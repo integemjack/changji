@@ -81,6 +81,9 @@ std::vector<compat::IgnoreRule> intentional_ignores() {
          "错误消息的文字不算契约（方案第三节「校验错误的消息文字不算契约」）。"
          "这里两边的差异来自各自的 HTTP 库：httpx 说 All connection attempts "
          "failed，httplib 说 Could not establish connection。"},
+        {"/llm_base_url",
+         "对拍时两侧各连一个自己的假模型（见 tools/duiping.ps1），"
+         "地址必然不同。共用一个的话 /api/plan 的两次调用会互相错位"},
         {"/local",
          "C++ 侧多出来的键：本地模型清单。Python 那边模型归 ComfyUI 管，"
          "没有这个概念。多一个键不影响前端（它按名字取字段）。"},
@@ -123,8 +126,8 @@ struct Args {
     /// 把每条请求的地址打出来。差异出在"发的不是同一个请求"时，
     /// 没有它只能靠猜。
     bool verbose = false;
-    /// 假大模型的工作目录（tools/fake_llm.py 的第二个参数）。
-    /// 给了才跑 LLM 阶段的对拍。
+    /// 假大模型的工作目录的**上一级**：下面要有 py/ 和 cpp/ 两个子目录，
+    /// 分别是两侧假模型的工作目录。给了才跑 LLM 阶段的对拍。
     std::string llm_work;
 };
 
@@ -388,10 +391,10 @@ int run_post(const Args& args, Tally& tally) {
     return 0;
 }
 
-/// 读 fake_llm 记下来的提示词。每行一条。
-std::vector<std::string> read_prompts(const fs::path& jsonl) {
+/// 读一侧假模型记下来的提示词。每行一条，顺序就是请求的顺序。
+std::vector<std::string> read_prompts(const fs::path& work) {
     std::vector<std::string> out;
-    std::ifstream in(jsonl, std::ios::binary);
+    std::ifstream in(work / "prompts.jsonl", std::ios::binary);
     if (!in) return out;
     std::string line;
     while (std::getline(in, line)) {
@@ -403,24 +406,104 @@ std::vector<std::string> read_prompts(const fs::path& jsonl) {
     return out;
 }
 
+/// 语料里的 clear_assets：把资产库清空再发请求。
+///
+/// **不清的话整条用例测的是别的东西。** /api/plan 看资产库里有没有角色
+/// 来决定要不要先出一遍圣经——有角色就跳过。用带角色的项目跑那些
+/// 标了 clear_assets 的用例，模型只被问一遍，而排好的两句答案里
+/// 第一句是圣经，于是分镜那一步拿到一份角色圣经，报"没有返回镜头列表"。
+/// **两边都这么报**，所以看起来像"一致地失败"，其实是对拍喂错了输入。
+///
+/// 只清 characters 和 locations，style 原样留着——直接写一个 {} 进去的话
+/// style 的字段全没了，而 AssetLibrary 那边有些字段是 extra="forbid" 的，
+/// 少写多写都可能让整份文件加载失败。
+bool clear_assets(const fs::path& project) {
+    const fs::path f = project / "assets.json";
+    json a = read_json(f);
+    if (a.is_null() || !a.is_object()) return false;
+    a["characters"] = json::object();
+    a["locations"] = json::object();
+    std::ofstream out(f, std::ios::binary | std::ios::trunc);
+    if (!out) return false;
+    out << a.dump(2);
+    return true;
+}
+
+/// 给一侧的假模型排好这次要回的答案，并把录音清空。
+bool arm_fake_llm(const fs::path& work, const std::vector<std::string>& replies) {
+    std::error_code ec;
+    fs::create_directories(work, ec);
+    {
+        std::ofstream f(work / "replies.jsonl", std::ios::binary | std::ios::trunc);
+        if (!f) return false;
+        for (const auto& r : replies) f << json(r).dump() << "\n";
+    }
+    { std::ofstream(work / "cursor.txt", std::ios::trunc) << "0"; }
+    { std::ofstream(work / "prompts.jsonl", std::ios::trunc); }
+    return true;
+}
+
+/// 一个案例要让模型依次回哪几句。
+///
+/// **顺序就是被问的顺序。** /api/plan 先问圣经再问分镜，反了的话
+/// 分镜阶段会拿到一份角色圣经，解析必然失败——而那看起来像是解析的 bug。
+std::vector<std::string> replies_for(const json& c) {
+    std::vector<std::string> out;
+    if (c.contains("llm_reply") && c.at("llm_reply").is_string()) {
+        out.push_back(c.at("llm_reply").get<std::string>());
+        return out;
+    }
+    const std::string url = c.value("url", std::string());
+
+    // **问几遍由语料说了算，不靠猜。**
+    //
+    // /api/plan 不是固定问两遍：资产库里已经有角色时它跳过圣经那一步，
+    // 只问分镜。按"固定两遍"排队的话，那些案例的第一次调用会拿到
+    // 圣经的答案，然后报"大模型没有返回镜头列表"——**两边都报**，
+    // 于是看起来"一致地失败"，其实是对拍自己把输入喂错了。
+    // 第一版就是这么错的，8 条 出分镜 全军覆没。
+    //
+    // 语料里的 prompts 是录制时真实发生的调用次数，拿它当准。
+    const std::size_t calls =
+        (c.contains("prompts") && c.at("prompts").is_array())
+            ? c.at("prompts").size()
+            : 1;
+
+    if (url == "/api/plan") {
+        // **分镜那句永远排在最后。** 问两遍时前面那句是圣经。
+        if (calls >= 2 && c.contains("llm_bible") && c.at("llm_bible").is_string()) {
+            out.push_back(c.at("llm_bible").get<std::string>());
+        }
+        if (c.contains("llm_storyboard") && c.at("llm_storyboard").is_string()) {
+            out.push_back(c.at("llm_storyboard").get<std::string>());
+        }
+        return out;
+    }
+
+    if (c.contains("llm_bible") && c.at("llm_bible").is_string()) {
+        out.push_back(c.at("llm_bible").get<std::string>());
+    }
+    return out;
+}
+
 /// LLM 阶段对拍。
 ///
 /// **这一模式验的是方案里那条"提示词的拼接必须逐字一致"。**
 ///
 /// 单元测试比的是 C++ 自己拼出来的串和录好的串——那验的是"C++ 没改过"，
-/// 验不了"Python 现在还是这么拼的"。这里把假模型夹在中间，
-/// 同一个请求让两个后端各发一次，然后逐字节比两条提示词。
+/// 验不了"Python 现在还是这么拼的"。这里给两侧各夹一个会录音的假模型，
+/// 同一个请求让两边各发一次，然后**逐条逐字节比提示词**。
 ///
-/// 要三样东西：两个后端都把 [llm].base_url 指向 --fake-llm，
-/// 以及 --llm-work 指向假模型的工作目录。
+/// **两侧各一个假模型，不共用。** /api/plan 一次要问两遍，共用一个队列的话
+/// 第二个后端拿到的是第一个剩下的，永远错位一条。
 int run_llm(const Args& args, Tally& tally) {
     if (args.python_url.empty() || args.llm_work.empty()) {
         std::cout << "\nLLM 对拍要 --python 和 --llm-work 都给\n";
         return 0;
     }
-    const fs::path work = paths::from_utf8(args.llm_work);
-    const fs::path reply_file = work / "reply.txt";
-    const fs::path prompts_file = work / "prompts.jsonl";
+    const fs::path base = paths::from_utf8(args.llm_work);
+    const fs::path py_work = base / "py";
+    const fs::path cp_work = base / "cpp";
 
     compat::CompareOptions opts;
     opts.ignore = live_ignores();
@@ -445,19 +528,18 @@ int run_llm(const Args& args, Tally& tally) {
                 name.find(args.filter) == std::string::npos) {
                 continue;
             }
-            if (!c.contains("llm_reply") || !c.contains("url")) {
-                tally.skip(name, "语料里没有 llm_reply 或 url");
+            if (!c.contains("url")) {
+                tally.skip(name, "语料里没有 url");
                 continue;
             }
-
-            // 事先把答案放好。假模型不消耗它，两个后端能各拿一次。
-            {
-                std::ofstream f(reply_file, std::ios::binary | std::ios::trunc);
-                if (!f) {
-                    tally.skip(name, "写不了 " + paths::to_utf8(reply_file));
-                    continue;
-                }
-                f << c.at("llm_reply").get<std::string>();
+            const auto replies = replies_for(c);
+            if (replies.empty()) {
+                tally.skip(name, "语料里没有给模型的答案");
+                continue;
+            }
+            if (!arm_fake_llm(py_work, replies) || !arm_fake_llm(cp_work, replies)) {
+                tally.skip(name, "写不了假模型的工作目录");
+                continue;
             }
 
             const std::string tag = "L" + std::to_string(index);
@@ -467,17 +549,53 @@ int run_llm(const Args& args, Tally& tally) {
                 tally.skip(name, "拷项目副本失败");
                 continue;
             }
+            if (c.value("clear_assets", false)) {
+                if (!clear_assets(py_dir) || !clear_assets(cp_dir)) {
+                    tally.skip(name, "清资产库失败");
+                    continue;
+                }
+            }
 
             const std::string url = c.at("url").get<std::string>();
             const json body = c.value("body", json::object());
+            if (args.verbose) {
+                std::cout << "      -> POST " << url << "（备了 " << replies.size()
+                          << " 句答案）\n";
+            }
 
-            // 清空录音，然后一边发一次。**顺序固定：先 Python 后 C++**，
-            // 这样 prompts.jsonl 里第 0 条一定是 Python 的。
-            { std::ofstream clear(prompts_file, std::ios::trunc); }
             const Response py = send(args.python_url, "POST", url,
                                      retarget(body, paths::to_utf8(py_dir)));
             const Response cp = send(args.cpp_url, "POST", url,
                                      retarget(body, paths::to_utf8(cp_dir)));
+            // **语料里记了 cpp_status 就说明这条是有意不一样的。**
+            //
+            // 那几条是 Python 的 StoryboardError 漏透 bug：模型吐了垃圾时
+            // 它抛出未捕获异常，回 500 加一句纯文本 "Internal Server Error"，
+            // 而 C++ 回 400 加一句人话。方案里记过这条。
+            //
+            // 这种情况**不能只是跳过**——跳过等于放弃检查，而这里恰恰要
+            // 检查两件事：Python 还是那个老样子（没被悄悄修好），
+            // 以及 C++ 确实回了我们想要的那个码。
+            const int want_py = c.value("status", 0);
+            const int want_cpp = c.value("cpp_status", want_py);
+            if (want_cpp != want_py && want_py != 0) {
+                std::vector<compat::Difference> d;
+                if (py.status != want_py && py.error.empty()) {
+                    d.push_back({"（Python 状态码）",
+                                 "语料说 " + std::to_string(want_py) + "，实际 " +
+                                     std::to_string(py.status) +
+                                     "。Python 那个 bug 被修了？那这条有意的偏离要重新评估"});
+                }
+                if (cp.status != want_cpp) {
+                    d.push_back({"（C++ 状态码）",
+                                 "该回 " + std::to_string(want_cpp) + "，实际 " +
+                                     std::to_string(cp.status)});
+                }
+                tally.report(name + "（有意不一样：" + (c.value("cpp_note", std::string("见语料")))
+                                 + "）", d);
+                continue;
+            }
+
             if (!py.error.empty()) {
                 tally.skip(name, "Python 侧：" + py.error);
                 continue;
@@ -497,29 +615,33 @@ int run_llm(const Args& args, Tally& tally) {
                 diffs.push_back({"响应" + d.path, d.detail});
             }
 
-            // **逐字节比提示词。** 这是这一模式存在的理由。
-            const auto prompts = read_prompts(prompts_file);
-            if (prompts.size() < 2) {
-                // 有的案例是校验失败，根本没走到模型那一步——那也是一致的一种，
-                // 只要两边都没发。发了一次说明只有一边走到了模型。
-                if (prompts.size() == 1) {
-                    diffs.push_back({"提示词",
-                                     "只有一边发了请求给模型（另一边在到模型之前就返回了）"});
+            // **逐条逐字节比提示词。** 这是这一模式存在的理由。
+            const auto py_prompts = read_prompts(py_work);
+            const auto cp_prompts = read_prompts(cp_work);
+            if (py_prompts.size() != cp_prompts.size()) {
+                // 问模型的次数不同：一边多问了一遍，或者一边在到模型之前
+                // 就返回了（校验失败）。两种都是真差异。
+                diffs.push_back({"提示词",
+                                 "问模型的次数不同：Python " +
+                                     std::to_string(py_prompts.size()) + " 次，C++ " +
+                                     std::to_string(cp_prompts.size()) + " 次"});
+            } else {
+                for (std::size_t k = 0; k < py_prompts.size(); ++k) {
+                    if (py_prompts[k] == cp_prompts[k]) continue;
+                    std::size_t i = 0;
+                    while (i < py_prompts[k].size() && i < cp_prompts[k].size() &&
+                           py_prompts[k][i] == cp_prompts[k][i]) {
+                        ++i;
+                    }
+                    const std::size_t from = i > 60 ? i - 60 : 0;
+                    diffs.push_back(
+                        {"提示词[" + std::to_string(k) + "]",
+                         "第 " + std::to_string(i) + " 字节起不同（长度 " +
+                             std::to_string(py_prompts[k].size()) + " vs " +
+                             std::to_string(cp_prompts[k].size()) +
+                             "）\n      Python …" + py_prompts[k].substr(from, 120) +
+                             "\n      C++    …" + cp_prompts[k].substr(from, 120)});
                 }
-            } else if (prompts[0] != prompts[1]) {
-                std::size_t i = 0;
-                while (i < prompts[0].size() && i < prompts[1].size() &&
-                       prompts[0][i] == prompts[1][i]) {
-                    ++i;
-                }
-                const std::size_t from = i > 60 ? i - 60 : 0;
-                diffs.push_back(
-                    {"提示词",
-                     "第 " + std::to_string(i) + " 字节起不同（长度 " +
-                         std::to_string(prompts[0].size()) + " vs " +
-                         std::to_string(prompts[1].size()) + "）\n      Python …" +
-                         prompts[0].substr(from, 120) + "\n      C++    …" +
-                         prompts[1].substr(from, 120)});
             }
             tally.report(name, diffs);
         }
@@ -530,6 +652,7 @@ int run_llm(const Args& args, Tally& tally) {
                    ec);
     return 0;
 }
+
 
 /// 数据层对拍：读一份项目文件再写回去，逐字段比。
 ///

@@ -64,8 +64,7 @@ class Handler(BaseHTTPRequestHandler):
             f.write(json.dumps({"path": self.path, "prompt": prompt,
                                 "request": req}, ensure_ascii=False) + "\n")
 
-        reply_file = WORK / "reply.txt"
-        reply = reply_file.read_text(encoding="utf-8") if reply_file.is_file() else "{}"
+        reply = self._next_reply()
         self._json(200, {
             "id": "duiping",
             "object": "chat.completion",
@@ -77,6 +76,38 @@ class Handler(BaseHTTPRequestHandler):
         })
 
 
+    def _next_reply(self) -> str:
+        """按顺序取下一个答案。
+
+        replies.jsonl 一行一个（JSON 字符串）。**用光了重复最后一条**，
+        不是报错：某一侧可能比另一侧多问一次模型（比如它在别的地方
+        又校验了一遍），那时候报错会把一次正常的对拍变成失败。
+
+        /api/plan 一次请求要问两遍（圣经 + 分镜），所以必须排队；
+        而**每一侧各起一个假模型**，两边不共用队列——共用的话
+        第二个后端拿到的是第一个后端剩下的，永远错位。
+        """
+        queue = WORK / "replies.jsonl"
+        if not queue.is_file():
+            single = WORK / "reply.txt"
+            return single.read_text(encoding="utf-8") if single.is_file() else "{}"
+
+        lines = [ln for ln in queue.read_text(encoding="utf-8").splitlines() if ln]
+        if not lines:
+            return "{}"
+        cursor_file = WORK / "cursor.txt"
+        try:
+            cursor = int(cursor_file.read_text(encoding="utf-8").strip())
+        except (OSError, ValueError):
+            cursor = 0
+        index = min(cursor, len(lines) - 1)
+        cursor_file.write_text(str(cursor + 1), encoding="utf-8")
+        try:
+            return json.loads(lines[index])
+        except json.JSONDecodeError:
+            return lines[index]
+
+
 def main() -> int:
     global WORK
     port = int(sys.argv[1]) if len(sys.argv) > 1 else 8125
@@ -84,6 +115,7 @@ def main() -> int:
         WORK = Path(sys.argv[2])
     WORK.mkdir(parents=True, exist_ok=True)
     (WORK / "prompts.jsonl").write_text("", encoding="utf-8")
+    (WORK / "cursor.txt").write_text("0", encoding="utf-8")
     print(f"假大模型在 127.0.0.1:{port}，工作目录 {WORK.resolve()}", flush=True)
     HTTPServer(("127.0.0.1", port), Handler).serve_forever()
     return 0
