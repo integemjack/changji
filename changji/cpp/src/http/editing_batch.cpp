@@ -11,6 +11,7 @@
 #include <vector>
 
 #include "http/editing.hpp"
+#include "http/reset.hpp"
 #include "models/project.hpp"
 #include "util/paths.hpp"
 
@@ -56,25 +57,6 @@ std::string join_cn(const std::vector<std::string>& v) {
         out += v[i];
     }
     return out;
-}
-
-int reset_all_shots_for_link(const ProjectStore& store) {
-    Project project = store.load_project();
-    int n = 0;
-    for (auto& ep : project.episodes) {
-        for (auto& shot : ep.shots) {
-            if (shot.status == ShotStatus::PLANNED ||
-                shot.status == ShotStatus::LOCKED) {
-                continue;
-            }
-            shot.status = ShotStatus::PLANNED;
-            shot.attempts = 0;
-            shot.gate_notes.clear();
-            ++n;
-        }
-    }
-    store.save_project(project);
-    return n;
 }
 
 }  // namespace
@@ -265,7 +247,7 @@ ApiResult post_shots_link_locations(const json& body) {
     if (total) store.save_project(project);
 
     // 接上之后提示词才完整，已渲染的那些是按缺场景的提示词跑出来的
-    const int reset = total ? reset_all_shots_for_link(store) : 0;
+    const int reset = total ? reset_all_shots(store) : 0;
     return {200, {{"linked", total}, {"episodes", linked}, {"reset_shots", reset}}};
 }
 

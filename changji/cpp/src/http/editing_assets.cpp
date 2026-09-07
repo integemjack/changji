@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "http/editing.hpp"
+#include "http/reset.hpp"
 #include "models/project.hpp"
 #include "util/paths.hpp"
 
@@ -47,25 +48,6 @@ double need_num(const json& v, const char* field) {
 /// 不重置的话已完成的镜头会继续用旧设定，同一个角色前后长得不一样。
 ///
 /// 跳过 PLANNED（本来就没开工）和 LOCKED（人工确认过，不再重跑）。
-int reset_all_shots(const ProjectStore& store) {
-    Project project = store.load_project();
-    int n = 0;
-    for (auto& ep : project.episodes) {
-        for (auto& shot : ep.shots) {
-            if (shot.status == ShotStatus::PLANNED ||
-                shot.status == ShotStatus::LOCKED) {
-                continue;
-            }
-            shot.status = ShotStatus::PLANNED;
-            shot.attempts = 0;
-            shot.gate_notes.clear();
-            ++n;
-        }
-    }
-    store.save_project(project);
-    return n;
-}
-
 /// 这批字段里有没有**真的**改动。
 ///
 /// 界面一次提交整张表单，所以"字段出现在请求里"不代表用户改了它。

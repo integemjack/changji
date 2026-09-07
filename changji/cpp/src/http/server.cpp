@@ -12,6 +12,7 @@
 #include "http/media.hpp"
 #include "http/upload.hpp"
 #include "http/readonly.hpp"
+#include "http/planning.hpp"
 #include "http/scripting.hpp"
 #include "llm/client.hpp"
 #include "http/ws.hpp"
@@ -298,6 +299,12 @@ void run(const config::Settings& settings, const Options& opts) {
         script_route(&post_script_write));
     CROW_ROUTE(app, "/api/script/trailer").methods("POST"_method)(
         script_route(&post_script_trailer));
+
+    // 出角色圣经和分镜表。走同一套包装。
+    CROW_ROUTE(app, "/api/bible").methods("POST"_method)(
+        script_route(&post_bible));
+    CROW_ROUTE(app, "/api/plan").methods("POST"_method)(
+        script_route(&post_plan));
 
     // ---- 任务状态 ----
     //

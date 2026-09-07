@@ -1,4 +1,5 @@
 #include "http/upload.hpp"
+#include "http/reset.hpp"
 
 #include <array>
 #include <cmath>
@@ -37,25 +38,6 @@ std::string need_str(const json& body, const char* key) {
 ProjectStore open_project(const std::string& path) {
     if (path.empty()) throw ApiError(400, "没有指定项目目录");
     return ProjectStore(paths::from_utf8(path));
-}
-
-int reset_all_shots(const ProjectStore& store) {
-    Project project = store.load_project();
-    int n = 0;
-    for (auto& ep : project.episodes) {
-        for (auto& shot : ep.shots) {
-            if (shot.status == ShotStatus::PLANNED ||
-                shot.status == ShotStatus::LOCKED) {
-                continue;
-            }
-            shot.status = ShotStatus::PLANNED;
-            shot.attempts = 0;
-            shot.gate_notes.clear();
-            ++n;
-        }
-    }
-    store.save_project(project);
-    return n;
 }
 
 /// 校验上传的数据，返回扩展名。不合格直接抛 400。
