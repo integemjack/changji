@@ -12,6 +12,8 @@
 #include "http/media.hpp"
 #include "http/upload.hpp"
 #include "http/readonly.hpp"
+#include "http/scripting.hpp"
+#include "llm/client.hpp"
 #include "http/ws.hpp"
 #include "pipeline/jobs.hpp"
 
@@ -266,6 +268,36 @@ void run(const config::Settings& settings, const Options& opts) {
             });
             return json_response(r.body, r.status);
         });
+
+    // ---- 剧本 ----
+    //
+    // 三个都是同步的：调一次大模型，几十秒内返回。写整季不一样，
+    // 那个要跑几分钟，走下面的 job 表。
+    //
+    // 客户端在这里造一次，三个路由共用。每个请求造一个的话，
+    // 换成进程内 llama.cpp 之后就是每个请求重新加载一遍模型。
+    static llm::RemoteClient script_client(settings.llm, llm::default_http_post());
+
+    const auto script_route = [](auto handler) {
+        return [handler](const crow::request& req) {
+            auto r = guard([&] {
+                // 这几个接口没有自己的 job，取消令牌是个不会被触发的哑元。
+                // 等它们接进 job 表之后换成真的那个。
+                static thread_local pipeline::CancelToken tok;
+                tok.reset();
+                return handler(json::parse(req.body, nullptr, false),
+                               script_client, tok);
+            });
+            return json_response(r.body, r.status);
+        };
+    };
+
+    CROW_ROUTE(app, "/api/script/premise").methods("POST"_method)(
+        script_route(&post_script_premise));
+    CROW_ROUTE(app, "/api/script/write").methods("POST"_method)(
+        script_route(&post_script_write));
+    CROW_ROUTE(app, "/api/script/trailer").methods("POST"_method)(
+        script_route(&post_script_trailer));
 
     // ---- 任务状态 ----
     //
