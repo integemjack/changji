@@ -25,4 +25,19 @@ namespace changji::http {
 /// 用户会以为改动没生效。
 ApiResult post_shot(const nlohmann::json& body);
 
+/// POST /api/character —— 改角色。
+/// body: {project, char_id, patch: {...}, reset_shots: bool = true}
+///
+/// 外观五段是一致性的锚点，改了会影响所有引用它的镜头，所以要连带
+/// 把未锁定的镜头退回未开工。改音色之类的不触发。
+ApiResult post_character(const nlohmann::json& body);
+
+/// POST /api/location —— 改场景。
+/// body: {project, location_id, patch: {...}, reset_shots: bool = true}
+ApiResult post_location(const nlohmann::json& body);
+
+/// POST /api/style —— 改全剧风格层。
+/// body: {project, patch: {...}, reset_shots: bool = true}
+ApiResult post_style(const nlohmann::json& body);
+
 }  // namespace changji::http

@@ -757,3 +757,86 @@ shutil.rmtree(EDIT_ROOT, ignore_errors=True)
 
 dump("endpoints_shot_edit", {"cases": edit_results})
 print("\n编辑接口语料写好了")
+
+
+# ══════════════════════════════════════════════════════════════════════
+# 阶段 3：资产类编辑接口
+# ══════════════════════════════════════════════════════════════════════
+#
+# 这三个改的是全剧共用的东西，会连带把未锁定的镜头退回未开工。
+# 所以语料除了响应还要记「重置了几个镜头」和「镜头状态变成什么」。
+
+ASSET_EDIT_ROOT = OUT / "资产编辑用例"
+if ASSET_EDIT_ROOT.exists():
+    shutil.rmtree(ASSET_EDIT_ROOT)
+ASSET_EDIT_ROOT.mkdir(parents=True)
+
+asset_cases = [
+    {"n": "改外观_触发重跑", "url": "/api/character",
+     "extra": {"char_id": "c_lin_yuan"},
+     "patch": {"face": "改成了单眼皮，长发"}},
+    {"n": "改名字_不触发", "url": "/api/character",
+     "extra": {"char_id": "c_lin_yuan"},
+     "patch": {"name": "林渊（改名）"}},
+    {"n": "外观提交同样的值_不触发", "url": "/api/character",
+     "extra": {"char_id": "c_lin_yuan"},
+     "patch": {"face": "单眼皮，短碎发，眼下有一道旧疤"}},
+    {"n": "改外观但关掉重置", "url": "/api/character",
+     "extra": {"char_id": "c_lin_yuan"}, "reset_shots": False,
+     "patch": {"attire": "换了件风衣"}},
+    {"n": "角色不存在_404", "url": "/api/character",
+     "extra": {"char_id": "c_no_such"}, "patch": {"name": "x"}},
+    {"n": "角色多余字段_422", "url": "/api/character",
+     "extra": {"char_id": "c_lin_yuan"}, "patch": {"没这个": 1}},
+    {"n": "改场景光线_触发重跑", "url": "/api/location",
+     "extra": {"location_id": "loc_rooftop"},
+     "patch": {"lighting": "改成暖调"}},
+    {"n": "改场景名字_不触发", "url": "/api/location",
+     "extra": {"location_id": "loc_rooftop"},
+     "patch": {"name": "天台（改）"}},
+    {"n": "场景不存在_404", "url": "/api/location",
+     "extra": {"location_id": "loc_no_such"}, "patch": {"name": "x"}},
+    {"n": "改全剧画风_触发重跑", "url": "/api/style", "extra": {},
+     "patch": {"global_style": "换成冷峻写实"}},
+    {"n": "改画幅_触发重跑", "url": "/api/style", "extra": {},
+     "patch": {"aspect_ratio": "16:9"}},
+    {"n": "风格提交同样的值_不触发", "url": "/api/style", "extra": {},
+     "patch": {"global_style": "写实电影感，浅景深"}},
+]
+
+asset_results = []
+for i, case in enumerate(asset_cases):
+    root = ASSET_EDIT_ROOT / f"a{i:02d}"
+    shutil.copytree(PROJ_ROOT, root)
+    body = {"project": str(root), "patch": case["patch"]}
+    body.update(case["extra"])
+    if "reset_shots" in case:
+        body["reset_shots"] = case["reset_shots"]
+    resp = client.post(case["url"], json=body)
+
+    after_assets, shot_status = None, None
+    if resp.status_code == 200:
+        st = ProjectStore(root)
+        a = st.load_assets()
+        after_assets = a.model_dump(mode="json")
+        sh = st.load_project().episode_by_id("ep01").shot_by_id("ep01_s03_sh007")
+        shot_status = sh.status.value
+
+    b = resp.json()
+    d = b.get("detail") if isinstance(b, dict) else None
+    shape_only = isinstance(d, str) and "validation error for" in d
+
+    asset_results.append({
+        "name": case["n"], "url": case["url"],
+        "extra": case["extra"], "patch": case["patch"],
+        "reset_shots": case.get("reset_shots"),
+        "status": resp.status_code, "body": b,
+        "compare": "shape" if shape_only else "full",
+        "assets_after": after_assets,
+        "shot_status_after": shot_status,
+    })
+    print(f"  {case['n']:26s} {case['url']:16s} -> {resp.status_code}")
+
+shutil.rmtree(ASSET_EDIT_ROOT, ignore_errors=True)
+dump("endpoints_asset_edit", {"cases": asset_results})
+print("\n资产编辑语料写好了")

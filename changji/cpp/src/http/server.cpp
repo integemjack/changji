@@ -4,6 +4,7 @@
 #include <nlohmann/json.hpp>
 
 #include "doctor/doctor.hpp"
+#include "http/editing.hpp"
 #include "http/readonly.hpp"
 #include "http/ws.hpp"
 
@@ -94,6 +95,28 @@ void run(const config::Settings& settings, const Options& opts) {
 
     CROW_ROUTE(app, "/api/assets")([](const crow::request& req) {
         auto r = guard([&] { return get_assets(query(req, "path")); });
+        return json_response(r.body, r.status);
+    });
+
+    // ---- 阶段 3：编辑接口 ----
+
+    CROW_ROUTE(app, "/api/shot").methods("POST"_method)([](const crow::request& req) {
+        auto r = guard([&] { return post_shot(json::parse(req.body, nullptr, false)); });
+        return json_response(r.body, r.status);
+    });
+
+    CROW_ROUTE(app, "/api/character").methods("POST"_method)([](const crow::request& req) {
+        auto r = guard([&] { return post_character(json::parse(req.body, nullptr, false)); });
+        return json_response(r.body, r.status);
+    });
+
+    CROW_ROUTE(app, "/api/location").methods("POST"_method)([](const crow::request& req) {
+        auto r = guard([&] { return post_location(json::parse(req.body, nullptr, false)); });
+        return json_response(r.body, r.status);
+    });
+
+    CROW_ROUTE(app, "/api/style").methods("POST"_method)([](const crow::request& req) {
+        auto r = guard([&] { return post_style(json::parse(req.body, nullptr, false)); });
         return json_response(r.body, r.status);
     });
 
