@@ -179,6 +179,7 @@ add_executable(changji
     src/comfy/loader.cpp
     src/comfy/renderers.cpp
     src/media/ffmpeg.cpp
+    src/media/subtitles.cpp
     src/http/readonly.cpp
     src/http/editing.cpp
     src/http/editing_assets.cpp
@@ -376,6 +377,7 @@ if(CHANGJI_BUILD_TESTS)
         tests/unit/test_voices.cpp
         tests/unit/test_comfy_renderers.cpp
         tests/unit/test_ffmpeg.cpp
+        tests/unit/test_subtitles.cpp
 
         # 被测的源码。刻意不包含 doctor.cpp、http/server.cpp、
         # llm/client_http.cpp、comfy/client_http.cpp 和 http/run_deps.cpp ——
@@ -409,6 +411,7 @@ if(CHANGJI_BUILD_TESTS)
         src/comfy/loader.cpp
         src/comfy/renderers.cpp
         src/media/ffmpeg.cpp
+        src/media/subtitles.cpp
         src/llm/client.cpp
         src/config/settings.cpp
         src/config/writeback.cpp
