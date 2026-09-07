@@ -72,6 +72,7 @@ add_executable(changji
     src/util/paths.cpp
     src/util/proc.cpp
     src/config/settings.cpp
+    src/config/writeback.cpp
     src/doctor/doctor.cpp
     src/models/shot.cpp
     src/models/character.cpp
@@ -223,6 +224,7 @@ if(CHANGJI_BUILD_TESTS)
         tests/unit/test_batch.cpp
         tests/unit/test_episodes.cpp
         tests/unit/test_llm_info.cpp
+        tests/unit/test_writeback.cpp
         src/models/shot.cpp
         src/models/character.cpp
         src/models/project.cpp
@@ -238,6 +240,7 @@ if(CHANGJI_BUILD_TESTS)
         src/pipeline/jobs.cpp
         src/llm/client.cpp
         src/config/settings.cpp
+        src/config/writeback.cpp
         src/http/readonly.cpp
         src/http/editing.cpp
         src/http/editing_assets.cpp

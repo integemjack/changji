@@ -517,9 +517,50 @@ def gen_providers() -> None:
     print("写好了", path, "（%d 家）" % len(LLM_PROVIDERS))
 
 
+# ---- 字段中文名和配置段映射 ----
+
+def gen_field_names() -> None:
+    """把 _FIELD_NAMES 和 _SETTING_SECTIONS 原样嵌进 C++。
+
+    四十条中文标签加十五条段映射，手抄一遍不现实。而且这两张表跟着
+    配置字段一起演进——手抄的那份漏掉新字段时，界面上会显示英文字段名，
+    用户得自己对着猜是哪一项。
+    """
+    from changji.web.server import _FIELD_NAMES, _SETTING_SECTIONS
+
+    out = io.StringIO()
+    out.write(header([
+        "字段的中文标签，从 web/server.py 的 _FIELD_NAMES 原样导出。",
+        "报「已应用 min_frame_similarity」不如报「与首帧相似度下限」。",
+        "另外是配置段映射：哪个字段该写进配置文件的哪一节。",
+    ]))
+
+    out.write("// 字段名 -> 中文标签。\n")
+    out.write("inline constexpr const char* kFieldNames[][2] = {\n")
+    for k, v in _FIELD_NAMES.items():
+        out.write("    {" + lit(k) + ", " + lit(v) + "},\n")
+    out.write("};\n\n")
+
+    out.write("// 字段名 -> {配置节, 节内的键名}。\n")
+    out.write("// 画质档位不在这里：它是按显存推出来的，写死在配置里等于\n")
+    out.write("// 把这台机器的显存刻进项目，换台机器就不对了。\n")
+    out.write("inline constexpr const char* kSettingSections[][3] = {\n")
+    for k, (section, field) in _SETTING_SECTIONS.items():
+        out.write("    {" + lit(k) + ", " + lit(section) + ", "
+                  + lit(field) + "},\n")
+    out.write("};\n\n")
+    out.write("}  // namespace changji::stages::prompt\n")
+
+    path = "cpp/src/config/field_names.inc.hpp"
+    io.open(path, "w", encoding="utf-8", newline="\n").write(out.getvalue())
+    print("写好了", path, "（%d 个标签，%d 条段映射）"
+          % (len(_FIELD_NAMES), len(_SETTING_SECTIONS)))
+
+
 if __name__ == "__main__":
     gen_bible()
     gen_storyboard()
     gen_shot_schema()
     gen_script()
     gen_providers()
+    gen_field_names()
