@@ -220,7 +220,45 @@ ggml-base.dll  ggml-cpu.dll  ggml.dll  llama.dll  stable-diffusion.lib
 `add_compile_definitions(GGML_MAX_NAME=160)` 被删掉，这里会读回 63，
 而**编译和链接都不会报错**。
 
-**结论：验证第二项从"不可行"改为"经补丁后可行"。** 决策 17 的补丁集方案成立。
+#### CUDA 构建：三处手工解的 CUDA 冲突已验证
+
+CPU 构建根本不编 `ggml-cuda`，所以上面那次通过**证明不了**我手工解的三处
+CUDA 冲突是对的。补了 CUDA 构建：
+
+```
+ggml-base.dll  ggml-cpu.dll  ggml-cuda.dll  ggml.dll  llama.dll
+llama.cpp 报告：CUDA : ARCHS = 750 | USE_GRAPHS = 1
+设备枚举：0. [GPU] CUDA0 — NVIDIA GeForce RTX 2060 / 1. [CPU]
+```
+
+`GGML_CUDA_USE_CUBLASLT_FP8` 在构建日志里出现 143 次，宏确实生效，
+那三处改动真的被编译了。
+
+**析构那一处单独验证过。** 它是这次移植最险的改动——llama.cpp 的析构是
+`[设备][流]` 双层循环而 `cublaslt_handles` 是一维，照抄会 double free，
+我把它挪到了外层。但**光枚举设备不会创建 `ggml_backend_cuda_context`**，
+所以前面的检查跑不到析构。为此在 cjverify 里加了第 6 项：真的
+`ggml_backend_dev_init` 出一个 CUDA0 后端再 `ggml_backend_free` 掉。
+
+```
+[6] GPU 后端构造与析构
+  已创建：CUDA0
+  [ok] 后端析构   构造再销毁一次没崩——cublasLtDestroy 的循环层次是对的
+```
+
+**结论：验证第二项从"不可行"改为"经补丁后可行"，CPU 和 CUDA 两条链都通。**
+决策 17 的补丁集方案成立。
+
+#### 一个咬了两次的环境坑
+
+CUDA 装完后，MSBuild 的 `CUDA <版本>.targets` 查的是**版本化**的
+`CUDA_PATH_V13_3`，不是 `CUDA_PATH`——两个都要在进程环境里。缺了只报
+
+```
+error : The CUDA Toolkit directory '' does not exist.
+```
+
+这句话把人往"CUDA 没装好"的方向带，实际是环境变量没传进去。
 
 ## 二、真正的坑是一个编译期常量，不是符号冲突
 
@@ -391,7 +429,7 @@ Windows 的路径处理会在你完全想不到的地方安静地失败。
 - [x] 第二项善后：出路已定（决策 17，补丁集），工作量已量化
 - [x] Metal shader 搬家 —— 已在 M1 上验证通过
 - [x] **移植实施完成**：6 个 hunk 全解，两库共用一份 ggml 编出二进制，cjverify 全过
-- [ ] 统一 ggml 的 CUDA 构建（CPU 版已过）
+- [x] 统一 ggml 的 CUDA 构建 —— 通过，析构路径单独验证过
 - [ ] 第二项后半：两个库各跑一次真实推理
 - [ ] 第三项：`--offload-to-cpu` 的崩溃 bug 复不复现
 - [ ] 第四项：`--vae-tiling` 在视频路径上通不通

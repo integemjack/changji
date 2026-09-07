@@ -113,6 +113,38 @@ void check_backends() {
     }
 }
 
+// 真正创建并销毁一次 GPU 后端。
+//
+// 这一步专门为了跑到 ggml_backend_cuda_context 的析构函数。移植补丁时
+// 那里改动最险：llama.cpp 的析构是 [设备][流] 双层循环，而 leejet 的
+// cublaslt_handles 是一维，照抄会把同一个句柄销毁 GGML_CUDA_MAX_STREAMS 次
+// （double free）。我把它挪到了外层循环——对不对只有真的构造再析构一次才知道。
+//
+// 光枚举设备不会创建 context，所以前面那步证明不了这件事。
+void check_backend_lifecycle() {
+    std::printf("\n[6] GPU 后端构造与析构\n");
+    ggml_backend_dev_t gpu = nullptr;
+    for (size_t i = 0; i < ggml_backend_dev_count(); ++i) {
+        ggml_backend_dev_t d = ggml_backend_dev_get(i);
+        if (ggml_backend_dev_type(d) == GGML_BACKEND_DEVICE_TYPE_GPU) { gpu = d; break; }
+    }
+    if (!gpu) {
+        std::printf("  没有 GPU 设备，跳过（CPU 构建下正常）\n");
+        return;
+    }
+
+    ggml_backend_t backend = ggml_backend_dev_init(gpu, nullptr);
+    if (!backend) {
+        bad("ggml_backend_dev_init", "GPU 后端初始化失败");
+        return;
+    }
+    std::printf("  已创建：%s\n", ggml_backend_name(backend));
+
+    // 销毁。cublasLtDestroy 在这里被调用；放错循环层的话这一步会崩或报 CUBLAS 错。
+    ggml_backend_free(backend);
+    ok("后端析构", "构造再销毁一次没崩——cublasLtDestroy 的循环层次是对的");
+}
+
 void check_llama() {
     std::printf("\n[4] llama.cpp\n");
     llama_backend_init();
@@ -152,6 +184,7 @@ int main() {
     check_backends();
     check_llama();
     check_sd();
+    check_backend_lifecycle();
 
     std::printf("\n====================\n");
     if (failures == 0) {
