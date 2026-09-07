@@ -29,15 +29,51 @@ struct ApiResult {
 };
 
 /// 抛出它等价于 FastAPI 的 raise HTTPException(status, detail)。
+///
+/// detail 可以是字符串，也可以是任意 JSON。后者是为了对上 FastAPI 自己的
+/// 校验错误：pydantic 的 extra="forbid" 之类违规回的是 **422** 而不是 400，
+/// 而且 detail 是一个结构化数组
+/// （[{type, loc, msg, input}]），不是一句话。对拍语料抓到过这一条。
 class ApiError : public std::runtime_error {
 public:
     ApiError(int status, const std::string& detail)
-        : std::runtime_error(detail), status_(status) {}
+        : std::runtime_error(detail), status_(status), detail_(detail) {}
+
+    /// 带完整 JSON body 的那种。**不做成构造函数重载**：
+    /// const char* 到 std::string 和到 nlohmann::json 都是一次用户定义转换，
+    /// 两个构造函数会让 ApiError(400, "字面量") 变成歧义调用。
+    static ApiError with_body(int status, const nlohmann::json& body) {
+        ApiError e(status, body.dump());
+        e.detail_ = body;
+        return e;
+    }
+
     int status() const { return status_; }
+    const nlohmann::json& detail() const { return detail_; }
 
 private:
     int status_;
+    nlohmann::json detail_;
 };
+
+/// FastAPI 在 pydantic 校验失败时回的那种 422。
+///
+/// loc 的头两段固定是 ["body", <模型字段名>]，第三段是出问题的键。
+/// 形状对不上的话前端拿到的 detail 是数组而不是字符串，
+/// 错误提示会显示成 [object Object]——那是现有行为，要原样保住。
+inline ApiError unprocessable(const std::string& model_field,
+                              const std::string& key,
+                              const std::string& msg,
+                              const nlohmann::json& input,
+                              const std::string& type) {
+    return ApiError::with_body(422, nlohmann::json{{"detail", nlohmann::json::array({
+        nlohmann::json{
+            {"type", type},
+            {"loc", nlohmann::json::array({"body", model_field, key})},
+            {"msg", msg},
+            {"input", input},
+        }})}});
+}
 
 // 每个接口一个纯函数。参数就是 Python 那边的查询参数。
 
@@ -54,7 +90,11 @@ ApiResult guard(F&& fn) {
     try {
         return fn();
     } catch (const ApiError& e) {
-        return {e.status(), {{"detail", e.what()}}};
+        // detail 已经是完整 body（422 那种）就原样返回，
+        // 否则包成 {"detail": "..."}——HTTPException 的形状。
+        const auto& d = e.detail();
+        if (d.is_object() && d.contains("detail")) return {e.status(), d};
+        return {e.status(), {{"detail", d}}};
     } catch (const std::exception& e) {
         // Python 那边未捕获的异常会被 FastAPI 变成 500 加一句
         // "Internal Server Error"。这里把真实信息带出来——

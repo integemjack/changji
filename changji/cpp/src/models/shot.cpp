@@ -32,6 +32,17 @@ bool is_slug(const std::string& s) {
     });
 }
 
+/// 数字转字符串，去掉 std::to_string 那一串没用的尾零。
+///
+/// 默认行为是 99.000000，出现在给用户看的错误消息里很难受。
+std::string num(double v) {
+    std::string s = std::to_string(v);
+    if (s.find('.') == std::string::npos) return s;
+    s.erase(s.find_last_not_of('0') + 1);
+    if (!s.empty() && s.back() == '.') s.pop_back();
+    return s;
+}
+
 void check_len(const std::string& value, std::size_t max_chars,
                const std::string& field, std::vector<std::string>& errs) {
     const std::size_t n = utf8_len(value);
@@ -181,7 +192,7 @@ void DialogueLine::validate(const std::string& where,
 
     if (emotion_intensity < 0.0 || emotion_intensity > 1.0) {
         errs.push_back(where + "：emotion_intensity 要在 0 到 1 之间，当前 " +
-                       std::to_string(emotion_intensity));
+                       num(emotion_intensity));
     }
     if (actual_duration_s.has_value() && *actual_duration_s < 0.0) {
         errs.push_back(where + "：actual_duration_s 不能为负");
@@ -212,11 +223,11 @@ std::vector<std::string> Shot::validate() const {
 
     if (duration_s <= 0.0 || duration_s > 30.0) {
         errs.push_back("duration_s 要在 0 到 30 秒之间，当前 " +
-                       std::to_string(duration_s));
+                       num(duration_s));
     }
     if (transition_dur_s < 0.0 || transition_dur_s > 2.0) {
         errs.push_back("transition_dur_s 要在 0 到 2 秒之间，当前 " +
-                       std::to_string(transition_dur_s));
+                       num(transition_dur_s));
     }
     if (attempts < 0) {
         errs.push_back("attempts 不能为负");

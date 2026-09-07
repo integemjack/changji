@@ -659,3 +659,101 @@ dump("endpoints_readonly", {
 })
 
 print("\n只读接口语料写好了")
+
+
+# ══════════════════════════════════════════════════════════════════════
+# 阶段 3：编辑接口
+# ══════════════════════════════════════════════════════════════════════
+#
+# 编辑会写盘，所以每个用例跑在**一份全新的项目副本**上，
+# 否则前一个用例的改动会污染后一个。
+# 语料同时记下响应和改完之后的镜头状态，两边都要对上。
+
+import tempfile  # noqa: E402
+
+EDIT_ROOT = OUT / "编辑用例"
+if EDIT_ROOT.exists():
+    shutil.rmtree(EDIT_ROOT)
+EDIT_ROOT.mkdir(parents=True)
+
+edit_cases = [
+    {"name": "改提示词_退回未开工",
+     "patch": {"first_frame_prompt": "改过的提示词"}},
+    {"name": "改景别_退回未开工",
+     "patch": {"shot_size": "CU"}},
+    {"name": "改字幕_不退回",
+     "patch": {"subtitle_text": "换一句字幕"}},
+    {"name": "改叙事功能_不退回",
+     "patch": {"beat": "铺垫"}},
+    {"name": "显式给了状态_即使改画面也不退回",
+     "patch": {"first_frame_prompt": "又改了", "status": "locked"}},
+    {"name": "改台词_清配音并解锁时长",
+     "patch": {"dialogue_texts": ["换了的第一句。", "雨声盖过了他后半句。"]}},
+    {"name": "台词条数对不上_400",
+     "patch": {"dialogue_texts": ["只给一条"]}},
+    {"name": "不认识的字段_400",
+     "patch": {"没这个字段": "x"}},
+    {"name": "枚举取值非法_400",
+     "patch": {"shot_size": "XXL"}},
+    {"name": "时长超上限_400",
+     "patch": {"duration_s": 99}},
+    {"name": "硬切给了转场时长_400",
+     "patch": {"transition_in": "cut", "transition_dur_s": 0.5}},
+    {"name": "改运镜_退回未开工",
+     "patch": {"camera_move": "orbit"}},
+]
+
+edit_results = []
+for i, case in enumerate(edit_cases):
+    root = EDIT_ROOT / f"c{i:02d}"
+    shutil.copytree(PROJ_ROOT, root)
+    body = {"project": str(root), "episode_id": "ep01",
+            "shot_id": "ep01_s03_sh007", "patch": case["patch"]}
+    resp = client.post("/api/shot", json=body)
+
+    after = None
+    if resp.status_code == 200:
+        st = ProjectStore(root)
+        sh = st.load_project().episode_by_id("ep01").shot_by_id("ep01_s03_sh007")
+        after = sh.model_dump(mode="json")
+
+    # pydantic 生成的报错文字不参与对拍。
+    #
+    # 那串东西里嵌着 pydantic 的版本号和文档 URL（errors.pydantic.dev/2.13/...），
+    # 在 C++ 里复刻既荒唐又会随上游版本腐烂；而且前端只是把这个字符串显示
+    # 出来，不解析它。所以这类用例只比状态码和 body 的形状，不比 detail 的文字。
+    body = resp.json()
+    detail = body.get("detail") if isinstance(body, dict) else None
+    msg_is_pydantic = isinstance(detail, str) and "validation error for" in detail
+
+    edit_results.append({
+        "name": case["name"],
+        "dir": root.name,
+        "patch": case["patch"],
+        "status": resp.status_code,
+        "body": body,
+        # full = body 逐字段深比较；shape = 只比状态码和 detail 是个非空字符串
+        "compare": "shape" if msg_is_pydantic else "full",
+        "shot_after": after,
+    })
+    print(f"  {case['name']:32s} → {resp.status_code}")
+
+# 剧集和镜头不存在的两条，不需要副本（不会写盘）
+for name, ep_id, sh_id in (("剧集不存在_404", "ep99", "ep01_s03_sh007"),
+                           ("镜头不存在_404", "ep01", "sh_no_such")):
+    resp = client.post("/api/shot", json={
+        "project": str(PROJ_ROOT), "episode_id": ep_id, "shot_id": sh_id,
+        "patch": {"beat": "x"}})
+    edit_results.append({"name": name, "dir": None,
+                         "episode_id": ep_id, "shot_id": sh_id,
+                         "patch": {"beat": "x"},
+                         "status": resp.status_code, "body": resp.json(),
+                         "compare": "full", "shot_after": None})
+    print(f"  {name:32s} → {resp.status_code}")
+
+# 副本本身不用留：shot_after 已经抽进 JSON 了，
+# C++ 测试会自己从原始项目复制。留着的话是 12 份项目进版本库。
+shutil.rmtree(EDIT_ROOT, ignore_errors=True)
+
+dump("endpoints_shot_edit", {"cases": edit_results})
+print("\n编辑接口语料写好了")

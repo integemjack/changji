@@ -183,6 +183,30 @@ struct Shot {
 | `/api/llm/models` | 同上，改成列本地 gguf 文件。设置页的模型下拉框跟着改 |
 | `[llm]` 配置段 | `base_url` / `api_key` 换成模型文件路径。Python 的 `Settings` 是 `extra="forbid"`，多一个键整份配置就加载失败 |
 
+### 校验错误的消息文字不算契约
+
+状态码和 body 的**形状**要一致，但 `detail` 里那句话的**文字**不比。
+
+Python 那边 pydantic 的报错长这样：
+
+```
+改动不合法：1 validation error for Shot
+duration_s
+  Input should be less than or equal to 30 [type=less_than_equal, input_value=99.0, ...]
+    For further information visit https://errors.pydantic.dev/2.13/v/less_than_equal
+```
+
+里面嵌着 pydantic 的版本号和文档 URL。在 C++ 里复刻既荒唐又会随上游版本
+腐烂，而前端只是把这个字符串显示出来、不解析它。C++ 侧给的是
+`改动不合法：duration_s 要在 0 到 30 秒之间，当前 99`——更短也更能照着做。
+
+对拍语料里这类用例标了 `"compare": "shape"`，只比状态码加"detail 是个非空
+字符串"。**这是有意的偏离，不是没对齐。**
+
+另有一条相反方向的发现：`extra="forbid"` 的违规，FastAPI 回的是 **422 而不是
+400**，而且 detail 是结构化数组 `[{type, loc, msg, input}]` 不是一句话。
+那个**要照做**——状态码和嵌套结构都在契约里。第一版我写成 400，对拍抓到了。
+
 `/api/doctor` 的 `checks` 数组内容**不算**契约。前端是泛化渲染的，只认
 `can_run` 和 `name/level/detail/fix` 四个键；检查项本身按各自后端的实际
 情况写（Python 那边叫 "Python"、"ComfyUI"、"hardware"，C++ 叫"运行时"、
