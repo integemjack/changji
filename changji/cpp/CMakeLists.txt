@@ -153,6 +153,7 @@ add_executable(changji
     src/http/ws.cpp
     src/pipeline/jobs.cpp
     src/pipeline/episode.cpp
+    src/comfy/workflow.cpp
     src/http/readonly.cpp
     src/http/editing.cpp
     src/http/editing_assets.cpp
@@ -329,6 +330,7 @@ if(CHANGJI_BUILD_TESTS)
         tests/unit/test_sd_video.cpp
         tests/unit/test_episode.cpp
         tests/unit/test_run.cpp
+        tests/unit/test_comfy_workflow.cpp
 
         # 被测的源码。刻意不包含 doctor.cpp、http/server.cpp 和
         # llm/client_http.cpp —— 那三个链 httplib 或 Crow，
@@ -355,6 +357,7 @@ if(CHANGJI_BUILD_TESTS)
         src/infer/sd_video.cpp
         src/pipeline/jobs.cpp
         src/pipeline/episode.cpp
+        src/comfy/workflow.cpp
         src/llm/client.cpp
         src/config/settings.cpp
         src/config/writeback.cpp
