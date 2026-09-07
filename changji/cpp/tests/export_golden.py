@@ -598,3 +598,64 @@ describe_cases.append({
 dump("hardware_describe", describe_cases)
 
 print("\nhardware 语料也写好了")
+
+
+# ══════════════════════════════════════════════════════════════════════
+# 阶段 2 的只读接口：直接调真实路由拿响应
+# ══════════════════════════════════════════════════════════════════════
+#
+# 不在这里照着路由代码重拼一遍 dict——那样测的是写脚本的人对代码的理解。
+# 起一个 FastAPI TestClient 打真实接口，拿到什么存什么。
+#
+# vram_gb_override 钉死，否则语料会跟着这台机器的显卡走，
+# 换台机器跑测试就红。C++ 侧用同一个值。
+
+from fastapi.testclient import TestClient  # noqa: E402
+
+from changji.config import Settings  # noqa: E402
+from changji.web.server import create_app  # noqa: E402
+
+PINNED_VRAM = 15.9   # 按 16GB 卡的实际上报值，落在 15.5 那一档
+
+settings = Settings.model_validate({"vram_gb_override": PINNED_VRAM})
+client = TestClient(create_app(settings))
+
+proj_arg = str(PROJ_ROOT)
+
+endpoint_cases = [
+    {"name": "hardware", "url": "/api/hardware", "params": {}},
+    {"name": "settings", "url": "/api/settings", "params": {}},
+    {"name": "project", "url": "/api/project", "params": {"path": proj_arg}},
+    {"name": "shots_ep01", "url": "/api/shots",
+     "params": {"path": proj_arg, "episode_id": "ep01"}},
+    {"name": "shots_ep02_empty", "url": "/api/shots",
+     "params": {"path": proj_arg, "episode_id": "ep02"}},
+    {"name": "assets", "url": "/api/assets", "params": {"path": proj_arg}},
+    # 错误分支：契约里状态码和 {"detail": ...} 的形状都要对上
+    {"name": "shots_missing_episode", "url": "/api/shots",
+     "params": {"path": proj_arg, "episode_id": "ep99"}},
+    {"name": "project_no_path", "url": "/api/project", "params": {"path": ""}},
+    {"name": "project_not_a_project", "url": "/api/project",
+     "params": {"path": str(OUT)}},
+]
+
+results = []
+for case in endpoint_cases:
+    resp = client.get(case["url"], params=case["params"])
+    results.append({
+        "name": case["name"],
+        "url": case["url"],
+        "params": case["params"],
+        "status": resp.status_code,
+        "body": resp.json(),
+    })
+    print(f"  {case['url']:18s} {case['params'].get('episode_id', ''):8s} "
+          f"→ {resp.status_code}")
+
+dump("endpoints_readonly", {
+    "pinned_vram_gb": PINNED_VRAM,
+    "project_path": proj_arg,
+    "cases": results,
+})
+
+print("\n只读接口语料写好了")

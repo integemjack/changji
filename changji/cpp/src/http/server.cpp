@@ -4,6 +4,7 @@
 #include <nlohmann/json.hpp>
 
 #include "doctor/doctor.hpp"
+#include "http/readonly.hpp"
 #include "http/ws.hpp"
 
 namespace changji::http {
@@ -35,6 +36,13 @@ json to_json(const doctor::Report& report) {
     return {{"can_run", report.can_run()}, {"checks", checks}};
 }
 
+/// 取查询参数。Crow 拿不到时返回 nullptr，转成空串——
+/// 空串该怎么处理由各个接口自己决定（比如 path 为空是 400 不是 500）。
+std::string query(const crow::request& req, const char* key) {
+    const char* v = req.url_params.get(key);
+    return v ? std::string(v) : std::string();
+}
+
 }  // namespace
 
 void run(const config::Settings& settings, const Options& opts) {
@@ -50,6 +58,43 @@ void run(const config::Settings& settings, const Options& opts) {
         // 体检里有三项要发网络请求，最坏情况阻塞二十多秒。
         // Crow 是线程池模型，这只占住一个工作线程，不影响其它请求。
         return json_response(to_json(doctor::run_checks(settings)));
+    });
+
+    // ---- 阶段 2：只读接口 ----
+    //
+    // 处理逻辑放在 readonly.cpp 里的纯函数，这里只负责取查询参数和转响应。
+    // 那些函数不碰 crow 类型，单元测试能不起服务就把它们跑一遍。
+
+    CROW_ROUTE(app, "/api/hardware")([&settings] {
+        auto r = guard([&] { return get_hardware(settings); });
+        return json_response(r.body, r.status);
+    });
+
+    CROW_ROUTE(app, "/api/settings")([&settings] {
+        auto r = guard([&] { return get_settings(settings); });
+        return json_response(r.body, r.status);
+    });
+
+    CROW_ROUTE(app, "/api/projects")([&settings] {
+        auto r = guard([&] { return get_projects(settings); });
+        return json_response(r.body, r.status);
+    });
+
+    CROW_ROUTE(app, "/api/project")([](const crow::request& req) {
+        auto r = guard([&] { return get_project(query(req, "path")); });
+        return json_response(r.body, r.status);
+    });
+
+    CROW_ROUTE(app, "/api/shots")([](const crow::request& req) {
+        auto r = guard([&] {
+            return get_shots(query(req, "path"), query(req, "episode_id"));
+        });
+        return json_response(r.body, r.status);
+    });
+
+    CROW_ROUTE(app, "/api/assets")([](const crow::request& req) {
+        auto r = guard([&] { return get_assets(query(req, "path")); });
+        return json_response(r.body, r.status);
     });
 
     // ---- WebSocket ----

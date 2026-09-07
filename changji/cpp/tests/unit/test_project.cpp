@@ -274,3 +274,21 @@ TEST_CASE("项目 id 允许连字符，镜头 id 不允许") {
     p.project_id = "My-Drama";  // 大写不行
     CHECK_FALSE(p.validate().empty());
 }
+
+TEST_CASE("资产库保持文件里的键顺序") {
+    // 接口响应里 characters/locations 是数组，顺序是值的一部分。
+    // assets.json 里是 loc_rooftop 在前、loc_alley 在后（插入顺序），
+    // 用 std::map 或普通 json 解析都会变成字典序，前端渲染顺序就变了。
+    const json exp = load_golden("project_expectations");
+    const ProjectStore store(golden_project_root(exp));
+    const AssetLibrary lib = store.load_assets();
+
+    std::vector<std::string> order;
+    for (const auto& kv : lib.locations) order.push_back(kv.first);
+    CHECK(order == std::vector<std::string>{"loc_rooftop", "loc_alley"});
+
+    // 而 location_ids() 要的是排序结果（给大模型做约束解码），
+    // 这两件事不能混
+    CHECK(lib.location_ids() ==
+          std::vector<std::string>{"loc_alley", "loc_rooftop"});
+}

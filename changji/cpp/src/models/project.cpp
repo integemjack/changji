@@ -35,12 +35,18 @@ std::size_t utf8_len(const std::string& s) {
     return n;
 }
 
-json read_json_file(const fs::path& path) {
+/// 读 JSON 文件。
+///
+/// 模板参数是为了 ordered_json：读资产库必须保留文档里的键顺序，
+/// 因为 characters/locations 在接口响应里是**数组**，顺序是值的一部分。
+/// 普通的 nlohmann::json 内部是 std::map，parse 时顺序当场就丢了。
+template <typename J>
+J read_json_file(const fs::path& path) {
     std::ifstream in(path, std::ios::binary);
     if (!in) {
         throw std::runtime_error("读不到文件：" + paths::to_utf8(path));
     }
-    json j = json::parse(in, nullptr, false);
+    J j = J::parse(in, nullptr, false);
     if (j.is_discarded()) {
         throw std::runtime_error("文件损坏，不是合法 JSON：" + paths::to_utf8(path));
     }
@@ -307,7 +313,7 @@ Project ProjectStore::load_project() const {
             "这里不是一个项目目录：" + paths::to_utf8(root()) +
             "\n用 changji new 创建，或者 cd 到正确的目录");
     }
-    const json raw = read_json_file(paths_.project_file());
+    const json raw = read_json_file<json>(paths_.project_file());
     const int version = raw.value("schema_version", 0);
     if (version > kSchemaVersion) {
         throw std::runtime_error(
@@ -322,7 +328,9 @@ AssetLibrary ProjectStore::load_assets() const {
     if (!fs::is_regular_file(paths_.assets_file(), ec)) {
         return AssetLibrary{};
     }
-    return read_json_file(paths_.assets_file()).get<AssetLibrary>();
+    // 用 ordered_json 而不是 json：见 read_json_file 的注释。
+    return read_json_file<nlohmann::ordered_json>(paths_.assets_file())
+        .get<AssetLibrary>();
 }
 
 void ProjectStore::save_project(Project& project) const {

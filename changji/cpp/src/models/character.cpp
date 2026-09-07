@@ -224,18 +224,49 @@ std::string Location::render_prompt(StyleLine style_line) const {
 
 // ── AssetLibrary ───────────────────────────────────────────────────────
 
+namespace {
+
+/// 两个 JSON 类型共用的实现。
+template <typename J>
+void asset_library_to_json(J& j, const AssetLibrary& t) {
+    j = J::object();
+    j["characters"] = t.characters;
+    j["locations"] = t.locations;
+    j["style"] = J(nlohmann::json(t.style));
+}
+
+template <typename J>
+void asset_library_from_json(const J& j, AssetLibrary& t) {
+    const AssetLibrary def{};
+    // 用 contains 而不是 at：缺字段要退回默认值，对应宏的 WITH_DEFAULT 语义。
+    t.characters = j.contains("characters")
+                       ? j.at("characters").template get<OrderedMap<Character>>()
+                       : def.characters;
+    t.locations = j.contains("locations")
+                      ? j.at("locations").template get<OrderedMap<Location>>()
+                      : def.locations;
+    t.style = j.contains("style")
+                  ? nlohmann::json(j.at("style")).template get<StyleProfile>()
+                  : def.style;
+}
+
+}  // namespace
+
+void to_json(nlohmann::json& j, const AssetLibrary& t) { asset_library_to_json(j, t); }
+void from_json(const nlohmann::json& j, AssetLibrary& t) { asset_library_from_json(j, t); }
+void to_json(nlohmann::ordered_json& j, const AssetLibrary& t) { asset_library_to_json(j, t); }
+void from_json(const nlohmann::ordered_json& j, AssetLibrary& t) { asset_library_from_json(j, t); }
+
+
 std::vector<std::string> AssetLibrary::character_ids() const {
-    std::vector<std::string> out;
-    out.reserve(characters.size());
-    for (const auto& kv : characters) out.push_back(kv.first);
-    return out;  // map 已按 key 有序，对应 Python 的 sorted()
+    // 排序，对应 Python 的 sorted(self.characters)。
+    // 注意这跟遍历顺序是两回事：遍历要插入顺序（响应里的数组），
+    // 这里要字典序（给大模型做约束解码的枚举）。
+    return characters.sorted_keys();
 }
 
 std::vector<std::string> AssetLibrary::location_ids() const {
-    std::vector<std::string> out;
-    out.reserve(locations.size());
-    for (const auto& kv : locations) out.push_back(kv.first);
-    return out;
+    return locations.sorted_keys();
 }
 
 std::vector<std::string> AssetLibrary::validate_references(

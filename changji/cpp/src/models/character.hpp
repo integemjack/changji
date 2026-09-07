@@ -19,6 +19,7 @@
 #include <nlohmann/json.hpp>
 
 #include "models/json_compat.hpp"
+#include "models/ordered_map.hpp"
 
 namespace changji::models {
 
@@ -137,15 +138,32 @@ struct StyleProfile {
 
 /// 角色和场景的资产库。分镜表里的每个 id 都必须能在这里查到。
 struct AssetLibrary {
-    // 用 std::map 而不是 unordered_map：character_ids() 要返回排序后的列表
-    // （Python 那边是 sorted(self.characters)），map 天然有序省一次排序，
-    // 而且资产库量级很小，哈希表的收益不存在。
-    std::map<std::string, Character> characters;
-    std::map<std::string, Location> locations;
+    // 必须保持插入顺序，不能用 std::map。
+    //
+    // 一开始用的是 std::map，理由是 character_ids() 要返回排序后的列表。
+    // 但那漏了另一半：接口响应里 characters/locations 是**数组**，
+    // 而 Python 的 dict 保持插入顺序——用 std::map 会按 key 排序，
+    // 两个后端返回的场景列表顺序不同，前端渲染出来肉眼可见。
+    // 对拍测试直接抓到了这一条（/api/assets 的 locations 顺序反了）。
+    //
+    // 排序的需求由 sorted_keys() 单独提供，见 ordered_map.hpp。
+    OrderedMap<Character> characters;
+    OrderedMap<Location> locations;
     StyleProfile style;
 
-    NLOHMANN_DEFINE_TYPE_INTRUSIVE_WITH_DEFAULT(
-        AssetLibrary, characters, locations, style)
+    // 这里**不能**用 NLOHMANN_DEFINE_TYPE_INTRUSIVE_WITH_DEFAULT。
+    //
+    // 那个宏展开出来的 from_json 形参写死是 nlohmann::json&，不是模板。
+    // 于是 ordered_json.get<AssetLibrary>() 会先把 ordered_json 隐式转成
+    // json——而那次转换正好把键排序了，顺序在进 from_json 之前就丢光。
+    // 在 load_assets 里换 ordered_json 完全不起作用，症状是接口响应里
+    // locations 数组变成字典序。对拍测试抓到的就是这一条。
+    //
+    // 所以手写，两个 JSON 类型各给一个显式重载，实现共用下面的模板。
+    friend void to_json(nlohmann::json& j, const AssetLibrary& t);
+    friend void from_json(const nlohmann::json& j, AssetLibrary& t);
+    friend void to_json(nlohmann::ordered_json& j, const AssetLibrary& t);
+    friend void from_json(const nlohmann::ordered_json& j, AssetLibrary& t);
 
     /// 给大模型做约束解码用的枚举。有了它模型就编不出新角色。
     std::vector<std::string> character_ids() const;

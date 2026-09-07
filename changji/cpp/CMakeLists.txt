@@ -78,6 +78,7 @@ add_executable(changji
     src/models/project.cpp
     src/models/hardware.cpp
     src/http/ws.cpp
+    src/http/readonly.cpp
     src/http/server.cpp
 )
 
@@ -184,15 +185,20 @@ if(CHANGJI_BUILD_TESTS)
         tests/unit/test_character.cpp
         tests/unit/test_project.cpp
         tests/unit/test_hardware.cpp
+        tests/unit/test_readonly.cpp
         src/models/shot.cpp
         src/models/character.cpp
         src/models/project.cpp
         src/models/hardware.cpp
         src/util/paths.cpp
         src/util/proc.cpp
+        src/config/settings.cpp
+        src/http/readonly.cpp
     )
     target_include_directories(changji_tests PRIVATE src "${ASIO_INCLUDE_DIR}")
-    target_link_libraries(changji_tests PRIVATE nlohmann_json::nlohmann_json)
+    target_link_libraries(changji_tests PRIVATE
+        nlohmann_json::nlohmann_json
+        tomlplusplus::tomlplusplus)
     target_include_directories(changji_tests PRIVATE "${doctest_SOURCE_DIR}")
     target_compile_features(changji_tests PRIVATE cxx_std_20)
 
