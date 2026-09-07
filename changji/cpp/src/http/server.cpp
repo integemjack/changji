@@ -18,6 +18,7 @@
 #include "http/episodes.hpp"
 #include "http/llm_info.hpp"
 #include "http/planning.hpp"
+#include "http/projects.hpp"
 #include "http/scripting.hpp"
 #include "llm/client.hpp"
 #include "http/ws.hpp"
@@ -397,6 +398,36 @@ void run(const config::Settings& settings, const Options& opts) {
         res.set_header("Content-Type", "text/plain; charset=utf-8");
         return res;
     });
+
+    // ---- 项目的新建、删除、改梗概 ----
+    //
+    // 同样是阶段 3 漏掉的。删项目那个不可逆，三道闸在 projects.cpp 里。
+
+    CROW_ROUTE(app, "/api/new").methods("POST"_method)(
+        [](const crow::request& req) {
+            auto r = guard([&] {
+                return post_new_project(json::parse(req.body, nullptr, false),
+                                        config::runtime().snapshot());
+            });
+            return json_response(r.body, r.status);
+        });
+
+    CROW_ROUTE(app, "/api/project/delete").methods("POST"_method)(
+        [](const crow::request& req) {
+            auto r = guard([&] {
+                return post_delete_project(json::parse(req.body, nullptr, false),
+                                           config::runtime().snapshot());
+            });
+            return json_response(r.body, r.status);
+        });
+
+    CROW_ROUTE(app, "/api/project/premise").methods("POST"_method)(
+        [](const crow::request& req) {
+            auto r = guard([&] {
+                return post_project_premise(json::parse(req.body, nullptr, false));
+            });
+            return json_response(r.body, r.status);
+        });
 
     // ---- 剧本读写与剧集增删改 ----
     //

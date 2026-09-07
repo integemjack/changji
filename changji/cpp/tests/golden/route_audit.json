@@ -1,23 +1,13 @@
 {
  "python_total": 48,
- "cpp_total": 39,
+ "cpp_total": 45,
  "missing": {
-  "1": [
-   "GET   /api/connections",
-   "POST  /api/connections",
-   "POST  /api/settings"
-  ],
   "5": [
    "GET   /api/outputs",
    "GET   /api/run/preview"
   ],
   "6": [
    "GET   /api/voices"
-  ],
-  "3": [
-   "POST  /api/new",
-   "POST  /api/project/delete",
-   "POST  /api/project/premise"
   ],
   "4": [
    "POST  /api/run"

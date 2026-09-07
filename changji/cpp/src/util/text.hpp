@@ -55,6 +55,14 @@ std::string truncate_utf8(const std::string& s, std::size_t n);
 /// 那些库的配置是另一套要维护的东西。
 std::string sha1_hex(const std::string& data);
 
+/// 目录名转成合法的项目 id，对应 web/server.py 的 _slugify()。
+///
+/// **和下面那个 slug() 规则不一样**，别合并：分隔符是连字符不是下划线，
+/// 退路的前缀是 "p-" 且取 8 位摘要不是 6 位。两处产生的 id 进的是不同的
+/// 字段（项目 id vs 角色 id），合并会让其中一边的 id 悄悄变形，
+/// 而 id 变形意味着老项目打不开。
+std::string project_slug(const std::string& name);
+
 /// 转成合法的 id 片段，对应 bible.py 的 _slug()。
 ///
 /// 规则：小写，非 [a-z0-9_] 的连续片段换成一个下划线，两端去下划线。

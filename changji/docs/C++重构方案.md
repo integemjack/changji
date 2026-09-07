@@ -685,6 +685,18 @@ POST /api/project/premise 阶段 3
 其中 `POST /api/settings` 属于**阶段 1**，也就是最早那一批。
 它和 `/api/connections` 一样写的是配置不是项目文件，所以归在阶段 1。
 
+**这六个已经全部补齐**（`config_api.cpp`、`projects.cpp`）。
+剩下没实现的四条都是按计划还没到，不是遗漏：
+
+| 接口 | 卡在哪 |
+|---|---|
+| `POST /api/run` | 要阶段 5 的流水线 |
+| `GET /api/outputs` | 要阶段 7 的成片产物 |
+| `GET /api/run/preview` | 要阶段 5 的耗时模型 |
+| `GET /api/voices` | 要阶段 6 的 ComfyUI 客户端 |
+
+也就是说**阶段 0 到 4 在路由层面已经完整**。
+
 补的时候顺带钉住了一处 Python 自己的不一致：项目里有预告片时，
 `POST /api/episode` 走 `_next_episode_id`（只数 epNN）得到 ep03，
 而 `duplicate` 那条分支数的是全部剧集数，得到 ep04。两个入口给出不同的

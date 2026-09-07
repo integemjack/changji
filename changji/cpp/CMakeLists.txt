@@ -99,6 +99,7 @@ add_executable(changji
     src/http/planning.cpp
     src/http/batch.cpp
     src/http/episodes.cpp
+    src/http/projects.cpp
     src/http/llm_info.cpp
     src/http/config_api.cpp
     src/http/config_api_doctor.cpp
@@ -229,6 +230,7 @@ if(CHANGJI_BUILD_TESTS)
         tests/unit/test_llm_info.cpp
         tests/unit/test_writeback.cpp
         tests/unit/test_config_api.cpp
+        tests/unit/test_projects.cpp
         src/models/shot.cpp
         src/models/character.cpp
         src/models/project.cpp
@@ -257,6 +259,7 @@ if(CHANGJI_BUILD_TESTS)
         src/http/planning.cpp
         src/http/batch.cpp
         src/http/episodes.cpp
+        src/http/projects.cpp
         src/http/llm_info.cpp
         src/http/config_api.cpp
         src/http/reset.cpp

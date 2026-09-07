@@ -152,6 +152,35 @@ std::string sha1_hex(const std::string& data) {
     return std::string(buf, 40);
 }
 
+std::string project_slug(const std::string& name) {
+    // 对应 re.sub(r"[^a-z0-9_-]+", "-", name.lower()).strip("-")
+    std::string out;
+    out.reserve(name.size());
+    bool prev_sep = false;
+    for (const char ch : name) {
+        const unsigned char c = static_cast<unsigned char>(ch);
+        char lowered = static_cast<char>(c);
+        if (c >= 'A' && c <= 'Z') lowered = static_cast<char>(c - 'A' + 'a');
+        const bool keep = (lowered >= 'a' && lowered <= 'z') ||
+                          (lowered >= '0' && lowered <= '9') ||
+                          lowered == '_' || lowered == '-';
+        if (keep) {
+            out.push_back(lowered);
+            prev_sep = false;
+        } else if (!prev_sep) {
+            out.push_back('-');
+            prev_sep = true;
+        }
+    }
+    std::size_t b = 0, e = out.size();
+    while (b < e && out[b] == '-') ++b;
+    while (e > b && out[e - 1] == '-') --e;
+    const std::string trimmed = out.substr(b, e - b);
+    if (!trimmed.empty()) return trimmed;
+    // 纯中文目录名走这条
+    return "p-" + sha1_hex(name).substr(0, 8);
+}
+
 std::string slug(const std::string& text) {
     // 按字节处理就够，不用解 UTF-8。
     //
