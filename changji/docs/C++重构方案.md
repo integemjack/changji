@@ -547,7 +547,7 @@ cpp/
 | **0** | CMake 骨架、Crow 起 HTTP、配置读写、`/api/health` `/api/doctor`、WebSocket echo | Windows 上已完成。ARM 那部分并入前置验证工程 |
 | **P** | 前置验证工程，见第四节 | 六项验证都有结论 |
 | **1** | 工具链切到 MSVC；`models/` 三个数据结构 + 项目库读写 | 能读 Python 写的项目文件（含中文路径和中文内容），字段全部对得上 |
-| **2** | 只读接口：`/api/project` `/api/shots` `/api/assets` `/api/settings` `/api/hardware` | Node 前端指向 C++ 后端，能正常显示项目 |
+| **2** | 只读接口：`/api/project` `/api/shots` `/api/assets` `/api/settings` `/api/hardware` | ✅ 已达成，2026-09-08 实机验过，见下面「阶段 2 判据的验证」 |
 | **3** | 编辑接口：`/api/shot` `/api/character` `/api/style` `/api/location` 等；多段上传和 `/api/media` 的 Range 支持 | `test_web_editing.py` 的 1083 行全部对拍通过；参考图能传、成片能拖进度条 |
 | **4** | LLM 三阶段接进程内 llama.cpp；线程池 + job 表 + WebSocket 广播；破契约那四项前端同步改 | 回放模式下生成结果与 Python 一致；WS 能实时看到阶段推进；设置页的模型选择改成本地 gguf |
 | **5** | 链接 sd.cpp，frames + render；逐步进度接进 WS 广播 | 能出图能出视频，与 ComfyUI 输出做画质比对；前端能看到「第 12/30 步」 |
@@ -555,6 +555,49 @@ cpp/
 | **7** | 配音编排 + 组装：`audio.py` 的编排逻辑、ffmpeg、字幕、成片 | 能产出完整一集（配音走 ComfyUI 后端） |
 | **8** | 删 Python 引擎 | 只剩两层 |
 | **9** | Qwen3-TTS 的 C++ 化 | 纯二进制能出声。并行推进，不卡前面任何阶段 |
+
+### 阶段 2 判据的验证
+
+2026-09-08 实机跑通。步骤（在 `changji/` 下）：
+
+```
+cd webapp && npm install && npm run build
+cpp/build/changji.exe --port 8080          # C++ 后端
+node webapp/server/src/index.js            # BFF，默认就指向 127.0.0.1:8080
+# 浏览器开 http://127.0.0.1:5174
+```
+
+Vue 前端完整渲染，顶栏显示「引擎已连接 http://127.0.0.1:8080」，
+用「打开其他目录」指向 `cpp/tests/golden/项目_雨夜天台` 之后，
+项目名、集数、风格、镜头数全部正确显示，**控制台零报错**。
+
+**十个已实现的只读接口经 BFF 全部通过**：`/api/health` `/api/doctor`
+`/api/hardware` `/api/settings` `/api/projects` `/api/project` `/api/shots`
+`/api/assets` `/api/run` `/api/script/series`。
+
+#### 前端还会调、但 C++ 侧还没有的七个接口
+
+顺带跑出来的缺口清单。这七个现在是 404，前端对应的功能不可用：
+
+| 接口 | 归属 |
+|---|---|
+| `GET /api/script` | 读某一集的剧本。**阶段 3 漏了**，应该补 |
+| `GET /api/episode`、`POST /api/episode/action` | 剧集增删改。**阶段 3 漏了**，应该补 |
+| `GET /api/outputs` | 列已生成的成片。依赖阶段 7 的产物，那时再做 |
+| `GET /api/run/preview` | 开跑前的预估。依赖阶段 5 的耗时模型 |
+| `GET /api/connections` | 平台账号连接状态。属于 Node 侧 BFF 的职责，不该进 C++ |
+| `/api/llm/providers`、`/api/llm/models` | 破契约白名单里的两项，跟前端改动一起做 |
+
+前两项是**真的遗漏**：它们是纯读写项目文件的接口，按分类属于阶段 3，
+当时按 `test_web_editing.py` 的覆盖面移植，而那个文件不测这两个。
+排进下一步补上。
+
+#### 一处环境不一致
+
+`webapp/package.json` 声明 `"node": ">=20"`，本机是 **Node 18.20.8**。
+`npm install` 只是警告不阻断，`npm run build` 也能过。但 `vitest@5` 要求
+`^22.12.0 || ^24.0.0 || >=26.0.0`，**前端的测试跑不了**。
+要跑 `npm test` 得先升 Node。
 
 ### 阶段 5 的条件分支
 
