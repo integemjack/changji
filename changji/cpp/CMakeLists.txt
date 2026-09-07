@@ -181,6 +181,7 @@ add_executable(changji
     src/media/ffmpeg.cpp
     src/media/subtitles.cpp
     src/gates/checks.cpp
+    src/media/assemble.cpp
     src/http/readonly.cpp
     src/http/editing.cpp
     src/http/editing_assets.cpp
@@ -380,6 +381,7 @@ if(CHANGJI_BUILD_TESTS)
         tests/unit/test_ffmpeg.cpp
         tests/unit/test_subtitles.cpp
         tests/unit/test_gates.cpp
+        tests/unit/test_assemble.cpp
 
         # 被测的源码。刻意不包含 doctor.cpp、http/server.cpp、
         # llm/client_http.cpp、comfy/client_http.cpp 和 http/run_deps.cpp ——
@@ -415,6 +417,7 @@ if(CHANGJI_BUILD_TESTS)
         src/media/ffmpeg.cpp
         src/media/subtitles.cpp
         src/gates/checks.cpp
+        src/media/assemble.cpp
         src/llm/client.cpp
         src/config/settings.cpp
         src/config/writeback.cpp
