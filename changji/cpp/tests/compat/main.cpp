@@ -292,6 +292,46 @@ Response send(const std::string& base, const std::string& method,
     return out;
 }
 
+/// 语料里 prep 标了名字，这里按名字做同样的改动。
+///
+/// **一开始我把这三条跳过了，理由写的是"没法通用重放"——那是错的。**
+/// prep 不是"导出脚本在本机做的任意操作"，它是两个有名字的、
+/// 声明式的 JSON 改动，`tests/unit/test_episodes.cpp` 早就实现过一遍。
+/// 跳过三条用例去省二十行代码，代价是那三条一直没人验。
+///
+/// 名字对不上就当场失败，不静默放过：语料里加了新的 prep 而这里没跟上，
+/// 表现会是"少测了一条"，而少测是看不见的。
+bool apply_prep(const fs::path& dir, const json& prep, std::string& why) {
+    if (!prep.is_string()) return true;
+    const std::string what = prep.get<std::string>();
+    json p = read_json(dir / "project.json");
+    if (p.is_null()) {
+        why = "读不到 project.json";
+        return false;
+    }
+    if (what == "add_trailer") {
+        p["episodes"].push_back(json{{"episode_id", "trailer"},
+                                     {"title", "预告"},
+                                     {"synopsis", ""},
+                                     {"target_duration_s", 20.0},
+                                     {"script", ""},
+                                     {"shots", json::array()}});
+    } else if (what == "only_one") {
+        const json first = p["episodes"][0];
+        p["episodes"] = json::array({first});
+    } else {
+        why = "语料里有没实现的 prep：" + what;
+        return false;
+    }
+    std::ofstream f(dir / "project.json", std::ios::binary | std::ios::trunc);
+    if (!f) {
+        why = "写不回 project.json";
+        return false;
+    }
+    f << p.dump(2);
+    return true;
+}
+
 /// 写接口的对拍：同一个请求发给两个后端，比响应，**再比改完之后的项目文件**。
 ///
 /// 比项目文件是这一模式真正的价值：响应一样不代表做的事一样。
@@ -324,18 +364,20 @@ int run_post(const Args& args, Tally& tally) {
         if (!args.filter.empty() && name.find(args.filter) == std::string::npos) {
             continue;
         }
-        // prep 是导出脚本在本机做的前置操作（建集、塞文件），没法通用重放。
-        // 跳过而不是硬猜——猜错的话对拍报的差异全是假的。
-        if (c.contains("prep") && !c.at("prep").is_null()) {
-            tally.skip(name, "有 prep 前置步骤，没法通用重放");
-            continue;
-        }
-
         const std::string tag = "c" + std::to_string(index);
         const fs::path py_dir = fresh_copy(src, tag + "_py");
         const fs::path cp_dir = fresh_copy(src, tag + "_cpp");
         if (py_dir.empty() || cp_dir.empty()) {
             tally.skip(name, "拷项目副本失败");
+            continue;
+        }
+
+        // 前置改动要**两份副本都做**，而且做的必须是同一件事，
+        // 否则比出来的差异是输入不同造成的。
+        const json prep = c.value("prep", json(nullptr));
+        std::string why;
+        if (!apply_prep(py_dir, prep, why) || !apply_prep(cp_dir, prep, why)) {
+            tally.skip(name, why);
             continue;
         }
 
@@ -1419,6 +1461,53 @@ int run_live(const Args& args, Tally& tally) {
         // 带路径参数的（/api/history/{id}）没有通用的填法，跳过。
         if (path.find('{') != std::string::npos) continue;
         if (!args.filter.empty() && path.find(args.filter) == std::string::npos) {
+            continue;
+        }
+
+        // `GET /` 是方案里写明的、唯一一处有意的破契约：Python 回
+        // page.py 生成的那一整页内置界面，C++ 回一句指路的纯文本
+        // （两层架构下界面在 Node 那边，会撞上根路径的只有直接开了
+        // 后端端口的人）。
+        //
+        // **验，不跳过。** 之前它一直记在"跳过"里，理由是"Python 回的
+        // 不是 JSON"——那等于这一项从来没被检查过：C++ 哪天把这句话
+        // 删了、或者 Python 那边的内置界面坏了，报告都不会变。
+        if (path == "/") {
+            const RawResponse py_root = fetch_raw(args.python_url, "/", "");
+            const RawResponse cp_root = fetch_raw(args.cpp_url, "/", "");
+            std::vector<compat::Difference> diffs;
+            if (!py_root.error.empty() || !cp_root.error.empty()) {
+                tally.skip(path, py_root.error + cp_root.error);
+                continue;
+            }
+            if (py_root.status != 200 || cp_root.status != 200) {
+                diffs.push_back({"（状态码）",
+                                 "两边都该是 200，实际 Python " +
+                                     std::to_string(py_root.status) + "、C++ " +
+                                     std::to_string(cp_root.status)});
+            }
+            const auto ctype = [](const RawResponse& r) {
+                const auto it = r.headers.find("Content-Type");
+                return it == r.headers.end() ? std::string() : it->second;
+            };
+            if (ctype(py_root).find("text/html") == std::string::npos) {
+                diffs.push_back({"Python 侧",
+                                 "该是内置界面那一页 HTML，实际 Content-Type 是「" +
+                                     ctype(py_root) + "」"});
+            }
+            if (ctype(cp_root).find("text/plain") == std::string::npos) {
+                diffs.push_back({"C++ 侧",
+                                 "该是一句纯文本，实际 Content-Type 是「" +
+                                     ctype(cp_root) + "」"});
+            }
+            // 那句话得真的指到 Node 那一层去，不然它就没有存在的理由。
+            if (cp_root.body.find("5174") == std::string::npos) {
+                diffs.push_back({"C++ 侧",
+                                 "那句指路的话里没提前端地址，等于没指路"});
+            }
+            tally.report(path + "（有意不一样：Python 回内置界面，"
+                                "C++ 回一句指路的话——界面在 Node 那一层）",
+                         diffs);
             continue;
         }
 
