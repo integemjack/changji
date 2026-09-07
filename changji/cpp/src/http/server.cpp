@@ -1,15 +1,21 @@
 #include "http/server.hpp"
 
 #include <crow.h>
+
+#include <filesystem>
+#include <fstream>
+#include <iterator>
 #include <nlohmann/json.hpp>
 
 #include "doctor/doctor.hpp"
 #include "http/editing.hpp"
+#include "http/media.hpp"
 #include "http/readonly.hpp"
 #include "http/ws.hpp"
 
 namespace changji::http {
 
+namespace fs = std::filesystem;
 using json = nlohmann::json;
 
 namespace {
@@ -96,6 +102,62 @@ void run(const config::Settings& settings, const Options& opts) {
     CROW_ROUTE(app, "/api/assets")([](const crow::request& req) {
         auto r = guard([&] { return get_assets(query(req, "path")); });
         return json_response(r.body, r.status);
+    });
+
+    // ---- /api/media：带 Range 的文件服务 ----
+    //
+    // Range 是必须的，不是锦上添花：不实现的话前端 <video> 标签
+    // 拖不动进度条，只能从头播。方案第三节点了名。
+
+    CROW_ROUTE(app, "/api/media")([](const crow::request& req) {
+        const auto t = resolve_media(query(req, "path"), query(req, "rel"));
+        if (t.status != 200) {
+            return json_response({{"detail", t.detail}}, t.status);
+        }
+
+        std::error_code ec;
+        const auto size = static_cast<std::uint64_t>(fs::file_size(t.path, ec));
+        if (ec) return json_response({{"detail", "读不到文件大小"}}, 500);
+
+        std::ifstream in(t.path, std::ios::binary);
+        if (!in) return json_response({{"detail", "打不开文件"}}, 500);
+
+        const std::string ctype = content_type_for(t.path);
+        const std::string range_header = req.get_header_value("Range");
+
+        if (range_header.empty()) {
+            std::string body((std::istreambuf_iterator<char>(in)),
+                             std::istreambuf_iterator<char>());
+            crow::response res(200, std::move(body));
+            res.set_header("Content-Type", ctype);
+            // 没有这个头，浏览器不知道服务端支持分段，
+            // 于是根本不会发 Range 请求，进度条照样拖不动。
+            res.set_header("Accept-Ranges", "bytes");
+            return res;
+        }
+
+        const auto r = parse_range(range_header, size);
+        if (!r.has_value()) {
+            // 语法不认识或起点越界。416 要带上 Content-Range 告诉对方真实长度。
+            crow::response res(416);
+            res.set_header("Content-Range", "bytes */" + std::to_string(size));
+            res.set_header("Accept-Ranges", "bytes");
+            return res;
+        }
+
+        const std::uint64_t len = r->last - r->first + 1;
+        std::string chunk(static_cast<std::size_t>(len), '\0');
+        in.seekg(static_cast<std::streamoff>(r->first));
+        in.read(chunk.data(), static_cast<std::streamsize>(len));
+        chunk.resize(static_cast<std::size_t>(in.gcount()));
+
+        crow::response res(206, std::move(chunk));
+        res.set_header("Content-Type", ctype);
+        res.set_header("Accept-Ranges", "bytes");
+        res.set_header("Content-Range",
+                       "bytes " + std::to_string(r->first) + "-" +
+                           std::to_string(r->last) + "/" + std::to_string(size));
+        return res;
     });
 
     // ---- 阶段 3：编辑接口 ----
