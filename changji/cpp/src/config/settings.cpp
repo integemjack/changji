@@ -122,6 +122,39 @@ std::vector<std::string> AssemblyConfig::validate() const {
     return errs;
 }
 
+fs::path ModelsConfig::dir_path(const fs::path& workspace) const {
+    if (dir && !dir->empty()) {
+        std::error_code ec;
+        fs::path p = paths::expand_user(*dir);
+        fs::path abs = fs::absolute(p, ec);
+        return ec ? p : abs;
+    }
+    // 回落到项目库旁边。模型和项目放一起，整个 workspace 拷到另一台机器
+    // 就能直接跑——不然还得记得单独拷模型。
+    return workspace / "models";
+}
+
+fs::path ModelsConfig::resolve(const std::string& entry,
+                               const fs::path& workspace) const {
+    if (entry.empty()) return {};
+    fs::path p = paths::expand_user(entry);
+    // 绝对路径原样用。多台机器共享一个网络盘时会这么填。
+    if (p.is_absolute()) return p;
+    std::error_code ec;
+    fs::path abs = fs::absolute(dir_path(workspace) / p, ec);
+    return ec ? dir_path(workspace) / p : abs;
+}
+
+std::vector<std::string> ModelsConfig::validate() const {
+    // 刻意什么都不查。
+    //
+    // 这里能查的只有"文件在不在"，而那件事不该在配置加载阶段做：
+    // 模型动辄好几个 G，装好程序还没下模型是常态。那时候如果加载直接失败，
+    // 用户连界面都进不去，也就没法在界面里看到到底缺哪个文件。
+    // 存在性检查在 doctor 里，报警告，程序照常起来。
+    return {};
+}
+
 std::vector<std::string> Settings::validate() const {
     std::vector<std::string> errs;
     auto merge = [&errs](std::vector<std::string> more) {
@@ -133,6 +166,7 @@ std::vector<std::string> Settings::validate() const {
     merge(tts.validate());
     merge(gates.validate());
     merge(assembly.validate());
+    merge(models.validate());
     if (vram_gb_override && *vram_gb_override <= 0) {
         errs.push_back("vram_gb_override 必须大于 0");
     }
@@ -169,6 +203,15 @@ const std::vector<std::pair<const char*, const char*>>& env_mapping() {
         {"WORKSPACE", "workspace"},
         {"VRAM_GB", "vram_gb_override"},
         {"FFMPEG_PATH", "assembly_ffmpeg_path"},
+        // 模型这几项是 C++ 独有的，Python 侧没有对应。
+        // 容器里最常用的就是 MODELS_DIR——镜像不打包模型，
+        // 挂个卷进来然后用它指过去。
+        {"MODELS_DIR", "models_dir"},
+        {"MODELS_LLM", "models_llm"},
+        {"MODELS_VIDEO", "models_video"},
+        {"MODELS_VIDEO_VAE", "models_video_vae"},
+        {"MODELS_VIDEO_TEXT_ENCODER", "models_video_text_encoder"},
+        {"MODELS_IMAGE", "models_image"},
     };
     return m;
 }
@@ -242,6 +285,14 @@ void apply_table(const toml::table& doc, Settings& s) {
         take(t, "ffmpeg_path", s.assembly.ffmpeg_path);
         take(t, "ffprobe_path", s.assembly.ffprobe_path);
     }
+    if (auto t = doc["models"].as_table()) {
+        take_path_str(t, "dir", s.models.dir);
+        take(t, "llm", s.models.llm);
+        take(t, "video", s.models.video);
+        take(t, "video_vae", s.models.video_vae);
+        take(t, "video_text_encoder", s.models.video_text_encoder);
+        take(t, "image", s.models.image);
+    }
     take_path_str(&doc, "workspace", s.workspace);
     if (auto node = doc.get("vram_gb_override")) {
         if (auto v = node->value<double>()) s.vram_gb_override = *v;
@@ -290,6 +341,14 @@ void apply_env(Settings& s) {
         if (d > 0) s.vram_gb_override = d;
     }
     if (!(v = get("FFMPEG_PATH")).empty()) s.assembly.ffmpeg_path = v;
+    if (!(v = get("MODELS_DIR")).empty()) s.models.dir = v;
+    if (!(v = get("MODELS_LLM")).empty()) s.models.llm = v;
+    if (!(v = get("MODELS_VIDEO")).empty()) s.models.video = v;
+    if (!(v = get("MODELS_VIDEO_VAE")).empty()) s.models.video_vae = v;
+    if (!(v = get("MODELS_VIDEO_TEXT_ENCODER")).empty()) {
+        s.models.video_text_encoder = v;
+    }
+    if (!(v = get("MODELS_IMAGE")).empty()) s.models.image = v;
 }
 
 }  // namespace
@@ -365,6 +424,24 @@ scene_transition_s = 0.4
 # 中文字幕单行上限，全角字符数。
 subtitle_max_chars_per_line = 15
 subtitle_font = "Source Han Sans SC"
+
+[models]
+# 进程内推理要用的模型文件。ComfyUI 那条路不需要这一节——
+# 那边模型是它自己管的，工作流里按名字引用。
+#
+# 相对路径相对下面的 dir 解析，绝对路径原样用（多机共享网络盘时会这么填）。
+# dir 留空则用项目库旁边的 models/ 目录。
+#
+# 这几项**必须自己填**，没有默认文件名。原因是同一个二进制要在配置差很多的
+# 机器上跑：24G 显存的机器和 8G 内存的树莓派，能装下的量化档完全不同，
+# 猜一个默认值只会让人以为配好了然后在加载时炸掉。
+#
+# dir = "~/models"
+# llm = "Qwen3-14B-Q4_K_M.gguf"
+# video = "Wan2.2-TI2V-5B-Q4_K_M.gguf"
+# video_vae = "Wan2.2_VAE.safetensors"
+# video_text_encoder = "umt5-xxl-encoder-Q5_K_M.gguf"
+# image = "Qwen-Image-Edit-Q4_K_M.gguf"
 )";
 
 }  // namespace

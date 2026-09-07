@@ -112,6 +112,52 @@ struct AssemblyConfig {
     std::vector<std::string> validate() const;
 };
 
+/// 本地推理要用的模型文件。
+///
+/// Python 侧**没有**这一节——那边模型是 ComfyUI 自己管的，工作流 JSON 里
+/// 按名字引用，changji 根本不知道文件在哪。进程内推理之后没有这一层了，
+/// 得自己说清楚每个模型是哪个文件。
+///
+/// 为什么要可配置而不是写死一套默认文件名：同一个二进制要在配置差很多的
+/// 机器上跑。Windows 上是 24G 显存的全尺寸模型，Pi 5 上只有 8G 内存，
+/// 能装下的是完全不同的量化档。写死的话每台机器都得改代码重编，
+/// 而"一个二进制到处跑"是这个后端存在的理由之一。
+///
+/// 路径规则：绝对路径原样用；相对路径相对 dir 解析。
+/// dir 支持 ~ 展开，为空时回落到项目库根目录下的 models/。
+struct ModelsConfig {
+    /// 模型目录。相对路径的基准。
+    std::optional<std::string> dir;
+
+    /// 写剧本、拆分镜用的语言模型（llama.cpp，GGUF）。
+    std::string llm;
+    /// 文生视频主模型（sd.cpp，GGUF）。
+    std::string video;
+    /// 视频模型的 VAE。和主模型分开是因为它常常单独换。
+    std::string video_vae;
+    /// 文本编码器（UMT5-XXL 之类）。
+    std::string video_text_encoder;
+    /// 首帧生成与图像编辑。
+    std::string image;
+
+    /// 把一个配置项解析成绝对路径。空字符串返回空路径。
+    ///
+    /// workspace 用来算 dir 的回落值，所以要传进来——
+    /// 这个函数不该自己去读全局配置。
+    std::filesystem::path resolve(const std::string& entry,
+                                  const std::filesystem::path& workspace) const;
+
+    /// 模型目录的绝对路径。
+    std::filesystem::path dir_path(const std::filesystem::path& workspace) const;
+
+    /// 只校验形状，**不检查文件存在**。
+    ///
+    /// 存在性交给 doctor。理由是模型动辄几个 G，用户装好程序还没下模型是
+    /// 常态；那时候如果配置加载直接失败，连界面都进不去，也就没法在界面里
+    /// 看到"缺哪个文件"。doctor 报缺失，程序照常起来。
+    std::vector<std::string> validate() const;
+};
+
 /// 全部配置。
 struct Settings {
     ComfyConfig comfy;
@@ -119,6 +165,7 @@ struct Settings {
     TTSConfig tts;
     GateConfig gates;
     AssemblyConfig assembly;
+    ModelsConfig models;
 
     /// 显存覆盖。推理服务在别的机器上时本机探测不到，用它手动指定
     std::optional<double> vram_gb_override;

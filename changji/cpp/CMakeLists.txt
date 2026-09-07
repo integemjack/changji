@@ -198,6 +198,7 @@ if(CHANGJI_BUILD_TESTS)
         tests/unit/test_media.cpp
         tests/unit/test_upload.cpp
         tests/unit/test_jobs.cpp
+        tests/unit/test_models_config.cpp
         src/models/shot.cpp
         src/models/character.cpp
         src/models/project.cpp

@@ -6,6 +6,8 @@
 #include <fstream>
 #include <optional>
 #include <sstream>
+#include <utility>
+#include <vector>
 
 #include <httplib.h>
 #include <nlohmann/json.hpp>
@@ -293,6 +295,57 @@ Check check_workspace(const config::Settings& s) {
     return {"项目目录", Level::OK, paths::to_utf8(path), ""};
 }
 
+/// 本地模型文件。
+///
+/// 一项都没配是 OK 不是 WARN——走 ComfyUI 那条路的用户根本不需要这一节，
+/// 给他们报警告等于让体检报告长期挂着一条永远不会去处理的黄字，
+/// 报告里有常驻噪音之后，真正的警告就没人看了。
+///
+/// 配了但文件不在才报警告。这种情况几乎一定是笔误或者模型没下完。
+Check check_models(const config::Settings& s) {
+    const fs::path ws = s.workspace_path();
+    const auto& m = s.models;
+
+    const std::vector<std::pair<const char*, const std::string*>> entries = {
+        {"llm", &m.llm},
+        {"video", &m.video},
+        {"video_vae", &m.video_vae},
+        {"video_text_encoder", &m.video_text_encoder},
+        {"image", &m.image},
+    };
+
+    std::vector<std::string> configured, missing;
+    for (const auto& [key, val] : entries) {
+        if (val->empty()) continue;
+        configured.push_back(key);
+        std::error_code ec;
+        const fs::path p = m.resolve(*val, ws);
+        if (!fs::is_regular_file(p, ec)) {
+            missing.push_back(std::string(key) + " -> " + paths::to_utf8(p));
+        }
+    }
+
+    if (configured.empty()) {
+        return {"本地模型", Level::OK, "没配，走推理服务", ""};
+    }
+
+    if (!missing.empty()) {
+        std::string detail = "配了 " + std::to_string(configured.size()) +
+                             " 项，其中 " + std::to_string(missing.size()) +
+                             " 项的文件不存在：";
+        for (const auto& x : missing) detail += "\n  " + x;
+        return {"本地模型", Level::WARN, detail,
+                "检查 [models] 里的文件名，以及 dir 指的目录对不对。\n"
+                "相对路径是相对 dir 解析的，dir 留空时是项目库下的 models/。\n"
+                "当前 dir：" + paths::to_utf8(m.dir_path(ws))};
+    }
+
+    return {"本地模型", Level::OK,
+            std::to_string(configured.size()) + " 个模型文件都在（" +
+                paths::to_utf8(m.dir_path(ws)) + "）",
+            ""};
+}
+
 }  // namespace
 
 namespace {
@@ -333,6 +386,7 @@ Report run_checks(const config::Settings& settings) {
 
     r.checks.push_back(guarded("配音", [&] { return check_tts(settings, infer_ok); }));
     r.checks.push_back(guarded("大模型", [&] { return check_llm(settings); }));
+    r.checks.push_back(guarded("本地模型", [&] { return check_models(settings); }));
     r.checks.push_back(guarded("显卡", [&] { return check_gpu(settings); }));
     r.checks.push_back(guarded("项目目录", [&] { return check_workspace(settings); }));
     return r;
