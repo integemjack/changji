@@ -77,6 +77,9 @@ add_executable(changji
     src/models/character.cpp
     src/models/project.cpp
     src/models/hardware.cpp
+    src/util/text.cpp
+    src/stages/json_extract.cpp
+    src/stages/bible.cpp
     src/http/ws.cpp
     src/pipeline/jobs.cpp
     src/http/readonly.cpp
@@ -199,12 +202,16 @@ if(CHANGJI_BUILD_TESTS)
         tests/unit/test_upload.cpp
         tests/unit/test_jobs.cpp
         tests/unit/test_models_config.cpp
+        tests/unit/test_bible.cpp
         src/models/shot.cpp
         src/models/character.cpp
         src/models/project.cpp
         src/models/hardware.cpp
         src/util/paths.cpp
         src/util/proc.cpp
+        src/util/text.cpp
+        src/stages/json_extract.cpp
+        src/stages/bible.cpp
         src/config/settings.cpp
         src/http/readonly.cpp
         src/http/editing.cpp

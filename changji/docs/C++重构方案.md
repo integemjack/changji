@@ -230,6 +230,33 @@ duration_s
 `/api/voices` 在阶段 6 之前返回空列表加一条说明——它依赖 ComfyUI 的
 节点清单，而 comfy/ 的移植排在阶段 6。这是暂时状态，不进白名单。
 
+### 一处有意不复刻的 Python bug：`/api/bible` 的 500
+
+阶段 4 移植角色圣经时对拍抓到的。
+
+`bible.py` 的 `_parse` 里调 `_extract_json`，而那个函数是从
+`storyboard.py` import 的，抛的是 **`StoryboardError`** 不是 `BibleError`。
+`/api/bible` 只 `except BibleError`，于是这个异常一路穿到最外面变成
+**500 Internal Server Error**。
+
+触发条件是"模型返回的东西里找不到合法 JSON"——这恰恰是弱模型最常见的
+失败方式。用户本该看到那句「大模型输出里找不到合法 JSON：……」，
+实际看到的是一个没有任何信息的 500。
+
+C++ 侧统一抛 `BibleError`，也就是 **400 带上原始输出的前 400 字**。
+
+这是**有意的偏离**。严格按契约应该复刻 500，但那等于专门写代码去重现一个
+bug，而且重现的是"出错时不告诉用户哪里错了"这种最不该保留的行为。
+
+对拍语料 `stage_bible.json` 的 `parse_failures` 里记着每条的
+`python_error` 和 `python_http_status`，测试里有一条断言专门检查
+"语料里还有 500 这条"——哪天 Python 侧修好了，那条断言会失败，
+提醒把这一节从方案里删掉。
+
+顺带一提，这个 bug 在 Python 侧是一行的事：`_parse` 里把
+`_extract_json` 包进 `try/except StoryboardError` 再转成 `BibleError`。
+要不要在删 Python 之前先修，取决于现在这套还要跑多久。
+
 ### WebSocket：增量，不是替换
 
 **REST 接口原样保留，WebSocket 是加在旁边的第二条通道。**

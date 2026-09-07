@@ -1,5 +1,7 @@
 #include "models/character.hpp"
 
+#include "util/text.hpp"
+
 #include <algorithm>
 #include <array>
 #include <cctype>
@@ -10,43 +12,10 @@ namespace changji::models {
 
 namespace {
 
-/// 要从各段尾部剥掉的标点，对应 Python 的 rstrip("。.；;，,、 ")。
-///
-/// 必须按 UTF-8 字符剥，不能按字节。中文标点每个 3 字节，
-/// 按字节剥会把前一个汉字劈成半个，产出乱码——而这个串会出现在
-/// 每一个镜头的提示词里，一旦坏掉是全剧性的。
-const std::array<const char*, 8> kTrimChars = {
-    "。", ".", "；", ";", "，", ",", "、", " "
-};
-
-/// 剥掉字符串尾部的空白和上面那批标点。
-std::string rstrip_punct(std::string s) {
-    bool changed = true;
-    while (changed && !s.empty()) {
-        changed = false;
-        for (const char* p : kTrimChars) {
-            const std::size_t n = std::char_traits<char>::length(p);
-            if (s.size() >= n && s.compare(s.size() - n, n, p) == 0) {
-                s.erase(s.size() - n);
-                changed = true;
-                break;
-            }
-        }
-    }
-    return s;
-}
-
-/// 对应 Python 的 str.strip()：只剥 ASCII 空白，两端都剥。
-std::string strip_ws(const std::string& s) {
-    const auto is_ws = [](unsigned char c) {
-        return c == ' ' || c == '\t' || c == '\n' || c == '\r' ||
-               c == '\v' || c == '\f';
-    };
-    std::size_t b = 0, e = s.size();
-    while (b < e && is_ws(static_cast<unsigned char>(s[b]))) ++b;
-    while (e > b && is_ws(static_cast<unsigned char>(s[e - 1]))) --e;
-    return s.substr(b, e - b);
-}
+// rstrip_punct / strip_ws 搬去了 util/text.hpp——分镜阶段解析大模型输出时
+// 也要用同一套清洗规则，两份拷贝迟早会分叉，而它们的输出进的是同一个提示词。
+using text::rstrip_punct;
+using text::strip_ws;
 
 std::string join(const std::vector<std::string>& parts, const std::string& sep) {
     std::string out;
