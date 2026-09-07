@@ -47,7 +47,22 @@ git diff "$BASE"..HEAD > leejet-ggml-extensions.patch
 ```bash
 cd llama.cpp
 git apply --reject --directory=ggml path/to/leejet-ggml-extensions.patch
+python3 path/to/resolve_llamacpp_conflicts.py
+find ggml -name '*.rej' -delete
 ```
+
+[`resolve_llamacpp_conflicts.py`](resolve_llamacpp_conflicts.py) 解掉那 6 个冲突。
+其中**两处不能照抄 leejet 的原文，上游改了数据结构**：
+
+- `ggml-cuda.cu` 的析构：llama.cpp 是 `[i][j]` 双层循环，而 `cublaslt_handles`
+  是一维（cuBLASLt 句柄不绑定流，流在 `cublasLtMatmul` 调用时传入）。
+  照抄会把同一个句柄销毁 `GGML_CUDA_MAX_STREAMS` 次——double free。
+  **必须放外层循环。**
+- `ggml-rpc.h` 的 `static_assert(GGML_OP_COUNT == N)`：补丁加了一个算子
+  `GGML_OP_QUANTIZE_I8_CONVROT`，llama.cpp 的基数是 101 不是 leejet 的 101→102
+  那一对，要按本地实际值改（这里是 101→102），顺带 bump `RPC_PROTO_PATCH_VERSION`。
+
+脚本每一步都断言锚点唯一存在，上游挪走锚点时直接抛异常而不是静默插错位置。
 
 对 llama.cpp `5202104`（ggml 0.23.0）的实测结果：**79 个 hunk 里 73 个干净落地，
 6 个需要手工处理，全部是纯新增上的上下文漂移，零语义冲突。**

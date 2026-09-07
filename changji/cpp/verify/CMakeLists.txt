@@ -131,6 +131,9 @@ target_compile_features(cjverify PRIVATE cxx_std_20)
 # sd.cpp 的公开头文件
 target_include_directories(cjverify PRIVATE "${sd_SOURCE_DIR}")
 
+# 让程序知道构建时开没开 CUDA，否则 CPU 构建里"只有 CPU 设备"会被误报成失败
+target_compile_definitions(cjverify PRIVATE CJV_CUDA_REQUESTED=$<BOOL:${CJV_CUDA}>)
+
 if(MSVC)
     target_compile_options(cjverify PRIVATE /utf-8 /W4)
 endif()

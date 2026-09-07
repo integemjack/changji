@@ -179,6 +179,49 @@ leejet 的 fork 自报 0.19.0，llama.cpp 的 ggml 是 0.23.0，四个小版本�
 冲突 hunk 数是这条路的健康度指标**——从 6 涨到几十就说明上游在这些区域动了
 大手术，该重新评估。
 
+### 补丁集实施完成：统一 ggml 跑通了
+
+六个冲突 hunk 全部解掉，脚本见
+[../patches/resolve_llamacpp_conflicts.py](../patches/resolve_llamacpp_conflicts.py)。
+**其中两处不能照抄 leejet 的原文，因为上游改了数据结构**：
+
+- `ggml-cuda.cu` 的析构：llama.cpp 已改成 `[i][j]` 双层循环（上游加了
+  per-stream 的 cuBLAS 句柄），而 `cublaslt_handles` 是一维的——cuBLASLt 句柄
+  不绑定流，流是调用 `cublasLtMatmul` 时传的。照抄会把同一个句柄销毁
+  `GGML_CUDA_MAX_STREAMS` 次，double free。**必须挪到外层循环。**
+- `ggml-rpc.h` 的 `static_assert(GGML_OP_COUNT == N)`：补丁加了算子
+  `GGML_OP_QUANTIZE_I8_CONVROT`，但 leejet 的基数（5.x 时代）和 llama.cpp 的
+  （现在 101）不同，要按本地实际值改成 102，顺带 bump `RPC_PROTO_PATCH_VERSION`。
+
+**这两处说明了为什么这是"移植"不是"打补丁"**：79 个 hunk 里 73 个确实是机械的，
+但剩下的需要读懂上游为什么改了结构。补丁集的长期成本主要在这里。
+
+#### 构建与运行结果
+
+llama.cpp + sd.cpp 在同一份打过补丁的 ggml 上编出一个二进制：
+
+```
+ggml-base.dll  ggml-cpu.dll  ggml.dll  llama.dll  stable-diffusion.lib
+```
+
+`cjverify.exe` 全部通过：
+
+```
+[1] 编译器            MSVC _MSC_VER = 1944
+[2] ggml ABI 一致性   写入 100 字符的名字，读回 100 字符 —— 库和程序都是 160
+[3] ggml 后端设备     1 个（CPU，符合 CJV_CUDA=OFF 的预期）
+[4] llama.cpp         llama_backend_init 正常，系统信息可读
+[5] sd.cpp            sd_version = master-846-d8fb10c
+```
+
+**第 2 项是这次验证最有价值的一条。** 它不是"编过了"，是运行时探针：写一个
+100 字符的张量名再读回来，库自己按 GGML_MAX_NAME 多少编的、名字就在多少字节
+处被截断。读回 100 说明库和程序都是 160；如果顶层那行
+`add_compile_definitions(GGML_MAX_NAME=160)` 被删掉，这里会读回 63，
+而**编译和链接都不会报错**。
+
+**结论：验证第二项从"不可行"改为"经补丁后可行"。** 决策 17 的补丁集方案成立。
+
 ## 二、真正的坑是一个编译期常量，不是符号冲突
 
 sd.cpp 的 CMakeLists：
@@ -347,7 +390,8 @@ Windows 的路径处理会在你完全想不到的地方安静地失败。
 - [x] 第二项：统一 ggml —— **双向都编不过**，见上
 - [x] 第二项善后：出路已定（决策 17，补丁集），工作量已量化
 - [x] Metal shader 搬家 —— 已在 M1 上验证通过
-- [ ] 移植实施：剩 6 个 hunk（3 CUDA / 1 Vulkan / 1 ggml-rpc.h / 1 CUDA CMakeLists）
+- [x] **移植实施完成**：6 个 hunk 全解，两库共用一份 ggml 编出二进制，cjverify 全过
+- [ ] 统一 ggml 的 CUDA 构建（CPU 版已过）
 - [ ] 第二项后半：两个库各跑一次真实推理
 - [ ] 第三项：`--offload-to-cpu` 的崩溃 bug 复不复现
 - [ ] 第四项：`--vae-tiling` 在视频路径上通不通

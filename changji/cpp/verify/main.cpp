@@ -93,7 +93,9 @@ void check_backends() {
     bool has_gpu = false;
     for (size_t i = 0; i < n; ++i) {
         ggml_backend_dev_t d = ggml_backend_dev_get(i);
-        const ggml_backend_dev_type ty = ggml_backend_dev_type(d);
+        // 必须写 enum：ggml 里 ggml_backend_dev_type 既是枚举名又是函数名，
+        // C++ 的名字查找里函数名会隐藏类型名，不加 enum 会被解析成声明。
+        const enum ggml_backend_dev_type ty = ggml_backend_dev_type(d);
         const char* tyname = ty == GGML_BACKEND_DEVICE_TYPE_GPU   ? "GPU"
                            : ty == GGML_BACKEND_DEVICE_TYPE_CPU   ? "CPU"
                                                                   : "ACCEL";
@@ -103,9 +105,11 @@ void check_backends() {
     }
 
     if (has_gpu) {
-        ok("CUDA 后端", "注册成功，能看到 GPU 设备");
+        ok("GPU 后端", "注册成功，能看到 GPU 设备");
+    } else if (CJV_CUDA_REQUESTED) {
+        bad("CUDA 后端", "开了 CJV_CUDA 却只有 CPU 设备——CUDA 没编进去");
     } else {
-        bad("CUDA 后端", "只有 CPU。CJV_CUDA 开了的话说明 CUDA 没编进去");
+        ok("后端枚举", "只有 CPU，符合 CJV_CUDA=OFF 的预期");
     }
 }
 
