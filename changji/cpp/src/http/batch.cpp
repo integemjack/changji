@@ -37,7 +37,10 @@ void forbid_extra(const json& body, const std::set<std::string>& allowed) {
 std::string need_str(const json& body, const char* key) {
     const auto it = body.find(key);
     if (it == body.end()) {
-        throw unprocessable_top(key, "Field required", nullptr, "missing");
+        // **input 是整个请求体，不是 null。** FastAPI 报缺字段时把父对象
+        // 放进 input，前端拿它回显"你提交的是这些"。写 null 的话那一栏是空的。
+        // 实时对拍抓出来的（写接口那一轮）。
+        throw unprocessable_top(key, "Field required", body, "missing");
     }
     if (!it->is_string()) {
         throw unprocessable_top(key, "Input should be a valid string", *it,

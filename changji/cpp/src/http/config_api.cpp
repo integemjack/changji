@@ -193,7 +193,8 @@ ApiResult post_connections(const json& body, const DoctorFn& check) {
     forbid_extra(body, {"patch", "persist"}, "");
     const auto pit = body.find("patch");
     if (pit == body.end() || !pit->is_object()) {
-        throw unprocessable_top("patch", "Field required", nullptr, "missing");
+        // input 是整个请求体，不是 null。见别的 need_str 那几处的注释。
+        throw unprocessable_top("patch", "Field required", body, "missing");
     }
     const json& patch = *pit;
     static const std::set<std::string> kAllowed = {

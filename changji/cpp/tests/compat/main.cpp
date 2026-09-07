@@ -56,6 +56,9 @@ std::vector<compat::IgnoreRule> default_ignores() {
         {"/job_id", "每次启动随机生成"},
         {"/workspace", "项目库的绝对路径，跟机器走"},
         {"/**/path", "项目的绝对路径，跟机器走"},
+        {"/**/project",
+         "同上。写接口那一轮里它还会出现在 422 的 input 回显里——"
+         "两个后端各用一份项目副本，回显的自然是各自那份的路径"},
         // ⚠️ 下面这几条只在**录制模式**下忽略。实时模式两个后端跑在
         // 同一台机器上，硬件字段必须一致——不一致说明探测逻辑有分歧。
         {"/gpu", "录制那台是别的显卡"},
@@ -117,6 +120,9 @@ struct Args {
     std::string project;
     std::string golden = "tests/golden";
     std::string filter;
+    /// 把每条请求的地址打出来。差异出在"发的不是同一个请求"时，
+    /// 没有它只能靠猜。
+    bool verbose = false;
 };
 
 std::pair<std::string, std::string> split_origin(const std::string& url) {
@@ -209,6 +215,175 @@ struct Tally {
         std::cout << "  [跳过] " << name << "  " << why << "\n";
     }
 };
+
+/// 给一个案例准备一份干净的项目副本。
+///
+/// **每个案例各一份，两个后端各一份。** 写接口会改状态：共用一份的话，
+/// 前一个案例改过的东西会成为后一个案例的输入，而两个后端还会互相踩。
+/// 那时候的"不一致"是自己造出来的，查半天最后发现是对拍的错。
+fs::path fresh_copy(const fs::path& src, const std::string& tag) {
+    std::error_code ec;
+    const fs::path dst = fs::temp_directory_path() /
+                         paths::from_utf8("changji_对拍_写") /
+                         paths::from_utf8(tag);
+    fs::remove_all(dst, ec);
+    fs::create_directories(dst.parent_path(), ec);
+    fs::copy(src, dst, fs::copy_options::recursive, ec);
+    return ec ? fs::path() : dst;
+}
+
+/// 把请求里指向项目的那几个键换成这一侧的副本。
+json retarget(const json& src, const std::string& project) {
+    if (!src.is_object()) return src;
+    json out = src;
+    for (const char* key : {"project", "path"}) {
+        if (out.contains(key) && out[key].is_string()) out[key] = project;
+    }
+    return out;
+}
+
+Response send(const std::string& base, const std::string& method,
+              const std::string& path_with_query, const json& body) {
+    const auto [origin, prefix] = split_origin(base);
+    httplib::Client cli(origin);
+    cli.set_connection_timeout(10, 0);
+    cli.set_read_timeout(120, 0);
+
+    Response out;
+    httplib::Result res =
+        method == "POST"
+            ? cli.Post(prefix + path_with_query, body.is_null() ? "" : body.dump(),
+                       "application/json")
+            : (method == "DELETE" ? cli.Delete(prefix + path_with_query)
+                                  : cli.Get(prefix + path_with_query));
+    if (!res) {
+        out.error = "连不上：" + httplib::to_string(res.error());
+        return out;
+    }
+    out.status = res->status;
+    out.body = json::parse(res->body, nullptr, false);
+    if (out.body.is_discarded()) {
+        out.error = "回的不是 JSON：" + res->body.substr(0, 200);
+    }
+    return out;
+}
+
+/// 写接口的对拍：同一个请求发给两个后端，比响应，**再比改完之后的项目文件**。
+///
+/// 比项目文件是这一模式真正的价值：响应一样不代表做的事一样。
+/// 一个接口可以回 {"saved": true} 然后什么都没写，或者写错了字段——
+/// 那要等到下一次打开项目才发现。
+int run_post(const Args& args, Tally& tally) {
+    if (args.python_url.empty() || args.project.empty()) {
+        std::cout << "\n写接口对拍要 --python 和 --project 都给\n";
+        return 0;
+    }
+    const json corpus = read_json(fs::path(args.golden) / "endpoints_episodes.json");
+    if (corpus.is_null()) {
+        std::cout << "读不到 endpoints_episodes.json\n";
+        return 0;
+    }
+
+    compat::CompareOptions opts;
+    opts.ignore = live_ignores();
+    // 项目文件里的时间戳和绝对路径两边必然不同（各自一份副本）。
+    opts.ignore.push_back({"/updated_at", "存盘刷新它"});
+    opts.ignore.push_back({"/created_at", "拷贝出来的时刻"});
+
+    const fs::path src = paths::from_utf8(args.project);
+    std::cout << "\n== 写接口：" << corpus.at("cases").size() << " 条 ==\n";
+
+    int index = 0;
+    for (const auto& c : corpus.at("cases")) {
+        const std::string name = c.value("name", "?");
+        ++index;
+        if (!args.filter.empty() && name.find(args.filter) == std::string::npos) {
+            continue;
+        }
+        // prep 是导出脚本在本机做的前置操作（建集、塞文件），没法通用重放。
+        // 跳过而不是硬猜——猜错的话对拍报的差异全是假的。
+        if (c.contains("prep") && !c.at("prep").is_null()) {
+            tally.skip(name, "有 prep 前置步骤，没法通用重放");
+            continue;
+        }
+
+        const std::string tag = "c" + std::to_string(index);
+        const fs::path py_dir = fresh_copy(src, tag + "_py");
+        const fs::path cp_dir = fresh_copy(src, tag + "_cpp");
+        if (py_dir.empty() || cp_dir.empty()) {
+            tally.skip(name, "拷项目副本失败");
+            continue;
+        }
+
+        const std::string method = c.value("method", "POST");
+        const std::string url = c.at("url").get<std::string>();
+
+        // 查询参数和请求体里的项目路径各自指向自己那一份。
+        const json query = c.value("query", json(nullptr));
+        const auto build = [&](const fs::path& dir) {
+            std::map<std::string, std::string> params;
+            if (query.is_object()) {
+                // ⚠️ **又是 items() 那个坑，这次是我在同一个文件里犯第二遍。**
+                // retarget() 返回的是临时 json，`.items()` 返回引用它的代理；
+                // range-for 延长的是代理不是那个 json。上一次的表现是崩溃，
+                // 这一次是**静默地一个参数都不产出**——后者更糟：
+                // 对拍照跑，报出来的是"两边都说缺参数"，看着像后端的问题。
+                //
+                // 规矩：`.items()` 只对具名变量调，不对函数返回值调。
+                const json aimed = retarget(query, paths::to_utf8(dir));
+                for (const auto& kv : aimed.items()) {
+                    if (kv.value().is_string()) {
+                        params[kv.key()] = kv.value().get<std::string>();
+                    }
+                }
+            }
+            return with_query(url, params);
+        };
+        const json body = c.value("body", json(nullptr));
+
+        const std::string py_url = build(py_dir);
+        const std::string cp_url = build(cp_dir);
+        if (args.verbose) {
+            std::cout << "      -> " << method << " " << cp_url << "\n";
+        }
+        const Response py = send(args.python_url, method, py_url,
+                                 retarget(body, paths::to_utf8(py_dir)));
+        const Response cp = send(args.cpp_url, method, cp_url,
+                                 retarget(body, paths::to_utf8(cp_dir)));
+        if (!py.error.empty()) {
+            tally.skip(name, "Python 侧：" + py.error);
+            continue;
+        }
+        if (!cp.error.empty()) {
+            tally.skip(name, "C++ 侧：" + cp.error);
+            continue;
+        }
+
+        std::vector<compat::Difference> diffs;
+        if (py.status != cp.status) {
+            diffs.push_back({"（状态码）", "Python " + std::to_string(py.status) +
+                                              "，C++ " + std::to_string(cp.status)});
+        }
+        const auto body_diffs = compat::compare(py.body, cp.body, opts);
+        diffs.insert(diffs.end(), body_diffs.begin(), body_diffs.end());
+
+        // **再比改完之后的项目文件。** 响应一样不代表做的事一样：
+        // 一个接口可以回 {"saved": true} 然后什么都没写。
+        const json py_proj = read_json(py_dir / "project.json");
+        const json cp_proj = read_json(cp_dir / "project.json");
+        if (!py_proj.is_null() && !cp_proj.is_null()) {
+            for (auto& d : compat::compare(py_proj, cp_proj, opts)) {
+                diffs.push_back({"project.json" + d.path, d.detail});
+            }
+        }
+        tally.report(name, diffs);
+    }
+
+    std::error_code ec;
+    fs::remove_all(fs::temp_directory_path() / paths::from_utf8("changji_对拍_写"),
+                   ec);
+    return 0;
+}
 
 /// 数据层对拍：读一份项目文件再写回去，逐字段比。
 ///
@@ -418,6 +593,7 @@ int main(int argc, char** argv) {
         else if (a == "--project") args.project = next();
         else if (a == "--golden") args.golden = next();
         else if (a == "--case") args.filter = next();
+        else if (a == "--verbose") args.verbose = true;
         else {
             std::cout << "用法：changji_compat --cpp URL [--python URL] "
                          "[--project 目录] [--golden 目录] [--case 过滤]\n";
@@ -432,7 +608,10 @@ int main(int argc, char** argv) {
     Tally tally;
     run_data(args, tally);
     run_recorded(args, tally);
-    if (!args.python_url.empty()) run_live(args, tally);
+    if (!args.python_url.empty()) {
+        run_live(args, tally);
+        run_post(args, tally);
+    }
 
     std::cout << "\n一致 " << tally.passed << "，不同 " << tally.failed
               << "，跳过 " << tally.skipped << "\n";
