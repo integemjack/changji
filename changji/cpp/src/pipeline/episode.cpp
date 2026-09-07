@@ -19,8 +19,8 @@ double now_seconds() {
 }
 
 bool wants(const RunOptions& o, Stage s) {
-    if (o.only.empty()) return true;
-    return std::find(o.only.begin(), o.only.end(), s) != o.only.end();
+    if (!o.only.has_value()) return true;   // 没给就是全跑
+    return std::find(o.only->begin(), o.only->end(), s) != o.only->end();
 }
 
 /// 挑出这一阶段要跑的镜头。
@@ -210,7 +210,7 @@ RunReport run_episode(const ProjectStore& store,
             // 差别在草稿失败的那几镜：force 重跑草稿之后它们状态没变，
             // 成片阶段跳过它们是对的——拿一个没渲出来的草稿去出成片，
             // 出来的是另一段没有首帧参考的片子，混在成片目录里最难发现。
-            const bool force_final = opts.only.empty() ? false : opts.force;
+            const bool force_final = opts.only.has_value() ? opts.force : false;
             report.final_ = render_tier(Tier::FINAL, force_final);
             save();
         }

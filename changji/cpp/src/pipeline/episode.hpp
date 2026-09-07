@@ -7,6 +7,7 @@
 // 按镜头串行是加载 80 次，按阶段分批是 2 次。
 // test_scheduler 里有一条用例专门钉这个差距。
 
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -53,8 +54,14 @@ struct RunOptions {
     bool skip_final = false;
     /// 无视状态，全部重跑。
     bool force = false;
-    /// 只跑这几个阶段。空表示全跑。
-    std::vector<Stage> only;
+    /// 只跑这几个阶段。
+    ///
+    /// **没给（nullopt）表示跑全流程，给了一个空的表示一个阶段都不跑。**
+    /// 这两者不是一回事，而且都是前端能触发的：Python 那边判的是
+    /// `if req.stages:`，所以 `stages: []` 走全流程（空列表是假值），
+    /// `stages: ["  "]` 走"只跑指定阶段"、而指定的阶段过滤完是空的。
+    /// 合成一个空 vector 的话，后一种会变成把整集重跑一遍。
+    std::optional<std::vector<Stage>> only;
 };
 
 /// 出图和出片的后端。注入的，理由同各阶段：

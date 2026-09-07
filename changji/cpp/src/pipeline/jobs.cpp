@@ -345,6 +345,8 @@ bool JobProgress::cancelled() const {
     return table_->slot(kind_).token.cancelled();
 }
 
+CancelToken& JobProgress::token() { return table_->slot(kind_).token; }
+
 JobTable& jobs() {
     static JobTable table;
     return table;

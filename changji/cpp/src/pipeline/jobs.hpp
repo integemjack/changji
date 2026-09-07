@@ -151,6 +151,16 @@ public:
     /// 该停了吗。耗时循环里要主动查。
     bool cancelled() const;
 
+    /// 这个任务的取消令牌。
+    ///
+    /// 光有 cancelled() 不够：sd.cpp 的采样、llama.cpp 的生成、ffmpeg 子进程
+    /// 都要拿到令牌**本身**才能被打断，它们不会回来问 JobProgress。
+    /// 只给 cancelled() 的话，点停止要等当前这一镜跑完才有反应——
+    /// 成片档一镜就是几分钟。
+    ///
+    /// 引用一直有效：令牌挂在 job 表的槽上，槽是表的成员，地址不变。
+    CancelToken& token();
+
 private:
     friend class JobTable;
     JobProgress(JobTable* t, JobKind k) : table_(t), kind_(k) {}

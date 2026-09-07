@@ -1,0 +1,50 @@
+#pragma once
+
+// POST /api/run —— 开跑。
+//
+// 走 job 表：立刻返回 {"started": true, "queue": [...]}，进度靠
+// GET /api/run 轮询或者 WebSocket 推。一集跑几十分钟，同步返回没有意义。
+//
+// 队列是为量产准备的：all_episodes 一次把整个项目有分镜的集都排上。
+// **一集出错不拖垮后面几集**——跑一晚上，早上发现第二集挂了导致后面十集
+// 都没动，那这一晚上就白熬了。
+
+#include <functional>
+
+#include <nlohmann/json.hpp>
+
+#include "config/settings.hpp"
+#include "http/readonly.hpp"
+#include "models/hardware.hpp"
+#include "pipeline/episode.hpp"
+
+namespace changji::http {
+
+/// 开跑要用的外部东西。
+///
+/// 全都是回调而不是值，两个原因：一是**每次开跑现取配置**，用户改完
+/// 模型文件不用重启（这条是有代价学来的，见 sd_image.hpp 里那段注释）；
+/// 二是测试能塞假后端进来——真跑一集要几十分钟，而这一层要测的是
+/// 队列、错误汇总和状态码，那些几毫秒就能测完。
+struct RunDeps {
+    std::function<config::Settings()> settings;
+    std::function<models::HardwareProfile()> profile;
+    /// 按当前配置造出图和出片的后端。
+    std::function<pipeline::Backends(const config::Settings&)> backends;
+};
+
+/// 默认的那套：配置从 runtime 取，后端是 sd.cpp。
+RunDeps default_run_deps();
+
+ApiResult post_run(const nlohmann::json& body, const RunDeps& deps);
+
+/// 把阶段名列表翻成枚举。认不出的抛 ApiError。
+///
+/// 单独暴露是因为**它抛的错不该变成 400**：Python 那边这个校验在
+/// run_stages 里，而那是在任务线程上跑的，错误落进任务状态的 error 字段。
+/// 变成 400 的话前端的表现完全不同——一个是弹错误框，一个是任务列表里
+/// 显示一条失败记录。
+std::vector<pipeline::Stage> parse_stages(
+    const std::vector<std::string>& names);
+
+}  // namespace changji::http

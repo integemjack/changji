@@ -19,9 +19,11 @@
 #include "http/llm_info.hpp"
 #include "http/planning.hpp"
 #include "http/projects.hpp"
+#include "http/run.hpp"
 #include "http/scripting.hpp"
 #include "llm/client.hpp"
 #include "http/ws.hpp"
+#include "infer/sd_image.hpp"
 #include "pipeline/jobs.hpp"
 
 namespace changji::http {
@@ -77,6 +79,14 @@ void run(const config::Settings& settings, const Options& opts) {
         [](const std::string& job_id, const json& msg) {
             ws::hub().broadcast(job_id, msg);
         });
+
+    // 出图和出片的两个模型槽注册到调度器上。**一个进程只注册一次**：
+    // 槽已经加载着的时候重新注册会抛异常，所以不能放在开跑的路径上。
+    //
+    // 注册不等于加载。真正加载要等第一次 acquire——一个视频模型好几个 G，
+    // 起服务时就加载的话，只想看看分镜表的人也要等上几十秒。
+    infer::register_sd_slots([] { return config::runtime().snapshot(); },
+                             config::runtime().profile());
 
     // ---- REST ----
 
@@ -487,14 +497,22 @@ void run(const config::Settings& settings, const Options& opts) {
     CROW_ROUTE(app, "/api/plan/all").methods("POST"_method)(
         batch_route(&post_plan_all));
 
-    // ---- 任务状态 ----
-    //
-    // POST /api/run 要等阶段 5 的流水线，这里先只挂查询和停止。
-    // 这两个本身就是完整的：前端的进度轮询和停止按钮现在就能用。
+    // ---- 任务状态与开跑 ----
 
     CROW_ROUTE(app, "/api/run")([] {
         return json_response(pipeline::jobs().snapshot(pipeline::JobKind::Run));
     });
+
+    // 开跑。立刻返回，进度靠上面那个轮询或者 WebSocket 推。
+    // 后端每次开跑现取（配置可能刚被改过），所以 deps 不在这里存一份。
+    CROW_ROUTE(app, "/api/run").methods("POST"_method)(
+        [](const crow::request& req) {
+            auto r = guard([&] {
+                return post_run(json::parse(req.body, nullptr, false),
+                                default_run_deps());
+            });
+            return json_response(r.body, r.status);
+        });
 
     CROW_ROUTE(app, "/api/stop").methods("POST"_method)([](const crow::request&) {
         // 没在跑时回 {"stopped": false} 而不是报错。

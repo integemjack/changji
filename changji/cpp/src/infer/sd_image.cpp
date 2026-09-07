@@ -388,6 +388,11 @@ std::shared_ptr<SdContext> g_video_ctx;
 
 void register_sd_slots(const config::Settings& settings,
                        const models::HardwareProfile& profile) {
+    register_sd_slots([settings] { return settings; }, profile);
+}
+
+void register_sd_slots(SettingsProvider provider,
+                       const models::HardwareProfile& profile) {
     // 预算取探测到的显存，留一成给驱动上下文和别的程序。
     //
     // 估高了是 OOM 直接崩，估低了只是多分段（慢）。所以往低了取——
@@ -407,8 +412,8 @@ void register_sd_slots(const config::Settings& settings,
         // 视频模型重新加载更贵（文件大得多），所以图像的优先级更低，
         // 腾地方时先卸它。
         spec.evict_priority = 5;
-        spec.load = [settings, budget] {
-            auto ctx = SdContext::create(settings, budget, ModelRole::Image);
+        spec.load = [provider, budget] {
+            auto ctx = SdContext::create(provider(), budget, ModelRole::Image);
             std::lock_guard lg(g_ctx_mu);
             g_image_ctx = std::move(ctx);
         };
@@ -424,8 +429,8 @@ void register_sd_slots(const config::Settings& settings,
         spec.residency = Residency::Cached;
         spec.vram_estimate = estimate;
         spec.evict_priority = 9;
-        spec.load = [settings, budget] {
-            auto ctx = SdContext::create(settings, budget, ModelRole::Video);
+        spec.load = [provider, budget] {
+            auto ctx = SdContext::create(provider(), budget, ModelRole::Video);
             std::lock_guard lg(g_ctx_mu);
             g_video_ctx = std::move(ctx);
         };

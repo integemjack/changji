@@ -116,10 +116,25 @@ private:
     std::unique_ptr<Impl> impl_;
 };
 
-/// 把 sd.cpp 的上下文注册到调度器的图像槽上。
+/// 取配置的回调。**每次加载模型时现取**，不是注册时取一次。
+///
+/// 这条是有代价学来的：LLM 客户端当初在构造时把 settings.llm 存了下来，
+/// 结果用户在设置页改了地址、接口回"已保存"，而请求还是发往老地址。
+/// 模型文件这一路同样——改完 [models] 里的文件名之后不重启就不生效，
+/// 而"不生效"的表现是加载出来的还是上一个模型，不报任何错。
+using SettingsProvider = std::function<config::Settings()>;
+
+/// 把 sd.cpp 的上下文注册到调度器的图像槽和视频槽上。
 ///
 /// 注册之后调用方只管 `scheduler().acquire(Slot::Image)`，
 /// 什么时候加载、什么时候为了腾地方被卸掉，由调度器决定。
+///
+/// **一个进程注册一次**，在启动时做。槽已经加载着的时候重新注册会抛异常
+/// （新的 unload 会去卸一个不是它加载的东西），所以别放在每次开跑的路径上。
+void register_sd_slots(SettingsProvider provider,
+                       const models::HardwareProfile& profile);
+
+/// 同上，配置固定不变的那种。测试和命令行用。
 void register_sd_slots(const config::Settings& settings,
                        const models::HardwareProfile& profile);
 
