@@ -81,6 +81,7 @@ add_executable(changji
     src/stages/json_extract.cpp
     src/stages/bible.cpp
     src/stages/storyboard.cpp
+    src/stages/script.cpp
     src/infer/scheduler.cpp
     src/http/ws.cpp
     src/pipeline/jobs.cpp
@@ -207,6 +208,7 @@ if(CHANGJI_BUILD_TESTS)
         tests/unit/test_bible.cpp
         tests/unit/test_storyboard.cpp
         tests/unit/test_scheduler.cpp
+        tests/unit/test_script.cpp
         src/models/shot.cpp
         src/models/character.cpp
         src/models/project.cpp
@@ -217,6 +219,7 @@ if(CHANGJI_BUILD_TESTS)
         src/stages/json_extract.cpp
         src/stages/bible.cpp
         src/stages/storyboard.cpp
+        src/stages/script.cpp
         src/infer/scheduler.cpp
         src/config/settings.cpp
         src/http/readonly.cpp

@@ -32,6 +32,15 @@ std::string collapse_ws(const std::string& s);
 /// 这样标点重复的串，而且这个串会出现在每一个镜头里。
 std::string clean_field(const std::string& s);
 
+/// UTF-8 字符数（不是字节数）。
+///
+/// 靠"续接字节高两位是 10"来数，不解码码点。中文一个字三字节，
+/// 用 s.size() 当字数会让所有长度判断偏大三倍。
+std::size_t utf8_len(const std::string& s);
+
+/// 一个 UTF-8 字符占几字节，从起始字节判断。非法起始字节按 1 算。
+std::size_t utf8_char_len(unsigned char lead);
+
 /// 按 UTF-8 字符截断到最多 n 个字符。
 ///
 /// 不能直接 substr：中文一个字 3 字节，按字节截会把最后一个字劈成半个，

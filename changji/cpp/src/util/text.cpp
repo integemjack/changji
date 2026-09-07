@@ -77,15 +77,27 @@ std::string clean_field(const std::string& s) {
     return rstrip_punct(strip_ws(collapse_ws(s)));
 }
 
+std::size_t utf8_len(const std::string& s) {
+    std::size_t n = 0;
+    for (const char ch : s) {
+        // 续接字节是 10xxxxxx，只数不是续接的
+        if ((static_cast<unsigned char>(ch) & 0xC0) != 0x80) ++n;
+    }
+    return n;
+}
+
+std::size_t utf8_char_len(unsigned char lead) {
+    if ((lead & 0xE0) == 0xC0) return 2;
+    if ((lead & 0xF0) == 0xE0) return 3;
+    if ((lead & 0xF8) == 0xF0) return 4;
+    return 1;
+}
+
 std::string truncate_utf8(const std::string& s, std::size_t n) {
     std::size_t chars = 0, i = 0;
     while (i < s.size() && chars < n) {
-        const unsigned char c = static_cast<unsigned char>(s[i]);
-        // 续接字节是 10xxxxxx，起始字节的高位说明这个字符占几字节
-        std::size_t len = 1;
-        if ((c & 0xE0) == 0xC0)      len = 2;
-        else if ((c & 0xF0) == 0xE0) len = 3;
-        else if ((c & 0xF8) == 0xF0) len = 4;
+        const std::size_t len =
+            utf8_char_len(static_cast<unsigned char>(s[i]));
         if (i + len > s.size()) break;  // 尾部本来就是残的，就到这儿
         i += len;
         ++chars;
