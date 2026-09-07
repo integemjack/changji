@@ -20,20 +20,6 @@ namespace changji::doctor {
 namespace fs = std::filesystem;
 using json = nlohmann::json;
 
-const char* to_string(Level level) {
-    switch (level) {
-        case Level::OK:   return "ok";
-        case Level::WARN: return "warn";
-        case Level::FAIL: return "fail";
-    }
-    return "fail";
-}
-
-bool Report::can_run() const {
-    return std::none_of(checks.begin(), checks.end(),
-                        [](const Check& c) { return c.level == Level::FAIL; });
-}
-
 namespace {
 
 /// 把 http://host:port/path 拆成 httplib 要的两段。

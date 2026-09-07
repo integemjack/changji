@@ -73,6 +73,7 @@ add_executable(changji
     src/util/proc.cpp
     src/config/settings.cpp
     src/config/writeback.cpp
+    src/config/runtime.cpp
     src/doctor/doctor.cpp
     src/models/shot.cpp
     src/models/character.cpp
@@ -99,6 +100,8 @@ add_executable(changji
     src/http/batch.cpp
     src/http/episodes.cpp
     src/http/llm_info.cpp
+    src/http/config_api.cpp
+    src/http/config_api_doctor.cpp
     src/http/reset.cpp
     src/http/server.cpp
 )
@@ -225,6 +228,7 @@ if(CHANGJI_BUILD_TESTS)
         tests/unit/test_episodes.cpp
         tests/unit/test_llm_info.cpp
         tests/unit/test_writeback.cpp
+        tests/unit/test_config_api.cpp
         src/models/shot.cpp
         src/models/character.cpp
         src/models/project.cpp
@@ -241,6 +245,8 @@ if(CHANGJI_BUILD_TESTS)
         src/llm/client.cpp
         src/config/settings.cpp
         src/config/writeback.cpp
+        src/config/runtime.cpp
+    src/config/runtime.cpp
         src/http/readonly.cpp
         src/http/editing.cpp
         src/http/editing_assets.cpp
@@ -252,6 +258,7 @@ if(CHANGJI_BUILD_TESTS)
         src/http/batch.cpp
         src/http/episodes.cpp
         src/http/llm_info.cpp
+        src/http/config_api.cpp
         src/http/reset.cpp
     )
     target_include_directories(changji_tests PRIVATE src "${ASIO_INCLUDE_DIR}")

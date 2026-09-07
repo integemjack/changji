@@ -1,0 +1,424 @@
+// 连接设置和运行参数两组接口的测试。
+//
+// 这三个是阶段 1 漏掉的，路由表核对时找出来的。
+//
+// 没走对拍语料，理由和两个长任务一样：Python 那边这几个接口改的是
+// **进程内的全局状态**（settings 对象、_TIER_OVERRIDES 字典），
+// TestClient 录到的只是响应体，录不到"改完之后进程里是什么样"。
+// 而那恰恰是这几个接口的全部意义。所以直接对着行为写断言，
+// 注释里标了每条对应 Python 的哪一段。
+
+#include <doctest/doctest.h>
+
+#include <filesystem>
+#include <fstream>
+#include <sstream>
+#include <string>
+
+#include <nlohmann/json.hpp>
+
+#include "config/runtime.hpp"
+#include "config/settings.hpp"
+#include "http/config_api.hpp"
+#include "models/hardware.hpp"
+#include "pipeline/jobs.hpp"
+#include "util/paths.hpp"
+
+using namespace changji;
+namespace fs = std::filesystem;
+using json = nlohmann::json;
+
+namespace {
+
+/// 假体检。真体检会去连推理服务和大模型，连不上时每一项要等一个超时。
+http::DoctorFn fake_doctor(bool can_run = true) {
+    return [can_run](const config::Settings&) {
+        doctor::Report r;
+        r.checks.push_back(doctor::Check{
+            "假的", can_run ? doctor::Level::OK : doctor::Level::FAIL, "细节", ""});
+        return r;
+    };
+}
+
+config::Settings baseline() {
+    config::Settings s;
+    s.comfy.base_url = "http://127.0.0.1:8188";
+    s.llm.base_url = "http://127.0.0.1:11434/v1";
+    s.llm.model = "qwen3:14b";
+    s.llm.api_key = "sk-abcdefgh";
+    s.llm.temperature = 0.7;
+    s.tts.backend = "comfy";
+    s.assembly.fps = 24;
+    s.assembly.crf = 18;
+    s.gates.enabled = true;
+    return s;
+}
+
+/// 每条用例前把全局 runtime 摆回基线。它是单例，用例之间会串。
+void reset_runtime() {
+    config::runtime().replace(baseline());
+    config::runtime().clear_tier_overrides();
+}
+
+std::string slurp(const fs::path& p) {
+    std::ifstream in(p, std::ios::binary);
+    if (!in) return {};
+    std::ostringstream ss;
+    ss << in.rdbuf();
+    return ss.str();
+}
+
+}  // namespace
+
+TEST_CASE("读连接设置时不回传密钥明文") {
+    // 回明文的话它会进浏览器的网络面板、进前端的状态、进任何一次截图。
+    reset_runtime();
+    const auto r = http::guard([] { return http::get_connections(); });
+    REQUIRE(r.status == 200);
+
+    CHECK(r.body.at("llm_api_key_set") == true);
+    CHECK(r.body.at("llm_api_key_hint") == "sk***gh");
+    // 整个响应体里不能出现完整的密钥
+    CHECK(r.body.dump().find("sk-abcdefgh") == std::string::npos);
+
+    SUBCASE("短密钥整个遮掉") {
+        // 掐头去尾之后剩不下几个字符，等于把密钥泄了一半
+        config::Settings s = baseline();
+        s.llm.api_key = "abc";
+        config::runtime().replace(s);
+        const auto r2 = http::guard([] { return http::get_connections(); });
+        CHECK(r2.body.at("llm_api_key_hint") == "***");
+        CHECK(r2.body.dump().find("abc") == std::string::npos);
+    }
+
+    SUBCASE("没设密钥") {
+        config::Settings s = baseline();
+        s.llm.api_key = "";
+        config::runtime().replace(s);
+        const auto r2 = http::guard([] { return http::get_connections(); });
+        CHECK(r2.body.at("llm_api_key_set") == false);
+    }
+}
+
+TEST_CASE("读连接设置的字段形状") {
+    reset_runtime();
+    const auto r = http::guard([] { return http::get_connections(); });
+    for (const char* k : {"comfy_base_url", "comfy_job_timeout_s",
+                          "comfy_max_retries", "llm_base_url", "llm_model",
+                          "llm_api_key_set", "llm_api_key_hint",
+                          "llm_temperature", "tts_backend", "tts_base_url",
+                          "tts_engine", "vram_gb_override", "config_file",
+                          "env_locked"}) {
+        CAPTURE(k);
+        CHECK(r.body.contains(k));
+    }
+    // 没设时是 null 不是 0——0 是个合法的显存值，混起来分不清
+    CHECK(r.body.at("vram_gb_override").is_null());
+    // 空的 tts_base_url 回空串不是 null，Python 那边是 `or ""`
+    CHECK(r.body.at("tts_base_url") == "");
+}
+
+TEST_CASE("改连接设置") {
+    reset_runtime();
+    const auto r = http::guard([] {
+        return http::post_connections(
+            json{{"patch", {{"llm_model", "新模型"},
+                            {"llm_base_url", "http://别处/v1"}}},
+                 {"persist", false}},
+            fake_doctor());
+    });
+    REQUIRE(r.status == 200);
+
+    // changed 里只有真的变了的
+    const auto changed = r.body.at("changed").get<std::vector<std::string>>();
+    CHECK(changed.size() == 2);
+    // 标签是中文。回执用英文字段名的话，用户得自己对着界面猜是哪一项。
+    const auto labels = r.body.at("labels").get<std::vector<std::string>>();
+    CHECK(labels.size() == 2);
+    for (const auto& l : labels) CHECK(l.find('_') == std::string::npos);
+
+    // 立刻生效
+    const config::Settings s = config::runtime().snapshot();
+    CHECK(s.llm.model == "新模型");
+    CHECK(s.llm.base_url == "http://别处/v1");
+
+    // 没勾写回就不写文件
+    CHECK(r.body.at("saved_to").is_null());
+    // 体检结果带回来了
+    CHECK(r.body.at("can_run") == true);
+    CHECK(r.body.at("checks").is_array());
+}
+
+TEST_CASE("没变的字段不算 changed") {
+    // 算进去的话界面会显示"已应用 模型名"，而用户什么都没改——
+    // 他会以为自己误触了什么。
+    reset_runtime();
+    const auto r = http::guard([] {
+        return http::post_connections(
+            json{{"patch", {{"llm_model", "qwen3:14b"}}}, {"persist", false}},
+            fake_doctor());
+    });
+    REQUIRE(r.status == 200);
+    CHECK(r.body.at("changed").empty());
+    CHECK(r.body.at("saved_to").is_null());
+}
+
+TEST_CASE("一项都没给要报错") {
+    reset_runtime();
+    const auto r = http::guard([] {
+        return http::post_connections(json{{"patch", json::object()}},
+                                      fake_doctor());
+    });
+    CHECK(r.status == 400);
+    CHECK(r.body.at("detail") == "没有要改的项");
+
+    SUBCASE("全填 null 也算没给") {
+        // 对应 pydantic 的 exclude_none=True
+        const auto r2 = http::guard([] {
+            return http::post_connections(
+                json{{"patch", {{"llm_model", nullptr}}}}, fake_doctor());
+        });
+        CHECK(r2.status == 400);
+    }
+}
+
+TEST_CASE("配音后端的两条约束") {
+    reset_runtime();
+    const auto try_tts = [](const json& patch) {
+        return http::guard([&] {
+            return http::post_connections(
+                json{{"patch", patch}, {"persist", false}}, fake_doctor());
+        });
+    };
+
+    CHECK(try_tts(json{{"tts_backend", "别的"}}).status == 400);
+
+    // 选 http 就必须填地址。不填的话跑到配音那一步才报错，
+    // 而那时候前面几十分钟的渲染已经跑完了。
+    const auto r = try_tts(json{{"tts_backend", "http"}});
+    CHECK(r.status == 400);
+    CHECK(r.body.at("detail") == "配音后端选 http 就必须填地址");
+
+    CHECK(try_tts(json{{"tts_backend", "http"},
+                       {"tts_base_url", "http://tts:9000"}}).status == 200);
+}
+
+TEST_CASE("tts_base_url 填空串当作没配") {
+    // 留一个空串的话，backend 选 http 时会拿它去连，
+    // 报的错是"连不上 "——后面什么都没有。
+    reset_runtime();
+    {
+        config::Settings s = baseline();
+        s.tts.base_url = "http://old:9000";
+        config::runtime().replace(s);
+    }
+    const auto r = http::guard([] {
+        return http::post_connections(
+            json{{"patch", {{"tts_base_url", ""}}}, {"persist", false}},
+            fake_doctor());
+    });
+    REQUIRE(r.status == 200);
+    CHECK_FALSE(config::runtime().snapshot().tts.base_url.has_value());
+}
+
+TEST_CASE("写回配置文件") {
+    reset_runtime();
+    const fs::path dir =
+        fs::temp_directory_path() / paths::from_utf8("changji_连接写回");
+    std::error_code ec;
+    fs::remove_all(dir, ec);
+    fs::create_directories(dir, ec);
+
+    // user_config_path() 指向真实的用户目录，测试里不该动它。
+    // 所以这里只验"写回开关关掉时不写"，写回本身由 test_writeback 覆盖。
+    const auto r = http::guard([] {
+        return http::post_connections(
+            json{{"patch", {{"llm_model", "不写回"}}}, {"persist", false}},
+            fake_doctor());
+    });
+    REQUIRE(r.status == 200);
+    CHECK(r.body.at("saved_to").is_null());
+    CHECK(config::runtime().snapshot().llm.model == "不写回");
+
+    fs::remove_all(dir, ec);
+}
+
+TEST_CASE("正在跑的时候不让换机器") {
+    // 前半集是一台机器出的，后半集是另一台，画风对不上。
+    reset_runtime();
+    pipeline::jobs().cancel(pipeline::JobKind::Run);
+    pipeline::jobs().wait_idle();
+
+    std::atomic<bool> release{false};
+    pipeline::jobs().start(pipeline::JobKind::Run, "ep01",
+                           [&release](pipeline::JobProgress& p) {
+                               while (!release.load() && !p.cancelled()) {
+                                   std::this_thread::sleep_for(
+                                       std::chrono::milliseconds(1));
+                               }
+                           });
+
+    const auto r = http::guard([] {
+        return http::post_connections(
+            json{{"patch", {{"llm_model", "x"}}}}, fake_doctor());
+    });
+    CHECK(r.status == 409);
+    CHECK(r.body.at("detail") == "正在跑，这时候换机器会把这一集跑坏");
+
+    SUBCASE("改参数也不让") {
+        const auto r2 = http::guard([] {
+            return http::post_settings(json{{"fps", 30}});
+        });
+        CHECK(r2.status == 409);
+        CHECK(r2.body.at("detail") == "正在跑，改参数会让这一集前后不一致");
+    }
+
+    release = true;
+    pipeline::jobs().cancel(pipeline::JobKind::Run);
+    pipeline::jobs().wait_idle();
+}
+
+TEST_CASE("改运行参数：两种请求写法都收") {
+    // 老写法是把字段直接摊在请求体里，新写法包在 patch 里。
+    // 只收一种的话，刷新慢一步的页面点一下就报 422。
+    reset_runtime();
+    {
+        const auto r = http::guard([] {
+            return http::post_settings(json{{"fps", 30}});
+        });
+        REQUIRE(r.status == 200);
+        CHECK(config::runtime().snapshot().assembly.fps == 30);
+    }
+    reset_runtime();
+    {
+        const auto r = http::guard([] {
+            return http::post_settings(
+                json{{"patch", {{"fps", 25}}}, {"persist", false}});
+        });
+        REQUIRE(r.status == 200);
+        CHECK(config::runtime().snapshot().assembly.fps == 25);
+    }
+}
+
+TEST_CASE("改运行参数：三组字段都能改") {
+    reset_runtime();
+    const auto r = http::guard([] {
+        return http::post_settings(json{
+            {"fps", 30}, {"crf", 20}, {"subtitle_font", "思源黑体"},
+            {"max_attempts_per_shot", 5}, {"gates_enabled", false},
+            {"tts_tolerance_s", 0.5},
+        });
+    });
+    REQUIRE(r.status == 200);
+    const config::Settings s = config::runtime().snapshot();
+    CHECK(s.assembly.fps == 30);
+    CHECK(s.assembly.crf == 20);
+    CHECK(s.assembly.subtitle_font == "思源黑体");
+    CHECK(s.gates.max_attempts_per_shot == 5);
+    CHECK(s.gates.enabled == false);
+    CHECK(s.tts.tolerance_s == doctest::Approx(0.5));
+    CHECK(r.body.at("changed").size() == 6);
+}
+
+TEST_CASE("分辨率必须是 32 的倍数") {
+    // 否则 Wan 的潜空间对不齐，出来的图是错位的。
+    reset_runtime();
+    const auto try_wh = [](const json& body) {
+        return http::guard([&] { return http::post_settings(body); }).status;
+    };
+    CHECK(try_wh(json{{"draft_width", 500}}) == 400);
+    CHECK(try_wh(json{{"draft_height", 500}}) == 400);
+    CHECK(try_wh(json{{"draft_width", 512}}) == 200);
+}
+
+TEST_CASE("画质档位真的生效，这是有意和 Python 不一样") {
+    // Python 那边有个 _TIER_OVERRIDES 字典，**只写不读**——
+    // 用户改了草稿分辨率，接口回「已应用 草稿宽度」，
+    // 而那个值存进一个没有任何地方读的字典里，实际什么都没发生。
+    //
+    // 这里让它真的生效。不生效的话，这个开关是在骗用户。
+    reset_runtime();
+    const models::HardwareProfile before = config::runtime().profile();
+    const auto bit = before.tiers.find(models::Tier::DRAFT);
+    REQUIRE(bit != before.tiers.end());
+
+    const auto r = http::guard([] {
+        return http::post_settings(
+            json{{"draft_width", 512}, {"draft_height", 768},
+                 {"draft_steps", 8}});
+    });
+    REQUIRE(r.status == 200);
+
+    const models::HardwareProfile after = config::runtime().profile();
+    const auto ait = after.tiers.find(models::Tier::DRAFT);
+    REQUIRE(ait != after.tiers.end());
+    CHECK(ait->second.width == 512);
+    CHECK(ait->second.height == 768);
+    CHECK(ait->second.steps == 8);
+
+    // 成片档没被顺手改掉
+    const auto fit = after.tiers.find(models::Tier::FINAL);
+    const auto fbefore = before.tiers.find(models::Tier::FINAL);
+    REQUIRE(fit != after.tiers.end());
+    REQUIRE(fbefore != before.tiers.end());
+    CHECK(fit->second.width == fbefore->second.width);
+
+    SUBCASE("清掉之后退回探测值") {
+        config::runtime().clear_tier_overrides();
+        const auto back = config::runtime().profile();
+        CHECK(back.tiers.at(models::Tier::DRAFT).width == bit->second.width);
+    }
+}
+
+TEST_CASE("档位不写回配置文件") {
+    // 档位是按显存推出来的，写死在配置里等于把这台机器的显存刻进项目，
+    // 换台机器就不对了。所以它只在进程内生效，重启即失效。
+    reset_runtime();
+    const auto r = http::guard([] {
+        return http::post_settings(
+            json{{"patch", {{"draft_width", 512}}}, {"persist", true}});
+    });
+    REQUIRE(r.status == 200);
+    CHECK(r.body.at("changed") == json::array({"draft_width"}));
+    // 只有档位这一项，没有可写回的东西，所以不该写文件
+    CHECK(r.body.at("saved_to").is_null());
+}
+
+TEST_CASE("多余字段要拒") {
+    reset_runtime();
+    const auto r = http::guard([] {
+        return http::post_settings(json{{"patch", {{"typo", 1}}}});
+    });
+    CHECK(r.status == 422);
+    CHECK(r.body.at("detail")[0].at("type") == "extra_forbidden");
+
+    const auto r2 = http::guard([] {
+        return http::post_connections(json{{"patch", {{"typo", 1}}}},
+                                      fake_doctor());
+    });
+    CHECK(r2.status == 422);
+}
+
+TEST_CASE("类型不对要拒，而且不能改坏一半") {
+    // 半套改动比不改更糟：用户看到"已应用"但配置是残的。
+    reset_runtime();
+    const int fps_before = config::runtime().snapshot().assembly.fps;
+    const auto r = http::guard([] {
+        return http::post_settings(json{{"fps", 30}, {"crf", "不是数字"}});
+    });
+    CHECK(r.status == 422);
+    // fps 没被改掉
+    CHECK(config::runtime().snapshot().assembly.fps == fps_before);
+}
+
+TEST_CASE("校验不过要整体回滚") {
+    reset_runtime();
+    const int fps_before = config::runtime().snapshot().assembly.fps;
+    // crf 的合法范围是 0..51
+    const auto r = http::guard([] {
+        return http::post_settings(json{{"fps", 30}, {"crf", 999}});
+    });
+    CHECK(r.status == 400);
+    CHECK(config::runtime().snapshot().assembly.fps == fps_before);
+    CHECK(config::runtime().snapshot().assembly.crf == 18);
+}

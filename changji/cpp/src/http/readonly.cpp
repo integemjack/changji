@@ -57,7 +57,13 @@ json opt(const std::optional<std::string>& v) {
 }  // namespace
 
 ApiResult get_hardware(const config::Settings& settings) {
-    const HardwareProfile p = HardwareProfile::detect(settings.vram_gb_override);
+    return get_hardware(settings,
+                        HardwareProfile::detect(settings.vram_gb_override));
+}
+
+ApiResult get_hardware(const config::Settings& settings,
+                       const HardwareProfile& p) {
+    (void)settings;
     return {200, {
         {"gpu", p.gpu.has_value() ? json(p.gpu->name) : json(nullptr)},
         {"vram_gb", round1(p.vram_gb)},
@@ -67,7 +73,10 @@ ApiResult get_hardware(const config::Settings& settings) {
 }
 
 ApiResult get_settings(const config::Settings& s) {
-    const HardwareProfile p = HardwareProfile::detect(s.vram_gb_override);
+    return get_settings(s, HardwareProfile::detect(s.vram_gb_override));
+}
+
+ApiResult get_settings(const config::Settings& s, const HardwareProfile& p) {
     return {200, {
         {"tiers", tiers_json(p.tiers, /*with_seconds=*/false)},
         {"assembly", {

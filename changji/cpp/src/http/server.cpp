@@ -12,7 +12,9 @@
 #include "http/media.hpp"
 #include "http/upload.hpp"
 #include "http/readonly.hpp"
+#include "config/runtime.hpp"
 #include "http/batch.hpp"
+#include "http/config_api.hpp"
 #include "http/episodes.hpp"
 #include "http/llm_info.hpp"
 #include "http/planning.hpp"
@@ -63,6 +65,11 @@ std::string query(const crow::request& req, const char* key) {
 void run(const config::Settings& settings, const Options& opts) {
     crow::SimpleApp app;
 
+    // 起服务前先把配置放进 runtime。后面所有读配置的地方都从那里拿——
+    // /api/connections 和 /api/settings 能在运行期改它，
+    // 各处捕获一份的话，改完之后有的地方是新的有的是旧的。
+    config::runtime().replace(settings);
+
     // job 表往 WebSocket 推消息，但它不认识 WebSocket——中间靠这个回调接上。
     // 分层的好处很实在：jobs.cpp 因此不用链 Crow，单元测试才编得动。
     pipeline::jobs().set_sink(
@@ -76,7 +83,12 @@ void run(const config::Settings& settings, const Options& opts) {
         return json_response({{"ok", true}, {"service", "changji"}});
     });
 
-    CROW_ROUTE(app, "/api/doctor")([&settings] {
+    // 下面这些从 runtime 取而不是用 run() 收到的那份 settings：
+    // /api/connections 和 /api/settings 能在运行期改配置，
+    // 用捕获的那份的话，改完之后体检和硬件画像还是老的，
+    // 用户会以为改动没生效。
+    CROW_ROUTE(app, "/api/doctor")([] {
+        const auto settings = config::runtime().snapshot();
         // 体检里有三项要发网络请求，最坏情况阻塞二十多秒。
         // Crow 是线程池模型，这只占住一个工作线程，不影响其它请求。
         return json_response(to_json(doctor::run_checks(settings)));
@@ -87,18 +99,26 @@ void run(const config::Settings& settings, const Options& opts) {
     // 处理逻辑放在 readonly.cpp 里的纯函数，这里只负责取查询参数和转响应。
     // 那些函数不碰 crow 类型，单元测试能不起服务就把它们跑一遍。
 
-    CROW_ROUTE(app, "/api/hardware")([&settings] {
-        auto r = guard([&] { return get_hardware(settings); });
+    CROW_ROUTE(app, "/api/hardware")([] {
+        auto r = guard([] {
+            return get_hardware(config::runtime().snapshot(),
+                                config::runtime().profile());
+        });
         return json_response(r.body, r.status);
     });
 
-    CROW_ROUTE(app, "/api/settings")([&settings] {
-        auto r = guard([&] { return get_settings(settings); });
+    CROW_ROUTE(app, "/api/settings")([] {
+        auto r = guard([] {
+            return get_settings(config::runtime().snapshot(),
+                                config::runtime().profile());
+        });
         return json_response(r.body, r.status);
     });
 
-    CROW_ROUTE(app, "/api/projects")([&settings] {
-        auto r = guard([&] { return get_projects(settings); });
+    CROW_ROUTE(app, "/api/projects")([] {
+        auto r = guard([] {
+            return get_projects(config::runtime().snapshot());
+        });
         return json_response(r.body, r.status);
     });
 
@@ -280,7 +300,11 @@ void run(const config::Settings& settings, const Options& opts) {
     //
     // 客户端在这里造一次，三个路由共用。每个请求造一个的话，
     // 换成进程内 llama.cpp 之后就是每个请求重新加载一遍模型。
-    static llm::RemoteClient script_client(settings.llm, llm::default_http_post());
+    // 传 provider 不是拷一份配置：/api/connections 能在运行期换大模型
+    // 地址，拷一份的话改完之后这里还在往老地址发，而界面已经显示"已应用"了。
+    static llm::RemoteClient script_client(
+        [] { return config::runtime().snapshot().llm; },
+        llm::default_http_post());
 
     const auto script_route = [](auto handler) {
         return [handler](const crow::request& req) {
@@ -309,6 +333,33 @@ void run(const config::Settings& settings, const Options& opts) {
     CROW_ROUTE(app, "/api/plan").methods("POST"_method)(
         script_route(&post_plan));
 
+    // ---- 连接设置与运行参数 ----
+    //
+    // 这三个是阶段 1 漏掉的，路由表核对时找出来的——前端那次探测只发
+    // GET 请求，POST-only 的接口整片看不见。
+
+    CROW_ROUTE(app, "/api/connections")([] {
+        return json_response(get_connections().body);
+    });
+
+    CROW_ROUTE(app, "/api/connections").methods("POST"_method)(
+        [](const crow::request& req) {
+            static const auto check = default_doctor();
+            auto r = guard([&] {
+                return post_connections(json::parse(req.body, nullptr, false),
+                                        check);
+            });
+            return json_response(r.body, r.status);
+        });
+
+    CROW_ROUTE(app, "/api/settings").methods("POST"_method)(
+        [](const crow::request& req) {
+            auto r = guard([&] {
+                return post_settings(json::parse(req.body, nullptr, false));
+            });
+            return json_response(r.body, r.status);
+        });
+
     // ---- 大模型接入信息 ----
     //
     // 方案的破契约白名单里原本有这两条，理由是"进程内推理之后语义重定义"。
@@ -320,9 +371,11 @@ void run(const config::Settings& settings, const Options& opts) {
         return json_response(get_llm_providers().body);
     });
 
-    CROW_ROUTE(app, "/api/llm/models")([&settings] {
+    CROW_ROUTE(app, "/api/llm/models")([] {
         static const auto fetch = default_http_get();
-        auto r = guard([&] { return get_llm_models(settings, fetch); });
+        auto r = guard([&] {
+            return get_llm_models(config::runtime().snapshot(), fetch);
+        });
         return json_response(r.body, r.status);
     });
 
@@ -384,8 +437,9 @@ void run(const config::Settings& settings, const Options& opts) {
     // 客户端换成 shared_ptr：任务比这次请求活得久，
     // 上面那个 static 引用在这里不够安全——将来换成按项目建的客户端时，
     // 引用会在任务还跑着的时候失效。
-    static auto batch_client =
-        std::make_shared<llm::RemoteClient>(settings.llm, llm::default_http_post());
+    static auto batch_client = std::make_shared<llm::RemoteClient>(
+        llm::ConfigProvider([] { return config::runtime().snapshot().llm; }),
+        llm::default_http_post());
 
     const auto batch_route = [](auto handler) {
         return [handler](const crow::request& req) {

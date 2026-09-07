@@ -16,6 +16,7 @@
 #include <nlohmann/json.hpp>
 
 #include "config/settings.hpp"
+#include "models/hardware.hpp"
 
 namespace changji::http {
 
@@ -97,6 +98,17 @@ inline ApiError unprocessable_top(const std::string& key,
 
 ApiResult get_hardware(const config::Settings& settings);
 ApiResult get_settings(const config::Settings& settings);
+
+/// 同上，但**画像由调用方给**。
+///
+/// 路由层要传 runtime().profile()——那份应用了 /api/settings 改过的
+/// 画质档位。上面那两个自己 detect() 一遍，会把覆盖绕过去，
+/// 表现是用户改了草稿分辨率，接口回"已应用"，但 /api/hardware 还是老值。
+/// 这个坑实机验证时撞到过：单元测试直接调 runtime().profile() 所以没发现。
+ApiResult get_hardware(const config::Settings& settings,
+                       const models::HardwareProfile& profile);
+ApiResult get_settings(const config::Settings& settings,
+                       const models::HardwareProfile& profile);
 ApiResult get_projects(const config::Settings& settings);
 ApiResult get_project(const std::string& path);
 ApiResult get_shots(const std::string& path, const std::string& episode_id);

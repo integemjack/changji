@@ -146,23 +146,29 @@ std::string explain_status(const config::LLMConfig& cfg, int status,
 
 // ---- RemoteClient ----
 
-RemoteClient::RemoteClient(config::LLMConfig cfg, HttpPost post)
+RemoteClient::RemoteClient(ConfigProvider cfg, HttpPost post)
     : cfg_(std::move(cfg)), post_(std::move(post)) {}
+
+RemoteClient::RemoteClient(config::LLMConfig cfg, HttpPost post)
+    : cfg_([cfg] { return cfg; }), post_(std::move(post)) {}
 
 std::string RemoteClient::complete(const Request& req,
                                    pipeline::CancelToken& tok) {
     if (tok.cancelled()) throw LlmError("已取消");
 
-    const std::string url = cfg_.base_url + "/chat/completions";
+    // 每次取一份当前配置。中途 /api/connections 换了地址的话，
+    // 下一次调用就走新地址——这正是那个接口的意义。
+    const config::LLMConfig cfg = cfg_();
+    const std::string url = cfg.base_url + "/chat/completions";
     const std::map<std::string, std::string> headers = {
-        {"Authorization", "Bearer " + cfg_.api_key},
+        {"Authorization", "Bearer " + cfg.api_key},
         {"Content-Type", "application/json"},
     };
 
-    HttpResponse r = post_(url, build_payload(cfg_, req, true).dump(), headers,
-                           cfg_.timeout_s);
+    HttpResponse r = post_(url, build_payload(cfg, req, true).dump(), headers,
+                           cfg.timeout_s);
     if (r.transport_error.has_value()) {
-        throw LlmError("连不上大模型服务（" + cfg_.base_url + "）。\n" +
+        throw LlmError("连不上大模型服务（" + cfg.base_url + "）。\n" +
                        *r.transport_error);
     }
 
@@ -174,15 +180,15 @@ std::string RemoteClient::complete(const Request& req,
         // 400、404、422 都见过，判断哪个是"不支持"哪个是"真错了"不现实。
         // 代价是真的地址错了会多发一次请求。
         if (tok.cancelled()) throw LlmError("已取消");
-        r = post_(url, build_payload(cfg_, req, false).dump(), headers,
-                  cfg_.timeout_s);
+        r = post_(url, build_payload(cfg, req, false).dump(), headers,
+                  cfg.timeout_s);
         if (r.transport_error.has_value()) {
-            throw LlmError("连不上大模型服务（" + cfg_.base_url + "）。\n" +
+            throw LlmError("连不上大模型服务（" + cfg.base_url + "）。\n" +
                            *r.transport_error);
         }
     }
 
-    if (r.status >= 400) throw LlmError(explain_status(cfg_, r.status, r.body));
+    if (r.status >= 400) throw LlmError(explain_status(cfg, r.status, r.body));
     if (tok.cancelled()) throw LlmError("已取消");
     return extract_content(r.body);
 }

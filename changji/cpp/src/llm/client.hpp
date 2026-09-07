@@ -97,14 +97,23 @@ std::string extract_content(const std::string& raw_body);
 std::string explain_status(const config::LLMConfig& cfg, int status,
                            const std::string& body);
 
+/// 每次调用时取一份当前配置。
+///
+/// **不能在构造时拷一份。** /api/connections 能在运行期换大模型地址，
+/// 拷一份的话改完之后剧本接口还在往老地址发，而界面已经显示"已应用"了。
+using ConfigProvider = std::function<config::LLMConfig()>;
+
 /// 远端 OpenAI 兼容服务。
 class RemoteClient : public Client {
 public:
+    explicit RemoteClient(ConfigProvider cfg, HttpPost post);
+    /// 配置固定不变的版本。测试用，生产代码应该传 provider。
     RemoteClient(config::LLMConfig cfg, HttpPost post);
+
     std::string complete(const Request& req, pipeline::CancelToken& tok) override;
 
 private:
-    config::LLMConfig cfg_;
+    ConfigProvider cfg_;
     HttpPost post_;
 };
 
