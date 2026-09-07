@@ -81,6 +81,7 @@ add_executable(changji
     src/http/readonly.cpp
     src/http/editing.cpp
     src/http/editing_assets.cpp
+    src/http/editing_batch.cpp
     src/http/server.cpp
 )
 
@@ -190,6 +191,7 @@ if(CHANGJI_BUILD_TESTS)
         tests/unit/test_readonly.cpp
         tests/unit/test_editing.cpp
         tests/unit/test_editing_assets.cpp
+        tests/unit/test_editing_batch.cpp
         src/models/shot.cpp
         src/models/character.cpp
         src/models/project.cpp
@@ -200,6 +202,7 @@ if(CHANGJI_BUILD_TESTS)
         src/http/readonly.cpp
         src/http/editing.cpp
         src/http/editing_assets.cpp
+        src/http/editing_batch.cpp
     )
     target_include_directories(changji_tests PRIVATE src "${ASIO_INCLUDE_DIR}")
     target_link_libraries(changji_tests PRIVATE

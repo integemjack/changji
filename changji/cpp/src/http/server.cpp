@@ -120,6 +120,21 @@ void run(const config::Settings& settings, const Options& opts) {
         return json_response(r.body, r.status);
     });
 
+    CROW_ROUTE(app, "/api/shots/batch").methods("POST"_method)([](const crow::request& req) {
+        auto r = guard([&] { return post_shots_batch(json::parse(req.body, nullptr, false)); });
+        return json_response(r.body, r.status);
+    });
+
+    CROW_ROUTE(app, "/api/shots/reorder").methods("POST"_method)([](const crow::request& req) {
+        auto r = guard([&] { return post_shots_reorder(json::parse(req.body, nullptr, false)); });
+        return json_response(r.body, r.status);
+    });
+
+    CROW_ROUTE(app, "/api/shots/link_locations").methods("POST"_method)([](const crow::request& req) {
+        auto r = guard([&] { return post_shots_link_locations(json::parse(req.body, nullptr, false)); });
+        return json_response(r.body, r.status);
+    });
+
     // ---- WebSocket ----
     //
     // 阶段 0 只验证连接、订阅和广播这条链路是通的。

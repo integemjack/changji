@@ -182,8 +182,12 @@ TEST_CASE("枚举取值非法要被拒绝，不能静默回落") {
 
     // 而且盘上的景别没被改
     const models::ProjectStore store(root);
-    const auto* sh = store.load_project().episode_by_id("ep01")
-                         ->shot_by_id("ep01_s03_sh007");
+    // 必须先把 Project 存进具名变量。写成
+    // store.load_project().episode_by_id(...)->shot_by_id(...) 是悬空指针：
+    // load_project 按值返回临时对象，整个表达式结束时它就析构了，
+    // 而 episode_by_id 返回的是指向它内部的指针。
+    const models::Project p = store.load_project();
+    const auto* sh = p.episode_by_id("ep01")->shot_by_id("ep01_s03_sh007");
     REQUIRE(sh != nullptr);
     CHECK(sh->shot_size == models::ShotSize::MCU);  // 原值
 

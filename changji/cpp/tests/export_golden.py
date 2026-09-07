@@ -840,3 +840,83 @@ for i, case in enumerate(asset_cases):
 shutil.rmtree(ASSET_EDIT_ROOT, ignore_errors=True)
 dump("endpoints_asset_edit", {"cases": asset_results})
 print("\n资产编辑语料写好了")
+
+
+# ══════════════════════════════════════════════════════════════════════
+# 阶段 3：批量编辑接口
+# ══════════════════════════════════════════════════════════════════════
+
+BATCH_ROOT = OUT / "批量用例"
+if BATCH_ROOT.exists():
+    shutil.rmtree(BATCH_ROOT)
+BATCH_ROOT.mkdir(parents=True)
+
+# ep01 里两个镜头：ep01_s03_sh007 (order=6, audio_done)、ep01_s01_sh001 (order=0, planned)
+SH_A = "ep01_s03_sh007"
+SH_B = "ep01_s01_sh001"
+
+batch_cases = [
+    {"n": "整集重置", "url": "/api/shots/batch",
+     "body": {"episode_id": "ep01", "action": "reset"}},
+    {"n": "只重置一个", "url": "/api/shots/batch",
+     "body": {"episode_id": "ep01", "action": "reset", "shot_ids": [SH_A]}},
+    {"n": "整集加锁", "url": "/api/shots/batch",
+     "body": {"episode_id": "ep01", "action": "lock"}},
+    {"n": "整集清闸门备注", "url": "/api/shots/batch",
+     "body": {"episode_id": "ep01", "action": "clear_notes"}},
+    {"n": "不认识的操作_400", "url": "/api/shots/batch",
+     "body": {"episode_id": "ep01", "action": "explode"}},
+    {"n": "镜头不存在_404", "url": "/api/shots/batch",
+     "body": {"episode_id": "ep01", "action": "reset", "shot_ids": ["no_such"]}},
+    {"n": "剧集不存在_404", "url": "/api/shots/batch",
+     "body": {"episode_id": "ep99", "action": "reset"}},
+    {"n": "重排_对调", "url": "/api/shots/reorder",
+     "body": {"episode_id": "ep01", "shot_ids": [SH_A, SH_B]}},
+    {"n": "重排_保持原序", "url": "/api/shots/reorder",
+     "body": {"episode_id": "ep01", "shot_ids": [SH_B, SH_A]}},
+    {"n": "重排_有重复_400", "url": "/api/shots/reorder",
+     "body": {"episode_id": "ep01", "shot_ids": [SH_A, SH_A]}},
+    {"n": "重排_少一个_400", "url": "/api/shots/reorder",
+     "body": {"episode_id": "ep01", "shot_ids": [SH_A]}},
+    {"n": "重排_多一个_400", "url": "/api/shots/reorder",
+     "body": {"episode_id": "ep01", "shot_ids": [SH_A, SH_B, "extra_one"]}},
+    {"n": "接场景_整个项目", "url": "/api/shots/link_locations",
+     "body": {"episode_id": ""}},
+    {"n": "接场景_指定集", "url": "/api/shots/link_locations",
+     "body": {"episode_id": "ep01"}},
+]
+
+batch_results = []
+for i, case in enumerate(batch_cases):
+    root = BATCH_ROOT / f"b{i:02d}"
+    shutil.copytree(PROJ_ROOT, root)
+    body = {"project": str(root)}
+    body.update(case["body"])
+    resp = client.post(case["url"], json=body)
+
+    shots_after = None
+    if resp.status_code == 200:
+        st = ProjectStore(root)
+        ep = st.load_project().episode_by_id("ep01")
+        shots_after = [
+            {"shot_id": s.shot_id, "order": s.order, "status": s.status.value,
+             "location_id": s.location_id, "gate_notes": s.gate_notes,
+             "attempts": s.attempts}
+            for s in ep.shots
+        ]
+
+    b = resp.json()
+    d = b.get("detail") if isinstance(b, dict) else None
+    shape_only = isinstance(d, str) and "validation error for" in d
+
+    batch_results.append({
+        "name": case["n"], "url": case["url"], "req": case["body"],
+        "status": resp.status_code, "body": b,
+        "compare": "shape" if shape_only else "full",
+        "shots_after": shots_after,
+    })
+    print(f"  {case['n']:20s} {case['url']:28s} -> {resp.status_code}")
+
+shutil.rmtree(BATCH_ROOT, ignore_errors=True)
+dump("endpoints_batch_edit", {"cases": batch_results})
+print("\n批量编辑语料写好了")

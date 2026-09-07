@@ -111,8 +111,8 @@ TEST_CASE("资产编辑接口与 Python 逐条对拍") {
         // 镜头状态也要一致——reset_shots 的数字对了不代表真的写进去了
         if (!c.at("shot_status_after").is_null()) {
             const models::ProjectStore store(root);
-            const auto* sh = store.load_project().episode_by_id("ep01")
-                                 ->shot_by_id("ep01_s03_sh007");
+            const models::Project p = store.load_project();
+            const auto* sh = p.episode_by_id("ep01")->shot_by_id("ep01_s03_sh007");
             REQUIRE(sh != nullptr);
             CHECK(std::string(models::to_string(sh->status)) ==
                   c.at("shot_status_after").get<std::string>());
@@ -143,8 +143,8 @@ TEST_CASE("提交同样的值不该触发重跑") {
     CHECK(r.body.at("reset_shots").get<int>() == 0);
 
     // 那个原本 audio_done 的镜头不该被动过
-    const auto* sh = store.load_project().episode_by_id("ep01")
-                         ->shot_by_id("ep01_s03_sh007");
+    const models::Project p = store.load_project();
+    const auto* sh = p.episode_by_id("ep01")->shot_by_id("ep01_s03_sh007");
     REQUIRE(sh != nullptr);
     CHECK(sh->status == models::ShotStatus::AUDIO_DONE);
 
@@ -171,8 +171,8 @@ TEST_CASE("重置跳过已锁定的镜头") {
     REQUIRE(r.status == 200);
 
     const models::ProjectStore store(root);
-    const auto* sh = store.load_project().episode_by_id("ep01")
-                         ->shot_by_id("ep01_s03_sh007");
+    const models::Project p = store.load_project();
+    const auto* sh = p.episode_by_id("ep01")->shot_by_id("ep01_s03_sh007");
     REQUIRE(sh != nullptr);
     CHECK(sh->status == models::ShotStatus::LOCKED);
 
