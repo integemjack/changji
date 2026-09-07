@@ -2,7 +2,10 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cerrno>
 #include <cstdlib>
+#include <utility>
+#include <vector>
 
 #include "models/project.hpp"
 #include "util/paths.hpp"
@@ -42,54 +45,101 @@ MediaTarget resolve_media(const std::string& project_path, const std::string& re
     return out;
 }
 
-std::optional<ByteRange> parse_range(const std::string& header,
-                                     std::uint64_t file_size) {
-    if (file_size == 0) return std::nullopt;
+namespace {
 
-    // 只认 "bytes=" 开头
-    const std::string prefix = "bytes=";
-    if (header.compare(0, prefix.size(), prefix) != 0) return std::nullopt;
-    std::string spec = header.substr(prefix.size());
+/// Python 的 `int()`：可以带正负号，前后空白已经在调用方剥掉了。
+/// 解不出来返回 false，对应 Starlette 里那个 `except ValueError: continue`。
+bool parse_int(const std::string& s, long long& out) {
+    if (s.empty()) return false;
+    std::size_t i = 0;
+    if (s[0] == '+' || s[0] == '-') i = 1;
+    if (i >= s.size()) return false;
+    for (std::size_t k = i; k < s.size(); ++k) {
+        if (std::isdigit(static_cast<unsigned char>(s[k])) == 0) return false;
+    }
+    errno = 0;
+    char* end = nullptr;
+    const long long v = std::strtoll(s.c_str(), &end, 10);
+    // Python 的 int 没有上限，我们有。超了就当解不出来——
+    // 真实请求里不会出现二十位的数字，而静默截断会让越界判定错掉。
+    if (errno == ERANGE || end != s.c_str() + s.size()) return false;
+    out = v;
+    return true;
+}
 
-    // 多区间不支持，按整文件回。浏览器的 <video> 不会发这种。
-    if (spec.find(',') != std::string::npos) return std::nullopt;
+std::string trim(const std::string& s) {
+    std::size_t b = 0, e = s.size();
+    while (b < e && std::isspace(static_cast<unsigned char>(s[b])) != 0) ++b;
+    while (e > b && std::isspace(static_cast<unsigned char>(s[e - 1])) != 0) --e;
+    return s.substr(b, e - b);
+}
 
-    const std::size_t dash = spec.find('-');
-    if (dash == std::string::npos) return std::nullopt;
+}  // namespace
 
-    const std::string first_s = spec.substr(0, dash);
-    const std::string last_s = spec.substr(dash + 1);
+RangeParse parse_range(const std::string& header, std::uint64_t file_size) {
+    const std::size_t eq = header.find('=');
+    if (eq == std::string::npos) return {RangeVerdict::Malformed, {}};
 
-    const auto all_digits = [](const std::string& s) {
-        return !s.empty() && std::all_of(s.begin(), s.end(), [](unsigned char c) {
-            return std::isdigit(c) != 0;
-        });
-    };
+    std::string units = trim(header.substr(0, eq));
+    std::transform(units.begin(), units.end(), units.begin(), [](unsigned char c) {
+        return static_cast<char>(std::tolower(c));
+    });
+    if (units != "bytes") return {RangeVerdict::Malformed, {}};
 
-    ByteRange r;
-    if (first_s.empty()) {
-        // "bytes=-500" —— 最后 500 字节
-        if (!all_digits(last_s)) return std::nullopt;
-        const std::uint64_t n = std::strtoull(last_s.c_str(), nullptr, 10);
-        if (n == 0) return std::nullopt;
-        r.first = n >= file_size ? 0 : file_size - n;
-        r.last = file_size - 1;
-    } else {
-        if (!all_digits(first_s)) return std::nullopt;
-        r.first = std::strtoull(first_s.c_str(), nullptr, 10);
-        if (last_s.empty()) {
-            // "bytes=100-" —— 从 100 到末尾。播放器拖进度条发的就是这种。
-            r.last = file_size - 1;
+    const std::string rest = header.substr(eq + 1);
+    const auto size = static_cast<long long>(file_size);
+
+    // 逐段解析。**解不出来的段是"跳过"不是"报错"**，这是 Starlette 的
+    // 做法；全都跳过了才算语法不认识。
+    std::vector<std::pair<long long, long long>> ranges;  // [start, end)
+    std::size_t pos = 0;
+    while (pos <= rest.size()) {
+        const std::size_t comma = rest.find(',', pos);
+        const std::string part =
+            trim(rest.substr(pos, comma == std::string::npos ? std::string::npos
+                                                             : comma - pos));
+        pos = comma == std::string::npos ? rest.size() + 1 : comma + 1;
+        if (part.empty() || part == "-") continue;
+        const std::size_t dash = part.find('-');
+        if (dash == std::string::npos) continue;
+
+        const std::string first_s = trim(part.substr(0, dash));
+        const std::string last_s = trim(part.substr(dash + 1));
+
+        long long start = 0;
+        long long end = size;
+        if (first_s.empty()) {
+            // "bytes=-500"：末尾 500 字节。注意 Python 允许 int("-5")，
+            // 于是 "bytes=--5" 算出来的起点比文件还大，最后判 416 而不是 400。
+            long long n = 0;
+            if (!parse_int(last_s, n)) continue;
+            start = size - n > 0 ? size - n : 0;
         } else {
-            if (!all_digits(last_s)) return std::nullopt;
-            r.last = std::strtoull(last_s.c_str(), nullptr, 10);
+            if (!parse_int(first_s, start)) continue;
+            long long e = 0;
+            if (!last_s.empty() && parse_int(last_s, e) && e < size) {
+                end = e + 1;
+            } else if (!last_s.empty() && !parse_int(last_s, e)) {
+                continue;  // "bytes=0-abc"：整段跳过
+            }
         }
+        ranges.emplace_back(start, end);
     }
 
-    if (r.first > r.last) return std::nullopt;
-    if (r.first >= file_size) return std::nullopt;  // 起点越界，调用方应回 416
-    if (r.last >= file_size) r.last = file_size - 1;
-    return r;
+    if (ranges.empty()) return {RangeVerdict::Malformed, {}};
+    for (const auto& [start, end] : ranges) {
+        if (start < 0 || start >= size) return {RangeVerdict::NotSatisfiable, {}};
+    }
+    for (const auto& [start, end] : ranges) {
+        if (start >= end) return {RangeVerdict::Malformed, {}};
+    }
+    // 多区间：见头文件里那段"有意的偏差"。
+    if (ranges.size() > 1) return {RangeVerdict::Ignore, {}};
+
+    ByteRange r;
+    r.first = static_cast<std::uint64_t>(ranges[0].first);
+    r.last = static_cast<std::uint64_t>(ranges[0].second - 1);
+    return {RangeVerdict::Ok, r};
 }
 
 std::string content_type_for(const fs::path& p) {

@@ -391,6 +391,228 @@ int run_post(const Args& args, Tally& tally) {
     return 0;
 }
 
+/// 一次原始 GET：**不解析成 JSON**，把状态码、要比的响应头和字节原样带回来。
+///
+/// `/api/media` 回的是文件内容，前面所有模式那套"解析成 JSON 再比"
+/// 在这里一个字节都用不上。
+struct RawResponse {
+    int status = 0;
+    std::map<std::string, std::string> headers;
+    std::string body;
+    std::string error;
+};
+
+/// 只比这几个头。别的（Date、Server、Connection）两边必然不同，
+/// 而且不是契约。
+const char* const kMediaHeaders[] = {"Content-Type", "Content-Length",
+                                     "Content-Range", "Accept-Ranges"};
+
+RawResponse fetch_raw(const std::string& base, const std::string& path_with_query,
+                      const std::string& range) {
+    const auto [origin, prefix] = split_origin(base);
+    httplib::Client cli(origin);
+    cli.set_connection_timeout(10, 0);
+    cli.set_read_timeout(60, 0);
+
+    httplib::Headers hdrs;
+    if (!range.empty()) hdrs.emplace("Range", range);
+
+    RawResponse out;
+    const auto res = cli.Get(prefix + path_with_query, hdrs);
+    if (!res) {
+        out.error = "连不上：" + httplib::to_string(res.error());
+        return out;
+    }
+    out.status = res->status;
+    out.body = res->body;
+    for (const char* h : kMediaHeaders) {
+        if (res->has_header(h)) out.headers[h] = res->get_header_value(h);
+    }
+    return out;
+}
+
+/// 造一个内容确定的文件。两侧各写一份一模一样的，
+/// 这样比出来的差异只可能出在"怎么发"上，不会是"发的东西本来就不同"。
+bool write_blob(const fs::path& file, std::size_t size) {
+    std::error_code ec;
+    fs::create_directories(file.parent_path(), ec);
+    std::ofstream f(file, std::ios::binary | std::ios::trunc);
+    if (!f) return false;
+    for (std::size_t i = 0; i < size; ++i) {
+        f.put(static_cast<char>((i * 7 + 3) % 256));
+    }
+    return true;
+}
+
+/// `/api/media` 对拍：**Range 这条路**。
+///
+/// 方案第三节点了名：不支持 Range 的话前端 `<video>` 拖不动进度条，
+/// 只能从头播。那是阶段 3 完成标志里的"成片能拖进度条"。
+///
+/// 这条路和前面七层都不一样：回的不是 JSON，**响应头本身就是契约**
+/// （`Content-Range` 少一个字节浏览器就对不上时间轴），
+/// 而且状态码有 206 和 416 两个别处不出现的值。
+int run_media(const Args& args, Tally& tally) {
+    if (args.python_url.empty() || args.project.empty()) return 0;
+
+    const fs::path src = paths::from_utf8(args.project);
+    const fs::path py_dir = fresh_copy(src, "m_py");
+    const fs::path cp_dir = fresh_copy(src, "m_cpp");
+    if (py_dir.empty() || cp_dir.empty()) {
+        tally.skip("/api/media", "拷项目副本失败");
+        return 0;
+    }
+
+    // 4096 字节，够切出好几段又不至于比起来慢。
+    constexpr std::size_t kSize = 4096;
+    const char* kRel = "output/duiping.mp4";
+    const char* kRelPng = "refs/duiping.png";
+    // 中文名单独一条：整个项目都是中文路径，URL 编解码那一段
+    // 出问题的话，症状是"某些文件取不到"，而不是 Range 不对。
+    const char* kRelCn = "output/试片_雨夜.mp4";
+
+    for (const fs::path& dir : {py_dir, cp_dir}) {
+        if (!write_blob(dir / paths::from_utf8(kRel), kSize) ||
+            !write_blob(dir / paths::from_utf8(kRelPng), 512) ||
+            !write_blob(dir / paths::from_utf8(kRelCn), 128)) {
+            tally.skip("/api/media", "写不了试验文件");
+            return 0;
+        }
+    }
+
+    struct Case {
+        const char* name;
+        const char* rel;
+        const char* range;
+        /// 有意不一样的那条：填上两边各自该回什么，以及为什么。
+        /// **验，不是跳过。** 跳过等于放弃检查——万一哪天 Python
+        /// 那边变了，或者我们这边不小心"修好"了，没人会发现。
+        int py_status = 0;
+        int cpp_status = 0;
+        const char* why = nullptr;
+    };
+    const Case cases[] = {
+        {"整取_不带 Range", kRel, ""},
+        {"开头十个字节", kRel, "bytes=0-9"},
+        {"从中间到结尾", kRel, "bytes=4000-"},
+        {"末尾十个字节（后缀式）", kRel, "bytes=-10"},
+        {"终点超出文件_要夹到末尾", kRel, "bytes=4090-999999"},
+        {"整个文件的显式区间", kRel, "bytes=0-4095"},
+        {"起点越界_416", kRel, "bytes=999999-"},
+        {"语法不认识", kRel, "bytes=abc"},
+        {"起点大于终点", kRel, "bytes=500-100"},
+        {"负数起点_算出来越界", kRel, "bytes=--5"},
+        {"单位不是 bytes", kRel, "items=0-9"},
+        {"png_看 Content-Type", kRelPng, ""},
+        {"中文文件名", kRelCn, ""},
+        {"中文文件名_带 Range", kRelCn, "bytes=0-9"},
+        {"多区间", kRel, "bytes=0-99,200-299", 206, 200,
+         "Python 回 multipart/byteranges，我们当没看见这个头回整个文件："
+         "浏览器的 <video> 不发多区间，而那个格式的分隔串是随机的，"
+         "两侧永远逐字节对不上"},
+        {"越界读项目外_403", "../../windows/win.ini", ""},
+        {"文件不存在_404", "output/没有这个.mp4", ""},
+    };
+
+    std::cout << "\n== /api/media（Range）：" << std::size(cases) << " 条 ==\n";
+
+    for (const auto& c : cases) {
+        const std::string name = c.name;
+        if (!args.filter.empty() && name.find(args.filter) == std::string::npos) {
+            continue;
+        }
+        const auto url = [&](const fs::path& dir) {
+            return with_query("/api/media", {{"path", paths::to_utf8(dir)},
+                                             {"rel", c.rel}});
+        };
+        if (args.verbose) {
+            std::cout << "      -> GET rel=" << c.rel << " Range=「" << c.range
+                      << "」\n";
+        }
+        const RawResponse py = fetch_raw(args.python_url, url(py_dir), c.range);
+        const RawResponse cp = fetch_raw(args.cpp_url, url(cp_dir), c.range);
+        if (!py.error.empty()) {
+            tally.skip(name, "Python 侧：" + py.error);
+            continue;
+        }
+        if (!cp.error.empty()) {
+            tally.skip(name, "C++ 侧：" + cp.error);
+            continue;
+        }
+
+        std::vector<compat::Difference> diffs;
+
+        if (c.why != nullptr) {
+            // 有意不一样：两边都得是当初说好的那个样子。
+            if (py.status != c.py_status || cp.status != c.cpp_status) {
+                diffs.push_back({"（有意不一样的那条变了）",
+                                 "说好 Python " + std::to_string(c.py_status) +
+                                     "、C++ " + std::to_string(c.cpp_status) +
+                                     "，实际 Python " + std::to_string(py.status) +
+                                     "、C++ " + std::to_string(cp.status)});
+            }
+            tally.report(name + "（有意不一样：" + c.why + "）", diffs);
+            continue;
+        }
+
+        if (py.status != cp.status) {
+            diffs.push_back({"（状态码）", "Python " + std::to_string(py.status) +
+                                              "，C++ " + std::to_string(cp.status)});
+        }
+        for (const char* h : kMediaHeaders) {
+            // **出错时不比 Content-Length。** 那时候正文是各自的报错文字，
+            // 而"错误消息的文字不算契约"是一开始就定下的标准——
+            // 为了让长度对上去抄一遍上游的英文句子，是本末倒置。
+            if (std::string(h) == "Content-Length" && py.status != 200 &&
+                py.status != 206) {
+                continue;
+            }
+            const auto a = py.headers.find(h);
+            const auto b = cp.headers.find(h);
+            const bool ha = a != py.headers.end();
+            const bool hb = b != cp.headers.end();
+            if (!ha && !hb) continue;
+            if (ha != hb) {
+                diffs.push_back({std::string("响应头 ") + h,
+                                 ha ? "只有 Python 给了：" + a->second
+                                    : "只有 C++ 给了：" + b->second});
+                continue;
+            }
+            if (a->second != b->second) {
+                diffs.push_back({std::string("响应头 ") + h,
+                                 "Python「" + a->second + "」，C++「" + b->second +
+                                     "」"});
+            }
+        }
+
+        // **字节要一模一样。** 长度对、头也对，内容却错了一位
+        // （比如 seek 的起点差一），那是最难查的一类 bug：
+        // 视频从中间开始播会花屏，但每个响应看起来都合法。
+        // 出错的那几条回的是 JSON 报错，文字不算契约，所以只在
+        // 两边都成功时比。
+        if (py.status == 200 || py.status == 206) {
+            if (py.body.size() != cp.body.size()) {
+                diffs.push_back({"内容", "长度不同：Python " +
+                                             std::to_string(py.body.size()) +
+                                             "，C++ " +
+                                             std::to_string(cp.body.size())});
+            } else if (py.body != cp.body) {
+                std::size_t i = 0;
+                while (i < py.body.size() && py.body[i] == cp.body[i]) ++i;
+                diffs.push_back({"内容", "第 " + std::to_string(i) +
+                                             " 个字节起不同（长度一样，"
+                                             "多半是起点差了一位）"});
+            }
+        }
+        tally.report(name, diffs);
+    }
+
+    std::error_code ec;
+    fs::remove_all(fs::temp_directory_path() / paths::from_utf8("changji_对拍_写"),
+                   ec);
+    return 0;
+}
+
 /// 解 base64。语料里的图片是这么存的（二进制塞不进 JSON）。
 ///
 /// 只给对拍用，不进 src/：后端本身没有需要解 base64 的地方。
@@ -1246,6 +1468,7 @@ int main(int argc, char** argv) {
         run_post(args, tally);
         run_edit(args, tally);
         run_upload(args, tally);
+        run_media(args, tally);
         if (!args.llm_work.empty()) run_llm(args, tally);
     }
 

@@ -76,67 +76,88 @@ TEST_CASE("越界的路径必须被拒绝") {
 
 TEST_CASE("Range 头解析") {
     constexpr std::uint64_t kSize = 1000;
+    using http::RangeVerdict;
+
+    // 期望值全部来自 Starlette 的 FileResponse._parse_range_header
+    // （.venv/Lib/site-packages/starlette/responses.py），不是我推的。
+    // 那是对拍要对上的那一侧。
 
     SUBCASE("普通闭区间") {
         const auto r = http::parse_range("bytes=0-499", kSize);
-        REQUIRE(r.has_value());
-        CHECK(r->first == 0);
-        CHECK(r->last == 499);
+        REQUIRE(r.verdict == RangeVerdict::Ok);
+        CHECK(r.range.first == 0);
+        CHECK(r.range.last == 499);
     }
 
     SUBCASE("开放式结尾：播放器拖进度条发的就是这种") {
         const auto r = http::parse_range("bytes=500-", kSize);
-        REQUIRE(r.has_value());
-        CHECK(r->first == 500);
-        CHECK(r->last == 999);
+        REQUIRE(r.verdict == RangeVerdict::Ok);
+        CHECK(r.range.first == 500);
+        CHECK(r.range.last == 999);
     }
 
     SUBCASE("末尾 N 字节") {
         const auto r = http::parse_range("bytes=-200", kSize);
-        REQUIRE(r.has_value());
-        CHECK(r->first == 800);
-        CHECK(r->last == 999);
+        REQUIRE(r.verdict == RangeVerdict::Ok);
+        CHECK(r.range.first == 800);
+        CHECK(r.range.last == 999);
     }
 
     SUBCASE("末尾 N 超过文件长度就给整个文件") {
         const auto r = http::parse_range("bytes=-5000", kSize);
-        REQUIRE(r.has_value());
-        CHECK(r->first == 0);
-        CHECK(r->last == 999);
+        REQUIRE(r.verdict == RangeVerdict::Ok);
+        CHECK(r.range.first == 0);
+        CHECK(r.range.last == 999);
     }
 
     SUBCASE("末端越界要夹到文件末尾") {
         const auto r = http::parse_range("bytes=900-99999", kSize);
-        REQUIRE(r.has_value());
-        CHECK(r->first == 900);
-        CHECK(r->last == 999);
+        REQUIRE(r.verdict == RangeVerdict::Ok);
+        CHECK(r.range.first == 900);
+        CHECK(r.range.last == 999);
     }
 
-    SUBCASE("起点越界要拒绝，调用方回 416") {
-        CHECK_FALSE(http::parse_range("bytes=1000-", kSize).has_value());
-        CHECK_FALSE(http::parse_range("bytes=5000-6000", kSize).has_value());
+    SUBCASE("起点越界回 416，不是 400") {
+        // **这一条是对拍抓出来的。** 原来的实现把它和"语法不认识"
+        // 混成一种，都回 416；Python 只有这一种回 416。
+        CHECK(http::parse_range("bytes=1000-", kSize).verdict ==
+              RangeVerdict::NotSatisfiable);
+        CHECK(http::parse_range("bytes=5000-6000", kSize).verdict ==
+              RangeVerdict::NotSatisfiable);
     }
 
-    SUBCASE("起点大于终点是非法的") {
-        CHECK_FALSE(http::parse_range("bytes=500-100", kSize).has_value());
+    SUBCASE("起点大于终点回 400") {
+        CHECK(http::parse_range("bytes=500-100", kSize).verdict ==
+              RangeVerdict::Malformed);
     }
 
-    SUBCASE("语法不认识的一律回 nullopt") {
+    SUBCASE("语法不认识回 400") {
         for (const char* bad : {"", "bytes", "bytes=", "bytes=abc-def",
-                                "items=0-10", "bytes=--5", "0-100"}) {
+                                "items=0-10", "0-100", "bytes=abc"}) {
             CAPTURE(bad);
-            CHECK_FALSE(http::parse_range(bad, kSize).has_value());
+            CHECK(http::parse_range(bad, kSize).verdict == RangeVerdict::Malformed);
         }
     }
 
-    SUBCASE("多区间不支持，按整文件回") {
-        // 浏览器的 <video> 不会发这种，支持它得写 multipart/byteranges，
-        // 不值得。返回 nullopt 让调用方回整个文件是安全的降级。
-        CHECK_FALSE(http::parse_range("bytes=0-99,200-299", kSize).has_value());
+    SUBCASE("bytes=--5 算出来的起点比文件还大，回 416 不是 400") {
+        // Python 的 int("-5") 是合法的，于是起点算成 1000-(-5)=1005，
+        // 走到越界那一步才被拦下。看着像语法错，判定却是 416——
+        // 这种地方不照抄 Starlette 的顺序就会不一样。
+        CHECK(http::parse_range("bytes=--5", kSize).verdict ==
+              RangeVerdict::NotSatisfiable);
     }
 
-    SUBCASE("空文件没有任何合法区间") {
-        CHECK_FALSE(http::parse_range("bytes=0-", 0).has_value());
+    SUBCASE("多区间当没看见，回整个文件") {
+        // 有意的偏差：Python 回 206 + multipart/byteranges。
+        // 不实现的理由见 media.hpp——浏览器的 <video> 不发这种，
+        // 而且那个格式的分隔串是随机的，两侧永远逐字节对不上。
+        CHECK(http::parse_range("bytes=0-99,200-299", kSize).verdict ==
+              RangeVerdict::Ignore);
+    }
+
+    SUBCASE("空文件：任何区间的起点都越界") {
+        CHECK(http::parse_range("bytes=0-", 0).verdict ==
+              RangeVerdict::NotSatisfiable);
     }
 }
 

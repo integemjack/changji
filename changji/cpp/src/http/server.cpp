@@ -43,7 +43,11 @@ namespace {
 /// 混用两套 JSON 库是长期的麻烦源。这里统一序列化成字符串再交给 Crow。
 crow::response json_response(const json& body, int status = 200) {
     crow::response res(status, body.dump());
-    res.set_header("Content-Type", "application/json; charset=utf-8");
+    // **不带 charset。** FastAPI 发的就是这个，对拍比响应头时发现
+    // 两边差一个 "; charset=utf-8"。JSON 按 RFC 8259 本来就必须是 UTF-8，
+    // 这个参数在 application/json 上是没注册的，加了不算更对。
+    // 差异出现在每一个接口上，而前面那几层对拍只比 body 不比头，一直没看见。
+    res.set_header("Content-Type", "application/json");
     return res;
 }
 
@@ -226,17 +230,36 @@ void run(const config::Settings& settings, const Options& opts) {
         }
 
         const auto r = parse_range(range_header, size);
-        if (!r.has_value()) {
-            // 语法不认识或起点越界。416 要带上 Content-Range 告诉对方真实长度。
-            crow::response res(416);
+
+        // **语法不认识和起点越界不是一回事。** 原来两种都回 416，
+        // 对拍比出来 Python 那边前者回 400。对浏览器来说含义不同：
+        // 416 带着文件真实长度，是"照这个重来"；400 是"你的请求是坏的"。
+        if (r.verdict == RangeVerdict::Malformed) {
+            crow::response res(400, "Range 头看不懂");
+            res.set_header("Content-Type", "text/plain; charset=utf-8");
+            return res;
+        }
+        if (r.verdict == RangeVerdict::NotSatisfiable) {
+            // 416 必须带 Content-Range 告诉对方真实长度，而且 **body 是空的**
+            // ——Python 那边 Content-Length 是 0，写点什么进去就对不上了。
+            crow::response res(416, "");
+            res.set_header("Content-Type", "text/plain; charset=utf-8");
             res.set_header("Content-Range", "bytes */" + std::to_string(size));
+            return res;
+        }
+        if (r.verdict == RangeVerdict::Ignore) {
+            // 多区间。见 media.hpp 里那段：当没看见这个头，回整个文件。
+            std::string whole((std::istreambuf_iterator<char>(in)),
+                              std::istreambuf_iterator<char>());
+            crow::response res(200, std::move(whole));
+            res.set_header("Content-Type", ctype);
             res.set_header("Accept-Ranges", "bytes");
             return res;
         }
 
-        const std::uint64_t len = r->last - r->first + 1;
+        const std::uint64_t len = r.range.last - r.range.first + 1;
         std::string chunk(static_cast<std::size_t>(len), '\0');
-        in.seekg(static_cast<std::streamoff>(r->first));
+        in.seekg(static_cast<std::streamoff>(r.range.first));
         in.read(chunk.data(), static_cast<std::streamsize>(len));
         chunk.resize(static_cast<std::size_t>(in.gcount()));
 
@@ -244,8 +267,9 @@ void run(const config::Settings& settings, const Options& opts) {
         res.set_header("Content-Type", ctype);
         res.set_header("Accept-Ranges", "bytes");
         res.set_header("Content-Range",
-                       "bytes " + std::to_string(r->first) + "-" +
-                           std::to_string(r->last) + "/" + std::to_string(size));
+                       "bytes " + std::to_string(r.range.first) + "-" +
+                           std::to_string(r.range.last) + "/" +
+                           std::to_string(size));
         return res;
     });
 
