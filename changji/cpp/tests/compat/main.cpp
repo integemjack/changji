@@ -169,7 +169,23 @@ struct Response {
     int status = 0;
     json body;
     std::string error;
+    /// **响应头也是契约。** 这一项是补上去的：Range 那一层比头的时候
+    /// 发现 C++ 全站的 Content-Type 都多一个 "; charset=utf-8"，
+    /// 而前面 143 条一条都没看见——它们只比 body。
+    /// 一个类别的差异，只要没有哪一层去比，就能一直绿着。
+    std::string content_type;
 };
+
+/// 比 Content-Type。**只比这一个头**：别的（Date、Server、Connection）
+/// 两边必然不同而且不是契约，Content-Length 会被 JSON 的键序影响
+/// 而键序明确不算契约。
+void diff_content_type(const Response& py, const Response& cp,
+                       std::vector<compat::Difference>& out) {
+    if (py.content_type == cp.content_type) return;
+    out.push_back({"响应头 Content-Type",
+                   "Python「" + py.content_type + "」，C++「" + cp.content_type +
+                       "」"});
+}
 
 Response fetch(const std::string& base, const std::string& path_with_query) {
     const auto [origin, prefix] = split_origin(base);
@@ -184,6 +200,7 @@ Response fetch(const std::string& base, const std::string& path_with_query) {
         return out;
     }
     out.status = res->status;
+    out.content_type = res->get_header_value("Content-Type");
     out.body = json::parse(res->body, nullptr, false);
     if (out.body.is_discarded()) {
         out.error = "回的不是 JSON：" + res->body.substr(0, 200);
@@ -267,6 +284,7 @@ Response send(const std::string& base, const std::string& method,
         return out;
     }
     out.status = res->status;
+    out.content_type = res->get_header_value("Content-Type");
     out.body = json::parse(res->body, nullptr, false);
     if (out.body.is_discarded()) {
         out.error = "回的不是 JSON：" + res->body.substr(0, 200);
@@ -370,6 +388,7 @@ int run_post(const Args& args, Tally& tally) {
             diffs.push_back({"（状态码）", "Python " + std::to_string(py.status) +
                                               "，C++ " + std::to_string(cp.status)});
         }
+        diff_content_type(py, cp, diffs);
         const auto body_diffs = compat::compare(py.body, cp.body, opts);
         diffs.insert(diffs.end(), body_diffs.begin(), body_diffs.end());
 
@@ -654,6 +673,7 @@ Response send_multipart(const std::string& base, const std::string& path,
         return out;
     }
     out.status = res->status;
+    out.content_type = res->get_header_value("Content-Type");
     out.body = json::parse(res->body, nullptr, false);
     if (out.body.is_discarded()) {
         out.error = "回的不是 JSON：" + res->body.substr(0, 200);
@@ -766,6 +786,7 @@ int run_upload(const Args& args, Tally& tally) {
             diffs.push_back({"（状态码）", "Python " + std::to_string(py.status) +
                                               "，C++ " + std::to_string(cp.status)});
         }
+        diff_content_type(py, cp, diffs);
         // 和编辑接口一样的自检：语料说该成，两边却都说请求不合法，
         // 那是对拍这边 multipart 拼错了，不是后端不一致。
         if (c.value("status", 0) == 200 && py.status == 422 && cp.status == 422) {
@@ -924,6 +945,7 @@ int run_edit(const Args& args, Tally& tally) {
                                  "Python " + std::to_string(py.status) + "，C++ " +
                                      std::to_string(cp.status)});
             }
+            diff_content_type(py, cp, diffs);
 
             // **请求拼错了的自检。** 两边都回 422 而语料说该 200，
             // 说明是我这儿把请求体拼错了，不是后端不一致——
@@ -1196,6 +1218,7 @@ int run_llm(const Args& args, Tally& tally) {
                                  "Python " + std::to_string(py.status) + "，C++ " +
                                      std::to_string(cp.status)});
             }
+            diff_content_type(py, cp, diffs);
             for (auto& d : compat::compare(py.body, cp.body, opts)) {
                 diffs.push_back({"响应" + d.path, d.detail});
             }
@@ -1421,6 +1444,7 @@ int run_live(const Args& args, Tally& tally) {
             diffs.push_back({"（状态码）", "Python " + std::to_string(py.status) +
                                               "，C++ " + std::to_string(cp.status)});
         }
+        diff_content_type(py, cp, diffs);
         const auto body_diffs = compat::compare(py.body, cp.body, opts);
         diffs.insert(diffs.end(), body_diffs.begin(), body_diffs.end());
         tally.report(path, diffs);
