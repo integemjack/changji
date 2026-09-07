@@ -5,6 +5,11 @@
 #include <set>
 #include <stdexcept>
 
+#include "gates/checks.hpp"
+#include "util/paths.hpp"
+#include "media/assemble.hpp"
+#include "stages/audio_plan.hpp"
+#include "stages/storyboard.hpp"
 #include "util/human_time.hpp"
 
 namespace changji::pipeline {
@@ -69,10 +74,74 @@ std::set<ShotStatus> render_entry_states(Tier tier) {
         return {ShotStatus::DRAFT_DONE, ShotStatus::FINAL_REJECTED};
     }
     return {ShotStatus::FRAME_DONE, ShotStatus::DRAFT_REJECTED,
-            ShotStatus::AUDIO_DONE,
-            // 配音还没移植（阶段 7），镜头到不了 AUDIO_DONE，
-            // 所以这里也要收 PLANNED。见下面 run_episode 里的长注释。
-            ShotStatus::PLANNED};
+            ShotStatus::AUDIO_DONE};
+}
+
+/// 装配成片。
+///
+/// 单独一个函数只是为了让 run_episode 里那一段短一点——它已经有五个阶段了。
+std::string run_assemble(const ProjectStore& store,
+                         const config::Settings& settings, Episode& ep,
+                         const media::FFmpeg& ff, JobProgress& progress) {
+    // 只装配**已经出片而且过了闸门**的镜头。
+    // DRAFT_DONE 也收：只跑草稿档验叙事时，那一档就是成品。
+    static const std::set<ShotStatus> kUsable = {
+        ShotStatus::FINAL_DONE, ShotStatus::DRAFT_DONE, ShotStatus::FALLBACK,
+        ShotStatus::LOCKED};
+
+    std::vector<Shot> shots;
+    for (const auto& s : ep.sorted_shots()) {
+        if (s.video_path.has_value() && !s.video_path->empty() &&
+            kUsable.count(s.status)) {
+            shots.push_back(s);
+        }
+    }
+    if (shots.empty()) {
+        throw std::runtime_error("没有可装配的镜头。先跑渲染阶段");
+    }
+
+    emit(progress, "assemble", "start",
+         "装配 " + std::to_string(shots.size()) + " 个镜头", 0,
+         static_cast<int>(shots.size()));
+
+    // **装配前先查音画能不能装下**，装完再发现就得重做整集。
+    // 查出问题只报不拦：拦下来的话一句台词长了一点整集就出不来，
+    // 而那一点多半是听不出来的。
+    for (const auto& shot : shots) {
+        if (shot.dialogue.empty()) continue;
+        const auto r = gates::gate_audio_sync(
+            shot, store.paths().abs(*shot.video_path), ff, settings.gates);
+        if (!r.ok()) {
+            Event e;
+            e.stage = "assemble";
+            e.kind = "gate";
+            e.shot_id = shot.shot_id;
+            e.message = r.describe();
+            progress.report(e);
+        }
+    }
+
+    const media::Timeline timeline =
+        media::build_timeline(shots, store.paths(), settings.assembly);
+    media::Assembler assembler(ff, settings.assembly, store.paths(),
+                               settings.gates.target_lufs,
+                               settings.gates.max_true_peak_db);
+    const auto output = assembler.assemble(timeline, ep.episode_id + ".mp4");
+
+    // 成片检查同样只报不拦：片子已经出来了，人可以自己看一眼再决定。
+    const auto result = gates::gate_episode(output, ff, settings.gates,
+                                            timeline.total_duration_s());
+    for (const auto& reason : result.reasons) {
+        Event e;
+        e.stage = "assemble";
+        e.kind = "gate";
+        e.message = "成片：" + reason;
+        progress.report(e);
+    }
+
+    emit(progress, "assemble", "done", "成片已生成：" + paths::to_utf8(output),
+         static_cast<int>(shots.size()), static_cast<int>(shots.size()));
+    return paths::to_utf8(output);
 }
 
 }  // namespace
@@ -98,7 +167,8 @@ bool stage_from_string(const std::string& s, Stage& out) {
 }
 
 RunReport run_episode(const ProjectStore& store,
-                      const HardwareProfile& profile, const RunOptions& opts,
+                      const HardwareProfile& profile,
+                      const config::Settings& settings, const RunOptions& opts,
                       const Backends& backends, JobProgress& progress,
                       CancelToken& tok) {
     RunReport report;
@@ -153,17 +223,64 @@ RunReport run_episode(const ProjectStore& store,
     };
 
     try {
+        // ---- 配音 ----
+        //
+        // **在生成任何画面之前跑完。** 它决定镜头时长，而时长决定帧数。
+        // 顺序反过来的话，配音出来装不进已经渲好的视频里。
+        if (wants(opts, Stage::Audio) && !tok.cancelled()) {
+            auto todo = pick(*ep, {ShotStatus::PLANNED}, opts.force);
+            if (todo.empty()) {
+                emit(progress, "audio", "done", "配音已完成，跳过");
+            } else {
+                const stages::TTSBackend backend =
+                    backends.tts.value_or(stages::estimate_backend());
+                // **后端名字对用户没有意义，要说清楚这次到底出不出声音。**
+                // 只说 "estimate" 的话，用户跑完一整集才发现成片是静音的。
+                const std::string how =
+                    backend.name == "estimate" ? "只算时长不出声音，成片会是静音"
+                    : backend.name == "comfy"  ? "走 ComfyUI 配音节点"
+                    : backend.name == "http"   ? "走独立配音服务"
+                                               : backend.name;
+                emit(progress, "audio", "start",
+                     "给 " + std::to_string(todo.size()) + " 个镜头配音，" + how,
+                     0, static_cast<int>(todo.size()));
+
+                stages::AudioStage stage(backend, settings.tts, store.paths());
+                report.audio = stage.run(todo, assets, progress, tok);
+                save();
+
+                // 台词太多装不下的镜头，在这里拆成连着的几镜。
+                //
+                // **拆在配音之后、出首帧之前**：音频已经有了、画面还没生成，
+                // 拆开不浪费任何一次渲染。
+                const std::size_t before = ep->shots.size();
+                ep->shots = stages::split_overlong_shots(
+                    ep->shots, stages::max_shot_duration_s(settings.assembly.fps));
+                const std::size_t added = ep->shots.size() - before;
+                if (added > 0) {
+                    emit(progress, "audio", "warn",
+                         "有 " + std::to_string(added) +
+                             " 处台词一镜装不下，已拆成新的镜头。这一集现在是 " +
+                             std::to_string(ep->shots.size()) + " 个镜头");
+                }
+                save();
+
+                emit(progress, "audio", "done", stages::summarize(report.audio),
+                     static_cast<int>(todo.size()),
+                     static_cast<int>(todo.size()));
+            }
+        }
+
         // ---- 首帧 ----
         if (wants(opts, Stage::Frames) && !tok.cancelled()) {
-            // Python 那边的入口状态只有 AUDIO_DONE：配音跑完锁了时长
-            // 才出首帧。**配音还没移植（阶段 7），所以这里也要收 PLANNED**——
-            // 只认 AUDIO_DONE 的话现在一个镜头都挑不出来，
-            // 而那表现为"点了开始，进度条转一下就说完成了，一张图也没有"。
+            // **入口状态只有 AUDIO_DONE。** 配音跑完锁了时长才出首帧——
+            // 时长决定帧数，帧数决定这一镜的画面，顺序反过来的话
+            // 配音出来装不进已经渲好的视频里。
             //
-            // 阶段 7 接上配音之后要回头收紧到只认 AUDIO_DONE，
-            // 否则配音失败的镜头会带着错的时长往下走。
-            auto todo = pick(*ep, {ShotStatus::AUDIO_DONE, ShotStatus::PLANNED},
-                             opts.force);
+            // 阶段 5 时这里临时放宽收了 PLANNED（那会儿配音还没移植），
+            // 现在配音接上了，收回来。配音失败的镜头状态停在 PLANNED，
+            // 于是自动被挡在首帧之外——那是对的，它们带着错的时长。
+            auto todo = pick(*ep, {ShotStatus::AUDIO_DONE}, opts.force);
             if (todo.empty()) {
                 emit(progress, "frames", "done", "首帧已完成，跳过");
             } else {
@@ -213,6 +330,20 @@ RunReport run_episode(const ProjectStore& store,
             const bool force_final = opts.only.has_value() ? opts.force : false;
             report.final_ = render_tier(Tier::FINAL, force_final);
             save();
+        }
+
+        // ---- 装配 ----
+        if (wants(opts, Stage::Assemble) && !tok.cancelled()) {
+            if (!backends.ffmpeg.has_value()) {
+                // 没装 ffmpeg 时前面几步照样跑完了。**跑到最后一步才说
+                // 缺 ffmpeg 最气人**，所以这里说清楚缺的是什么、产物在哪。
+                emit(progress, "assemble", "warn",
+                     "没有 ffmpeg，跳过装配。各镜头的视频已经在 shots/ 下，"
+                     "装好之后单跑 assemble 阶段即可");
+            } else {
+                report.output = run_assemble(store, settings, *ep,
+                                             *backends.ffmpeg, progress);
+            }
         }
     } catch (const std::exception& e) {
         report.errors.push_back(e.what());

@@ -332,15 +332,29 @@ TEST_CASE("stages 空数组走全流程，给了内容才只跑那几个") {
         CHECK(fakes.videos.size() == 2);
     }
 
-    SUBCASE("只跑首帧") {
+    SUBCASE("只跑配音和首帧") {
+        // 首帧的入口状态是 AUDIO_DONE，所以配音要一起跑。
+        // 只给 frames 的话一个镜头都挑不出来——那正是下一条用例钉的。
         const auto store = make_store("只首帧", {{"ep01", 2}});
+        Fakes fakes;
+        run_and_wait({{"project", project_arg(store)},
+                      {"episode_id", "ep01"},
+                      {"stages", json::array({"audio", "frames"})}},
+                     fakes);
+        CHECK(fakes.frames.size() == 2);
+        CHECK(fakes.videos.empty());
+    }
+
+    SUBCASE("跳过配音直接跑首帧，一个镜头都挑不出来") {
+        // **这是有意的。** 时长决定帧数，帧数决定画面。跳过配音的话
+        // 镜头时长还是分镜给的估算值，配音出来装不进去。
+        const auto store = make_store("跳配音", {{"ep01", 2}});
         Fakes fakes;
         run_and_wait({{"project", project_arg(store)},
                       {"episode_id", "ep01"},
                       {"stages", json::array({"frames"})}},
                      fakes);
-        CHECK(fakes.frames.size() == 2);
-        CHECK(fakes.videos.empty());
+        CHECK(fakes.frames.empty());
     }
 
     SUBCASE("全是空白的阶段名 = 一个都不跑") {

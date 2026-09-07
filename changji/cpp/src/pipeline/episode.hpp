@@ -15,6 +15,8 @@
 #include "models/hardware.hpp"
 #include "models/project.hpp"
 #include "pipeline/jobs.hpp"
+#include "media/ffmpeg.hpp"
+#include "stages/audio.hpp"
 #include "stages/frames.hpp"
 #include "stages/render.hpp"
 
@@ -23,11 +25,11 @@ namespace changji::pipeline {
 /// 流水线的阶段。**也是断点续跑的锚点**——每个阶段跑完就存盘，
 /// 中途断了下次从没跑完的那个阶段接着来。
 enum class Stage {
-    Audio,      ///< 配音。阶段 7，现在还没有
+    Audio,      ///< 配音。**在生成任何画面之前跑完**——它决定镜头时长
     Frames,     ///< 逐镜首帧
     Draft,      ///< 草稿档视频
     Final,      ///< 成片档视频
-    Assemble,   ///< 装配成一集。阶段 7
+    Assemble,   ///< 拼成一集
 };
 
 const char* to_string(Stage s);
@@ -37,9 +39,12 @@ bool stage_from_string(const std::string& s, Stage& out);
 /// 跑一集的结果。
 struct RunReport {
     std::string episode_id;
+    std::vector<stages::ShotAudioPlan> audio;
     std::vector<stages::FrameOutcome> frames;
     std::vector<stages::RenderOutcome> draft;
     std::vector<stages::RenderOutcome> final_;
+    /// 成片的路径。没跑装配阶段时是空的。
+    std::optional<std::string> output;
     std::vector<std::string> errors;
     double elapsed_s = 0.0;
 
@@ -70,6 +75,12 @@ struct RunOptions {
 struct Backends {
     stages::FrameRenderer frame;
     stages::VideoRenderer video;
+    /// 配音。留空就用估算后端——只算时长不出声音，
+    /// 成片是静音的，但整条流水线能跑通。
+    std::optional<stages::TTSBackend> tts;
+    /// 装配和闸门要用。留空就跳过装配阶段——没装 ffmpeg 的机器上
+    /// 前面几步照样能跑，而"跑到最后一步才说缺 ffmpeg"最气人。
+    std::optional<media::FFmpeg> ffmpeg;
     /// 出首帧的后端叫什么，只用来拼那句开始的话。
     ///
     /// Python 那边这句里带后端名是有用的：它有三条路
@@ -85,7 +96,8 @@ struct Backends {
 /// 下次跑会当成没跑过。
 RunReport run_episode(const models::ProjectStore& store,
                       const models::HardwareProfile& profile,
-                      const RunOptions& opts, const Backends& backends,
-                      JobProgress& progress, CancelToken& tok);
+                      const config::Settings& settings, const RunOptions& opts,
+                      const Backends& backends, JobProgress& progress,
+                      CancelToken& tok);
 
 }  // namespace changji::pipeline

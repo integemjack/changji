@@ -10,6 +10,7 @@
 #include <memory>
 
 #include "comfy/loader.hpp"
+#include "media/ffmpeg.hpp"
 #include "comfy/renderers.hpp"
 #include "config/runtime.hpp"
 #include "http/run.hpp"
@@ -31,6 +32,16 @@ RunDeps default_run_deps() {
         b.frame = stages::sd_renderer();
         b.video = infer::sd_video_renderer(s);
         b.frame_backend_name = "sd.cpp";
+
+        // 装配和闸门要用。路径从配置来——用户可能把 ffmpeg 装在
+        // 非 PATH 的地方，那时候 assembly.ffmpeg_path 是唯一的出路。
+        b.ffmpeg = media::FFmpeg(s.assembly.ffmpeg_path, s.assembly.ffprobe_path,
+                                 media::default_runner());
+
+        // 配音留空 = 估算后端（只算时长不出声音）。
+        // HTTP 和 ComfyUI 两个真后端还没移植，接上之前成片是静音的——
+        // 而那件事在配音阶段的 start 事件里说清楚了，不会跑完才发现。
+        b.tts.reset();
         if (s.models.engine != "comfy") return b;
 
         // ---- 走 ComfyUI ----

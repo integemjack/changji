@@ -185,7 +185,7 @@ ApiResult post_run(const json& body, const RunDeps& deps) {
                     }
 
                     const auto report = pipeline::run_episode(
-                        store, profile, opts, backends, p, p.token());
+                        store, profile, settings, opts, backends, p, p.token());
                     if (!report.errors.empty()) {
                         errors.push_back(id + "：" + join(report.errors, "；"));
                     }

@@ -13,6 +13,7 @@
 #include <algorithm>
 #include <filesystem>
 #include <fstream>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -184,7 +185,8 @@ pipeline::RunReport run_it(const models::ProjectStore& store,
                 [&](pipeline::JobProgress& p) {
                     try {
                         report = pipeline::run_episode(
-                            store, make_profile(), opts, backends, p, tok);
+                            store, make_profile(), config::Settings{}, opts,
+                            backends, p, tok);
                     } catch (const std::exception& e) {
                         thrown = e.what();
                     }
@@ -335,13 +337,16 @@ TEST_CASE("only 指定阶段时只跑那一段") {
     // 用途是单独重做某一段：改完分镜只重渲染，不必把首帧再出一遍。
     const auto store = make_store("单阶段", 2);
 
-    // 先把首帧跑出来
+    // 先把配音和首帧跑出来。
+    //
+    // **配音是必须的一步，不是可以省的。** 首帧的入口状态是 AUDIO_DONE——
+    // 时长决定帧数，帧数决定画面，所以配音必须在前面。
     {
         Recorder rec;
         pipeline::CancelToken tok;
         pipeline::RunOptions opts;
         opts.episode_id = "ep01";
-        opts.only = {pipeline::Stage::Frames};
+        opts.only = {pipeline::Stage::Audio, pipeline::Stage::Frames};
         run_it(store, opts, rec, tok);
         CHECK(rec.ids_of("draft").empty());
         CHECK(reload(store).shots[0].status == models::ShotStatus::FRAME_DONE);
@@ -605,4 +610,129 @@ TEST_CASE("阶段名的字符串两边要能互转") {
         CHECK_FALSE(pipeline::stage_from_string("render", s));
         CHECK(s == pipeline::Stage::Final);   // 没被改掉
     }
+}
+
+TEST_CASE("配音跑在所有画面之前") {
+    // **时长决定帧数，帧数决定画面。** 顺序反过来的话，配音出来
+    // 装不进已经渲好的视频里，而那要到装配时才发现。
+    const auto store = make_store("配音优先", 2);
+    {
+        models::Project p = store.load_project();
+        models::Episode* ep = p.episode_by_id("ep01");
+        for (auto& s : ep->shots) {
+            models::DialogueLine l;
+            l.char_id = "c_lin_wan";
+            l.text = "我等了你三年。";
+            s.dialogue.push_back(l);
+        }
+        store.save_project(p);
+    }
+
+    Recorder rec;
+    pipeline::CancelToken tok;
+    pipeline::RunOptions opts;
+    opts.episode_id = "ep01";
+    opts.skip_final = true;
+    const auto report = run_it(store, opts, rec, tok);
+
+    CHECK(report.audio.size() == 2);
+    // 没给 TTS 后端时用估算后端：只算时长，但会写出等长静音 wav，
+    // 所以后面的装配环节不用为它写特例。
+    const models::Episode ep = reload(store);
+    for (const auto& s : ep.shots) {
+        CAPTURE(s.shot_id);
+        REQUIRE(s.dialogue.size() == 1);
+        CHECK(s.dialogue[0].actual_duration_s.has_value());
+        CHECK(s.dialogue[0].audio_path.has_value());
+        // 有台词的镜头时长被锁定
+        CHECK(s.duration_locked);
+    }
+
+    SUBCASE("首帧在配音之后才跑") {
+        CHECK(rec.ids_of("frame").size() == 2);
+        CHECK(ep.shots[0].status == models::ShotStatus::DRAFT_DONE);
+    }
+}
+
+TEST_CASE("没配音的镜头进不了首帧") {
+    // 阶段 5 时这里临时放宽收了 PLANNED（那会儿配音还没移植）。
+    // 现在收回来了：配音失败的镜头状态停在 PLANNED，自动被挡在首帧之外——
+    // 那是对的，它们带着错的时长。
+    const auto store = make_store("没配音", 2);
+    Recorder rec;
+    pipeline::CancelToken tok;
+    pipeline::RunOptions opts;
+    opts.episode_id = "ep01";
+    opts.only = {pipeline::Stage::Frames};
+
+    const auto report = run_it(store, opts, rec, tok);
+    CHECK(rec.ids_of("frame").empty());
+    CHECK(report.frames.empty());
+}
+
+TEST_CASE("台词太多的镜头在配音之后拆开") {
+    // **拆在配音之后、出首帧之前**：音频已经有了、画面还没生成，
+    // 拆开不浪费任何一次渲染。
+    const auto store = make_store("拆镜", 1);
+    {
+        models::Project p = store.load_project();
+        models::Episode* ep = p.episode_by_id("ep01");
+        for (int i = 0; i < 4; ++i) {
+            models::DialogueLine l;
+            l.char_id = "c_lin_wan";
+            l.text = "这是第" + std::to_string(i) + "句比较长的台词内容在这里";
+            ep->shots[0].dialogue.push_back(l);
+        }
+        store.save_project(p);
+    }
+
+    Recorder rec;
+    pipeline::CancelToken tok;
+    pipeline::RunOptions opts;
+    opts.episode_id = "ep01";
+    opts.only = {pipeline::Stage::Audio};
+    run_it(store, opts, rec, tok);
+
+    const models::Episode ep = reload(store);
+    CHECK(ep.shots.size() > 1);   // 拆开了
+
+    SUBCASE("拆出来的新镜编号不重") {
+        std::set<std::string> ids;
+        for (const auto& s : ep.shots) {
+            CAPTURE(s.shot_id);
+            CHECK(ids.insert(s.shot_id).second);
+        }
+    }
+
+    SUBCASE("order 重排过") {
+        for (std::size_t i = 0; i < ep.shots.size(); ++i) {
+            CHECK(ep.shots[i].order == static_cast<int>(i));
+        }
+    }
+}
+
+TEST_CASE("没有 ffmpeg 时跳过装配，并说清产物在哪") {
+    // 前面几步已经跑完了。**跑到最后一步才说缺 ffmpeg 最气人**，
+    // 所以要说清楚缺的是什么、东西在哪、装好之后怎么补上。
+    const auto store = make_store("没ffmpeg", 1);
+    Recorder rec;
+    pipeline::CancelToken tok;
+    pipeline::RunOptions opts;
+    opts.episode_id = "ep01";
+    opts.skip_final = true;
+    std::vector<nlohmann::json> msgs;
+
+    const auto report = run_it(store, opts, rec, tok, &msgs);
+    CHECK_FALSE(report.output.has_value());
+    CHECK(report.ok());   // 不算失败——视频都出来了
+
+    bool said = false;
+    for (const auto& m : msgs) {
+        const std::string s = m.dump();
+        if (s.find("没有 ffmpeg") != std::string::npos &&
+            s.find("shots/") != std::string::npos) {
+            said = true;
+        }
+    }
+    CHECK(said);
 }
