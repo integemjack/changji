@@ -199,3 +199,35 @@ TEST_CASE("长值在报告里要截断") {
     CHECK(s.size() < 500);
     CHECK(s.find("…") != std::string::npos);
 }
+
+TEST_CASE("忽略规则也管只有一边有的键") {
+    // **少了这一步的话，"多了某个键"永远压不下去**——而忽略规则写的
+    // 就是"C++ 侧有意多这个键"（比如 /local：本地模型清单，
+    // Python 那边模型归 ComfyUI 管，没这个概念）。
+    // 实时对拍第一次跑绿的时候正是卡在这儿。
+    compat::CompareOptions opts;
+    opts.ignore = {{"/local", "C++ 侧有意多出来的键"},
+                   {"/**/error", "错误消息的文字不算契约"}};
+
+    CHECK(compat::compare(json::object(), json{{"local", 1}}, opts).empty());
+    CHECK(compat::compare(json{{"local", 1}}, json::object(), opts).empty());
+    // 嵌一层的也要能压住
+    CHECK(compat::compare(json{{"a", json::object()}},
+                          json{{"a", {{"error", "连不上"}}}}, opts).empty());
+
+    SUBCASE("没写规则的键照样报") {
+        const auto d = compat::compare(json::object(), json{{"其它", 1}}, opts);
+        REQUIRE(d.size() == 1);
+        CHECK(d[0].path == "/其它");
+    }
+
+    SUBCASE("规则只压得住它自己那一段，压不住上一层") {
+        // /**/error 匹配的是 /a/error。整个 a 对象是多出来的时候，
+        // 差异报在 /a 上——那**不该**被这条规则压住，
+        // 因为"多了一整个对象"和"多了一个错误消息字段"完全是两回事。
+        const auto d = compat::compare(json::object(),
+                                       json{{"a", {{"error", "连不上"}}}}, opts);
+        REQUIRE(d.size() == 1);
+        CHECK(d[0].path == "/a");
+    }
+}

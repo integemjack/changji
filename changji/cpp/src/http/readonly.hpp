@@ -94,6 +94,27 @@ inline ApiError unprocessable_top(const std::string& key,
         }})}});
 }
 
+/// FastAPI 在**查询参数**缺失时回的那种 422。
+///
+/// loc 是 ["query", <参数名>]，和请求体那两个（["body", ...]）不是一回事。
+///
+/// 这一条是实时对拍抓出来的：C++ 侧原先直接进处理函数，缺 episode_id 时
+/// 回的是 404「没有剧集 」（注意末尾那个空格，参数是空的）。而 FastAPI
+/// 在处理函数跑之前就把请求拦下来了，回 422 加一个结构化的 detail。
+/// 状态码和 detail 的形状都是契约的一部分。
+///
+/// **"给了但是空的"不算缺失**：`?path=` 在 FastAPI 那边是一个合法的空字符串，
+/// 会进处理函数然后回 400「没有指定项目目录」。语料里有一条专门测这个。
+inline ApiError unprocessable_query(const std::string& name) {
+    return ApiError::with_body(422, nlohmann::json{{"detail", nlohmann::json::array({
+        nlohmann::json{
+            {"type", "missing"},
+            {"loc", nlohmann::json::array({"query", name})},
+            {"msg", "Field required"},
+            {"input", nullptr},
+        }})}});
+}
+
 // 每个接口一个纯函数。参数就是 Python 那边的查询参数。
 
 ApiResult get_hardware(const config::Settings& settings);

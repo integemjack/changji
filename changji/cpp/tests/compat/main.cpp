@@ -64,6 +64,25 @@ std::vector<compat::IgnoreRule> default_ignores() {
     };
 }
 
+/// 两边**有意不一样**的地方。每一条都对应方案里记过的一个决定。
+///
+/// 和上面那组不同：上面是"环境不同所以值不同"，这里是"我们决定让它不一样"。
+/// 混在一起的话，将来想收窄环境那组时会连这组一起碰。
+std::vector<compat::IgnoreRule> intentional_ignores() {
+    return {
+        {"/checks/**",
+         "体检项两边查的东西不同：C++ 侧没有 Python 解释器、多了 sd.cpp 后端和"
+         "本地模型两项。形状（name/level/detail/fix）是一致的，前端照渲染。"},
+        {"/**/error",
+         "错误消息的文字不算契约（方案第三节「校验错误的消息文字不算契约」）。"
+         "这里两边的差异来自各自的 HTTP 库：httpx 说 All connection attempts "
+         "failed，httplib 说 Could not establish connection。"},
+        {"/local",
+         "C++ 侧多出来的键：本地模型清单。Python 那边模型归 ComfyUI 管，"
+         "没有这个概念。多一个键不影响前端（它按名字取字段）。"},
+    };
+}
+
 /// 实时模式下能收窄的忽略项：两个后端在同一台机器上，硬件必须一致。
 std::vector<compat::IgnoreRule> live_ignores() {
     auto v = default_ignores();
@@ -75,7 +94,20 @@ std::vector<compat::IgnoreRule> live_ignores() {
                                       r.pattern == "/tiers/**";
                            }),
             v.end());
+    const auto intentional = intentional_ignores();
+    v.insert(v.end(), intentional.begin(), intentional.end());
     return v;
+}
+
+/// 把生效的忽略项打出来。
+///
+/// **不打的话，忽略就是隐形的。** 一份"全部一致"的报告后面藏着十条忽略规则，
+/// 而看报告的人不知道——那比对拍不通过更危险。
+void print_ignores(const std::vector<compat::IgnoreRule>& rules) {
+    std::cout << "\n忽略 " << rules.size() << " 条（每条都有理由）：\n";
+    for (const auto& r : rules) {
+        std::cout << "  " << r.pattern << "\n      " << r.why << "\n";
+    }
 }
 
 struct Args {

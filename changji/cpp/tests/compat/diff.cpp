@@ -67,6 +67,13 @@ bool numbers_equal(const json& a, const json& b, double tol) {
 void walk(const json& expected, const json& actual, const std::string& path,
           const CompareOptions& opts, std::vector<Difference>& out);
 
+bool ignored(const std::string& path, const CompareOptions& opts) {
+    for (const auto& rule : opts.ignore) {
+        if (path_matches(path, rule.pattern)) return true;
+    }
+    return false;
+}
+
 void walk_object(const json& expected, const json& actual,
                  const std::string& path, const CompareOptions& opts,
                  std::vector<Difference>& out) {
@@ -82,7 +89,14 @@ void walk_object(const json& expected, const json& actual,
         const bool in_a = actual.contains(key);
         if (in_e && in_a) {
             walk(expected[key], actual[key], sub, opts, out);
-        } else if (in_e) {
+            continue;
+        }
+        // **只有一边有的键也要过忽略规则。**
+        // 少了这一步的话，"多了 /local 这个键"永远压不下去——
+        // 而忽略规则写的就是"C++ 侧有意多这个键"。
+        // 实时对拍第一次跑绿的时候正是卡在这儿。
+        if (ignored(sub, opts)) continue;
+        if (in_e) {
             out.push_back({sub, "少了这个键，期望 " + brief(expected[key])});
         } else {
             out.push_back({sub, "多了这个键：" + brief(actual[key])});
@@ -92,9 +106,7 @@ void walk_object(const json& expected, const json& actual,
 
 void walk(const json& expected, const json& actual, const std::string& path,
           const CompareOptions& opts, std::vector<Difference>& out) {
-    for (const auto& rule : opts.ignore) {
-        if (path_matches(path, rule.pattern)) return;
-    }
+    if (ignored(path, opts)) return;
 
     if (type_name(expected) != type_name(actual)) {
         out.push_back({path, "类型不同：期望 " + type_name(expected) + "（" +

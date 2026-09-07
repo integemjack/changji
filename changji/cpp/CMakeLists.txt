@@ -81,6 +81,12 @@ FetchContent_Declare(Crow
 
 FetchContent_MakeAvailable(json tomlplusplus httplib Crow)
 
+# Crow 1.2.0 的状态码表里没有 422，会把它改写成 500。
+# 所有 pydantic 风格的校验错误都受影响，而单元测试看不见——
+# 那边不经过 Crow 的写响应那一步。详见脚本里的注释。
+include("${CMAKE_CURRENT_LIST_DIR}/cmake/patch_crow_422.cmake")
+changji_patch_crow_422("${crow_SOURCE_DIR}/include")
+
 # ⚠️ **httplib 的头文件目录不能是 SYSTEM。**
 #
 # sd.cpp 把自己的 thirdparty 目录（里面有一份 httplib.h 0.28.0）作为

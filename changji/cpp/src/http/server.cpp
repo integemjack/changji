@@ -75,6 +75,20 @@ bool query_bool(const crow::request& req, const char* key, bool def = false) {
            s == "t";
 }
 
+/// 取一个**必填**的查询参数。没这个键就抛 422。
+///
+/// **"没给"和"给了个空的"是两回事。** FastAPI 对 `path: str` 这种没有默认值
+/// 的参数，缺了就在处理函数跑之前拦下来回 422；而 `?path=` 是一个合法的
+/// 空字符串，会进处理函数然后回 400。少了这个区分的话，缺参数时 C++ 回的是
+/// 404「没有剧集 」——注意末尾那个空格，那是拿空参数去查的结果。
+///
+/// 这一条是实时对拍抓出来的：单元测试直接调处理函数，天然绕过了这一层。
+std::string required_query(const crow::request& req, const char* key) {
+    const char* v = req.url_params.get(key);
+    if (v == nullptr) throw unprocessable_query(key);
+    return v;
+}
+
 /// 取查询参数。Crow 拿不到时返回 nullptr，转成空串——
 /// 空串该怎么处理由各个接口自己决定（比如 path 为空是 400 不是 500）。
 std::string query(const crow::request& req, const char* key) {
@@ -153,19 +167,20 @@ void run(const config::Settings& settings, const Options& opts) {
     });
 
     CROW_ROUTE(app, "/api/project")([](const crow::request& req) {
-        auto r = guard([&] { return get_project(query(req, "path")); });
+        auto r = guard([&] { return get_project(required_query(req, "path")); });
         return json_response(r.body, r.status);
     });
 
     CROW_ROUTE(app, "/api/shots")([](const crow::request& req) {
         auto r = guard([&] {
-            return get_shots(query(req, "path"), query(req, "episode_id"));
+            return get_shots(required_query(req, "path"),
+                             required_query(req, "episode_id"));
         });
         return json_response(r.body, r.status);
     });
 
     CROW_ROUTE(app, "/api/assets")([](const crow::request& req) {
-        auto r = guard([&] { return get_assets(query(req, "path")); });
+        auto r = guard([&] { return get_assets(required_query(req, "path")); });
         return json_response(r.body, r.status);
     });
 
@@ -175,7 +190,16 @@ void run(const config::Settings& settings, const Options& opts) {
     // 拖不动进度条，只能从头播。方案第三节点了名。
 
     CROW_ROUTE(app, "/api/media")([](const crow::request& req) {
-        const auto t = resolve_media(query(req, "path"), query(req, "rel"));
+        // 这条路不走 guard（它要回文件内容不是 JSON），所以必填参数
+        // 的 422 要自己接住。
+        const char* path_p = req.url_params.get("path");
+        const char* rel_p = req.url_params.get("rel");
+        if (path_p == nullptr || rel_p == nullptr) {
+            const auto e =
+                unprocessable_query(path_p == nullptr ? "path" : "rel");
+            return json_response(e.detail(), e.status());
+        }
+        const auto t = resolve_media(path_p, rel_p);
         if (t.status != 200) {
             return json_response({{"detail", t.detail}}, t.status);
         }
@@ -465,7 +489,8 @@ void run(const config::Settings& settings, const Options& opts) {
 
     CROW_ROUTE(app, "/api/script")([](const crow::request& req) {
         auto r = guard([&] {
-            return get_script(query(req, "path"), query(req, "episode_id"));
+            return get_script(required_query(req, "path"),
+                              required_query(req, "episode_id"));
         });
         return json_response(r.body, r.status);
     });
@@ -529,7 +554,8 @@ void run(const config::Settings& settings, const Options& opts) {
     // 要算进预估里，不然改完分辨率预演的时间不变，看着像是没生效。
     CROW_ROUTE(app, "/api/run/preview")([](const crow::request& req) {
         auto r = guard([&] {
-            return get_run_preview(query(req, "path"), query(req, "episode_id"),
+            return get_run_preview(required_query(req, "path"),
+                                   query(req, "episode_id"),
                                    query_bool(req, "all_episodes"),
                                    query_bool(req, "skip_final"),
                                    query_bool(req, "force"),
@@ -549,13 +575,13 @@ void run(const config::Settings& settings, const Options& opts) {
                 [] { return config::runtime().snapshot().comfy; },
                 comfy::default_transport(
                     [] { return config::runtime().snapshot().comfy; }));
-            return get_voices(query(req, "path"), client);
+            return get_voices(required_query(req, "path"), client);
         });
         return json_response(r.body, r.status);
     });
 
     CROW_ROUTE(app, "/api/outputs")([](const crow::request& req) {
-        auto r = guard([&] { return get_outputs(query(req, "path")); });
+        auto r = guard([&] { return get_outputs(required_query(req, "path")); });
         return json_response(r.body, r.status);
     });
 
