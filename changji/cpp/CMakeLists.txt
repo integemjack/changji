@@ -176,6 +176,7 @@ add_executable(changji
     src/comfy/client.cpp
     src/comfy/ws_client.cpp
     src/comfy/client_http.cpp
+    src/comfy/loader.cpp
     src/http/readonly.cpp
     src/http/editing.cpp
     src/http/editing_assets.cpp
@@ -367,6 +368,7 @@ if(CHANGJI_BUILD_TESTS)
         tests/unit/test_comfy_workflow.cpp
         tests/unit/test_comfy_client.cpp
         tests/unit/test_ws_client.cpp
+        tests/unit/test_comfy_loader.cpp
 
         # 被测的源码。刻意不包含 doctor.cpp、http/server.cpp 和
         # llm/client_http.cpp —— 那三个链 httplib 或 Crow，
@@ -396,6 +398,7 @@ if(CHANGJI_BUILD_TESTS)
         src/comfy/workflow.cpp
         src/comfy/client.cpp
         src/comfy/ws_client.cpp
+        src/comfy/loader.cpp
         src/llm/client.cpp
         src/config/settings.cpp
         src/config/writeback.cpp
