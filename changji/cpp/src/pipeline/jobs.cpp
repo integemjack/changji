@@ -77,7 +77,8 @@ const JobTable::Slot& JobTable::slot(JobKind k) const {
     return k == JobKind::Run ? run_ : write_;
 }
 
-bool JobTable::start(JobKind kind, const std::string& episode_id, Body body) {
+bool JobTable::start(JobKind kind, const std::string& episode_id, Body body,
+                     const std::string& stop_message) {
     std::unique_lock lk(mu_);
     Slot& s = slot(kind);
     if (s.state.running) return false;
@@ -103,14 +104,15 @@ bool JobTable::start(JobKind kind, const std::string& episode_id, Body body) {
     s.state.job_id = new_job_id(kind);
     if (!episode_id.empty()) s.state.episode_id = episode_id;
     s.state.started_at = std::chrono::steady_clock::now();
+    s.state.stop_message = stop_message;
     s.active = true;
 
     const std::string job_id = s.state.job_id;
 
     s.worker = std::thread([this, kind, job_id, body = std::move(body)]() {
-        auto report = [this, kind](Event ev) { record(kind, std::move(ev)); };
+        JobProgress progress(this, kind);
         try {
-            body(slot(kind).token, report);
+            body(progress);
         } catch (const std::exception& e) {
             std::lock_guard lg(mu_);
             slot(kind).state.error = e.what();
@@ -179,7 +181,10 @@ bool JobTable::cancel(JobKind kind) {
     // 代价是 running 不再等价于"线程还活着"。所以 start() 里那句 join
     // 不能删：槽看着空了，上一条线程可能还在收尾。
     s.state.running = false;
-    s.state.error = stopped_message(kind);
+    // 任务自己指定的那句优先。同一个槽上跑的两件事说法不一样：
+    // 写整季停了是"已经写好的几集留着"，批量出分镜停了是"已经出好的分镜留着"。
+    s.state.error = s.state.stop_message.empty() ? stopped_message(kind)
+                                                 : s.state.stop_message;
     return true;
 }
 
@@ -281,6 +286,63 @@ std::string JobTable::job_id(JobKind kind) const {
 void JobTable::wait_idle() {
     std::unique_lock lk(mu_);
     idle_cv_.wait(lk, [this] { return !run_.active && !write_.active; });
+}
+
+
+// ---- JobProgress ----
+
+template <typename F>
+void JobTable::mutate(JobKind kind, F&& fn) {
+    std::lock_guard lg(mu_);
+    fn(slot(kind).state);
+}
+
+void JobProgress::report(Event ev) { table_->record(kind_, std::move(ev)); }
+
+void JobProgress::set_message(std::string m) {
+    table_->mutate(kind_, [&](JobState& s) { s.message = std::move(m); });
+}
+
+void JobProgress::set_done(int done) {
+    table_->mutate(kind_, [&](JobState& s) { s.done = done; });
+}
+
+void JobProgress::set_total(int total) {
+    table_->mutate(kind_, [&](JobState& s) { s.total = total; });
+}
+
+void JobProgress::add_episode(nlohmann::json ep) {
+    table_->mutate(kind_,
+                   [&](JobState& s) { s.episodes.push_back(std::move(ep)); });
+}
+
+void JobProgress::set_output(std::string path) {
+    table_->mutate(kind_, [&](JobState& s) { s.output = std::move(path); });
+}
+
+void JobProgress::add_output(std::string path) {
+    table_->mutate(kind_,
+                   [&](JobState& s) { s.outputs.push_back(std::move(path)); });
+}
+
+void JobProgress::set_episode_id(std::string id) {
+    table_->mutate(kind_, [&](JobState& s) { s.episode_id = std::move(id); });
+}
+
+void JobProgress::set_queue(int done, int total) {
+    table_->mutate(kind_, [&](JobState& s) {
+        s.queue_done = done;
+        s.queue_total = total;
+    });
+}
+
+void JobProgress::set_error(std::string e) {
+    table_->mutate(kind_, [&](JobState& s) { s.error = std::move(e); });
+}
+
+bool JobProgress::cancelled() const {
+    std::lock_guard lg(table_->mu_);
+    return table_->slot(kind_).token.cancelled();
 }
 
 JobTable& jobs() {

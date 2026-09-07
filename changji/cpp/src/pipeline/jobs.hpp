@@ -101,6 +101,9 @@ struct JobState {
 
     /// 事件环。上限 500，对应 Python 的 deque(maxlen=500)。
     std::deque<Event> events;
+
+    /// 手动停止时写进 error 的话。空表示用这一类的默认值。
+    std::string stop_message;
 };
 
 /// 消息汇。job 表产生的进度和终止消息往这里送。
@@ -108,6 +111,52 @@ struct JobState {
 /// 默认什么都不做（命令行模式、单元测试都不需要推送）。
 /// main() 里接到 ws::hub().broadcast 上。
 using Sink = std::function<void(const std::string& job_id, const nlohmann::json& msg)>;
+
+class JobTable;
+
+/// 任务体能改的那部分状态。
+///
+/// 不直接把 JobState 交出去，是因为里面有一半字段只该由 job 表自己动
+/// （running、job_id、started_at）。任务体拿到整个结构就迟早会去改它们，
+/// 而改错的表现是"任务明明跑完了界面还转着圈"。
+///
+/// 所有方法都是线程安全的，可以从工作线程随便调。
+class JobProgress {
+public:
+    /// 记一条事件：进环形缓冲、更新进度、广播出去。
+    void report(Event ev);
+
+    /// 只改一句话，不动进度条。跑长任务时"正在写第 3 集"这种。
+    void set_message(std::string m);
+
+    /// 完成数 / 总数。对应 Python 的 writing.done / writing.total。
+    void set_done(int done);
+    void set_total(int total);
+
+    /// 追加一集的结果。写整季和批量出分镜都靠它，
+    /// 每写完一集就往里加一条，界面能边跑边看。
+    void add_episode(nlohmann::json ep);
+
+    /// 产物路径。
+    void set_output(std::string path);
+    void add_output(std::string path);
+
+    /// 当前跑到哪一集，以及队列进度。
+    void set_episode_id(std::string id);
+    void set_queue(int done, int total);
+
+    /// 记一条错误。**不终止任务**——写整季时一集写砸了不该让前面几集白写。
+    void set_error(std::string e);
+
+    /// 该停了吗。耗时循环里要主动查。
+    bool cancelled() const;
+
+private:
+    friend class JobTable;
+    JobProgress(JobTable* t, JobKind k) : table_(t), kind_(k) {}
+    JobTable* table_;
+    JobKind kind_;
+};
 
 /// 任务表。所有公开方法可从任意线程调用。
 class JobTable {
@@ -118,13 +167,19 @@ public:
     JobTable(const JobTable&) = delete;
     JobTable& operator=(const JobTable&) = delete;
 
-    /// 任务体。收到取消令牌和一个上报进度的回调。
-    using Body = std::function<void(CancelToken&, const std::function<void(Event)>&)>;
+    /// 任务体。拿到一个能改进度的句柄。
+    using Body = std::function<void(JobProgress&)>;
 
     /// 启动一个任务。同种已经在跑就返回 false，调用方回 409。
     ///
     /// episode_id 只是给快照显示用的，不影响调度。
-    bool start(JobKind kind, const std::string& episode_id, Body body);
+    ///
+    /// stop_message 是手动停止时写进 error 的那句话。留空用这一类的默认值。
+    /// 要能按任务指定，是因为同一个槽上跑的两件事说法不一样：
+    /// 写整季停了是"已经写好的几集留着"，批量出分镜停了是
+    /// "已经出好的分镜留着"。用同一句必然有一半场合是错的。
+    bool start(JobKind kind, const std::string& episode_id, Body body,
+               const std::string& stop_message = "");
 
     /// 请求取消。没在跑返回 false，对应 Python 的 {"stopped": false}。
     bool cancel(JobKind kind);
@@ -157,8 +212,12 @@ private:
 
     Slot& slot(JobKind k);
     const Slot& slot(JobKind k) const;
+    friend class JobProgress;
     void record(JobKind kind, Event ev);
     void emit(const std::string& job_id, const nlohmann::json& msg) const;
+    /// 在锁里改一下这个槽的状态。JobProgress 的所有 setter 都走它。
+    template <typename F>
+    void mutate(JobKind kind, F&& fn);
 
     mutable std::mutex mu_;
     Sink sink_;

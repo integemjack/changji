@@ -12,6 +12,7 @@
 #include "http/media.hpp"
 #include "http/upload.hpp"
 #include "http/readonly.hpp"
+#include "http/batch.hpp"
 #include "http/planning.hpp"
 #include "http/scripting.hpp"
 #include "llm/client.hpp"
@@ -305,6 +306,32 @@ void run(const config::Settings& settings, const Options& opts) {
         script_route(&post_bible));
     CROW_ROUTE(app, "/api/plan").methods("POST"_method)(
         script_route(&post_plan));
+
+    // ---- 两个长任务 ----
+    //
+    // 立刻返回 {"started": true, ...}，活干在工作线程上。
+    // 进度靠 GET /api/script/series 轮询或者 WebSocket 推。
+    //
+    // 客户端换成 shared_ptr：任务比这次请求活得久，
+    // 上面那个 static 引用在这里不够安全——将来换成按项目建的客户端时，
+    // 引用会在任务还跑着的时候失效。
+    static auto batch_client =
+        std::make_shared<llm::RemoteClient>(settings.llm, llm::default_http_post());
+
+    const auto batch_route = [](auto handler) {
+        return [handler](const crow::request& req) {
+            auto r = guard([&] {
+                return handler(json::parse(req.body, nullptr, false),
+                               batch_client);
+            });
+            return json_response(r.body, r.status);
+        };
+    };
+
+    CROW_ROUTE(app, "/api/script/series").methods("POST"_method)(
+        batch_route(&post_script_series));
+    CROW_ROUTE(app, "/api/plan/all").methods("POST"_method)(
+        batch_route(&post_plan_all));
 
     // ---- 任务状态 ----
     //

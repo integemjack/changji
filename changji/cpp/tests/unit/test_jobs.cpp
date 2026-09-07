@@ -29,7 +29,7 @@ namespace {
 
 /// 一个立刻结束的任务体。
 JobTable::Body noop() {
-    return [](CancelToken&, const std::function<void(Event)>&) {};
+    return [](JobProgress&) {};
 }
 
 /// 等到任务跑完。超时就失败——挂住比断言失败更难查。
@@ -92,7 +92,7 @@ TEST_CASE("Write 快照只有六个字段") {
 TEST_CASE("同种任务不能并发，不同种可以") {
     JobTable t;
     std::atomic<bool> release{false};
-    auto blocker = [&release](CancelToken&, const std::function<void(Event)>&) {
+    auto blocker = [&release](JobProgress&) {
         while (!release.load()) std::this_thread::sleep_for(std::chrono::milliseconds(1));
     };
 
@@ -124,8 +124,8 @@ TEST_CASE("取消") {
     CHECK(t.cancel(JobKind::Run) == false);  // 没在跑，对应 {"stopped": false}
 
     t.start(JobKind::Run, "ep_01",
-            [&loops](CancelToken& tok, const std::function<void(Event)>&) {
-                while (!tok.cancelled()) {
+            [&loops](JobProgress& p) {
+                while (!p.cancelled()) {
                     ++loops;
                     std::this_thread::sleep_for(std::chrono::milliseconds(1));
                 }
@@ -147,15 +147,15 @@ TEST_CASE("取消") {
         std::atomic<bool> release{false};
         std::atomic<bool> write_saw_cancel{false};
         t.start(JobKind::Write, "",
-                [&](CancelToken& tok, const std::function<void(Event)>&) {
+                [&](JobProgress& p) {
                     while (!release.load()) {
-                        if (tok.cancelled()) write_saw_cancel = true;
+                        if (p.cancelled()) write_saw_cancel = true;
                         std::this_thread::sleep_for(std::chrono::milliseconds(1));
                     }
                 });
         t.start(JobKind::Run, "ep_01",
-                [](CancelToken& tok, const std::function<void(Event)>&) {
-                    while (!tok.cancelled()) {
+                [](JobProgress& p) {
+                    while (!p.cancelled()) {
                         std::this_thread::sleep_for(std::chrono::milliseconds(1));
                     }
                 });
@@ -172,9 +172,7 @@ TEST_CASE("异常被兜住，不会崩掉整个服务") {
     // 包着整个 run()，这里靠工作线程里的 catch。
     JobTable t;
     t.start(JobKind::Run, "ep_01",
-            [](CancelToken&, const std::function<void(Event)>&) {
-                throw std::runtime_error("模型文件读不了");
-            });
+            [](JobProgress&) { throw std::runtime_error("模型文件读不了"); });
     REQUIRE(wait_done(t, JobKind::Run));
 
     const json s = t.snapshot(JobKind::Run);
@@ -183,7 +181,7 @@ TEST_CASE("异常被兜住，不会崩掉整个服务") {
 
     SUBCASE("非标准异常也兜住") {
         t.start(JobKind::Run, "ep_02",
-                [](CancelToken&, const std::function<void(Event)>&) { throw 42; });
+                [](JobProgress&) { throw 42; });
         REQUIRE(wait_done(t, JobKind::Run));
         CHECK(t.snapshot(JobKind::Run).at("error") == "未知异常");
     }
@@ -192,7 +190,7 @@ TEST_CASE("异常被兜住，不会崩掉整个服务") {
 TEST_CASE("事件环上限 500，快照只回最后 80 条") {
     JobTable t;
     t.start(JobKind::Run, "ep_01",
-            [](CancelToken&, const std::function<void(Event)>& report) {
+            [](JobProgress& p) {
                 for (int i = 0; i < 600; ++i) {
                     Event e;
                     e.stage = "render";
@@ -200,7 +198,7 @@ TEST_CASE("事件环上限 500，快照只回最后 80 条") {
                     e.message = "第 " + std::to_string(i) + " 条";
                     e.current = i;
                     e.total = 600;
-                    report(e);
+                    p.report(e);
                 }
             });
     REQUIRE(wait_done(t, JobKind::Run));
@@ -234,16 +232,16 @@ TEST_CASE("没有总数的事件不清空进度条") {
     // 抹掉的话前端进度条会一跳一跳地闪回零。
     JobTable t;
     t.start(JobKind::Run, "ep_01",
-            [](CancelToken&, const std::function<void(Event)>& report) {
-                Event p;
-                p.stage = "render"; p.kind = "progress";
-                p.current = 3; p.total = 10; p.message = "画第 3 个镜头";
-                report(p);
+            [](JobProgress& p) {
+                Event e;
+                e.stage = "render"; e.kind = "progress";
+                e.current = 3; e.total = 10; e.message = "画第 3 个镜头";
+                p.report(e);
 
                 Event log;
                 log.stage = "render"; log.kind = "warn";
                 log.message = "显存吃紧，转成分块解码";
-                report(log);  // total 保持 0
+                p.report(log);  // total 保持 0
             });
     REQUIRE(wait_done(t, JobKind::Run));
 
@@ -264,12 +262,12 @@ TEST_CASE("消息汇收到的内容") {
     });
 
     t.start(JobKind::Run, "ep_01",
-            [](CancelToken&, const std::function<void(Event)>& report) {
+            [](JobProgress& p) {
                 Event e;
                 e.stage = "render"; e.kind = "progress";
                 e.current = 1; e.total = 2; e.message = "开画";
                 e.shot_id = "s_001";
-                report(e);
+                p.report(e);
             });
     REQUIRE(wait_done(t, JobKind::Run));
 
@@ -299,9 +297,7 @@ TEST_CASE("消息汇收到的内容") {
 
     SUBCASE("异常时发 error") {
         t.start(JobKind::Run, "ep_02",
-                [](CancelToken&, const std::function<void(Event)>&) {
-                    throw std::runtime_error("炸了");
-                });
+                [](JobProgress&) { throw std::runtime_error("炸了"); });
         REQUIRE(wait_done(t, JobKind::Run));
         const auto m = drain();
         REQUIRE(m.size() == 1);
@@ -311,8 +307,8 @@ TEST_CASE("消息汇收到的内容") {
 
     SUBCASE("取消时也发 error") {
         t.start(JobKind::Run, "ep_03",
-                [](CancelToken& tok, const std::function<void(Event)>&) {
-                    while (!tok.cancelled()) {
+                [](JobProgress& p) {
+                    while (!p.cancelled()) {
                         std::this_thread::sleep_for(std::chrono::milliseconds(1));
                     }
                 });
@@ -354,7 +350,7 @@ TEST_CASE("多线程同时抢同一个槽，只能有一个成功") {
             racers.emplace_back([&] {
                 const bool ok = t.start(
                     JobKind::Run, "ep",
-                    [&release](CancelToken&, const std::function<void(Event)>&) {
+                    [&release](JobProgress&) {
                         while (!release.load()) {
                             std::this_thread::sleep_for(std::chrono::microseconds(50));
                         }
@@ -391,13 +387,13 @@ TEST_CASE("一边跑一边查快照不会撕裂") {
     });
 
     t.start(JobKind::Run, "ep_01",
-            [](CancelToken&, const std::function<void(Event)>& report) {
+            [](JobProgress& p) {
                 for (int i = 0; i < 3000; ++i) {
                     Event e;
                     e.stage = "render"; e.kind = "progress";
                     e.current = i; e.total = 3000;
                     e.message = "第 " + std::to_string(i);
-                    report(e);
+                    p.report(e);
                 }
             });
     REQUIRE(wait_done(t, JobKind::Run, 30000));
@@ -409,7 +405,7 @@ TEST_CASE("一边跑一边查快照不会撕裂") {
 TEST_CASE("wait_idle 等得住两个槽") {
     JobTable t;
     std::atomic<int> finished{0};
-    auto slow = [&finished](CancelToken&, const std::function<void(Event)>&) {
+    auto slow = [&finished](JobProgress&) {
         std::this_thread::sleep_for(std::chrono::milliseconds(30));
         ++finished;
     };
@@ -428,8 +424,8 @@ TEST_CASE("析构时先取消再等，不会挂住") {
     {
         JobTable t;
         t.start(JobKind::Run, "ep_01",
-                [&saw_cancel](CancelToken& tok, const std::function<void(Event)>&) {
-                    while (!tok.cancelled()) {
+                [&saw_cancel](JobProgress& p) {
+                    while (!p.cancelled()) {
                         std::this_thread::sleep_for(std::chrono::milliseconds(1));
                     }
                     saw_cancel = true;
@@ -447,8 +443,8 @@ TEST_CASE("两种任务的停止文案不一样") {
     // 合并成一句的话，有一半场合用户看到的提示是错的。
     JobTable t;
     std::atomic<bool> release{false};
-    auto blocker = [&release](CancelToken& tok, const std::function<void(Event)>&) {
-        while (!release.load() && !tok.cancelled()) {
+    auto blocker = [&release](JobProgress& p) {
+        while (!release.load() && !p.cancelled()) {
             std::this_thread::sleep_for(std::chrono::milliseconds(1));
         }
     };
