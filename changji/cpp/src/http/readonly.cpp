@@ -6,6 +6,7 @@
 
 #include "models/hardware.hpp"
 #include "models/project.hpp"
+#include "util/fs_time.hpp"
 #include "util/paths.hpp"
 
 namespace fs = std::filesystem;
@@ -354,17 +355,15 @@ ApiResult get_projects(const config::Settings& settings) {
                 }
             }
 
+            // Unix 秒。**不能直接用 time_since_epoch()**：
+            // file_time_type 的纪元由实现定，MSVC 用的是 1601-01-01，
+            // 一个刚写的文件在那上面是一百三十多亿秒。前端的 humanAgo()
+            // 按 Unix 秒算，会得出 2381 年、然后一律显示"刚刚"——
+            // 每个项目都显示"刚刚"，看起来像是没坏。
             double mtime = 0.0;
             const fs::path pf = store.paths().project_file();
             if (fs::is_regular_file(pf, ec)) {
-                const auto t = fs::last_write_time(pf, ec);
-                if (!ec) {
-                    // 转成 Unix 秒。前端只拿它排序和显示相对时间，
-                    // 精度到秒够用；跨平台的 file_clock 纪元不统一，
-                    // 所以走 duration 而不是直接 time_since_epoch 的原值。
-                    mtime = std::chrono::duration<double>(
-                                t.time_since_epoch()).count();
-                }
+                mtime = util::file_mtime_unix(pf);
             }
 
             items.push_back({json{

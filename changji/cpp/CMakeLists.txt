@@ -136,6 +136,7 @@ add_executable(changji
     src/models/hardware.cpp
     src/util/text.cpp
     src/util/human_time.cpp
+    src/util/fs_time.cpp
     src/stages/json_extract.cpp
     src/stages/bible.cpp
     src/stages/storyboard.cpp
@@ -340,6 +341,7 @@ if(CHANGJI_BUILD_TESTS)
         src/util/proc.cpp
         src/util/text.cpp
         src/util/human_time.cpp
+        src/util/fs_time.cpp
         src/stages/json_extract.cpp
         src/stages/bible.cpp
         src/stages/storyboard.cpp

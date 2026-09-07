@@ -38,6 +38,22 @@ RunDeps default_run_deps();
 
 ApiResult post_run(const nlohmann::json& body, const RunDeps& deps);
 
+/// GET /api/run/preview —— 开跑之前先说清楚这一次会做什么、大概多久。
+///
+/// 以前只能按下开始再看，一按就是几十分钟。哪些镜头会重做、总共要等多久，
+/// 这两件事应该在按下去之前就知道。
+///
+/// **一个镜头从它现在的状态开始，会一路走完后面所有阶段。** 只按当前状态
+/// 归到一个阶段的话，会告诉人"配音 2 镜，粗估 16 秒"，而实际上那两镜还要
+/// 出首帧、跑草稿档、跑成片档，得等十几分钟。报小了的预演比没有预演更糟。
+ApiResult get_run_preview(const std::string& path,
+                          const std::string& episode_id, bool all_episodes,
+                          bool skip_final, bool force,
+                          const models::HardwareProfile& profile);
+
+/// GET /api/outputs —— 列出已经出好的成片。审片时直接在界面里播。
+ApiResult get_outputs(const std::string& path);
+
 /// 把阶段名列表翻成枚举。认不出的抛 ApiError。
 ///
 /// 单独暴露是因为**它抛的错不该变成 400**：Python 那边这个校验在

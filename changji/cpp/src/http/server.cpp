@@ -2,6 +2,8 @@
 
 #include <crow.h>
 
+#include <algorithm>
+#include <cctype>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
@@ -54,6 +56,21 @@ json to_json(const doctor::Report& report) {
         });
     }
     return {{"can_run", report.can_run()}, {"checks", checks}};
+}
+
+/// 取布尔查询参数。
+///
+/// 认的取值抄 FastAPI：true/1/on/yes/y/t，大小写不论。别的一律 false——
+/// FastAPI 那边不认识的值是 422，但前端只会发 URLSearchParams 序列化出来的
+/// "true"/"false"，为一个到不了的分支加一条错误路径不划算。
+bool query_bool(const crow::request& req, const char* key, bool def = false) {
+    const char* v = req.url_params.get(key);
+    if (v == nullptr) return def;
+    std::string s(v);
+    std::transform(s.begin(), s.end(), s.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    return s == "true" || s == "1" || s == "on" || s == "yes" || s == "y" ||
+           s == "t";
 }
 
 /// 取查询参数。Crow 拿不到时返回 nullptr，转成空串——
@@ -501,6 +518,27 @@ void run(const config::Settings& settings, const Options& opts) {
 
     CROW_ROUTE(app, "/api/run")([] {
         return json_response(pipeline::jobs().snapshot(pipeline::JobKind::Run));
+    });
+
+    // 开跑之前先看看这一次会做什么、大概多久。一按就是几十分钟，
+    // 哪些镜头会重做应该在按下去之前就知道。
+    //
+    // 画像走 runtime 而不是自己 detect()：用户在设置页改过的画质档位
+    // 要算进预估里，不然改完分辨率预演的时间不变，看着像是没生效。
+    CROW_ROUTE(app, "/api/run/preview")([](const crow::request& req) {
+        auto r = guard([&] {
+            return get_run_preview(query(req, "path"), query(req, "episode_id"),
+                                   query_bool(req, "all_episodes"),
+                                   query_bool(req, "skip_final"),
+                                   query_bool(req, "force"),
+                                   config::runtime().profile());
+        });
+        return json_response(r.body, r.status);
+    });
+
+    CROW_ROUTE(app, "/api/outputs")([](const crow::request& req) {
+        auto r = guard([&] { return get_outputs(query(req, "path")); });
+        return json_response(r.body, r.status);
     });
 
     // 开跑。立刻返回，进度靠上面那个轮询或者 WebSocket 推。
