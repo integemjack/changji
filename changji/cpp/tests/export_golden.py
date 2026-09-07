@@ -507,3 +507,94 @@ dump("project_expectations", {
 })
 
 print(f"\n项目目录建在 {PROJ_ROOT}")
+
+
+# ══════════════════════════════════════════════════════════════════════
+# hardware.py 的语料
+# ══════════════════════════════════════════════════════════════════════
+
+from changji.hardware import (  # noqa: E402
+    HardwareProfile,
+    Tier,
+    TierSpec,
+    _round32,
+    tiers_for_vram,
+)
+
+# ── _round32 的银行家舍入 ───────────────────────────────────────────────
+#
+# Python 的 round() 是四舍六入五取偶，C++ 的 std::round 是四舍五入远离零。
+# 恰好落在 .5 上时两者不同：round(12.5) Python 给 12、std::round 给 13。
+# 这里把所有半整数情形都列出来钉死。
+round32_cases = []
+for n in (0, 1, 16, 17, 31, 32, 33,
+          400, 416, 432, 448, 464, 480,   # 400/32=12.5, 432/32=13.5, 464/32=14.5
+          352, 288, 256, 544, 704, 1088,
+          -5, 15, 47, 48, 49):
+    round32_cases.append({"n": n, "expected": _round32(n)})
+dump("round32", round32_cases)
+
+
+# ── 各档显存推导出的档位参数 ────────────────────────────────────────────
+
+vram_cases = []
+for vram in (4.0, 7.5, 8.0, 11.5, 12.0, 15.5, 15.9, 16.0, 23.5, 24.0, 48.0):
+    tiers = tiers_for_vram(vram)
+    vram_cases.append({
+        "vram_gb": vram,
+        "tiers": {
+            t.value: {
+                "width": s.width, "height": s.height, "steps": s.steps,
+                "measured_seconds": s.measured_seconds,
+            }
+            for t, s in tiers.items()
+        },
+    })
+dump("tiers_for_vram", vram_cases)
+
+
+# ── scaled_to 的三种画幅 ────────────────────────────────────────────────
+
+scale_cases = []
+for w, h, steps in ((1280, 704, 30), (640, 352, 10), (768, 432, 18), (960, 544, 20)):
+    spec = TierSpec(tier=Tier.FINAL, width=w, height=h, steps=steps)
+    scale_cases.append({
+        "input": {"width": w, "height": h, "steps": steps},
+        "9:16": {"width": spec.scaled_to("9:16").width,
+                 "height": spec.scaled_to("9:16").height},
+        "16:9": {"width": spec.scaled_to("16:9").width,
+                 "height": spec.scaled_to("16:9").height},
+        "1:1": {"width": spec.scaled_to("1:1").width,
+                "height": spec.scaled_to("1:1").height},
+    })
+dump("tier_scaled_to", scale_cases)
+
+
+# ── describe() 的逐字节输出 ─────────────────────────────────────────────
+#
+# 这段直接打给用户看，格式对不上会很显眼。
+
+describe_cases = []
+for vram, has_gpu in ((15.9, True), (12.0, False), (6.0, True), (24.0, False)):
+    prof = HardwareProfile(
+        gpu=None, vram_gb=vram, tiers=tiers_for_vram(vram), detected=has_gpu)
+    describe_cases.append({
+        "vram_gb": vram, "detected": has_gpu, "gpu": None,
+        "describe": prof.describe(),
+        "estimate_episode_20_final": prof.estimate_episode(20, Tier.FINAL),
+    })
+
+# 带显卡信息的那一支
+from changji.hardware import GPUInfo  # noqa: E402
+gpu = GPUInfo(name="NVIDIA GeForce RTX 2060", vram_mb=6144, driver="610.88")
+prof_gpu = HardwareProfile(gpu=gpu, vram_gb=gpu.vram_gb,
+                           tiers=tiers_for_vram(gpu.vram_gb), detected=True)
+describe_cases.append({
+    "vram_gb": gpu.vram_gb, "detected": True,
+    "gpu": {"name": gpu.name, "vram_mb": gpu.vram_mb, "driver": gpu.driver},
+    "describe": prof_gpu.describe(),
+    "estimate_episode_20_final": prof_gpu.estimate_episode(20, Tier.FINAL),
+})
+dump("hardware_describe", describe_cases)
+
+print("\nhardware 语料也写好了")
