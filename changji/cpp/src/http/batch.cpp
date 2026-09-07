@@ -64,15 +64,17 @@ double num_in_range(const json& body, const char* key, double def, double gt,
                                 "float_type");
     }
     const double v = it->get<double>();
+    // 边界值用 bound_text 印，不用 std::to_string——后者给六位小数，
+    // 1800.0 会变成 "1800.000000"，而 pydantic 的消息里是 "1800"。
+    // 而且要带 ctx，前端靠它填出"最大 1800"这种中文提示。
     if (v <= gt) {
-        throw unprocessable_top(
-            key, "Input should be greater than " + std::to_string(gt), *it,
-            "greater_than");
+        throw out_of_range(key, "Input should be greater than " + bound_text(gt),
+                           *it, "greater_than", "gt", gt);
     }
     if (v > le) {
-        throw unprocessable_top(
-            key, "Input should be less than or equal to " + std::to_string(le),
-            *it, "less_than_equal");
+        throw out_of_range(
+            key, "Input should be less than or equal to " + bound_text(le), *it,
+            "less_than_equal", "le", le);
     }
     return v;
 }
@@ -86,14 +88,14 @@ int int_in_range(const json& body, const char* key, int def, int ge, int le) {
     }
     const int v = it->get<int>();
     if (v < ge) {
-        throw unprocessable_top(
+        throw out_of_range(
             key, "Input should be greater than or equal to " + std::to_string(ge),
-            *it, "greater_than_equal");
+            *it, "greater_than_equal", "ge", ge);
     }
     if (v > le) {
-        throw unprocessable_top(
+        throw out_of_range(
             key, "Input should be less than or equal to " + std::to_string(le),
-            *it, "less_than_equal");
+            *it, "less_than_equal", "le", le);
     }
     return v;
 }

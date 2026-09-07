@@ -123,6 +123,9 @@ struct Args {
     /// 把每条请求的地址打出来。差异出在"发的不是同一个请求"时，
     /// 没有它只能靠猜。
     bool verbose = false;
+    /// 假大模型的工作目录（tools/fake_llm.py 的第二个参数）。
+    /// 给了才跑 LLM 阶段的对拍。
+    std::string llm_work;
 };
 
 std::pair<std::string, std::string> split_origin(const std::string& url) {
@@ -385,6 +388,149 @@ int run_post(const Args& args, Tally& tally) {
     return 0;
 }
 
+/// 读 fake_llm 记下来的提示词。每行一条。
+std::vector<std::string> read_prompts(const fs::path& jsonl) {
+    std::vector<std::string> out;
+    std::ifstream in(jsonl, std::ios::binary);
+    if (!in) return out;
+    std::string line;
+    while (std::getline(in, line)) {
+        if (line.empty()) continue;
+        const json j = json::parse(line, nullptr, false);
+        if (j.is_discarded() || !j.contains("prompt")) continue;
+        out.push_back(j.at("prompt").get<std::string>());
+    }
+    return out;
+}
+
+/// LLM 阶段对拍。
+///
+/// **这一模式验的是方案里那条"提示词的拼接必须逐字一致"。**
+///
+/// 单元测试比的是 C++ 自己拼出来的串和录好的串——那验的是"C++ 没改过"，
+/// 验不了"Python 现在还是这么拼的"。这里把假模型夹在中间，
+/// 同一个请求让两个后端各发一次，然后逐字节比两条提示词。
+///
+/// 要三样东西：两个后端都把 [llm].base_url 指向 --fake-llm，
+/// 以及 --llm-work 指向假模型的工作目录。
+int run_llm(const Args& args, Tally& tally) {
+    if (args.python_url.empty() || args.llm_work.empty()) {
+        std::cout << "\nLLM 对拍要 --python 和 --llm-work 都给\n";
+        return 0;
+    }
+    const fs::path work = paths::from_utf8(args.llm_work);
+    const fs::path reply_file = work / "reply.txt";
+    const fs::path prompts_file = work / "prompts.jsonl";
+
+    compat::CompareOptions opts;
+    opts.ignore = live_ignores();
+
+    const fs::path src = paths::from_utf8(args.project);
+    int index = 0;
+
+    for (const char* corpus_name : {"endpoints_scripting.json",
+                                    "endpoints_planning.json"}) {
+        const json corpus = read_json(fs::path(args.golden) / corpus_name);
+        if (corpus.is_null()) {
+            std::cout << "\n读不到 " << corpus_name << "，跳过\n";
+            continue;
+        }
+        std::cout << "\n== LLM 阶段：" << corpus_name << "，"
+                  << corpus.at("cases").size() << " 条 ==\n";
+
+        for (const auto& c : corpus.at("cases")) {
+            const std::string name = c.value("name", "?");
+            ++index;
+            if (!args.filter.empty() &&
+                name.find(args.filter) == std::string::npos) {
+                continue;
+            }
+            if (!c.contains("llm_reply") || !c.contains("url")) {
+                tally.skip(name, "语料里没有 llm_reply 或 url");
+                continue;
+            }
+
+            // 事先把答案放好。假模型不消耗它，两个后端能各拿一次。
+            {
+                std::ofstream f(reply_file, std::ios::binary | std::ios::trunc);
+                if (!f) {
+                    tally.skip(name, "写不了 " + paths::to_utf8(reply_file));
+                    continue;
+                }
+                f << c.at("llm_reply").get<std::string>();
+            }
+
+            const std::string tag = "L" + std::to_string(index);
+            const fs::path py_dir = fresh_copy(src, tag + "_py");
+            const fs::path cp_dir = fresh_copy(src, tag + "_cpp");
+            if (py_dir.empty() || cp_dir.empty()) {
+                tally.skip(name, "拷项目副本失败");
+                continue;
+            }
+
+            const std::string url = c.at("url").get<std::string>();
+            const json body = c.value("body", json::object());
+
+            // 清空录音，然后一边发一次。**顺序固定：先 Python 后 C++**，
+            // 这样 prompts.jsonl 里第 0 条一定是 Python 的。
+            { std::ofstream clear(prompts_file, std::ios::trunc); }
+            const Response py = send(args.python_url, "POST", url,
+                                     retarget(body, paths::to_utf8(py_dir)));
+            const Response cp = send(args.cpp_url, "POST", url,
+                                     retarget(body, paths::to_utf8(cp_dir)));
+            if (!py.error.empty()) {
+                tally.skip(name, "Python 侧：" + py.error);
+                continue;
+            }
+            if (!cp.error.empty()) {
+                tally.skip(name, "C++ 侧：" + cp.error);
+                continue;
+            }
+
+            std::vector<compat::Difference> diffs;
+            if (py.status != cp.status) {
+                diffs.push_back({"（状态码）",
+                                 "Python " + std::to_string(py.status) + "，C++ " +
+                                     std::to_string(cp.status)});
+            }
+            for (auto& d : compat::compare(py.body, cp.body, opts)) {
+                diffs.push_back({"响应" + d.path, d.detail});
+            }
+
+            // **逐字节比提示词。** 这是这一模式存在的理由。
+            const auto prompts = read_prompts(prompts_file);
+            if (prompts.size() < 2) {
+                // 有的案例是校验失败，根本没走到模型那一步——那也是一致的一种，
+                // 只要两边都没发。发了一次说明只有一边走到了模型。
+                if (prompts.size() == 1) {
+                    diffs.push_back({"提示词",
+                                     "只有一边发了请求给模型（另一边在到模型之前就返回了）"});
+                }
+            } else if (prompts[0] != prompts[1]) {
+                std::size_t i = 0;
+                while (i < prompts[0].size() && i < prompts[1].size() &&
+                       prompts[0][i] == prompts[1][i]) {
+                    ++i;
+                }
+                const std::size_t from = i > 60 ? i - 60 : 0;
+                diffs.push_back(
+                    {"提示词",
+                     "第 " + std::to_string(i) + " 字节起不同（长度 " +
+                         std::to_string(prompts[0].size()) + " vs " +
+                         std::to_string(prompts[1].size()) + "）\n      Python …" +
+                         prompts[0].substr(from, 120) + "\n      C++    …" +
+                         prompts[1].substr(from, 120)});
+            }
+            tally.report(name, diffs);
+        }
+    }
+
+    std::error_code ec;
+    fs::remove_all(fs::temp_directory_path() / paths::from_utf8("changji_对拍_写"),
+                   ec);
+    return 0;
+}
+
 /// 数据层对拍：读一份项目文件再写回去，逐字段比。
 ///
 /// **这是阶段 1 完成标志的端到端版本。** 单元测试逐个字段查过了，但那是
@@ -594,6 +740,7 @@ int main(int argc, char** argv) {
         else if (a == "--golden") args.golden = next();
         else if (a == "--case") args.filter = next();
         else if (a == "--verbose") args.verbose = true;
+        else if (a == "--llm-work") args.llm_work = next();
         else {
             std::cout << "用法：changji_compat --cpp URL [--python URL] "
                          "[--project 目录] [--golden 目录] [--case 过滤]\n";
@@ -611,6 +758,7 @@ int main(int argc, char** argv) {
     if (!args.python_url.empty()) {
         run_live(args, tally);
         run_post(args, tally);
+        if (!args.llm_work.empty()) run_llm(args, tally);
     }
 
     std::cout << "\n一致 " << tally.passed << "，不同 " << tally.failed

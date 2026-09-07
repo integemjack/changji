@@ -94,6 +94,42 @@ inline ApiError unprocessable_top(const std::string& key,
         }})}});
 }
 
+/// 把一个数值边界按 pydantic 的写法印出来。
+///
+/// **不能用 std::to_string。** 那个对 double 固定给六位小数，
+/// 1800.0 会变成 "1800.000000"，而 pydantic 的消息里是 "1800"。
+/// 整数值就印整数，有小数才印小数。
+inline std::string bound_text(double v) {
+    if (v == static_cast<double>(static_cast<long long>(v))) {
+        return std::to_string(static_cast<long long>(v));
+    }
+    std::string s = std::to_string(v);
+    // 去掉尾巴上的零：0.500000 -> 0.5
+    while (s.size() > 1 && s.back() == '0') s.pop_back();
+    if (!s.empty() && s.back() == '.') s.pop_back();
+    return s;
+}
+
+/// 数值越界的那种 422。**比 unprocessable_top 多一个 ctx。**
+///
+/// pydantic 在越界错误里带一个 ctx 说明边界是多少（{"le": 1800.0}）。
+/// 少了它前端就没法在提示里填出"最大 1800"——只能把 msg 整句显示出来，
+/// 而那是英文的。这一条是实时对拍抓出来的。
+inline ApiError out_of_range(const std::string& key, const std::string& msg,
+                             const nlohmann::json& input,
+                             const std::string& type,
+                             const std::string& bound_key,
+                             const nlohmann::json& bound) {
+    return ApiError::with_body(422, nlohmann::json{{"detail", nlohmann::json::array({
+        nlohmann::json{
+            {"type", type},
+            {"loc", nlohmann::json::array({"body", key})},
+            {"msg", msg},
+            {"input", input},
+            {"ctx", nlohmann::json{{bound_key, bound}}},
+        }})}});
+}
+
 /// FastAPI 在**查询参数**缺失时回的那种 422。
 ///
 /// loc 是 ["query", <参数名>]，和请求体那两个（["body", ...]）不是一回事。
