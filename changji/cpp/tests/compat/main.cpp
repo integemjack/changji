@@ -34,6 +34,7 @@
 
 #include "diff.hpp"
 #include "util/httplib.hpp"
+#include "models/project.hpp"
 #include "util/paths.hpp"
 
 namespace fs = std::filesystem;
@@ -209,6 +210,68 @@ struct Tally {
     }
 };
 
+/// 数据层对拍：读一份项目文件再写回去，逐字段比。
+///
+/// **这是阶段 1 完成标志的端到端版本。** 单元测试逐个字段查过了，但那是
+/// 挑着查的——真正要保证的是"一个字段都没丢、一个字段都没多"。
+/// 少一个字段的表现是：C++ 存过一次之后，Python 那边再打开就丢了那项设置。
+///
+/// 不需要起服务。
+int run_data(const Args& args, Tally& tally) {
+    if (args.project.empty()) {
+        std::cout << "\n数据层对拍要 --project 指一个项目\n";
+        return 0;
+    }
+    std::cout << "\n== 数据层：读写往返 ==\n";
+
+    // 拷一份再操作。**绝不在原项目上写**——对拍不该改用户的数据，
+    // 而且改坏了之后下一次对拍比的是被改过的东西。
+    std::error_code ec;
+    const fs::path src = paths::from_utf8(args.project);
+    const fs::path work = fs::temp_directory_path() /
+                          paths::from_utf8("changji_对拍_数据层");
+    fs::remove_all(work, ec);
+    fs::copy(src, work, fs::copy_options::recursive, ec);
+    if (ec) {
+        tally.skip("拷贝项目", ec.message());
+        return 0;
+    }
+
+    compat::CompareOptions opts;
+    opts.ignore = {
+        {"/updated_at",
+         "存盘会刷新它。这正是它存在的意义，不该要求往返之后不变"},
+    };
+
+    for (const char* name : {"project.json", "assets.json"}) {
+        const json before = read_json(src / name);
+        if (before.is_null()) {
+            tally.skip(name, "读不出来或者不是 JSON");
+            continue;
+        }
+
+        try {
+            // 读进来再写回去。中间什么都不改。
+            const models::ProjectStore store(work);
+            if (std::string(name) == "project.json") {
+                models::Project p = store.load_project();
+                store.save_project(p);
+            } else {
+                const models::AssetLibrary a = store.load_assets();
+                store.save_assets(a);
+            }
+        } catch (const std::exception& e) {
+            tally.report(name, {{"", std::string("读写时抛了：") + e.what()}});
+            continue;
+        }
+
+        const json after = read_json(work / name);
+        tally.report(name, compat::compare(before, after, opts), 20);
+    }
+    fs::remove_all(work, ec);
+    return 0;
+}
+
 /// 录制模式：拿录好的 Python 响应跟活着的 C++ 后端比。
 int run_recorded(const Args& args, Tally& tally) {
     const json corpus = read_json(fs::path(args.golden) / "endpoints_readonly.json");
@@ -367,6 +430,7 @@ int main(int argc, char** argv) {
     }
 
     Tally tally;
+    run_data(args, tally);
     run_recorded(args, tally);
     if (!args.python_url.empty()) run_live(args, tally);
 

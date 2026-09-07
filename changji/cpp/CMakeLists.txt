@@ -502,7 +502,16 @@ if(CHANGJI_BUILD_TESTS)
     target_link_libraries(changji_compat PRIVATE
         nlohmann_json::nlohmann_json httplib::httplib)
     target_compile_features(changji_compat PRIVATE cxx_std_20)
-    target_sources(changji_compat PRIVATE src/util/paths.cpp)
+    # 数据层对拍要真的读写项目文件，所以要把 models 那几个编进来。
+    target_sources(changji_compat PRIVATE
+        src/util/paths.cpp
+        src/util/text.cpp
+        src/models/shot.cpp
+        src/models/character.cpp
+        src/models/project.cpp
+        src/models/hardware.cpp
+        src/util/proc.cpp
+    )
     if(WIN32)
         target_compile_definitions(changji_compat PRIVATE
             NOMINMAX WIN32_LEAN_AND_MEAN UNICODE _UNICODE)
