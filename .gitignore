@@ -32,3 +32,6 @@ frontend/assets/*.js.map
 
 # 本机 Claude Code 状态
 .claude/
+
+# C++ 构建产物
+changji/cpp/build*/

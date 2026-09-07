@@ -1,0 +1,382 @@
+#include "config/settings.hpp"
+
+#include <fstream>
+#include <iterator>
+#include <sstream>
+#include <stdexcept>
+
+#include <toml++/toml.hpp>
+
+#include "util/paths.hpp"
+
+namespace changji::config {
+
+namespace fs = std::filesystem;
+
+// ---- 校验 ----
+//
+// 每一条都对应 Python 侧 config.py 里的一个 Field 约束或 field_validator。
+// 改这里的时候必须同步改那边，反之亦然，直到 Python 删除为止。
+
+namespace {
+
+/// 去掉首尾空白和末尾斜杠。对应 Python 的 _strip_slash。
+std::string strip_trailing_slash(std::string v) {
+    size_t b = v.find_first_not_of(" \t\r\n");
+    if (b == std::string::npos) return {};
+    size_t e = v.find_last_not_of(" \t\r\n");
+    v = v.substr(b, e - b + 1);
+    while (!v.empty() && v.back() == '/') v.pop_back();
+    return v;
+}
+
+bool starts_with(const std::string& s, const char* prefix) {
+    return s.rfind(prefix, 0) == 0;
+}
+
+void check_range(std::vector<std::string>& errs, const char* name,
+                 double v, double lo, double hi) {
+    if (v < lo || v > hi) {
+        std::ostringstream os;
+        os << name << " 必须在 " << lo << " 到 " << hi << " 之间，当前是 " << v;
+        errs.push_back(os.str());
+    }
+}
+
+void check_gt(std::vector<std::string>& errs, const char* name, double v, double lo) {
+    if (v <= lo) {
+        std::ostringstream os;
+        os << name << " 必须大于 " << lo << "，当前是 " << v;
+        errs.push_back(os.str());
+    }
+}
+
+void check_ge(std::vector<std::string>& errs, const char* name, double v, double lo) {
+    if (v < lo) {
+        std::ostringstream os;
+        os << name << " 不能小于 " << lo << "，当前是 " << v;
+        errs.push_back(os.str());
+    }
+}
+
+}  // namespace
+
+std::string ComfyConfig::ws_url() const {
+    std::string u = base_url;
+    if (starts_with(u, "http://")) return "ws://" + u.substr(7) + "/ws";
+    if (starts_with(u, "https://")) return "wss://" + u.substr(8) + "/ws";
+    return u + "/ws";
+}
+
+std::vector<std::string> ComfyConfig::validate() const {
+    std::vector<std::string> errs;
+    if (!starts_with(base_url, "http://") && !starts_with(base_url, "https://")) {
+        errs.push_back("推理服务地址必须以 http:// 或 https:// 开头");
+    }
+    check_gt(errs, "comfy.timeout_s", timeout_s, 0);
+    check_gt(errs, "comfy.job_timeout_s", job_timeout_s, 0);
+    check_ge(errs, "comfy.max_retries", max_retries, 0);
+    return errs;
+}
+
+std::vector<std::string> LLMConfig::validate() const {
+    std::vector<std::string> errs;
+    check_gt(errs, "llm.timeout_s", timeout_s, 0);
+    check_range(errs, "llm.temperature", temperature, 0.0, 2.0);
+    return errs;
+}
+
+std::vector<std::string> TTSConfig::validate() const {
+    std::vector<std::string> errs;
+    if (backend != "comfy" && backend != "http") {
+        errs.push_back("tts.backend 只能是 comfy 或 http，当前是 " + backend);
+    }
+    // Python 侧这一条在 doctor 里查而不是在模型里查，这里保持一致，
+    // 避免配置加载阶段就因为还没填地址而整个起不来。
+    check_ge(errs, "tts.tolerance_s", tolerance_s, 0);
+    check_range(errs, "tts.max_tempo_shift", max_tempo_shift, 0.0, 0.2);
+    return errs;
+}
+
+std::vector<std::string> GateConfig::validate() const {
+    std::vector<std::string> errs;
+    check_ge(errs, "gates.min_pixel_std", min_pixel_std, 0);
+    check_ge(errs, "gates.min_pixel_mean", min_pixel_mean, 0);
+    check_ge(errs, "gates.max_pixel_mean", max_pixel_mean, 0);
+    check_range(errs, "gates.min_frame_similarity", min_frame_similarity, 0.0, 1.0);
+    check_gt(errs, "gates.max_audio_drift_s", max_audio_drift_s, 0);
+    check_ge(errs, "gates.max_attempts_per_shot", max_attempts_per_shot, 1);
+    return errs;
+}
+
+std::vector<std::string> AssemblyConfig::validate() const {
+    std::vector<std::string> errs;
+    check_range(errs, "assembly.fps", fps, 1, 120);
+    check_range(errs, "assembly.crf", crf, 0, 51);
+    check_range(errs, "assembly.audio_sample_rate", audio_sample_rate, 8000, 192000);
+    check_range(errs, "assembly.audio_channels", audio_channels, 1, 2);
+    check_range(errs, "assembly.scene_transition_s", scene_transition_s, 0.0, 2.0);
+    check_range(errs, "assembly.subtitle_max_chars_per_line",
+                subtitle_max_chars_per_line, 6, 30);
+    check_range(errs, "assembly.subtitle_max_lines", subtitle_max_lines, 1, 3);
+    return errs;
+}
+
+std::vector<std::string> Settings::validate() const {
+    std::vector<std::string> errs;
+    auto merge = [&errs](std::vector<std::string> more) {
+        errs.insert(errs.end(), std::make_move_iterator(more.begin()),
+                    std::make_move_iterator(more.end()));
+    };
+    merge(comfy.validate());
+    merge(llm.validate());
+    merge(tts.validate());
+    merge(gates.validate());
+    merge(assembly.validate());
+    if (vram_gb_override && *vram_gb_override <= 0) {
+        errs.push_back("vram_gb_override 必须大于 0");
+    }
+    return errs;
+}
+
+fs::path Settings::workspace_path() const {
+    if (workspace && !workspace->empty()) {
+        std::error_code ec;
+        fs::path p = paths::expand_user(*workspace);
+        fs::path abs = fs::absolute(p, ec);
+        return ec ? p : abs;
+    }
+    return paths::user_data_dir(kAppName) / "projects";
+}
+
+// ---- 加载 ----
+
+fs::path user_config_path() {
+    return paths::user_config_dir(kAppName) / "config.toml";
+}
+
+namespace {
+
+/// 环境变量后缀 -> 配置路径。与 Python 的 _ENV_MAPPING 一一对应。
+const std::vector<std::pair<const char*, const char*>>& env_mapping() {
+    static const std::vector<std::pair<const char*, const char*>> m = {
+        {"COMFY_BASE_URL", "comfy_base_url"},
+        {"COMFY_TIMEOUT_S", "comfy_timeout_s"},
+        {"LLM_BASE_URL", "llm_base_url"},
+        {"LLM_MODEL", "llm_model"},
+        {"LLM_API_KEY", "llm_api_key"},
+        {"TTS_BASE_URL", "tts_base_url"},
+        {"WORKSPACE", "workspace"},
+        {"VRAM_GB", "vram_gb_override"},
+        {"FFMPEG_PATH", "assembly_ffmpeg_path"},
+    };
+    return m;
+}
+
+/// 从 toml 表里取值，键不存在就保持原样。
+///
+/// 全部走「存在才覆盖」而不是「取值或默认」，是因为配置是分层合并的：
+/// 用户配置里没写的项要留给下一层，不能被默认值顶掉。
+template <typename T>
+void take(const toml::table* tbl, const char* key, T& dest) {
+    if (!tbl) return;
+    if (auto node = tbl->get(key)) {
+        if (auto v = node->value<T>()) dest = *v;
+    }
+}
+
+void take_path_str(const toml::table* tbl, const char* key,
+                   std::optional<std::string>& dest) {
+    if (!tbl) return;
+    if (auto node = tbl->get(key)) {
+        if (auto v = node->value<std::string>()) dest = *v;
+    }
+}
+
+void apply_table(const toml::table& doc, Settings& s) {
+    if (auto t = doc["comfy"].as_table()) {
+        take(t, "base_url", s.comfy.base_url);
+        take(t, "timeout_s", s.comfy.timeout_s);
+        take(t, "job_timeout_s", s.comfy.job_timeout_s);
+        take(t, "max_retries", s.comfy.max_retries);
+    }
+    if (auto t = doc["llm"].as_table()) {
+        take(t, "base_url", s.llm.base_url);
+        take(t, "model", s.llm.model);
+        take(t, "api_key", s.llm.api_key);
+        take(t, "timeout_s", s.llm.timeout_s);
+        take(t, "temperature", s.llm.temperature);
+    }
+    if (auto t = doc["tts"].as_table()) {
+        take(t, "backend", s.tts.backend);
+        take_path_str(t, "base_url", s.tts.base_url);
+        take(t, "engine", s.tts.engine);
+        take(t, "tolerance_s", s.tts.tolerance_s);
+        take(t, "max_tempo_shift", s.tts.max_tempo_shift);
+    }
+    if (auto t = doc["gates"].as_table()) {
+        take(t, "enabled", s.gates.enabled);
+        take(t, "min_pixel_std", s.gates.min_pixel_std);
+        take(t, "min_pixel_mean", s.gates.min_pixel_mean);
+        take(t, "max_pixel_mean", s.gates.max_pixel_mean);
+        take(t, "min_frame_similarity", s.gates.min_frame_similarity);
+        take(t, "max_audio_drift_s", s.gates.max_audio_drift_s);
+        take(t, "target_lufs", s.gates.target_lufs);
+        take(t, "max_true_peak_db", s.gates.max_true_peak_db);
+        take(t, "max_attempts_per_shot", s.gates.max_attempts_per_shot);
+        take(t, "fallback_on_exhausted", s.gates.fallback_on_exhausted);
+    }
+    if (auto t = doc["assembly"].as_table()) {
+        take(t, "fps", s.assembly.fps);
+        take(t, "pix_fmt", s.assembly.pix_fmt);
+        take(t, "video_codec", s.assembly.video_codec);
+        take(t, "crf", s.assembly.crf);
+        take(t, "audio_codec", s.assembly.audio_codec);
+        take(t, "audio_bitrate", s.assembly.audio_bitrate);
+        take(t, "audio_sample_rate", s.assembly.audio_sample_rate);
+        take(t, "audio_channels", s.assembly.audio_channels);
+        take(t, "scene_transition_s", s.assembly.scene_transition_s);
+        take(t, "subtitle_max_chars_per_line", s.assembly.subtitle_max_chars_per_line);
+        take(t, "subtitle_max_lines", s.assembly.subtitle_max_lines);
+        take(t, "subtitle_font", s.assembly.subtitle_font);
+        take(t, "ffmpeg_path", s.assembly.ffmpeg_path);
+        take(t, "ffprobe_path", s.assembly.ffprobe_path);
+    }
+    take_path_str(&doc, "workspace", s.workspace);
+    if (auto node = doc.get("vram_gb_override")) {
+        if (auto v = node->value<double>()) s.vram_gb_override = *v;
+    }
+}
+
+void read_toml_into(const fs::path& path, Settings& s) {
+    std::error_code ec;
+    if (!fs::is_regular_file(path, ec)) return;
+    try {
+        auto doc = toml::parse_file(path.string());
+        apply_table(doc, s);
+    } catch (const toml::parse_error& e) {
+        // 配置坏了要说清楚是哪个文件。只说「配置解析失败」的话，
+        // 用户手上有用户级和项目级两份，只能挨个翻。
+        std::ostringstream os;
+        os << "配置文件解析失败：" << path.string() << "\n" << e.description()
+           << "（第 " << e.source().begin.line << " 行）";
+        throw std::runtime_error(os.str());
+    }
+}
+
+/// 环境变量覆盖。
+///
+/// 环境变量都是字符串，数值项要转换。转换失败就忽略这一项而不是报错——
+/// 容器里注入了一个格式不对的值，整个服务起不来比用默认值更糟。
+void apply_env(Settings& s) {
+    auto get = [](const char* suffix) {
+        return paths::env((std::string(kEnvPrefix) + suffix).c_str());
+    };
+    auto as_double = [](const std::string& v, double& dest) {
+        try { dest = std::stod(v); } catch (...) {}
+    };
+
+    std::string v;
+    if (!(v = get("COMFY_BASE_URL")).empty()) s.comfy.base_url = v;
+    if (!(v = get("COMFY_TIMEOUT_S")).empty()) as_double(v, s.comfy.timeout_s);
+    if (!(v = get("LLM_BASE_URL")).empty()) s.llm.base_url = v;
+    if (!(v = get("LLM_MODEL")).empty()) s.llm.model = v;
+    if (!(v = get("LLM_API_KEY")).empty()) s.llm.api_key = v;
+    if (!(v = get("TTS_BASE_URL")).empty()) s.tts.base_url = v;
+    if (!(v = get("WORKSPACE")).empty()) s.workspace = v;
+    if (!(v = get("VRAM_GB")).empty()) {
+        double d = 0;
+        as_double(v, d);
+        if (d > 0) s.vram_gb_override = d;
+    }
+    if (!(v = get("FFMPEG_PATH")).empty()) s.assembly.ffmpeg_path = v;
+}
+
+}  // namespace
+
+Settings load_settings(const std::optional<fs::path>& project_dir) {
+    Settings s;  // 内置默认值就是成员初始化器
+    read_toml_into(user_config_path(), s);
+    if (project_dir) read_toml_into(*project_dir / "changji.toml", s);
+    apply_env(s);
+
+    // 地址类的值统一规整，避免 http://x:8188/ 和 http://x:8188
+    // 被当成两个不同的服务
+    s.comfy.base_url = strip_trailing_slash(s.comfy.base_url);
+    s.llm.base_url = strip_trailing_slash(s.llm.base_url);
+    if (s.tts.base_url) s.tts.base_url = strip_trailing_slash(*s.tts.base_url);
+
+    return s;
+}
+
+std::map<std::string, std::string> env_overridden() {
+    std::map<std::string, std::string> out;
+    for (const auto& [suffix, key] : env_mapping()) {
+        std::string name = std::string(kEnvPrefix) + suffix;
+        if (!paths::env(name.c_str()).empty()) out[key] = name;
+    }
+    return out;
+}
+
+// ---- 写模板 ----
+
+namespace {
+
+// 与 Python 的 _DEFAULT_TOML 保持一致。注释是给人看的，不能省。
+constexpr const char* kDefaultToml = R"(# 场记配置文件
+# 优先级：环境变量 > 项目目录下的 changji.toml > 本文件 > 内置默认值
+
+# 项目库根目录。留空则用系统标准数据目录。
+# 换机器时把项目目录整个拷走即可，程序装在哪都不影响。
+# workspace = "D:/短剧项目"
+
+# 显存覆盖。推理服务跑在另一台机器时本机探测不到显卡，用它手动指定。
+# vram_gb_override = 16
+
+[comfy]
+# 推理服务地址。可以是本机，也可以是局域网里任意一台有显卡的机器。
+base_url = "http://127.0.0.1:8188"
+job_timeout_s = 1800
+max_retries = 3
+
+[llm]
+# 剧本和分镜用的大模型。默认走本地 Ollama。
+# 也可以填任何兼容 OpenAI 接口的服务。
+base_url = "http://127.0.0.1:11434/v1"
+model = "qwen3:14b"
+
+[tts]
+# backend 填 comfy 表示通过推理服务的 TTS 节点调用，填 http 表示独立服务。
+backend = "comfy"
+engine = "cosyvoice3"
+
+[gates]
+# 质量闸门。全自动模式下这些阈值决定废片能不能被拦住。
+enabled = true
+max_attempts_per_shot = 3
+# 重试超限时降级为静帧加运镜，保证整集能出片而不是卡死。
+fallback_on_exhausted = true
+
+[assembly]
+fps = 24
+crf = 18
+# 只在场景切换处用溶解，同场景内一律硬切。
+scene_transition_s = 0.4
+# 中文字幕单行上限，全角字符数。
+subtitle_max_chars_per_line = 15
+subtitle_font = "Source Han Sans SC"
+)";
+
+}  // namespace
+
+fs::path write_default_config(const std::optional<fs::path>& path) {
+    fs::path target = path ? *path : user_config_path();
+    std::error_code ec;
+    fs::create_directories(target.parent_path(), ec);
+    std::ofstream out(target, std::ios::binary);
+    if (!out) throw std::runtime_error("写不了配置文件：" + target.string());
+    out << kDefaultToml;
+    return target;
+}
+
+}  // namespace changji::config
