@@ -1,0 +1,34 @@
+# ComfyUI 是第三方仓库（comfyanonymous/ComfyUI）加模型权重，34GB，不入库。
+# 需要的话按 README 用 download_models.ps1 拉。
+ComfyUI/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.ruff_cache/
+node_modules/
+
+# 运行时生成的素材，绝不入库
+projects/
+*.mp4
+*.wav
+*.safetensors
+*.ckpt
+*.pth
+*.bin
+
+# 容器跑起来之后落在这里的东西：模型、缓存、日志、生成的素材，
+# 还有界面上改的连接设置（里面可能有 api key）。这个仓库是要公开的。
+changji/data/
+
+# 前端 sourcemap，57MB 纯调试产物，运行不需要
+frontend/assets/*.js.map
+
+# 本机 Claude Code 状态
+.claude/

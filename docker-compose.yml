@@ -1,0 +1,39 @@
+# 本机的 ComfyUI 服务。
+#
+# 这份是给这台机器用的。要在别的机器上部署整套，用 changji 项目里那份
+# compose，它会把编排引擎、ComfyUI、大模型三个服务一起拉起来。
+name: ai-duanju
+
+services:
+  comfyui:
+    image: changji/comfyui:cu130
+    container_name: comfyui
+    ports:
+      - "8188:8188"
+    volumes:
+      # 只挂需要持久化的子目录，绝不能把整个 ComfyUI 目录挂进去。
+      # 挂载会覆盖镜像内容，整个挂会把镜像里烤好的 ComfyUI 代码和
+      # 配音节点包全部盖掉，容器起来后配音节点直接消失。
+      - ./ComfyUI/models:/app/ComfyUI/models
+      - ./ComfyUI/input:/app/ComfyUI/input
+      - ./ComfyUI/output:/app/ComfyUI/output
+      - ./ComfyUI/user:/app/ComfyUI/user
+      # 自定义前端：内置默认模板引用的模型本机没有，用注入脚本换成 Wan 工作流
+      - ./frontend:/app/frontend
+    environment:
+      - HF_HOME=/app/ComfyUI/models/hf_cache
+      # 国内直连 HuggingFace 下大文件会传到一半断流，走镜像站更稳
+      - HF_ENDPOINT=https://hf-mirror.com
+    shm_size: "8gb"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    command: >
+      python main.py --listen 0.0.0.0 --port 8188
+      --enable-manager
+      --front-end-root /app/frontend
+    restart: unless-stopped

@@ -1,0 +1,133 @@
+/*
+ * 设计变量。
+ *
+ * 深色打底：这是个看片的工具，界面亮过画面就抢戏了。
+ * 浅色留着给白天在办公室改分镜的人，跟随系统。
+ * 所有颜色只在这里定义一次，组件里不许再出现十六进制。
+ */
+
+:root {
+  color-scheme: dark;
+
+  /* 底色，由深到浅 */
+  --bg: #0e1014;
+  --bg-sunken: #090b0e;
+  --surface: #16191f;
+  --surface-2: #1d212a;
+  --surface-3: #252a35;
+  --line: #2b313c;
+  --line-strong: #3a4250;
+
+  /* 文字 */
+  --text: #e8ecf3;
+  --text-2: #a3adbd;
+  --text-3: #6b7688;
+
+  /* 主色：胶片暖橙。整套界面只有一个强调色，
+     多了之后「哪个按钮是主操作」就说不清了。 */
+  --accent: #f0932b;
+  --accent-soft: rgba(240, 147, 43, 0.14);
+  --accent-line: rgba(240, 147, 43, 0.35);
+  --accent-text: #1a1204;
+
+  /* 状态 */
+  --ok: #34c759;
+  --ok-soft: rgba(52, 199, 89, 0.14);
+  --warn: #ffcc4d;
+  --warn-soft: rgba(255, 204, 77, 0.14);
+  --danger: #ff5f56;
+  --danger-soft: rgba(255, 95, 86, 0.14);
+  --info: #58a6ff;
+  --info-soft: rgba(88, 166, 255, 0.14);
+
+  /* 圆角 */
+  --r-sm: 6px;
+  --r: 10px;
+  --r-lg: 14px;
+  --r-xl: 20px;
+  --r-pill: 999px;
+
+  /* 间距。用一套 4 的倍数，别处不许自创数值 */
+  --s1: 4px;
+  --s2: 8px;
+  --s3: 12px;
+  --s4: 16px;
+  --s5: 20px;
+  --s6: 24px;
+  --s8: 32px;
+  --s10: 40px;
+  --s12: 48px;
+
+  /* 阴影 */
+  --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-2: 0 6px 24px rgba(0, 0, 0, 0.35);
+  --shadow-3: 0 18px 50px rgba(0, 0, 0, 0.45);
+
+  /* 字号 */
+  --fs-xs: 11px;
+  --fs-sm: 12px;
+  --fs-base: 13px;
+  --fs-md: 14px;
+  --fs-lg: 16px;
+  --fs-xl: 20px;
+  --fs-2xl: 26px;
+  --fs-3xl: 34px;
+
+  /* 布局 */
+  --rail-w: 232px;
+  --topbar-h: 56px;
+  --content-max: 1180px;
+
+  --font: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC',
+    'Hiragino Sans GB', 'Microsoft YaHei', 'Noto Sans SC', sans-serif;
+  --font-mono: 'SFMono-Regular', 'JetBrains Mono', Consolas, 'Liberation Mono',
+    monospace;
+
+  --ease: cubic-bezier(0.2, 0.7, 0.3, 1);
+}
+
+/* 浅色。只翻底色和文字，强调色和状态色两边通用，
+   免得同一个「已完成」在两套主题里是两种绿。 */
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme='dark']) {
+    color-scheme: light;
+    --bg: #f5f6f8;
+    --bg-sunken: #eceef2;
+    --surface: #ffffff;
+    --surface-2: #f7f8fa;
+    --surface-3: #eef0f4;
+    --line: #e0e3e9;
+    --line-strong: #c9cfd8;
+    --text: #171a1f;
+    --text-2: #5a6472;
+    --text-3: #8b95a5;
+    --accent: #d97706;
+    --accent-soft: rgba(217, 119, 6, 0.1);
+    --accent-line: rgba(217, 119, 6, 0.3);
+    --accent-text: #ffffff;
+    --shadow-1: 0 1px 2px rgba(16, 24, 40, 0.06);
+    --shadow-2: 0 6px 20px rgba(16, 24, 40, 0.08);
+    --shadow-3: 0 18px 44px rgba(16, 24, 40, 0.12);
+  }
+}
+
+:root[data-theme='light'] {
+  color-scheme: light;
+  --bg: #f5f6f8;
+  --bg-sunken: #eceef2;
+  --surface: #ffffff;
+  --surface-2: #f7f8fa;
+  --surface-3: #eef0f4;
+  --line: #e0e3e9;
+  --line-strong: #c9cfd8;
+  --text: #171a1f;
+  --text-2: #5a6472;
+  --text-3: #8b95a5;
+  --accent: #d97706;
+  --accent-soft: rgba(217, 119, 6, 0.1);
+  --accent-line: rgba(217, 119, 6, 0.3);
+  --accent-text: #ffffff;
+  --shadow-1: 0 1px 2px rgba(16, 24, 40, 0.06);
+  --shadow-2: 0 6px 20px rgba(16, 24, 40, 0.08);
+  --shadow-3: 0 18px 44px rgba(16, 24, 40, 0.12);
+}

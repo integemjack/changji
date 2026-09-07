@@ -1,0 +1,19 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.ruff_cache/
+# 运行时数据，绝不入库
+projects/
+*.mp4
+*.wav
+*.safetensors
+
+# 容器跑起来之后落在这里的东西：模型、缓存、日志、生成的素材、
+# 还有界面上改的连接设置（里面可能有 api key）。
+# 一条都不该入库，这个仓库是要公开的。
+data/

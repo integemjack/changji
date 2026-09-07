@@ -1,0 +1,477 @@
+<script setup>
+/**
+ * 第一步：项目。
+ *
+ * 进来第一眼要看到「我有哪些项目」，而不是一个让人填绝对路径的输入框。
+ * 容器里项目库挂在哪，用户根本不知道，问引擎要列表才是对的。
+ */
+import { computed, onMounted, ref } from 'vue'
+import { useRouter } from 'vue-router'
+
+import AppIcon from '@/components/AppIcon.vue'
+import EmptyState from '@/components/EmptyState.vue'
+import StepHeader from '@/components/StepHeader.vue'
+import { api } from '@/api'
+import { humanAgo, useAction } from '@/composables/useAction'
+import { useSession } from '@/stores/session'
+import { useUi } from '@/stores/ui'
+
+const router = useRouter()
+const session = useSession()
+const ui = useUi()
+const { run, isBusy, busy } = useAction()
+
+const workspace = ref('')
+const projects = ref([])
+const loading = ref(true)
+const loadError = ref('')
+const keyword = ref('')
+
+const creating = ref(false)
+const draft = ref({ path: '', title: '', style_line: 'realistic' })
+
+const removing = ref(null) // 待删项目
+const confirmName = ref('')
+
+const shown = computed(() => {
+  const kw = keyword.value.trim().toLowerCase()
+  if (!kw) return projects.value
+  return projects.value.filter(
+    (p) =>
+      p.name?.toLowerCase().includes(kw) || p.dir?.toLowerCase().includes(kw),
+  )
+})
+
+async function load() {
+  loading.value = true
+  loadError.value = ''
+  try {
+    const data = await api.projects()
+    workspace.value = data.workspace
+    projects.value = data.projects ?? []
+  } catch (err) {
+    loadError.value = err.message
+  } finally {
+    loading.value = false
+  }
+}
+
+onMounted(load)
+
+function open(project) {
+  if (project.broken) {
+    ui.error(`这个项目读不了：${project.broken}`)
+    return
+  }
+  session.selectProject(project.path)
+  ui.ok(`已切到「${project.name}」`)
+  router.push('/script')
+}
+
+async function create() {
+  const name = draft.value.path.trim()
+  if (!name) {
+    ui.warn('先给项目起个名字')
+    return
+  }
+  const result = await run(() => api.newProject({ ...draft.value, path: name }), {
+    key: 'create',
+    success: '项目建好了',
+  })
+  if (!result) return
+  creating.value = false
+  draft.value = { path: '', title: '', style_line: 'realistic' }
+  await load()
+  session.selectProject(result.root)
+  router.push('/script')
+}
+
+async function remove() {
+  if (!removing.value) return
+  const target = removing.value
+  const done = await run(
+    () => api.deleteProject({ path: target.path, confirm_name: confirmName.value }),
+    { key: 'delete', success: '已删除' },
+  )
+  if (!done) return
+  removing.value = null
+  confirmName.value = ''
+  if (session.projectPath === target.path) session.clear()
+  await load()
+}
+
+function progressOf(p) {
+  if (!p.shots) return 0
+  return Math.round((p.done_shots / p.shots) * 100)
+}
+</script>
+
+<template>
+  <div class="stack--lg stack">
+    <StepHeader>
+      <template #actions>
+        <button class="btn btn--ghost" type="button" :disabled="loading" @click="load">
+          <AppIcon name="refresh" :size="15" />
+          刷新
+        </button>
+        <button class="btn btn--primary" type="button" @click="creating = !creating">
+          <AppIcon name="plus" :size="15" />
+          新建项目
+        </button>
+      </template>
+    </StepHeader>
+
+    <!-- 新建 -->
+    <Transition name="fold">
+      <section v-if="creating" class="card">
+        <div class="card__head">
+          <div>
+            <div class="card__title">新建项目</div>
+            <div class="card__sub">
+              只填名字就落在项目库里；填完整路径可以建在别处。
+            </div>
+          </div>
+          <button class="btn btn--ghost btn--sm" type="button" @click="creating = false">
+            <AppIcon name="close" :size="14" />
+          </button>
+        </div>
+        <div class="card__body grid grid--form">
+          <label class="field">
+            <span class="field__label">项目名或路径</span>
+            <input
+              v-model="draft.path"
+              class="input"
+              placeholder="例如：雪夜"
+              @keyup.enter="create"
+            />
+            <span class="field__hint">项目库：<code class="mono">{{ workspace || '读取中' }}</code></span>
+          </label>
+          <label class="field">
+            <span class="field__label">剧名</span>
+            <input v-model="draft.title" class="input" placeholder="不填就用项目名" />
+          </label>
+          <label class="field">
+            <span class="field__label">风格线</span>
+            <select v-model="draft.style_line" class="select">
+              <option value="realistic">真人写实</option>
+              <option value="anime">动漫</option>
+            </select>
+            <span class="field__hint">决定出图基座和提示词范式，建好之后不建议再改。</span>
+          </label>
+        </div>
+        <div class="card__foot">
+          <button
+            class="btn btn--primary"
+            type="button"
+            :disabled="isBusy('create')"
+            @click="create"
+          >
+            {{ isBusy('create') ? '正在建…' : '建好，去写剧本' }}
+          </button>
+          <button class="btn btn--ghost" type="button" @click="creating = false">
+            取消
+          </button>
+        </div>
+      </section>
+    </Transition>
+
+    <!-- 列表 -->
+    <section class="stack">
+      <div class="row row--between">
+        <div class="row">
+          <h2 class="section-title">项目库</h2>
+          <span v-if="projects.length" class="pill pill--neutral">
+            {{ projects.length }} 个
+          </span>
+        </div>
+        <input
+          v-if="projects.length > 6"
+          v-model="keyword"
+          class="input input--search"
+          placeholder="搜项目"
+        />
+      </div>
+
+      <div v-if="loading" class="grid grid--cards">
+        <div v-for="i in 3" :key="i" class="card skeleton" />
+      </div>
+
+      <EmptyState
+        v-else-if="loadError"
+        icon="warn"
+        tone="warn"
+        title="读不到项目库"
+        :hint="loadError"
+      >
+        <button class="btn" type="button" @click="load">重试</button>
+        <RouterLink to="/settings" class="btn btn--primary">去设置里检查引擎地址</RouterLink>
+      </EmptyState>
+
+      <EmptyState
+        v-else-if="!projects.length"
+        icon="folder"
+        title="项目库还是空的"
+        :hint="`新建一个项目就能开始。它会落在 ${workspace}，整个目录拷到别的机器就能接着做。`"
+      >
+        <button class="btn btn--primary" type="button" @click="creating = true">
+          <AppIcon name="plus" :size="15" />
+          新建第一个项目
+        </button>
+      </EmptyState>
+
+      <div v-else class="grid grid--cards">
+        <article
+          v-for="p in shown"
+          :key="p.path"
+          class="proj card"
+          :class="{
+            'proj--current': p.path === session.projectPath,
+            'proj--broken': p.broken,
+          }"
+          tabindex="0"
+          @click="open(p)"
+          @keyup.enter="open(p)"
+        >
+          <div class="proj__top">
+            <span class="proj__badge" :class="`proj__badge--${p.style_line || 'realistic'}`">
+              {{ p.style_line === 'anime' ? '动漫' : '写实' }}
+            </span>
+            <span v-if="p.path === session.projectPath" class="pill pill--accent">
+              当前
+            </span>
+            <span class="spacer" />
+            <button
+              class="btn btn--ghost btn--sm proj__del"
+              type="button"
+              title="删除项目"
+              @click.stop="((removing = p), (confirmName = ''))"
+            >
+              <AppIcon name="trash" :size="14" />
+            </button>
+          </div>
+
+          <h3 class="proj__name truncate">{{ p.name }}</h3>
+          <p class="proj__dir tiny dim truncate mono">{{ p.dir }}</p>
+
+          <p v-if="p.broken" class="proj__broken small">读不了：{{ p.broken }}</p>
+
+          <template v-else>
+            <div class="proj__stats">
+              <span><b class="numeric">{{ p.episodes }}</b> 集</span>
+              <span><b class="numeric">{{ p.shots }}</b> 镜</span>
+              <span><b class="numeric">{{ p.outputs }}</b> 成片</span>
+            </div>
+            <div class="proj__bar">
+              <div class="proj__bar-fill" :style="{ width: progressOf(p) + '%' }" />
+            </div>
+            <div class="proj__foot tiny dim">
+              <span>{{ p.shots ? `${progressOf(p)}% 已出片` : '还没分镜' }}</span>
+              <span>{{ humanAgo(p.mtime) }}</span>
+            </div>
+          </template>
+        </article>
+      </div>
+    </section>
+
+    <!-- 删除确认 -->
+    <div v-if="removing" class="modal" @click.self="removing = null">
+      <div class="modal__box card">
+        <div class="card__head">
+          <div class="card__title">删掉「{{ removing.name }}」？</div>
+        </div>
+        <div class="card__body stack">
+          <p class="small muted">
+            连同素材、配音和已经跑出来的成片一起删，删了找不回来。
+            确认的话，把目录名一字不差地打一遍：
+          </p>
+          <code class="modal__name mono">{{ removing.dir }}</code>
+          <input
+            v-model="confirmName"
+            class="input"
+            :placeholder="removing.dir"
+            autofocus
+            @keyup.enter="remove"
+          />
+        </div>
+        <div class="card__foot">
+          <button
+            class="btn btn--danger"
+            type="button"
+            :disabled="confirmName !== removing.dir || busy"
+            @click="remove"
+          >
+            {{ isBusy('delete') ? '正在删…' : '确认删除' }}
+          </button>
+          <button class="btn btn--ghost" type="button" @click="removing = null">
+            取消
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+</template>
+
+<style scoped>
+.section-title {
+  font-size: var(--fs-lg);
+  font-weight: 600;
+}
+.input--search {
+  width: 200px;
+}
+.grid--form {
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+}
+.grid--cards {
+  grid-template-columns: repeat(auto-fill, minmax(248px, 1fr));
+}
+
+.proj {
+  padding: var(--s4);
+  cursor: pointer;
+  transition: border-color 0.15s var(--ease), transform 0.12s var(--ease),
+    box-shadow 0.15s var(--ease);
+}
+.proj:hover {
+  border-color: var(--line-strong);
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-2);
+}
+.proj--current {
+  border-color: var(--accent-line);
+  background: linear-gradient(var(--accent-soft), transparent 60%), var(--surface);
+}
+.proj--broken {
+  border-color: color-mix(in srgb, var(--danger) 40%, transparent);
+}
+
+.proj__top {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  margin-bottom: var(--s3);
+}
+.proj__badge {
+  padding: 1px 7px;
+  border-radius: var(--r-sm);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  background: var(--surface-3);
+  color: var(--text-2);
+}
+.proj__badge--anime {
+  background: var(--info-soft);
+  color: var(--info);
+}
+.proj__del {
+  width: 26px;
+  padding: 0;
+  color: var(--text-3);
+  opacity: 0;
+}
+.proj:hover .proj__del,
+.proj:focus-within .proj__del {
+  opacity: 1;
+}
+.proj__del:hover {
+  color: var(--danger);
+}
+
+.proj__name {
+  font-size: var(--fs-lg);
+  font-weight: 600;
+  line-height: 1.3;
+}
+.proj__dir {
+  margin-bottom: var(--s3);
+}
+.proj__broken {
+  color: var(--danger);
+  margin-top: var(--s2);
+}
+
+.proj__stats {
+  display: flex;
+  gap: var(--s4);
+  font-size: var(--fs-sm);
+  color: var(--text-2);
+  margin-bottom: var(--s2);
+}
+.proj__stats b {
+  color: var(--text);
+  font-weight: 600;
+}
+.proj__bar {
+  height: 4px;
+  border-radius: var(--r-pill);
+  background: var(--surface-3);
+  overflow: hidden;
+}
+.proj__bar-fill {
+  height: 100%;
+  background: var(--accent);
+  border-radius: var(--r-pill);
+  transition: width 0.3s var(--ease);
+}
+.proj__foot {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 6px;
+}
+
+.skeleton {
+  height: 168px;
+  background: linear-gradient(
+    100deg,
+    var(--surface) 30%,
+    var(--surface-2) 50%,
+    var(--surface) 70%
+  );
+  background-size: 220% 100%;
+  animation: shimmer 1.3s linear infinite;
+}
+@keyframes shimmer {
+  to {
+    background-position: -120% 0;
+  }
+}
+
+.modal {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: grid;
+  place-items: center;
+  padding: var(--s4);
+  background: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(3px);
+}
+.modal__box {
+  width: min(440px, 100%);
+  box-shadow: var(--shadow-3);
+}
+.modal__name {
+  display: block;
+  padding: var(--s2) var(--s3);
+  border-radius: var(--r);
+  background: var(--bg-sunken);
+  border: 1px solid var(--line);
+  color: var(--accent);
+}
+
+.fold-enter-active,
+.fold-leave-active {
+  transition: opacity 0.18s var(--ease), transform 0.18s var(--ease);
+}
+.fold-enter-from,
+.fold-leave-to {
+  opacity: 0;
+  transform: translateY(-8px);
+}
+
+@media (max-width: 640px) {
+  .input--search {
+    width: 130px;
+  }
+}
+</style>
