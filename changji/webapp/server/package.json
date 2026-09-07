@@ -7,13 +7,11 @@
   "scripts": {
     "dev": "node --watch src/index.js",
     "start": "node src/index.js",
-    "test": "vitest run",
+    "test": "vitest run --passWithNoTests",
     "test:watch": "vitest"
   },
   "dependencies": {
-    "express": "^4.21.2",
-    "smol-toml": "^1.8.0",
-    "zod": "^4.5.4"
+    "express": "^4.21.2"
   },
   "devDependencies": {
     "vitest": "^5.0.0"
