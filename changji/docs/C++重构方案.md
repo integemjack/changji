@@ -639,11 +639,78 @@ cpp/
 | **2** | 只读接口：`/api/project` `/api/shots` `/api/assets` `/api/settings` `/api/hardware` | ✅ 已达成，2026-09-08 实机验过，见下面「阶段 2 判据的验证」 |
 | **3** | 编辑接口：`/api/shot` `/api/character` `/api/style` `/api/location` 等；多段上传和 `/api/media` 的 Range 支持 | `test_web_editing.py` 的 1083 行全部对拍通过；参考图能传、成片能拖进度条 |
 | **4** | LLM 三阶段；线程池 + job 表 + WebSocket 广播；破契约项 | 回放模式下生成结果与 Python 一致；WS 能实时看到阶段推进。**前端不用改**——破契约重审后只剩 `GET /` 一项，不影响前端 |
-| **5** | 链接 sd.cpp，frames + render；逐步进度接进 WS 广播 | 能出图能出视频，与 ComfyUI 输出做画质比对；前端能看到「第 12/30 步」 |
-| **6** | 移植 `comfy/`，ComfyUI 作为可选后端接回来 | 配置里能在 sd.cpp 和 ComfyUI 之间切；`/api/voices` 恢复 |
+| **5** | 链接 sd.cpp，frames + render；逐步进度接进 WS 广播 | 代码已完成（流水线、`POST /api/run`、VAE 分块、`/api/run/preview`、`/api/outputs`）。**实机判据卡住**，见下面「阶段 5 的实机判据卡在模型文件上」 |
+| **6** | 移植 `comfy/`，ComfyUI 作为可选后端接回来 | ✅ 已达成。`[models].engine` 一个键切换；`/api/voices` 已恢复，路由表 48/48 |
 | **7** | 配音编排 + 组装：`audio.py` 的编排逻辑、ffmpeg、字幕、成片 | 能产出完整一集（配音走 ComfyUI 后端） |
 | **8** | 删 Python 引擎 | 只剩两层 |
 | **9** | Qwen3-TTS 的 C++ 化 | 纯二进制能出声。并行推进，不卡前面任何阶段 |
+
+### 阶段 5 的实机判据卡在模型文件上（2026-09-08）
+
+代码那部分做完了：整集流水线（按阶段分批、每阶段存盘）、`POST /api/run`
+的队列与取消、`/api/run/preview`、`/api/outputs`，以及**前置验证里那组
+VAE 分块参数**——那组数一直没接进代码，而 `sd_vid_gen_params_init` 默认
+`enabled=false`，也就是说在接上之前出视频那条路必然 OOM。
+
+判据里"能出图能出视频"跑不了，原因不在代码：
+
+- `download_models.ps1` 指向 `E:\AI短剧\ComfyUI\models`，而这台机器
+  现在只有 C、D 两个盘，**E 盘没接**。
+- C 盘剩 8 GB，装不下 Wan 2.2 那套（Q4_K_M 权重合计 11.3 GB）。
+- 当前构建是 `CHANGJI_SD_CUDA=OFF`，即便有模型也只走 CPU。
+
+要往下推需要：接上 E 盘，或者腾空间重下 + `-DCHANGJI_SD_CUDA=ON` 重新配置
+（nvcc 13.3 在机器上，MSVC + CUDA 那项前置验证已经通过）。
+
+**这一条不阻塞阶段 6**：ComfyUI 那条路不需要本地模型文件，
+所以阶段 6 先做完了。
+
+### 一处构建 bug：钉的 httplib 版本从来没生效过（阶段 6 发现）
+
+写 ComfyUI 的 multipart 上传时编不过，追下去发现的。
+
+sd.cpp 把自己的 `thirdparty` 目录作为 INTERFACE 包含目录导出，那里面有
+一份 `httplib.h`（0.28.0）。而 `httplib::httplib` 的头文件是以 **SYSTEM**
+身份进来的（MSVC 上是 `-external:I`），**SYSTEM 目录永远排在普通 `-I` 之后**
+——所以只要它是 SYSTEM，sd.cpp 那份就必赢。
+
+后果：从链上 sd.cpp 那天起，`llm/client_http.cpp` 和 `doctor/doctor.cpp`
+编的一直是 0.28.0，而不是 CMakeLists 里钉的 0.15.3。两边碰巧 API 兼容，
+所以**从来没报过错**。
+
+**一个版本号写在构建脚本里、实际编的是另一个版本，比编不过更危险**：
+升级依赖时看着改了其实没改；照着 0.15.3 的文档写代码，跑的是 0.28.0。
+
+修法：清掉 httplib 的 `INTERFACE_SYSTEM_INCLUDE_DIRECTORIES` 让它变成普通
+`-I`，再 `BEFORE` 排到最前面；加 `util/httplib.hpp` 包一层把警告按下去，
+用到它的三个文件统一走它。sd.cpp 的 `thirdparty` 里还有一份 `json.hpp`，
+我们一律写 `<nlohmann/json.hpp>` 所以没撞上，但 stb 的两个头也改成了
+`<thirdparty/stb_image.h>`，路径写全，不靠"谁先谁后"。
+
+**这一条要推广成一条规则**：凡是两个依赖都 vendor 了同一个库的头文件，
+就不能靠包含顺序碰运气。后面链 llama.cpp 时同样的事会再来一次
+（它也 vendor 了自己的一套第三方头）。
+
+### 阶段 6 的两个决定（2026-09-08）
+
+**一、WebSocket 客户端自己写。**
+
+项目里 WebSocket 有两个方向：Crow 做服务端（前端连过来看进度），
+ComfyUI 那边我们是客户端。**Crow 只有服务端。** 为一个客户端再拉一个库
+代价不小——Beast 要整个 Boost，websocketpp 停更多年且依赖旧版 asio，
+而这两条都和"零运行时依赖 + 交叉编译到树莓派"直接冲突。
+
+我们要的功能很窄：**收文本帧**。发只发一次握手，ping 只回不发，
+不支持 wss（要 TLS 的部署走反向代理，那时候退回轮询）。
+协议部分（握手串、帧编解码）抽成纯函数单独测死——那些错了不会崩，
+只会"连不上"或者"收到乱码"，而在真实服务端上试错一次要几十秒。
+
+**二、`/api/voices` 有意偏离 Python 一处。**
+
+那边的 `list_voices` 把异常吞掉返回空列表，于是"ComfyUI 连不上"和
+"一个音色都没装"回的是同一个空下拉框，用户没有任何线索。
+C++ 侧连不上时回一句话。形状没变（前端本来就在读 `error` 字段，
+角色页那段代码已经有了），所以这是纯增益，不算破契约。
 
 ### 阶段 2 判据的验证
 
