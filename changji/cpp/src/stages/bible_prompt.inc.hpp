@@ -1,6 +1,5 @@
-// 本文件由 cpp/tools/gen_prompts.py 从 Python 的 build_prompt
-// 生成，不要手改。提示词要求和 Python 逐字节一致，手抄错一个字
-// 不会报错，只会让模型输出悄悄变一点。
+// 本文件由 cpp/tools/gen_prompts.py 生成，不要手改。
+// 提示词要求和 Python 逐字节一致。
 
 #pragma once
 

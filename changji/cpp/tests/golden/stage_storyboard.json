@@ -1,0 +1,2263 @@
+{
+ "note": "由 cpp/tests/export_storyboard_golden.py 生成，不要手改",
+ "durations": {
+  "slots": [
+   2.0,
+   3.0,
+   4.0,
+   5.0
+  ],
+  "max_shot_duration_s": 5.041666666666667,
+  "snap": [
+   {
+    "in": 0.0,
+    "out": 2.0
+   },
+   {
+    "in": 0.5,
+    "out": 2.0
+   },
+   {
+    "in": 1.0,
+    "out": 2.0
+   },
+   {
+    "in": 2.0,
+    "out": 2.0
+   },
+   {
+    "in": 2.4,
+    "out": 2.0
+   },
+   {
+    "in": 2.5,
+    "out": 2.0
+   },
+   {
+    "in": 2.6,
+    "out": 3.0
+   },
+   {
+    "in": 3.5,
+    "out": 3.0
+   },
+   {
+    "in": 4.4,
+    "out": 4.0
+   },
+   {
+    "in": 4.5,
+    "out": 4.0
+   },
+   {
+    "in": 5.0,
+    "out": 5.0
+   },
+   {
+    "in": 7.0,
+    "out": 5.0
+   },
+   {
+    "in": 100.0,
+    "out": 5.0
+   },
+   {
+    "in": -3.0,
+    "out": 2.0
+   }
+  ],
+  "ceil": [
+   {
+    "in": 0.0,
+    "out": 2.0
+   },
+   {
+    "in": 1.9,
+    "out": 2.0
+   },
+   {
+    "in": 2.0,
+    "out": 2.0
+   },
+   {
+    "in": 2.0001,
+    "out": 3.0
+   },
+   {
+    "in": 2.5,
+    "out": 3.0
+   },
+   {
+    "in": 3.0,
+    "out": 3.0
+   },
+   {
+    "in": 4.9,
+    "out": 5.0
+   },
+   {
+    "in": 5.0,
+    "out": 5.0
+   },
+   {
+    "in": 5.1,
+    "out": 5.0
+   },
+   {
+    "in": 99.0,
+    "out": 5.0
+   }
+  ]
+ },
+ "quotas": [
+  {
+   "target_s": 1.0,
+   "slots": [
+    [
+     5.0,
+     1
+    ]
+   ],
+   "total_s": 5.0,
+   "shot_count": 1,
+   "describe": "1 个 5 秒镜头"
+  },
+  {
+   "target_s": 5.0,
+   "slots": [
+    [
+     5.0,
+     1
+    ]
+   ],
+   "total_s": 5.0,
+   "shot_count": 1,
+   "describe": "1 个 5 秒镜头"
+  },
+  {
+   "target_s": 10.0,
+   "slots": [
+    [
+     3.0,
+     1
+    ],
+    [
+     5.0,
+     1
+    ]
+   ],
+   "total_s": 8.0,
+   "shot_count": 2,
+   "describe": "1 个 3 秒镜头，1 个 5 秒镜头"
+  },
+  {
+   "target_s": 30.0,
+   "slots": [
+    [
+     2.0,
+     2
+    ],
+    [
+     3.0,
+     2
+    ],
+    [
+     4.0,
+     1
+    ],
+    [
+     5.0,
+     3
+    ]
+   ],
+   "total_s": 29.0,
+   "shot_count": 8,
+   "describe": "2 个 2 秒镜头，2 个 3 秒镜头，1 个 4 秒镜头，3 个 5 秒镜头"
+  },
+  {
+   "target_s": 45.0,
+   "slots": [
+    [
+     2.0,
+     2
+    ],
+    [
+     3.0,
+     3
+    ],
+    [
+     4.0,
+     2
+    ],
+    [
+     5.0,
+     5
+    ]
+   ],
+   "total_s": 46.0,
+   "shot_count": 12,
+   "describe": "2 个 2 秒镜头，3 个 3 秒镜头，2 个 4 秒镜头，5 个 5 秒镜头"
+  },
+  {
+   "target_s": 60.0,
+   "slots": [
+    [
+     2.0,
+     3
+    ],
+    [
+     3.0,
+     4
+    ],
+    [
+     4.0,
+     3
+    ],
+    [
+     5.0,
+     6
+    ]
+   ],
+   "total_s": 60.0,
+   "shot_count": 16,
+   "describe": "3 个 2 秒镜头，4 个 3 秒镜头，3 个 4 秒镜头，6 个 5 秒镜头"
+  },
+  {
+   "target_s": 90.0,
+   "slots": [
+    [
+     2.0,
+     4
+    ],
+    [
+     3.0,
+     7
+    ],
+    [
+     4.0,
+     4
+    ],
+    [
+     5.0,
+     9
+    ]
+   ],
+   "total_s": 90.0,
+   "shot_count": 24,
+   "describe": "4 个 2 秒镜头，7 个 3 秒镜头，4 个 4 秒镜头，9 个 5 秒镜头"
+  },
+  {
+   "target_s": 120.0,
+   "slots": [
+    [
+     2.0,
+     6
+    ],
+    [
+     3.0,
+     9
+    ],
+    [
+     4.0,
+     5
+    ],
+    [
+     5.0,
+     12
+    ]
+   ],
+   "total_s": 119.0,
+   "shot_count": 32,
+   "describe": "6 个 2 秒镜头，9 个 3 秒镜头，5 个 4 秒镜头，12 个 5 秒镜头"
+  },
+  {
+   "target_s": 300.0,
+   "slots": [
+    [
+     2.0,
+     15
+    ],
+    [
+     3.0,
+     22
+    ],
+    [
+     4.0,
+     14
+    ],
+    [
+     5.0,
+     30
+    ]
+   ],
+   "total_s": 302.0,
+   "shot_count": 81,
+   "describe": "15 个 2 秒镜头，22 个 3 秒镜头，14 个 4 秒镜头，30 个 5 秒镜头"
+  },
+  {
+   "target_s": 7.5,
+   "slots": [
+    [
+     3.0,
+     1
+    ],
+    [
+     5.0,
+     1
+    ]
+   ],
+   "total_s": 8.0,
+   "shot_count": 2,
+   "describe": "1 个 3 秒镜头，1 个 5 秒镜头"
+  },
+  {
+   "target_s": 33.3,
+   "slots": [
+    [
+     2.0,
+     2
+    ],
+    [
+     3.0,
+     2
+    ],
+    [
+     4.0,
+     1
+    ],
+    [
+     5.0,
+     4
+    ]
+   ],
+   "total_s": 34.0,
+   "shot_count": 9,
+   "describe": "2 个 2 秒镜头，2 个 3 秒镜头，1 个 4 秒镜头，4 个 5 秒镜头"
+  },
+  {
+   "target_s": 0.5,
+   "slots": [
+    [
+     5.0,
+     1
+    ]
+   ],
+   "total_s": 5.0,
+   "shot_count": 1,
+   "describe": "1 个 5 秒镜头"
+  }
+ ],
+ "prompts": [
+  {
+   "target_s": 60.0,
+   "episode_id": "ep_01",
+   "script": "第一集《雨夜天台》\n\n林晚站在天台边缘，雨水打湿了她的白衬衫。\n林晚：你说过会来的。\n陈默从阴影里走出来，手里攥着一把伞。\n陈默：我来了。晚了七年。\n",
+   "prompt": "你是一位短剧分镜师。把下面的剧本拆成分镜表。\n\n可用角色（只能用这些 id）：\n  c_chen_mo：陈默\n  c_lin_wan：林晚\n\n可用场景：\n  loc_rooftop：夜间天台\n\n镜头配额，必须严格按这个数量和时长分配：\n  3 个 2 秒镜头，4 个 3 秒镜头，3 个 4 秒镜头，6 个 5 秒镜头\n  合计 16 个镜头，总时长 60 秒\n\n硬性要求：\n\n1. shot_id 用 ep_01_sh001 这样的格式，三位数字，按顺序递增。\n2. order 从 0 开始递增。\n3. duration_s 只能取配额里出现过的值，且各档位的数量必须与配额完全一致。\n4. characters 必须填。凡是这一镜里出现的人，都要在这里列出 char_id，\n   并填本镜的表情、动作、面部朝向。画面里没有人才填空数组。\n   只填这些，绝对不要描述角色的长相、发型、发色、身材或服装样式，\n   那些由系统统一管理，你写了会被丢弃并造成前后不一致。\n   换装只能通过 wardrobe_state 填一个状态名。\n5. first_frame_prompt 描述这一镜的画面：环境、光线、构图、角色的姿态和位置。\n   同样不要描述角色长相，系统会自动拼接。\n6. dialogue 必须填。剧本里的每一句台词都要落到某个镜头上，一句都不能丢。\n   说话的人填 char_id，旁白留空。这一镜没人说话才填空数组。\n   说话的角色也必须同时出现在 characters 里。\n7. 同一场景内连续镜头尽量复用 camera_id，避免越轴。\n8. transition_in 默认 cut 且 transition_dur_s 必须为 0；\n   只有场景切换才用 dissolve，此时 transition_dur_s 填 0.4。\n9. continuity_notes 记录需要与前后镜保持一致的细节，比如道具在哪只手。\n10. 如果剧本里有信息不足以确定画面的地方，写进 missing_info，不要自己编。\n\n剧本：\n\n第一集《雨夜天台》\n\n林晚站在天台边缘，雨水打湿了她的白衬衫。\n林晚：你说过会来的。\n陈默从阴影里走出来，手里攥着一把伞。\n陈默：我来了。晚了七年。\n\n\n只输出 JSON，不要任何解释文字。"
+  },
+  {
+   "target_s": 30.0,
+   "episode_id": "ep_02",
+   "script": "第一集《雨夜天台》\n\n林晚站在天台边缘，雨水打湿了她的白衬衫。\n林晚：你说过会来的。\n陈默从阴影里走出来，手里攥着一把伞。\n陈默：我来了。晚了七年。\n",
+   "prompt": "你是一位短剧分镜师。把下面的剧本拆成分镜表。\n\n可用角色（只能用这些 id）：\n  c_chen_mo：陈默\n  c_lin_wan：林晚\n\n可用场景：\n  loc_rooftop：夜间天台\n\n镜头配额，必须严格按这个数量和时长分配：\n  2 个 2 秒镜头，2 个 3 秒镜头，1 个 4 秒镜头，3 个 5 秒镜头\n  合计 8 个镜头，总时长 29 秒\n\n硬性要求：\n\n1. shot_id 用 ep_02_sh001 这样的格式，三位数字，按顺序递增。\n2. order 从 0 开始递增。\n3. duration_s 只能取配额里出现过的值，且各档位的数量必须与配额完全一致。\n4. characters 必须填。凡是这一镜里出现的人，都要在这里列出 char_id，\n   并填本镜的表情、动作、面部朝向。画面里没有人才填空数组。\n   只填这些，绝对不要描述角色的长相、发型、发色、身材或服装样式，\n   那些由系统统一管理，你写了会被丢弃并造成前后不一致。\n   换装只能通过 wardrobe_state 填一个状态名。\n5. first_frame_prompt 描述这一镜的画面：环境、光线、构图、角色的姿态和位置。\n   同样不要描述角色长相，系统会自动拼接。\n6. dialogue 必须填。剧本里的每一句台词都要落到某个镜头上，一句都不能丢。\n   说话的人填 char_id，旁白留空。这一镜没人说话才填空数组。\n   说话的角色也必须同时出现在 characters 里。\n7. 同一场景内连续镜头尽量复用 camera_id，避免越轴。\n8. transition_in 默认 cut 且 transition_dur_s 必须为 0；\n   只有场景切换才用 dissolve，此时 transition_dur_s 填 0.4。\n9. continuity_notes 记录需要与前后镜保持一致的细节，比如道具在哪只手。\n10. 如果剧本里有信息不足以确定画面的地方，写进 missing_info，不要自己编。\n\n剧本：\n\n第一集《雨夜天台》\n\n林晚站在天台边缘，雨水打湿了她的白衬衫。\n林晚：你说过会来的。\n陈默从阴影里走出来，手里攥着一把伞。\n陈默：我来了。晚了七年。\n\n\n只输出 JSON，不要任何解释文字。"
+  },
+  {
+   "target_s": 60.0,
+   "episode_id": "ep_03",
+   "script": "第一集《雨夜天台》\n\n林晚站在天台边缘，雨水打湿了她的白衬衫。\n林晚：你说过会来的。\n陈默从阴影里走出来，手里攥着一把伞。\n陈默：我来了。晚了七年。\n",
+   "no_locations": true,
+   "prompt": "你是一位短剧分镜师。把下面的剧本拆成分镜表。\n\n可用角色（只能用这些 id）：\n  c_chen_mo：陈默\n  c_lin_wan：林晚\n\n可用场景：\n  （未定义场景，location_id 留空）\n\n镜头配额，必须严格按这个数量和时长分配：\n  3 个 2 秒镜头，4 个 3 秒镜头，3 个 4 秒镜头，6 个 5 秒镜头\n  合计 16 个镜头，总时长 60 秒\n\n硬性要求：\n\n1. shot_id 用 ep_03_sh001 这样的格式，三位数字，按顺序递增。\n2. order 从 0 开始递增。\n3. duration_s 只能取配额里出现过的值，且各档位的数量必须与配额完全一致。\n4. characters 必须填。凡是这一镜里出现的人，都要在这里列出 char_id，\n   并填本镜的表情、动作、面部朝向。画面里没有人才填空数组。\n   只填这些，绝对不要描述角色的长相、发型、发色、身材或服装样式，\n   那些由系统统一管理，你写了会被丢弃并造成前后不一致。\n   换装只能通过 wardrobe_state 填一个状态名。\n5. first_frame_prompt 描述这一镜的画面：环境、光线、构图、角色的姿态和位置。\n   同样不要描述角色长相，系统会自动拼接。\n6. dialogue 必须填。剧本里的每一句台词都要落到某个镜头上，一句都不能丢。\n   说话的人填 char_id，旁白留空。这一镜没人说话才填空数组。\n   说话的角色也必须同时出现在 characters 里。\n7. 同一场景内连续镜头尽量复用 camera_id，避免越轴。\n8. transition_in 默认 cut 且 transition_dur_s 必须为 0；\n   只有场景切换才用 dissolve，此时 transition_dur_s 填 0.4。\n9. continuity_notes 记录需要与前后镜保持一致的细节，比如道具在哪只手。\n10. 如果剧本里有信息不足以确定画面的地方，写进 missing_info，不要自己编。\n\n剧本：\n\n第一集《雨夜天台》\n\n林晚站在天台边缘，雨水打湿了她的白衬衫。\n林晚：你说过会来的。\n陈默从阴影里走出来，手里攥着一把伞。\n陈默：我来了。晚了七年。\n\n\n只输出 JSON，不要任何解释文字。"
+  }
+ ],
+ "schemas": [
+  {
+   "name": "带场景",
+   "schema": {
+    "type": "object",
+    "properties": {
+     "shots": {
+      "type": "array",
+      "items": {
+       "type": "object",
+       "properties": {
+        "shot_id": {
+         "description": "全局唯一，如 ep01_s03_sh007",
+         "pattern": "^[a-z0-9_]+$",
+         "title": "Shot Id",
+         "type": "string"
+        },
+        "scene_id": {
+         "pattern": "^[a-z0-9_]+$",
+         "title": "Scene Id",
+         "type": "string"
+        },
+        "order": {
+         "description": "集内顺序",
+         "minimum": 0,
+         "title": "Order",
+         "type": "integer"
+        },
+        "visual_desc": {
+         "default": "",
+         "description": "给人看的中文描述",
+         "maxLength": 300,
+         "title": "Visual Desc",
+         "type": "string"
+        },
+        "first_frame_prompt": {
+         "default": "",
+         "maxLength": 1200,
+         "title": "First Frame Prompt",
+         "type": "string"
+        },
+        "motion_prompt": {
+         "default": "",
+         "description": "运动描述，给视频模型",
+         "maxLength": 400,
+         "title": "Motion Prompt",
+         "type": "string"
+        },
+        "shot_size": {
+         "$ref": "#/$defs/ShotSize",
+         "default": "MS"
+        },
+        "camera_angle": {
+         "$ref": "#/$defs/CameraAngle",
+         "default": "eye_level"
+        },
+        "camera_move": {
+         "$ref": "#/$defs/CameraMove",
+         "default": "static"
+        },
+        "camera_id": {
+         "anyOf": [
+          {
+           "type": "string"
+          },
+          {
+           "type": "null"
+          }
+         ],
+         "default": null,
+         "description": "复用机位 id。同场景同机位保证不越轴",
+         "title": "Camera Id"
+        },
+        "characters": {
+         "type": "array",
+         "items": {
+          "$ref": "#/$defs/CharacterInShot"
+         },
+         "description": "本镜出现的角色。没有人物出镜就填空数组"
+        },
+        "location_id": {
+         "anyOf": [
+          {
+           "type": "string",
+           "enum": [
+            "loc_rooftop"
+           ]
+          },
+          {
+           "type": "null"
+          }
+         ]
+        },
+        "duration_s": {
+         "type": "number",
+         "enum": [
+          2.0,
+          3.0,
+          4.0,
+          5.0
+         ],
+         "description": "只能取这些值"
+        },
+        "dialogue": {
+         "type": "array",
+         "items": {
+          "$ref": "#/$defs/DialogueLine"
+         },
+         "description": "本镜的台词和旁白，逐句填。剧本里的每一句话都必须落到某个镜头上，不能丢。这一镜没有人说话就填空数组"
+        },
+        "transition_in": {
+         "$ref": "#/$defs/Transition",
+         "default": "cut"
+        },
+        "transition_dur_s": {
+         "default": 0.0,
+         "maximum": 2.0,
+         "minimum": 0,
+         "title": "Transition Dur S",
+         "type": "number"
+        },
+        "subtitle_text": {
+         "default": "",
+         "title": "Subtitle Text",
+         "type": "string"
+        },
+        "beat": {
+         "default": "",
+         "description": "叙事功能，如 反转、铺垫",
+         "maxLength": 20,
+         "title": "Beat",
+         "type": "string"
+        },
+        "continuity_notes": {
+         "default": "",
+         "maxLength": 200,
+         "title": "Continuity Notes",
+         "type": "string"
+        },
+        "missing_info": {
+         "description": "模型自报的信息缺口，供校验阶段检查",
+         "items": {
+          "type": "string"
+         },
+         "title": "Missing Info",
+         "type": "array"
+        }
+       },
+       "required": [
+        "shot_id",
+        "scene_id",
+        "order",
+        "first_frame_prompt",
+        "shot_size",
+        "duration_s",
+        "characters",
+        "dialogue"
+       ],
+       "additionalProperties": false
+      }
+     }
+    },
+    "required": [
+     "shots"
+    ],
+    "additionalProperties": false,
+    "$defs": {
+     "CameraAngle": {
+      "enum": [
+       "low",
+       "eye_level",
+       "high",
+       "overhead",
+       "dutch"
+      ],
+      "title": "CameraAngle",
+      "type": "string"
+     },
+     "CameraMove": {
+      "enum": [
+       "static",
+       "pan_left",
+       "pan_right",
+       "tilt_up",
+       "tilt_down",
+       "push_in",
+       "pull_out",
+       "handheld",
+       "orbit"
+      ],
+      "title": "CameraMove",
+      "type": "string"
+     },
+     "CharacterInShot": {
+      "additionalProperties": false,
+      "description": "角色在本镜头中的表现。\n\n只有可变项。外观描述属于角色资产，不在这里，也不允许大模型在这里写。",
+      "properties": {
+       "char_id": {
+        "type": "string",
+        "enum": [
+         "c_chen_mo",
+         "c_lin_wan"
+        ],
+        "description": "必须是已注册角色之一"
+       },
+       "expression": {
+        "default": "",
+        "description": "表情，如 愕然、隐忍",
+        "maxLength": 40,
+        "title": "Expression",
+        "type": "string"
+       },
+       "action": {
+        "default": "",
+        "description": "本镜动作，如 后退半步",
+        "maxLength": 80,
+        "title": "Action",
+        "type": "string"
+       },
+       "wardrobe_state": {
+        "default": "default",
+        "description": "服装状态 id，如 suit_torn",
+        "maxLength": 40,
+        "title": "Wardrobe State",
+        "type": "string"
+       },
+       "face_pose": {
+        "$ref": "#/$defs/FacePose",
+        "default": "front",
+        "description": "面部朝向"
+       },
+       "screen_pos": {
+        "default": "center",
+        "description": "画面位置：left / center / right",
+        "title": "Screen Pos",
+        "type": "string"
+       }
+      },
+      "required": [
+       "char_id"
+      ],
+      "title": "CharacterInShot",
+      "type": "object"
+     },
+     "DialogueLine": {
+      "additionalProperties": false,
+      "description": "一句台词。时长字段由配音阶段回填，分镜阶段不填。",
+      "properties": {
+       "char_id": {
+        "anyOf": [
+         {
+          "type": "string",
+          "enum": [
+           "c_chen_mo",
+           "c_lin_wan"
+          ]
+         },
+         {
+          "type": "null"
+         }
+        ],
+        "description": "说话角色。旁白留空"
+       },
+       "text": {
+        "maxLength": 200,
+        "minLength": 1,
+        "title": "Text",
+        "type": "string"
+       },
+       "emotion": {
+        "default": "neutral",
+        "description": "情绪标签",
+        "title": "Emotion",
+        "type": "string"
+       },
+       "emotion_intensity": {
+        "default": 0.5,
+        "maximum": 1.0,
+        "minimum": 0.0,
+        "title": "Emotion Intensity",
+        "type": "number"
+       }
+      },
+      "required": [
+       "text"
+      ],
+      "title": "DialogueLine",
+      "type": "object"
+     },
+     "FacePose": {
+      "description": "角色面部朝向。口型判定用。",
+      "enum": [
+       "front",
+       "three_quarter",
+       "profile",
+       "back",
+       "off_screen"
+      ],
+      "title": "FacePose",
+      "type": "string"
+     },
+     "ShotSize": {
+      "description": "景别。取值顺序由近到远。",
+      "enum": [
+       "ECU",
+       "CU",
+       "MCU",
+       "MS",
+       "MLS",
+       "LS",
+       "ELS"
+      ],
+      "title": "ShotSize",
+      "type": "string"
+     },
+     "ShotStatus": {
+      "description": "镜头在流水线上的位置。断点续跑靠它。",
+      "enum": [
+       "planned",
+       "audio_done",
+       "frame_done",
+       "draft_done",
+       "draft_rejected",
+       "final_done",
+       "final_rejected",
+       "fallback",
+       "locked"
+      ],
+      "title": "ShotStatus",
+      "type": "string"
+     },
+     "Transition": {
+      "enum": [
+       "cut",
+       "dissolve",
+       "fade_in",
+       "fade_out",
+       "whip"
+      ],
+      "title": "Transition",
+      "type": "string"
+     }
+    }
+   }
+  },
+  {
+   "name": "没场景",
+   "schema": {
+    "type": "object",
+    "properties": {
+     "shots": {
+      "type": "array",
+      "items": {
+       "type": "object",
+       "properties": {
+        "shot_id": {
+         "description": "全局唯一，如 ep01_s03_sh007",
+         "pattern": "^[a-z0-9_]+$",
+         "title": "Shot Id",
+         "type": "string"
+        },
+        "scene_id": {
+         "pattern": "^[a-z0-9_]+$",
+         "title": "Scene Id",
+         "type": "string"
+        },
+        "order": {
+         "description": "集内顺序",
+         "minimum": 0,
+         "title": "Order",
+         "type": "integer"
+        },
+        "visual_desc": {
+         "default": "",
+         "description": "给人看的中文描述",
+         "maxLength": 300,
+         "title": "Visual Desc",
+         "type": "string"
+        },
+        "first_frame_prompt": {
+         "default": "",
+         "maxLength": 1200,
+         "title": "First Frame Prompt",
+         "type": "string"
+        },
+        "motion_prompt": {
+         "default": "",
+         "description": "运动描述，给视频模型",
+         "maxLength": 400,
+         "title": "Motion Prompt",
+         "type": "string"
+        },
+        "shot_size": {
+         "$ref": "#/$defs/ShotSize",
+         "default": "MS"
+        },
+        "camera_angle": {
+         "$ref": "#/$defs/CameraAngle",
+         "default": "eye_level"
+        },
+        "camera_move": {
+         "$ref": "#/$defs/CameraMove",
+         "default": "static"
+        },
+        "camera_id": {
+         "anyOf": [
+          {
+           "type": "string"
+          },
+          {
+           "type": "null"
+          }
+         ],
+         "default": null,
+         "description": "复用机位 id。同场景同机位保证不越轴",
+         "title": "Camera Id"
+        },
+        "characters": {
+         "type": "array",
+         "items": {
+          "$ref": "#/$defs/CharacterInShot"
+         },
+         "description": "本镜出现的角色。没有人物出镜就填空数组"
+        },
+        "location_id": {
+         "anyOf": [
+          {
+           "type": "string"
+          },
+          {
+           "type": "null"
+          }
+         ],
+         "default": null,
+         "title": "Location Id"
+        },
+        "duration_s": {
+         "type": "number",
+         "enum": [
+          2.0,
+          3.0,
+          4.0,
+          5.0
+         ],
+         "description": "只能取这些值"
+        },
+        "dialogue": {
+         "type": "array",
+         "items": {
+          "$ref": "#/$defs/DialogueLine"
+         },
+         "description": "本镜的台词和旁白，逐句填。剧本里的每一句话都必须落到某个镜头上，不能丢。这一镜没有人说话就填空数组"
+        },
+        "transition_in": {
+         "$ref": "#/$defs/Transition",
+         "default": "cut"
+        },
+        "transition_dur_s": {
+         "default": 0.0,
+         "maximum": 2.0,
+         "minimum": 0,
+         "title": "Transition Dur S",
+         "type": "number"
+        },
+        "subtitle_text": {
+         "default": "",
+         "title": "Subtitle Text",
+         "type": "string"
+        },
+        "beat": {
+         "default": "",
+         "description": "叙事功能，如 反转、铺垫",
+         "maxLength": 20,
+         "title": "Beat",
+         "type": "string"
+        },
+        "continuity_notes": {
+         "default": "",
+         "maxLength": 200,
+         "title": "Continuity Notes",
+         "type": "string"
+        },
+        "missing_info": {
+         "description": "模型自报的信息缺口，供校验阶段检查",
+         "items": {
+          "type": "string"
+         },
+         "title": "Missing Info",
+         "type": "array"
+        }
+       },
+       "required": [
+        "shot_id",
+        "scene_id",
+        "order",
+        "first_frame_prompt",
+        "shot_size",
+        "duration_s",
+        "characters",
+        "dialogue"
+       ],
+       "additionalProperties": false
+      }
+     }
+    },
+    "required": [
+     "shots"
+    ],
+    "additionalProperties": false,
+    "$defs": {
+     "CameraAngle": {
+      "enum": [
+       "low",
+       "eye_level",
+       "high",
+       "overhead",
+       "dutch"
+      ],
+      "title": "CameraAngle",
+      "type": "string"
+     },
+     "CameraMove": {
+      "enum": [
+       "static",
+       "pan_left",
+       "pan_right",
+       "tilt_up",
+       "tilt_down",
+       "push_in",
+       "pull_out",
+       "handheld",
+       "orbit"
+      ],
+      "title": "CameraMove",
+      "type": "string"
+     },
+     "CharacterInShot": {
+      "additionalProperties": false,
+      "description": "角色在本镜头中的表现。\n\n只有可变项。外观描述属于角色资产，不在这里，也不允许大模型在这里写。",
+      "properties": {
+       "char_id": {
+        "type": "string",
+        "enum": [
+         "c_chen_mo",
+         "c_lin_wan"
+        ],
+        "description": "必须是已注册角色之一"
+       },
+       "expression": {
+        "default": "",
+        "description": "表情，如 愕然、隐忍",
+        "maxLength": 40,
+        "title": "Expression",
+        "type": "string"
+       },
+       "action": {
+        "default": "",
+        "description": "本镜动作，如 后退半步",
+        "maxLength": 80,
+        "title": "Action",
+        "type": "string"
+       },
+       "wardrobe_state": {
+        "default": "default",
+        "description": "服装状态 id，如 suit_torn",
+        "maxLength": 40,
+        "title": "Wardrobe State",
+        "type": "string"
+       },
+       "face_pose": {
+        "$ref": "#/$defs/FacePose",
+        "default": "front",
+        "description": "面部朝向"
+       },
+       "screen_pos": {
+        "default": "center",
+        "description": "画面位置：left / center / right",
+        "title": "Screen Pos",
+        "type": "string"
+       }
+      },
+      "required": [
+       "char_id"
+      ],
+      "title": "CharacterInShot",
+      "type": "object"
+     },
+     "DialogueLine": {
+      "additionalProperties": false,
+      "description": "一句台词。时长字段由配音阶段回填，分镜阶段不填。",
+      "properties": {
+       "char_id": {
+        "anyOf": [
+         {
+          "type": "string",
+          "enum": [
+           "c_chen_mo",
+           "c_lin_wan"
+          ]
+         },
+         {
+          "type": "null"
+         }
+        ],
+        "description": "说话角色。旁白留空"
+       },
+       "text": {
+        "maxLength": 200,
+        "minLength": 1,
+        "title": "Text",
+        "type": "string"
+       },
+       "emotion": {
+        "default": "neutral",
+        "description": "情绪标签",
+        "title": "Emotion",
+        "type": "string"
+       },
+       "emotion_intensity": {
+        "default": 0.5,
+        "maximum": 1.0,
+        "minimum": 0.0,
+        "title": "Emotion Intensity",
+        "type": "number"
+       }
+      },
+      "required": [
+       "text"
+      ],
+      "title": "DialogueLine",
+      "type": "object"
+     },
+     "FacePose": {
+      "description": "角色面部朝向。口型判定用。",
+      "enum": [
+       "front",
+       "three_quarter",
+       "profile",
+       "back",
+       "off_screen"
+      ],
+      "title": "FacePose",
+      "type": "string"
+     },
+     "ShotSize": {
+      "description": "景别。取值顺序由近到远。",
+      "enum": [
+       "ECU",
+       "CU",
+       "MCU",
+       "MS",
+       "MLS",
+       "LS",
+       "ELS"
+      ],
+      "title": "ShotSize",
+      "type": "string"
+     },
+     "ShotStatus": {
+      "description": "镜头在流水线上的位置。断点续跑靠它。",
+      "enum": [
+       "planned",
+       "audio_done",
+       "frame_done",
+       "draft_done",
+       "draft_rejected",
+       "final_done",
+       "final_rejected",
+       "fallback",
+       "locked"
+      ],
+      "title": "ShotStatus",
+      "type": "string"
+     },
+     "Transition": {
+      "enum": [
+       "cut",
+       "dissolve",
+       "fade_in",
+       "fade_out",
+       "whip"
+      ],
+      "title": "Transition",
+      "type": "string"
+     }
+    }
+   }
+  }
+ ],
+ "links": [
+  {
+   "before": {
+    "scene_id": "loc_rooftop"
+   },
+   "changed": true,
+   "after": {
+    "scene_id": "loc_rooftop",
+    "location_id": "loc_rooftop"
+   }
+  },
+  {
+   "before": {
+    "scene_id": "loc_rooftop",
+    "location_id": "loc_office"
+   },
+   "changed": false,
+   "after": {
+    "scene_id": "loc_rooftop",
+    "location_id": "loc_office"
+   }
+  },
+  {
+   "before": {
+    "scene_id": "sc_01"
+   },
+   "changed": false,
+   "after": {
+    "scene_id": "sc_01"
+   }
+  },
+  {
+   "before": {
+    "scene_id": "loc_rooftop",
+    "location_id": ""
+   },
+   "changed": true,
+   "after": {
+    "scene_id": "loc_rooftop",
+    "location_id": "loc_rooftop"
+   }
+  },
+  {
+   "before": {
+    "scene_id": "loc_rooftop",
+    "location_id": null
+   },
+   "changed": true,
+   "after": {
+    "scene_id": "loc_rooftop",
+    "location_id": "loc_rooftop"
+   }
+  },
+  {
+   "before": {},
+   "changed": false,
+   "after": {}
+  }
+ ],
+ "speakers": [
+  {
+   "before": {
+    "dialogue": [
+     {
+      "char_id": "c_lin_wan",
+      "text": "你说过会来的"
+     }
+    ],
+    "characters": []
+   },
+   "after": {
+    "dialogue": [
+     {
+      "char_id": "c_lin_wan",
+      "text": "你说过会来的"
+     }
+    ],
+    "characters": [
+     {
+      "char_id": "c_lin_wan"
+     }
+    ]
+   }
+  },
+  {
+   "before": {
+    "dialogue": [
+     {
+      "char_id": "c_lin_wan",
+      "text": "x"
+     }
+    ],
+    "characters": [
+     {
+      "char_id": "c_lin_wan"
+     }
+    ]
+   },
+   "after": {
+    "dialogue": [
+     {
+      "char_id": "c_lin_wan",
+      "text": "x"
+     }
+    ],
+    "characters": [
+     {
+      "char_id": "c_lin_wan"
+     }
+    ]
+   }
+  },
+  {
+   "before": {
+    "dialogue": [
+     {
+      "char_id": null,
+      "text": "旁白"
+     }
+    ],
+    "characters": []
+   },
+   "after": {
+    "dialogue": [
+     {
+      "char_id": null,
+      "text": "旁白"
+     }
+    ],
+    "characters": []
+   }
+  },
+  {
+   "before": {
+    "dialogue": [
+     {
+      "char_id": "c_unknown",
+      "text": "x"
+     }
+    ],
+    "characters": []
+   },
+   "after": {
+    "dialogue": [
+     {
+      "char_id": "c_unknown",
+      "text": "x"
+     }
+    ],
+    "characters": []
+   }
+  },
+  {
+   "before": {
+    "dialogue": [
+     {
+      "char_id": "c_chen_mo",
+      "text": "x"
+     }
+    ]
+   },
+   "after": {
+    "dialogue": [
+     {
+      "char_id": "c_chen_mo",
+      "text": "x"
+     }
+    ],
+    "characters": [
+     {
+      "char_id": "c_chen_mo"
+     }
+    ]
+   }
+  },
+  {
+   "before": {
+    "dialogue": [
+     {
+      "char_id": "c_lin_wan",
+      "text": "a"
+     },
+     {
+      "char_id": "c_chen_mo",
+      "text": "b"
+     },
+     {
+      "char_id": "c_lin_wan",
+      "text": "c"
+     }
+    ],
+    "characters": []
+   },
+   "after": {
+    "dialogue": [
+     {
+      "char_id": "c_lin_wan",
+      "text": "a"
+     },
+     {
+      "char_id": "c_chen_mo",
+      "text": "b"
+     },
+     {
+      "char_id": "c_lin_wan",
+      "text": "c"
+     }
+    ],
+    "characters": [
+     {
+      "char_id": "c_lin_wan"
+     },
+     {
+      "char_id": "c_chen_mo"
+     }
+    ]
+   }
+  },
+  {
+   "before": {
+    "dialogue": [],
+    "characters": []
+   },
+   "after": {
+    "dialogue": [],
+    "characters": []
+   }
+  }
+ ],
+ "parses": [
+  {
+   "name": "正常一集",
+   "raw": "{\"shots\": [{\"shot_id\": \"ep_01_sh001\", \"scene_id\": \"loc_rooftop\", \"order\": 0, \"first_frame_prompt\": \"夜间天台，雨中，女子背对镜头站在护栏边\", \"motion_prompt\": \"缓慢推进\", \"shot_size\": \"MS\", \"camera_angle\": \"eye_level\", \"camera_move\": \"push_in\", \"camera_id\": \"cam_a\", \"duration_s\": 5.0, \"characters\": [{\"char_id\": \"c_lin_wan\", \"expression\": \"落寞\", \"action\": \"扶着护栏\", \"face_pose\": \"back\"}], \"dialogue\": [], \"transition_in\": \"cut\", \"transition_dur_s\": 0.0, \"beat\": \"开场\"}, {\"shot_id\": \"ep_01_sh002\", \"scene_id\": \"loc_rooftop\", \"first_frame_prompt\": \"近景，女子转身，雨水顺着脸颊\", \"shot_size\": \"CU\", \"camera_angle\": \"eye_level\", \"duration_s\": 3.0, \"characters\": [], \"dialogue\": [{\"char_id\": \"c_lin_wan\", \"text\": \"你说过会来的\"}], \"transition_in\": \"cut\"}, {\"shot_id\": \"ep_01_sh003\", \"scene_id\": \"loc_rooftop\", \"order\": 2, \"first_frame_prompt\": \"男子从阴影里走出，手里攥着伞\", \"shot_size\": \"MCU\", \"camera_angle\": \"eye_level\", \"duration_s\": 4.4, \"characters\": [{\"char_id\": \"c_chen_mo\", \"expression\": \"克制\", \"action\": \"握伞\", \"face_pose\": \"front\"}], \"dialogue\": [{\"char_id\": \"c_chen_mo\", \"text\": \"我来了。晚了七年。\"}], \"transition_in\": \"dissolve\"}]}",
+   "shots": [
+    {
+     "shot_id": "ep_01_sh001",
+     "scene_id": "loc_rooftop",
+     "order": 0,
+     "visual_desc": "",
+     "first_frame_prompt": "夜间天台，雨中，女子背对镜头站在护栏边",
+     "last_frame_prompt": null,
+     "motion_prompt": "缓慢推进",
+     "negative_prompt": "",
+     "shot_size": "MS",
+     "camera_angle": "eye_level",
+     "camera_move": "push_in",
+     "camera_id": "cam_a",
+     "characters": [
+      {
+       "char_id": "c_lin_wan",
+       "expression": "落寞",
+       "action": "扶着护栏",
+       "wardrobe_state": "default",
+       "face_pose": "back",
+       "screen_pos": "center"
+      }
+     ],
+     "location_id": "loc_rooftop",
+     "prop_ids": [],
+     "duration_s": 5.0,
+     "duration_locked": false,
+     "dialogue": [],
+     "sfx": [],
+     "bgm_cue": null,
+     "needs_lipsync": false,
+     "transition_in": "cut",
+     "transition_dur_s": 0.0,
+     "subtitle_text": "",
+     "beat": "开场",
+     "continuity_notes": "",
+     "missing_info": [],
+     "status": "planned",
+     "attempts": 0,
+     "frame_path": null,
+     "video_path": null,
+     "gate_notes": []
+    },
+    {
+     "shot_id": "ep_01_sh002",
+     "scene_id": "loc_rooftop",
+     "order": 1,
+     "visual_desc": "",
+     "first_frame_prompt": "近景，女子转身，雨水顺着脸颊",
+     "last_frame_prompt": null,
+     "motion_prompt": "",
+     "negative_prompt": "",
+     "shot_size": "CU",
+     "camera_angle": "eye_level",
+     "camera_move": "static",
+     "camera_id": null,
+     "characters": [
+      {
+       "char_id": "c_lin_wan",
+       "expression": "",
+       "action": "",
+       "wardrobe_state": "default",
+       "face_pose": "front",
+       "screen_pos": "center"
+      }
+     ],
+     "location_id": "loc_rooftop",
+     "prop_ids": [],
+     "duration_s": 3.0,
+     "duration_locked": false,
+     "dialogue": [
+      {
+       "char_id": "c_lin_wan",
+       "text": "你说过会来的",
+       "emotion": "neutral",
+       "emotion_intensity": 0.5,
+       "voice_id": null,
+       "audio_path": null,
+       "actual_duration_s": null
+      }
+     ],
+     "sfx": [],
+     "bgm_cue": null,
+     "needs_lipsync": false,
+     "transition_in": "cut",
+     "transition_dur_s": 0.0,
+     "subtitle_text": "",
+     "beat": "",
+     "continuity_notes": "",
+     "missing_info": [],
+     "status": "planned",
+     "attempts": 0,
+     "frame_path": null,
+     "video_path": null,
+     "gate_notes": []
+    },
+    {
+     "shot_id": "ep_01_sh003",
+     "scene_id": "loc_rooftop",
+     "order": 2,
+     "visual_desc": "",
+     "first_frame_prompt": "男子从阴影里走出，手里攥着伞",
+     "last_frame_prompt": null,
+     "motion_prompt": "",
+     "negative_prompt": "",
+     "shot_size": "MCU",
+     "camera_angle": "eye_level",
+     "camera_move": "static",
+     "camera_id": null,
+     "characters": [
+      {
+       "char_id": "c_chen_mo",
+       "expression": "克制",
+       "action": "握伞",
+       "wardrobe_state": "default",
+       "face_pose": "front",
+       "screen_pos": "center"
+      }
+     ],
+     "location_id": "loc_rooftop",
+     "prop_ids": [],
+     "duration_s": 4.0,
+     "duration_locked": false,
+     "dialogue": [
+      {
+       "char_id": "c_chen_mo",
+       "text": "我来了。晚了七年。",
+       "emotion": "neutral",
+       "emotion_intensity": 0.5,
+       "voice_id": null,
+       "audio_path": null,
+       "actual_duration_s": null
+      }
+     ],
+     "sfx": [],
+     "bgm_cue": null,
+     "needs_lipsync": false,
+     "transition_in": "dissolve",
+     "transition_dur_s": 0.4,
+     "subtitle_text": "",
+     "beat": "",
+     "continuity_notes": "",
+     "missing_info": [],
+     "status": "planned",
+     "attempts": 0,
+     "frame_path": null,
+     "video_path": null,
+     "gate_notes": []
+    }
+   ]
+  },
+  {
+   "name": "顶层是数组",
+   "raw": "[{\"shot_id\": \"ep_01_sh001\", \"scene_id\": \"loc_rooftop\", \"order\": 0, \"first_frame_prompt\": \"夜间天台，雨中，女子背对镜头站在护栏边\", \"motion_prompt\": \"缓慢推进\", \"shot_size\": \"MS\", \"camera_angle\": \"eye_level\", \"camera_move\": \"push_in\", \"camera_id\": \"cam_a\", \"duration_s\": 5.0, \"characters\": [{\"char_id\": \"c_lin_wan\", \"expression\": \"落寞\", \"action\": \"扶着护栏\", \"face_pose\": \"back\"}], \"dialogue\": [], \"transition_in\": \"cut\", \"transition_dur_s\": 0.0, \"beat\": \"开场\"}, {\"shot_id\": \"ep_01_sh002\", \"scene_id\": \"loc_rooftop\", \"first_frame_prompt\": \"近景，女子转身，雨水顺着脸颊\", \"shot_size\": \"CU\", \"camera_angle\": \"eye_level\", \"duration_s\": 3.0, \"characters\": [], \"dialogue\": [{\"char_id\": \"c_lin_wan\", \"text\": \"你说过会来的\"}], \"transition_in\": \"cut\"}, {\"shot_id\": \"ep_01_sh003\", \"scene_id\": \"loc_rooftop\", \"order\": 2, \"first_frame_prompt\": \"男子从阴影里走出，手里攥着伞\", \"shot_size\": \"MCU\", \"camera_angle\": \"eye_level\", \"duration_s\": 4.4, \"characters\": [{\"char_id\": \"c_chen_mo\", \"expression\": \"克制\", \"action\": \"握伞\", \"face_pose\": \"front\"}], \"dialogue\": [{\"char_id\": \"c_chen_mo\", \"text\": \"我来了。晚了七年。\"}], \"transition_in\": \"dissolve\"}]",
+   "shots": [
+    {
+     "shot_id": "ep_01_sh001",
+     "scene_id": "loc_rooftop",
+     "order": 0,
+     "visual_desc": "",
+     "first_frame_prompt": "夜间天台，雨中，女子背对镜头站在护栏边",
+     "last_frame_prompt": null,
+     "motion_prompt": "缓慢推进",
+     "negative_prompt": "",
+     "shot_size": "MS",
+     "camera_angle": "eye_level",
+     "camera_move": "push_in",
+     "camera_id": "cam_a",
+     "characters": [
+      {
+       "char_id": "c_lin_wan",
+       "expression": "落寞",
+       "action": "扶着护栏",
+       "wardrobe_state": "default",
+       "face_pose": "back",
+       "screen_pos": "center"
+      }
+     ],
+     "location_id": "loc_rooftop",
+     "prop_ids": [],
+     "duration_s": 5.0,
+     "duration_locked": false,
+     "dialogue": [],
+     "sfx": [],
+     "bgm_cue": null,
+     "needs_lipsync": false,
+     "transition_in": "cut",
+     "transition_dur_s": 0.0,
+     "subtitle_text": "",
+     "beat": "开场",
+     "continuity_notes": "",
+     "missing_info": [],
+     "status": "planned",
+     "attempts": 0,
+     "frame_path": null,
+     "video_path": null,
+     "gate_notes": []
+    },
+    {
+     "shot_id": "ep_01_sh002",
+     "scene_id": "loc_rooftop",
+     "order": 1,
+     "visual_desc": "",
+     "first_frame_prompt": "近景，女子转身，雨水顺着脸颊",
+     "last_frame_prompt": null,
+     "motion_prompt": "",
+     "negative_prompt": "",
+     "shot_size": "CU",
+     "camera_angle": "eye_level",
+     "camera_move": "static",
+     "camera_id": null,
+     "characters": [
+      {
+       "char_id": "c_lin_wan",
+       "expression": "",
+       "action": "",
+       "wardrobe_state": "default",
+       "face_pose": "front",
+       "screen_pos": "center"
+      }
+     ],
+     "location_id": "loc_rooftop",
+     "prop_ids": [],
+     "duration_s": 3.0,
+     "duration_locked": false,
+     "dialogue": [
+      {
+       "char_id": "c_lin_wan",
+       "text": "你说过会来的",
+       "emotion": "neutral",
+       "emotion_intensity": 0.5,
+       "voice_id": null,
+       "audio_path": null,
+       "actual_duration_s": null
+      }
+     ],
+     "sfx": [],
+     "bgm_cue": null,
+     "needs_lipsync": false,
+     "transition_in": "cut",
+     "transition_dur_s": 0.0,
+     "subtitle_text": "",
+     "beat": "",
+     "continuity_notes": "",
+     "missing_info": [],
+     "status": "planned",
+     "attempts": 0,
+     "frame_path": null,
+     "video_path": null,
+     "gate_notes": []
+    },
+    {
+     "shot_id": "ep_01_sh003",
+     "scene_id": "loc_rooftop",
+     "order": 2,
+     "visual_desc": "",
+     "first_frame_prompt": "男子从阴影里走出，手里攥着伞",
+     "last_frame_prompt": null,
+     "motion_prompt": "",
+     "negative_prompt": "",
+     "shot_size": "MCU",
+     "camera_angle": "eye_level",
+     "camera_move": "static",
+     "camera_id": null,
+     "characters": [
+      {
+       "char_id": "c_chen_mo",
+       "expression": "克制",
+       "action": "握伞",
+       "wardrobe_state": "default",
+       "face_pose": "front",
+       "screen_pos": "center"
+      }
+     ],
+     "location_id": "loc_rooftop",
+     "prop_ids": [],
+     "duration_s": 4.0,
+     "duration_locked": false,
+     "dialogue": [
+      {
+       "char_id": "c_chen_mo",
+       "text": "我来了。晚了七年。",
+       "emotion": "neutral",
+       "emotion_intensity": 0.5,
+       "voice_id": null,
+       "audio_path": null,
+       "actual_duration_s": null
+      }
+     ],
+     "sfx": [],
+     "bgm_cue": null,
+     "needs_lipsync": false,
+     "transition_in": "dissolve",
+     "transition_dur_s": 0.4,
+     "subtitle_text": "",
+     "beat": "",
+     "continuity_notes": "",
+     "missing_info": [],
+     "status": "planned",
+     "attempts": 0,
+     "frame_path": null,
+     "video_path": null,
+     "gate_notes": []
+    }
+   ]
+  }
+ ],
+ "parse_failures": [
+  {
+   "name": "空数组",
+   "raw": "{\"shots\": []}",
+   "raises": true,
+   "python_error": "StoryboardError"
+  },
+  {
+   "name": "不是列表",
+   "raw": "{\"shots\": {\"a\": 1}}",
+   "raises": true,
+   "python_error": "StoryboardError"
+  },
+  {
+   "name": "引用了没注册的角色",
+   "raw": "{\"shots\": [{\"shot_id\": \"ep_01_sh001\", \"scene_id\": \"s\", \"order\": 0, \"first_frame_prompt\": \"x\", \"shot_size\": \"MS\", \"duration_s\": 5.0, \"characters\": [{\"char_id\": \"c_nobody\", \"expression\": \"x\", \"action\": \"x\", \"face_pose\": \"front\"}], \"dialogue\": []}]}",
+   "raises": true,
+   "python_error": "StoryboardError"
+  },
+  {
+   "name": "根本不是 JSON",
+   "raw": "抱歉，我做不到。",
+   "raises": true,
+   "python_error": "StoryboardError"
+  }
+ ],
+ "coverages": [
+  {
+   "name": "有台词有角色",
+   "script": "第一集《雨夜天台》\n\n林晚站在天台边缘，雨水打湿了她的白衬衫。\n林晚：你说过会来的。\n陈默从阴影里走出来，手里攥着一把伞。\n陈默：我来了。晚了七年。\n",
+   "shots": [
+    {
+     "shot_id": "ep_01_sh001",
+     "scene_id": "loc_rooftop",
+     "order": 0,
+     "visual_desc": "",
+     "first_frame_prompt": "夜间天台，雨中，女子背对镜头站在护栏边",
+     "last_frame_prompt": null,
+     "motion_prompt": "缓慢推进",
+     "negative_prompt": "",
+     "shot_size": "MS",
+     "camera_angle": "eye_level",
+     "camera_move": "push_in",
+     "camera_id": "cam_a",
+     "characters": [
+      {
+       "char_id": "c_lin_wan",
+       "expression": "落寞",
+       "action": "扶着护栏",
+       "wardrobe_state": "default",
+       "face_pose": "back",
+       "screen_pos": "center"
+      }
+     ],
+     "location_id": "loc_rooftop",
+     "prop_ids": [],
+     "duration_s": 5.0,
+     "duration_locked": false,
+     "dialogue": [],
+     "sfx": [],
+     "bgm_cue": null,
+     "needs_lipsync": false,
+     "transition_in": "cut",
+     "transition_dur_s": 0.0,
+     "subtitle_text": "",
+     "beat": "开场",
+     "continuity_notes": "",
+     "missing_info": [],
+     "status": "planned",
+     "attempts": 0,
+     "frame_path": null,
+     "video_path": null,
+     "gate_notes": []
+    },
+    {
+     "shot_id": "ep_01_sh002",
+     "scene_id": "loc_rooftop",
+     "order": 1,
+     "visual_desc": "",
+     "first_frame_prompt": "近景，女子转身，雨水顺着脸颊",
+     "last_frame_prompt": null,
+     "motion_prompt": "",
+     "negative_prompt": "",
+     "shot_size": "CU",
+     "camera_angle": "eye_level",
+     "camera_move": "static",
+     "camera_id": null,
+     "characters": [
+      {
+       "char_id": "c_lin_wan",
+       "expression": "",
+       "action": "",
+       "wardrobe_state": "default",
+       "face_pose": "front",
+       "screen_pos": "center"
+      }
+     ],
+     "location_id": "loc_rooftop",
+     "prop_ids": [],
+     "duration_s": 3.0,
+     "duration_locked": false,
+     "dialogue": [
+      {
+       "char_id": "c_lin_wan",
+       "text": "你说过会来的",
+       "emotion": "neutral",
+       "emotion_intensity": 0.5,
+       "voice_id": null,
+       "audio_path": null,
+       "actual_duration_s": null
+      }
+     ],
+     "sfx": [],
+     "bgm_cue": null,
+     "needs_lipsync": false,
+     "transition_in": "cut",
+     "transition_dur_s": 0.0,
+     "subtitle_text": "",
+     "beat": "",
+     "continuity_notes": "",
+     "missing_info": [],
+     "status": "planned",
+     "attempts": 0,
+     "frame_path": null,
+     "video_path": null,
+     "gate_notes": []
+    },
+    {
+     "shot_id": "ep_01_sh003",
+     "scene_id": "loc_rooftop",
+     "order": 2,
+     "visual_desc": "",
+     "first_frame_prompt": "男子从阴影里走出，手里攥着伞",
+     "last_frame_prompt": null,
+     "motion_prompt": "",
+     "negative_prompt": "",
+     "shot_size": "MCU",
+     "camera_angle": "eye_level",
+     "camera_move": "static",
+     "camera_id": null,
+     "characters": [
+      {
+       "char_id": "c_chen_mo",
+       "expression": "克制",
+       "action": "握伞",
+       "wardrobe_state": "default",
+       "face_pose": "front",
+       "screen_pos": "center"
+      }
+     ],
+     "location_id": "loc_rooftop",
+     "prop_ids": [],
+     "duration_s": 4.0,
+     "duration_locked": false,
+     "dialogue": [
+      {
+       "char_id": "c_chen_mo",
+       "text": "我来了。晚了七年。",
+       "emotion": "neutral",
+       "emotion_intensity": 0.5,
+       "voice_id": null,
+       "audio_path": null,
+       "actual_duration_s": null
+      }
+     ],
+     "sfx": [],
+     "bgm_cue": null,
+     "needs_lipsync": false,
+     "transition_in": "dissolve",
+     "transition_dur_s": 0.4,
+     "subtitle_text": "",
+     "beat": "",
+     "continuity_notes": "",
+     "missing_info": [],
+     "status": "planned",
+     "attempts": 0,
+     "frame_path": null,
+     "video_path": null,
+     "gate_notes": []
+    }
+   ],
+   "problems": []
+  },
+  {
+   "name": "剧本有对白但分镜没台词",
+   "script": "第一集《雨夜天台》\n\n林晚站在天台边缘，雨水打湿了她的白衬衫。\n林晚：你说过会来的。\n陈默从阴影里走出来，手里攥着一把伞。\n陈默：我来了。晚了七年。\n",
+   "shots": [
+    {
+     "shot_id": "ep_01_sh001",
+     "scene_id": "loc_rooftop",
+     "order": 0,
+     "visual_desc": "",
+     "first_frame_prompt": "夜间天台，雨中，女子背对镜头站在护栏边",
+     "last_frame_prompt": null,
+     "motion_prompt": "缓慢推进",
+     "negative_prompt": "",
+     "shot_size": "MS",
+     "camera_angle": "eye_level",
+     "camera_move": "push_in",
+     "camera_id": "cam_a",
+     "characters": [
+      {
+       "char_id": "c_lin_wan",
+       "expression": "落寞",
+       "action": "扶着护栏",
+       "wardrobe_state": "default",
+       "face_pose": "back",
+       "screen_pos": "center"
+      }
+     ],
+     "location_id": "loc_rooftop",
+     "prop_ids": [],
+     "duration_s": 5.0,
+     "duration_locked": false,
+     "dialogue": [],
+     "sfx": [],
+     "bgm_cue": null,
+     "needs_lipsync": false,
+     "transition_in": "cut",
+     "transition_dur_s": 0.0,
+     "subtitle_text": "",
+     "beat": "开场",
+     "continuity_notes": "",
+     "missing_info": [],
+     "status": "planned",
+     "attempts": 0,
+     "frame_path": null,
+     "video_path": null,
+     "gate_notes": []
+    },
+    {
+     "shot_id": "ep_01_sh002",
+     "scene_id": "loc_rooftop",
+     "order": 1,
+     "visual_desc": "",
+     "first_frame_prompt": "近景，女子转身，雨水顺着脸颊",
+     "last_frame_prompt": null,
+     "motion_prompt": "",
+     "negative_prompt": "",
+     "shot_size": "CU",
+     "camera_angle": "eye_level",
+     "camera_move": "static",
+     "camera_id": null,
+     "characters": [],
+     "location_id": "loc_rooftop",
+     "prop_ids": [],
+     "duration_s": 3.0,
+     "duration_locked": false,
+     "dialogue": [],
+     "sfx": [],
+     "bgm_cue": null,
+     "needs_lipsync": false,
+     "transition_in": "cut",
+     "transition_dur_s": 0.0,
+     "subtitle_text": "",
+     "beat": "",
+     "continuity_notes": "",
+     "missing_info": [],
+     "status": "planned",
+     "attempts": 0,
+     "frame_path": null,
+     "video_path": null,
+     "gate_notes": []
+    },
+    {
+     "shot_id": "ep_01_sh003",
+     "scene_id": "loc_rooftop",
+     "order": 2,
+     "visual_desc": "",
+     "first_frame_prompt": "男子从阴影里走出，手里攥着伞",
+     "last_frame_prompt": null,
+     "motion_prompt": "",
+     "negative_prompt": "",
+     "shot_size": "MCU",
+     "camera_angle": "eye_level",
+     "camera_move": "static",
+     "camera_id": null,
+     "characters": [
+      {
+       "char_id": "c_chen_mo",
+       "expression": "克制",
+       "action": "握伞",
+       "wardrobe_state": "default",
+       "face_pose": "front",
+       "screen_pos": "center"
+      }
+     ],
+     "location_id": "loc_rooftop",
+     "prop_ids": [],
+     "duration_s": 4.0,
+     "duration_locked": false,
+     "dialogue": [],
+     "sfx": [],
+     "bgm_cue": null,
+     "needs_lipsync": false,
+     "transition_in": "dissolve",
+     "transition_dur_s": 0.4,
+     "subtitle_text": "",
+     "beat": "",
+     "continuity_notes": "",
+     "missing_info": [],
+     "status": "planned",
+     "attempts": 0,
+     "frame_path": null,
+     "video_path": null,
+     "gate_notes": []
+    }
+   ],
+   "problems": [
+    "剧本里有对白，但分镜表里一句台词都没有。模型多半漏填了 dialogue 字段"
+   ]
+  },
+  {
+   "name": "剧本没有对白",
+   "script": "全是画面描述，没有冒号后面跟内容",
+   "shots": [
+    {
+     "shot_id": "ep_01_sh001",
+     "scene_id": "loc_rooftop",
+     "order": 0,
+     "visual_desc": "",
+     "first_frame_prompt": "夜间天台，雨中，女子背对镜头站在护栏边",
+     "last_frame_prompt": null,
+     "motion_prompt": "缓慢推进",
+     "negative_prompt": "",
+     "shot_size": "MS",
+     "camera_angle": "eye_level",
+     "camera_move": "push_in",
+     "camera_id": "cam_a",
+     "characters": [
+      {
+       "char_id": "c_lin_wan",
+       "expression": "落寞",
+       "action": "扶着护栏",
+       "wardrobe_state": "default",
+       "face_pose": "back",
+       "screen_pos": "center"
+      }
+     ],
+     "location_id": "loc_rooftop",
+     "prop_ids": [],
+     "duration_s": 5.0,
+     "duration_locked": false,
+     "dialogue": [],
+     "sfx": [],
+     "bgm_cue": null,
+     "needs_lipsync": false,
+     "transition_in": "cut",
+     "transition_dur_s": 0.0,
+     "subtitle_text": "",
+     "beat": "开场",
+     "continuity_notes": "",
+     "missing_info": [],
+     "status": "planned",
+     "attempts": 0,
+     "frame_path": null,
+     "video_path": null,
+     "gate_notes": []
+    },
+    {
+     "shot_id": "ep_01_sh002",
+     "scene_id": "loc_rooftop",
+     "order": 1,
+     "visual_desc": "",
+     "first_frame_prompt": "近景，女子转身，雨水顺着脸颊",
+     "last_frame_prompt": null,
+     "motion_prompt": "",
+     "negative_prompt": "",
+     "shot_size": "CU",
+     "camera_angle": "eye_level",
+     "camera_move": "static",
+     "camera_id": null,
+     "characters": [
+      {
+       "char_id": "c_lin_wan",
+       "expression": "",
+       "action": "",
+       "wardrobe_state": "default",
+       "face_pose": "front",
+       "screen_pos": "center"
+      }
+     ],
+     "location_id": "loc_rooftop",
+     "prop_ids": [],
+     "duration_s": 3.0,
+     "duration_locked": false,
+     "dialogue": [
+      {
+       "char_id": "c_lin_wan",
+       "text": "你说过会来的",
+       "emotion": "neutral",
+       "emotion_intensity": 0.5,
+       "voice_id": null,
+       "audio_path": null,
+       "actual_duration_s": null
+      }
+     ],
+     "sfx": [],
+     "bgm_cue": null,
+     "needs_lipsync": false,
+     "transition_in": "cut",
+     "transition_dur_s": 0.0,
+     "subtitle_text": "",
+     "beat": "",
+     "continuity_notes": "",
+     "missing_info": [],
+     "status": "planned",
+     "attempts": 0,
+     "frame_path": null,
+     "video_path": null,
+     "gate_notes": []
+    },
+    {
+     "shot_id": "ep_01_sh003",
+     "scene_id": "loc_rooftop",
+     "order": 2,
+     "visual_desc": "",
+     "first_frame_prompt": "男子从阴影里走出，手里攥着伞",
+     "last_frame_prompt": null,
+     "motion_prompt": "",
+     "negative_prompt": "",
+     "shot_size": "MCU",
+     "camera_angle": "eye_level",
+     "camera_move": "static",
+     "camera_id": null,
+     "characters": [
+      {
+       "char_id": "c_chen_mo",
+       "expression": "克制",
+       "action": "握伞",
+       "wardrobe_state": "default",
+       "face_pose": "front",
+       "screen_pos": "center"
+      }
+     ],
+     "location_id": "loc_rooftop",
+     "prop_ids": [],
+     "duration_s": 4.0,
+     "duration_locked": false,
+     "dialogue": [
+      {
+       "char_id": "c_chen_mo",
+       "text": "我来了。晚了七年。",
+       "emotion": "neutral",
+       "emotion_intensity": 0.5,
+       "voice_id": null,
+       "audio_path": null,
+       "actual_duration_s": null
+      }
+     ],
+     "sfx": [],
+     "bgm_cue": null,
+     "needs_lipsync": false,
+     "transition_in": "dissolve",
+     "transition_dur_s": 0.4,
+     "subtitle_text": "",
+     "beat": "",
+     "continuity_notes": "",
+     "missing_info": [],
+     "status": "planned",
+     "attempts": 0,
+     "frame_path": null,
+     "video_path": null,
+     "gate_notes": []
+    }
+   ],
+   "problems": []
+  },
+  {
+   "name": "一个角色都没有",
+   "script": "第一集《雨夜天台》\n\n林晚站在天台边缘，雨水打湿了她的白衬衫。\n林晚：你说过会来的。\n陈默从阴影里走出来，手里攥着一把伞。\n陈默：我来了。晚了七年。\n",
+   "shots": [
+    {
+     "shot_id": "ep_01_sh001",
+     "scene_id": "loc_rooftop",
+     "order": 0,
+     "visual_desc": "",
+     "first_frame_prompt": "夜间天台，雨中，女子背对镜头站在护栏边",
+     "last_frame_prompt": null,
+     "motion_prompt": "缓慢推进",
+     "negative_prompt": "",
+     "shot_size": "MS",
+     "camera_angle": "eye_level",
+     "camera_move": "push_in",
+     "camera_id": "cam_a",
+     "characters": [],
+     "location_id": "loc_rooftop",
+     "prop_ids": [],
+     "duration_s": 5.0,
+     "duration_locked": false,
+     "dialogue": [],
+     "sfx": [],
+     "bgm_cue": null,
+     "needs_lipsync": false,
+     "transition_in": "cut",
+     "transition_dur_s": 0.0,
+     "subtitle_text": "",
+     "beat": "开场",
+     "continuity_notes": "",
+     "missing_info": [],
+     "status": "planned",
+     "attempts": 0,
+     "frame_path": null,
+     "video_path": null,
+     "gate_notes": []
+    },
+    {
+     "shot_id": "ep_01_sh002",
+     "scene_id": "loc_rooftop",
+     "order": 1,
+     "visual_desc": "",
+     "first_frame_prompt": "近景，女子转身，雨水顺着脸颊",
+     "last_frame_prompt": null,
+     "motion_prompt": "",
+     "negative_prompt": "",
+     "shot_size": "CU",
+     "camera_angle": "eye_level",
+     "camera_move": "static",
+     "camera_id": null,
+     "characters": [],
+     "location_id": "loc_rooftop",
+     "prop_ids": [],
+     "duration_s": 3.0,
+     "duration_locked": false,
+     "dialogue": [],
+     "sfx": [],
+     "bgm_cue": null,
+     "needs_lipsync": false,
+     "transition_in": "cut",
+     "transition_dur_s": 0.0,
+     "subtitle_text": "",
+     "beat": "",
+     "continuity_notes": "",
+     "missing_info": [],
+     "status": "planned",
+     "attempts": 0,
+     "frame_path": null,
+     "video_path": null,
+     "gate_notes": []
+    },
+    {
+     "shot_id": "ep_01_sh003",
+     "scene_id": "loc_rooftop",
+     "order": 2,
+     "visual_desc": "",
+     "first_frame_prompt": "男子从阴影里走出，手里攥着伞",
+     "last_frame_prompt": null,
+     "motion_prompt": "",
+     "negative_prompt": "",
+     "shot_size": "MCU",
+     "camera_angle": "eye_level",
+     "camera_move": "static",
+     "camera_id": null,
+     "characters": [],
+     "location_id": "loc_rooftop",
+     "prop_ids": [],
+     "duration_s": 4.0,
+     "duration_locked": false,
+     "dialogue": [],
+     "sfx": [],
+     "bgm_cue": null,
+     "needs_lipsync": false,
+     "transition_in": "dissolve",
+     "transition_dur_s": 0.4,
+     "subtitle_text": "",
+     "beat": "",
+     "continuity_notes": "",
+     "missing_info": [],
+     "status": "planned",
+     "attempts": 0,
+     "frame_path": null,
+     "video_path": null,
+     "gate_notes": []
+    }
+   ],
+   "problems": [
+    "剧本里有对白，但分镜表里一句台词都没有。模型多半漏填了 dialogue 字段",
+    "所有镜头的 characters 都是空的，没有任何角色出镜。模型多半漏填了 characters 字段"
+   ]
+  },
+  {
+   "name": "空分镜表",
+   "script": "第一集《雨夜天台》\n\n林晚站在天台边缘，雨水打湿了她的白衬衫。\n林晚：你说过会来的。\n陈默从阴影里走出来，手里攥着一把伞。\n陈默：我来了。晚了七年。\n",
+   "shots": [],
+   "problems": [
+    "剧本里有对白，但分镜表里一句台词都没有。模型多半漏填了 dialogue 字段",
+    "所有镜头的 characters 都是空的，没有任何角色出镜。模型多半漏填了 characters 字段"
+   ]
+  }
+ ],
+ "rebalances": [
+  {
+   "target_s": 12.0,
+   "tolerance_s": 3.0,
+   "before": [
+    5.0,
+    3.0,
+    4.0
+   ],
+   "after": [
+    5.0,
+    3.0,
+    4.0
+   ]
+  },
+  {
+   "target_s": 30.0,
+   "tolerance_s": 3.0,
+   "before": [
+    5.0,
+    3.0,
+    4.0
+   ],
+   "after": [
+    5.0,
+    3.0,
+    4.0
+   ]
+  },
+  {
+   "target_s": 5.0,
+   "tolerance_s": 3.0,
+   "before": [
+    5.0,
+    3.0,
+    4.0
+   ],
+   "after": [
+    2.0,
+    3.0,
+    4.0
+   ]
+  },
+  {
+   "target_s": 13.0,
+   "tolerance_s": 0.5,
+   "before": [
+    5.0,
+    3.0,
+    4.0
+   ],
+   "after": [
+    5.0,
+    3.0,
+    4.0
+   ]
+  },
+  {
+   "target_s": 13.0,
+   "tolerance_s": 100.0,
+   "before": [
+    5.0,
+    3.0,
+    4.0
+   ],
+   "after": [
+    5.0,
+    3.0,
+    4.0
+   ]
+  }
+ ]
+}
