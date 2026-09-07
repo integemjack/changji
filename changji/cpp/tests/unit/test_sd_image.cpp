@@ -142,3 +142,24 @@ TEST_CASE("出图请求的种子必须能显式给") {
     CHECK(r.height > 0);
     CHECK(r.steps > 0);
 }
+
+TEST_CASE("出视频默认开 VAE 分块，参数是实测出来的那一组") {
+    // **这条不测代码，它钉的是 verify/RESULTS.md 三点八的实测结论。**
+    //
+    // 这几个数看着像可以随手清理掉的魔数，实际上每一个都对应一次失败：
+    //
+    //   不分块           解码要 11747 MB —— 6GB 卡上失败
+    //   默认 32x32       9610 MB        —— 还是失败（40x22 的潜变量上
+    //                                      切出来两块重叠 0.75，白切）
+    //   再开时间维分块   10321 MB       —— 反而更高
+    //   16x11 重叠 0.25  成功，44.7 秒
+    //
+    // 改这几个数之前先在 6GB 卡上跑一遍 Wan，别照着"看起来更整齐"改。
+    infer::VideoRequest r;
+    CHECK(r.vae_tiling);
+    CHECK(r.vae_tile_x == 16);
+    CHECK(r.vae_tile_y == 11);
+    CHECK(r.vae_tile_overlap == doctest::Approx(0.25));
+    // 时间维分块要关：低帧数下切不动，还引入有状态分块自身的开销
+    CHECK_FALSE(r.vae_temporal_tiling);
+}

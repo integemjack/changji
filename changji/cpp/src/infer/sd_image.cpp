@@ -293,6 +293,19 @@ void SdContext::generate_video(const VideoRequest& req, const fs::path& raw_dest
     g.sample_params.guidance.txt_cfg = static_cast<float>(req.cfg);
     if (has_start) g.init_image = start;
 
+    // VAE 分块。**不设的话默认是关的**，而关着在 6GB 卡上解码要 11.7GB，
+    // 直接失败。见 VideoRequest 里那张实测表。
+    g.vae_tiling_params.enabled = req.vae_tiling;
+    g.vae_tiling_params.temporal_tiling = req.vae_temporal_tiling;
+    g.vae_tiling_params.tile_size_x = req.vae_tile_x;
+    g.vae_tiling_params.tile_size_y = req.vae_tile_y;
+    g.vae_tiling_params.target_overlap = static_cast<float>(req.vae_tile_overlap);
+    // 显式清零：rel_size 非零时 sd.cpp 优先用比例、忽略上面的绝对块大小
+    // （见 vae.hpp 的 get_tile_size）。依赖 init 把它清成 0 的话，
+    // 上游哪天改了默认值，这里会静默地换成另一套分块策略。
+    g.vae_tiling_params.rel_size_x = 0.0f;
+    g.vae_tiling_params.rel_size_y = 0.0f;
+
     ActiveGeneration& a = active();
     {
         std::lock_guard lg(a.mu);
