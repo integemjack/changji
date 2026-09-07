@@ -105,6 +105,40 @@ std::string truncate_utf8(const std::string& s, std::size_t n) {
     return s.substr(0, i);
 }
 
+std::vector<std::string> utf8_chars(const std::string& s) {
+    std::vector<std::string> out;
+    std::size_t i = 0;
+    while (i < s.size()) {
+        const std::size_t n = utf8_char_len(static_cast<unsigned char>(s[i]));
+        // 尾部残缺时按剩下的取。丢掉的话字数会少，估出来的时长偏短，
+        // 而偏短的表现是配音装不进镜头。
+        const std::size_t take = std::min(n, s.size() - i);
+        out.push_back(s.substr(i, take));
+        i += take;
+    }
+    return out;
+}
+
+char32_t utf8_codepoint(const std::string& ch) {
+    if (ch.empty()) return 0;
+    const auto b0 = static_cast<unsigned char>(ch[0]);
+    const auto cont = [&ch](std::size_t i) {
+        return static_cast<char32_t>(static_cast<unsigned char>(ch[i]) & 0x3F);
+    };
+    if (b0 < 0x80) return b0;
+    if ((b0 & 0xE0) == 0xC0 && ch.size() >= 2) {
+        return (static_cast<char32_t>(b0 & 0x1F) << 6) | cont(1);
+    }
+    if ((b0 & 0xF0) == 0xE0 && ch.size() >= 3) {
+        return (static_cast<char32_t>(b0 & 0x0F) << 12) | (cont(1) << 6) | cont(2);
+    }
+    if ((b0 & 0xF8) == 0xF0 && ch.size() >= 4) {
+        return (static_cast<char32_t>(b0 & 0x07) << 18) | (cont(1) << 12) |
+               (cont(2) << 6) | cont(3);
+    }
+    return 0;
+}
+
 std::string sha1_raw(const std::string& data) {
     std::uint32_t h[5] = {0x67452301u, 0xEFCDAB89u, 0x98BADCFEu,
                           0x10325476u, 0xC3D2E1F0u};

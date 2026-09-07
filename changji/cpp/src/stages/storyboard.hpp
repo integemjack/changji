@@ -18,6 +18,7 @@
 
 #include "models/character.hpp"
 #include "models/shot.hpp"
+#include "stages/limits.hpp"
 
 namespace changji::stages {
 
@@ -25,15 +26,6 @@ class StoryboardError : public std::runtime_error {
 public:
     explicit StoryboardError(const std::string& what) : std::runtime_error(what) {}
 };
-
-/// Wan 单段能生成的最大帧数。
-inline constexpr int kMaxFrames = 121;
-
-/// 单个镜头能生成的最长时长。
-///
-/// 分镜的时长档位必须由它推导，不能各写一份。早先档位表里有 8 秒和 10 秒，
-/// 而实际上限是 5 秒，多出来的部分被静默截断，成片比计划短了一大截且没人发现。
-double max_shot_duration_s(int fps = 24);
 
 /// 视频模型支持的时长档位。
 ///

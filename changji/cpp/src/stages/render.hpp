@@ -17,15 +17,10 @@
 #include "models/project.hpp"
 #include "models/shot.hpp"
 #include "pipeline/jobs.hpp"
+#include "stages/limits.hpp"
 #include "stages/prompt_compose.hpp"
 
 namespace changji::stages {
-
-/// 单段帧数上限。
-///
-/// 超过这个数会在约 100 帧处到达末帧然后往回跑，出现乒乓现象。
-/// **这是模型本身的限制，不是可调参数。**
-inline constexpr int kMaxFrames = 121;
 
 /// 时长换帧数。
 ///

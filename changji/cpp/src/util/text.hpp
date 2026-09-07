@@ -6,6 +6,7 @@
 
 #include <cstddef>
 #include <string>
+#include <vector>
 
 namespace changji::text {
 
@@ -40,6 +41,16 @@ std::size_t utf8_len(const std::string& s);
 
 /// 一个 UTF-8 字符占几字节，从起始字节判断。非法起始字节按 1 算。
 std::size_t utf8_char_len(unsigned char lead);
+
+/// 把 UTF-8 串切成一个个**字符**（不是字节）。
+///
+/// 断行、估时长、按字数硬切，全部要按字符算。按字节算会把一个中文字
+/// 劈成三段，产出非法 UTF-8——那个串一路往下走，最后表现成
+/// "字幕整轨不显示"或者"nlohmann 序列化时抛异常"。
+std::vector<std::string> utf8_chars(const std::string& s);
+
+/// 一个 UTF-8 字符的码点。不是合法字符时返回 0。
+char32_t utf8_codepoint(const std::string& ch);
 
 /// 按 UTF-8 字符截断到最多 n 个字符。
 ///

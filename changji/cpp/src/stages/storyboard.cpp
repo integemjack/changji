@@ -1,5 +1,7 @@
 #include "stages/storyboard.hpp"
 
+#include "stages/limits.hpp"
+
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
