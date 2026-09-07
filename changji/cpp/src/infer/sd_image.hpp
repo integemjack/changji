@@ -1,0 +1,96 @@
+#pragma once
+
+// 用 sd.cpp 出图。
+//
+// 这一层是**阶段 5 的核心**，也是模型调度器真正派上用场的地方：
+// sd_ctx 的建立和销毁挂在 Scheduler 的槽位上，跨阶段的显存回收由它决定。
+//
+// ---
+//
+// 和 sd_backend.hpp 一样，这个头文件**不 include sd.cpp 的头，也不带 #ifdef**。
+// 没链 sd.cpp 时 generate() 抛一个说人话的异常，调用方照常写。
+
+#include <cstdint>
+#include <filesystem>
+#include <functional>
+#include <memory>
+#include <stdexcept>
+#include <string>
+#include <vector>
+
+#include "config/settings.hpp"
+#include "models/hardware.hpp"
+#include "pipeline/jobs.hpp"
+
+namespace changji::infer {
+
+class SdError : public std::runtime_error {
+public:
+    explicit SdError(const std::string& what) : std::runtime_error(what) {}
+};
+
+/// 一次出图的参数。
+struct ImageRequest {
+    std::string positive;
+    std::string negative;
+    int width = 512;
+    int height = 512;
+    int steps = 20;
+    /// 种子。**必须显式给**，不能让它随机——重跑同一个镜头要能得到
+    /// 同一张图，否则"重试"和"换一张"就分不清了。
+    std::int64_t seed = 0;
+    double cfg = 7.0;
+    /// 参考图的绝对路径。图像编辑模型那条路会用，纯文生图忽略。
+    std::vector<std::filesystem::path> reference_images;
+};
+
+/// 每一步的进度。
+///
+/// 采样一步在低配机器上要好几秒，不报的话界面上就是一条几分钟不动的进度条，
+/// 用户分不清是在跑还是卡死了。
+using StepCallback = std::function<void(int step, int total, double seconds)>;
+
+/// sd.cpp 的上下文。**贵**：建一次要解析模型文件、建张量图、分配运行时缓冲。
+///
+/// 所以它不是每次出图新建一个，而是挂在调度器的槽位上复用。
+/// 一集四十个镜头：复用是建一次用四十次，不复用是建四十次，
+/// 在 6GB 卡上后者慢到不可用。
+class SdContext {
+public:
+    /// 按配置建一个。模型路径从 [models] 来。
+    ///
+    /// vram_budget_gb 是给 sd.cpp 的 max_vram：0 表示"用当前空闲显存，
+    /// 不设显式预算"。**这个数不是显卡有多少**，是留给推理多少。
+    static std::shared_ptr<SdContext> create(const config::Settings& settings,
+                                             double vram_budget_gb);
+
+    ~SdContext();
+    SdContext(const SdContext&) = delete;
+    SdContext& operator=(const SdContext&) = delete;
+
+    /// 出一张图，写到 dest（PNG）。
+    ///
+    /// tok 会在每一步的回调里查。sd.cpp 的采样循环中途打得断
+    /// （sd_cancel_generation），所以点了停止不用等这一镜跑完。
+    void generate(const ImageRequest& req, const std::filesystem::path& dest,
+                  pipeline::CancelToken& tok, const StepCallback& on_step);
+
+private:
+    SdContext() = default;
+    struct Impl;
+    std::unique_ptr<Impl> impl_;
+};
+
+/// 把 sd.cpp 的上下文注册到调度器的图像槽上。
+///
+/// 注册之后调用方只管 `scheduler().acquire(Slot::Image)`，
+/// 什么时候加载、什么时候为了腾地方被卸掉，由调度器决定。
+void register_sd_slots(const config::Settings& settings,
+                       const models::HardwareProfile& profile);
+
+/// 当前挂在图像槽上的上下文。没加载时返回空。
+///
+/// 拿它之前要先 acquire 那个槽，否则可能拿到一个正要被卸掉的。
+std::shared_ptr<SdContext> current_image_context();
+
+}  // namespace changji::infer

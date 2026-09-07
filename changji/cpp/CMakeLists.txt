@@ -142,6 +142,7 @@ add_executable(changji
     src/stages/prompt_compose.cpp
     src/infer/scheduler.cpp
     src/infer/sd_backend.cpp
+    src/infer/sd_image.cpp
     src/llm/client.cpp
     src/llm/client_http.cpp
     src/http/ws.cpp
@@ -189,6 +190,11 @@ target_compile_definitions(changji PRIVATE
 if(CHANGJI_SD)
     target_link_libraries(changji PRIVATE stable-diffusion)
     target_compile_definitions(changji PRIVATE CHANGJI_HAVE_SD=1)
+    # stb 那两个头在 sd.cpp 的 thirdparty 里，它自己没 export 这个目录。
+    # 用它们是为了在**内存里**编解码 PNG——stb 自带的 fopen 版本在
+    # Windows 上把路径按 ANSI 代码页解释，中文项目名直接写不进去。
+    target_include_directories(changji PRIVATE
+        "${stable_diffusion_cpp_SOURCE_DIR}/thirdparty")
 endif()
 
 if(WIN32)
@@ -310,6 +316,11 @@ if(CHANGJI_BUILD_TESTS)
         tests/unit/test_config_api.cpp
         tests/unit/test_projects.cpp
         tests/unit/test_prompt_compose.cpp
+        tests/unit/test_sd_image.cpp
+
+        # 被测的源码。刻意不包含 doctor.cpp、http/server.cpp 和
+        # llm/client_http.cpp —— 那三个链 httplib 或 Crow，
+        # 而它们的逻辑部分已经拆到不依赖网络库的文件里了。
         src/models/shot.cpp
         src/models/character.cpp
         src/models/project.cpp
@@ -322,15 +333,14 @@ if(CHANGJI_BUILD_TESTS)
         src/stages/storyboard.cpp
         src/stages/script.cpp
         src/stages/prompt_compose.cpp
-    src/stages/prompt_compose.cpp
         src/infer/scheduler.cpp
-    src/infer/sd_backend.cpp
+        src/infer/sd_backend.cpp
+        src/infer/sd_image.cpp
         src/pipeline/jobs.cpp
         src/llm/client.cpp
         src/config/settings.cpp
         src/config/writeback.cpp
         src/config/runtime.cpp
-    src/config/runtime.cpp
         src/http/readonly.cpp
         src/http/editing.cpp
         src/http/editing_assets.cpp
