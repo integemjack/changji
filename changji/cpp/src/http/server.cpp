@@ -22,9 +22,11 @@
 #include "http/planning.hpp"
 #include "http/projects.hpp"
 #include "http/run.hpp"
+#include "http/voices.hpp"
 #include "http/scripting.hpp"
 #include "llm/client.hpp"
 #include "http/ws.hpp"
+#include "comfy/client.hpp"
 #include "infer/sd_image.hpp"
 #include "pipeline/jobs.hpp"
 
@@ -532,6 +534,22 @@ void run(const config::Settings& settings, const Options& opts) {
                                    query_bool(req, "skip_final"),
                                    query_bool(req, "force"),
                                    config::runtime().profile());
+        });
+        return json_response(r.body, r.status);
+    });
+
+    // 服务端有哪些参考音色。角色页打开时顺带拉一次。
+    //
+    // 客户端每次现建：ComfyUI 的地址能在设置页改，存一份的话改完不生效。
+    // object_info 的缓存也跟着丢，但这个接口一次请求就问一遍，
+    // 缓存本来就用不上。
+    CROW_ROUTE(app, "/api/voices")([](const crow::request& req) {
+        auto r = guard([&] {
+            comfy::Client client(
+                [] { return config::runtime().snapshot().comfy; },
+                comfy::default_transport(
+                    [] { return config::runtime().snapshot().comfy; }));
+            return get_voices(query(req, "path"), client);
         });
         return json_response(r.body, r.status);
     });

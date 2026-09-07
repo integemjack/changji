@@ -193,6 +193,7 @@ add_executable(changji
     src/http/config_api_doctor.cpp
     src/http/reset.cpp
     src/http/run.cpp
+    src/http/voices.cpp
     src/http/server.cpp
 )
 
@@ -369,6 +370,7 @@ if(CHANGJI_BUILD_TESTS)
         tests/unit/test_comfy_client.cpp
         tests/unit/test_ws_client.cpp
         tests/unit/test_comfy_loader.cpp
+        tests/unit/test_voices.cpp
 
         # 被测的源码。刻意不包含 doctor.cpp、http/server.cpp 和
         # llm/client_http.cpp —— 那三个链 httplib 或 Crow，
@@ -418,6 +420,7 @@ if(CHANGJI_BUILD_TESTS)
         src/http/config_api.cpp
         src/http/reset.cpp
         src/http/run.cpp
+        src/http/voices.cpp
     )
     target_include_directories(changji_tests PRIVATE src "${ASIO_INCLUDE_DIR}")
     target_link_libraries(changji_tests PRIVATE

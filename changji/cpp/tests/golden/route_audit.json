@@ -1,10 +1,6 @@
 {
  "python_total": 48,
- "cpp_total": 48,
- "missing": {
-  "6": [
-   "GET   /api/voices"
-  ]
- },
+ "cpp_total": 49,
+ "missing": {},
  "cpp_only": []
 }
