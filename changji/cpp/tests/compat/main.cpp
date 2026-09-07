@@ -391,6 +391,192 @@ int run_post(const Args& args, Tally& tally) {
     return 0;
 }
 
+/// 解 base64。语料里的图片是这么存的（二进制塞不进 JSON）。
+///
+/// 只给对拍用，不进 src/：后端本身没有需要解 base64 的地方。
+std::string b64_decode(const std::string& in) {
+    static constexpr char kAlphabet[] =
+        "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    int table[256];
+    for (int i = 0; i < 256; ++i) table[i] = -1;
+    for (int i = 0; i < 64; ++i) table[static_cast<unsigned char>(kAlphabet[i])] = i;
+
+    std::string out;
+    int acc = 0, bits = 0;
+    for (const unsigned char ch : in) {
+        if (ch == '=') break;
+        const int v = table[ch];
+        if (v < 0) continue;  // 换行之类的填充字符，跳过
+        acc = (acc << 6) | v;
+        bits += 6;
+        if (bits >= 8) {
+            bits -= 8;
+            out.push_back(static_cast<char>((acc >> bits) & 0xFF));
+        }
+    }
+    return out;
+}
+
+/// 发一个 multipart/form-data 请求。上传接口只有这一种发法。
+Response send_multipart(const std::string& base, const std::string& path,
+                        const httplib::MultipartFormDataItems& items) {
+    const auto [origin, prefix] = split_origin(base);
+    httplib::Client cli(origin);
+    cli.set_connection_timeout(10, 0);
+    cli.set_read_timeout(120, 0);
+
+    Response out;
+    httplib::Result res = cli.Post(prefix + path, items);
+    if (!res) {
+        out.error = "连不上：" + httplib::to_string(res.error());
+        return out;
+    }
+    out.status = res->status;
+    out.body = json::parse(res->body, nullptr, false);
+    if (out.body.is_discarded()) {
+        out.error = "回的不是 JSON：" + res->body.substr(0, 200);
+    }
+    return out;
+}
+
+/// 列一个目录里的文件（名字 + 字节数），排好序。
+///
+/// 只比名字不够：**两边都写出了同名文件、但内容长度不同**是可能的
+/// （比如一侧多写了个 BOM，或者把二进制当文本转了行）。
+json list_dir(const fs::path& dir) {
+    json out = json::array();
+    std::error_code ec;
+    if (!fs::is_directory(dir, ec)) return out;
+    std::vector<std::pair<std::string, std::uintmax_t>> rows;
+    for (const auto& e : fs::directory_iterator(dir, ec)) {
+        if (!e.is_regular_file()) continue;
+        rows.emplace_back(paths::to_utf8(e.path().filename()),
+                          fs::file_size(e.path(), ec));
+    }
+    std::sort(rows.begin(), rows.end());
+    for (const auto& [name, size] : rows) {
+        out.push_back({{"name", name}, {"size", size}});
+    }
+    return out;
+}
+
+/// 上传接口对拍。
+///
+/// **这是唯一一条不走 JSON 请求体的路。** multipart 的解析、
+/// 文件名的落盘、格式白名单——全都是另一套代码，前面五层一个字节
+/// 都没碰过它。
+///
+/// 比完响应要**比 refs/ 目录本身**：上传接口的全部意义就是把文件写到
+/// 那儿，响应里的 `saved` 只是它自己声称写了。
+int run_upload(const Args& args, Tally& tally) {
+    if (args.python_url.empty() || args.project.empty()) return 0;
+
+    const json corpus = read_json(fs::path(args.golden) / "endpoints_upload.json");
+    if (corpus.is_null()) {
+        std::cout << "\n读不到 endpoints_upload.json，跳过\n";
+        return 0;
+    }
+
+    compat::CompareOptions opts;
+    opts.ignore = live_ignores();
+    opts.ignore.push_back({"/updated_at", "存盘刷新它"});
+    opts.ignore.push_back({"/created_at", "拷贝出来的时刻"});
+
+    const fs::path src = paths::from_utf8(args.project);
+    std::cout << "\n== 上传接口：" << corpus.at("cases").size() << " 条 ==\n";
+
+    int index = 0;
+    for (const auto& c : corpus.at("cases")) {
+        const std::string name = c.value("name", "?");
+        ++index;
+        if (!args.filter.empty() && name.find(args.filter) == std::string::npos) {
+            continue;
+        }
+
+        const std::string tag = "u" + std::to_string(index);
+        const fs::path py_dir = fresh_copy(src, tag + "_py");
+        const fs::path cp_dir = fresh_copy(src, tag + "_cpp");
+        if (py_dir.empty() || cp_dir.empty()) {
+            tally.skip(name, "拷项目副本失败");
+            continue;
+        }
+
+        // file_b64 是 null 表示"空文件"那条用例——不是"没有文件字段"。
+        // 空内容也得把这一部分发出去，否则测的是"缺字段 422"而不是
+        // "空文件 400"，两条完全不同的路。
+        const std::string content =
+            (c.contains("file_b64") && c.at("file_b64").is_string())
+                ? b64_decode(c.at("file_b64").get<std::string>())
+                : std::string();
+
+        const auto build = [&](const fs::path& dir) {
+            httplib::MultipartFormDataItems items;
+            items.push_back({"project", paths::to_utf8(dir), "", ""});
+            const json form = c.value("form", json::object());
+            for (const auto& kv : form.items()) {
+                if (!kv.value().is_string()) continue;
+                items.push_back({kv.key(), kv.value().get<std::string>(), "", ""});
+            }
+            items.push_back({"file", content, c.value("file_name", "a.png"),
+                             c.value("content_type", "application/octet-stream")});
+            return items;
+        };
+
+        const std::string url = c.at("url").get<std::string>();
+        if (args.verbose) {
+            std::cout << "      -> POST " << url << " （" << content.size()
+                      << " 字节的 " << c.value("file_name", "?") << "）\n";
+        }
+
+        const Response py = send_multipart(args.python_url, url, build(py_dir));
+        const Response cp = send_multipart(args.cpp_url, url, build(cp_dir));
+        if (!py.error.empty()) {
+            tally.skip(name, "Python 侧：" + py.error);
+            continue;
+        }
+        if (!cp.error.empty()) {
+            tally.skip(name, "C++ 侧：" + cp.error);
+            continue;
+        }
+
+        std::vector<compat::Difference> diffs;
+        if (py.status != cp.status) {
+            diffs.push_back({"（状态码）", "Python " + std::to_string(py.status) +
+                                              "，C++ " + std::to_string(cp.status)});
+        }
+        // 和编辑接口一样的自检：语料说该成，两边却都说请求不合法，
+        // 那是对拍这边 multipart 拼错了，不是后端不一致。
+        if (c.value("status", 0) == 200 && py.status == 422 && cp.status == 422) {
+            diffs.push_back({"（对拍自己的问题）",
+                             "语料说这条该回 200，两边却都回 422："
+                             "multipart 拼错了，不是后端的差异"});
+        }
+        for (auto& d : compat::compare(py.body, cp.body, opts)) {
+            diffs.push_back({"响应" + d.path, d.detail});
+        }
+
+        // **落盘的东西才是这个接口的产出。**
+        for (auto& d : compat::compare(list_dir(py_dir / "refs"),
+                                       list_dir(cp_dir / "refs"), opts)) {
+            diffs.push_back({"refs/" + d.path, d.detail});
+        }
+        for (const char* file : {"assets.json", "project.json"}) {
+            const json a = read_json(py_dir / file);
+            const json b = read_json(cp_dir / file);
+            if (a.is_null() || b.is_null()) continue;
+            for (auto& d : compat::compare(a, b, opts)) {
+                diffs.push_back({std::string(file) + d.path, d.detail});
+            }
+        }
+        tally.report(name, diffs);
+    }
+
+    std::error_code ec;
+    fs::remove_all(fs::temp_directory_path() / paths::from_utf8("changji_对拍_写"),
+                   ec);
+    return 0;
+}
+
 /// 编辑接口对拍：改镜头、改资产、批量操作。
 ///
 /// **这三个语料里的 `body` 是期望的响应，不是请求体。** 请求体要现拼——
@@ -1059,6 +1245,7 @@ int main(int argc, char** argv) {
         run_live(args, tally);
         run_post(args, tally);
         run_edit(args, tally);
+        run_upload(args, tally);
         if (!args.llm_work.empty()) run_llm(args, tally);
     }
 
