@@ -105,7 +105,7 @@ std::string truncate_utf8(const std::string& s, std::size_t n) {
     return s.substr(0, i);
 }
 
-std::string sha1_hex(const std::string& data) {
+std::string sha1_raw(const std::string& data) {
     std::uint32_t h[5] = {0x67452301u, 0xEFCDAB89u, 0x98BADCFEu,
                           0x10325476u, 0xC3D2E1F0u};
 
@@ -146,10 +146,61 @@ std::string sha1_hex(const std::string& data) {
         h[0] += a; h[1] += b; h[2] += c; h[3] += d; h[4] += e;
     }
 
-    char buf[41];
-    std::snprintf(buf, sizeof(buf), "%08x%08x%08x%08x%08x",
-                  h[0], h[1], h[2], h[3], h[4]);
-    return std::string(buf, 40);
+    // 原始 20 字节，大端。十六进制那版在下面套一层。
+    std::string out;
+    out.reserve(20);
+    for (const std::uint32_t v : h) {
+        for (int i = 3; i >= 0; --i) {
+            out.push_back(static_cast<char>((v >> (i * 8)) & 0xFF));
+        }
+    }
+    return out;
+}
+
+std::string sha1_hex(const std::string& data) {
+    const std::string raw = sha1_raw(data);
+    std::string out;
+    out.reserve(40);
+    for (const char c : raw) {
+        char buf[3];
+        std::snprintf(buf, sizeof(buf), "%02x",
+                      static_cast<unsigned>(static_cast<unsigned char>(c)));
+        out.append(buf, 2);
+    }
+    return out;
+}
+
+std::string base64_encode(const std::string& data) {
+    static const char* kAlphabet =
+        "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    std::string out;
+    out.reserve(((data.size() + 2) / 3) * 4);
+    std::size_t i = 0;
+    for (; i + 2 < data.size(); i += 3) {
+        const auto a = static_cast<unsigned char>(data[i]);
+        const auto b = static_cast<unsigned char>(data[i + 1]);
+        const auto c = static_cast<unsigned char>(data[i + 2]);
+        out.push_back(kAlphabet[a >> 2]);
+        out.push_back(kAlphabet[((a & 0x03) << 4) | (b >> 4)]);
+        out.push_back(kAlphabet[((b & 0x0F) << 2) | (c >> 6)]);
+        out.push_back(kAlphabet[c & 0x3F]);
+    }
+    // 尾巴要补 '='。少补的话 WebSocket 握手的 Sec-WebSocket-Key 长度不对，
+    // 服务端直接拒绝连接——而错误只是"连不上"，看不出是编码问题。
+    if (i < data.size()) {
+        const auto a = static_cast<unsigned char>(data[i]);
+        out.push_back(kAlphabet[a >> 2]);
+        if (i + 1 < data.size()) {
+            const auto b = static_cast<unsigned char>(data[i + 1]);
+            out.push_back(kAlphabet[((a & 0x03) << 4) | (b >> 4)]);
+            out.push_back(kAlphabet[(b & 0x0F) << 2]);
+        } else {
+            out.push_back(kAlphabet[(a & 0x03) << 4]);
+            out.push_back('=');
+        }
+        out.push_back('=');
+    }
+    return out;
 }
 
 std::string project_slug(const std::string& name) {

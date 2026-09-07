@@ -55,6 +55,17 @@ std::string truncate_utf8(const std::string& s, std::size_t n);
 /// 那些库的配置是另一套要维护的东西。
 std::string sha1_hex(const std::string& data);
 
+/// SHA-1，返回**原始 20 字节**。
+///
+/// WebSocket 握手要的是这个：Sec-WebSocket-Accept 是
+/// base64(sha1(key + 固定 GUID))，中间不经过十六进制。
+/// 拿 sha1_hex 的输出去 base64 会得到一个 56 字符的串，
+/// 服务端算出来的是 28 字符——握手失败，而报错只是"连不上"。
+std::string sha1_raw(const std::string& data);
+
+/// 标准 base64（带 = 补齐，不是 URL 变体）。
+std::string base64_encode(const std::string& data);
+
 /// 目录名转成合法的项目 id，对应 web/server.py 的 _slugify()。
 ///
 /// **和下面那个 slug() 规则不一样**，别合并：分隔符是连字符不是下划线，
