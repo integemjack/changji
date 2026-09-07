@@ -124,7 +124,62 @@ endif()
 option(CHANGJI_SD "链接 stable-diffusion.cpp" ON)
 option(CHANGJI_SD_CUDA "sd.cpp 用 CUDA 后端" OFF)
 
+# ---- llama.cpp（阶段 9：进程内 TTS）----
+#
+# **默认关。** 开着会让每一次干净构建多编一份 llama.cpp + 一份打过补丁的
+# ggml，而阶段 8 之前没有哪条主线功能用得到它。
+#
+# 为什么现在把它接进来：Qwen3-TTS 已经进了 llama.cpp 主线
+# （PR #26254，2026-08-04 合并，走 mtmd），配音的 C++ 化不再需要
+# 自己写 codec，但需要 llama.cpp 在进程里。见方案风险一那一节。
+#
+# **两份 ggml 的问题在前置验证工程里已经解掉了**（决策 17）：
+# 统一的那份 ggml 是"llama.cpp 自带的 + leejet 扩展补丁"，
+# CPU 和 CUDA 两条链都验过（verify/RESULTS.md）。这里做的是把那套
+# 手工步骤自动化——verify/ 是一次性工程，人可以在中间插一次手；
+# 主工程靠 FetchContent 拉源码，没人插得进去。
+option(CHANGJI_LLAMA "链接 llama.cpp（进程内 TTS）" OFF)
+
+if(CHANGJI_LLAMA)
+    # **这一行删了照样编过，但会踩运行时内存。**
+    # sd.cpp 自己的 CMakeLists 里有 `add_definitions(-DGGML_MAX_NAME=160)`，
+    # 而 add_definitions 只作用于它之后的目录作用域——加不到别处已经编好的
+    # ggml 上。结果是 ggml 按 64 编、sd.cpp 按 160 编，两边看到的 ggml_tensor
+    # 大小不一致，**链接不报错**。所以在顶层统一定义。
+    # verify/main.cpp 的 check_ggml_abi() 是这一条的运行时探针：
+    # 写一个 100 字符的张量名再读回来，读回 63 就说明这行没生效。
+    add_compile_definitions(GGML_MAX_NAME=160)
+
+    # 打补丁要一个 Python。找不到就当场停，不要配置期悄悄过、
+    # 编译期报一堆"找不到 GGML_TYPE_F8_E4M3"——那时候没人会想到是这儿。
+    find_package(Python3 COMPONENTS Interpreter REQUIRED)
+
+    foreach(opt LLAMA_BUILD_TESTS LLAMA_BUILD_TOOLS LLAMA_BUILD_EXAMPLES
+                LLAMA_BUILD_SERVER LLAMA_BUILD_APP LLAMA_BUILD_COMMON
+                LLAMA_BUILD_UI LLAMA_OPENSSL)
+        set(${opt} OFF CACHE BOOL "" FORCE)
+    endforeach()
+
+    FetchContent_Declare(llama
+        GIT_REPOSITORY https://github.com/ggml-org/llama.cpp.git
+        # 钉死，理由同 sd.cpp。这个 commit 是前置验证工程验过的那个。
+        GIT_TAG 5202104
+        GIT_SHALLOW ON
+        # 拉下来就地打补丁。脚本是幂等的——FetchContent 什么时候重跑
+        # PATCH_COMMAND 并不好预测，而 git apply 打第二遍会失败。
+        PATCH_COMMAND ${CMAKE_COMMAND} -E env
+            "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/patches/apply_to_llamacpp.py"
+            "<SOURCE_DIR>")
+    FetchContent_MakeAvailable(llama)
+endif()
+
 if(CHANGJI_SD)
+    if(CHANGJI_LLAMA)
+        set(CHANGJI_SD_SUBMODULES "")
+    else()
+        set(CHANGJI_SD_SUBMODULES "ggml")
+    endif()
+
     # 只要 ggml 那个子模块。webui 是个前端仓库，libwebp/libwebm 我们关掉了
     # 对应的功能——全递归拉下来是几百兆，而且拉一个前端仓库来编后端很荒唐。
     set(SD_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
@@ -140,9 +195,27 @@ if(CHANGJI_SD)
         # 钉死。ggml 和 sd.cpp 都在活跃开发，不钉版本会出现
         # "昨天能编今天编不过"，而这两个的编译时间以分钟计。
         GIT_TAG 9cdb6b6fc05edf2d446bfe881a4c462b241b3025
-        GIT_SUBMODULES "ggml"
+        # 开了 CHANGJI_LLAMA 的时候不拉 ggml 子模块：ggml 目标已经由
+        # llama.cpp 建好了，sd.cpp 的 CMakeLists 写着 `if (NOT TARGET ggml)`，
+        # 会自己跳过。拉了也是白拉几百兆。
+        GIT_SUBMODULES "${CHANGJI_SD_SUBMODULES}"
         GIT_SHALLOW OFF)
     FetchContent_MakeAvailable(stable_diffusion_cpp)
+
+    if(CHANGJI_LLAMA)
+        # **sd.cpp 用相对路径拿 ggml 的内部头**：三个 .cpp 里写着
+        # `#include "ggml/src/ggml-impl.h"`，那是相对它自己那个 ggml 子模块的。
+        # 我们没拉那个子模块（ggml 由 llama.cpp 提供），所以要把 llama.cpp
+        # 的源码根加进搜索路径——它底下正好也是 ggml/src/ggml-impl.h。
+        #
+        # 前置验证工程没撞上这个：它钉的 sd.cpp 是 d8fb10c(master-846)，
+        # 而主工程钉的是 9cdb6b6(master-848)，中间那两个提交新增了
+        # compute_workspace.cpp。**"验证工程验过"不等于"换个版本还成立"。**
+        #
+        # 头和库必须同源：库是 llama.cpp 那份打过补丁的 ggml，头也得是它，
+        # 否则又回到 GGML_MAX_NAME 那类"编得过、跑起来踩内存"的问题。
+        target_include_directories(stable-diffusion PRIVATE "${llama_SOURCE_DIR}")
+    endif()
 endif()
 
 # ---- 本体 ----

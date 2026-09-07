@@ -26,7 +26,11 @@ param(
     [int]$CppPort = 8123,
     [int]$PyPort = 8124,
     [int]$LlmPyPort = 8125,
-    [int]$LlmCppPort = 8126
+    [int]$LlmCppPort = 8126,
+    # 拿哪个 C++ 二进制去对拍。默认是主构建；开了 CHANGJI_LLAMA 的那份
+    # 放在 build_llama 下，用 -CppExe build_llama\changji.exe 指过去，
+    # 可以验"链进 llama.cpp 之后接口行为一个字都没变"。
+    [string]$CppExe = "build\changji.exe"
 )
 
 $ErrorActionPreference = "Stop"
@@ -73,7 +77,7 @@ Set-Content -Path $cppCmd -Encoding ASCII -Value @(
     "@echo off",
     "set CHANGJI_LLM_BASE_URL=http://127.0.0.1:$LlmCppPort/v1",
     "cd /d `"$cpp`"",
-    "build\changji.exe --port $CppPort"
+    "`"$cpp\$CppExe`" --port $CppPort"
 )
 Start-Process -FilePath $pyCmd -WindowStyle Hidden
 Start-Process -FilePath $cppCmd -WindowStyle Hidden

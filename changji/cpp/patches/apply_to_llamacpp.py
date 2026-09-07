@@ -1,0 +1,83 @@
+#!/usr/bin/env python3
+"""把 leejet 的 ggml 扩展打到 llama.cpp 自带的那份 ggml 上。
+
+原来这一套是 README 里的**手工步骤**（git apply --reject、跑冲突解决脚本、
+删 .rej）。手工步骤在 verify/ 那个一次性的验证工程里够用，但主工程要靠
+FetchContent 自动拉源码，没人会在中间插一次手。这个脚本把那三步包起来，
+给 CMake 的 PATCH_COMMAND 用。
+
+**必须幂等。** FetchContent 在什么情况下重跑 PATCH_COMMAND 并不好预测
+（改了 GIT_TAG、清了 _deps、换了生成器都可能），而 `git apply` 打第二遍
+会失败、冲突解决脚本打第二遍会把三个成员加两次。所以先看戳文件，
+打完再写；已经打过就直接退出。
+
+用法：
+
+    python apply_to_llamacpp.py <llama.cpp 源码目录>
+
+在那个目录下要能看到 ggml/ 子目录（llama.cpp 是 vendor 进去的，不是子模块）。
+"""
+
+from __future__ import annotations
+
+import pathlib
+import subprocess
+import sys
+
+HERE = pathlib.Path(__file__).resolve().parent
+PATCH = HERE / "leejet-ggml-extensions.patch"
+RESOLVE = HERE / "resolve_llamacpp_conflicts.py"
+STAMP = ".changji-ggml-patched"
+
+
+def main() -> int:
+    if len(sys.argv) < 2:
+        print("要给 llama.cpp 的源码目录", file=sys.stderr)
+        return 2
+    root = pathlib.Path(sys.argv[1]).resolve()
+
+    ggml = root / "ggml"
+    if not ggml.is_dir():
+        print(f"{root} 下没有 ggml/：这不像 llama.cpp 的源码树", file=sys.stderr)
+        return 2
+
+    stamp = ggml / STAMP
+    if stamp.is_file():
+        print(f"[ggml 补丁] 已经打过了（{stamp.name}），跳过")
+        return 0
+
+    if not PATCH.is_file():
+        print(f"找不到补丁 {PATCH}", file=sys.stderr)
+        return 2
+
+    # git apply --reject：73/79 个 hunk 直接落，剩下 6 个留 .rej，
+    # 由下面那个脚本按锚点手工解。**返回码非零是预期的**，
+    # 有 .rej 就会非零——所以不能用 check=True。
+    print("[ggml 补丁] git apply --reject …")
+    subprocess.run(
+        ["git", "apply", "--reject", "--directory=ggml", str(PATCH)],
+        cwd=root, check=False)
+
+    print("[ggml 补丁] 解那 6 个冲突 …")
+    done = subprocess.run([sys.executable, str(RESOLVE)], cwd=root, check=False)
+    if done.returncode != 0:
+        # 冲突解决脚本每一步都断言锚点唯一存在。它失败通常意味着
+        # **上游把锚点挪走了**，那时候必须停下来重新对齐，
+        # 而不是留一棵打了一半的源码树继续编——那会编出很难解释的错误。
+        print("\n[ggml 补丁] 冲突解决脚本失败了。这一般意味着上游动了那几处代码，\n"
+              "            补丁集要重新对齐。**不要绕过这一步继续编。**\n"
+              "            对齐办法见 patches/README.md。", file=sys.stderr)
+        return 1
+
+    rejects = list(ggml.rglob("*.rej"))
+    for r in rejects:
+        r.unlink()
+    print(f"[ggml 补丁] 清掉 {len(rejects)} 个 .rej")
+
+    stamp.write_text("changji: leejet ggml extensions applied\n", encoding="utf-8")
+    print("[ggml 补丁] 好了")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
