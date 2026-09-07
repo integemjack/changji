@@ -14,6 +14,7 @@
 #include "http/readonly.hpp"
 #include "http/batch.hpp"
 #include "http/episodes.hpp"
+#include "http/llm_info.hpp"
 #include "http/planning.hpp"
 #include "http/scripting.hpp"
 #include "llm/client.hpp"
@@ -307,6 +308,42 @@ void run(const config::Settings& settings, const Options& opts) {
         script_route(&post_bible));
     CROW_ROUTE(app, "/api/plan").methods("POST"_method)(
         script_route(&post_plan));
+
+    // ---- 大模型接入信息 ----
+    //
+    // 方案的破契约白名单里原本有这两条，理由是"进程内推理之后语义重定义"。
+    // 决策 4 之后那个理由不成立了：用远端大模型是长期形态之一，
+    // 不是过渡状态。所以 providers 原样保留，models 是**扩展**不是替换——
+    // 远端有哪些照旧列，另加一个字段列本机的 gguf。
+
+    CROW_ROUTE(app, "/api/llm/providers")([] {
+        return json_response(get_llm_providers().body);
+    });
+
+    CROW_ROUTE(app, "/api/llm/models")([&settings] {
+        static const auto fetch = default_http_get();
+        auto r = guard([&] { return get_llm_models(settings, fetch); });
+        return json_response(r.body, r.status);
+    });
+
+    // ---- 根路径 ----
+    //
+    // **这是白名单里唯一真正的破契约。** Python 那边 GET / 返回
+    // page.py 生成的一整页 HTML（那是删 Python 之前的内置界面）。
+    // 两层架构下界面由 Node 提供，浏览器根本不会访问到这里——
+    // 会撞上它的只有直接开了后端端口的人。给他们一句指路的话，
+    // 比返回 404 或者一个空页面有用。
+    CROW_ROUTE(app, "/")([&opts] {
+        // 用原始字符串字面量，换行直接写在源码里。
+        const std::string body =
+            std::string(R"(场记 C++ 后端在跑。
+这里只有接口，界面在 Node 那一层——默认 http://127.0.0.1:5174
+
+体检： http://127.0.0.1:)") + std::to_string(opts.port) + "/api/doctor\n";
+        crow::response res(200, body);
+        res.set_header("Content-Type", "text/plain; charset=utf-8");
+        return res;
+    });
 
     // ---- 剧本读写与剧集增删改 ----
     //

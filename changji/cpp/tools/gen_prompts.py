@@ -492,8 +492,34 @@ def gen_script() -> None:
     print("写好了", path, "（%d 段）" % len(emit))
 
 
+# ---- 大模型平台清单 ----
+
+def gen_providers() -> None:
+    """把 LLM_PROVIDERS 原样嵌进 C++。
+
+    十几家平台，每家四个字段，手抄一遍必然错。而且这份清单会随各家的
+    地址变化而更新——手抄的那份只会越来越旧，且没有任何迹象提示它旧了。
+    """
+    from changji.web.server import LLM_PROVIDERS
+
+    dumped = json.dumps(LLM_PROVIDERS, ensure_ascii=False, indent=1)
+    out = io.StringIO()
+    out.write(header([
+        "常见大模型平台的接入地址，从 web/server.py 的 LLM_PROVIDERS 原样导出。",
+        "各家地址会变，改了 Python 侧就重跑这个脚本。",
+    ]))
+    out.write("inline constexpr const char* kLlmProvidersJson =\n    "
+              + lit(dumped) + ";\n\n")
+    out.write("}  // namespace changji::stages::prompt\n")
+
+    path = "cpp/src/http/llm_providers.inc.hpp"
+    io.open(path, "w", encoding="utf-8", newline="\n").write(out.getvalue())
+    print("写好了", path, "（%d 家）" % len(LLM_PROVIDERS))
+
+
 if __name__ == "__main__":
     gen_bible()
     gen_storyboard()
     gen_shot_schema()
     gen_script()
+    gen_providers()

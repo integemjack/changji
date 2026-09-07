@@ -7,6 +7,7 @@
 
 #include <string>
 
+#include "http/llm_info.hpp"
 #include "llm/client.hpp"
 
 namespace changji::llm {
@@ -61,3 +62,45 @@ HttpPost default_http_post() {
 }
 
 }  // namespace changji::llm
+
+namespace changji::http {
+
+HttpGet default_http_get() {
+    return [](const std::string& url,
+              const std::map<std::string, std::string>& headers,
+              double timeout_s) -> llm::HttpResponse {
+        // 和 POST 那份共用同一套拆地址和超时设置。抽个公共函数不划算——
+        // 两边加起来二十行，抽出来反而要多一层间接。
+        const std::size_t scheme_end = url.find("://");
+        const std::size_t host_start =
+            scheme_end == std::string::npos ? 0 : scheme_end + 3;
+        const std::size_t path_start = url.find('/', host_start);
+        const std::string origin =
+            path_start == std::string::npos ? url : url.substr(0, path_start);
+        const std::string path =
+            path_start == std::string::npos ? "/" : url.substr(path_start);
+
+        httplib::Client cli(origin);
+        const int secs = static_cast<int>(timeout_s);
+        cli.set_connection_timeout(secs, 0);
+        cli.set_read_timeout(secs, 0);
+        cli.set_write_timeout(secs, 0);
+        cli.set_follow_location(true);
+
+        httplib::Headers h;
+        for (const auto& kv : headers) h.emplace(kv.first, kv.second);
+
+        const auto res = cli.Get(path, h);
+        llm::HttpResponse out;
+        if (!res) {
+            out.status = 0;
+            out.transport_error = httplib::to_string(res.error());
+            return out;
+        }
+        out.status = res->status;
+        out.body = res->body;
+        return out;
+    };
+}
+
+}  // namespace changji::http

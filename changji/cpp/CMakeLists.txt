@@ -97,6 +97,7 @@ add_executable(changji
     src/http/planning.cpp
     src/http/batch.cpp
     src/http/episodes.cpp
+    src/http/llm_info.cpp
     src/http/reset.cpp
     src/http/server.cpp
 )
@@ -221,6 +222,7 @@ if(CHANGJI_BUILD_TESTS)
         tests/unit/test_planning.cpp
         tests/unit/test_batch.cpp
         tests/unit/test_episodes.cpp
+        tests/unit/test_llm_info.cpp
         src/models/shot.cpp
         src/models/character.cpp
         src/models/project.cpp
@@ -246,6 +248,7 @@ if(CHANGJI_BUILD_TESTS)
         src/http/planning.cpp
         src/http/batch.cpp
         src/http/episodes.cpp
+        src/http/llm_info.cpp
         src/http/reset.cpp
     )
     target_include_directories(changji_tests PRIVATE src "${ASIO_INCLUDE_DIR}")
