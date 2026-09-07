@@ -11,6 +11,7 @@
 
 #include <filesystem>
 #include <string>
+#include <vector>
 
 namespace changji::paths {
 
@@ -56,5 +57,18 @@ std::string to_utf8(const std::filesystem::path& p);
 /// 实测踩到的位置：proc::which() 里 `fs::path(dir)`，dir 来自 PATH 环境变量
 /// （已经是 UTF-8）。只要 PATH 里有一个目录名带非 ASCII 字符，--doctor 就整个崩掉。
 std::filesystem::path from_utf8(const std::string& s);
+
+/// 命令行参数，**UTF-8 的**。
+///
+/// Windows 上 `char** argv` 是按当前 ANSI 代码页编的。一个中文路径
+/// 从命令行传进来，直接当 UTF-8 用会得到一串乱码字节——
+/// 拼进 URL 是 400，交给 fs::path 是异常，写进日志是问号。
+/// 而这一切都不报错，只表现为"这个项目打不开"。
+///
+/// 这里从 GetCommandLineW 重新取一份宽字符的再转 UTF-8。
+/// 其它平台 argv 本来就是 UTF-8，原样拷贝。
+///
+/// **每个 main() 的第一件事都该是调它。**
+std::vector<std::string> utf8_args(int argc, char** argv);
 
 }  // namespace changji::paths

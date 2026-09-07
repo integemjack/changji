@@ -119,14 +119,20 @@ int run(int argc, char** argv) {
     bool want_doctor = false;
     bool want_init = false;
 
-    for (int i = 1; i < argc; ++i) {
-        std::string a = argv[i];
+    // Windows 上 argv 是按 ANSI 代码页编的，中文参数直接用是乱码。
+    // 现在的选项都是 ASCII 所以碰不上，但将来加 --config <路径> 就会踩——
+    // 而那时候的表现是"配置文件找不到"，看不出是参数被编码毁了。
+    // 对拍程序就是这么栽的一次，见 tests/compat/main.cpp。
+    const std::vector<std::string> av = changji::paths::utf8_args(argc, argv);
+
+    for (std::size_t i = 1; i < av.size(); ++i) {
+        const std::string& a = av[i];
         auto next = [&](const char* what) -> std::string {
-            if (i + 1 >= argc) {
+            if (i + 1 >= av.size()) {
                 std::cerr << a << " 后面要跟" << what << "\n";
                 std::exit(2);
             }
-            return argv[++i];
+            return av[++i];
         };
         if (a == "--help" || a == "-h") { print_usage(); return 0; }
         else if (a == "--port") opts.port = std::atoi(next("端口号").c_str());

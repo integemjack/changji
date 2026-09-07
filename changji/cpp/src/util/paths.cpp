@@ -4,6 +4,8 @@
 
 #ifdef _WIN32
 #include <windows.h>
+// CommandLineToArgvW 在这里，不在 windows.h
+#include <shellapi.h>
 #include <vector>
 #endif
 
@@ -32,6 +34,28 @@ std::string to_utf8(const std::wstring& wide) {
 
 }  // namespace
 #endif
+
+std::vector<std::string> utf8_args(int argc, char** argv) {
+#ifdef _WIN32
+    // argv 是按 ANSI 代码页编的。中文路径从命令行传进来，直接当 UTF-8 用
+    // 会得到一串乱码字节——拼进 URL 是 400，交给 fs::path 是异常。
+    // 而这一切都不报错，只表现为"这个项目打不开"。
+    int wide_argc = 0;
+    LPWSTR* wide = ::CommandLineToArgvW(::GetCommandLineW(), &wide_argc);
+    if (wide != nullptr) {
+        std::vector<std::string> out;
+        out.reserve(static_cast<std::size_t>(wide_argc));
+        for (int i = 0; i < wide_argc; ++i) out.push_back(to_utf8(std::wstring(wide[i])));
+        ::LocalFree(wide);
+        return out;
+    }
+    // 取不到宽版本时退回 argv。乱码总比一个参数都没有强。
+#endif
+    std::vector<std::string> out;
+    out.reserve(static_cast<std::size_t>(argc));
+    for (int i = 0; i < argc; ++i) out.emplace_back(argv[i]);
+    return out;
+}
 
 std::filesystem::path from_utf8(const std::string& s) {
     // C++17 的 u8path 就是为这件事存在的（C++20 起被标记为弃用，

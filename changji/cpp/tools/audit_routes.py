@@ -139,6 +139,13 @@ def main() -> None:
         "cpp_total": len(cpp),
         "missing": {k: sorted(v) for k, v in missing.items()},
         "cpp_only": ["%s %s" % (m, p) for m, p in extra],
+        # 完整的路由清单。对拍程序的实时模式靠它决定要打哪些接口——
+        # 手写一份清单的话，新加的路由不会自动进对拍，
+        # 而"新加的接口没被对拍过"正是最需要对拍的情形。
+        "routes": [
+            {"method": m, "path": p, "in_cpp": (m, p) in cpp}
+            for m, p in sorted(py)
+        ],
     }
     target = REPO / "cpp" / "tests" / "golden" / "route_audit.json"
     with io.open(target, "w", encoding="utf-8", newline="\n") as f:

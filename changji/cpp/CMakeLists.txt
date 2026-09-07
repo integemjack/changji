@@ -257,7 +257,8 @@ if(WIN32)
         WIN32_LEAN_AND_MEAN
         UNICODE _UNICODE      # 路径要走宽字符，中文目录名才不会乱码
     )
-    target_link_libraries(changji PRIVATE ws2_32 mswsock)
+    # shell32：CommandLineToArgvW（paths::utf8_args 用它拿宽字符参数）
+    target_link_libraries(changji PRIVATE ws2_32 mswsock shell32)
     if(MSVC)
         # /utf-8       源码是 UTF-8，中文注释和中文字符串字面量都靠它
         # /Zc:__cplusplus
@@ -388,6 +389,8 @@ if(CHANGJI_BUILD_TESTS)
         tests/unit/test_audio_plan.cpp
         tests/unit/test_audio.cpp
         tests/unit/test_tts_backends.cpp
+        tests/unit/test_compat_diff.cpp
+        tests/compat/diff.cpp
 
         # 被测的源码。刻意不包含 doctor.cpp、http/server.cpp、
         # llm/client_http.cpp、comfy/client_http.cpp 和 http/run_deps.cpp ——
@@ -458,6 +461,9 @@ if(CHANGJI_BUILD_TESTS)
         find_package(Threads REQUIRED)
         target_link_libraries(changji_tests PRIVATE Threads::Threads)
     endif()
+    if(WIN32)
+        target_link_libraries(changji_tests PRIVATE shell32)
+    endif()
     target_include_directories(changji_tests PRIVATE "${doctest_SOURCE_DIR}")
     target_compile_features(changji_tests PRIVATE cxx_std_20)
 
@@ -472,4 +478,35 @@ if(CHANGJI_BUILD_TESTS)
     endif()
 
     add_test(NAME unit COMMAND changji_tests)
+
+    # ---- 对拍程序 ----
+    #
+    # 方案第六节。**这个目标补的是单元测试够不着的那一层**：
+    # 那边直接调 http/*.cpp 里的纯函数，绕过了路由注册、查询参数解析、
+    # 状态码和 Content-Type。阶段 3 就是这么丢过四个接口的——
+    # 函数写好了、测试也过了，但根本没挂上路由。
+    #
+    # 不进 add_test：它要连一个活着的后端，不是能在 ctest 里无条件跑的东西。
+    add_executable(changji_compat
+        tests/compat/main.cpp
+        tests/compat/diff.cpp
+    )
+    target_include_directories(changji_compat PRIVATE src tests/compat)
+    target_include_directories(changji_compat BEFORE PRIVATE "${httplib_SOURCE_DIR}")
+    target_link_libraries(changji_compat PRIVATE
+        nlohmann_json::nlohmann_json httplib::httplib)
+    target_compile_features(changji_compat PRIVATE cxx_std_20)
+    target_sources(changji_compat PRIVATE src/util/paths.cpp)
+    if(WIN32)
+        target_compile_definitions(changji_compat PRIVATE
+            NOMINMAX WIN32_LEAN_AND_MEAN UNICODE _UNICODE)
+        target_link_libraries(changji_compat PRIVATE ws2_32 shell32)
+    endif()
+    if(MSVC)
+        target_compile_options(changji_compat PRIVATE /utf-8 /Zc:__cplusplus /W4)
+        if(CHANGJI_STATIC_RUNTIME)
+            set_property(TARGET changji_compat PROPERTY
+                         MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+        endif()
+    endif()
 endif()
