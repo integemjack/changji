@@ -12,6 +12,7 @@
 #include <httplib.h>
 #include <nlohmann/json.hpp>
 
+#include "infer/sd_backend.hpp"
 #include "util/paths.hpp"
 #include "util/proc.hpp"
 
@@ -281,6 +282,24 @@ Check check_workspace(const config::Settings& s) {
     return {"项目目录", Level::OK, paths::to_utf8(path), ""};
 }
 
+/// 进程内出图后端。
+///
+/// 没链的话不是错误，是一种部署形态：走 ComfyUI 那条路的用户不需要它，
+/// 交叉编译到某些平台时也可能关掉。所以是 OK 加一句说明，不是 WARN——
+/// 报告里挂一条永远不会去处理的黄字，会让真正的警告没人看。
+Check check_sd() {
+    if (!infer::sd_available()) {
+        return {"出图后端", Level::OK, "没编进来，出图走推理服务", ""};
+    }
+    // 系统信息里带着编进去的后端和 CPU 特性（AVX2、CUDA 之类）。
+    // 这一行是出画质问题时第一个要看的东西：同一份模型在 AVX2 和
+    // 纯标量上出的图不一样，而用户不会想到去问"你编的时候开了什么"。
+    std::string detail = "sd.cpp " + infer::sd_version();
+    const std::string info = infer::sd_system_info();
+    if (!info.empty()) detail += "\n" + info;
+    return {"出图后端", Level::OK, detail, ""};
+}
+
 /// 本地模型文件。
 ///
 /// 一项都没配是 OK 不是 WARN——走 ComfyUI 那条路的用户根本不需要这一节，
@@ -372,6 +391,7 @@ Report run_checks(const config::Settings& settings) {
 
     r.checks.push_back(guarded("配音", [&] { return check_tts(settings, infer_ok); }));
     r.checks.push_back(guarded("大模型", [&] { return check_llm(settings); }));
+    r.checks.push_back(guarded("出图后端", [&] { return check_sd(); }));
     r.checks.push_back(guarded("本地模型", [&] { return check_models(settings); }));
     r.checks.push_back(guarded("显卡", [&] { return check_gpu(settings); }));
     r.checks.push_back(guarded("项目目录", [&] { return check_workspace(settings); }));

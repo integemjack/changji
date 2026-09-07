@@ -826,6 +826,23 @@ sd.cpp 和 llama.cpp 各自 vendor 了不同 commit 的 ggml。同时链接进�
 前置验证工程的第二项就是验它。找不到能同时编过的 commit，退路是 fork
 其中一个自己维护——控制力最强，成本也最高。
 
+#### 这笔账推迟到 llama.cpp 真进来的时候再付（2026-09-08）
+
+阶段 5 开工时重新想了一遍这条：**统一 ggml 只在两个库同时链接时才需要**。
+
+决策 4 之后大模型走远端（`[llm]` 配置段，`RemoteClient`），
+llama.cpp 还没进程内化。所以现在 sd.cpp 可以带着自己那份 ggml 单独链，
+`CMakeLists.txt` 里就是这么做的。
+
+补丁集（`patches/`）留着不动。它已经在 CUDA 和 Metal 上都验证过了，
+不是没做完的东西——只是现在用不上。提前统一等于**现在就开始付**
+"两个上游各自前进、那个能同时编的 commit 要重新找"的维护成本，
+而收益要等到 llama.cpp 进来才有。
+
+重新用它的时机：把 llama.cpp 链进来做进程内大模型的那一天。
+到时候按 `patches/README.md` 的步骤走，先重新生成一次补丁
+（leejet/ggml 和上游都会前进）。
+
 ### 风险三：已验证解除，但换来一条硬约束（原为高）
 
 前置验证的第三、四项在 RTX 2060 6GB 上跑完了，结论见
@@ -917,6 +934,37 @@ vk::CommandBuffer::end: ErrorOutOfHostMemory
 另有两条实测顺带记下：**V3D 跑不了 T5 的嵌入表**，ggml 直接 abort 不回落，
 文本编码器在 Pi 上只能走 CPU；**瓶颈是 GPU 不是 CPU**，扩散阶段只有一核
 在自旋提交，V3D 满频但没有矩阵核心。
+
+### 零运行时依赖在 MSVC 上要单独做（阶段 5 发现）
+
+`CHANGJI_STATIC_RUNTIME` 那个开关原来只对 GNU/Clang 生效，
+`if(CHANGJI_STATIC_RUNTIME AND NOT MSVC)`。链进 sd.cpp 之后
+`dumpbin /dependents` 显示 exe 依赖：
+
+```
+MSVCP140.dll  VCRUNTIME140.dll  VCRUNTIME140_1.dll  VCOMP140.DLL
+```
+
+拷到没装 VC++ 运行库的机器上直接弹"缺少 DLL"。而"零运行时依赖"是这个
+后端的立项理由之一，不能只在 MinGW 那条路上成立。
+
+两处改动：
+
+- `CMAKE_MSVC_RUNTIME_LIBRARY` 设成 `MultiThreaded`，而且**必须在
+  FetchContent 之前设**——它要传染给所有子项目，一半 `/MT` 一半 `/MD`
+  链接时报 RuntimeLibrary 不匹配，而那个错误指向的是某个 `.obj`，
+  看不出是运行库选项的问题。
+- `GGML_OPENMP=OFF`。**MSVC 的 OpenMP 运行时只有动态版**，`/MT` 也去不掉
+  `VCOMP140.DLL`。关掉之后 ggml 用自带的线程池，CPU 推理慢一点，
+  但这个项目的目标是 GPU 推理，"拷过去就能跑"比那点 CPU 性能重要。
+
+改完只剩 `WS2_32` `MSWSOCK` `KERNEL32` `ADVAPI32` 四个 Windows 自带的，
+二进制 49.6 MB。
+
+顺带记一条操作上的坑：改运行库之后**要全量重编依赖**，只删
+`build/CMakeCache.txt` 不够——而且删了它 CMake 会忘掉生成器，
+下次配置默认成 Visual Studio，和 `_deps/*-subbuild` 里的 Ninja 缓存冲突，
+报的错是"generator does not match"。正确做法是整个删掉 `build/`。
 
 ### 风险五：MSVC 切换会作废阶段 0 的一部分结论（中）
 

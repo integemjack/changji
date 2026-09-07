@@ -1,5 +1,8 @@
 cmake_minimum_required(VERSION 3.20)
-project(changji CXX)
+project(changji C CXX)
+# C 也要启用：ggml 是 C 写的，而且 sd.cpp 声明了 target_compile_features(c_std_11)。
+# 只写 CXX 的话 configure 会在 generate 阶段报 "No known features for C compiler"，
+# 而那句话看不出和缺 C 语言有关系。
 
 # 全局停在 C++17，只把自己的目标抬到 20。
 #
@@ -18,6 +21,19 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
     set(CMAKE_BUILD_TYPE Release CACHE STRING "" FORCE)
+endif()
+
+# 静态 CRT 要在**拉依赖之前**定，它得传染给所有子项目——
+# 一半 /MT 一半 /MD 的话链接时报 RuntimeLibrary 不匹配，
+# 而那个错误信息指向的是某个 .obj，看不出是运行库选项的问题。
+if(MSVC)
+    set(CMAKE_MSVC_RUNTIME_LIBRARY
+        "MultiThreaded$<$<CONFIG:Debug>:Debug>" CACHE STRING "" FORCE)
+    # ggml 默认开 OpenMP，那会拖进 VCOMP140.DLL——**MSVC 的 OpenMP 运行时
+    # 只有动态版**，/MT 也去不掉它。关掉之后 ggml 用自带的线程池，
+    # CPU 推理会慢一点，但这个项目的目标是 GPU 推理，
+    # 而"拷过去就能跑"比那点 CPU 性能重要。
+    set(GGML_OPENMP OFF CACHE BOOL "" FORCE)
 endif()
 
 include(FetchContent)
@@ -65,6 +81,45 @@ FetchContent_Declare(Crow
 
 FetchContent_MakeAvailable(json tomlplusplus httplib Crow)
 
+# ---- stable-diffusion.cpp ----
+#
+# 阶段 5 的核心依赖。出首帧、出视频都靠它。
+#
+# **暂时不统一 ggml。** 方案的风险二说统一 ggml 是一笔长期维护成本，
+# 但那笔账只在 sd.cpp 和 llama.cpp **同时链接**时才需要付——两个库各自
+# vendor 了不同 commit 的 ggml，同时进来才有符号冲突。
+#
+# 决策 4 之后大模型走远端（[llm] 配置段），llama.cpp 还没进程内化，
+# 所以现在 sd.cpp 可以带着自己那份 ggml 单独链。patches/ 下的补丁集
+# 留着不动，等真要把 llama.cpp 链进来时再用。
+#
+# 这不是把问题推给未来：补丁集已经在 CUDA 和 Metal 上都验证过了
+# （见 verify/RESULTS.md），只是现在用不上。提前统一等于现在就开始付
+# 那笔"两个上游各自前进"的维护成本，而收益要等到 llama.cpp 进来才有。
+option(CHANGJI_SD "链接 stable-diffusion.cpp" ON)
+option(CHANGJI_SD_CUDA "sd.cpp 用 CUDA 后端" OFF)
+
+if(CHANGJI_SD)
+    # 只要 ggml 那个子模块。webui 是个前端仓库，libwebp/libwebm 我们关掉了
+    # 对应的功能——全递归拉下来是几百兆，而且拉一个前端仓库来编后端很荒唐。
+    set(SD_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+    set(SD_WEBP OFF CACHE BOOL "" FORCE)
+    set(SD_WEBM OFF CACHE BOOL "" FORCE)
+    set(SD_BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+    if(CHANGJI_SD_CUDA)
+        set(SD_CUDA ON CACHE BOOL "" FORCE)
+    endif()
+
+    FetchContent_Declare(stable_diffusion_cpp
+        GIT_REPOSITORY https://github.com/leejet/stable-diffusion.cpp.git
+        # 钉死。ggml 和 sd.cpp 都在活跃开发，不钉版本会出现
+        # "昨天能编今天编不过"，而这两个的编译时间以分钟计。
+        GIT_TAG 9cdb6b6fc05edf2d446bfe881a4c462b241b3025
+        GIT_SUBMODULES "ggml"
+        GIT_SHALLOW OFF)
+    FetchContent_MakeAvailable(stable_diffusion_cpp)
+endif()
+
 # ---- 本体 ----
 
 add_executable(changji
@@ -85,6 +140,7 @@ add_executable(changji
     src/stages/storyboard.cpp
     src/stages/script.cpp
     src/infer/scheduler.cpp
+    src/infer/sd_backend.cpp
     src/llm/client.cpp
     src/llm/client_http.cpp
     src/http/ws.cpp
@@ -129,6 +185,11 @@ target_compile_definitions(changji PRIVATE
     # 先不引 OpenSSL。等真要连云端 LLM 时再打开 CPPHTTPLIB_OPENSSL_SUPPORT。
 )
 
+if(CHANGJI_SD)
+    target_link_libraries(changji PRIVATE stable-diffusion)
+    target_compile_definitions(changji PRIVATE CHANGJI_HAVE_SD=1)
+endif()
+
 if(WIN32)
     target_compile_definitions(changji PRIVATE
         _WIN32_WINNT=0x0A00   # Windows 10。asio 不给这个宏会警告并退化行为
@@ -163,6 +224,22 @@ endif()
 #
 # MSVC 走 /MT 是另一套机制，这些 flag 对它无效，所以只对 GNU/Clang 生效。
 option(CHANGJI_STATIC_RUNTIME "静态链接 libstdc++/libgcc" ON)
+
+# MSVC 走 /MT（静态 CRT），机制和 GCC 那套完全不同，所以单独一段。
+#
+# 不做的话 exe 依赖 MSVCP140.dll、VCRUNTIME140.dll 那一串，
+# 拷到没装 VC++ 运行库的机器上直接弹"缺少 DLL"。而"零运行时依赖"
+# 是这个后端的立项理由之一。
+#
+# **必须在 FetchContent 之前设**：这个变量要传染给所有子项目，
+# 一半 /MT 一半 /MD 链接时会报 RuntimeLibrary 不匹配。
+# 这里放在文件末尾只是为了和上面那段放一起读——CMake 的
+# CMAKE_MSVC_RUNTIME_LIBRARY 是在生成阶段读的，位置不影响。
+if(CHANGJI_STATIC_RUNTIME AND MSVC)
+    set_property(TARGET changji PROPERTY
+                 MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+endif()
+
 if(CHANGJI_STATIC_RUNTIME AND NOT MSVC)
     if(WIN32)
         # MinGW 上必须用 -static 而不是 -static-libgcc -static-libstdc++。
@@ -243,6 +320,7 @@ if(CHANGJI_BUILD_TESTS)
         src/stages/storyboard.cpp
         src/stages/script.cpp
         src/infer/scheduler.cpp
+    src/infer/sd_backend.cpp
         src/pipeline/jobs.cpp
         src/llm/client.cpp
         src/config/settings.cpp
