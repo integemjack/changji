@@ -10,6 +10,7 @@
 #include "doctor/doctor.hpp"
 #include "http/editing.hpp"
 #include "http/media.hpp"
+#include "http/upload.hpp"
 #include "http/readonly.hpp"
 #include "http/ws.hpp"
 
@@ -196,6 +197,67 @@ void run(const config::Settings& settings, const Options& opts) {
         auto r = guard([&] { return post_shots_link_locations(json::parse(req.body, nullptr, false)); });
         return json_response(r.body, r.status);
     });
+
+    // ---- 参考图上传（multipart）----
+    //
+    // multipart 的解析是 crow 的事，留在这一层；校验和落盘在 upload.cpp
+    // 的纯函数里，那样不起服务也能测。
+
+    CROW_ROUTE(app, "/api/character/reference").methods("POST"_method)
+        ([](const crow::request& req) {
+            auto r = guard([&]() -> ApiResult {
+                crow::multipart::message msg(req);
+                const auto field = [&](const char* name) -> std::string {
+                    auto it = msg.part_map.find(name);
+                    return it == msg.part_map.end() ? std::string() : it->second.body;
+                };
+                auto fit = msg.part_map.find("file");
+                if (fit == msg.part_map.end()) throw ApiError(400, "没有上传文件");
+                // 文件那一部分的 Content-Type 在它自己的头里，不是请求头里
+                const std::string ctype =
+                    fit->second.get_header_object("Content-Type").value;
+                return post_character_reference(field("project"), field("char_id"),
+                                                field("slot"), ctype,
+                                                fit->second.body);
+            });
+            return json_response(r.body, r.status);
+        });
+
+    CROW_ROUTE(app, "/api/location/reference").methods("POST"_method)
+        ([](const crow::request& req) {
+            auto r = guard([&]() -> ApiResult {
+                crow::multipart::message msg(req);
+                const auto field = [&](const char* name) -> std::string {
+                    auto it = msg.part_map.find(name);
+                    return it == msg.part_map.end() ? std::string() : it->second.body;
+                };
+                auto fit = msg.part_map.find("file");
+                if (fit == msg.part_map.end()) throw ApiError(400, "没有上传文件");
+                const std::string ctype =
+                    fit->second.get_header_object("Content-Type").value;
+                return post_location_reference(field("project"), field("location_id"),
+                                               ctype, fit->second.body);
+            });
+            return json_response(r.body, r.status);
+        });
+
+    CROW_ROUTE(app, "/api/character/reference/clear").methods("POST"_method)
+        ([](const crow::request& req) {
+            auto r = guard([&] {
+                return post_character_reference_clear(
+                    json::parse(req.body, nullptr, false));
+            });
+            return json_response(r.body, r.status);
+        });
+
+    CROW_ROUTE(app, "/api/location/reference/clear").methods("POST"_method)
+        ([](const crow::request& req) {
+            auto r = guard([&] {
+                return post_location_reference_clear(
+                    json::parse(req.body, nullptr, false));
+            });
+            return json_response(r.body, r.status);
+        });
 
     // ---- WebSocket ----
     //

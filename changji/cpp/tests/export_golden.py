@@ -920,3 +920,97 @@ for i, case in enumerate(batch_cases):
 shutil.rmtree(BATCH_ROOT, ignore_errors=True)
 dump("endpoints_batch_edit", {"cases": batch_results})
 print("\n批量编辑语料写好了")
+
+
+# ══════════════════════════════════════════════════════════════════════
+# 阶段 3：参考图上传
+# ══════════════════════════════════════════════════════════════════════
+
+import base64  # noqa: E402
+
+# 一张 1x1 的 PNG 和一张 1x1 的 WEBP，够验格式判断和落盘，不用真图片
+PNG_1X1 = base64.b64decode(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==")
+WEBP_1X1 = base64.b64decode(
+    "UklGRhoAAABXRUJQVlA4TA0AAAAvAAAAEAcQERGIiP4HAA==")
+
+UP_ROOT = OUT / "上传用例"
+if UP_ROOT.exists():
+    shutil.rmtree(UP_ROOT)
+UP_ROOT.mkdir(parents=True)
+
+upload_cases = [
+    {"n": "传角色正面图_png", "url": "/api/character/reference",
+     "form": {"char_id": "c_lin_yuan", "slot": "front"},
+     "file": ("a.png", PNG_1X1, "image/png")},
+    {"n": "传角色侧面图_webp", "url": "/api/character/reference",
+     "form": {"char_id": "c_lin_yuan", "slot": "three_quarter"},
+     "file": ("a.webp", WEBP_1X1, "image/webp")},
+    {"n": "槽位非法_400", "url": "/api/character/reference",
+     "form": {"char_id": "c_lin_yuan", "slot": "left_ear"},
+     "file": ("a.png", PNG_1X1, "image/png")},
+    {"n": "角色不存在_404", "url": "/api/character/reference",
+     "form": {"char_id": "c_no_such", "slot": "front"},
+     "file": ("a.png", PNG_1X1, "image/png")},
+    {"n": "格式不收_400", "url": "/api/character/reference",
+     "form": {"char_id": "c_lin_yuan", "slot": "front"},
+     "file": ("a.gif", b"GIF89a", "image/gif")},
+    {"n": "空文件_400", "url": "/api/character/reference",
+     "form": {"char_id": "c_lin_yuan", "slot": "front"},
+     "file": ("a.png", b"", "image/png")},
+    {"n": "传场景空景图", "url": "/api/location/reference",
+     "form": {"location_id": "loc_rooftop"},
+     "file": ("e.png", PNG_1X1, "image/png")},
+    {"n": "场景不存在_404", "url": "/api/location/reference",
+     "form": {"location_id": "loc_no_such"},
+     "file": ("e.png", PNG_1X1, "image/png")},
+]
+
+upload_results = []
+for i, case in enumerate(upload_cases):
+    root = UP_ROOT / f"u{i:02d}"
+    shutil.copytree(PROJ_ROOT, root)
+    form = {"project": str(root)}
+    form.update(case["form"])
+    fname, fdata, fctype = case["file"]
+    resp = client.post(case["url"], data=form,
+                       files={"file": (fname, fdata, fctype)})
+
+    assets_after, refs_listing = None, None
+    if resp.status_code == 200:
+        assets_after = ProjectStore(root).load_assets().model_dump(mode="json")
+        refs_listing = sorted(p.name for p in (root / "refs").iterdir()) \
+            if (root / "refs").is_dir() else []
+
+    upload_results.append({
+        "name": case["n"], "url": case["url"], "form": case["form"],
+        "file_name": fname, "file_b64": base64.b64encode(fdata).decode(),
+        "content_type": fctype,
+        "status": resp.status_code, "body": resp.json(),
+        "assets_after": assets_after, "refs_listing": refs_listing,
+    })
+    print(f"  {case['n']:22s} -> {resp.status_code}")
+
+# 换格式重传：先 png 再 webp，验旧文件被清掉
+root = UP_ROOT / "replace"
+shutil.copytree(PROJ_ROOT, root)
+client.post("/api/character/reference",
+            data={"project": str(root), "char_id": "c_lin_yuan", "slot": "front"},
+            files={"file": ("a.png", PNG_1X1, "image/png")})
+r2 = client.post("/api/character/reference",
+                 data={"project": str(root), "char_id": "c_lin_yuan", "slot": "front"},
+                 files={"file": ("a.webp", WEBP_1X1, "image/webp")})
+upload_results.append({
+    "name": "换格式重传_旧文件要被清掉", "url": "/api/character/reference",
+    "form": {"char_id": "c_lin_yuan", "slot": "front"},
+    "file_name": "a.webp", "file_b64": base64.b64encode(WEBP_1X1).decode(),
+    "content_type": "image/webp", "first_png_b64": base64.b64encode(PNG_1X1).decode(),
+    "status": r2.status_code, "body": r2.json(),
+    "assets_after": ProjectStore(root).load_assets().model_dump(mode="json"),
+    "refs_listing": sorted(p.name for p in (root / "refs").iterdir()),
+})
+print(f"  换格式重传_旧文件要被清掉 -> {r2.status_code} refs={sorted(p.name for p in (root/'refs').iterdir())}")
+
+shutil.rmtree(UP_ROOT, ignore_errors=True)
+dump("endpoints_upload", {"cases": upload_results})
+print("\n上传语料写好了")
