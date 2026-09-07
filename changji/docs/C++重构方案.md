@@ -631,9 +631,31 @@ Vue 前端完整渲染，顶栏显示「引擎已连接 http://127.0.0.1:8080」
 只要拿测试文件当清单，测试没覆盖的就会整片漏掉，而且漏得很干净，
 没有任何编译或运行迹象。
 
-对策不是"下次小心点"，是**换一份清单**：后面几个阶段按 Python 的路由表
-（`grep 'app.get\|app.post' server.py`）逐条核对，测试文件只用来定验证方式。
-阶段 6 和阶段 7 开工前先做这件事。
+对策不是"下次小心点"，是**换一份清单**：按 Python 的路由表逐条核对，
+测试文件只用来定验证方式。做成了脚本 [cpp/tools/audit_routes.py](../cpp/tools/audit_routes.py)，
+**每个阶段开工前跑一遍**。
+
+清单取自 FastAPI 的 `app.routes` 而不是 grep 源码——装饰器怎么写、
+路由挂在哪个 router 上都不影响结果。
+
+第一次跑（2026-09-08）就又找出**四个前端探测没发现的**：
+
+```
+POST /api/settings        阶段 1
+GET  /api/connections     阶段 1
+POST /api/connections     阶段 1
+POST /api/new             阶段 3
+POST /api/project/delete  阶段 3
+POST /api/project/premise 阶段 3
+```
+
+前端那次只发 GET 请求，**POST-only 的接口整片看不见**——同一个盲区
+换了个形式又出现了一次。这正好说明为什么对策要是"换清单"而不是
+"多测一遍"：任何一种探测手段都有它看不见的东西，只有拿源头的定义
+逐条比对才不会漏。
+
+其中 `POST /api/settings` 属于**阶段 1**，也就是最早那一批。
+它和 `/api/connections` 一样写的是配置不是项目文件，所以归在阶段 1。
 
 补的时候顺带钉住了一处 Python 自己的不一致：项目里有预告片时，
 `POST /api/episode` 走 `_next_episode_id`（只数 epNN）得到 ep03，
