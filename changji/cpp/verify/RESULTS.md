@@ -542,6 +542,51 @@ MSVC 上静默走错分支**，llama.cpp 的 `LU8` 宏就是这么炸的（见�
 > 只能走 `paths::to_utf8()` / `paths::from_utf8()`，禁止 `path.string()`
 > 和 `fs::path(str)`。**
 
+## 三点十、验证第五项：Vulkan 在 Pi 5 上可用（通过）
+
+验证机：`root@192.168.20.91`，Raspberry Pi 5 Model B Rev 1.0，
+Debian 13 (trixie)，内核 6.18.39，Cortex-A76 四核，7.9GB 内存，425GB 磁盘。
+
+方案里写的是"VideoCore VII 的 Vulkan 驱动成熟度未知"。实际情况比预期好：
+
+```
+GPU0: V3D 7.1.7.0    驱动 V3DV Mesa 26.2.0    Vulkan 1.3.354   ← 硬件
+GPU1: llvmpipe       软件回退
+```
+
+ggml 的 Vulkan 后端**编译零错误**，产出 `libggml-vulkan.so.0.23.0`，
+运行时也认到了设备：
+
+```
+ggml_vulkan: Found 1 Vulkan devices:
+ggml_vulkan: 0 = V3D 7.1.7.0 (V3DV Mesa) | uma: 1 | fp16: 1 | bf16: 0 |
+             warp size: 16 | shared memory: 32768 | int dot: 1 | matrix cores: none
+Backend 1/2: Vulkan0    Device memory: 4096 MB (4096 MB free)
+```
+
+`test-backend-ops -o ADD` 全部通过。
+
+### 三条要记的能力细节
+
+- **`uma: 1`** —— 统一内存，显存是从系统内存里划的，不是独立的
+- **`fp16: 1` 但 `bf16: 0`** —— 半精度可以，bfloat16 不行。选量化格式时要避开 bf16
+- **`matrix cores: none`** —— 没有张量核心，矩阵乘走通用着色器
+
+### ⚠️ 最重要的数字：Vulkan 只看得到 4096 MB
+
+Pi 有 8GB 内存，但 **Vulkan 设备内存是 4096 MB**（CMA 划给 GPU 的那部分）。
+这个数字直接影响第六项，见下一节。
+
+### Debian 13 上编 ggml Vulkan 的两个依赖坑
+
+两个都缺时 CMake 的报错都不告诉你该装哪个包：
+
+1. `find_package(Vulkan COMPONENTS glslc)` 要的 `glslc` 在 **`glslc` 包**里，
+   不在 `glslang-tools` 里（后者给的是 `glslangValidator`）。
+   报错是 `Could NOT find Vulkan (missing: glslc)`——看着像 Vulkan 没装，
+   实际 libvulkan 就在那儿。
+2. 再往下要 `spirv-headers` 提供 `SPIRV-HeadersConfig.cmake`。
+
 ## 四、Windows 长路径（工程约束，不影响方案）
 
 llama.cpp 现在带了个 Svelte 写的 Web UI，`tools/ui/src/lib/components/app/chat/
@@ -570,5 +615,5 @@ Windows 的路径处理会在你完全想不到的地方安静地失败。
 - [ ] 第二项后半：两个库各跑一次真实推理
 - [x] **第三项：`--offload-to-cpu` —— 通过**，Issue #1483 不复现
 - [x] **第四项：VAE 分块 —— 通过**，但默认块大小对 Wan 无效，必须显式设 `--vae-tile-size`
-- [ ] 第五项：ggml 的 Vulkan 后端在 Pi 5 上能不能起来
+- [x] **第五项：Pi 5 的 Vulkan —— 通过**，V3D + V3DV Mesa，但设备内存只有 4096 MB
 - [ ] 第六项：Pi 的 8GB 装不装得下 5B 的 Q4 权重加 VAE
