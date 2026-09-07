@@ -7,7 +7,8 @@ import AppIcon from '@/components/AppIcon.vue'
 import { STEP_ROUTES } from '@/router'
 import { useSession } from '@/stores/session'
 
-const props = defineProps({
+// 模板里直接用 title / tagline，不需要接住返回值
+defineProps({
   title: { type: String, default: '' },
   tagline: { type: String, default: '' },
 })
@@ -106,8 +107,15 @@ const isDone = computed(() => Boolean(step.value && session.done[step.value.key]
     width: 100%;
     justify-content: stretch;
   }
+  /* 主操作占满剩下的宽度，次要操作按内容收窄。
+     一起拉平的话，一个没有底色的次要按钮会和主按钮一样宽，
+     手机上看过去分不出哪个才是这一步该点的。 */
   .head__actions :deep(.btn) {
-    flex: 1;
+    flex: 0 1 auto;
+  }
+  .head__actions :deep(.btn--primary),
+  .head__actions :deep(.btn--ai) {
+    flex: 1 1 auto;
   }
 }
 </style>

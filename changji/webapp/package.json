@@ -3,17 +3,23 @@
   "private": true,
   "version": "0.1.0",
   "description": "场记 Web 平台：Node BFF + Vue 3 前端",
-  "workspaces": ["server", "client"],
+  "workspaces": [
+    "server",
+    "client"
+  ],
   "scripts": {
     "dev": "concurrently -n server,client -c cyan,magenta \"npm:dev:server\" \"npm:dev:client\"",
     "dev:server": "npm --workspace server run dev",
     "dev:client": "npm --workspace client run dev",
     "build": "npm --workspace client run build",
     "start": "npm --workspace server run start",
-    "lint": "npm --workspace client run lint"
+    "lint": "npm --workspace client run lint",
+    "test": "npm --workspace server run test"
   },
   "devDependencies": {
     "concurrently": "^9.1.0"
   },
-  "engines": { "node": ">=20" }
+  "engines": {
+    "node": ">=20"
+  }
 }

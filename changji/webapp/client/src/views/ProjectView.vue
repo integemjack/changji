@@ -5,7 +5,7 @@
  * 进来第一眼要看到「我有哪些项目」，而不是一个让人填绝对路径的输入框。
  * 容器里项目库挂在哪，用户根本不知道，问引擎要列表才是对的。
  */
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 
 import AppIcon from '@/components/AppIcon.vue'
@@ -30,8 +30,21 @@ const keyword = ref('')
 const creating = ref(false)
 const draft = ref({ path: '', title: '', style_line: 'realistic' })
 
+// 项目库以外的项目。整个目录拷到别的机器就能接着做，所以项目常常躺在
+// 移动硬盘或者共享盘上，不在项目库根目录下面——那些以前在界面上够不着。
+const opening = ref(false)
+const openPath = ref('')
+
 const removing = ref(null) // 待删项目
 const confirmName = ref('')
+
+// 全剧风格。所有镜头共用的一层，属于项目的创作常量，
+// 跟「选哪个项目」放在同一页——开工时定一次，后面基本不动。
+const style = ref({ global_style: '', negative_prompt: '', aspect_ratio: '9:16' })
+const savedStyle = ref('')
+const styleLine = ref('')
+const resetOnStyle = ref(false)
+const styleDirty = computed(() => JSON.stringify(style.value) !== savedStyle.value)
 
 const shown = computed(() => {
   const kw = keyword.value.trim().toLowerCase()
@@ -56,7 +69,40 @@ async function load() {
   }
 }
 
+async function loadStyle() {
+  if (!session.projectPath) return
+  try {
+    const data = await api.assets(session.projectPath)
+    styleLine.value = data.style?.style_line ?? ''
+    style.value = {
+      global_style: data.style?.global_style ?? '',
+      negative_prompt: data.style?.negative_prompt ?? '',
+      aspect_ratio: data.style?.aspect_ratio ?? '9:16',
+    }
+    savedStyle.value = JSON.stringify(style.value)
+  } catch {
+    // 项目坏了或者刚建好还没有资产库，这一张卡不显示就是了
+    savedStyle.value = ''
+  }
+}
+
+async function saveStyle() {
+  const result = await run(
+    () =>
+      api.saveStyle({
+        project: session.projectPath,
+        patch: style.value,
+        reset_shots: resetOnStyle.value,
+      }),
+    { key: 'style', refresh: true },
+  )
+  if (!result) return
+  savedStyle.value = JSON.stringify(style.value)
+  ui.ok(result.reset_shots ? `风格已改，${result.reset_shots} 个镜头退回重跑` : '已保存')
+}
+
 onMounted(load)
+watch(() => session.projectPath, loadStyle, { immediate: true })
 
 function open(project) {
   if (project.broken) {
@@ -83,6 +129,22 @@ async function create() {
   draft.value = { path: '', title: '', style_line: 'realistic' }
   await load()
   session.selectProject(result.root)
+  router.push('/script')
+}
+
+/** 按路径打开一个项目库以外的项目。先问引擎认不认，再切过去。 */
+async function openByPath() {
+  const path = openPath.value.trim()
+  if (!path) {
+    ui.warn('填一个项目目录的完整路径')
+    return
+  }
+  const info = await run(() => api.project(path), { key: 'open' })
+  if (!info) return
+  session.selectProject(info.root)
+  opening.value = false
+  openPath.value = ''
+  ui.ok(`已切到「${info.title || info.project_id}」`)
   router.push('/script')
 }
 
@@ -114,12 +176,49 @@ function progressOf(p) {
           <AppIcon name="refresh" :size="15" />
           刷新
         </button>
+        <button class="btn btn--ghost" type="button" @click="opening = !opening">
+          <AppIcon name="folder" :size="15" />
+          打开其他目录
+        </button>
         <button class="btn btn--primary" type="button" @click="creating = !creating">
           <AppIcon name="plus" :size="15" />
           新建项目
         </button>
       </template>
     </StepHeader>
+
+    <!-- 打开项目库以外的项目 -->
+    <Transition name="fold">
+      <section v-if="opening" class="card">
+        <div class="card__head">
+          <div>
+            <div class="card__title">打开其他目录的项目</div>
+            <div class="card__sub">
+              项目整个目录拷到哪儿都能接着做。不在项目库里的，填完整路径打开。
+            </div>
+          </div>
+          <button class="btn btn--ghost btn--sm" type="button" @click="opening = false">
+            <AppIcon name="close" :size="14" />
+          </button>
+        </div>
+        <div class="card__body row">
+          <input
+            v-model="openPath"
+            class="input mono"
+            placeholder="D:\短剧\雪夜  或者  /data/projects/雪夜"
+            @keyup.enter="openByPath"
+          />
+          <button
+            class="btn btn--primary nowrap"
+            type="button"
+            :disabled="isBusy('open')"
+            @click="openByPath"
+          >
+            {{ isBusy('open') ? '打开中…' : '打开' }}
+          </button>
+        </div>
+      </section>
+    </Transition>
 
     <!-- 新建 -->
     <Transition name="fold">
@@ -174,6 +273,81 @@ function progressOf(p) {
         </div>
       </section>
     </Transition>
+
+    <!-- 全剧风格。选中项目之后才有意义 -->
+    <section v-if="session.hasProject && savedStyle" class="card">
+      <div class="card__head">
+        <div>
+          <div class="card__title">
+            全剧风格
+            <span class="pill pill--neutral">
+              {{ styleLine === 'anime' ? '动漫线' : '写实线' }}
+            </span>
+          </div>
+          <div class="card__sub">
+            所有镜头共用的一层，开工时定一次。改它等于整部剧换调性。
+          </div>
+        </div>
+        <span v-if="styleDirty" class="pill pill--warn">未保存</span>
+      </div>
+      <div class="card__body stack">
+        <div class="grid grid--form">
+          <label class="field">
+            <span class="field__label">画风与质感</span>
+            <textarea
+              v-model="style.global_style"
+              class="textarea textarea--tight"
+              rows="3"
+              placeholder="例如：电影感冷调，浅景深，胶片颗粒"
+            />
+          </label>
+          <label class="field">
+            <span class="field__label">负向提示词</span>
+            <textarea
+              v-model="style.negative_prompt"
+              class="textarea textarea--tight"
+              rows="3"
+              placeholder="例如：多手多脚，文字水印，糊脸"
+            />
+          </label>
+        </div>
+
+        <div class="field">
+          <span class="field__label">画幅</span>
+          <div class="chips">
+            <button
+              v-for="r in ['9:16', '16:9', '1:1', '4:5']"
+              :key="r"
+              class="chip"
+              :class="{ 'chip--on': style.aspect_ratio === r }"
+              type="button"
+              @click="style.aspect_ratio = r"
+            >
+              {{ r }}{{ r === '9:16' ? ' 竖屏' : r === '16:9' ? ' 横屏' : '' }}
+            </button>
+          </div>
+          <span class="field__hint">短剧平台基本都吃 9:16。改画幅要重跑所有镜头。</span>
+        </div>
+
+        <label class="switch">
+          <input v-model="resetOnStyle" type="checkbox" />
+          <span>顺便把已渲染的镜头退回重跑</span>
+          <span class="field__hint">
+            不勾的话新风格只对之后才跑的镜头生效，一集里前后会不一致。
+          </span>
+        </label>
+      </div>
+      <div class="card__foot">
+        <button
+          class="btn btn--primary"
+          type="button"
+          :disabled="!styleDirty || isBusy('style')"
+          @click="saveStyle"
+        >
+          {{ isBusy('style') ? '保存中…' : '保存风格' }}
+        </button>
+      </div>
+    </section>
 
     <!-- 列表 -->
     <section class="stack">
@@ -324,6 +498,47 @@ function progressOf(p) {
 }
 .grid--cards {
   grid-template-columns: repeat(auto-fill, minmax(248px, 1fr));
+}
+
+.textarea--tight {
+  min-height: 0;
+}
+.chips {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.chip {
+  padding: 4px var(--s3);
+  border-radius: var(--r-pill);
+  border: 1px solid var(--line);
+  background: var(--surface-2);
+  color: var(--text-2);
+  font-size: var(--fs-sm);
+  cursor: pointer;
+}
+.chip--on {
+  background: var(--accent-soft);
+  border-color: var(--accent-line);
+  color: var(--accent);
+  font-weight: 600;
+}
+.switch {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: center;
+  gap: var(--s2);
+  cursor: pointer;
+  font-size: var(--fs-base);
+}
+.switch input {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--accent);
+}
+.switch .field__hint {
+  grid-column: 2;
+  margin-top: -4px;
 }
 
 .proj {

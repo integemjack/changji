@@ -1,8 +1,9 @@
 <script setup>
 import { computed, onMounted, watch } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { useRoute } from 'vue-router'
 
 import AppIcon from '@/components/AppIcon.vue'
+import ErrorBoundary from '@/components/ErrorBoundary.vue'
 import StepRail from '@/components/StepRail.vue'
 import ToastStack from '@/components/ToastStack.vue'
 import EngineLamp from '@/components/EngineLamp.vue'
@@ -12,7 +13,6 @@ import { useSession } from '@/stores/session'
 import { useUi } from '@/stores/ui'
 
 const route = useRoute()
-const router = useRouter()
 const session = useSession()
 const ui = useUi()
 
@@ -101,11 +101,14 @@ function cycleTheme() {
 
         <div class="main__scroll">
           <div class="main__inner">
-            <RouterView v-slot="{ Component }">
-              <Transition name="fade" mode="out-in">
-                <component :is="Component" />
-              </Transition>
-            </RouterView>
+            <!-- 页面崩了要说出来，而不是白屏。见 ErrorBoundary 里的说明。 -->
+            <ErrorBoundary>
+              <RouterView v-slot="{ Component }">
+                <Transition name="fade" mode="out-in">
+                  <component :is="Component" />
+                </Transition>
+              </RouterView>
+            </ErrorBoundary>
           </div>
         </div>
 

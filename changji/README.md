@@ -45,6 +45,29 @@ pip install -e .
 changji init
 ```
 
+## Web 平台
+
+引导式界面在 `webapp/`，Node + Vue 3 写的，把整条生产线分成八步：
+
+```
+全剧（做一次）    项目 → 剧本大纲 → 角色
+分集（每集重复）  场景 → 分镜 → 制作 → 成片 → 上传至平台
+```
+
+每一步都能让大模型代劳，每一步的结果都看得见。环境和参数全收在设置页，
+包括大模型 API 地址和 ComfyUI API 地址。电脑和手机都能开。
+
+```bash
+changji serve --port 8080      # 引擎
+cd webapp && npm install && npm run dev
+```
+
+或者 `docker compose up -d` 一次拉起全套，然后打开 http://localhost:5174 。
+细节见 `webapp/README.md`。
+
+`changji serve` 自己在 8080 根路径上还挂着一个更早的手写界面，功能重叠，
+不装 Node 时可用。新功能只加在 webapp 那一套里。
+
 ## 依赖的外部服务
 
 | 服务 | 用途 | 默认地址 |
@@ -109,6 +132,45 @@ Qwen3-TTS 或 CosyVoice 3，不要用 IndexTTS-2 和 Fish Speech，
 换 `workflows/tts.json` 里的引擎节点即可，不用改代码。
 
 ## 已知问题
+
+**Docker Desktop 启动后引擎起不来，报 `initializing Inference manager`
+或 `initializing Secrets Engine`。**
+
+表现容易误判成「没启动」，其实是启动了但 dockerd 崩了：
+`dockerDesktopLinuxEngine` 管道在，但 `/info` 返回 500 空正文；
+WSL 里有 `containerd-shim` 却没有 dockerd，`/var/run/docker.sock` 不存在。
+真正的报错在 `%LOCALAPPDATA%\Docker\log\host\com.docker.backend.exe.log` 里：
+
+```
+backend crashed: starting services: initializing Inference manager:
+listening on unix://…\Docker\run\dockerInference: remove …: 系统无法访问此文件
+```
+
+原因是残留的 AF_UNIX socket 文件（属性是 `Archive, ReparsePoint`，长度 0）
+删不掉——Remove-Item、.NET File.Delete、fsutil 一律返回「系统无法访问此文件」。
+Docker 启动时要先 remove 再 listen，remove 失败就崩；崩溃又留下新的 socket，
+成了闭环。
+
+处理办法：文件删不掉但父目录能改名。**关键是两个目录必须一起清，然后只启动
+一次**——一次只清一个的话，清掉 run 会崩在 secrets，清掉 secrets 又崩回 run，
+因为每次失败的启动都会重新造出前一个。
+
+```powershell
+Get-Process 'Docker Desktop','com.docker.backend','com.docker.build','docker-sandbox','docker-ai' `
+  -ErrorAction SilentlyContinue | Stop-Process -Force
+Stop-Service com.docker.service -Force
+wsl --shutdown
+$stamp = Get-Date -Format 'HHmmss'
+foreach ($d in @("$env:LOCALAPPDATA\Docker\run", "$env:LOCALAPPDATA\docker-secrets-engine")) {
+    if (Test-Path $d) { Rename-Item $d ((Split-Path $d -Leaf) + ".bak-$stamp") }
+    New-Item -ItemType Directory -Path $d -Force | Out-Null
+}
+Start-Service com.docker.service
+Start-Process "$env:ProgramFiles\Docker\Docker\Docker Desktop.exe"
+```
+
+注意：设置里的 `EnableDockerAI` 关掉也挡不住——4.72.0 里 Inference manager
+照样启动。所以这个坑会复发，复发时照上面处理。
 
 **在 Windows 服务器上通过 SSH 构建镜像会失败。**
 报错是 `A specified logon session does not exist`。原因是 Docker Desktop 的

@@ -92,15 +92,19 @@ export const api = {
   deletePublishTarget: (id) => del('/bff/publish/targets/' + encodeURIComponent(id)),
   publishRecords: (project) => get('/bff/publish/records', { project }),
   deliver: (payload) => post('/bff/publish/deliver', payload),
+  deliverBatch: (payload) => post('/bff/publish/batch', payload),
 
   // ---- 引擎：项目 ----
   projects: () => get('/api/projects'),
   project: (path) => get('/api/project', { path }),
   newProject: (payload) => post('/api/new', payload),
   deleteProject: (payload) => post('/api/project/delete', payload),
+  savePremise: (payload) => post('/api/project/premise', payload),
 
   // ---- 引擎：剧本 ----
   writeScript: (payload) => post('/api/script/write', payload),
+  suggestPremises: (payload) => post('/api/script/premise', payload),
+  writeTrailer: (payload) => post('/api/script/trailer', payload),
   seriesStatus: () => get('/api/script/series'),
   writeSeries: (payload) => post('/api/script/series', payload),
   stopSeries: () => post('/api/script/series/stop', {}),
@@ -116,8 +120,13 @@ export const api = {
   uploadReference: (form) =>
     request('/api/character/reference', { method: 'POST', body: form }),
   saveLocation: (payload) => post('/api/location', payload),
+  uploadLocationReference: (form) =>
+    request('/api/location/reference', { method: 'POST', body: form }),
+  clearLocationReference: (payload) => post('/api/location/reference/clear', payload),
   saveStyle: (payload) => post('/api/style', payload),
   voices: (path) => get('/api/voices', { path }),
+  llmModels: () => get('/api/llm/models'),
+  llmProviders: () => get('/api/llm/providers'),
 
   // ---- 引擎：分镜 ----
   plan: (payload) => post('/api/plan', payload),
@@ -125,6 +134,8 @@ export const api = {
   shots: (path, episodeId) => get('/api/shots', { path, episode_id: episodeId }),
   saveShot: (payload) => post('/api/shot', payload),
   batchShots: (payload) => post('/api/shots/batch', payload),
+  linkLocations: (payload) => post('/api/shots/link_locations', payload),
+  reorderShots: (payload) => post('/api/shots/reorder', payload),
   newEpisode: (payload) => post('/api/episode', payload),
   episodeAction: (payload) => post('/api/episode/action', payload),
 

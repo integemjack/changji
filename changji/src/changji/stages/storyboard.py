@@ -21,6 +21,7 @@ from ..config import LLMConfig
 from ..models.character import AssetLibrary
 from ..models.shot import Shot, apply_lipsync_rules
 from .render import max_shot_duration_s
+from ._llm import raise_for_status as _raise_for_status
 
 
 class StoryboardError(RuntimeError):
@@ -297,7 +298,7 @@ class StoryboardGenerator:
                     f"{self.config.base_url}/chat/completions",
                     json=payload, headers=headers,
                 )
-            r.raise_for_status()
+            _raise_for_status(self.config, r, StoryboardError)
             body = r.json()
         try:
             return body["choices"][0]["message"]["content"]
@@ -324,6 +325,7 @@ class StoryboardGenerator:
             elif not item.get("transition_dur_s"):
                 item["transition_dur_s"] = 0.4
             _add_missing_speakers(item, set(assets.characters))
+            link_location(item, set(assets.locations))
             try:
                 shots.append(Shot.model_validate(item))
             except Exception as exc:
@@ -365,6 +367,26 @@ class StoryboardGenerator:
                 "模型多半漏填了 characters 字段"
             )
         return problems
+
+
+def link_location(item: dict[str, Any], known: set[str]) -> bool:
+    """location_id 空着但 scene_id 正是一个已注册场景时，把它接上。
+
+    schema 里 scene_id 和 location_id 是两个字段，模型十次有八次把场景
+    id 填进 scene_id 就完事了。后果不是报错——分镜表照样合法，是渲染时
+    render.py 只在 location_id 有值时才把场景描述拼进提示词，于是空间和
+    光线那一段整个丢掉，同一个房间在每个镜头里都长得不一样。
+
+    这类静默失败最难查，所以在这里接上，而不是指望模型下次填对。
+    返回是否改动过，调用方要靠它决定用不用存盘。
+    """
+    if item.get("location_id"):
+        return False
+    scene = str(item.get("scene_id") or "")
+    if scene in known:
+        item["location_id"] = scene
+        return True
+    return False
 
 
 def _add_missing_speakers(item: dict[str, Any], known: set[str]) -> None:

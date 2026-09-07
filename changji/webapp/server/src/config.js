@@ -14,8 +14,9 @@ import os from 'node:os'
 import path from 'node:path'
 
 const DEFAULTS = {
-  // Python 引擎（changji web）的地址。可以指向局域网另一台机器。
-  engineBaseUrl: 'http://127.0.0.1:8000',
+  // Python 引擎（changji serve）的地址。可以指向局域网另一台机器。
+  // 端口跟着 changji serve 的默认值走，改了那边这里也要改。
+  engineBaseUrl: 'http://127.0.0.1:8080',
   // 引擎单次请求的等待上限。出分镜这类活儿要几分钟，不能按秒算。
   engineTimeoutMs: 600000,
   // 上传目标。凭据不落这里，只存一个引用名，见 routes/publish.js

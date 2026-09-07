@@ -1018,3 +1018,66 @@ class TestRunPreview:
         r = client.get("/api/run/preview", params={
             "path": str(store.root), "episode_id": "ep01"})
         assert r.status_code == 400
+
+
+class TestReorder:
+    """调镜头顺序。
+
+    出完分镜想调节奏，最常做的事就是把某一镜往前挪。以前 order 字段在
+    界面上根本没露出来，等于这件事做不了。
+    """
+
+    def _order(self, store):
+        ep = store.load_project().episode_by_id("ep01")
+        return [s.shot_id for s in ep.sorted_shots()]
+
+    def test_按给的顺序排(self, client, project):
+        r = client.post("/api/shots/reorder", json={
+            "project": str(project.root), "episode_id": "ep01",
+            "shot_ids": ["ep01_sh002", "ep01_sh001"]})
+        assert r.status_code == 200
+        assert r.json()["moved"] == 2
+        assert self._order(project) == ["ep01_sh002", "ep01_sh001"]
+
+    def test_不重跑任何镜头(self, client, project):
+        """换顺序不改画面，已经渲染好的还能接着用。"""
+        client.post("/api/shots/reorder", json={
+            "project": str(project.root), "episode_id": "ep01",
+            "shot_ids": ["ep01_sh002", "ep01_sh001"]})
+        assert _reload(project).status is ShotStatus.DRAFT_DONE
+        assert _reload(project, "ep01_sh002").status is ShotStatus.FINAL_DONE
+
+    def test_少给一镜就拒绝(self, client, project):
+        """只传一部分等于让引擎去猜剩下的排哪儿。猜错了是把片子剪乱，
+        而且要播一遍才发现。"""
+        r = client.post("/api/shots/reorder", json={
+            "project": str(project.root), "episode_id": "ep01",
+            "shot_ids": ["ep01_sh001"]})
+        assert r.status_code == 400
+        assert "ep01_sh002" in r.json()["detail"]
+        assert self._order(project) == ["ep01_sh001", "ep01_sh002"]
+
+    def test_多给一镜也拒绝(self, client, project):
+        r = client.post("/api/shots/reorder", json={
+            "project": str(project.root), "episode_id": "ep01",
+            "shot_ids": ["ep01_sh001", "ep01_sh002", "ep01_sh099"]})
+        assert r.status_code == 400
+        assert "ep01_sh099" in r.json()["detail"]
+
+    def test_重复的_id_拒绝(self, client, project):
+        r = client.post("/api/shots/reorder", json={
+            "project": str(project.root), "episode_id": "ep01",
+            "shot_ids": ["ep01_sh001", "ep01_sh001"]})
+        assert r.status_code == 400
+
+    def test_顺序没变时不算挪动(self, client, project):
+        r = client.post("/api/shots/reorder", json={
+            "project": str(project.root), "episode_id": "ep01",
+            "shot_ids": ["ep01_sh001", "ep01_sh002"]})
+        assert r.json()["moved"] == 0
+
+    def test_没这一集(self, client, project):
+        r = client.post("/api/shots/reorder", json={
+            "project": str(project.root), "episode_id": "ep99",
+            "shot_ids": []})
+        assert r.status_code == 404

@@ -1,11 +1,33 @@
-# 一条命令拉起全套：编排引擎、ComfyUI、大模型服务。
+# 一条命令拉起全套：Web 平台、编排引擎、ComfyUI、大模型服务。
 #
 #   docker compose up -d
 #
-# 然后打开 http://localhost:8080
+# 然后打开 http://localhost:5174
 name: changji
 
 services:
+  # 引导式 Web 平台。Node 发前端 + 转发接口，不做推理，不需要显卡。
+  # 引擎地址填错时界面仍然打得开，就是因为它单独在这一层，
+  # 前端直连引擎的话，地址一填错就等于把自己锁在门外。
+  webapp:
+    build: ./webapp
+    image: changji/webapp:latest
+    container_name: changji-webapp
+    ports:
+      - "${WEBAPP_PORT:-5174}:5174"
+    volumes:
+      # 引擎地址和投递目标写在这里，不挂出来容器一重建就没了
+      - ${CHANGJI_WEBAPP_CONFIG:-./data/webapp}:/data/webapp
+      # 上传那一步要把成片投递到这里，宿主机上接手的脚本从这儿取
+      - ${CHANGJI_PUBLISH:-./data/publish}:/data/publish
+    environment:
+      - CHANGJI_ENGINE_URL=http://changji:8080
+    depends_on:
+      changji:
+        condition: service_healthy
+    restart: unless-stopped
+
+
   # 编排引擎与 Web 界面。不做推理，不需要显卡。
   changji:
     build: .

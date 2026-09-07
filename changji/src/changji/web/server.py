@@ -35,6 +35,68 @@ from ..pipeline import Event, Pipeline, human_time
 from .page import render_page
 
 
+# 常见大模型平台的接入地址。
+#
+# 这些平台都提供 OpenAI 兼容接口，所以不用为每一家写适配器。列在这里只是
+# 免得用户去各家文档里翻那一行 base_url——选完照样能手改。
+#
+# local 为真的是本机跑的服务，通常不校验密钥；其余都要去对应平台申请。
+# 地址会变，各家也会加新的，填不通时以官方文档为准。
+LLM_PROVIDERS: list[dict[str, Any]] = [
+    {"id": "ollama", "name": "Ollama（本机）",
+     "base_url": "http://127.0.0.1:11434/v1", "local": True,
+     "note": "本机跑模型，不要密钥。先 ollama pull 一个模型"},
+    {"id": "lmstudio", "name": "LM Studio（本机）",
+     "base_url": "http://127.0.0.1:1234/v1", "local": True,
+     "note": "在 LM Studio 里开启本地服务器"},
+    {"id": "vllm", "name": "vLLM（本机或局域网）",
+     "base_url": "http://127.0.0.1:8000/v1", "local": True,
+     "note": "自建推理服务，地址按实际部署改"},
+    {"id": "deepseek", "name": "DeepSeek 深度求索",
+     "base_url": "https://api.deepseek.com/v1", "local": False,
+     "note": "platform.deepseek.com 申请密钥"},
+    {"id": "siliconflow", "name": "硅基流动 SiliconFlow",
+     "base_url": "https://api.siliconflow.cn/v1", "local": False,
+     "note": "聚合了很多开源模型，一个密钥都能用"},
+    {"id": "dashscope", "name": "阿里云百炼（通义千问）",
+     "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+     "local": False, "note": "注意是 compatible-mode 那条地址"},
+    {"id": "moonshot", "name": "月之暗面 Kimi",
+     "base_url": "https://api.moonshot.cn/v1", "local": False,
+     "note": "platform.moonshot.cn 申请密钥"},
+    {"id": "zhipu", "name": "智谱 GLM",
+     "base_url": "https://open.bigmodel.cn/api/paas/v4", "local": False,
+     "note": "bigmodel.cn 申请密钥"},
+    {"id": "ark", "name": "火山方舟（豆包）",
+     "base_url": "https://ark.cn-beijing.volces.com/api/v3", "local": False,
+     "note": "模型名填推理接入点 ID，不是模型名字"},
+    {"id": "hunyuan", "name": "腾讯混元",
+     "base_url": "https://api.hunyuan.cloud.tencent.com/v1", "local": False,
+     "note": "腾讯云控制台申请密钥"},
+    {"id": "minimax", "name": "MiniMax",
+     "base_url": "https://api.minimax.chat/v1", "local": False,
+     "note": "platform.minimaxi.com 申请密钥"},
+    {"id": "stepfun", "name": "阶跃星辰 StepFun",
+     "base_url": "https://api.stepfun.com/v1", "local": False,
+     "note": "platform.stepfun.com 申请密钥"},
+    {"id": "lingyi", "name": "零一万物 Yi",
+     "base_url": "https://api.lingyiwanwu.com/v1", "local": False,
+     "note": "platform.lingyiwanwu.com 申请密钥"},
+    {"id": "openai", "name": "OpenAI",
+     "base_url": "https://api.openai.com/v1", "local": False,
+     "note": "国内直连多半要自备网络"},
+    {"id": "openrouter", "name": "OpenRouter",
+     "base_url": "https://openrouter.ai/api/v1", "local": False,
+     "note": "一个密钥转发到几百个模型"},
+]
+
+
+# 预告片挂在这个固定的集号上。写死是有意的：预告片只有一条，
+# 重剪要覆盖上一条而不是攒出一堆 trailer2、trailer3。
+# 它也不参与「接着前几集写」的上下文，否则正片会开始抄自己的预告。
+TRAILER_EPISODE_ID = "trailer"
+
+
 class RunState:
     """一次运行的实时状态。界面轮询这个。"""
 
@@ -193,6 +255,38 @@ class ClearReferenceRequest(BaseModel):
     slot: str
 
 
+class ReorderShotsRequest(BaseModel):
+    """重排镜头顺序。
+
+    分镜出来之后想调节奏，最常做的事就是把某一镜往前挪。以前只能改
+    order 字段——而那个字段在编辑器里没有露出来，等于做不了。
+    """
+
+    model_config = {"extra": "forbid"}
+
+    project: str
+    episode_id: str
+    shot_ids: list[str] = Field(description="按新顺序排的完整镜头 id 列表")
+
+
+class LinkLocationsRequest(BaseModel):
+    """把 location_id 空着的镜头接回场景。留空集号表示整个项目都补。"""
+
+    model_config = {"extra": "forbid"}
+
+    project: str
+    episode_id: str = ""
+
+
+class ClearLocationReferenceRequest(BaseModel):
+    """撤掉一个场景的空景图。"""
+
+    model_config = {"extra": "forbid"}
+
+    project: str
+    location_id: str
+
+
 class LocationPatch(BaseModel):
     model_config = {"extra": "forbid"}
 
@@ -343,6 +437,20 @@ class DeleteProjectRequest(BaseModel):
     )
 
 
+class PremiseRequest(BaseModel):
+    """只改项目的梗概。
+
+    以前界面上要存一句梗概，得借道 /api/script/write——那个接口会顺手
+    把梗概写进项目，但代价是让大模型完整写一集，几十秒起步，大模型没起来
+    时还直接失败。存一行字不该是这个价钱。
+    """
+
+    model_config = {"extra": "forbid"}
+
+    project: str
+    premise: str = Field(default="", max_length=2000)
+
+
 class NewProjectRequest(BaseModel):
     path: str
     title: str = ""
@@ -366,6 +474,39 @@ class WriteScriptRequest(BaseModel):
         default=True, description="把前面几集当上下文，接着往下写")
     reuse_characters: bool = Field(
         default=True, description="沿用项目里已有的角色，名字不变")
+
+
+class PremiseIdeaRequest(BaseModel):
+    """让大模型想几个选题。
+
+    「这部剧讲什么」是整条流水线的源头，也是最难从零开始的一步。
+    别处每一步都能让 AI 代劳，唯独这里要人对着空白框发呆，说不过去。
+    """
+
+    model_config = {"extra": "forbid"}
+
+    project: str
+    keywords: str = Field(default="", max_length=200,
+                          description="想往哪个方向。留空就让它自由发挥")
+    count: int = Field(default=3, ge=3, le=5)
+
+
+class TrailerRequest(BaseModel):
+    """剪一条预告片。
+
+    对流水线来说预告片就是特别短的一集：出分镜、配音、装配全走原来那条路。
+    区别只在写的时候——预告片要的是钩子不是完整故事，所以另一套提示词。
+    """
+
+    model_config = {"extra": "forbid"}
+
+    project: str
+    duration_s: float = Field(default=20.0, gt=0, le=120)
+    episode_ids: list[str] = Field(
+        default_factory=list,
+        description="从哪几集里挑素材。留空表示所有已写好的集",
+    )
+    reuse_characters: bool = True
 
 
 class WriteSeriesRequest(BaseModel):
@@ -425,7 +566,8 @@ class BibleRequest(BaseModel):
     script: str = Field(default="", description="留空则用这一集已存的剧本")
     overwrite: bool = Field(
         default=False,
-        description="已经有角色了还要重出。默认拒绝，免得冲掉手改过的设定",
+        description="同名的角色和场景用新出的顶掉旧的。默认只补新的，"
+                    "手改过的设定和传过的参考图都保住",
     )
 
 
@@ -562,6 +704,56 @@ def create_app(settings: Settings, default_project: Path | None = None) -> FastA
             ],
         }
 
+    @app.get("/api/llm/providers")
+    async def llm_providers() -> dict[str, Any]:
+        """常见大模型平台的接入地址。
+
+        这些平台都提供 OpenAI 兼容接口，所以场记不用为每一家写一个适配器
+        ——填对地址和密钥就能用。列出来只是免得用户去翻各家文档找那一行
+        base_url，选完仍然可以手改，这里不锁死任何东西。
+
+        地址会变，各家也会加新的。当成一份「省得查文档」的清单看，
+        真填不通的时候以官方文档为准。
+        """
+        return {"providers": LLM_PROVIDERS}
+
+    @app.get("/api/llm/models")
+    async def llm_models() -> dict[str, Any]:
+        """那台大模型服务上都有哪些模型。
+
+        模型名以前只能手打。打错了要跑到写剧本那一步才报错，而报出来的
+        是一个 404——用户看不出是地址错了还是名字错了。列表拉过来给人选，
+        这类错就没机会发生。
+
+        OpenAI 兼容接口一律有 GET /models，Ollama 也有。问不到就返回空
+        列表并说明原因，界面退回手打，不至于因为列不出来就没法填。
+        """
+        import httpx
+
+        url = f"{settings.llm.base_url}/models"
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as http:
+                r = await http.get(
+                    url,
+                    headers={"Authorization": f"Bearer {settings.llm.api_key}"},
+                )
+        except httpx.RequestError as exc:
+            return {"models": [], "error": f"连不上 {url}：{exc}"}
+        if r.status_code >= 400:
+            return {"models": [], "error": f"{url} 返回 {r.status_code}"}
+        try:
+            body = r.json()
+        except Exception:
+            return {"models": [], "error": f"{url} 返回的不是 JSON"}
+
+        items = body.get("data") if isinstance(body, dict) else body
+        names = []
+        for item in items or []:
+            name = item.get("id") if isinstance(item, dict) else str(item)
+            if name:
+                names.append(str(name))
+        return {"models": sorted(set(names)), "current": settings.llm.model}
+
     @app.get("/api/voices")
     async def voices(path: str) -> dict[str, Any]:
         """服务端有哪些参考音色。
@@ -653,6 +845,10 @@ def create_app(settings: Settings, default_project: Path | None = None) -> FastA
                     "shot_id": s.shot_id,
                     "order": s.order,
                     "scene_id": s.scene_id,
+                    # 这一集用到哪几个场景，界面靠它算。缺了的话场景页
+                    # 只能把全剧的场景一股脑列出来，看不出跟本集的关系。
+                    "location_id": s.location_id,
+                    "char_ids": [c.char_id for c in s.characters],
                     "shot_size": s.shot_size.value,
                     "camera_angle": s.camera_angle.value,
                     "camera_move": s.camera_move.value,
@@ -812,6 +1008,18 @@ def create_app(settings: Settings, default_project: Path | None = None) -> FastA
             raise HTTPException(400, f"创建目录失败：{exc}") from exc
         return {"root": str(store.root)}
 
+    @app.post("/api/project/premise")
+    async def save_premise(req: PremiseRequest) -> dict[str, Any]:
+        """存下这部剧讲什么。写下一集时当提示词用。"""
+        store = _store(req.project)
+        try:
+            project = store.load_project()
+        except (FileNotFoundError, ValueError) as exc:
+            raise HTTPException(400, str(exc)) from exc
+        project.premise = req.premise.strip()[:2000]
+        store.save_project(project)
+        return {"premise": project.premise}
+
     @app.post("/api/script/write")
     async def write_script(req: WriteScriptRequest) -> dict[str, Any]:
         """写一集剧本，回给界面让人过目。不落库。"""
@@ -832,6 +1040,10 @@ def create_app(settings: Settings, default_project: Path | None = None) -> FastA
             for ep in project.episodes:
                 if req.episode_id and ep.episode_id == req.episode_id:
                     break
+                # 预告片是从正片里剪出来的，再拿它当写正片的上下文，
+                # 模型会开始抄自己的预告，越写越像宣传语
+                if ep.episode_id == TRAILER_EPISODE_ID:
+                    continue
                 if ep.script.strip():
                     earlier.append(f"【{ep.episode_id}】\n{ep.script.strip()}")
             previous = "\n\n".join(earlier[-3:])
@@ -867,6 +1079,90 @@ def create_app(settings: Settings, default_project: Path | None = None) -> FastA
                     else "合适"),
             "continued_from": bool(previous),
             "reused_characters": names or [],
+        }
+
+    @app.post("/api/script/premise")
+    async def suggest_premises(req: PremiseIdeaRequest) -> dict[str, Any]:
+        """想几个选题给人挑。不落库，挑中哪个由界面再存。"""
+        from ..stages.script import ScriptError, ScriptGenerator
+
+        store = _store(req.project)
+        try:
+            project = store.load_project()
+        except (FileNotFoundError, ValueError) as exc:
+            raise HTTPException(400, str(exc)) from exc
+
+        # 项目上已有的梗概算一个「已经想过的方向」，避免连点两次
+        # 拿回同一批。已经写了几集的话，那些也算。
+        existing = [project.premise] if project.premise.strip() else []
+        existing += [e.synopsis for e in project.episodes if e.synopsis.strip()]
+
+        try:
+            ideas = await ScriptGenerator(settings.llm).generate_premises(
+                req.keywords, project.style_line, req.count, existing or None)
+        except ScriptError as exc:
+            raise HTTPException(400, str(exc)) from exc
+
+        return {
+            "ideas": [
+                {"title": i.title, "premise": i.premise, "hook": i.hook}
+                for i in ideas
+            ],
+            "style_line": project.style_line.value,
+        }
+
+    @app.post("/api/script/trailer")
+    async def write_trailer(req: TrailerRequest) -> dict[str, Any]:
+        """剪一条预告片。写完不落库，回给界面让人先看。"""
+        from ..stages.script import ScriptError, ScriptGenerator
+
+        store = _store(req.project)
+        try:
+            project = store.load_project()
+            assets = store.load_assets()
+        except (FileNotFoundError, ValueError) as exc:
+            raise HTTPException(400, str(exc)) from exc
+
+        wanted = set(req.episode_ids)
+        picked = [
+            ep for ep in project.episodes
+            if ep.script.strip()
+            # 预告片自己不该当自己的素材
+            and ep.episode_id != TRAILER_EPISODE_ID
+            and (not wanted or ep.episode_id in wanted)
+        ]
+        if not picked:
+            raise HTTPException(
+                400, "没有可用来剪预告的剧集。先写几集正片，再回来剪预告")
+
+        source = "\n\n".join(
+            f"【{ep.episode_id} {ep.title}】\n{ep.script.strip()}" for ep in picked)
+        names = ([c.name for c in assets.characters.values()]
+                 if req.reuse_characters else None)
+
+        try:
+            draft = await ScriptGenerator(settings.llm).generate_trailer(
+                project.premise, req.duration_s, project.style_line,
+                episodes=source, characters=names or None)
+        except ScriptError as exc:
+            raise HTTPException(400, str(exc)) from exc
+
+        text = draft.render()
+        budget = _script_budget(req.duration_s)
+        return {
+            "title": draft.title,
+            "logline": draft.logline,
+            "script": text,
+            "speakers": draft.speakers,
+            "dialogue_chars": draft.dialogue_chars,
+            "budget_chars": budget,
+            "beats": len(draft.beats),
+            # 预告片写长了比正片更要命：刷到第三秒还没看到钩子，人就划走了
+            "fit": ("偏长" if draft.dialogue_chars > budget
+                    else "偏短" if draft.dialogue_chars < budget * 0.35
+                    else "合适"),
+            "from_episodes": [ep.episode_id for ep in picked],
+            "episode_id": TRAILER_EPISODE_ID,
         }
 
     @app.get("/api/script/series")
@@ -912,7 +1208,9 @@ def create_app(settings: Settings, default_project: Path | None = None) -> FastA
                 # 前几集当上下文。只取最近三集，整季塞进去小模型撑不住，
                 # 离得远的剧情对下一集的连贯性也没什么帮助。
                 written = [f"【{ep.episode_id}】\n{ep.script.strip()}"
-                           for ep in project.episodes if ep.script.strip()]
+                           for ep in project.episodes
+                           if ep.script.strip()
+                           and ep.episode_id != TRAILER_EPISODE_ID]
                 previous = "\n\n".join(written[-3:])
                 writing.message = f"正在写第 {i + 1} 集"
                 try:
@@ -985,35 +1283,58 @@ def create_app(settings: Settings, default_project: Path | None = None) -> FastA
         if not script:
             raise HTTPException(400, "还没有剧本，先去写一集")
 
-        if assets.characters and not req.overwrite:
-            raise HTTPException(
-                409, "已经有角色设定了。要重出的话勾上覆盖，"
-                     "手改过的设定会被冲掉")
-
         try:
             fresh = await BibleGenerator(settings.llm).generate(
                 script, project.style_line)
         except BibleError as exc:
             raise HTTPException(400, str(exc)) from exc
 
-        # 风格层是用户在设置里调的，不该被每次重出角色顺手覆盖掉
-        fresh.style = assets.style
-        store.save_assets(fresh)
-        # 外观变了等于全剧提示词都变了，已渲染的镜头得退回重跑
+        # 合并，不是替换。
+        #
+        # 角色和场景是一个全剧共用的库，第五集的场景要出的时候，前四集
+        # 的场景还在里面。整个换掉的话，那些场景连同它们的空景图一起没了，
+        # 而分镜表里还留着指向它们的 id，跑起来直接报「场景未注册」。
+        #
+        # 同名的默认保留旧的：手改过的设定、传过的参考图都挂在旧的那一份上。
+        # 勾了覆盖才让新的顶掉。
+        added_c, added_l, kept = [], [], 0
+        for cid, char in fresh.characters.items():
+            if cid in assets.characters and not req.overwrite:
+                kept += 1
+                continue
+            if cid not in assets.characters:
+                added_c.append(cid)
+            assets.characters[cid] = char
+        for lid, loc in fresh.locations.items():
+            if lid in assets.locations and not req.overwrite:
+                kept += 1
+                continue
+            if lid not in assets.locations:
+                added_l.append(lid)
+            assets.locations[lid] = loc
+
+        store.save_assets(assets)
+        # 外观变了等于全剧提示词都变了，已渲染的镜头得退回重跑。
+        # 只新增没覆盖的话，老镜头用的还是原来那份设定，不用动。
         reset = _reset_all_shots(store) if req.overwrite else 0
 
         return {
+            "added_characters": added_c,
+            "added_locations": added_l,
+            "kept": kept,
             "characters": [
                 {"char_id": c.char_id, "name": c.name,
                  "identity": c.appearance.identity,
                  "face": c.appearance.face,
-                 "attire": c.appearance.attire}
-                for c in fresh.characters.values()
+                 "attire": c.appearance.attire,
+                 "is_new": c.char_id in added_c}
+                for c in assets.characters.values()
             ],
             "locations": [
                 {"location_id": loc.location_id, "name": loc.name,
-                 "space": loc.space, "lighting": loc.lighting}
-                for loc in fresh.locations.values()
+                 "space": loc.space, "lighting": loc.lighting,
+                 "is_new": loc.location_id in added_l}
+                for loc in assets.locations.values()
             ],
             "reset_shots": reset,
         }
@@ -1494,6 +1815,81 @@ def create_app(settings: Settings, default_project: Path | None = None) -> FastA
             ),
         }
 
+    @app.post("/api/shots/reorder")
+    async def reorder_shots(req: ReorderShotsRequest) -> dict[str, Any]:
+        """按给定顺序重排镜头。
+
+        必须给出完整列表。只传「把 A 挪到第 3 位」这类增量指令的话，
+        界面和引擎对当前顺序的理解一旦对不上，结果就是把片子剪乱，
+        而且是那种要播一遍才发现的乱。
+
+        不重跑任何镜头：换顺序不改画面，已经渲染好的还能用。
+        转场是装配时按前后镜头算的，跟着新顺序自然就对了。
+        """
+        store = _store(req.project)
+        project = store.load_project()
+        ep = project.episode_by_id(req.episode_id)
+        if ep is None:
+            raise HTTPException(404, f"没有剧集 {req.episode_id}")
+
+        wanted = list(req.shot_ids)
+        if len(set(wanted)) != len(wanted):
+            raise HTTPException(400, "顺序里有重复的镜头 id")
+        current = {s.shot_id for s in ep.shots}
+        if set(wanted) != current:
+            missing = sorted(current - set(wanted))
+            extra = sorted(set(wanted) - current)
+            raise HTTPException(
+                400,
+                "顺序表和这一集的镜头对不上。"
+                + (f"少了：{'、'.join(missing)}。" if missing else "")
+                + (f"多了：{'、'.join(extra)}。" if extra else ""),
+            )
+
+        rank = {sid: i for i, sid in enumerate(wanted)}
+        moved = sum(1 for s in ep.shots if s.order != rank[s.shot_id])
+        for shot in ep.shots:
+            shot.order = rank[shot.shot_id]
+        store.save_project(project)
+        return {"moved": moved, "total": len(wanted)}
+
+    @app.post("/api/shots/link_locations")
+    async def link_locations(req: LinkLocationsRequest) -> dict[str, Any]:
+        """把 location_id 空着的镜头接回场景。
+
+        老项目里的分镜多半只填了 scene_id。那样渲染时场景描述整段丢掉，
+        跑出来的画面同一个房间每镜都不一样，而且不报任何错。
+        新出的分镜已经在生成时接上了（见 stages/storyboard.link_location），
+        这个接口是给之前存下来的补的。
+        """
+        store = _store(req.project)
+        try:
+            project = store.load_project()
+            assets = store.load_assets()
+        except (FileNotFoundError, ValueError) as exc:
+            raise HTTPException(400, str(exc)) from exc
+
+        known = set(assets.locations)
+        linked: dict[str, int] = {}
+        for ep in project.episodes:
+            if req.episode_id and ep.episode_id != req.episode_id:
+                continue
+            n = 0
+            for shot in ep.shots:
+                if shot.location_id:
+                    continue
+                if shot.scene_id in known:
+                    shot.location_id = shot.scene_id
+                    n += 1
+            if n:
+                linked[ep.episode_id] = n
+        total = sum(linked.values())
+        if total:
+            store.save_project(project)
+        # 接上之后提示词才完整，已渲染的那些是按缺场景的提示词跑出来的
+        reset = _reset_all_shots(store) if total else 0
+        return {"linked": total, "episodes": linked, "reset_shots": reset}
+
     @app.post("/api/episode")
     async def new_episode(req: NewEpisodeRequest) -> dict[str, Any]:
         """新建一集。
@@ -1622,6 +2018,9 @@ def create_app(settings: Settings, default_project: Path | None = None) -> FastA
                     "location_id": loc.location_id, "name": loc.name,
                     "space": loc.space, "lighting": loc.lighting,
                     "palette": loc.palette,
+                    # 空景图是场景一致性的锚点。以前没回传，界面上就没法
+                    # 显示也没法换，等于这个字段只有命令行够得着。
+                    "ref_empty": loc.ref_empty,
                     "rendered": loc.render_prompt(assets.style.style_line),
                 }
                 for loc in assets.locations.values()
@@ -1767,6 +2166,68 @@ def create_app(settings: Settings, default_project: Path | None = None) -> FastA
         store.save_assets(assets)
         # 文件留着不删。用户可能只是想先试试没有参考图的效果，
         # 删掉的话再想用回来就得重新找那张图。
+        return {"cleared": True, "reset_shots": _reset_all_shots(store)}
+
+    @app.post("/api/location/reference")
+    async def upload_location_reference(
+        project: str = Form(...),
+        location_id: str = Form(...),
+        file: UploadFile = File(...),
+    ) -> dict[str, Any]:
+        """给场景传一张空景图。
+
+        空景图是场景一致性的锚点：同一个房间在十几个镜头里出现，光靠
+        「冷调顶光的安保室」这句话，模型每次布置的家具位置都不一样。
+        给一张没有人的空景，它就照着那个空间画。
+        """
+        store = _store(project)
+        assets = store.load_assets()
+        loc = assets.locations.get(location_id)
+        if loc is None:
+            raise HTTPException(404, f"没有场景 {location_id}")
+
+        suffix = _REF_SUFFIX.get(file.content_type or "")
+        if suffix is None:
+            raise HTTPException(
+                400, f"只收 png、jpg、webp，收到的是 {file.content_type}")
+        data = await file.read()
+        if not data:
+            raise HTTPException(400, "文件是空的")
+        if len(data) > _REF_MAX_BYTES:
+            raise HTTPException(
+                400, f"太大了（{len(data) / 1024 / 1024:.0f} MB）。"
+                     f"参考图给模型看，几千像素就够")
+
+        store.paths.refs.mkdir(parents=True, exist_ok=True)
+        dest = store.paths.refs / f"{location_id}_empty{suffix}"
+        # 换格式重传时把旧的删掉，不然 refs 里会留一张永远用不上的
+        for old_suffix in _REF_SUFFIX.values():
+            stale = store.paths.refs / f"{location_id}_empty{old_suffix}"
+            if stale != dest and stale.is_file():
+                stale.unlink()
+        dest.write_bytes(data)
+
+        rel = store.paths.rel(dest)
+        loc.ref_empty = rel
+        store.save_assets(assets)
+        # 空景图直接决定画面长什么样，跟改场景描述是一回事，得重跑
+        return {"saved": rel, "reset_shots": _reset_all_shots(store),
+                "size_kb": round(len(data) / 1024)}
+
+    @app.post("/api/location/reference/clear")
+    async def clear_location_reference(
+        req: ClearLocationReferenceRequest,
+    ) -> dict[str, Any]:
+        """撤掉空景图，退回纯文字描述。文件留着，想用回来不用重新找。"""
+        store = _store(req.project)
+        assets = store.load_assets()
+        loc = assets.locations.get(req.location_id)
+        if loc is None:
+            raise HTTPException(404, f"没有场景 {req.location_id}")
+        if not loc.ref_empty:
+            return {"cleared": False, "reset_shots": 0}
+        loc.ref_empty = None
+        store.save_assets(assets)
         return {"cleared": True, "reset_shots": _reset_all_shots(store)}
 
     @app.post("/api/location")
@@ -2046,9 +2507,14 @@ def _script_budget(duration_s: float) -> int:
 
 
 def _next_episode_id(project) -> str:
-    """下一个没被占用的剧集编号。量产时不该逼用户自己想 id。"""
+    """下一个没被占用的剧集编号。量产时不该逼用户自己想 id。
+
+    只数 epNN 那些。预告片挂在 trailer 上，把它也数进去的话，
+    有了预告之后新建的第二集会跳号变成 ep03。
+    """
     existing = {e.episode_id for e in project.episodes}
-    n = len(project.episodes) + 1
+    n = sum(1 for e in project.episodes
+            if re.fullmatch(r"ep\d+", e.episode_id)) + 1
     while f"ep{n:02d}" in existing:
         n += 1
     return f"ep{n:02d}"

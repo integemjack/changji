@@ -10,11 +10,18 @@ import { computed } from 'vue'
 import { useRoute } from 'vue-router'
 
 import AppIcon from '@/components/AppIcon.vue'
-import { STEP_ROUTES } from '@/router'
+import { PHASES, STEP_ROUTES } from '@/router'
 import { useSession } from '@/stores/session'
 
 const route = useRoute()
 const session = useSession()
+
+/** 每一段的第一步前面插一条段头，段界不用在模板里手写死。 */
+const firstOfPhase = new Map()
+for (const [i, step] of STEP_ROUTES.entries()) {
+  if (!firstOfPhase.has(step.phase)) firstOfPhase.set(step.phase, i)
+}
+const startsPhase = (i) => firstOfPhase.get(STEP_ROUTES[i].phase) === i
 
 const currentIndex = computed(() =>
   STEP_ROUTES.findIndex((s) => s.key === route.meta?.step),
@@ -46,24 +53,35 @@ function stateOf(step, index) {
     </div>
 
     <nav class="rail__nav">
-      <RouterLink
-        v-for="(step, i) in STEP_ROUTES"
-        :key="step.key"
-        class="step"
-        :class="[`step--${stateOf(step, i)}`, { 'step--active': i === currentIndex }]"
-        :to="step.path"
-      >
-        <span class="step__line" :class="{ 'step__line--first': i === 0 }" />
-        <span class="step__bullet">
-          <AppIcon v-if="session.done[step.key]" name="check" :size="12" />
-          <span v-else class="step__num numeric">{{ i + 1 }}</span>
-        </span>
-        <span class="step__text">
-          <span class="step__title">{{ step.title }}</span>
-          <span class="step__tagline">{{ step.tagline }}</span>
-        </span>
-        <AppIcon class="step__icon" :name="step.icon" :size="15" />
-      </RouterLink>
+      <template v-for="(step, i) in STEP_ROUTES" :key="step.key">
+        <div v-if="startsPhase(i)" class="phase">
+          <span class="phase__title">{{ PHASES[step.phase].title }}</span>
+          <span class="phase__hint">
+            {{
+              step.phase === 'episode' && session.episodeId
+                ? session.episodeId
+                : PHASES[step.phase].hint
+            }}
+          </span>
+        </div>
+
+        <RouterLink
+          class="step"
+          :class="[`step--${stateOf(step, i)}`, { 'step--active': i === currentIndex }]"
+          :to="step.path"
+        >
+          <span class="step__line" :class="{ 'step__line--first': startsPhase(i) }" />
+          <span class="step__bullet">
+            <AppIcon v-if="session.done[step.key]" name="check" :size="12" />
+            <span v-else class="step__num numeric">{{ i + 1 }}</span>
+          </span>
+          <span class="step__text">
+            <span class="step__title">{{ step.title }}</span>
+            <span class="step__tagline">{{ step.tagline }}</span>
+          </span>
+          <AppIcon class="step__icon" :name="step.icon" :size="15" />
+        </RouterLink>
+      </template>
     </nav>
 
     <RouterLink to="/settings" class="rail__settings">
@@ -117,6 +135,32 @@ function stateOf(step, index) {
   flex-direction: column;
   padding: var(--s2) var(--s3);
   flex: 1;
+}
+
+/* 段头。八步平铺成一条的时候，看不出「前三步做一次、后五步每集重复」，
+   用户会以为角色也要每集重出一遍。 */
+.phase {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s2);
+  margin: var(--s3) 0 var(--s2);
+  padding: 0 var(--s3);
+}
+.phase:first-child {
+  margin-top: 0;
+}
+.phase__title {
+  font-size: var(--fs-xs);
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  color: var(--text-2);
+}
+.phase__hint {
+  font-size: 10px;
+  color: var(--text-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .step {

@@ -256,3 +256,94 @@ class TestSettingsPersist:
                            json={"patch": {"没这项": 1}}).status_code == 422
         assert client.post("/api/settings",
                            json={"没这项": 1}).status_code == 422
+
+
+class TestProviders:
+    """常见大模型平台的接入地址。
+
+    各家都是 OpenAI 兼容接口，差别只在 base_url 和密钥。列出来是为了
+    免得用户去翻各家文档找那一行地址——填错地址的后果是跑到写剧本
+    那一步才炸，而报出来的 404 分不清是地址错还是模型名错。
+    """
+
+    def test_列得出来(self, client):
+        r = client.get("/api/llm/providers")
+        assert r.status_code == 200
+        providers = r.json()["providers"]
+        assert len(providers) >= 10
+
+    def test_每一条都能直接填进设置(self, client):
+        """地址必须是完整的 http(s) 地址，不能是「见文档」这种占位。"""
+        for p in client.get("/api/llm/providers").json()["providers"]:
+            assert p["base_url"].startswith(("http://", "https://")), p["id"]
+            assert p["name"] and p["note"], p["id"]
+            assert isinstance(p["local"], bool), p["id"]
+
+    def test_id_不重复(self, client):
+        ids = [p["id"] for p in client.get("/api/llm/providers").json()["providers"]]
+        assert len(ids) == len(set(ids))
+
+    def test_本机和云端都有(self, client):
+        """只给云服务的话，装完连个能立刻试通的选项都没有。"""
+        providers = client.get("/api/llm/providers").json()["providers"]
+        assert any(p["local"] for p in providers)
+        assert any(not p["local"] for p in providers)
+
+
+class TestModelList:
+    """那台服务上有哪些模型。界面靠它把手打的模型名换成可选的。"""
+
+    def test_连不上时给空列表和原因(self, client, monkeypatch):
+        """列不出来不该让设置页整个不能用，退回手打就行。
+
+        这里必须把网络打桩掉。不打桩的话，开发机上正好跑着 Ollama
+        就会真连上去，测试结果跟着机器走——那种测试过了也说明不了什么。
+        """
+        import httpx
+
+        class Offline:
+            def __init__(self, *a, **k):
+                pass
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *a):
+                return False
+
+            async def get(self, url, headers=None):
+                raise httpx.ConnectError("连不上", request=httpx.Request("GET", url))
+
+        monkeypatch.setattr(httpx, "AsyncClient", Offline)
+        r = client.get("/api/llm/models")
+        assert r.status_code == 200, "列不出来也不该报 500，那会把设置页整页打死"
+        body = r.json()
+        assert body["models"] == []
+        assert body["error"], "列不出来必须说清楚为什么"
+
+    def test_问得到时按名字排好(self, client, monkeypatch):
+        import httpx
+
+        class FakeClient:
+            def __init__(self, *a, **k):
+                pass
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *a):
+                return False
+
+            async def get(self, url, headers=None):
+                return httpx.Response(
+                    200,
+                    json={"data": [{"id": "b-model"}, {"id": "a-model"},
+                                   {"id": "b-model"}]},
+                    request=httpx.Request("GET", url),
+                )
+
+        monkeypatch.setattr(httpx, "AsyncClient", FakeClient)
+        body = client.get("/api/llm/models").json()
+        # 去重并排序：同一个模型报两遍在下拉框里会出现两条一样的
+        assert body["models"] == ["a-model", "b-model"]
+        assert body["current"]

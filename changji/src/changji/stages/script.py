@@ -24,6 +24,7 @@ import httpx
 from ..config import LLMConfig
 from ..models.character import StyleLine
 from .audio import CHARS_PER_SECOND
+from ._llm import raise_for_status as _raise_for_status
 
 
 class ScriptError(RuntimeError):
@@ -181,6 +182,51 @@ _SCHEMA: dict[str, Any] = {
 }
 
 
+# 想选题用的 schema。一次给几个而不是一个：定调子这件事，
+# 摆三个方案在面前挑，比看一个方案判断「行不行」容易得多。
+_PREMISE_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["ideas"],
+    "properties": {
+        "ideas": {
+            "type": "array",
+            "minItems": 3,
+            "maxItems": 5,
+            "items": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["title", "premise", "hook"],
+                "properties": {
+                    "title": {
+                        "type": "string",
+                        "description": "剧名，八个字以内",
+                    },
+                    "premise": {
+                        "type": "string",
+                        "description": "一两句话说清这部剧讲什么。"
+                                       "要具体到人物和处境，不要写题材标签",
+                    },
+                    "hook": {
+                        "type": "string",
+                        "description": "一句话说清观众为什么会看下去",
+                    },
+                },
+            },
+        }
+    },
+}
+
+
+@dataclass
+class PremiseIdea:
+    """一个选题。"""
+
+    title: str
+    premise: str
+    hook: str
+
+
 @dataclass
 class ScriptDraft:
     """写出来的一集。"""
@@ -268,6 +314,107 @@ def build_prompt(
     return "\n".join(parts)
 
 
+def build_premise_prompt(
+    keywords: str, style_line: StyleLine, count: int = 3,
+    existing: list[str] | None = None,
+) -> str:
+    """想选题的提示词。
+
+    最容易出的问题是模型给一堆题材标签——「都市 / 复仇 / 逆袭」。
+    那种东西写不成剧本：下一步要拿它当写剧本的输入，标签里没有人物、
+    没有处境，模型只能自己编，编出来的每一集互不相干。
+    所以这里反复要求具体到人和事。
+    """
+    style_hint = (
+        "真人写实短剧，题材要落在现实生活里"
+        if style_line is StyleLine.REALISTIC
+        else "动漫短剧，可以有超现实设定，但情感冲突要真实"
+    )
+    parts = [
+        f"你在给一部竖屏{style_hint}想选题。给出 {count} 个不同方向的方案。",
+        "",
+        "硬性要求：",
+        "1. premise 必须具体到人物和处境，一两句话。"
+        "「都市复仇爽剧」这种是题材标签不是选题，不要给。",
+        "2. 一句话里就要有冲突。没有冲突的设定拍不成短剧。",
+        "3. 主要人物不超过三个，短剧里人一多就立不住。",
+        "4. 几个方案要拉开差距，不要三个都是同一个故事换名字。",
+        "5. 是能一直往下拍的设定，不是一集就讲完的段子。",
+        "6. title 是剧名，八个字以内，不要副标题。",
+    ]
+    if keywords.strip():
+        parts += [
+            "",
+            f"往这个方向想：{keywords.strip()}",
+        ]
+    if existing:
+        # 已经有的方向要避开，否则连点两次「再想几个」会拿到同一批
+        parts += [
+            "",
+            "下面这些方向已经有了，换别的：",
+            "、".join(e.strip()[:60] for e in existing[:6]),
+        ]
+    parts += ["", "只输出 JSON，不要任何解释文字。"]
+    return "\n".join(parts)
+
+
+def build_trailer_prompt(
+    premise: str, duration_s: float, style_line: StyleLine,
+    episodes: str = "", characters: list[str] | None = None,
+) -> str:
+    """预告片的提示词。
+
+    预告片和正片是两种东西，不能拿写正片的那套提示词缩短了用：
+
+    正片要把一件事讲完，预告片要的正好相反——只给钩子，不给答案。
+    正片是一条连续的时间线，预告片是几个不相干瞬间的蒙太奇。
+    正片结尾留情绪落点，预告片结尾留悬念和「点进去看」的冲动。
+
+    所以另写一套，跟 build_prompt 共用同一个 JSON schema 就够了：
+    下游的分镜、配音、装配认的是渲染出来的那段文本，不关心它怎么来的。
+    """
+    chars = budget_chars(duration_s)
+    style_hint = (
+        "真人写实短剧" if style_line is StyleLine.REALISTIC else "动漫短剧"
+    )
+    parts = [
+        f"你在写一部竖屏{style_hint}的预告片，总时长约 {duration_s:.0f} 秒。",
+        "",
+        "预告片不是把正片缩短，是另一种东西。硬性要求：",
+        f"1. 所有对白加起来控制在 {chars} 个字以内。预告片以画面为主，"
+        f"话越少越有劲。",
+        "2. 用蒙太奇：几个不相干的瞬间快速切换，不要讲一条完整的时间线。",
+        "3. 前两秒必须是全片最抓人的那个画面或那句话，刷到就得停下来。",
+        "4. 只给钩子，不给答案。关键情节点到为止，结局绝对不能剧透。",
+        "5. 结尾停在悬念上，可以是一句反问、一个未完成的动作或一个眼神。",
+        "6. 对白只写说出口的话，不要带引号，不要在 text 里重复人名。",
+        "7. 出场角色不超过三个，名字前后一模一样。",
+        "8. title 写这部剧的名字，logline 写一句能当封面文案的钩子。",
+    ]
+    if characters:
+        parts += [
+            "",
+            f"必须沿用这些已有角色，名字一字不改：{'、'.join(characters)}。",
+        ]
+    if episodes:
+        parts += [
+            "",
+            "已经写好的剧集如下。从里面挑最有冲击力的瞬间来剪，"
+            "不要编造剧里没有的情节，也不要把结局说出来：",
+            "",
+            episodes.strip()[:6000],
+        ]
+    parts += [
+        "",
+        "这部剧讲的是：",
+        "",
+        premise.strip(),
+        "",
+        "只输出 JSON，不要任何解释文字。",
+    ]
+    return "\n".join(parts)
+
+
 class ScriptGenerator:
     """从一句梗概写出一集剧本。"""
 
@@ -285,15 +432,75 @@ class ScriptGenerator:
             build_prompt(premise, duration_s, style_line, previous, characters))
         return self._parse(raw)
 
-    async def _complete(self, prompt: str) -> str:
+    async def generate_premises(
+        self, keywords: str = "", style_line: StyleLine = StyleLine.REALISTIC,
+        count: int = 3, existing: list[str] | None = None,
+    ) -> list[PremiseIdea]:
+        """想几个选题。
+
+        「这部剧讲什么」是整条流水线的源头，也是最难从零开始的一步。
+        给三个方案挑，比对着空白框发呆容易。
+        """
+        count = max(3, min(5, count))
+        raw = await self._complete(
+            build_premise_prompt(keywords, style_line, count, existing),
+            schema=_PREMISE_SCHEMA, name="premises")
+        return self._parse_premises(raw)
+
+    @staticmethod
+    def _parse_premises(raw: str) -> list[PremiseIdea]:
+        from .storyboard import _extract_json
+
+        data = _extract_json(raw)
+        items = data.get("ideas") if isinstance(data, dict) else data
+        if not isinstance(items, list) or not items:
+            raise ScriptError("大模型没给出任何选题")
+
+        ideas: list[PremiseIdea] = []
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            premise = strip_wrapper(str(item.get("premise") or ""))
+            if not premise:
+                continue
+            ideas.append(PremiseIdea(
+                title=strip_wrapper(str(item.get("title") or "")),
+                premise=premise,
+                hook=strip_wrapper(str(item.get("hook") or "")),
+            ))
+        if not ideas:
+            raise ScriptError("大模型给的选题全是空的")
+        return ideas
+
+    async def generate_trailer(
+        self, premise: str, duration_s: float = 20.0,
+        style_line: StyleLine = StyleLine.REALISTIC,
+        episodes: str = "", characters: list[str] | None = None,
+    ) -> ScriptDraft:
+        """写一条预告片。
+
+        产出和正片一样是 ScriptDraft，所以后面的分镜、配音、装配一步
+        都不用改——对流水线来说预告片就是特别短的一集。
+        """
+        if not premise.strip() and not episodes.strip():
+            raise ScriptError("既没有梗概也没有写好的剧集，剪不出预告片")
+        raw = await self._complete(build_trailer_prompt(
+            premise or "见下面已写好的剧集", duration_s, style_line,
+            episodes=episodes, characters=characters))
+        return self._parse(raw)
+
+    async def _complete(
+        self, prompt: str, schema: dict[str, Any] | None = None,
+        name: str = "script",
+    ) -> str:
         payload: dict[str, Any] = {
             "model": self.config.model,
             "messages": [{"role": "user", "content": prompt}],
             "temperature": self.config.temperature,
             "response_format": {
                 "type": "json_schema",
-                "json_schema": {"name": "script", "strict": True,
-                                "schema": _SCHEMA},
+                "json_schema": {"name": name, "strict": True,
+                                "schema": schema or _SCHEMA},
             },
         }
         headers = {"Authorization": f"Bearer {self.config.api_key}"}
@@ -310,7 +517,7 @@ class ScriptGenerator:
                 payload["response_format"] = {"type": "json_object"}
                 r = await http.post(f"{self.config.base_url}/chat/completions",
                                     json=payload, headers=headers)
-            r.raise_for_status()
+            _raise_for_status(self.config, r, ScriptError)
             body = r.json()
         try:
             return body["choices"][0]["message"]["content"]

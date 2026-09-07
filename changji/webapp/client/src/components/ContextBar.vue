@@ -7,13 +7,26 @@
  * 第三集的分镜页上点出第一集的成片。
  */
 import { computed } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 
 import AppIcon from '@/components/AppIcon.vue'
+import { STEP_ROUTES } from '@/router'
 import { useSession } from '@/stores/session'
 
 const session = useSession()
 const router = useRouter()
+const route = useRoute()
+
+/**
+ * 只有分集那几步才显示集号选择器。
+ *
+ * 项目、剧本大纲、角色是全剧的事，在那几页摆一个「当前集」会让人以为
+ * 角色也要每集重出一遍。
+ */
+const phase = computed(
+  () => STEP_ROUTES.find((s) => s.key === route.meta?.step)?.phase ?? 'series',
+)
+const perEpisode = computed(() => phase.value === 'episode')
 
 const name = computed(
   () => session.project?.title || session.project?.project_id || '',
@@ -39,30 +52,35 @@ function onPick(event) {
         <span class="ctx__path tiny dim truncate">{{ shortPath }}</span>
       </button>
 
-      <span class="ctx__sep" />
+      <template v-if="perEpisode">
+        <span class="ctx__sep" />
 
-      <label class="ctx__episode">
-        <span class="tiny dim nowrap">当前集</span>
-        <select
-          class="select select--slim"
-          :value="session.episodeId"
-          :disabled="!session.episodes.length"
-          @change="onPick"
-        >
-          <option v-if="!session.episodes.length" value="">还没有剧集</option>
-          <option
-            v-for="ep in session.episodes"
-            :key="ep.episode_id"
-            :value="ep.episode_id"
+        <label class="ctx__episode">
+          <span class="tiny dim nowrap">当前集</span>
+          <select
+            class="select select--slim"
+            :value="session.episodeId"
+            :disabled="!session.episodes.length"
+            @change="onPick"
           >
-            {{ ep.episode_id }} · {{ ep.title || '未命名' }}（{{ ep.shots }} 镜）
-          </option>
-        </select>
-      </label>
+            <option v-if="!session.episodes.length" value="">还没有剧集</option>
+            <option
+              v-for="ep in session.episodes"
+              :key="ep.episode_id"
+              :value="ep.episode_id"
+            >
+              {{ ep.episode_id }} · {{ ep.title || '未命名' }}（{{ ep.shots }} 镜）
+            </option>
+          </select>
+        </label>
+      </template>
+      <span v-else class="pill pill--neutral nowrap ctx__scope">
+        全剧共用 · {{ session.episodes.length }} 集
+      </span>
 
       <span class="spacer" />
 
-      <span v-if="session.counters.shots" class="pill pill--neutral nowrap">
+      <span v-if="perEpisode && session.counters.shots" class="pill pill--neutral nowrap">
         {{ session.counters.produced }} / {{ session.counters.shots }} 镜已完成
       </span>
 
@@ -183,8 +201,15 @@ function onPick(event) {
   .ctx__path {
     display: none;
   }
+  /* 「当前集」这三个字挤掉的正是项目名。下拉框本身已经说清楚是什么了 */
+  .ctx__episode > .tiny {
+    display: none;
+  }
+  .ctx__project {
+    min-width: 5em;
+  }
   .select--slim {
-    max-width: 190px;
+    max-width: 160px;
   }
 }
 </style>

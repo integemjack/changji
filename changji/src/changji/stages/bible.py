@@ -18,6 +18,7 @@ from ..config import LLMConfig
 from ..models.character import (
     AppearanceBlock, AssetLibrary, Character, Location, StyleLine, StyleProfile, guess_gender,
 )
+from ._llm import raise_for_status as _raise_for_status
 
 
 class BibleError(RuntimeError):
@@ -146,7 +147,7 @@ class BibleGenerator:
                 payload["response_format"] = {"type": "json_object"}
                 r = await http.post(f"{self.config.base_url}/chat/completions",
                                     json=payload, headers=headers)
-            r.raise_for_status()
+            _raise_for_status(self.config, r, BibleError)
             body = r.json()
         try:
             return body["choices"][0]["message"]["content"]

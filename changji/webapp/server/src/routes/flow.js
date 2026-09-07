@@ -12,29 +12,61 @@ import { callEngine } from '../engine.js'
 
 export const flowRouter = Router()
 
+/**
+ * 八步分两段。
+ *
+ * series 那三步做一次，整部剧共用；episode 那五步对着当前这一集走。
+ * 前端的侧边导航靠 phase 分段，这里也用它来决定一步该按全剧判定
+ * 还是按当前集判定。
+ */
 export const STEPS = [
-  { key: 'project', title: '项目', hint: '选一个项目，或者新建一个' },
-  { key: 'script', title: '剧本大纲', hint: '给一句梗概，让大模型写出整集剧本' },
-  { key: 'characters', title: '角色', hint: '定下每个角色的长相和音色' },
-  { key: 'scenes', title: '场景', hint: '定下每个场景的空间和光线' },
-  { key: 'storyboard', title: '分镜', hint: '把剧本拆成一个个镜头' },
-  { key: 'production', title: '制作', hint: '配音、首帧、草稿、成片，跑流水线' },
-  { key: 'film', title: '成片', hint: '看装配好的整集' },
-  { key: 'publish', title: '上传至平台', hint: '带上标题和话题投递出去' },
+  { key: 'project', phase: 'series', title: '项目', hint: '选一个项目，或者新建一个' },
+  { key: 'script', phase: 'series', title: '剧本大纲', hint: '全剧讲什么、分几集、每集写什么' },
+  { key: 'characters', phase: 'series', title: '角色', hint: '从剧本提人物，全剧同一批' },
+  { key: 'scenes', phase: 'episode', title: '场景', hint: '这一集在哪儿拍' },
+  { key: 'storyboard', phase: 'episode', title: '分镜', hint: '把这一集拆成一个个镜头' },
+  { key: 'production', phase: 'episode', title: '制作', hint: '配音、首帧、草稿、成片' },
+  { key: 'film', phase: 'episode', title: '成片', hint: '看装配好的这一集' },
+  { key: 'publish', phase: 'episode', title: '上传至平台', hint: '带上标题和话题投递出去' },
 ]
 
 /**
- * 一集在流水线上走到哪了。
+ * 每一步做完了没有。
  *
  * 判定看的是数据本身而不是「用户点没点过下一步」。中途关掉浏览器
  * 第二天回来，进度得还在。
  */
-function assessEpisode(project, shots, episode, publishedIds) {
+function assess(project, shots, episode, publishedIds) {
   const done = {}
   done.project = Boolean(project?.project_id)
-  done.script = Boolean(episode && String(episode.synopsis || '').trim())
+
+  // 剧本大纲是全剧的事：有梗概，并且至少一集写出了内容。
+  // 只看当前这一集的话，新建第五集时前四步的对勾会集体消失。
+  const written = (project?.episodes ?? []).filter((e) => e.shots > 0 || e.synopsis)
+  done.script =
+    Boolean(String(project?.premise || '').trim()) && written.length > 0
+
   done.characters = (project?.characters?.length ?? 0) > 0
-  done.scenes = (project?.locations?.length ?? 0) > 0
+
+  // 场景库是全剧共用的，但这一步问的是「这一集够不够」：
+  // 分镜还没出的时候只要库里有场景就算数；出了分镜之后，
+  // 这一集引用到的场景必须都在库里，否则跑到一半会报「场景未注册」。
+  const known = new Set((project?.locations ?? []).map((l) => l.location_id))
+  // 老分镜常把场景 id 填在 scene_id 里、location_id 留空。那种镜头渲染时
+  // 拿不到场景描述，界面上要能看出来，所以这里两个字段都认。
+  const used = new Set()
+  let unlinked = 0
+  for (const s of shots) {
+    if (s.location_id) {
+      used.add(s.location_id)
+    } else if (s.scene_id && known.has(s.scene_id)) {
+      used.add(s.scene_id)
+      unlinked += 1
+    }
+  }
+  const missing = [...used].filter((id) => !known.has(id))
+  done.scenes = known.size > 0 && missing.length === 0 && unlinked === 0
+
   done.storyboard = shots.length > 0
 
   const finalStates = new Set(['final_done', 'locked', 'fallback'])
@@ -49,7 +81,11 @@ function assessEpisode(project, shots, episode, publishedIds) {
       shots: shots.length,
       produced: producedShots,
       characters: project?.characters?.length ?? 0,
-      locations: project?.locations?.length ?? 0,
+      locations: known.size,
+      episodeLocations: used.size,
+      missingLocations: missing,
+      unlinkedShots: unlinked,
+      episodesWritten: written.length,
       lipsync: shots.filter((s) => s.needs_lipsync).length,
       plannedDurationS: shots.reduce((a, s) => a + (s.duration_s || 0), 0),
     },
@@ -110,7 +146,7 @@ flowRouter.get('/', async (req, res) => {
       .map((r) => r.episodeId),
   )
 
-  const assessed = assessEpisode(project, shots, episode, publishedIds)
+  const assessed = assess(project, shots, episode, publishedIds)
   // 成片文件名里带集号。没挑集时只要出过片就算走到这一步了。
   assessed.done.film = outputs.some(
     (o) => !episodeId || String(o.name || '').includes(episodeId),

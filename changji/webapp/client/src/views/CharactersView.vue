@@ -6,7 +6,7 @@
  * 全剧几十个镜头的提示词都跟着变——引擎会把已渲染的镜头退回重跑，
  * 界面必须把这件事说在前面，别让人改完才发现成片全没了。
  */
-import { computed, ref, watch } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
 
 import AppIcon from '@/components/AppIcon.vue'
 import EmptyState from '@/components/EmptyState.vue'
@@ -26,6 +26,7 @@ const openId = ref('')
 const edits = ref({}) // char_id -> 编辑中的副本
 const voices = ref([])
 const voicesError = ref('')
+const voicesLoading = ref(false)
 
 const SLOTS = [
   { key: 'front', label: '正面' },
@@ -61,20 +62,44 @@ async function load() {
 
 watch(() => session.projectPath, load, { immediate: true })
 
+/**
+ * 问服务端有哪些参考音色。
+ *
+ * 这一问要走到 ComfyUI 那台机器上。它没起来的时候会一直等到超时，
+ * 所以必须有个「正在问」的状态——否则下拉框空着一分钟，
+ * 用户以为这个项目没有音色可选。
+ */
 async function loadVoices() {
   voicesError.value = ''
+  voicesLoading.value = true
   try {
     const data = await api.voices(session.projectPath)
     voices.value = data.voices ?? []
     if (data.error) voicesError.value = data.error
   } catch (err) {
     voicesError.value = err.message
+  } finally {
+    voicesLoading.value = false
   }
 }
 
-function toggle(charId) {
+async function toggle(charId) {
+  // 改了外观直接收起来，改动就没了。先问一句。
+  if (openId.value && changed(openId.value)) {
+    if (!confirm('这个角色有改动还没保存，收起就没了。确定？')) return
+    // 放弃的那一份要还原，否则「未保存」的红标会一直挂在列表上
+    const was = characters.value.find((c) => c.char_id === openId.value)
+    if (was) edits.value[openId.value] = { ...was }
+  }
   openId.value = openId.value === charId ? '' : charId
-  if (openId.value && !voices.value.length && !voicesError.value) loadVoices()
+  if (!openId.value) return
+  if (!voices.value.length && !voicesError.value) loadVoices()
+  // 展开的那一块很高。点的是列表靠下的角色时，内容全在屏幕外面，
+  // 看上去就像「点了没反应」。等一帧渲染完再把它拉回视野里。
+  await nextTick()
+  document
+    .querySelector(`[data-char="${charId}"]`)
+    ?.scrollIntoView({ behavior: 'smooth', block: 'start' })
 }
 
 function changed(charId) {
@@ -86,23 +111,29 @@ function changed(charId) {
   )
 }
 
+/**
+ * 从剧本提角色。
+ *
+ * 角色是全剧共用的一批，所以不指定集号——引擎会挑第一集有内容的剧本。
+ * 默认只补新出现的人物：老角色的设定和参考图都留着。第五集冒出一个新
+ * 角色时，不该把前四集主角的脸重新想一遍。
+ */
 async function generate(overwrite) {
-  if (overwrite && !confirm('重出角色设定会冲掉手改过的内容，已渲染的镜头也要重跑。继续？')) {
+  if (overwrite && !confirm('覆盖会冲掉手改过的设定和传过的参考图，已渲染的镜头也要重跑。继续？')) {
     return
   }
   const result = await run(
-    () =>
-      api.makeBible({
-        project: session.projectPath,
-        episode_id: session.episodeId,
-        overwrite,
-      }),
+    () => api.makeBible({ project: session.projectPath, overwrite }),
     { key: 'bible', refresh: true },
   )
-  if (result) {
-    ui.ok(`出了 ${result.characters.length} 个角色、${result.locations.length} 个场景`)
-    await load()
-  }
+  if (!result) return
+  const added = result.added_characters?.length ?? 0
+  ui.ok(
+    added
+      ? `补了 ${added} 个新角色：${result.added_characters.join('、')}`
+      : '剧本里的人物库里都有了，没补新的',
+  )
+  await load()
 }
 
 async function save(charId) {
@@ -165,17 +196,27 @@ async function clearRef(charId, slot) {
           刷新
         </button>
         <button
+          v-if="characters.length"
+          class="btn btn--ghost"
+          type="button"
+          :disabled="isBusy('bible')"
+          title="同名角色用新出的顶掉旧的，手改过的设定和参考图会丢"
+          @click="generate(true)"
+        >
+          全部重出
+        </button>
+        <button
           class="btn btn--ai"
           type="button"
           :disabled="!session.hasProject || isBusy('bible')"
-          @click="generate(characters.length > 0)"
+          @click="generate(false)"
         >
           <AppIcon name="sparkle" :size="15" />
           {{
             isBusy('bible')
-              ? '大模型正在出设定…'
+              ? '大模型正在读剧本…'
               : characters.length
-                ? 'AI 重出角色设定'
+                ? 'AI 补新角色'
                 : 'AI 从剧本出角色'
           }}
         </button>
@@ -217,6 +258,7 @@ async function clearRef(charId, slot) {
           :key="c.char_id"
           class="chr card"
           :class="{ 'chr--open': openId === c.char_id }"
+          :data-char="c.char_id"
         >
           <button class="chr__head" type="button" @click="toggle(c.char_id)">
             <span class="chr__avatar">
@@ -327,7 +369,15 @@ async function clearRef(charId, slot) {
                     <option :value="null">自动挑（按性别和中文样本）</option>
                     <option v-for="v in voices" :key="v" :value="v">{{ v }}</option>
                   </select>
-                  <span v-if="voicesError" class="field__error">{{ voicesError }}</span>
+                  <span v-if="voicesLoading" class="field__hint">
+                    正在问 ComfyUI 有哪些音色…它没起来的话要等到超时。
+                  </span>
+                  <span v-else-if="voicesError" class="field__error">
+                    {{ voicesError }}
+                  </span>
+                  <span v-else-if="!voices.length" class="field__hint">
+                    没问到音色。留「自动挑」也能跑，配音时按性别和中文样本挑。
+                  </span>
                   <span v-else class="field__hint">
                     列表来自 ComfyUI 那台机器，装了哪些插件就有哪些选项。
                   </span>
@@ -452,13 +502,21 @@ async function clearRef(charId, slot) {
   grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr);
   gap: var(--s6);
 }
+/* 保存条钉在视口底部。展开的角色编辑器比屏幕高，保存按钮在最下面，
+   改完上面几段外观得先滚到底才找得到——那正是「以为存不上」的来源。 */
 .chr__foot {
+  position: sticky;
+  bottom: 0;
+  z-index: 4;
   display: flex;
   align-items: center;
   gap: var(--s2);
-  margin-top: var(--s5);
-  padding-top: var(--s4);
+  flex-wrap: wrap;
+  margin: var(--s5) calc(var(--s5) * -1) calc(var(--s5) * -1);
+  padding: var(--s3) var(--s5);
   border-top: 1px solid var(--line);
+  background: color-mix(in srgb, var(--surface-2) 94%, transparent);
+  backdrop-filter: blur(8px);
 }
 
 .textarea--tight {

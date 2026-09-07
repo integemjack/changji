@@ -1,9 +1,19 @@
 <script setup>
+import { onMounted, onUnmounted } from 'vue'
+
 import AppIcon from '@/components/AppIcon.vue'
 import { useUi } from '@/stores/ui'
 
 const ui = useUi()
 const ICONS = { ok: 'check', info: 'info', warn: 'warn', error: 'warn' }
+
+// main.js 里的全局错误处理够不到 store（会绕成循环依赖），
+// 所以它发一个事件，由这儿接住变成提示条。
+function onGlobalError(event) {
+  ui.error(event.detail)
+}
+onMounted(() => window.addEventListener('changji:error', onGlobalError))
+onUnmounted(() => window.removeEventListener('changji:error', onGlobalError))
 </script>
 
 <template>

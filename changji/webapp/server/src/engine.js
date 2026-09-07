@@ -6,6 +6,7 @@
  */
 
 import { Readable } from 'node:stream'
+import { pipeline } from 'node:stream/promises'
 import { loadConfig } from './config.js'
 
 export class EngineError extends Error {
@@ -63,15 +64,32 @@ export async function callEngine(pathname, { method = 'GET', body, search, timeo
  */
 export async function proxy(req, res) {
   const cfg = loadConfig()
-  const qs = req.originalUrl.includes('?')
-    ? req.originalUrl.slice(req.originalUrl.indexOf('?'))
-    : ''
-  const target = engineUrl(req.path, qs)
+  // originalUrl 才带着挂载前缀。用 req.path 的话 app.use('/api', …)
+  // 会把 /api 吃掉，转出去就变成了 /projects，引擎一律 404。
+  const at = req.originalUrl.indexOf('?')
+  const pathname = at >= 0 ? req.originalUrl.slice(0, at) : req.originalUrl
+  const qs = at >= 0 ? req.originalUrl.slice(at) : ''
+  const target = engineUrl(pathname, qs)
 
-  const init = { method: req.method, headers: {}, redirect: 'manual' }
+  // 浏览器中途放弃这次请求时（拖进度条、缩略图还没加载完就滚走了），
+  // 要把上游那一路也掐掉，否则引擎那边会继续吐一整个视频给没人要的连接。
+  const abort = new AbortController()
+  const onClientGone = () => abort.abort()
+  req.on('aborted', onClientGone)
+  res.on('close', () => {
+    if (!res.writableEnded) abort.abort()
+  })
+
+  const init = { method: req.method, headers: {}, redirect: 'manual', signal: abort.signal }
   // multipart 上传（参考图）原样透传，不能在这里 JSON 化
   const ct = req.headers['content-type']
   if (ct) init.headers['content-type'] = ct
+  // Range 必须转过去。不转的话引擎每次都回整个文件，浏览器认定这个源
+  // 不支持随机访问，成片页拖进度条和按分镜跳转就全都跳回 0 秒。
+  for (const name of ['range', 'if-range', 'if-none-match', 'if-modified-since']) {
+    const value = req.headers[name]
+    if (value) init.headers[name] = value
+  }
   if (req.method !== 'GET' && req.method !== 'HEAD') {
     init.body = req.rawBody ?? req
     init.duplex = 'half'
@@ -81,6 +99,7 @@ export async function proxy(req, res) {
   try {
     upstream = await fetch(target, init)
   } catch (err) {
+    if (abort.signal.aborted) return // 浏览器自己不要了，没人在等这个响应
     res.status(503).json({
       detail: `连不上引擎 ${cfg.engineBaseUrl}：${err.message}`,
       engineOffline: true,
@@ -89,18 +108,37 @@ export async function proxy(req, res) {
   }
 
   res.status(upstream.status)
+  const encoded = Boolean(upstream.headers.get('content-encoding'))
   for (const [key, value] of upstream.headers) {
-    // 让 Node 自己算长度和编码，照抄上游的容易和实际发出的对不上
-    if (['content-encoding', 'content-length', 'transfer-encoding', 'connection'].includes(key)) {
-      continue
-    }
+    // fetch 已经把压缩解开了，上游的 content-encoding 和 content-length
+    // 跟实际发出去的对不上，照抄会让浏览器把响应判成损坏
+    if (['content-encoding', 'transfer-encoding', 'connection'].includes(key)) continue
+    // 没压缩时长度是准的，留着——视频要靠它算进度条
+    if (key === 'content-length' && encoded) continue
     res.setHeader(key, value)
   }
   if (!upstream.body) {
     res.end()
     return
   }
-  Readable.fromWeb(upstream.body).pipe(res)
+
+  // 必须用 pipeline 而不是 pipe。
+  //
+  // pipe 不管上游报错：连接中途断了（引擎重启、浏览器拖进度条放弃了这次
+  // 请求）会在这个 Readable 上抛一个没人接的 'error' 事件，Node 的默认行为
+  // 是让整个进程崩掉——一次拖进度条就能把整个 Web 服务干掉。
+  // 这条在本机实测发生过：读了 485KB 视频之后 other side closed，进程退出。
+  try {
+    await pipeline(Readable.fromWeb(upstream.body), res)
+  } catch (err) {
+    // 断流是常态不是故障：视频拖进度条、缩略图还没加载完就滚走了，
+    // 都会走到这儿。记一行就够，不要惊动上层。
+    if (!abort.signal.aborted && !res.writableEnded) {
+      console.warn(`转发中断 ${pathname}：${err.message}`)
+    }
+  } finally {
+    req.off('aborted', onClientGone)
+  }
 }
 
 /** 引擎在不在。设置页和顶栏的状态灯用这个。 */

@@ -1,0 +1,10 @@
+# 构建上下文里别塞这些：装好的依赖和打包产物都在镜像里重新生成，
+# 拷进去只会让每次构建多传几百兆。
+node_modules
+*/node_modules
+client/dist
+.vite
+*.log
+Dockerfile
+.dockerignore
+README.md
