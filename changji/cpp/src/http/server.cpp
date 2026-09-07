@@ -13,6 +13,7 @@
 #include "http/upload.hpp"
 #include "http/readonly.hpp"
 #include "http/ws.hpp"
+#include "pipeline/jobs.hpp"
 
 namespace changji::http {
 
@@ -55,6 +56,13 @@ std::string query(const crow::request& req, const char* key) {
 
 void run(const config::Settings& settings, const Options& opts) {
     crow::SimpleApp app;
+
+    // job 表往 WebSocket 推消息，但它不认识 WebSocket——中间靠这个回调接上。
+    // 分层的好处很实在：jobs.cpp 因此不用链 Crow，单元测试才编得动。
+    pipeline::jobs().set_sink(
+        [](const std::string& job_id, const json& msg) {
+            ws::hub().broadcast(job_id, msg);
+        });
 
     // ---- REST ----
 
@@ -259,10 +267,37 @@ void run(const config::Settings& settings, const Options& opts) {
             return json_response(r.body, r.status);
         });
 
+    // ---- 任务状态 ----
+    //
+    // POST /api/run 要等阶段 5 的流水线，这里先只挂查询和停止。
+    // 这两个本身就是完整的：前端的进度轮询和停止按钮现在就能用。
+
+    CROW_ROUTE(app, "/api/run")([] {
+        return json_response(pipeline::jobs().snapshot(pipeline::JobKind::Run));
+    });
+
+    CROW_ROUTE(app, "/api/stop").methods("POST"_method)([](const crow::request&) {
+        // 没在跑时回 {"stopped": false} 而不是报错。
+        // 前端的停止按钮是无条件可点的，重复点不该弹错误框。
+        const bool stopped = pipeline::jobs().cancel(pipeline::JobKind::Run);
+        return json_response({{"stopped", stopped}});
+    });
+
+    CROW_ROUTE(app, "/api/script/series")([] {
+        return json_response(pipeline::jobs().snapshot(pipeline::JobKind::Write));
+    });
+
+    CROW_ROUTE(app, "/api/script/series/stop").methods("POST"_method)
+        ([](const crow::request&) {
+            const bool stopped = pipeline::jobs().cancel(pipeline::JobKind::Write);
+            return json_response({{"stopped", stopped}});
+        });
+
     // ---- WebSocket ----
     //
-    // 阶段 0 只验证连接、订阅和广播这条链路是通的。
-    // 真正的进度消息要等阶段 4 有了 job 表之后才有东西可推。
+    // 进度消息由 job 表通过上面那个 sink 推过来。
+    // 前端可以只连 WebSocket，也可以继续轮询 /api/run——两条路并存，
+    // WebSocket 断了退回轮询就行，任务本身不受影响。
 
     CROW_WEBSOCKET_ROUTE(app, "/ws")
         .onopen([](crow::websocket::connection& conn) {

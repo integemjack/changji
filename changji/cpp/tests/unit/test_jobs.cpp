@@ -1,0 +1,486 @@
+// 任务表的测试。
+//
+// 这里测两类东西，两类都容易出错但出错方式完全不同：
+//
+// 一是**快照形状**，跟 Python 的 RunState/WriteState.snapshot() 对拍。
+//    出错的话前端读到 undefined，表现是进度条不动或者报错框空白。
+//
+// 二是**并发**。这类 bug 单跑一遍测不出来——要靠重复和多线程去撞。
+//    下面几个用例刻意跑几百上千轮，就是为了让竞态有机会暴露。
+//    如果哪天 CI 上偶发失败，那不是"抖动"，是真有竞态。
+
+#include <doctest/doctest.h>
+
+#include <atomic>
+#include <chrono>
+#include <set>
+#include <string>
+#include <thread>
+#include <vector>
+
+#include <nlohmann/json.hpp>
+
+#include "pipeline/jobs.hpp"
+
+using namespace changji::pipeline;
+using json = nlohmann::json;
+
+namespace {
+
+/// 一个立刻结束的任务体。
+JobTable::Body noop() {
+    return [](CancelToken&, const std::function<void(Event)>&) {};
+}
+
+/// 等到任务跑完。超时就失败——挂住比断言失败更难查。
+///
+/// 只能用来等**自然结束**的任务。取消的任务不行：cancel() 里 running
+/// 立刻变 false，这个函数会在工作线程还活着的时候就返回。
+/// 等取消要用 t.wait_idle()。
+bool wait_done(JobTable& t, JobKind k, int timeout_ms = 5000) {
+    const auto deadline =
+        std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
+    while (t.running(k)) {
+        if (std::chrono::steady_clock::now() > deadline) return false;
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    return true;
+}
+
+}  // namespace
+
+TEST_CASE("Run 快照的字段和 Python 一致") {
+    JobTable t;
+    const json s = t.snapshot(JobKind::Run);
+
+    // 字段名逐个对，少一个前端就读到 undefined
+    for (const char* k : {"running", "episode_id", "stage", "current", "total",
+                          "message", "elapsed_s", "output", "outputs",
+                          "queue_done", "queue_total", "error", "events"}) {
+        CAPTURE(k);
+        CHECK_MESSAGE(s.contains(k), "快照缺字段");
+    }
+    CHECK(s.size() == 13);  // 也不能多，多出来的字段说明混进了 Write 的
+
+    // 空闲时的初值
+    CHECK(s.at("running") == false);
+    CHECK(s.at("episode_id").is_null());
+    CHECK(s.at("error").is_null());
+    CHECK(s.at("output").is_null());
+    CHECK(s.at("outputs").is_array());
+    CHECK(s.at("events").is_array());
+    CHECK(s.at("queue_total") == 1);  // 只跑一集时是 1/1，不是 0/0
+    CHECK(s.at("elapsed_s") == 0.0);
+}
+
+TEST_CASE("Write 快照只有六个字段") {
+    // Write 的形状比 Run 小得多。早先版本把两种任务塞进同一个结构，
+    // 顺手把 Run 的字段全吐出去了——前端拿 events 去渲染，
+    // 结果写作任务的进度条画出来是空的。
+    JobTable t;
+    const json s = t.snapshot(JobKind::Write);
+    CHECK(s.size() == 6);
+    for (const char* k : {"running", "done", "total", "message", "episodes", "error"}) {
+        CAPTURE(k);
+        CHECK(s.contains(k));
+    }
+    CHECK_FALSE(s.contains("events"));
+    CHECK_FALSE(s.contains("queue_total"));
+    CHECK(s.at("episodes").is_array());
+}
+
+TEST_CASE("同种任务不能并发，不同种可以") {
+    JobTable t;
+    std::atomic<bool> release{false};
+    auto blocker = [&release](CancelToken&, const std::function<void(Event)>&) {
+        while (!release.load()) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    };
+
+    CHECK(t.start(JobKind::Run, "ep_01", blocker) == true);
+    // 第二个同种的要被拒，调用方据此回 409
+    CHECK(t.start(JobKind::Run, "ep_02", noop()) == false);
+
+    // 写作跟跑流水线是两个槽，Python 那边的注释明写着可以同时进行
+    CHECK(t.start(JobKind::Write, "", blocker) == true);
+    CHECK(t.start(JobKind::Write, "", noop()) == false);
+
+    CHECK(t.running(JobKind::Run));
+    CHECK(t.running(JobKind::Write));
+    // 被拒的那次不能污染已有状态
+    CHECK(t.snapshot(JobKind::Run).at("episode_id") == "ep_01");
+
+    release = true;
+    REQUIRE(wait_done(t, JobKind::Run));
+    REQUIRE(wait_done(t, JobKind::Write));
+
+    // 跑完之后同一个槽要能再起
+    CHECK(t.start(JobKind::Run, "ep_03", noop()) == true);
+    REQUIRE(wait_done(t, JobKind::Run));
+}
+
+TEST_CASE("取消") {
+    JobTable t;
+    std::atomic<int> loops{0};
+    CHECK(t.cancel(JobKind::Run) == false);  // 没在跑，对应 {"stopped": false}
+
+    t.start(JobKind::Run, "ep_01",
+            [&loops](CancelToken& tok, const std::function<void(Event)>&) {
+                while (!tok.cancelled()) {
+                    ++loops;
+                    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+                }
+            });
+
+    // 等它真的转起来再取消，不然测的是"启动前就取消"这个另一回事
+    while (loops.load() < 3) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    CHECK(t.cancel(JobKind::Run) == true);
+
+    // running 必须**立刻**是 false，不等线程退出。
+    // Python 那边 stop_run() 就是 task.cancel() 紧跟 running = False，
+    // 前端点完停止马上拉 /api/run，看到的得是"停了"。
+    CHECK(t.running(JobKind::Run) == false);
+    CHECK(t.snapshot(JobKind::Run).at("error") == kRunStoppedMessage);
+
+    t.wait_idle();
+
+    SUBCASE("取消一个不影响另一个") {
+        std::atomic<bool> release{false};
+        std::atomic<bool> write_saw_cancel{false};
+        t.start(JobKind::Write, "",
+                [&](CancelToken& tok, const std::function<void(Event)>&) {
+                    while (!release.load()) {
+                        if (tok.cancelled()) write_saw_cancel = true;
+                        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+                    }
+                });
+        t.start(JobKind::Run, "ep_01",
+                [](CancelToken& tok, const std::function<void(Event)>&) {
+                    while (!tok.cancelled()) {
+                        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+                    }
+                });
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        t.cancel(JobKind::Run);
+        CHECK(write_saw_cancel.load() == false);
+        release = true;
+        t.wait_idle();
+    }
+}
+
+TEST_CASE("异常被兜住，不会崩掉整个服务") {
+    // 流水线里任何一步抛异常都不该带走进程。Python 那边是 try/except
+    // 包着整个 run()，这里靠工作线程里的 catch。
+    JobTable t;
+    t.start(JobKind::Run, "ep_01",
+            [](CancelToken&, const std::function<void(Event)>&) {
+                throw std::runtime_error("模型文件读不了");
+            });
+    REQUIRE(wait_done(t, JobKind::Run));
+
+    const json s = t.snapshot(JobKind::Run);
+    CHECK(s.at("running") == false);
+    CHECK(s.at("error") == "模型文件读不了");
+
+    SUBCASE("非标准异常也兜住") {
+        t.start(JobKind::Run, "ep_02",
+                [](CancelToken&, const std::function<void(Event)>&) { throw 42; });
+        REQUIRE(wait_done(t, JobKind::Run));
+        CHECK(t.snapshot(JobKind::Run).at("error") == "未知异常");
+    }
+}
+
+TEST_CASE("事件环上限 500，快照只回最后 80 条") {
+    JobTable t;
+    t.start(JobKind::Run, "ep_01",
+            [](CancelToken&, const std::function<void(Event)>& report) {
+                for (int i = 0; i < 600; ++i) {
+                    Event e;
+                    e.stage = "render";
+                    e.kind = "progress";
+                    e.message = "第 " + std::to_string(i) + " 条";
+                    e.current = i;
+                    e.total = 600;
+                    report(e);
+                }
+            });
+    REQUIRE(wait_done(t, JobKind::Run));
+
+    const json s = t.snapshot(JobKind::Run);
+    const json& ev = s.at("events");
+    CHECK(ev.size() == kSnapshotEvents);
+    // 留下的必须是**最后** 80 条：600 条里存了后 500 条（100..599），
+    // 再取后 80 条就是 520..599
+    CHECK(ev.front().at("current") == 520);
+    CHECK(ev.back().at("current") == 599);
+    CHECK(ev.back().at("message") == "第 599 条");
+
+    // 事件字段形状
+    for (const char* k : {"at", "stage", "kind", "message", "shot_id",
+                          "current", "total"}) {
+        CAPTURE(k);
+        CHECK(ev.back().contains(k));
+    }
+    CHECK(ev.back().at("shot_id").is_null());  // 没给就是 null，不是空串
+    CHECK(ev.back().at("at").get<double>() > 0.0);  // 时间戳由 record 补
+
+    // 进度跟着最后一条走
+    CHECK(s.at("current") == 599);
+    CHECK(s.at("total") == 600);
+    CHECK(s.at("stage") == "render");
+}
+
+TEST_CASE("没有总数的事件不清空进度条") {
+    // 一条纯日志事件（total=0）夹在进度里，不该把已有的 current/total 抹掉。
+    // 抹掉的话前端进度条会一跳一跳地闪回零。
+    JobTable t;
+    t.start(JobKind::Run, "ep_01",
+            [](CancelToken&, const std::function<void(Event)>& report) {
+                Event p;
+                p.stage = "render"; p.kind = "progress";
+                p.current = 3; p.total = 10; p.message = "画第 3 个镜头";
+                report(p);
+
+                Event log;
+                log.stage = "render"; log.kind = "warn";
+                log.message = "显存吃紧，转成分块解码";
+                report(log);  // total 保持 0
+            });
+    REQUIRE(wait_done(t, JobKind::Run));
+
+    const json s = t.snapshot(JobKind::Run);
+    CHECK(s.at("current") == 3);
+    CHECK(s.at("total") == 10);
+    CHECK(s.at("message") == "显存吃紧，转成分块解码");  // 消息还是要更新
+    CHECK(s.at("events").size() == 2);
+}
+
+TEST_CASE("消息汇收到的内容") {
+    JobTable t;
+    std::mutex mu;
+    std::vector<std::pair<std::string, json>> got;
+    t.set_sink([&](const std::string& id, const json& m) {
+        std::lock_guard lg(mu);
+        got.emplace_back(id, m);
+    });
+
+    t.start(JobKind::Run, "ep_01",
+            [](CancelToken&, const std::function<void(Event)>& report) {
+                Event e;
+                e.stage = "render"; e.kind = "progress";
+                e.current = 1; e.total = 2; e.message = "开画";
+                e.shot_id = "s_001";
+                report(e);
+            });
+    REQUIRE(wait_done(t, JobKind::Run));
+
+    // 取一份拷贝再断言。直接在锁里断言的话，SUBCASE 展开时外层的
+    // lock_guard 还活着，子用例里再锁同一把就是递归加锁——
+    // 非递归 mutex 在 MSVC 上抛 "resource deadlock would occur"。
+    auto drain = [&mu, &got] {
+        std::lock_guard lg(mu);
+        auto copy = got;
+        got.clear();
+        return copy;
+    };
+
+    const auto msgs = drain();
+    REQUIRE(msgs.size() == 2);  // 一条进度 + 一条完成
+
+    CHECK(msgs[0].second.at("type") == "progress");
+    CHECK(msgs[0].second.at("stage") == "render");
+    CHECK(msgs[0].second.at("step") == 1);     // 注意字段名是 step 不是 current
+    CHECK(msgs[0].second.at("total") == 2);
+    CHECK(msgs[0].second.at("shot_id") == "s_001");
+
+    // 完成消息**必须**发出去。被节流吞掉的话前端永远停在"跑着"。
+    CHECK(msgs[1].second.at("type") == "done");
+    CHECK(msgs[0].first == msgs[1].first);  // 同一个 job_id
+    CHECK(msgs[1].second.at("job_id") == msgs[1].first);
+
+    SUBCASE("异常时发 error") {
+        t.start(JobKind::Run, "ep_02",
+                [](CancelToken&, const std::function<void(Event)>&) {
+                    throw std::runtime_error("炸了");
+                });
+        REQUIRE(wait_done(t, JobKind::Run));
+        const auto m = drain();
+        REQUIRE(m.size() == 1);
+        CHECK(m[0].second.at("type") == "error");
+        CHECK(m[0].second.at("message") == "炸了");
+    }
+
+    SUBCASE("取消时也发 error") {
+        t.start(JobKind::Run, "ep_03",
+                [](CancelToken& tok, const std::function<void(Event)>&) {
+                    while (!tok.cancelled()) {
+                        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+                    }
+                });
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        t.cancel(JobKind::Run);
+        t.wait_idle();
+        const auto m = drain();
+        REQUIRE(m.size() == 1);
+        CHECK(m[0].second.at("type") == "error");
+        // 不是"已取消"——cancel() 已经把 error 写成了给用户看的那句话，
+        // 工作线程结束时不能覆盖掉
+        CHECK(m[0].second.at("message") == kRunStoppedMessage);
+    }
+}
+
+TEST_CASE("反复起停不会漏 join") {
+    // 上一轮的 std::thread 没 join 就被赋值，std::thread 的赋值运算符
+    // 会调 terminate。跑一遍看不出来，要连着起停几百次。
+    JobTable t;
+    for (int i = 0; i < 300; ++i) {
+        CAPTURE(i);
+        REQUIRE(t.start(JobKind::Run, "ep_" + std::to_string(i), noop()));
+        REQUIRE(wait_done(t, JobKind::Run));
+    }
+    CHECK(t.snapshot(JobKind::Run).at("episode_id") == "ep_299");
+}
+
+TEST_CASE("多线程同时抢同一个槽，只能有一个成功") {
+    // start() 里为了 join 上一轮线程要临时解锁，那个窗口曾经能让
+    // 两个 start() 一起通过 running 检查。这个用例专门撞它。
+    for (int round = 0; round < 50; ++round) {
+        CAPTURE(round);
+        JobTable t;
+        std::atomic<bool> release{false};
+        std::atomic<int> wins{0};
+        std::vector<std::thread> racers;
+
+        for (int i = 0; i < 8; ++i) {
+            racers.emplace_back([&] {
+                const bool ok = t.start(
+                    JobKind::Run, "ep",
+                    [&release](CancelToken&, const std::function<void(Event)>&) {
+                        while (!release.load()) {
+                            std::this_thread::sleep_for(std::chrono::microseconds(50));
+                        }
+                    });
+                if (ok) ++wins;
+            });
+        }
+        for (auto& th : racers) th.join();
+        CHECK(wins.load() == 1);
+
+        release = true;
+        t.wait_idle();
+    }
+}
+
+TEST_CASE("一边跑一边查快照不会撕裂") {
+    // 工作线程在写 state，HTTP 线程在读快照。没锁好的话读到的是半新半旧，
+    // 或者直接读到已经被 pop_front 的 deque 元素。
+    JobTable t;
+    std::atomic<bool> stop_polling{false};
+    std::atomic<int> polls{0};
+
+    std::thread poller([&] {
+        while (!stop_polling.load()) {
+            const json s = t.snapshot(JobKind::Run);
+            // 光是能取出来不算数，字段得完整
+            REQUIRE(s.contains("events"));
+            REQUIRE(s.at("events").is_array());
+            for (const auto& e : s.at("events")) {
+                REQUIRE(e.contains("current"));
+            }
+            ++polls;
+        }
+    });
+
+    t.start(JobKind::Run, "ep_01",
+            [](CancelToken&, const std::function<void(Event)>& report) {
+                for (int i = 0; i < 3000; ++i) {
+                    Event e;
+                    e.stage = "render"; e.kind = "progress";
+                    e.current = i; e.total = 3000;
+                    e.message = "第 " + std::to_string(i);
+                    report(e);
+                }
+            });
+    REQUIRE(wait_done(t, JobKind::Run, 30000));
+    stop_polling = true;
+    poller.join();
+    CHECK(polls.load() > 0);
+}
+
+TEST_CASE("wait_idle 等得住两个槽") {
+    JobTable t;
+    std::atomic<int> finished{0};
+    auto slow = [&finished](CancelToken&, const std::function<void(Event)>&) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(30));
+        ++finished;
+    };
+    t.start(JobKind::Run, "ep_01", slow);
+    t.start(JobKind::Write, "", slow);
+    t.wait_idle();
+    CHECK(finished.load() == 2);
+    CHECK_FALSE(t.running(JobKind::Run));
+    CHECK_FALSE(t.running(JobKind::Write));
+}
+
+TEST_CASE("析构时先取消再等，不会挂住") {
+    // 关服务时如果有个跑到一半的任务，析构不能干等——那可能是几十分钟。
+    std::atomic<bool> saw_cancel{false};
+    const auto t0 = std::chrono::steady_clock::now();
+    {
+        JobTable t;
+        t.start(JobKind::Run, "ep_01",
+                [&saw_cancel](CancelToken& tok, const std::function<void(Event)>&) {
+                    while (!tok.cancelled()) {
+                        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+                    }
+                    saw_cancel = true;
+                });
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }  // 析构在这里
+    const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now() - t0).count();
+    CHECK(saw_cancel.load());
+    CHECK(ms < 2000);  // 真挂住的话这里会超时
+}
+
+TEST_CASE("两种任务的停止文案不一样") {
+    // 这两句是前端直接显示给用户的，各自说的是各自的事。
+    // 合并成一句的话，有一半场合用户看到的提示是错的。
+    JobTable t;
+    std::atomic<bool> release{false};
+    auto blocker = [&release](CancelToken& tok, const std::function<void(Event)>&) {
+        while (!release.load() && !tok.cancelled()) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+    };
+    t.start(JobKind::Run, "ep_01", blocker);
+    t.start(JobKind::Write, "", blocker);
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+
+    CHECK(t.cancel(JobKind::Run) == true);
+    CHECK(t.cancel(JobKind::Write) == true);
+    CHECK(t.snapshot(JobKind::Run).at("error") ==
+          "已手动停止。已完成的镜头会保留，下次从这里继续。");
+    CHECK(t.snapshot(JobKind::Write).at("error") ==
+          "已手动停止。已经写好的几集留着。");
+
+    release = true;
+    t.wait_idle();
+}
+
+TEST_CASE("job_id 每次都不一样") {
+    // WebSocket 按 job_id 订阅。撞了的话新任务的进度会推给订阅旧任务的连接。
+    JobTable t;
+    std::set<std::string> ids;
+    for (int i = 0; i < 100; ++i) {
+        REQUIRE(t.start(JobKind::Run, "ep", noop()));
+        ids.insert(t.job_id(JobKind::Run));
+        REQUIRE(wait_done(t, JobKind::Run));
+    }
+    CHECK(ids.size() == 100);
+    // 前缀区分任务种类，看日志时有用
+    CHECK(ids.begin()->rfind("run-", 0) == 0);
+
+    REQUIRE(t.start(JobKind::Write, "", noop()));
+    CHECK(t.job_id(JobKind::Write).rfind("write-", 0) == 0);
+    REQUIRE(wait_done(t, JobKind::Write));
+}

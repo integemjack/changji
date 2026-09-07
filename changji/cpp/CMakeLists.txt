@@ -78,6 +78,7 @@ add_executable(changji
     src/models/project.cpp
     src/models/hardware.cpp
     src/http/ws.cpp
+    src/pipeline/jobs.cpp
     src/http/readonly.cpp
     src/http/editing.cpp
     src/http/editing_assets.cpp
@@ -196,6 +197,7 @@ if(CHANGJI_BUILD_TESTS)
         tests/unit/test_editing_batch.cpp
         tests/unit/test_media.cpp
         tests/unit/test_upload.cpp
+        tests/unit/test_jobs.cpp
         src/models/shot.cpp
         src/models/character.cpp
         src/models/project.cpp
@@ -209,11 +211,18 @@ if(CHANGJI_BUILD_TESTS)
         src/http/editing_batch.cpp
         src/http/media.cpp
         src/http/upload.cpp
+        src/pipeline/jobs.cpp
     )
     target_include_directories(changji_tests PRIVATE src "${ASIO_INCLUDE_DIR}")
     target_link_libraries(changji_tests PRIVATE
         nlohmann_json::nlohmann_json
         tomlplusplus::tomlplusplus)
+    # jobs.cpp 起线程。MinGW/Linux 上不显式链 pthread 会在运行期崩，
+    # 而不是链接期报错——症状是 std::thread 构造时抛 system_error。
+    if(NOT MSVC)
+        find_package(Threads REQUIRED)
+        target_link_libraries(changji_tests PRIVATE Threads::Threads)
+    endif()
     target_include_directories(changji_tests PRIVATE "${doctest_SOURCE_DIR}")
     target_compile_features(changji_tests PRIVATE cxx_std_20)
 

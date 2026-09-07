@@ -1,0 +1,291 @@
+#include "pipeline/jobs.hpp"
+
+#include <algorithm>
+#include <cmath>
+#include <random>
+#include <sstream>
+
+using json = nlohmann::json;
+
+namespace changji::pipeline {
+
+namespace {
+
+/// Unix 秒，三位小数。对齐 Python 的 round(time.time(), 3)。
+double now_unix() {
+    using namespace std::chrono;
+    const auto d = system_clock::now().time_since_epoch();
+    const double s = duration<double>(d).count();
+    return std::nearbyint(s * 1000.0) / 1000.0;
+}
+
+/// 一位小数。对齐 Python 的 round(elapsed, 1)。
+double round1(double x) { return std::nearbyint(x * 10.0) / 10.0; }
+
+std::string new_job_id(JobKind kind) {
+    static std::mt19937_64 rng{std::random_device{}()};
+    std::ostringstream os;
+    os << to_string(kind) << "-" << std::hex << rng();
+    return os.str();
+}
+
+json opt_str(const std::optional<std::string>& v) {
+    return v.has_value() ? json(*v) : json(nullptr);
+}
+
+}  // namespace
+
+const char* stopped_message(JobKind k) {
+    return k == JobKind::Run ? kRunStoppedMessage : kWriteStoppedMessage;
+}
+
+const char* to_string(JobKind k) {
+    switch (k) {
+        case JobKind::Run:   return "run";
+        case JobKind::Write: return "write";
+    }
+    return "?";
+}
+
+json Event::to_json() const {
+    return {
+        {"at", at},
+        {"stage", stage},
+        {"kind", kind},
+        {"message", message},
+        {"shot_id", opt_str(shot_id)},
+        {"current", current},
+        {"total", total},
+    };
+}
+
+JobTable::JobTable() = default;
+
+JobTable::~JobTable() {
+    // 先请求取消再等。不取消的话析构会卡在一个可能跑几十分钟的任务上。
+    run_.token.request();
+    write_.token.request();
+    wait_idle();
+    if (run_.worker.joinable()) run_.worker.join();
+    if (write_.worker.joinable()) write_.worker.join();
+}
+
+JobTable::Slot& JobTable::slot(JobKind k) {
+    return k == JobKind::Run ? run_ : write_;
+}
+const JobTable::Slot& JobTable::slot(JobKind k) const {
+    return k == JobKind::Run ? run_ : write_;
+}
+
+bool JobTable::start(JobKind kind, const std::string& episode_id, Body body) {
+    std::unique_lock lk(mu_);
+    Slot& s = slot(kind);
+    if (s.state.running) return false;
+
+    // 先占坑再干别的。下面 join 上一轮线程时要临时解锁，
+    // 不先把 running 立起来的话，那个窗口里第二个 start() 会看到
+    // running==false 一起挤进来，两条线程抢同一个槽。
+    s.state.running = true;
+
+    // 上一轮的线程可能还没退——正常跑完没来得及 join，或者被手动停止后
+    // 还在收尾（那种情况 running 早就是 false 了）。这里一定要等到它真的结束：
+    // 不等的话 std::thread 的赋值运算符会调 terminate，
+    // 而且新旧两条线程会同时写同一个 state。
+    if (s.worker.joinable()) {
+        lk.unlock();
+        s.worker.join();
+        lk.lock();
+    }
+
+    s.token.reset();
+    s.state = JobState{};
+    s.state.running = true;
+    s.state.job_id = new_job_id(kind);
+    if (!episode_id.empty()) s.state.episode_id = episode_id;
+    s.state.started_at = std::chrono::steady_clock::now();
+    s.active = true;
+
+    const std::string job_id = s.state.job_id;
+
+    s.worker = std::thread([this, kind, job_id, body = std::move(body)]() {
+        auto report = [this, kind](Event ev) { record(kind, std::move(ev)); };
+        try {
+            body(slot(kind).token, report);
+        } catch (const std::exception& e) {
+            std::lock_guard lg(mu_);
+            slot(kind).state.error = e.what();
+        } catch (...) {
+            std::lock_guard lg(mu_);
+            slot(kind).state.error = "未知异常";
+        }
+
+        json final_msg;
+        {
+            std::lock_guard lg(mu_);
+            Slot& sl = slot(kind);
+            sl.state.running = false;
+            sl.active = false;
+            // done / error 是终止消息，**不受节流影响**——
+            // 被节流掉的话前端会永远停在"跑着"的状态。
+            //
+            // 注意判断顺序：error 先于 cancelled。手动停止时 cancel() 已经
+            // 把 error 写成了那句"已完成的镜头会保留"，这里不能再覆盖成"已取消"。
+            if (sl.state.error.has_value()) {
+                final_msg = {{"type", "error"}, {"job_id", job_id},
+                             {"message", *sl.state.error}};
+            } else if (sl.token.cancelled()) {
+                final_msg = {{"type", "error"}, {"job_id", job_id},
+                             {"message", "已取消"}};
+            } else {
+                final_msg = {{"type", "done"}, {"job_id", job_id},
+                             {"outputs", sl.state.outputs}};
+            }
+        }
+        emit(job_id, final_msg);
+        idle_cv_.notify_all();
+    });
+
+    return true;
+}
+
+void JobTable::set_sink(Sink s) {
+    std::lock_guard lg(mu_);
+    sink_ = std::move(s);
+}
+
+void JobTable::emit(const std::string& job_id, const json& msg) const {
+    // 取一份拷贝再调用，别拿着锁进 sink——sink 里是 Hub，Hub 自己有锁。
+    Sink s;
+    {
+        std::lock_guard lg(mu_);
+        s = sink_;
+    }
+    if (s) s(job_id, msg);
+}
+
+bool JobTable::cancel(JobKind kind) {
+    std::lock_guard lg(mu_);
+    Slot& s = slot(kind);
+    if (!s.state.running) return false;
+    s.token.request();
+
+    // running 立刻置 false，不等工作线程真的退出。
+    //
+    // 这是抄 Python 的：那边 stop_run() 里是 task.cancel() 之后紧跟着
+    // state.running = False。差别是可观测的——前端点完停止马上会拉一次
+    // /api/run，如果这里还报 running=true，界面就会卡在"正在跑"上好几秒
+    // （工作线程要跑到下一个取消检查点才退）。
+    //
+    // 代价是 running 不再等价于"线程还活着"。所以 start() 里那句 join
+    // 不能删：槽看着空了，上一条线程可能还在收尾。
+    s.state.running = false;
+    s.state.error = stopped_message(kind);
+    return true;
+}
+
+void JobTable::record(JobKind kind, Event ev) {
+    std::string job_id;
+    json msg;
+    {
+        std::lock_guard lg(mu_);
+        Slot& s = slot(kind);
+        JobState& st = s.state;
+
+        // 事件时间戳由这里统一打，调用方不用管。Python 那边是 append 时
+        // 取 round(time.time(),3)，同一个位置。
+        if (ev.at == 0.0) ev.at = now_unix();
+
+        st.stage = ev.stage;
+        // 只有带总数的事件才更新进度。不加这个判断的话，
+        // 一条 total=0 的日志事件会把进度条清零。
+        if (ev.total) {
+            st.current = ev.current;
+            st.total = ev.total;
+        }
+        st.message = ev.message;
+
+        st.events.push_back(ev);
+        while (st.events.size() > kMaxEvents) st.events.pop_front();
+
+        job_id = st.job_id;
+        msg = {
+            {"type", ev.kind == "error" ? "error" : "progress"},
+            {"job_id", job_id},
+            {"stage", ev.stage},
+            {"step", ev.current},
+            {"total", ev.total},
+            {"message", ev.message},
+        };
+        if (ev.shot_id.has_value()) msg["shot_id"] = *ev.shot_id;
+    }
+    // 广播放在锁外：Hub 自己有锁，嵌套两把锁是死锁的常见来源。
+    emit(job_id, msg);
+}
+
+json JobTable::snapshot(JobKind kind) const {
+    std::lock_guard lg(mu_);
+    const JobState& s = slot(kind).state;
+
+    json events = json::array();
+    const std::size_t skip =
+        s.events.size() > kSnapshotEvents ? s.events.size() - kSnapshotEvents : 0;
+    for (std::size_t i = skip; i < s.events.size(); ++i) {
+        events.push_back(s.events[i].to_json());
+    }
+
+    const double elapsed =
+        s.started_at.time_since_epoch().count() == 0
+            ? 0.0
+            : round1(std::chrono::duration<double>(
+                         std::chrono::steady_clock::now() - s.started_at).count());
+
+    if (kind == JobKind::Write) {
+        // WriteState.snapshot() 的字段少得多，别把 Run 的那些混进来
+        return {
+            {"running", s.running},
+            {"done", s.done},
+            {"total", s.total},
+            {"message", s.message},
+            {"episodes", s.episodes},
+            {"error", opt_str(s.error)},
+        };
+    }
+
+    return {
+        {"running", s.running},
+        {"episode_id", opt_str(s.episode_id)},
+        {"stage", s.stage},
+        {"current", s.current},
+        {"total", s.total},
+        {"message", s.message},
+        {"elapsed_s", elapsed},
+        {"output", opt_str(s.output)},
+        {"outputs", s.outputs},
+        {"queue_done", s.queue_done},
+        {"queue_total", s.queue_total},
+        {"error", opt_str(s.error)},
+        {"events", events},
+    };
+}
+
+bool JobTable::running(JobKind kind) const {
+    std::lock_guard lg(mu_);
+    return slot(kind).state.running;
+}
+
+std::string JobTable::job_id(JobKind kind) const {
+    std::lock_guard lg(mu_);
+    return slot(kind).state.job_id;
+}
+
+void JobTable::wait_idle() {
+    std::unique_lock lk(mu_);
+    idle_cv_.wait(lk, [this] { return !run_.active && !write_.active; });
+}
+
+JobTable& jobs() {
+    static JobTable table;
+    return table;
+}
+
+}  // namespace changji::pipeline
