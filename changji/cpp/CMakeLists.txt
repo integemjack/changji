@@ -164,6 +164,7 @@ add_executable(changji
     src/stages/frames.cpp
     src/stages/render.cpp
     src/stages/audio_plan.cpp
+    src/stages/audio.cpp
     src/infer/scheduler.cpp
     src/infer/sd_backend.cpp
     src/infer/sd_image.cpp
@@ -384,6 +385,7 @@ if(CHANGJI_BUILD_TESTS)
         tests/unit/test_gates.cpp
         tests/unit/test_assemble.cpp
         tests/unit/test_audio_plan.cpp
+        tests/unit/test_audio.cpp
 
         # 被测的源码。刻意不包含 doctor.cpp、http/server.cpp、
         # llm/client_http.cpp、comfy/client_http.cpp 和 http/run_deps.cpp ——
@@ -406,6 +408,7 @@ if(CHANGJI_BUILD_TESTS)
         src/stages/frames.cpp
         src/stages/render.cpp
         src/stages/audio_plan.cpp
+        src/stages/audio.cpp
         src/infer/scheduler.cpp
         src/infer/sd_backend.cpp
         src/infer/sd_image.cpp
