@@ -145,6 +145,7 @@ add_executable(changji
     src/infer/scheduler.cpp
     src/infer/sd_backend.cpp
     src/infer/sd_image.cpp
+    src/infer/sd_video.cpp
     src/llm/client.cpp
     src/llm/client_http.cpp
     src/http/ws.cpp
@@ -321,6 +322,7 @@ if(CHANGJI_BUILD_TESTS)
         tests/unit/test_sd_image.cpp
         tests/unit/test_frames.cpp
         tests/unit/test_render.cpp
+        tests/unit/test_sd_video.cpp
 
         # 被测的源码。刻意不包含 doctor.cpp、http/server.cpp 和
         # llm/client_http.cpp —— 那三个链 httplib 或 Crow，
@@ -345,6 +347,8 @@ if(CHANGJI_BUILD_TESTS)
         src/infer/scheduler.cpp
         src/infer/sd_backend.cpp
         src/infer/sd_image.cpp
+        src/infer/sd_video.cpp
+    src/infer/sd_video.cpp
         src/pipeline/jobs.cpp
         src/llm/client.cpp
         src/config/settings.cpp

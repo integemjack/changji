@@ -131,10 +131,15 @@ struct SdContext::Impl {
 };
 
 std::shared_ptr<SdContext> SdContext::create(const config::Settings& settings,
-                                             double vram_budget_gb) {
+                                             double vram_budget_gb,
+                                             ModelRole role) {
     const fs::path ws = settings.workspace_path();
     const auto& m = settings.models;
-    if (m.image.empty() && m.video.empty()) {
+    if (role == ModelRole::Video && m.video.empty()) {
+        throw SdError("没配视频模型。在 changji.toml 的 [models] 里填 video，"
+                      "或者把出片交给推理服务");
+    }
+    if (role == ModelRole::Image && m.image.empty() && m.video.empty()) {
         throw SdError(
             "没配出图模型。在 changji.toml 的 [models] 里填 image 或 video，"
             "或者把出图交给推理服务");
@@ -144,9 +149,12 @@ std::shared_ptr<SdContext> SdContext::create(const config::Settings& settings,
     self->impl_ = std::make_unique<Impl>();
     Impl& impl = *self->impl_;
 
-    // 有图像模型就用它出首帧，一致性更好；没有就用视频模型出单帧。
+    // 出视频只能用视频模型。出首帧优先用图像模型（能吃参考图，
+    // 跨镜头一致性远好于视频模型），没配就退回视频模型出单帧——
     // 这个选择和 Python 的 build_backend 是同一个判断。
-    const std::string& which = m.image.empty() ? m.video : m.image;
+    const std::string& which =
+        role == ModelRole::Video ? m.video
+                                 : (m.image.empty() ? m.video : m.image);
     impl.diffusion = paths::to_utf8(m.resolve(which, ws));
     impl.vae = m.video_vae.empty() ? "" : paths::to_utf8(m.resolve(m.video_vae, ws));
     impl.text_encoder = m.video_text_encoder.empty()
@@ -249,17 +257,116 @@ void SdContext::generate(const ImageRequest& req, const fs::path& dest,
     ::free_sd_images(out, count);
 }
 
+void SdContext::generate_video(const VideoRequest& req, const fs::path& raw_dest,
+                               pipeline::CancelToken& tok,
+                               const StepCallback& on_step) {
+    if (tok.cancelled()) throw SdError("已取消");
+    if (!::sd_ctx_supports_video_generation(impl_->ctx)) {
+        throw SdError("这个模型不支持出视频。[models].video 要填一个视频模型"
+                      "（比如 Wan），填成图像模型是不行的");
+    }
+
+    sd_image_t start{};
+    bool has_start = false;
+    if (req.start_image.has_value()) {
+        start = load_image(*req.start_image);
+        has_start = true;
+    }
+    struct StartGuard {
+        sd_image_t& img;
+        bool& has;
+        ~StartGuard() {
+            if (has) ::stbi_image_free(img.data);
+        }
+    } sguard{start, has_start};
+
+    sd_vid_gen_params_t g{};
+    ::sd_vid_gen_params_init(&g);
+    g.prompt = req.positive.c_str();
+    g.negative_prompt = req.negative.c_str();
+    g.width = req.width;
+    g.height = req.height;
+    g.video_frames = req.frames;
+    g.fps = req.fps;
+    g.seed = req.seed;
+    g.sample_params.sample_steps = req.steps;
+    g.sample_params.guidance.txt_cfg = static_cast<float>(req.cfg);
+    if (has_start) g.init_image = start;
+
+    ActiveGeneration& a = active();
+    {
+        std::lock_guard lg(a.mu);
+        a.ctx = impl_->ctx;
+        a.on_step = &on_step;
+        a.tok = &tok;
+    }
+    a.cancel_sent.store(false, std::memory_order_relaxed);
+    ::sd_set_progress_callback(progress_trampoline, nullptr);
+
+    sd_image_t* frames = nullptr;
+    int count = 0;
+    sd_audio_t* audio = nullptr;
+    const bool ok = ::generate_video(impl_->ctx, &g, &frames, &count, &audio);
+
+    {
+        std::lock_guard lg(a.mu);
+        a.ctx = nullptr;
+        a.on_step = nullptr;
+        a.tok = nullptr;
+    }
+
+    struct FrameGuard {
+        sd_image_t*& f;
+        int& n;
+        ~FrameGuard() {
+            if (f) ::free_sd_images(f, n);
+        }
+    } fguard{frames, count};
+
+    if (tok.cancelled()) throw SdError("已取消");
+    if (!ok || frames == nullptr || count <= 0) {
+        throw SdError("出视频失败，看一眼上面 sd.cpp 打的日志");
+    }
+
+    // 裸 RGB24 顺序写出去。**逐帧写不是一次性拼成一个大 buffer**：
+    // 121 帧 448x768 是 125 MB，先攒在内存里等于在出视频最吃内存的
+    // 那一刻再要 125 MB。
+    std::error_code ec;
+    fs::create_directories(raw_dest.parent_path(), ec);
+    std::ofstream f(raw_dest, std::ios::binary | std::ios::trunc);
+    if (!f) throw SdError("写不了 " + paths::to_utf8(raw_dest));
+    for (int i = 0; i < count; ++i) {
+        const sd_image_t& img = frames[i];
+        if (img.channel != 3) {
+            throw SdError("sd.cpp 吐的帧不是 RGB24（channel=" +
+                          std::to_string(img.channel) + "），编码参数对不上");
+        }
+        const std::size_t n =
+            static_cast<std::size_t>(img.width) * img.height * img.channel;
+        f.write(reinterpret_cast<const char*>(img.data),
+                static_cast<std::streamsize>(n));
+        if (!f) throw SdError("写裸帧时出错，多半是磁盘满了");
+    }
+    f.close();
+    if (!f) throw SdError("写 " + paths::to_utf8(raw_dest) + " 时出错");
+}
+
 #else   // 没链 sd.cpp
 
 struct SdContext::Impl {};
 
-std::shared_ptr<SdContext> SdContext::create(const config::Settings&, double) {
+std::shared_ptr<SdContext> SdContext::create(const config::Settings&, double,
+                                             ModelRole) {
     throw SdError("这个二进制没有编进出图后端。出图请走推理服务，"
                   "或者用带 sd.cpp 的构建");
 }
 SdContext::~SdContext() = default;
 void SdContext::generate(const ImageRequest&, const fs::path&,
                          pipeline::CancelToken&, const StepCallback&) {
+    throw SdError("这个二进制没有编进出图后端");
+}
+void SdContext::generate_video(const VideoRequest&, const fs::path&,
+                               pipeline::CancelToken&, const StepCallback&) {
     throw SdError("这个二进制没有编进出图后端");
 }
 
@@ -275,6 +382,7 @@ namespace {
 
 std::mutex g_ctx_mu;
 std::shared_ptr<SdContext> g_image_ctx;
+std::shared_ptr<SdContext> g_video_ctx;
 
 }  // namespace
 
@@ -285,29 +393,58 @@ void register_sd_slots(const config::Settings& settings,
     // 估高了是 OOM 直接崩，估低了只是多分段（慢）。所以往低了取——
     // 这条和 Scheduler 里那个 vram_estimate 的取舍是同一个道理。
     const double budget = profile.vram_gb > 0 ? profile.vram_gb * 0.9 : 0.0;
+    const std::size_t estimate =
+        static_cast<std::size_t>(budget * 1024) * 1024 * 1024;
 
-    SlotSpec spec;
-    spec.slot = Slot::Image;
-    spec.residency = Residency::Cached;   // 每个镜头都要，别反复卸
-    // 估个数就行，真实占用由 sd.cpp 自己的预算管。这个数只用来决定
-    // "再加载一个装不装得下"。
-    spec.vram_estimate = static_cast<std::size_t>(budget * 1024) * 1024 * 1024;
-    spec.evict_priority = 5;
-    spec.load = [settings, budget] {
-        auto ctx = SdContext::create(settings, budget);
-        std::lock_guard lg(g_ctx_mu);
-        g_image_ctx = std::move(ctx);
-    };
-    spec.unload = [] {
-        std::lock_guard lg(g_ctx_mu);
-        g_image_ctx.reset();   // 析构里 free_sd_ctx
-    };
-    scheduler().register_slot(std::move(spec));
+    // 两个槽的估值都按整个预算算，也就是**同时只装得下一个**。
+    // 这不是保守，是事实：6GB 卡上图像模型和视频模型任意一个都要占满，
+    // 让调度器知道这件事，它才会在切阶段时先卸掉另一个。
+    {
+        SlotSpec spec;
+        spec.slot = Slot::Image;
+        spec.residency = Residency::Cached;   // 每个镜头都要，别反复卸
+        spec.vram_estimate = estimate;
+        // 视频模型重新加载更贵（文件大得多），所以图像的优先级更低，
+        // 腾地方时先卸它。
+        spec.evict_priority = 5;
+        spec.load = [settings, budget] {
+            auto ctx = SdContext::create(settings, budget, ModelRole::Image);
+            std::lock_guard lg(g_ctx_mu);
+            g_image_ctx = std::move(ctx);
+        };
+        spec.unload = [] {
+            std::lock_guard lg(g_ctx_mu);
+            g_image_ctx.reset();   // 析构里 free_sd_ctx
+        };
+        scheduler().register_slot(std::move(spec));
+    }
+    {
+        SlotSpec spec;
+        spec.slot = Slot::Video;
+        spec.residency = Residency::Cached;
+        spec.vram_estimate = estimate;
+        spec.evict_priority = 9;
+        spec.load = [settings, budget] {
+            auto ctx = SdContext::create(settings, budget, ModelRole::Video);
+            std::lock_guard lg(g_ctx_mu);
+            g_video_ctx = std::move(ctx);
+        };
+        spec.unload = [] {
+            std::lock_guard lg(g_ctx_mu);
+            g_video_ctx.reset();
+        };
+        scheduler().register_slot(std::move(spec));
+    }
 }
 
 std::shared_ptr<SdContext> current_image_context() {
     std::lock_guard lg(g_ctx_mu);
     return g_image_ctx;
+}
+
+std::shared_ptr<SdContext> current_video_context() {
+    std::lock_guard lg(g_ctx_mu);
+    return g_video_ctx;
 }
 
 }  // namespace changji::infer

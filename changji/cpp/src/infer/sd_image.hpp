@@ -50,6 +50,31 @@ struct ImageRequest {
 /// 用户分不清是在跑还是卡死了。
 using StepCallback = std::function<void(int step, int total, double seconds)>;
 
+/// 一次出视频的参数。
+struct VideoRequest {
+    std::string positive;
+    std::string negative;
+    int width = 448;
+    int height = 768;
+    int steps = 8;
+    int frames = 49;
+    int fps = 24;
+    std::int64_t seed = 0;
+    double cfg = 7.0;
+    /// 首帧。跨镜头一致性全靠它，没有的话退化成纯文生视频。
+    std::optional<std::filesystem::path> start_image;
+};
+
+/// 这个上下文装的是哪个模型。
+///
+/// 图像和视频是**两个不同的模型**（首帧用图像编辑模型，视频用 Wan），
+/// 各自一个 sd_ctx、各自一个调度槽。合成一个的话，跑首帧时视频模型
+/// 也占着显存，而 6GB 卡上那意味着两个都装不下。
+enum class ModelRole {
+    Image,
+    Video,
+};
+
 /// sd.cpp 的上下文。**贵**：建一次要解析模型文件、建张量图、分配运行时缓冲。
 ///
 /// 所以它不是每次出图新建一个，而是挂在调度器的槽位上复用。
@@ -62,7 +87,8 @@ public:
     /// vram_budget_gb 是给 sd.cpp 的 max_vram：0 表示"用当前空闲显存，
     /// 不设显式预算"。**这个数不是显卡有多少**，是留给推理多少。
     static std::shared_ptr<SdContext> create(const config::Settings& settings,
-                                             double vram_budget_gb);
+                                             double vram_budget_gb,
+                                             ModelRole role);
 
     ~SdContext();
     SdContext(const SdContext&) = delete;
@@ -74,6 +100,15 @@ public:
     /// （sd_cancel_generation），所以点了停止不用等这一镜跑完。
     void generate(const ImageRequest& req, const std::filesystem::path& dest,
                   pipeline::CancelToken& tok, const StepCallback& on_step);
+
+    /// 出一段视频，把**裸 RGB24 帧**顺序写到 raw_dest。
+    ///
+    /// 不在这里编码成 mp4：编码是 ffmpeg 的事，而这一层不该知道
+    /// 编码参数从哪儿来。见 sd_video.hpp。
+    void generate_video(const VideoRequest& req,
+                        const std::filesystem::path& raw_dest,
+                        pipeline::CancelToken& tok,
+                        const StepCallback& on_step);
 
 private:
     SdContext() = default;
@@ -88,9 +123,10 @@ private:
 void register_sd_slots(const config::Settings& settings,
                        const models::HardwareProfile& profile);
 
-/// 当前挂在图像槽上的上下文。没加载时返回空。
+/// 当前挂在图像槽 / 视频槽上的上下文。没加载时返回空。
 ///
-/// 拿它之前要先 acquire 那个槽，否则可能拿到一个正要被卸掉的。
+/// 拿它之前要先 acquire 对应的槽，否则可能拿到一个正要被卸掉的。
 std::shared_ptr<SdContext> current_image_context();
+std::shared_ptr<SdContext> current_video_context();
 
 }  // namespace changji::infer

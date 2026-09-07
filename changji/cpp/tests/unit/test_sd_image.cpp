@@ -52,7 +52,7 @@ TEST_CASE("没链 sd.cpp 时给的是人话不是崩溃") {
     }
 
     try {
-        infer::SdContext::create(with_models(), 6.0);
+        infer::SdContext::create(with_models(), 6.0, infer::ModelRole::Image);
         FAIL("该抛异常");
     } catch (const infer::SdError& e) {
         const std::string msg = e.what();
@@ -120,7 +120,7 @@ TEST_CASE("没配模型时的报错说清了去哪儿改") {
     }
     config::Settings s;   // image 和 video 都是空的
     try {
-        infer::SdContext::create(s, 6.0);
+        infer::SdContext::create(s, 6.0, infer::ModelRole::Image);
         FAIL("该抛异常");
     } catch (const infer::SdError& e) {
         const std::string msg = e.what();
