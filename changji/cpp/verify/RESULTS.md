@@ -405,6 +405,92 @@ cast，i8 convrot 和 FP8 matmul 只有 CUDA 和 Vulkan 版本。同机实测：
 都是上游的），**里面没有任何 FP8 / convrot 代码**。按 master 生成补丁会得到
 空补丁且不报错。这一条已写进 [../patches/README.md](../patches/README.md)。
 
+## 三点七、CUDA 运行时是动态依赖，与"零运行时依赖"冲突
+
+编出来的 `sd-cli.exe` 直接跑会以 `0xC0000135`（STATUS_DLL_NOT_FOUND）退出，
+把 `%CUDA_PATH%in` 加进 PATH 才能起来。ggml 那几个库是静态链接进去的
+（构建目录里根本没有 ggml*.dll），缺的是 CUDA 自己的运行时——
+`cudart64_*.dll`、`cublas64_*.dll`、`cublasLt64_*.dll` 这一批。
+
+这跟 [cpp/README.md](../README.md) 里"单一二进制、零运行时依赖"那条论证
+直接冲突。阶段 0 没发现是因为那时还没链 CUDA。三个选项：
+
+1. **随包分发那几个 CUDA DLL。** 最省事，但 exe 旁边要跟一堆 DLL，
+   "拷一个 exe 过去就能跑"不再成立，而那正是当初打开 `CHANGJI_STATIC_RUNTIME`
+   的理由
+2. **静态链接 CUDA 运行时**（`CUDA::cudart_static` / `cublas_static`）。
+   ggml 的 `GGML_STATIC` 走的就是这条，Windows 上 12.3.1 之前没有静态
+   cublas，现在的 13.3 有。体积会涨不少
+3. **接受这个折扣**，在文档里把"零运行时依赖"改成"零 Python/Node 运行时依赖，
+   但需要 CUDA 运行时"
+
+这一条要在阶段 5 之前定，因为它影响 `CHANGJI_STATIC_RUNTIME` 那一整套论证。
+
+## 三点八、验证第三、四项：offload 与 VAE 分块 —— 都通过
+
+在 RTX 2060 6GB 上跑 Wan 2.2 TI2V-5B（Q4_K_M），640x352、9 帧、4 步。
+
+### 第三项：`--offload-to-cpu` 不复现崩溃（通过）
+
+方案风险四引的上游 [Issue #1483](https://github.com/leejet/stable-diffusion.cpp/issues/1483)
+说这个选项会导致进程终止。**在 sd.cpp `d8fb10c` 上不复现。**
+
+```
+total params memory = 11285.94MB (VRAM 0.00MB, RAM 11285.94MB)
+  text_encoders 6664.20MB(RAM)  diffusion_model 3277.49MB(RAM)  vae 1344.24MB(RAM)
+Wan2.2-TI2V-5B compute buffer size: 68.64 MB(VRAM)
+4/4 - 1.02s/it   sampling completed, taking 8.05s
+```
+
+**11.3GB 的权重，显存常驻 0，采样时显存峰值 68.64 MB。** 方案的第一条立项理由
+——逐层换入换出让大模型在小显存上跑——在 6GB 卡上实测成立，不是纸面推论。
+
+### 第四项：VAE 分块存在且可用，但默认参数对 Wan 无效（通过，附重要前提）
+
+方案风险三担心的是"视频路径上是否接通未确认……如果确实缺失，需要自己实现
+并回馈上游"。**实测是接通的，不用自己写。** 但默认参数救不了场，必须显式调块大小。
+
+四次实验只改分块参数，其余完全一致：
+
+| 配置 | VAE 解码所需显存 | 结果 |
+|---|---|---|
+| 不分块 | 11747.59 MB | 失败（可用 5081 MB） |
+| `--vae-tiling`（默认 32x32） | 9610.67 MB | 失败 |
+| 再加 `--temporal-tiling` | 10321.64 MB | 失败（反而更高） |
+| `--vae-tile-size 16x11 --vae-tile-overlap 0.25` | — | **成功，44.73s** |
+
+三条要点：
+
+**一、默认块大小对 Wan 是白切。** 默认 32x32 的块碰上 40x22 的潜变量，
+切出来是 `num tiles : 2, 1`、重叠率 **0.75**——两块几乎完全重叠，
+所以只降了 18%。改成 16x11、重叠 0.25 之后是 6 块，直接过。
+
+**二、`--temporal-tiling` 是独立开关，且在低帧数下是空操作。**
+sd.cpp 把时间维分块和空间分块分成了两个参数。但 9 帧视频只压成
+**3 个潜变量帧**，而分块粒度 `tile_frames=4` 比总数还大：
+
+```
+Wan VAE stateful temporal tiling: tile_frames=4, total latent frames=3, tiles=1
+```
+
+切不动，还引入了有状态分块自身的开销，显存反而从 9610 涨到 10321 MB。
+
+**三、显存大头不是帧数，是空间和通道维的解码展开。** 潜变量 `40x22x3x48`
+只有 3 个时间帧，却要 11.7GB——瓶颈在 40x22 展开成 640x352 的过程。
+这一条纠正了一个容易有的直觉（"少出几帧就能省显存"）。
+
+### 对方案的影响
+
+- **风险三改写**：不是"分块可能缺失"，是"分块存在，但默认参数对 Wan 无效"。
+  自己实现并回馈上游那条兜底不需要了。
+- **阶段 5 的必备参数**：`--offload-to-cpu`、`--vae-tiling`、
+  **`--vae-tile-size` 必须按潜变量尺寸算**，不能用默认值。
+  块大小要随分辨率自适应——这是编排层要做的事，写死一个值在换分辨率时会失效。
+- **风险四（offload 崩溃）可以关闭**，在这个上游版本上不复现。
+
+产物 `out-tile16.mp4.avi`（326K，640x352x9 帧）。注意 sd-cli 会在 `-o` 给的
+文件名后面再补一个 `.avi`。
+
 ## 四、Windows 长路径（工程约束，不影响方案）
 
 llama.cpp 现在带了个 Svelte 写的 Web UI，`tools/ui/src/lib/components/app/chat/
@@ -431,7 +517,7 @@ Windows 的路径处理会在你完全想不到的地方安静地失败。
 - [x] **移植实施完成**：6 个 hunk 全解，两库共用一份 ggml 编出二进制，cjverify 全过
 - [x] 统一 ggml 的 CUDA 构建 —— 通过，析构路径单独验证过
 - [ ] 第二项后半：两个库各跑一次真实推理
-- [ ] 第三项：`--offload-to-cpu` 的崩溃 bug 复不复现
-- [ ] 第四项：`--vae-tiling` 在视频路径上通不通
+- [x] **第三项：`--offload-to-cpu` —— 通过**，Issue #1483 不复现
+- [x] **第四项：VAE 分块 —— 通过**，但默认块大小对 Wan 无效，必须显式设 `--vae-tile-size`
 - [ ] 第五项：ggml 的 Vulkan 后端在 Pi 5 上能不能起来
 - [ ] 第六项：Pi 的 8GB 装不装得下 5B 的 Q4 权重加 VAE
