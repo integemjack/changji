@@ -6,6 +6,7 @@
 #include <string>
 #include <vector>
 
+#include "http/episodes.hpp"
 #include "http/scripting.hpp"
 #include "models/project.hpp"
 #include "pipeline/jobs.hpp"
@@ -106,36 +107,6 @@ Project load_or_400(const ProjectStore& store) {
     } catch (const std::exception& e) {
         throw ApiError(400, e.what());
     }
-}
-
-/// 下一个没被占用的剧集编号。量产时不该逼用户自己想 id。
-///
-/// **只数 epNN 那些。** 预告片挂在 trailer 上，把它也数进去的话，
-/// 有了预告之后新建的第二集会跳号变成 ep03。
-std::string next_episode_id(const Project& project) {
-    std::set<std::string> existing;
-    int n = 1;
-    for (const auto& ep : project.episodes) {
-        existing.insert(ep.episode_id);
-        // 对应 re.fullmatch(r"ep\d+", ...)
-        if (ep.episode_id.size() > 2 && ep.episode_id.compare(0, 2, "ep") == 0) {
-            bool all_digits = true;
-            for (std::size_t i = 2; i < ep.episode_id.size(); ++i) {
-                if (ep.episode_id[i] < '0' || ep.episode_id[i] > '9') {
-                    all_digits = false;
-                    break;
-                }
-            }
-            if (all_digits) ++n;
-        }
-    }
-    const auto fmt = [](int k) {
-        char buf[16];
-        std::snprintf(buf, sizeof(buf), "ep%02d", k);
-        return std::string(buf);
-    };
-    while (existing.count(fmt(n))) ++n;
-    return fmt(n);
 }
 
 std::vector<std::string> character_names(const AssetLibrary& assets) {

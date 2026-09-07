@@ -581,16 +581,29 @@ Vue 前端完整渲染，顶栏显示「引擎已连接 http://127.0.0.1:8080」
 
 | 接口 | 归属 |
 |---|---|
-| `GET /api/script` | 读某一集的剧本。**阶段 3 漏了**，应该补 |
-| `GET /api/episode`、`POST /api/episode/action` | 剧集增删改。**阶段 3 漏了**，应该补 |
+| ~~`GET /api/script`、`POST /api/script`~~ | ✅ 已补，见下 |
+| ~~`POST /api/episode`、`POST /api/episode/action`~~ | ✅ 已补，见下 |
 | `GET /api/outputs` | 列已生成的成片。依赖阶段 7 的产物，那时再做 |
 | `GET /api/run/preview` | 开跑前的预估。依赖阶段 5 的耗时模型 |
 | `GET /api/connections` | 平台账号连接状态。属于 Node 侧 BFF 的职责，不该进 C++ |
 | `/api/llm/providers`、`/api/llm/models` | 破契约白名单里的两项，跟前端改动一起做 |
 
-前两项是**真的遗漏**：它们是纯读写项目文件的接口，按分类属于阶段 3，
-当时按 `test_web_editing.py` 的覆盖面移植，而那个文件不测这两个。
-排进下一步补上。
+前两项是**真的遗漏**，2026-09-08 已补齐（`src/http/episodes.cpp`，
+语料 `endpoints_episodes.json`）。
+
+漏的原因值得单独记：阶段 3 是按 `test_web_editing.py` 的覆盖面移植的，
+而那个文件不测这几个接口。**对拍语料的覆盖面成了移植的覆盖面**——
+只要拿测试文件当清单，测试没覆盖的就会整片漏掉，而且漏得很干净，
+没有任何编译或运行迹象。
+
+对策不是"下次小心点"，是**换一份清单**：后面几个阶段按 Python 的路由表
+（`grep 'app.get\|app.post' server.py`）逐条核对，测试文件只用来定验证方式。
+阶段 6 和阶段 7 开工前先做这件事。
+
+补的时候顺带钉住了一处 Python 自己的不一致：项目里有预告片时，
+`POST /api/episode` 走 `_next_episode_id`（只数 epNN）得到 ep03，
+而 `duplicate` 那条分支数的是全部剧集数，得到 ep04。两个入口给出不同的
+编号，看着像 bug，但改了会让两边的项目文件对不上，所以照抄。
 
 #### 一处环境不一致
 

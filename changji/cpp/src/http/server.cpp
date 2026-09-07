@@ -13,6 +13,7 @@
 #include "http/upload.hpp"
 #include "http/readonly.hpp"
 #include "http/batch.hpp"
+#include "http/episodes.hpp"
 #include "http/planning.hpp"
 #include "http/scripting.hpp"
 #include "llm/client.hpp"
@@ -306,6 +307,37 @@ void run(const config::Settings& settings, const Options& opts) {
         script_route(&post_bible));
     CROW_ROUTE(app, "/api/plan").methods("POST"_method)(
         script_route(&post_plan));
+
+    // ---- 剧本读写与剧集增删改 ----
+    //
+    // 这几个属于阶段 3，当时按 test_web_editing.py 的覆盖面移植而漏了。
+    // 阶段 2 判据的实机验证里前端调出 404 才发现。
+
+    CROW_ROUTE(app, "/api/script")([](const crow::request& req) {
+        auto r = guard([&] {
+            return get_script(query(req, "path"), query(req, "episode_id"));
+        });
+        return json_response(r.body, r.status);
+    });
+
+    CROW_ROUTE(app, "/api/script").methods("POST"_method)(
+        script_route(&post_script));
+
+    CROW_ROUTE(app, "/api/episode").methods("POST"_method)(
+        [](const crow::request& req) {
+            auto r = guard([&] {
+                return post_episode(json::parse(req.body, nullptr, false));
+            });
+            return json_response(r.body, r.status);
+        });
+
+    CROW_ROUTE(app, "/api/episode/action").methods("POST"_method)(
+        [](const crow::request& req) {
+            auto r = guard([&] {
+                return post_episode_action(json::parse(req.body, nullptr, false));
+            });
+            return json_response(r.body, r.status);
+        });
 
     // ---- 两个长任务 ----
     //
