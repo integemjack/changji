@@ -1,9 +1,18 @@
 cmake_minimum_required(VERSION 3.20)
 project(changji CXX)
 
-# C++20。Crow 需要 17 起步，20 的 std::format 和 designated initializer
-# 在移植 pydantic 那批结构体时省很多事。
-set(CMAKE_CXX_STANDARD 20)
+# 全局停在 C++17，只把自己的目标抬到 20。
+#
+# 原本这里写的是 CMAKE_CXX_STANDARD 20。前置验证工程实测发现那样到阶段 5
+# 会炸：llama.cpp 和 ggml 写的是 target_compile_features(... cxx_std_17)
+# 加一句 "# don't bump"，而那声明的是**下限不是上限**——父作用域给 20 时
+# "至少 17"照样满足，于是上游整个按 C++20 编，然后在 MSVC 上撞 char8_t
+# （llama-chat.cpp 的 LU8 宏用 __cplusplus 做守卫，而 MSVC 不加
+# /Zc:__cplusplus 时那个宏永远是 199711L，守卫静默失效）。
+# 只在 MSVC + C++20 这个组合下出现，MinGW 编不出来，所以阶段 0 没遇到。
+#
+# 详见 verify/RESULTS.md。
+set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
@@ -64,9 +73,14 @@ add_executable(changji
     src/util/proc.cpp
     src/config/settings.cpp
     src/doctor/doctor.cpp
+    src/models/shot.cpp
     src/http/ws.cpp
     src/http/server.cpp
 )
+
+# 自己的代码要 C++20，但只加在自己的目标上，不传染给上游。
+# 阶段 5 链 sd.cpp / llama.cpp 时这一点是必须的，见上面 CMAKE_CXX_STANDARD 那段。
+target_compile_features(changji PRIVATE cxx_std_20)
 
 target_include_directories(changji PRIVATE
     src
@@ -128,3 +142,52 @@ if(CHANGJI_STATIC_RUNTIME AND NOT MSVC)
 endif()
 
 install(TARGETS changji RUNTIME DESTINATION bin)
+
+
+# ---- 测试 ----
+#
+# doctest 而不是 Catch2：单头文件、编译快。树莓派上本机编译时 Catch2 的
+# 编译开销受不了（Pi 5 编 Crow 那几个头文件已经很吃力了）。
+option(CHANGJI_BUILD_TESTS "编单元测试" ON)
+
+if(CHANGJI_BUILD_TESTS)
+    enable_testing()
+
+    # 只取源码，不跑它的 CMakeLists。
+    #
+    # doctest v2.4.11 的 CMakeLists 头一行是 cmake_minimum_required(VERSION 3.0)，
+    # 而 CMake 4 把 "低于 3.5" 从警告改成了硬错误，配置直接失败。
+    # 但 doctest 是单头文件，压根不需要它的构建脚本——SOURCE_SUBDIR 指向一个
+    # 不存在的目录，FetchContent 就只下载不 add_subdirectory。
+    #
+    # 比 CMAKE_POLICY_VERSION_MINIMUM 那种全局降级干净：那个会把所有依赖的
+    # 策略一起放宽，掩盖别的问题。
+    FetchContent_Declare(doctest
+        GIT_REPOSITORY https://github.com/doctest/doctest.git
+        GIT_TAG v2.4.11
+        GIT_SHALLOW ON
+        SOURCE_SUBDIR does-not-exist)
+    FetchContent_MakeAvailable(doctest)
+
+    add_executable(changji_tests
+        tests/unit/main.cpp
+        tests/unit/test_shot.cpp
+        src/models/shot.cpp
+    )
+    target_include_directories(changji_tests PRIVATE src "${ASIO_INCLUDE_DIR}")
+    target_link_libraries(changji_tests PRIVATE nlohmann_json::nlohmann_json)
+    target_include_directories(changji_tests PRIVATE "${doctest_SOURCE_DIR}")
+    target_compile_features(changji_tests PRIVATE cxx_std_20)
+
+    # 对拍语料的位置。测试要读 Python 写出来的真实项目文件。
+    target_compile_definitions(changji_tests PRIVATE
+        CHANGJI_GOLDEN_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/golden")
+
+    if(MSVC)
+        target_compile_options(changji_tests PRIVATE /utf-8 /W4)
+    else()
+        target_compile_options(changji_tests PRIVATE -Wall -Wextra)
+    endif()
+
+    add_test(NAME unit COMMAND changji_tests)
+endif()
