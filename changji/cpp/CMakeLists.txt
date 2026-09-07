@@ -135,6 +135,7 @@ add_executable(changji
     src/models/project.cpp
     src/models/hardware.cpp
     src/util/text.cpp
+    src/util/human_time.cpp
     src/stages/json_extract.cpp
     src/stages/bible.cpp
     src/stages/storyboard.cpp
@@ -150,6 +151,7 @@ add_executable(changji
     src/llm/client_http.cpp
     src/http/ws.cpp
     src/pipeline/jobs.cpp
+    src/pipeline/episode.cpp
     src/http/readonly.cpp
     src/http/editing.cpp
     src/http/editing_assets.cpp
@@ -323,6 +325,7 @@ if(CHANGJI_BUILD_TESTS)
         tests/unit/test_frames.cpp
         tests/unit/test_render.cpp
         tests/unit/test_sd_video.cpp
+        tests/unit/test_episode.cpp
 
         # 被测的源码。刻意不包含 doctor.cpp、http/server.cpp 和
         # llm/client_http.cpp —— 那三个链 httplib 或 Crow，
@@ -334,6 +337,7 @@ if(CHANGJI_BUILD_TESTS)
         src/util/paths.cpp
         src/util/proc.cpp
         src/util/text.cpp
+        src/util/human_time.cpp
         src/stages/json_extract.cpp
         src/stages/bible.cpp
         src/stages/storyboard.cpp
@@ -341,15 +345,12 @@ if(CHANGJI_BUILD_TESTS)
         src/stages/prompt_compose.cpp
         src/stages/frames.cpp
         src/stages/render.cpp
-    src/stages/render.cpp
-    src/stages/frames.cpp
-    src/stages/render.cpp
         src/infer/scheduler.cpp
         src/infer/sd_backend.cpp
         src/infer/sd_image.cpp
         src/infer/sd_video.cpp
-    src/infer/sd_video.cpp
         src/pipeline/jobs.cpp
+        src/pipeline/episode.cpp
         src/llm/client.cpp
         src/config/settings.cpp
         src/config/writeback.cpp

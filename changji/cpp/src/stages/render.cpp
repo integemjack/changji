@@ -4,6 +4,7 @@
 #include <chrono>
 #include <cmath>
 
+#include "util/human_time.hpp"
 #include "util/paths.hpp"
 #include "util/text.hpp"
 
@@ -78,6 +79,10 @@ std::vector<RenderOutcome> render_batch(std::vector<Shot*>& shots,
     std::vector<RenderOutcome> outcomes;
     const int total = static_cast<int>(shots.size());
     int index = 0;
+
+    // 开跑前的预计来自一张按显存推的静态表，实测能差一倍。
+    // 跑起来之后用真实耗时重算，等的人才知道还要等多久。
+    const double stage_started = now_seconds();
 
     for (Shot* shot : shots) {
         ++index;
@@ -163,6 +168,22 @@ std::vector<RenderOutcome> render_batch(std::vector<Shot*>& shots,
 
         out.elapsed_s = now_seconds() - started;
         outcomes.push_back(out);
+
+        // 剩余时间按**已经跑过的这几镜**的平均值推，不按静态表。
+        // 失败的那几镜也算进去：它们也花了时间（而且往往花得更多，
+        // 失败通常发生在跑完大半之后）。
+        const int left = total - index;
+        if (left > 0) {
+            const double per = (now_seconds() - stage_started) / index;
+            pipeline::Event e;
+            e.stage = stage_name;
+            e.kind = "eta";
+            e.current = index;
+            e.total = total;
+            e.message = "还剩 " + std::to_string(left) + " 个镜头，按目前速度约 " +
+                        util::human_time(per * left);
+            progress.report(e);
+        }
     }
     return outcomes;
 }
