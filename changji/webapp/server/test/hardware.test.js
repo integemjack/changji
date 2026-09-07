@@ -20,7 +20,7 @@ describe('32 的倍数', () => {
   it('规整到最近的 32 倍', () => {
     // 不是 32 的倍数会让 Wan 的潜空间对不齐
     expect(round32(432)).toBe(448)
-    expect(round32(431)).toBe(448)
+    expect(round32(431)).toBe(416)
     expect(round32(1088)).toBe(1088)
   })
 
@@ -28,9 +28,10 @@ describe('32 的倍数', () => {
     // 80/32 = 2.5：Python 的 round 给 2（取偶），Math.round 给 3。
     // 差一档就是 64 和 96，而分辨率不符会被闸门判成「档位参数没生效」，
     // 退回重跑，永远跑不出来
-    expect(round32(80)).toBe(64)
-    expect(round32(112)).toBe(96)
-    expect(round32(144)).toBe(128)
+    expect(round32(80)).toBe(64) // 2.5 → 2
+    expect(round32(144)).toBe(128) // 4.5 → 4
+    expect(round32(48)).toBe(64) // 1.5 → 2
+    expect(round32(208)).toBe(192) // 6.5 → 6
   })
 
   it('再小也不低于 32', () => {
