@@ -56,9 +56,10 @@ private:
     nlohmann::json detail_;
 };
 
-/// FastAPI 在 pydantic 校验失败时回的那种 422。
+/// FastAPI 在 pydantic 校验失败时回的那种 422，**字段嵌在子模型里**的情形。
 ///
 /// loc 的头两段固定是 ["body", <模型字段名>]，第三段是出问题的键。
+/// 字段直接挂在请求模型上时 loc 只有两段，用下面的 unprocessable_top。
 /// 形状对不上的话前端拿到的 detail 是数组而不是字符串，
 /// 错误提示会显示成 [object Object]——那是现有行为，要原样保住。
 inline ApiError unprocessable(const std::string& model_field,
@@ -70,6 +71,23 @@ inline ApiError unprocessable(const std::string& model_field,
         nlohmann::json{
             {"type", type},
             {"loc", nlohmann::json::array({"body", model_field, key})},
+            {"msg", msg},
+            {"input", input},
+        }})}});
+}
+
+/// 同上，但字段**直接挂在请求模型上**，loc 只有 ["body", <键>] 两段。
+///
+/// 两个函数不能合并：段数是 pydantic 按模型嵌套层数生成的，
+/// 多一段少一段前端高亮的就是别的字段。
+inline ApiError unprocessable_top(const std::string& key,
+                                  const std::string& msg,
+                                  const nlohmann::json& input,
+                                  const std::string& type) {
+    return ApiError::with_body(422, nlohmann::json{{"detail", nlohmann::json::array({
+        nlohmann::json{
+            {"type", type},
+            {"loc", nlohmann::json::array({"body", key})},
             {"msg", msg},
             {"input", input},
         }})}});
