@@ -139,6 +139,7 @@ add_executable(changji
     src/stages/bible.cpp
     src/stages/storyboard.cpp
     src/stages/script.cpp
+    src/stages/prompt_compose.cpp
     src/infer/scheduler.cpp
     src/infer/sd_backend.cpp
     src/llm/client.cpp
@@ -308,6 +309,7 @@ if(CHANGJI_BUILD_TESTS)
         tests/unit/test_writeback.cpp
         tests/unit/test_config_api.cpp
         tests/unit/test_projects.cpp
+        tests/unit/test_prompt_compose.cpp
         src/models/shot.cpp
         src/models/character.cpp
         src/models/project.cpp
@@ -319,6 +321,8 @@ if(CHANGJI_BUILD_TESTS)
         src/stages/bible.cpp
         src/stages/storyboard.cpp
         src/stages/script.cpp
+        src/stages/prompt_compose.cpp
+    src/stages/prompt_compose.cpp
         src/infer/scheduler.cpp
     src/infer/sd_backend.cpp
         src/pipeline/jobs.cpp
