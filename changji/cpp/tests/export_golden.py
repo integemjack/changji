@@ -434,3 +434,76 @@ voice_cases.append({"gender": "male", "index": 0, "pool": ["none"],
 dump("pick_voice", {"pool": voice_pool, "cases": voice_cases})
 
 print("\ncharacter 语料也写好了")
+
+
+# ══════════════════════════════════════════════════════════════════════
+# project.py 的语料：真的建一个项目目录出来
+# ══════════════════════════════════════════════════════════════════════
+#
+# 阶段 1 的完成标志是"能读 Python 写的项目文件（含中文路径和中文内容），
+# 字段全部对得上"。所以这里不导出 JSON 片段，而是**真的用 ProjectStore
+# 建一个目录**，目录名带中文，让 C++ 侧去读它。
+#
+# 中文目录名是刻意的：MSVC 上 fs::path(std::string) 会按 ANSI 代码页解释
+# 窄字符串，而项目里的 std::string 一律是 UTF-8，撞上就抛异常。
+# 这个坑在 verify/RESULTS.md 里记过，这里用语料把它钉死。
+
+import shutil  # noqa: E402
+
+from changji.models.project import (  # noqa: E402
+    Episode,
+    Project,
+    ProjectStore,
+)
+
+PROJ_ROOT = OUT / "项目_雨夜天台"
+if PROJ_ROOT.exists():
+    shutil.rmtree(PROJ_ROOT)
+
+store = ProjectStore.create(PROJ_ROOT, project_id="yuye-tiantai",
+                            title="雨夜天台", style_line=StyleLine.REALISTIC)
+
+project = store.load_project()
+project.premise = "一个关于错过与和解的都市短剧。每集三分钟，竖屏。"
+project.episodes = [
+    Episode(
+        episode_id="ep01",
+        title="第一集 · 雨",
+        synopsis="林渊在天台等一个不会来的人。",
+        target_duration_s=180.0,
+        script="（雨声起）\n林渊站在栏杆前，没有回头。",
+        shots=[full, minimal],   # 复用前面那两个镜头，order 分别是 6 和 0
+    ),
+    Episode(
+        episode_id="ep02",
+        title="第二集 · 晴",
+        synopsis="三年后，同一个天台。",
+        target_duration_s=200.0,
+    ),
+]
+store.save_project(project)
+store.save_assets(lib)
+
+ep01 = project.episode_by_id("ep01")
+dump("project_expectations", {
+    "root_name": PROJ_ROOT.name,
+    "project_id": project.project_id,
+    "title": project.title,
+    "premise": project.premise,
+    "schema_version": project.schema_version,
+    "episode_ids": [e.episode_id for e in project.episodes],
+    "ep01": {
+        "sorted_shot_ids": [s.shot_id for s in ep01.sorted_shots()],
+        "planned_duration_s": ep01.planned_duration_s(),
+        "counts_by_status": ep01.counts_by_status(),
+        "shots_needing_planned": [s.shot_id for s in ep01.shots_needing(ShotStatus.PLANNED)],
+        "shots_needing_audio_done": [
+            s.shot_id for s in ep01.shots_needing(ShotStatus.AUDIO_DONE)],
+    },
+    "subdirs": sorted(p.name for p in PROJ_ROOT.iterdir() if p.is_dir()),
+    # rel() 的正斜杠约定：Windows 上存的项目拿到 Linux 也要能读
+    "rel_of_frames_file": store.paths.rel(PROJ_ROOT / "frames" / "a.png"),
+    "rel_of_nested": store.paths.rel(PROJ_ROOT / "shots" / "draft" / "b.mp4"),
+})
+
+print(f"\n项目目录建在 {PROJ_ROOT}")
