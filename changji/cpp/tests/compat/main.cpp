@@ -391,6 +391,183 @@ int run_post(const Args& args, Tally& tally) {
     return 0;
 }
 
+/// 编辑接口对拍：改镜头、改资产、批量操作。
+///
+/// **这三个语料里的 `body` 是期望的响应，不是请求体。** 请求体要现拼——
+/// 每个语料拼法不一样（`patch` / `extra` / `req`），下面这个小适配表把
+/// 这点差异集中在一处，免得散在三段几乎一样的循环里。
+///
+/// 拼错了不会报错，只会两边都回 422，然后对拍说"一致"——
+/// **那是最坏的结果：绿的，但什么都没验。** 所以下面对每条都检查
+/// "是不是两边都回了 422 而语料说该 200"，撞上就当差异报出来。
+struct EditCorpus {
+    const char* file;
+    const char* title;
+    /// 从语料里拼出请求体（不含 project，那个由调用方按副本填）。
+    json (*build)(const json& c);
+    /// 请求打到哪个 URL。有的语料每条自己带 url，有的整个语料共用一个。
+    const char* fixed_url;
+};
+
+json build_shot_edit(const json& c) {
+    // 末尾两条（剧集/镜头不存在）自己带 episode_id / shot_id，
+    // 其余的都打在导出脚本固定的那一个镜头上。
+    return {{"episode_id", c.value("episode_id", "ep01")},
+            {"shot_id", c.value("shot_id", "ep01_s03_sh007")},
+            {"patch", c.value("patch", json::object())}};
+}
+
+json build_asset_edit(const json& c) {
+    json body = c.value("extra", json::object());
+    body["patch"] = c.value("patch", json::object());
+    // reset_shots 在语料里是 null 表示"没显式给"，那就别发——
+    // 发一个 null 过去和不发是两码事（后者才走得到默认值 true）。
+    if (c.contains("reset_shots") && !c.at("reset_shots").is_null()) {
+        body["reset_shots"] = c.at("reset_shots");
+    }
+    return body;
+}
+
+json build_batch_edit(const json& c) { return c.value("req", json::object()); }
+
+/// 一条用例改完之后要比哪些文件。
+///
+/// 语料里记的是窄投影（`shot_after` 只有那一个镜头，`shots_after` 只有
+/// 六个字段）。这里不照抄那个投影，**直接整份比 project.json 和
+/// assets.json**——比语料记的更严，而且不用在 C++ 里重写一遍投影逻辑。
+const char* const kEditFiles[] = {"project.json", "assets.json"};
+
+int run_edit(const Args& args, Tally& tally) {
+    if (args.python_url.empty() || args.project.empty()) return 0;
+
+    static const EditCorpus corpora[] = {
+        {"endpoints_shot_edit.json", "改镜头", build_shot_edit, "/api/shot"},
+        {"endpoints_asset_edit.json", "改资产", build_asset_edit, nullptr},
+        {"endpoints_batch_edit.json", "批量操作", build_batch_edit, nullptr},
+    };
+
+    compat::CompareOptions opts;
+    opts.ignore = live_ignores();
+    opts.ignore.push_back({"/updated_at", "存盘刷新它"});
+    opts.ignore.push_back({"/created_at", "拷贝出来的时刻"});
+
+    const fs::path src = paths::from_utf8(args.project);
+    int index = 0;
+
+    for (const auto& corpus_def : corpora) {
+        const json corpus = read_json(fs::path(args.golden) / corpus_def.file);
+        if (corpus.is_null()) {
+            std::cout << "\n读不到 " << corpus_def.file << "，跳过\n";
+            continue;
+        }
+        std::cout << "\n== 编辑接口·" << corpus_def.title << "："
+                  << corpus.at("cases").size() << " 条 ==\n";
+
+        for (const auto& c : corpus.at("cases")) {
+            const std::string name = c.value("name", "?");
+            ++index;
+            if (!args.filter.empty() &&
+                name.find(args.filter) == std::string::npos) {
+                continue;
+            }
+
+            const std::string tag = "e" + std::to_string(index);
+            const fs::path py_dir = fresh_copy(src, tag + "_py");
+            const fs::path cp_dir = fresh_copy(src, tag + "_cpp");
+            if (py_dir.empty() || cp_dir.empty()) {
+                tally.skip(name, "拷项目副本失败");
+                continue;
+            }
+
+            const std::string url = corpus_def.fixed_url
+                                        ? corpus_def.fixed_url
+                                        : c.value("url", std::string());
+            if (url.empty()) {
+                tally.skip(name, "语料里没有 url");
+                continue;
+            }
+
+            const json shape = corpus_def.build(c);
+            const auto with_project = [&](const fs::path& dir) {
+                json b = shape;
+                b["project"] = paths::to_utf8(dir);
+                return b;
+            };
+            if (args.verbose) {
+                std::cout << "      -> POST " << url << " " << shape.dump() << "\n";
+            }
+
+            const Response py = send(args.python_url, "POST", url,
+                                     with_project(py_dir));
+            const Response cp = send(args.cpp_url, "POST", url,
+                                     with_project(cp_dir));
+            if (!py.error.empty()) {
+                tally.skip(name, "Python 侧：" + py.error);
+                continue;
+            }
+            if (!cp.error.empty()) {
+                tally.skip(name, "C++ 侧：" + cp.error);
+                continue;
+            }
+
+            std::vector<compat::Difference> diffs;
+            if (py.status != cp.status) {
+                diffs.push_back({"（状态码）",
+                                 "Python " + std::to_string(py.status) + "，C++ " +
+                                     std::to_string(cp.status)});
+            }
+
+            // **请求拼错了的自检。** 两边都回 422 而语料说该 200，
+            // 说明是我这儿把请求体拼错了，不是后端不一致——
+            // 不查的话这条会报"一致"，绿得毫无意义。
+            const int want = c.value("status", 0);
+            if (want == 200 && py.status == 422 && cp.status == 422) {
+                diffs.push_back({"（对拍自己的问题）",
+                                 "语料说这条该回 200，两边却都回 422："
+                                 "请求体拼错了，不是后端的差异"});
+            }
+
+            // pydantic 那串报错文字不参与对拍（版本号 + 文档 URL），
+            // 语料里 compare=shape 的就是这类。两边都得有个非空的
+            // detail，但不比里面写了什么。
+            const bool shape_only = c.value("compare", std::string("full")) == "shape";
+            if (shape_only) {
+                const auto has_detail = [](const json& b) {
+                    return b.is_object() && b.contains("detail") &&
+                           ((b.at("detail").is_string() &&
+                             !b.at("detail").get<std::string>().empty()) ||
+                            b.at("detail").is_array());
+                };
+                if (has_detail(py.body) != has_detail(cp.body)) {
+                    diffs.push_back({"响应/detail",
+                                     "一边有非空的 detail，另一边没有"});
+                }
+            } else {
+                for (auto& d : compat::compare(py.body, cp.body, opts)) {
+                    diffs.push_back({"响应" + d.path, d.detail});
+                }
+            }
+
+            // **再比改完之后的项目文件。** 响应一样不代表写盘一样：
+            // 一个接口可以回 {"saved": true} 然后什么都没写。
+            for (const char* file : kEditFiles) {
+                const json a = read_json(py_dir / file);
+                const json b = read_json(cp_dir / file);
+                if (a.is_null() || b.is_null()) continue;
+                for (auto& d : compat::compare(a, b, opts)) {
+                    diffs.push_back({std::string(file) + d.path, d.detail});
+                }
+            }
+            tally.report(name, diffs);
+        }
+    }
+
+    std::error_code ec;
+    fs::remove_all(fs::temp_directory_path() / paths::from_utf8("changji_对拍_写"),
+                   ec);
+    return 0;
+}
+
 /// 读一侧假模型记下来的提示词。每行一条，顺序就是请求的顺序。
 std::vector<std::string> read_prompts(const fs::path& work) {
     std::vector<std::string> out;
@@ -881,6 +1058,7 @@ int main(int argc, char** argv) {
     if (!args.python_url.empty()) {
         run_live(args, tally);
         run_post(args, tally);
+        run_edit(args, tally);
         if (!args.llm_work.empty()) run_llm(args, tally);
     }
 
