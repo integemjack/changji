@@ -662,7 +662,7 @@ cpp/
 | **4** | LLM 三阶段；线程池 + job 表 + WebSocket 广播；破契约项 | 回放模式下生成结果与 Python 一致；WS 能实时看到阶段推进。**前端不用改**——破契约重审后只剩 `GET /` 一项，不影响前端 |
 | **5** | 链接 sd.cpp，frames + render；逐步进度接进 WS 广播 | 代码已完成（流水线、`POST /api/run`、VAE 分块、`/api/run/preview`、`/api/outputs`）。**实机判据卡住**，见下面「阶段 5 的实机判据卡在模型文件上」 |
 | **6** | 移植 `comfy/`，ComfyUI 作为可选后端接回来 | ✅ 已达成。`[models].engine` 一个键切换；`/api/voices` 已恢复，路由表 48/48 |
-| **7** | 配音编排 + 组装：`audio.py` 的编排逻辑、ffmpeg、字幕、成片 | 五个阶段已接进 `run_episode`（配音→首帧→草稿→成片→装配）。**还差 HTTP / ComfyUI 两个真 TTS 后端**——接上之前配音走估算后端，成片是静音的 |
+| **7** | 配音编排 + 组装：`audio.py` 的编排逻辑、ffmpeg、字幕、成片 | ✅ 代码已完成：五个阶段接进 `run_episode`（配音→首帧→草稿→成片→装配），三个 TTS 后端（估算 / HTTP / ComfyUI）按 `[tts].backend` 切。**实机产出一集要等模型和 ffmpeg**，同阶段 5 那条 |
 | **8** | 删 Python 引擎 | 只剩两层 |
 | **9** | Qwen3-TTS 的 C++ 化 | 纯二进制能出声。并行推进，不卡前面任何阶段 |
 

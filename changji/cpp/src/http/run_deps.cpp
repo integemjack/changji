@@ -10,7 +10,9 @@
 #include <memory>
 
 #include "comfy/loader.hpp"
+#include "llm/client.hpp"
 #include "media/ffmpeg.hpp"
+#include "stages/tts_backends.hpp"
 #include "comfy/renderers.hpp"
 #include "config/runtime.hpp"
 #include "http/run.hpp"
@@ -38,10 +40,32 @@ RunDeps default_run_deps() {
         b.ffmpeg = media::FFmpeg(s.assembly.ffmpeg_path, s.assembly.ffprobe_path,
                                  media::default_runner());
 
-        // 配音留空 = 估算后端（只算时长不出声音）。
-        // HTTP 和 ComfyUI 两个真后端还没移植，接上之前成片是静音的——
-        // 而那件事在配音阶段的 start 事件里说清楚了，不会跑完才发现。
+        // 配音后端按 [tts].backend 选。
+        //
+        // **任何一条路搭不起来都退回估算后端，不抛。** 配音只是五个阶段
+        // 之一，为它整条流水线跑不起来不值得——而且估算后端会写出等长
+        // 静音，画面那几步照样能验。真出不了声这件事在配音阶段的
+        // start 事件里说清楚了，不会跑完一整集才发现。
         b.tts.reset();
+        if (s.tts.backend == "http" && s.tts.base_url.has_value() &&
+            !s.tts.base_url->empty()) {
+            b.tts = stages::http_tts_backend(*s.tts.base_url, 300.0,
+                                             llm::default_http_post(), b.ffmpeg);
+        } else if (s.tts.backend == "comfy") {
+            try {
+                auto tts_client = std::make_shared<comfy::Client>(
+                    [] { return config::runtime().snapshot().comfy; },
+                    comfy::default_transport(
+                        [] { return config::runtime().snapshot().comfy; }));
+                if (const auto wf =
+                        comfy::load_workflow(*tts_client, store, "tts", false)) {
+                    b.tts = stages::comfy_tts_backend(tts_client, *wf,
+                                                      store.paths(), b.ffmpeg);
+                }
+            } catch (const std::exception&) {
+                // 连不上 ComfyUI 或者工作流读不了。退回估算后端。
+            }
+        }
         if (s.models.engine != "comfy") return b;
 
         // ---- 走 ComfyUI ----
