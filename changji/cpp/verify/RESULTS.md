@@ -587,6 +587,87 @@ Pi 有 8GB 内存，但 **Vulkan 设备内存是 4096 MB**（CMA 划给 GPU 的�
    实际 libvulkan 就在那儿。
 2. 再往下要 `spirv-headers` 提供 `SPIRV-HeadersConfig.cmake`。
 
+## 三点十一、验证第六项：Pi 5 跑不了 Wan 2.2（失败）
+
+**结论：Raspberry Pi 5（8GB）跑不了 Wan 2.2 TI2V-5B，一步采样都没开始。**
+
+### 怎么失败的
+
+```
+MESA: error: Failed to allocate device memory for BO
+terminate called after throwing an instance of vk::OutOfHostMemoryError
+  what():  vk::CommandBuffer::end: ErrorOutOfHostMemory
+EXIT=134
+```
+
+崩在 Vulkan 驱动分配缓冲区那一步。进度：825 个张量流式加载走了 16 批
+（每批 27 个，约 430 个），**采样进度行数为 0**——连第一步去噪都没到。
+
+### 这次的条件已经拉满
+
+失败不是因为没优化。跑之前做了：
+
+| 手段 | 状态 |
+|---|---|
+| `--offload-to-cpu` | 开 |
+| `--vae-tiling --vae-tile-size 16x11` | 开 |
+| `--backend clip=cpu` | 开（绕开 V3D 跑不了 T5 嵌入表的问题） |
+| 磁盘交换 | **+8GB**（另有 2GB zram） |
+| Docker / containerd | 停 |
+| 桌面会话（lightdm 全家） | 停 |
+| 电源 | 换过，全程 `throttled=0x0` |
+
+起跑时可用内存 7.4GB、交换 10GB 全空。
+
+### 为什么 8GB 交换救不了
+
+这一条值得单独记：**GPU 缓冲区要物理驻留的内存**（DMA 可达），
+换页出去的部分对 Vulkan 驱动不可用。所以交换能延后 CPU 侧的 OOM，
+**挡不住 GPU 侧的分配失败**。
+
+崩溃前的内存实况是 7.68GB 已用 / 380MB 可用 / 3.1GB 交换已用——
+CPU 侧靠交换撑住了，但 Vulkan 要的那块连续物理内存拿不出来。
+
+### 数字对得上
+
+`total params memory size = 11285.94MB` 与 Windows 上完全一致
+（文本编码器 6664MB + 扩散模型 3277MB + VAE 1344MB）。
+所以这不是 ARM 上的什么特殊行为，就是**11.3GB 的工作集塞不进 8GB 机器**。
+
+### 顺带测到的两条
+
+**V3D 跑不了 T5 的嵌入表。** 第一次尝试崩在
+
+```
+ggml-backend.cpp:930: pre-allocated tensor (text_encoders.t5xxl.transformer.shared.weight)
+in a buffer (Vulkan0) that cannot run the operation (NONE)
+```
+
+ggml 直接 abort，不回落到 CPU。要显式 `--backend clip=cpu` 才能绕过。
+**文本编码器在 Pi 上只能跑 CPU。**
+
+**瓶颈是 GPU 不是 CPU。** 扩散阶段只有一个核 100%（Vulkan 提交线程自旋），
+另三核空闲，V3D 满频 960MHz。文本编码器阶段四核都用上了
+（三个工作线程各积累约 2 分钟 CPU 时间）。V3D 没有矩阵核心
+（`matrix cores: none`），矩阵乘走通用着色器——加核数没用。
+
+### 对决策 4 的影响
+
+决策 4 选的是"树莓派跑全流程，慢也认"。**这个选项在 8GB 的 Pi 5 上
+不成立**——不是慢，是跑不起来。方案里"约束顺序：能跑 > 画质 > 速度"
+的第一条就没满足。
+
+三个方向，要重新定：
+
+1. **Pi 只做编排 + 界面，推理打到局域网里的 Windows 机器。**
+   代价是 sd.cpp 不必链进同一个二进制，方案第一条立项理由
+   （逐层换入换出让大模型在小显存上跑）就只对 Windows 成立。
+2. **换更小的模型跑 Pi。** 文本编码器占了 11.3GB 里的 6.7GB，
+   是最大的一块。换更激进的 umt5 量化或别的编码器可能压得下来，
+   但那是另一条选型线，要重新验画质。
+3. **等 16GB 的 Pi 5。** 官方有 16GB 版本，11.3GB 装得下。
+   但 V3D 没有矩阵核心这条不变，速度仍然是问题。
+
 ## 四、Windows 长路径（工程约束，不影响方案）
 
 llama.cpp 现在带了个 Svelte 写的 Web UI，`tools/ui/src/lib/components/app/chat/
@@ -616,4 +697,4 @@ Windows 的路径处理会在你完全想不到的地方安静地失败。
 - [x] **第三项：`--offload-to-cpu` —— 通过**，Issue #1483 不复现
 - [x] **第四项：VAE 分块 —— 通过**，但默认块大小对 Wan 无效，必须显式设 `--vae-tile-size`
 - [x] **第五项：Pi 5 的 Vulkan —— 通过**，V3D + V3DV Mesa，但设备内存只有 4096 MB
-- [ ] 第六项：Pi 的 8GB 装不装得下 5B 的 Q4 权重加 VAE
+- [x] **第六项：Pi 5 跑不了 Wan 2.2 —— 失败**，Vulkan 缓冲区分配不出来，一步采样都没到
