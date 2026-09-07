@@ -11,11 +11,8 @@
 #include <vector>
 
 #include "config/runtime.hpp"
-#include "infer/sd_image.hpp"
-#include "infer/sd_video.hpp"
 #include "models/project.hpp"
 #include "pipeline/jobs.hpp"
-#include "stages/frames.hpp"
 #include "util/fs_time.hpp"
 #include "util/human_time.hpp"
 #include "util/paths.hpp"
@@ -126,19 +123,6 @@ std::vector<pipeline::Stage> parse_stages(
     return out;
 }
 
-RunDeps default_run_deps() {
-    RunDeps d;
-    d.settings = [] { return config::runtime().snapshot(); };
-    d.profile = [] { return config::runtime().profile(); };
-    d.backends = [](const config::Settings& s) {
-        pipeline::Backends b;
-        b.frame = stages::sd_renderer();
-        b.video = infer::sd_video_renderer(s);
-        return b;
-    };
-    return d;
-}
-
 ApiResult post_run(const json& body, const RunDeps& deps) {
     if (!body.is_object()) throw ApiError(400, "请求体要是一个对象");
 
@@ -181,7 +165,7 @@ ApiResult post_run(const json& body, const RunDeps& deps) {
             // 中途换的话同一集里前半段和后半段用的是不同的模型。
             const config::Settings settings = deps.settings();
             const HardwareProfile profile = deps.profile();
-            const pipeline::Backends backends = deps.backends(settings);
+            const pipeline::Backends backends = deps.backends(settings, store);
 
             std::vector<std::string> errors;
             int done = 0;

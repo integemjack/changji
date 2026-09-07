@@ -95,7 +95,8 @@ struct Fakes {
             p.detected = true;
             return p;
         };
-        d.backends = [this](const config::Settings&) {
+        d.backends = [this](const config::Settings&,
+                            const models::ProjectStore&) {
             pipeline::Backends b;
             b.frame = [this](const models::Shot& s, const stages::PromptBundle&,
                              const models::TierSpec&, const fs::path& dest,

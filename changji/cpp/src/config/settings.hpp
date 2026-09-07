@@ -126,6 +126,16 @@ struct AssemblyConfig {
 /// 路径规则：绝对路径原样用；相对路径相对 dir 解析。
 /// dir 支持 ~ 展开，为空时回落到项目库根目录下的 models/。
 struct ModelsConfig {
+    /// 出图出片走哪个引擎："sd"（进程内 sd.cpp）或 "comfy"（外部 ComfyUI）。
+    ///
+    /// **放在 [models] 里而不是单开一节**，是因为这一节本来就是 C++ 侧独有的
+    /// （Python 的 Settings 是 extra="forbid"，见方案的"配置隔离"）。
+    /// C++ 独有的键集中在一处，两个后端各用一份配置时最容易分辨。
+    ///
+    /// 选 comfy 时视频一定走 ComfyUI；首帧要项目里有 workflows/image.json
+    /// 才走它，没有就退回 sd.cpp——图像工作流是用户提供的，不能假定存在。
+    std::string engine = "sd";
+
     /// 模型目录。相对路径的基准。
     std::optional<std::string> dir;
 

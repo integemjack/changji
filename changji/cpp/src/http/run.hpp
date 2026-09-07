@@ -16,6 +16,7 @@
 #include "config/settings.hpp"
 #include "http/readonly.hpp"
 #include "models/hardware.hpp"
+#include "models/project.hpp"
 #include "pipeline/episode.hpp"
 
 namespace changji::http {
@@ -30,7 +31,12 @@ struct RunDeps {
     std::function<config::Settings()> settings;
     std::function<models::HardwareProfile()> profile;
     /// 按当前配置造出图和出片的后端。
-    std::function<pipeline::Backends(const config::Settings&)> backends;
+    ///
+    /// 要 store 是因为 ComfyUI 那条路的工作流在**项目里**
+    /// （workflows/video.json 覆盖内置的那份）。只给 settings 的话，
+    /// "不同的剧用不同的模型"就没了。
+    std::function<pipeline::Backends(const config::Settings&,
+                                     const models::ProjectStore&)> backends;
 };
 
 /// 默认的那套：配置从 runtime 取，后端是 sd.cpp。

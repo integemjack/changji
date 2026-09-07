@@ -177,6 +177,7 @@ add_executable(changji
     src/comfy/ws_client.cpp
     src/comfy/client_http.cpp
     src/comfy/loader.cpp
+    src/comfy/renderers.cpp
     src/http/readonly.cpp
     src/http/editing.cpp
     src/http/editing_assets.cpp
@@ -194,6 +195,7 @@ add_executable(changji
     src/http/reset.cpp
     src/http/run.cpp
     src/http/voices.cpp
+    src/http/run_deps.cpp
     src/http/server.cpp
 )
 
@@ -371,10 +373,12 @@ if(CHANGJI_BUILD_TESTS)
         tests/unit/test_ws_client.cpp
         tests/unit/test_comfy_loader.cpp
         tests/unit/test_voices.cpp
+        tests/unit/test_comfy_renderers.cpp
 
-        # 被测的源码。刻意不包含 doctor.cpp、http/server.cpp 和
-        # llm/client_http.cpp —— 那三个链 httplib 或 Crow，
-        # 而它们的逻辑部分已经拆到不依赖网络库的文件里了。
+        # 被测的源码。刻意不包含 doctor.cpp、http/server.cpp、
+        # llm/client_http.cpp、comfy/client_http.cpp 和 http/run_deps.cpp ——
+        # 它们链 httplib、asio 或 Crow，而各自的逻辑部分都已经拆到
+        # 不依赖网络库的文件里了。
         src/models/shot.cpp
         src/models/character.cpp
         src/models/project.cpp
@@ -401,6 +405,7 @@ if(CHANGJI_BUILD_TESTS)
         src/comfy/client.cpp
         src/comfy/ws_client.cpp
         src/comfy/loader.cpp
+        src/comfy/renderers.cpp
         src/llm/client.cpp
         src/config/settings.cpp
         src/config/writeback.cpp

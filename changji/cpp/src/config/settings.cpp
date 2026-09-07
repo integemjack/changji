@@ -146,13 +146,21 @@ fs::path ModelsConfig::resolve(const std::string& entry,
 }
 
 std::vector<std::string> ModelsConfig::validate() const {
-    // 刻意什么都不查。
+    // **只查 engine，模型文件一个都不查。**
     //
-    // 这里能查的只有"文件在不在"，而那件事不该在配置加载阶段做：
+    // engine 是枚举，写错了不是"文件缺了"而是"整条出片的路走岔了"，
+    // 而走岔的表现是连不上 ComfyUI 或者报"没有编进出图后端"——
+    // 两句话都指不到真正的原因（拼写错误）。
+    //
+    // 文件这边能查的只有"在不在"，而那件事不该在配置加载阶段做：
     // 模型动辄好几个 G，装好程序还没下模型是常态。那时候如果加载直接失败，
     // 用户连界面都进不去，也就没法在界面里看到到底缺哪个文件。
     // 存在性检查在 doctor 里，报警告，程序照常起来。
-    return {};
+    std::vector<std::string> errs;
+    if (engine != "sd" && engine != "comfy") {
+        errs.push_back("models.engine 只能是 sd 或 comfy，当前是 " + engine);
+    }
+    return errs;
 }
 
 std::vector<std::string> Settings::validate() const {
@@ -286,6 +294,7 @@ void apply_table(const toml::table& doc, Settings& s) {
         take(t, "ffprobe_path", s.assembly.ffprobe_path);
     }
     if (auto t = doc["models"].as_table()) {
+        take(t, "engine", s.models.engine);
         take_path_str(t, "dir", s.models.dir);
         take(t, "llm", s.models.llm);
         take(t, "video", s.models.video);
@@ -426,6 +435,11 @@ subtitle_max_chars_per_line = 15
 subtitle_font = "Source Han Sans SC"
 
 [models]
+# 出图出片走哪个引擎。sd = 进程内 sd.cpp，comfy = 外部 ComfyUI。
+# 选 comfy 时视频一定走 ComfyUI；首帧要项目里有 workflows/image.json
+# 才走它，没有就退回 sd.cpp——图像工作流是用户提供的，不能假定存在。
+engine = "sd"
+
 # 进程内推理要用的模型文件。ComfyUI 那条路不需要这一节——
 # 那边模型是它自己管的，工作流里按名字引用。
 #
