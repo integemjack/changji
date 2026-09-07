@@ -11,9 +11,9 @@
 #ifdef CHANGJI_HAVE_SD
 #include <stable-diffusion.h>
 #define STB_IMAGE_WRITE_IMPLEMENTATION
-#include <stb_image_write.h>
+#include <thirdparty/stb_image_write.h>
 #define STB_IMAGE_IMPLEMENTATION
-#include <stb_image.h>
+#include <thirdparty/stb_image.h>
 #endif
 
 namespace fs = std::filesystem;

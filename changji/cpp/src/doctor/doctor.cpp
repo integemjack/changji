@@ -9,7 +9,7 @@
 #include <utility>
 #include <vector>
 
-#include <httplib.h>
+#include "util/httplib.hpp"
 #include <nlohmann/json.hpp>
 
 #include "infer/sd_backend.hpp"

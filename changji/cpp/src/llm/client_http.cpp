@@ -3,7 +3,7 @@
 // 分出来是为了让 client.cpp 能进单元测试目标而不用链 httplib——
 // 请求怎么拼、错误怎么翻成人话、返回怎么抽内容，那三件事全是纯逻辑。
 
-#include <httplib.h>
+#include "util/httplib.hpp"
 
 #include <string>
 

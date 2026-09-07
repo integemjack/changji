@@ -147,6 +147,12 @@ struct Transport {
 /// 用户在设置页改了地址、接口回"已保存"，而请求还是发往老地址。
 using ConfigProvider = std::function<config::ComfyConfig()>;
 
+/// 真实的传输：httplib 做 HTTP，自己那个 WebSocket 客户端做进度。
+///
+/// 实现在 client_http.cpp——**那是唯一 include httplib 和 asio 的文件**，
+/// 所以这一层能进单元测试目标。
+Transport default_transport(ConfigProvider cfg);
+
 class Client {
 public:
     Client(ConfigProvider cfg, Transport transport, std::string client_id = "");

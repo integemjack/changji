@@ -81,6 +81,25 @@ FetchContent_Declare(Crow
 
 FetchContent_MakeAvailable(json tomlplusplus httplib Crow)
 
+# ⚠️ **httplib 的头文件目录不能是 SYSTEM。**
+#
+# sd.cpp 把自己的 thirdparty 目录（里面有一份 httplib.h 0.28.0）作为
+# INTERFACE 包含目录导出，那是普通的 -I。而 MSVC 的 SYSTEM 目录
+# （-external:I）**永远排在普通 -I 之后**——所以只要 httplib 是 SYSTEM，
+# sd.cpp 那份就必赢，我们钉的 0.15.3 一行都用不上。
+#
+# 这不是假想：llm/client_http.cpp 和 doctor.cpp 从链上 sd.cpp 那天起
+# 编的一直是 0.28.0。两边碰巧 API 兼容，所以从来没报过错，直到 comfy
+# 这边用到 multipart 才炸出来（0.28.0 把 MultipartFormDataItems 改了名）。
+# **一个版本号写在构建脚本里、实际编的是另一个版本**，比编不过更危险。
+#
+# 清掉 SYSTEM 标记之后它就是普通 -I，再配合下面的 BEFORE 排到最前面。
+# 代价是 httplib 的警告会进 /W4 的视野，所以用到它的地方包一层
+# util/httplib.hpp 把警告按下去。
+if(TARGET httplib)
+    set_property(TARGET httplib PROPERTY INTERFACE_SYSTEM_INCLUDE_DIRECTORIES "")
+endif()
+
 # ---- stable-diffusion.cpp ----
 #
 # 阶段 5 的核心依赖。出首帧、出视频都靠它。
@@ -156,6 +175,7 @@ add_executable(changji
     src/comfy/workflow.cpp
     src/comfy/client.cpp
     src/comfy/ws_client.cpp
+    src/comfy/client_http.cpp
     src/http/readonly.cpp
     src/http/editing.cpp
     src/http/editing_assets.cpp
@@ -183,6 +203,8 @@ target_include_directories(changji PRIVATE
     src
     "${ASIO_INCLUDE_DIR}"
 )
+# 我们那份 httplib 排在最前面，见上面 INTERFACE_SYSTEM_INCLUDE_DIRECTORIES 那段。
+target_include_directories(changji BEFORE PRIVATE "${httplib_SOURCE_DIR}")
 
 target_link_libraries(changji PRIVATE
     nlohmann_json::nlohmann_json
@@ -203,8 +225,18 @@ if(CHANGJI_SD)
     # stb 那两个头在 sd.cpp 的 thirdparty 里，它自己没 export 这个目录。
     # 用它们是为了在**内存里**编解码 PNG——stb 自带的 fopen 版本在
     # Windows 上把路径按 ANSI 代码页解释，中文项目名直接写不进去。
-    target_include_directories(changji PRIVATE
-        "${stable_diffusion_cpp_SOURCE_DIR}/thirdparty")
+    # ⚠️ **不要把 sd.cpp 的 thirdparty 目录摊在包含路径上。**
+    #
+    # 那里面有一份 httplib.h（0.28.0）和一份 json.hpp，会盖住我们钉的版本。
+    # 而且盖得**必然**：httplib::httplib 的头文件是以 SYSTEM 身份进来的
+    # （MSVC 上是 -external:I），SYSTEM 目录永远排在普通 -I 之后。
+    # 于是 llm/client_http.cpp 和 doctor.cpp 一直编的是 0.28.0，不是 0.15.3——
+    # 两边碰巧 API 兼容所以从来没报过错，直到 comfy 这边用到 multipart
+    # （0.28.0 把 MultipartFormDataItems 改了名）才炸出来。
+    #
+    # 现在只把 sd.cpp 的源码根目录留在路径上，stb 走
+    # `#include <thirdparty/stb_image.h>`。多打几个字，换的是
+    # "谁也不会再意外捡到别人的 httplib"。
 endif()
 
 if(WIN32)
