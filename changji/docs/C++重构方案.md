@@ -361,6 +361,27 @@ C++ 侧让它真的生效（`config::Runtime::set_tier_override`）。仍然只�
 要测**所有读它的路径**都读到了新值。这里加了带 profile 参数的重载，
 由路由层显式传 `runtime().profile()`。
 
+### 一处有意不复刻的 Python bug：`probe()` 撞上 "N/A" 会崩（阶段 7 发现）
+
+移植 `assembly/ffmpeg.py` 时，给 ffprobe 的输出做对拍语料，
+拿一个 `nb_frames` 是 `"N/A"` 的样本喂进去，**Python 直接抛
+`ValueError: invalid literal for int() with base 10: 'N/A'`。**
+
+```python
+frames=int(video.get("nb_frames") or 0),
+```
+
+`or 0` 只挡得住 `None` 和空串，挡不住 `"N/A"`——而 **ffprobe 对 mkv 和
+没有索引的流就是这么给的**，那不是异常情况。也就是说 `probe()` 探测一个
+正常的 mkv 会直接崩，而它在闸门和装配两条路上都被调用。
+
+`duration` 那几个字段走的是 `_to_float`，有 try/except，所以没事；
+唯一漏网的是 `nb_frames` 这个 `int()`。
+
+C++ 侧统一走 `to_double`（解析不了返回 0），所以这条路不复刻。
+语料里那个样本记的是 `python_raises` 而不是期望值，用例钉的是
+"C++ 不抛，而且别的字段照常解出来"。
+
 ### 一处有意不复刻的 Python bug：`/api/bible` 的 500
 
 阶段 4 移植角色圣经时对拍抓到的。
