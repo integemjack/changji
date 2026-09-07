@@ -232,3 +232,205 @@ boundary = Shot(**base, visual_desc="雨" * 300)
 dump("shot_boundary_300_chars", boundary.model_dump(mode="json"))
 
 print(f"\n语料写入 {OUT}")
+
+
+# ══════════════════════════════════════════════════════════════════════
+# character.py 的语料
+# ══════════════════════════════════════════════════════════════════════
+
+from changji.models.character import (  # noqa: E402
+    AppearanceBlock,
+    AssetLibrary,
+    Character,
+    Location,
+    StyleLine,
+    StyleProfile,
+    WardrobeVariant,
+    guess_gender,
+    pick_voice,
+)
+
+# ── 渲染输出的逐字节对拍 ────────────────────────────────────────────────
+#
+# 方案第六节：接口契约只要求结构兼容，但**提示词拼接必须逐字节相同**。
+# 这一段的输出直接进提示词，差一个标点画面重心就变。
+
+render_cases = []
+
+
+def render_case(name: str, block: AppearanceBlock) -> None:
+    render_cases.append({
+        "name": name,
+        "block": block.model_dump(mode="json"),
+        "realistic": block.render(StyleLine.REALISTIC),
+        "anime": block.render(StyleLine.ANIME),
+    })
+
+
+render_case("五段齐全", AppearanceBlock(
+    identity="三十岁上下的男性，沉默寡言",
+    body="偏瘦，肩背挺直",
+    face="单眼皮，短碎发，眼下有一道旧疤",
+    attire="深灰西装，衬衫领口松着",
+    style="低饱和，胶片颗粒",
+))
+
+# 尾部标点是这个函数存在的理由：手写设定常带句号，
+# 不剥的话拼出来是「冷静克制。，身姿笔挺。，」
+render_case("各段都带尾部标点", AppearanceBlock(
+    identity="冷静克制。",
+    body="身姿笔挺。",
+    face="浓眉，鹰钩鼻；",
+    attire="黑色风衣，",
+    style="硬朗光影、",
+))
+
+render_case("中间段为空", AppearanceBlock(
+    identity="少女",
+    body="",
+    face="双马尾，琥珀色瞳",
+    attire="水手服",
+    style="",
+))
+
+render_case("只有必填段", AppearanceBlock(
+    identity="老者", face="白须及胸", attire="灰布长衫",
+))
+
+render_case("带空白和标点混合", AppearanceBlock(
+    identity="  中年女性，干练  ",
+    body="  ",
+    face="盘发，细框眼镜。。",
+    attire="米色套装、、",
+    style=" 冷调 ",
+))
+
+dump("appearance_render", render_cases)
+
+
+# ── Character 的完整渲染 ────────────────────────────────────────────────
+
+lin = Character(
+    char_id="c_lin_yuan",
+    name="林渊",
+    appearance=AppearanceBlock(
+        identity="三十岁上下的男性，沉默寡言。",
+        body="偏瘦，肩背挺直",
+        face="单眼皮，短碎发，眼下有一道旧疤",
+        attire="深灰西装，衬衫领口松着",
+        style="低饱和，胶片颗粒",
+    ),
+    wardrobe=[
+        WardrobeVariant(wardrobe_id="suit_soaked", description="西装被雨淋透，紧贴身体"),
+        WardrobeVariant(wardrobe_id="casual", description="灰色卫衣，牛仔裤"),
+    ],
+    ref_front="refs/c_lin_yuan_front.png",
+    ref_three_quarter="refs/c_lin_yuan_tq.png",
+    ref_back=None,
+    lora_trigger="linyuan_v3",
+    lora_strength=0.85,
+    voice_gender="male",
+    voice_order=1,
+)
+
+char_cases = {
+    "character": lin.model_dump(mode="json"),
+    "render": {
+        "realistic_default": lin.render_prompt(StyleLine.REALISTIC),
+        "realistic_soaked": lin.render_prompt(StyleLine.REALISTIC, "suit_soaked"),
+        "anime_default": lin.render_prompt(StyleLine.ANIME),
+        "anime_casual": lin.render_prompt(StyleLine.ANIME, "casual"),
+        "unknown_wardrobe": lin.render_prompt(StyleLine.REALISTIC, "not_exist"),
+    },
+    "wardrobe_desc": {
+        "default": lin.wardrobe_desc("default"),
+        "suit_soaked": lin.wardrobe_desc("suit_soaked"),
+        "not_exist": lin.wardrobe_desc("not_exist"),
+        "empty": lin.wardrobe_desc(""),
+    },
+    # ref_back 是 None，测退级链
+    "ref_for_pose": {
+        p: lin.ref_for_pose(p)
+        for p in ("front", "three_quarter", "profile", "back", "off_screen", "乱填")
+    },
+}
+dump("character_render", char_cases)
+
+
+# ── Location 与资产库 ───────────────────────────────────────────────────
+
+rooftop = Location(
+    location_id="loc_rooftop",
+    name="天台",
+    space="老式写字楼顶层，水泥地面，一圈锈蚀铁栏杆",
+    lighting="冷调顶光，远处霓虹反光",
+    palette="青灰为主，点缀品红",
+    ref_empty="refs/loc_rooftop_empty.png",
+)
+alley = Location(
+    location_id="loc_alley",
+    name="小巷",
+    space="两侧是斑驳砖墙的窄巷",
+    lighting="暖调侧逆光",
+    palette="",
+)
+
+lib = AssetLibrary(
+    characters={"c_lin_yuan": lin},
+    locations={"loc_rooftop": rooftop, "loc_alley": alley},
+    style=StyleProfile(
+        style_line=StyleLine.REALISTIC,
+        global_style="写实电影感，浅景深",
+        negative_prompt="模糊，低质量",
+        aspect_ratio="9:16",
+    ),
+)
+
+dump("asset_library", {
+    "library": lib.model_dump(mode="json"),
+    "character_ids": lib.character_ids(),
+    "location_ids": lib.location_ids(),
+    "location_render": {
+        "rooftop_realistic": rooftop.render_prompt(StyleLine.REALISTIC),
+        "rooftop_anime": rooftop.render_prompt(StyleLine.ANIME),
+        "alley_realistic": alley.render_prompt(StyleLine.REALISTIC),
+    },
+    "validate_references": {
+        "all_known": lib.validate_references({"c_lin_yuan"}, {"loc_rooftop"}),
+        "missing_both": lib.validate_references(
+            {"c_lin_yuan", "c_chen_mo"}, {"loc_alley", "loc_office"}),
+    },
+})
+
+
+# ── 性别猜测与音色挑选 ──────────────────────────────────────────────────
+
+gender_cases = [
+    "一位年轻的女性，短发",
+    "中年男人，络腮胡",
+    "他是这家店的老板",
+    "她的妈妈",
+    "一个孩子",
+    "",
+    "父女二人",          # 男女词同时出现，应返回空串
+]
+dump("guess_gender", [{"identity": g, "expected": guess_gender(g)} for g in gender_cases])
+
+voice_pool = [
+    "none", "en_female_belinda.wav", "zh_male_chadwick.wav",
+    "zh_female_sophie.wav", "en_male_freeman.wav", "narrator.wav",
+]
+voice_cases = []
+for g in ("female", "male", ""):
+    for idx in (0, 1, 2):
+        voice_cases.append({
+            "gender": g, "index": idx,
+            "expected": pick_voice(voice_pool, g, idx),
+        })
+voice_cases.append({"gender": "female", "index": 0, "pool": [],
+                    "expected": pick_voice([], "female", 0)})
+voice_cases.append({"gender": "male", "index": 0, "pool": ["none"],
+                    "expected": pick_voice(["none"], "male", 0)})
+dump("pick_voice", {"pool": voice_pool, "cases": voice_cases})
+
+print("\ncharacter 语料也写好了")

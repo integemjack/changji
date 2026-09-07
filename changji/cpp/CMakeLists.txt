@@ -74,6 +74,7 @@ add_executable(changji
     src/config/settings.cpp
     src/doctor/doctor.cpp
     src/models/shot.cpp
+    src/models/character.cpp
     src/http/ws.cpp
     src/http/server.cpp
 )
@@ -178,7 +179,9 @@ if(CHANGJI_BUILD_TESTS)
     add_executable(changji_tests
         tests/unit/main.cpp
         tests/unit/test_shot.cpp
+        tests/unit/test_character.cpp
         src/models/shot.cpp
+        src/models/character.cpp
     )
     target_include_directories(changji_tests PRIVATE src "${ASIO_INCLUDE_DIR}")
     target_link_libraries(changji_tests PRIVATE nlohmann_json::nlohmann_json)
