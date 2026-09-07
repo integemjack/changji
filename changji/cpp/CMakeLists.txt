@@ -141,6 +141,7 @@ add_executable(changji
     src/stages/script.cpp
     src/stages/prompt_compose.cpp
     src/stages/frames.cpp
+    src/stages/render.cpp
     src/infer/scheduler.cpp
     src/infer/sd_backend.cpp
     src/infer/sd_image.cpp
@@ -319,6 +320,7 @@ if(CHANGJI_BUILD_TESTS)
         tests/unit/test_prompt_compose.cpp
         tests/unit/test_sd_image.cpp
         tests/unit/test_frames.cpp
+        tests/unit/test_render.cpp
 
         # 被测的源码。刻意不包含 doctor.cpp、http/server.cpp 和
         # llm/client_http.cpp —— 那三个链 httplib 或 Crow，
@@ -336,7 +338,10 @@ if(CHANGJI_BUILD_TESTS)
         src/stages/script.cpp
         src/stages/prompt_compose.cpp
         src/stages/frames.cpp
+        src/stages/render.cpp
+    src/stages/render.cpp
     src/stages/frames.cpp
+    src/stages/render.cpp
         src/infer/scheduler.cpp
         src/infer/sd_backend.cpp
         src/infer/sd_image.cpp
