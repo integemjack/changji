@@ -33,6 +33,20 @@ std::string to_utf8(const std::wstring& wide) {
 }  // namespace
 #endif
 
+std::filesystem::path from_utf8(const std::string& s) {
+    // C++17 的 u8path 就是为这件事存在的（C++20 起被标记为弃用，
+    // 替代品是 char8_t 那一套，但本项目全局停在 C++17，用它最直接）。
+    return std::filesystem::u8path(s);
+}
+
+std::string to_utf8(const std::filesystem::path& p) {
+#ifdef _WIN32
+    return to_utf8(p.wstring());
+#else
+    return p.string();
+#endif
+}
+
 std::string env(const char* name) {
 #ifdef _WIN32
     std::wstring wname;
@@ -54,11 +68,11 @@ namespace {
 fs::path home_dir() {
 #ifdef _WIN32
     std::string p = env("USERPROFILE");
-    if (!p.empty()) return fs::path(p);
-    return fs::path(env("HOMEDRIVE") + env("HOMEPATH"));
+    if (!p.empty()) return from_utf8(p);
+    return from_utf8(env("HOMEDRIVE") + env("HOMEPATH"));
 #else
     std::string p = env("HOME");
-    return p.empty() ? fs::path("/tmp") : fs::path(p);
+    return p.empty() ? fs::path("/tmp") : from_utf8(p);
 #endif
 }
 
@@ -69,12 +83,12 @@ fs::path user_config_dir(const std::string& app_name) {
     // platformdirs 的 user_config_dir 默认 roaming=False，落在 Local 而不是 Roaming
     std::string base = env("LOCALAPPDATA");
     if (base.empty()) return home_dir() / "AppData" / "Local" / app_name;
-    return fs::path(base) / app_name;
+    return from_utf8(base) / app_name;
 #elif defined(__APPLE__)
     return home_dir() / "Library" / "Application Support" / app_name;
 #else
     std::string xdg = env("XDG_CONFIG_HOME");
-    if (!xdg.empty()) return fs::path(xdg) / app_name;
+    if (!xdg.empty()) return from_utf8(xdg) / app_name;
     return home_dir() / ".config" / app_name;
 #endif
 }
@@ -83,22 +97,22 @@ fs::path user_data_dir(const std::string& app_name) {
 #if defined(_WIN32)
     std::string base = env("LOCALAPPDATA");
     if (base.empty()) return home_dir() / "AppData" / "Local" / app_name;
-    return fs::path(base) / app_name;
+    return from_utf8(base) / app_name;
 #elif defined(__APPLE__)
     return home_dir() / "Library" / "Application Support" / app_name;
 #else
     std::string xdg = env("XDG_DATA_HOME");
-    if (!xdg.empty()) return fs::path(xdg) / app_name;
+    if (!xdg.empty()) return from_utf8(xdg) / app_name;
     return home_dir() / ".local" / "share" / app_name;
 #endif
 }
 
 fs::path expand_user(const std::string& raw) {
     if (raw.empty()) return {};
-    if (raw[0] != '~') return fs::path(raw);
+    if (raw[0] != '~') return from_utf8(raw);
     if (raw.size() == 1) return home_dir();
-    if (raw[1] == '/' || raw[1] == '\\') return home_dir() / raw.substr(2);
-    return fs::path(raw);  // ~someuser 这种形式不支持，原样返回
+    if (raw[1] == '/' || raw[1] == '\\') return home_dir() / from_utf8(raw.substr(2));
+    return from_utf8(raw);  // ~someuser 这种形式不支持，原样返回
 }
 
 }  // namespace changji::paths

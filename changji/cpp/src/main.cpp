@@ -12,6 +12,7 @@
 #include "config/settings.hpp"
 #include "doctor/doctor.hpp"
 #include "http/server.hpp"
+#include "util/paths.hpp"
 
 namespace {
 
@@ -88,7 +89,32 @@ int run_doctor(const changji::config::Settings& settings) {
 
 }  // namespace
 
+namespace {
+
+/// 真正的入口。main 只负责把异常兜住。
+int run(int argc, char** argv);
+
+}  // namespace
+
 int main(int argc, char** argv) {
+    // 顶层兜异常。没有它的话，任何漏出来的异常会走 std::terminate 到 abort，
+    // 在 Windows 上表现为进程以 0xC0000409 消失、一个字都不打印，
+    // 而那个错误码字面意思是"栈缓冲区溢出"，会把人往完全错误的方向带。
+    // （这是实测踩到的：--doctor 在 MSVC 下就这样静默死掉。）
+    try {
+        return run(argc, argv);
+    } catch (const std::exception& e) {
+        std::cerr << "出错了：" << e.what() << "\n";
+        return 1;
+    } catch (...) {
+        std::cerr << "出错了：未知异常\n";
+        return 1;
+    }
+}
+
+namespace {
+
+int run(int argc, char** argv) {
     changji::http::Options opts;
     bool want_doctor = false;
     bool want_init = false;
@@ -117,7 +143,7 @@ int main(int argc, char** argv) {
     if (want_init) {
         try {
             auto p = changji::config::write_default_config();
-            std::cout << "配置模板已写入 " << p.string() << "\n";
+            std::cout << "配置模板已写入 " << changji::paths::to_utf8(p) << "\n";
             return 0;
         } catch (const std::exception& e) {
             std::cerr << e.what() << "\n";
@@ -147,3 +173,5 @@ int main(int argc, char** argv) {
     changji::http::run(settings, opts);
     return 0;
 }
+
+}  // namespace

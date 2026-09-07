@@ -33,4 +33,28 @@ std::filesystem::path expand_user(const std::string& raw);
 /// Windows 上走宽字符再转回 UTF-8，否则中文路径会变成问号。
 std::string env(const char* name);
 
+/// 路径转 UTF-8 字符串。**任何时候都不要用 path.string() 代替它。**
+///
+/// 这是实测踩出来的：MSVC 上 fs::path 内部存宽字符，.string() 会用当前
+/// ANSI 代码页做转换，遇到该代码页表示不了的字符就抛 std::system_error
+/// （"No mapping for the Unicode character exists in the target multi-byte
+/// code page"）。这台机器的代码页是 936（GBK），--doctor 就这样静默死掉——
+/// 异常一路穿到 std::terminate，进程以 0xC0000409 消失，而那个错误码字面
+/// 意思是"栈缓冲区溢出"，会把人往完全错误的方向带。
+///
+/// 项目目录本来就允许是 E:\AI短剧\ 这种路径，用户名也可能是中文，
+/// 所以这不是边缘情况。这个函数走 wstring → UTF-8，不经过 ANSI 代码页，
+/// 永远不会失败。
+std::string to_utf8(const std::filesystem::path& p);
+
+/// UTF-8 字符串转路径。**任何时候都不要用 fs::path(str) 代替它。**
+///
+/// 是 to_utf8 的反方向，坑也是对称的：MSVC 上 fs::path(std::string) 把窄字符串
+/// 按当前 ANSI 代码页解释，而本项目里的 std::string 一律是 UTF-8。
+/// UTF-8 的中文字节序列在 GBK 里往往是非法的，转换会抛 std::system_error。
+///
+/// 实测踩到的位置：proc::which() 里 `fs::path(dir)`，dir 来自 PATH 环境变量
+/// （已经是 UTF-8）。只要 PATH 里有一个目录名带非 ASCII 字符，--doctor 就整个崩掉。
+std::filesystem::path from_utf8(const std::string& s);
+
 }  // namespace changji::paths

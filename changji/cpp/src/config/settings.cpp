@@ -252,13 +252,13 @@ void read_toml_into(const fs::path& path, Settings& s) {
     std::error_code ec;
     if (!fs::is_regular_file(path, ec)) return;
     try {
-        auto doc = toml::parse_file(path.string());
+        auto doc = toml::parse_file(paths::to_utf8(path));
         apply_table(doc, s);
     } catch (const toml::parse_error& e) {
         // 配置坏了要说清楚是哪个文件。只说「配置解析失败」的话，
         // 用户手上有用户级和项目级两份，只能挨个翻。
         std::ostringstream os;
-        os << "配置文件解析失败：" << path.string() << "\n" << e.description()
+        os << "配置文件解析失败：" << paths::to_utf8(path) << "\n" << e.description()
            << "（第 " << e.source().begin.line << " 行）";
         throw std::runtime_error(os.str());
     }
@@ -374,7 +374,7 @@ fs::path write_default_config(const std::optional<fs::path>& path) {
     std::error_code ec;
     fs::create_directories(target.parent_path(), ec);
     std::ofstream out(target, std::ios::binary);
-    if (!out) throw std::runtime_error("写不了配置文件：" + target.string());
+    if (!out) throw std::runtime_error("写不了配置文件：" + paths::to_utf8(target));
     out << kDefaultToml;
     return target;
 }

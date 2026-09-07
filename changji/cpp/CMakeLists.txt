@@ -109,8 +109,14 @@ if(WIN32)
     )
     target_link_libraries(changji PRIVATE ws2_32 mswsock)
     if(MSVC)
-        # 源码是 UTF-8，中文注释和中文字符串字面量都靠它
-        target_compile_options(changji PRIVATE /utf-8 /W4)
+        # /utf-8       源码是 UTF-8，中文注释和中文字符串字面量都靠它
+        # /Zc:__cplusplus
+        #     不加这个的话 MSVC 的 __cplusplus 永远是 199711L，不管实际用的
+        #     是哪个标准。后果有两层：一是自己的代码（doctor 报的 C++ 版本）
+        #     显示成 "C++97"；二是任何拿 __cplusplus 做条件编译的第三方头文件
+        #     都会在 MSVC 上静默走错分支——llama.cpp 的 LU8 宏就是这么炸的，
+        #     见 verify/RESULTS.md。
+        target_compile_options(changji PRIVATE /utf-8 /Zc:__cplusplus /W4)
     endif()
 else()
     target_compile_options(changji PRIVATE -Wall -Wextra -Wpedantic)
@@ -184,7 +190,7 @@ if(CHANGJI_BUILD_TESTS)
         CHANGJI_GOLDEN_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/golden")
 
     if(MSVC)
-        target_compile_options(changji_tests PRIVATE /utf-8 /W4)
+        target_compile_options(changji_tests PRIVATE /utf-8 /Zc:__cplusplus /W4)
     else()
         target_compile_options(changji_tests PRIVATE -Wall -Wextra)
     endif()

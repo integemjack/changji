@@ -491,6 +491,57 @@ Wan VAE stateful temporal tiling: tile_frames=4, total latent frames=3, tiles=1
 产物 `out-tile16.mp4.avi`（326K，640x352x9 帧）。注意 sd-cli 会在 `-o` 给的
 文件名后面再补一个 `.avi`。
 
+## 三点九、阶段 0 的代码在 MSVC 下有三个 bug（已修）
+
+切到 MSVC 之后，阶段 0 那份 MinGW 编译通过的代码暴露出三个问题。它们全都
+和"窄字符串到底是什么编码"有关，而且**都不会在 MinGW 上出现**。
+
+### 1. `fs::path(std::string)` 按 ANSI 代码页解释，不是 UTF-8
+
+`proc::which()` 里写的是 `fs::path(dir)`，`dir` 来自 `paths::env("PATH")`——
+那个函数已经正确地把宽字符转成了 UTF-8。但 MSVC 上 `fs::path(std::string)`
+会把窄字符串按**当前 ANSI 代码页**（这台机器是 936/GBK）解释，UTF-8 的中文
+字节序列在 GBK 里往往非法，直接抛 `std::system_error`。
+
+只要 PATH 里有一个目录名带非 ASCII 字符，`--doctor` 整个崩掉。
+项目目录本来就允许是 `E:\AI短剧\`，用户名也可能是中文，这不是边缘情况。
+
+同一份代码在 `paths.cpp` 里还有 8 处同样的写法。全部换成新的
+`paths::from_utf8()`（内部走 `std::filesystem::u8path`）。反方向的
+`path.string()` 也是对称的坑，换成 `paths::to_utf8()`（走 wstring，不经过
+ANSI 代码页，永不失败）。
+
+### 2. 异常穿到 std::terminate，报成"栈缓冲区溢出"
+
+上面那个异常没人接，一路走到 `std::terminate` → `abort` → `__fastfail`，
+进程以 `0xC0000409` 消失，**一个字都不打印**。而那个错误码的字面意思是
+STATUS_STACK_BUFFER_OVERRUN，排查方向被带向"哪里写越界了"，
+实际跟缓冲区毫无关系。
+
+修了两层：`main()` 加顶层 try/catch；`run_checks()` 里每一项检查单独兜异常，
+单项失败降级成一条 WARN 而不是拖垮整个体检——**体检的意义就是环境不对时
+告诉你哪里不对，它自己最不能因为环境不对而崩掉**。
+
+### 3. `__cplusplus` 在 MSVC 上永远是 199711L
+
+体检里那行"运行时"报的是 `C++97`，实际编的是 C++20。原因是 MSVC 不加
+`/Zc:__cplusplus` 就不更新这个宏。
+
+这不只是显示问题——**任何拿 `__cplusplus` 做条件编译的第三方头文件都会在
+MSVC 上静默走错分支**，llama.cpp 的 `LU8` 宏就是这么炸的（见第三节）。
+已给 MSVC 加上 `/Zc:__cplusplus`，doctor 现在正确报 `C++20`。
+
+### 对方案的影响
+
+阶段 1 的完成标志是"能读 Python 写的项目文件（含中文路径和中文内容）"。
+这三个 bug 说明**中文路径的问题不在读文件那一步，在更早的地方**——
+配置加载、PATH 查找、目录创建，任何一处把 UTF-8 字符串塞进 `fs::path`
+都会炸。移植时的规矩：
+
+> **项目里的 `std::string` 一律是 UTF-8。`std::string` 和 `fs::path` 之间
+> 只能走 `paths::to_utf8()` / `paths::from_utf8()`，禁止 `path.string()`
+> 和 `fs::path(str)`。**
+
 ## 四、Windows 长路径（工程约束，不影响方案）
 
 llama.cpp 现在带了个 Svelte 写的 Web UI，`tools/ui/src/lib/components/app/chat/

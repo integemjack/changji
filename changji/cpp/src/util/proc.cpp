@@ -83,9 +83,9 @@ std::optional<std::string> which(const std::string& name) {
         if (dir.empty()) continue;
 
         for (const auto& ext : exts) {
-            fs::path candidate = fs::path(dir) / (name + ext);
+            fs::path candidate = paths::from_utf8(dir) / paths::from_utf8(name + ext);
             if (fs::is_regular_file(candidate, ec)) {
-                return candidate.string();
+                return paths::to_utf8(candidate);
             }
         }
     }

@@ -284,31 +284,57 @@ Check check_workspace(const config::Settings& s) {
     {
         std::ofstream out(probe, std::ios::binary);
         if (!out) {
-            return {"项目目录", Level::FAIL, path.string() + " 不可写",
+            return {"项目目录", Level::FAIL, paths::to_utf8(path) + " 不可写",
                     ec ? ec.message() : "创建测试文件失败"};
         }
         out << "ok";
     }
     fs::remove(probe, ec);
-    return {"项目目录", Level::OK, path.string(), ""};
+    return {"项目目录", Level::OK, paths::to_utf8(path), ""};
+}
+
+}  // namespace
+
+namespace {
+
+/// 跑一项检查，异常不外泄。
+///
+/// 体检的意义就是"环境不对时告诉你哪里不对"，所以它自己最不能因为环境不对
+/// 而崩掉。实测踩到过：某一项抛了 std::system_error，异常一路穿到
+/// std::terminate，进程以 0xC0000409 消失、一个字不打印，而那个错误码
+/// 字面意思是"栈缓冲区溢出"，排查方向完全被带偏。
+///
+/// 现在单项失败降级成一条 WARN，其余检查照跑。
+template <typename F>
+Check guarded(const char* name, F&& fn) {
+    try {
+        return fn();
+    } catch (const std::exception& e) {
+        return {name, Level::WARN, std::string("这一项检查自己出错了：") + e.what(),
+                "这是 changji 的问题不是你的环境问题，请把这条报上来。\n"
+                "其余检查不受影响。"};
+    } catch (...) {
+        return {name, Level::WARN, "这一项检查自己抛了未知异常",
+                "这是 changji 的问题不是你的环境问题，请把这条报上来。"};
+    }
 }
 
 }  // namespace
 
 Report run_checks(const config::Settings& settings) {
     Report r;
-    r.checks.push_back(check_runtime());
-    r.checks.push_back(check_ffmpeg(settings));
-    r.checks.push_back(check_fonts(settings));
+    r.checks.push_back(guarded("运行时", [&] { return check_runtime(); }));
+    r.checks.push_back(guarded("FFmpeg", [&] { return check_ffmpeg(settings); }));
+    r.checks.push_back(guarded("中文字体", [&] { return check_fonts(settings); }));
 
-    Check infer = check_infer(settings);
+    Check infer = guarded("推理服务", [&] { return check_infer(settings); });
     bool infer_ok = infer.level == Level::OK;
     r.checks.push_back(std::move(infer));
 
-    r.checks.push_back(check_tts(settings, infer_ok));
-    r.checks.push_back(check_llm(settings));
-    r.checks.push_back(check_gpu(settings));
-    r.checks.push_back(check_workspace(settings));
+    r.checks.push_back(guarded("配音", [&] { return check_tts(settings, infer_ok); }));
+    r.checks.push_back(guarded("大模型", [&] { return check_llm(settings); }));
+    r.checks.push_back(guarded("显卡", [&] { return check_gpu(settings); }));
+    r.checks.push_back(guarded("项目目录", [&] { return check_workspace(settings); }));
     return r;
 }
 
