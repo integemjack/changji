@@ -10,6 +10,12 @@
 
 #include <doctest/doctest.h>
 
+#include <fstream>
+#include <optional>
+#include <vector>
+
+#include <nlohmann/json.hpp>
+
 #include <algorithm>
 #include <filesystem>
 #include <fstream>
@@ -420,5 +426,113 @@ TEST_CASE("概览只列没过的") {
 
     SUBCASE("一个都没有时也有话说") {
         CHECK(gates::summarize({}) == "没有需要检查的镜头");
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 画面闸门的判定，和 Python 逐条比。
+//
+// 上面那些用例钉的是我们自己的意图。contract_audit.py 把这个文件归在
+// 「两边都有、又没有语料兜着」那一类，而闸门的判定决定一镜是重试、
+// 退回上一阶段、还是降级——**两边判得不一样，就是同一段素材在两个后端上
+// 得到不同的质量结论**。
+//
+// 零件本来就对得上（spread < 8、mean < 6 || > 249 两边一模一样）。
+// 要比的是**把零件组装成一个判定**那一步——今天已经在别处栽过三次这个
+// 形状：装配层的响度、视频后端的风格线、首帧的尺寸节点名单。
+//
+// 两边造假的层次不同：Python 假 sample_pixel_stats()（回对象），
+// C++ 假 Runner（回 ffmpeg 的文本）。所以**输入也进语料**，
+// 这边按同一组数把文本造出来——靠用例名去对应输入的话，
+// 那边改个数字这边就悄悄不一样了。
+// ---------------------------------------------------------------------------
+
+namespace {
+
+nlohmann::json gates_golden() {
+    const std::string path = std::string(CHANGJI_GOLDEN_DIR) + "/gates.json";
+    std::ifstream in(path, std::ios::binary);
+    REQUIRE_MESSAGE(in.good(), "读不到语料 " << path);
+    nlohmann::json j;
+    in >> j;
+    return j;
+}
+
+/// 把 mean / spread 还原成一段 signalstats 输出。
+/// spread = high - low，mean = YAVG，见 parse_signalstats。
+std::string stats_from(double mean, double spread) {
+    return stats(0.0, mean - spread / 2.0, mean, mean + spread / 2.0, 255.0);
+}
+
+}  // namespace
+
+TEST_CASE("画面闸门的判定和 Python 一条一条对得上") {
+    const nlohmann::json g = gates_golden();
+    const auto cases = g.at("cases");
+    // 语料读空了的话循环一次都不转，而用例照样绿。
+    REQUIRE(cases.size() == 14);
+
+    for (const auto& c : cases) {
+        const std::string name = c.at("name").get<std::string>();
+        CAPTURE(name);
+
+        FakeFF fake;
+        fake.probe_fails = c.at("probe_raises").get<bool>();
+        fake.stats_fail = c.at("stats_raises").get<bool>();
+
+        if (!c.at("probe").is_null()) {
+            const auto& pr = c.at("probe");
+            const double dur = pr.at("duration_s").get<double>();
+            const int w = pr.at("width").get<int>();
+            const int h = pr.at("height").get<int>();
+            if (pr.at("has_video").get<bool>()) {
+                fake.probe_out = probe_json(dur, w, h);
+            } else {
+                // 只有音轨：探测得到，但没有视频流
+                fake.probe_out =
+                    R"({"streams":[{"codec_type":"audio","codec_name":"aac"}],)"
+                    R"("format":{"duration":"4.000000"}})";
+            }
+        }
+
+        fake.frames.clear();
+        for (const auto& s : c.at("samples")) {
+            fake.frames.push_back(stats_from(s.at("mean").get<double>(),
+                                             s.at("spread").get<double>()));
+        }
+        // 语料里样本为空表示"取不到画面"。FakeFF 用光了会重复最后一条，
+        // 所以空列表要单独处理成"回一段解析不出东西的文本"。
+        const bool no_samples = fake.frames.empty();
+        if (no_samples) fake.frames.push_back("");
+
+        // file_bytes 为空表示"文件不存在"——给一个没建出来的路径。
+        fs::path video;
+        if (c.at("file_bytes").is_null()) {
+            video = fs::temp_directory_path() /
+                    paths::from_utf8("changji_闸门/没这个文件.mp4");
+            std::error_code ec;
+            fs::remove(video, ec);
+        } else {
+            video = fake_video("语料_" + name,
+                               c.at("file_bytes").get<std::size_t>());
+        }
+
+        std::optional<double> want_dur;
+        if (!c.at("expected_duration_s").is_null()) {
+            want_dur = c.at("expected_duration_s").get<double>();
+        }
+        std::optional<std::pair<int, int>> want_size;
+        if (!c.at("expected_size").is_null()) {
+            const auto v = c.at("expected_size").get<std::vector<int>>();
+            want_size = std::pair{v[0], v[1]};
+        }
+
+        config::GateConfig cfg;
+        const auto r = gates::gate_video(make_shot(), video, fake.ff(), cfg,
+                                         want_dur, want_size, "画面闸门");
+
+        // **判定是契约。** 它决定这一镜是重试、退回还是降级。
+        CHECK(std::string(gates::to_string(r.verdict)) ==
+              c.at("verdict").get<std::string>());
     }
 }
