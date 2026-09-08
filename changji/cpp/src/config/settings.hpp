@@ -157,6 +157,23 @@ struct ModelsConfig {
     std::string video_text_encoder;
     /// 首帧生成与图像编辑。
     std::string image;
+    /// 图像模型的 VAE。
+    ///
+    /// **不能复用 `video_vae`。** 之前这里就是复用的，因为图像那条路一直没
+    /// 真跑过。Wan 的 VAE 和 Qwen-Image 的不是一回事，喂错了 sd.cpp 不会报错
+    /// ——它照常加载，然后出一张和提示词没关系的图。
+    /// 留空就退回 `video_vae`，好让只用 Wan 的人不用填两遍。
+    std::string image_vae;
+    /// 图像模型的文本编码器。
+    ///
+    /// **走的是 sd.cpp 的 `llm_path`，不是 `t5xxl_path`。** Qwen-Image-Edit
+    /// 用 Qwen2.5-VL 当编码器，和 Wan 用的 UMT5-XXL 不是一类东西，
+    /// 参数位置也不同（见 sd.cpp 的 docs/qwen_image_edit.md）。
+    /// 留空就退回 `video_text_encoder`，那时仍按 t5xxl 传。
+    std::string image_text_encoder;
+    /// 文本编码器的视觉塔（mmproj），走 `llm_vision_path`。
+    /// Qwen-Image-Edit 2509 及以后要它；初版可以不填。
+    std::string image_text_encoder_vision;
 
     /// 进程内配音的骨干（Qwen3-TTS 的 talker，GGUF）。
     ///

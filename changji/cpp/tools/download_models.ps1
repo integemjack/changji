@@ -51,9 +51,23 @@ $files = @(
     @{ n='图像模型 Qwen-Image-Edit Q2_K（最小档，先验通路）'; mb=6735
        u='https://huggingface.co/QuantStack/Qwen-Image-Edit-GGUF/resolve/main/Qwen_Image_Edit-Q2_K.gguf'
        f='Qwen_Image_Edit-Q2_K.gguf' },
-    @{ n='图像模型的文本编码器 Qwen2.5-VL mmproj'; mb=1291
+    @{ n='图像模型的视觉塔 Qwen2.5-VL mmproj'; mb=1291
        u='https://huggingface.co/QuantStack/Qwen-Image-Edit-GGUF/resolve/main/mmproj/Qwen2.5-VL-7B-Instruct-mmproj-BF16.gguf'
-       f='Qwen2.5-VL-7B-Instruct-mmproj-BF16.gguf' }
+       f='Qwen2.5-VL-7B-Instruct-mmproj-BF16.gguf' },
+    # **Qwen-Image-Edit 的文本编码器不是 umt5，是 Qwen2.5-VL。**
+    # 一开始只下了扩散模型就以为够了，是因为 C++ 那边图像那条路复用了视频的
+    # video_vae 和 video_text_encoder——而那两个是 Wan 的，喂给 Qwen 是错的。
+    # sd.cpp 的文档写得很清楚（docs/qwen_image_edit.md）：
+    #   --diffusion-model Qwen_Image_Edit-*.gguf
+    #   --vae             qwen_image_vae.safetensors   ← 不是 Wan 的 VAE
+    #   --llm             Qwen2.5-VL-7B-Instruct.gguf  ← 不是 umt5，走 llm_path
+    # 也就是说图像那条路一直没接对，只是从来没跑过所以没人发现。
+    @{ n='图像模型的文本编码器 Qwen2.5-VL 7B Q2_K（最小档）'; mb=2876
+       u='https://huggingface.co/mradermacher/Qwen2.5-VL-7B-Instruct-GGUF/resolve/main/Qwen2.5-VL-7B-Instruct.Q2_K.gguf'
+       f='Qwen2.5-VL-7B-Instruct-Q2_K.gguf' },
+    @{ n='图像模型的 VAE（Qwen 自己的，不是 Wan 的）'; mb=242
+       u='https://huggingface.co/Comfy-Org/Qwen-Image_ComfyUI/resolve/main/split_files/vae/qwen_image_vae.safetensors'
+       f='qwen_image_vae.safetensors' }
 )
 
 # Measure-Object -Property 认的是对象属性，不认哈希表的键，

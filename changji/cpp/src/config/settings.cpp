@@ -233,6 +233,9 @@ const std::vector<std::pair<const char*, const char*>>& env_mapping() {
         // 对拍推理层就卡在这上面：两边默认走的不是同一条路，没法比。
         {"MODELS_ENGINE", "models_engine"},
         {"MODELS_TTS", "models_tts"},
+        {"MODELS_IMAGE_VAE", "models_image_vae"},
+        {"MODELS_IMAGE_TEXT_ENCODER", "models_image_text_encoder"},
+        {"MODELS_IMAGE_TEXT_ENCODER_VISION", "models_image_text_encoder_vision"},
         {"MODELS_TTS_DECODER", "models_tts_decoder"},
     };
     return m;
@@ -315,6 +318,9 @@ void apply_table(const toml::table& doc, Settings& s) {
         take(t, "video_vae", s.models.video_vae);
         take(t, "video_text_encoder", s.models.video_text_encoder);
         take(t, "image", s.models.image);
+        take(t, "image_vae", s.models.image_vae);
+        take(t, "image_text_encoder", s.models.image_text_encoder);
+        take(t, "image_text_encoder_vision", s.models.image_text_encoder_vision);
         take(t, "tts", s.models.tts);
         take(t, "tts_decoder", s.models.tts_decoder);
         take(t, "diffusion_flash_attn", s.models.diffusion_flash_attn);
@@ -381,6 +387,11 @@ void apply_env(Settings& s) {
     // 两句话都指不到真正的原因（环境变量拼错了）。
     // 这里保持原值，随后 validate() 会拦住它并说清楚。
     if (!(v = get("MODELS_ENGINE")).empty()) s.models.engine = v;
+    if (!(v = get("MODELS_IMAGE_VAE")).empty()) s.models.image_vae = v;
+    if (!(v = get("MODELS_IMAGE_TEXT_ENCODER")).empty())
+        s.models.image_text_encoder = v;
+    if (!(v = get("MODELS_IMAGE_TEXT_ENCODER_VISION")).empty())
+        s.models.image_text_encoder_vision = v;
     if (!(v = get("MODELS_TTS")).empty()) s.models.tts = v;
     if (!(v = get("MODELS_TTS_DECODER")).empty()) s.models.tts_decoder = v;
 }
