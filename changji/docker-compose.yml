@@ -30,8 +30,19 @@ services:
 
   # 编排引擎与 Web 界面。不做推理，不需要显卡。
   changji:
-    build: .
-    image: changji/changji:latest
+    # **迁移期间两份都在。** 默认还是 Python 那版；要换成 C++ 引擎，
+    # 在 .env 里写这两行（镜像 tag 一起换，免得两版覆盖同一个 tag，
+    # 回滚时分不清手上是哪一个）：
+    #
+    #     CHANGJI_DOCKERFILE=Dockerfile.cpp
+    #     CHANGJI_IMAGE=changji/changji:cpp
+    #
+    # 做成一个变量而不是另起一个 service，是因为 webapp 的 depends_on 指着
+    # 这个名字——另起一个的话那条依赖要跟着分叉，两边都得维护。
+    build:
+      context: .
+      dockerfile: ${CHANGJI_DOCKERFILE:-Dockerfile}
+    image: ${CHANGJI_IMAGE:-changji/changji:latest}
     container_name: changji
     ports:
       - "${CHANGJI_PORT:-8080}:8080"

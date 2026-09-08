@@ -81,12 +81,24 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=build /src/build/changji /usr/local/bin/changji
-RUN mkdir -p /data/projects
+
+# **和 Python 那版共用同一个 entrypoint，一个字都不用改。**
+# 它干的事是"配置文件不存在就播一份，然后 exec 后面的命令"，
+# 跟实现语言无关。播的位置是 /root/.config/changji/config.toml——
+# 验过 C++ 在 Linux 上找的正是这个路径（/api/connections 的 config_file
+# 回的就是它，塞进去的 base_url 也读出来了）。
+#
+# 没有它的话，compose 里那几个 CHANGJI_SEED_* 全部失效：
+# C++ 侧一个 SEED 都不认（grep 过，零处），播种从来就是镜像层干的事。
+COPY docker/entrypoint.sh /usr/local/bin/entrypoint.sh
+RUN chmod +x /usr/local/bin/entrypoint.sh && mkdir -p /data/projects
 
 EXPOSE 8080
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
     CMD curl -fsS http://127.0.0.1:8080/api/health || exit 1
+
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
 
 # 0.0.0.0 而不是默认的 127.0.0.1：容器里只听 127.0.0.1 等于谁也连不上。
 CMD ["changji", "--host", "0.0.0.0", "--port", "8080"]
