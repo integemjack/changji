@@ -35,3 +35,11 @@ frontend/assets/*.js.map
 
 # C++ 构建产物
 changji/cpp/build*/
+
+# 进程内推理的权重。9.7 GB，绝不入库。
+# 用 changji/cpp/tools/download_models.ps1 拉。
+#
+# 2026-09-08 出过事：脚本把权重放在 models/，我以为那是仓库外面，
+# 其实仓库根就是 Desktop/changji，models/ 在里面。一次 git add -A
+# 把一个下到一半的 161 MB 文件提交进去了。
+models/

@@ -1,0 +1,144 @@
+﻿# 把进程内推理要用的权重下齐。
+#
+# 阶段 5（出图出片）、阶段 7（配音+装配）、阶段 9（进程内配音）的实机判据
+# 都卡在这些文件上。**下之前先把大小和剩余空间摆出来**，因为这套东西
+# 加起来 10 GB，而这台机器上为它腾过一次地方。
+#
+# ⚠️ **要 GGUF，不要 safetensors。** 仓库里原来的 download_models.ps1 下的是
+# fp16 safetensors（16.9 GB），那套是给 ComfyUI 的，**sd.cpp 根本吃不了**。
+# 配音那边当初也是同一个漏。这个脚本只下 GGUF（VAE 除外，它本来就是
+# safetensors，sd.cpp 认）。
+#
+# 文件名要和配置模板里 [models] 那几项对得上，见 settings.cpp 的 kDefaultToml。
+
+param(
+    [string]$Dest = "$PSScriptRoot\..\..\..\models",
+    [switch]$WhatIf
+)
+
+$ErrorActionPreference = 'Stop'
+
+# 名字 / URL / 期望大小（MB，2026-09-08 用 HEAD 查的真实值）/ 落盘文件名
+$files = @(
+    @{ n='扩散主模型 Wan2.2-TI2V-5B Q4_K_M'; mb=3274
+       u='https://huggingface.co/QuantStack/Wan2.2-TI2V-5B-GGUF/resolve/main/Wan2.2-TI2V-5B-Q4_K_M.gguf'
+       f='Wan2.2-TI2V-5B-Q4_K_M.gguf' },
+    @{ n='文本编码器 umt5-xxl Q5_K_M';        mb=3953
+       u='https://huggingface.co/city96/umt5-xxl-encoder-gguf/resolve/main/umt5-xxl-encoder-Q5_K_M.gguf'
+       f='umt5-xxl-encoder-Q5_K_M.gguf' },
+    @{ n='VAE Wan2.2（safetensors，sd.cpp 认）'; mb=1344
+       u='https://huggingface.co/Comfy-Org/Wan_2.2_ComfyUI_Repackaged/resolve/main/split_files/vae/wan2.2_vae.safetensors'
+       f='Wan2.2_VAE.safetensors' },
+    @{ n='配音骨干 Qwen3-TTS 12Hz 1.7B Q4_K_M'; mb=987
+       u='https://huggingface.co/ggml-org/Qwen3-TTS-12Hz-1.7B-Base-GGUF/resolve/main/Qwen3-TTS-12Hz-1.7B-Base-Q4_K_M.gguf'
+       f='Qwen3-TTS-12Hz-1.7B-Base-Q4_K_M.gguf' },
+    @{ n='配音解码器 mmproj Q8_0';             mb=425
+       u='https://huggingface.co/ggml-org/Qwen3-TTS-12Hz-1.7B-Base-GGUF/resolve/main/mmproj-Qwen3-TTS-12Hz-1.7B-Base-Q8_0.gguf'
+       f='mmproj-Qwen3-TTS-12Hz-1.7B-Base-Q8_0.gguf' }
+)
+
+# Measure-Object -Property 认的是对象属性，不认哈希表的键，
+# 这里的元素是哈希表，得先取出来
+$total = ($files | ForEach-Object { $_.mb } | Measure-Object -Sum).Sum
+$dest = [System.IO.Path]::GetFullPath($Dest)
+# Windows PowerShell 5.1 没有 ?? 和三元运算符，别用
+$qualifier = (Split-Path $dest -Qualifier) -replace ':', ''
+$freeGb = [math]::Round((Get-PSDrive $qualifier).Free / 1GB, 1)
+
+Write-Host "落盘目录：$dest"
+Write-Host "要下 $($files.Count) 个文件，合计 $([math]::Round($total/1024,1)) GB；该盘剩 $freeGb GB"
+Write-Host ""
+foreach ($x in $files) { "  {0,6} MB  {1}" -f $x.mb, $x.n | Write-Host }
+Write-Host ""
+
+if ($total/1024 -gt $freeGb - 5) {
+    Write-Host "空间不够（要留 5 GB 余量）。腾出空间再来。" -ForegroundColor Red
+    exit 1
+}
+if ($WhatIf) { Write-Host "（-WhatIf，不实际下载）"; exit 0 }
+
+New-Item -ItemType Directory -Force -Path $dest | Out-Null
+
+foreach ($x in $files) {
+    $out = Join-Path $dest $x.f
+    if (Test-Path $out) {
+        $haveMb = [math]::Round((Get-Item $out).Length / 1MB)
+        # 差一成以内就算下全了。HF 的 content-length 和落盘大小会有零头
+        if ([math]::Abs($haveMb - $x.mb) -lt ($x.mb * 0.1)) {
+            Write-Host "已有，跳过：$($x.f)（$haveMb MB）" -ForegroundColor DarkGray
+            continue
+        }
+        # **别删。** 下面 curl 带 -C -，接着下就行。
+        # 第一版这里直接 Remove-Item，等于把断点续传废掉了——
+        # 一个 4 GB 的文件断在 627 MB，重跑一次从零开始。
+        # 只有比目标还大才删：那说明文件是坏的，续传接不上。
+        if ($haveMb -gt $x.mb * 1.1) {
+            Write-Host "比该有的还大（$haveMb MB > $($x.mb) MB），删掉重下：$($x.f)" -ForegroundColor Yellow
+            Remove-Item $out -Force
+        } else {
+            Write-Host "下了一半（$haveMb / $($x.mb) MB），接着下：$($x.f)" -ForegroundColor Yellow
+        }
+    }
+    Write-Host "下载 $($x.n) … $($x.mb) MB"
+    # curl 而不是 Invoke-WebRequest：后者会把整个响应读进内存，
+    # 3 GB 的文件能把机器拖垮。curl 直接落盘，还能断点续传。
+    #
+    # ⚠️ **必须 -sS 把进度条关掉。** curl 的进度条走的是 stderr，而
+    # Windows PowerShell 5.1 一旦把原生程序的 stderr 收进管道（调用方写
+    # `2>&1` 就会），每一行都被包成 ErrorRecord，配上
+    # $ErrorActionPreference='Stop' 就是**下第一个文件时当场中止**——
+    # 而报出来的是 NativeCommandError，看着像 curl 挂了。
+    # -sS 保留真正的错误信息，只去掉进度。
+    # **整个文件重试，不只靠 curl 自己的 --retry。**
+    # 几 GB 的文件在 Windows 的 schannel 上常见 `curl: (56) server closed
+    # abruptly (missing close_notify)`——TLS 连接中途断掉。curl 的 --retry
+    # 管的是"请求失败"，对传到一半断线不一定重来。
+    # 好在 -C - 会续传，所以从外面再叫一次就是接着下。
+    # **按"有没有进展"决定要不要接着试，不是数固定次数。**
+    # 这台机器上 HF 的连接很不稳（schannel 的 (35) 握手失败、(56) 对端
+    # 没发 close_notify 就断），但每次都能往前推几百 MB。定死 4 次的话
+    # 一个 4 GB 的文件必然下不完，而它其实只是需要多接几次。
+    # 判停的条件改成"连着几次一个字节都没多"——那才是真的卡住了。
+    $ok = $false
+    $stall = 0
+    $try = 0
+    while (-not $ok -and $stall -lt 5) {
+        $try++
+        $before = 0
+        if (Test-Path $out) { $before = (Get-Item $out).Length }
+        if ($try -gt 1) {
+            Write-Host ("  第 {0} 次（已有 {1} MB，续传）" -f $try, [math]::Round($before/1MB)) -ForegroundColor DarkGray
+            Start-Sleep -Seconds 5
+        }
+        & curl.exe -sS -L --fail --retry 3 --retry-delay 5 --retry-all-errors `
+            -C - -o "$out" $x.u
+        if ($LASTEXITCODE -eq 0) { $ok = $true; break }
+
+        $after = 0
+        if (Test-Path $out) { $after = (Get-Item $out).Length }
+        if ($after -gt $before) { $stall = 0 } else { $stall++ }
+    }
+    if (-not $ok) {
+        Write-Host "下载失败：$($x.f)（连着 5 次没有进展，试了 $try 次）" -ForegroundColor Red
+        exit 1
+    }
+    $gotMb = [math]::Round((Get-Item $out).Length / 1MB)
+    if ([math]::Abs($gotMb - $x.mb) -gt ($x.mb * 0.1)) {
+        Write-Host "下完大小不对：有 $gotMb MB，该 $($x.mb) MB" -ForegroundColor Red
+        exit 1
+    }
+    Write-Host "  好了：$gotMb MB" -ForegroundColor Green
+}
+
+Write-Host ""
+Write-Host "全下完了。配置里这么填（changji.toml 的 [models]）：" -ForegroundColor Cyan
+Write-Host @"
+[models]
+engine = "sd"
+dir = "$($dest -replace '\\','/')"
+video = "Wan2.2-TI2V-5B-Q4_K_M.gguf"
+video_vae = "Wan2.2_VAE.safetensors"
+video_text_encoder = "umt5-xxl-encoder-Q5_K_M.gguf"
+tts = "Qwen3-TTS-12Hz-1.7B-Base-Q4_K_M.gguf"
+tts_decoder = "mmproj-Qwen3-TTS-12Hz-1.7B-Base-Q8_0.gguf"
+"@

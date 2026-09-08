@@ -731,6 +731,43 @@ import `changji.stages.bible.build_prompt` 来算），不是手写的——
 `current`，写作那边对应 `done`。照抄另一边的映射，进度条一直是 0——
 而那和"任务卡住"在界面上是同一个样子。
 
+### 哪些测试真的和 Python 比过（2026-09-08）
+
+阶段 8 的闸门是「对拍覆盖到你愿意永久放弃它的程度」，而"覆盖"有两种，
+价值差得很远：
+
+| | 期望值从哪来 | 写错了会怎样 |
+|---|---|---|
+| 和 Python 比 | 跑 Python 算出来 | Python 改了、我们抄错了，都会红 |
+| 只钉意图 | 人写在用例里 | **写错了照样绿** |
+
+这个差别一天之内撞到三次：装配层把一个被 `%g` 截过位的响度值当成正确
+答案钉住了；两个视频后端都写死 REALISTIC；`test_jobs.cpp` 有条用例叫
+「Run 快照的字段和 Python 一致」而那份名单是手写的。三处都是绿着的错。
+
+`cpp/tools/contract_audit.py` 把这件事变成可查的：一个测试文件读了
+`export_*.py` / `gen_*.py` 生成的语料，就算"和 Python 比"。
+当前 **54 个测试文件里 23 个和 Python 比过**。
+
+**剩下 31 个不是都该改。** 分三类：
+
+- **C++ 独有，没有可比物**（该是这样）：`test_facades` `test_jobs`
+  `test_proc` `test_scheduler` `test_sd_image` `test_sd_video`
+  `test_ws_client` `test_ws_hub` `test_models_config` `test_llm_info`，
+  加上对拍工具自己那三个。Python 侧压根没有 WebSocket、进程内 sd.cpp、
+  线程池、`[models]` 段。
+- **单元测试只钉意图，但对拍在接口层比过**：`test_readonly`
+  `test_projects` `test_config_api` `test_voices` `test_run`
+  `test_writeback`。这些的保证来自对拍那 166 条，不在单元测试里。
+- **两边都有、而且没有语料兜着**——这才是要盯的：`test_audio`
+  `test_character` `test_comfy_client` `test_episode` `test_frames`
+  `test_gates` `test_hardware` `test_llm_client` `test_render`
+  `test_shot` `test_paths`。
+
+⚠️ **这个工具量的是"有没有比过"，不是"比得全不全"。** 一个文件里可能
+一半用例读语料、一半是手写断言，它只会记成"和 Python 比"。
+要看比得全不全得数具体语料有多少条——那是人看的事。
+
 ### 阶段 8 的清单：删之前要知道会一起没掉什么（2026-09-08）
 
 删 Python 引擎那一行在表里只有五个字，实际盘了一遍之后**它是一扇单向门**，
