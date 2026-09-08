@@ -706,6 +706,26 @@ cpp/
 
 ### 阶段 5 的实机判据卡在模型文件上（2026-09-08）
 
+> **补正（2026-09-08 晚）：卡点比原来记的小得多，而且我之前的数字是错的。**
+>
+> 一直说"要 11.3 GB 放不下"。实测（HEAD 查的真实大小）：
+>
+> | | 扩散主模型 | VAE | 文本编码器 | 合计 |
+> |---|---|---|---|---|
+> | `download_models.ps1` 下的 fp16 safetensors | 9536 MB | 1344 MB | 6423 MB | **16.9 GB** |
+> | GGUF Q4_K_M | 3274 MB | 1344 MB | 3485 MB | **7.9 GB** |
+> | GGUF Q3_K_M | 2429 MB | 1344 MB | 2913 MB | **6.5 GB** |
+>
+> 两件事：**"11.3 GB"是错的**，safetensors 那套实际 16.9 GB；
+> 而**那套 sd.cpp 根本用不了**——它是给 ComfyUI 的，sd.cpp 吃 GGUF。
+> 仓库里一直没有取 GGUF 的脚本，和配音那边一模一样的漏（
+> `download_tts_model.ps1` 下 safetensors，GGUF 那份是后来补的）。
+>
+> 补了 `download_wan_gguf.ps1`。Q4_K_M 那套 7.9 GB，Q3_K_M 那套 6.5 GB——
+> **本机剩 5.3 GB，腾掉 `cpp/build_llama`（1.9 GB，可重新生成）就够 Q3 了。**
+> 脚本会先把三份大小和剩余空间一起摆出来再动手下。
+
+
 代码那部分做完了：整集流水线（按阶段分批、每阶段存盘）、`POST /api/run`
 的队列与取消、`/api/run/preview`、`/api/outputs`，以及**前置验证里那组
 VAE 分块参数**——那组数一直没接进代码，而 `sd_vid_gen_params_init` 默认
