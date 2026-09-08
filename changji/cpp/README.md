@@ -71,6 +71,19 @@ matmul），调用点没有 `#ifdef` 守卫。来龙去脉见
 
 ## 测试
 
+一条命令把全部六样跑完（在 `changji/` 下）：
+
+```bash
+powershell -ExecutionPolicy Bypass -File verify_all.ps1
+powershell -ExecutionPolicy Bypass -File verify_all.ps1 -Quick   # 跳过 llama 那一档
+```
+
+它替你做了两件容易出错的事：**进 MSVC 环境**（忘了的话报的是
+`fatal error C1083: 无法打开包括文件: "algorithm"`，看着像代码问题），
+以及**检查对拍的条数**——"不同 0"出自 20 条和出自 165 条完全是两回事。
+
+也可以分开跑：
+
 ```bash
 ./build/changji_tests.exe                                    # 437 条单元测试
 powershell -ExecutionPolicy Bypass -File tools\duiping.ps1   # 对拍（会自己起四个进程）

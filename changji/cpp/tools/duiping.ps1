@@ -88,8 +88,16 @@ Start-Process -FilePath $pyCmd -WindowStyle Hidden
 Start-Process -FilePath $cppCmd -WindowStyle Hidden
 Start-Sleep -Seconds 8
 
+# **--golden 一定要显式传绝对路径。**
+# 对拍工具那边的默认值是相对路径 "tests/golden"，也就是说它只在
+# 工作目录正好是 cpp/ 的时候才对。从别处调这个脚本（比如仓库根目录的
+# verify_all.ps1）时，语料一份都读不到——而**它不会报错**，
+# 只是那些要语料的模式全都静静地不跑，最后报"一致 20、不同 0、跳过 0"，
+# 退出码还是 0。
+#
+# 165 条变 20 条而结论仍然是"全过"，是这套工具里最坏的一种失败。
 $argv = @("--cpp","http://127.0.0.1:$CppPort","--python","http://127.0.0.1:$PyPort",
-          "--project",$project,"--llm-work",$work)
+          "--project",$project,"--llm-work",$work,"--golden",$golden)
 if ($Case) { $argv += @("--case",$Case) }
 if ($ShowRequests) { $argv += "--verbose" }
 
