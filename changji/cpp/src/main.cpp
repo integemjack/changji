@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <cstdlib>
+#include <cctype>
 #include <iostream>
 #include <string>
 
@@ -16,6 +17,28 @@
 #include "util/paths.hpp"
 
 namespace {
+
+/// 解析 --port 的参数。
+///
+/// **不用 std::atoi。** 它解不出来就返回 0，而 0 在 bind 里是合法的——
+/// 意思是"操作系统随便挑一个空闲端口"。于是 `--port abc` 会静默地
+/// 起在一个随机端口上，而用户以为它在自己敲的那个上面。
+///
+/// 更常见的是打错一个字符：`--port 8O80`（字母 O）被 atoi 解成 **8**，
+/// 服务起在 8 端口，用户连 8080 连不上，而程序一声没吭。
+/// 这一类"静默地理解成别的意思"是最难查的，因为症状离原因很远。
+int parse_port(const std::string& raw) {
+    const bool digits =
+        !raw.empty() && std::all_of(raw.begin(), raw.end(), [](unsigned char c) {
+            return std::isdigit(c) != 0;
+        });
+    long v = digits ? std::strtol(raw.c_str(), nullptr, 10) : -1;
+    if (!digits || v < 1 || v > 65535) {
+        std::cerr << "--port 要一个 1 到 65535 的整数，收到的是「" << raw << "」\n";
+        std::exit(2);
+    }
+    return static_cast<int>(v);
+}
 
 void print_usage() {
     std::cout <<
@@ -224,7 +247,7 @@ int run(int argc, char** argv) {
             return av[++i];
         };
         if (a == "--help" || a == "-h") { print_usage(); return 0; }
-        else if (a == "--port") opts.port = std::atoi(next("端口号").c_str());
+        else if (a == "--port") opts.port = parse_port(next("端口号"));
         else if (a == "--host") opts.host = next("监听地址");
         else if (a == "--doctor") want_doctor = true;
         else if (a == "--say") say_text = next("要念的话");
