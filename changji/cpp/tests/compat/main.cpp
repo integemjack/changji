@@ -26,6 +26,8 @@
 #include <fstream>
 #include <iostream>
 #include <map>
+#include <thread>
+#include <chrono>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -290,6 +292,156 @@ Response send(const std::string& base, const std::string& method,
         out.error = "回的不是 JSON：" + res->body.substr(0, 200);
     }
     return out;
+}
+
+/// 列一个目录里的文件（名字 + 字节数），排好序。
+///
+/// 只比名字不够：**两边都写出了同名文件、但内容长度不同**是可能的
+/// （比如一侧多写了个 BOM，或者把二进制当文本转了行）。
+json list_dir(const fs::path& dir) {
+    json out = json::array();
+    std::error_code ec;
+    if (!fs::is_directory(dir, ec)) return out;
+    std::vector<std::pair<std::string, std::uintmax_t>> rows;
+    for (const auto& e : fs::directory_iterator(dir, ec)) {
+        if (!e.is_regular_file()) continue;
+        rows.emplace_back(paths::to_utf8(e.path().filename()),
+                          fs::file_size(e.path(), ec));
+    }
+    std::sort(rows.begin(), rows.end());
+    for (const auto& [name, size] : rows) {
+        out.push_back({{"name", name}, {"size", size}});
+    }
+    return out;
+}
+
+/// 轮询 `GET /api/run` 直到跑完。返回最后那一份快照。
+///
+/// 超时不是失败而是**跳过**：这一层要真跑流水线，慢一点是正常的，
+/// 而把"这台机器慢"报成"两边不一致"是最坏的一种噪音。
+std::optional<Response> wait_idle(const std::string& base, int timeout_s) {
+    for (int i = 0; i < timeout_s * 2; ++i) {
+        const Response r = fetch(base, "/api/run");
+        if (!r.error.empty()) return std::nullopt;
+        if (r.body.is_object() && r.body.value("running", false) == false &&
+            i > 0) {
+            return r;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    }
+    return std::nullopt;
+}
+
+/// 推理层对拍：**真的跑一遍流水线**。
+///
+/// 这一层一直空着，理由记的是"要真跑一集"，而跑一集要模型和 ffmpeg。
+/// 配音这一段绕开了那两样：只跑 `stages: ["audio"]`。
+///
+/// ⚠️ **我一开始的前提是错的，记在这里免得下一个人重犯。**
+/// 我以为"ComfyUI 连不上时两边都会退回估算后端（写等长静音 wav），
+/// 于是既不碰模型也不碰 ffmpeg"。实际不是：**两边都有内置的配音工作流**
+/// （Python 的 `workflows_loader`、C++ 的 `bundled_workflows.inc.hpp`），
+/// 所以两边都造出了 ComfyUI 后端，然后都连不上 127.0.0.1:8188。
+/// 估算后端只有在**连工作流都没有**的时候才会用上。
+///
+/// 所以这一条实际验的是：**ComfyUI 不在的时候，跑配音这一段两边各干了什么。**
+/// 那仍然是一条值得验的路——用户机器上没起 ComfyUI 是最常见的状态，
+/// 而"这时候该怎么办"两边的答案目前不一样，见下面报出来的差异。
+///
+/// 验的东西比接口层深一层：
+///   - 跑完之后的 `GET /api/run` 快照（在跑什么、报了什么错）
+///   - **project.json**——镜头状态有没有一起推进、有没有一样地拆镜头
+///   - **audio/ 目录**——文件名和字节数。响应一样不代表写出来的东西一样
+int run_pipeline(const Args& args, Tally& tally) {
+    if (args.python_url.empty() || args.project.empty()) return 0;
+
+    compat::CompareOptions opts;
+    opts.ignore = live_ignores();
+    opts.ignore.push_back({"/updated_at", "存盘刷新它"});
+    opts.ignore.push_back({"/created_at", "拷贝出来的时刻"});
+    // 跑得快慢和时间戳不算契约。
+    opts.ignore.push_back({"/elapsed_s", "两边各跑各的，快慢必然不同"});
+    opts.ignore.push_back({"/events", "事件的文字和条数不算契约，"
+                                      "要比的是跑完之后盘上的东西"});
+    opts.ignore.push_back({"/message", "同上，是给人看的一句话"});
+
+    const fs::path src = paths::from_utf8(args.project);
+    std::cout << "\n== 推理层：真跑一遍配音（ComfyUI 不在的情形）==\n";
+
+    const std::string name = "跑一集的配音";
+    if (!args.filter.empty() && name.find(args.filter) == std::string::npos) {
+        return 0;
+    }
+
+    const fs::path py_dir = fresh_copy(src, "run_py");
+    const fs::path cp_dir = fresh_copy(src, "run_cpp");
+    if (py_dir.empty() || cp_dir.empty()) {
+        tally.skip(name, "拷项目副本失败");
+        return 0;
+    }
+
+    const auto body = [](const fs::path& dir) {
+        return json{{"project", paths::to_utf8(dir)},
+                    {"episode_id", "ep01"},
+                    // **只跑配音这一段。** 别的阶段要模型和 ffmpeg。
+                    {"stages", json::array({"audio"})},
+                    // force：语料项目里有些镜头已经是 audio_done，
+                    // 不强制的话跳过它们，那就什么都没跑。
+                    {"force", true}};
+    };
+
+    const Response py = send(args.python_url, "POST", "/api/run", body(py_dir));
+    const Response cp = send(args.cpp_url, "POST", "/api/run", body(cp_dir));
+    if (!py.error.empty()) {
+        tally.skip(name, "Python 侧：" + py.error);
+        return 0;
+    }
+    if (!cp.error.empty()) {
+        tally.skip(name, "C++ 侧：" + cp.error);
+        return 0;
+    }
+
+    std::vector<compat::Difference> diffs;
+    if (py.status != cp.status) {
+        diffs.push_back({"（起跑的状态码）", "Python " + std::to_string(py.status) +
+                                                 "，C++ " + std::to_string(cp.status)});
+    }
+    if (py.status != 200) {
+        // 起都没起来，后面比什么都没意义。
+        tally.report(name, diffs);
+        return 0;
+    }
+
+    const auto py_final = wait_idle(args.python_url, 180);
+    const auto cp_final = wait_idle(args.cpp_url, 180);
+    if (!py_final.has_value() || !cp_final.has_value()) {
+        tally.skip(name, "等不到跑完（超时或连不上）");
+        return 0;
+    }
+
+    for (auto& d : compat::compare(py_final->body, cp_final->body, opts)) {
+        diffs.push_back({"跑完的状态" + d.path, d.detail});
+    }
+
+    // **真正的产出在这两处。** 上面那份快照只是它自己说的。
+    const json a = read_json(py_dir / "project.json");
+    const json b = read_json(cp_dir / "project.json");
+    if (!a.is_null() && !b.is_null()) {
+        for (auto& d : compat::compare(a, b, opts)) {
+            diffs.push_back({"project.json" + d.path, d.detail});
+        }
+    }
+    for (auto& d : compat::compare(list_dir(py_dir / "audio"),
+                                   list_dir(cp_dir / "audio"), opts)) {
+        diffs.push_back({"audio/" + d.path, d.detail});
+    }
+
+    tally.report(name, diffs);
+
+    std::error_code ec;
+    fs::remove_all(fs::temp_directory_path() / paths::from_utf8("changji_对拍_写"),
+                   ec);
+    return 0;
 }
 
 /// 语料里 prep 标了名字，这里按名字做同样的改动。
@@ -723,26 +875,6 @@ Response send_multipart(const std::string& base, const std::string& path,
     return out;
 }
 
-/// 列一个目录里的文件（名字 + 字节数），排好序。
-///
-/// 只比名字不够：**两边都写出了同名文件、但内容长度不同**是可能的
-/// （比如一侧多写了个 BOM，或者把二进制当文本转了行）。
-json list_dir(const fs::path& dir) {
-    json out = json::array();
-    std::error_code ec;
-    if (!fs::is_directory(dir, ec)) return out;
-    std::vector<std::pair<std::string, std::uintmax_t>> rows;
-    for (const auto& e : fs::directory_iterator(dir, ec)) {
-        if (!e.is_regular_file()) continue;
-        rows.emplace_back(paths::to_utf8(e.path().filename()),
-                          fs::file_size(e.path(), ec));
-    }
-    std::sort(rows.begin(), rows.end());
-    for (const auto& [name, size] : rows) {
-        out.push_back({{"name", name}, {"size", size}});
-    }
-    return out;
-}
 
 /// 上传接口对拍。
 ///
@@ -1582,6 +1714,7 @@ int main(int argc, char** argv) {
         run_edit(args, tally);
         run_upload(args, tally);
         run_media(args, tally);
+        run_pipeline(args, tally);
         if (!args.llm_work.empty()) run_llm(args, tally);
     }
 
