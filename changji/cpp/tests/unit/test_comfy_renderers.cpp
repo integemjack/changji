@@ -14,9 +14,13 @@
 #include <optional>
 #include <vector>
 
+#include <nlohmann/json.hpp>
+
 #include "comfy/renderers.hpp"
 #include "config/settings.hpp"
 #include "stages/prompt_compose.hpp"
+#include "stages/frames.hpp"
+#include "stages/render.hpp"
 #include "util/paths.hpp"
 
 using namespace changji;
@@ -624,4 +628,204 @@ TEST_CASE("被服务端拒绝时，报的话里有镜头号，不是一坨嵌套
                           [](int, int, double) {}),
                         comfy::ComfyError);
     }
+}
+
+// ===========================================================================
+// 和 Python 比**提交给 ComfyUI 的那份工作流**。
+//
+// 上面那八条用例钉的是我们自己的意图。装配层刚证明过这个差别不是学究：
+// 那边的用例把一个截过位的响度值当成正确答案钉住了，绿了很久。
+//
+// 而这一层出过一次真的：两个视频后端都写死了 StyleLine::REALISTIC，
+// 动画线的项目正向提示词和 Python 差一个分隔符。那次是肉眼看出来的，
+// 这份语料是为了下一次不用靠肉眼。
+//
+// 输入是**真的内置工作流**（video.json 转成接口版，12 个节点），
+// 不是上面那个手搓的小工作流——set_by_class / find_by_class 在真实
+// 结构上才有意义。
+// ===========================================================================
+
+namespace {
+
+nlohmann::json render_golden() {
+    const std::string path =
+        std::string(CHANGJI_GOLDEN_DIR) + "/comfy/render_submit.json";
+    std::ifstream in(path, std::ios::binary);
+    REQUIRE_MESSAGE(in.good(), "读不到语料 " << path);
+    nlohmann::json j;
+    in >> j;
+    return j;
+}
+
+models::AssetLibrary golden_assets(models::StyleLine line) {
+    models::AssetLibrary a;
+    models::Character lin;
+    lin.char_id = "c_lin_wan";
+    lin.name = "林晚";
+    lin.appearance.identity = "二十七岁女性，外表冷静";
+    lin.appearance.body = "偏瘦，中等身高";
+    lin.appearance.face = "黑色长直发，单眼皮";
+    lin.appearance.attire = "白色衬衫";
+    a.characters["c_lin_wan"] = lin;
+    a.style.style_line = line;
+    a.style.global_style = "电影感，冷色调";
+    a.style.negative_prompt = "低质量，多余的手指";
+    a.style.aspect_ratio = "9:16";
+    return a;
+}
+
+models::Shot golden_shot() {
+    models::Shot s;
+    s.shot_id = "ep01_sh007";
+    s.scene_id = "sc01";
+    s.order = 6;
+    s.visual_desc = "雨夜天台，两人对峙";
+    s.first_frame_prompt = "雨夜天台，两人对峙";
+    s.motion_prompt = "镜头缓慢推近";
+    s.shot_size = models::ShotSize::MS;
+    s.camera_angle = models::CameraAngle::EYE_LEVEL;
+    s.camera_move = models::CameraMove::PUSH_IN;
+    models::CharacterInShot c;
+    c.char_id = "c_lin_wan";
+    c.expression = "落寞";
+    c.action = "转身";
+    c.face_pose = models::FacePose::FRONT;
+    c.wardrobe_state = "default";
+    s.characters = {c};
+    s.duration_s = 5.0;
+    s.attempts = 0;
+    return s;
+}
+
+/// ordered_json 转成 json：**键的顺序不算契约**（两边都是按 id 索引的
+/// 对象，ComfyUI 也不看顺序），但每个键的值要一模一样。
+/// nlohmann::json 内部按键排序，所以转过去之后直接比就是结构比较。
+nlohmann::json canonical(const comfy::OrderedJson& v) {
+    return nlohmann::json::parse(v.dump());
+}
+
+/// 把 KSampler 的 seed 换成占位符，和导出脚本里的 blank_seed 对应。
+///
+/// **种子这一项两边不可能一样，而且 Python 自己每次重启都不一样。**
+/// render.py 的 _seed_for 用 abs(hash(shot.shot_id))，而 Python 的 str
+/// hash() 按进程随机化——实测同一个 shot_id 三次不同进程给出
+/// 762199586 / 740115691 / 1194400939。这是一处**有意不复刻的 Python bug**，
+/// 方案里「首帧种子每次重启都变」那一节记着。
+///
+/// 所以种子不进这份比较，另有专门的断言盯着它（见下一条用例）。
+nlohmann::json blank_seed(nlohmann::json prompt) {
+    for (auto& [id, node] : prompt.items()) {
+        if (node.value("class_type", "") == "KSampler") {
+            node["inputs"]["seed"] = "<SEED>";
+        }
+    }
+    return prompt;
+}
+
+}  // namespace
+
+TEST_CASE("提交给 ComfyUI 的工作流和 Python 一样") {
+    const nlohmann::json g = render_golden();
+    const comfy::ApiWorkflow base(
+        comfy::OrderedJson::parse(g.at("workflow").dump()));
+
+    for (const auto& c : g.at("cases")) {
+        const std::string name = c.at("name").get<std::string>();
+        CAPTURE(name);
+
+        const auto line = c.at("style_line").get<std::string>() == "anime"
+                              ? models::StyleLine::ANIME
+                              : models::StyleLine::REALISTIC;
+        const auto tier = c.at("tier").get<std::string>() == "final"
+                              ? models::Tier::FINAL
+                              : models::Tier::DRAFT;
+
+        models::TierSpec spec;
+        spec.tier = tier;
+        spec.width = c.at("spec").at("width").get<int>();
+        spec.height = c.at("spec").at("height").get<int>();
+        spec.steps = c.at("spec").at("steps").get<int>();
+
+        const stages::PromptComposer composer(golden_assets(line));
+        const auto shot = golden_shot();
+        const auto plan = stages::make_plan(shot, spec, composer, "9:16");
+
+        // 先比计划本身。计划错了，下面提交的内容也就错了，
+        // 但那时候看到的会是一堆节点的 diff，指不回这里。
+        const auto& pg = c.at("plan");
+        CHECK(plan.frames == pg.at("frames").get<int>());
+        CHECK(plan.spec.width == pg.at("width").get<int>());
+        CHECK(plan.spec.height == pg.at("height").get<int>());
+        CHECK(plan.spec.steps == pg.at("steps").get<int>());
+        CHECK(plan.prompts.positive == pg.at("positive").get<std::string>());
+        CHECK(plan.prompts.negative == pg.at("negative").get<std::string>());
+        CHECK(plan.motion == pg.at("motion").get<std::string>());
+
+        std::optional<fs::path> start;
+        if (!c.at("start_image").is_null()) {
+            // 渲染器不查这个文件在不在，直接交给 upload_image，
+            // 所以这里给一个不存在的路径也走得通。
+            // **文件得真的存在**：存在性检查在 Client::upload_image 里，
+            // 不在渲染器里。语料里那个路径是 <ROOT> 开头的占位符，
+            // 这边照着文件名在临时目录里造一个。
+            const auto d = temp_dir("首帧素材");
+            start = d / "a.png";
+            std::ofstream(*start, std::ios::binary) << "png";
+        }
+
+        Recorder rec;
+        auto render = comfy::video_renderer(client_of(rec), base);
+        pipeline::CancelToken tok;
+        const auto dir = temp_dir("语料提交");
+        render(shot, plan, start, dir / "v.mp4", tok, [](int, int, double) {});
+
+        REQUIRE(rec.submitted.size() == 1);
+        CHECK(blank_seed(canonical(rec.submitted.back())) == c.at("submitted"));
+
+        CHECK(rec.uploaded.size() == c.at("uploaded").size());
+    }
+}
+
+TEST_CASE("种子不进语料比较，但它自己要稳") {
+    // 上一条把 KSampler 的 seed 换成了占位符——Python 那边它每次重启
+    // 都不一样，比不了。**但不比不等于不测**：种子错了的后果是
+    // 同一个镜头每次出来的画面都不同，而"重跑一次看看"是最常做的操作。
+    const nlohmann::json g = render_golden();
+    const comfy::ApiWorkflow base(
+        comfy::OrderedJson::parse(g.at("workflow").dump()));
+    const auto shot = golden_shot();
+
+    models::TierSpec spec;
+    spec.tier = models::Tier::DRAFT;
+    spec.width = 480;
+    spec.height = 854;
+    spec.steps = 4;
+    const stages::PromptComposer composer(
+        golden_assets(models::StyleLine::REALISTIC));
+
+    auto seed_of = [&](const models::Shot& s) {
+        const auto plan = stages::make_plan(s, spec, composer, "9:16");
+        Recorder rec;
+        auto r = comfy::video_renderer(client_of(rec), base);
+        pipeline::CancelToken tok;
+        const auto dir = temp_dir("种子");
+        r(s, plan, std::nullopt, dir / "v.mp4", tok, [](int, int, double) {});
+        return rec.by_class("KSampler", "seed").get<std::int64_t>();
+    };
+
+    // 就是 render_seed 算出来的那个值，不是别处来的
+    CHECK(seed_of(shot) == stages::render_seed(shot.shot_id, 0));
+
+    // 同一个镜头跑两次，种子一样（可复现）
+    CHECK(seed_of(shot) == seed_of(shot));
+
+    // 重试要换种子，否则重试等于把同一段视频再算一遍
+    auto retried = shot;
+    retried.attempts = 1;
+    CHECK(seed_of(retried) == stages::render_seed(shot.shot_id, 1));
+    CHECK(seed_of(retried) != seed_of(shot));
+
+    // 首帧和视频要落在不同的种子上（Python 侧靠 "frame:" 前缀区分）
+    CHECK(stages::frame_seed(shot.shot_id, 0) !=
+          stages::render_seed(shot.shot_id, 0));
 }
