@@ -62,6 +62,13 @@ public:
 
     size_t connection_count();
 
+    /// 有多少个连接订阅了这个 job。
+    ///
+    /// 加它一半是为了能测——`subs_` 是私有的，不然订阅有没有生效
+    /// 只能靠 broadcast 观察，而 broadcast 要解引用 connection，
+    /// 拿假指针就崩了。另一半是诊断：没人听的时候值不值得去凑那条消息。
+    size_t subscriber_count(const std::string& job_id);
+
 private:
     bool should_throttle(const std::string& job_id, const std::string& type);
 

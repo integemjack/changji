@@ -30,8 +30,13 @@ void Hub::remove(crow::websocket::connection* conn) {
 }
 
 void Hub::subscribe(crow::websocket::connection* conn, const std::string& job_id) {
+    // 空 job_id 不订阅：客户端发一条 {"type":"subscribe"} 不带 job_id 时会
+    // 走到这儿，而订阅一个空 id 永远等不到任何消息（没有 job 叫这个），
+    // 只是往 subs_ 里种一个永远不会被清掉的键。
     if (job_id.empty()) return;
     std::lock_guard<std::mutex> lk(mu_);
+    // 只认已经登记过的连接。断开之后再来的订阅要丢掉，
+    // 否则 subs_ 里会留着一个已经没了的指针。
     if (conns_.count(conn)) subs_[job_id].insert(conn);
 }
 
@@ -50,13 +55,31 @@ void Hub::handle_client_message(crow::websocket::connection* conn,
     json msg = json::parse(raw, nullptr, false);
     if (msg.is_discarded() || !msg.is_object()) return;
 
-    std::string type = msg.value("type", std::string{});
-    std::string job_id = msg.value("job_id", std::string{});
+    // **`value()` 只兜住"键不存在"，兜不住"键在但类型不对"。**
+    // `msg.value("type", std::string{})` 碰上 {"type":123} 会抛
+    // type_error.302，而这里是客户端能直接喂进来的地方——上面那句
+    // "一律当不可信输入"就不成立了。所以先问类型再取。
+    //
+    // 这是新加的 Hub 用例抓出来的：那条用例里塞了一串畸形消息，
+    // 其中 {"type":123,"job_id":456} 让整个 handler 抛了出去。
+    const auto str_field = [&msg](const char* key) -> std::string {
+        const auto it = msg.find(key);
+        if (it == msg.end() || !it->is_string()) return {};
+        return it->get<std::string>();
+    };
+    const std::string type = str_field("type");
+    const std::string job_id = str_field("job_id");
     if (type == "subscribe") {
         subscribe(conn, job_id);
     } else if (type == "unsubscribe") {
         unsubscribe(conn, job_id);
     }
+}
+
+size_t Hub::subscriber_count(const std::string& job_id) {
+    std::lock_guard lg(mu_);
+    auto it = subs_.find(job_id);
+    return it == subs_.end() ? 0 : it->second.size();
 }
 
 bool Hub::should_throttle(const std::string& job_id, const std::string& type) {

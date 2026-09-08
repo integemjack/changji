@@ -1515,6 +1515,28 @@ changji 目前没有地方填。
   原来是无条件截断写的：一个已经配好模型路径和后端地址的用户，
   只是想看看模板长什么样，那些就全没了——而且没有任何提示，因为命令"成功"了。
 
+**`/ws` 的服务端那一侧原来一条测试都没有**（2026-09-08 补上）。
+
+`test_ws_client.cpp` 测的是我们自己写的客户端（连 ComfyUI 用的），
+和广播中心是两码事。而 **Python 侧根本没有 WebSocket**（`server.py` 开头
+写着"不用 WebSocket，因为轮询在这个场景够用"），所以这条路**没法对拍**，
+只能自己测——它是全项目唯一一处既没有对拍、原来也没有单元测试的地方。
+
+拿假指针测是安全的：`Hub` 里那个 `connection*` **纯粹当键用，从不解引用**，
+唯一会解引用的是 `broadcast`，用例一次都不调它。
+
+**第一次跑就抓到一个真 bug。** 用例里塞了一串畸形消息，
+其中 `{"type":123,"job_id":456}` 让 handler 直接抛了出去：
+
+```
+[json.exception.type_error.302] type must be string, but is number
+```
+
+`msg.value("type", std::string{})` 只兜得住"键不存在"，兜不住"键在但类型
+不对"。而这里是**客户端能直接喂进来的地方**，文件开头那句"客户端发来的
+东西一律当不可信输入：解析失败就静默丢弃"因此并不成立。
+改成先问类型再取。
+
 **下面这段是还差的：**
 mtmd 的音频生成 API 在头文件里明写着
 `EXPERIMENTAL API for audio generation, subjected to breaking changes`，

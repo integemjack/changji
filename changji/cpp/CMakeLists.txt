@@ -502,6 +502,7 @@ if(CHANGJI_BUILD_TESTS)
         tests/unit/test_comfy_workflow.cpp
         tests/unit/test_comfy_client.cpp
         tests/unit/test_ws_client.cpp
+        tests/unit/test_ws_hub.cpp
         tests/unit/test_comfy_loader.cpp
         tests/unit/test_voices.cpp
         tests/unit/test_comfy_renderers.cpp
@@ -540,6 +541,10 @@ if(CHANGJI_BUILD_TESTS)
         src/stages/tts_backends.cpp
         # 测试目标编的是没开 CHANGJI_LLAMA 的那份存根（返回"没编进来"）。
         # 少了它 tts_backends.cpp 里的 local_tts_backend 会链不上。
+        # ws.cpp 进得来：它只 include <crow/websocket.h>（头文件库），
+        # 不碰 asio 的运行时，也不链 Crow 的 app。Hub 里那个
+        # connection* 纯粹当键用，从不解引用——所以拿假指针就能测。
+        src/http/ws.cpp
         src/infer/llama_tts.cpp
         src/infer/scheduler.cpp
         src/infer/sd_backend.cpp
@@ -577,7 +582,10 @@ if(CHANGJI_BUILD_TESTS)
         src/http/run.cpp
         src/http/voices.cpp
     )
-    target_include_directories(changji_tests PRIVATE src "${ASIO_INCLUDE_DIR}")
+    # Crow 的头目录：ws.cpp 要 <crow/websocket.h>。Crow 是纯头文件库，
+    # 加个包含路径就够，不用链它的 app（测试里只碰 Hub 那个纯数据结构）。
+    target_include_directories(changji_tests PRIVATE src "${ASIO_INCLUDE_DIR}"
+                               "${crow_SOURCE_DIR}/include")
     target_link_libraries(changji_tests PRIVATE
         nlohmann_json::nlohmann_json
         tomlplusplus::tomlplusplus)
