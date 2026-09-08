@@ -191,8 +191,18 @@ std::vector<std::string> mix_args(const fs::path& video,
     // 不收回来的话编码器会挑个 96k 之类的采样率，文件白白变大。
     filters.push_back(
         mix_inputs + "amix=inputs=" + std::to_string(segments.size()) +
-        ":dropout_transition=0:normalize=0,loudnorm=I=" + fmt("%g", target_lufs) +
-        ":TP=" + fmt("%g", max_true_peak_db) + ":LRA=11,aresample=" +
+        // %.12g 而不是 %g。**这里和 storyboard.cpp 的 format_g 不是一回事**：
+        // 那边对的是 Python 的 f"{x:g}"（也是 6 位有效数字，两边同一套规则），
+        // 这边对的是 Python 的 f"{self.target_lufs}"，也就是 str(float)，
+        // 不截位。%g 默认 6 位有效数字，target_lufs 填 -16.123456 时
+        // C++ 会写出 -16.1235——**响度目标真的变了**，不是显示问题。
+        //
+        // 剩下一处对不齐是有意留着的：整数值 Python 写 "-16.0"，
+        // 这里写 "-16"。ffmpeg 两个都当 -16 解析，成片一模一样；
+        // 要逐字节一样得照搬 Python 的 repr 规则（整数浮点补 ".0"），
+        // 为一个解析结果相同的字符串背那套算法不值。
+        ":dropout_transition=0:normalize=0,loudnorm=I=" + fmt("%.12g", target_lufs) +
+        ":TP=" + fmt("%.12g", max_true_peak_db) + ":LRA=11,aresample=" +
         std::to_string(config.audio_sample_rate) + "[amixed]");
     // 音轨补静音到视频长度。
     filters.push_back("[amixed]apad[aout]");

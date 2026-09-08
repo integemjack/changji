@@ -277,6 +277,35 @@ TEST_CASE("混音绝不能用 -shortest") {
         CHECK(c.find("loudnorm=I=-14:TP=-2") != std::string::npos);
     }
 
+    SUBCASE("响度目标不许被格式化截掉位数") {
+        // **这里原来是 %g，会截到 6 位有效数字。** target_lufs 是配置里
+        // 一个没有小数位限制的浮点数，填 -16.123456 的话 C++ 写出的是
+        // -16.1235——**响度目标真的变了**，而 Python 那边写的是
+        // f"{self.target_lufs}"（str(float)，不截位）。
+        //
+        // 不是显示问题：ffmpeg 照着 -16.1235 归一，成片响度和 Python 的
+        // 不一样，而两边的命令行都"看着对"。
+        const auto a = media::mix_args("j.mp4", segs, cfg, -16.123456, -1.234567,
+                                       9.0, "o.mp4");
+        const std::string c = arg_value(a, "-filter_complex");
+        CAPTURE(c);
+        CHECK(c.find("loudnorm=I=-16.123456:TP=-1.234567") != std::string::npos);
+    }
+
+    SUBCASE("整数值这里写 -16，Python 写 -16.0——有意留着的") {
+        // ffmpeg 两个都当 -16 解析，成片一模一样。要逐字节一样得照搬
+        // Python 的 repr 规则（整数浮点补 ".0"），为一个解析结果相同的
+        // 字符串背那套算法不值。
+        //
+        // 钉住是因为**下一个人看见这处不一致，得知道它是被想过的**，
+        // 而不是抄漏了——尤其是删掉 Python 之后再也没法比对的时候。
+        const auto a = media::mix_args("j.mp4", segs, cfg, -16.0, -1.5, 9.0,
+                                       "o.mp4");
+        const std::string c = arg_value(a, "-filter_complex");
+        CHECK(c.find("loudnorm=I=-16:TP=-1.5") != std::string::npos);
+        CHECK(c.find("I=-16.0") == std::string::npos);
+    }
+
     SUBCASE("视频原样拷贝") {
         // 混音不碰画面，重编码一次是白白多一次有损压缩。
         CHECK(arg_value(args, "-c:v") == "copy");
