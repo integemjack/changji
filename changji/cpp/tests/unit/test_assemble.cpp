@@ -661,3 +661,133 @@ TEST_CASE("时间线的起点和字幕时间戳和 Python 一样") {
         }
     }
 }
+
+
+// ---------------------------------------------------------------------------
+// build_timeline 排出来的时间线，和 Python 逐条比。
+//
+// 上面那些用例比的是**由时间线拼出来的 ffmpeg 命令**，命令里只看得见
+// 一部分（adelay 的偏移）。时间线里最要紧的那部分——**字幕的时间戳**——
+// 走的是另一条路（烧进 .ass），命令里一个字都看不到。
+// `coverage_audit.py` 一直把 Timeline / TimelineEntry / build_timeline
+// 列在没碰过的符号里。
+//
+// **这是音画对齐的最后一环。** 每条字幕的起止时间来自
+// `line.actual_duration_s`——配音阶段量出来写回台词的那个数
+// （那一步由 audio_stage.json 钉住），这里再把它累成时间轴。
+// 算错了不报错：字幕生成成功、成片渲染成功、总时长也对，
+// 只是字幕比人声早半秒或晚半秒，而且一集下来越飘越远，
+// 每一条单看都"差不多对"。
+// ---------------------------------------------------------------------------
+
+TEST_CASE("时间线的排期和字幕时间戳和 Python 一样") {
+    const std::string path =
+        std::string(CHANGJI_GOLDEN_DIR) + "/timeline.json";
+    std::ifstream in(path, std::ios::binary);
+    REQUIRE_MESSAGE(in.good(), "读不到语料 " << path);
+    json g;
+    in >> g;
+
+    const auto cases = g.at("cases");
+    REQUIRE(cases.size() == 13);
+
+    const fs::path root = fs::temp_directory_path() /
+                          paths::from_utf8("changji_时间线语料");
+    std::error_code ec;
+    fs::remove_all(root, ec);
+    const models::ProjectPaths pp(root);
+    touch(root / "audio" / "x.wav");
+
+    for (const auto& c : cases) {
+        const std::string name = c.at("name").get<std::string>();
+        CAPTURE(name);
+        const auto want = c.at("timeline");
+
+        // 语料记的是**排完之后**的样子，输入要从里面还原：
+        // 每个 entry 的 shot_id / duration_s / 转场是输入，
+        // start_s 和 cues 是被测的产物。台词从 cues 还原不出来
+        // （不出字幕的那几种正是要覆盖的），所以按用例名单独给。
+        std::vector<models::Shot> shots;
+        for (const auto& e : want.at("entries")) {
+            const std::string vid = e.at("video_path").get<std::string>();
+            touch(root / paths::from_utf8(vid));
+            auto s = make_shot(e.at("shot_id").get<std::string>(),
+                               e.at("duration_s").get<double>(), vid);
+            const std::string tr = e.at("transition_in").get<std::string>();
+            s.transition_in = tr == "dissolve" ? models::Transition::DISSOLVE
+                            : tr == "fade_in"  ? models::Transition::FADE_IN
+                            : tr == "fade_out" ? models::Transition::FADE_OUT
+                            : tr == "whip"     ? models::Transition::WHIP
+                                               : models::Transition::CUT;
+            s.transition_dur_s = e.at("transition_dur_s").get<double>();
+            shots.push_back(s);
+        }
+        // 台词由语料另给（见 dialogue_in 字段）
+        const auto& din = c.at("dialogue_in");
+        REQUIRE(din.size() == shots.size());
+        for (std::size_t i = 0; i < shots.size(); ++i) {
+            for (const auto& l : din[i]) {
+                auto dl = line(l.at("text").get<std::string>(),
+                               0.0,
+                               l.at("char_id").is_null()
+                                   ? std::optional<std::string>{}
+                                   : l.at("char_id").get<std::string>(),
+                               l.at("audio_path").is_null()
+                                   ? std::string()
+                                   : l.at("audio_path").get<std::string>());
+                if (l.at("actual_duration_s").is_null()) {
+                    dl.actual_duration_s.reset();
+                } else {
+                    dl.actual_duration_s =
+                        l.at("actual_duration_s").get<double>();
+                }
+                shots[i].dialogue.push_back(dl);
+            }
+        }
+
+        const auto tl = media::build_timeline(shots, pp, config::AssemblyConfig{});
+
+        CHECK(tl.total_duration_s() ==
+              doctest::Approx(want.at("total_duration_s").get<double>()));
+
+        const auto want_entries = want.at("entries");
+        REQUIRE(tl.entries.size() == want_entries.size());
+        for (std::size_t i = 0; i < tl.entries.size(); ++i) {
+            CAPTURE(i);
+            const auto& got = tl.entries[i];
+            const auto& w = want_entries[i];
+            CHECK(got.shot_id == w.at("shot_id").get<std::string>());
+            // **起点**：溶解要把它往回挪，漏了这一步整集字幕全偏
+            CHECK(got.start_s == doctest::Approx(w.at("start_s").get<double>()));
+            CHECK(got.duration_s ==
+                  doctest::Approx(w.at("duration_s").get<double>()));
+            CHECK(got.audio_paths.size() ==
+                  w.at("audio_paths").size());
+
+            const auto want_cues = w.at("cues");
+            REQUIRE(got.cues.size() == want_cues.size());
+            for (std::size_t j = 0; j < got.cues.size(); ++j) {
+                CAPTURE(j);
+                CHECK(got.cues[j].start_s ==
+                      doctest::Approx(want_cues[j].at("start_s").get<double>()));
+                CHECK(got.cues[j].end_s ==
+                      doctest::Approx(want_cues[j].at("end_s").get<double>()));
+                CHECK(got.cues[j].text ==
+                      want_cues[j].at("text").get<std::string>());
+                CHECK(got.cues[j].style ==
+                      want_cues[j].at("style").get<std::string>());
+            }
+        }
+
+        // 摊平之后的那一份也比一遍——烧字幕读的是它
+        const auto all = tl.cues();
+        const auto want_all = want.at("all_cues");
+        REQUIRE(all.size() == want_all.size());
+        for (std::size_t i = 0; i < all.size(); ++i) {
+            CAPTURE(i);
+            CHECK(all[i].start_s ==
+                  doctest::Approx(want_all[i].at("start_s").get<double>()));
+            CHECK(all[i].text == want_all[i].at("text").get<std::string>());
+        }
+    }
+}

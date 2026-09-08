@@ -1,0 +1,823 @@
+{
+  "cases": [
+    {
+      "name": "一镜一句",
+      "dialogue_in": [
+        [
+          {
+            "text": "你终于来了。",
+            "char_id": "c_lin",
+            "actual_duration_s": 2.0,
+            "audio_path": "audio/x.wav"
+          }
+        ]
+      ],
+      "timeline": {
+        "total_duration_s": 3.0,
+        "entries": [
+          {
+            "shot_id": "sh001",
+            "video_path": "video/sh001.mp4",
+            "start_s": 0.0,
+            "duration_s": 3.0,
+            "transition_in": "cut",
+            "transition_dur_s": 0.0,
+            "audio_paths": [
+              "audio/x.wav"
+            ],
+            "cues": [
+              {
+                "start_s": 0.0,
+                "end_s": 2.0,
+                "text": "你终于来了。",
+                "style": "dialogue"
+              }
+            ]
+          }
+        ],
+        "all_cues": [
+          {
+            "start_s": 0.0,
+            "end_s": 2.0,
+            "text": "你终于来了。",
+            "style": "dialogue"
+          }
+        ]
+      }
+    },
+    {
+      "name": "一镜两句，第二句要接着第一句",
+      "dialogue_in": [
+        [
+          {
+            "text": "你终于来了。",
+            "char_id": "c_lin",
+            "actual_duration_s": 2.0,
+            "audio_path": "audio/x.wav"
+          },
+          {
+            "text": "雨下了一夜。",
+            "char_id": "c_lin",
+            "actual_duration_s": 1.5,
+            "audio_path": "audio/x.wav"
+          }
+        ]
+      ],
+      "timeline": {
+        "total_duration_s": 5.0,
+        "entries": [
+          {
+            "shot_id": "sh001",
+            "video_path": "video/sh001.mp4",
+            "start_s": 0.0,
+            "duration_s": 5.0,
+            "transition_in": "cut",
+            "transition_dur_s": 0.0,
+            "audio_paths": [
+              "audio/x.wav",
+              "audio/x.wav"
+            ],
+            "cues": [
+              {
+                "start_s": 0.0,
+                "end_s": 2.0,
+                "text": "你终于来了。",
+                "style": "dialogue"
+              },
+              {
+                "start_s": 2.0,
+                "end_s": 3.5,
+                "text": "雨下了一夜。",
+                "style": "dialogue"
+              }
+            ]
+          }
+        ],
+        "all_cues": [
+          {
+            "start_s": 0.0,
+            "end_s": 2.0,
+            "text": "你终于来了。",
+            "style": "dialogue"
+          },
+          {
+            "start_s": 2.0,
+            "end_s": 3.5,
+            "text": "雨下了一夜。",
+            "style": "dialogue"
+          }
+        ]
+      }
+    },
+    {
+      "name": "两镜硬切",
+      "dialogue_in": [
+        [
+          {
+            "text": "第一句。",
+            "char_id": "c_lin",
+            "actual_duration_s": 2.0,
+            "audio_path": "audio/x.wav"
+          }
+        ],
+        [
+          {
+            "text": "第二句。",
+            "char_id": "c_lin",
+            "actual_duration_s": 2.5,
+            "audio_path": "audio/x.wav"
+          }
+        ]
+      ],
+      "timeline": {
+        "total_duration_s": 7.0,
+        "entries": [
+          {
+            "shot_id": "sh001",
+            "video_path": "video/sh001.mp4",
+            "start_s": 0.0,
+            "duration_s": 3.0,
+            "transition_in": "cut",
+            "transition_dur_s": 0.0,
+            "audio_paths": [
+              "audio/x.wav"
+            ],
+            "cues": [
+              {
+                "start_s": 0.0,
+                "end_s": 2.0,
+                "text": "第一句。",
+                "style": "dialogue"
+              }
+            ]
+          },
+          {
+            "shot_id": "sh002",
+            "video_path": "video/sh002.mp4",
+            "start_s": 3.0,
+            "duration_s": 4.0,
+            "transition_in": "cut",
+            "transition_dur_s": 0.0,
+            "audio_paths": [
+              "audio/x.wav"
+            ],
+            "cues": [
+              {
+                "start_s": 3.0,
+                "end_s": 5.5,
+                "text": "第二句。",
+                "style": "dialogue"
+              }
+            ]
+          }
+        ],
+        "all_cues": [
+          {
+            "start_s": 0.0,
+            "end_s": 2.0,
+            "text": "第一句。",
+            "style": "dialogue"
+          },
+          {
+            "start_s": 3.0,
+            "end_s": 5.5,
+            "text": "第二句。",
+            "style": "dialogue"
+          }
+        ]
+      }
+    },
+    {
+      "name": "两镜溶解，第二镜起点要回挪",
+      "dialogue_in": [
+        [
+          {
+            "text": "第一句。",
+            "char_id": "c_lin",
+            "actual_duration_s": 2.0,
+            "audio_path": "audio/x.wav"
+          }
+        ],
+        [
+          {
+            "text": "第二句。",
+            "char_id": "c_lin",
+            "actual_duration_s": 2.5,
+            "audio_path": "audio/x.wav"
+          }
+        ]
+      ],
+      "timeline": {
+        "total_duration_s": 7.0,
+        "entries": [
+          {
+            "shot_id": "sh001",
+            "video_path": "video/sh001.mp4",
+            "start_s": 0.0,
+            "duration_s": 3.0,
+            "transition_in": "cut",
+            "transition_dur_s": 0.0,
+            "audio_paths": [
+              "audio/x.wav"
+            ],
+            "cues": [
+              {
+                "start_s": 0.0,
+                "end_s": 2.0,
+                "text": "第一句。",
+                "style": "dialogue"
+              }
+            ]
+          },
+          {
+            "shot_id": "sh002",
+            "video_path": "video/sh002.mp4",
+            "start_s": 2.5,
+            "duration_s": 4.0,
+            "transition_in": "dissolve",
+            "transition_dur_s": 0.5,
+            "audio_paths": [
+              "audio/x.wav"
+            ],
+            "cues": [
+              {
+                "start_s": 2.5,
+                "end_s": 5.0,
+                "text": "第二句。",
+                "style": "dialogue"
+              }
+            ]
+          }
+        ],
+        "all_cues": [
+          {
+            "start_s": 0.0,
+            "end_s": 2.0,
+            "text": "第一句。",
+            "style": "dialogue"
+          },
+          {
+            "start_s": 2.5,
+            "end_s": 5.0,
+            "text": "第二句。",
+            "style": "dialogue"
+          }
+        ]
+      }
+    },
+    {
+      "name": "第一镜就带溶解，回挪不能变成负数",
+      "dialogue_in": [
+        [
+          {
+            "text": "第一句。",
+            "char_id": "c_lin",
+            "actual_duration_s": 2.0,
+            "audio_path": "audio/x.wav"
+          }
+        ]
+      ],
+      "timeline": {
+        "total_duration_s": 3.0,
+        "entries": [
+          {
+            "shot_id": "sh001",
+            "video_path": "video/sh001.mp4",
+            "start_s": 0.0,
+            "duration_s": 3.0,
+            "transition_in": "dissolve",
+            "transition_dur_s": 1.0,
+            "audio_paths": [
+              "audio/x.wav"
+            ],
+            "cues": [
+              {
+                "start_s": 0.0,
+                "end_s": 2.0,
+                "text": "第一句。",
+                "style": "dialogue"
+              }
+            ]
+          }
+        ],
+        "all_cues": [
+          {
+            "start_s": 0.0,
+            "end_s": 2.0,
+            "text": "第一句。",
+            "style": "dialogue"
+          }
+        ]
+      }
+    },
+    {
+      "name": "没有台词的镜头",
+      "dialogue_in": [
+        [],
+        [
+          {
+            "text": "终于说话了。",
+            "char_id": "c_lin",
+            "actual_duration_s": 2.0,
+            "audio_path": "audio/x.wav"
+          }
+        ]
+      ],
+      "timeline": {
+        "total_duration_s": 7.0,
+        "entries": [
+          {
+            "shot_id": "sh001",
+            "video_path": "video/sh001.mp4",
+            "start_s": 0.0,
+            "duration_s": 4.0,
+            "transition_in": "cut",
+            "transition_dur_s": 0.0,
+            "audio_paths": [],
+            "cues": []
+          },
+          {
+            "shot_id": "sh002",
+            "video_path": "video/sh002.mp4",
+            "start_s": 4.0,
+            "duration_s": 3.0,
+            "transition_in": "cut",
+            "transition_dur_s": 0.0,
+            "audio_paths": [
+              "audio/x.wav"
+            ],
+            "cues": [
+              {
+                "start_s": 4.0,
+                "end_s": 6.0,
+                "text": "终于说话了。",
+                "style": "dialogue"
+              }
+            ]
+          }
+        ],
+        "all_cues": [
+          {
+            "start_s": 4.0,
+            "end_s": 6.0,
+            "text": "终于说话了。",
+            "style": "dialogue"
+          }
+        ]
+      }
+    },
+    {
+      "name": "空文本不出字幕，但后面那句要往后挪",
+      "dialogue_in": [
+        [
+          {
+            "text": "   ",
+            "char_id": "c_lin",
+            "actual_duration_s": 1.5,
+            "audio_path": "audio/x.wav"
+          },
+          {
+            "text": "这句才有字幕。",
+            "char_id": "c_lin",
+            "actual_duration_s": 2.0,
+            "audio_path": "audio/x.wav"
+          }
+        ]
+      ],
+      "timeline": {
+        "total_duration_s": 6.0,
+        "entries": [
+          {
+            "shot_id": "sh001",
+            "video_path": "video/sh001.mp4",
+            "start_s": 0.0,
+            "duration_s": 6.0,
+            "transition_in": "cut",
+            "transition_dur_s": 0.0,
+            "audio_paths": [
+              "audio/x.wav",
+              "audio/x.wav"
+            ],
+            "cues": [
+              {
+                "start_s": 1.5,
+                "end_s": 3.5,
+                "text": "这句才有字幕。",
+                "style": "dialogue"
+              }
+            ]
+          }
+        ],
+        "all_cues": [
+          {
+            "start_s": 1.5,
+            "end_s": 3.5,
+            "text": "这句才有字幕。",
+            "style": "dialogue"
+          }
+        ]
+      }
+    },
+    {
+      "name": "时长为 0 不出字幕，但也要占位",
+      "dialogue_in": [
+        [
+          {
+            "text": "这句没配出来。",
+            "char_id": "c_lin",
+            "actual_duration_s": 0.0,
+            "audio_path": "audio/x.wav"
+          },
+          {
+            "text": "这句有。",
+            "char_id": "c_lin",
+            "actual_duration_s": 2.0,
+            "audio_path": "audio/x.wav"
+          }
+        ]
+      ],
+      "timeline": {
+        "total_duration_s": 6.0,
+        "entries": [
+          {
+            "shot_id": "sh001",
+            "video_path": "video/sh001.mp4",
+            "start_s": 0.0,
+            "duration_s": 6.0,
+            "transition_in": "cut",
+            "transition_dur_s": 0.0,
+            "audio_paths": [
+              "audio/x.wav",
+              "audio/x.wav"
+            ],
+            "cues": [
+              {
+                "start_s": 0.0,
+                "end_s": 2.0,
+                "text": "这句有。",
+                "style": "dialogue"
+              }
+            ]
+          }
+        ],
+        "all_cues": [
+          {
+            "start_s": 0.0,
+            "end_s": 2.0,
+            "text": "这句有。",
+            "style": "dialogue"
+          }
+        ]
+      }
+    },
+    {
+      "name": "actual_duration_s 是 None",
+      "dialogue_in": [
+        [
+          {
+            "text": "还没配音。",
+            "char_id": "c_lin",
+            "actual_duration_s": null,
+            "audio_path": "audio/x.wav"
+          },
+          {
+            "text": "这句配了。",
+            "char_id": "c_lin",
+            "actual_duration_s": 2.0,
+            "audio_path": "audio/x.wav"
+          }
+        ]
+      ],
+      "timeline": {
+        "total_duration_s": 5.0,
+        "entries": [
+          {
+            "shot_id": "sh001",
+            "video_path": "video/sh001.mp4",
+            "start_s": 0.0,
+            "duration_s": 5.0,
+            "transition_in": "cut",
+            "transition_dur_s": 0.0,
+            "audio_paths": [
+              "audio/x.wav",
+              "audio/x.wav"
+            ],
+            "cues": [
+              {
+                "start_s": 0.0,
+                "end_s": 2.0,
+                "text": "这句配了。",
+                "style": "dialogue"
+              }
+            ]
+          }
+        ],
+        "all_cues": [
+          {
+            "start_s": 0.0,
+            "end_s": 2.0,
+            "text": "这句配了。",
+            "style": "dialogue"
+          }
+        ]
+      }
+    },
+    {
+      "name": "旁白算 narration，有角色的算 dialogue",
+      "dialogue_in": [
+        [
+          {
+            "text": "雨下了一整夜。",
+            "char_id": null,
+            "actual_duration_s": 2.0,
+            "audio_path": "audio/x.wav"
+          },
+          {
+            "text": "你终于来了。",
+            "char_id": "c_lin",
+            "actual_duration_s": 1.5,
+            "audio_path": "audio/x.wav"
+          }
+        ]
+      ],
+      "timeline": {
+        "total_duration_s": 6.0,
+        "entries": [
+          {
+            "shot_id": "sh001",
+            "video_path": "video/sh001.mp4",
+            "start_s": 0.0,
+            "duration_s": 6.0,
+            "transition_in": "cut",
+            "transition_dur_s": 0.0,
+            "audio_paths": [
+              "audio/x.wav",
+              "audio/x.wav"
+            ],
+            "cues": [
+              {
+                "start_s": 0.0,
+                "end_s": 2.0,
+                "text": "雨下了一整夜。",
+                "style": "narration"
+              },
+              {
+                "start_s": 2.0,
+                "end_s": 3.5,
+                "text": "你终于来了。",
+                "style": "dialogue"
+              }
+            ]
+          }
+        ],
+        "all_cues": [
+          {
+            "start_s": 0.0,
+            "end_s": 2.0,
+            "text": "雨下了一整夜。",
+            "style": "narration"
+          },
+          {
+            "start_s": 2.0,
+            "end_s": 3.5,
+            "text": "你终于来了。",
+            "style": "dialogue"
+          }
+        ]
+      }
+    },
+    {
+      "name": "有台词没音频文件",
+      "dialogue_in": [
+        [
+          {
+            "text": "这句没有音频文件。",
+            "char_id": "c_lin",
+            "actual_duration_s": 2.0,
+            "audio_path": null
+          }
+        ]
+      ],
+      "timeline": {
+        "total_duration_s": 4.0,
+        "entries": [
+          {
+            "shot_id": "sh001",
+            "video_path": "video/sh001.mp4",
+            "start_s": 0.0,
+            "duration_s": 4.0,
+            "transition_in": "cut",
+            "transition_dur_s": 0.0,
+            "audio_paths": [],
+            "cues": [
+              {
+                "start_s": 0.0,
+                "end_s": 2.0,
+                "text": "这句没有音频文件。",
+                "style": "dialogue"
+              }
+            ]
+          }
+        ],
+        "all_cues": [
+          {
+            "start_s": 0.0,
+            "end_s": 2.0,
+            "text": "这句没有音频文件。",
+            "style": "dialogue"
+          }
+        ]
+      }
+    },
+    {
+      "name": "台词比镜头长，字幕溢出到下一镜",
+      "dialogue_in": [
+        [
+          {
+            "text": "一句很长的台词。",
+            "char_id": "c_lin",
+            "actual_duration_s": 5.0,
+            "audio_path": "audio/x.wav"
+          }
+        ],
+        [
+          {
+            "text": "下一镜。",
+            "char_id": "c_lin",
+            "actual_duration_s": 1.0,
+            "audio_path": "audio/x.wav"
+          }
+        ]
+      ],
+      "timeline": {
+        "total_duration_s": 5.0,
+        "entries": [
+          {
+            "shot_id": "sh001",
+            "video_path": "video/sh001.mp4",
+            "start_s": 0.0,
+            "duration_s": 2.0,
+            "transition_in": "cut",
+            "transition_dur_s": 0.0,
+            "audio_paths": [
+              "audio/x.wav"
+            ],
+            "cues": [
+              {
+                "start_s": 0.0,
+                "end_s": 5.0,
+                "text": "一句很长的台词。",
+                "style": "dialogue"
+              }
+            ]
+          },
+          {
+            "shot_id": "sh002",
+            "video_path": "video/sh002.mp4",
+            "start_s": 2.0,
+            "duration_s": 3.0,
+            "transition_in": "cut",
+            "transition_dur_s": 0.0,
+            "audio_paths": [
+              "audio/x.wav"
+            ],
+            "cues": [
+              {
+                "start_s": 2.0,
+                "end_s": 3.0,
+                "text": "下一镜。",
+                "style": "dialogue"
+              }
+            ]
+          }
+        ],
+        "all_cues": [
+          {
+            "start_s": 0.0,
+            "end_s": 5.0,
+            "text": "一句很长的台词。",
+            "style": "dialogue"
+          },
+          {
+            "start_s": 2.0,
+            "end_s": 3.0,
+            "text": "下一镜。",
+            "style": "dialogue"
+          }
+        ]
+      }
+    },
+    {
+      "name": "三镜连续溶解",
+      "dialogue_in": [
+        [
+          {
+            "text": "一。",
+            "char_id": "c_lin",
+            "actual_duration_s": 1.0,
+            "audio_path": "audio/x.wav"
+          }
+        ],
+        [
+          {
+            "text": "二。",
+            "char_id": "c_lin",
+            "actual_duration_s": 1.0,
+            "audio_path": "audio/x.wav"
+          }
+        ],
+        [
+          {
+            "text": "三。",
+            "char_id": "c_lin",
+            "actual_duration_s": 1.0,
+            "audio_path": "audio/x.wav"
+          }
+        ]
+      ],
+      "timeline": {
+        "total_duration_s": 9.0,
+        "entries": [
+          {
+            "shot_id": "sh001",
+            "video_path": "video/sh001.mp4",
+            "start_s": 0.0,
+            "duration_s": 3.0,
+            "transition_in": "cut",
+            "transition_dur_s": 0.0,
+            "audio_paths": [
+              "audio/x.wav"
+            ],
+            "cues": [
+              {
+                "start_s": 0.0,
+                "end_s": 1.0,
+                "text": "一。",
+                "style": "dialogue"
+              }
+            ]
+          },
+          {
+            "shot_id": "sh002",
+            "video_path": "video/sh002.mp4",
+            "start_s": 2.5,
+            "duration_s": 3.0,
+            "transition_in": "dissolve",
+            "transition_dur_s": 0.5,
+            "audio_paths": [
+              "audio/x.wav"
+            ],
+            "cues": [
+              {
+                "start_s": 2.5,
+                "end_s": 3.5,
+                "text": "二。",
+                "style": "dialogue"
+              }
+            ]
+          },
+          {
+            "shot_id": "sh003",
+            "video_path": "video/sh003.mp4",
+            "start_s": 4.75,
+            "duration_s": 3.0,
+            "transition_in": "dissolve",
+            "transition_dur_s": 0.75,
+            "audio_paths": [
+              "audio/x.wav"
+            ],
+            "cues": [
+              {
+                "start_s": 4.75,
+                "end_s": 5.75,
+                "text": "三。",
+                "style": "dialogue"
+              }
+            ]
+          }
+        ],
+        "all_cues": [
+          {
+            "start_s": 0.0,
+            "end_s": 1.0,
+            "text": "一。",
+            "style": "dialogue"
+          },
+          {
+            "start_s": 2.5,
+            "end_s": 3.5,
+            "text": "二。",
+            "style": "dialogue"
+          },
+          {
+            "start_s": 4.75,
+            "end_s": 5.75,
+            "text": "三。",
+            "style": "dialogue"
+          }
+        ]
+      }
+    }
+  ],
+  "note": "由 cpp/tests/export_timeline_golden.py 生成，不要手改。字幕时间戳来自配音量出来的真实时长——算错了不报错，表现是字幕和人声对不上，而且一集下来越飘越远。"
+}
