@@ -80,4 +80,18 @@ TTSBackend comfy_tts_backend(std::shared_ptr<comfy::Client> client,
                              models::ProjectPaths paths,
                              const std::optional<media::FFmpeg>& ff);
 
+/// 进程内配音（阶段 9）。**要 CHANGJI_LLAMA=ON 编出来的二进制。**
+///
+/// 和另外两个后端的区别在于**模型只载一次**：1.5 GB 的权重，
+/// 每句台词重载一遍的话，一集几十句就是几十次载入。
+/// 所以这里握着一个 shared_ptr，跟着 TTSBackend 的生命周期走。
+///
+/// 载不起来返回 nullopt——调用方按"这条路搭不起来"处理，退回估算后端，
+/// 和另外两个后端连不上时是同一套逻辑。
+///
+/// ⚠️ 这条路径**从来没跑过**，见 infer/llama_tts.hpp 开头。
+std::optional<TTSBackend> local_tts_backend(
+    const std::filesystem::path& backbone, const std::filesystem::path& decoder,
+    bool use_gpu, const std::optional<media::FFmpeg>& ff, std::string& why);
+
 }  // namespace changji::stages

@@ -538,6 +538,9 @@ if(CHANGJI_BUILD_TESTS)
         src/stages/audio_plan.cpp
         src/stages/audio.cpp
         src/stages/tts_backends.cpp
+        # 测试目标编的是没开 CHANGJI_LLAMA 的那份存根（返回"没编进来"）。
+        # 少了它 tts_backends.cpp 里的 local_tts_backend 会链不上。
+        src/infer/llama_tts.cpp
         src/infer/scheduler.cpp
         src/infer/sd_backend.cpp
         src/infer/sd_image.cpp

@@ -51,6 +51,23 @@ RunDeps default_run_deps() {
             !s.tts.base_url->empty()) {
             b.tts = stages::http_tts_backend(*s.tts.base_url, 300.0,
                                              llm::default_http_post(), b.ffmpeg);
+        } else if (s.tts.backend == "local") {
+            // 进程内配音。模型路径在 [models] 里——那一节本来就是
+            // C++ 侧独有的，C++ 独有的键集中在一处。
+            std::string why;
+            const auto ws = s.workspace_path();
+            auto local = stages::local_tts_backend(
+                s.models.resolve(s.models.tts, ws),
+                s.models.resolve(s.models.tts_decoder, ws),
+                /*use_gpu=*/true, b.ffmpeg, why);
+            if (local.has_value()) b.tts = std::move(*local);
+            // 载不起来就退回估算后端，和另外两条路一样。
+            //
+            // **不在这里往哪儿写一行日志**：这个文件没有日志设施，
+            // 为一条错误现造一个不合适。用户看得见的地方有两处，
+            // 都已经覆盖：配音阶段的 start 事件里会报后端名字
+            // （退回了就是 estimate），以及 /api/doctor 的"进程内配音"
+            // 那一项——它查的就是这两个模型路径。
         } else if (s.tts.backend == "comfy") {
             try {
                 auto tts_client = std::make_shared<comfy::Client>(

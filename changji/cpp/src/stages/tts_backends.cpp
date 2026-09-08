@@ -4,6 +4,7 @@
 #include <cstdio>
 #include <fstream>
 
+#include "infer/llama_tts.hpp"
 #include "stages/audio_plan.hpp"
 #include "util/paths.hpp"
 #include "util/text.hpp"
@@ -260,6 +261,76 @@ TTSBackend comfy_tts_backend(std::shared_ptr<comfy::Client> client,
         res.audio_path = out;
         return res;
     };
+    return b;
+}
+
+std::optional<TTSBackend> local_tts_backend(const fs::path& backbone,
+                                            const fs::path& decoder,
+                                            bool use_gpu,
+                                            const std::optional<media::FFmpeg>& ff,
+                                            std::string& why) {
+    if (!infer::llama_tts_available()) {
+        why = "这个二进制没编进程内配音（构建时 CHANGJI_LLAMA=OFF）";
+        return std::nullopt;
+    }
+    if (backbone.empty() || decoder.empty()) {
+        // 两个都要。只填一个是最常见的配错法，所以要分别点名，
+        // 不能笼统说一句"模型没配"。
+        why = std::string("进程内配音要两份模型：") +
+              (backbone.empty() ? "[models].tts 没填" : "[models].tts 已填") +
+              "，" +
+              (decoder.empty() ? "[models].tts_decoder 没填"
+                               : "[models].tts_decoder 已填");
+        return std::nullopt;
+    }
+
+    // **模型只载一次，跟着后端的生命周期走。**
+    // 1.5 GB 的权重，每句台词重载一遍的话一集就是几十次。
+    auto engine = std::shared_ptr<infer::LlamaTts>(
+        infer::LlamaTts::load(backbone, decoder, use_gpu, why));
+    if (!engine) return std::nullopt;
+
+    TTSBackend b;
+    b.name = "local";
+    b.synthesize = [engine, ff](const std::string& text, const fs::path& out,
+                                const std::optional<std::string>& voice,
+                                const std::string& emotion, double intensity) {
+        // 情绪和强度这一版用不上：Qwen3-TTS 的情绪是靠参考音色带的，
+        // 没有独立的情绪参数。**不静默吞掉**——调用方以为设了情绪而实际没有，
+        // 比明说不支持更糟。留在这儿等接参考音色时一起做。
+        (void)emotion;
+        (void)intensity;
+
+        infer::LlamaTtsRequest req;
+        req.text = text;
+        req.out = out;
+        // voice 在这一版当参考音色的文件路径用。资产库里角色的
+        // voice_id 填的就是一个音频文件时才有意义，填别的会读不了，
+        // 那时候报错说的是"参考音色读不了"，指向明确。
+        if (voice.has_value() && !voice->empty()) {
+            req.speaker_ref = paths::from_utf8(*voice);
+        }
+
+        double duration = 0;
+        std::string why;
+        if (!engine->synthesize(req, duration, why)) {
+            throw AudioError("进程内配音失败：" + why);
+        }
+
+        SynthesisResult res;
+        // **时长用合成器自己报的，不再读一遍文件。**
+        // 它是按采样数算的，比解析 wav 头更直接；而且 ffprobe 那条路
+        // 在没装 ffmpeg 的机器上会抛，进程内配音本来就不该依赖 ffmpeg。
+        res.duration_s = duration;
+        if (res.duration_s <= 0) res.duration_s = probe_audio_duration(out, ff);
+        // 进程内也可能"成功但没出声"：模型第一帧就停、或者权重不匹配时
+        // 出一段极短的噪音。判据和另外两个后端共用。
+        reject_silent_audio(out, res.duration_s, text);
+        res.audio_path = out;
+        return res;
+    };
+    // 音色列表问不到：参考音色是用户自己给的音频文件，没有服务端清单。
+    // 留空，AudioStage 会按角色资产里填的来（见 audio.hpp 的 VoiceLister）。
     return b;
 }
 

@@ -314,9 +314,42 @@ Check check_ggml() {
 /// ComfyUI 或独立 HTTP 服务是阶段 8 之后相当长一段时间的实际形态，
 /// 方案风险一那一节写明了这一点。报警告等于让报告长期挂一条
 /// 永远不会去处理的黄字。
-Check check_local_tts() {
+Check check_local_tts(const config::Settings& settings) {
     const auto probe = infer::probe_llama_tts();
-    return {"进程内配音", probe.ok ? Level::OK : Level::WARN, probe.detail, ""};
+    if (!probe.ok) return {"进程内配音", Level::WARN, probe.detail, ""};
+    if (!infer::llama_tts_available()) {
+        return {"进程内配音", Level::OK, probe.detail, ""};
+    }
+
+    // 编进来了，接着查配置。**只有 backend 真选了 local 才判警告**——
+    // 编进来但不用它是完全正常的形态。
+    const bool selected = settings.tts.backend == "local";
+    const auto ws = settings.workspace_path();
+    const auto backbone = settings.models.resolve(settings.models.tts, ws);
+    const auto decoder =
+        settings.models.resolve(settings.models.tts_decoder, ws);
+
+    std::error_code ec;
+    const bool has_b =
+        !backbone.empty() && std::filesystem::is_regular_file(backbone, ec);
+    const bool has_d =
+        !decoder.empty() && std::filesystem::is_regular_file(decoder, ec);
+
+    if (has_b && has_d) {
+        return {"进程内配音", Level::OK,
+                probe.detail + "；两份模型都在" +
+                    (selected ? "，[tts].backend = local" : "（当前没选它）"),
+                ""};
+    }
+    // 缺哪一份要分别点名：只填一个是最常见的配错法。
+    const std::string missing =
+        std::string(has_b ? "" : "[models].tts ") + (has_d ? "" : "[models].tts_decoder");
+    return {"进程内配音", selected ? Level::FAIL : Level::OK,
+            probe.detail + "；缺模型：" + missing +
+                (selected ? "，配音会退回估算后端（出静音）" : "（当前没选它）"),
+            selected ? "填上 [models].tts（Qwen3-TTS 的 talker）和 "
+                       "[models].tts_decoder（tokenizer/解码器），两份都是 GGUF。"
+                     : ""};
 }
 
 Check check_sd() {
@@ -424,7 +457,7 @@ Report run_checks(const config::Settings& settings) {
     r.checks.push_back(guarded("配音", [&] { return check_tts(settings, infer_ok); }));
     r.checks.push_back(guarded("大模型", [&] { return check_llm(settings); }));
     r.checks.push_back(guarded("ggml ABI", [&] { return check_ggml(); }));
-    r.checks.push_back(guarded("进程内配音", [&] { return check_local_tts(); }));
+    r.checks.push_back(guarded("进程内配音", [&] { return check_local_tts(settings); }));
     r.checks.push_back(guarded("出图后端", [&] { return check_sd(); }));
     r.checks.push_back(guarded("本地模型", [&] { return check_models(settings); }));
     r.checks.push_back(guarded("显卡", [&] { return check_gpu(settings); }));

@@ -13,6 +13,8 @@
 #include <fstream>
 #include <string>
 
+#include "config/settings.hpp"
+#include "infer/llama_tts.hpp"
 #include "stages/tts_backends.hpp"
 #include "util/paths.hpp"
 
@@ -293,4 +295,54 @@ TEST_CASE("HTTP 后端不给音色列表") {
         },
         std::nullopt);
     CHECK_FALSE(static_cast<bool>(b.list_voices));
+}
+
+// ── 进程内配音（阶段 9）─────────────────────────────────────────────
+//
+// 这个测试二进制编的是没开 CHANGJI_LLAMA 的那份，所以这里能验的是
+// **搭不起来时说的话对不对**。合成本身要权重，一行都验不了——
+// 那件事记在 infer/llama_tts.hpp 开头。
+//
+// 能验的这几条不是凑数：配错模型路径是这条路上最常见的失败，
+// 而"配音悄悄退回估算后端出静音"是最难发现的症状。
+
+TEST_CASE("进程内配音：没编进来时说清楚是构建选项，不是配置") {
+    std::string why;
+    const auto b = stages::local_tts_backend("a.gguf", "b.gguf", false,
+                                             std::nullopt, why);
+    CHECK_FALSE(b.has_value());
+    // 用户看到这句话要能直接知道去改构建，而不是去翻配置文件。
+    CHECK(why.find("CHANGJI_LLAMA") != std::string::npos);
+}
+
+TEST_CASE("进程内配音：缺模型路径时分别点名") {
+    // 只填一个是最常见的配错法。笼统说一句"模型没配"的话，
+    // 填了一个的人会以为自己填对了。
+    if (!infer::llama_tts_available()) {
+        // 没编进来时先撞上构建那条，测不到这一条——如实跳过，
+        // 不要为了让用例"通过"而放宽断言。
+        return;
+    }
+    std::string why;
+    CHECK_FALSE(stages::local_tts_backend("", "b.gguf", false, std::nullopt, why)
+                    .has_value());
+    CHECK(why.find("[models].tts 没填") != std::string::npos);
+
+    why.clear();
+    CHECK_FALSE(stages::local_tts_backend("a.gguf", "", false, std::nullopt, why)
+                    .has_value());
+    CHECK(why.find("[models].tts_decoder 没填") != std::string::npos);
+}
+
+TEST_CASE("tts.backend 认 local，另外两个取值一个字没变") {
+    config::TTSConfig c;
+    c.backend = "local";
+    CHECK(c.validate().empty());
+    for (const char* ok : {"comfy", "http"}) {
+        c.backend = ok;
+        CAPTURE(ok);
+        CHECK(c.validate().empty());
+    }
+    c.backend = "explode";
+    CHECK_FALSE(c.validate().empty());
 }

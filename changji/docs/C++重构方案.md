@@ -1184,7 +1184,26 @@ EXPERIMENTAL，升级 llama.cpp 时**这一段要重新对照上游的 tts.cpp �
 - **context 必须开 `embeddings`。** 每一帧都要把骨干的隐状态喂给解码器，
   关着的话 `llama_get_embeddings_ith` 返回空，症状是第一帧就失败。
 
-**下面这段是接进 `TTSBackend` 之前还差的：**
+**接进 `TTSBackend` 也做完了**（2026-09-08）：`[tts].backend = "local"`，
+模型路径在 `[models].tts` / `[models].tts_decoder`。
+
+**`local` 这个取值是加法，不是破坏。** Python 那边 `backend` 是个没有枚举
+校验的普通字符串，填 `local` 它不报错、只是认不出来然后退回估算后端；
+原有的 `comfy` / `http` 两个取值行为一个字没变。模型路径放进 `[models]`
+是因为**那一节本来就是 C++ 侧独有的**（Python 的 Settings 是
+`extra="forbid"`，见"配置隔离"），C++ 独有的键集中在一处最容易分辨。
+
+`tts` 和 `llm` 分成两个键：talker 只有 1.7B，写剧本那个是 14B，
+共用一个键的话换写剧本的模型会把配音一起换掉。
+
+**载不起来时不往哪儿写日志。** `run_deps.cpp` 没有日志设施，为一条错误
+现造一个不合适。用户看得见的地方有两处，都已经覆盖：配音阶段的 start
+事件会报后端名字（退回了就是 `estimate`），以及 `/api/doctor` 的
+"进程内配音"——它现在真的去查那两个模型文件在不在，
+**并且只在 `[tts].backend` 真选了 `local` 时才判 FAIL**：
+编进来但不用它是完全正常的形态，报警告等于让报告长期挂一条黄字。
+
+**下面这段是还差的：**
 mtmd 的音频生成 API 在头文件里明写着
 `EXPERIMENTAL API for audio generation, subjected to breaking changes`，
 而且**是无状态的**——`mtmd_gen_audio_process` 的注释说

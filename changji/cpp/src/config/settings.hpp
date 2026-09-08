@@ -55,7 +55,15 @@ struct LLMConfig {
 
 /// 配音。
 struct TTSConfig {
-    std::string backend = "comfy";  ///< comfy 或 http
+    /// comfy / http / local。
+    ///
+    /// **local 是 C++ 侧独有的取值**（进程内跑 Qwen3-TTS，要
+    /// CHANGJI_LLAMA=ON 编出来的二进制）。Python 那边这个字段没有枚举校验，
+    /// 填 local 它不会报错、只是认不出来然后退回估算后端——
+    /// 也就是说这一项是**加法而不是破坏**：原有的两个取值行为一个字没变。
+    /// 模型路径放在 [models].tts / [models].tts_decoder，
+    /// 那一节本来就是 C++ 侧独有的（见 ModelsConfig 上面那段）。
+    std::string backend = "comfy";
     std::optional<std::string> base_url;  ///< backend 为 http 时必填
     std::string engine = "cosyvoice3";
     /// 台词时长与镜头时长的允许偏差。超出就要靠尾帧冻结或音频微调吸收
@@ -149,6 +157,18 @@ struct ModelsConfig {
     std::string video_text_encoder;
     /// 首帧生成与图像编辑。
     std::string image;
+
+    /// 进程内配音的骨干（Qwen3-TTS 的 talker，GGUF）。
+    ///
+    /// **和 llm 分开是因为它们是两个模型，不是一个模型的两种用法。**
+    /// talker 只有 1.7B，写剧本那个是 14B；共用一个键的话，
+    /// 换写剧本的模型会把配音一起换掉。
+    std::string tts;
+    /// 配音的解码器（Qwen3-TTS 的 tokenizer，GGUF）。
+    ///
+    /// 这一份把 12.5 Hz 的码本还原成 24 kHz 波形。**必须和 tts 配套**，
+    /// 拿错了 mtmd 会报"这份 mmproj 不支持音频生成"。
+    std::string tts_decoder;
 
     /// 把一个配置项解析成绝对路径。空字符串返回空路径。
     ///

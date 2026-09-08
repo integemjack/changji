@@ -88,8 +88,9 @@ std::vector<std::string> LLMConfig::validate() const {
 
 std::vector<std::string> TTSConfig::validate() const {
     std::vector<std::string> errs;
-    if (backend != "comfy" && backend != "http") {
-        errs.push_back("tts.backend 只能是 comfy 或 http，当前是 " + backend);
+    if (backend != "comfy" && backend != "http" && backend != "local") {
+        errs.push_back("tts.backend 只能是 comfy、http 或 local，当前是 " +
+                       backend);
     }
     // Python 侧这一条在 doctor 里查而不是在模型里查，这里保持一致，
     // 避免配置加载阶段就因为还没填地址而整个起不来。
@@ -301,6 +302,8 @@ void apply_table(const toml::table& doc, Settings& s) {
         take(t, "video_vae", s.models.video_vae);
         take(t, "video_text_encoder", s.models.video_text_encoder);
         take(t, "image", s.models.image);
+        take(t, "tts", s.models.tts);
+        take(t, "tts_decoder", s.models.tts_decoder);
     }
     take_path_str(&doc, "workspace", s.workspace);
     if (auto node = doc.get("vram_gb_override")) {
