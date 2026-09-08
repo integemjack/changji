@@ -8,6 +8,7 @@
 // test_scheduler 里有一条用例专门钉这个差距。
 
 #include <optional>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -99,5 +100,21 @@ RunReport run_episode(const models::ProjectStore& store,
                       const config::Settings& settings, const RunOptions& opts,
                       const Backends& backends, JobProgress& progress,
                       CancelToken& tok);
+
+/// 挑出这一阶段要跑的镜头。按 `order` 排，不按在数组里的位置。
+///
+/// **挑漏一个状态是最难查的一类错**：那一镜永远轮不到它——不报错、
+/// 不重试、日志里一行都没有，表现是"成片里少了一个镜头"，
+/// 而你会先怀疑分镜、怀疑渲染、怀疑装配。
+/// 所以它和下面那个不留在匿名 namespace 里，好让语料够得着。
+std::vector<models::Shot*> pick(models::Episode& ep,
+                                const std::set<models::ShotStatus>& want,
+                                bool force);
+
+/// 一个档位的入口状态。
+///
+/// 草稿档收 `AUDIO_DONE` 是关键：首帧失败的镜头状态停在那里，
+/// 不收的话它永远出不了片；收了就退回纯文生视频。
+std::set<models::ShotStatus> render_entry_states(models::Tier tier);
 
 }  // namespace changji::pipeline

@@ -10,6 +10,8 @@
 
 #include <doctest/doctest.h>
 
+#include <nlohmann/json.hpp>
+
 #include <algorithm>
 #include <filesystem>
 #include <fstream>
@@ -735,4 +737,113 @@ TEST_CASE("没有 ffmpeg 时跳过装配，并说清产物在哪") {
         }
     }
     CHECK(said);
+}
+
+
+// ---------------------------------------------------------------------------
+// 各阶段到底挑哪些镜头跑，和 Python 逐个比。
+//
+// 上面那些用例钉的是我们自己的意图——`contract_audit.py` 的工作单上
+// 这个文件是最后一条。这一段把它补上。
+//
+// **挑错镜头是最难查的一类错。** 挑漏了，那一镜永远轮不到它:
+// 不报错、不重试、日志里一行都没有，表现是"成片里少了一个镜头"，
+// 而你会先怀疑分镜、怀疑渲染、怀疑装配，最后才想到是入口状态少写了一个。
+// 挑多了则是白烧显卡：已经出好的镜头又渲一遍。
+//
+// 语料是**全枚举**的：每个 ShotStatus × 每个阶段 × force 开关。
+// 期望值来自把 Python 那边的阶段类换成假货、跑真的 Pipeline 方法接出来的
+// todo，不是照着源码抄的 predicate——抄歪了语料和代码会一起歪。
+// ---------------------------------------------------------------------------
+
+TEST_CASE("各阶段挑哪些镜头跑，和 Python 一样") {
+    const std::string path =
+        std::string(CHANGJI_GOLDEN_DIR) + "/episode_pick.json";
+    std::ifstream in(path, std::ios::binary);
+    REQUIRE_MESSAGE(in.good(), "读不到语料 " << path);
+    nlohmann::json g;
+    in >> g;
+
+    const auto statuses = g.at("statuses").get<std::vector<std::string>>();
+    REQUIRE(statuses.size() >= 9);
+
+    // 照语料的顺序造镜头，order 倒着编——数组顺序和 order 反着来，
+    // 这样"按 order 排"和"按数组位置排"给出的答案不一样。
+    auto build = [&]() {
+        models::Episode ep;
+        ep.episode_id = "ep01";
+        const int n = static_cast<int>(statuses.size());
+        for (int i = 0; i < n; ++i) {
+            models::Shot s;
+            s.shot_id = "sh_" + statuses[i];
+            s.scene_id = "sc01";
+            s.order = n - i;
+            s.duration_s = 4.0;
+            s.video_path = "video/" + statuses[i] + ".mp4";
+            bool ok = false;
+            for (int v = 0; v <= static_cast<int>(models::ShotStatus::LOCKED); ++v) {
+                const auto st = static_cast<models::ShotStatus>(v);
+                if (models::to_string(st) == statuses[i]) {
+                    s.status = st;
+                    ok = true;
+                    break;
+                }
+            }
+            // 语料里有个状态 C++ 侧认不出来，就是两边的枚举对不上了——
+            // 那正是"挑漏一个状态"的源头，不能当成没看见
+            REQUIRE_MESSAGE(ok, "C++ 侧没有这个状态：" << statuses[i]);
+            ep.shots.push_back(s);
+        }
+        return ep;
+    };
+
+    for (const auto& row : g.at("stages")) {
+        const std::string stage = row.at("stage").get<std::string>();
+        const bool force = row.at("force").get<bool>();
+        CAPTURE(stage);
+        CAPTURE(force);
+
+        std::set<models::ShotStatus> want;
+        if (stage == "audio") {
+            want = {models::ShotStatus::PLANNED};
+        } else if (stage == "frames") {
+            want = {models::ShotStatus::AUDIO_DONE};
+        } else if (stage == "render_draft") {
+            want = pipeline::render_entry_states(models::Tier::DRAFT);
+        } else if (stage == "render_final") {
+            want = pipeline::render_entry_states(models::Tier::FINAL);
+        } else {
+            FAIL("语料里有没认过的阶段：" << stage);
+        }
+
+        auto ep = build();
+        const auto got = pipeline::pick(ep, want, force);
+
+        std::vector<std::string> got_ids;
+        for (const models::Shot* s : got) got_ids.push_back(s->shot_id);
+        const auto want_ids = row.at("picked").get<std::vector<std::string>>();
+
+        // 顺序也比：画面的连贯性是按 order 来的，挑对了但顺序错了
+        // 一样出问题（而且更难看出来）
+        CHECK(got_ids == want_ids);
+    }
+}
+
+TEST_CASE("pick 返回的是指针，改了状态要能落到剧集上") {
+    // 这一条不比 Python，钉的是 C++ 自己的一个坑：Python 那边
+    // episode.sorted_shots() 返回的是同一批对象的引用，而 C++ 侧那个
+    // 函数返回的是**拷贝**。照抄名字的话所有状态改动都写进临时对象，
+    // 存盘时一个字段都没变——而且全程不报错。
+    models::Episode ep;
+    models::Shot a;
+    a.shot_id = "sh001";
+    a.order = 1;
+    a.status = models::ShotStatus::PLANNED;
+    ep.shots.push_back(a);
+
+    auto todo = pipeline::pick(ep, {models::ShotStatus::PLANNED}, false);
+    REQUIRE(todo.size() == 1);
+    todo[0]->status = models::ShotStatus::AUDIO_DONE;
+
+    CHECK(ep.shots[0].status == models::ShotStatus::AUDIO_DONE);
 }

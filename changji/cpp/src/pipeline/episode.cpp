@@ -16,18 +16,6 @@ namespace changji::pipeline {
 
 using namespace changji::models;
 
-namespace {
-
-double now_seconds() {
-    using namespace std::chrono;
-    return duration<double>(steady_clock::now().time_since_epoch()).count();
-}
-
-bool wants(const RunOptions& o, Stage s) {
-    if (!o.only.has_value()) return true;   // 没给就是全跑
-    return std::find(o.only->begin(), o.only->end(), s) != o.only->end();
-}
-
 /// 挑出这一阶段要跑的镜头。
 ///
 /// **按 order 排序**，不是按在数组里的顺序。分镜表被手工改过之后，
@@ -53,17 +41,6 @@ std::vector<Shot*> pick(Episode& ep, const std::set<ShotStatus>& want,
     return todo;
 }
 
-void emit(JobProgress& p, const char* stage, const char* kind,
-          const std::string& message, int current = 0, int total = 0) {
-    Event e;
-    e.stage = stage;
-    e.kind = kind;
-    e.message = message;
-    e.current = current;
-    e.total = total;
-    p.report(e);
-}
-
 /// 一个档位的入口状态。
 ///
 /// 首帧失败的镜头状态还停在 AUDIO_DONE（配音接上之前是 PLANNED）。
@@ -75,6 +52,29 @@ std::set<ShotStatus> render_entry_states(Tier tier) {
     }
     return {ShotStatus::FRAME_DONE, ShotStatus::DRAFT_REJECTED,
             ShotStatus::AUDIO_DONE};
+}
+
+namespace {
+
+double now_seconds() {
+    using namespace std::chrono;
+    return duration<double>(steady_clock::now().time_since_epoch()).count();
+}
+
+bool wants(const RunOptions& o, Stage s) {
+    if (!o.only.has_value()) return true;   // 没给就是全跑
+    return std::find(o.only->begin(), o.only->end(), s) != o.only->end();
+}
+
+void emit(JobProgress& p, const char* stage, const char* kind,
+          const std::string& message, int current = 0, int total = 0) {
+    Event e;
+    e.stage = stage;
+    e.kind = kind;
+    e.message = message;
+    e.current = current;
+    e.total = total;
+    p.report(e);
 }
 
 /// 装配成片。
