@@ -32,6 +32,31 @@ namespace fs = std::filesystem;
 
 namespace changji::infer {
 
+// **这一段在 #ifdef 外面**：它只看配置，和有没有链上 sd.cpp 无关，
+// 而测试目标编的是没链上游那一支。写在 #ifdef 里面就测不到了。
+std::string sd_model_problem(const config::Settings& settings, ModelRole role) {
+    const auto& m = settings.models;
+    if (role == ModelRole::Video) {
+        if (m.video.empty()) {
+            return "没配视频模型。在 changji.toml 的 [models] 里填 video，"
+                   "或者把出片交给推理服务";
+        }
+        return {};
+    }
+    if (!m.image.empty()) return {};
+    if (!m.video.empty()) {
+        // 拿视频模型走 generate_image 会整个进程崩，见头文件里的说明。
+        return "没配出图模型（[models].image）。\n"
+               "**不能用视频模型顶替**：sd.cpp 的 generate_image 没有帧数"
+               "参数，拿 Wan 这类视频模型进去会让进程直接崩掉（实测）。\n"
+               "要么在 [models] 里填一个图像模型（比如 "
+               "Qwen-Image-Edit-Q4_K_M.gguf），\n"
+               "要么把出图交给推理服务（[models].engine = \"comfy\"）";
+    }
+    return "没配出图模型。在 changji.toml 的 [models] 里填 image，"
+           "或者把出图交给推理服务";
+}
+
 #ifdef CHANGJI_HAVE_SD
 
 namespace {
@@ -147,26 +172,20 @@ std::shared_ptr<SdContext> SdContext::create(const config::Settings& settings,
                                              ModelRole role) {
     const fs::path ws = settings.workspace_path();
     const auto& m = settings.models;
-    if (role == ModelRole::Video && m.video.empty()) {
-        throw SdError("没配视频模型。在 changji.toml 的 [models] 里填 video，"
-                      "或者把出片交给推理服务");
-    }
-    if (role == ModelRole::Image && m.image.empty() && m.video.empty()) {
-        throw SdError(
-            "没配出图模型。在 changji.toml 的 [models] 里填 image 或 video，"
-            "或者把出图交给推理服务");
+    if (const std::string why = sd_model_problem(settings, role); !why.empty()) {
+        throw SdError(why);
     }
 
     auto self = std::shared_ptr<SdContext>(new SdContext());
     self->impl_ = std::make_unique<Impl>();
     Impl& impl = *self->impl_;
 
-    // 出视频只能用视频模型。出首帧优先用图像模型（能吃参考图，
-    // 跨镜头一致性远好于视频模型），没配就退回视频模型出单帧——
-    // 这个选择和 Python 的 build_backend 是同一个判断。
-    const std::string& which =
-        role == ModelRole::Video ? m.video
-                                 : (m.image.empty() ? m.video : m.image);
+    // 出视频用视频模型，出首帧用图像模型。
+    //
+    // **原来这里写着"没配就退回视频模型出单帧"，那条退路是坏的**，
+    // 上面那个 throw 里记了为什么（sd.cpp 的 generate_image 没有帧数参数，
+    // 拿视频模型进去整个进程崩）。走到这里时 image 一定非空。
+    const std::string& which = role == ModelRole::Video ? m.video : m.image;
     impl.diffusion = paths::to_utf8(m.resolve(which, ws));
     impl.vae = m.video_vae.empty() ? "" : paths::to_utf8(m.resolve(m.video_vae, ws));
     impl.text_encoder = m.video_text_encoder.empty()

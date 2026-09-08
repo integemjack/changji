@@ -108,6 +108,18 @@ enum class ModelRole {
     Video,
 };
 
+/// 这份配置能不能拿来出图 / 出片。能就返回空串，不能就返回一句人话。
+///
+/// **纯判断，和有没有链上 sd.cpp 无关**，所以放在 `#ifdef` 外面——
+/// 测试目标编的是没链上游那一支，判断逻辑要是写在 `#ifdef` 里面就测不到。
+/// 和 `doctor/needs.hpp` 拆出来是同一个理由。
+///
+/// 最要紧的一条：**没配 image 时不许拿 video 顶替**。
+/// 2026-09-08 实测那么干会让整个进程崩掉（0xc0000094 整数除零），
+/// 因为 `sd_img_gen_params_t` 没有 video_frames 字段，
+/// 压根没法告诉 generate_image 出几帧。
+std::string sd_model_problem(const config::Settings& settings, ModelRole role);
+
 /// sd.cpp 的上下文。**贵**：建一次要解析模型文件、建张量图、分配运行时缓冲。
 ///
 /// 所以它不是每次出图新建一个，而是挂在调度器的槽位上复用。

@@ -163,3 +163,60 @@ TEST_CASE("出视频默认开 VAE 分块，参数是实测出来的那一组") {
     // 时间维分块要关：低帧数下切不动，还引入有状态分块自身的开销
     CHECK_FALSE(r.vae_temporal_tiling);
 }
+
+// ---------------------------------------------------------------------------
+// **不许拿视频模型顶替图像模型。**
+//
+// 2026-09-08 跑阶段 5 判据时撞上的：只配了 [models].video 没配 image，
+// 出首帧那一步**整个进程崩掉**——异常码 0xc0000094（整数除零），
+// HTTP 服务连同正在跑的整集一起没，日志里什么都没有。
+//
+// 原因看 API 就清楚：`sd_img_gen_params_t` 里**没有 video_frames 字段**
+// （只有 sd_vid_gen_params_t 有），压根没法告诉 generate_image 出几帧。
+//
+// 代码原来是**故意**这么退的，注释写着"没配就退回视频模型出单帧——
+// 这个选择和 Python 的 build_backend 是同一个判断"。那个判断在 Python
+// 那边成立（走 ComfyUI 工作流，把 length 设成 1 就行），在这边不成立。
+//
+// 判断拆进了 sd_model_problem()，放在 #ifdef 外面——测试目标编的是
+// 没链 sd.cpp 那一支，写在 #ifdef 里面就测不到。
+// ---------------------------------------------------------------------------
+
+TEST_CASE("没配 image 但配了 video：拦下来，不许顶替") {
+    config::Settings s;
+    s.models.video = "Wan2.2-TI2V-5B-Q4_K_M.gguf";
+    s.models.image = "";
+
+    const std::string why = infer::sd_model_problem(s, infer::ModelRole::Image);
+    REQUIRE_FALSE(why.empty());
+    // 话要说清两件事：缺什么，以及为什么不能拿现有的顶
+    CHECK(why.find("[models].image") != std::string::npos);
+    CHECK(why.find("不能用视频模型顶替") != std::string::npos);
+    // 还要给出路，不然用户只知道不行、不知道怎么办
+    CHECK(why.find("comfy") != std::string::npos);
+}
+
+TEST_CASE("配了 image 就放行") {
+    config::Settings s;
+    s.models.image = "Qwen-Image-Edit-Q4_K_M.gguf";
+    s.models.video = "Wan2.2-TI2V-5B-Q4_K_M.gguf";
+    CHECK(infer::sd_model_problem(s, infer::ModelRole::Image).empty());
+    CHECK(infer::sd_model_problem(s, infer::ModelRole::Video).empty());
+}
+
+TEST_CASE("两个都没配：还是要说清缺的是 image") {
+    config::Settings s;
+    const std::string why = infer::sd_model_problem(s, infer::ModelRole::Image);
+    REQUIRE_FALSE(why.empty());
+    CHECK(why.find("image") != std::string::npos);
+    // 这一支不该提"顶替"——没有视频模型可顶，说了只会让人困惑
+    CHECK(why.find("不能用视频模型顶替") == std::string::npos);
+}
+
+TEST_CASE("出片没配 video：单独一句话") {
+    config::Settings s;
+    s.models.image = "Qwen-Image-Edit-Q4_K_M.gguf";
+    const std::string why = infer::sd_model_problem(s, infer::ModelRole::Video);
+    REQUIRE_FALSE(why.empty());
+    CHECK(why.find("video") != std::string::npos);
+}
