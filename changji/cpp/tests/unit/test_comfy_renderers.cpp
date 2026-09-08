@@ -647,6 +647,16 @@ TEST_CASE("被服务端拒绝时，报的话里有镜头号，不是一坨嵌套
 
 namespace {
 
+nlohmann::json frame_golden() {
+    const std::string path =
+        std::string(CHANGJI_GOLDEN_DIR) + "/comfy/frame_submit.json";
+    std::ifstream in(path, std::ios::binary);
+    REQUIRE_MESSAGE(in.good(), "读不到语料 " << path);
+    nlohmann::json j;
+    in >> j;
+    return j;
+}
+
 nlohmann::json render_golden() {
     const std::string path =
         std::string(CHANGJI_GOLDEN_DIR) + "/comfy/render_submit.json";
@@ -828,4 +838,85 @@ TEST_CASE("种子不进语料比较，但它自己要稳") {
     // 首帧和视频要落在不同的种子上（Python 侧靠 "frame:" 前缀区分）
     CHECK(stages::frame_seed(shot.shot_id, 0) !=
           stages::render_seed(shot.shot_id, 0));
+}
+
+TEST_CASE("首帧：提交给 ComfyUI 的工作流和 Python 一样") {
+    // 视频那条路已经这么比过（render_submit.json），而且**比出来过一个
+    // 真 bug**。首帧这条原来只有 C++ 自己的意图测试——那种测试
+    // 钉的是"我们想让它这样"，不是"和 Python 一样"，装配层刚证明过
+    // 这两者的差别不是学究。
+    const nlohmann::json g = frame_golden();
+    const auto dir = temp_dir("首帧语料");
+    models::ProjectPaths paths(dir);
+    pipeline::CancelToken tok;
+
+    for (const auto& c : g.at("cases")) {
+        const std::string name = c.at("name").get<std::string>();
+        CAPTURE(name);
+        REQUIRE(c.at("ok").get<bool>());   // 六条 Python 都跑通了
+
+        // 语料里说要有哪些参考图文件，就造哪些——"文件不在"那条
+        // 靠的正是少造一个。
+        for (const auto& rel : c.at("existing_files")) {
+            const auto p = dir / paths::from_utf8(rel.get<std::string>());
+            std::error_code ec;
+            fs::create_directories(p.parent_path(), ec);
+            std::ofstream(p, std::ios::binary) << "png";
+        }
+
+        stages::PromptBundle prompts;
+        prompts.positive = c.at("prompts").at("positive").get<std::string>();
+        prompts.negative = c.at("prompts").at("negative").get<std::string>();
+        prompts.reference_images =
+            c.at("reference_images").get<std::vector<std::string>>();
+
+        models::TierSpec spec;
+        spec.tier = models::Tier::DRAFT;
+        spec.width = c.at("spec").at("width").get<int>();
+        spec.height = c.at("spec").at("height").get<int>();
+        spec.steps = c.at("spec").at("steps").get<int>();
+
+        const comfy::ApiWorkflow wf(
+            comfy::OrderedJson::parse(c.at("workflow").dump()));
+
+        Recorder rec;
+        auto render = comfy::image_frame_renderer(client_of(rec), wf, paths);
+        auto shot = golden_shot();
+        REQUIRE_NOTHROW(render(shot, prompts, spec, dir / "f.png", tok,
+                               [](int, int, double) {}));
+        REQUIRE(rec.submitted.size() == 1);
+
+        const nlohmann::json got = blank_seed(canonical(rec.submitted.back()));
+
+        if (c.contains("cpp_differs")) {
+            // **有意不一样的那一条，验而不跳过。**
+            //
+            // Python 的尺寸节点名单里有 ModelSamplingSD3，于是它把
+            // width/height 塞到一个根本没有这两个输入的节点上——看着
+            // 成功了，实际什么也没设成。C++ 的名单里没有它。
+            //
+            // 两件事都要验：**Python 现在确实还是那样**（语料里那份
+            // submitted 就是证据），以及 **C++ 确实给出了想要的那个值**。
+            // 只验后者的话，哪天 Python 改了这边也不会知道。
+            CAPTURE(c.at("cpp_differs").get<std::string>());
+
+            const nlohmann::json& py = c.at("submitted");
+            // Python 那边：塞进去了
+            CHECK(py.at("10").at("inputs").contains("width"));
+            // 我们这边：那个节点一个字没动
+            REQUIRE(got.contains("10"));
+            CHECK_FALSE(got.at("10").at("inputs").contains("width"));
+            CHECK_FALSE(got.at("10").at("inputs").contains("height"));
+            // 除了那个节点，别的必须一模一样——**偏差只许有这一处**
+            nlohmann::json py_rest = py;
+            nlohmann::json got_rest = got;
+            py_rest.erase("10");
+            got_rest.erase("10");
+            CHECK(got_rest == py_rest);
+            continue;
+        }
+
+        CHECK(got == c.at("submitted"));
+        CHECK(rec.uploaded.size() == c.at("uploaded").size());
+    }
 }

@@ -2035,6 +2035,34 @@ Python 写的是 `f"{self.target_lufs}"`，也就是 `str(float)`，不截位。
 要证明差别得让一个 mp3 响应在这里成功，而那需要机器上真有 ffmpeg。
 用例里写明了这一点，装上 ffmpeg 之后该补。
 
+**首帧那条路的尺寸节点名单和 Python 不一样，没人记着为什么**（2026-09-08 记）。
+
+给首帧后端补和 Python 的工作流对比时发现的（`frame_submit.json`）。
+两边"尺寸节点候选名单"从来就不一样：
+
+| | Python `ImageModelFrameBackend` | C++ `set_size` |
+|---|---|---|
+| 1 | `EmptySD3LatentImage` | `Wan22ImageToVideoLatent` |
+| 2 | `EmptyLatentImage` | `EmptySD3LatentImage` |
+| 3 | `EmptySD3LatentImage`（重复，多半是笔误） | `EmptyLatentImage` |
+| 4 | `ModelSamplingSD3` | `EmptyHunyuanLatentVideo` |
+
+第 4 项是要紧的。`ModelSamplingSD3` 只有 `model` 和 `shift`，
+**根本没有 width / height**。而两边的 `set_by_class` 都只在**类名找不到**
+时才抛，键不存在照样写进去。于是一个没有潜空间节点的工作流：
+Python 会把 `width` / `height` 塞到 `ModelSamplingSD3` 上，
+**看着成功了，实际什么也没设成**，还往工作流里多塞了两个无效输入。
+
+两边都没真的调整尺寸，所以这不是画面出错的 bug；但它是一处**真实存在、
+之前没有任何记录**的差异。C++ 不复刻那个无效写入。
+
+记法用的是语料里的 `cpp_differs` 标注（和端点语料的 `cpp_note` 一个路子），
+用例**两个方向都验**：Python 现在确实还那样写、C++ 确实没写，
+**并且除了那一个节点其余必须逐字节一样**——偏差不许悄悄变宽。
+
+另外五条（无参考图 / 两张 / 多于 LoadImage / 文件不在 / 没有 SaveImage）
+和 Python 完全一致。这条路除此之外没有漂移。
+
 **语料项目的七个空目录不在版本库里，新克隆跑测试就会挂**（2026-09-08 修）。
 
 `test_project.cpp` 那条「子目录齐全」列的是语料项目根下的目录，
