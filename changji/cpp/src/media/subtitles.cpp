@@ -1,6 +1,11 @@
 #include "media/subtitles.hpp"
 
 #include <algorithm>
+// **MSVC 会顺带把 <cmath> 带进来，GCC 不会。** 这一处 std::fmod 在
+// Windows 上编了几个月都没事，第一次在 Linux 上编就挂：
+// "'fmod' is not a member of 'std'"。方案里"交叉编译到树莓派"那条要的
+// 就是这种东西早点冒出来。
+#include <cmath>
 #include <cstdio>
 #include <fstream>
 #include <sstream>

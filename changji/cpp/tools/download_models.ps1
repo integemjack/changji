@@ -34,7 +34,26 @@ $files = @(
        f='Qwen3-TTS-12Hz-1.7B-Base-Q4_K_M.gguf' },
     @{ n='配音解码器 mmproj Q8_0';             mb=425
        u='https://huggingface.co/ggml-org/Qwen3-TTS-12Hz-1.7B-Base-GGUF/resolve/main/mmproj-Qwen3-TTS-12Hz-1.7B-Base-Q8_0.gguf'
-       f='mmproj-Qwen3-TTS-12Hz-1.7B-Base-Q8_0.gguf' }
+       f='mmproj-Qwen3-TTS-12Hz-1.7B-Base-Q8_0.gguf' },
+    # 首帧用的图像模型。
+    #
+    # ⚠️ **文件名是下划线不是连字符**：仓库里叫 Qwen_Image_Edit-*，
+    # 而方案里写的是 Qwen-Image-Edit-*。照方案那个名字拼 URL 会 404。
+    #
+    # ⚠️ **12.4 GB，不是方案里写的"约 4 GB"。** Qwen-Image-Edit 是 20B 的模型，
+    # 整个量化梯队最小的 Q2_K 也有 6.7 GB——**都超过这台机器 6 GB 的显存**，
+    # 所以一定要靠 offload，出一张首帧会比 Wan 出一段视频还慢。
+    # 这个数是 2026-09-08 用 HF 的 API 查的。
+    # **先用最小的档验通路。** 整个梯队最小的就是 Q2_K，6.7 GB——
+    # 就算它也超过这台机器 6 GB 的显存，一样要 offload。
+    # 先拿它把"能不能出图"这条路走通；画质要求更高的档等通了再换，
+    # 换档只是改这一行加配置里的文件名。
+    @{ n='图像模型 Qwen-Image-Edit Q2_K（最小档，先验通路）'; mb=6735
+       u='https://huggingface.co/QuantStack/Qwen-Image-Edit-GGUF/resolve/main/Qwen_Image_Edit-Q2_K.gguf'
+       f='Qwen_Image_Edit-Q2_K.gguf' },
+    @{ n='图像模型的文本编码器 Qwen2.5-VL mmproj'; mb=1291
+       u='https://huggingface.co/QuantStack/Qwen-Image-Edit-GGUF/resolve/main/mmproj/Qwen2.5-VL-7B-Instruct-mmproj-BF16.gguf'
+       f='Qwen2.5-VL-7B-Instruct-mmproj-BF16.gguf' }
 )
 
 # Measure-Object -Property 认的是对象属性，不认哈希表的键，
