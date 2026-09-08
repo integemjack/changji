@@ -98,7 +98,7 @@ stages::FrameRenderer image_frame_renderer(std::shared_ptr<Client> client,
         JobResult result;
         try {
             result = client->run(wf, [&](const JobProgress& p) {
-                if (p.total > 0) on_step(p.step, p.total, 0.0);
+                if (p.total > 0) on_step(p.step, p.total, 0.0, false);
             }, tok);
         } catch (const PromptValidationError& e) {
             // 原样透传的话用户看到的是一坨嵌套 JSON。
@@ -148,7 +148,7 @@ stages::VideoRenderer video_renderer(std::shared_ptr<Client> client,
         JobResult result;
         try {
             result = client->run(wf, [&](const JobProgress& p) {
-                if (p.total > 0) on_step(p.step, p.total, 0.0);
+                if (p.total > 0) on_step(p.step, p.total, 0.0, false);
             }, tok);
         } catch (const PromptValidationError& e) {
             throw ComfyError("镜头 " + shot.shot_id +

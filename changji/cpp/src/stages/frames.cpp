@@ -102,16 +102,20 @@ std::vector<FrameOutcome> run_frames(std::vector<Shot*>& shots,
 
             // 逐步进度。采样一步在低配机器上要好几秒，不报的话界面上
             // 就是一条几分钟不动的进度条，用户分不清是在跑还是卡死了。
-            const auto on_step = [&](int step, int steps, double) {
+            const auto on_step = [&](int step, int steps, double,
+                                     bool loading) {
                 pipeline::Event e;
                 e.stage = "frames";
                 e.kind = "progress";
                 e.current = index;
                 e.total = total;
                 e.shot_id = shot->shot_id;
-                e.message = "出首帧 " + shot->shot_id + "（第 " +
-                            std::to_string(step) + "/" +
-                            std::to_string(steps) + " 步）";
+                e.message =
+                    loading ? "加载出图模型 " + std::to_string(step) + "/" +
+                                  std::to_string(steps)
+                            : "出首帧 " + shot->shot_id + "（第 " +
+                                  std::to_string(step) + "/" +
+                                  std::to_string(steps) + " 步）";
                 progress.report(e);
             };
 

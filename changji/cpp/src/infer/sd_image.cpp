@@ -72,6 +72,9 @@ struct ActiveGeneration {
     const StepCallback* on_step = nullptr;
     pipeline::CancelToken* tok = nullptr;
     std::atomic<bool> cancel_sent{false};
+    /// 这一次生成**要采样几步**。sd.cpp 的进度回调加载权重和采样共用一个，
+    /// 靠"报上来的总数是不是等于我们要的步数"把两者分开。
+    int want_steps = 0;
 };
 
 ActiveGeneration& active() {
@@ -90,7 +93,14 @@ void progress_trampoline(int step, int steps, float time, void* /*data*/) {
         ctx = a.ctx;
         tok = a.tok;
     }
-    if (cb) cb(step, steps, static_cast<double>(time));
+    int want = 0;
+    {
+        std::lock_guard lg(a.mu);
+        want = a.want_steps;
+    }
+    // 总数对不上我们要的步数，就是在加载权重，不是在采样
+    const bool loading = want > 0 && steps != want;
+    if (cb) cb(step, steps, static_cast<double>(time), loading);
 
     // 取消是**在这里**发出去的。sd.cpp 的采样循环没有别的插手点，
     // 不在回调里发的话，点了停止要等这一镜跑完——低配机器上那是好几分钟。
@@ -297,6 +307,7 @@ void SdContext::generate(const ImageRequest& req, const fs::path& dest,
         a.ctx = impl_->ctx;
         a.on_step = &on_step;
         a.tok = &tok;
+        a.want_steps = req.steps;
     }
     a.cancel_sent.store(false, std::memory_order_relaxed);
     ::sd_set_progress_callback(progress_trampoline, nullptr);
@@ -310,6 +321,7 @@ void SdContext::generate(const ImageRequest& req, const fs::path& dest,
         a.ctx = nullptr;
         a.on_step = nullptr;
         a.tok = nullptr;
+        a.want_steps = 0;
     }
 
     if (tok.cancelled()) {
@@ -385,6 +397,7 @@ void SdContext::generate_video(const VideoRequest& req, const fs::path& raw_dest
         a.ctx = impl_->ctx;
         a.on_step = &on_step;
         a.tok = &tok;
+        a.want_steps = req.steps;
     }
     a.cancel_sent.store(false, std::memory_order_relaxed);
     ::sd_set_progress_callback(progress_trampoline, nullptr);
@@ -399,6 +412,7 @@ void SdContext::generate_video(const VideoRequest& req, const fs::path& raw_dest
         a.ctx = nullptr;
         a.on_step = nullptr;
         a.tok = nullptr;
+        a.want_steps = 0;
     }
 
     struct FrameGuard {

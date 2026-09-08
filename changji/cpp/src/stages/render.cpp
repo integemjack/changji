@@ -132,16 +132,20 @@ std::vector<RenderOutcome> render_batch(std::vector<Shot*>& shots,
             const fs::path dest = paths.shots(stage_name) /
                                   paths::from_utf8(shot->shot_id + ".mp4");
 
-            const auto on_step = [&](int step, int steps, double) {
+            const auto on_step = [&](int step, int steps, double,
+                                     bool loading) {
                 pipeline::Event e;
                 e.stage = stage_name;
                 e.kind = "progress";
                 e.current = index;
                 e.total = total;
                 e.shot_id = shot->shot_id;
-                e.message = "出视频 " + shot->shot_id + "（第 " +
-                            std::to_string(step) + "/" +
-                            std::to_string(steps) + " 步）";
+                e.message =
+                    loading ? "加载出片模型 " + std::to_string(step) + "/" +
+                                  std::to_string(steps)
+                            : "出视频 " + shot->shot_id + "（第 " +
+                                  std::to_string(step) + "/" +
+                                  std::to_string(steps) + " 步）";
                 progress.report(e);
             };
 

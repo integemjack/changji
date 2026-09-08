@@ -86,7 +86,7 @@ stages::VideoRenderer fake_ok(
                pipeline::CancelToken&, const infer::StepCallback& on_step) {
         if (seen_starts) seen_starts->push_back(start);
         if (seen_frames) seen_frames->push_back(plan.frames);
-        on_step(1, 2, 0.1);
+        on_step(1, 2, 0.1, false);
         std::error_code ec;
         fs::create_directories(dest.parent_path(), ec);
         std::ofstream(dest, std::ios::binary) << "假的 mp4";

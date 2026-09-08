@@ -48,7 +48,14 @@ struct ImageRequest {
 ///
 /// 采样一步在低配机器上要好几秒，不报的话界面上就是一条几分钟不动的进度条，
 /// 用户分不清是在跑还是卡死了。
-using StepCallback = std::function<void(int step, int total, double seconds)>;
+/// 出图过程中的进度回调。
+///
+/// `loading = true` 表示这一下报的是**加载权重**，不是采样。
+/// sd.cpp 那个回调两件事都会调，不分开的话用户会看到
+/// "第 1927/1927 步"（加载 1927 个张量）紧接着"第 1/8 步"（真的采样），
+/// 像是跑到头又倒回去了——而 1927 这个数对他没有任何意义。
+using StepCallback =
+    std::function<void(int step, int total, double seconds, bool loading)>;
 
 /// 一次出视频的参数。
 struct VideoRequest {

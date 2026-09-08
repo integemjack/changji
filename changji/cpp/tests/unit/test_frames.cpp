@@ -83,8 +83,8 @@ stages::FrameRenderer fake_ok(std::vector<std::string>* seen_prompts = nullptr,
         if (seen_seeds) {
             seen_seeds->push_back(stages::frame_seed(shot.shot_id, shot.attempts));
         }
-        on_step(1, 2, 0.1);
-        on_step(2, 2, 0.2);
+        on_step(1, 2, 0.1, false);
+        on_step(2, 2, 0.2, false);
         std::error_code ec;
         fs::create_directories(dest.parent_path(), ec);
         std::ofstream out(dest, std::ios::binary);

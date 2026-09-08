@@ -342,7 +342,7 @@ TEST_CASE("出首帧：提示词进对节点，不是按 id 排的") {
     const auto shot = make_shot();
     pipeline::CancelToken tok;
     render(shot, bundle(), make_spec(), dir / "f.png", tok,
-           [](int, int, double) {});
+           [](int, int, double, bool) {});
 
     CHECK(rec.input("3", "text") == "雨夜天台，两人对峙");
     CHECK(rec.input("4", "text") == "低质量，多余的手");
@@ -354,7 +354,7 @@ TEST_CASE("出首帧：提示词进对节点，不是按 id 排的") {
         wf.set_input("9", "negative", OrderedJson::array({"3", 0}));
         auto r = comfy::image_frame_renderer(client_of(r2), wf, paths);
         r(shot, bundle(), make_spec(), dir / "g.png", tok,
-          [](int, int, double) {});
+          [](int, int, double, bool) {});
         CHECK(r2.input("4", "text") == "雨夜天台，两人对峙");
         CHECK(r2.input("3", "text") == "低质量，多余的手");
     }
@@ -369,7 +369,7 @@ TEST_CASE("出首帧：尺寸、种子、保存前缀") {
     auto shot = make_shot();
     pipeline::CancelToken tok;
     render(shot, bundle(), make_spec(), dir / "f.png", tok,
-           [](int, int, double) {});
+           [](int, int, double, bool) {});
 
     CHECK(rec.input("5", "width") == 480);
     CHECK(rec.input("5", "height") == 854);
@@ -388,7 +388,7 @@ TEST_CASE("出首帧：尺寸、种子、保存前缀") {
         auto r = comfy::image_frame_renderer(client_of(r2), image_workflow(),
                                              paths);
         r(s2, bundle(), make_spec(), dir / "g.png", tok,
-          [](int, int, double) {});
+          [](int, int, double, bool) {});
         CHECK(r2.input("9", "seed") == stages::frame_seed(shot.shot_id, 1));
         CHECK(r2.input("9", "seed") != rec.input("9", "seed"));
     }
@@ -401,7 +401,7 @@ TEST_CASE("出首帧：尺寸、种子、保存前缀") {
         wf.to_json().erase("8");
         auto r = comfy::image_frame_renderer(client_of(r2), wf, paths);
         CHECK_NOTHROW(r(shot, bundle(), make_spec(), dir / "h.png", tok,
-                        [](int, int, double) {}));
+                        [](int, int, double, bool) {}));
     }
 }
 
@@ -417,7 +417,7 @@ TEST_CASE("出首帧：参考图要先传上去，ComfyUI 可能在别的机器�
                                               paths);
     pipeline::CancelToken tok;
     render(make_shot(), bundle({"assets/a.png", "assets/b.png"}), make_spec(),
-           dir / "f.png", tok, [](int, int, double) {});
+           dir / "f.png", tok, [](int, int, double, bool) {});
 
     REQUIRE(rec.uploaded.size() == 2);
     // 传的是绝对路径（paths.abs 解出来的），不是项目内的相对路径——
@@ -436,7 +436,7 @@ TEST_CASE("出首帧：参考图要先传上去，ComfyUI 可能在别的机器�
         CHECK_NOTHROW(r(make_shot(),
                         bundle({"assets/a.png", "assets/b.png", "assets/c.png"}),
                         make_spec(), dir / "g.png", tok,
-                        [](int, int, double) {}));
+                        [](int, int, double, bool) {}));
         CHECK(r2.uploaded.size() == 3);      // 三张都传了
         CHECK(r2.input("6", "image") == "up_1.png");
         CHECK(r2.input("7", "image") == "up_2.png");
@@ -451,7 +451,7 @@ TEST_CASE("出首帧：参考图要先传上去，ComfyUI 可能在别的机器�
         CHECK_NOTHROW(r(make_shot(),
                         bundle({"assets/没这个.png", "assets/b.png"}),
                         make_spec(), dir / "h.png", tok,
-                        [](int, int, double) {}));
+                        [](int, int, double, bool) {}));
         REQUIRE(r2.uploaded.size() == 1);
         CHECK(r2.input("6", "image") == "up_1.png");
     }
@@ -466,7 +466,7 @@ TEST_CASE("出首帧：产出下载到 dest，没有产出就报到镜头号") {
                                               paths);
     pipeline::CancelToken tok;
     render(make_shot(), bundle(), make_spec(), dest, tok,
-           [](int, int, double) {});
+           [](int, int, double, bool) {});
 
     REQUIRE(rec.downloaded_to.size() == 1);
     CHECK(rec.downloaded_to[0] == dest);
@@ -479,7 +479,7 @@ TEST_CASE("出首帧：产出下载到 dest，没有产出就报到镜头号") {
         auto r = comfy::image_frame_renderer(client_of(r2), image_workflow(),
                                              paths);
         CHECK_THROWS_AS(r(make_shot(), bundle(), make_spec(), dest, tok,
-                          [](int, int, double) {}),
+                          [](int, int, double, bool) {}),
                         comfy::ComfyError);
     }
 }
@@ -496,7 +496,7 @@ TEST_CASE("出视频：帧数、步数、种子、档位前缀") {
                                         composer, "9:16");
     pipeline::CancelToken tok;
     render(shot, plan, std::nullopt, dir / "v.mp4", tok,
-           [](int, int, double) {});
+           [](int, int, double, bool) {});
 
     CHECK(rec.input("5", "width") == plan.spec.width);
     CHECK(rec.input("5", "height") == plan.spec.height);
@@ -512,7 +512,7 @@ TEST_CASE("出视频：帧数、步数、种子、档位前缀") {
         const auto dplan = stages::make_plan(shot, make_spec(models::Tier::DRAFT),
                                              composer, "9:16");
         auto r = comfy::video_renderer(client_of(r2), video_workflow());
-        r(shot, dplan, std::nullopt, dir / "d.mp4", tok, [](int, int, double) {});
+        r(shot, dplan, std::nullopt, dir / "d.mp4", tok, [](int, int, double, bool) {});
         CHECK(r2.input("8", "filename_prefix") == "changji/ep01_sh007_draft");
     }
 }
@@ -530,7 +530,7 @@ TEST_CASE("出视频：首帧传上去，没有首帧就不传") {
 
     auto render = comfy::video_renderer(client_of(rec), video_workflow());
     render(shot, plan, dir / "first.png", dir / "v.mp4", tok,
-           [](int, int, double) {});
+           [](int, int, double, bool) {});
     REQUIRE(rec.uploaded.size() == 1);
     CHECK(rec.input("6", "image") == "up_1.png");
 
@@ -539,7 +539,7 @@ TEST_CASE("出视频：首帧传上去，没有首帧就不传") {
         // ComfyUI 会报"找不到文件"，而那句话指不到这里。
         Recorder r2;
         auto r = comfy::video_renderer(client_of(r2), video_workflow());
-        r(shot, plan, std::nullopt, dir / "w.mp4", tok, [](int, int, double) {});
+        r(shot, plan, std::nullopt, dir / "w.mp4", tok, [](int, int, double, bool) {});
         CHECK(r2.uploaded.empty());
         CHECK(r2.input("6", "image") == "");
     }
@@ -562,7 +562,7 @@ TEST_CASE("出视频：正向提示词跟着风格线走") {
         REQUIRE_FALSE(plan.motion.empty());
         Recorder rec;
         auto r = comfy::video_renderer(client_of(rec), video_workflow());
-        r(shot, plan, std::nullopt, dir / "v.mp4", tok, [](int, int, double) {});
+        r(shot, plan, std::nullopt, dir / "v.mp4", tok, [](int, int, double, bool) {});
         return rec.input("3", "text").get<std::string>();
     };
 
@@ -601,7 +601,7 @@ TEST_CASE("被服务端拒绝时，报的话里有镜头号，不是一坨嵌套
     std::string why;
     try {
         render(make_shot(), bundle(), make_spec(), dir / "f.png", tok,
-               [](int, int, double) {});
+               [](int, int, double, bool) {});
         FAIL("应该抛");
     } catch (const comfy::ComfyError& e) {
         why = e.what();
@@ -625,7 +625,7 @@ TEST_CASE("被服务端拒绝时，报的话里有镜头号，不是一坨嵌套
                                             composer, "9:16");
         auto r = comfy::video_renderer(client_of(r2), video_workflow());
         CHECK_THROWS_AS(r(make_shot(), plan, std::nullopt, dir / "v.mp4", tok,
-                          [](int, int, double) {}),
+                          [](int, int, double, bool) {}),
                         comfy::ComfyError);
     }
 }
@@ -787,7 +787,7 @@ TEST_CASE("提交给 ComfyUI 的工作流和 Python 一样") {
         auto render = comfy::video_renderer(client_of(rec), base);
         pipeline::CancelToken tok;
         const auto dir = temp_dir("语料提交");
-        render(shot, plan, start, dir / "v.mp4", tok, [](int, int, double) {});
+        render(shot, plan, start, dir / "v.mp4", tok, [](int, int, double, bool) {});
 
         REQUIRE(rec.submitted.size() == 1);
         CHECK(blank_seed(canonical(rec.submitted.back())) == c.at("submitted"));
@@ -819,7 +819,7 @@ TEST_CASE("种子不进语料比较，但它自己要稳") {
         auto r = comfy::video_renderer(client_of(rec), base);
         pipeline::CancelToken tok;
         const auto dir = temp_dir("种子");
-        r(s, plan, std::nullopt, dir / "v.mp4", tok, [](int, int, double) {});
+        r(s, plan, std::nullopt, dir / "v.mp4", tok, [](int, int, double, bool) {});
         return rec.by_class("KSampler", "seed").get<std::int64_t>();
     };
 
@@ -883,7 +883,7 @@ TEST_CASE("首帧：提交给 ComfyUI 的工作流和 Python 一样") {
         auto render = comfy::image_frame_renderer(client_of(rec), wf, paths);
         auto shot = golden_shot();
         REQUIRE_NOTHROW(render(shot, prompts, spec, dir / "f.png", tok,
-                               [](int, int, double) {}));
+                               [](int, int, double, bool) {}));
         REQUIRE(rec.submitted.size() == 1);
 
         const nlohmann::json got = blank_seed(canonical(rec.submitted.back()));
