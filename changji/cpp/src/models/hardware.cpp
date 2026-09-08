@@ -153,9 +153,25 @@ std::optional<GPUInfo> detect_gpu() {
                        {"--query-gpu=name,memory.total,driver_version",
                         "--format=csv,noheader,nounits"},
                        15000);
-    if (!r.launched || r.out.empty()) return std::nullopt;
+    if (!r.launched) return std::nullopt;
+    return parse_gpu_query(r.out);
+}
 
-    const std::string first = r.out.substr(0, r.out.find('\n'));
+std::optional<GPUInfo> parse_gpu_query(const std::string& out) {
+    if (out.empty()) return std::nullopt;
+    // **卡数 = 非空行数。** nvidia-smi 一张卡一行。
+    // 只读第一行取显存是对的（那是卡 0 的），但"有几张"以前根本没人问。
+    int gpu_count = 0;
+    for (std::size_t i = 0; i < out.size();) {
+        const std::size_t nl = out.find('\n', i);
+        const std::size_t end = nl == std::string::npos ? out.size() : nl;
+        const std::string line = out.substr(i, end - i);
+        if (line.find_first_not_of(" \t\r") != std::string::npos) ++gpu_count;
+        if (nl == std::string::npos) break;
+        i = nl + 1;
+    }
+
+    const std::string first = out.substr(0, out.find('\n'));
     std::vector<std::string> parts;
     std::size_t start = 0;
     while (start <= first.size()) {
@@ -179,6 +195,7 @@ std::optional<GPUInfo> detect_gpu() {
         return std::nullopt;
     }
     if (parts.size() > 2 && !parts[2].empty()) info.driver = parts[2];
+    info.count = gpu_count > 0 ? gpu_count : 1;
     return info;
 }
 
@@ -229,6 +246,11 @@ std::string HardwareProfile::describe() const {
     std::string head;
     if (gpu.has_value()) {
         head = gpu->name + "，显存 " + fmt1(gpu->vram_gb()) + " GB";
+        // 多卡的时候说一声。**说清楚显存是单卡的**——
+        // 不然看到"8 张卡"很容易以为那 48 GB 是总数。
+        if (gpu->count > 1) {
+            head += "（共 " + std::to_string(gpu->count) + " 张，显存是单卡的）";
+        }
     } else if (detected) {
         head = "显存 " + fmt1(vram_gb) + " GB";
     } else {

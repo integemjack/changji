@@ -155,3 +155,69 @@ TEST_CASE("本机探测能跑通且不崩") {
         CHECK(p.detected);
     }
 }
+
+
+TEST_CASE("认得出有几张卡") {
+    // **这台开发机只有一张卡，多卡那条路一行都跑不到。**
+    // 明天上 8×48 才知道对不对，而那时候要是错了，表现是
+    // "八个进程全挤在卡 0 上，看着在并行实际在排队"，一声不吭。
+    // 所以拿真实格式的输出在这儿先验。
+
+    // 一张卡
+    {
+        const auto g = parse_gpu_query(
+            "NVIDIA GeForce RTX 2060, 6144, 581.15\n");
+        REQUIRE(g.has_value());
+        CHECK(g->name == "NVIDIA GeForce RTX 2060");
+        CHECK(g->vram_mb == 6144);
+        CHECK(g->count == 1);
+    }
+
+    // 八张卡：**显存仍然是单卡的 48 GB，不是加起来的 384**
+    {
+        std::string out;
+        for (int i = 0; i < 8; ++i) out += "NVIDIA L40S, 49140, 581.15\n";
+        const auto g = parse_gpu_query(out);
+        REQUIRE(g.has_value());
+        CHECK(g->count == 8);
+        CHECK(g->vram_mb == 49140);
+        // 加起来去查档位表会算出一张卡根本跑不动的分辨率
+        CHECK(g->vram_gb() < 50.0);
+    }
+
+    // 末尾没有换行也要数对
+    {
+        const auto g = parse_gpu_query(
+            "NVIDIA L40S, 49140, 581.15\nNVIDIA L40S, 49140, 581.15");
+        REQUIRE(g.has_value());
+        CHECK(g->count == 2);
+    }
+
+    // 中间的空行不算一张卡
+    {
+        const auto g = parse_gpu_query(
+            "NVIDIA L40S, 49140, 581.15\n\nNVIDIA L40S, 49140, 581.15\n\n");
+        REQUIRE(g.has_value());
+        CHECK(g->count == 2);
+    }
+
+    // 探测不到就是探测不到，别编一个出来
+    CHECK_FALSE(parse_gpu_query("").has_value());
+    CHECK_FALSE(parse_gpu_query("\n\n").has_value());
+    // 显存那一列不是数字时也不该硬凑
+    CHECK_FALSE(parse_gpu_query("某张卡, N/A, 1.0\n").has_value());
+}
+
+TEST_CASE("档位按单卡算，不按总显存") {
+    // 八张 48 GB 加起来 384 GB 去查档位表，会算出一张卡跑不动的分辨率。
+    // 这一条钉住"两个维度不能混"。
+    const auto one = tiers_for_vram(48.0);
+    const auto eight = tiers_for_vram(48.0);   // 卡数不参与
+    CHECK(one.at(Tier::FINAL).width ==
+          eight.at(Tier::FINAL).width);
+
+    // 而 384 GB 会落到更高的档——正是不该发生的那种
+    const auto summed = tiers_for_vram(384.0);
+    CHECK(summed.at(Tier::FINAL).width >=
+          one.at(Tier::FINAL).width);
+}

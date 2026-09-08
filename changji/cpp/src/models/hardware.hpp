@@ -65,11 +65,30 @@ struct GPUInfo {
     std::string name;
     int vram_mb = 0;
     std::optional<std::string> driver;
+    /// 这台机器上有几张卡。**探测不到时是 1，不是 0**——
+    /// 有一张卡在跑这个程序，0 会让"起几个工作进程"算出 0 个。
+    ///
+    /// **和 vram_mb 是两个维度，别混。** vram_mb 是**卡 0** 的显存，
+    /// 决定单个镜头能跑多大（一个模型跑在一张卡上）；
+    /// count 决定能同时跑几个镜头。八张 48 GB 加起来去查档位表，
+    /// 会算出一张卡根本跑不动的分辨率。
+    int count = 1;
 
-    NLOHMANN_DEFINE_TYPE_INTRUSIVE_WITH_DEFAULT(GPUInfo, name, vram_mb, driver)
+    NLOHMANN_DEFINE_TYPE_INTRUSIVE_WITH_DEFAULT(GPUInfo, name, vram_mb, driver,
+                                                count)
 
     double vram_gb() const { return static_cast<double>(vram_mb) / 1024.0; }
 };
+
+/// 解析 `nvidia-smi --query-gpu=name,memory.total,driver_version
+/// --format=csv,noheader,nounits` 的输出。
+///
+/// **抽出来是为了能测。** 开发机只有一张卡，多卡那条路一行都跑不到；
+/// 而这段要是错了，表现是"八个进程全挤在卡 0 上，看着在并行实际在排队"，
+/// 一声不吭。
+///
+/// 显存取**第一行**（卡 0 的），卡数是非空行数——两个维度，别混。
+std::optional<GPUInfo> parse_gpu_query(const std::string& out);
 
 /// 探测本机显卡。探测不到返回空，由调用方决定怎么办。
 ///
