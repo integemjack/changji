@@ -10,8 +10,14 @@
 #ifdef _WIN32
 #include <windows.h>
 #else
+#include <sys/wait.h>
+#include <csignal>
 #include <unistd.h>
 #endif
+
+#include <chrono>
+#include <thread>
+#include <vector>
 
 namespace changji::proc {
 
@@ -19,35 +25,47 @@ namespace fs = std::filesystem;
 
 namespace {
 
-/// 给参数加引号。
+/// 给参数加引号，按 **CommandLineToArgvW 的规则**。
 ///
-/// 这里必须用引号而不是直接拼接：项目路径经常带中文和空格
-/// （比如 E:\AI短剧\），不加引号会被 shell 拆成多个参数。
+/// 从 2026-09-08 起 `run` 不再经过 cmd.exe（改走 CreateProcessW），
+/// 所以这里要迁就的是 C 运行时的命令行解析，不是 shell 的。
+/// 两套规则差很多——cmd 会把 `,` `;` `=` 也当分隔符，还会展开 `%VAR%`；
+/// CommandLineToArgvW 只认空格和制表符做分隔，引号里什么都是字面量。
 ///
-/// ⚠️ **`,` `;` `=` 也是 cmd.exe 的参数分隔符**，不是只有空格。
-/// 原来的判断里没有它们，后果是 ffmpeg 的滤镜串**每一条都会被切碎**：
-///
-///     scale=640:-2,setsar=1,fps=24
-///
-/// 这一串不带空格、不带引号，原来会原样拼进命令行，然后 cmd 在 `=` 和
-/// `,` 上切开，ffmpeg 收到的是七八个碎片。`media/assemble.cpp` 拼的
-/// 每一个 `-vf` / `-filter_complex` 参数都是这个形状。
-///
-/// 这是拿 `@echo [%~1]` 做回显、真跑一遍才看出来的——第一版用的是 `%*`
-/// （回显整条参数串），那验不出"被切成几个"，因为拼回去的字还是那些。
-///
-/// 还没处理的一个：**`%`**。cmd 就算在引号里也会展开 `%VAR%`。
-/// 现在的路径和滤镜里都不会出现成对的 `%`，先记在这儿。
+/// 规则本身（微软文档 "Parsing C++ Command-Line Arguments"）：
+///   - 2n 个反斜杠后跟引号  → n 个反斜杠，引号起界定作用
+///   - 2n+1 个反斜杠后跟引号 → n 个反斜杠加一个字面引号
+///   - 不跟引号的反斜杠     → 原样
+/// 所以只有**紧挨着引号的**那些反斜杠要翻倍，路径里的 `C:\a\b` 不用动。
 std::string quote(const std::string& s) {
     if (s.empty()) return "\"\"";
-    bool needs = s.find_first_of(" \t\"'&|<>(),;=^") != std::string::npos;
-    if (!needs) return s;
+    // **判断"要不要引"时用的是并集，比 argv 规则宽。**
+    //
+    // argv 规则只把空格和制表符当分隔符，照理只需要看这两个。但
+    // `which()` 可能返回一个 **.bat/.cmd**（PATHEXT 里就有，而 ffmpeg
+    // 的某些装法正是 .bat 包装），而 Windows 跑 .bat 一定要经过
+    // cmd.exe——那时候 `,` `;` `=` `&` 这些又变回分隔符了。
+    // 多引几个字符对 .exe 没有害处，对 .bat 是必需的。
+    if (s.find_first_of(" \t\"'&|<>(),;=^") == std::string::npos) return s;
+
     std::string out = "\"";
-    for (char c : s) {
-        if (c == '"') out += "\\";
-        out += c;
+    std::size_t slashes = 0;
+    for (const char c : s) {
+        if (c == '\\') {
+            ++slashes;
+            continue;
+        }
+        if (c == '"') {
+            out.append(slashes * 2 + 1, '\\');  // 翻倍，再加一个转义引号
+            out += '"';
+        } else {
+            out.append(slashes, '\\');
+            out += c;
+        }
+        slashes = 0;
     }
-    out += "\"";
+    out.append(slashes * 2, '\\');  // 结尾的反斜杠要翻倍，否则会转义掉收尾的引号
+    out += '"';
     return out;
 }
 
@@ -107,66 +125,170 @@ std::optional<std::string> which(const std::string& name) {
 Result run(const std::string& exe, const std::vector<std::string>& args, int timeout_ms) {
     Result r;
 
-    // **先确认这个程序存在。**
-    //
-    // 下面走的是 popen，而 popen 是把命令交给 shell 跑的——**只要 shell
-    // 起得来它就成功**，哪怕命令根本不存在。所以不先查一下的话，
-    // `launched` 永远是 true，而头文件里说它"区分「跑了但失败」和
-    // 「根本没这个程序」"。
-    //
-    // 这不是纸面问题：`media/ffmpeg.cpp` 就是靠 `!launched` 抛
-    // FFmpegMissing（"找不到 ffmpeg。在配置里填 assembly.ffmpeg_path"）的。
-    // 少了这一步，没装 ffmpeg 的人拿到的是"ffmpeg 报错了"外加一句
-    // shell 的"不是内部或外部命令"——指不到该去装或者去填路径。
-    if (!which(exe).has_value()) return r;  // launched 保持 false
-
-    std::string cmd = quote(exe);
-    for (const auto& a : args) cmd += " " + quote(a);
-    // stderr 并进 stdout。ffmpeg -version 和 nvidia-smi 的报错都走 stderr，
-    // 只读 stdout 会得到一片空白然后误判成「程序不存在」。
-    cmd += " 2>&1";
-
-    // TODO(阶段 1): popen 没法设超时，卡死的子进程会把工作线程一起拖住。
-    // 现在只用来跑 ffmpeg -version 这类秒回的命令，风险可控。
-    // 装配环节接进来之前必须换成 CreateProcess / fork+waitpid 加超时。
-    (void)timeout_ms;
+    // 先确认这个程序存在。找不到就是 launched=false，
+    // 调用方靠它区分"没装"和"装了但报错"（media/ffmpeg.cpp 就是这么用的）。
+    const auto resolved = which(exe);
+    if (!resolved.has_value()) return r;
 
 #ifdef _WIN32
-    // **必须走 _wpopen（宽字符），不能用 _popen。**
+    // ---- Windows：CreateProcessW，不经过 cmd ----
     //
-    // _popen 是窄接口，而我们手上的 cmd 是 UTF-8。把 UTF-8 字节喂给它，
-    // 只要路径里有非 ASCII 就会被按当前 ANSI 代码页重新解释——
-    // 这个项目的项目名和模型目录**基本都是中文**。
-    // 实测症状：`'"C:\...\changji 鐢妇鈹栭弽鑲╂畱...\tool.bat"' is not
-    // recognized as an internal or external command`。
+    // **原来这里走的是 _wpopen，也就是把命令交给 cmd.exe。** 换掉的理由
+    // 不是洁癖，是踩出来的：cmd 把 `,` `;` `=` 也当参数分隔符，于是
+    // ffmpeg 的滤镜串（`scale=640:-2,setsar=1,fps=24`）会被切成碎片。
+    // 那次是靠加引号绕过去的，但绕不掉的还有：cmd 在引号里照样展开
+    // `%VAR%`，而且 popen 根本没法设超时——文件头那条 TODO 写的就是
+    // "装配环节接进来之前必须换成 CreateProcess 加超时"，现在到期了。
     //
-    // 原来这里还在最外层多包了一层引号，注释说是为了处理 exe 路径带空格。
-    // **那一层反而是坏的**：cmd.exe 见到开头两个连续引号会把程序名解析成
-    // 空的，于是带空格的路径一个都跑不起来。每个部分已经单独引过了，
-    // 不需要再包。两个问题都是拿一个真的带空格、带中文的路径去跑才露出来的。
-    const std::wstring wcmd = paths::from_utf8(cmd).wstring();
-    std::FILE* pipe = _wpopen(wcmd.c_str(), L"r");
-#else
-    std::FILE* pipe = popen(cmd.c_str(), "r");
-#endif
-    if (!pipe) return r;
+    // 不经过 shell 之后，上面那一整类问题都不存在了：引用规则只剩
+    // CommandLineToArgvW 那一套（见 quote()），`%` 不再被展开。
+    std::wstring cmdline = paths::from_utf8(quote(*resolved)).wstring();
+    for (const auto& a : args) {
+        cmdline += L" ";
+        cmdline += paths::from_utf8(quote(a)).wstring();
+    }
+
+    SECURITY_ATTRIBUTES sa{};
+    sa.nLength = sizeof(sa);
+    sa.bInheritHandle = TRUE;
+
+    HANDLE rd = nullptr;
+    HANDLE wr = nullptr;
+    if (!::CreatePipe(&rd, &wr, &sa, 0)) return r;
+    // 读端不给子进程继承，否则子进程退出后管道不会关，读到天荒地老。
+    ::SetHandleInformation(rd, HANDLE_FLAG_INHERIT, 0);
+
+    STARTUPINFOW si{};
+    si.cb = sizeof(si);
+    si.dwFlags = STARTF_USESTDHANDLES;
+    si.hStdOutput = wr;
+    // stderr 并进 stdout：ffmpeg -version 和 nvidia-smi 的正经输出都在 stderr。
+    si.hStdError = wr;
+    si.hStdInput = ::GetStdHandle(STD_INPUT_HANDLE);
+
+    PROCESS_INFORMATION pi{};
+    // lpCommandLine 必须可写，CreateProcessW 会就地改它。
+    std::vector<wchar_t> mutable_cmd(cmdline.begin(), cmdline.end());
+    mutable_cmd.push_back(L'\0');
+
+    const BOOL ok = ::CreateProcessW(nullptr, mutable_cmd.data(), nullptr, nullptr,
+                                     TRUE, CREATE_NO_WINDOW, nullptr, nullptr,
+                                     &si, &pi);
+    ::CloseHandle(wr);  // 父进程这一份写端要立刻关，否则读端永远等不到 EOF
+    if (!ok) {
+        ::CloseHandle(rd);
+        return r;
+    }
     r.launched = true;
 
-    std::array<char, 4096> buf{};
-    while (std::fgets(buf.data(), static_cast<int>(buf.size()), pipe) != nullptr) {
-        r.out += buf.data();
-        // 输出无上限的话，遇到 ffmpeg 这种能刷几十 MB 日志的程序会吃光内存
-        if (r.out.size() > 1u << 20) {
-            r.out += "\n...(输出过长，已截断)\n";
-            break;
+    // **读管道必须和等超时并行。**
+    //
+    // 第一版是先把管道读到 EOF 再 WaitForSingleObject——而管道的 EOF 要等
+    // 子进程退出才会来，所以超时永远是在"它已经结束了"之后才开始计时，
+    // 等于没有。用例里 800 毫秒的超时实际等了 4123 毫秒才回来，
+    // 就是这么露出来的。
+    //
+    // 现在读放在线程里，主线程只等进程。超时就 TerminateProcess，
+    // 子进程一死管道就到 EOF，读线程自己收摊。
+    std::string collected;
+    std::thread reader([&collected, rd] {
+        std::array<char, 4096> buf{};
+        DWORD got = 0;
+        while (::ReadFile(rd, buf.data(), static_cast<DWORD>(buf.size()), &got,
+                          nullptr) &&
+               got > 0) {
+            collected.append(buf.data(), got);
+            if (collected.size() > 1u << 20) {
+                collected += "\n...(输出过长，已截断)\n";
+                break;
+            }
         }
+    });
+
+    const DWORD wait_ms = timeout_ms > 0 ? static_cast<DWORD>(timeout_ms) : INFINITE;
+    if (::WaitForSingleObject(pi.hProcess, wait_ms) == WAIT_TIMEOUT) {
+        ::TerminateProcess(pi.hProcess, 1);
+        ::WaitForSingleObject(pi.hProcess, 2000);
+        r.timed_out = true;
     }
-#ifdef _WIN32
-    r.exit_code = _pclose(pipe);
-#else
-    r.exit_code = pclose(pipe);
-#endif
+    reader.join();
+    ::CloseHandle(rd);
+    r.out = std::move(collected);
+
+    DWORD code = 1;
+    ::GetExitCodeProcess(pi.hProcess, &code);
+    r.exit_code = static_cast<int>(code);
+    ::CloseHandle(pi.hProcess);
+    ::CloseHandle(pi.hThread);
     return r;
+
+#else
+    // ---- POSIX：fork + execvp ----
+    //
+    // execvp 直接吃 argv 数组，**根本不需要引用**——上面 Windows 那一堆
+    // 引用规则在这边一条都用不上。
+    int fds[2];
+    if (::pipe(fds) != 0) return r;
+
+    const pid_t pid = ::fork();
+    if (pid < 0) {
+        ::close(fds[0]);
+        ::close(fds[1]);
+        return r;
+    }
+    if (pid == 0) {
+        ::close(fds[0]);
+        ::dup2(fds[1], STDOUT_FILENO);
+        ::dup2(fds[1], STDERR_FILENO);
+        ::close(fds[1]);
+        std::vector<char*> argv;
+        argv.push_back(const_cast<char*>(resolved->c_str()));
+        for (const auto& a : args) argv.push_back(const_cast<char*>(a.c_str()));
+        argv.push_back(nullptr);
+        ::execv(resolved->c_str(), argv.data());
+        ::_exit(127);  // execv 只有失败才会回来
+    }
+    ::close(fds[1]);
+    r.launched = true;
+
+    // 同 Windows 那段：读和等要并行，否则超时形同虚设。
+    std::string collected;
+    std::thread reader([&collected, fd = fds[0]] {
+        std::array<char, 4096> buf{};
+        ssize_t got = 0;
+        while ((got = ::read(fd, buf.data(), buf.size())) > 0) {
+            collected.append(buf.data(), static_cast<std::size_t>(got));
+            if (collected.size() > 1u << 20) {
+                collected += "\n...(输出过长，已截断)\n";
+                break;
+            }
+        }
+    });
+
+    int status = 0;
+    if (timeout_ms > 0) {
+        const auto deadline =
+            std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
+        for (;;) {
+            if (::waitpid(pid, &status, WNOHANG) == pid) break;
+            if (std::chrono::steady_clock::now() >= deadline) {
+                ::kill(pid, SIGKILL);
+                ::waitpid(pid, &status, 0);
+                r.timed_out = true;
+                break;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+    } else {
+        ::waitpid(pid, &status, 0);
+    }
+    reader.join();
+    ::close(fds[0]);
+    r.out = std::move(collected);
+
+    r.exit_code = WIFEXITED(status) ? WEXITSTATUS(status) : 1;
+    return r;
+#endif
 }
 
 }  // namespace changji::proc

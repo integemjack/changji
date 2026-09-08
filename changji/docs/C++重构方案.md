@@ -1555,6 +1555,29 @@ changji 目前没有地方填。
 最后一条尤其顽固：**我写那条"中文路径跑得起来"的用例时，自己又踩了一次**
 ——用例测的就是这条规矩，写的时候还是忘了。大概这就是它值得有一条用例的原因。
 
+**`proc::run` 不再经过 shell**（2026-09-08）：Windows 上 `CreateProcessW`，
+别处 `fork + execv`。文件头那条 TODO 写的是"装配环节接进来之前必须换成
+CreateProcess 加超时"——阶段 7 代码完成之后，这个期限到了。
+
+换掉的直接原因是**上一条那个 bug 只是绕过去了，没有根治**：cmd 把
+`,` `;` `=` 当分隔符是靠多加引号绕的，但绕不掉 cmd 在引号里照样展开
+`%VAR%`，也绕不掉 popen 没有超时。不经过 shell 之后这一整类问题都不存在了。
+
+引用规则也跟着换：从"迁就 cmd"改成 `CommandLineToArgvW` 那一套
+（只有紧挨着引号的反斜杠要翻倍）。**判断"要不要引"仍然用宽的并集**，
+因为 `which()` 可能返回一个 `.bat`（PATHEXT 里有，而 ffmpeg 的某些装法
+正是 .bat 包装），而 Windows 跑 .bat 一定经过 cmd。
+
+**新写的超时第一次就是错的，是新加的用例抓出来的。** 我先把管道读到 EOF
+再等进程——而管道的 EOF 要等子进程退出才来，所以超时永远在"它已经结束了"
+之后才开始计时。用例里 800 毫秒的超时实际等了 4123 毫秒。
+改成读放在线程里、主线程只等进程，超时就 `TerminateProcess`。
+
+测试靶子也换了：**必须是真的 `.exe`**（新增 `tests/tools/argecho.cpp`）。
+原来拿 `.bat` 当靶子，而 Windows 跑 .bat 一定经过 cmd.exe——
+测出来的是 cmd 的分隔规则，不是 `CreateProcessW` 的。
+换成 CreateProcessW 之后那条用例照旧红，而那个红是测试工具带来的。
+
 **下面这段是还差的：**
 mtmd 的音频生成 API 在头文件里明写着
 `EXPERIMENTAL API for audio generation, subjected to breaking changes`，

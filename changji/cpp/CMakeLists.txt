@@ -601,6 +601,14 @@ if(CHANGJI_BUILD_TESTS)
         target_link_libraries(changji_tests PRIVATE shell32)
     endif()
     target_include_directories(changji_tests PRIVATE "${doctest_SOURCE_DIR}")
+
+    # 一个只会把参数打回来的小程序，给 proc::run 的引用规则当靶子。
+    # **必须是真的 .exe**：Windows 跑 .bat 一定经过 cmd.exe，
+    # 那测出来的是 cmd 的分隔规则，不是 CreateProcessW 的。
+    add_executable(changji_argecho tests/tools/argecho.cpp)
+    target_compile_definitions(changji_tests PRIVATE
+        CHANGJI_ARGECHO="$<TARGET_FILE:changji_argecho>")
+    add_dependencies(changji_tests changji_argecho)
     target_compile_features(changji_tests PRIVATE cxx_std_20)
 
     # 对拍语料的位置。测试要读 Python 写出来的真实项目文件。

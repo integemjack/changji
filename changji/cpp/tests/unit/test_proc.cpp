@@ -9,6 +9,7 @@
 
 #include <doctest/doctest.h>
 
+#include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <string>
@@ -57,7 +58,6 @@ TEST_CASE("which：在 PATH 里找得到") {
     CHECK(found->find("changji_fake_tool") != std::string::npos);
 
     std::error_code ec;
-    fs::remove_all(dir, ec);
 }
 
 TEST_CASE("which：找不到就是 nullopt，不是空串") {
@@ -217,25 +217,11 @@ TEST_CASE("中文路径也跑得起来（这条规矩每次都得重新验）") 
 // 推规则很容易推出一个"看起来对"的结论，然后测试和实现一起错。
 
 TEST_CASE("参数里的特殊字符原样传过去") {
-    const fs::path dir = fs::temp_directory_path() / "changji_quote_test";
-    std::error_code ec;
-    fs::remove_all(dir, ec);
-    fs::create_directories(dir, ec);
-#ifdef _WIN32
-    // **只回显第一个参数，而且去掉外面那层引号（%~1）。**
-    //
-    // 第一版用的是 %*（整条参数串），那几乎什么都验不到：不加引号时
-    // "with space" 会被拆成两个参数，可 %* 回显的还是同样那串字，
-    // find() 照样找得到。实测把 quote() 整个短路掉，这条用例仍然全绿。
-    // 换成 %~1 之后，没引好就只回来 [with]，一眼看得出。
-    const fs::path tool = dir / "echoargs.bat";
-    { std::ofstream f(tool); f << "@echo [%~1]\n"; }
-#else
-    const fs::path tool = dir / "echoargs.sh";
-    { std::ofstream f(tool); f << "#!/bin/sh\nprintf '[%s]' \"$1\"\n"; }
-    fs::permissions(tool, fs::perms::owner_all, ec);
-#endif
-    const std::string exe = paths::to_utf8(tool);
+    // **靶子必须是真的 .exe**（tests/tools/argecho.cpp，构建时一起编出来）。
+    // 第一版拿 .bat 当靶子，而 Windows 跑 .bat 一定经过 cmd.exe——
+    // 测出来的是 cmd 的分隔规则，不是 CreateProcessW + CommandLineToArgvW 的。
+    // 换成 CreateProcessW 之后那条用例照旧红，而那个红是测试工具带来的。
+    const std::string exe = CHANGJI_ARGECHO;
 
     for (const char* arg : {
              "simple",
@@ -269,5 +255,25 @@ TEST_CASE("参数里的特殊字符原样传过去") {
                       "回来的是 [" << r.out << "]");
     }
 
-    fs::remove_all(dir, ec);
+}
+
+TEST_CASE("超时会把子进程杀掉，而不是把调用线程钉住") {
+    // **换掉 popen 之前根本做不到这一条**：popen 没有超时接口，
+    // 一个卡死的 ffmpeg 会把整个工作线程钉住，而外面看到的只是
+    // "这一集一直在跑"，没有任何别的信号。proc.cpp 文件头那条 TODO
+    // 写的就是"装配环节接进来之前必须换成 CreateProcess 加超时"。
+    const auto t0 = std::chrono::steady_clock::now();
+#ifdef _WIN32
+    // ping 本机 5 次，每次隔一秒——一个不会秒回、又一定存在的命令。
+    const auto r = proc::run("ping.exe", {"-n", "5", "127.0.0.1"}, 800);
+#else
+    const auto r = proc::run("sleep", {"5"}, 800);
+#endif
+    const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+                             std::chrono::steady_clock::now() - t0)
+                             .count();
+    CHECK(r.launched);
+    CHECK(r.timed_out);
+    // 800 毫秒的超时，不该等满 5 秒。给足余量，只证明"没等到自然结束"。
+    CHECK_MESSAGE(elapsed < 4000, "实际等了 " << elapsed << " 毫秒");
 }
