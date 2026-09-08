@@ -480,3 +480,90 @@ TEST_CASE("job_id 每次都不一样") {
     CHECK(t.job_id(JobKind::Write).rfind("write-", 0) == 0);
     REQUIRE(wait_done(t, JobKind::Write));
 }
+
+// ── 写整季那条路上的几个 setter ─────────────────────────────────────
+//
+// coverage_audit.py 查出来的：set_done / add_episode / add_output /
+// set_episode_id / set_error 一个都没被碰过。上面那些用例把快照形状、
+// 取消、事件环、并发都盖住了，唯独**累积**这件事没人验。
+//
+// 累积错了的表现都是"界面上少了东西"，不报错：
+//   - add_episode 要是覆盖而不是追加，写整季只看得到最后一集
+//   - set_error 要是终止任务，写砸一集会让前面几集白写
+//     （jobs.hpp 那行注释写的就是这条）
+
+TEST_CASE("写整季：每集追加一条，不是覆盖") {
+    JobTable t;
+    CHECK(t.start(JobKind::Write, "", [](JobProgress& p) {
+        p.set_total(3);
+        p.add_episode(json{{"episode_id", "ep01"}, {"title", "第一集"}});
+        p.set_done(1);
+        p.add_episode(json{{"episode_id", "ep02"}, {"title", "第二集"}});
+        p.set_done(2);
+    }));
+    REQUIRE(wait_done(t, JobKind::Write));
+
+    const json s = t.snapshot(JobKind::Write);
+    REQUIRE(s.at("episodes").is_array());
+    CHECK(s.at("episodes").size() == 2);
+    CHECK(s.at("episodes")[0].at("episode_id") == "ep01");
+    CHECK(s.at("episodes")[1].at("episode_id") == "ep02");
+    CHECK(s.at("done") == 2);
+    CHECK(s.at("total") == 3);
+}
+
+TEST_CASE("set_error 不终止任务，后面几集照跑") {
+    // jobs.hpp：「记一条错误。**不终止任务**——写整季时一集写砸了
+    // 不该让前面几集白写。」跑一晚上，早上发现第二集挂了导致后面十集
+    // 都没动，那一晚上就白熬了。
+    JobTable t;
+    std::atomic<int> reached{0};
+    CHECK(t.start(JobKind::Write, "", [&reached](JobProgress& p) {
+        p.add_episode(json{{"episode_id", "ep01"}});
+        p.set_error("ep02：大模型没返回镜头列表");
+        reached = 1;
+        // 出错之后还能继续往里写。
+        p.add_episode(json{{"episode_id", "ep03"}});
+        reached = 2;
+    }));
+    REQUIRE(wait_done(t, JobKind::Write));
+
+    CHECK(reached.load() == 2);
+    const json s = t.snapshot(JobKind::Write);
+    CHECK(s.at("episodes").size() == 2);
+    const std::string err = s.at("error").get<std::string>();
+    CHECK(err.find("ep02") != std::string::npos);
+}
+
+TEST_CASE("跑流水线：产物是追加的，当前集号会更新") {
+    JobTable t;
+    CHECK(t.start(JobKind::Run, "ep01", [](JobProgress& p) {
+        p.set_episode_id("ep01");
+        p.add_output("output/ep01.mp4");
+        p.set_episode_id("ep02");
+        p.add_output("output/ep02.mp4");
+    }));
+    REQUIRE(wait_done(t, JobKind::Run));
+
+    const json s = t.snapshot(JobKind::Run);
+    // 集号是"当前跑到哪一集"，覆盖是对的。
+    CHECK(s.at("episode_id") == "ep02");
+    // 产物是整批的清单，必须都在——批量跑完之后界面靠它列出成片。
+    REQUIRE(s.at("outputs").is_array());
+    CHECK(s.at("outputs").size() == 2);
+    CHECK(s.at("outputs")[0] == "output/ep01.mp4");
+    CHECK(s.at("outputs")[1] == "output/ep02.mp4");
+}
+
+TEST_CASE("没跑过的槽，快照里的累积字段是空的不是缺的") {
+    // 前端拿 .length 去渲染。缺字段的话是 undefined，取 .length 直接抛，
+    // 整页白屏——而"还没开始跑"是最常见的状态。
+    JobTable t;
+    const json run = t.snapshot(JobKind::Run);
+    REQUIRE(run.at("outputs").is_array());
+    CHECK(run.at("outputs").empty());
+
+    const json write = t.snapshot(JobKind::Write);
+    REQUIRE(write.at("episodes").is_array());
+    CHECK(write.at("episodes").empty());
+}
