@@ -1159,7 +1159,32 @@ mtmd 挂在 `tools/` 底下，而我们把 `LLAMA_BUILD_TOOLS` 关了——
 （`mtmd_default_marker`、`mtmd_context_params_default`），
 叫得动才算数。实测回的是 `mtmd 已链入，媒体标记 <__media__>，默认 4 线程`。
 
-**合成本身还没接，理由记在这儿免得下一个人以为是漏了：**
+**合成路径写完了，但一次都没跑过**（2026-09-08）。`infer/llama_tts.hpp`：
+载模型（talker + tokenizer 两份 GGUF）、逐帧驱动、写 wav、回时长。
+参照的是 llama.cpp 自带的 `tools/tts/tts.cpp`，那个文件开头自己写着
+"this is NOT a production-ready binary"，只是它把模型相关的部分都推给了
+`mtmd_helper::gen_audio`，剩下的循环不到四十行。`common` 那几个依赖
+（`common_init_from_params`、`common_sampler_*`）都换成了 llama.h 里的
+原生对应物，所以不用把 `LLAMA_BUILD_COMMON` 打开。
+
+⚠️ **编得过 ≠ 是对的。** 机器上没有权重，这条路径一次都没有真正执行过。
+头文件里把这一点写在最前面了，还钉了一句：mtmd 的音频生成 API 标着
+EXPERIMENTAL，升级 llama.cpp 时**这一段要重新对照上游的 tts.cpp 看一遍**。
+
+**链接时撞到一个真问题：两份 stb。** 开了 `CHANGJI_LLAMA` 之后 mtmd 也带
+一份 stb（`vendor::stb`），和我们 `sd_image.cpp` 里那份 `STB_IMAGE_IMPLEMENTATION`
+撞出几十个重复符号，直接 LNK1169。修法是给我们那份加 `STB_IMAGE_STATIC`
+（内部链接），不是改成用 mtmd 那份——两份 stb 的版本不一定一样，
+借用别人的实现等于把自己的行为绑在对方的升级上。
+**这正是风险二说的那类问题，只是这次撞在第三方小库上而不是 ggml 上。**
+
+两处顺手挡掉的坑，写在代码里：
+- **不调 `llama_backend_free()`。** 它是全局的，配音后端销毁时调它会把
+  同一个进程里 sd.cpp 正在用的 ggml 后端一起拆掉。进程退出时操作系统会收。
+- **context 必须开 `embeddings`。** 每一帧都要把骨干的隐状态喂给解码器，
+  关着的话 `llama_get_embeddings_ith` 返回空，症状是第一帧就失败。
+
+**下面这段是接进 `TTSBackend` 之前还差的：**
 mtmd 的音频生成 API 在头文件里明写着
 `EXPERIMENTAL API for audio generation, subjected to breaking changes`，
 而且**是无状态的**——`mtmd_gen_audio_process` 的注释说

@@ -10,8 +10,20 @@
 
 #ifdef CHANGJI_HAVE_SD
 #include <stable-diffusion.h>
+// **两个 STATIC 不能删。** 它们让 stb 的所有函数变成内部链接，
+// 只在这个 .cpp 里可见。
+//
+// 不加的话：开了 CHANGJI_LLAMA 之后 mtmd 也带一份 stb（vendor::stb），
+// 链接时几十个 stbi_* 符号重复定义，直接 LNK1169。两份 stb 同时存在
+// 是常态而不是意外——sd.cpp 和 llama.cpp 各自 vendor 了一份，
+// 这正是方案风险二说的那类问题，只是这次撞在第三方小库上。
+//
+// 用 STATIC 而不是"改成用 mtmd 那份"：两份 stb 的版本不一定一样，
+// 借用别人的实现等于把自己的行为绑在对方的升级上。
+#define STB_IMAGE_WRITE_STATIC
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include <thirdparty/stb_image_write.h>
+#define STB_IMAGE_STATIC
 #define STB_IMAGE_IMPLEMENTATION
 #include <thirdparty/stb_image.h>
 #endif

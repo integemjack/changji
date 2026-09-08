@@ -10,22 +10,22 @@
 //
 // ---
 //
-// **这一层现在只回答"编进来了没有"。** 真正合成还没接，理由写在这里
-// 免得下一个人以为是漏了：
+// ⚠️ **这一层编得过、但从来没跑过。** 到 2026-09-08 为止机器上没有
+// Qwen3-TTS 的权重（talker 1.7B Q4_K_M 1.2 GB + tokenizer 255 MB，
+// 要下载），所以下面这条合成路径**一次都没有真正执行过**。
+// 参照的是 llama.cpp 自带的 `tools/tts/tts.cpp`，那个文件自己开头就写着
+// "this is NOT a production-ready binary"。
 //
-// mtmd 那套音频生成的 API 在头文件里明写着
-// `EXPERIMENTAL API for audio generation, subjected to breaking changes`，
-// 而且**是无状态的**——`mtmd_gen_audio_process` 的注释说
-// "caller must handle state management and audio frame accumulation"。
-// 也就是说这不是"调一个函数出一段音频"，是要自己驱动骨干模型逐 token 跑、
-// 把隐状态喂进 GEN_CODE、攒够码本再走 GEN_WAV。那是几百行，
-// 而且**在拿到权重之前一行都验不了**（talker 1.7B Q4_K_M 1.2 GB +
-// tokenizer 255 MB）。
-//
-// 先把编译和链接这一段做扎实、能自检，比先写一堆跑不了的代码有用。
+// 而且 mtmd 的音频生成 API 在头文件里明写着
+// `EXPERIMENTAL API for audio generation, subjected to breaking changes`。
+// 钉死的 llama.cpp commit 是 `5202104`，升级时**这一段要重新对照上游的
+// tts.cpp 看一遍**，不要假设签名没变。
 //
 // 门面写法同 sd_backend.hpp：头文件不带 #ifdef、不 include mtmd。
 
+#include <filesystem>
+#include <memory>
+#include <optional>
 #include <string>
 
 namespace changji::infer {
@@ -45,5 +45,56 @@ struct LlamaTtsProbe {
 /// 链接器完全可以把它整个丢掉，而构建日志里照样有一行
 /// "Linking CXX static library mtmd.lib"。**"编出来了"不等于"在二进制里"。**
 LlamaTtsProbe probe_llama_tts();
+
+/// 一次合成要的东西。
+struct LlamaTtsRequest {
+    std::string text;
+    /// 参考音色的音频文件。留空就用模型的默认音色。
+    std::optional<std::filesystem::path> speaker_ref;
+    /// 语种提示。Qwen3-TTS 支持十种，留空让它自己判断。
+    std::string lang;
+    /// 输出到哪个 wav。
+    std::filesystem::path out;
+
+    int top_k = 40;
+    float top_p = 0.9;
+    /// UINT32_MAX 表示随机。**默认给一个定值**：配音重跑一次就换一个
+    /// 声音的话，用户没法靠重跑修一句坏台词，只能整集重配。
+    unsigned int seed = 1234;
+    /// 一帧一帧生成的上限。12.5 Hz 的码率下 512 帧约 41 秒，
+    /// 比单句台词的上限（见 stages/limits.hpp）宽得多。
+    int max_frames = 512;
+};
+
+/// 加载好的模型。**加载很贵（1.5 GB 权重），要跨多句台词复用。**
+///
+/// 不可拷贝：里面握着 llama_model / llama_context / mtmd_context 三个句柄。
+class LlamaTts {
+public:
+    /// backbone 是 talker 那份 GGUF，mmproj 是 tokenizer（解码器）那份。
+    /// 载不起来返回 nullptr，`why` 里说清是哪一步。
+    static std::unique_ptr<LlamaTts> load(const std::filesystem::path& backbone,
+                                          const std::filesystem::path& mmproj,
+                                          bool use_gpu, std::string& why);
+
+    ~LlamaTts();
+    LlamaTts(const LlamaTts&) = delete;
+    LlamaTts& operator=(const LlamaTts&) = delete;
+
+    /// 合成一句，写成 wav。失败返回 false 并填 `why`。
+    ///
+    /// 出来的音频时长写进 `out_duration_s`——调用方要拿它去锁镜头时长，
+    /// 而重新读一遍文件是白读。
+    bool synthesize(const LlamaTtsRequest& req, double& out_duration_s,
+                    std::string& why);
+
+    /// 采样率，来自模型自己报的（Qwen3-TTS 是 24000）。
+    int sample_rate() const;
+
+private:
+    LlamaTts();
+    struct Impl;
+    std::unique_ptr<Impl> impl_;
+};
 
 }  // namespace changji::infer
