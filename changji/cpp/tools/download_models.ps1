@@ -70,16 +70,30 @@ $files = @(
        f='qwen_image_vae.safetensors' }
 )
 
-# Measure-Object -Property 认的是对象属性，不认哈希表的键，
-# 这里的元素是哈希表，得先取出来
-$total = ($files | ForEach-Object { $_.mb } | Measure-Object -Sum).Sum
 $dest = [System.IO.Path]::GetFullPath($Dest)
+# **只算还差多少，不是算一共多少。**
+#
+# 原来这里是把 $files 里所有 mb 加起来跟剩余空间比。加到第 9 个文件时目录
+# 变成 21 GB，而盘上只剩 20 GB——于是它拒绝下载，可实际上只差 3 GB，
+# 别的早就下好了。**目录一旦超过盘的大小，这个检查就永远不让你下**，
+# 哪怕一个字节都不缺。
+#
+# 改成按"这个文件还差多少"算：没有就算全量，下了一半就算剩下那半。
+$need = 0
+foreach ($x in $files) {
+    $p = Join-Path $dest $x.f
+    $haveMb = 0
+    if (Test-Path $p) { $haveMb = [math]::Round((Get-Item $p).Length / 1MB) }
+    $left = $x.mb - $haveMb
+    if ($left -gt 0) { $need += $left }
+}
+$total = $need
 # Windows PowerShell 5.1 没有 ?? 和三元运算符，别用
 $qualifier = (Split-Path $dest -Qualifier) -replace ':', ''
 $freeGb = [math]::Round((Get-PSDrive $qualifier).Free / 1GB, 1)
 
 Write-Host "落盘目录：$dest"
-Write-Host "要下 $($files.Count) 个文件，合计 $([math]::Round($total/1024,1)) GB；该盘剩 $freeGb GB"
+Write-Host "$($files.Count) 个文件，还差 $([math]::Round($total/1024,1)) GB；该盘剩 $freeGb GB"
 Write-Host ""
 foreach ($x in $files) { "  {0,6} MB  {1}" -f $x.mb, $x.n | Write-Host }
 Write-Host ""

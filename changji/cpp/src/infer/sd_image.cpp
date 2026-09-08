@@ -161,6 +161,10 @@ struct SdContext::Impl {
     // 路径要活到 sd_ctx 建完：sd_ctx_params_t 存的是 const char*，
     // 不拷贝。传临时 string 的 c_str() 的话，new_sd_ctx 读到的是野指针。
     std::string diffusion, vae, text_encoder, max_vram, params_backend;
+    /// Qwen-Image 那一路的文本编码器（sd.cpp 的 llm_path）和它的视觉塔。
+    /// **和 text_encoder 互斥**：一次只填其中一边——Wan 走 t5xxl，
+    /// Qwen-Image 走 llm，两个参数位不是一回事。
+    std::string llm, llm_vision;
 
     ~Impl() {
         if (ctx) ::free_sd_ctx(ctx);
@@ -185,12 +189,34 @@ std::shared_ptr<SdContext> SdContext::create(const config::Settings& settings,
     // **原来这里写着"没配就退回视频模型出单帧"，那条退路是坏的**，
     // 上面那个 throw 里记了为什么（sd.cpp 的 generate_image 没有帧数参数，
     // 拿视频模型进去整个进程崩）。走到这里时 image 一定非空。
-    const std::string& which = role == ModelRole::Video ? m.video : m.image;
+    const bool is_video = role == ModelRole::Video;
+    const std::string& which = is_video ? m.video : m.image;
     impl.diffusion = paths::to_utf8(m.resolve(which, ws));
-    impl.vae = m.video_vae.empty() ? "" : paths::to_utf8(m.resolve(m.video_vae, ws));
-    impl.text_encoder = m.video_text_encoder.empty()
-                            ? ""
-                            : paths::to_utf8(m.resolve(m.video_text_encoder, ws));
+
+    // **VAE 和文本编码器要按角色挑，不能两边共用一套。**
+    // 之前这里写死了 video_vae + video_text_encoder，图像那条路也拿它俩用
+    // ——因为图像那条路从来没真跑过，没人发现。
+    // Wan 的 VAE 和 Qwen-Image 的不是一回事；UMT5-XXL 和 Qwen2.5-VL 更不是，
+    // 而且在 sd.cpp 里根本不是同一个参数位（t5xxl_path vs llm_path，
+    // 见上游 docs/qwen_image_edit.md）。
+    // **喂错了不报错**：照常加载，然后出一张和提示词没关系的图。
+    // 图像那几项留空就退回视频那套，只用 Wan 的人不必填两遍。
+    const std::string& vae_key =
+        (!is_video && !m.image_vae.empty()) ? m.image_vae : m.video_vae;
+    impl.vae = vae_key.empty() ? "" : paths::to_utf8(m.resolve(vae_key, ws));
+
+    if (!is_video && !m.image_text_encoder.empty()) {
+        impl.llm = paths::to_utf8(m.resolve(m.image_text_encoder, ws));
+        if (!m.image_text_encoder_vision.empty()) {
+            impl.llm_vision =
+                paths::to_utf8(m.resolve(m.image_text_encoder_vision, ws));
+        }
+    } else {
+        impl.text_encoder = m.video_text_encoder.empty()
+                                ? ""
+                                : paths::to_utf8(
+                                      m.resolve(m.video_text_encoder, ws));
+    }
     impl.max_vram = vram_arg(vram_budget_gb);
     // 权重放系统内存，用到才搬进显存。**这是 6GB 卡上能跑的关键**——
     // 见方案里"跨模型调度"那一节。默认（权重直接进显存）在这台机器上
@@ -215,6 +241,9 @@ std::shared_ptr<SdContext> SdContext::create(const config::Settings& settings,
         p.t5xxl_path = impl.text_encoder.c_str();
     }
     // 上游 docs/wan.md 给 Wan 的命令行带着 --diffusion-fa，而
+    if (!impl.llm.empty()) p.llm_path = impl.llm.c_str();
+    if (!impl.llm_vision.empty()) p.llm_vision_path = impl.llm_vision.c_str();
+
     // sd_ctx_params_init 的默认是 false。6 GB 卡上这一项直接影响塞不塞得下。
     p.diffusion_flash_attn = m.diffusion_flash_attn;
     p.max_vram = impl.max_vram.c_str();
