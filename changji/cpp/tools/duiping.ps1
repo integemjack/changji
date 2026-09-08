@@ -76,6 +76,11 @@ Set-Content -Path $pyCmd -Encoding ASCII -Value @(
 Set-Content -Path $cppCmd -Encoding ASCII -Value @(
     "@echo off",
     "set CHANGJI_LLM_BASE_URL=http://127.0.0.1:$LlmCppPort/v1",
+    # **让 C++ 也走 ComfyUI 那条路。** 不设的话它默认 engine=sd，
+    # 出图出片走进程内的 sd.cpp，根本不加载 ComfyUI 工作流——
+    # 那时候推理层那一条比的是两条不同的路，没有意义。
+    # 两边都连不上 ComfyUI，但至少走的是同一条。
+    "set CHANGJI_MODELS_ENGINE=comfy",
     "cd /d `"$cpp`"",
     "`"$cpp\$CppExe`" --port $CppPort"
 )

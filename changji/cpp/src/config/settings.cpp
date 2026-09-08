@@ -221,6 +221,13 @@ const std::vector<std::pair<const char*, const char*>>& env_mapping() {
         {"MODELS_VIDEO_VAE", "models_video_vae"},
         {"MODELS_VIDEO_TEXT_ENCODER", "models_video_text_encoder"},
         {"MODELS_IMAGE", "models_image"},
+        // **engine 原来漏了。** 别的 [models] 键都有环境变量，
+        // 偏偏这个开关没有——而它决定出图出片走进程内还是走 ComfyUI，
+        // 正是容器里和对拍时最需要临时翻的一个。
+        // 对拍推理层就卡在这上面：两边默认走的不是同一条路，没法比。
+        {"MODELS_ENGINE", "models_engine"},
+        {"MODELS_TTS", "models_tts"},
+        {"MODELS_TTS_DECODER", "models_tts_decoder"},
     };
     return m;
 }
@@ -361,6 +368,13 @@ void apply_env(Settings& s) {
         s.models.video_text_encoder = v;
     }
     if (!(v = get("MODELS_IMAGE")).empty()) s.models.image = v;
+    // engine 只认那两个取值。写错了不静默接受——那会让整条出片的路
+    // 悄悄走岔，而表现是"连不上 ComfyUI"或者"没编进出图后端"，
+    // 两句话都指不到真正的原因（环境变量拼错了）。
+    // 这里保持原值，随后 validate() 会拦住它并说清楚。
+    if (!(v = get("MODELS_ENGINE")).empty()) s.models.engine = v;
+    if (!(v = get("MODELS_TTS")).empty()) s.models.tts = v;
+    if (!(v = get("MODELS_TTS_DECODER")).empty()) s.models.tts_decoder = v;
 }
 
 }  // namespace

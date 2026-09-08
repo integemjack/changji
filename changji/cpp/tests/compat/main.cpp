@@ -86,6 +86,10 @@ std::vector<compat::IgnoreRule> intentional_ignores() {
         {"/llm_base_url",
          "对拍时两侧各连一个自己的假模型（见 tools/duiping.ps1），"
          "地址必然不同。共用一个的话 /api/plan 的两次调用会互相错位"},
+        {"/env_locked/models_engine",
+         "对拍自己设的 CHANGJI_MODELS_ENGINE=comfy——不设的话 C++ 默认走"
+         "进程内的 sd.cpp，推理层那一条比的就是两条不同的路。"
+         "Python 没有 [models] 这一节，自然也没有这个锁"},
         {"/local",
          "C++ 侧多出来的键：本地模型清单。Python 那边模型归 ComfyUI 管，"
          "没有这个概念。多一个键不影响前端（它按名字取字段）。"},
@@ -434,36 +438,42 @@ int run_pipeline(const Args& args, Tally& tally) {
         return 0;
     }
 
-    // **有意不一样：验两边各自还是不是当初那个样子。**
-    // 不逐字段比——见上面那段，两边跑的不是同一条路。
-    const std::string py_err = py_final->body.value("error", std::string());
-    const std::string cp_stage = cp_final->body.value("stage", std::string());
+    // **两边现在走同一条路了**（duiping.ps1 给 C++ 那侧设了
+    // CHANGJI_MODELS_ENGINE=comfy），所以这里改回逐字段真比。
+    //
+    // 在此之前这一条是"有意不一样"：C++ 默认 engine=sd，
+    // 压根不加载 ComfyUI 工作流，而 Python 的 load_all 光加载 video
+    // 就要 ComfyUI 活着。那时候比的是两条不同的路，没有意义。
+    for (auto& d : compat::compare(py_final->body, cp_final->body, opts)) {
+        diffs.push_back({"跑完的状态" + d.path, d.detail});
+    }
 
-    if (py_err.find("ComfyUI") == std::string::npos) {
-        diffs.push_back({"Python 侧",
-                         "本该卡在加载 video 工作流那一步（要问 ComfyUI 要 "
-                         "/object_info），实际 error 是「" + py_err + "」"});
-    }
-    if (cp_stage != "audio") {
-        diffs.push_back({"C++ 侧",
-                         "本该进到配音阶段（engine=sd 时不碰 ComfyUI 工作流），"
-                         "实际停在「" + cp_stage + "」"});
-    }
-    // Python 卡在加载那一步，盘上就该一个字节都没动。
+    // **真正的产出在这两处。** 上面那份快照只是它自己说的。
     {
-        const json py_proj = read_json(py_dir / "project.json");
-        const json src_proj = read_json(src / "project.json");
-        if (!py_proj.is_null() && !src_proj.is_null() &&
-            !compat::compare(src_proj, py_proj, opts).empty()) {
-            diffs.push_back({"Python 侧",
-                             "本该什么都没写（它在加载工作流时就中止了），"
-                             "实际 project.json 变了"});
+        const json a = read_json(py_dir / "project.json");
+        const json b = read_json(cp_dir / "project.json");
+        if (!a.is_null() && !b.is_null()) {
+            for (auto& d : compat::compare(a, b, opts)) {
+                diffs.push_back({"project.json" + d.path, d.detail});
+            }
         }
     }
+    for (auto& d : compat::compare(list_dir(py_dir / "audio"),
+                                   list_dir(cp_dir / "audio"), opts)) {
+        diffs.push_back({"audio/" + d.path, d.detail});
+    }
 
-    tally.report(name + "（有意不一样：Python 光加载工作流就要 ComfyUI 活着，"
-                        "C++ 的 engine=sd 根本不碰它）",
-                 diffs);
+    tally.report(name, diffs);
+
+    // **说清楚这一条到底比了什么，免得被当成"配音跑通了"。**
+    // 没起 ComfyUI 的时候两边都停在加载工作流那一步，这一条验的是
+    // "两边在同一处、以同样的方式停下"。要验配音真出声，得有 ComfyUI
+    // 活着，或者阶段 9 的进程内配音接上权重。
+    if (py_final->body.value("error", std::string()).find("ComfyUI") !=
+        std::string::npos) {
+        std::cout << "      注：两边都停在「连不上 ComfyUI」。这一条验的是"
+                     "「停得一样」，不是「配音出了声」。\n";
+    }
 
     std::error_code ec;
     fs::remove_all(fs::temp_directory_path() / paths::from_utf8("changji_对拍_写"),
