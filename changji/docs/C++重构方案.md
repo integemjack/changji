@@ -746,6 +746,24 @@ cpp/
 > 设的是 `INFINITY`，sd.cpp 的 `set_flow_shift` 见到 INFINITY 就用模型自己的
 > 默认值（Wan 是 5.0）。**这一条本来看着最像 bug，查完是对的**——
 > 所以这种对照要一条条看代码，不能凭"文档里写了我们没设"就下结论。
+>
+> **整张表对完了，记在这儿免得下次再对一遍：**
+>
+> | 传给 sd.cpp 的 | 我们设的 | 对不对 |
+> |---|---|---|
+> | `diffusion_model_path` | `[models].video`（或 `image`） | ✅ |
+> | `vae_path` | `[models].video_vae` | ✅ |
+> | `t5xxl_path` | `[models].video_text_encoder` | ❌ **原来传给了 `embeddings_connectors_path`，已改** |
+> | `diffusion_flash_attn` | 原来不设（默认 false） | ❌ **已加 `[models].diffusion_flash_attn`，默认开** |
+> | `sample_params.flow_shift` | 不设 | ✅ 留 `INFINITY`，sd.cpp 认出 Wan 后给 5.0 |
+> | `vae_tiling_params` | 只在出视频那条设 | ✅ 默认值是 verify 里实测出来的；出单帧的 VAE 解码便宜得多，不需要 |
+> | `params_backend = "cpu"` | 固定 | ✅ 等价于 CLI 的 `--offload-to-cpu`（`docs/backend.md` 明说它就是"往参数分配前面塞一个 CPU 默认"）|
+> | `max_vram` | 按显存预算算 | ✅ |
+>
+> 五对二错。**两处错的共同点是"填错了编译器不会说话"**：
+> 字段都在同一个结构体里、都以 `_path` 结尾或都是 `bool`，
+> 而错了之后的表现分别是"出的片和提示词没关系"和"显存不够跑不起来"——
+> 两句话都指不到填错的那一行。
 
 
 代码那部分做完了：整集流水线（按阶段分批、每阶段存盘）、`POST /api/run`
