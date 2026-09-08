@@ -9,13 +9,16 @@
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
+#include <cstdint>
 #include <string>
+#include <vector>
 
 #include <nlohmann/json.hpp>
 
 #include "util/fs_time.hpp"
 #include "util/human_time.hpp"
 #include "util/paths.hpp"
+#include "util/text.hpp"
 
 using namespace changji;
 namespace fs = std::filesystem;
@@ -83,4 +86,92 @@ TEST_CASE("file_mtime_unix 返回的是 Unix 纪元的秒，不是 1601") {
 TEST_CASE("file_mtime_unix 对不存在的文件返回 0，不抛") {
     // 调用方拿它排序和显示，为一个缺文件抛异常会把整个列表打断。
     CHECK(util::file_mtime_unix("这个文件不存在_98765.txt") == 0.0);
+}
+
+// ── 文本小工具 ─────────────────────────────────────────────────────
+//
+// `strip_ws` / `collapse_ws` / `rstrip_punct` / `utf8_chars` /
+// `utf8_codepoint` 原来一条测试都没有（tools/coverage_audit.py 查出来的）。
+//
+// 它们错了**都不报错**，只是产出的字不对：提示词里多半个字、字幕断在
+// 一个汉字中间、按字节切出非法 UTF-8 然后一路往下走，最后表现成
+// "字幕整轨不显示"或者"序列化时抛异常"——离出错的地方很远。
+//
+// 期望值取自 tests/golden/text_helpers.json，那份是**真的跑一遍 Python
+// 的对应写法**生成的（rstrip("。.；;，,、 ")、str.strip()、
+// re.sub(r"\s+", " ", s)、list(s)、ord(c)），不是手写的。
+
+namespace {
+
+json text_golden() {
+    const fs::path p = fs::path(CHANGJI_GOLDEN_DIR) / "text_helpers.json";
+    std::ifstream in(p, std::ios::binary);
+    REQUIRE_MESSAGE(in.good(), "读不到 " << paths::to_utf8(p));
+    return json::parse(in);
+}
+
+}  // namespace
+
+TEST_CASE("strip_ws 和 Python 的 str.strip() 一致") {
+    for (const auto& c : text_golden().at("strip_ws")) {
+        const std::string in = c.at("in").get<std::string>();
+        CAPTURE(in);
+        CHECK(text::strip_ws(in) == c.at("out").get<std::string>());
+    }
+}
+
+TEST_CASE("rstrip_punct 按字符剥，不按字节") {
+    // 中文标点每个 3 字节，按字节剥会把前一个汉字劈成半个，产出乱码——
+    // 而这个串会出现在**每一个镜头的提示词**里，坏掉是全剧性的。
+    for (const auto& c : text_golden().at("rstrip_punct")) {
+        const std::string in = c.at("in").get<std::string>();
+        CAPTURE(in);
+        CHECK(text::rstrip_punct(in) == c.at("out").get<std::string>());
+    }
+}
+
+TEST_CASE("utf8_chars 切出来的是字符不是字节") {
+    for (const auto& c : text_golden().at("utf8_chars")) {
+        const std::string in = c.at("in").get<std::string>();
+        CAPTURE(in);
+        const auto got = text::utf8_chars(in);
+        const auto want = c.at("out").get<std::vector<std::string>>();
+        CHECK(got == want);
+    }
+    // 单独点一下四字节的：emoji 是最容易被切坏的那一档。
+    const auto got = text::utf8_chars("a🎬b");
+    REQUIRE(got.size() == 3);
+    CHECK(got[1].size() == 4);
+}
+
+TEST_CASE("utf8_codepoint 和 Python 的 ord() 一致") {
+    for (const auto& c : text_golden().at("utf8_codepoint")) {
+        const std::string in = c.at("in").get<std::string>();
+        CAPTURE(in);
+        CHECK(static_cast<std::uint32_t>(text::utf8_codepoint(in)) ==
+              c.at("out").get<std::uint32_t>());
+    }
+    // 不是合法字符时返回 0，而不是抛或者返回垃圾。
+    CHECK(text::utf8_codepoint("") == 0);
+}
+
+TEST_CASE("collapse_ws 只压 ASCII 空白——和 Python 有意不一样") {
+    // **这一条不能照抄 Python。** Python 的 re.sub(r"\s+", " ", s) 在 str 上
+    // 是 Unicode 感知的，全角空格 U+3000 也会被压成半角；C++ 这边只认
+    // ASCII 空白，全角空格原样留着。text.cpp 里写明了这是有意的：
+    // 为这个引一整套 Unicode 表不划算，而两边都不产生乱码，
+    // 差别只是提示词里多一个全角空格。
+    //
+    // 语料里那几条是 Python 的输出，所以**只对不含全角空格的那些逐条比**；
+    // 全角那条单独验 C++ 的行为，并把这处偏差钉住——
+    // 哪天有人"顺手对齐"了，这里会红，提醒他先看 text.cpp 那段说明。
+    for (const auto& c : text_golden().at("collapse_ws")) {
+        const std::string in = c.at("in").get<std::string>();
+        if (in.find("\u3000") != std::string::npos) continue;  // 占位，见下
+        CAPTURE(in);
+        CHECK(text::collapse_ws(in) == c.at("out").get<std::string>());
+    }
+    // 全角空格：C++ 原样留着，Python 会压成半角。
+    const std::string full = "\xe4\xb8\xad\xe3\x80\x80\xe6\x96\x87";  // 中　文
+    CHECK(text::collapse_ws(full) == full);
 }
