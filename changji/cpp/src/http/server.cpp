@@ -276,37 +276,37 @@ void run(const config::Settings& settings, const Options& opts) {
     // ---- 阶段 3：编辑接口 ----
 
     CROW_ROUTE(app, "/api/shot").methods("POST"_method)([](const crow::request& req) {
-        auto r = guard([&] { return post_shot(json::parse(req.body, nullptr, false)); });
+        auto r = guard([&] { return post_shot(parse_body(req.body)); });
         return json_response(r.body, r.status);
     });
 
     CROW_ROUTE(app, "/api/character").methods("POST"_method)([](const crow::request& req) {
-        auto r = guard([&] { return post_character(json::parse(req.body, nullptr, false)); });
+        auto r = guard([&] { return post_character(parse_body(req.body)); });
         return json_response(r.body, r.status);
     });
 
     CROW_ROUTE(app, "/api/location").methods("POST"_method)([](const crow::request& req) {
-        auto r = guard([&] { return post_location(json::parse(req.body, nullptr, false)); });
+        auto r = guard([&] { return post_location(parse_body(req.body)); });
         return json_response(r.body, r.status);
     });
 
     CROW_ROUTE(app, "/api/style").methods("POST"_method)([](const crow::request& req) {
-        auto r = guard([&] { return post_style(json::parse(req.body, nullptr, false)); });
+        auto r = guard([&] { return post_style(parse_body(req.body)); });
         return json_response(r.body, r.status);
     });
 
     CROW_ROUTE(app, "/api/shots/batch").methods("POST"_method)([](const crow::request& req) {
-        auto r = guard([&] { return post_shots_batch(json::parse(req.body, nullptr, false)); });
+        auto r = guard([&] { return post_shots_batch(parse_body(req.body)); });
         return json_response(r.body, r.status);
     });
 
     CROW_ROUTE(app, "/api/shots/reorder").methods("POST"_method)([](const crow::request& req) {
-        auto r = guard([&] { return post_shots_reorder(json::parse(req.body, nullptr, false)); });
+        auto r = guard([&] { return post_shots_reorder(parse_body(req.body)); });
         return json_response(r.body, r.status);
     });
 
     CROW_ROUTE(app, "/api/shots/link_locations").methods("POST"_method)([](const crow::request& req) {
-        auto r = guard([&] { return post_shots_link_locations(json::parse(req.body, nullptr, false)); });
+        auto r = guard([&] { return post_shots_link_locations(parse_body(req.body)); });
         return json_response(r.body, r.status);
     });
 
@@ -357,7 +357,7 @@ void run(const config::Settings& settings, const Options& opts) {
         ([](const crow::request& req) {
             auto r = guard([&] {
                 return post_character_reference_clear(
-                    json::parse(req.body, nullptr, false));
+                    parse_body(req.body));
             });
             return json_response(r.body, r.status);
         });
@@ -366,7 +366,7 @@ void run(const config::Settings& settings, const Options& opts) {
         ([](const crow::request& req) {
             auto r = guard([&] {
                 return post_location_reference_clear(
-                    json::parse(req.body, nullptr, false));
+                    parse_body(req.body));
             });
             return json_response(r.body, r.status);
         });
@@ -391,7 +391,7 @@ void run(const config::Settings& settings, const Options& opts) {
                 // 等它们接进 job 表之后换成真的那个。
                 static thread_local pipeline::CancelToken tok;
                 tok.reset();
-                return handler(json::parse(req.body, nullptr, false),
+                return handler(parse_body(req.body),
                                script_client, tok);
             });
             return json_response(r.body, r.status);
@@ -424,7 +424,7 @@ void run(const config::Settings& settings, const Options& opts) {
         [](const crow::request& req) {
             static const auto check = default_doctor();
             auto r = guard([&] {
-                return post_connections(json::parse(req.body, nullptr, false),
+                return post_connections(parse_body(req.body),
                                         check);
             });
             return json_response(r.body, r.status);
@@ -433,7 +433,7 @@ void run(const config::Settings& settings, const Options& opts) {
     CROW_ROUTE(app, "/api/settings").methods("POST"_method)(
         [](const crow::request& req) {
             auto r = guard([&] {
-                return post_settings(json::parse(req.body, nullptr, false));
+                return post_settings(parse_body(req.body));
             });
             return json_response(r.body, r.status);
         });
@@ -483,7 +483,7 @@ void run(const config::Settings& settings, const Options& opts) {
     CROW_ROUTE(app, "/api/new").methods("POST"_method)(
         [](const crow::request& req) {
             auto r = guard([&] {
-                return post_new_project(json::parse(req.body, nullptr, false),
+                return post_new_project(parse_body(req.body),
                                         config::runtime().snapshot());
             });
             return json_response(r.body, r.status);
@@ -492,7 +492,7 @@ void run(const config::Settings& settings, const Options& opts) {
     CROW_ROUTE(app, "/api/project/delete").methods("POST"_method)(
         [](const crow::request& req) {
             auto r = guard([&] {
-                return post_delete_project(json::parse(req.body, nullptr, false),
+                return post_delete_project(parse_body(req.body),
                                            config::runtime().snapshot());
             });
             return json_response(r.body, r.status);
@@ -501,7 +501,7 @@ void run(const config::Settings& settings, const Options& opts) {
     CROW_ROUTE(app, "/api/project/premise").methods("POST"_method)(
         [](const crow::request& req) {
             auto r = guard([&] {
-                return post_project_premise(json::parse(req.body, nullptr, false));
+                return post_project_premise(parse_body(req.body));
             });
             return json_response(r.body, r.status);
         });
@@ -525,7 +525,7 @@ void run(const config::Settings& settings, const Options& opts) {
     CROW_ROUTE(app, "/api/episode").methods("POST"_method)(
         [](const crow::request& req) {
             auto r = guard([&] {
-                return post_episode(json::parse(req.body, nullptr, false));
+                return post_episode(parse_body(req.body));
             });
             return json_response(r.body, r.status);
         });
@@ -533,7 +533,7 @@ void run(const config::Settings& settings, const Options& opts) {
     CROW_ROUTE(app, "/api/episode/action").methods("POST"_method)(
         [](const crow::request& req) {
             auto r = guard([&] {
-                return post_episode_action(json::parse(req.body, nullptr, false));
+                return post_episode_action(parse_body(req.body));
             });
             return json_response(r.body, r.status);
         });
@@ -553,7 +553,7 @@ void run(const config::Settings& settings, const Options& opts) {
     const auto batch_route = [](auto handler) {
         return [handler](const crow::request& req) {
             auto r = guard([&] {
-                return handler(json::parse(req.body, nullptr, false),
+                return handler(parse_body(req.body),
                                batch_client);
             });
             return json_response(r.body, r.status);
@@ -615,7 +615,7 @@ void run(const config::Settings& settings, const Options& opts) {
     CROW_ROUTE(app, "/api/run").methods("POST"_method)(
         [](const crow::request& req) {
             auto r = guard([&] {
-                return post_run(json::parse(req.body, nullptr, false),
+                return post_run(parse_body(req.body),
                                 default_run_deps());
             });
             return json_response(r.body, r.status);

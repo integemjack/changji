@@ -178,6 +178,9 @@ std::string with_query(const std::string& path,
 struct Response {
     int status = 0;
     json body;
+    /// 响应原文。**body 解析不动的时候只有它还留着东西**——
+    /// 而"回了客户端解析不动的东西"正是要报出来的那种差异。
+    std::string raw;
     std::string error;
     /// **响应头也是契约。** 这一项是补上去的：Range 那一层比头的时候
     /// 发现 C++ 全站的 Content-Type 都多一个 "; charset=utf-8"，
@@ -272,6 +275,39 @@ json retarget(const json& src, const std::string& project) {
     for (const char* key : {"project", "path"}) {
         if (out.contains(key) && out[key].is_string()) out[key] = project;
     }
+    return out;
+}
+
+/// 发一段**原始字节**当请求体。
+///
+/// `send` 收的是 json、发的是 `dump()`，所以它永远发得出合法 JSON——
+/// 也就永远试不出"body 解析不动的时候两边怎么回"。
+/// 166 条对拍一条都没试过这个，于是 C++ 回**不合法的 JSON** 这件事
+/// 一直没人看见（`json::parse(..., false)` 的 discarded 值被塞进 422 的
+/// `input`，dump 出来是字面量 `<discarded>`）。
+Response send_raw(const std::string& base, const std::string& method,
+                  const std::string& path, const std::string& raw_body,
+                  const std::string& content_type = "application/json") {
+    const auto [origin, prefix] = split_origin(base);
+    httplib::Client cli(origin);
+    cli.set_connection_timeout(10, 0);
+    cli.set_read_timeout(120, 0);
+
+    httplib::Result res = method == "POST"
+        ? cli.Post(prefix + path, raw_body, content_type)
+        : cli.Put(prefix + path, raw_body, content_type);
+
+    Response out;
+    if (!res) {
+        out.error = "连不上：" + httplib::to_string(res.error());
+        return out;
+    }
+    out.status = res->status;
+    out.content_type = res->get_header_value("Content-Type");
+    out.raw = res->body;                     // 原文留着——它可能根本不是 JSON
+    out.body = json::parse(res->body, nullptr, false);
+    // **这里不把"不是 JSON"当成 error**：那会变成 skip，
+    // 而"回了不合法的 JSON"正是要比的东西，必须能报成"不同"。
     return out;
 }
 
@@ -1980,6 +2016,59 @@ int run_live(const Args& args, Tally& tally) {
 
 }  // namespace
 
+/// 请求体解析不动的时候，两边各回什么。
+///
+/// **这一条是补出来的**：跑真的引擎、手敲一个非法 UTF-8 的 body 时发现
+/// C++ 回的是 `{"detail":[{"input":<discarded>,...}]}`——`<discarded>`
+/// 不是 JSON，客户端 `JSON.parse` 直接抛，连错误信息都读不出来。
+/// 而且报的是"Field required"，指着一个根本没读到的字段，
+/// 真正的毛病是整个 body 就没解析成功。Python 那边是
+/// 400 + {"detail":"There was an error parsing the body"}。
+void run_bad_body(const Args& args, Tally& tally) {
+    struct Case {
+        const char* name;
+        const char* path;
+        std::string body;
+    };
+    const std::vector<Case> cases = {
+        // 非法 UTF-8：0xff 0xfe 不是合法的 UTF-8 起始字节
+        {"请求体是非法 UTF-8", "/api/new",
+         std::string("{\"title\":\"") + "\xff\xfe" + "\"}"},
+        {"请求体不是 JSON", "/api/new", "这不是 json"},
+        {"请求体是半截 JSON", "/api/new", "{\"title\":"},
+        {"请求体是空的", "/api/new", ""},
+        {"请求体是 JSON 但不是对象", "/api/new", "[1,2,3]"},
+    };
+
+    for (const auto& c : cases) {
+        const std::string name = std::string("坏请求体：") + c.name;
+        const Response py = send_raw(args.python_url, "POST", c.path, c.body);
+        const Response cp = send_raw(args.cpp_url, "POST", c.path, c.body);
+        if (!py.error.empty()) { tally.skip(name, "Python 侧：" + py.error); continue; }
+        if (!cp.error.empty()) { tally.skip(name, "C++ 侧：" + cp.error); continue; }
+
+        std::vector<compat::Difference> diffs;
+        if (py.status != cp.status) {
+            diffs.push_back({"（状态码）", "Python " + std::to_string(py.status) +
+                                             "，C++ " + std::to_string(cp.status)});
+        }
+        // **先比"是不是 JSON"。** 回一坨客户端解析不动的东西，
+        // 比字段对不对更严重——那是连错误信息都送不到用户眼前。
+        if (py.body.is_discarded() != cp.body.is_discarded()) {
+            diffs.push_back({"（回的是不是合法 JSON）",
+                             std::string("Python ") +
+                                 (py.body.is_discarded() ? "不是" : "是") +
+                                 "，C++ " + (cp.body.is_discarded() ? "不是" : "是") +
+                                 "；C++ 原文：" + cp.raw.substr(0, 160)});
+        } else if (!py.body.is_discarded()) {
+            for (auto& d : compat::compare(py.body, cp.body, compat::CompareOptions{})) {
+                diffs.push_back({d.path, d.detail});
+            }
+        }
+        tally.report(name, diffs);
+    }
+}
+
 int main(int argc, char** argv) {
     // **第一件事**：Windows 上 argv 是 ANSI 的，中文项目路径直接用会是乱码。
     // 这个 bug 就是这个程序自己抓出来的——跑第一遍时七条只读接口全回 500，
@@ -2064,6 +2153,7 @@ int main(int argc, char** argv) {
         run_upload(args, tally);
         run_media(args, tally);
         run_pipeline(args, tally);
+        run_bad_body(args, tally);
         if (!args.llm_work.empty()) run_llm(args, tally);
     }
 

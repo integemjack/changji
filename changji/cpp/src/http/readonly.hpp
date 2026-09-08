@@ -171,6 +171,108 @@ ApiResult get_project(const std::string& path);
 ApiResult get_shots(const std::string& path, const std::string& episode_id);
 ApiResult get_assets(const std::string& path);
 
+/// 请求体解析不动时，按 **Python 真实行为** 分四种情况回。
+///
+/// 之前这里是 `json::parse(body, nullptr, false)`，失败回一个 discarded 值，
+/// 被直接塞进 422 的 `input` 字段——而 discarded 的 dump() 是字面量
+/// `<discarded>`，**那不是 JSON**，客户端 `JSON.parse` 直接抛，
+/// 连错误信息都读不出来。而且报的是"Field required"，
+/// 指着一个根本没读到的字段。
+///
+/// 起两个引擎逐条比出来的（对拍「坏请求体」那五条）：
+///
+/// | 请求体 | Python |
+/// |---|---|
+/// | 不是合法 UTF-8 | 400 `{"detail":"There was an error parsing the body"}` |
+/// | 空 | 422 `missing`，loc `["body"]`，input `null` |
+/// | 能解码但不是 JSON | 422 `json_invalid`，loc `["body", 出错位置]` |
+/// | 是 JSON 但不是对象 | 422 `model_attributes_type` |
+///
+/// **第一版我把五种全回成 400**，因为只拿"非法 UTF-8"那一种验过就收工了。
+/// 五分之四是错的。
+inline bool valid_utf8(const std::string& s) {
+    std::size_t i = 0;
+    while (i < s.size()) {
+        const unsigned char c = static_cast<unsigned char>(s[i]);
+        std::size_t n = 0;
+        if (c < 0x80) n = 0;
+        else if ((c & 0xE0) == 0xC0) n = 1;
+        else if ((c & 0xF0) == 0xE0) n = 2;
+        else if ((c & 0xF8) == 0xF0) n = 3;
+        else return false;
+        if (i + n >= s.size() + (n == 0 ? 1 : 0)) { if (n) return false; }
+        for (std::size_t k = 1; k <= n; ++k) {
+            if (i + k >= s.size()) return false;
+            if ((static_cast<unsigned char>(s[i + k]) & 0xC0) != 0x80) return false;
+        }
+        i += n + 1;
+    }
+    return true;
+}
+
+/// 字节偏移换成字符偏移。
+///
+/// **Python 的 `loc` 里那个数是字符位置，不是字节位置**——它在 str 上解析。
+/// 纯 ASCII 时两者一样，所以只拿英文试是试不出这个差别的。
+inline std::size_t char_offset(const std::string& s, std::size_t byte_off) {
+    std::size_t chars = 0;
+    for (std::size_t i = 0; i < byte_off && i < s.size(); ++i) {
+        if ((static_cast<unsigned char>(s[i]) & 0xC0) != 0x80) ++chars;
+    }
+    return chars;
+}
+
+inline nlohmann::json parse_body(const std::string& raw) {
+    // 一、解码那一层就挂了。Starlette 在读 body 时就拦下，还没轮到 JSON。
+    if (!valid_utf8(raw)) {
+        throw ApiError(400, "There was an error parsing the body");
+    }
+
+    // 二、空 body。pydantic 当成"这个字段没给"。
+    if (raw.empty()) {
+        throw ApiError::with_body(422, nlohmann::json{{"detail",
+            nlohmann::json::array({nlohmann::json{
+                {"type", "missing"},
+                {"loc", nlohmann::json::array({"body"})},
+                {"msg", "Field required"},
+                {"input", nullptr},
+            }})}});
+    }
+
+    // 三、能解码，但不是 JSON。
+    nlohmann::json v;
+    try {
+        v = nlohmann::json::parse(raw);
+    } catch (const nlohmann::json::parse_error& e) {
+        // nlohmann 的 byte 是 1 起的字节位置，Python 的 pos 是 0 起的字符位置
+        const std::size_t off =
+            char_offset(raw, e.byte > 0 ? e.byte - 1 : 0);
+        throw ApiError::with_body(422, nlohmann::json{{"detail",
+            nlohmann::json::array({nlohmann::json{
+                {"type", "json_invalid"},
+                {"loc", nlohmann::json::array({"body", off})},
+                {"msg", "JSON decode error"},
+                {"input", nlohmann::json::object()},
+                // 文字不算契约（对拍有 /**/error 的忽略规则），
+                // 但形状要在——前端会读它
+                {"ctx", nlohmann::json{{"error", "Expecting value"}}},
+            }})}});
+    }
+
+    // 四、是 JSON，但不是对象。请求模型都是对象。
+    if (!v.is_object()) {
+        throw ApiError::with_body(422, nlohmann::json{{"detail",
+            nlohmann::json::array({nlohmann::json{
+                {"type", "model_attributes_type"},
+                {"loc", nlohmann::json::array({"body"})},
+                {"msg", "Input should be a valid dictionary or object to "
+                        "extract fields from"},
+                {"input", v},
+            }})}});
+    }
+    return v;
+}
+
 /// 把上面那些函数的异常翻成 ApiResult。路由层统一走它。
 template <typename F>
 ApiResult guard(F&& fn) {
