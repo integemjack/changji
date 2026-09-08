@@ -1742,6 +1742,50 @@ int main(int argc, char** argv) {
         return 2;
     }
 
+    // **语料一份都读不到时必须当场停，不能"跳过"了事。**
+    //
+    // 这些语料都是进了版本库的。读不到只有一个原因：`--golden` 指错了。
+    // 而原来的行为是每个模式各打一句"读不到 xxx，跳过"然后接着跑——
+    // 最后报的是"一致 20、不同 0、跳过 0"，**退出码 0**。
+    //
+    // 那正是这套工具里最坏的一种失败：条数从 165 掉到 20，结论仍然是全过。
+    // 实测被骗过一次（从仓库根目录调 duiping.ps1，它没传 --golden，
+    // 而工具的默认值是相对路径 "tests/golden"）。
+    //
+    // 靠外面数条数也能兜住，但那要求每个调用方都记得数。在这儿拦最省事。
+    {
+        static const char* kRequired[] = {
+            "endpoints_readonly.json", "route_audit.json",
+            "endpoints_episodes.json", "endpoints_shot_edit.json",
+            "endpoints_asset_edit.json", "endpoints_batch_edit.json",
+            "endpoints_upload.json", "endpoints_scripting.json",
+            "endpoints_planning.json",
+        };
+        std::vector<std::string> missing;
+        for (const char* name : kRequired) {
+            std::error_code ec;
+            if (!fs::is_regular_file(fs::path(args.golden) / name, ec)) {
+                missing.emplace_back(name);
+            }
+        }
+        if (!missing.empty()) {
+            std::cout << "\n语料读不到，对拍不能跑。\n"
+                      << "  --golden 指向：" << args.golden << "\n"
+                      << "  缺了 " << missing.size() << " / "
+                      << std::size(kRequired) << " 份：";
+            for (std::size_t i = 0; i < missing.size() && i < 4; ++i) {
+                std::cout << (i ? "、" : "") << missing[i];
+            }
+            if (missing.size() > 4) std::cout << " …";
+            std::cout << "\n\n"
+                         "**这里不往下跑，是因为往下跑会给出一个假的绿。**\n"
+                         "少几份语料只会让对应的模式静静地不跑，而最后仍然报\n"
+                         "「不同 0、跳过 0」——条数从 165 掉到 20，结论不变。\n"
+                         "语料都在版本库里，读不到基本就是路径给错了。\n";
+            return 2;
+        }
+    }
+
     Tally tally;
     run_data(args, tally);
     run_recorded(args, tally);
