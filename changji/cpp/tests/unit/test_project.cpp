@@ -134,8 +134,32 @@ TEST_CASE("目录布局与相对路径约定") {
     const ProjectPaths paths(root);
 
     SUBCASE("子目录齐全") {
+        // **在临时目录里现建一个，不看语料目录里现在有什么。**
+        //
+        // 原来这里直接列语料项目根下的目录。那七个子目录是空的，
+        // 而 **git 不跟踪空目录**——它们只是"碰巧在盘上"。后果有两个：
+        //
+        //   一，新克隆一份仓库跑测试就会挂，而报错只说"子目录对不上"，
+        //       完全看不出真正的原因是"少了几个空目录"。
+        //   二，任何清过一次工作区的操作都会让它挂。2026-09-08 就是
+        //       这么撞上的：一次 `git stash -u` 把它们清掉了，
+        //       而 `stash pop` 带不回来——git 从来没跟踪过它们。
+        //
+        // 加 .gitkeep 占位是另一种修法，但那会往 refs/ 里塞一个文件，
+        // 而上传那几条用例是**逐个文件名比 refs/ 的内容**的，
+        // 立刻挂四条。
+        //
+        // 真正要钉的本来就不是"盘上有什么"，是 **ensure() 建出来的
+        // 布局和 Python 一致**。
+        const fs::path tmp =
+            fs::temp_directory_path() / changji::paths::from_utf8("changji_布局");
+        std::error_code ec;
+        fs::remove_all(tmp, ec);
+        const ProjectPaths fresh(tmp);
+        fresh.ensure();
+
         std::vector<std::string> got;
-        for (const auto& entry : fs::directory_iterator(root)) {
+        for (const auto& entry : fs::directory_iterator(tmp)) {
             if (entry.is_directory()) {
                 got.push_back(changji::paths::to_utf8(entry.path().filename()));
             }

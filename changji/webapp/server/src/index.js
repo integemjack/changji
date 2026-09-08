@@ -17,6 +17,7 @@ import { proxy } from './engine.js'
 import { settingsRouter } from './routes/settings.js'
 import { publishRouter } from './routes/publish.js'
 import { flowRouter } from './routes/flow.js'
+import { attachWs } from './ws.js'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 const clientDist = path.resolve(here, '../../client/dist')
@@ -60,6 +61,10 @@ app.use((err, _req, res, _next) => {
 
 const port = Number(process.env.PORT || 5173 + 1)
 const host = process.env.HOST || '0.0.0.0'
-app.listen(port, host, () => {
+const server = app.listen(port, host, () => {
   console.log(`场记 Web 平台已启动：http://127.0.0.1:${port}`)
 })
+
+// 进度走 WebSocket。**掉线不影响功能**：前端收到关闭就退回轮询
+// /api/run，那条路一直在。
+attachWs(server)

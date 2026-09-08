@@ -1,8 +1,20 @@
 /**
  * 流水线运行状态。
  *
- * 轮询而不是 WebSocket：这一层要显示的东西每秒变一次就够了，
- * 少一层连接管理就少一类掉线问题。引擎那边也是这个思路。
+ * **WebSocket 打底，轮询兜底。** 引擎推进度到 /api/ws（由 Node 那一层
+ * 中转到引擎的 /ws），连不上或断了就退回每 1200ms 轮询 /api/run。
+ * 两条路并存不是保守：WebSocket 掉线的原因很多（代理、休眠、引擎重启），
+ * 而这一屏是用户盯着等的，宁可慢一点也不能停在半路。
+ *
+ * **推上来的是增量，不是整份状态。** 引擎的消息只有
+ * {type, job_id, stage, step, total, message, shot_id}，
+ * 没有 outputs / events / queue_total 这些。所以：
+ *
+ *   - 开跑前先拉一次全量（poll）
+ *   - 跑的过程中用推上来的增量更新进度
+ *   - 收到 done / error 再拉一次全量，把产出和完整事件补齐
+ *
+ * 这也是引擎那边 ws.hpp 里写的用法：「重连后先拉一次全量再续订阅」。
  */
 
 import { defineStore } from 'pinia'
@@ -20,10 +32,21 @@ const STAGE_LABELS = {
   done: '完成',
 }
 
+/** 轮询兜底的间隔。和原来一样，用户对这个节奏已经有预期。 */
+const POLL_MS = 1200
+
+function wsUrl() {
+  const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+  return `${proto}//${window.location.host}/api/ws`
+}
+
 export const useRun = defineStore('run', () => {
   const state = ref(null)
   const polling = ref(false)
+  /** 真的连上了 WebSocket。界面暂时不显示它，排查时有用。 */
+  const live = ref(false)
   let timer = null
+  let socket = null
   let missCount = 0
 
   const running = computed(() => Boolean(state.value?.running))
@@ -49,21 +72,110 @@ export const useRun = defineStore('run', () => {
     }
   }
 
-  function start(intervalMs = 1200) {
+  /** 把推上来的一条增量并进当前状态。 */
+  function applyMessage(msg) {
+    if (!msg || typeof msg !== 'object') return
+    if (msg.type === 'hello') return
+
+    if (msg.type === 'done' || msg.type === 'error') {
+      // 终止消息只说"完了"，产出和完整事件要再拉一次。
+      // **不能只把 running 置 false 就完事**：产出列表是这一屏的结果。
+      poll()
+      return
+    }
+
+    // 字段名不一样：推上来的叫 step，快照里叫 current。
+    // 直接把 msg 铺进 state 的话，进度条会读到 undefined。
+    const base = state.value ?? {}
+    state.value = {
+      ...base,
+      running: true,
+      stage: msg.stage ?? base.stage,
+      current: typeof msg.step === 'number' ? msg.step : base.current,
+      total: typeof msg.total === 'number' ? msg.total : base.total,
+      message: msg.message ?? base.message,
+      // 事件日志按镜头分组显示，推上来的这条也要进去，否则跑的过程中
+      // 日志是空的，要等结束才一次性出现。
+      events: [
+        ...(base.events ?? []),
+        {
+          at: Date.now() / 1000,
+          stage: msg.stage ?? '',
+          kind: msg.type === 'error' ? 'error' : 'progress',
+          message: msg.message ?? '',
+          shot_id: msg.shot_id,
+          current: msg.step ?? 0,
+          total: msg.total ?? 0,
+        },
+      ].slice(-200),
+    }
+  }
+
+  function openSocket() {
+    if (socket) return
+    let sock
+    try {
+      sock = new WebSocket(wsUrl())
+    } catch {
+      return // 退回轮询，start() 里已经起了定时器
+    }
+    socket = sock
+
+    sock.onopen = () => {
+      live.value = true
+      // **按类别订阅**。具体的 job_id 引擎不对外暴露，订不了；
+      // 而按类别订阅可以在任务开始之前完成，中间不会漏消息。
+      sock.send(JSON.stringify({ type: 'subscribe', job_id: 'run' }))
+    }
+    sock.onmessage = (ev) => {
+      let msg
+      try {
+        msg = JSON.parse(ev.data)
+      } catch {
+        return // 不是 JSON 就丢掉，不该让一条坏消息掀翻这一屏
+      }
+      applyMessage(msg)
+    }
+    const drop = () => {
+      live.value = false
+      if (socket === sock) socket = null
+      // 断了不停轮询——定时器一直开着，这里不用做别的。
+    }
+    sock.onclose = drop
+    sock.onerror = drop
+  }
+
+  function start(intervalMs = POLL_MS) {
     if (polling.value) return
     polling.value = true
     poll()
+    // **定时器照常开着，即使 WebSocket 连上了。**
+    // 它同时是兜底和补全：推上来的是增量，outputs / queue_total 这些
+    // 只有全量里有。连上 WS 之后这条路的开销可以忽略。
     timer = setInterval(poll, intervalMs)
+    openSocket()
   }
 
   function stop() {
     polling.value = false
     if (timer) clearInterval(timer)
     timer = null
+    if (socket) {
+      const sock = socket
+      socket = null
+      sock.onclose = null
+      sock.onerror = null
+      sock.close()
+    }
+    live.value = false
   }
 
-  return { state, running, percent, stageLabel, events, polling, poll, start, stop }
+  return {
+    state, running, percent, stageLabel, events, polling, live,
+    poll, start, stop, applyMessage,
+  }
 })
+
 
 /** 写整季剧本 / 批量出分镜的进度。跟流水线是两条独立的线。 */
 export const useWriter = defineStore('writer', () => {
