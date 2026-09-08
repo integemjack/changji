@@ -13,6 +13,7 @@
 #include <nlohmann/json.hpp>
 
 #include "infer/ggml_abi.hpp"
+#include "infer/llama_tts.hpp"
 #include "infer/sd_backend.hpp"
 #include "util/paths.hpp"
 #include "util/proc.hpp"
@@ -307,6 +308,17 @@ Check check_ggml() {
             "而且 ggml 的头和库必须来自同一份源码树。"};
 }
 
+/// 进程内配音编进来了没有。
+///
+/// **不是 WARN 也不是 FAIL。** 没编进来是完全正常的形态——配音走
+/// ComfyUI 或独立 HTTP 服务是阶段 8 之后相当长一段时间的实际形态，
+/// 方案风险一那一节写明了这一点。报警告等于让报告长期挂一条
+/// 永远不会去处理的黄字。
+Check check_local_tts() {
+    const auto probe = infer::probe_llama_tts();
+    return {"进程内配音", probe.ok ? Level::OK : Level::WARN, probe.detail, ""};
+}
+
 Check check_sd() {
     if (!infer::sd_available()) {
         return {"出图后端", Level::OK, "没编进来，出图走推理服务", ""};
@@ -412,6 +424,7 @@ Report run_checks(const config::Settings& settings) {
     r.checks.push_back(guarded("配音", [&] { return check_tts(settings, infer_ok); }));
     r.checks.push_back(guarded("大模型", [&] { return check_llm(settings); }));
     r.checks.push_back(guarded("ggml ABI", [&] { return check_ggml(); }));
+    r.checks.push_back(guarded("进程内配音", [&] { return check_local_tts(); }));
     r.checks.push_back(guarded("出图后端", [&] { return check_sd(); }));
     r.checks.push_back(guarded("本地模型", [&] { return check_models(settings); }));
     r.checks.push_back(guarded("显卡", [&] { return check_gpu(settings); }));

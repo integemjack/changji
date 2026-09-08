@@ -173,6 +173,17 @@ if(CHANGJI_LLAMA)
         set(${opt} OFF CACHE BOOL "" FORCE)
     endforeach()
 
+    # **配音要 mtmd，而 mtmd 在 tools/ 底下。**
+    # Qwen3-TTS 的实现（models/qwen3tts-gen.cpp、qwen3tts-spkenc.cpp）
+    # 在 mtmd 里，不在 libllama 里。上游正好留了这个钩子：
+    # LLAMA_BUILD_MTMD 单独编 mtmd，不用把整个 tools/ 和 common 拖进来。
+    set(LLAMA_BUILD_MTMD ON CACHE BOOL "" FORCE)
+
+    # **视频支持关掉。** mtmd 的 MTMD_VIDEO 要 LLAMA_SUBPROCESS，
+    # 而且运行时要 PATH 里有 ffmpeg 二进制。我们用不到（配音只出音频），
+    # 开着等于给二进制加一个用不上的运行时依赖。
+    set(MTMD_VIDEO OFF CACHE BOOL "" FORCE)
+
     FetchContent_Declare(llama
         GIT_REPOSITORY https://github.com/ggml-org/llama.cpp.git
         # 钉死，理由同 sd.cpp。这个 commit 是前置验证工程验过的那个。
@@ -259,6 +270,7 @@ add_executable(changji
     src/stages/audio.cpp
     src/stages/tts_backends.cpp
     src/infer/ggml_abi.cpp
+    src/infer/llama_tts.cpp
     src/infer/scheduler.cpp
     src/infer/sd_backend.cpp
     src/infer/sd_image.cpp
@@ -324,11 +336,16 @@ target_compile_definitions(changji PRIVATE
 )
 
 if(CHANGJI_LLAMA)
-    target_link_libraries(changji PRIVATE llama)
+    # mtmd 而不只是 llama：Qwen3-TTS 的实现在 mtmd 里。
+    # mtmd 的 PUBLIC 链接里已经带上了 llama 和 ggml。
+    target_link_libraries(changji PRIVATE mtmd)
     target_compile_definitions(changji PRIVATE CHANGJI_HAVE_LLAMA=1)
     # ggml 的头。开了 CHANGJI_LLAMA 时它由 llama.cpp 提供，
     # 而 doctor 的 ABI 探针要 include "ggml.h"。
     target_include_directories(changji PRIVATE "${llama_SOURCE_DIR}/ggml/include")
+    # mtmd.h 在 tools/mtmd 下。mtmd 目标自己 PUBLIC 了这个目录，
+    # 这一行是为了万一以后改成别的链接方式时不至于悄悄编不到。
+    target_include_directories(changji PRIVATE "${llama_SOURCE_DIR}/tools/mtmd")
 endif()
 
 if(CHANGJI_SD)

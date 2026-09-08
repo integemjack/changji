@@ -1142,6 +1142,34 @@ stable-diffusion.cpp，llama.cpp 没有链进二进制。
    拉完源码之后插一次手；主工程靠 FetchContent 拉，没人插得进去。
 3. 接 llama.cpp 的 mtmd TTS，做成第四个 `TTSBackend`。
 
+**第 3 步先做了编译和链接那一半**（2026-09-08）。两件事：
+
+**一、Qwen3-TTS 的实现在 mtmd 里，不在 libllama 里**
+（`tools/mtmd/models/qwen3tts-gen.cpp`、`qwen3tts-spkenc.cpp`）。
+mtmd 挂在 `tools/` 底下，而我们把 `LLAMA_BUILD_TOOLS` 关了——
+只链 llama 是拿不到配音的。上游正好留了 `LLAMA_BUILD_MTMD` 这个钩子，
+可以单独编 mtmd，不用把整个 `tools/` 和 `common` 拖进来。
+`MTMD_VIDEO` 要关：它要 `LLAMA_SUBPROCESS`，运行时还要 PATH 里有 ffmpeg，
+而配音只出音频。
+
+**二、加了一条运行时探针，不满足于"编出来了"。** mtmd 是静态库，
+而我们还没有任何地方调它的函数——链接器完全可以把它整个丢掉，
+构建日志里照样有一行 `Linking CXX static library mtmd.lib`。
+所以 `/api/doctor` 里那项"进程内配音"真的调两个纯函数
+（`mtmd_default_marker`、`mtmd_context_params_default`），
+叫得动才算数。实测回的是 `mtmd 已链入，媒体标记 <__media__>，默认 4 线程`。
+
+**合成本身还没接，理由记在这儿免得下一个人以为是漏了：**
+mtmd 的音频生成 API 在头文件里明写着
+`EXPERIMENTAL API for audio generation, subjected to breaking changes`，
+而且**是无状态的**——`mtmd_gen_audio_process` 的注释说
+"caller must handle state management and audio frame accumulation"。
+这不是"调一个函数出一段音频"，是要自己驱动骨干模型逐 token 跑、
+把隐状态喂进 `GEN_CODE`、攒够码本再走 `GEN_WAV`。那是几百行，
+而且**在拿到权重之前一行都验不了**。先把编译链接这一段做扎实、能自检，
+比先写一堆跑不了的代码有用——阶段 5 和 7 的教训就是"代码写完了、
+实机判据卡住"这个状态本身要标出来，不要假装完成。
+
 第 1、2 步已经做完（2026-09-08）：`CHANGJI_LLAMA=ON` 时 llama.cpp 和 sd.cpp
 在同一份打过补丁的 ggml 上编出**一个 57 MB 的 changji.exe，没有外挂 DLL**。
 拿它跑完整对拍：**164 条一致、0 条不同**——链进 llama.cpp 之后接口行为
