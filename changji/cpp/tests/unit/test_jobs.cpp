@@ -376,11 +376,23 @@ TEST_CASE("一边跑一边查快照不会撕裂") {
     std::thread poller([&] {
         while (!stop_polling.load()) {
             const json s = t.snapshot(JobKind::Run);
-            // 光是能取出来不算数，字段得完整
-            REQUIRE(s.contains("events"));
-            REQUIRE(s.at("events").is_array());
+            // 光是能取出来不算数，字段得完整。
+            //
+            // **这里必须是 CHECK 不是 REQUIRE。** REQUIRE 失败要靠抛异常
+            // 中止用例，而这是工作线程——异常出不去，整轮跑会被就地截断。
+            // 实测过：把这条改成必失败的 REQUIRE，输出是
+            //
+            //     test cases: 215 | 214 passed | 1 failed | 277 skipped
+            //
+            // 492 条里只跑了 215 条，剩下 277 条根本没执行，而汇总行写的是
+            // "1 failed"——看见这行的人会去修那一条然后重跑，
+            // **不会知道另外 277 条压根没跑过**。
+            // 换成 CHECK 之后同样的失败是：492 全跑完，1 条挂，179 个断言挂。
+            CHECK(s.contains("events"));
+            CHECK(s.at("events").is_array());
+            if (!s.contains("events") || !s.at("events").is_array()) continue;
             for (const auto& e : s.at("events")) {
-                REQUIRE(e.contains("current"));
+                CHECK(e.contains("current"));
             }
             ++polls;
         }
