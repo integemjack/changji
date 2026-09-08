@@ -346,3 +346,58 @@ TEST_CASE("tts.backend 认 local，另外两个取值一个字没变") {
     c.backend = "explode";
     CHECK_FALSE(c.validate().empty());
 }
+
+TEST_CASE("HTTP 后端：两处和 Python 不一样的地方，是故意的") {
+    // 这两条**不是对拍能发现的**——对拍比的是接口响应，
+    // 而配音后端在流水线里面，跑起来要有个真的 TTS 服务。
+    //
+    // 记在这里是因为 Python 删掉之后就没有参照物了：
+    // 后来的人看见 C++ 比 Python 严，会以为是自己看漏了 Python 的哪一行，
+    // 或者反过来，"对齐一下"把它改回去。
+    const fs::path dir = temp_dir("http偏差");
+
+    auto backend_returning = [&](const std::string& body) {
+        return stages::http_tts_backend(
+            "http://x", 30.0,
+            [body](const std::string&, const std::string&,
+                   const std::map<std::string, std::string>&, double) {
+                llm::HttpResponse r;
+                r.status = 200;
+                r.body = body;
+                return r;
+            },
+            std::nullopt);
+    };
+
+    SUBCASE("回了一段静音 wav 要被拦下来——Python 这里是放行的") {
+        // Python 的 HttpTTSBackend 收尾只有 probe_wav_duration，
+        // 没有 _reject_silent_audio（audio.py:161）。只有它的 Comfy 后端有。
+        //
+        // 而"成功但没出声"和后端是谁没关系：独立服务同样会在模型没载好时
+        // 回一个合法的空 wav。放行的代价是一整集静音被当成配音成功。
+        const fs::path src = dir / paths::from_utf8("静音.wav");
+        stages::write_silence(src, 0.3, 24000);   // 短过 1.05 秒的绝对下限
+        std::ifstream in(src, std::ios::binary);
+        const std::string bytes((std::istreambuf_iterator<char>(in)),
+                                std::istreambuf_iterator<char>());
+
+        const auto b = backend_returning(bytes);
+        CHECK_THROWS_AS(
+            b.synthesize("这是一句正常长度的台词，配出来不该只有零点三秒",
+                         dir / paths::from_utf8("出.wav"), std::nullopt,
+                         "neutral", 0.5),
+            stages::AudioError);
+    }
+
+    // **第二处偏差这里钉不住，说清楚为什么。**
+    //
+    // Python 的 HTTP 后端调 probe_wav_duration（只认 wav），这里调
+    // probe_audio_duration（wav 读不动就退 ffprobe）。要证明这个差别，
+    // 得让一个非 wav 的响应在这里**成功**——而那需要机器上真有 ffmpeg，
+    // 本机没有。给 std::nullopt 的话两边都抛，只是话不一样，
+    // 而那句话上面"wav 自己读，别的格式没有 ffmpeg 时说清缺什么"
+    // 那条已经钉过了。
+    //
+    // 所以这条偏差目前只有代码注释和方案文档记着，没有用例。
+    // 装上 ffmpeg 之后应该补：回一段 mp3，断言拿得到时长。
+}

@@ -167,8 +167,31 @@ TTSBackend http_tts_backend(const std::string& base_url, double timeout_s,
         f.close();
 
         SynthesisResult res;
+        // ⚠️ **这两行都和 Python 不一样，而且是故意的。**
+        //
+        // Python 的 HttpTTSBackend.synthesize 收尾是这么一行
+        // （src/changji/stages/audio.py:161，2026-09-08 复核过还是这样）：
+        //
+        //     return SynthesisResult(duration_s=probe_wav_duration(out_path), ...)
+        //
+        // 也就是：**只认 wav**，而且**不验产出物**。
+        //
+        // 一，时长这里走 probe_audio_duration（wav 自己读，别的退 ffprobe）。
+        //     Python 用的是 probe_wav_duration，服务端回 mp3 就直接抛
+        //     "音频文件读不出时长"。而独立 TTS 服务回 mp3 很常见——
+        //     Python 那边它自己的 Comfy 后端用的正是 probe_audio_duration，
+        //     两个后端不一致更像是漏了，不是有意的。
+        //
+        // 二，**Python 的 HTTP 后端不做静音检查**，只有 Comfy 后端做。
+        //     而"成功但没出声"和后端是谁没有关系：独立服务同样会在
+        //     模型没载好时回一个合法的空 wav。漏掉的代价是一整集静音
+        //     被当成配音成功，混音、字幕、时长锁全部照跑，
+        //     等人听出来的时候前面几步都得重来。
+        //
+        // 两条都是**往严的方向偏**，不会把 Python 能过的正常输入判失败
+        // （mp3 那条是放宽，静音那条挡的是本来就该挡的）。
+        // 删掉 Python 之后没人记得这里差过，所以写在这儿。
         res.duration_s = probe_audio_duration(out, ff);
-        // HTTP 服务同样可能"成功但没出声"，一样要验产出物。
         reject_silent_audio(out, res.duration_s, text);
         res.audio_path = out;
         return res;
