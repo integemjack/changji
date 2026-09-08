@@ -42,4 +42,12 @@ changji/cpp/build*/
 # 2026-09-08 出过事：脚本把权重放在 models/，我以为那是仓库外面，
 # 其实仓库根就是 Desktop/changji，models/ 在里面。一次 git add -A
 # 把一个下到一半的 161 MB 文件提交进去了。
-models/
+#
+# **开头那个斜杠不能少。** 写成 models/ 会匹配任意层级的同名目录，
+# 而 changji/cpp/src/models/ 底下全是源码——已跟踪的不受影响，
+# 但**以后往那儿新加的文件会被静默忽略**，git add 悄悄跳过。
+/models/
+
+# 外部工具（ffmpeg 之类）。和 models/ 一样：仓库根就是这个目录，
+# 往它下面放大文件必须先写进这里。开头的斜杠同理，不能少。
+/bin/

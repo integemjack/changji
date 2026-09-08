@@ -1,5 +1,7 @@
 #include "doctor/doctor.hpp"
 
+#include "doctor/needs.hpp"
+
 #include <algorithm>
 #include <cctype>
 #include <filesystem>
@@ -128,11 +130,33 @@ Check check_fonts(const config::Settings& s) {
 }
 
 Check check_infer(const config::Settings& s) {
+    // **当前配置到底用不用得上 ComfyUI，先问清楚再判。**
+    //
+    // 原来这里无条件报 FAIL 并说"出图和出视频都要用它"。
+    // 那句话在 `[models].engine = "sd"` 时是**假的**——那条路走进程内的
+    // sd.cpp，`run_deps.cpp` 里 `if (engine != "comfy") return b;`
+    // 在碰任何 ComfyUI 工作流之前就返回了。
+    //
+    // 后果不是小事：报告底下会写"有 N 项必须先解决才能出片"，
+    // 把人支去装一个 34 GB 的依赖，而他根本不需要。
+    // 体检报告的意义就是告诉人"还差什么"，它说错了比不说更糟。
+    // 判断本身在 needs.hpp 里，那个文件不链网络库所以测得到。
+    // 这个文件（链 httplib）不进测试目标，见 CMakeLists 里那段说明。
+    const ComfyNeed need = comfy_need(s);
     const std::string& url = s.comfy.base_url;
     auto body = get_json(url, "/system_stats", 8);
     if (!body) {
+        if (!need.required()) {
+            // 用不到它，连不上就只是个事实，不是待办
+            return {"推理服务", Level::OK,
+                    "没连（当前配置用不到它）",
+                    "出图出片走进程内 sd.cpp（[models].engine = \"" +
+                        s.models.engine + "\"），配音走 " + s.tts.backend +
+                        "。\n改成 engine = \"comfy\" 或 tts.backend = "
+                        "\"comfy\" 时才需要它。"};
+        }
         return {"推理服务", Level::FAIL, "连不上 " + url,
-                "出图和出视频都要用它。\n"
+                need.who() + "。\n"
                 "用 Docker: docker compose up -d comfyui\n"
                 "已经装在别处就改配置：\n"
                 "  export CHANGJI_COMFY_BASE_URL=http://某台机器:8188"};
@@ -159,6 +183,15 @@ Check check_tts(const config::Settings& s, bool infer_ok) {
                     "在配置里填 tts.base_url"};
         }
         return {"配音", Level::OK, "独立服务 " + *s.tts.base_url, ""};
+    }
+    // **选了进程内配音就不该去问 ComfyUI。**
+    // 原来没有这一支，backend = "local" 会掉进下面那条 ComfyUI 的路，
+    // 报"推理服务连不上，无法判断"——而那时候两份 GGUF 就在盘上，
+    // 判得出来，而且和 ComfyUI 一点关系都没有。
+    // 细节由「进程内配音」那一项报（模型在不在、编没编进来），
+    // 这里只说清这条路归谁管。
+    if (tts_is_local(s)) {
+        return {"配音", Level::OK, "走进程内（详见「进程内配音」那一项）", ""};
     }
     if (!infer_ok) {
         return {"配音", Level::WARN, "推理服务连不上，无法判断",

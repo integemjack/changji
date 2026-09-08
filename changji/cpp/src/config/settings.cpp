@@ -209,6 +209,12 @@ const std::vector<std::pair<const char*, const char*>>& env_mapping() {
         {"LLM_MODEL", "llm_model"},
         {"LLM_API_KEY", "llm_api_key"},
         {"TTS_BASE_URL", "tts_base_url"},
+        // C++ 独有。Python 的 TTSConfig.backend 只有 comfy / http，
+        // 没有 local（进程内那条路是这边加的），所以它那边也没有
+        // 这个环境变量。和 MODELS_* 那九个是同一类扩展。
+        // 有它才能不改配置文件就切到进程内配音——跑判据、跑 CI
+        // 都要这个，改用户的配置文件是不该干的事。
+        {"TTS_BACKEND", "tts_backend"},
         {"WORKSPACE", "workspace"},
         {"VRAM_GB", "vram_gb_override"},
         {"FFMPEG_PATH", "assembly_ffmpeg_path"},
@@ -354,6 +360,7 @@ void apply_env(Settings& s) {
     if (!(v = get("LLM_MODEL")).empty()) s.llm.model = v;
     if (!(v = get("LLM_API_KEY")).empty()) s.llm.api_key = v;
     if (!(v = get("TTS_BASE_URL")).empty()) s.tts.base_url = v;
+    if (!(v = get("TTS_BACKEND")).empty()) s.tts.backend = v;
     if (!(v = get("WORKSPACE")).empty()) s.workspace = v;
     if (!(v = get("VRAM_GB")).empty()) {
         double d = 0;

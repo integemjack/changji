@@ -252,6 +252,7 @@ add_executable(changji
     src/config/writeback.cpp
     src/config/runtime.cpp
     src/doctor/doctor.cpp
+    src/doctor/needs.cpp
     src/models/shot.cpp
     src/models/character.cpp
     src/models/project.cpp
@@ -471,6 +472,7 @@ if(CHANGJI_BUILD_TESTS)
         tests/unit/test_character.cpp
         tests/unit/test_project.cpp
         tests/unit/test_hardware.cpp
+        tests/unit/test_doctor.cpp
         tests/unit/test_readonly.cpp
         tests/unit/test_editing.cpp
         tests/unit/test_editing_assets.cpp
@@ -550,6 +552,9 @@ if(CHANGJI_BUILD_TESTS)
         # 不碰 asio 的运行时，也不链 Crow 的 app。Hub 里那个
         # connection* 纯粹当键用，从不解引用——所以拿假指针就能测。
         src/http/ws.cpp
+        # 体检的"当前配置用得上哪些依赖"是纯判断，不碰网络，所以进得来。
+        # doctor.cpp 本身仍然不进——它链 httplib。
+        src/doctor/needs.cpp
         # 这两个都是可选依赖的门面，测试目标里编的是没链上游时那一支
         # （CHANGJI_HAVE_SD / CHANGJI_HAVE_LLAMA 只给 changji 目标定义）。
         # test_facades.cpp 验的就是那一支的行为。
