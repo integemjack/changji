@@ -107,6 +107,28 @@ std::unique_ptr<LlamaTts> LlamaTts::load(const std::filesystem::path& backbone,
     // **必须开 embeddings。** 生成的每一帧都要把骨干的隐状态喂给解码器，
     // 关着的话 llama_get_embeddings_ith 返回空，症状是第一帧就失败。
     cp.embeddings = true;
+
+    // **n_ctx 必须自己设成 0。**
+    //
+    // `llama_context_default_params()` 给的是 **512**，而参考实现
+    // （`tools/tts/tts.cpp` 走 common）用的 `common_params.n_ctx` 默认是
+    // **0**，注释写着 "0 == context the model was trained with"。
+    // llama.cpp 里 0 表示"用模型训练时的长度"（llama-context.cpp 那句
+    // `params.n_ctx == 0 ? hparams.n_ctx_train : params.n_ctx`）。
+    //
+    // 512 是不够的：骨干是自回归跑的，提示词的 token 加上最多 512 帧
+    // 都要占位置。一句长一点的台词就会撑爆，而症状是生成中途失败，
+    // 指不到"上下文开小了"。
+    cp.n_ctx = 0;
+
+    // **要逐 token 的隐状态，所以不能池化。**
+    //
+    // 默认是 UNSPECIFIED，llama.cpp 会去看模型的 hparams，拿不到才退成
+    // NONE。Qwen3 骨干上大概率就是 NONE，但这里依赖的是
+    // `llama_get_embeddings_ith(ctx, -1)` 拿最后一个 token 的隐状态——
+    // 一旦哪个模型的 hparams 带了池化类型，这条路就悄悄取到别的东西。
+    // 显式写死，不赌默认值。
+    cp.pooling_type = LLAMA_POOLING_TYPE_NONE;
     im.lctx = llama_init_from_model(im.model, cp);
     if (im.lctx == nullptr) {
         why = "建不出 llama context";

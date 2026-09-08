@@ -1479,6 +1479,25 @@ changji 目前没有地方填。
 
 用例里那个假 transport 一被碰就让用例失败，**通过本身就证明了它没去问**。
 
+**照着对 sd.cpp 那套办法，把 `llama_tts.cpp` 也对了一遍**（2026-09-08）。
+这段代码是照着 `tools/tts/tts.cpp` 写的，而那个文件走 `common`——
+我把 `common` 那几个依赖换成了 llama.h 的原生对应物，**换的时候丢了默认值**：
+
+| | 参考实现（走 common） | 我原来写的 | |
+|---|---|---|---|
+| `n_ctx` | `common_params.n_ctx = 0`，注释写着 "0 == context the model was trained with" | `llama_context_default_params()` 给的 **512** | ❌ 已改成 0 |
+| `pooling_type` | common 按需要设 | 默认 `UNSPECIFIED`，靠模型 hparams 兜底 | ⚠️ 改成显式 `NONE` |
+
+**512 是不够的**：骨干是自回归跑的，提示词的 token 加上最多 512 帧都要占
+位置，一句长一点的台词就撑爆，而症状是"生成中途失败"，指不到"上下文开小了"。
+
+`pooling_type` 那条大概率本来也没事（Qwen3 骨干的 hparams 多半就是 NONE），
+但这里依赖 `llama_get_embeddings_ith(ctx, -1)` 取最后一个 token 的隐状态，
+一旦哪个模型带了池化类型就悄悄取到别的东西。显式写死，不赌默认值。
+
+**教训和 sd.cpp 那两处是同一个：把一个"带默认值的封装"换成"直接调底层"时，
+封装里那些默认值会静默消失。** 换的时候只看了签名对不对得上，没看默认值。
+
 **下面这段是还差的：**
 mtmd 的音频生成 API 在头文件里明写着
 `EXPERIMENTAL API for audio generation, subjected to breaking changes`，
