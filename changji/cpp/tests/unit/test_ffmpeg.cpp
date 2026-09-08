@@ -295,3 +295,62 @@ TEST_CASE("ffmpeg 超时要单独报，不能混进「退出码 N」") {
         CHECK(msg.find("frame= 120") != std::string::npos);
     }
 }
+
+TEST_CASE("缺哪个就指哪个配置项，别永远指 ffmpeg_path") {
+    // 2026-09-08 跑装配判据时撞上的：ffmpeg 配好了、ffprobe 没配，
+    // 报的却是"在配置里填 assembly.ffmpeg_path"。**照着做没有任何用**，
+    // 因为 ffprobe 有自己的 assembly.ffprobe_path。
+    //
+    // 这类错误比没提示更糟：它让人照做、发现没用，然后开始怀疑别的地方。
+    const auto missing_only = [](const std::string& absent) {
+        media::FFmpeg ff(
+            "ffmpeg", "ffprobe",
+            [absent](const std::string& exe, const std::vector<std::string>&,
+                     double) {
+                media::ProcResult r;
+                r.launched = exe.find(absent) == std::string::npos;
+                r.out = "version";
+                return r;
+            });
+        try {
+            ff.check();
+            return std::string{"没抛"};
+        } catch (const media::FFmpegMissing& e) {
+            return std::string(e.what());
+        }
+    };
+
+    SUBCASE("只缺 ffprobe：指 ffprobe_path") {
+        const std::string msg = missing_only("ffprobe");
+        CAPTURE(msg);
+        CHECK(msg.find("assembly.ffprobe_path") != std::string::npos);
+        // 不能再提 ffmpeg_path——那正是把人带偏的那句
+        CHECK(msg.find("assembly.ffmpeg_path") == std::string::npos);
+    }
+
+    SUBCASE("只缺 ffmpeg：指 ffmpeg_path") {
+        const std::string msg = missing_only("ffmpeg");
+        CAPTURE(msg);
+        CHECK(msg.find("assembly.ffmpeg_path") != std::string::npos);
+        CHECK(msg.find("assembly.ffprobe_path") == std::string::npos);
+    }
+
+    SUBCASE("两个都缺：两个都要提") {
+        media::FFmpeg ff("ffmpeg", "ffprobe",
+                         [](const std::string&, const std::vector<std::string>&,
+                            double) {
+                             media::ProcResult r;
+                             r.launched = false;
+                             return r;
+                         });
+        try {
+            ff.check();
+            FAIL("该抛");
+        } catch (const media::FFmpegMissing& e) {
+            const std::string msg = e.what();
+            CAPTURE(msg);
+            CHECK(msg.find("assembly.ffmpeg_path") != std::string::npos);
+            CHECK(msg.find("assembly.ffprobe_path") != std::string::npos);
+        }
+    }
+}

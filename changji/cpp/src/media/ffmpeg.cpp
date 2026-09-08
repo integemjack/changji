@@ -227,9 +227,23 @@ void FFmpeg::check() const {
     if (missing.empty()) return;
 
     std::string names;
+    // **指向缺的那一个的配置项，不是永远指 ffmpeg_path。**
+    //
+    // 原来无论缺谁都写"填 assembly.ffmpeg_path"。缺的是 ffprobe 时那句话
+    // 是错的——ffprobe 有自己的 `assembly.ffprobe_path`，填 ffmpeg_path
+    // 一点用没有。2026-09-08 跑装配判据时撞上：ffmpeg 明明配好了，
+    // 报的还是"填 assembly.ffmpeg_path"，照做当然没用。
+    //
+    // 这类错误比没有提示更糟：它让人**照着做，然后发现没用**，
+    // 于是开始怀疑别的地方。
+    std::string keys;
     for (std::size_t i = 0; i < missing.size(); ++i) {
-        if (i) names += "和";
+        if (i) {
+            names += "和";
+            keys += "、";
+        }
         names += missing[i];
+        keys += std::string("assembly.") + missing[i] + "_path";
     }
     // 说清怎么办。只说"找不到"的话，用户下一步不知道该干什么。
     throw FFmpegMissing(
@@ -237,7 +251,7 @@ void FFmpeg::check() const {
         "Windows 可以用 winget install Gyan.FFmpeg，\n"
         "macOS 用 brew install ffmpeg，\n"
         "Linux 用包管理器安装。\n"
-        "装好后如果仍然找不到，在配置里填 assembly.ffmpeg_path 指定完整路径。");
+        "装好后如果仍然找不到，在配置里填 " + keys + " 指定完整路径。");
 }
 
 bool FFmpeg::available() const {
