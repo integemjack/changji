@@ -189,6 +189,22 @@ bool LlamaTts::synthesize(const LlamaTtsRequest& req, double& out_duration_s,
         speaker.reset(wrapper.bitmap);
     }
 
+    // **每次合成前把 KV 缓存清干净。**
+    //
+    // 少了这一句，**第二句台词就配不出来**——`step_prompt` 返回负数，
+    // 报"跑提示词时失败"。2026-09-08 跑真流水线时撞到的：一集里第一句
+    // 出得好好的，第二句必挂；重启服务之后那一句又能出。
+    //
+    // 原因是下面 `inp.seq_id = 0` 每次都用同一个序列，而这个
+    // LlamaTts 实例在整条流水线上是**复用**的（模型 1 GB 出头，
+    // 每句重载一遍不现实，见头文件）。不清的话第二句的 token 接在
+    // 第一句后面，上下文越堆越长。
+    //
+    // **`--say` 那条路发现不了**：它建一次、用一次、进程就退了。
+    // 头文件里"已知没验过：并发调用"那一条说的就是这一类，
+    // 只是真正的破绽不是并发，是**顺序复用**。
+    llama_memory_clear(llama_get_memory(im.lctx), true);
+
     mtmd_helper::gen_audio gen(im.lctx, im.mctx);
     mtmd_helper_gen_audio_inp inp{};
     inp.seq_id = 0;
