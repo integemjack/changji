@@ -72,7 +72,21 @@ Step "单元测试" {
     $out = & $exe 2>&1
     $line = $out | Select-String -Pattern 'test cases:'
     Write-Host "  $line"
-    return ($LASTEXITCODE -eq 0)
+    if ($LASTEXITCODE -ne 0) { return $false }
+
+    # **也要看条数。** 退出码为 0 只说明"跑到的都过了"——
+    # 有人从 CMakeLists 里漏掉一个测试文件，或者整个 tests/unit 没编进去，
+    # 剩下的照样全过、退出码照样 0。和对拍那边是同一类失败：
+    # 数字悄悄掉下来，而结论不变。
+    #
+    # 这个下限只用来拦断崖式的下跌，不用跟着每次加用例改。
+    if ($line -notmatch 'test cases:\s*(\d+)') { return $false }
+    $n = [int]$matches[1]
+    if ($n -lt 400) {
+        Write-Host "  只有 $n 条用例，正常是 480 多条——多半是有测试文件没编进去" -ForegroundColor Red
+        return $false
+    }
+    return $true
 }
 
 Step "对拍（默认构建）" {
