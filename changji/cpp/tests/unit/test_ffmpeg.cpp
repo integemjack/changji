@@ -267,3 +267,31 @@ TEST_CASE("抽帧的 -ss 放在 -i 前面") {
     CHECK(ss < i);
     CHECK(*(ss + 1) == "1.500");
 }
+
+TEST_CASE("ffmpeg 超时要单独报，不能混进「退出码 N」") {
+    // **这一条是跟着 proc::run 真的能超时之后才有意义的。**
+    // 在那之前超时参数是摆设（popen 没有超时接口），所以从来不会走到。
+    //
+    // 混在"退出码 N"里的后果：一次跑了半小时被杀掉的编码，看起来就像
+    // 编码参数写错了，人会去翻滤镜串——而真正的原因是这一段太长或者卡住了。
+    media::FFmpeg ff("ffmpeg", "ffprobe",
+                     [](const std::string&, const std::vector<std::string>&,
+                        double) {
+                         media::ProcResult r;
+                         r.launched = true;
+                         r.timed_out = true;
+                         r.exit_code = 1;
+                         r.out = "frame= 120 fps=24";
+                         return r;
+                     });
+    try {
+        ff.run({"-i", "a.mp4", "b.mp4"}, 1800.0);
+        FAIL("该抛的");
+    } catch (const media::FFmpegError& e) {
+        const std::string msg = e.what();
+        CHECK(msg.find("超时") != std::string::npos);
+        CHECK(msg.find("1800") != std::string::npos);
+        // 最后那段输出也要带上：卡在哪一帧是有用的线索。
+        CHECK(msg.find("frame= 120") != std::string::npos);
+    }
+}

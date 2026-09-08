@@ -116,6 +116,14 @@ struct ProcResult {
     /// 进程有没有起来。区分"跑了但失败"和"根本没这个程序"——
     /// 后者要说"去装 ffmpeg"，前者要把 ffmpeg 自己的报错贴出来。
     bool launched = false;
+
+    /// 超时被杀掉了。
+    ///
+    /// 从 2026-09-08 起 `proc::run` 真的会超时杀进程（原来 popen 没这个
+    /// 能力，超时参数是摆设）。**能力一旦生效，就得能报出来**——
+    /// 不然一次跑了半小时被杀掉的编码，看到的是"ffmpeg 退出码 1"
+    /// 加一段被截断的日志，人会以为是编码参数不对。
+    bool timed_out = false;
 };
 
 using Runner = std::function<ProcResult(const std::string& exe,

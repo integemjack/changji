@@ -207,6 +207,7 @@ Runner default_runner() {
         out.exit_code = r.exit_code;
         out.out = r.out;
         out.launched = r.launched;
+        out.timed_out = r.timed_out;
         return out;
     };
 }
@@ -255,6 +256,15 @@ std::string FFmpeg::run_exe(const std::string& exe,
     if (!r.launched) {
         throw FFmpegMissing("找不到 " + exe +
                             "。在配置里填 assembly.ffmpeg_path 指定完整路径");
+    }
+    if (r.timed_out) {
+        // **超时要单独说。** 混在"退出码 N"里的话，一次跑了半小时被杀掉的
+        // 编码看起来就像编码参数写错了，人会去翻滤镜串。
+        throw FFmpegError(exe + " 超时（" + std::to_string(static_cast<int>(timeout_s)) +
+                          " 秒）被中止。\n"
+                          "要么这一段太长，要么它卡住了。最后的输出：\n" +
+                          (r.out.size() > 800 ? r.out.substr(r.out.size() - 800)
+                                              : r.out));
     }
     if (r.exit_code != 0) {
         // 把 ffmpeg 自己的报错贴出来，截断到 800 字——它的日志很长，
