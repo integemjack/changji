@@ -883,6 +883,38 @@ sd.cpp——`run_deps.cpp` 里 `if (engine != "comfy") return b;`
 修完：一个进程里两句都出来了，都验过不是静音
 （峰值 14032 / 5078，有声样本 76.6% / 76.1%）。
 
+### 配置文件位置：值一样，取值的机制不一样（2026-09-08 记）
+
+迁移期间两个后端**共用一份用户配置**——`check_template_compat.py` 整个
+存在的前提就是这个。所以"两边算出来的位置一不一样"是承重的一条。
+
+值是一样的：两边都给 `%LOCALAPPDATA%/changji/config.toml`，
+项目级都是 `<项目>/changji.toml`，合并顺序也一样（先用户后项目）。
+
+**但取值的机制根本不同**：
+
+    Python  platformdirs → Windows 已知文件夹 API（ctypes）
+    C++     直接读 LOCALAPPDATA 环境变量
+
+实测：把 `LOCALAPPDATA` 设成别的值，platformdirs 的 env 版函数确实跟着变，
+**但它实际调的是 ctypes 那版**，回的还是原来的路径。也就是
+**Python 根本不看这个环境变量，而 C++ 只看它**。
+
+今天一致纯属这台机器上两者恰好相同。会分叉的情形：
+
+- `LOCALAPPDATA` 被改过（CI、沙箱、`set LOCALAPPDATA=...`）：
+  **C++ 跟着走，Python 不跟**，两边读的就是两个文件
+- 没设：C++ 退回 `home/AppData/Local`，Python 还是问 API；
+  企业环境配了文件夹重定向的话这两个不一样
+
+后果是**用户改了配置，一个后端看得见另一个看不见**——而且两边都不会
+报错，只会表现为"改了没生效"。
+
+**没改成一样**：让 C++ 也去调已知文件夹 API 要引 shell32，
+而这个分叉只在迁移期间有意义（阶段 8 之后 Python 没了，C++ 怎么算就是
+定义）。记下来，并且用例两头都钉：默认环境下两边一致、
+以及"C++ 认这个环境变量"这个行为本身。
+
 ### 闸门判定和 Python 一条不差（2026-09-08）
 
 `contract_audit.py` 把 `test_gates.cpp` 归在「两边都有、又没有语料兜着」

@@ -1,0 +1,9 @@
+{
+  "app_name": "changji",
+  "config_file_name": "config.toml",
+  "project_file_name": "changji.toml",
+  "user_config_dir": "C:/Users/ultra/AppData/Local/changji",
+  "user_data_dir": "C:/Users/ultra/AppData/Local/changji",
+  "user_config_path": "C:/Users/ultra/AppData/Local/changji/config.toml",
+  "note": "由 cpp/tests/export_paths_golden.py 生成，不要手改。只有默认环境下的值——Python 走 Windows 已知文件夹 API，C++ 读 LOCALAPPDATA，机制不同，改了环境变量就没有可比性。详见脚本开头和方案里那一节。"
+}
