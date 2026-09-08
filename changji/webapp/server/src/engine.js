@@ -22,6 +22,42 @@ function engineUrl(pathname, search = '') {
   return engineBaseUrl + pathname + (search || '')
 }
 
+/**
+ * 把引擎的错误 body 翻成一句人话。
+ *
+ * **422 的 detail 是一个结构化数组**（对齐 FastAPI 的 pydantic 报错，
+ * 引擎那边 readonly.hpp 里写着这一点），形如：
+ *
+ *     [{ loc: ['body', 'patch.tts_backend'], msg: 'Extra inputs are not permitted' }]
+ *
+ * 原来这里是 `data?.detail || ...` 直接扔给 `new EngineError(...)`，
+ * 而 `new Error([{...}])` 的 message 会被字符串化成 **"[object Object]"**——
+ * 用户在界面上看到的就是这七个字，等于什么都没说。
+ * 而表单填错是最常撞到的一类错误，这条路恰恰最需要说清楚。
+ *
+ * 多条要全带上：一次提交填错三个字段，只报第一个的话，
+ * 用户改完再提交又被打回来。
+ */
+function engineMessage(data, status) {
+  const detail = data?.detail
+  if (Array.isArray(detail)) {
+    const lines = detail.map((item) => {
+      if (typeof item === 'string') return item
+      // loc 的第一段一般是 "body" / "query"，对用户没意义，去掉。
+      const loc = Array.isArray(item?.loc)
+        ? item.loc.filter((x) => x !== 'body' && x !== 'query').join('.')
+        : ''
+      const msg = item?.msg || item?.message || JSON.stringify(item)
+      return loc ? `${loc}：${msg}` : msg
+    })
+    if (lines.length) return lines.join('\n')
+  }
+  if (typeof detail === 'string' && detail) return detail
+  if (detail) return JSON.stringify(detail)
+  if (typeof data?.message === 'string' && data.message) return data.message
+  return `引擎报错 ${status}`
+}
+
 /** 发一个 JSON 请求，返回解析后的结果。 */
 export async function callEngine(pathname, { method = 'GET', body, search, timeoutMs } = {}) {
   const cfg = loadConfig()
@@ -51,7 +87,7 @@ export async function callEngine(pathname, { method = 'GET', body, search, timeo
     throw new EngineError(`引擎返回的不是 JSON：${text.slice(0, 200)}`, 502)
   }
   if (!res.ok) {
-    throw new EngineError(data?.detail || data?.message || `引擎报错 ${res.status}`, res.status)
+    throw new EngineError(engineMessage(data, res.status), res.status)
   }
   return data
 }
