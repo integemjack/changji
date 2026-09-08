@@ -18,6 +18,7 @@
 
 #include <string>
 
+#include "http/server.hpp"
 #include "infer/ggml_abi.hpp"
 #include "infer/llama_tts.hpp"
 #include "infer/sd_backend.hpp"
@@ -71,4 +72,19 @@ TEST_CASE("门面的可选性只关在 .cpp 里，头文件不带 #ifdef") {
     // 能编到这儿本身就是证据：这个测试目标没有定义 CHANGJI_HAVE_SD，
     // 而上面那些调用全都编过了。
     CHECK(true);
+}
+
+TEST_CASE("服务默认只听回环，不是整个局域网") {
+    // **原来默认是 0.0.0.0**，也就是同一个 Wi-Fi 上的人都连得上。
+    // 而这套接口没有任何鉴权：连上就能读项目、改分镜、起流水线。
+    //
+    // Python 侧一直是 127.0.0.1（run_server 的默认值和 cli.py 的 --host），
+    // 所以这也是一处**对拍看不见的行为差异**——对拍比的是响应内容，
+    // 比不到绑在哪个地址上。
+    //
+    // 容器里要 0.0.0.0，但那条路本来就显式传（Dockerfile 最后一行），
+    // 不依赖这个默认值。
+    const http::Options opts;
+    CHECK(opts.host == "127.0.0.1");
+    CHECK(opts.port == 8080);
 }
