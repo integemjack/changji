@@ -146,18 +146,55 @@ TEST_CASE("视频提示词是画面加运动") {
     const auto shot = make_shot("ep01_sh001");
     const auto plan = stages::make_plan(shot, make_spec(), composer, "9:16");
 
-    const std::string v = stages::video_positive(plan, models::StyleLine::REALISTIC);
+    const std::string v = stages::video_positive(plan);
     CHECK(v.find("二十七岁女性") != std::string::npos);      // 画面
     CHECK(v.find("镜头缓慢推近") != std::string::npos);      // 运动
     CHECK(v.find("雨丝斜掠") != std::string::npos);
     // 画面在前，运动在后
     CHECK(v.find("二十七岁女性") < v.find("镜头缓慢推近"));
 
+    SUBCASE("动画线用半角逗号加空格，写实线用全角逗号") {
+        // **原来这里是错的。** 两个视频后端（comfy/renderers.cpp 和
+        // infer/sd_video.cpp）都写死了 REALISTIC，所以动画线的项目
+        // 拼出来是"画面，运动"，而 Python 那边是"画面, 运动"。
+        //
+        // Python 走的是 `self.composer._sep`——composer 是从资产库
+        // 建的，天然知道风格线。C++ 把后端抽成了函数对象，函数对象
+        // 拿不到资产库，于是"传什么风格线"变成了调用方的责任，
+        // 而两个调用方都传错了。
+        //
+        // 提示词是**要逐字节对得上**的，一个分隔符也算。所以修法不是
+        // 把两处常量改对，是把 style_line 放进 RenderPlan——
+        // 让它没法传错。
+        const auto anime = make_assets(models::StyleLine::ANIME);
+        const stages::PromptComposer ac(anime);
+        const auto ap = stages::make_plan(shot, make_spec(), ac, "9:16");
+        const std::string av = stages::video_positive(ap);
+
+        REQUIRE_FALSE(ap.motion.empty());
+        CHECK(av.find(", ") != std::string::npos);
+        CHECK(av.find(ap.prompts.positive + ", " + ap.motion) == 0);
+
+        // 写实线仍是全角逗号，没被顺手改掉
+        CHECK(v.find(plan.prompts.positive + "，" + plan.motion) == 0);
+    }
+
+    SUBCASE("style_line 跟着资产库走，不是默认值") {
+        // make_plan 忘了填这一行的话，动画线的计划会拿到默认的 REALISTIC，
+        // 上面那条就白测了——它测的是 video_positive，不是 make_plan。
+        const auto anime = make_assets(models::StyleLine::ANIME);
+        const stages::PromptComposer ac(anime);
+        CHECK(ac.style_line() == models::StyleLine::ANIME);
+        CHECK(stages::make_plan(shot, make_spec(), ac, "9:16").style_line ==
+              models::StyleLine::ANIME);
+        CHECK(plan.style_line == models::StyleLine::REALISTIC);
+    }
+
     SUBCASE("没有运动描述时不留尾巴") {
         stages::RenderPlan p = plan;
         p.motion.clear();
         const std::string s =
-            stages::video_positive(p, models::StyleLine::REALISTIC);
+            stages::video_positive(p);
         CHECK(s == p.prompts.positive);
         CHECK(s.rfind("，") != s.size() - 3);
     }

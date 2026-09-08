@@ -132,8 +132,7 @@ stages::VideoRenderer video_renderer(std::shared_ptr<Client> client,
                          {"seed", stages::render_seed(shot.shot_id, shot.attempts)}});
 
         const auto [pos_id, neg_id] = text_node_ids(wf);
-        wf.set_input(pos_id, "text",
-                     stages::video_positive(plan, models::StyleLine::REALISTIC));
+        wf.set_input(pos_id, "text", stages::video_positive(plan));
         wf.set_input(neg_id, "text", plan.prompts.negative);
 
         if (start_image.has_value()) {

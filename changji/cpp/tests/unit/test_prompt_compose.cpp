@@ -16,6 +16,7 @@
 #include "models/character.hpp"
 #include "models/shot.hpp"
 #include "stages/prompt_compose.hpp"
+#include "stages/render.hpp"
 
 using namespace changji;
 using json = nlohmann::json;
@@ -139,6 +140,22 @@ TEST_CASE("提示词组装和 Python 逐字节一致") {
               c.at("reference_images").get<std::vector<std::string>>());
         check_text(composer.motion_prompt(shot),
                    c.at("motion").get<std::string>(), "运动");
+
+        // **把画面和运动拼起来的那一步**。语料里原来只有 positive 和
+        // motion 两个字段，各自都比过，而拼接没人比——C++ 那边正是在
+        // 这一步错的：两个视频后端都写死了 REALISTIC，动漫线的项目
+        // 分隔符和 Python 不一样（", " vs "，"）。
+        //
+        // 走 make_plan 而不是手搓一个 RenderPlan：错的地方就在
+        // "计划里的风格线是哪来的"，手搓等于把出错的那一步跳过去。
+        models::TierSpec spec;
+        spec.tier = models::Tier::DRAFT;
+        spec.width = 480;
+        spec.height = 854;
+        spec.steps = 4;
+        const auto plan = stages::make_plan(shot, spec, composer, "9:16");
+        check_text(stages::video_positive(plan),
+                   c.at("video_positive").get<std::string>(), "视频正向");
     }
 }
 

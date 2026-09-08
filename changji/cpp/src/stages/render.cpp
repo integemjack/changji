@@ -55,11 +55,12 @@ RenderPlan make_plan(const Shot& shot, const TierSpec& spec,
     p.frames = frames_for(shot.duration_s, fps);
     p.prompts = composer.compose(shot);
     p.motion = composer.motion_prompt(shot);
+    p.style_line = composer.style_line();
     return p;
 }
 
-std::string video_positive(const RenderPlan& plan, StyleLine style_line) {
-    const std::string sep = style_line == StyleLine::ANIME ? ", " : "，";
+std::string video_positive(const RenderPlan& plan) {
+    const std::string sep = plan.style_line == StyleLine::ANIME ? ", " : "，";
     if (plan.motion.empty()) return plan.prompts.positive;
     if (plan.prompts.positive.empty()) return plan.motion;
     return plan.prompts.positive + sep + plan.motion;

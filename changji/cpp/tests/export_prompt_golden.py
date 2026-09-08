@@ -28,8 +28,12 @@ from changji.models.shot import (                                   # noqa: E402
     CameraAngle, CameraMove, CharacterInShot, FacePose, Shot, ShotSize,
 )
 from changji.stages.render import (                                 # noqa: E402
-    _ANGLE_ZH, _MOVE_ZH, _SHOT_SIZE_ZH, PromptComposer,
+    _ANGLE_ZH, _MOVE_ZH, _SHOT_SIZE_ZH, PromptComposer, RenderStage,
 )
+from changji.hardware import Tier, TierSpec                       # noqa: E402
+
+# 给 video_positive 用的档位。宽高步数不进提示词，随便给一个合法值。
+_SPEC = TierSpec(tier=Tier.DRAFT, width=480, height=854, steps=4)
 
 
 def assets(style_line: StyleLine) -> AssetLibrary:
@@ -96,6 +100,12 @@ def cis(char_id, **kw) -> CharacterInShot:
     return CharacterInShot(**base)
 
 
+def _stage(composer: PromptComposer) -> RenderStage:
+    """只为了调 _video_positive / plan。这两个方法只读 composer 和 fps。"""
+    return RenderStage(client=None, composer=composer, paths=None,
+                       video_workflow=None)
+
+
 def cases() -> list[dict]:
     out = []
 
@@ -112,6 +122,18 @@ def cases() -> list[dict]:
                 "negative": b.negative,
                 "reference_images": b.reference_images,
                 "motion": composer.motion_prompt(s),
+                # 视频模型拿到的正向提示词：画面加运动，中间那个分隔符
+                # 跟着风格线走（动漫线 ", "，写实线 "，"）。
+                #
+                # **单独导出是因为 C++ 那边这一步错过。** 两个视频后端
+                # 都写死了 REALISTIC，动漫线的项目拼出来差一个分隔符。
+                # 语料里原来只有 positive 和 motion 两个字段，各自都对，
+                # **把它们拼起来的那一步没人比过**。
+                #
+                # 调的是真的 RenderStage._video_positive。client / paths /
+                # video_workflow 都用不到（只读 composer 和 plan），给 None。
+                "video_positive": _stage(composer)._video_positive(
+                    _stage(composer).plan(s, _SPEC)),
             }
         except Exception as exc:                          # noqa: BLE001
             entry = {"name": name, "style_line": line.value,

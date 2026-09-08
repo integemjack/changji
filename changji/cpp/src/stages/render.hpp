@@ -48,6 +48,14 @@ struct RenderPlan {
     PromptBundle prompts;
     std::string motion;
 
+    /// 拼提示词要用的分隔符由它决定（动画线 ", "，写实线 "，"）。
+    ///
+    /// **放进计划里而不是让调用方传**，是因为原来就是传错的：
+    /// 两个视频后端都写死了 REALISTIC，动画线的项目拼出来和 Python
+    /// 差一个分隔符——而提示词是要逐字节对得上的。
+    /// 后端那一层拿不到资产库，让它"记得传对"本身就是设计问题。
+    models::StyleLine style_line = models::StyleLine::REALISTIC;
+
     double duration_s() const { return frames / 24.0; }
 };
 
@@ -59,7 +67,7 @@ RenderPlan make_plan(const models::Shot& shot, const models::TierSpec& spec,
 ///
 /// 拼在一起而不是只给运动描述，是因为视频模型也要知道画面里有什么——
 /// 只给"镜头缓慢推近"的话它不知道推的是谁。
-std::string video_positive(const RenderPlan& plan, models::StyleLine style_line);
+std::string video_positive(const RenderPlan& plan);
 
 struct RenderOutcome {
     std::string shot_id;

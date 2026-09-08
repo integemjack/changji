@@ -55,6 +55,13 @@ public:
     /// 而首帧已经把长相定死了，两者打架的结果是脸在动的过程中变形。
     std::string motion_prompt(const models::Shot& shot) const;
 
+    /// 这条片子是写实线还是动画线。
+    ///
+    /// 暴露出来是因为**后端那一层也要用它拼提示词**，而后端拿不到资产库。
+    /// 原来两个视频后端都是写死 REALISTIC，动画线的项目在那一步
+    /// 会用错分隔符（见 video_positive）。
+    models::StyleLine style_line() const { return style_line_; }
+
 private:
     models::AssetLibrary assets_;
     models::StyleLine style_line_;

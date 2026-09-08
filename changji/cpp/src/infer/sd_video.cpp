@@ -98,7 +98,7 @@ stages::VideoRenderer sd_video_renderer(const config::Settings& settings) {
         if (!ctx) throw SdError("出视频上下文没准备好");
 
         VideoRequest req;
-        req.positive = stages::video_positive(plan, models::StyleLine::REALISTIC);
+        req.positive = stages::video_positive(plan);
         req.negative = plan.prompts.negative;
         req.width = plan.spec.width;
         req.height = plan.spec.height;
