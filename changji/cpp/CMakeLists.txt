@@ -475,6 +475,7 @@ if(CHANGJI_BUILD_TESTS)
         tests/unit/test_editing.cpp
         tests/unit/test_editing_assets.cpp
         tests/unit/test_editing_batch.cpp
+        tests/unit/test_reset.cpp
         tests/unit/test_media.cpp
         tests/unit/test_upload.cpp
         tests/unit/test_jobs.cpp
