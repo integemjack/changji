@@ -724,6 +724,16 @@ cpp/
 > 补了 `download_wan_gguf.ps1`。Q4_K_M 那套 7.9 GB，Q3_K_M 那套 6.5 GB——
 > **本机剩 5.3 GB，腾掉 `cpp/build_llama`（1.9 GB，可重新生成）就够 Q3 了。**
 > 脚本会先把三份大小和剩余空间一起摆出来再动手下。
+>
+> **写完那个脚本顺手对了一遍代码，抓到一个真 bug。** `sd_image.cpp` 把文本
+> 编码器传给了 `embeddings_connectors_path`，而 Wan 的 umt5-xxl 该走
+> `t5xxl_path`——依据是 sd.cpp 自己的 `docs/wan.md`，那上面写的就是
+> `--t5xxl umt5-xxl-encoder-Q8_0.gguf`。
+>
+> **这个错的严重之处在于它不报错**：sd.cpp 那条路加载失败只 warn，
+> 于是 umt5-xxl 被静默忽略、`t5xxl_path` 是空的，Wan 拿不到任何文本条件。
+> 症状会是"出的片和提示词没关系"，而日志里只有一行 warn。
+> 它会在用户下完 6.5 GB、第一次真跑的时候才发作——**最贵的那个时刻**。
 
 
 代码那部分做完了：整集流水线（按阶段分批、每阶段存盘）、`POST /api/run`

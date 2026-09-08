@@ -183,7 +183,17 @@ std::shared_ptr<SdContext> SdContext::create(const config::Settings& settings,
     p.diffusion_model_path = impl.diffusion.c_str();
     if (!impl.vae.empty()) p.vae_path = impl.vae.c_str();
     if (!impl.text_encoder.empty()) {
-        p.embeddings_connectors_path = impl.text_encoder.c_str();
+        // **是 t5xxl_path，不是 embeddings_connectors_path。**
+        //
+        // 原来写的是后者。sd.cpp 里那是另一条加载路径（日志写的是
+        // "loading embeddings connectors from ..."），而且**加载失败只 warn
+        // 不报错**——于是 umt5-xxl 被静默忽略、t5xxl_path 是空的，
+        // Wan 拿不到任何文本条件。症状会是"出的片和提示词没关系"，
+        // 而日志里只有一行 warn，指不到这儿。
+        //
+        // 依据是 sd.cpp 自己的 docs/wan.md，那上面的命令行是：
+        //   --t5xxl ...\models\text_encoders\umt5-xxl-encoder-Q8_0.gguf
+        p.t5xxl_path = impl.text_encoder.c_str();
     }
     p.max_vram = impl.max_vram.c_str();
     p.params_backend = impl.params_backend.c_str();
