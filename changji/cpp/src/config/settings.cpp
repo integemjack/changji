@@ -311,6 +311,7 @@ void apply_table(const toml::table& doc, Settings& s) {
         take(t, "image", s.models.image);
         take(t, "tts", s.models.tts);
         take(t, "tts_decoder", s.models.tts_decoder);
+        take(t, "diffusion_flash_attn", s.models.diffusion_flash_attn);
     }
     take_path_str(&doc, "workspace", s.workspace);
     if (auto node = doc.get("vram_gb_override")) {

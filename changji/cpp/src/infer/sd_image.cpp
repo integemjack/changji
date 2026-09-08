@@ -195,6 +195,9 @@ std::shared_ptr<SdContext> SdContext::create(const config::Settings& settings,
         //   --t5xxl ...\models\text_encoders\umt5-xxl-encoder-Q8_0.gguf
         p.t5xxl_path = impl.text_encoder.c_str();
     }
+    // 上游 docs/wan.md 给 Wan 的命令行带着 --diffusion-fa，而
+    // sd_ctx_params_init 的默认是 false。6 GB 卡上这一项直接影响塞不塞得下。
+    p.diffusion_flash_attn = m.diffusion_flash_attn;
     p.max_vram = impl.max_vram.c_str();
     p.params_backend = impl.params_backend.c_str();
     p.n_threads = -1;   // -1 = 物理核数

@@ -224,3 +224,21 @@ TEST_CASE("环境变量把 engine 写错了要被拦住，不能悄悄接受") {
     REQUIRE_FALSE(errs.empty());
     CHECK(errs[0].find("sd 或 comfy") != std::string::npos);
 }
+
+TEST_CASE("flash attention 默认开，配置里能关") {
+    // sd.cpp 的 sd_ctx_params_init 把它设成 false，而方案第二节选 sd.cpp 的
+    // 理由里就列着 --diffusion-fa。6 GB 卡上这一项直接影响塞不塞得下，
+    // 不该靠用户自己想起来加。
+    CHECK(config::ModelsConfig{}.diffusion_flash_attn);
+
+    const fs::path tmp = fs::temp_directory_path() / "changji_fa_test";
+    std::error_code ec;
+    fs::remove_all(tmp, ec);
+    fs::create_directories(tmp, ec);
+    {
+        std::ofstream f(tmp / "changji.toml", std::ios::binary);
+        f << "[models]\ndiffusion_flash_attn = false\n";
+    }
+    CHECK_FALSE(config::load_settings(tmp).models.diffusion_flash_attn);
+    fs::remove_all(tmp, ec);
+}

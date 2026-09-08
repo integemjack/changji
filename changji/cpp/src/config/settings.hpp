@@ -164,6 +164,17 @@ struct ModelsConfig {
     /// talker 只有 1.7B，写剧本那个是 14B；共用一个键的话，
     /// 换写剧本的模型会把配音一起换掉。
     std::string tts;
+    /// 出图出片时开不开 flash attention。
+    ///
+    /// **默认开。** sd.cpp 的 `sd_ctx_params_init` 把它设成 false，
+    /// 而方案第二节选 sd.cpp 的理由里就列着 `--diffusion-fa`——
+    /// 上游 `docs/wan.md` 给 Wan 的命令行也是带着它的。
+    /// 6 GB 卡上这一项直接影响塞不塞得下，不该靠用户自己想起来加。
+    ///
+    /// 留一个开关是因为它会改数值路径：万一某个后端上出问题，
+    /// 关掉它比重编一个二进制容易。
+    bool diffusion_flash_attn = true;
+
     /// 配音的解码器（Qwen3-TTS 的 tokenizer，GGUF）。
     ///
     /// 这一份把 12.5 Hz 的码本还原成 24 kHz 波形。**必须和 tts 配套**，
