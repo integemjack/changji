@@ -14,8 +14,15 @@
 #include <fstream>
 #include <string>
 
+#include <cctype>
+#include <vector>
+
+#include <nlohmann/json.hpp>
+
 #include "media/assemble.hpp"
 #include "util/paths.hpp"
+
+using json = nlohmann::json;
 
 using namespace changji;
 namespace fs = std::filesystem;
@@ -216,10 +223,22 @@ TEST_CASE("统一规格：先按比例缩到框内再补边") {
 }
 
 TEST_CASE("拼接清单用正斜杠，拼接本身零重编码") {
-    const std::vector<fs::path> clips = {
-        paths::from_utf8("C:/项目 库/雨夜天台/output/.work/norm_0000.mp4"),
-        paths::from_utf8("C:/项目 库/雨夜天台/output/.work/norm_0001.mp4"),
-    };
+    // **路径要用反斜杠拼出来。** 原来这里给的是正斜杠字面量，于是
+    // "清单里没有反斜杠"那条断言**永远为真**——输入里本来就没有，
+    // fwd() 那个转换一次都没被走到。
+    //
+    // 是这么发现的：把 concat_listing 里的 fwd(p) 换成 to_utf8(p)，
+    // 全套 509 条**依然全绿**。
+    //
+    // 而真实调用方给的正是反斜杠——Windows 上 work / "norm_0000.mp4"
+    // 拼出来就是反斜杠分隔的。
+    const fs::path work =
+        paths::from_utf8("C:\\项目 库\\雨夜天台\\output\\.work");
+    const std::vector<fs::path> clips = {work / "norm_0000.mp4",
+                                         work / "norm_0001.mp4"};
+    // 前提先立住：这台机器上拼出来确实带反斜杠，否则下面那条又是空的
+    REQUIRE(paths::to_utf8(clips[0]).find('\\') != std::string::npos);
+
     const std::string listing = media::concat_listing(clips);
     CAPTURE(listing);
     CHECK(listing.find('\\') == std::string::npos);
@@ -401,4 +420,244 @@ TEST_CASE("路径里有单引号会破掉滤镜——已知缺陷，两边一样
     // 冒号转了，反斜杠换成了正斜杠，**单引号原样留着**——这就是那个洞。
     CHECK(e.find("C\\:/") == 0);
     CHECK(e.find('\'') != std::string::npos);
+}
+
+// ===========================================================================
+// 和 Python 比 ffmpeg 的命令行。
+//
+// **上面那些用例钉的是我们自己的意图，不是"和 Python 一样"。** 两者的
+// 差别不是学究：2026-09-08 抓到 loudnorm 的响度目标被 %g 截到 6 位有效
+// 数字，而上面那条用例**把截过的值当成正确答案钉住了**
+// （`loudnorm=I=-14:TP=-2`）。自己钉自己，钉错了照样绿。
+//
+// 语料由 cpp/tests/export_assemble_golden.py 生成，期望值全部来自
+// **调真的 Python 函数**（假一个 FFmpeg，把 run_ffmpeg 收到的 argv 记下来）。
+// ===========================================================================
+
+namespace {
+
+json commands_golden() {
+    const std::string path =
+        std::string(CHANGJI_GOLDEN_DIR) + "/ffmpeg/commands.json";
+    std::ifstream in(path, std::ios::binary);
+    REQUIRE_MESSAGE(in.good(), "读不到语料 " << path);
+    json j;
+    in >> j;
+    return j;
+}
+
+/// 和导出脚本里的 norm() 对应：反斜杠换正斜杠。
+///
+/// 语料里项目根已经换成了字面量 <ROOT>，所以这边直接拿 <ROOT> 当根用，
+/// 路径就天然对得上。**放宽的只有路径的拼写，不是命令的语义。**
+std::string fwd_slash(std::string s) {
+    std::replace(s.begin(), s.end(), '\\', '/');
+    return s;
+}
+
+/// Python 的 str(float) 和 C++ 的 %g 对整数值拼法不同：
+/// Python 写 -16.0，我们写 -16。ffmpeg 两个都当 -16 解析，成片一模一样。
+///
+/// **只抹这一种差别**，别的照旧逐字节比。要逐字节一样得照搬 Python 的
+/// repr 规则（整数浮点补 ".0"），为一个解析结果相同的字符串背那套算法
+/// 不值——这个决定在 media/assemble.cpp 的 mix_args 里写着。
+std::string drop_trailing_dot_zero(std::string s) {
+    std::string out;
+    out.reserve(s.size());
+    for (std::size_t i = 0; i < s.size(); ++i) {
+        // 只在"数字 . 0"且后面不再跟数字时抹掉 ".0"
+        if (s[i] == '.' && i + 1 < s.size() && s[i + 1] == '0' &&
+            i > 0 && std::isdigit(static_cast<unsigned char>(s[i - 1])) &&
+            (i + 2 >= s.size() ||
+             !std::isdigit(static_cast<unsigned char>(s[i + 2])))) {
+            ++i;   // 跳过 '0'
+            continue;
+        }
+        out += s[i];
+    }
+    return out;
+}
+
+void check_argv(const std::vector<std::string>& got, const json& want,
+                const std::string& what) {
+    const auto expect = want.get<std::vector<std::string>>();
+    CAPTURE(what);
+    REQUIRE_MESSAGE(got.size() == expect.size(),
+                    what << "：参数个数对不上，我们 " << got.size()
+                         << " 条，Python " << expect.size() << " 条");
+    for (std::size_t i = 0; i < expect.size(); ++i) {
+        CAPTURE(i);
+        const std::string mine = fwd_slash(got[i]);
+        if (mine == expect[i]) continue;
+        // 只有浮点拼法这一种差别可以放过
+        CHECK_MESSAGE(drop_trailing_dot_zero(expect[i]) == mine,
+                      what << " 第 " << i << " 个参数不一样：\n"
+                           << "  我们  " << mine << "\n"
+                           << "  Python " << expect[i]);
+    }
+}
+
+/// 语料里的 argv 不含 -y（Python 在 run_ffmpeg 里统一加），
+/// 而我们的 *_args() 自己带 -y。比之前去掉。
+std::vector<std::string> without_y(std::vector<std::string> args) {
+    const auto it = std::find(args.begin(), args.end(), "-y");
+    REQUIRE_MESSAGE(it != args.end(), "我们这边每条命令都该带 -y");
+    args.erase(it);
+    return args;
+}
+
+config::AssemblyConfig golden_config() {
+    return config::AssemblyConfig{};   // 语料是用两边的默认值导的
+}
+
+}  // namespace
+
+TEST_CASE("统一规格的命令和 Python 一样") {
+    const json g = commands_golden().at("normalize");
+    const auto cfg = golden_config();
+    const auto srcs = g.at("srcs").get<std::vector<std::string>>();
+    const auto dests = g.at("dests").get<std::vector<std::string>>();
+    REQUIRE(srcs.size() == g.at("calls").size());
+
+    for (std::size_t i = 0; i < srcs.size(); ++i) {
+        const auto args = media::normalize_args(
+            paths::from_utf8(srcs[i]), g.at("target_w").get<int>(),
+            g.at("target_h").get<int>(), cfg, paths::from_utf8(dests[i]));
+        check_argv(without_y(args), g.at("calls")[i], "统一规格");
+    }
+}
+
+TEST_CASE("拼接的清单和命令都和 Python 一样") {
+    const json g = commands_golden().at("concat");
+
+    std::vector<fs::path> clips;
+    for (const auto& c : g.at("clips")) {
+        clips.push_back(paths::from_utf8(c.get<std::string>()));
+    }
+    // 清单里的路径必须是正斜杠——ffmpeg 的 concat 分离器只认这个
+    CHECK(media::concat_listing(clips) == g.at("listing").get<std::string>());
+
+    const auto args = media::concat_args(
+        paths::from_utf8(g.at("listing_path").get<std::string>()),
+        paths::from_utf8(g.at("dest").get<std::string>()));
+    check_argv(without_y(args), g.at("calls")[0], "拼接");
+}
+
+TEST_CASE("响度目标带小数时也和 Python 一样") {
+    // **这条是整份语料存在的直接理由。** 上面那条混音用的是默认的
+    // -16.0 / -1.5，而出问题的 %g 把这两个值渲染成 -16 / -1.5，
+    // 抹掉 ".0" 之后和 Python 一样——**默认值根本试不出那个 bug**。
+    // 响度目标得有 6 位以上有效数字才暴露得出来。
+    const json g = commands_golden().at("mix_precise");
+
+    std::vector<media::AudioSegment> segs;
+    for (const auto& s : g.at("segments")) {
+        segs.push_back({paths::from_utf8(s.at("path").get<std::string>()),
+                        s.at("at_s").get<double>()});
+    }
+    const auto args = media::mix_args(
+        paths::from_utf8(g.at("video").get<std::string>()), segs,
+        golden_config(), g.at("target_lufs").get<double>(),
+        g.at("max_true_peak_db").get<double>(),
+        g.at("video_duration_s").get<double>(),
+        paths::from_utf8(g.at("dest").get<std::string>()));
+    check_argv(without_y(args), g.at("calls")[0], "混音（高精度响度）");
+}
+
+TEST_CASE("混音的滤镜链和 Python 一样") {
+    // 这一条是全套里最容易飘的：延迟、混音、响度归一、补静音，
+    // 四段拼成一个字符串，任何一处差一个字符 ffmpeg 都会整条拒绝，
+    // 或者更糟——照着跑出一个音画错位的成片。
+    const json g = commands_golden().at("mix");
+
+    std::vector<media::AudioSegment> segs;
+    for (const auto& s : g.at("segments")) {
+        segs.push_back({paths::from_utf8(s.at("path").get<std::string>()),
+                        s.at("at_s").get<double>()});
+    }
+    const auto args = media::mix_args(
+        paths::from_utf8(g.at("video").get<std::string>()), segs,
+        golden_config(), g.at("target_lufs").get<double>(),
+        g.at("max_true_peak_db").get<double>(),
+        g.at("video_duration_s").get<double>(),
+        paths::from_utf8(g.at("dest").get<std::string>()));
+    check_argv(without_y(args), g.at("calls")[0], "混音");
+}
+
+TEST_CASE("没有配音时的静音轨命令和 Python 一样") {
+    // 没有音轨的话有些平台会认为文件损坏。
+    const json g = commands_golden().at("silent_audio");
+    const auto args = media::silent_audio_args(
+        paths::from_utf8(g.at("video").get<std::string>()), golden_config(),
+        paths::from_utf8(g.at("dest").get<std::string>()));
+    check_argv(without_y(args), g.at("calls")[0], "静音轨");
+}
+
+TEST_CASE("烧字幕的命令和 Python 一样") {
+    const json g = commands_golden().at("burn");
+    const auto args = media::burn_args(
+        paths::from_utf8(g.at("video").get<std::string>()),
+        paths::from_utf8(g.at("ass_path").get<std::string>()), golden_config(),
+        paths::from_utf8(g.at("dest").get<std::string>()));
+    check_argv(without_y(args), g.at("calls")[0], "烧字幕");
+}
+
+TEST_CASE("滤镜里的路径转义和 Python 逐字节一样") {
+    // 上一条里的路径在语料里已经换成了 <ROOT>，冒号就没了，
+    // 所以转义那一步在那条命令里其实没被走到。这里单独拿真路径过。
+    for (const auto& c : commands_golden().at("escape_filter_path")) {
+        const std::string in = c.at("input").get<std::string>();
+        CAPTURE(in);
+        CHECK(media::escape_filter_path(paths::from_utf8(in)) ==
+              c.at("expected").get<std::string>());
+    }
+}
+
+TEST_CASE("时间线的起点和字幕时间戳和 Python 一样") {
+    // 混音里每一段的偏移量全从这里来。时间线错了，adelay 也就错了，
+    // 而上面那条用例是拿语料里的 segments 直接喂的，绕过了这一步。
+    const json g = commands_golden().at("timeline");
+
+    const auto root = temp_root("语料时间线");
+    models::ProjectPaths paths(root);
+    paths.ensure();
+    touch(paths.abs("shots/draft/a.mp4"));
+    touch(paths.abs("shots/draft/b.mp4"));
+    touch(paths.abs("audio/a_1.wav"));
+    touch(paths.abs("audio/a_2.wav"));
+
+    models::Shot a = make_shot("ep01_sh001", 6.0, "shots/draft/a.mp4");
+    a.transition_in = models::Transition::CUT;
+    a.transition_dur_s = 0.0;
+    a.dialogue = {line("你终于来了。", 2.5, std::string("c_lin_wan"),
+                       "audio/a_1.wav"),
+                  line("雨下了一整夜。", 2.0, std::nullopt, "audio/a_2.wav")};
+    models::Shot b = make_shot("ep01_sh002", 5.0, "shots/draft/b.mp4");
+    b.transition_in = models::Transition::DISSOLVE;
+    b.transition_dur_s = 0.4;
+
+    std::vector<models::Shot> shots = {a, b};
+    config::AssemblyConfig cfg;
+    const auto tl = media::build_timeline(shots, paths, cfg);
+
+    REQUIRE(tl.entries.size() == g.size());
+    for (std::size_t i = 0; i < tl.entries.size(); ++i) {
+        CAPTURE(i);
+        const auto& e = tl.entries[i];
+        CHECK(e.shot_id == g[i].at("shot_id").get<std::string>());
+        CHECK(e.start_s == doctest::Approx(g[i].at("start_s").get<double>()));
+        CHECK(e.duration_s ==
+              doctest::Approx(g[i].at("duration_s").get<double>()));
+        REQUIRE(e.cues.size() == g[i].at("cues").size());
+        for (std::size_t k = 0; k < e.cues.size(); ++k) {
+            CAPTURE(k);
+            const auto& want = g[i].at("cues")[k];
+            CHECK(e.cues[k].start_s ==
+                  doctest::Approx(want.at("start_s").get<double>()));
+            CHECK(e.cues[k].end_s ==
+                  doctest::Approx(want.at("end_s").get<double>()));
+            CHECK(e.cues[k].text == want.at("text").get<std::string>());
+            CHECK(e.cues[k].style == want.at("style").get<std::string>());
+        }
+    }
 }
