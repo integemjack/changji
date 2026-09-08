@@ -204,3 +204,70 @@ TEST_CASE("中文路径也跑得起来（这条规矩每次都得重新验）") 
 
     fs::remove_all(dir, ec);
 }
+
+// ── 参数引用 ───────────────────────────────────────────────────────
+//
+// 每一个 ffmpeg 参数都要过 proc.cpp 里那个 quote()。ffmpeg 的滤镜串里
+// 冒号、单引号、逗号、等号、方括号、反斜杠全是家常便饭
+// （`subtitles=xx.ass:force_style='Fontsize=24'` 这种），
+// 引错一个字符，整条命令的语义就变了——而症状是 ffmpeg 报一句
+// 看不懂的参数错误，指不到是我们拼坏的。
+//
+// **这里不去推 cmd.exe 的引用规则，而是真的跑一遍看回来的是什么。**
+// 推规则很容易推出一个"看起来对"的结论，然后测试和实现一起错。
+
+TEST_CASE("参数里的特殊字符原样传过去") {
+    const fs::path dir = fs::temp_directory_path() / "changji_quote_test";
+    std::error_code ec;
+    fs::remove_all(dir, ec);
+    fs::create_directories(dir, ec);
+#ifdef _WIN32
+    // **只回显第一个参数，而且去掉外面那层引号（%~1）。**
+    //
+    // 第一版用的是 %*（整条参数串），那几乎什么都验不到：不加引号时
+    // "with space" 会被拆成两个参数，可 %* 回显的还是同样那串字，
+    // find() 照样找得到。实测把 quote() 整个短路掉，这条用例仍然全绿。
+    // 换成 %~1 之后，没引好就只回来 [with]，一眼看得出。
+    const fs::path tool = dir / "echoargs.bat";
+    { std::ofstream f(tool); f << "@echo [%~1]\n"; }
+#else
+    const fs::path tool = dir / "echoargs.sh";
+    { std::ofstream f(tool); f << "#!/bin/sh\nprintf '[%s]' \"$1\"\n"; }
+    fs::permissions(tool, fs::perms::owner_all, ec);
+#endif
+    const std::string exe = paths::to_utf8(tool);
+
+    for (const char* arg : {
+             "simple",
+             "with space",
+             "a:b",                                  // 滤镜里的分隔符
+             "force_style=QFontsize=24Q",            // 带单引号（下面会换掉）
+             "scale=640:-2,fps=24",                  // 逗号和等号
+             "[0:v][1:a]",                           // 方括号和冒号
+             "C:XXtempXXa b.ass",                    // 反斜杠加空格
+             "100%%",                                // 百分号：cmd 会不会吃掉
+         }) {
+        std::string a = arg;
+        // 把占位符换成真的字符，免得源码里堆一层层转义看不清。
+        for (auto& c : a) {
+            if (c == 'Q') c = 0x27;  // 单引号
+        }
+        std::string fixed;
+        for (std::size_t i = 0; i < a.size(); ++i) {
+            if (a[i] == 'X' && i + 1 < a.size() && a[i + 1] == 'X') {
+                fixed += '\\';
+                ++i;
+            } else {
+                fixed += a[i];
+            }
+        }
+        CAPTURE(fixed);
+        const auto r = proc::run(exe, {fixed});
+        CHECK(r.launched);
+        // 回显里必须能原样找到这个参数。找不到就说明被 shell 改写了。
+        CHECK_MESSAGE(r.out.find("[" + fixed + "]") != std::string::npos,
+                      "回来的是 [" << r.out << "]");
+    }
+
+    fs::remove_all(dir, ec);
+}

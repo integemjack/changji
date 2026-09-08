@@ -23,9 +23,24 @@ namespace {
 ///
 /// 这里必须用引号而不是直接拼接：项目路径经常带中文和空格
 /// （比如 E:\AI短剧\），不加引号会被 shell 拆成多个参数。
+///
+/// ⚠️ **`,` `;` `=` 也是 cmd.exe 的参数分隔符**，不是只有空格。
+/// 原来的判断里没有它们，后果是 ffmpeg 的滤镜串**每一条都会被切碎**：
+///
+///     scale=640:-2,setsar=1,fps=24
+///
+/// 这一串不带空格、不带引号，原来会原样拼进命令行，然后 cmd 在 `=` 和
+/// `,` 上切开，ffmpeg 收到的是七八个碎片。`media/assemble.cpp` 拼的
+/// 每一个 `-vf` / `-filter_complex` 参数都是这个形状。
+///
+/// 这是拿 `@echo [%~1]` 做回显、真跑一遍才看出来的——第一版用的是 `%*`
+/// （回显整条参数串），那验不出"被切成几个"，因为拼回去的字还是那些。
+///
+/// 还没处理的一个：**`%`**。cmd 就算在引号里也会展开 `%VAR%`。
+/// 现在的路径和滤镜里都不会出现成对的 `%`，先记在这儿。
 std::string quote(const std::string& s) {
     if (s.empty()) return "\"\"";
-    bool needs = s.find_first_of(" \t\"'&|<>()") != std::string::npos;
+    bool needs = s.find_first_of(" \t\"'&|<>(),;=^") != std::string::npos;
     if (!needs) return s;
     std::string out = "\"";
     for (char c : s) {
