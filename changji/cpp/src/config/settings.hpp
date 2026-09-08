@@ -216,6 +216,20 @@ struct ModelsConfig {
     std::vector<std::string> validate() const;
 };
 
+/// 工作进程。**空 = 进程内，行为和以前一模一样。**
+///
+/// 填了地址就把出图和出片派给那些进程去算。为什么要这样见方案
+/// 「多卡和多机怎么用起来」：sd.cpp 的进度回调是全局的，
+/// 同进程两个生成会互相串——同种模型的多实例只能靠多进程。
+///
+/// 这一节和 [models] 一样是 C++ 侧独有的，Python 的 Settings
+/// 是 extra="forbid"，出现它就起不来。
+struct WorkersConfig {
+    /// `["http://127.0.0.1:9001", "http://127.0.0.1:9002"]`。
+    /// 跨机就填别的机器的地址，协议一模一样。
+    std::vector<std::string> endpoints;
+};
+
 /// 全部配置。
 struct Settings {
     ComfyConfig comfy;
@@ -224,6 +238,7 @@ struct Settings {
     GateConfig gates;
     AssemblyConfig assembly;
     ModelsConfig models;
+    WorkersConfig workers;
 
     /// 显存覆盖。推理服务在别的机器上时本机探测不到，用它手动指定
     std::optional<double> vram_gb_override;

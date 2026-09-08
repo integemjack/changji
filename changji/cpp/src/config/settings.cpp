@@ -275,6 +275,16 @@ void apply_table(const toml::table& doc, Settings& s) {
         take(t, "timeout_s", s.llm.timeout_s);
         take(t, "temperature", s.llm.temperature);
     }
+    if (auto t = doc["workers"].as_table()) {
+        if (auto arr = (*t)["endpoints"].as_array()) {
+            s.workers.endpoints.clear();
+            for (const auto& v : *arr) {
+                if (auto sv = v.value<std::string>()) {
+                    s.workers.endpoints.push_back(*sv);
+                }
+            }
+        }
+    }
     if (auto t = doc["tts"].as_table()) {
         take(t, "backend", s.tts.backend);
         take_path_str(t, "base_url", s.tts.base_url);

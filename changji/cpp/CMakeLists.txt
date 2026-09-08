@@ -278,6 +278,8 @@ add_executable(changji
     src/infer/sd_video.cpp
     src/llm/client.cpp
     src/llm/client_http.cpp
+    src/infer/worker_pool.cpp
+    src/infer/worker_server.cpp
     src/infer/worker_proto.cpp
     src/http/flow.cpp
     src/http/webapp.cpp

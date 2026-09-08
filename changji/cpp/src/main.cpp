@@ -10,6 +10,7 @@
 #include <iostream>
 #include <string>
 
+#include "infer/worker_server.hpp"
 #include "config/settings.hpp"
 #include "infer/llama_tts.hpp"
 #include "doctor/doctor.hpp"
@@ -50,6 +51,10 @@ void print_usage() {
         "                        要让局域网连进来才填 0.0.0.0——这套接口没有\n"
         "                        鉴权，连上就能读项目、改分镜、起流水线\n"
         "  --doctor              跑一遍环境体检然后退出\n"
+        "\n"
+        "  当工作进程跑（多卡时一张卡起一个，见方案「多卡和多机」）：\n"
+        "  --worker              以工作进程模式起，只算不发接口\n"
+        "  --gpu <n>             绑第几张卡，默认 0\n"
         "  --init-config         生成一份带注释的配置模板然后退出\n"
         "  --force               配合 --init-config：已有配置也照样覆盖\n"
         "  --help                显示这段话\n"
@@ -224,6 +229,8 @@ namespace {
 int run(int argc, char** argv) {
     changji::http::Options opts;
     bool want_doctor = false;
+    bool want_worker = false;
+    int worker_gpu = 0;
     bool want_force = false;
     bool want_init = false;
 
@@ -252,6 +259,8 @@ int run(int argc, char** argv) {
         if (a == "--help" || a == "-h") { print_usage(); return 0; }
         else if (a == "--port") opts.port = parse_port(next("端口号"));
         else if (a == "--host") opts.host = next("监听地址");
+        else if (a == "--worker") want_worker = true;
+        else if (a == "--gpu") worker_gpu = std::atoi(next("显卡序号").c_str());
         else if (a == "--doctor") want_doctor = true;
         else if (a == "--say") say_text = next("要念的话");
         else if (a == "--out") say_out = next("输出文件名");
@@ -318,6 +327,27 @@ int run(int argc, char** argv) {
         return run_say(settings, say_text, say_voice, say_out, say_model,
                        say_decoder);
     }
+
+    if (want_worker) {
+
+        // 工作进程：只算，不发接口、不碰项目文件。
+
+        // 见方案「多卡和多机怎么用起来」。
+
+        changji::infer::WorkerOptions wo;
+
+        wo.port = opts.port;
+
+        wo.host = opts.host;
+
+        wo.gpu = worker_gpu;
+
+        changji::infer::run_worker(settings, wo);
+
+        return 0;
+
+    }
+
 
     if (want_doctor) return run_doctor(settings);
 

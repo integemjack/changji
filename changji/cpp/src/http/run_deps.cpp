@@ -18,6 +18,7 @@
 #include "http/run.hpp"
 #include "infer/sd_image.hpp"
 #include "infer/sd_video.hpp"
+#include "infer/worker_pool.hpp"
 #include "stages/frames.hpp"
 
 namespace changji::http {
@@ -34,6 +35,18 @@ RunDeps default_run_deps() {
         b.frame = stages::sd_renderer();
         b.video = infer::sd_video_renderer(s);
         b.frame_backend_name = "sd.cpp";
+
+        // **配了工作进程就派出去算。** 空的话上面那两行原样生效——
+        // 行为和以前一模一样，这是这一步能安全落地的前提。
+        if (auto pool = infer::make_worker_pool(s.workers.endpoints)) {
+            b.frame = pool->frame_renderer();
+            b.video = pool->video_renderer();
+            b.frame_backend_name =
+                "sd.cpp（" + std::to_string(pool->size()) + " 个工作进程）";
+            // 池要活到渲染结束。Backends 只存 std::function，
+            // 捕获一份 shared_ptr 让它跟着活。
+            b.keepalive.push_back(pool);
+        }
 
         // 装配和闸门要用。路径从配置来——用户可能把 ffmpeg 装在
         // 非 PATH 的地方，那时候 assembly.ffmpeg_path 是唯一的出路。

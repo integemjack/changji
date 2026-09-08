@@ -46,6 +46,12 @@ std::string env(const char* name);
 /// 项目目录本来就允许是 E:\AI短剧\ 这种路径，用户名也可能是中文，
 /// 所以这不是边缘情况。这个函数走 wstring → UTF-8，不经过 ANSI 代码页，
 /// 永远不会失败。
+/// 设一个环境变量（当前进程内）。
+///
+/// 工作进程用它设 `CUDA_VISIBLE_DEVICES`，**必须在建任何 ggml 上下文之前**
+/// ——后端初始化时就把设备列表读走了，之后再设没用。
+void set_env(const std::string& name, const std::string& value);
+
 std::string to_utf8(const std::filesystem::path& p);
 
 /// UTF-8 字符串转路径。**任何时候都不要用 fs::path(str) 代替它。**

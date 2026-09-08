@@ -1,5 +1,7 @@
 #include "stages/frames.hpp"
 
+#include <optional>
+
 #include <chrono>
 #include <cstdlib>
 
@@ -36,8 +38,11 @@ std::int64_t frame_seed(const std::string& shot_id, int attempts) {
     return (b + static_cast<std::int64_t>(attempts) * 6271) % 2147483648LL;
 }
 
-FrameRenderer sd_renderer() {
-    return [](const Shot& shot, const PromptBundle& prompts,
+namespace {
+
+/// 出图那一段的公共实现。`seed_override` 有值就用它，没有就按镜头算。
+FrameRenderer make_sd_renderer(std::optional<std::int64_t> seed_override) {
+    return [seed_override](const Shot& shot, const PromptBundle& prompts,
               const TierSpec& spec, const fs::path& dest,
               pipeline::CancelToken& tok, const infer::StepCallback& on_step) {
         // 每次借一下。**不在外面借一次拿着不放**——那样跑首帧期间
@@ -53,12 +58,21 @@ FrameRenderer sd_renderer() {
         req.width = spec.width;
         req.height = spec.height;
         req.steps = spec.steps;
-        req.seed = frame_seed(shot.shot_id, shot.attempts);
+        req.seed = seed_override ? *seed_override
+                                 : frame_seed(shot.shot_id, shot.attempts);
         for (const auto& r : prompts.reference_images) {
             req.reference_images.push_back(paths::from_utf8(r));
         }
         ctx->generate(req, dest, tok, on_step);
     };
+}
+
+}  // namespace
+
+FrameRenderer sd_renderer() { return make_sd_renderer(std::nullopt); }
+
+FrameRenderer sd_renderer_with_seed(std::int64_t seed) {
+    return make_sd_renderer(seed);
 }
 
 std::vector<FrameOutcome> run_frames(std::vector<Shot*>& shots,

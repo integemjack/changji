@@ -71,6 +71,17 @@ std::string to_utf8(const std::filesystem::path& p) {
 #endif
 }
 
+void set_env(const std::string& name, const std::string& value) {
+#if defined(_WIN32)
+    // **用宽字符版**：值里可能有中文路径，窄版在简体 Windows 上按本地
+    // 代码页转，非 ASCII 会烂掉。这个项目在窄/宽这件事上栽过好几次。
+    ::_wputenv_s(from_utf8(name).wstring().c_str(),
+                 from_utf8(value).wstring().c_str());
+#else
+    ::setenv(name.c_str(), value.c_str(), 1);
+#endif
+}
+
 std::string env(const char* name) {
 #ifdef _WIN32
     std::wstring wname;

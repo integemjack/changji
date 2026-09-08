@@ -86,9 +86,15 @@ void encode_raw_to_mp4(const fs::path& raw_path, int width, int height, int fps,
     }
 }
 
-stages::VideoRenderer sd_video_renderer(const config::Settings& settings) {
+namespace {
+
+/// 出片那一段的公共实现。`seed_override` 有值就用它。
+stages::VideoRenderer make_video_renderer(
+    const config::Settings& settings,
+    std::optional<std::int64_t> seed_override) {
     const config::AssemblyConfig assembly = settings.assembly;
-    return [assembly](const models::Shot& shot, const stages::RenderPlan& plan,
+    return [assembly, seed_override](
+               const models::Shot& shot, const stages::RenderPlan& plan,
                       const std::optional<fs::path>& start_image,
                       const fs::path& dest, pipeline::CancelToken& tok,
                       const StepCallback& on_step) {
@@ -105,7 +111,9 @@ stages::VideoRenderer sd_video_renderer(const config::Settings& settings) {
         req.steps = plan.spec.steps;
         req.frames = plan.frames;
         req.fps = assembly.fps;
-        req.seed = stages::render_seed(shot.shot_id, shot.attempts);
+        req.seed = seed_override
+                       ? *seed_override
+                       : stages::render_seed(shot.shot_id, shot.attempts);
         req.start_image = start_image;
 
         const fs::path raw = raw_temp_for(dest);
@@ -113,6 +121,17 @@ stages::VideoRenderer sd_video_renderer(const config::Settings& settings) {
         ctx->generate_video(req, raw, tok, on_step);
         encode_raw_to_mp4(raw, req.width, req.height, req.fps, assembly, dest);
     };
+}
+
+}  // namespace
+
+stages::VideoRenderer sd_video_renderer(const config::Settings& settings) {
+    return make_video_renderer(settings, std::nullopt);
+}
+
+stages::VideoRenderer sd_video_renderer_with_seed(
+    const config::Settings& settings, std::int64_t seed) {
+    return make_video_renderer(settings, seed);
 }
 
 }  // namespace changji::infer

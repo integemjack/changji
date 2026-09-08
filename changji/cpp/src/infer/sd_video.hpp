@@ -1,5 +1,7 @@
 #pragma once
 
+#include <cstdint>
+
 // 用 sd.cpp 出视频，再交给 ffmpeg 编码成 mp4。
 //
 // sd.cpp 的 generate_video 吐的是**裸帧数组**，不是编码好的视频
@@ -29,6 +31,11 @@ namespace changji::infer {
 /// 每一镜的片段和最后拼起来的成片必须用同一套规格，
 /// 否则拼接环节要重编码，那是白白多一次有损压缩。
 stages::VideoRenderer sd_video_renderer(const config::Settings& settings);
+
+/// 同上，但**种子由外面给**。工作进程用这个——它拿不到 `attempts`，
+/// 自己算的种子和串行跑的不一样，而且不会有任何报错。
+stages::VideoRenderer sd_video_renderer_with_seed(
+    const config::Settings& settings, std::int64_t seed);
 
 /// 把裸 RGB 帧编码成 mp4。
 ///

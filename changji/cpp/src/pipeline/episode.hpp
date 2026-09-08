@@ -7,6 +7,7 @@
 // 按镜头串行是加载 80 次，按阶段分批是 2 次。
 // test_scheduler 里有一条用例专门钉这个差距。
 
+#include <memory>
 #include <optional>
 #include <set>
 #include <string>
@@ -88,6 +89,14 @@ struct Backends {
     /// （image_model / video_model / comfy），传了参考图但走的是视频模型
     /// 的话那些图一张都不会被用上，不写出来用户只会以为是模型不听话。
     std::string frame_backend_name = "sd.cpp";
+
+    /// 只是让某些东西活到渲染结束。
+    ///
+    /// **`frame` 和 `video` 是 std::function，捕获的是裸指针**——
+    /// 工作进程池那种"造出来交给它俩用"的东西，没有这个的话
+    /// 出了 `backends()` 那个作用域就析构了，而 lambda 还留着指针。
+    /// 表现是跑到第一镜就崩，且崩在池的析构里，看不出和配置有什么关系。
+    std::vector<std::shared_ptr<void>> keepalive;
 };
 
 /// 跑一集。

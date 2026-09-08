@@ -60,6 +60,13 @@ using FrameRenderer = std::function<void(
 /// 它自己不管模型加载——那是调度器的事。每次调用时向调度器借图像槽。
 FrameRenderer sd_renderer();
 
+/// 同上，但**种子由外面给**。
+///
+/// 工作进程用这个：任务里带着协调者算好的种子。它自己算不了——
+/// `frame_seed` 要 `attempts`，而工作进程拿不到那个数。
+/// 用错种子出来的图和串行跑的不一样，**而且不会有任何报错**。
+FrameRenderer sd_renderer_with_seed(std::int64_t seed);
+
 /// 给一批镜头出首帧。
 ///
 /// **顺序生成，不并发。** 显卡只有一张，并发只会更慢，而且两个上下文
