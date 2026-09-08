@@ -36,7 +36,12 @@ export const STEPS = [
  * 判定看的是数据本身而不是「用户点没点过下一步」。中途关掉浏览器
  * 第二天回来，进度得还在。
  */
-function assess(project, shots, episode, publishedIds) {
+/**
+ * 导出**只为了能测**：这套判定规则是只写在一处的（见文件头），
+ * 而只写在一处的东西一旦错了，侧边栏、进度条、下一步按钮会一起错，
+ * 三个地方看起来还一致，反而更难发现是判定本身的问题。
+ */
+export function assess(project, shots, episode, publishedIds) {
   const done = {}
   done.project = Boolean(project?.project_id)
 
