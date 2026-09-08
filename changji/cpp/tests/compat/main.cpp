@@ -337,17 +337,32 @@ std::optional<Response> wait_idle(const std::string& base, int timeout_s) {
 /// 这一层一直空着，理由记的是"要真跑一集"，而跑一集要模型和 ffmpeg。
 /// 配音这一段绕开了那两样：只跑 `stages: ["audio"]`。
 ///
-/// ⚠️ **我一开始的前提是错的，记在这里免得下一个人重犯。**
-/// 我以为"ComfyUI 连不上时两边都会退回估算后端（写等长静音 wav），
-/// 于是既不碰模型也不碰 ffmpeg"。实际不是：**两边都有内置的配音工作流**
-/// （Python 的 `workflows_loader`、C++ 的 `bundled_workflows.inc.hpp`），
-/// 所以两边都造出了 ComfyUI 后端，然后都连不上 127.0.0.1:8188。
-/// 估算后端只有在**连工作流都没有**的时候才会用上。
+/// ⚠️ **我前后错了两次，两次都记在这儿免得下一个人重走。**
 ///
-/// 所以这一条实际验的是：**ComfyUI 不在的时候，跑配音这一段两边各干了什么。**
-/// 那仍然是一条值得验的路——用户机器上没起 ComfyUI 是最常见的状态，
-/// 而"这时候该怎么办"两边的答案目前不一样，见下面报出来的差异。
+/// 第一次：我以为"ComfyUI 连不上时两边都会退回估算后端"。不是——
+/// 两边都有内置的配音工作流（Python 的 `workflows_loader`、C++ 的
+/// `bundled_workflows.inc.hpp`），估算后端只在**连工作流都没有**时才用得上。
 ///
+/// 第二次：看到两边行为不同，我写成了"Python 一失败就整体中止，
+/// C++ 跳过失败继续跑"，当成一处待定的策略分歧。**那也不对。** 真正的机制是：
+///
+///   - Python 的 `load_all` 上来就加载 **video**（`required=True`），
+///     而 `video.json` 是**界面版**的，转接口版要问服务端要 `/object_info`。
+///     于是**光是加载**就要 ComfyUI 活着——哪怕用户只点了 `stages: ["audio"]`，
+///     哪怕配音这一段根本不碰视频。
+///   - C++ 在 `[models].engine = "sd"`（默认）时**在加载任何 ComfyUI 工作流
+///     之前就返回了**（`run_deps.cpp` 里 `if (engine != "comfy") return b;`）——
+///     它有进程内的 sd.cpp，出视频不需要 ComfyUI。
+///
+/// **所以两边跑的根本不是同一条路，而那正是这次重构的目的，不是契约 bug。**
+/// 直接逐字段比这一条没有意义。
+///
+/// 记成**有意不一样**并且逐次验证：验 Python 确实卡在加载工作流那一步、
+/// C++ 确实进到了配音阶段、而且 Python 那边盘上一个字节都没动。
+/// 哪天 Python 改成按需加载、或者 C++ 的默认引擎变了，这一条会当场报出来。
+///
+/// **要真正逐字段比这一层，得让 C++ 也以 `[models].engine = "comfy"` 起。**
+/// 那是下一步，需要 duiping.ps1 给 C++ 那一侧单独写一份配置。
 /// 验的东西比接口层深一层：
 ///   - 跑完之后的 `GET /api/run` 快照（在跑什么、报了什么错）
 ///   - **project.json**——镜头状态有没有一起推进、有没有一样地拆镜头
@@ -419,24 +434,36 @@ int run_pipeline(const Args& args, Tally& tally) {
         return 0;
     }
 
-    for (auto& d : compat::compare(py_final->body, cp_final->body, opts)) {
-        diffs.push_back({"跑完的状态" + d.path, d.detail});
-    }
+    // **有意不一样：验两边各自还是不是当初那个样子。**
+    // 不逐字段比——见上面那段，两边跑的不是同一条路。
+    const std::string py_err = py_final->body.value("error", std::string());
+    const std::string cp_stage = cp_final->body.value("stage", std::string());
 
-    // **真正的产出在这两处。** 上面那份快照只是它自己说的。
-    const json a = read_json(py_dir / "project.json");
-    const json b = read_json(cp_dir / "project.json");
-    if (!a.is_null() && !b.is_null()) {
-        for (auto& d : compat::compare(a, b, opts)) {
-            diffs.push_back({"project.json" + d.path, d.detail});
+    if (py_err.find("ComfyUI") == std::string::npos) {
+        diffs.push_back({"Python 侧",
+                         "本该卡在加载 video 工作流那一步（要问 ComfyUI 要 "
+                         "/object_info），实际 error 是「" + py_err + "」"});
+    }
+    if (cp_stage != "audio") {
+        diffs.push_back({"C++ 侧",
+                         "本该进到配音阶段（engine=sd 时不碰 ComfyUI 工作流），"
+                         "实际停在「" + cp_stage + "」"});
+    }
+    // Python 卡在加载那一步，盘上就该一个字节都没动。
+    {
+        const json py_proj = read_json(py_dir / "project.json");
+        const json src_proj = read_json(src / "project.json");
+        if (!py_proj.is_null() && !src_proj.is_null() &&
+            !compat::compare(src_proj, py_proj, opts).empty()) {
+            diffs.push_back({"Python 侧",
+                             "本该什么都没写（它在加载工作流时就中止了），"
+                             "实际 project.json 变了"});
         }
     }
-    for (auto& d : compat::compare(list_dir(py_dir / "audio"),
-                                   list_dir(cp_dir / "audio"), opts)) {
-        diffs.push_back({"audio/" + d.path, d.detail});
-    }
 
-    tally.report(name, diffs);
+    tally.report(name + "（有意不一样：Python 光加载工作流就要 ComfyUI 活着，"
+                        "C++ 的 engine=sd 根本不碰它）",
+                 diffs);
 
     std::error_code ec;
     fs::remove_all(fs::temp_directory_path() / paths::from_utf8("changji_对拍_写"),
