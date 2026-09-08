@@ -460,3 +460,124 @@ TEST_CASE("ping 不抛，连不上就是 false") {
     comfy::Client c2(fast_config(), s.transport(), "cid");
     CHECK(c2.ping());
 }
+
+
+// ---------------------------------------------------------------------------
+// 和 Python 逐条比 client.py 里那几个纯函数。
+//
+// 上面那些用例钉的是我们自己的意图——`contract_audit.py` 一直把这个文件
+// 列在「两边都有、又只钉了意图」那一类里。这一段把能脱开网络跑的三件事
+// 拿去问 Python。
+//
+// 最要紧的是 **first_file()**：`outputs` 是「节点 id -> {images:[...]}」，
+// 谁排在前面就决定成片用哪张图。Python 那边是 dict 走插入顺序；
+// C++ 这边 `OrderedJson` 是 `nlohmann::ordered_json`，也是插入顺序——
+// **这是有意选的**。哪天有人顺手换成 `nlohmann::json`，它按键名字典序，
+// `"10"` 就跑到 `"9"` 前面，`first_file()` 换一张图**而且一声不吭**：
+// 文件在、格式对、流程全绿，只是画面不对。
+// 语料专门挑了插入序和字典序相反的节点 id，正反各一条。
+// ---------------------------------------------------------------------------
+
+namespace {
+
+OrderedJson load_comfy_golden() {
+    const std::string path =
+        std::string(CHANGJI_GOLDEN_DIR) + "/comfy_client.json";
+    std::ifstream in(path, std::ios::binary);
+    REQUIRE_MESSAGE(in.good(), "读不到语料 " << path);
+    OrderedJson g;
+    in >> g;
+    return g;
+}
+
+}  // namespace
+
+TEST_CASE("产出文件的挑选和 Python 一样（含插入顺序）") {
+    const auto g = load_comfy_golden();
+    const auto cases = g.at("outputs");
+    REQUIRE(cases.size() == 9);
+
+    for (const auto& c : cases) {
+        const std::string name = c.at("name").get<std::string>();
+        CAPTURE(name);
+
+        comfy::JobResult r;
+        r.prompt_id = "p1";
+        r.outputs = c.at("outputs");
+
+        if (c.contains("divergent")) {
+            // 两边有意不一样。**不比 Python 的值**——比了就是把
+            // 其中一边的行为写进期望里假装是契约。这里钉 C++ 自己该做什么，
+            // 理由在语料的 divergent 字段里，也写进了方案。
+            CHECK(r.files().empty());
+            CHECK_FALSE(r.first_file().has_value());
+            continue;
+        }
+
+        CHECK(r.files() == c.at("files_images").get<std::vector<OrderedJson>>());
+        CHECK(r.files("videos") ==
+              c.at("files_videos").get<std::vector<OrderedJson>>());
+
+        const auto want_first = c.at("first_file");
+        if (want_first.is_null()) {
+            CHECK_FALSE(r.first_file().has_value());
+        } else {
+            REQUIRE(r.first_file().has_value());
+            CHECK(*r.first_file() == want_first);
+        }
+    }
+}
+
+TEST_CASE("校验失败翻成的人话和 Python 一字不差") {
+    // 这句话是用户唯一能看懂的东西。翻错了没人会发现——
+    // 用户只会觉得"报错看不懂"，然后去装一堆其实不缺的东西。
+    const auto g = load_comfy_golden();
+    const auto cases = g.at("validation");
+    REQUIRE(cases.size() == 9);
+
+    for (const auto& c : cases) {
+        const std::string name = c.at("name").get<std::string>();
+        CAPTURE(name);
+        const auto ne = c.at("node_errors");
+        comfy::PromptValidationError e(
+            c.at("message").get<std::string>(),
+            ne.is_null() ? OrderedJson::object() : ne);
+        CHECK(e.human_summary() == c.at("human_summary").get<std::string>());
+    }
+}
+
+TEST_CASE("从 history 里挖执行失败的原因和 Python 一样") {
+    const auto g = load_comfy_golden();
+    const auto cases = g.at("history");
+    REQUIRE(cases.size() == 8);
+
+    for (const auto& c : cases) {
+        const std::string name = c.at("name").get<std::string>();
+        CAPTURE(name);
+        const std::string got = comfy::error_from_history(c.at("status"));
+
+        if (c.contains("divergent")) {
+            // Python 把它自己的 None 渲染进中文句子里（"节点 None 执行失败"）。
+            // C++ 渲染成 "?"——都没信息，但 ? 不会让人以为有个叫 None 的节点。
+            CHECK(got == "节点 ? 执行失败：炸了");
+            continue;
+        }
+        CHECK(got == c.at("error").get<std::string>());
+    }
+}
+
+TEST_CASE("进度百分比的除零和 Python 一样") {
+    const auto g = load_comfy_golden();
+    const auto cases = g.at("progress");
+    REQUIRE(cases.size() == 6);
+
+    for (const auto& c : cases) {
+        comfy::JobProgress p;
+        p.prompt_id = "p1";
+        p.step = c.at("step").get<int>();
+        p.total = c.at("total").get<int>();
+        CAPTURE(p.step);
+        CAPTURE(p.total);
+        CHECK(p.fraction() == doctest::Approx(c.at("fraction").get<double>()));
+    }
+}

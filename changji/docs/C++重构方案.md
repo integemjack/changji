@@ -959,6 +959,56 @@ C++ 算成"这一镜失败"接着跑。
 而 **C++ 侧根本没有这个类型**——它捕 `std::exception`，
 所以没必要定义专门的异常。
 
+### ComfyUI 客户端：挑哪张图靠的是插入顺序（2026-09-08）
+
+`comfy/workflow.py` 那一半早就有语料（工作流 JSON 逐块比），
+`comfy/client.py` 一直没有——`contract_audit.py` 把
+`test_comfy_client.cpp` 列在「两边都有、又只钉了意图」那一类里。
+补了 `comfy_client.json`，32 条，覆盖四个能脱开网络跑的纯函数。
+
+**最要紧的是 `first_file()`。** `outputs` 是「节点 id -> {images:[...]}」，
+`files()` 把各节点的摊平，`first_file()` 取第一个。
+也就是说**哪个节点排在前面，决定了成片用哪张图**。
+
+Python 那边是 dict，走插入顺序（服务端 history JSON 里的顺序）。
+C++ 用 `nlohmann::ordered_json`，也是插入顺序——**这是有意选的**。
+可要是哪天有人顺手换成 `nlohmann::json`，它按键名字典序排，
+`"10"` 就跑到 `"9"` 前面，`first_file()` 换一张图**而且一声不吭**：
+文件在、格式对、流程全绿，只是画面不对。
+语料专挑插入序和字典序相反的节点 id，**正反各一条**——
+只有一条方向的话，"跟的是插入序"和"碰巧一样"分不开。
+验过：把 `files()` 改成按键名排序再遍历，这份语料抓得到。
+
+顺带钉住一条以前只写在头文件注释里、没人去问过 Python 的事：
+**视频节点也把结果放在 `images` 键下**，带 `animated` 标记。
+按 `"videos"` 找一个都找不到。
+
+导语料时又撞出两处两边不一样，都是 C++ 有意做得更稳，都标在语料里
+（`divergent` 字段），C++ 侧钉自己的行为，不拿 Python 的值当期望：
+
+**一、`images` 不是数组的时候。** Python 的 `files()` 是
+`out.extend(node_out.get(kind, []))`——喂个字符串进去它**按字符摊平**。
+实测 `{"images": "坏掉的"}` 得到 `files() == ['坏','掉','的']`，
+`first_file() == '坏'`：一个字符串，而调用方等的是带 `filename` 的字典。
+于是炸在下游（`'str' object has no attribute 'get'`），
+报错指向的地方离真正的原因隔了好几层。
+C++ 判 `is_array()`，不是数组就跳过，`first_file()` 回 `nullopt`，
+调用方当成"没有产出文件"正常报错。
+
+**二、`execution_error` 里缺 `node_type` 的时候。** Python 是
+`f"节点 {detail.get('node_type')} 执行失败：..."`，缺字段时 `None`
+被 f-string 直接渲染进去，用户看到"**节点 None 执行失败**"
+——一个中文句子里夹着 Python 的 `None`。
+C++ 用 `str_or(detail, "node_type", "?")`，渲染成"节点 ?"。
+两边都没信息，但 `?` 不会让人以为有个叫 None 的节点。
+
+还有一件工具上的事：`contract_audit.py` 以前只打两个桶
+（比过 / 只钉意图），**哪些"只钉意图"是真缺口，一直在我脑子里**——
+跨会话必然走样，这一轮就发现我记的数和实际对不上。
+现在免责名单连理由写进脚本，还会反过来提醒哪条已经不在"只钉意图"里、
+该从表里删掉（补了语料之后不删，那张表会慢慢变成一份过期的免责声明）。
+真待办打印在报告末尾，现在剩 1 条：`test_episode.cpp`。
+
 ### 配音阶段：一镜配音失败，Python 会把整集废掉（2026-09-08）
 
 给 `stages/audio.cpp` 补语料（`audio_stage.json`，6 条）时挖出两处不一样。
