@@ -244,3 +244,109 @@ TEST_CASE("默认配置模板里 [models] 必须是注释掉的") {
     CHECK(text.find("# [models]") != std::string::npos);
     fs::remove_all(tmp, ec);
 }
+
+
+// ---------------------------------------------------------------------------
+// 配置模板必须提到代码真的认的每一个值。
+//
+// **这一条是被一个真 bug 逼出来的。** 模板里 `[tts] backend` 的注释写着
+// "填 comfy……填 http……"，只列了两个值，而代码认三个——漏掉的正是
+// `local`：阶段 9 做的进程内配音，`--say` 验过真能出声。
+// `[models]` 那一节也没有 `tts` / `tts_decoder` 这两个键，
+// 而它们是 local 那条路必须填的。
+//
+// 后果不是"少个功能"，是**把人推去装一个根本不需要的东西**：
+// 用户跑 `--init-config`（这是他做的第一件事），照着模板只能选 comfy 或
+// http，于是去装 34 GB 的 ComfyUI 或者另起一个配音服务，
+// 而这台机器上的这个二进制自己就能出声。
+//
+// 单元测试看不见这种错——模板是注释，改错了每个值仍然解析得动、
+// 每条断言仍然是绿的。所以这里改成**拿代码认的值去查模板**：
+// 以后再加一个后端而不写进模板，这条就会红。
+// ---------------------------------------------------------------------------
+
+namespace {
+
+/// 从模板里切出一节：从 `[名字]` 那行到下一个顶格的 `[` 为止。
+///
+/// **整份模板做子串搜索是不行的**，第一版就栽在这上面：查 `"tts"`
+/// 撞上 `[tts]` 这个节名本身，查 `image` 撞上 `workflows/image.json`，
+/// 两条用例从头到尾没验过任何东西——把模板改回漏掉 local 的样子，
+/// 它们照样全绿。
+std::string toml_section(const std::string& tpl, const std::string& name) {
+    // [models] 那一节在模板里**整个是注释掉的**（默认走 Python 引擎，
+    // 取消注释才切到进程内推理），所以两种开头都要认。
+    const std::string head = "[" + name + "]";
+    std::string opener = head;
+    std::size_t i = tpl.find("\n" + opener);
+    if (i == std::string::npos) {
+        opener = "# " + head;
+        i = tpl.find("\n" + opener);
+        if (i == std::string::npos) return {};
+    }
+    i += 1;
+    std::size_t j = i + opener.size();
+    while (true) {
+        const std::size_t nl = tpl.find('\n', j);
+        if (nl == std::string::npos) return tpl.substr(i);
+        // 下一节的开头：顶格的 '[' 或者顶格的 "# ["
+        const bool bare = nl + 1 < tpl.size() && tpl[nl + 1] == '[';
+        const bool commented = tpl.compare(nl + 1, 3, "# [") == 0;
+        if (bare || commented) return tpl.substr(i, nl - i);
+        j = nl + 1;
+    }
+}
+
+}  // namespace
+
+TEST_CASE("模板的 [tts] 那一节提到了代码认的每一个后端") {
+    // 代码里真的分派到的三个值：doctor/needs.cpp、http/run_deps.cpp
+    const std::string sec =
+        toml_section(config::default_config_template(), "tts");
+    REQUIRE_FALSE(sec.empty());
+
+    for (const char* backend : {"local", "comfy", "http"}) {
+        CAPTURE(backend);
+        CHECK_MESSAGE(sec.find(backend) != std::string::npos,
+                      "[tts] 那一节里没提 " << backend
+                      << " —— 用户照着模板配就不会知道有这条路");
+    }
+}
+
+TEST_CASE("模板的 [models] 那一节列出了每一个会被读的键") {
+    // settings.cpp 里 take(t, "...", ...) 那一串。
+    // **按 `键 = ` 的形状找**，不是找到这个词就算——散文里提一嘴不等于
+    // 给了用户一行可以取消注释就用的东西。
+    const std::string sec =
+        toml_section(config::default_config_template(), "models");
+    REQUIRE_FALSE(sec.empty());
+
+    for (const char* key : {"dir", "engine", "llm", "video", "video_vae",
+                            "video_text_encoder", "image", "tts",
+                            "tts_decoder"}) {
+        CAPTURE(key);
+        // 模板里这一节整个是注释掉的，所以形状是 `# 键 = `
+        const std::string want = std::string("# ") + key + " = ";
+        CHECK_MESSAGE(sec.find(want) != std::string::npos,
+                      "[models] 里没有 `" << want << "` 这一行");
+    }
+}
+
+TEST_CASE("模板自己解析得动，而且解析出来就是默认值") {
+    // 模板是用户拿到的第一个文件。它要是解析不动，或者解析出来和默认值
+    // 不一样，那"生成一份模板"这件事本身就是在骗人。
+    const fs::path dir = fs::temp_directory_path() /
+                         paths::from_utf8("changji_模板往返");
+    std::error_code ec;
+    fs::remove_all(dir, ec);
+    fs::create_directories(dir, ec);
+    {
+        std::ofstream f(dir / "changji.toml", std::ios::binary);
+        f << config::default_config_template();
+    }
+    const auto s2 = config::load_settings(dir);
+    const config::Settings def;
+    CHECK(s2.tts.backend == def.tts.backend);
+    CHECK(s2.llm.model == def.llm.model);
+    CHECK(s2.comfy.base_url == def.comfy.base_url);
+}

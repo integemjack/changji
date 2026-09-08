@@ -439,7 +439,13 @@ base_url = "http://127.0.0.1:11434/v1"
 model = "qwen3:14b"
 
 [tts]
-# backend 填 comfy 表示通过推理服务的 TTS 节点调用，填 http 表示独立服务。
+# backend 有三个值：
+#   local —— **进程内配音，不需要装任何外部服务**。要填下面 [models] 里的
+#            tts 和 tts_decoder 两个模型文件。想先听听效果的话，不必配也不必
+#            建项目，直接：changji --say "雨下了一整夜。" --tts-model <骨干>
+#            --tts-decoder <解码器>
+#   comfy —— 通过推理服务（ComfyUI）的 TTS 节点调用
+#   http  —— 独立的配音服务
 backend = "comfy"
 engine = "cosyvoice3"
 
@@ -487,6 +493,10 @@ subtitle_font = "Source Han Sans SC"
 #
 # dir = "~/models"
 # llm = "Qwen3-14B-Q4_K_M.gguf"
+# 进程内配音（[tts] backend = "local"）要这两个。骨干是自回归那半，
+# 解码器把 token 变成波形，缺一个都出不了声。
+# tts = "Qwen3-TTS-12Hz-1.7B-Base-Q4_K_M.gguf"
+# tts_decoder = "mmproj-Qwen3-TTS-12Hz-1.7B-Base-f16.gguf"
 # video = "Wan2.2-TI2V-5B-Q4_K_M.gguf"
 # video_vae = "Wan2.2_VAE.safetensors"
 # video_text_encoder = "umt5-xxl-encoder-Q5_K_M.gguf"
@@ -494,6 +504,8 @@ subtitle_font = "Source Han Sans SC"
 )";
 
 }  // namespace
+
+std::string default_config_template() { return kDefaultToml; }
 
 fs::path write_default_config(const std::optional<fs::path>& path) {
     fs::path target = path ? *path : user_config_path();

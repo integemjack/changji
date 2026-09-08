@@ -235,6 +235,14 @@ Settings load_settings(const std::optional<std::filesystem::path>& project_dir =
 /// 返回 {"comfy_base_url": "CHANGJI_COMFY_BASE_URL"} 这样的映射。
 std::map<std::string, std::string> env_overridden();
 
+/// 那份带注释的配置模板的原文。
+///
+/// 导出来是为了让用例**拿代码认的值去查它**：模板是注释，写漏一个后端
+/// 或一个模型键，解析照样过、断言照样绿，而用户照着它配就永远不知道
+/// 有那条路。漏 `[tts] backend = "local"` 那次，代价是把人推去装
+/// 34 GB 的 ComfyUI，而这个二进制自己就能出声。
+std::string default_config_template();
+
 /// 生成一份带注释的配置模板。首次安装时用。
 std::filesystem::path write_default_config(
     const std::optional<std::filesystem::path>& path = std::nullopt);
