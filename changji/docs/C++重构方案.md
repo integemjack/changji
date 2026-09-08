@@ -762,8 +762,8 @@ import `changji.stages.bible.build_prompt` 来算），不是手写的——
   `test_projects` `test_config_api` `test_voices` `test_run`
   `test_writeback`。这些的保证来自对拍那 166 条，不在单元测试里。
 - **两边都有、而且没有语料兜着**——这才是要盯的。原来十一个，
-  现在剩五个：`test_audio` `test_comfy_client` `test_episode`
-  `test_frames` `test_render`。
+  现在剩四个：`test_audio` `test_comfy_client` `test_episode`
+  `test_frames`。
 
 （`test_gates` 补了语料，见「闸门判定和 Python 一条不差」；
 `test_paths` 补了，见「配置文件位置」那一节；
@@ -929,6 +929,33 @@ sd.cpp——`run_deps.cpp` 里 `if (engine != "comfy") return b;`
 而这个分叉只在迁移期间有意义（阶段 8 之后 Python 没了，C++ 怎么算就是
 定义）。记下来，并且用例两头都钉：默认环境下两边一致、
 以及"C++ 认这个环境变量"这个行为本身。
+
+### frames_for 的取偶：一个抄歪了也不报错的地方（2026-09-08）
+
+帧数换算这段藏着一个很容易抄歪的地方：
+
+    raw = int(round(duration_s * fps))
+    n   = max(1, round((raw - 1) / 4))
+
+Python 的 `round()` 是**四舍六入五取偶**，不是学校教的四舍五入。
+`round(2.5)` 是 **2** 不是 3。而 `(raw-1)/4` 落在 .5 上一点都不少见——
+`raw = 4x+3` 全都是，raw=11 就是 2.5：取偶给 **9 帧**，
+四舍五入给 **13 帧**。
+
+**抄歪了不会报错。** 4n+1 是 Wan 的硬要求，给别的数它自己截，
+而截在哪儿不告诉你。表现是"出来的片比预期短一点"，
+和"模型没跟上运动描述"混在一起，几乎不可能联想到是这个换算。
+
+C++ 那边本来就用 `std::nearbyint`（默认取偶）对齐了——**有人想过这件事**。
+缺的是「有东西盯着它别再变回去」：原来的用例只有三个手写期望值
+（2.0→49、3.0→73），那是"我们以为应该是多少"，不是"Python 给多少"。
+
+补了 74 条语料，专挑 .5 边界和 121 帧的上限截断。
+**验过牙齿**：把 `nearbyint` 换成 `std::round`（最顺手会写成的那个），
+当场挂。
+
+另加一条**不依赖 Python 的**：每个结果都得满足 4n+1、≥5、≤上限。
+两边一起抄错的话，比对那条照样绿，这条不会——**语料自己证明不了自己**。
 
 ### 闸门判定和 Python 一条不差（2026-09-08）
 

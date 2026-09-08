@@ -5,6 +5,8 @@
 
 #include <doctest/doctest.h>
 
+#include <nlohmann/json.hpp>
+
 #include <filesystem>
 #include <fstream>
 #include <string>
@@ -411,4 +413,61 @@ TEST_CASE("每一镜的帧数按它自己的时长算") {
 
     std::error_code ec;
     fs::remove_all(root, ec);
+}
+
+// ---------------------------------------------------------------------------
+// frames_for 的换算，和 Python 逐个比。
+//
+// **帧数错了 Wan 不会报错**——4n+1 是它的硬要求，给别的数它自己截，
+// 而截在哪儿不告诉你。表现是"出来的片比预期短一点"，和"模型没跟上运动
+// 描述"混在一起，几乎不可能联想到是这个换算错了。
+//
+// 这段换算里藏着一个很容易抄歪的地方：Python 的 `round()` 是
+// **四舍六入五取偶**，不是学校教的四舍五入。`round(2.5)` 是 2 不是 3。
+// 而 `(raw-1)/4` 落在 .5 上一点都不少见——raw=11 就是 2.5，
+// 取偶给 9 帧，普通四舍五入给 13 帧。
+//
+// 上面那三条手写的期望值（2.0→49、3.0→73）是"我们以为应该是多少"，
+// 不是"Python 给多少"。这一条才是后者。
+// ---------------------------------------------------------------------------
+
+TEST_CASE("frames_for 和 Python 逐个对得上（含取偶边界）") {
+    const std::string path =
+        std::string(CHANGJI_GOLDEN_DIR) + "/render_math.json";
+    std::ifstream in(path, std::ios::binary);
+    REQUIRE_MESSAGE(in.good(), "读不到语料 " << path);
+    nlohmann::json g;
+    in >> g;
+
+    const auto cases = g.at("cases");
+    // 语料读空了循环一次都不转，而用例照样绿。
+    REQUIRE(cases.size() > 60);
+
+    for (const auto& c : cases) {
+        const double d = c.at("duration_s").get<double>();
+        const int fps = c.at("fps").get<int>();
+        CAPTURE(d);
+        CAPTURE(fps);
+        CHECK(stages::frames_for(d, fps) == c.at("frames").get<int>());
+    }
+}
+
+TEST_CASE("4n+1 这条硬要求，每一条都得满足") {
+    // 上一条比的是"和 Python 一样"。这一条比的是**那个值本身合不合法**——
+    // 两边一起抄错了的话，上一条照样绿。
+    const std::string path =
+        std::string(CHANGJI_GOLDEN_DIR) + "/render_math.json";
+    std::ifstream in(path, std::ios::binary);
+    REQUIRE(in.good());
+    nlohmann::json g;
+    in >> g;
+
+    const int cap = g.at("max_frames").get<int>();
+    for (const auto& c : g.at("cases")) {
+        const int f = c.at("frames").get<int>();
+        CAPTURE(c.at("duration_s").get<double>());
+        CHECK(f % 4 == 1);      // 4n+1
+        CHECK(f >= 5);          // n 至少是 1
+        CHECK(f <= cap);        // 不超上限
+    }
 }
