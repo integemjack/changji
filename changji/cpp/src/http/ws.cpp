@@ -111,7 +111,16 @@ bool Hub::should_throttle(const std::string& job_id, const std::string& type) {
 
 void Hub::broadcast(const std::string& job_id, const json& msg) {
     std::lock_guard<std::mutex> lk(mu_);
-    if (should_throttle(job_id, msg.value("type", std::string{}))) return;
+    // `value()` 兜不住"键在但类型不对"，会抛 type_error.302——
+    // 和 handle_client_message 里那处是同一个坑。这里的 msg 是我们自己
+    // 造的，理论上 type 一定是字符串；但这段跑在流水线的工作线程上，
+    // 一个异常穿出去比多写三行难查得多。
+    const auto type_it = msg.find("type");
+    const std::string type =
+        (type_it != msg.end() && type_it->is_string())
+            ? type_it->get<std::string>()
+            : std::string{};
+    if (should_throttle(job_id, type)) return;
     auto it = subs_.find(job_id);
     if (it == subs_.end() || it->second.empty()) return;
     std::string payload = msg.dump();

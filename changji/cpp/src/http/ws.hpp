@@ -69,8 +69,19 @@ public:
     /// 拿假指针就崩了。另一半是诊断：没人听的时候值不值得去凑那条消息。
     size_t subscriber_count(const std::string& job_id);
 
-private:
+    /// 这条消息该不该被节流掉。
+    ///
+    /// **放在 public 是为了能测。** 它本来是私有的，只有 `broadcast` 调；
+    /// 但 `broadcast` 要解引用 `connection*` 才能发消息，拿假指针会崩，
+    /// 于是这条规则一直没有任何测试。而它错了的后果很重：
+    /// **done / error 一旦被节流掉，前端会一直显示「生成中」**，
+    /// 直到用户手动刷新——比进度条不流畅严重得多。
+    ///
+    /// ⚠️ 调用方要自己持锁：它读写 `last_sent_`，而 `broadcast` 已经
+    /// 拿着 `mu_` 了，这里再锁一次就是自锁。
     bool should_throttle(const std::string& job_id, const std::string& type);
+
+private:
 
     std::mutex mu_;
     std::set<crow::websocket::connection*> conns_;

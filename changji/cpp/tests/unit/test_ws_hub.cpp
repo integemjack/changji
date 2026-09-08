@@ -12,7 +12,9 @@
 
 #include <doctest/doctest.h>
 
+#include <chrono>
 #include <string>
+#include <thread>
 
 #include "http/ws.hpp"
 
@@ -115,4 +117,56 @@ TEST_CASE("subscribe / unsubscribe 走得通，重复操作是幂等的") {
     // 退订一个没订过的，安静地什么都不做。
     h.handle_client_message(a, R"({"type":"unsubscribe","job_id":"job1"})");
     CHECK(h.subscriber_count("job1") == 0);
+}
+
+// ── 进度节流 ───────────────────────────────────────────────────────
+//
+// 逐步回调每秒可能触发几十次，直接透传会把前端淹掉，所以 progress 要节流。
+// **但 done / error 一条都不能漏**：漏一条，前端就一直显示「生成中」
+// 直到用户手动刷新——比进度条不流畅严重得多。
+//
+// 这条规则原来没有任何测试，因为 should_throttle 是私有的，而唯一的调用方
+// broadcast 要解引用 connection* 才能发消息，拿假指针会崩。为此把它挪到了
+// public（见 ws.hpp 里的说明）。
+
+TEST_CASE("progress 在间隔内只放第一条过") {
+    ws::Hub h;
+    // 第一条永远放过：一个任务刚开始就被节流掉的话，前端在第一个间隔里
+    // 什么都看不到，看起来像没启动。
+    CHECK_FALSE(h.should_throttle("job1", "progress"));
+    CHECK(h.should_throttle("job1", "progress"));
+    CHECK(h.should_throttle("job1", "progress"));
+}
+
+TEST_CASE("done 和 error 永远不节流") {
+    ws::Hub h;
+    // 先把这个 job 的节流窗口点着。
+    CHECK_FALSE(h.should_throttle("job1", "progress"));
+    CHECK(h.should_throttle("job1", "progress"));
+
+    // 紧接着的 done / error 必须原样放过。
+    CHECK_FALSE(h.should_throttle("job1", "done"));
+    CHECK_FALSE(h.should_throttle("job1", "error"));
+    CHECK_FALSE(h.should_throttle("job1", "start"));
+    // 连着来几条也一样，它们不进节流的账。
+    CHECK_FALSE(h.should_throttle("job1", "done"));
+}
+
+TEST_CASE("两个任务各算各的") {
+    // 按 job_id 记，不是全局一个窗口——否则同时跑两集时，
+    // 后一集的进度会被前一集压住。
+    ws::Hub h;
+    CHECK_FALSE(h.should_throttle("job1", "progress"));
+    CHECK_FALSE(h.should_throttle("job2", "progress"));
+    CHECK(h.should_throttle("job1", "progress"));
+    CHECK(h.should_throttle("job2", "progress"));
+}
+
+TEST_CASE("过了间隔又放行") {
+    ws::Hub h;
+    CHECK_FALSE(h.should_throttle("job1", "progress"));
+    CHECK(h.should_throttle("job1", "progress"));
+    // kThrottleInterval 是 200 毫秒，多睡一点避开时钟粒度。
+    std::this_thread::sleep_for(ws::kThrottleInterval + std::chrono::milliseconds(80));
+    CHECK_FALSE(h.should_throttle("job1", "progress"));
 }
