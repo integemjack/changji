@@ -1215,6 +1215,23 @@ Python 那个接口明写着 `if new_tts.backend not in ("comfy", "http")` 就�
 这个不对称写了一条用例钉住（`test_config_api.cpp`），因为它**很容易被
 "顺手补齐"**——补齐的代价是对拍多一条不同。
 
+**权重怎么拿：`download_tts_gguf.ps1`**（2026-09-08 加）。
+一条命令下齐两份，断点续传，默认走 hf-mirror（国内直连 huggingface
+常断在半路），下完把要贴的配置行打印出来。
+
+和 `download_tts_model.ps1` 不是一回事：**那一份下的是 safetensors，
+给 Python / ComfyUI 那条路用**；这一份下的是 GGUF，给 C++ 进程内的
+llama.cpp + mtmd 用。两条路的权重格式不通用。
+
+骨干选 `customvoice` 而不是 `base`：mtmd 那套接口的输入正好是一个
+`speaker_ref`（一段参考音频），而短剧要的是每个角色一个声音。
+`base` 是模型自带的几个预置音色，但 **mtmd 的接口里没有"挑哪个预置音色"
+这个参数**，实际拿到的是默认那个。`voicedesign` 要一段文字描述，
+changji 目前没有地方填。
+
+实测两份的真实大小（HEAD 查的，不是估的）：talker 1127 MB + 解码器 243 MB
+= **1.34 GB**。
+
 **下面这段是还差的：**
 mtmd 的音频生成 API 在头文件里明写着
 `EXPERIMENTAL API for audio generation, subjected to breaking changes`，
