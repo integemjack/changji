@@ -656,10 +656,16 @@ if(CHANGJI_BUILD_TESTS)
         src/models/project.cpp
         src/models/hardware.cpp
         src/util/proc.cpp
+        # WebSocket 层要连 /ws。协议那部分是纯函数，复用 comfy 那份；
+        # 传输直接用 asio，不把整个 comfy 客户端拖进来。
+        src/comfy/ws_client.cpp
     )
+    target_include_directories(changji_compat PRIVATE "${ASIO_INCLUDE_DIR}")
+    target_compile_definitions(changji_compat PRIVATE ASIO_STANDALONE)
     if(WIN32)
         target_compile_definitions(changji_compat PRIVATE
-            NOMINMAX WIN32_LEAN_AND_MEAN UNICODE _UNICODE)
+            NOMINMAX WIN32_LEAN_AND_MEAN UNICODE _UNICODE
+            _WIN32_WINNT=0x0A00)
         target_link_libraries(changji_compat PRIVATE ws2_32 shell32)
     endif()
     if(MSVC)

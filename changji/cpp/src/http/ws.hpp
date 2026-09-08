@@ -40,6 +40,13 @@ public:
     void add(crow::websocket::connection* conn);
     void remove(crow::websocket::connection* conn);
 
+    /// 订阅。`job_id` 可以是**具体的任务 id**，也可以是**任务类别**
+    /// （"run" / "write"）。
+    ///
+    /// **按类订阅不是方便，是唯一可行的方式。** 具体的 job_id 由
+    /// `new_job_id` 随机生成，而且从来不从任何接口暴露出去——
+    /// `POST /api/run` 回 {started, queue}，`GET /api/run` 那些字段里也没有。
+    /// 只认具体 id 的话，客户端永远订不上任何任务。
     void subscribe(crow::websocket::connection* conn, const std::string& job_id);
     void unsubscribe(crow::websocket::connection* conn, const std::string& job_id);
 

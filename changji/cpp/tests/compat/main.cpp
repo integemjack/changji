@@ -28,12 +28,16 @@
 #include <map>
 #include <thread>
 #include <chrono>
+#include <optional>
+#include <random>
 #include <sstream>
 #include <string>
 #include <vector>
 
+#include <asio.hpp>
 #include <nlohmann/json.hpp>
 
+#include "comfy/ws_client.hpp"
 #include "diff.hpp"
 #include "util/httplib.hpp"
 #include "models/project.hpp"
@@ -1473,6 +1477,270 @@ int run_llm(const Args& args, Tally& tally) {
 }
 
 
+
+// ---------------------------------------------------------------------------
+// WebSocket 层：**起一个任务，从 /ws 上看它推进**。
+//
+// 这是阶段 4 完成判据里唯一没被验过的一条。前面那些层比的是两边的响应，
+// 而这条路 **Python 侧根本没有**——`web/server.py` 开头写着
+// 「不用 WebSocket，因为轮询在这个场景足够了，而且少一层连接管理
+// 就少一类掉线问题」。所以这一层不是对拍，是**单边验收**。
+//
+// 为什么非验不可：`server.cpp` 里那一句
+//
+//     pipeline::jobs().set_sink([](id, msg){ ws::hub().broadcast(id, msg); });
+//
+// 是 job 表和 WebSocket 之间**唯一的接头**，而它在 `run()` 里，
+// 一条测试都走不到。两个零件各自有测试（jobs 那边 118 条断言、
+// Hub 那边 9 条），接头本身没有——今天已经在别处栽过两次这个形状了。
+//
+// ⚠️ **这一层第一次跑就把一个真问题验出来了，过程记在这儿。**
+// `POST /api/run` 回 `{"started", "queue"}`，`GET /api/run` 那十几个字段里
+// 也没有 job_id，Event 里更没有——**job_id 从来不从任何接口暴露出去**，
+// 而它又是 `mt19937_64{random_device{}}` 随机生成的。
+// 于是 `Hub::subscribe` 要的那个 id 客户端根本拿不到，
+// **`/ws` 以前一条任务消息都送不出去**。
+//
+// 修法是让 `subscribe` 也认**任务类别**（"run" / "write"）。
+// 补 job_id 到 REST 里是另一条路，但那样前端得先打一次 GET 才能订阅，
+// 而 WebSocket 本来就是来替掉那次轮询的；而且比 Python 多一个字段
+// 就是一处破契约。
+// ---------------------------------------------------------------------------
+
+/// Tally 只有 report(name, diffs)，没有 fail。包一层，免得每处都写
+/// 一遍那个 Difference 的花括号。
+void ws_fail(Tally& tally, const std::string& name, const std::string& detail) {
+    tally.report(name, {{"/ws", detail}});
+}
+
+/// 一个够用的 WebSocket 客户端：连上、握手、订阅、读几条。
+///
+/// 只用 comfy/ws_client 里那几个纯函数加 asio 的阻塞接口。
+/// 不做 TLS、不做分片重组——服务端推的是一条条完整的小 JSON。
+class WsPeek {
+public:
+    /// 连上并握手。失败返回一句人话。
+    std::string connect(const std::string& url) {
+        const auto u = comfy::ws::parse_url(url);
+        if (!u.has_value()) return "地址认不出来：" + url;
+        try {
+            asio::ip::tcp::resolver resolver(io_);
+            asio::connect(sock_, resolver.resolve(u->host, u->port));
+            sock_.set_option(asio::ip::tcp::no_delay(true));
+
+            const std::string key = comfy::ws::random_key();
+            const std::string req = comfy::ws::handshake_request(*u, key);
+            asio::write(sock_, asio::buffer(req));
+
+            // 读到空行为止就是握手响应
+            std::string head;
+            while (head.find("\r\n\r\n") == std::string::npos) {
+                char b[512];
+                asio::error_code ec;
+                const std::size_t n = sock_.read_some(asio::buffer(b), ec);
+                if (ec) return "握手时连接断了：" + ec.message();
+                head.append(b, n);
+            }
+            if (head.find(" 101 ") == std::string::npos) {
+                return "服务端没给 101：\n" + head.substr(0, 200);
+            }
+            // **accept 要核**。不核的话任何回 101 的东西都算连上了，
+            // 而握手串算错在这里正是最容易发生的事。
+            const std::string want = comfy::ws::accept_key(key);
+            if (head.find(want) == std::string::npos) {
+                return "Sec-WebSocket-Accept 对不上，应该是 " + want;
+            }
+            // 握手响应之后可能已经跟着数据帧了，留着
+            const std::size_t body = head.find("\r\n\r\n") + 4;
+            buf_ = head.substr(body);
+            return {};
+        } catch (const std::exception& e) {
+            return std::string("连不上：") + e.what();
+        }
+    }
+
+    void send_text(const std::string& payload) {
+        static std::mt19937 rng{std::random_device{}()};
+        asio::error_code ec;
+        asio::write(sock_,
+                    asio::buffer(comfy::ws::encode_frame(
+                        comfy::ws::Opcode::Text, payload, rng())),
+                    ec);
+    }
+
+    /// 读一条文本消息，最多等 timeout。超时返回 nullopt。
+    std::optional<std::string> read_text(std::chrono::milliseconds timeout) {
+        const auto deadline = std::chrono::steady_clock::now() + timeout;
+        for (;;) {
+            std::size_t used = 0;
+            if (auto f = comfy::ws::decode_frame(buf_, used)) {
+                buf_.erase(0, used);
+                if (f->opcode == comfy::ws::Opcode::Text) return f->payload;
+                if (f->opcode == comfy::ws::Opcode::Close) return std::nullopt;
+                continue;   // ping/pong 之类的跳过
+            }
+            if (std::chrono::steady_clock::now() >= deadline) return std::nullopt;
+
+            // asio 的阻塞 read_some 没有超时，用非阻塞加轮询代替。
+            // 这里等的是别的线程在跑流水线，睡一下不浪费什么。
+            asio::error_code ec;
+            sock_.non_blocking(true, ec);
+            char b[4096];
+            const std::size_t n = sock_.read_some(asio::buffer(b), ec);
+            if (!ec) {
+                buf_.append(b, n);
+            } else if (ec == asio::error::would_block ||
+                       ec == asio::error::try_again) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(20));
+            } else {
+                return std::nullopt;   // 断了
+            }
+        }
+    }
+
+private:
+    asio::io_context io_;
+    asio::ip::tcp::socket sock_{io_};
+    std::string buf_;
+};
+
+/// 把 http:// 换成 ws://，并接上 /ws。
+std::string ws_url_of(const std::string& http_url) {
+    std::string u = http_url;
+    if (u.rfind("http://", 0) == 0) u = "ws://" + u.substr(7);
+    while (!u.empty() && u.back() == '/') u.pop_back();
+    return u + "/ws";
+}
+
+/// WebSocket 层：起一个任务，看进度消息是不是真的推出来了。
+int run_ws(const Args& args, Tally& tally) {
+    if (args.project.empty()) return 0;
+
+    const std::string name = "WS 能看到阶段推进";
+    if (!args.filter.empty() && name.find(args.filter) == std::string::npos) {
+        return 0;
+    }
+    std::cout << "\n== WebSocket：起一个任务看它推进（C++ 独有，Python 没有这条路）==\n";
+
+    const fs::path dir = fresh_copy(paths::from_utf8(args.project), "ws_cpp");
+    if (dir.empty()) {
+        tally.skip(name, "拷项目副本失败");
+        return 0;
+    }
+    const std::string proj = paths::to_utf8(dir);
+
+    WsPeek ws;
+    if (const std::string why = ws.connect(ws_url_of(args.cpp_url)); !why.empty()) {
+        ws_fail(tally, name, "连不上 /ws：" + why);
+        return 0;
+    }
+
+    // **先订阅再起任务**，中间不会漏消息。
+    // 字段名是 project 和 episode_id，不是 path——**第一版我写成 path，
+    // 服务端回 422 把缺的字段名点出来了**，那条报错自己就是个好例子。
+    const Response eps = fetch(args.cpp_url, "/api/project?path=" + encode(proj));
+    std::string episode_id;
+    if (eps.body.is_object() && eps.body.contains("episodes") &&
+        eps.body["episodes"].is_array() && !eps.body["episodes"].empty()) {
+        episode_id = eps.body["episodes"][0].value("episode_id", "");
+    }
+    const json body{{"project", proj}, {"episode_id", episode_id},
+                    {"stages", json::array({"audio"})}};
+    const Response started = send(args.cpp_url, "POST", "/api/run", body);
+    if (started.status != 200) {
+        ws_fail(tally, name, "起不来任务：HTTP " + std::to_string(started.status) +
+                             " " + started.body.dump().substr(0, 200));
+        return 0;
+    }
+
+    // 按**类别**订阅，不是按具体 id——具体 id 拿不到，见上面。
+    // 这也意味着**订阅可以在起任务之前完成**，不用先轮询一次。
+    ws.send_text(json{{"type", "subscribe"}, {"job_id", "run"}}.dump());
+
+    // 收到 done 或 error 就算走完一轮。progress 会被节流（200ms 一条），
+    // 所以不强求看到它——**必须看到的是收尾那一条**：
+    // 它一旦漏发，前端会一直显示「生成中」直到用户手动刷新。
+    std::vector<json> seen;
+    std::string job_id;
+    bool greeted = false;
+    bool finished = false;
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(90);
+    while (std::chrono::steady_clock::now() < deadline && !finished) {
+        const auto raw = ws.read_text(std::chrono::milliseconds(2000));
+        if (!raw.has_value()) continue;
+        const json m = json::parse(*raw, nullptr, false);
+        if (m.is_discarded() || !m.is_object()) {
+            ws_fail(tally, name, "推上来的不是 JSON 对象：" + raw->substr(0, 120));
+            return 0;
+        }
+        const std::string type = m.value("type", "");
+
+        // 连上时服务端先发一条问候，它不带 job_id，也不算任务消息。
+        // **单独认它是有意义的**：收到 hello 就说明握手、路由、连接注册
+        // 这一串是通的，后面再收不到东西就一定是接头的问题，不是连接的
+        // 问题——这两种情形查起来完全不同。
+        if (type == "hello") {
+            if (m.value("service", "") != "changji") {
+                ws_fail(tally, name, "问候消息不对：" + m.dump().substr(0, 160));
+                return 0;
+            }
+            greeted = true;
+            continue;
+        }
+
+        seen.push_back(m);
+        if (type == "done" || type == "error") finished = true;
+    }
+
+    if (!greeted) {
+        ws_fail(tally, name, "连上了却没收到 hello——握手过了但路由不对？");
+        return 0;
+    }
+    if (seen.empty()) {
+        ws_fail(tally, name,
+                "收到了 hello，但订阅之后 90 秒一条任务消息都没有。\n"
+                "  连接本身是通的，问题在 job 表到 Hub 那一段：接头是\n"
+                "  server.cpp 里 jobs().set_sink(...) 那一句，而广播只发给\n"
+                "  订了这个 job_id **或这一类** 的连接。");
+        return 0;
+    }
+
+    // 每条都要带 type 和 job_id，而且 job_id 得是我们订的那个——
+    // 串台的话前端会把别的任务的进度画到当前任务上。
+    for (const json& m : seen) {
+        if (!m.contains("type") || !m["type"].is_string()) {
+            ws_fail(tally, name, "消息缺 type：" + m.dump().substr(0, 160));
+            return 0;
+        }
+        const std::string got_id = m.value("job_id", std::string{});
+        if (got_id.rfind("run-", 0) != 0) {
+            ws_fail(tally, name, "job_id 不是 run- 开头：" +
+                                     m.dump().substr(0, 160));
+            return 0;
+        }
+        // 一轮里只该有一个任务，串台的话前端会把别的任务的进度
+        // 画到当前任务上。
+        if (job_id.empty()) job_id = got_id;
+        if (got_id != job_id) {
+            ws_fail(tally, name, "同一轮里出现了两个 job_id：" + job_id +
+                                     " 和 " + got_id);
+            return 0;
+        }
+    }
+    if (!finished) {
+        ws_fail(tally, name, "只收到 " + std::to_string(seen.size()) +
+                       " 条，始终没等到 done / error。\n"
+                       "  **收尾那条一旦漏发，前端会一直显示「生成中」**，"
+                       "直到用户手动刷新。");
+        return 0;
+    }
+
+    std::cout << "  收到 " << seen.size() << " 条，收尾是 "
+              << seen.back().value("type", "?") << "\n";
+    tally.report(name, {});
+    return 0;
+}
+
 /// 数据层对拍：读一份项目文件再写回去，逐字段比。
 ///
 /// **这是阶段 1 完成标志的端到端版本。** 单元测试逐个字段查过了，但那是
@@ -1798,6 +2066,16 @@ int main(int argc, char** argv) {
         run_pipeline(args, tally);
         if (!args.llm_work.empty()) run_llm(args, tally);
     }
+
+    // **放在所有比较之后。** 这一层会在 C++ 侧真起一个任务，
+    // 而任务跑完 job 表里会留下 episode_id 之类的痕迹——
+    // 实时模式要逐字段比 `GET /api/run`，那时 Python 是空闲的（null），
+    // C++ 却是 "ep01"。
+    //
+    // 这是我自己踩的：第一版放在最前面，结果 165 条里多出一条不同，
+    // 而报出来的是 `/api/run` 的 `/episode_id`，看着像接口差异。
+    // `run_pipeline` 排在后面也是同一个理由。
+    run_ws(args, tally);
 
     std::cout << "\n一致 " << tally.passed << "，不同 " << tally.failed
               << "，跳过 " << tally.skipped << "\n";

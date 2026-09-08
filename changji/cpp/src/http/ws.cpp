@@ -1,6 +1,7 @@
 #include "http/ws.hpp"
 
 #include <iterator>
+#include <set>
 
 #include <crow/websocket.h>
 
@@ -121,10 +122,36 @@ void Hub::broadcast(const std::string& job_id, const json& msg) {
             ? type_it->get<std::string>()
             : std::string{};
     if (should_throttle(job_id, type)) return;
-    auto it = subs_.find(job_id);
-    if (it == subs_.end() || it->second.empty()) return;
+
+    // 收件人有两种：订了这个**具体 job_id** 的，和订了这一**类**任务的。
+    //
+    // **按类订阅是必须有的，不是方便。** job_id 由 `new_job_id` 随机生成
+    // （mt19937_64 + random_device），而且**从来不从任何接口暴露出去**——
+    // `POST /api/run` 回的是 {started, queue}，`GET /api/run` 那十几个字段里
+    // 也没有它，Event 里更没有。于是客户端根本拿不到这个 id，
+    // 也就永远订不上任何任务：**这条路以前一条消息都送不出去**。
+    //
+    // 补 job_id 到 REST 响应里是另一种修法，但那样前端得先打一次 GET 才能
+    // 订阅，而 WebSocket 本来就是来替掉那次轮询的；而且比 Python 多一个
+    // 字段就是一处破契约。按类订阅两样都不占：连上就能订，接口一个字没改。
+    //
+    // 类名是 job_id 里第一个 '-' 之前的部分（"run-a3f..." → "run"），
+    // 和 `to_string(JobKind)` 对得上。
+    std::set<crow::websocket::connection*> targets;
+    if (auto it = subs_.find(job_id); it != subs_.end()) {
+        targets.insert(it->second.begin(), it->second.end());
+    }
+    const std::size_t dash = job_id.find('-');
+    if (dash != std::string::npos) {
+        if (auto it = subs_.find(job_id.substr(0, dash)); it != subs_.end()) {
+            targets.insert(it->second.begin(), it->second.end());
+        }
+    }
+    if (targets.empty()) return;
+
+    // 用 set 去重：同一个连接既订了具体 id 又订了类别时只该收一条。
     std::string payload = msg.dump();
-    for (auto* c : it->second) c->send_text(payload);
+    for (auto* c : targets) c->send_text(payload);
 }
 
 void Hub::broadcast_all(const json& msg) {
