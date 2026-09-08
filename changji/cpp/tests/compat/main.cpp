@@ -1968,18 +1968,29 @@ int run_live(const Args& args, Tally& tally) {
                                  "该是内置界面那一页 HTML，实际 Content-Type 是「" +
                                      ctype(py_root) + "」"});
             }
-            if (ctype(cp_root).find("text/plain") == std::string::npos) {
+            // **C++ 这边变过一次。** 原来回的是一句 text/plain 指路
+            // （"界面在 Node 那一层，默认 5174"），现在把打包好的前端
+            // 嵌进二进制自己发了，所以也是 HTML。
+            // 这处差异因此**变小**了，但没有消失——两边发的是不同的界面
+            // （Python 是它自带的那一页，C++ 是 webapp 打包出来的）。
+            // 不能因为"看起来一样了"就把这条删掉：删了就等于当它不存在。
+            if (ctype(cp_root).find("text/html") == std::string::npos) {
                 diffs.push_back({"C++ 侧",
-                                 "该是一句纯文本，实际 Content-Type 是「" +
+                                 "该是打包进来的前端那一页 HTML，"
+                                 "实际 Content-Type 是「" +
                                      ctype(cp_root) + "」"});
             }
-            // 那句话得真的指到 Node 那一层去，不然它就没有存在的理由。
-            if (cp_root.body.find("5174") == std::string::npos) {
+            // 得真的是那个前端，不是一页空壳。Vite 打出来的入口
+            // 一定带一个 module 脚本，没有它就是没打包进去。
+            if (cp_root.body.find("<script") == std::string::npos ||
+                cp_root.body.find("/assets/") == std::string::npos) {
                 diffs.push_back({"C++ 侧",
-                                 "那句指路的话里没提前端地址，等于没指路"});
+                                 "回的 HTML 里没有指向 /assets/ 的脚本，"
+                                 "多半是前端没嵌进来（跑一下 gen_webapp.py）"});
             }
-            tally.report(path + "（有意不一样：Python 回内置界面，"
-                                "C++ 回一句指路的话——界面在 Node 那一层）",
+            tally.report(path + "（有意不一样：两边都发 HTML，"
+                                "但 Python 发的是自带那一页，"
+                                "C++ 发的是 webapp 打包出来的）",
                          diffs);
             continue;
         }

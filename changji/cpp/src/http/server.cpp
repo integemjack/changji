@@ -25,6 +25,7 @@
 #include "http/voices.hpp"
 #include "http/scripting.hpp"
 #include "llm/client.hpp"
+#include "http/webapp.hpp"
 #include "http/ws.hpp"
 #include "comfy/client.hpp"
 #include "infer/sd_image.hpp"
@@ -464,16 +465,64 @@ void run(const config::Settings& settings, const Options& opts) {
     // 两层架构下界面由 Node 提供，浏览器根本不会访问到这里——
     // 会撞上它的只有直接开了后端端口的人。给他们一句指路的话，
     // 比返回 404 或者一个空页面有用。
-    CROW_ROUTE(app, "/")([&opts] {
-        // 用原始字符串字面量，换行直接写在源码里。
-        const std::string body =
-            std::string(R"(场记 C++ 后端在跑。
-这里只有接口，界面在 Node 那一层——默认 http://127.0.0.1:5174
-
-体检： http://127.0.0.1:)") + std::to_string(opts.port) + "/api/doctor\n";
-        crow::response res(200, body);
-        res.set_header("Content-Type", "text/plain; charset=utf-8");
+    // ---- 前端 ----
+    //
+    // **这里以前回的是一句 text/plain 指路**（"界面在 Node 那一层，
+    // 默认 5174"）。那是迁移期的临时状态，代价是用户得起两个进程，
+    // 而且打开引擎的端口看不到任何东西。现在把打包好的前端嵌进二进制
+    // 直接发（见 http/webapp.hpp）。
+    //
+    // ⚠️ 只发静态文件，不替代 Node 那个 BFF：`/bff/*` 仍然只有它有。
+    // 制作页（看跑批进度）只用 `/api/*`，走这条路能用；
+    // 设置页和上传页要 `/bff/*`，得起 Node 那一层。
+    const auto serve_webapp = [](const crow::request& req) {
+        const std::string rel = normalize_webapp_path(req.url);
+        if (rel.empty()) {
+            // 只有 `..` 这类会走到这儿
+            crow::response res(400, "路径不合法");
+            res.set_header("Content-Type", "text/plain; charset=utf-8");
+            return res;
+        }
+        const std::string* body = find_webapp_file(rel);
+        std::string name = rel;
+        if (!body) {
+            // **找不到就回 index.html**：单页应用的深链接靠这个。
+            // 直接打开 /production 这种地址，服务端并没有对应文件，
+            // 回 404 的话用户看到的是一片空白而不是界面。
+            body = find_webapp_file("index.html");
+            name = "index.html";
+        }
+        if (!body) {
+            crow::response res(500,
+                               "前端没打包进来。生成一下："
+                               "cd webapp/client && npm run build，"
+                               "然后 python cpp/tools/gen_webapp.py，再重编。");
+            res.set_header("Content-Type", "text/plain; charset=utf-8");
+            return res;
+        }
+        crow::response res(200, *body);
+        res.set_header("Content-Type", webapp_content_type(name));
         return res;
+    };
+
+    CROW_ROUTE(app, "/")(serve_webapp);
+
+    // **兜底用 CROW_CATCHALL_ROUTE，不能用 `/<path>`。**
+    // Crow 的 `<path>` 连斜杠一起吃，写成路由的话它会把 `/api/outputs`、
+    // `/api/run` 这些全匹配走——对拍当场报出来：Python 回 200，C++ 回 404。
+    // catchall 只在别的路由都没匹配上时才触发，正好是单页应用兜底的语义。
+    CROW_CATCHALL_ROUTE(app)
+    ([serve_webapp](const crow::request& req, crow::response& res) {
+        if (!webapp_owns(req.url)) {
+            // 接口路径没匹配上就是真的没有这个接口，照常回 404 JSON
+            res.code = 404;
+            res.body = R"({"detail":"Not Found"})";
+            res.set_header("Content-Type", "application/json");
+            res.end();
+            return;
+        }
+        res = serve_webapp(req);
+        res.end();
     });
 
     // ---- 项目的新建、删除、改梗概 ----
