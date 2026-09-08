@@ -82,6 +82,32 @@ publishRouter.get('/records', (req, res) => {
 })
 
 /** 问引擎要项目根。前端传绝对路径过来是不行的，那等于把整块磁盘开给浏览器。 */
+/**
+ * `full` 是不是在 `root` 里面。
+ *
+ * **单独抽出来是为了能测。** 它原来是 deliverOne 里的两行，而 deliverOne
+ * 没导出、也没有任何测试——一个决定"能不能读这个文件"的判断不该是这样。
+ *
+ * 几个必须挡住的：
+ *   - rel 给绝对路径（`C:\Windows\...`）。`path.resolve(root, rel)` 遇到
+ *     绝对路径会**直接返回它**，root 被忽略，全靠这里挡。
+ *   - `../` 往上跳。resolve 会先把 `..` 归一化，所以比的是归一化之后的。
+ *   - 同前缀的兄弟目录：root 是 `/a/proj`，别让 `/a/proj2/x` 混进来。
+ *     所以拼的是 `root + 分隔符` 而不是 `root`。
+ *
+ * ⚠️ 挡不住的：**符号链接**。项目目录里放一个指向外面的链接，这里看不出来。
+ * 真要堵得用 fs.realpathSync 再比一次——但那会让每次投递多一次系统调用，
+ * 而这一层的威胁模型是"用户自己的机器、用户自己的项目"，不是多租户。
+ * 记在这儿，哪天这个前提变了要回来改。
+ */
+export function insideRoot(root, full) {
+  if (!root || !full) return false
+  const r = path.resolve(root)
+  const f = path.resolve(full)
+  if (f === r) return false  // 目录本身不是可投递的文件
+  return f.startsWith(r + path.sep)
+}
+
 async function projectRoot(project) {
   const info = await callEngine('/api/project', {
     search: '?path=' + encodeURIComponent(project),
@@ -116,7 +142,7 @@ async function deliverOne({ target, root, project, rel, episodeId, title, descri
   }
 
   const source = path.resolve(root, rel)
-  if (source !== root && !source.startsWith(root + path.sep)) {
+  if (!insideRoot(root, source)) {
     record.detail = '只能投递项目目录内的文件'
     return record
   }
