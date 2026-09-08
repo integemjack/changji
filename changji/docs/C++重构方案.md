@@ -747,7 +747,9 @@ import `changji.stages.bible.build_prompt` 来算），不是手写的——
 
 `cpp/tools/contract_audit.py` 把这件事变成可查的：一个测试文件读了
 `export_*.py` / `gen_*.py` 生成的语料，就算"和 Python 比"。
-当前 **54 个测试文件里 23 个和 Python 比过**。
+当前 **55 个测试文件里 28 个和 Python 比过**。
+
+⚠️ **这个数字改过一次。** 第一版工具只认脚本里的 `"xxx.json"` 字面量，漏掉了经过 helper 的那种——`export_golden.py` 用的是 `dump("tiers_for_vram", ...)`，文件名由 `OUT / f"{name}.json"` 拼出来。于是 `test_hardware` / `test_episodes` 那几个**明明在和 Python 比**，却被归进"只钉意图"。原来报的是 23/54，实际是 28/55。**漏报的代价是有人照着这份清单去补一份已经存在的语料。**
 
 **剩下 31 个不是都该改。** 分三类：
 
@@ -760,9 +762,11 @@ import `changji.stages.bible.build_prompt` 来算），不是手写的——
   `test_projects` `test_config_api` `test_voices` `test_run`
   `test_writeback`。这些的保证来自对拍那 166 条，不在单元测试里。
 - **两边都有、而且没有语料兜着**——这才是要盯的：`test_audio`
-  `test_character` `test_comfy_client` `test_episode` `test_frames`
-  `test_gates` `test_hardware` `test_llm_client` `test_render`
-  `test_shot` `test_paths`。
+  `test_comfy_client` `test_episode` `test_frames` `test_llm_client`
+  `test_render` `test_paths`。
+
+（`test_gates` 已经补上语料，见「闸门判定和 Python 一条不差」；
+`test_hardware` `test_character` `test_shot` 本来就在比，是工具漏报了。）
 
 ⚠️ **这个工具量的是"有没有比过"，不是"比得全不全"。** 一个文件里可能
 一半用例读语料、一半是手写断言，它只会记成"和 Python 比"。

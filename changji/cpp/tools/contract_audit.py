@@ -49,9 +49,20 @@ def generated_goldens() -> dict[str, str]:
     for script in sorted(list((ROOT / "tests").glob("export_*.py")) +
                          list((ROOT / "tools").glob("gen_*.py"))):
         text = io.open(script, encoding="utf-8").read()
-        # 只认写盘那几处：DEST / dest 变量，或者 write 附近的字面量
+        # 两种写法都要认：
+        #   一，直接写字面量 "xxx.json"
+        #   二，**经过一个 helper**，比如 export_golden.py 里的
+        #       `dump("tiers_for_vram", ...)`，文件名是
+        #       `OUT / f"{name}.json"` 拼出来的。
+        #
+        # 只认第一种的话会**漏报**：`test_hardware.cpp` 明明在和 Python
+        # 比（tiers_for_vram.json / tier_scaled_to.json 都是 export_golden.py
+        # 生成的），却被归进"只钉意图"。而漏报的代价是有人照着这份清单
+        # 去补一份已经存在的语料。
         for m in re.finditer(r'"([a-z_0-9]+\.json)"', text):
             out.setdefault(m.group(1), script.name)
+        for m in re.finditer(r'dump\(\s*"([a-z_0-9]+)"', text):
+            out.setdefault(m.group(1) + ".json", script.name)
     return out
 
 
