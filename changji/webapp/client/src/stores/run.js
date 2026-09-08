@@ -20,6 +20,7 @@
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 import { api } from '@/api'
+import { openJobSocket } from '@/composables/useJobSocket'
 
 const STAGE_LABELS = {
   audio: '配音',
@@ -34,11 +35,6 @@ const STAGE_LABELS = {
 
 /** 轮询兜底的间隔。和原来一样，用户对这个节奏已经有预期。 */
 const POLL_MS = 1200
-
-function wsUrl() {
-  const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-  return `${proto}//${window.location.host}/api/ws`
-}
 
 export const useRun = defineStore('run', () => {
   const state = ref(null)
@@ -113,36 +109,14 @@ export const useRun = defineStore('run', () => {
 
   function openSocket() {
     if (socket) return
-    let sock
-    try {
-      sock = new WebSocket(wsUrl())
-    } catch {
-      return // 退回轮询，start() 里已经起了定时器
-    }
-    socket = sock
-
-    sock.onopen = () => {
+    socket = openJobSocket('run', (msg) => {
       live.value = true
-      // **按类别订阅**。具体的 job_id 引擎不对外暴露，订不了；
-      // 而按类别订阅可以在任务开始之前完成，中间不会漏消息。
-      sock.send(JSON.stringify({ type: 'subscribe', job_id: 'run' }))
-    }
-    sock.onmessage = (ev) => {
-      let msg
-      try {
-        msg = JSON.parse(ev.data)
-      } catch {
-        return // 不是 JSON 就丢掉，不该让一条坏消息掀翻这一屏
-      }
       applyMessage(msg)
-    }
-    const drop = () => {
+    }, () => {
       live.value = false
-      if (socket === sock) socket = null
-      // 断了不停轮询——定时器一直开着，这里不用做别的。
-    }
-    sock.onclose = drop
-    sock.onerror = drop
+      socket = null
+      // 断了不用做别的：定时器一直开着，自动就退回轮询。
+    })
   }
 
   function start(intervalMs = POLL_MS) {
@@ -163,8 +137,6 @@ export const useRun = defineStore('run', () => {
     if (socket) {
       const sock = socket
       socket = null
-      sock.onclose = null
-      sock.onerror = null
       sock.close()
     }
     live.value = false
@@ -190,6 +162,9 @@ export const useWriter = defineStore('writer', () => {
     return Math.min(100, Math.round((s.done / s.total) * 100))
   })
 
+  const live = ref(false)
+  let socket = null
+
   async function poll() {
     try {
       state.value = await api.seriesStatus()
@@ -199,18 +174,63 @@ export const useWriter = defineStore('writer', () => {
     }
   }
 
+  /**
+   * 把推上来的一条并进状态。
+   *
+   * **和流水线那边的映射不一样：这里推的 step 对应快照里的 done，
+   * 不是 current。** 写作任务的快照只有 {running, done, total, message,
+   * episodes, error}，进度条算的是 done/total。照抄流水线那边的映射
+   * 会让进度条一直是 0。
+   */
+  function applyMessage(msg) {
+    if (!msg || typeof msg !== 'object') return
+    if (msg.type === 'hello') return
+    if (msg.type === 'done' || msg.type === 'error') {
+      poll() // episodes 和 error 只有全量里有
+      return
+    }
+    const base = state.value ?? {}
+    state.value = {
+      ...base,
+      running: true,
+      done: typeof msg.step === 'number' ? msg.step : base.done,
+      total: typeof msg.total === 'number' ? msg.total : base.total,
+      message: msg.message ?? base.message,
+    }
+  }
+
   function start(intervalMs = 1500) {
     if (polling.value) return
     polling.value = true
     poll()
+    // 轮询留着：推的是增量，episodes 那些只有全量里有；
+    // 而且 WebSocket 连不上时它就是唯一的路。
     timer = setInterval(poll, intervalMs)
+    if (!socket) {
+      socket = openJobSocket('write', (msg) => {
+        live.value = true
+        applyMessage(msg)
+      }, () => {
+        live.value = false
+        socket = null
+      })
+    }
   }
 
   function stop() {
     polling.value = false
     if (timer) clearInterval(timer)
     timer = null
+    if (socket) {
+      const sock = socket
+      socket = null
+      sock.close()
+    }
+    live.value = false
   }
 
-  return { state, running, percent, polling, poll, start, stop }
+  return {
+    state, running, percent, polling, live,
+    poll, start, stop, applyMessage,
+  }
 })

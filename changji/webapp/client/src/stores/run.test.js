@@ -10,9 +10,15 @@ import { createPinia, setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const runStatus = vi.fn()
-vi.mock('@/api', () => ({ api: { runStatus: () => runStatus() } }))
+const seriesStatus = vi.fn()
+vi.mock('@/api', () => ({
+  api: { runStatus: () => runStatus(), seriesStatus: () => seriesStatus() },
+}))
+// WebSocket 在 node 环境里没有。这几条测的是收到消息之后怎么并状态，
+// 不测连接本身——中转那一段在服务端的 ws.test.js 里用真 socket 测过。
+vi.stubGlobal('WebSocket', class { constructor() { throw new Error('无') } })
 
-const { useRun } = await import('./run.js')
+const { useRun, useWriter } = await import('./run.js')
 
 describe('applyMessage', () => {
   beforeEach(() => {
@@ -89,5 +95,36 @@ describe('applyMessage', () => {
     expect(s.events.length).toBeLessThanOrEqual(200)
     // 留的是最后那些——用户要看的是刚发生的
     expect(s.events.at(-1).current).toBe(249)
+  })
+})
+
+describe('useWriter 的 applyMessage', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    seriesStatus.mockReset()
+    seriesStatus.mockResolvedValue({ running: false })
+  })
+
+  it('step 要落到 done 上——和流水线那边不是同一个字段', () => {
+    // 写作任务的快照是 {running, done, total, ...}，进度条算 done/total。
+    // 照抄流水线那边的 current 映射，进度条会一直是 0。
+    const w = useWriter()
+    w.applyMessage({ type: 'progress', job_id: 'write-1', step: 4, total: 8 })
+    expect(w.state.done).toBe(4)
+    expect(w.state.total).toBe(8)
+    expect(w.percent).toBe(50)
+  })
+
+  it('done 之后要拉全量——episodes 只有快照里有', () => {
+    const w = useWriter()
+    w.applyMessage({ type: 'done', job_id: 'write-1' })
+    expect(seriesStatus).toHaveBeenCalledTimes(1)
+  })
+
+  it('hello 和坏消息都不动状态', () => {
+    const w = useWriter()
+    w.applyMessage({ type: 'hello', service: 'changji' })
+    expect(() => w.applyMessage(null)).not.toThrow()
+    expect(w.state).toBeNull()
   })
 })
