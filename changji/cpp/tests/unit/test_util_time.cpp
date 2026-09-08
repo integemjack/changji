@@ -175,3 +175,15 @@ TEST_CASE("collapse_ws 只压 ASCII 空白——和 Python 有意不一样") {
     const std::string full = "\xe4\xb8\xad\xe3\x80\x80\xe6\x96\x87";  // 中　文
     CHECK(text::collapse_ws(full) == full);
 }
+
+TEST_CASE("indent_rest：第一行不动，后面每行缩进") {
+    // 体检报告的排版。原来只有 fix 那一段做了这件事，detail 是原样打的——
+    // 而"出图后端"那一项的 detail 是多行的（sd.cpp 的 System Info），
+    // 于是它顶格贴在报告中间，把整张表的对齐冲掉了。那是用户看到的第一屏。
+    CHECK(text::indent_rest("单行", "    ") == "单行");
+    CHECK(text::indent_rest("", "    ").empty());
+    CHECK(text::indent_rest("a\nb", "  ") == "a\n  b");
+    CHECK(text::indent_rest("a\nb\nc", "  ") == "a\n  b\n  c");
+    // 结尾的换行也要照顾到：多缩一个空行比少缩一行好看得多。
+    CHECK(text::indent_rest("a\n", "  ") == "a\n  ");
+}

@@ -48,6 +48,27 @@ std::string strip_ws(const std::string& s) {
     return s.substr(b, e - b);
 }
 
+std::string indent_rest(const std::string& s, const std::string& pad) {
+    std::string out;
+    out.reserve(s.size() + pad.size() * 4);
+    std::size_t pos = 0;
+    bool first = true;
+    while (pos <= s.size()) {
+        std::size_t nl = s.find('\n', pos);
+        const bool last = nl == std::string::npos;
+        if (last) nl = s.size();
+        if (!first) {
+            out += '\n';
+            out += pad;
+        }
+        out.append(s, pos, nl - pos);
+        first = false;
+        if (last) break;
+        pos = nl + 1;
+    }
+    return out;
+}
+
 std::string collapse_ws(const std::string& s) {
     // 只压 ASCII 空白。
     //

@@ -15,6 +15,7 @@
 #include "doctor/doctor.hpp"
 #include "http/server.hpp"
 #include "util/paths.hpp"
+#include "util/text.hpp"
 
 namespace {
 
@@ -163,15 +164,12 @@ int run_doctor(const changji::config::Settings& settings) {
                                                                        : "✗";
         std::cout << "  " << symbol << "  " << c.name;
         for (size_t i = display_width(c.name); i < width + 2; ++i) std::cout << ' ';
-        std::cout << c.detail << "\n";
+        // detail 也可能是多行的（"出图后端"那一项带着 sd.cpp 的
+        // System Info）。不缩进的话它会顶格贴在报告中间，把对齐冲掉。
+        std::cout << changji::text::indent_rest(c.detail, "        ") << "\n";
         if (!c.fix.empty()) {
-            size_t pos = 0;
-            while (pos <= c.fix.size()) {
-                size_t nl = c.fix.find('\n', pos);
-                if (nl == std::string::npos) nl = c.fix.size();
-                std::cout << "        " << c.fix.substr(pos, nl - pos) << "\n";
-                pos = nl + 1;
-            }
+            std::cout << "        "
+                      << changji::text::indent_rest(c.fix, "        ") << "\n";
         }
     }
     std::cout << "\n";

@@ -49,6 +49,15 @@ std::size_t utf8_char_len(unsigned char lead);
 /// "字幕整轨不显示"或者"nlohmann 序列化时抛异常"。
 std::vector<std::string> utf8_chars(const std::string& s);
 
+/// 除第一行外，每一行前面加上 pad。
+///
+/// 给体检报告排版用：第一行接在项目名后面，后续行要缩进到同一列。
+/// 原来只有 `fix` 那一段做了这件事，`detail` 是原样打出去的——
+/// 而"出图后端"那一项的 detail 是**多行的**（sd.cpp 的 System Info
+/// 带着一整行 CPU 特性），于是它顶格贴在报告中间，把整张表的对齐冲掉了。
+/// 那是用户看到的第一屏。
+std::string indent_rest(const std::string& s, const std::string& pad);
+
 /// 一个 UTF-8 字符的码点。不是合法字符时返回 0。
 char32_t utf8_codepoint(const std::string& ch);
 
