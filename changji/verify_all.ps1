@@ -3,9 +3,10 @@
 # 五件事，顺序是**按发现问题的快慢排的**，前面的先跑：
 #   1. 默认构建（sd.cpp，不带进程内配音）
 #   2. 单元测试
-#   3. 对拍（会自己起四个进程：Python 后端、C++ 后端、两个假大模型）
-#   4. llama 构建（CHANGJI_LLAMA=ON）+ 拿它再跑一遍对拍
-#   5. webapp 的测试和客户端构建
+#   3. 配置模板 Python 还读不读得动（迁移期间两边共用一份配置）
+#   4. 对拍（会自己起四个进程：Python 后端、C++ 后端、两个假大模型）
+#   5. llama 构建（CHANGJI_LLAMA=ON）+ 拿它再跑一遍对拍
+#   6. webapp 的测试和客户端构建
 #
 # 为什么值得有这个脚本：
 #
@@ -87,6 +88,17 @@ Step "单元测试" {
         return $false
     }
     return $true
+}
+
+Step "配置模板两边都读得动" {
+    # 迁移期间两个后端共用一份用户配置。模板里出现一个 Python 不认的键，
+    # **Python 整份加载失败、后端起不来**——今天断过一次，症状是对拍里
+    # 152 条全变成"Python 侧：连不上"，看着像端口问题。
+    $py = Join-Path $root '.venv\Scripts\python.exe'
+    if (-not (Test-Path $py)) { Write-Host "  没有 .venv，跳不了也测不了" -ForegroundColor Yellow; return $false }
+    $out = & $py (Join-Path $cpp 'tools\check_template_compat.py') 2>&1
+    $out | ForEach-Object { Write-Host "  $_" }
+    return ($LASTEXITCODE -eq 0)
 }
 
 Step "对拍（默认构建）" {
