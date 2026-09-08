@@ -761,12 +761,27 @@ import `changji.stages.bible.build_prompt` 来算），不是手写的——
 - **单元测试只钉意图，但对拍在接口层比过**：`test_readonly`
   `test_projects` `test_config_api` `test_voices` `test_run`
   `test_writeback`。这些的保证来自对拍那 166 条，不在单元测试里。
-- **两边都有、而且没有语料兜着**——这才是要盯的：`test_audio`
-  `test_comfy_client` `test_episode` `test_frames` `test_llm_client`
-  `test_render` `test_paths`。
+- **两边都有、而且没有语料兜着**——这才是要盯的。原来十一个，
+  现在剩五个：`test_audio` `test_comfy_client` `test_episode`
+  `test_frames` `test_render`。
 
-（`test_gates` 已经补上语料，见「闸门判定和 Python 一条不差」；
+（`test_gates` 补了语料，见「闸门判定和 Python 一条不差」；
+`test_paths` 补了，见「配置文件位置」那一节；
+`test_llm_client` 补了，见下面；
 `test_hardware` `test_character` `test_shot` 本来就在比，是工具漏报了。）
+
+**发给大模型的请求体也比过了**（`llm_payload.json`，9 条）。
+这一份算契约的理由：请求体是真的发到外部服务上的东西，`temperature`
+差一点、`strict` 没带上，模型回来的就是另一种东西，而两边都会"成功"。
+
+结构上两边不一样：**Python 三个阶段各拼各的**（bible / script /
+storyboard 里各有一份 `_complete`），**C++ 是一个 `build_payload` 共用**。
+所以语料按阶段导，看那一个函数能不能拼出同样的四份——
+共用的那份漏了某个阶段的特殊处理就在这里露出来。结果是一条不差。
+
+顺带核实了一处容易写错的：`generate_premises` 传的 name 是
+**复数 "premises"**，C++ 那边 `scripting.cpp:202` 也是复数。
+单复数错了传输层不报错，但 strict 模式下有些实现会拒。
 
 ⚠️ **这个工具量的是"有没有比过"，不是"比得全不全"。** 一个文件里可能
 一半用例读语料、一半是手写断言，它只会记成"和 Python 比"。

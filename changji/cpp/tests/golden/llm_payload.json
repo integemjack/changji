@@ -1,0 +1,1756 @@
+{
+  "model": "qwen3:14b",
+  "temperature": 0.35,
+  "prompt": "把这段剧本里的角色和场景抽出来。\n\n雨夜天台，两人对峙。",
+  "cases": [
+    {
+      "name": "bible_schema",
+      "schema_name": "bible",
+      "json_schema_mode": true,
+      "schema": {
+        "type": "object",
+        "properties": {
+          "characters": {
+            "type": "array",
+            "description": "剧本里所有有名有姓或有台词的角色",
+            "items": {
+              "type": "object",
+              "properties": {
+                "key": {
+                  "type": "string",
+                  "description": "英文小写下划线短标识，如 lin_wan"
+                },
+                "name": {
+                  "type": "string",
+                  "description": "剧本里的中文称呼"
+                },
+                "identity": {
+                  "type": "string",
+                  "description": "身份：性别、年龄段、气质。一句话"
+                },
+                "body": {
+                  "type": "string",
+                  "description": "体型和身高感"
+                },
+                "face": {
+                  "type": "string",
+                  "description": "五官、发型、发色、瞳色。这段会在几十个镜头里逐字复用，写得具体且不要含糊"
+                },
+                "attire": {
+                  "type": "string",
+                  "description": "默认服装"
+                }
+              },
+              "required": [
+                "key",
+                "name",
+                "identity",
+                "face",
+                "attire"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "locations": {
+            "type": "array",
+            "description": "剧本里出现的场景",
+            "items": {
+              "type": "object",
+              "properties": {
+                "key": {
+                  "type": "string",
+                  "description": "英文小写下划线短标识"
+                },
+                "name": {
+                  "type": "string",
+                  "description": "中文场景名"
+                },
+                "space": {
+                  "type": "string",
+                  "description": "空间结构和布景"
+                },
+                "lighting": {
+                  "type": "string",
+                  "description": "光线基调"
+                },
+                "palette": {
+                  "type": "string",
+                  "description": "色彩方案"
+                }
+              },
+              "required": [
+                "key",
+                "name",
+                "space",
+                "lighting"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "global_style": {
+            "type": "string",
+            "description": "全剧统一的画风、色温、质感。一句话"
+          }
+        },
+        "required": [
+          "characters",
+          "locations",
+          "global_style"
+        ],
+        "additionalProperties": false
+      },
+      "payload": {
+        "model": "qwen3:14b",
+        "messages": [
+          {
+            "role": "user",
+            "content": "把这段剧本里的角色和场景抽出来。\n\n雨夜天台，两人对峙。"
+          }
+        ],
+        "temperature": 0.35,
+        "response_format": {
+          "type": "json_schema",
+          "json_schema": {
+            "name": "bible",
+            "strict": true,
+            "schema": {
+              "type": "object",
+              "properties": {
+                "characters": {
+                  "type": "array",
+                  "description": "剧本里所有有名有姓或有台词的角色",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "key": {
+                        "type": "string",
+                        "description": "英文小写下划线短标识，如 lin_wan"
+                      },
+                      "name": {
+                        "type": "string",
+                        "description": "剧本里的中文称呼"
+                      },
+                      "identity": {
+                        "type": "string",
+                        "description": "身份：性别、年龄段、气质。一句话"
+                      },
+                      "body": {
+                        "type": "string",
+                        "description": "体型和身高感"
+                      },
+                      "face": {
+                        "type": "string",
+                        "description": "五官、发型、发色、瞳色。这段会在几十个镜头里逐字复用，写得具体且不要含糊"
+                      },
+                      "attire": {
+                        "type": "string",
+                        "description": "默认服装"
+                      }
+                    },
+                    "required": [
+                      "key",
+                      "name",
+                      "identity",
+                      "face",
+                      "attire"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "locations": {
+                  "type": "array",
+                  "description": "剧本里出现的场景",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "key": {
+                        "type": "string",
+                        "description": "英文小写下划线短标识"
+                      },
+                      "name": {
+                        "type": "string",
+                        "description": "中文场景名"
+                      },
+                      "space": {
+                        "type": "string",
+                        "description": "空间结构和布景"
+                      },
+                      "lighting": {
+                        "type": "string",
+                        "description": "光线基调"
+                      },
+                      "palette": {
+                        "type": "string",
+                        "description": "色彩方案"
+                      }
+                    },
+                    "required": [
+                      "key",
+                      "name",
+                      "space",
+                      "lighting"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "global_style": {
+                  "type": "string",
+                  "description": "全剧统一的画风、色温、质感。一句话"
+                }
+              },
+              "required": [
+                "characters",
+                "locations",
+                "global_style"
+              ],
+              "additionalProperties": false
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "bible_退回 json_object",
+      "schema_name": "bible",
+      "json_schema_mode": false,
+      "schema": {
+        "type": "object",
+        "properties": {
+          "characters": {
+            "type": "array",
+            "description": "剧本里所有有名有姓或有台词的角色",
+            "items": {
+              "type": "object",
+              "properties": {
+                "key": {
+                  "type": "string",
+                  "description": "英文小写下划线短标识，如 lin_wan"
+                },
+                "name": {
+                  "type": "string",
+                  "description": "剧本里的中文称呼"
+                },
+                "identity": {
+                  "type": "string",
+                  "description": "身份：性别、年龄段、气质。一句话"
+                },
+                "body": {
+                  "type": "string",
+                  "description": "体型和身高感"
+                },
+                "face": {
+                  "type": "string",
+                  "description": "五官、发型、发色、瞳色。这段会在几十个镜头里逐字复用，写得具体且不要含糊"
+                },
+                "attire": {
+                  "type": "string",
+                  "description": "默认服装"
+                }
+              },
+              "required": [
+                "key",
+                "name",
+                "identity",
+                "face",
+                "attire"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "locations": {
+            "type": "array",
+            "description": "剧本里出现的场景",
+            "items": {
+              "type": "object",
+              "properties": {
+                "key": {
+                  "type": "string",
+                  "description": "英文小写下划线短标识"
+                },
+                "name": {
+                  "type": "string",
+                  "description": "中文场景名"
+                },
+                "space": {
+                  "type": "string",
+                  "description": "空间结构和布景"
+                },
+                "lighting": {
+                  "type": "string",
+                  "description": "光线基调"
+                },
+                "palette": {
+                  "type": "string",
+                  "description": "色彩方案"
+                }
+              },
+              "required": [
+                "key",
+                "name",
+                "space",
+                "lighting"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "global_style": {
+            "type": "string",
+            "description": "全剧统一的画风、色温、质感。一句话"
+          }
+        },
+        "required": [
+          "characters",
+          "locations",
+          "global_style"
+        ],
+        "additionalProperties": false
+      },
+      "payload": {
+        "model": "qwen3:14b",
+        "messages": [
+          {
+            "role": "user",
+            "content": "把这段剧本里的角色和场景抽出来。\n\n雨夜天台，两人对峙。"
+          }
+        ],
+        "temperature": 0.35,
+        "response_format": {
+          "type": "json_object"
+        }
+      }
+    },
+    {
+      "name": "script_schema",
+      "schema_name": "script",
+      "json_schema_mode": true,
+      "schema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "title",
+          "logline",
+          "beats"
+        ],
+        "properties": {
+          "title": {
+            "type": "string",
+            "description": "这一集的标题，六个字以内"
+          },
+          "logline": {
+            "type": "string",
+            "description": "一句话说清这一集发生了什么，给人看的，不进成片"
+          },
+          "beats": {
+            "type": "array",
+            "minItems": 4,
+            "description": "按时间顺序排的场次。动作和对白交替，不要连着五句对白",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "kind",
+                "speaker",
+                "text"
+              ],
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "enum": [
+                    "action",
+                    "dialogue"
+                  ],
+                  "description": "action 是动作或环境描写，dialogue 是有人说话"
+                },
+                "speaker": {
+                  "type": "string",
+                  "description": "说话的人。kind 是 action 时填空字符串"
+                },
+                "text": {
+                  "type": "string",
+                  "description": "这一拍的内容。对白只写说出口的话，不要带引号也不要带名字前缀"
+                }
+              }
+            }
+          }
+        }
+      },
+      "payload": {
+        "model": "qwen3:14b",
+        "messages": [
+          {
+            "role": "user",
+            "content": "把这段剧本里的角色和场景抽出来。\n\n雨夜天台，两人对峙。"
+          }
+        ],
+        "temperature": 0.35,
+        "response_format": {
+          "type": "json_schema",
+          "json_schema": {
+            "name": "script",
+            "strict": true,
+            "schema": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "title",
+                "logline",
+                "beats"
+              ],
+              "properties": {
+                "title": {
+                  "type": "string",
+                  "description": "这一集的标题，六个字以内"
+                },
+                "logline": {
+                  "type": "string",
+                  "description": "一句话说清这一集发生了什么，给人看的，不进成片"
+                },
+                "beats": {
+                  "type": "array",
+                  "minItems": 4,
+                  "description": "按时间顺序排的场次。动作和对白交替，不要连着五句对白",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "kind",
+                      "speaker",
+                      "text"
+                    ],
+                    "properties": {
+                      "kind": {
+                        "type": "string",
+                        "enum": [
+                          "action",
+                          "dialogue"
+                        ],
+                        "description": "action 是动作或环境描写，dialogue 是有人说话"
+                      },
+                      "speaker": {
+                        "type": "string",
+                        "description": "说话的人。kind 是 action 时填空字符串"
+                      },
+                      "text": {
+                        "type": "string",
+                        "description": "这一拍的内容。对白只写说出口的话，不要带引号也不要带名字前缀"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "script_退回 json_object",
+      "schema_name": "script",
+      "json_schema_mode": false,
+      "schema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "title",
+          "logline",
+          "beats"
+        ],
+        "properties": {
+          "title": {
+            "type": "string",
+            "description": "这一集的标题，六个字以内"
+          },
+          "logline": {
+            "type": "string",
+            "description": "一句话说清这一集发生了什么，给人看的，不进成片"
+          },
+          "beats": {
+            "type": "array",
+            "minItems": 4,
+            "description": "按时间顺序排的场次。动作和对白交替，不要连着五句对白",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "kind",
+                "speaker",
+                "text"
+              ],
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "enum": [
+                    "action",
+                    "dialogue"
+                  ],
+                  "description": "action 是动作或环境描写，dialogue 是有人说话"
+                },
+                "speaker": {
+                  "type": "string",
+                  "description": "说话的人。kind 是 action 时填空字符串"
+                },
+                "text": {
+                  "type": "string",
+                  "description": "这一拍的内容。对白只写说出口的话，不要带引号也不要带名字前缀"
+                }
+              }
+            }
+          }
+        }
+      },
+      "payload": {
+        "model": "qwen3:14b",
+        "messages": [
+          {
+            "role": "user",
+            "content": "把这段剧本里的角色和场景抽出来。\n\n雨夜天台，两人对峙。"
+          }
+        ],
+        "temperature": 0.35,
+        "response_format": {
+          "type": "json_object"
+        }
+      }
+    },
+    {
+      "name": "premises_schema",
+      "schema_name": "premises",
+      "json_schema_mode": true,
+      "schema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "ideas"
+        ],
+        "properties": {
+          "ideas": {
+            "type": "array",
+            "minItems": 3,
+            "maxItems": 5,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "title",
+                "premise",
+                "hook"
+              ],
+              "properties": {
+                "title": {
+                  "type": "string",
+                  "description": "剧名，八个字以内"
+                },
+                "premise": {
+                  "type": "string",
+                  "description": "一两句话说清这部剧讲什么。要具体到人物和处境，不要写题材标签"
+                },
+                "hook": {
+                  "type": "string",
+                  "description": "一句话说清观众为什么会看下去"
+                }
+              }
+            }
+          }
+        }
+      },
+      "payload": {
+        "model": "qwen3:14b",
+        "messages": [
+          {
+            "role": "user",
+            "content": "把这段剧本里的角色和场景抽出来。\n\n雨夜天台，两人对峙。"
+          }
+        ],
+        "temperature": 0.35,
+        "response_format": {
+          "type": "json_schema",
+          "json_schema": {
+            "name": "premises",
+            "strict": true,
+            "schema": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "ideas"
+              ],
+              "properties": {
+                "ideas": {
+                  "type": "array",
+                  "minItems": 3,
+                  "maxItems": 5,
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "title",
+                      "premise",
+                      "hook"
+                    ],
+                    "properties": {
+                      "title": {
+                        "type": "string",
+                        "description": "剧名，八个字以内"
+                      },
+                      "premise": {
+                        "type": "string",
+                        "description": "一两句话说清这部剧讲什么。要具体到人物和处境，不要写题材标签"
+                      },
+                      "hook": {
+                        "type": "string",
+                        "description": "一句话说清观众为什么会看下去"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "premises_退回 json_object",
+      "schema_name": "premises",
+      "json_schema_mode": false,
+      "schema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "ideas"
+        ],
+        "properties": {
+          "ideas": {
+            "type": "array",
+            "minItems": 3,
+            "maxItems": 5,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "title",
+                "premise",
+                "hook"
+              ],
+              "properties": {
+                "title": {
+                  "type": "string",
+                  "description": "剧名，八个字以内"
+                },
+                "premise": {
+                  "type": "string",
+                  "description": "一两句话说清这部剧讲什么。要具体到人物和处境，不要写题材标签"
+                },
+                "hook": {
+                  "type": "string",
+                  "description": "一句话说清观众为什么会看下去"
+                }
+              }
+            }
+          }
+        }
+      },
+      "payload": {
+        "model": "qwen3:14b",
+        "messages": [
+          {
+            "role": "user",
+            "content": "把这段剧本里的角色和场景抽出来。\n\n雨夜天台，两人对峙。"
+          }
+        ],
+        "temperature": 0.35,
+        "response_format": {
+          "type": "json_object"
+        }
+      }
+    },
+    {
+      "name": "storyboard_schema",
+      "schema_name": "storyboard",
+      "json_schema_mode": true,
+      "schema": {
+        "name": "带场景",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "shots": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "shot_id": {
+                    "description": "全局唯一，如 ep01_s03_sh007",
+                    "pattern": "^[a-z0-9_]+$",
+                    "title": "Shot Id",
+                    "type": "string"
+                  },
+                  "scene_id": {
+                    "pattern": "^[a-z0-9_]+$",
+                    "title": "Scene Id",
+                    "type": "string"
+                  },
+                  "order": {
+                    "description": "集内顺序",
+                    "minimum": 0,
+                    "title": "Order",
+                    "type": "integer"
+                  },
+                  "visual_desc": {
+                    "default": "",
+                    "description": "给人看的中文描述",
+                    "maxLength": 300,
+                    "title": "Visual Desc",
+                    "type": "string"
+                  },
+                  "first_frame_prompt": {
+                    "default": "",
+                    "maxLength": 1200,
+                    "title": "First Frame Prompt",
+                    "type": "string"
+                  },
+                  "motion_prompt": {
+                    "default": "",
+                    "description": "运动描述，给视频模型",
+                    "maxLength": 400,
+                    "title": "Motion Prompt",
+                    "type": "string"
+                  },
+                  "shot_size": {
+                    "$ref": "#/$defs/ShotSize",
+                    "default": "MS"
+                  },
+                  "camera_angle": {
+                    "$ref": "#/$defs/CameraAngle",
+                    "default": "eye_level"
+                  },
+                  "camera_move": {
+                    "$ref": "#/$defs/CameraMove",
+                    "default": "static"
+                  },
+                  "camera_id": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null,
+                    "description": "复用机位 id。同场景同机位保证不越轴",
+                    "title": "Camera Id"
+                  },
+                  "characters": {
+                    "type": "array",
+                    "items": {
+                      "$ref": "#/$defs/CharacterInShot"
+                    },
+                    "description": "本镜出现的角色。没有人物出镜就填空数组"
+                  },
+                  "location_id": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "enum": [
+                          "loc_rooftop"
+                        ]
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "duration_s": {
+                    "type": "number",
+                    "enum": [
+                      2.0,
+                      3.0,
+                      4.0,
+                      5.0
+                    ],
+                    "description": "只能取这些值"
+                  },
+                  "dialogue": {
+                    "type": "array",
+                    "items": {
+                      "$ref": "#/$defs/DialogueLine"
+                    },
+                    "description": "本镜的台词和旁白，逐句填。剧本里的每一句话都必须落到某个镜头上，不能丢。这一镜没有人说话就填空数组"
+                  },
+                  "transition_in": {
+                    "$ref": "#/$defs/Transition",
+                    "default": "cut"
+                  },
+                  "transition_dur_s": {
+                    "default": 0.0,
+                    "maximum": 2.0,
+                    "minimum": 0,
+                    "title": "Transition Dur S",
+                    "type": "number"
+                  },
+                  "subtitle_text": {
+                    "default": "",
+                    "title": "Subtitle Text",
+                    "type": "string"
+                  },
+                  "beat": {
+                    "default": "",
+                    "description": "叙事功能，如 反转、铺垫",
+                    "maxLength": 20,
+                    "title": "Beat",
+                    "type": "string"
+                  },
+                  "continuity_notes": {
+                    "default": "",
+                    "maxLength": 200,
+                    "title": "Continuity Notes",
+                    "type": "string"
+                  },
+                  "missing_info": {
+                    "description": "模型自报的信息缺口，供校验阶段检查",
+                    "items": {
+                      "type": "string"
+                    },
+                    "title": "Missing Info",
+                    "type": "array"
+                  }
+                },
+                "required": [
+                  "shot_id",
+                  "scene_id",
+                  "order",
+                  "first_frame_prompt",
+                  "shot_size",
+                  "duration_s",
+                  "characters",
+                  "dialogue"
+                ],
+                "additionalProperties": false
+              }
+            }
+          },
+          "required": [
+            "shots"
+          ],
+          "additionalProperties": false,
+          "$defs": {
+            "CameraAngle": {
+              "enum": [
+                "low",
+                "eye_level",
+                "high",
+                "overhead",
+                "dutch"
+              ],
+              "title": "CameraAngle",
+              "type": "string"
+            },
+            "CameraMove": {
+              "enum": [
+                "static",
+                "pan_left",
+                "pan_right",
+                "tilt_up",
+                "tilt_down",
+                "push_in",
+                "pull_out",
+                "handheld",
+                "orbit"
+              ],
+              "title": "CameraMove",
+              "type": "string"
+            },
+            "CharacterInShot": {
+              "additionalProperties": false,
+              "description": "角色在本镜头中的表现。\n\n只有可变项。外观描述属于角色资产，不在这里，也不允许大模型在这里写。",
+              "properties": {
+                "char_id": {
+                  "type": "string",
+                  "enum": [
+                    "c_chen_mo",
+                    "c_lin_wan"
+                  ],
+                  "description": "必须是已注册角色之一"
+                },
+                "expression": {
+                  "default": "",
+                  "description": "表情，如 愕然、隐忍",
+                  "maxLength": 40,
+                  "title": "Expression",
+                  "type": "string"
+                },
+                "action": {
+                  "default": "",
+                  "description": "本镜动作，如 后退半步",
+                  "maxLength": 80,
+                  "title": "Action",
+                  "type": "string"
+                },
+                "wardrobe_state": {
+                  "default": "default",
+                  "description": "服装状态 id，如 suit_torn",
+                  "maxLength": 40,
+                  "title": "Wardrobe State",
+                  "type": "string"
+                },
+                "face_pose": {
+                  "$ref": "#/$defs/FacePose",
+                  "default": "front",
+                  "description": "面部朝向"
+                },
+                "screen_pos": {
+                  "default": "center",
+                  "description": "画面位置：left / center / right",
+                  "title": "Screen Pos",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "char_id"
+              ],
+              "title": "CharacterInShot",
+              "type": "object"
+            },
+            "DialogueLine": {
+              "additionalProperties": false,
+              "description": "一句台词。时长字段由配音阶段回填，分镜阶段不填。",
+              "properties": {
+                "char_id": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "enum": [
+                        "c_chen_mo",
+                        "c_lin_wan"
+                      ]
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "description": "说话角色。旁白留空"
+                },
+                "text": {
+                  "maxLength": 200,
+                  "minLength": 1,
+                  "title": "Text",
+                  "type": "string"
+                },
+                "emotion": {
+                  "default": "neutral",
+                  "description": "情绪标签",
+                  "title": "Emotion",
+                  "type": "string"
+                },
+                "emotion_intensity": {
+                  "default": 0.5,
+                  "maximum": 1.0,
+                  "minimum": 0.0,
+                  "title": "Emotion Intensity",
+                  "type": "number"
+                }
+              },
+              "required": [
+                "text"
+              ],
+              "title": "DialogueLine",
+              "type": "object"
+            },
+            "FacePose": {
+              "description": "角色面部朝向。口型判定用。",
+              "enum": [
+                "front",
+                "three_quarter",
+                "profile",
+                "back",
+                "off_screen"
+              ],
+              "title": "FacePose",
+              "type": "string"
+            },
+            "ShotSize": {
+              "description": "景别。取值顺序由近到远。",
+              "enum": [
+                "ECU",
+                "CU",
+                "MCU",
+                "MS",
+                "MLS",
+                "LS",
+                "ELS"
+              ],
+              "title": "ShotSize",
+              "type": "string"
+            },
+            "ShotStatus": {
+              "description": "镜头在流水线上的位置。断点续跑靠它。",
+              "enum": [
+                "planned",
+                "audio_done",
+                "frame_done",
+                "draft_done",
+                "draft_rejected",
+                "final_done",
+                "final_rejected",
+                "fallback",
+                "locked"
+              ],
+              "title": "ShotStatus",
+              "type": "string"
+            },
+            "Transition": {
+              "enum": [
+                "cut",
+                "dissolve",
+                "fade_in",
+                "fade_out",
+                "whip"
+              ],
+              "title": "Transition",
+              "type": "string"
+            }
+          }
+        }
+      },
+      "payload": {
+        "model": "qwen3:14b",
+        "messages": [
+          {
+            "role": "user",
+            "content": "把这段剧本里的角色和场景抽出来。\n\n雨夜天台，两人对峙。"
+          }
+        ],
+        "temperature": 0.35,
+        "response_format": {
+          "type": "json_schema",
+          "json_schema": {
+            "name": "storyboard",
+            "strict": true,
+            "schema": {
+              "name": "带场景",
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "shots": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "shot_id": {
+                          "description": "全局唯一，如 ep01_s03_sh007",
+                          "pattern": "^[a-z0-9_]+$",
+                          "title": "Shot Id",
+                          "type": "string"
+                        },
+                        "scene_id": {
+                          "pattern": "^[a-z0-9_]+$",
+                          "title": "Scene Id",
+                          "type": "string"
+                        },
+                        "order": {
+                          "description": "集内顺序",
+                          "minimum": 0,
+                          "title": "Order",
+                          "type": "integer"
+                        },
+                        "visual_desc": {
+                          "default": "",
+                          "description": "给人看的中文描述",
+                          "maxLength": 300,
+                          "title": "Visual Desc",
+                          "type": "string"
+                        },
+                        "first_frame_prompt": {
+                          "default": "",
+                          "maxLength": 1200,
+                          "title": "First Frame Prompt",
+                          "type": "string"
+                        },
+                        "motion_prompt": {
+                          "default": "",
+                          "description": "运动描述，给视频模型",
+                          "maxLength": 400,
+                          "title": "Motion Prompt",
+                          "type": "string"
+                        },
+                        "shot_size": {
+                          "$ref": "#/$defs/ShotSize",
+                          "default": "MS"
+                        },
+                        "camera_angle": {
+                          "$ref": "#/$defs/CameraAngle",
+                          "default": "eye_level"
+                        },
+                        "camera_move": {
+                          "$ref": "#/$defs/CameraMove",
+                          "default": "static"
+                        },
+                        "camera_id": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ],
+                          "default": null,
+                          "description": "复用机位 id。同场景同机位保证不越轴",
+                          "title": "Camera Id"
+                        },
+                        "characters": {
+                          "type": "array",
+                          "items": {
+                            "$ref": "#/$defs/CharacterInShot"
+                          },
+                          "description": "本镜出现的角色。没有人物出镜就填空数组"
+                        },
+                        "location_id": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "enum": [
+                                "loc_rooftop"
+                              ]
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "duration_s": {
+                          "type": "number",
+                          "enum": [
+                            2.0,
+                            3.0,
+                            4.0,
+                            5.0
+                          ],
+                          "description": "只能取这些值"
+                        },
+                        "dialogue": {
+                          "type": "array",
+                          "items": {
+                            "$ref": "#/$defs/DialogueLine"
+                          },
+                          "description": "本镜的台词和旁白，逐句填。剧本里的每一句话都必须落到某个镜头上，不能丢。这一镜没有人说话就填空数组"
+                        },
+                        "transition_in": {
+                          "$ref": "#/$defs/Transition",
+                          "default": "cut"
+                        },
+                        "transition_dur_s": {
+                          "default": 0.0,
+                          "maximum": 2.0,
+                          "minimum": 0,
+                          "title": "Transition Dur S",
+                          "type": "number"
+                        },
+                        "subtitle_text": {
+                          "default": "",
+                          "title": "Subtitle Text",
+                          "type": "string"
+                        },
+                        "beat": {
+                          "default": "",
+                          "description": "叙事功能，如 反转、铺垫",
+                          "maxLength": 20,
+                          "title": "Beat",
+                          "type": "string"
+                        },
+                        "continuity_notes": {
+                          "default": "",
+                          "maxLength": 200,
+                          "title": "Continuity Notes",
+                          "type": "string"
+                        },
+                        "missing_info": {
+                          "description": "模型自报的信息缺口，供校验阶段检查",
+                          "items": {
+                            "type": "string"
+                          },
+                          "title": "Missing Info",
+                          "type": "array"
+                        }
+                      },
+                      "required": [
+                        "shot_id",
+                        "scene_id",
+                        "order",
+                        "first_frame_prompt",
+                        "shot_size",
+                        "duration_s",
+                        "characters",
+                        "dialogue"
+                      ],
+                      "additionalProperties": false
+                    }
+                  }
+                },
+                "required": [
+                  "shots"
+                ],
+                "additionalProperties": false,
+                "$defs": {
+                  "CameraAngle": {
+                    "enum": [
+                      "low",
+                      "eye_level",
+                      "high",
+                      "overhead",
+                      "dutch"
+                    ],
+                    "title": "CameraAngle",
+                    "type": "string"
+                  },
+                  "CameraMove": {
+                    "enum": [
+                      "static",
+                      "pan_left",
+                      "pan_right",
+                      "tilt_up",
+                      "tilt_down",
+                      "push_in",
+                      "pull_out",
+                      "handheld",
+                      "orbit"
+                    ],
+                    "title": "CameraMove",
+                    "type": "string"
+                  },
+                  "CharacterInShot": {
+                    "additionalProperties": false,
+                    "description": "角色在本镜头中的表现。\n\n只有可变项。外观描述属于角色资产，不在这里，也不允许大模型在这里写。",
+                    "properties": {
+                      "char_id": {
+                        "type": "string",
+                        "enum": [
+                          "c_chen_mo",
+                          "c_lin_wan"
+                        ],
+                        "description": "必须是已注册角色之一"
+                      },
+                      "expression": {
+                        "default": "",
+                        "description": "表情，如 愕然、隐忍",
+                        "maxLength": 40,
+                        "title": "Expression",
+                        "type": "string"
+                      },
+                      "action": {
+                        "default": "",
+                        "description": "本镜动作，如 后退半步",
+                        "maxLength": 80,
+                        "title": "Action",
+                        "type": "string"
+                      },
+                      "wardrobe_state": {
+                        "default": "default",
+                        "description": "服装状态 id，如 suit_torn",
+                        "maxLength": 40,
+                        "title": "Wardrobe State",
+                        "type": "string"
+                      },
+                      "face_pose": {
+                        "$ref": "#/$defs/FacePose",
+                        "default": "front",
+                        "description": "面部朝向"
+                      },
+                      "screen_pos": {
+                        "default": "center",
+                        "description": "画面位置：left / center / right",
+                        "title": "Screen Pos",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "char_id"
+                    ],
+                    "title": "CharacterInShot",
+                    "type": "object"
+                  },
+                  "DialogueLine": {
+                    "additionalProperties": false,
+                    "description": "一句台词。时长字段由配音阶段回填，分镜阶段不填。",
+                    "properties": {
+                      "char_id": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "enum": [
+                              "c_chen_mo",
+                              "c_lin_wan"
+                            ]
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ],
+                        "description": "说话角色。旁白留空"
+                      },
+                      "text": {
+                        "maxLength": 200,
+                        "minLength": 1,
+                        "title": "Text",
+                        "type": "string"
+                      },
+                      "emotion": {
+                        "default": "neutral",
+                        "description": "情绪标签",
+                        "title": "Emotion",
+                        "type": "string"
+                      },
+                      "emotion_intensity": {
+                        "default": 0.5,
+                        "maximum": 1.0,
+                        "minimum": 0.0,
+                        "title": "Emotion Intensity",
+                        "type": "number"
+                      }
+                    },
+                    "required": [
+                      "text"
+                    ],
+                    "title": "DialogueLine",
+                    "type": "object"
+                  },
+                  "FacePose": {
+                    "description": "角色面部朝向。口型判定用。",
+                    "enum": [
+                      "front",
+                      "three_quarter",
+                      "profile",
+                      "back",
+                      "off_screen"
+                    ],
+                    "title": "FacePose",
+                    "type": "string"
+                  },
+                  "ShotSize": {
+                    "description": "景别。取值顺序由近到远。",
+                    "enum": [
+                      "ECU",
+                      "CU",
+                      "MCU",
+                      "MS",
+                      "MLS",
+                      "LS",
+                      "ELS"
+                    ],
+                    "title": "ShotSize",
+                    "type": "string"
+                  },
+                  "ShotStatus": {
+                    "description": "镜头在流水线上的位置。断点续跑靠它。",
+                    "enum": [
+                      "planned",
+                      "audio_done",
+                      "frame_done",
+                      "draft_done",
+                      "draft_rejected",
+                      "final_done",
+                      "final_rejected",
+                      "fallback",
+                      "locked"
+                    ],
+                    "title": "ShotStatus",
+                    "type": "string"
+                  },
+                  "Transition": {
+                    "enum": [
+                      "cut",
+                      "dissolve",
+                      "fade_in",
+                      "fade_out",
+                      "whip"
+                    ],
+                    "title": "Transition",
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "storyboard_退回 json_object",
+      "schema_name": "storyboard",
+      "json_schema_mode": false,
+      "schema": {
+        "name": "带场景",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "shots": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "shot_id": {
+                    "description": "全局唯一，如 ep01_s03_sh007",
+                    "pattern": "^[a-z0-9_]+$",
+                    "title": "Shot Id",
+                    "type": "string"
+                  },
+                  "scene_id": {
+                    "pattern": "^[a-z0-9_]+$",
+                    "title": "Scene Id",
+                    "type": "string"
+                  },
+                  "order": {
+                    "description": "集内顺序",
+                    "minimum": 0,
+                    "title": "Order",
+                    "type": "integer"
+                  },
+                  "visual_desc": {
+                    "default": "",
+                    "description": "给人看的中文描述",
+                    "maxLength": 300,
+                    "title": "Visual Desc",
+                    "type": "string"
+                  },
+                  "first_frame_prompt": {
+                    "default": "",
+                    "maxLength": 1200,
+                    "title": "First Frame Prompt",
+                    "type": "string"
+                  },
+                  "motion_prompt": {
+                    "default": "",
+                    "description": "运动描述，给视频模型",
+                    "maxLength": 400,
+                    "title": "Motion Prompt",
+                    "type": "string"
+                  },
+                  "shot_size": {
+                    "$ref": "#/$defs/ShotSize",
+                    "default": "MS"
+                  },
+                  "camera_angle": {
+                    "$ref": "#/$defs/CameraAngle",
+                    "default": "eye_level"
+                  },
+                  "camera_move": {
+                    "$ref": "#/$defs/CameraMove",
+                    "default": "static"
+                  },
+                  "camera_id": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null,
+                    "description": "复用机位 id。同场景同机位保证不越轴",
+                    "title": "Camera Id"
+                  },
+                  "characters": {
+                    "type": "array",
+                    "items": {
+                      "$ref": "#/$defs/CharacterInShot"
+                    },
+                    "description": "本镜出现的角色。没有人物出镜就填空数组"
+                  },
+                  "location_id": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "enum": [
+                          "loc_rooftop"
+                        ]
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "duration_s": {
+                    "type": "number",
+                    "enum": [
+                      2.0,
+                      3.0,
+                      4.0,
+                      5.0
+                    ],
+                    "description": "只能取这些值"
+                  },
+                  "dialogue": {
+                    "type": "array",
+                    "items": {
+                      "$ref": "#/$defs/DialogueLine"
+                    },
+                    "description": "本镜的台词和旁白，逐句填。剧本里的每一句话都必须落到某个镜头上，不能丢。这一镜没有人说话就填空数组"
+                  },
+                  "transition_in": {
+                    "$ref": "#/$defs/Transition",
+                    "default": "cut"
+                  },
+                  "transition_dur_s": {
+                    "default": 0.0,
+                    "maximum": 2.0,
+                    "minimum": 0,
+                    "title": "Transition Dur S",
+                    "type": "number"
+                  },
+                  "subtitle_text": {
+                    "default": "",
+                    "title": "Subtitle Text",
+                    "type": "string"
+                  },
+                  "beat": {
+                    "default": "",
+                    "description": "叙事功能，如 反转、铺垫",
+                    "maxLength": 20,
+                    "title": "Beat",
+                    "type": "string"
+                  },
+                  "continuity_notes": {
+                    "default": "",
+                    "maxLength": 200,
+                    "title": "Continuity Notes",
+                    "type": "string"
+                  },
+                  "missing_info": {
+                    "description": "模型自报的信息缺口，供校验阶段检查",
+                    "items": {
+                      "type": "string"
+                    },
+                    "title": "Missing Info",
+                    "type": "array"
+                  }
+                },
+                "required": [
+                  "shot_id",
+                  "scene_id",
+                  "order",
+                  "first_frame_prompt",
+                  "shot_size",
+                  "duration_s",
+                  "characters",
+                  "dialogue"
+                ],
+                "additionalProperties": false
+              }
+            }
+          },
+          "required": [
+            "shots"
+          ],
+          "additionalProperties": false,
+          "$defs": {
+            "CameraAngle": {
+              "enum": [
+                "low",
+                "eye_level",
+                "high",
+                "overhead",
+                "dutch"
+              ],
+              "title": "CameraAngle",
+              "type": "string"
+            },
+            "CameraMove": {
+              "enum": [
+                "static",
+                "pan_left",
+                "pan_right",
+                "tilt_up",
+                "tilt_down",
+                "push_in",
+                "pull_out",
+                "handheld",
+                "orbit"
+              ],
+              "title": "CameraMove",
+              "type": "string"
+            },
+            "CharacterInShot": {
+              "additionalProperties": false,
+              "description": "角色在本镜头中的表现。\n\n只有可变项。外观描述属于角色资产，不在这里，也不允许大模型在这里写。",
+              "properties": {
+                "char_id": {
+                  "type": "string",
+                  "enum": [
+                    "c_chen_mo",
+                    "c_lin_wan"
+                  ],
+                  "description": "必须是已注册角色之一"
+                },
+                "expression": {
+                  "default": "",
+                  "description": "表情，如 愕然、隐忍",
+                  "maxLength": 40,
+                  "title": "Expression",
+                  "type": "string"
+                },
+                "action": {
+                  "default": "",
+                  "description": "本镜动作，如 后退半步",
+                  "maxLength": 80,
+                  "title": "Action",
+                  "type": "string"
+                },
+                "wardrobe_state": {
+                  "default": "default",
+                  "description": "服装状态 id，如 suit_torn",
+                  "maxLength": 40,
+                  "title": "Wardrobe State",
+                  "type": "string"
+                },
+                "face_pose": {
+                  "$ref": "#/$defs/FacePose",
+                  "default": "front",
+                  "description": "面部朝向"
+                },
+                "screen_pos": {
+                  "default": "center",
+                  "description": "画面位置：left / center / right",
+                  "title": "Screen Pos",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "char_id"
+              ],
+              "title": "CharacterInShot",
+              "type": "object"
+            },
+            "DialogueLine": {
+              "additionalProperties": false,
+              "description": "一句台词。时长字段由配音阶段回填，分镜阶段不填。",
+              "properties": {
+                "char_id": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "enum": [
+                        "c_chen_mo",
+                        "c_lin_wan"
+                      ]
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "description": "说话角色。旁白留空"
+                },
+                "text": {
+                  "maxLength": 200,
+                  "minLength": 1,
+                  "title": "Text",
+                  "type": "string"
+                },
+                "emotion": {
+                  "default": "neutral",
+                  "description": "情绪标签",
+                  "title": "Emotion",
+                  "type": "string"
+                },
+                "emotion_intensity": {
+                  "default": 0.5,
+                  "maximum": 1.0,
+                  "minimum": 0.0,
+                  "title": "Emotion Intensity",
+                  "type": "number"
+                }
+              },
+              "required": [
+                "text"
+              ],
+              "title": "DialogueLine",
+              "type": "object"
+            },
+            "FacePose": {
+              "description": "角色面部朝向。口型判定用。",
+              "enum": [
+                "front",
+                "three_quarter",
+                "profile",
+                "back",
+                "off_screen"
+              ],
+              "title": "FacePose",
+              "type": "string"
+            },
+            "ShotSize": {
+              "description": "景别。取值顺序由近到远。",
+              "enum": [
+                "ECU",
+                "CU",
+                "MCU",
+                "MS",
+                "MLS",
+                "LS",
+                "ELS"
+              ],
+              "title": "ShotSize",
+              "type": "string"
+            },
+            "ShotStatus": {
+              "description": "镜头在流水线上的位置。断点续跑靠它。",
+              "enum": [
+                "planned",
+                "audio_done",
+                "frame_done",
+                "draft_done",
+                "draft_rejected",
+                "final_done",
+                "final_rejected",
+                "fallback",
+                "locked"
+              ],
+              "title": "ShotStatus",
+              "type": "string"
+            },
+            "Transition": {
+              "enum": [
+                "cut",
+                "dissolve",
+                "fade_in",
+                "fade_out",
+                "whip"
+              ],
+              "title": "Transition",
+              "type": "string"
+            }
+          }
+        }
+      },
+      "payload": {
+        "model": "qwen3:14b",
+        "messages": [
+          {
+            "role": "user",
+            "content": "把这段剧本里的角色和场景抽出来。\n\n雨夜天台，两人对峙。"
+          }
+        ],
+        "temperature": 0.35,
+        "response_format": {
+          "type": "json_object"
+        }
+      }
+    },
+    {
+      "name": "没有 schema",
+      "schema_name": "",
+      "json_schema_mode": true,
+      "schema": null,
+      "payload": {
+        "model": "qwen3:14b",
+        "messages": [
+          {
+            "role": "user",
+            "content": "把这段剧本里的角色和场景抽出来。\n\n雨夜天台，两人对峙。"
+          }
+        ],
+        "temperature": 0.35
+      }
+    }
+  ],
+  "note": "由 cpp/tests/export_llm_payload_golden.py 生成，不要手改。Python 是三个阶段各拼各的，C++ 是一个 build_payload 共用；这份按阶段导，就是要看那一个函数能不能拼出同样的三份。"
+}

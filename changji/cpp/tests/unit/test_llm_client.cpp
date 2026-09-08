@@ -10,6 +10,8 @@
 
 #include <doctest/doctest.h>
 
+#include <fstream>
+
 #include <map>
 #include <string>
 #include <vector>
@@ -320,4 +322,53 @@ TEST_CASE("回放客户端") {
 
     CHECK(c.calls().size() == 3);
     CHECK(c.calls()[0].prompt == "写一集短剧");
+}
+
+// ---------------------------------------------------------------------------
+// 发给大模型服务的请求体，和 Python 逐字段比。
+//
+// 上面那条「请求体的形状」钉的是我们自己的意图。请求体是**真的发到外部
+// 服务上的东西**：temperature 差一点、response_format 少一层、strict 没
+// 带上，模型回来的就是另一种东西——而两边都会"成功"，差异要到成片里
+// 才看得出来。
+//
+// **一处结构差异**：Python 是三个阶段各拼各的（bible.py / script.py /
+// storyboard.py 里各有一份 _complete），C++ 是一个 build_payload 三处共用。
+// 所以语料按阶段导，这边用同样的输入调那一个函数——共用的那份要是漏了
+// 某个阶段的特殊处理，就在这里露出来。
+// ---------------------------------------------------------------------------
+
+TEST_CASE("请求体和 Python 逐字段一样") {
+    const std::string path =
+        std::string(CHANGJI_GOLDEN_DIR) + "/llm_payload.json";
+    std::ifstream in(path, std::ios::binary);
+    REQUIRE_MESSAGE(in.good(), "读不到语料 " << path);
+    nlohmann::json g;
+    in >> g;
+
+    const auto cases = g.at("cases");
+    // 语料读空了循环一次都不转，而用例照样绿。
+    REQUIRE(cases.size() == 9);
+
+    config::LLMConfig cfg;
+    cfg.model = g.at("model").get<std::string>();
+    cfg.temperature = g.at("temperature").get<double>();
+
+    for (const auto& c : cases) {
+        const std::string name = c.at("name").get<std::string>();
+        CAPTURE(name);
+
+        llm::Request req;
+        req.prompt = g.at("prompt").get<std::string>();
+        req.schema_name = c.at("schema_name").get<std::string>();
+        if (!c.at("schema").is_null()) {
+            req.schema = nlohmann::ordered_json::parse(c.at("schema").dump());
+        }
+
+        const auto got = llm::build_payload(
+            cfg, req, c.at("json_schema_mode").get<bool>());
+
+        // 键的顺序不算契约（JSON 对象无序），值要一模一样。
+        CHECK(nlohmann::json::parse(got.dump()) == c.at("payload"));
+    }
 }
