@@ -178,7 +178,12 @@ bool LlamaTts::synthesize(const LlamaTtsRequest& req, double& out_duration_s,
             im.mctx, paths::to_utf8(*req.speaker_ref).c_str(), false,
             mtmd_helper_init_opt_default());
         if (wrapper.bitmap == nullptr) {
-            why = "参考音色读不了：" + paths::to_utf8(*req.speaker_ref);
+            // **把认得的格式列出来。** mtmd 那边走 miniaudio，只认这三种
+            // （mtmd-helper.h 里写着 "audio: formats supported by miniaudio:
+            // wav, mp3, flac"）。拿一个 m4a 或者 ogg 过来是很常见的事，
+            // 而只说"读不了"的话，用户会去查路径对不对、文件坏没坏。
+            why = "参考音色读不了：" + paths::to_utf8(*req.speaker_ref) +
+                  "（只认 wav / mp3 / flac）";
             return false;
         }
         speaker.reset(wrapper.bitmap);

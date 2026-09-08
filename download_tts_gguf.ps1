@@ -125,7 +125,10 @@ foreach ($f in $files) {
 Write-Host ""
 if ($ok) {
     Write-Host "两份都齐了。把下面这段贴进配置文件（Windows 上是" -ForegroundColor Green
-    Write-Host "$env:APPDATA\changji\config.toml）：" -ForegroundColor Green
+    # **是 LOCALAPPDATA 不是 APPDATA。** 第一版写错了：写进 Roaming 的话
+    # changji 根本不读，症状是"配置贴了还是说模型没配"。
+    # 实际路径可以用 changji.exe --init-config 打出来确认。
+    Write-Host "$env:LOCALAPPDATA\changji\config.toml）：" -ForegroundColor Green
     Write-Host ""
     Write-Host "[tts]"
     Write-Host 'backend = "local"'
@@ -135,6 +138,9 @@ if ($ok) {
     Write-Host "tts_decoder = `"$(Join-Path $Dest $tokenizer)`""
     Write-Host ""
     Write-Host "然后 changji.exe --doctor 里那项「进程内配音」应该报两份模型都在。"
+    Write-Host ""
+    Write-Host "音色：把角色的 voice_id 填成一段人声片段的路径，模型照着它念。"
+    Write-Host "      只认 wav / mp3 / flac（mtmd 那边走 miniaudio）。不填就用默认音色。"
     Write-Host ""
     Write-Host "⚠️ 要用 CHANGJI_LLAMA=ON 编出来的二进制，默认构建没编进程内配音。"
 } else {

@@ -50,6 +50,9 @@ LlamaTtsProbe probe_llama_tts();
 struct LlamaTtsRequest {
     std::string text;
     /// 参考音色的音频文件。留空就用模型的默认音色。
+    ///
+    /// **只认 wav / mp3 / flac**——mtmd 那边走 miniaudio，就这三种
+    /// （见 `mtmd-helper.h` 对 `mtmd_helper_bitmap_init_from_buf` 的注释）。
     std::optional<std::filesystem::path> speaker_ref;
     /// 语种提示。Qwen3-TTS 支持十种，留空让它自己判断。
     std::string lang;

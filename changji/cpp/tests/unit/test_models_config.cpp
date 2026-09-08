@@ -242,3 +242,31 @@ TEST_CASE("flash attention 默认开，配置里能关") {
     CHECK_FALSE(config::load_settings(tmp).models.diffusion_flash_attn);
     fs::remove_all(tmp, ec);
 }
+
+TEST_CASE("默认配置模板里 [models] 必须是注释掉的") {
+    // **不是风格问题，是 Python 后端起不起得来的问题。**
+    //
+    // Python 引擎的 Settings 是 extra="forbid"，只要用户配置里出现 [models]，
+    // 它整份加载失败（"Extra inputs are not permitted"），后端根本起不来。
+    // 而迁移期间两个后端共用这一份文件。
+    //
+    // 这条用例是踩过之后加的：我拿 --init-config 当"看一眼配置在哪"的探针，
+    // 一敲就把模板写进了用户配置，然后对拍里 152 条全变成
+    // "Python 侧：连不上"——而那看起来像是网络或端口的问题。
+    const fs::path tmp = fs::temp_directory_path() / "changji_tpl_test";
+    std::error_code ec;
+    fs::remove_all(tmp, ec);
+    fs::create_directories(tmp, ec);
+    const fs::path f = tmp / "config.toml";
+    config::write_default_config(f);
+
+    std::ifstream in(f, std::ios::binary);
+    const std::string text((std::istreambuf_iterator<char>(in)),
+                           std::istreambuf_iterator<char>());
+    // 行首的 [models] 就是生效的节头；"# [models]" 是注释，不算。
+    CHECK(text.find("\n[models]") == std::string::npos);
+    CHECK(text.find("\nengine = \"sd\"") == std::string::npos);
+    // 但内容要还在，只是注释掉——不然用户不知道有这一节可以填。
+    CHECK(text.find("# [models]") != std::string::npos);
+    fs::remove_all(tmp, ec);
+}

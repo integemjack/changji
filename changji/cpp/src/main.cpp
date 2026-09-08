@@ -30,6 +30,7 @@ void print_usage() {
         "  --tts-model <文件>    临时指定骨干，盖过配置里的 [models].tts\n"
         "  --tts-decoder <文件>  临时指定解码器，盖过 [models].tts_decoder\n"
         "  --init-config    生成一份带注释的配置模板然后退出\n"
+        "  --force          配合 --init-config：已有配置也照样覆盖\n"
         "  --help           显示这段话\n"
         "\n"
         "配置优先级：环境变量 > 项目目录的 changji.toml > 用户全局配置 > 内置默认值\n";
@@ -197,6 +198,7 @@ namespace {
 int run(int argc, char** argv) {
     changji::http::Options opts;
     bool want_doctor = false;
+    bool want_force = false;
     bool want_init = false;
 
     // Windows 上 argv 是按 ANSI 代码页编的，中文参数直接用是乱码。
@@ -234,6 +236,7 @@ int run(int argc, char** argv) {
         else if (a == "--tts-model") say_model = next("骨干模型文件");
         else if (a == "--tts-decoder") say_decoder = next("解码器文件");
         else if (a == "--init-config") want_init = true;
+        else if (a == "--force") want_force = true;
         else {
             std::cerr << "不认识的选项：" << a << "\n\n";
             print_usage();
@@ -242,6 +245,22 @@ int run(int argc, char** argv) {
     }
 
     if (want_init) {
+        // **已经有配置就不覆盖。**
+        //
+        // write_default_config() 是无条件截断写的。一个已经配好模型路径、
+        // 工作区、后端地址的用户，只是想看看模板长什么样而敲了 --init-config，
+        // 结果那些全没了——而且没有任何提示，因为命令"成功"了。
+        //
+        // 这不是假想：写这段之前我自己就是拿它当"看一眼默认配置在哪"的
+        // 探针用的，一敲就把人家的配置盖了。
+        const auto existing = changji::config::user_config_path();
+        std::error_code ec;
+        if (!want_force && std::filesystem::exists(existing, ec)) {
+            std::cerr << "配置文件已经在了：" << changji::paths::to_utf8(existing)
+                      << "\n"
+                         "  不覆盖。真要重新生成一份就加 --force（原来那份会没）。\n";
+            return 1;
+        }
         try {
             auto p = changji::config::write_default_config();
             std::cout << "配置模板已写入 " << changji::paths::to_utf8(p) << "\n";

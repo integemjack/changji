@@ -452,11 +452,21 @@ scene_transition_s = 0.4
 subtitle_max_chars_per_line = 15
 subtitle_font = "Source Han Sans SC"
 
-[models]
+# ⚠️ **迁移期间这一整节默认是注释掉的。**
+#
+# Python 引擎的 Settings 是 extra="forbid"，只要这份配置里出现 [models]，
+# **它整份加载失败、后端根本起不来**，报的是
+# "Extra inputs are not permitted"。而迁移期间两个后端共用这一份文件。
+#
+# 要用进程内推理（sd.cpp / 进程内配音）就把下面这些取消注释——
+# 那之后 Python 引擎会起不来，阶段 8 之前请确认你不再需要它。
+# 或者把这一节写进项目目录的 changji.toml，只影响那一个项目。
+#
+# [models]
 # 出图出片走哪个引擎。sd = 进程内 sd.cpp，comfy = 外部 ComfyUI。
 # 选 comfy 时视频一定走 ComfyUI；首帧要项目里有 workflows/image.json
 # 才走它，没有就退回 sd.cpp——图像工作流是用户提供的，不能假定存在。
-engine = "sd"
+# engine = "sd"
 
 # 进程内推理要用的模型文件。ComfyUI 那条路不需要这一节——
 # 那边模型是它自己管的，工作流里按名字引用。
