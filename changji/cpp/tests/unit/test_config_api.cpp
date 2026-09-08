@@ -422,3 +422,31 @@ TEST_CASE("校验不过要整体回滚") {
     CHECK(config::runtime().snapshot().assembly.fps == fps_before);
     CHECK(config::runtime().snapshot().assembly.crf == 18);
 }
+
+TEST_CASE("设置接口有意不认 local，配置文件认——这个分界不能漂") {
+    // 阶段 9 给 [tts].backend 加了第三个取值 local（进程内配音）。
+    // **配置文件认它，这个接口有意不认。**
+    //
+    // 理由是 Python 的 POST /api/settings 明确只放 comfy 和 http 过，
+    // 而这个接口在对拍覆盖范围内——放 local 过就是一处真的破契约。
+    // local 走配置文件那条路，和 [models] 那一节同样的道理。
+    //
+    // 这条用例存在的意义是**把这个分界钉住**：它是个反直觉的不对称，
+    // 后来的人很容易"顺手补齐"，而补齐的代价是对拍多一条不同。
+    reset_runtime();
+    // 注意是 post_connections 不是 post_settings：tts_backend 归"连接"
+    // 那一组（后端地址、模型名那些），不归"参数"那一组。
+    // 第一版写错了，回的是 422 extra_forbidden——**那个 422 本身是对的**，
+    // 说明白名单确实在拦不该出现的键，只是我敲错了门。
+    const auto r = http::guard([] {
+        return http::post_connections(
+            json{{"patch", {{"tts_backend", "local"}}}, {"persist", false}},
+            fake_doctor());
+    });
+    CHECK_MESSAGE(r.status == 400, r.body.dump());
+
+    // 而配置对象本身认——不然配置文件里写 local 会整个加载不起来。
+    config::TTSConfig c;
+    c.backend = "local";
+    CHECK(c.validate().empty());
+}

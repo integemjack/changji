@@ -294,6 +294,16 @@ ApiResult post_connections(const json& body, const DoctorFn& check) {
 
     const auto errs = s.validate();
     if (!errs.empty()) throw ApiError(400, readable(errs));
+    // **这里有意不认 local，尽管 TTSConfig::validate() 认。** 不是漏了。
+    //
+    // Python 的 POST /api/settings 明确只放 comfy 和 http 过
+    // （server.py 的 `if new_tts.backend not in ("comfy", "http")`），
+    // 而这个接口在对拍覆盖范围内。放 local 过就是一处真的破契约，
+    // 而阶段 8 之前两个后端在接口上必须一模一样。
+    //
+    // 所以 local 走**配置文件**那条路，和 [models] 那一节同样的道理：
+    // C++ 独有的东西留在文件里，不进这个两边共用的接口。
+    // 阶段 8 删掉 Python 之后这条限制可以放开。
     if (s.tts.backend != "comfy" && s.tts.backend != "http") {
         throw ApiError(400, "配音后端只能是 comfy 或 http");
     }

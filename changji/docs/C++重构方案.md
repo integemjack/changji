@@ -1203,6 +1203,18 @@ EXPERIMENTAL，升级 llama.cpp 时**这一段要重新对照上游的 tts.cpp �
 **并且只在 `[tts].backend` 真选了 `local` 时才判 FAIL**：
 编进来但不用它是完全正常的形态，报警告等于让报告长期挂一条黄字。
 
+**一个反直觉但必须保住的不对称**（2026-09-08 补）：
+配置文件认 `local`，**`POST /api/connections` 有意不认**。
+
+Python 那个接口明写着 `if new_tts.backend not in ("comfy", "http")` 就回 400，
+而它在对拍覆盖范围内——放 `local` 过就是一处真的破契约，
+而阶段 8 之前两个后端在接口上必须一模一样。所以 `local` 走配置文件那条路，
+和 `[models]` 那一节同样的道理：C++ 独有的东西留在文件里，
+不进这个两边共用的接口。阶段 8 删掉 Python 之后这条限制可以放开。
+
+这个不对称写了一条用例钉住（`test_config_api.cpp`），因为它**很容易被
+"顺手补齐"**——补齐的代价是对拍多一条不同。
+
 **下面这段是还差的：**
 mtmd 的音频生成 API 在头文件里明写着
 `EXPERIMENTAL API for audio generation, subjected to breaking changes`，
