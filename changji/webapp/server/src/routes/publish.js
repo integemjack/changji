@@ -17,7 +17,7 @@ export const publishRouter = Router()
 
 // 各家的竖屏要求和时长上限。发布页拿它做发片前的自检，
 // 免得投出去才被平台退回来。
-const PLATFORMS = [
+export const PLATFORMS = [
   { id: 'douyin', name: '抖音', ratio: '9:16', maxDurationS: 900 },
   { id: 'kuaishou', name: '快手', ratio: '9:16', maxDurationS: 600 },
   { id: 'xiaohongshu', name: '小红书', ratio: '9:16', maxDurationS: 900 },
@@ -36,18 +36,38 @@ publishRouter.get('/targets', (_req, res) => {
   res.json({ targets: cfg.publishTargets ?? [] })
 })
 
+/**
+ * 校验一个投递目标。通过返回空串，不通过返回给用户看的那句话。
+ *
+ * **单独抽出来是为了能测**，也是为了把"平台名认不认得"这条加进来：
+ *
+ * 发布页的发片自检（PublishView.vue）是这么找平台的——
+ * `platforms.find((p) => p.id === target.platform) ?? null`。
+ * platform 填了个认不出的字符串时它得到 null，于是**时长上限和竖屏比例
+ * 一条都不查，安安静静地什么都不说**。用户以为自检过了，
+ * 投出去才被平台退回来——而自检存在的全部意义就是避免这件事。
+ *
+ * 服务端原来只查了 platform 非空。一个静默不生效的自检比没有自检更糟，
+ * 所以这里改成认不出就直接拒。
+ */
+export function validateTarget(body, platformIds) {
+  const { name, platform, exportDir, webhookUrl } = body ?? {}
+  if (!name || !platform) return '得填名字和平台'
+  if (!platformIds.includes(platform)) {
+    return `认不出这个平台：${platform}。可选：${platformIds.join('、')}`
+  }
+  if (!exportDir && !webhookUrl) return '投递目录和 webhook 至少要填一个'
+  if (webhookUrl && !/^https?:\/\//.test(webhookUrl)) {
+    return 'webhook 要以 http:// 或 https:// 开头'
+  }
+  return ''
+}
+
 publishRouter.post('/targets', (req, res) => {
   const { id, name, platform, exportDir, webhookUrl, note } = req.body ?? {}
-  if (!name || !platform) {
-    res.status(400).json({ detail: '得填名字和平台' })
-    return
-  }
-  if (!exportDir && !webhookUrl) {
-    res.status(400).json({ detail: '投递目录和 webhook 至少要填一个' })
-    return
-  }
-  if (webhookUrl && !/^https?:\/\//.test(webhookUrl)) {
-    res.status(400).json({ detail: 'webhook 要以 http:// 或 https:// 开头' })
+  const bad = validateTarget(req.body, PLATFORMS.map((p) => p.id))
+  if (bad) {
+    res.status(400).json({ detail: bad })
     return
   }
   const cfg = loadConfig()
