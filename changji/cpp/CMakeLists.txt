@@ -503,6 +503,7 @@ if(CHANGJI_BUILD_TESTS)
         tests/unit/test_comfy_client.cpp
         tests/unit/test_ws_client.cpp
         tests/unit/test_ws_hub.cpp
+        tests/unit/test_util_time.cpp
         tests/unit/test_comfy_loader.cpp
         tests/unit/test_voices.cpp
         tests/unit/test_comfy_renderers.cpp
