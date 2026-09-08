@@ -3,7 +3,7 @@
 #include <memory>
 
 #ifdef CHANGJI_HAVE_LLAMA
-#include <cstdio>
+#include <fstream>
 
 #include "llama.h"
 #include "mtmd-helper.h"
@@ -267,20 +267,24 @@ bool LlamaTts::synthesize(const LlamaTtsRequest& req, double& out_duration_s,
 
     std::error_code ec;
     std::filesystem::create_directories(req.out.parent_path(), ec);
-    // 二进制写。文本模式在 Windows 上会把 0x0A 换成 0x0D0A，
-    // 把 wav 写坏——而坏在哪里要用十六进制看才知道。
-    std::FILE* f = std::fopen(paths::to_utf8(req.out).c_str(), "wb");
-    if (f == nullptr) {
+
+    // **不能用 fopen(const char*)。** Windows 上那个路径按 ANSI 代码页
+    // 解释，中文项目名直接写不进去，而且报的错是"写文件失败"，
+    // 看不出是编码问题。`sd_image.cpp` 里写 PNG 那段已经踩过一次并写了
+    // 注释，这里是我几天前新写的代码，又踩了同一个坑。
+    //
+    // ofstream 吃 fs::path 就没这个问题：MSVC 上它走宽字符那条路。
+    std::ofstream out(req.out, std::ios::binary | std::ios::trunc);
+    if (!out) {
         why = "写不了 " + paths::to_utf8(req.out);
         return false;
     }
-    const size_t wrote = std::fwrite(data, 1, len, f);
-    std::fclose(f);
-    if (wrote != len) {
-        why = "只写进去 " + std::to_string(wrote) + " / " + std::to_string(len) +
-              " 字节（磁盘满了？）";
+    out.write(data, static_cast<std::streamsize>(len));
+    if (!out) {
+        why = "写 " + paths::to_utf8(req.out) + " 时出错（磁盘满了？）";
         return false;
     }
+    out.close();
 
     out_duration_s = rate > 0 ? static_cast<double>(samples) / rate : 0.0;
     return true;

@@ -1537,6 +1537,24 @@ changji 目前没有地方填。
 东西一律当不可信输入：解析失败就静默丢弃"因此并不成立。
 改成先问类型再取。
 
+**Windows 上"窄接口吃 UTF-8"这一类坑，已经踩到第四次**（2026-09-08）。
+清单记在这儿，新写代码前扫一眼：
+
+| 踩在哪 | 症状 |
+|---|---|
+| `stbi_write_png` 的 `fopen` | 中文项目名写不进图，报"写文件失败" |
+| `_popen`（`proc::run`） | 中文/带空格的路径跑不起来，报"不是内部或外部命令" |
+| `_putenv_s`（测试的 `ScopedEnv`） | PATH 被截断，**之后每条用例都在坏 PATH 上跑** |
+| `std::fopen`（`llama_tts.cpp` 写 wav） | 同第一条。这处是我几天前新写的，**踩的是已经有注释警告过的同一个坑** |
+| `fs::path(窄字符串字面量)` | 直接抛 "No mapping for the Unicode character" |
+
+**规矩**：Windows 上凡是吃 `const char*` 路径或命令行的接口，一律换宽字符版
+（`_wpopen`、`SetEnvironmentVariableW`），或者用 `ofstream(fs::path)`；
+源码里的中文字面量转 `fs::path` 一律走 `paths::from_utf8`。
+
+最后一条尤其顽固：**我写那条"中文路径跑得起来"的用例时，自己又踩了一次**
+——用例测的就是这条规矩，写的时候还是忘了。大概这就是它值得有一条用例的原因。
+
 **下面这段是还差的：**
 mtmd 的音频生成 API 在头文件里明写着
 `EXPERIMENTAL API for audio generation, subjected to breaking changes`，

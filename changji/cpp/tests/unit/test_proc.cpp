@@ -162,3 +162,45 @@ TEST_CASE("run：路径里有空格也跑得起来") {
 
     fs::remove_all(dir, ec);
 }
+
+// ── 中文路径这条线 ─────────────────────────────────────────────────
+//
+// 这个项目的项目名、模型目录基本都是中文，而 Windows 上**每一个吃窄字符串
+// 的 API 都会把 UTF-8 按 ANSI 代码页重新解释**。踩过的地方已经有三处：
+//   - stbi_write_png 的 fopen（sd_image.cpp 里有注释）
+//   - _popen（proc.cpp，就是上面那几条用例炸出来的）
+//   - _putenv_s（测试自己的 ScopedEnv）
+//
+// 下面这条不测某一个函数，测的是**这条规矩还立着没有**：
+// 拿一个中文路径真的跑一次子进程。
+
+TEST_CASE("中文路径也跑得起来（这条规矩每次都得重新验）") {
+    // **必须 from_utf8。** 窄字符串字面量在 /utf-8 下是 UTF-8 字节，
+    // 而 MSVC 的 fs::path(std::string) 按 ANSI 代码页转宽字符，
+    // 中文在 GBK 里往往转不过去，直接抛
+    // "No mapping for the Unicode character exists in the target
+    // multi-byte code page"。
+    //
+    // 写这条用例时我自己先踩了一次——**测的就是这条规矩，写的时候还是忘了**。
+    // 这大概就是它值得有一条用例的原因。
+    const fs::path dir =
+        fs::temp_directory_path() / paths::from_utf8("changji_中文目录_测试");
+    std::error_code ec;
+    fs::remove_all(dir, ec);
+    fs::create_directories(dir, ec);
+#ifdef _WIN32
+    const fs::path tool = dir / paths::from_utf8("工具.bat");
+    { std::ofstream f(tool); f << "@echo changji_cjk_ok\n"; }
+#else
+    const fs::path tool = dir / paths::from_utf8("工具.sh");
+    { std::ofstream f(tool); f << "#!/bin/sh\necho changji_cjk_ok\n"; }
+    fs::permissions(tool, fs::perms::owner_all, ec);
+#endif
+
+    const auto r = proc::run(paths::to_utf8(tool), {});
+    CHECK(r.launched);
+    CHECK_MESSAGE(r.out.find("changji_cjk_ok") != std::string::npos,
+                  "exit=" << r.exit_code << " out=[" << r.out << "]");
+
+    fs::remove_all(dir, ec);
+}
