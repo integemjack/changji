@@ -10,6 +10,7 @@
 #include <string>
 
 #include "config/settings.hpp"
+#include "infer/llama_tts.hpp"
 #include "doctor/doctor.hpp"
 #include "http/server.hpp"
 #include "util/paths.hpp"
@@ -23,10 +24,89 @@ void print_usage() {
         "  --port <n>       监听端口，默认 8080\n"
         "  --host <addr>    监听地址，默认 0.0.0.0\n"
         "  --doctor         在命令行跑一遍环境体检然后退出\n"
+        "  --say <文本>     用进程内配音念一句然后退出（阶段 9 的实机判据）\n"
+        "  --out <文件>     --say 写到哪儿，默认 say.wav\n"
+        "  --voice <音频>   参考音色，一段人声片段。不给就用模型默认的\n"
+        "  --tts-model <文件>    临时指定骨干，盖过配置里的 [models].tts\n"
+        "  --tts-decoder <文件>  临时指定解码器，盖过 [models].tts_decoder\n"
         "  --init-config    生成一份带注释的配置模板然后退出\n"
         "  --help           显示这段话\n"
         "\n"
         "配置优先级：环境变量 > 项目目录的 changji.toml > 用户全局配置 > 内置默认值\n";
+}
+
+
+/// `--say`：用进程内配音念一句，写成 wav。
+///
+/// **阶段 9 的实机判据就是这一条。** 那条合成路径代码写完很久了，
+/// 但机器上一直没有 Qwen3-TTS 的权重，所以一次都没执行过。
+/// 权重到位之后，这一条命令是最短的验证路径——不用起服务、不用建项目、
+/// 不用 ffmpeg，出不出得了声一句话就知道。
+///
+/// 报错要说清楚是**哪一步**断的：没编进来（改构建）、没配路径（改配置）、
+/// 载不起来（文件不对或显存不够）、合成失败（模型或参数）。
+/// 只说一句"配音失败"的话，用户下一步该干什么全靠猜。
+int run_say(const changji::config::Settings& settings, const std::string& text,
+            const std::string& voice, const std::string& out,
+            const std::string& model_override,
+            const std::string& decoder_override) {
+    using namespace changji;
+
+    if (!infer::llama_tts_available()) {
+        std::cerr << "这个二进制没编进程内配音。\n"
+                     "  用 -DCHANGJI_LLAMA=ON 重新配置构建。\n";
+        return 1;
+    }
+
+    const auto ws = settings.workspace_path();
+    const auto backbone =
+        model_override.empty() ? settings.models.resolve(settings.models.tts, ws)
+                               : paths::from_utf8(model_override);
+    const auto decoder =
+        decoder_override.empty()
+            ? settings.models.resolve(settings.models.tts_decoder, ws)
+            : paths::from_utf8(decoder_override);
+    if (backbone.empty() || decoder.empty()) {
+        std::cerr << "配置里缺模型路径。要这两项：\n"
+                     "  [models].tts          骨干（qwen-talker-*.gguf）\n"
+                     "  [models].tts_decoder  解码器（qwen-tokenizer-12hz-*.gguf）\n"
+                     "两份都没有的话跑一遍 download_tts_gguf.ps1。\n"
+                     "也可以不改配置，直接用 --tts-model / --tts-decoder 指过来。\n";
+        return 1;
+    }
+
+    std::cout << "骨干   " << paths::to_utf8(backbone) << "\n"
+              << "解码器 " << paths::to_utf8(decoder) << "\n"
+              << "载入中（1 GB 出头，第一次会慢）…\n";
+
+    std::string why;
+    auto engine = infer::LlamaTts::load(backbone, decoder, /*use_gpu=*/true, why);
+    if (!engine) {
+        std::cerr << "载不起来：" << why << "\n";
+        return 1;
+    }
+    std::cout << "载好了，采样率 " << engine->sample_rate() << " Hz\n";
+
+    infer::LlamaTtsRequest req;
+    req.text = text;
+    req.out = paths::from_utf8(out);
+    if (!voice.empty()) req.speaker_ref = paths::from_utf8(voice);
+
+    double seconds = 0;
+    if (!engine->synthesize(req, seconds, why)) {
+        std::cerr << "合成失败：" << why << "\n";
+        return 1;
+    }
+
+    std::cout << "出声了：" << out << "，" << seconds << " 秒\n";
+    // 这一条是给判据用的：静音检测那套判据（见 stages/tts_backends.hpp）
+    // 认为 1.05 秒以下多半是空音频。这里只提醒，不当失败——
+    // 念一个字本来就可能不到一秒。
+    if (seconds < 1.05) {
+        std::cout << "  ⚠️ 不到 1.05 秒。流水线里的静音检测会把这种当空音频拦下来。\n"
+                     "     念一句长一点的再看看是不是真的出声了。\n";
+    }
+    return 0;
 }
 
 /// UTF-8 字符串占多少个终端列。
@@ -125,6 +205,13 @@ int run(int argc, char** argv) {
     // 对拍程序就是这么栽的一次，见 tests/compat/main.cpp。
     const std::vector<std::string> av = changji::paths::utf8_args(argc, argv);
 
+    // --say 那一组。**这是阶段 9 唯一的实机判据**：进程内配音那条路
+    // 有没有真的能出声，不跑一次是不知道的（代码写完了但一直没有权重）。
+    // 做成命令行而不是接口，是因为它要在"整条流水线还跑不起来"的时候
+    // 就能单独验——出一集要模型、要 ffmpeg，那些是另外的坎。
+    std::string say_text, say_voice, say_model, say_decoder;
+    std::string say_out = "say.wav";
+
     for (std::size_t i = 1; i < av.size(); ++i) {
         const std::string& a = av[i];
         auto next = [&](const char* what) -> std::string {
@@ -138,6 +225,14 @@ int run(int argc, char** argv) {
         else if (a == "--port") opts.port = std::atoi(next("端口号").c_str());
         else if (a == "--host") opts.host = next("监听地址");
         else if (a == "--doctor") want_doctor = true;
+        else if (a == "--say") say_text = next("要念的话");
+        else if (a == "--out") say_out = next("输出文件名");
+        else if (a == "--voice") say_voice = next("参考音色文件");
+        // **两个临时覆盖。** 没有它们的话，想拿 --say 试一份刚下好的模型
+        // 就得先去改配置文件——而"改了配置去试，试完再改回来"这件事
+        // 本身就容易忘记改回来。
+        else if (a == "--tts-model") say_model = next("骨干模型文件");
+        else if (a == "--tts-decoder") say_decoder = next("解码器文件");
         else if (a == "--init-config") want_init = true;
         else {
             std::cerr << "不认识的选项：" << a << "\n\n";
@@ -172,6 +267,11 @@ int run(int argc, char** argv) {
         std::cerr << "配置有问题：\n";
         for (const auto& e : errs) std::cerr << "  - " << e << "\n";
         return 1;
+    }
+
+    if (!say_text.empty()) {
+        return run_say(settings, say_text, say_voice, say_out, say_model,
+                       say_decoder);
     }
 
     if (want_doctor) return run_doctor(settings);
