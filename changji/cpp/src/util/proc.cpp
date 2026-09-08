@@ -3,17 +3,14 @@
 #include <array>
 #include <cstdio>
 #include <filesystem>
+#include <string>
 
 #include "util/paths.hpp"
 
 #ifdef _WIN32
 #include <windows.h>
-#define POPEN  _popen
-#define PCLOSE _pclose
 #else
 #include <unistd.h>
-#define POPEN  popen
-#define PCLOSE pclose
 #endif
 
 namespace changji::proc {
@@ -95,24 +92,48 @@ std::optional<std::string> which(const std::string& name) {
 Result run(const std::string& exe, const std::vector<std::string>& args, int timeout_ms) {
     Result r;
 
+    // **先确认这个程序存在。**
+    //
+    // 下面走的是 popen，而 popen 是把命令交给 shell 跑的——**只要 shell
+    // 起得来它就成功**，哪怕命令根本不存在。所以不先查一下的话，
+    // `launched` 永远是 true，而头文件里说它"区分「跑了但失败」和
+    // 「根本没这个程序」"。
+    //
+    // 这不是纸面问题：`media/ffmpeg.cpp` 就是靠 `!launched` 抛
+    // FFmpegMissing（"找不到 ffmpeg。在配置里填 assembly.ffmpeg_path"）的。
+    // 少了这一步，没装 ffmpeg 的人拿到的是"ffmpeg 报错了"外加一句
+    // shell 的"不是内部或外部命令"——指不到该去装或者去填路径。
+    if (!which(exe).has_value()) return r;  // launched 保持 false
+
     std::string cmd = quote(exe);
     for (const auto& a : args) cmd += " " + quote(a);
     // stderr 并进 stdout。ffmpeg -version 和 nvidia-smi 的报错都走 stderr，
     // 只读 stdout 会得到一片空白然后误判成「程序不存在」。
     cmd += " 2>&1";
 
-#ifdef _WIN32
-    // cmd.exe 对整条命令行的解析规则：最外层再包一层引号，
-    // 否则 exe 路径带空格时前半段会被当成命令、后半段当成参数。
-    cmd = "\"" + cmd + "\"";
-#endif
-
     // TODO(阶段 1): popen 没法设超时，卡死的子进程会把工作线程一起拖住。
     // 现在只用来跑 ffmpeg -version 这类秒回的命令，风险可控。
     // 装配环节接进来之前必须换成 CreateProcess / fork+waitpid 加超时。
     (void)timeout_ms;
 
-    std::FILE* pipe = POPEN(cmd.c_str(), "r");
+#ifdef _WIN32
+    // **必须走 _wpopen（宽字符），不能用 _popen。**
+    //
+    // _popen 是窄接口，而我们手上的 cmd 是 UTF-8。把 UTF-8 字节喂给它，
+    // 只要路径里有非 ASCII 就会被按当前 ANSI 代码页重新解释——
+    // 这个项目的项目名和模型目录**基本都是中文**。
+    // 实测症状：`'"C:\...\changji 鐢妇鈹栭弽鑲╂畱...\tool.bat"' is not
+    // recognized as an internal or external command`。
+    //
+    // 原来这里还在最外层多包了一层引号，注释说是为了处理 exe 路径带空格。
+    // **那一层反而是坏的**：cmd.exe 见到开头两个连续引号会把程序名解析成
+    // 空的，于是带空格的路径一个都跑不起来。每个部分已经单独引过了，
+    // 不需要再包。两个问题都是拿一个真的带空格、带中文的路径去跑才露出来的。
+    const std::wstring wcmd = paths::from_utf8(cmd).wstring();
+    std::FILE* pipe = _wpopen(wcmd.c_str(), L"r");
+#else
+    std::FILE* pipe = popen(cmd.c_str(), "r");
+#endif
     if (!pipe) return r;
     r.launched = true;
 
@@ -125,7 +146,11 @@ Result run(const std::string& exe, const std::vector<std::string>& args, int tim
             break;
         }
     }
-    r.exit_code = PCLOSE(pipe);
+#ifdef _WIN32
+    r.exit_code = _pclose(pipe);
+#else
+    r.exit_code = pclose(pipe);
+#endif
     return r;
 }
 

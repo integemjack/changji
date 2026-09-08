@@ -16,6 +16,7 @@
 #include <string>
 #include <system_error>
 
+#include "scoped_env.hpp"
 #include "config/settings.hpp"
 #include "util/paths.hpp"
 
@@ -152,34 +153,7 @@ TEST_CASE("模型配置能从 toml 读出来") {
 // 偏偏这个"走进程内还是走 ComfyUI"的开关漏了，
 // 而它正是容器里和对拍时最需要临时翻的一个。
 
-namespace {
-
-/// 设一个环境变量，析构时还原。测试之间不能互相污染。
-class ScopedEnv {
-public:
-    ScopedEnv(std::string name, const std::string& value) : name_(std::move(name)) {
-        had_ = !paths::env(name_.c_str()).empty();
-        if (had_) old_ = paths::env(name_.c_str());
-        set(value);
-    }
-    ~ScopedEnv() { set(had_ ? old_ : std::string()); }
-    ScopedEnv(const ScopedEnv&) = delete;
-    ScopedEnv& operator=(const ScopedEnv&) = delete;
-
-private:
-    void set(const std::string& v) {
-#ifdef _WIN32
-        _putenv_s(name_.c_str(), v.c_str());
-#else
-        if (v.empty()) ::unsetenv(name_.c_str());
-        else ::setenv(name_.c_str(), v.c_str(), 1);
-#endif
-    }
-    std::string name_, old_;
-    bool had_ = false;
-};
-
-}  // namespace
+// ScopedEnv 挪去 scoped_env.hpp 了：which 那边也要用，各写一份迟早分家。
 
 TEST_CASE("环境变量：改了值就要生效，而且要在 env_locked 里报出来") {
     struct Case {
@@ -196,7 +170,7 @@ TEST_CASE("环境变量：改了值就要生效，而且要在 env_locked 里报
 
     for (const auto& c : cases) {
         CAPTURE(c.var);
-        const ScopedEnv guard(std::string("CHANGJI_") + c.var, c.value);
+        const test::ScopedEnv guard(std::string("CHANGJI_") + c.var, c.value);
 
         // 一、表里有它，界面才知道该把输入框置灰。
         const auto locked = config::env_overridden();
@@ -217,7 +191,7 @@ TEST_CASE("环境变量：改了值就要生效，而且要在 env_locked 里报
 TEST_CASE("环境变量把 engine 写错了要被拦住，不能悄悄接受") {
     // 悄悄接受的话整条出片的路会走岔，而表现是"连不上 ComfyUI"或者
     // "没编进出图后端"——两句话都指不到真正的原因（环境变量拼错了）。
-    const ScopedEnv guard("CHANGJI_MODELS_ENGINE", "sdcpp");
+    const test::ScopedEnv guard("CHANGJI_MODELS_ENGINE", "sdcpp");
     const config::Settings s = config::load_settings();
     CHECK(s.models.engine == "sdcpp");
     const auto errs = s.models.validate();
