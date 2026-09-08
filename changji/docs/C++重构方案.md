@@ -762,8 +762,7 @@ import `changji.stages.bible.build_prompt` 来算），不是手写的——
   `test_projects` `test_config_api` `test_voices` `test_run`
   `test_writeback`。这些的保证来自对拍那 166 条，不在单元测试里。
 - **两边都有、而且没有语料兜着**——这才是要盯的。原来十一个，
-  现在剩四个：`test_audio` `test_comfy_client` `test_episode`
-  `test_frames`。
+  现在剩三个：`test_audio` `test_comfy_client` `test_episode`。
 
 （`test_gates` 补了语料，见「闸门判定和 Python 一条不差」；
 `test_paths` 补了，见「配置文件位置」那一节；
@@ -929,6 +928,36 @@ sd.cpp——`run_deps.cpp` 里 `if (engine != "comfy") return b;`
 而这个分叉只在迁移期间有意义（阶段 8 之后 Python 没了，C++ 怎么算就是
 定义）。记下来，并且用例两头都钉：默认环境下两边一致、
 以及"C++ 认这个环境变量"这个行为本身。
+
+### 首帧阶段的状态变化：失败时 status 必须不动（2026-09-08）
+
+这一层逻辑不多，但**每一条都写在镜头状态上**，而状态是后面每个阶段的输入：
+
+    成功：status → frame_done，frame_path 填相对路径
+    失败：**attempts 加一，status 不动**
+
+两半都要紧，而且错了都不报错：
+
+- `attempts` 是闸门的重试计数。加错了要么永远重试，要么第一次就判超限降级。
+- `status` 不动，这一镜下一轮才会被再捡起来。改成推到别的状态它就被跳过，
+  表现是"那一镜永远没有首帧"，而日志里只剩一条早就滚掉的失败。
+
+补了五条语料（全成功 / 全失败 / 中间失败 / 第一个失败 / 单镜），
+比 outcome 和跑完之后的镜头状态。一条不差。
+
+⚠️ **一处两边不一样，语料够不着**：Python 只捕
+`(FrameError, RenderError)`，**C++ 捕的是 `std::exception`**。
+渲染器抛别的类型时，Python 让它穿出去（整个阶段中断），
+C++ 算成"这一镜失败"接着跑。
+
+哪个对不好说：C++ 更能扛，但也更会**把渲染器里的 bug 说成"这一镜失败"**。
+今天那个 sd.cpp 的除零是直接崩进程、连 catch 都没走到，
+所以这条差异当时没起作用。语料只喂两边都会捕的错误——
+喂别的就不是在比同一件事了。
+
+写这条用例时被这个差异绊了一下：第一版我抛的是 `stages::FrameError`，
+而 **C++ 侧根本没有这个类型**——它捕 `std::exception`，
+所以没必要定义专门的异常。
 
 ### frames_for 的取偶：一个抄歪了也不报错的地方（2026-09-08）
 

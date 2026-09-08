@@ -7,6 +7,8 @@
 
 #include <doctest/doctest.h>
 
+#include <nlohmann/json.hpp>
+
 #include <filesystem>
 #include <fstream>
 #include <string>
@@ -378,4 +380,110 @@ TEST_CASE("每一镜拿到的提示词都带完整的身份层") {
 
     std::error_code ec;
     fs::remove_all(root, ec);
+}
+
+// ---------------------------------------------------------------------------
+// 首帧阶段跑完之后镜头变成什么样，和 Python 逐条比。
+//
+// 这一层逻辑不多，但**每一条都写在镜头状态上**，而状态是后面每个阶段的
+// 输入：
+//
+//   成功：status 推到 frame_done，frame_path 填相对路径
+//   失败：**attempts 加一，status 不动**
+//
+// 第二条要紧。attempts 是闸门的重试计数，加错了要么永远重试、要么第一次
+// 就判超限降级。而 status 不动意味着这一镜下一轮还会被捡起来——改成推到
+// 别的状态它就被跳过了，表现是"那一镜永远没有首帧"，
+// 而日志里只有一条早就滚掉的失败。
+//
+// ⚠️ 语料只喂两边都会捕的错误类型。Python 捕 (FrameError, RenderError)，
+// **C++ 捕的是 std::exception**——渲染器抛别的类型时 Python 让它穿出去
+// （整个阶段中断），C++ 算成"这一镜失败"接着跑。那处差异写在方案里，
+// 不在这份语料的范围内。
+// ---------------------------------------------------------------------------
+
+TEST_CASE("首帧阶段的状态变化和 Python 一样") {
+    const std::string path =
+        std::string(CHANGJI_GOLDEN_DIR) + "/frames_stage.json";
+    std::ifstream in(path, std::ios::binary);
+    REQUIRE_MESSAGE(in.good(), "读不到语料 " << path);
+    nlohmann::json g;
+    in >> g;
+
+    const auto cases = g.at("cases");
+    REQUIRE(cases.size() == 5);
+
+    for (const auto& c : cases) {
+        const std::string name = c.at("name").get<std::string>();
+        CAPTURE(name);
+
+        const auto plan = c.at("plan").get<std::vector<bool>>();
+        const fs::path root = temp_root("语料_" + name);
+        const models::ProjectPaths paths(root);
+
+        std::vector<models::Shot> owned;
+        for (std::size_t i = 0; i < plan.size(); ++i) {
+            char buf[32];
+            std::snprintf(buf, sizeof(buf), "ep01_sh%03d",
+                          static_cast<int>(i + 1));
+            auto s = make_shot(buf);
+            s.order = static_cast<int>(i);
+            s.status = models::ShotStatus::AUDIO_DONE;
+            s.attempts = 0;
+            owned.push_back(s);
+        }
+        std::vector<models::Shot*> shots;
+        for (auto& s : owned) shots.push_back(&s);
+
+        // 按剧本成功或失败，和 Python 那边的 ScriptedBackend 一样
+        std::size_t idx = 0;
+        stages::FrameRenderer scripted =
+            [&plan, &idx](const models::Shot& shot, const stages::PromptBundle&,
+                          const models::TierSpec&, const fs::path& dest,
+                          pipeline::CancelToken&, const infer::StepCallback&) {
+                const bool ok = idx < plan.size() ? plan[idx] : true;
+                ++idx;
+                if (!ok) {
+                    // C++ 这边没有单独的 FrameError——run_frames 捕的是 std::exception。
+                    // 这正是方案里记的那处差异，用例注释开头写了。
+                    throw std::runtime_error(shot.shot_id + " 出首帧失败：造出来的错");
+                }
+                std::error_code ec;
+                fs::create_directories(dest.parent_path(), ec);
+                std::ofstream f(dest, std::ios::binary | std::ios::trunc);
+                f << "png";
+            };
+
+        pipeline::JobTable table;
+        pipeline::CancelToken tok;
+        std::vector<stages::FrameOutcome> outs;
+        table.start(pipeline::JobKind::Run, "ep01",
+                    [&](pipeline::JobProgress& p) {
+                        outs = stages::run_frames(shots, make_assets(),
+                                                  make_spec(), paths, scripted,
+                                                  p, tok);
+                    });
+        table.wait_idle();
+
+        const auto want_outs = c.at("outcomes");
+        REQUIRE(outs.size() == want_outs.size());
+        for (std::size_t i = 0; i < outs.size(); ++i) {
+            CAPTURE(i);
+            CHECK(outs[i].shot_id == want_outs[i].at("shot_id").get<std::string>());
+            CHECK(outs[i].ok == want_outs[i].at("ok").get<bool>());
+            CHECK(outs[i].error.empty() != want_outs[i].at("has_error").get<bool>());
+        }
+
+        const auto want_shots = c.at("shots_after");
+        REQUIRE(owned.size() == want_shots.size());
+        for (std::size_t i = 0; i < owned.size(); ++i) {
+            CAPTURE(i);
+            CHECK(std::string(models::to_string(owned[i].status)) ==
+                  want_shots[i].at("status").get<std::string>());
+            CHECK(owned[i].attempts == want_shots[i].at("attempts").get<int>());
+            // frame_path：成功该有、失败该没有
+            const bool want_path = !want_shots[i].at("frame_path").is_null();
+            CHECK(owned[i].frame_path.has_value() == want_path);
+        }
+    }
 }
