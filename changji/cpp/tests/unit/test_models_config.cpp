@@ -9,8 +9,10 @@
 
 #include <doctest/doctest.h>
 
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <map>
 #include <string>
 #include <system_error>
 
@@ -134,4 +136,91 @@ TEST_CASE("模型配置能从 toml 读出来") {
     }
 
     fs::remove_all(tmp, ec);
+}
+
+// ── 环境变量覆盖 ─────────────────────────────────────────────────────
+//
+// **这一组防的是"两处不同步"。** 一个环境变量要在两个地方各写一遍：
+// `env_mapping()` 那张表（决定 /api/connections 的 env_locked 里报不报它，
+// 界面靠这个把输入框置灰）和 `apply_env()`（决定它到底生不生效）。
+//
+// 只加了表：界面说"被环境变量锁住了"，而值其实没被覆盖。
+// 只加了 apply_env：值覆盖了，界面还让人编辑，改完悄悄丢掉。
+// **两种都不会报错，都只能靠人发现。**
+//
+// CHANGJI_MODELS_ENGINE 就是补出来的——别的 [models] 键都有，
+// 偏偏这个"走进程内还是走 ComfyUI"的开关漏了，
+// 而它正是容器里和对拍时最需要临时翻的一个。
+
+namespace {
+
+/// 设一个环境变量，析构时还原。测试之间不能互相污染。
+class ScopedEnv {
+public:
+    ScopedEnv(std::string name, const std::string& value) : name_(std::move(name)) {
+        had_ = !paths::env(name_.c_str()).empty();
+        if (had_) old_ = paths::env(name_.c_str());
+        set(value);
+    }
+    ~ScopedEnv() { set(had_ ? old_ : std::string()); }
+    ScopedEnv(const ScopedEnv&) = delete;
+    ScopedEnv& operator=(const ScopedEnv&) = delete;
+
+private:
+    void set(const std::string& v) {
+#ifdef _WIN32
+        _putenv_s(name_.c_str(), v.c_str());
+#else
+        if (v.empty()) ::unsetenv(name_.c_str());
+        else ::setenv(name_.c_str(), v.c_str(), 1);
+#endif
+    }
+    std::string name_, old_;
+    bool had_ = false;
+};
+
+}  // namespace
+
+TEST_CASE("环境变量：改了值就要生效，而且要在 env_locked 里报出来") {
+    struct Case {
+        const char* var;      ///< 不带 CHANGJI_ 前缀
+        const char* key;      ///< env_locked 里的键名
+        const char* value;
+    };
+    // 挑的是这次新加的三个。老的那些同理，出问题的方式一模一样。
+    const Case cases[] = {
+        {"MODELS_ENGINE", "models_engine", "comfy"},
+        {"MODELS_TTS", "models_tts", "some-talker.gguf"},
+        {"MODELS_TTS_DECODER", "models_tts_decoder", "some-decoder.gguf"},
+    };
+
+    for (const auto& c : cases) {
+        CAPTURE(c.var);
+        const ScopedEnv guard(std::string("CHANGJI_") + c.var, c.value);
+
+        // 一、表里有它，界面才知道该把输入框置灰。
+        const auto locked = config::env_overridden();
+        CHECK_MESSAGE(locked.count(c.key) == 1,
+                      "env_mapping() 里少了这一项，界面不会显示它被锁住");
+
+        // 二、值真的被覆盖了。
+        const config::Settings s = config::load_settings();
+        const std::string got =
+            std::string(c.key) == "models_engine"      ? s.models.engine
+            : std::string(c.key) == "models_tts"       ? s.models.tts
+                                                       : s.models.tts_decoder;
+        CHECK_MESSAGE(got == c.value,
+                      "apply_env() 里少了这一项，值没被覆盖");
+    }
+}
+
+TEST_CASE("环境变量把 engine 写错了要被拦住，不能悄悄接受") {
+    // 悄悄接受的话整条出片的路会走岔，而表现是"连不上 ComfyUI"或者
+    // "没编进出图后端"——两句话都指不到真正的原因（环境变量拼错了）。
+    const ScopedEnv guard("CHANGJI_MODELS_ENGINE", "sdcpp");
+    const config::Settings s = config::load_settings();
+    CHECK(s.models.engine == "sdcpp");
+    const auto errs = s.models.validate();
+    REQUIRE_FALSE(errs.empty());
+    CHECK(errs[0].find("sd 或 comfy") != std::string::npos);
 }
