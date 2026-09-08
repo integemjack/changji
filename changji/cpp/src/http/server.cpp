@@ -25,6 +25,8 @@
 #include "http/voices.hpp"
 #include "http/scripting.hpp"
 #include "llm/client.hpp"
+#include "http/flow.hpp"
+#include "util/paths.hpp"
 #include "http/webapp.hpp"
 #include "http/ws.hpp"
 #include "comfy/client.hpp"
@@ -465,6 +467,110 @@ void run(const config::Settings& settings, const Options& opts) {
     // 两层架构下界面由 Node 提供，浏览器根本不会访问到这里——
     // 会撞上它的只有直接开了后端端口的人。给他们一句指路的话，
     // 比返回 404 或者一个空页面有用。
+    // ---- Node 那个 BFF 的几条，引擎自己也答一份 ----
+    //
+    // **为什么引擎要管这个。** 引擎自己发前端之后，走这条路的人拿不到
+    // `/bff/*`——界面能打开、项目列表也在，但**剧集下拉框是空的**、
+    // 顶栏写着"引擎连不上"，制作页点不动。那等于"打开端口就能看处理进度"
+    // 没做完。
+    //
+    // 只搬**判定和状态**这几条。投递（`/bff/publish/*`）没搬：它要存投递
+    // 记录、要平台配置，是另一套东西，不是顺手能带的。要投递就仍然起 Node。
+
+    CROW_ROUTE(app, "/bff/health")([] {
+        return json_response({{"ok", true}, {"service", "changji"}});
+    });
+
+    // 前端拿它点亮顶栏那个"引擎连不上/已连接"。
+    // **由引擎自己答的时候它恒为在线**——答得出这个请求就说明活着，
+    // 再去 ping 自己一次没有意义。
+    CROW_ROUTE(app, "/bff/settings/status")([] {
+        return json_response({{"online", true},
+                              {"baseUrl", ""},
+                              {"latencyMs", 0},
+                              {"service", "changji"}});
+    });
+
+    CROW_ROUTE(app, "/bff/settings/config")([] {
+        const auto s = config::runtime().snapshot();
+        json locked = json::object();
+        for (const auto& [k, v] : config::env_overridden()) locked[k] = v;
+        return json_response(
+            {{"engineBaseUrl", ""},
+             {"engineTimeoutMs", 0},
+             {"configFile", changji::paths::to_utf8(config::user_config_path())},
+             {"envLocked", locked}});
+    });
+
+    // 八步走到哪一步了。
+    CROW_ROUTE(app, "/bff/flow")([](const crow::request& req) {
+        const char* raw_path = req.url_params.get("path");
+        json body{{"steps", flow_steps()}};
+        if (raw_path == nullptr || *raw_path == 0) {
+            // 还没选项目：八步全未完成，前端照样画得出侧边栏
+            json done = json::object();
+            for (const auto& st : flow_steps()) done[st["key"]] = false;
+            body["done"] = done;
+            body["counters"] = json::object();
+            body["project"] = nullptr;
+            body["episode"] = nullptr;
+            return json_response(body);
+        }
+        const std::string path = raw_path;
+
+        auto proj = guard([&] { return get_project(path); });
+        if (proj.status != 200) {
+            return json_response(proj.body, proj.status);
+        }
+        const json& project = proj.body;
+
+        // 没指定就跟第一集走，和 Node 那边一样
+        std::string episode_id;
+        if (const char* e = req.url_params.get("episode_id")) episode_id = e;
+        const auto& eps = project.contains("episodes") && project["episodes"].is_array()
+                              ? project["episodes"]
+                              : json::array();
+        if (episode_id.empty() && !eps.empty() && eps[0].is_object()) {
+            episode_id = eps[0].value("episode_id", std::string());
+        }
+        json episode = nullptr;
+        for (const auto& e : eps) {
+            if (e.is_object() && e.value("episode_id", std::string()) == episode_id) {
+                episode = e;
+                break;
+            }
+        }
+
+        // 分镜和产物取不到就当空的——**别让整条判定挂掉**。
+        // 一个还没出分镜的项目本来就该走到"分镜"那一步停下，
+        // 而不是让侧边栏整个不显示。
+        json shots = json::array();
+        if (!episode_id.empty()) {
+            auto r = guard([&] { return get_shots(path, episode_id); });
+            if (r.status == 200 && r.body.contains("shots") &&
+                r.body["shots"].is_array()) {
+                shots = r.body["shots"];
+            }
+        }
+        json outputs = json::array();
+        {
+            auto r = guard([&] { return get_outputs(path); });
+            if (r.status == 200 && r.body.contains("files") &&
+                r.body["files"].is_array()) {
+                outputs = r.body["files"];
+            }
+        }
+
+        const json assessed = flow_assess(project, shots, outputs, episode_id);
+        body["done"] = assessed["done"];
+        body["counters"] = assessed["counters"];
+        body["project"] = project;
+        body["episodeId"] = episode_id;
+        body["episode"] = episode;
+        body["outputs"] = outputs;
+        return json_response(body);
+    });
+
     // ---- 前端 ----
     //
     // **这里以前回的是一句 text/plain 指路**（"界面在 Node 那一层，
@@ -475,13 +581,19 @@ void run(const config::Settings& settings, const Options& opts) {
     // ⚠️ 只发静态文件，不替代 Node 那个 BFF：`/bff/*` 仍然只有它有。
     // 制作页（看跑批进度）只用 `/api/*`，走这条路能用；
     // 设置页和上传页要 `/bff/*`，得起 Node 那一层。
-    const auto serve_webapp = [](const crow::request& req) {
+    // **逐字段填 res，不要整个赋值。**
+    // catchall 拿到的 `crow::response&` 已经带着这次连接的内部状态，
+    // `res = 另一个 response` 会把那些状态一起覆盖掉——浏览器收到的是
+    // ERR_CONTENT_LENGTH_MISMATCH，而服务端日志里明明白白写着 200。
+    // 日志说成功、浏览器说坏掉，这种最难查。
+    const auto fill_webapp = [](const crow::request& req, crow::response& res) {
         const std::string rel = normalize_webapp_path(req.url);
         if (rel.empty()) {
             // 只有 `..` 这类会走到这儿
-            crow::response res(400, "路径不合法");
+            res.code = 400;
+            res.body = "路径不合法";
             res.set_header("Content-Type", "text/plain; charset=utf-8");
-            return res;
+            return;
         }
         const std::string* body = find_webapp_file(rel);
         std::string name = rel;
@@ -493,26 +605,42 @@ void run(const config::Settings& settings, const Options& opts) {
             name = "index.html";
         }
         if (!body) {
-            crow::response res(500,
-                               "前端没打包进来。生成一下："
-                               "cd webapp/client && npm run build，"
-                               "然后 python cpp/tools/gen_webapp.py，再重编。");
+            res.code = 500;
+            res.body =
+                "前端没打包进来。生成一下：cd webapp/client && npm run build，"
+                "然后 python cpp/tools/gen_webapp.py，再重编。";
             res.set_header("Content-Type", "text/plain; charset=utf-8");
-            return res;
+            return;
         }
-        crow::response res(200, *body);
+        res.code = 200;
+        res.body = *body;
         res.set_header("Content-Type", webapp_content_type(name));
-        return res;
     };
 
-    CROW_ROUTE(app, "/")(serve_webapp);
+    const auto webapp_route = [fill_webapp](const crow::request& req) {
+        crow::response res;
+        fill_webapp(req, res);
+        return res;
+    };
+    CROW_ROUTE(app, "/")(webapp_route);
+
+    // **静态资源走普通路由，不走 catchall。**
+    // 实测：同一个文件从 catchall 出去只有 65389 字节，从普通路由出去是
+    // 完整的 131332——浏览器报 ERR_CONTENT_LENGTH_MISMATCH，页面一片空白，
+    // 而服务端日志两次都写 200。原因没查到底（Crow 的 catchall 那条路上
+    // 大 body 被截断），但普通路由是好的，就走普通路由。
+    // catchall 只留给单页应用兜底，那里只发几百字节的 index.html。
+    CROW_ROUTE(app, "/assets/<path>")(
+        [webapp_route](const crow::request& req, const std::string&) {
+            return webapp_route(req);
+        });
 
     // **兜底用 CROW_CATCHALL_ROUTE，不能用 `/<path>`。**
     // Crow 的 `<path>` 连斜杠一起吃，写成路由的话它会把 `/api/outputs`、
     // `/api/run` 这些全匹配走——对拍当场报出来：Python 回 200，C++ 回 404。
     // catchall 只在别的路由都没匹配上时才触发，正好是单页应用兜底的语义。
     CROW_CATCHALL_ROUTE(app)
-    ([serve_webapp](const crow::request& req, crow::response& res) {
+    ([fill_webapp](const crow::request& req, crow::response& res) {
         if (!webapp_owns(req.url)) {
             // 接口路径没匹配上就是真的没有这个接口，照常回 404 JSON
             res.code = 404;
@@ -521,7 +649,7 @@ void run(const config::Settings& settings, const Options& opts) {
             res.end();
             return;
         }
-        res = serve_webapp(req);
+        fill_webapp(req, res);
         res.end();
     });
 

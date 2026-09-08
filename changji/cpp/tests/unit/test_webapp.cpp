@@ -12,8 +12,11 @@
 
 #include <doctest/doctest.h>
 
+#include <algorithm>
+#include <map>
 #include <string>
 
+#include "http/bundled_webapp.inc.hpp"
 #include "http/webapp.hpp"
 
 using namespace changji;
@@ -91,4 +94,39 @@ TEST_CASE("前端真的嵌进来了") {
     CHECK(html.find("/assets/") != std::string::npos);
 
     CHECK(http::find_webapp_file("不存在的文件.js") == nullptr);
+}
+
+TEST_CASE("切成多段的文件要拼回完整长度") {
+    // **原来这里只查了几个子串**——而子串在第一段里就有，
+    // 后面几段丢了照样绿。实机上正是这样：浏览器拿到 65389 字节
+    // 而磁盘上是 131332，页面一片空白，而这条用例是绿的。
+    //
+    // 生成器把大文件切成 16 KB 一段（MSVC 单条字面量的上限），
+    // 运行时按文件名拼回去。**长度是唯一能证明拼对了的东西。**
+    std::size_t total = 0;
+    std::size_t biggest = 0;
+    for (const auto& [name, chunk] : http::kBundledWebappChunks) {
+        (void)name;
+        total += chunk.size();
+    }
+    // 逐个文件查：拼出来的长度必须等于它那几段之和
+    std::map<std::string, std::size_t> want;
+    for (const auto& [name, chunk] : http::kBundledWebappChunks) {
+        want[std::string(name)] += chunk.size();
+    }
+    std::size_t joined = 0;
+    for (const auto& [name, size] : want) {
+        const auto* got = http::find_webapp_file(name);
+        REQUIRE_MESSAGE(got != nullptr, "少了 " << name);
+        CHECK_MESSAGE(got->size() == size,
+                      name << " 拼出来 " << got->size() << " 字节，"
+                           << "该是 " << size);
+        joined += got->size();
+        biggest = std::max(biggest, size);
+    }
+    CHECK(joined == total);
+    // 确认语料里真有需要切段的文件，否则这条用例什么都没验
+    CHECK_MESSAGE(biggest > 16000,
+                  "最大的文件才 " << biggest << " 字节，没有跨段的，"
+                                  "这条用例证明不了拼接是对的");
 }
