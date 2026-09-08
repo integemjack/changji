@@ -14,6 +14,7 @@
 
 #include <filesystem>
 #include <fstream>
+#include <ctime>
 #include <string>
 
 #include <nlohmann/json.hpp>
@@ -228,6 +229,12 @@ TEST_CASE("时间戳格式与 Python 的 isoformat 对齐") {
     // 微秒六位，时区是 +00:00 不是 Z
     CHECK(ts.substr(26) == "+00:00");
     CHECK(ts.find('Z') == std::string::npos);
+
+    // **对拍看不见这一条，所以只能靠这里。** updated_at / created_at 每次
+    // 存盘都会变，对拍把它们放进了忽略表——忽略的是值，格式也就跟着没人看了。
+    //
+    // 而带不带时区是有人依赖的：webapp 的 humanAgo 用 Date.parse 解它，
+    // **不带时区的话 JS 按本地时间解**，东八区会把"刚刚"显示成"8 小时前"。
 }
 
 TEST_CASE("新建项目") {
@@ -291,4 +298,21 @@ TEST_CASE("资产库保持文件里的键顺序") {
     // 这两件事不能混
     CHECK(lib.location_ids() ==
           std::vector<std::string>{"loc_alley", "loc_rooftop"});
+}
+
+TEST_CASE("时间戳是 UTC，不是本地时间") {
+    // 写成本地时间又标 +00:00 的话，所有"几分钟前"都会差一个时区，
+    // 而且不同机器上差得还不一样。
+    const std::string t = utc_now_iso8601();
+    const int hour = std::stoi(t.substr(11, 2));
+
+    const std::time_t now = std::time(nullptr);
+    std::tm utc{};
+#ifdef _WIN32
+    gmtime_s(&utc, &now);
+#else
+    gmtime_r(&now, &utc);
+#endif
+    CAPTURE(t);
+    CHECK(hour == utc.tm_hour);
 }
