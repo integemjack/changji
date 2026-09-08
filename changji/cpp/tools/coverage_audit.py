@@ -40,15 +40,57 @@ NOISE = {
 
 
 def symbols(header: pathlib.Path) -> set[str]:
+    """头文件里**外面调得到**的名字。
+
+    ⚠️ **要跳过私有成员。** 第一版没跳，于是它指着 `AudioStage` 的
+    `split_long_lines` / `lock_duration` 说"没测过"——那几个是 private，
+    外面根本调不到，测不了也不该测。一个会指向死路的清单比没有清单更糟：
+    照着它去做，做到一半才发现这活儿干不了。
+
+    识别办法很土：数花括号深度，记住每个 class/struct 是在哪一层开的，
+    class 默认 private、struct 默认 public，见到 `public:` 之类就改。
+    够用了——这个文件读的是自家的头文件，不是任意 C++。
+    """
     text = io.open(header, encoding="utf-8", errors="replace").read()
-    # 去掉注释，免得把注释里提到的名字当成声明。
     text = re.sub(r"//[^\n]*", "", text)
     text = re.sub(r"/\*.*?\*/", "", text, flags=re.S)
+
     out = set()
-    for m in DECL.finditer(text):
-        name = m.group(1) or m.group(2)
-        if name and name not in NOISE and not name.startswith("_"):
-            out.add(name)
+    depth = 0
+    # 栈里放 (开始深度, 当前可见性)
+    scopes: list[tuple[int, str]] = []
+
+    for line in text.split("\n"):
+        stripped = line.strip()
+
+        # 可见性切换
+        m = re.match(r"^(public|private|protected)\s*:", stripped)
+        if m and scopes:
+            scopes[-1] = (scopes[-1][0], m.group(1))
+
+        # 新的 class / struct
+        m = re.match(r"^(class|struct)\s+([A-Za-z_]\w*)", stripped)
+        if m and not stripped.rstrip().endswith(";"):   # 前向声明不算
+            if not scopes or scopes[-1][1] == "public":
+                out.add(m.group(2))
+            scopes.append((depth, "private" if m.group(1) == "class" else "public"))
+        elif m:
+            if not scopes or scopes[-1][1] == "public":
+                out.add(m.group(2))
+
+        visible = (not scopes) or scopes[-1][1] == "public"
+        if visible:
+            fm = re.match(
+                r"^(?:[A-Za-z_][\w:<>,&*\s]*?\s+)?([A-Za-z_]\w*)\s*\(", stripped)
+            if fm:
+                name = fm.group(1)
+                if name not in NOISE and not name.startswith("_"):
+                    out.add(name)
+
+        depth += line.count("{") - line.count("}")
+        while scopes and depth <= scopes[-1][0]:
+            scopes.pop()
+
     return out
 
 

@@ -506,6 +506,7 @@ if(CHANGJI_BUILD_TESTS)
         tests/unit/test_util_time.cpp
         tests/unit/test_proc.cpp
         tests/unit/test_paths.cpp
+        tests/unit/test_facades.cpp
         tests/unit/test_comfy_loader.cpp
         tests/unit/test_voices.cpp
         tests/unit/test_comfy_renderers.cpp
@@ -548,6 +549,10 @@ if(CHANGJI_BUILD_TESTS)
         # 不碰 asio 的运行时，也不链 Crow 的 app。Hub 里那个
         # connection* 纯粹当键用，从不解引用——所以拿假指针就能测。
         src/http/ws.cpp
+        # 这两个都是可选依赖的门面，测试目标里编的是没链上游时那一支
+        # （CHANGJI_HAVE_SD / CHANGJI_HAVE_LLAMA 只给 changji 目标定义）。
+        # test_facades.cpp 验的就是那一支的行为。
+        src/infer/ggml_abi.cpp
         src/infer/llama_tts.cpp
         src/infer/scheduler.cpp
         src/infer/sd_backend.cpp
