@@ -12,6 +12,7 @@
 #include "util/httplib.hpp"
 #include <nlohmann/json.hpp>
 
+#include "infer/ggml_abi.hpp"
 #include "infer/sd_backend.hpp"
 #include "util/paths.hpp"
 #include "util/proc.hpp"
@@ -287,6 +288,25 @@ Check check_workspace(const config::Settings& s) {
 /// 没链的话不是错误，是一种部署形态：走 ComfyUI 那条路的用户不需要它，
 /// 交叉编译到某些平台时也可能关掉。所以是 OK 加一句说明，不是 WARN——
 /// 报告里挂一条永远不会去处理的黄字，会让真正的警告没人看。
+/// ggml 的 ABI 自检。
+///
+/// 这一项和别的体检项不一样：**它查的不是环境，是这个二进制自己编得对不对。**
+/// 放进体检报告是因为它防的那类问题没有别的信号——编译过、链接过、
+/// 起得来，只有读写张量时慢慢踩坏内存。详见 infer/ggml_abi.hpp。
+Check check_ggml() {
+    if (!infer::ggml_available()) {
+        return {"ggml ABI", Level::OK, "没链 ggml（出图和配音都走外部服务）", ""};
+    }
+    const auto abi = infer::check_ggml_abi();
+    if (abi.ok) return {"ggml ABI", Level::OK, abi.detail, ""};
+    // FAIL 不是 WARN：结构体大小对不上之后，这个进程做的任何推理
+    // 都不值得相信，继续跑只会把损坏推到更远的地方。
+    return {"ggml ABI", Level::FAIL, abi.detail,
+            "多半是构建脚本改动引起的。顶层要有 "
+            "add_compile_definitions(GGML_MAX_NAME=160)，"
+            "而且 ggml 的头和库必须来自同一份源码树。"};
+}
+
 Check check_sd() {
     if (!infer::sd_available()) {
         return {"出图后端", Level::OK, "没编进来，出图走推理服务", ""};
@@ -391,6 +411,7 @@ Report run_checks(const config::Settings& settings) {
 
     r.checks.push_back(guarded("配音", [&] { return check_tts(settings, infer_ok); }));
     r.checks.push_back(guarded("大模型", [&] { return check_llm(settings); }));
+    r.checks.push_back(guarded("ggml ABI", [&] { return check_ggml(); }));
     r.checks.push_back(guarded("出图后端", [&] { return check_sd(); }));
     r.checks.push_back(guarded("本地模型", [&] { return check_models(settings); }));
     r.checks.push_back(guarded("显卡", [&] { return check_gpu(settings); }));

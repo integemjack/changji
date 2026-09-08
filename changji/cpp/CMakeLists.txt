@@ -140,15 +140,28 @@ option(CHANGJI_SD_CUDA "sd.cpp 用 CUDA 后端" OFF)
 # 主工程靠 FetchContent 拉源码，没人插得进去。
 option(CHANGJI_LLAMA "链接 llama.cpp（进程内 TTS）" OFF)
 
+# **GGML_MAX_NAME 要在顶层定义，链了 ggml 就要，不管它是谁带进来的。**
+#
+# sd.cpp 自己的 CMakeLists 里有 `add_definitions(-DGGML_MAX_NAME=160)`，
+# 但 add_definitions 只作用于**它之后的目录作用域**——加到了 ggml 上，
+# 没加到我们自己的源文件上。于是默认构建里库是 160、本体是 64，
+# **编译和链接全都不报错**。
+#
+# 这不是推理出来的：doctor 的 ggml ABI 探针接上之后第一次跑就报了 fail，
+# "库是按 160 编的，本体是 64"。在此之前它已经这样很久了，
+# 只是本体里没有人直接读写 ggml_tensor 的字段，所以还没出事。
+if(CHANGJI_SD OR CHANGJI_LLAMA)
+    add_compile_definitions(GGML_MAX_NAME=160)
+endif()
+
 if(CHANGJI_LLAMA)
-    # **这一行删了照样编过，但会踩运行时内存。**
+    # 上面那行原来在这个块里。留着这段注释是因为它解释了后果：
     # sd.cpp 自己的 CMakeLists 里有 `add_definitions(-DGGML_MAX_NAME=160)`，
     # 而 add_definitions 只作用于它之后的目录作用域——加不到别处已经编好的
     # ggml 上。结果是 ggml 按 64 编、sd.cpp 按 160 编，两边看到的 ggml_tensor
     # 大小不一致，**链接不报错**。所以在顶层统一定义。
     # verify/main.cpp 的 check_ggml_abi() 是这一条的运行时探针：
     # 写一个 100 字符的张量名再读回来，读回 63 就说明这行没生效。
-    add_compile_definitions(GGML_MAX_NAME=160)
 
     # 打补丁要一个 Python。找不到就当场停，不要配置期悄悄过、
     # 编译期报一堆"找不到 GGML_TYPE_F8_E4M3"——那时候没人会想到是这儿。
@@ -245,6 +258,7 @@ add_executable(changji
     src/stages/audio_plan.cpp
     src/stages/audio.cpp
     src/stages/tts_backends.cpp
+    src/infer/ggml_abi.cpp
     src/infer/scheduler.cpp
     src/infer/sd_backend.cpp
     src/infer/sd_image.cpp
@@ -309,9 +323,22 @@ target_compile_definitions(changji PRIVATE
     # 先不引 OpenSSL。等真要连云端 LLM 时再打开 CPPHTTPLIB_OPENSSL_SUPPORT。
 )
 
+if(CHANGJI_LLAMA)
+    target_link_libraries(changji PRIVATE llama)
+    target_compile_definitions(changji PRIVATE CHANGJI_HAVE_LLAMA=1)
+    # ggml 的头。开了 CHANGJI_LLAMA 时它由 llama.cpp 提供，
+    # 而 doctor 的 ABI 探针要 include "ggml.h"。
+    target_include_directories(changji PRIVATE "${llama_SOURCE_DIR}/ggml/include")
+endif()
+
 if(CHANGJI_SD)
     target_link_libraries(changji PRIVATE stable-diffusion)
     target_compile_definitions(changji PRIVATE CHANGJI_HAVE_SD=1)
+    # 没开 CHANGJI_LLAMA 时 ggml 是 sd.cpp 自带的那份，头在它的子模块里。
+    if(NOT CHANGJI_LLAMA)
+        target_include_directories(changji PRIVATE
+            "${stable_diffusion_cpp_SOURCE_DIR}/ggml/include")
+    endif()
     # stb 那两个头在 sd.cpp 的 thirdparty 里，它自己没 export 这个目录。
     # 用它们是为了在**内存里**编解码 PNG——stb 自带的 fopen 版本在
     # Windows 上把路径按 ANSI 代码页解释，中文项目名直接写不进去。
