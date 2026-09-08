@@ -31,6 +31,13 @@ std::optional<std::pair<std::string, std::string>> find_voice_input(
 /// **任何一步失败都回 200 加一个 error 字段**，不回错误码：这个接口是
 /// 角色页打开时顺带拉的，回 500 的话整个页面会弹错误框，
 /// 而用户可能根本没打算配音。
-ApiResult get_voices(const std::string& path, comfy::Client& client);
+/// backend 是 `[tts].backend` 的值。
+///
+/// **进程内配音（local）根本不问 ComfyUI 要音色。** 它的"音色"是用户自己
+/// 给的一段参考音频，服务端没有清单可列。不区分的话，选了 local 的用户
+/// 会在角色页看到一个 ComfyUI 的音色下拉框（或者一句"连不上 ComfyUI"），
+/// 而那个后端压根没在用——**答非所问比答不出来更糟**。
+ApiResult get_voices(const std::string& path, comfy::Client& client,
+                     const std::string& backend = "comfy");
 
 }  // namespace changji::http

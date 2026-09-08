@@ -1371,6 +1371,16 @@ changji 目前没有地方填。
 
 只说一句"配音失败"的话，用户下一步该干什么全靠猜。
 
+**`/api/voices` 也跟着改了**（2026-09-08）：`[tts].backend = "local"` 时
+不去问 ComfyUI，直接回空列表加一句"音色来自参考音频"。
+
+原来那个接口不管配的是哪个后端，一律去读 ComfyUI 的配音工作流再问服务端
+要音色清单。选了进程内配音的用户会在角色页看到一个 ComfyUI 的下拉框，
+或者一句"连不上 ComfyUI"——**而那个后端压根没在用**。
+答非所问比答不出来更糟：他会去查 ComfyUI，查半天发现根本不相干。
+
+用例里那个假 transport 一被碰就让用例失败，**通过本身就证明了它没去问**。
+
 **下面这段是还差的：**
 mtmd 的音频生成 API 在头文件里明写着
 `EXPERIMENTAL API for audio generation, subjected to breaking changes`，

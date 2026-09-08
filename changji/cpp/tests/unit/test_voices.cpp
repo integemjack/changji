@@ -181,3 +181,25 @@ TEST_CASE("没有项目文件时用内置的 tts 工作流") {
         CHECK(err.find("读不到配音工作流") == std::string::npos);
     }
 }
+
+TEST_CASE("进程内配音：不去问 ComfyUI，直说音色来自参考音频") {
+    // **答非所问比答不出来更糟。** 选了 local 的用户如果在角色页看到
+    // 一个 ComfyUI 的音色下拉框（或者一句"连不上 ComfyUI"），
+    // 他会去查 ComfyUI——而那个后端压根没在用。
+    //
+    // 这里传一个会抛异常的假客户端：真去问了就会炸，
+    // 用例通过本身就证明了它没去问。
+    // 这个 transport 一被碰就让用例失败：**通过本身就证明了它没去问。**
+    comfy::Transport t;
+    t.get = [](const std::string& path, double) -> comfy::HttpResponse {
+        FAIL("backend=local 时不该去问 ComfyUI，却请求了 " << path);
+        return {0, "", "unreachable"};
+    };
+    comfy::Client client([] { return config::ComfyConfig{}; }, t, "cid");
+
+    const auto r = http::get_voices("任意路径", client, "local");
+    CHECK(r.status == 200);
+    CHECK(r.body.at("voices").empty());
+    const std::string err = r.body.at("error").get<std::string>();
+    CHECK(err.find("参考音频") != std::string::npos);
+}

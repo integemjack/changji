@@ -47,8 +47,20 @@ std::optional<std::pair<std::string, std::string>> find_voice_input(
     return std::nullopt;
 }
 
-ApiResult get_voices(const std::string& path, comfy::Client& client) {
+ApiResult get_voices(const std::string& path, comfy::Client& client,
+                     const std::string& backend) {
     if (path.empty()) throw ApiError(400, "没有指定项目目录");
+
+    // 进程内配音：没有服务端清单可列，音色是一段参考音频。
+    // 回空列表 + 一句说明，而不是去问一个根本没在用的后端。
+    if (backend == "local") {
+        return {200,
+                {{"voices", json::array()},
+                 {"error", "进程内配音（[tts].backend = local）没有音色清单。"
+                           "音色来自参考音频：把角色的 voice_id 填成一段人声"
+                           "片段的路径，模型照着它的音色念。"}}};
+    }
+
     const models::ProjectStore store(paths::from_utf8(path));
 
     std::optional<comfy::ApiWorkflow> wf;

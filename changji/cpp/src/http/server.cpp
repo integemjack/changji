@@ -599,7 +599,8 @@ void run(const config::Settings& settings, const Options& opts) {
                 [] { return config::runtime().snapshot().comfy; },
                 comfy::default_transport(
                     [] { return config::runtime().snapshot().comfy; }));
-            return get_voices(required_query(req, "path"), client);
+            return get_voices(required_query(req, "path"), client,
+                              config::runtime().snapshot().tts.backend);
         });
         return json_response(r.body, r.status);
     });
