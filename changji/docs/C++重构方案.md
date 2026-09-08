@@ -1578,6 +1578,19 @@ CreateProcess 加超时"——阶段 7 代码完成之后，这个期限到了�
 测出来的是 cmd 的分隔规则，不是 `CreateProcessW` 的。
 换成 CreateProcessW 之后那条用例照旧红，而那个红是测试工具带来的。
 
+**一处两边共有的洞，记着但先不改**（2026-09-08）：
+`-vf subtitles='<路径>'` 是用单引号括起来的，路径里再出现一个单引号就会
+提前收尾，ffmpeg 报一句滤镜语法错误。
+
+Python 的 `_escape_filter_path` 只做了 `\` → `/` 和 `:` → `\:`，
+C++ 的 `escape_filter_path` 一模一样——**所以这不是移植漏了，是两边共有的**。
+契约标准要求和 Python 一致，单方面改会让对拍多一条"不同"，
+而那条不同其实是我们更对。
+
+加了一条用例把现状钉住：**哪天有人只改一侧，它会立刻红**。真要修就两边
+一起修——阶段 8 删掉 Python 之后就只剩一侧，那时候顺手改掉。
+实际风险不高：项目名和集名基本是中文，中文里没有 ASCII 单引号。
+
 **下面这段是还差的：**
 mtmd 的音频生成 API 在头文件里明写着
 `EXPERIMENTAL API for audio generation, subjected to breaking changes`，

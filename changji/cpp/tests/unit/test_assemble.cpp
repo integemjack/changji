@@ -352,3 +352,24 @@ TEST_CASE("装配前的字幕自检") {
     }
     CHECK(said);
 }
+
+TEST_CASE("路径里有单引号会破掉滤镜——已知缺陷，两边一样") {
+    // `-vf subtitles='<路径>'` 是用单引号括起来的，路径里再出现一个单引号
+    // 就会提前收尾，后面的字变成滤镜的其它参数，ffmpeg 报一句语法错误。
+    //
+    // **Python 侧是一样的**（assembly/assemble.py 的 _escape_filter_path
+    // 只做了 `\` → `/` 和 `:` → `\:`），所以这不是移植漏了，
+    // 是两边共有的一个洞。契约标准要求和 Python 一致，所以先不单方面改——
+    // 单方面改了对拍会多一条不同，而那条"不同"其实是我们更对。
+    //
+    // 这条用例把现状钉住：**哪天有人只改一侧，它会立刻红**，
+    // 提醒去看另一侧。真要修就两边一起修（阶段 8 删掉 Python 之后就只剩一侧）。
+    //
+    // 实际风险不高：项目名和集名基本是中文，中文里没有 ASCII 单引号。
+    const std::string e =
+        media::escape_filter_path(paths::from_utf8("C:/Bob's drama/a.ass"));
+    CAPTURE(e);
+    // 冒号转了，反斜杠换成了正斜杠，**单引号原样留着**——这就是那个洞。
+    CHECK(e.find("C\\:/") == 0);
+    CHECK(e.find('\'') != std::string::npos);
+}
