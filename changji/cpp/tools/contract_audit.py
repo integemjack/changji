@@ -84,6 +84,35 @@ def main() -> int:
     tests = sorted((ROOT / "tests" / "unit").glob("*.cpp")) + \
         sorted((ROOT / "tests" / "compat").glob("*.cpp"))
 
+    # 「只钉意图」不等于该补。这张表把**不算缺口**的逐个记下来，
+    # 剩下的就是真待办——以前这份名单在我脑子里，跨会话必然走样。
+    # 键是文件名，值是"为什么不用比"。
+    NOT_A_GAP = {
+        # Python 侧根本没有这个东西，没有可比物
+        "test_ws_hub.cpp":      "WebSocket 推送，Python 是轮询",
+        "test_ws_client.cpp":   "同上",
+        "test_sd_image.cpp":    "进程内 sd.cpp，Python 走 ComfyUI HTTP",
+        "test_sd_video.cpp":    "同上",
+        "test_proc.cpp":        "Windows 进程封装，Python 用 asyncio",
+        "test_scheduler.cpp":   "线程池，Python 是 asyncio 单线程",
+        "test_facades.cpp":     "C++ 自己的分层，Python 没有这一层",
+        "test_compat_diff.cpp": "对拍工具自己的用例",
+        "diff.cpp":             "同上",
+        "main.cpp":             "doctest 入口",
+        # HTTP 那一层由对拍活着比（endpoints_*.json 比的是真响应），
+        # 这些用例钉的是单元级的边角，不是契约面
+        "test_config_api.cpp":  "接口由 HTTP 对拍覆盖",
+        "test_doctor.cpp":      "同上",
+        "test_jobs.cpp":        "同上",
+        "test_projects.cpp":    "同上",
+        "test_run.cpp":         "同上",
+        "test_voices.cpp":      "同上",
+        "test_reset.cpp":       "同上",
+        "test_llm_info.cpp":    "同上",
+        "test_models_config.cpp": "同上",
+        "test_writeback.cpp":   "同上",
+    }
+
     compared: list[tuple[str, list[str]]] = []
     intent_only: list[str] = []
 
@@ -108,14 +137,28 @@ def main() -> int:
     for name in intent_only:
         print(f"  {name}")
 
-    print()
     total = len(compared) + len(intent_only)
-    print(f"合计 {total} 个测试文件：和 Python 比 {len(compared)}，"
-          f"只钉意图 {len(intent_only)}")
     print()
-    print("「只钉意图」不等于该改。很多东西 Python 侧根本没有")
-    print("（WebSocket、进程内 sd.cpp、llama_tts、线程池），没有可比物；")
-    print("**要警惕的是那些两边都有、却只钉了意图的**。")
+    print("真待办：两边都有、又只钉了意图的")
+    print("-" * 78)
+    todo = [n for n in intent_only if n not in NOT_A_GAP]
+    for name in todo:
+        print(f"  {name}")
+    if not todo:
+        print("  （空）")
+
+    stale = sorted(set(NOT_A_GAP) - set(intent_only))
+    if stale:
+        # 补上语料之后它就从 intent_only 里消失了，表里那条也该删——
+        # 不提醒的话这张表会慢慢变成一份过期的免责声明
+        print()
+        print("⚠️ 免责表里这几条已经不在「只钉意图」里了，该从表里删掉：")
+        for name in stale:
+            print(f"  {name}  （原因写的是：{NOT_A_GAP[name]}）")
+
+    print()
+    print(f"合计 {total} 个测试文件：和 Python 比 {len(compared)}，"
+          f"只钉意图 {len(intent_only)}（其中 {len(todo)} 条是真待办）")
     return 0
 
 

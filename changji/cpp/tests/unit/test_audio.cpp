@@ -10,6 +10,9 @@
 
 #include <doctest/doctest.h>
 
+#include <nlohmann/json.hpp>
+#include <memory>
+
 #include <filesystem>
 #include <fstream>
 #include <string>
@@ -376,4 +379,131 @@ TEST_CASE("换了音色要在事件里说一声") {
         if (t.find("已自动换成可用的") != std::string::npos) said = true;
     }
     CHECK(said);
+}
+
+// ---------------------------------------------------------------------------
+// 配音阶段跑完之后镜头变成什么样，和 Python 逐条比。
+//
+// `audio_plan.json` 覆盖的是**算**那部分（时长估算、拆镜头）。
+// 这一条补的是**编排**：一句一句配、把量到的时长写回台词、
+// 反推锁定镜头时长、推状态。
+//
+// **时长回写最要紧**：`actual_duration_s` 是后面所有环节的输入——
+// 字幕的时间戳、装配的 adelay 偏移、闸门的音画同步判定全从它来。
+// 写错了不报错，成片里表现为字幕和人声对不上，而那时候已经隔了三个阶段。
+//
+// ⚠️ 语料是用 `concurrency=1` 导的。Python 的 run 默认并发 2，
+// C++ 是顺序跑的（头文件里写了理由）。不统一的话比的就不是同一件事。
+// ---------------------------------------------------------------------------
+
+TEST_CASE("配音阶段的时长回写和状态变化和 Python 一样") {
+    const std::string path =
+        std::string(CHANGJI_GOLDEN_DIR) + "/audio_stage.json";
+    std::ifstream in(path, std::ios::binary);
+    REQUIRE_MESSAGE(in.good(), "读不到语料 " << path);
+    nlohmann::json g;
+    in >> g;
+
+    const auto cases = g.at("cases");
+    REQUIRE(cases.size() == 6);
+
+    for (std::size_t ci = 0; ci < cases.size(); ++ci) {
+        const auto& c = cases[ci];
+        const std::string name = c.at("name").get<std::string>();
+        CAPTURE(name);
+
+        const auto durations = c.at("synth_durations").get<std::vector<double>>();
+        const auto shots_want = c.at("shots_after");
+
+        // 按剧本回时长，和 Python 那边的 ScriptedTTS 一样：
+        // 按调用顺序取，用光了回 1.0
+        auto idx = std::make_shared<std::size_t>(0);
+        stages::TTSBackend b;
+        b.name = "scripted";
+        b.synthesize = [durations, idx](const std::string&, const fs::path& out,
+                                        const std::optional<std::string>&,
+                                        const std::string&, double) {
+            const double d = *idx < durations.size() ? durations[*idx] : 1.0;
+            ++*idx;
+            stages::SynthesisResult r;
+            r.duration_s = d;
+            stages::write_silence(out, d, 24000);
+            r.audio_path = out;
+            return r;
+        };
+
+        const auto paths = make_paths("语料" + std::to_string(ci));
+        stages::AudioStage stage(b, config::TTSConfig{}, paths);
+
+        // **输入用 shots_before**。shots_after 里的台词是拆过之后的，
+        // 拿它当输入就不是同一个场景了——拆句本身正是被测的行为。
+        std::vector<models::Shot> owned;
+        for (const auto& sb : c.at("shots_before")) {
+            std::vector<models::DialogueLine> lines;
+            for (const auto& t : sb.at("dialogue")) {
+                lines.push_back(line(t.get<std::string>()));
+            }
+            auto sh = make_shot(sb.at("shot_id").get<std::string>(), lines);
+            sh.duration_s = sb.at("duration_s").get<double>();
+            owned.push_back(sh);
+        }
+
+        std::vector<models::Shot*> shots;
+        for (auto& s : owned) shots.push_back(&s);
+
+        pipeline::JobTable table;
+        pipeline::CancelToken tok;
+        std::vector<stages::ShotAudioPlan> plans;
+        table.start(pipeline::JobKind::Run, "ep01",
+                    [&](pipeline::JobProgress& p) {
+                        plans = stage.run(shots, make_assets(), p, tok);
+                    });
+        table.wait_idle();
+
+        const auto want_plans = c.at("plans");
+        REQUIRE(plans.size() == want_plans.size());
+        for (std::size_t i = 0; i < plans.size(); ++i) {
+            CAPTURE(i);
+            CHECK(plans[i].shot_id == want_plans[i].at("shot_id").get<std::string>());
+            CHECK(plans[i].speech_duration_s ==
+                  doctest::Approx(want_plans[i].at("speech_duration_s").get<double>()));
+            CHECK(plans[i].locked_duration_s ==
+                  doctest::Approx(want_plans[i].at("locked_duration_s").get<double>()));
+            CHECK(plans[i].slack_s ==
+                  doctest::Approx(want_plans[i].at("slack_s").get<double>()));
+            CHECK(plans[i].is_tight() == want_plans[i].at("is_tight").get<bool>());
+        }
+
+        // 跑完之后镜头本身变成什么样——**这才是下游真正读的东西**
+        REQUIRE(owned.size() == shots_want.size());
+        for (std::size_t i = 0; i < owned.size(); ++i) {
+            CAPTURE(i);
+            const auto& got = owned[i];
+            const auto& want = shots_want[i];
+            CHECK(std::string(models::to_string(got.status)) ==
+                  want.at("status").get<std::string>());
+            CHECK(got.duration_s ==
+                  doctest::Approx(want.at("duration_s").get<double>()));
+            CHECK(got.duration_locked == want.at("duration_locked").get<bool>());
+
+            // 拆句：条数对不上，后面全错位
+            const auto want_lines = want.at("dialogue");
+            REQUIRE(got.dialogue.size() == want_lines.size());
+            for (std::size_t j = 0; j < got.dialogue.size(); ++j) {
+                CAPTURE(j);
+                const auto& gl = got.dialogue[j];
+                const auto& wl = want_lines[j];
+                CHECK(gl.text == wl.at("text").get<std::string>());
+                CHECK(gl.audio_path.has_value() == wl.at("has_audio").get<bool>());
+                // **回写的时长**：字幕时间戳、装配 adelay、闸门同步判定全从它来
+                if (wl.at("actual_duration_s").is_null()) {
+                    CHECK_FALSE(gl.actual_duration_s.has_value());
+                } else {
+                    REQUIRE(gl.actual_duration_s.has_value());
+                    CHECK(*gl.actual_duration_s == doctest::Approx(
+                              wl.at("actual_duration_s").get<double>()));
+                }
+            }
+        }
+    }
 }
