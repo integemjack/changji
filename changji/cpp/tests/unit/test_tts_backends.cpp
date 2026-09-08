@@ -13,6 +13,14 @@
 #include <fstream>
 #include <string>
 
+#include <map>
+#include <memory>
+#include <optional>
+#include <vector>
+
+#include <nlohmann/json.hpp>
+
+#include "comfy/client.hpp"
 #include "config/settings.hpp"
 #include "infer/llama_tts.hpp"
 #include "stages/tts_backends.hpp"
@@ -400,4 +408,158 @@ TEST_CASE("HTTP 后端：两处和 Python 不一样的地方，是故意的") {
     //
     // 所以这条偏差目前只有代码注释和方案文档记着，没有用例。
     // 装上 ffmpeg 之后应该补：回一段 mp3，断言拿得到时长。
+}
+
+// ===========================================================================
+// 和 Python 比**提交给 ComfyUI 的那份配音工作流**。
+//
+// ComfyUI 那三条路里，视频和首帧已经这么比过了，这是第三条。
+// 视频那条比出来过一个真 bug，首帧那条比出来一处没记录的偏差——
+// 上面那些用例钉的是我们自己的意图，不是"和 Python 一样"。
+//
+// 配音这条的填法和另外两条不一样：**不按节点类型找，按键名找**。
+// 错一点就是"台词没填进去"或者"填到了不该填的节点上"，
+// 而两者在产出上都是"配出来的音不对"，日志里看不出区别。
+// ===========================================================================
+
+namespace {
+
+nlohmann::json tts_golden() {
+    const std::string path =
+        std::string(CHANGJI_GOLDEN_DIR) + "/comfy/tts_submit.json";
+    std::ifstream in(path, std::ios::binary);
+    REQUIRE_MESSAGE(in.good(), "读不到语料 " << path);
+    nlohmann::json j;
+    in >> j;
+    return j;
+}
+
+/// 只记不判的假 ComfyUI，够配音这条路用。
+struct TtsRecorder {
+    std::vector<OrderedJson> submitted;
+
+    comfy::Transport transport() {
+        comfy::Transport t;
+        t.get = [](const std::string& path, double) {
+            comfy::HttpResponse r;
+            r.status = 200;
+            if (path.rfind("/history/", 0) != 0) { r.body = "{}"; return r; }
+            r.body = OrderedJson{{"pid-1", {
+                {"status", {{"status_str", "success"}, {"completed", true}}},
+                {"outputs", {{"9", {{"audio", OrderedJson::array({
+                    OrderedJson{{"filename", "out.flac"},
+                                {"subfolder", "audio"},
+                                {"type", "output"}}})}}}}}}}}.dump();
+            return r;
+        };
+        t.post_json = [this](const std::string&, const std::string& body, double) {
+            submitted.push_back(
+                OrderedJson::parse(body).at("prompt"));
+            comfy::HttpResponse r;
+            r.status = 200;
+            r.body = R"({"prompt_id":"pid-1"})";
+            return r;
+        };
+        t.upload = [](const std::string&, const std::filesystem::path&,
+                      const std::string&, double) {
+            comfy::HttpResponse r;
+            r.status = 200;
+            r.body = R"({"name":"up.png","subfolder":""})";
+            return r;
+        };
+        t.download = [](const std::string&,
+                        const std::map<std::string, std::string>&,
+                        const std::filesystem::path& dest, double) {
+            // 写一段够长的静音 wav，免得撞上"疑似空音频"那道闸
+            std::error_code ec;
+            fs::create_directories(dest.parent_path(), ec);
+            stages::write_silence(dest, 4.0, 24000);
+            comfy::HttpResponse r;
+            r.status = 200;
+            return r;
+        };
+        t.connect_ws = [](const std::string&) -> comfy::WsRecv { return nullptr; };
+        t.sleep = [](double) {};
+        return t;
+    }
+};
+
+nlohmann::json canon(const OrderedJson& v) {
+    return nlohmann::json::parse(v.dump());
+}
+
+}  // namespace
+
+TEST_CASE("配音：键名匹配那套规则和 Python 一样") {
+    // 这一段不经过后端，直接调 apply_text，把规则钉死：
+    // 连线不许碰、数字不许碰、第一个匹配的键胜出、neutral 不填情绪。
+    // **先把条数钉住。** 语料要是读成了空的，下面这个循环一次都不转，
+    // 而用例照样是绿的——这一整条就白写了。
+    const nlohmann::json rules = tts_golden().at("apply_rules");
+    REQUIRE(rules.size() == 8);
+
+    for (const auto& r : rules) {
+        const std::string name = r.at("name").get<std::string>();
+        CAPTURE(name);
+
+        comfy::ApiWorkflow wf(OrderedJson{
+            {"1", {{"class_type", "AnyNode"},
+                   {"inputs", OrderedJson::parse(r.at("inputs_before").dump())}}}});
+        std::optional<std::string> voice;
+        if (!r.at("voice_id").is_null()) {
+            voice = r.at("voice_id").get<std::string>();
+        }
+        const bool filled = stages::apply_text(
+            wf, "新台词", voice, r.at("emotion").get<std::string>());
+
+        CHECK(filled == r.at("filled").get<bool>());
+        CHECK(canon(wf.to_json().at("1").at("inputs")) == r.at("inputs_after"));
+    }
+}
+
+TEST_CASE("配音：提交给 ComfyUI 的工作流和 Python 一样") {
+    const nlohmann::json g = tts_golden();
+    const auto dir = temp_dir("配音语料");
+
+    for (const auto& c : g.at("cases")) {
+        const std::string name = c.at("name").get<std::string>();
+        CAPTURE(name);
+
+        // 语料里那份工作流：成功的用内置 tts.json，失败那条用一个
+        // 没有可填文本节点的。两边喂的是同一份。
+        const std::string stem = c.at("out_stem").get<std::string>();
+        const fs::path out = dir / paths::from_utf8(stem + ".wav");
+
+        TtsRecorder rec;
+        config::ComfyConfig cfg;
+        cfg.job_timeout_s = 5.0;
+        cfg.max_retries = 0;
+        auto client = std::make_shared<comfy::Client>(
+            [cfg] { return cfg; }, rec.transport(), "cid");
+
+        comfy::ApiWorkflow wf(
+            OrderedJson::parse(c.at("workflow_used").dump()));
+        models::ProjectPaths paths_(dir);
+        const auto backend =
+            stages::comfy_tts_backend(client, wf, paths_, std::nullopt);
+
+        std::optional<std::string> voice;
+        if (!c.at("voice_id").is_null()) {
+            voice = c.at("voice_id").get<std::string>();
+        }
+        const std::string text = c.at("text").get<std::string>();
+        const std::string emotion = c.at("emotion").get<std::string>();
+
+        if (!c.at("ok").get<bool>()) {
+            // **填不进去必须抛。** 不抛的话整集会拿工作流里预置的那句话
+            // 去配音，而且每一镜都一样——听出来的时候整集都白配了。
+            CHECK_THROWS_AS(backend.synthesize(text, out, voice, emotion, 0.5),
+                            stages::AudioError);
+            continue;
+        }
+
+        REQUIRE_NOTHROW(backend.synthesize(text, out, voice, emotion, 0.5));
+        REQUIRE(rec.submitted.size() == 1);
+        CHECK(canon(rec.submitted.back()) == c.at("submitted"));
+    }
 }
