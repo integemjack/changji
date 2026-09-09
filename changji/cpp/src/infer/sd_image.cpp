@@ -171,6 +171,9 @@ struct SdContext::Impl {
     // 路径要活到 sd_ctx 建完：sd_ctx_params_t 存的是 const char*，
     // 不拷贝。传临时 string 的 c_str() 的话，new_sd_ctx 读到的是野指针。
     std::string diffusion, vae, text_encoder, max_vram, params_backend;
+    /// 双专家模型的高噪声那一份（Wan 2.2 A14B）。空 = 单模型。
+    /// 和上面几个一样，路径要活到 sd_ctx 建完。
+    std::string high_noise;
     /// Qwen-Image 那一路的文本编码器（sd.cpp 的 llm_path）和它的视觉塔。
     /// **和 text_encoder 互斥**：一次只填其中一边——Wan 走 t5xxl，
     /// Qwen-Image 走 llm，两个参数位不是一回事。
@@ -178,6 +181,8 @@ struct SdContext::Impl {
     /// 这个角色的采样旋钮，建上下文时按 [models] 里的角色值定下来。
     double cfg = 7.0;
     double flow_shift = 3.0;
+    /// 两个专家交班的 sigma 阈值。只在 high_noise 非空时有意义。
+    double moe_boundary = 0.875;
 
     ~Impl() {
         if (ctx) ::free_sd_ctx(ctx);
@@ -207,6 +212,11 @@ std::shared_ptr<SdContext> SdContext::create(const config::Settings& settings,
     impl.cfg = is_video ? m.video_cfg : m.image_cfg;
     impl.flow_shift = is_video ? m.video_flow_shift : m.image_flow_shift;
     impl.diffusion = paths::to_utf8(m.resolve(which, ws));
+    // 双专家的高噪声那一份。只有视频那条路有——Qwen-Image 不是 MoE。
+    if (is_video && !m.video_high_noise.empty()) {
+        impl.high_noise = paths::to_utf8(m.resolve(m.video_high_noise, ws));
+        impl.moe_boundary = m.video_moe_boundary;
+    }
 
     // **VAE 和文本编码器要按角色挑，不能两边共用一套。**
     // 之前这里写死了 video_vae + video_text_encoder，图像那条路也拿它俩用
@@ -251,6 +261,9 @@ std::shared_ptr<SdContext> SdContext::create(const config::Settings& settings,
     ::sd_ctx_params_init(&p);
     p.auto_fit = auto_fit;
     p.diffusion_model_path = impl.diffusion.c_str();
+    if (!impl.high_noise.empty()) {
+        p.high_noise_diffusion_model_path = impl.high_noise.c_str();
+    }
     if (!impl.vae.empty()) p.vae_path = impl.vae.c_str();
     if (!impl.text_encoder.empty()) {
         // **是 t5xxl_path，不是 embeddings_connectors_path。**
@@ -405,6 +418,19 @@ void SdContext::generate_video(const VideoRequest& req, const fs::path& raw_dest
     // 见 ModelsConfig::image_cfg 上面那段。
     g.sample_params.guidance.txt_cfg = static_cast<float>(impl_->cfg);
     g.sample_params.flow_shift = static_cast<float>(impl_->flow_shift);
+    // **高噪声专家的旋钮要单独填一遍。** sd_vid_gen_params_init 给它的是
+    // 另一套默认值（cfg 7.0、flow_shift 无穷），不填的话前几步会在一个
+    // 和低噪声那份完全不同的 cfg 上跑——而这**不会报错**，只是出来的片
+    // 前后不搭。上游 docs/wan.md 的 A14B 命令行两边给的就是同一个 cfg。
+    //
+    // 步数保持 init 给的 -1：那是"按 moe_boundary 自动分"的意思
+    // （sd.cpp 扫 sigma 序列，第一个小于阈值的下标就是交班点）。
+    // 填成具体数字的话两段步数是**相加**的，总步数会翻倍。
+    g.high_noise_sample_params.guidance.txt_cfg =
+        static_cast<float>(impl_->cfg);
+    g.high_noise_sample_params.flow_shift =
+        static_cast<float>(impl_->flow_shift);
+    g.moe_boundary = static_cast<float>(impl_->moe_boundary);
     if (has_start) g.init_image = start;
 
     // VAE 分块。**不设的话默认是关的**，而关着在 6GB 卡上解码要 11.7GB，

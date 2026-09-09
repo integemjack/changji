@@ -346,7 +346,8 @@ TEST_CASE("模板的 [models] 那一节列出了每一个会被读的键") {
                             "tts", "tts_decoder", "weights",
                             "video_cfg", "video_flow_shift",
                             "image_cfg", "image_flow_shift", "frame_tier",
-                            "vram_reserve_gb"}) {
+                            "vram_reserve_gb", "video_high_noise",
+                            "video_moe_boundary"}) {
         CAPTURE(key);
         // 模板里这一节整个是注释掉的，所以形状是 `# 键 = `
         const std::string want = std::string("# ") + key + " = ";
@@ -406,6 +407,54 @@ TEST_CASE("[models].weights：默认 cpu，认 auto，别的拒") {
     }
     CHECK(said);
     fs::remove_all(tmp, ec);
+}
+
+TEST_CASE("[models]：双专家视频模型的两项") {
+    // Wan 2.2 的 A14B 是混合专家：高噪声专家跑前几步定构图和运动，
+    // 低噪声专家跑后几步出细节。换它的理由是 TI2V-5B 的动作质量不够
+    // （用户看了草稿档的原话：图生视频还是太差了）。
+    const fs::path tmp = fs::temp_directory_path() / "changji_moe_cfg";
+    std::error_code ec;
+    fs::create_directories(tmp, ec);
+    {
+        std::ofstream f(tmp / "changji.toml", std::ios::binary);
+        f << "[models]\nvideo = \"low.gguf\"\n"
+             "video_high_noise = \"high.gguf\"\n"
+             "video_moe_boundary = 0.9\n";
+    }
+    const auto s = config::load_settings(tmp);
+    CHECK(s.models.video_high_noise == "high.gguf");
+    CHECK(s.models.video_moe_boundary == doctest::Approx(0.9));
+
+    // 默认：空 + sd.cpp 的 0.875
+    CHECK(config::ModelsConfig{}.video_high_noise.empty());
+    CHECK(config::ModelsConfig{}.video_moe_boundary == doctest::Approx(0.875));
+
+    SUBCASE("只填高噪声那份要拒") {
+        // 症状会是"出的片和以前一样"——高噪声那份被静默忽略，看不出来，
+        // 所以这里必须拦住。
+        config::Settings bad;
+        bad.models.video_high_noise = "high.gguf";
+        bad.models.video.clear();
+        bool said = false;
+        for (const auto& e : bad.validate()) {
+            if (e.find("video_high_noise") != std::string::npos) said = true;
+        }
+        CHECK(said);
+    }
+    SUBCASE("交班点要在 0 和 1 之间") {
+        for (const double v : {0.0, 1.0, 1.5, -0.1}) {
+            CAPTURE(v);
+            config::Settings bad;
+            bad.models.video_moe_boundary = v;
+            bool said = false;
+            for (const auto& e : bad.validate()) {
+                if (e.find("video_moe_boundary") != std::string::npos) said = true;
+            }
+            CHECK(said);
+        }
+    }
+
 }
 
 TEST_CASE("[models].frame_tier：默认 draft，认 final，别的拒") {

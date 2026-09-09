@@ -224,6 +224,28 @@ struct ModelsConfig {
     /// **C++ 独有**（Python 那边这些在 ComfyUI 工作流里）。
     double video_cfg = 6.0;
     double video_flow_shift = 3.0;
+
+    /// 双专家视频模型的**高噪声**那一份。**C++ 独有**，Python 没有这条路。
+    ///
+    /// Wan 2.2 的 A14B 系列（T2V-A14B / I2V-A14B）是混合专家：高噪声专家
+    /// 跑前几步定构图和运动，低噪声专家跑后几步出细节。`video` 填低噪声
+    /// 那份，这里填高噪声那份。留空就是单模型，和以前一样。
+    ///
+    /// 换它的理由：TI2V-5B 是 Wan 家族里最小的一档，多家评测点名它的
+    /// 动作质量不如专门的 14B 图生视频模型。
+    ///
+    /// **A14B 的推荐旋钮和 5B 不一样**：上游 docs/wan.md 给的命令行是
+    /// cfg 3.5（5B 那边我们用 6.0）、flow_shift 3.0、euler。换模型时
+    /// `video_cfg` 要跟着改，否则前几步会在一个完全不对的 cfg 上跑。
+    std::string video_high_noise;
+
+    /// 两个专家在哪个 sigma 交班。默认 0.875 是 sd.cpp 的默认值。
+    ///
+    /// sd.cpp 的分步逻辑：高噪声步数留 -1（我们就是这么传的）时，它扫一遍
+    /// sigma 序列，第一个小于这个值的下标就是交班点。调大 = 高噪声专家
+    /// 跑得更久（运动更大、细节更少），调小反之。
+    /// `video_high_noise` 为空时这一项没有意义。
+    double video_moe_boundary = 0.875;
     double image_cfg = 2.5;
     double image_flow_shift = 3.0;
 

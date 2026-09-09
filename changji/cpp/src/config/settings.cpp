@@ -179,6 +179,17 @@ std::vector<std::string> Settings::validate() const {
     if (vram_gb_override && *vram_gb_override <= 0) {
         errs.push_back("vram_gb_override 必须大于 0");
     }
+    if (!models.video_high_noise.empty() && models.video.empty()) {
+        // 只填高噪声那份是配错了，而症状会是"出的片和以前一样"——
+        // 高噪声那份被静默忽略，看不出来。
+        errs.push_back(
+            "[models].video_high_noise 填了但 [models].video 是空的："
+            "双专家要两份，video 填低噪声那份");
+    }
+    if (models.video_moe_boundary <= 0 || models.video_moe_boundary >= 1) {
+        errs.push_back("[models].video_moe_boundary 要在 0 和 1 之间，现在是 " +
+                       std::to_string(models.video_moe_boundary));
+    }
     if (models.vram_reserve_gb < 0) {
         errs.push_back("[models].vram_reserve_gb 不能是负的");
     }
@@ -354,6 +365,8 @@ void apply_table(const toml::table& doc, Settings& s) {
         take(t, "image_flow_shift", s.models.image_flow_shift);
         take(t, "frame_tier", s.models.frame_tier);
         take(t, "vram_reserve_gb", s.models.vram_reserve_gb);
+        take(t, "video_high_noise", s.models.video_high_noise);
+        take(t, "video_moe_boundary", s.models.video_moe_boundary);
     }
     take_path_str(&doc, "workspace", s.workspace);
     if (auto node = doc.get("vram_gb_override")) {
@@ -567,6 +580,16 @@ subtitle_font = "Source Han Sans SC"
 # 又会当起始图喂给出片那一步，草稿档的首帧配成片档的视频等于把锚点放大两倍
 # 再用。显存够就填 final，慢一些但清楚。
 # frame_tier = "final"
+#
+# 双专家视频模型的高噪声那一份（Wan 2.2 的 A14B 系列）。video 填低噪声那份，
+# 这里填高噪声那份，留空就是单模型。高噪声专家跑前几步定构图和运动，
+# 低噪声专家跑后几步出细节。
+# **换 A14B 之后 video_cfg 要跟着改**：上游给 A14B 的是 3.5，5B 那边是 6.0。
+# video_high_noise = "Wan2.2-I2V-A14B-HighNoise-Q8_0.gguf"
+#
+# 两个专家在哪个 sigma 交班，默认 0.875（sd.cpp 的默认）。
+# 调大 = 高噪声专家跑得更久，运动更大、细节更少。
+# video_moe_boundary = 0.875
 #
 # weights = "auto" 时给计算缓冲留多少显存（GB）。auto 的预算是给权重的，
 # 而生成时那块计算缓冲比"给驱动留一成"大一个量级：1280×704 的 VAE 解码
