@@ -347,7 +347,8 @@ TEST_CASE("模板的 [models] 那一节列出了每一个会被读的键") {
                             "video_cfg", "video_flow_shift",
                             "image_cfg", "image_flow_shift", "frame_tier",
                             "vram_reserve_gb", "video_high_noise",
-                            "video_moe_boundary"}) {
+                            "video_moe_boundary", "video_llm",
+                            "video_llm_vision", "video_audio_vae"}) {
         CAPTURE(key);
         // 模板里这一节整个是注释掉的，所以形状是 `# 键 = `
         const std::string want = std::string("# ") + key + " = ";
@@ -441,6 +442,34 @@ TEST_CASE("[models]：双专家视频模型的两项") {
             if (e.find("video_high_noise") != std::string::npos) said = true;
         }
         CHECK(said);
+    }
+    SUBCASE("t5xxl 和 llm 两个编码器参数位只能填一个") {
+        // MiniMax-H3 用裁过的 Qwen3-VL-32B 当编码器，在 sd.cpp 里是
+        // llm_path；Wan 用 UMT5-XXL，是 t5xxl_path。**填错了不报错**——
+        // 照常加载，然后出一段和提示词没关系的片，没有任何日志指到这儿。
+        config::Settings bad;
+        bad.models.video = "h3.gguf";
+        bad.models.video_llm = "qwen3vl.gguf";
+        bad.models.video_text_encoder = "umt5.safetensors";
+        bool said = false;
+        for (const auto& e : bad.validate()) {
+            if (e.find("video_llm") != std::string::npos) said = true;
+        }
+        CHECK(said);
+
+        // 各填一个都行
+        for (const bool use_llm : {true, false}) {
+            CAPTURE(use_llm);
+            config::Settings ok;
+            ok.models.video = "v.gguf";
+            ok.models.video_text_encoder.clear();
+            ok.models.video_llm.clear();
+            (use_llm ? ok.models.video_llm : ok.models.video_text_encoder) =
+                "enc.gguf";
+            for (const auto& e : ok.validate()) {
+                CHECK_MESSAGE(e.find("video_llm") == std::string::npos, e);
+            }
+        }
     }
     SUBCASE("交班点要在 0 和 1 之间") {
         for (const double v : {0.0, 1.0, 1.5, -0.1}) {

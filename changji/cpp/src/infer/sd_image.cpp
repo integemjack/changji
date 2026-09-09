@@ -174,6 +174,8 @@ struct SdContext::Impl {
     /// 双专家模型的高噪声那一份（Wan 2.2 A14B）。空 = 单模型。
     /// 和上面几个一样，路径要活到 sd_ctx 建完。
     std::string high_noise;
+    /// 音频 VAE（MiniMax-H3 那类音画一起出的模型）。
+    std::string audio_vae;
     /// Qwen-Image 那一路的文本编码器（sd.cpp 的 llm_path）和它的视觉塔。
     /// **和 text_encoder 互斥**：一次只填其中一边——Wan 走 t5xxl，
     /// Qwen-Image 走 llm，两个参数位不是一回事。
@@ -230,7 +232,20 @@ std::shared_ptr<SdContext> SdContext::create(const config::Settings& settings,
         (!is_video && !m.image_vae.empty()) ? m.image_vae : m.video_vae;
     impl.vae = vae_key.empty() ? "" : paths::to_utf8(m.resolve(vae_key, ws));
 
-    if (!is_video && !m.image_text_encoder.empty()) {
+    // 音频 VAE：MiniMax-H3 那类画面和声音一起出的模型才有。
+    if (is_video && !m.video_audio_vae.empty()) {
+        impl.audio_vae = paths::to_utf8(m.resolve(m.video_audio_vae, ws));
+    }
+
+    if (is_video && !m.video_llm.empty()) {
+        // **视频模型也可能用 llm_path 而不是 t5xxl_path。**
+        // Wan 那一路是 UMT5-XXL → t5xxl；MiniMax-H3 用裁过的 Qwen3-VL-32B
+        // → llm。校验那边保证这两项不会同时填。
+        impl.llm = paths::to_utf8(m.resolve(m.video_llm, ws));
+        if (!m.video_llm_vision.empty()) {
+            impl.llm_vision = paths::to_utf8(m.resolve(m.video_llm_vision, ws));
+        }
+    } else if (!is_video && !m.image_text_encoder.empty()) {
         impl.llm = paths::to_utf8(m.resolve(m.image_text_encoder, ws));
         if (!m.image_text_encoder_vision.empty()) {
             impl.llm_vision =
@@ -265,6 +280,7 @@ std::shared_ptr<SdContext> SdContext::create(const config::Settings& settings,
         p.high_noise_diffusion_model_path = impl.high_noise.c_str();
     }
     if (!impl.vae.empty()) p.vae_path = impl.vae.c_str();
+    if (!impl.audio_vae.empty()) p.audio_vae_path = impl.audio_vae.c_str();
     if (!impl.text_encoder.empty()) {
         // **是 t5xxl_path，不是 embeddings_connectors_path。**
         //

@@ -186,6 +186,13 @@ std::vector<std::string> Settings::validate() const {
             "[models].video_high_noise 填了但 [models].video 是空的："
             "双专家要两份，video 填低噪声那份");
     }
+    if (!models.video_llm.empty() && !models.video_text_encoder.empty()) {
+        // 两个参数位只能填一个。都填了的话下面按 llm 走、t5xxl 那份被
+        // 静默丢掉——症状是"出的片和提示词没关系"，没有任何报错指到这儿。
+        errs.push_back(
+            "[models].video_llm 和 video_text_encoder 只能填一个："
+            "前者是 llm_path（MiniMax-H3 那类），后者是 t5xxl_path（Wan 那类）");
+    }
     if (models.video_moe_boundary <= 0 || models.video_moe_boundary >= 1) {
         errs.push_back("[models].video_moe_boundary 要在 0 和 1 之间，现在是 " +
                        std::to_string(models.video_moe_boundary));
@@ -367,6 +374,9 @@ void apply_table(const toml::table& doc, Settings& s) {
         take(t, "vram_reserve_gb", s.models.vram_reserve_gb);
         take(t, "video_high_noise", s.models.video_high_noise);
         take(t, "video_moe_boundary", s.models.video_moe_boundary);
+        take(t, "video_llm", s.models.video_llm);
+        take(t, "video_llm_vision", s.models.video_llm_vision);
+        take(t, "video_audio_vae", s.models.video_audio_vae);
     }
     take_path_str(&doc, "workspace", s.workspace);
     if (auto node = doc.get("vram_gb_override")) {
@@ -590,6 +600,16 @@ subtitle_font = "Source Han Sans SC"
 # 两个专家在哪个 sigma 交班，默认 0.875（sd.cpp 的默认）。
 # 调大 = 高噪声专家跑得更久，运动更大、细节更少。
 # video_moe_boundary = 0.875
+#
+# 视频模型的 LLM 类文本编码器。video_text_encoder 走 t5xxl_path（Wan 那一路的
+# UMT5-XXL），这一项走 llm_path（MiniMax-H3 那类用大语言模型当编码器的）。
+# **两个只能填一个**，填错了不报错，只是出来的片和提示词没关系。
+# video_llm = "qwen3vl_32b_minimax_h3-Q4_K_M.gguf"
+# video_llm_vision = ""
+#
+# 音频 VAE。给 MiniMax-H3 这类画面和声音一起生成的模型用；不填的话联合扩散
+# 照跑，但出来的片没有解码好的音轨。
+# video_audio_vae = "minimax_h3_audio_vae_fp32.safetensors"
 #
 # weights = "auto" 时给计算缓冲留多少显存（GB）。auto 的预算是给权重的，
 # 而生成时那块计算缓冲比"给驱动留一成"大一个量级：1280×704 的 VAE 解码

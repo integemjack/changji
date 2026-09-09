@@ -246,6 +246,24 @@ struct ModelsConfig {
     /// 跑得更久（运动更大、细节更少），调小反之。
     /// `video_high_noise` 为空时这一项没有意义。
     double video_moe_boundary = 0.875;
+
+    /// 视频模型的 **LLM 类**文本编码器（sd.cpp 的 `llm_path`）。**C++ 独有。**
+    ///
+    /// `video_text_encoder` 走的是 `t5xxl_path`（Wan 那一路的 UMT5-XXL）。
+    /// MiniMax-H3 这类用大语言模型当编码器的（它要裁过的 Qwen3-VL-32B）
+    /// 在 sd.cpp 里是**另一个参数位**，填错了不报错——照常加载，
+    /// 然后出一段和提示词没关系的片。填了这一项就不再填 t5xxl。
+    std::string video_llm;
+
+    /// `video_llm` 的视觉塔单独存放时填这里（sd.cpp 的 `llm_vision_path`）。
+    /// H3 的 Qwen3-VL 视觉塔通常已经在同一份权重里，那就不用填。
+    std::string video_llm_vision;
+
+    /// 音频 VAE（sd.cpp 的 `audio_vae_path`）。**C++ 独有。**
+    ///
+    /// 给 MiniMax-H3 这种画面和声音一起生成的模型用。不填的话联合扩散
+    /// 照跑，但出来的片没有解码好的音轨（上游 docs/minimax_h3.md 写的）。
+    std::string video_audio_vae;
     double image_cfg = 2.5;
     double image_flow_shift = 3.0;
 
