@@ -342,6 +342,10 @@ void apply_table(const toml::table& doc, Settings& s) {
         take(t, "tts_decoder", s.models.tts_decoder);
         take(t, "diffusion_flash_attn", s.models.diffusion_flash_attn);
         take(t, "weights", s.models.weights);
+        take(t, "video_cfg", s.models.video_cfg);
+        take(t, "video_flow_shift", s.models.video_flow_shift);
+        take(t, "image_cfg", s.models.image_cfg);
+        take(t, "image_flow_shift", s.models.image_flow_shift);
     }
     take_path_str(&doc, "workspace", s.workspace);
     if (auto node = doc.get("vram_gb_override")) {
@@ -543,6 +547,13 @@ subtitle_font = "Source Han Sans SC"
 # 代价是每一步都在等 PCIe。auto = 交给 sd.cpp 按这张卡真实的空闲显存决定，
 # 装得下的常驻显存——大卡（≥ 24 GB）上用这个，实测出片阶段利用率从 35% 起飞。
 # weights = "auto"
+#
+# 采样旋钮，按角色分开。默认值是 sd.cpp 上游文档给这两个模型的推荐值，
+# 一般不用动。图像那条路 cfg 太高（比如 7）出来的就是噪点。
+# video_cfg = 6.0
+# video_flow_shift = 3.0
+# image_cfg = 2.5
+# image_flow_shift = 3.0
 )";
 
 }  // namespace

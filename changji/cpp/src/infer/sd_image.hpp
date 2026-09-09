@@ -39,6 +39,8 @@ struct ImageRequest {
     /// 种子。**必须显式给**，不能让它随机——重跑同一个镜头要能得到
     /// 同一张图，否则"重试"和"换一张"就分不清了。
     std::int64_t seed = 0;
+    /// **不再生效。** cfg 按角色从 [models].image_cfg / video_cfg 来，
+    /// 留着这个字段只是不想动所有构造点。
     double cfg = 7.0;
     /// 参考图的绝对路径。图像编辑模型那条路会用，纯文生图忽略。
     std::vector<std::filesystem::path> reference_images;
@@ -67,6 +69,8 @@ struct VideoRequest {
     int frames = 49;
     int fps = 24;
     std::int64_t seed = 0;
+    /// **不再生效。** cfg 按角色从 [models].image_cfg / video_cfg 来，
+    /// 留着这个字段只是不想动所有构造点。
     double cfg = 7.0;
     /// 首帧。跨镜头一致性全靠它，没有的话退化成纯文生视频。
     std::optional<std::filesystem::path> start_image;

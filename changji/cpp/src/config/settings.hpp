@@ -204,6 +204,16 @@ struct ModelsConfig {
     /// 挑档位的，和这张卡实际有多少显存是两回事。
     std::string weights = "cpu";
 
+    /// 采样的两个旋钮，按角色分开。默认值照抄 sd.cpp 上游文档的推荐命令行：
+    /// docs/wan.md 给 Wan2.2 TI2V-5B 的是 `--cfg-scale 6.0 --flow-shift 3.0`，
+    /// docs/qwen_image.md 给 Qwen-Image 的是 `--cfg-scale 2.5 --flow-shift 3`。
+    /// 以前两条路都是 cfg 7.0、flow_shift 不设（sd.cpp 给 Wan 的内置默认是 5）。
+    /// **C++ 独有**（Python 那边这些在 ComfyUI 工作流里）。
+    double video_cfg = 6.0;
+    double video_flow_shift = 3.0;
+    double image_cfg = 2.5;
+    double image_flow_shift = 3.0;
+
     /// 配音的解码器（Qwen3-TTS 的 tokenizer，GGUF）。
     ///
     /// 这一份把 12.5 Hz 的码本还原成 24 kHz 波形。**必须和 tts 配套**，

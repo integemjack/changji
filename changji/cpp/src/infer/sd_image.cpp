@@ -175,6 +175,9 @@ struct SdContext::Impl {
     /// **和 text_encoder 互斥**：一次只填其中一边——Wan 走 t5xxl，
     /// Qwen-Image 走 llm，两个参数位不是一回事。
     std::string llm, llm_vision;
+    /// 这个角色的采样旋钮，建上下文时按 [models] 里的角色值定下来。
+    double cfg = 7.0;
+    double flow_shift = 3.0;
 
     ~Impl() {
         if (ctx) ::free_sd_ctx(ctx);
@@ -201,6 +204,8 @@ std::shared_ptr<SdContext> SdContext::create(const config::Settings& settings,
     // 拿视频模型进去整个进程崩）。走到这里时 image 一定非空。
     const bool is_video = role == ModelRole::Video;
     const std::string& which = is_video ? m.video : m.image;
+    impl.cfg = is_video ? m.video_cfg : m.image_cfg;
+    impl.flow_shift = is_video ? m.video_flow_shift : m.image_flow_shift;
     impl.diffusion = paths::to_utf8(m.resolve(which, ws));
 
     // **VAE 和文本编码器要按角色挑，不能两边共用一套。**
@@ -303,7 +308,10 @@ void SdContext::generate(const ImageRequest& req, const fs::path& dest,
     g.seed = req.seed;
     g.batch_count = 1;
     g.sample_params.sample_steps = req.steps;
-    g.sample_params.guidance.txt_cfg = static_cast<float>(req.cfg);
+    // cfg / flow_shift 按角色从 [models] 来，不用请求里那个 7.0——
+    // 见 ModelsConfig::image_cfg 上面那段。
+    g.sample_params.guidance.txt_cfg = static_cast<float>(impl_->cfg);
+    g.sample_params.flow_shift = static_cast<float>(impl_->flow_shift);
     if (!refs.empty()) {
         g.ref_images = refs.data();
         g.ref_images_count = static_cast<int>(refs.size());
@@ -383,7 +391,10 @@ void SdContext::generate_video(const VideoRequest& req, const fs::path& raw_dest
     g.fps = req.fps;
     g.seed = req.seed;
     g.sample_params.sample_steps = req.steps;
-    g.sample_params.guidance.txt_cfg = static_cast<float>(req.cfg);
+    // cfg / flow_shift 按角色从 [models] 来，不用请求里那个 7.0——
+    // 见 ModelsConfig::image_cfg 上面那段。
+    g.sample_params.guidance.txt_cfg = static_cast<float>(impl_->cfg);
+    g.sample_params.flow_shift = static_cast<float>(impl_->flow_shift);
     if (has_start) g.init_image = start;
 
     // VAE 分块。**不设的话默认是关的**，而关着在 6GB 卡上解码要 11.7GB，

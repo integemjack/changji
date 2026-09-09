@@ -324,7 +324,9 @@ TEST_CASE("模板的 [models] 那一节列出了每一个会被读的键") {
     for (const char* key : {"dir", "engine", "llm", "video", "video_vae",
                             "video_text_encoder", "image", "image_vae",
                             "image_text_encoder", "image_text_encoder_vision",
-                            "tts", "tts_decoder"}) {
+                            "tts", "tts_decoder", "weights",
+                            "video_cfg", "video_flow_shift",
+                            "image_cfg", "image_flow_shift"}) {
         CAPTURE(key);
         // 模板里这一节整个是注释掉的，所以形状是 `# 键 = `
         const std::string want = std::string("# ") + key + " = ";
