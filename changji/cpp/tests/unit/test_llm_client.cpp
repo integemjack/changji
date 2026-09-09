@@ -20,6 +20,8 @@
 
 #include "config/settings.hpp"
 #include "llm/client.hpp"
+#include "infer/llama_chat.hpp"
+#include "llm/local_client.hpp"
 #include "pipeline/jobs.hpp"
 
 using namespace changji;
@@ -371,4 +373,23 @@ TEST_CASE("请求体和 Python 逐字段一样") {
         // 键的顺序不算契约（JSON 对象无序），值要一模一样。
         CHECK(nlohmann::json::parse(got.dump()) == c.at("payload"));
     }
+}
+
+TEST_CASE("[llm].backend 选哪条后端") {
+    // 没编进程内大模型的构建里，配 local 也要能跑——退回远端，
+    // 别抛。用户多半只是拿了个不带 llama 的构建，而远端只要地址填了就能用。
+    auto dummy_post = [](const std::string&, const std::string&,
+                         const std::map<std::string, std::string>&, double) {
+        llm::HttpResponse r;
+        r.status = 200;
+        r.body = R"({"choices":[{"message":{"content":"好"}}]})";
+        return r;
+    };
+    const auto c = llm::make_client(dummy_post);
+    REQUIRE(c != nullptr);
+
+    // 这个测试目标是不带 llama 编的，所以拿到的一定是远端那条。
+    // 真装了 llama 的构建里 backend=local 才会给 LocalClient——
+    // 那条要真模型才跑得动，不在单元测试里验。
+    CHECK_FALSE(infer::llama_chat_available());
 }

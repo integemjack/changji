@@ -1,5 +1,7 @@
 #include "llm/local_client.hpp"
 
+#include "config/runtime.hpp"
+#include <cstdio>
 #include <mutex>
 
 #include "infer/llama_chat.hpp"
@@ -47,6 +49,22 @@ std::string LocalClient::complete(const Request& req,
     }
     if (tok.cancelled()) throw LlmError("已取消");
     return out;
+}
+
+std::shared_ptr<Client> make_client(HttpPost post) {
+    const config::Settings s = config::runtime().snapshot();
+    if (s.llm.backend == "local") {
+        if (infer::llama_chat_available()) {
+            return std::make_shared<LocalClient>();
+        }
+        std::fputs(
+            "[llm] 配的是 backend = \"local\"，但这个二进制没编进程内"
+            "大模型（构建时 CHANGJI_LLAMA=OFF）。退回 [llm].base_url 那条。\n",
+            stderr);
+    }
+    return std::make_shared<RemoteClient>(
+        ConfigProvider([] { return config::runtime().snapshot().llm; }),
+        std::move(post));
 }
 
 void register_llm_slot(std::function<config::Settings()> provider,

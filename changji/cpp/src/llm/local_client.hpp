@@ -33,4 +33,17 @@ public:
 void register_llm_slot(std::function<config::Settings()> provider,
                        const models::HardwareProfile& profile);
 
+/// 按 `[llm].backend` 造一个客户端。
+///
+/// **选一次就够，别每个请求选。** 把"走哪条后端"散到各个路由里的话，
+/// 将来加第三条就要改三处；而且 local 那条每次都要重新借槽。
+///
+/// 配的是 local 但这个二进制没编进 llama.cpp 时**退回远端**并在 stderr 上
+/// 说一声——比直接抛好：用户多半只是拿了个不带 llama 的构建，
+/// 而远端那条只要地址填了就能用。
+/// `post` 是远端那条要用的发送函数，由调用方注入（生产里传
+/// `default_http_post()`）。**做成参数而不是在这里直接调**：
+/// 那个函数只链进主目标，测试目标里没有，写死会让测试链不过。
+std::shared_ptr<Client> make_client(HttpPost post);
+
 }  // namespace changji::llm

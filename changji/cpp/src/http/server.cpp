@@ -25,6 +25,7 @@
 #include "http/voices.hpp"
 #include "http/scripting.hpp"
 #include "llm/client.hpp"
+#include "llm/local_client.hpp"
 #include "http/flow.hpp"
 #include "util/paths.hpp"
 #include "http/webapp.hpp"
@@ -131,6 +132,10 @@ void run(const config::Settings& settings, const Options& opts) {
     infer::sd_log_to_stderr();
     infer::register_sd_slots([] { return config::runtime().snapshot(); },
                              config::runtime().profile());
+    // [llm].backend = "local" 时把大模型也挂上调度器。远端那条不注册——
+    // 没有本地权重，注册一个装不上的槽只会在借它时抛没意义的错。
+    llm::register_llm_slot([] { return config::runtime().snapshot(); },
+                           config::runtime().profile());
 
     // ---- REST ----
 
@@ -387,9 +392,11 @@ void run(const config::Settings& settings, const Options& opts) {
     // 换成进程内 llama.cpp 之后就是每个请求重新加载一遍模型。
     // 传 provider 不是拷一份配置：/api/connections 能在运行期换大模型
     // 地址，拷一份的话改完之后这里还在往老地址发，而界面已经显示"已应用"了。
-    static llm::RemoteClient script_client(
-        [] { return config::runtime().snapshot().llm; },
-        llm::default_http_post());
+    // **两条后端都要能走，而且要在这里选一次。**
+    // 每个请求选一次的话，local 那条每次都要重新借槽——借槽本身不贵，
+    // 但把"选哪条"散到各个路由里，将来加第三条后端就要改三处。
+    static std::shared_ptr<llm::Client> script_client =
+        llm::make_client(llm::default_http_post());
 
     const auto script_route = [](auto handler) {
         return [handler](const crow::request& req) {
@@ -399,7 +406,7 @@ void run(const config::Settings& settings, const Options& opts) {
                 static thread_local pipeline::CancelToken tok;
                 tok.reset();
                 return handler(parse_body(req.body),
-                               script_client, tok);
+                               *script_client, tok);
             });
             return json_response(r.body, r.status);
         };
@@ -732,9 +739,8 @@ void run(const config::Settings& settings, const Options& opts) {
     // 客户端换成 shared_ptr：任务比这次请求活得久，
     // 上面那个 static 引用在这里不够安全——将来换成按项目建的客户端时，
     // 引用会在任务还跑着的时候失效。
-    static auto batch_client = std::make_shared<llm::RemoteClient>(
-        llm::ConfigProvider([] { return config::runtime().snapshot().llm; }),
-        llm::default_http_post());
+    static std::shared_ptr<llm::Client> batch_client =
+        llm::make_client(llm::default_http_post());
 
     const auto batch_route = [](auto handler) {
         return [handler](const crow::request& req) {
