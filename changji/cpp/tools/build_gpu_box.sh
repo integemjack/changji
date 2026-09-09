@@ -36,7 +36,18 @@ if [ -f /etc/network_turbo ]; then
     echo "[$(date '+%H:%M:%S')] 学术加速已开（GitHub 直连不通）"
 fi
 
-COMMON="-G Ninja -DCMAKE_BUILD_TYPE=Release
+# **协调者那份要一个 Python**：CMakeLists 里 find_package(Python3 REQUIRED)，
+# 用来给 llama.cpp 打 FP8 补丁。找不到就当场停（那是故意的，见那行上面的
+# 注释：配置期悄悄过的话，编译期会报一堆"找不到 GGML_TYPE_F8_E4M3"，
+# 那时候没人会想到是这儿）。
+# 这台机器上 python 在 miniconda 里、没进 PATH，显式指给 CMake。
+PY3=""
+for c in "$(command -v python3)" /root/miniconda3/bin/python3 /opt/conda/bin/python3; do
+    [ -x "$c" ] && { PY3="-DPython3_EXECUTABLE=$c"; break; }
+done
+[ -n "$PY3" ] && echo "Python：${PY3#-DPython3_EXECUTABLE=}" || echo "⚠ 找不到 Python，协调者那份会配置失败"
+
+COMMON="$PY3 -G Ninja -DCMAKE_BUILD_TYPE=Release
         -DCMAKE_CUDA_COMPILER=/usr/local/cuda/bin/nvcc
         -DCHANGJI_CUDA_ARCH=$ARCH -DCMAKE_CUDA_ARCHITECTURES=$ARCH
         -DCHANGJI_BUILD_TESTS=OFF"
