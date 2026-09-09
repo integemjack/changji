@@ -44,6 +44,17 @@ struct ImageRequest {
     double cfg = 7.0;
     /// 参考图的绝对路径。图像编辑模型那条路会用，纯文生图忽略。
     std::vector<std::filesystem::path> reference_images;
+
+    /// VAE 解码分块。**出片那条路早就有，出图这条路以前一个字没填**——
+    /// 于是 sd.cpp 走的是整图解码：1280×704 一次要 6.6 GB 计算缓冲，
+    /// fp8 扩散模型 19.5 GB 常驻之后 32 GB 的卡挤不出来，报
+    /// `vae decode compute failed`（分块那条路的文案是"…while processing
+    /// a tile"，看文案就能分辨走的哪条路）。块大小按潜空间算，和出片那边
+    /// 一致：16×11 个潜空间格子、重叠 1/4。
+    bool vae_tiling = true;
+    int vae_tile_x = 16;
+    int vae_tile_y = 11;
+    double vae_tile_overlap = 0.25;
 };
 
 /// 每一步的进度。

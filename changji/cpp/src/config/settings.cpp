@@ -186,9 +186,8 @@ std::vector<std::string> Settings::validate() const {
         errs.push_back("[models].frame_tier 只能是 draft 或 final，现在是 " +
                        models.frame_tier);
     }
-    if (models.weights != "cpu" && models.weights != "auto") {
-        errs.push_back("[models].weights 只能是 cpu 或 auto，现在是 " +
-                       models.weights);
+    if (models.weights.empty()) {
+        errs.push_back("[models].weights 不能是空的（要 cpu / auto / 组件规格）");
     }
     return errs;
 }

@@ -104,6 +104,10 @@ std::string sd_system_info() { return {}; }
 std::vector<std::string> sd_sample_methods() { return {}; }
 std::vector<std::string> sd_schedulers() { return {}; }
 void sd_set_log_sink(SdLogSink) {}
+// 没链 sd.cpp 就没有日志可接。**两个分支都要有**——协调者那份是
+// CHANGJI_SD=OFF 编的，少了这个链接期就挂，而工作进程那份编得好好的，
+// 一半成功一半失败最容易被当成"编译很慢"忽略过去。
+void sd_log_to_stderr(int) {}
 
 #endif
 

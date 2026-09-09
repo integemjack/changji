@@ -71,10 +71,11 @@ if [ "$ENC" = "bf16" ]; then
      "$B/Comfy-Org/Qwen-Image_ComfyUI/resolve/main/split_files/diffusion_models/qwen_image_fp8_e4m3fn.safetensors" \
      20430635136
 else
-  # 32 GB 的卡：**Q6_K，不是 fp8**。fp8 20 GB 常驻之后，1280×704 的
-  # VAE 解码要的 6.6 GB 缓冲挤不进 32 GB，只能退回 weights="cpu"——
-  # 那样每一步都要把 19.5 GB 搬过 PCIe，实测利用率 26%、每张 136 秒。
-  # Q6_K 16 GB 能常驻，利用率 89%、每张 34 秒，**画质看不出差别**。
+  # 32 GB 的卡两份都下：fp8 配 weights="te=cpu,vae=cpu" 画质最好但
+  # 峰值 31.9 GB 很紧；Q6_K 配 weights="auto" 稳。两份都是 35 秒一张。
+  dl qwen_image_fp8_e4m3fn.safetensors \
+     "$B/Comfy-Org/Qwen-Image_ComfyUI/resolve/main/split_files/diffusion_models/qwen_image_fp8_e4m3fn.safetensors" \
+     20430635136
   dl qwen-image-Q6_K.gguf \
      "$B/city96/Qwen-Image-gguf/resolve/main/qwen-image-Q6_K.gguf" \
      16824990240
@@ -113,7 +114,9 @@ if [ "$ENC" = "bf16" ]; then
   echo '  image_text_encoder = "qwen_2.5_vl_7b_bf16.safetensors"'
   echo '  weights = "auto"'
 else
-  echo '  image = "qwen-image-Q6_K.gguf"'
+  echo '  # 画质优先：fp8 + 只把扩散模型放显存（峰值 31.9/32.6 GB，很紧）'
+  echo '  image = "qwen_image_fp8_e4m3fn.safetensors"'
+  echo '  weights = "te=cpu,vae=cpu"'
+  echo '  # 求稳：image = "qwen-image-Q6_K.gguf" 配 weights = "auto"'
   echo '  image_text_encoder = "Qwen2.5-VL-7B-Instruct-Q8_0.gguf"'
-  echo '  weights = "auto"        # Q6_K 能常驻，别用 cpu——那样慢 4 倍'
 fi

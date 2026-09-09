@@ -387,8 +387,18 @@ TEST_CASE("[models].weights：默认 cpu，认 auto，别的拒") {
     }
     CHECK(config::load_settings(tmp).models.weights == "auto");
 
+    // 第三种取值：sd.cpp 的组件规格，原样传下去。
+    // **给"差一点就装得下"的卡用的**：5090 上 fp8 图像模型用 auto 会连
+    // 编码器一起塞进显存，挤不下 VAE 解码那 6.6 GB；只把编码器和 VAE
+    // 放内存就够了，而编码器只在采样前跑一次，放内存几乎不影响速度。
+    {
+        std::ofstream f(tmp / "changji.toml", std::ios::binary);
+        f << "[models]\nweights = \"te=cpu,vae=cpu\"\n";
+    }
+    CHECK(config::load_settings(tmp).models.weights == "te=cpu,vae=cpu");
+
     config::Settings s;
-    s.models.weights = "gpu";   // 没有这个值：auto 才是"能进显存就进"
+    s.models.weights = "";      // 空的才拒——别的都可能是合法规格
     const auto errs = s.validate();
     bool said = false;
     for (const auto& e : errs) {

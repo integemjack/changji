@@ -242,8 +242,10 @@ std::shared_ptr<SdContext> SdContext::create(const config::Settings& settings,
     // auto：params_backend 留空 + auto_fit。sd.cpp 只在两个后端 spec 都为空时
     // 才启用 auto_fit（stable-diffusion.cpp 里那一行 `&& params_backend_spec.empty()`），
     // 所以这里**不能**填 "" 之外的任何东西。它按这张卡真实的空闲显存逐组件放。
+    // auto 时留空（sd.cpp 只在两个 spec 都为空时才启用 auto_fit）；
+    // cpu 就是 "cpu"；别的原样传下去当组件规格。
     const bool auto_fit = m.weights == "auto";
-    impl.params_backend = auto_fit ? "" : "cpu";
+    impl.params_backend = auto_fit ? "" : m.weights;
 
     sd_ctx_params_t p{};
     ::sd_ctx_params_init(&p);
@@ -312,6 +314,14 @@ void SdContext::generate(const ImageRequest& req, const fs::path& dest,
     // 见 ModelsConfig::image_cfg 上面那段。
     g.sample_params.guidance.txt_cfg = static_cast<float>(impl_->cfg);
     g.sample_params.flow_shift = static_cast<float>(impl_->flow_shift);
+    // VAE 分块解码——和 generate_video 那边同一套写法。不填的话 sd.cpp
+    // 整图解码，1280×704 要 6.6 GB 缓冲，fp8 常驻的 32 GB 卡上出不来图。
+    g.vae_tiling_params.enabled = req.vae_tiling;
+    g.vae_tiling_params.tile_size_x = req.vae_tile_x;
+    g.vae_tiling_params.tile_size_y = req.vae_tile_y;
+    g.vae_tiling_params.target_overlap = static_cast<float>(req.vae_tile_overlap);
+    g.vae_tiling_params.rel_size_x = 0.0f;
+    g.vae_tiling_params.rel_size_y = 0.0f;
     if (!refs.empty()) {
         g.ref_images = refs.data();
         g.ref_images_count = static_cast<int>(refs.size());
@@ -532,8 +542,16 @@ void register_sd_slots(SettingsProvider provider,
         profile.gpu.has_value()
             ? std::max(1.0, profile.gpu->vram_gb() - reserve) * 0.9
             : budget;
-    const auto budget_for = [budget, physical](const config::Settings& s) {
-        return s.models.weights == "auto" ? physical : budget;
+    // 显式给了组件规格（比如 te=cpu,vae=cpu）的时候，权重放哪已经由用户
+    // 定了，余量那 6 GB 就别再扣——扣了预算只剩 23 GB，扩散模型 19.5 GB
+    // 加上它自己的计算缓冲就超了，5090 上表现是
+    // "segment 56/62 failed during weight preparation"。整卡按 0.9 给。
+    const double whole =
+        profile.gpu.has_value() ? profile.gpu->vram_gb() * 0.9 : budget;
+    const auto budget_for = [budget, physical, whole](const config::Settings& s) {
+        if (s.models.weights == "auto") return physical;
+        if (s.models.weights == "cpu") return budget;
+        return whole;
     };
     const std::size_t estimate =
         static_cast<std::size_t>(budget * 1024) * 1024 * 1024;
