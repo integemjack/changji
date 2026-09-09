@@ -1,43 +1,30 @@
 #pragma once
-
 // GET /api/voices —— 服务端有哪些参考音色。
 //
-// 音色在 ComfyUI 那边是个**下拉框**，装了哪些插件就有哪些选项。
-// 界面上得让人从这个列表里选，而不是手打一条路径然后在跑到配音那一步
-// 才发现填错了——那时候前面的分镜和首帧已经跑完了。
+// **现在两条配音后端都没有服务端清单**，这个接口的全部工作就是把这件事
+// 说清楚。以前走 ComfyUI 时它是个下拉框（装了哪些插件就有哪些选项），
+// ComfyUI 拆掉之后剩下的两条是：
 //
-// 移植自 web/server.py 的 voices()。阶段 6 的完成判据之一。
-
-#include <optional>
+//   local —— 进程内跑。音色是用户自己给的一段参考音频，没有清单。
+//   http  —— 外部服务。它有没有音色列表是那个服务自己的事，我们不代问。
+//
+// **接口保留而不是删掉**：角色页打开时会拉它，删了前端要跟着改，
+// 而它现在恰好承担了"告诉用户音色怎么配"这件事——那句说明比一个
+// 空下拉框有用。
 #include <string>
-#include <utility>
 
-#include "comfy/client.hpp"
-#include "comfy/workflow.hpp"
 #include "http/readonly.hpp"
 
 namespace changji::http {
 
-/// 在工作流里找音色那个下拉框：返回 (节点类型, 输入名)。找不到返回空。
-///
-/// **靠输入名认，不靠节点类型认。** TTS 那一片的自定义节点包换得很勤，
-/// 类型名各不相同，而输入名反而稳定（voice、speaker、reference_audio 那几个）。
-/// 按类型名列白名单的话，用户换一个节点包音色列表就空了。
-std::optional<std::pair<std::string, std::string>> find_voice_input(
-    const comfy::ApiWorkflow& w);
-
-/// GET /api/voices。
+/// 列音色。
 ///
 /// **任何一步失败都回 200 加一个 error 字段**，不回错误码：这个接口是
 /// 角色页打开时顺带拉的，回 500 的话整个页面会弹错误框，
 /// 而用户可能根本没打算配音。
-/// backend 是 `[tts].backend` 的值。
 ///
-/// **进程内配音（local）根本不问 ComfyUI 要音色。** 它的"音色"是用户自己
-/// 给的一段参考音频，服务端没有清单可列。不区分的话，选了 local 的用户
-/// 会在角色页看到一个 ComfyUI 的音色下拉框（或者一句"连不上 ComfyUI"），
-/// 而那个后端压根没在用——**答非所问比答不出来更糟**。
-ApiResult get_voices(const std::string& path, comfy::Client& client,
-                     const std::string& backend = "comfy");
+/// `backend` 是 `[tts].backend` 的值，用来决定那句说明怎么写——
+/// 说错了比不说更糟：让用 local 的人去查一个他根本没在用的服务。
+ApiResult get_voices(const std::string& path, const std::string& backend);
 
 }  // namespace changji::http

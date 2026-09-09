@@ -7,11 +7,11 @@
 
 #include <string>
 
-#include "comfy/ws_client.hpp"
+#include "net/ws_client.hpp"
 #include "util/text.hpp"
 
 using namespace changji;
-namespace ws = changji::comfy::ws;
+namespace ws = changji::ws;
 
 TEST_CASE("accept 是 base64(sha1(key+GUID))，中间不经过十六进制") {
     // RFC 6455 里那个例子。拿 sha1 的十六进制串去 base64 的话会得到

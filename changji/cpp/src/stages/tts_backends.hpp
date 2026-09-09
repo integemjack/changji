@@ -20,8 +20,6 @@
 #include <optional>
 #include <string>
 
-#include "comfy/client.hpp"
-#include "comfy/workflow.hpp"
 #include "config/settings.hpp"
 #include "llm/client.hpp"
 #include "media/ffmpeg.hpp"
@@ -30,14 +28,6 @@
 
 namespace changji::stages {
 
-/// 把台词填进工作流。填上了返回 true。
-///
-/// **按键名匹配而不是按节点类型。** TTS 那一片的自定义节点包换得很勤，
-/// 类型名各不相同，而输入名反而稳定。按类型列白名单的话，
-/// 用户换一个节点包就一个字都填不进去，而报错是"工作流里找不到文本节点"。
-bool apply_text(comfy::ApiWorkflow& wf, const std::string& text,
-                const std::optional<std::string>& voice_id,
-                const std::string& emotion);
 
 /// 一秒以内的音频几乎不可能是一句正常台词，多半是节点失败后的占位输出。
 inline constexpr double kMinPlausibleDurationS = 1.05;
@@ -70,15 +60,6 @@ TTSBackend http_tts_backend(const std::string& base_url, double timeout_s,
                             llm::HttpPost post,
                             const std::optional<media::FFmpeg>& ff);
 
-/// 通过 ComfyUI 的 TTS 节点配音。
-///
-/// 好处是推理都集中在装了显卡和 PyTorch 的那台机器上，编排引擎
-/// 不必背推理框架的依赖。工作流由用户提供，放在项目的 workflows/tts.json，
-/// 这样换引擎只换工作流不改代码。
-TTSBackend comfy_tts_backend(std::shared_ptr<comfy::Client> client,
-                             comfy::ApiWorkflow workflow,
-                             models::ProjectPaths paths,
-                             const std::optional<media::FFmpeg>& ff);
 
 /// 进程内配音（阶段 9）。**要 CHANGJI_LLAMA=ON 编出来的二进制。**
 ///

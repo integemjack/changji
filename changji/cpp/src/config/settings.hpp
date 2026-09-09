@@ -30,18 +30,6 @@ namespace changji::config {
 inline constexpr const char* kAppName = "changji";
 inline constexpr const char* kEnvPrefix = "CHANGJI_";
 
-/// 推理服务连接。默认本机，但可以指向任意一台机器。
-struct ComfyConfig {
-    std::string base_url = "http://127.0.0.1:8188";
-    double timeout_s = 60.0;
-    /// 提交后等待单个任务完成的上限。成片档一个镜头可能要好几分钟
-    double job_timeout_s = 1800.0;
-    int max_retries = 3;
-
-    std::string ws_url() const;
-    std::vector<std::string> validate() const;
-};
-
 /// 剧本和分镜用的大模型。默认走本地 Ollama。
 struct LLMConfig {
     /// 大模型跑在哪：`remote`（默认，走 base_url）或 `local`（进程内）。
@@ -63,15 +51,15 @@ struct LLMConfig {
 
 /// 配音。
 struct TTSConfig {
-    /// comfy / http / local。
+    /// `local`（进程内跑）或 `http`（外部配音服务）。
     ///
-    /// **local 是 C++ 侧独有的取值**（进程内跑 Qwen3-TTS，要
-    /// CHANGJI_LLAMA=ON 编出来的二进制）。Python 那边这个字段没有枚举校验，
-    /// 填 local 它不会报错、只是认不出来然后退回估算后端——
-    /// 也就是说这一项是**加法而不是破坏**：原有的两个取值行为一个字没变。
-    /// 模型路径放在 [models].tts / [models].tts_decoder，
-    /// 那一节本来就是 C++ 侧独有的（见 ModelsConfig 上面那段）。
-    std::string backend = "comfy";
+    /// **原来还有 comfy 那一档，2026-09-10 随 ComfyUI 一起拆了。**
+    /// 老配置填 comfy 会被校验拦下并给出改法——静默退回估算后端的话，
+    /// 整集会是静音的，而那要到装配完才发现。
+    ///
+    /// local 要 CHANGJI_LLAMA=ON 编出来的二进制，模型路径放
+    /// [models].tts / [models].tts_decoder。
+    std::string backend = "local";
     std::optional<std::string> base_url;  ///< backend 为 http 时必填
     std::string engine = "cosyvoice3";
     /// 台词时长与镜头时长的允许偏差。超出就要靠尾帧冻结或音频微调吸收
@@ -142,14 +130,10 @@ struct AssemblyConfig {
 /// 路径规则：绝对路径原样用；相对路径相对 dir 解析。
 /// dir 支持 ~ 展开，为空时回落到项目库根目录下的 models/。
 struct ModelsConfig {
-    /// 出图出片走哪个引擎："sd"（进程内 sd.cpp）或 "comfy"（外部 ComfyUI）。
+    /// 出图出片走哪个引擎。**现在只有 `"sd"`**（进程内 sd.cpp）。
     ///
-    /// **放在 [models] 里而不是单开一节**，是因为这一节本来就是 C++ 侧独有的
-    /// （Python 的 Settings 是 extra="forbid"，见方案的"配置隔离"）。
-    /// C++ 独有的键集中在一处，两个后端各用一份配置时最容易分辨。
-    ///
-    /// 选 comfy 时视频一定走 ComfyUI；首帧要项目里有 workflows/image.json
-    /// 才走它，没有就退回 sd.cpp——图像工作流是用户提供的，不能假定存在。
+    /// comfy 那一档 2026-09-10 拆了。这个字段留着是为了**认得出老配置**：
+    /// 填 comfy 时校验会说清楚该怎么改，而不是让它悄悄跑成别的样子。
     std::string engine = "sd";
 
     /// 模型目录。相对路径的基准。
@@ -417,7 +401,6 @@ struct WorkersConfig {
 
 /// 全部配置。
 struct Settings {
-    ComfyConfig comfy;
     LLMConfig llm;
     TTSConfig tts;
     GateConfig gates;

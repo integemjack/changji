@@ -37,7 +37,7 @@
 #include <asio.hpp>
 #include <nlohmann/json.hpp>
 
-#include "comfy/ws_client.hpp"
+#include "net/ws_client.hpp"
 #include "diff.hpp"
 #include "util/httplib.hpp"
 #include "models/project.hpp"
@@ -1551,21 +1551,21 @@ void ws_fail(Tally& tally, const std::string& name, const std::string& detail) {
 
 /// 一个够用的 WebSocket 客户端：连上、握手、订阅、读几条。
 ///
-/// 只用 comfy/ws_client 里那几个纯函数加 asio 的阻塞接口。
+/// 只用 net/ws_client 里那几个纯函数加 asio 的阻塞接口。
 /// 不做 TLS、不做分片重组——服务端推的是一条条完整的小 JSON。
 class WsPeek {
 public:
     /// 连上并握手。失败返回一句人话。
     std::string connect(const std::string& url) {
-        const auto u = comfy::ws::parse_url(url);
+        const auto u = ws::parse_url(url);
         if (!u.has_value()) return "地址认不出来：" + url;
         try {
             asio::ip::tcp::resolver resolver(io_);
             asio::connect(sock_, resolver.resolve(u->host, u->port));
             sock_.set_option(asio::ip::tcp::no_delay(true));
 
-            const std::string key = comfy::ws::random_key();
-            const std::string req = comfy::ws::handshake_request(*u, key);
+            const std::string key = ws::random_key();
+            const std::string req = ws::handshake_request(*u, key);
             asio::write(sock_, asio::buffer(req));
 
             // 读到空行为止就是握手响应
@@ -1582,7 +1582,7 @@ public:
             }
             // **accept 要核**。不核的话任何回 101 的东西都算连上了，
             // 而握手串算错在这里正是最容易发生的事。
-            const std::string want = comfy::ws::accept_key(key);
+            const std::string want = ws::accept_key(key);
             if (head.find(want) == std::string::npos) {
                 return "Sec-WebSocket-Accept 对不上，应该是 " + want;
             }
@@ -1599,8 +1599,8 @@ public:
         static std::mt19937 rng{std::random_device{}()};
         asio::error_code ec;
         asio::write(sock_,
-                    asio::buffer(comfy::ws::encode_frame(
-                        comfy::ws::Opcode::Text, payload, rng())),
+                    asio::buffer(ws::encode_frame(
+                        ws::Opcode::Text, payload, rng())),
                     ec);
     }
 
@@ -1609,10 +1609,10 @@ public:
         const auto deadline = std::chrono::steady_clock::now() + timeout;
         for (;;) {
             std::size_t used = 0;
-            if (auto f = comfy::ws::decode_frame(buf_, used)) {
+            if (auto f = ws::decode_frame(buf_, used)) {
                 buf_.erase(0, used);
-                if (f->opcode == comfy::ws::Opcode::Text) return f->payload;
-                if (f->opcode == comfy::ws::Opcode::Close) return std::nullopt;
+                if (f->opcode == ws::Opcode::Text) return f->payload;
+                if (f->opcode == ws::Opcode::Close) return std::nullopt;
                 continue;   // ping/pong 之类的跳过
             }
             if (std::chrono::steady_clock::now() >= deadline) return std::nullopt;

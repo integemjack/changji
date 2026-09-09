@@ -291,11 +291,11 @@ add_executable(changji
     src/main.cpp
     src/util/paths.cpp
     src/util/proc.cpp
+    src/net/ws_client.cpp
     src/config/settings.cpp
     src/config/writeback.cpp
     src/config/runtime.cpp
     src/doctor/doctor.cpp
-    src/doctor/needs.cpp
     src/models/shot.cpp
     src/models/character.cpp
     src/models/project.cpp
@@ -332,12 +332,6 @@ add_executable(changji
     src/http/ws.cpp
     src/pipeline/jobs.cpp
     src/pipeline/episode.cpp
-    src/comfy/workflow.cpp
-    src/comfy/client.cpp
-    src/comfy/ws_client.cpp
-    src/comfy/client_http.cpp
-    src/comfy/loader.cpp
-    src/comfy/renderers.cpp
     src/media/ffmpeg.cpp
     src/media/subtitles.cpp
     src/gates/checks.cpp
@@ -527,7 +521,6 @@ if(CHANGJI_BUILD_TESTS)
         tests/unit/test_character.cpp
         tests/unit/test_project.cpp
         tests/unit/test_hardware.cpp
-        tests/unit/test_doctor.cpp
         tests/unit/test_readonly.cpp
         tests/unit/test_editing.cpp
         tests/unit/test_editing_assets.cpp
@@ -557,17 +550,13 @@ if(CHANGJI_BUILD_TESTS)
         tests/unit/test_sd_video.cpp
         tests/unit/test_episode.cpp
         tests/unit/test_run.cpp
-        tests/unit/test_comfy_workflow.cpp
-        tests/unit/test_comfy_client.cpp
         tests/unit/test_ws_client.cpp
         tests/unit/test_ws_hub.cpp
         tests/unit/test_util_time.cpp
         tests/unit/test_proc.cpp
         tests/unit/test_paths.cpp
         tests/unit/test_facades.cpp
-        tests/unit/test_comfy_loader.cpp
         tests/unit/test_voices.cpp
-        tests/unit/test_comfy_renderers.cpp
         tests/unit/test_ffmpeg.cpp
         tests/unit/test_subtitles.cpp
         tests/unit/test_gates.cpp
@@ -591,6 +580,7 @@ if(CHANGJI_BUILD_TESTS)
         src/models/hardware.cpp
         src/util/paths.cpp
         src/util/proc.cpp
+        src/net/ws_client.cpp
         src/util/text.cpp
         src/util/human_time.cpp
         src/util/fs_time.cpp
@@ -612,7 +602,6 @@ if(CHANGJI_BUILD_TESTS)
         src/http/ws.cpp
         # 体检的"当前配置用得上哪些依赖"是纯判断，不碰网络，所以进得来。
         # doctor.cpp 本身仍然不进——它链 httplib。
-        src/doctor/needs.cpp
         # 这两个都是可选依赖的门面，测试目标里编的是没链上游时那一支
         # （CHANGJI_HAVE_SD / CHANGJI_HAVE_LLAMA 只给 changji 目标定义）。
         # test_facades.cpp 验的就是那一支的行为。
@@ -626,11 +615,6 @@ if(CHANGJI_BUILD_TESTS)
         src/infer/sd_upscale.cpp
         src/pipeline/jobs.cpp
         src/pipeline/episode.cpp
-        src/comfy/workflow.cpp
-        src/comfy/client.cpp
-        src/comfy/ws_client.cpp
-        src/comfy/loader.cpp
-        src/comfy/renderers.cpp
         src/media/ffmpeg.cpp
         src/media/subtitles.cpp
         src/gates/checks.cpp
@@ -722,9 +706,8 @@ if(CHANGJI_BUILD_TESTS)
         src/models/project.cpp
         src/models/hardware.cpp
         src/util/proc.cpp
-        # WebSocket 层要连 /ws。协议那部分是纯函数，复用 comfy 那份；
-        # 传输直接用 asio，不把整个 comfy 客户端拖进来。
-        src/comfy/ws_client.cpp
+        src/net/ws_client.cpp
+        # WebSocket 层要连 /ws。协议那部分是纯函数，传输直接用 asio。
     )
     target_include_directories(changji_compat PRIVATE "${ASIO_INCLUDE_DIR}")
     target_compile_definitions(changji_compat PRIVATE ASIO_STANDALONE)

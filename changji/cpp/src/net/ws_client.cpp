@@ -1,11 +1,11 @@
-#include "comfy/ws_client.hpp"
+#include "net/ws_client.hpp"
 
 #include <cstring>
 #include <random>
 
 #include "util/text.hpp"
 
-namespace changji::comfy::ws {
+namespace changji::ws {
 
 namespace {
 
@@ -178,4 +178,4 @@ std::string encode_frame(Opcode op, const std::string& payload,
     return out;
 }
 
-}  // namespace changji::comfy::ws
+}  // namespace changji::ws

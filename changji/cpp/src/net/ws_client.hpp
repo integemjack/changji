@@ -2,8 +2,8 @@
 
 // 一个够用的 WebSocket 客户端。
 //
-// **为什么自己写。** 这个项目里 WebSocket 有两个方向：Crow 做服务端
-// （前端连过来看进度），ComfyUI 那边我们是客户端。Crow 只有服务端。
+// **为什么自己写。** Crow 只有服务端（前端连过来看进度），
+// 而对拍工具要当客户端去连我们自己的 /ws。
 // 为一个客户端再拉一个库（websocketpp、Boost.Beast）代价不小：
 // Beast 要整个 Boost，websocketpp 停更多年且 API 依赖旧版 asio。
 // 而我们要的功能是**收文本帧**——发只发一次握手，连 ping 都可以只回不发。
@@ -13,15 +13,17 @@
 // 而在真实服务端上试错一次要几十秒。
 //
 // 不支持的：wss（TLS）、分片续帧的**跨帧文本拼接**除外的扩展、压缩扩展。
-// ComfyUI 默认是明文 ws，要 TLS 的部署放个反向代理，
-// 那时候用轮询那条路——client.cpp 里连不上就退回轮询。
+// 我们自己的 /ws 是明文，要 TLS 的部署放个反向代理。
+//
+// **原来放在 src/comfy/ 底下**，那是历史位置——它一直是通用的，
+// 只是最早的用途是连 ComfyUI。2026-09-10 拆 ComfyUI 时挪到 src/net/。
 
 #include <cstdint>
 #include <optional>
 #include <string>
 #include <vector>
 
-namespace changji::comfy::ws {
+namespace changji::ws {
 
 /// RFC 6455 那个固定 GUID。拼在客户端 key 后面算 accept。
 inline constexpr const char* kMagic = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
@@ -81,4 +83,4 @@ std::optional<Frame> decode_frame(const std::string& buf, std::size_t& consumed)
 std::string encode_frame(Opcode op, const std::string& payload,
                          std::uint32_t mask_key);
 
-}  // namespace changji::comfy::ws
+}  // namespace changji::ws

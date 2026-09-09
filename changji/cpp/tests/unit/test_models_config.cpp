@@ -182,7 +182,7 @@ TEST_CASE("环境变量：改了值就要生效，而且要在 env_locked 里报
     };
     // 挑的是这次新加的三个。老的那些同理，出问题的方式一模一样。
     const Case cases[] = {
-        {"MODELS_ENGINE", "models_engine", "comfy"},
+        {"MODELS_ENGINE", "models_engine", "sd"},
         {"MODELS_TTS", "models_tts", "some-talker.gguf"},
         {"MODELS_TTS_DECODER", "models_tts_decoder", "some-decoder.gguf"},
     };
@@ -215,7 +215,9 @@ TEST_CASE("环境变量把 engine 写错了要被拦住，不能悄悄接受") {
     CHECK(s.models.engine == "sdcpp");
     const auto errs = s.models.validate();
     REQUIRE_FALSE(errs.empty());
-    CHECK(errs[0].find("sd 或 comfy") != std::string::npos);
+    // ComfyUI 拆掉之后 engine 只剩 sd，而**老配置填 comfy 要给迁移说明**，
+    // 不能只说"只能是 sd"——用户不知道自己那套工作流该怎么办。
+    CHECK(errs[0].find("sd") != std::string::npos);
 }
 
 TEST_CASE("flash attention 默认开，配置里能关") {
@@ -324,7 +326,7 @@ TEST_CASE("模板的 [tts] 那一节提到了代码认的每一个后端") {
         toml_section(config::default_config_template(), "tts");
     REQUIRE_FALSE(sec.empty());
 
-    for (const char* backend : {"local", "comfy", "http"}) {
+    for (const char* backend : {"local", "http"}) {
         CAPTURE(backend);
         CHECK_MESSAGE(sec.find(backend) != std::string::npos,
                       "[tts] 那一节里没提 " << backend
@@ -376,7 +378,7 @@ TEST_CASE("模板自己解析得动，而且解析出来就是默认值") {
     const config::Settings def;
     CHECK(s2.tts.backend == def.tts.backend);
     CHECK(s2.llm.model == def.llm.model);
-    CHECK(s2.comfy.base_url == def.comfy.base_url);
+    CHECK(s2.models.engine == def.models.engine);
 }
 
 TEST_CASE("[models].weights：默认 cpu，认 auto，别的拒") {

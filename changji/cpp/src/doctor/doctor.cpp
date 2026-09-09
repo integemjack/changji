@@ -1,6 +1,5 @@
 #include "doctor/doctor.hpp"
 
-#include "doctor/needs.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -129,54 +128,7 @@ Check check_fonts(const config::Settings& s) {
 #endif
 }
 
-Check check_infer(const config::Settings& s) {
-    // **当前配置到底用不用得上 ComfyUI，先问清楚再判。**
-    //
-    // 原来这里无条件报 FAIL 并说"出图和出视频都要用它"。
-    // 那句话在 `[models].engine = "sd"` 时是**假的**——那条路走进程内的
-    // sd.cpp，`run_deps.cpp` 里 `if (engine != "comfy") return b;`
-    // 在碰任何 ComfyUI 工作流之前就返回了。
-    //
-    // 后果不是小事：报告底下会写"有 N 项必须先解决才能出片"，
-    // 把人支去装一个 34 GB 的依赖，而他根本不需要。
-    // 体检报告的意义就是告诉人"还差什么"，它说错了比不说更糟。
-    // 判断本身在 needs.hpp 里，那个文件不链网络库所以测得到。
-    // 这个文件（链 httplib）不进测试目标，见 CMakeLists 里那段说明。
-    const ComfyNeed need = comfy_need(s);
-    const std::string& url = s.comfy.base_url;
-    auto body = get_json(url, "/system_stats", 8);
-    if (!body) {
-        if (!need.required()) {
-            // 用不到它，连不上就只是个事实，不是待办
-            return {"推理服务", Level::OK,
-                    "没连（当前配置用不到它）",
-                    "出图出片走进程内 sd.cpp（[models].engine = \"" +
-                        s.models.engine + "\"），配音走 " + s.tts.backend +
-                        "。\n改成 engine = \"comfy\" 或 tts.backend = "
-                        "\"comfy\" 时才需要它。"};
-        }
-        return {"推理服务", Level::FAIL, "连不上 " + url,
-                need.who() + "。\n"
-                "用 Docker: docker compose up -d comfyui\n"
-                "已经装在别处就改配置：\n"
-                "  export CHANGJI_COMFY_BASE_URL=http://某台机器:8188"};
-    }
-    if (body->contains("devices") && (*body)["devices"].is_array()
-        && !(*body)["devices"].empty()) {
-        const auto& d = (*body)["devices"][0];
-        double vram = d.value("vram_total", 0.0) / (1024.0 * 1024.0 * 1024.0);
-        std::ostringstream os;
-        os << url << "  " << d.value("name", std::string{}) << "  ";
-        os.setf(std::ios::fixed);
-        os.precision(1);
-        os << vram << " GB";
-        return {"推理服务", Level::OK, os.str(), ""};
-    }
-    return {"推理服务", Level::WARN, url + " 已连接但没有报告显卡",
-            "可能在用 CPU 推理，会非常慢"};
-}
-
-Check check_tts(const config::Settings& s, bool infer_ok) {
+Check check_tts(const config::Settings& s) {
     if (s.tts.backend == "http") {
         if (!s.tts.base_url || s.tts.base_url->empty()) {
             return {"配音", Level::FAIL, "配了 http 后端但没填地址",
@@ -184,48 +136,16 @@ Check check_tts(const config::Settings& s, bool infer_ok) {
         }
         return {"配音", Level::OK, "独立服务 " + *s.tts.base_url, ""};
     }
-    // **选了进程内配音就不该去问 ComfyUI。**
-    // 原来没有这一支，backend = "local" 会掉进下面那条 ComfyUI 的路，
-    // 报"推理服务连不上，无法判断"——而那时候两份 GGUF 就在盘上，
-    // 判得出来，而且和 ComfyUI 一点关系都没有。
     // 细节由「进程内配音」那一项报（模型在不在、编没编进来），
     // 这里只说清这条路归谁管。
-    if (tts_is_local(s)) {
+    if (s.tts.backend == "local") {
         return {"配音", Level::OK, "走进程内（详见「进程内配音」那一项）", ""};
     }
-    if (!infer_ok) {
-        return {"配音", Level::WARN, "推理服务连不上，无法判断",
-                "先解决推理服务的连接问题"};
-    }
-    auto body = get_json(s.comfy.base_url, "/object_info", 30);
-    if (!body || !body->is_object()) {
-        return {"配音", Level::WARN, "查不到推理服务的节点清单", ""};
-    }
-    std::vector<std::string> engines;
-    bool has_tts = false;
-    for (auto it = body->begin(); it != body->end(); ++it) {
-        const std::string& n = it.key();
-        if (n == "UnifiedTTSTextNode") has_tts = true;
-        if (n.size() > 10 && n.compare(n.size() - 10, 10, "EngineNode") == 0) {
-            engines.push_back(n.substr(0, n.size() - 10));
-        }
-    }
-    if (has_tts) {
-        std::sort(engines.begin(), engines.end());
-        std::string list;
-        for (size_t i = 0; i < engines.size() && i < 5; ++i) {
-            if (i) list += "、";
-            list += engines[i];
-        }
-        return {"配音", Level::OK, "配音节点可用，引擎：" + list, ""};
-    }
-    return {"配音", Level::WARN, "推理服务上没有本地配音节点",
-            "成片会是静音。本地方案要装节点包：\n"
-            "  cd ComfyUI/custom_nodes\n"
-            "  git clone https://github.com/diodiogod/TTS-Audio-Suite.git\n"
-            "  cd TTS-Audio-Suite && python install.py\n"
-            "装完重启。用 Docker 的话直接重新 build 更稳，\n"
-            "手动装的依赖在容器重建时会丢。"};
+    // 走到这里就只剩 http 那条，而它上面已经答过了。
+    // **ComfyUI 那条 2026-09-10 拆了**，原来这里会去问它的节点清单，
+    // 判断装没装 TTS 节点包。
+    return {"配音", Level::WARN, "配音后端认不出：" + s.tts.backend,
+            "只能是 local（进程内）或 http（外部服务）"};
 }
 
 Check check_llm(const config::Settings& s) {
@@ -483,11 +403,9 @@ Report run_checks(const config::Settings& settings) {
     r.checks.push_back(guarded("FFmpeg", [&] { return check_ffmpeg(settings); }));
     r.checks.push_back(guarded("中文字体", [&] { return check_fonts(settings); }));
 
-    Check infer = guarded("推理服务", [&] { return check_infer(settings); });
-    bool infer_ok = infer.level == Level::OK;
-    r.checks.push_back(std::move(infer));
-
-    r.checks.push_back(guarded("配音", [&] { return check_tts(settings, infer_ok); }));
+    // 「推理服务」那一项 2026-09-10 随 ComfyUI 一起去掉了：出图出片都在
+    // 进程内，没有外部服务要连。出图那条由「出图后端」和「本地模型」两项管。
+    r.checks.push_back(guarded("配音", [&] { return check_tts(settings); }));
     r.checks.push_back(guarded("大模型", [&] { return check_llm(settings); }));
     r.checks.push_back(guarded("ggml ABI", [&] { return check_ggml(); }));
     r.checks.push_back(guarded("进程内配音", [&] { return check_local_tts(settings); }));

@@ -290,19 +290,16 @@ TEST_CASE("一次改好几节") {
     const fs::path dir = tmp_dir("多节");
     const fs::path cfg = dir / "changji.toml";
     put(cfg,
-        "[comfy]\nbase_url = \"http://old:8188\"\n\n"
         "[llm]\nmodel = \"old\"\n\n"
         "[assembly]\nfps = 24\ncrf = 18\n");
 
     config::save_user_config(json{
-        {"comfy", {{"base_url", "http://new:8188"}}},
         {"llm", {{"model", "new"}, {"temperature", 0.3}}},
         {"assembly", {{"fps", 30}}},
         {"vram_gb_override", 12.0},
     }, cfg);
 
     const config::Settings s = reload(dir);
-    CHECK(s.comfy.base_url == "http://new:8188");
     CHECK(s.llm.model == "new");
     CHECK(s.llm.temperature == doctest::Approx(0.3));
     CHECK(s.assembly.fps == 30);

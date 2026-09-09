@@ -61,24 +61,6 @@ void check_ge(std::vector<std::string>& errs, const char* name, double v, double
 
 }  // namespace
 
-std::string ComfyConfig::ws_url() const {
-    std::string u = base_url;
-    if (starts_with(u, "http://")) return "ws://" + u.substr(7) + "/ws";
-    if (starts_with(u, "https://")) return "wss://" + u.substr(8) + "/ws";
-    return u + "/ws";
-}
-
-std::vector<std::string> ComfyConfig::validate() const {
-    std::vector<std::string> errs;
-    if (!starts_with(base_url, "http://") && !starts_with(base_url, "https://")) {
-        errs.push_back("推理服务地址必须以 http:// 或 https:// 开头");
-    }
-    check_gt(errs, "comfy.timeout_s", timeout_s, 0);
-    check_gt(errs, "comfy.job_timeout_s", job_timeout_s, 0);
-    check_ge(errs, "comfy.max_retries", max_retries, 0);
-    return errs;
-}
-
 std::vector<std::string> LLMConfig::validate() const {
     std::vector<std::string> errs;
     if (backend != "remote" && backend != "local") {
@@ -91,9 +73,14 @@ std::vector<std::string> LLMConfig::validate() const {
 
 std::vector<std::string> TTSConfig::validate() const {
     std::vector<std::string> errs;
-    if (backend != "comfy" && backend != "http" && backend != "local") {
-        errs.push_back("tts.backend 只能是 comfy、http 或 local，当前是 " +
-                       backend);
+    if (backend != "http" && backend != "local") {
+        errs.push_back(
+            backend == "comfy"
+                ? std::string("tts.backend = \"comfy\" 已经不支持了："
+                              "ComfyUI 那条路已拆除。改成 \"local\"（进程内跑，"
+                              "要填 [models].tts 和 tts_decoder）或者 "
+                              "\"http\"（外部配音服务，要填 [tts].base_url）。")
+                : "tts.backend 只能是 http 或 local，当前是 " + backend);
     }
     // Python 侧这一条在 doctor 里查而不是在模型里查，这里保持一致，
     // 避免配置加载阶段就因为还没填地址而整个起不来。
@@ -161,8 +148,16 @@ std::vector<std::string> ModelsConfig::validate() const {
     // 用户连界面都进不去，也就没法在界面里看到到底缺哪个文件。
     // 存在性检查在 doctor 里，报警告，程序照常起来。
     std::vector<std::string> errs;
-    if (engine != "sd" && engine != "comfy") {
-        errs.push_back("models.engine 只能是 sd 或 comfy，当前是 " + engine);
+    if (engine != "sd") {
+        // ComfyUI 那条 2026-09-10 拆掉了。**老配置要给出迁移说明**，
+        // 只说"只能是 sd"的话用户不知道自己那套工作流该怎么办。
+        errs.push_back(
+            engine == "comfy"
+                ? std::string("models.engine = \"comfy\" 已经不支持了："
+                              "ComfyUI 那条路已拆除，出图出片都走进程内的 "
+                              "sd.cpp。改成 \"sd\"，并在 [models] 里填 "
+                              "image / video 那几个模型文件。")
+                : "models.engine 只能是 sd，当前是 " + engine);
     }
     return errs;
 }
@@ -184,7 +179,6 @@ std::vector<std::string> Settings::validate() const {
         errs.insert(errs.end(), std::make_move_iterator(more.begin()),
                     std::make_move_iterator(more.end()));
     };
-    merge(comfy.validate());
     merge(llm.validate());
     merge(tts.validate());
     merge(gates.validate());
@@ -262,8 +256,6 @@ namespace {
 /// 环境变量后缀 -> 配置路径。与 Python 的 _ENV_MAPPING 一一对应。
 const std::vector<std::pair<const char*, const char*>>& env_mapping() {
     static const std::vector<std::pair<const char*, const char*>> m = {
-        {"COMFY_BASE_URL", "comfy_base_url"},
-        {"COMFY_TIMEOUT_S", "comfy_timeout_s"},
         {"LLM_BASE_URL", "llm_base_url"},
         {"LLM_MODEL", "llm_model"},
         {"LLM_API_KEY", "llm_api_key"},
@@ -321,12 +313,6 @@ void take_path_str(const toml::table* tbl, const char* key,
 }
 
 void apply_table(const toml::table& doc, Settings& s) {
-    if (auto t = doc["comfy"].as_table()) {
-        take(t, "base_url", s.comfy.base_url);
-        take(t, "timeout_s", s.comfy.timeout_s);
-        take(t, "job_timeout_s", s.comfy.job_timeout_s);
-        take(t, "max_retries", s.comfy.max_retries);
-    }
     if (auto t = doc["llm"].as_table()) {
         take(t, "backend", s.llm.backend);
         take(t, "base_url", s.llm.base_url);
@@ -451,8 +437,6 @@ void apply_env(Settings& s) {
     };
 
     std::string v;
-    if (!(v = get("COMFY_BASE_URL")).empty()) s.comfy.base_url = v;
-    if (!(v = get("COMFY_TIMEOUT_S")).empty()) as_double(v, s.comfy.timeout_s);
     if (!(v = get("LLM_BASE_URL")).empty()) s.llm.base_url = v;
     if (!(v = get("LLM_MODEL")).empty()) s.llm.model = v;
     if (!(v = get("LLM_API_KEY")).empty()) s.llm.api_key = v;
@@ -497,7 +481,6 @@ Settings load_settings(const std::optional<fs::path>& project_dir) {
 
     // 地址类的值统一规整，避免 http://x:8188/ 和 http://x:8188
     // 被当成两个不同的服务
-    s.comfy.base_url = strip_trailing_slash(s.comfy.base_url);
     s.llm.base_url = strip_trailing_slash(s.llm.base_url);
     if (s.tts.base_url) s.tts.base_url = strip_trailing_slash(*s.tts.base_url);
 
@@ -528,12 +511,6 @@ constexpr const char* kDefaultToml = R"(# 场记配置文件
 # 显存覆盖。推理服务跑在另一台机器时本机探测不到显卡，用它手动指定。
 # vram_gb_override = 16
 
-[comfy]
-# 推理服务地址。可以是本机，也可以是局域网里任意一台有显卡的机器。
-base_url = "http://127.0.0.1:8188"
-job_timeout_s = 1800
-max_retries = 3
-
 [llm]
 # 剧本和分镜用的大模型。backend 两个值：
 #   remote —— 默认。走下面的 base_url，任何兼容 OpenAI 接口的服务都行。
@@ -550,9 +527,8 @@ model = "qwen3:14b"
 #            tts 和 tts_decoder 两个模型文件。想先听听效果的话，不必配也不必
 #            建项目，直接：changji --say "雨下了一整夜。" --tts-model <骨干>
 #            --tts-decoder <解码器>
-#   comfy —— 通过推理服务（ComfyUI）的 TTS 节点调用
 #   http  —— 独立的配音服务
-backend = "comfy"
+backend = "local"
 engine = "cosyvoice3"
 
 [gates]
@@ -582,13 +558,11 @@ subtitle_font = "Source Han Sans SC"
 # 或者把这一节写进项目目录的 changji.toml，只影响那一个项目。
 #
 # [models]
-# 出图出片走哪个引擎。sd = 进程内 sd.cpp，comfy = 外部 ComfyUI。
-# 选 comfy 时视频一定走 ComfyUI；首帧要项目里有 workflows/image.json
-# 才走它，没有就退回 sd.cpp——图像工作流是用户提供的，不能假定存在。
+# 出图出片走哪个引擎。现在只有 sd（进程内 sd.cpp）。
+# ComfyUI 那条 2026-09-10 拆了；老配置写 comfy 会被拦下并给出改法。
 # engine = "sd"
-
-# 进程内推理要用的模型文件。ComfyUI 那条路不需要这一节——
-# 那边模型是它自己管的，工作流里按名字引用。
+#
+# 进程内推理要用的模型文件。
 #
 # 相对路径相对下面的 dir 解析，绝对路径原样用（多机共享网络盘时会这么填）。
 # dir 留空则用项目库旁边的 models/ 目录。

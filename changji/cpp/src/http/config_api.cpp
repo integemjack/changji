@@ -169,9 +169,6 @@ ApiResult get_connections() {
     for (const auto& kv : env_overridden()) env[kv.first] = kv.second;
 
     return {200, {
-        {"comfy_base_url", s.comfy.base_url},
-        {"comfy_job_timeout_s", s.comfy.job_timeout_s},
-        {"comfy_max_retries", s.comfy.max_retries},
         {"llm_base_url", s.llm.base_url},
         {"llm_model", s.llm.model},
         {"llm_api_key_set", !key.empty()},
@@ -198,7 +195,6 @@ ApiResult post_connections(const json& body, const DoctorFn& check) {
     }
     const json& patch = *pit;
     static const std::set<std::string> kAllowed = {
-        "comfy_base_url", "comfy_job_timeout_s", "comfy_max_retries",
         "llm_base_url", "llm_model", "llm_api_key", "llm_temperature",
         "tts_backend", "tts_base_url", "tts_engine", "vram_gb_override"};
     forbid_extra(patch, kAllowed, "patch.");
@@ -229,21 +225,7 @@ ApiResult post_connections(const json& body, const DoctorFn& check) {
         if (key == "vram_gb_override") continue;   // 下面单独处理
 
         const auto [section, field] = split_conn_key(key);
-        if (section == "comfy") {
-            if (field == "base_url") {
-                const auto x = need_string(v, key);
-                note(key, s.comfy.base_url != x);
-                s.comfy.base_url = x;
-            } else if (field == "job_timeout_s") {
-                const auto x = need_num(v, key);
-                note(key, s.comfy.job_timeout_s != x);
-                s.comfy.job_timeout_s = x;
-            } else if (field == "max_retries") {
-                const auto x = need_int(v, key);
-                note(key, s.comfy.max_retries != x);
-                s.comfy.max_retries = x;
-            }
-        } else if (section == "llm") {
+        if (section == "llm") {
             if (field == "base_url") {
                 const auto x = need_string(v, key);
                 note(key, s.llm.base_url != x);
@@ -294,18 +276,12 @@ ApiResult post_connections(const json& body, const DoctorFn& check) {
 
     const auto errs = s.validate();
     if (!errs.empty()) throw ApiError(400, readable(errs));
-    // **这里有意不认 local，尽管 TTSConfig::validate() 认。** 不是漏了。
-    //
-    // Python 的 POST /api/settings 明确只放 comfy 和 http 过
-    // （server.py 的 `if new_tts.backend not in ("comfy", "http")`），
-    // 而这个接口在对拍覆盖范围内。放 local 过就是一处真的破契约，
-    // 而阶段 8 之前两个后端在接口上必须一模一样。
-    //
-    // 所以 local 走**配置文件**那条路，和 [models] 那一节同样的道理：
-    // C++ 独有的东西留在文件里，不进这个两边共用的接口。
-    // 阶段 8 删掉 Python 之后这条限制可以放开。
-    if (s.tts.backend != "comfy" && s.tts.backend != "http") {
-        throw ApiError(400, "配音后端只能是 comfy 或 http");
+    // 以前这里有意只放 comfy 和 http 过，为的是和 Python 的
+    // `if new_tts.backend not in ("comfy", "http")` 一字不差。
+    // **ComfyUI 拆掉之后那条限制没有意义了**：comfy 已经不是合法取值，
+    // 而 local 是现在的默认。照旧不放别的取值过。
+    if (s.tts.backend != "local" && s.tts.backend != "http") {
+        throw ApiError(400, "配音后端只能是 local 或 http");
     }
     if (s.tts.backend == "http" && !s.tts.base_url.has_value()) {
         throw ApiError(400, "配音后端选 http 就必须填地址");
@@ -325,11 +301,7 @@ ApiResult post_connections(const json& body, const DoctorFn& check) {
             }
             const auto [section, field] = split_conn_key(key);
             json value;
-            if (section == "comfy") {
-                if (field == "base_url") value = s.comfy.base_url;
-                else if (field == "job_timeout_s") value = s.comfy.job_timeout_s;
-                else if (field == "max_retries") value = s.comfy.max_retries;
-            } else if (section == "llm") {
+            if (section == "llm") {
                 if (field == "base_url") value = s.llm.base_url;
                 else if (field == "model") value = s.llm.model;
                 else if (field == "api_key") value = s.llm.api_key;

@@ -42,12 +42,11 @@ http::DoctorFn fake_doctor(bool can_run = true) {
 
 config::Settings baseline() {
     config::Settings s;
-    s.comfy.base_url = "http://127.0.0.1:8188";
     s.llm.base_url = "http://127.0.0.1:11434/v1";
     s.llm.model = "qwen3:14b";
     s.llm.api_key = "sk-abcdefgh";
     s.llm.temperature = 0.7;
-    s.tts.backend = "comfy";
+    s.tts.backend = "local";
     s.assembly.fps = 24;
     s.assembly.crf = 18;
     s.gates.enabled = true;
@@ -103,8 +102,9 @@ TEST_CASE("读连接设置时不回传密钥明文") {
 TEST_CASE("读连接设置的字段形状") {
     reset_runtime();
     const auto r = http::guard([] { return http::get_connections(); });
-    for (const char* k : {"comfy_base_url", "comfy_job_timeout_s",
-                          "comfy_max_retries", "llm_base_url", "llm_model",
+    REQUIRE(r.status == 200);
+    for (const char* k : {
+                          "llm_base_url", "llm_model",
                           "llm_api_key_set", "llm_api_key_hint",
                           "llm_temperature", "tts_backend", "tts_base_url",
                           "tts_engine", "vram_gb_override", "config_file",
@@ -423,30 +423,26 @@ TEST_CASE("校验不过要整体回滚") {
     CHECK(config::runtime().snapshot().assembly.crf == 18);
 }
 
-TEST_CASE("设置接口有意不认 local，配置文件认——这个分界不能漂") {
-    // 阶段 9 给 [tts].backend 加了第三个取值 local（进程内配音）。
-    // **配置文件认它，这个接口有意不认。**
+TEST_CASE("设置接口认的配音后端，和配置文件认的是同一批") {
+    // **这条用例以前钉的是一个反直觉的不对称**：接口只放 comfy 和 http 过，
+    // 配置文件另外认 local。那个不对称是为了和 Python 的
+    // `if new_tts.backend not in ("comfy", "http")` 一字不差。
     //
-    // 理由是 Python 的 POST /api/settings 明确只放 comfy 和 http 过，
-    // 而这个接口在对拍覆盖范围内——放 local 过就是一处真的破契约。
-    // local 走配置文件那条路，和 [models] 那一节同样的道理。
-    //
-    // 这条用例存在的意义是**把这个分界钉住**：它是个反直觉的不对称，
-    // 后来的人很容易"顺手补齐"，而补齐的代价是对拍多一条不同。
+    // ComfyUI 2026-09-10 拆掉之后不对称没有了：comfy 不再是合法取值，
+    // local 成了默认。两边认的都是 local 和 http。
     reset_runtime();
-    // 注意是 post_connections 不是 post_settings：tts_backend 归"连接"
-    // 那一组（后端地址、模型名那些），不归"参数"那一组。
-    // 第一版写错了，回的是 422 extra_forbidden——**那个 422 本身是对的**，
-    // 说明白名单确实在拦不该出现的键，只是我敲错了门。
+    for (const char* b : {"local", "http"}) {
+        CAPTURE(b);
+        config::TTSConfig c;
+        c.backend = b;
+        if (std::string(b) == "http") c.base_url = "http://x";
+        CHECK(c.validate().empty());
+    }
+    // 认不出的值两边都要拒
     const auto r = http::guard([] {
         return http::post_connections(
-            json{{"patch", {{"tts_backend", "local"}}}, {"persist", false}},
+            json{{"patch", {{"tts_backend", "comfy"}}}, {"persist", false}},
             fake_doctor());
     });
     CHECK_MESSAGE(r.status == 400, r.body.dump());
-
-    // 而配置对象本身认——不然配置文件里写 local 会整个加载不起来。
-    config::TTSConfig c;
-    c.backend = "local";
-    CHECK(c.validate().empty());
 }
