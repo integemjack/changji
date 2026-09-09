@@ -122,17 +122,25 @@ content 里；默认（auto）会剥到 `reasoning_content`，content 才干净�
 
 ## 4. 两份构建
 
-    # 工作进程：要 sd.cpp + CUDA，不要 llama
-    cmake -S cpp -B build-worker -DCMAKE_BUILD_TYPE=Release \
-      -DCHANGJI_SD=ON -DCHANGJI_SD_CUDA=ON -DCHANGJI_LLAMA=OFF \
-      -DCMAKE_CUDA_COMPILER=/usr/local/cuda/bin/nvcc \
-      -DCHANGJI_CUDA_ARCH=<89 或 120> -DCMAKE_CUDA_ARCHITECTURES=<同左>
+    bash cpp/tools/build_gpu_box.sh /root/changji /root/autodl-tmp 120
 
-    # 协调者：要 llama（进程内配音），不要 sd.cpp
-    cmake -S cpp -B build-coord -DCMAKE_BUILD_TYPE=Release \
-      -DCHANGJI_SD=OFF -DCHANGJI_LLAMA=ON -DGGML_CUDA=ON ...
+架构号：Ada（L20/4090）= 89，Blackwell（5080/5090）= **120**。填错编出来的
+东西在卡上跑不了，而且要跑到加载模型那一步才报错。
 
-架构号：Ada（L20/4090）= 89，Blackwell（5080/5090）= **120**。
+脚本先编一份**纯 CPU 的测试目标**（最快能发现编译器问题：新机器的 g++ 可能
+比你上次用的老，C++20 有些地方不认），再编工作进程（sd.cpp + CUDA）和
+协调者（llama.cpp + CUDA，进程内配音）。
+
+**构建目录别放系统盘。** AutoDL 这类机器 `/` 只有 30 G，而 FetchContent 拉的
+那堆（llama.cpp + sd.cpp + ggml + Crow + asio…）加上 CUDA 目标文件轻松几个 G，
+编到一半没空间比编不过还难查。
+
+**国内机器上 GitHub 可能直连不通。** `git ls-remote https://github.com/...`
+会挂着不返回，FetchContent 就卡在克隆那一步，**日志里一个字都不打**——
+看起来像"编译很慢"，实际是永远不会好。AutoDL 自带 `/etc/network_turbo`，
+`source` 一下就通（脚本会自动找它）。**它会让 pip / apt 变慢**，
+所以只在构建时开；下模型别开，hf-mirror 本来就是国内的。
+
 
 ## 5. 跑之前先看一眼画面
 
