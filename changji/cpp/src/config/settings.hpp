@@ -272,6 +272,21 @@ struct ModelsConfig {
     /// 出的初始噪声不一样，同一个种子出来的画面就不一样，而且不报错。
     /// 只影响出片那条上下文，出图那条不动（改了会连首帧一起变）。
     std::string video_rng = "cuda";
+
+    /// 出片挂一个 LoRA（相对 `dir` 或绝对路径）。**C++ 独有。**
+    ///
+    /// 用途是 Turbo 那类蒸馏适配器：MiniMax-H3 的 Turbo LoRA 能把采样从
+    /// 28 步压到 6 步，约 5 倍。挂上之后**步数要跟着改**（走
+    /// `POST /api/settings {"final_steps":6}` 或档位设置），不改的话
+    /// 白挂——28 步跑 Turbo 只会更糊，资料说超过 8 步就开始过锐。
+    ///
+    /// 留空就是不挂。sd.cpp 有自己的张量名转换，**认不认这类给 ComfyUI
+    /// 做的 LoRA 要实测**：不认时它只是加载不上，画面照出，所以判据得看
+    /// 耗时有没有真的降下来，不能只看"没报错"。
+    std::string video_lora;
+
+    /// 上面那个 LoRA 的权重。1.0 是原样，调低减弱它的影响。
+    double video_lora_strength = 1.0;
     double image_cfg = 2.5;
     double image_flow_shift = 3.0;
 

@@ -176,6 +176,10 @@ struct SdContext::Impl {
     std::string high_noise;
     /// 音频 VAE（MiniMax-H3 那类音画一起出的模型）。
     std::string audio_vae;
+    /// 出片挂的 LoRA。sd_lora_t 存的是 const char*，不拷贝，所以路径
+    /// 要活到 generate_video 调完，不能用临时 string 的 c_str()。
+    std::string lora;
+    float lora_strength = 1.0f;
     /// Qwen-Image 那一路的文本编码器（sd.cpp 的 llm_path）和它的视觉塔。
     /// **和 text_encoder 互斥**：一次只填其中一边——Wan 走 t5xxl，
     /// Qwen-Image 走 llm，两个参数位不是一回事。
@@ -231,6 +235,12 @@ std::shared_ptr<SdContext> SdContext::create(const config::Settings& settings,
     const std::string& vae_key =
         (!is_video && !m.image_vae.empty()) ? m.image_vae : m.video_vae;
     impl.vae = vae_key.empty() ? "" : paths::to_utf8(m.resolve(vae_key, ws));
+
+    // 出片的 LoRA（Turbo 那类蒸馏适配器）。
+    if (is_video && !m.video_lora.empty()) {
+        impl.lora = paths::to_utf8(m.resolve(m.video_lora, ws));
+        impl.lora_strength = static_cast<float>(m.video_lora_strength);
+    }
 
     // 音频 VAE：MiniMax-H3 那类画面和声音一起出的模型才有。
     if (is_video && !m.video_audio_vae.empty()) {
@@ -453,6 +463,19 @@ void SdContext::generate_video(const VideoRequest& req, const fs::path& raw_dest
     g.high_noise_sample_params.flow_shift =
         static_cast<float>(impl_->flow_shift);
     g.moe_boundary = static_cast<float>(impl_->moe_boundary);
+
+    // LoRA。**这个数组要活到 generate_video 返回**——sd_vid_gen_params_t
+    // 存的是指针，不拷贝。放在这一层的局部变量里正好（下面就调用了）。
+    sd_lora_t lora{};
+    if (!impl_->lora.empty()) {
+        lora.path = impl_->lora.c_str();
+        lora.multiplier = impl_->lora_strength;
+        // H3 不是混合专家，高噪声那份不存在；A14B 挂 LoRA 的话这里要分两条。
+        lora.is_high_noise = false;
+        g.loras = &lora;
+        g.lora_count = 1;
+    }
+
     if (has_start) g.init_image = start;
 
     // VAE 分块。**不设的话默认是关的**，而关着在 6GB 卡上解码要 11.7GB，

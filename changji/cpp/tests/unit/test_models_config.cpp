@@ -349,7 +349,8 @@ TEST_CASE("模板的 [models] 那一节列出了每一个会被读的键") {
                             "vram_reserve_gb", "video_high_noise",
                             "video_moe_boundary", "video_llm",
                             "video_llm_vision", "video_audio_vae",
-                            "video_rng"}) {
+                            "video_rng", "video_lora",
+                            "video_lora_strength"}) {
         CAPTURE(key);
         // 模板里这一节整个是注释掉的，所以形状是 `# 键 = `
         const std::string want = std::string("# ") + key + " = ";
@@ -443,6 +444,21 @@ TEST_CASE("[models]：双专家视频模型的两项") {
             if (e.find("video_high_noise") != std::string::npos) said = true;
         }
         CHECK(said);
+    }
+    SUBCASE("出片的 LoRA：默认不挂，路径和权重都读得到") {
+        // 用途是 Turbo 那类蒸馏适配器：H3 的 Turbo LoRA 把 28 步压到 6 步。
+        // **挂上之后步数要跟着改**，不改的话白挂，28 步跑 Turbo 只会更糊。
+        CHECK(config::ModelsConfig{}.video_lora.empty());
+        CHECK(config::ModelsConfig{}.video_lora_strength ==
+              doctest::Approx(1.0));
+        {
+            std::ofstream f(tmp / "changji.toml", std::ios::binary);
+            f << "[models]\nvideo_lora = \"loras/turbo.safetensors\"\n"
+                 "video_lora_strength = 0.8\n";
+        }
+        const auto got = config::load_settings(tmp);
+        CHECK(got.models.video_lora == "loras/turbo.safetensors");
+        CHECK(got.models.video_lora_strength == doctest::Approx(0.8));
     }
     SUBCASE("随机数发生器：默认 cuda，认 cpu/std，别的拒") {
         // sd.cpp 的默认是 cuda，Wan 那一路就用它；上游给 MiniMax-H3 的

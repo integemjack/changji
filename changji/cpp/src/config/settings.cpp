@@ -383,6 +383,8 @@ void apply_table(const toml::table& doc, Settings& s) {
         take(t, "video_llm_vision", s.models.video_llm_vision);
         take(t, "video_audio_vae", s.models.video_audio_vae);
         take(t, "video_rng", s.models.video_rng);
+        take(t, "video_lora", s.models.video_lora);
+        take(t, "video_lora_strength", s.models.video_lora_strength);
     }
     take_path_str(&doc, "workspace", s.workspace);
     if (auto node = doc.get("vram_gb_override")) {
@@ -621,6 +623,12 @@ subtitle_font = "Source Han Sans SC"
 # 上游给 MiniMax-H3 的命令行是 --rng cpu；发生器不同则同一个种子出的画面不同，
 # 而且不报错。只影响出片，出图那条不动。
 # video_rng = "cpu"
+#
+# 出片挂一个 LoRA。Turbo 那类蒸馏适配器能把采样步数压到 6 步左右（约 5 倍）。
+# **挂上之后步数要跟着改**，不改的话白挂。认不认这类给 ComfyUI 做的 LoRA
+# 要实测：不认时只是加载不上、画面照出，判据得看耗时有没有真降下来。
+# video_lora = "loras/minimax_h3_turbo_v4_step600_ema.safetensors"
+# video_lora_strength = 1.0
 #
 # weights = "auto" 时给计算缓冲留多少显存（GB）。auto 的预算是给权重的，
 # 而生成时那块计算缓冲比"给驱动留一成"大一个量级：1280×704 的 VAE 解码
