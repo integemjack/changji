@@ -6,6 +6,7 @@
 #include <cstdio>
 #include <cstring>
 #include <deque>
+#include <optional>
 #include <fstream>
 
 #include "stages/storyboard.hpp"
@@ -88,6 +89,44 @@ void write_silence(const fs::path& path, double seconds, int sample_rate) {
         f.write(zeros.data(), take);
         left -= take;
     }
+}
+
+std::optional<double> wav_peak_ratio(const fs::path& path) {
+    std::ifstream in(path, std::ios::binary);
+    if (!in) return std::nullopt;
+    // 整个读进来。这条只在时长短过绝对下限时才会被调，文件也就几十 KB。
+    std::string all((std::istreambuf_iterator<char>(in)),
+                    std::istreambuf_iterator<char>());
+    if (all.size() < 12 || all.compare(0, 4, "RIFF") != 0 ||
+        all.compare(8, 4, "WAVE") != 0) {
+        return std::nullopt;
+    }
+    std::uint16_t format = 0;
+    std::uint16_t bits = 0;
+    std::size_t data_off = 0;
+    std::size_t data_len = 0;
+    std::size_t off = 12;
+    while (off + 8 <= all.size()) {
+        const std::string id = all.substr(off, 4);
+        const std::uint32_t size = get_u32(all, off + 4);
+        if (id == "fmt ") {
+            format = get_u16(all, off + 8);
+            bits = get_u16(all, off + 22);
+        } else if (id == "data") {
+            data_off = off + 8;
+            data_len = std::min<std::size_t>(size, all.size() - data_off);
+            break;
+        }
+        off += 8 + size + (size % 2);
+    }
+    if (format != 1 || bits != 16 || data_len < 2) return std::nullopt;
+
+    int peak = 0;
+    for (std::size_t i = data_off; i + 1 < data_off + data_len; i += 2) {
+        const int v = static_cast<std::int16_t>(get_u16(all, i));
+        peak = std::max(peak, v < 0 ? -v : v);
+    }
+    return peak / 32768.0;
 }
 
 double probe_wav_duration(const fs::path& path) {

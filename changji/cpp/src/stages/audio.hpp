@@ -75,6 +75,14 @@ void write_silence(const std::filesystem::path& path, double seconds,
 /// 而且这样在没装 ffmpeg 的机器上配音那条路照样能跑。
 double probe_wav_duration(const std::filesystem::path& path);
 
+/// 读 16 位 PCM wav 的峰值（最大采样绝对值 / 满幅，0..1）。
+///
+/// 给"疑似空音频"那道检查用：ComfyUI 节点失败时吐的占位音频是**全零**，
+/// 而一句真的短台词（「苏晚！」1.04 秒）峰值有满幅的一成。只看时长
+/// 分不开这两种，看峰值一眼就分开了。不是 16 位 PCM 或者读不出来就
+/// 回空——那时候检查退回只看时长。
+std::optional<double> wav_peak_ratio(const std::filesystem::path& path);
+
 /// 跑配音并锁定镜头时长。
 class AudioStage {
 public:

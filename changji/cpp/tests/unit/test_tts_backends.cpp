@@ -9,6 +9,7 @@
 
 #include <doctest/doctest.h>
 
+#include <cmath>
 #include <filesystem>
 #include <fstream>
 #include <string>
@@ -23,6 +24,7 @@
 #include "comfy/client.hpp"
 #include "config/settings.hpp"
 #include "infer/llama_tts.hpp"
+#include "stages/audio.hpp"
 #include "stages/tts_backends.hpp"
 #include "util/paths.hpp"
 
@@ -106,10 +108,66 @@ TEST_CASE("疑似空音频要被拦下来") {
         const std::string msg = e.what();
         CAPTURE(msg);
         // 话要说到根因上：状态是成功的，用户第一反应不会是去看日志
-        CHECK(msg.find("任务状态是成功") != std::string::npos);
-        CHECK(msg.find("ComfyUI 的日志") != std::string::npos);
+        CHECK(msg.find("状态是成功") != std::string::npos);
+        // 不再一口咬定是 ComfyUI——本地后端也走这条检查。
+        CHECK(msg.find("ComfyUI") != std::string::npos);
         // 要给出判断依据，不然用户没法确认这是不是误杀
         CHECK(msg.find("1.00 秒") != std::string::npos);
+    }
+}
+
+namespace {
+// 在一段静音 wav 的数据区里写一个正弦：24 kHz 单声道 16 位，
+// 和 write_silence 的头一致，data 块从第 44 字节起。
+void write_tone(const fs::path& path, double seconds, double amplitude) {
+    stages::write_silence(path, seconds, 24000);
+    std::fstream f(path, std::ios::binary | std::ios::in | std::ios::out);
+    f.seekp(44);
+    const int frames = static_cast<int>(seconds * 24000);
+    for (int i = 0; i < frames; ++i) {
+        const double t = i / 24000.0;
+        const int v = static_cast<int>(amplitude * 32767 * std::sin(6.2831853 * 220.0 * t));
+        const unsigned char lo = static_cast<unsigned char>(v & 0xff);
+        const unsigned char hi = static_cast<unsigned char>((v >> 8) & 0xff);
+        f.put(static_cast<char>(lo));
+        f.put(static_cast<char>(hi));
+    }
+}
+}  // namespace
+
+TEST_CASE("短台词的真声音不该被绝对下限误杀") {
+    // 5090 上整集跑通时被这条误杀过一句：「苏晚！」本地 TTS 出了 1.04 秒的
+    // 真声音，差 0.01 秒够不到 1.05 的绝对下限，整个镜头的配音就丢了，
+    // 装配时闸门报"有台词但没有配音时长"。
+    const fs::path dir = temp_dir("短台词");
+
+    SUBCASE("1.04 秒、有声音：放行") {
+        const fs::path p = dir / paths::from_utf8("苏晚.wav");
+        write_tone(p, 1.04, 0.12);   // 峰值满幅 12%，和实测的 Qwen3-TTS 一个量级
+        CHECK(stages::wav_peak_ratio(p).value() > 0.1);
+        CHECK_NOTHROW(stages::reject_silent_audio(p, 1.04, "苏晚！"));
+    }
+    SUBCASE("1.04 秒、全零：还是占位音频，照拦") {
+        const fs::path p = dir / paths::from_utf8("占位.wav");
+        stages::write_silence(p, 1.04, 24000);
+        CHECK(stages::wav_peak_ratio(p).value() == 0.0);
+        CHECK_THROWS_AS(stages::reject_silent_audio(p, 1.04, "苏晚！"),
+                        stages::AudioError);
+    }
+    SUBCASE("有声音但只有估算的一成：相对下限照旧") {
+        const fs::path p = dir / paths::from_utf8("太短.wav");
+        write_tone(p, 0.3, 0.5);
+        CHECK_THROWS_AS(
+            stages::reject_silent_audio(
+                p, 0.3, "这是一句正常长度的台词，配出来不该只有零点三秒"),
+            stages::AudioError);
+    }
+    SUBCASE("不是 16 位 PCM 的读不出峰值，退回只看时长") {
+        const fs::path p = dir / paths::from_utf8("不是wav.wav");
+        std::ofstream(p, std::ios::binary) << "not a wav at all";
+        CHECK_FALSE(stages::wav_peak_ratio(p).has_value());
+        CHECK_THROWS_AS(stages::reject_silent_audio(p, 1.04, "苏晚！"),
+                        stages::AudioError);
     }
 }
 

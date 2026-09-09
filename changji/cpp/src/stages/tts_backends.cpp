@@ -5,6 +5,7 @@
 #include <fstream>
 
 #include "infer/llama_tts.hpp"
+#include "stages/audio.hpp"
 #include "stages/audio_plan.hpp"
 #include "util/paths.hpp"
 #include "util/text.hpp"
@@ -85,6 +86,17 @@ void reject_silent_audio(const fs::path& path, double duration_s,
     if (duration_s >= kMinPlausibleDurationS && duration_s >= expected * 0.35) {
         return;
     }
+    // **短过绝对下限但真有声音的，放行。** 5090 上整集跑通时被这条误杀过
+    // 一句：「苏晚！」本地 TTS 出了 1.04 秒、五万字节的真声音，差 0.01 秒
+    // 够不到 1.05。绝对下限挡的是 ComfyUI 节点失败时吐的那一秒占位音频，
+    // 而那种是**全零**——看峰值就分开了：真话峰值有满幅的一成，占位是 0。
+    // 相对下限照旧：估算 3 秒的台词只出 0.3 秒，有声音也不对。
+    // （Python 只看时长；它的这道检查只挂在 Comfy 后端上，本地后端是
+    // C++ 独有的，所以这里比 Python 宽是有意的。）
+    if (duration_s > 0 && duration_s >= expected * 0.35) {
+        const auto peak = wav_peak_ratio(path);
+        if (peak.has_value() && *peak >= 0.02) return;
+    }
 
     std::error_code ec;
     const auto size = fs::is_regular_file(path, ec) ? fs::file_size(path, ec) : 0;
@@ -96,8 +108,8 @@ void reject_silent_audio(const fs::path& path, double duration_s,
         " 秒、" + std::to_string(size) + " 字节，而这句台词按语速估算应有 " +
         fmt("%.1f", expected) + " 秒。\n台词：" +
         text::truncate_utf8(text, 30) +
-        "\nComfyUI 报的任务状态是成功，但节点内部很可能失败了。"
-        "去看 ComfyUI 的日志，常见原因是缺少依赖或模型没下完。");
+        "\n后端报的状态是成功，但产出物本身是空的。"
+        "走 ComfyUI 的话去看它的日志，常见原因是缺少依赖或模型没下完。");
 }
 
 double probe_audio_duration(const fs::path& path,
