@@ -31,6 +31,12 @@ const shots = ref([])
 const allEpisodes = ref(false)
 const skipFinal = ref(false)
 const force = ref(false)
+/**
+ * 多卡时按阶段排队列：所有集先配音，再所有集出首帧，再所有集出草稿……
+ * 单卡没意义（每一集本来就一个接一个），多卡时省掉每集之间的空转和换模型。
+ * 只在"跑整个项目"时有意义，所以只跟着它出现。
+ */
+const stageMajor = ref(false)
 
 const canStart = computed(
   () => Boolean(session.episodeId || allEpisodes.value) && !runStore.running,
@@ -138,6 +144,7 @@ async function start() {
         all_episodes: allEpisodes.value,
         skip_final: skipFinal.value,
         force: force.value,
+        order: allEpisodes.value && stageMajor.value ? 'stage' : 'episode',
       }),
     { key: 'start' },
   )
@@ -415,6 +422,11 @@ const sinceText = (ms) => humanTime(Math.max(0, (Date.now() - ms) / 1000))
               <input v-model="allEpisodes" type="checkbox" />
               <span>整个项目一起跑</span>
               <span class="field__hint">把所有已出分镜的集排成队列，一集接一集。</span>
+            </label>
+            <label v-if="allEpisodes" class="switch">
+              <input v-model="stageMajor" type="checkbox" />
+              <span>按阶段排队列（多卡）</span>
+              <span class="field__hint">所有集先配音，再所有集出首帧、出草稿……多张卡时省掉每集之间的空转和换模型。</span>
             </label>
             <label class="switch">
               <input v-model="skipFinal" type="checkbox" />
