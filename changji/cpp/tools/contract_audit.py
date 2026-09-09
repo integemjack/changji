@@ -101,6 +101,12 @@ def main() -> int:
         "main.cpp":             "doctest 入口",
         # HTTP 那一层由对拍活着比（endpoints_*.json 比的是真响应），
         # 这些用例钉的是单元级的边角，不是契约面
+        # 多卡那一套。Python 是 asyncio 单进程逐镜串行，没有工作进程、
+        # 没有池、也没有"派给谁"这件事，所以整块没有可比物。
+        "test_worker_proto.cpp":  "工作进程协议，Python 没有工作进程",
+        "test_worker_roster.cpp": "派活策略，同上",
+        # 前端产物嵌进二进制。Python 那版靠 Node 发前端，没有这条路。
+        "test_webapp.cpp":        "内嵌 webapp，Python 靠 Node 发前端",
         "test_config_api.cpp":  "接口由 HTTP 对拍覆盖",
         "test_doctor.cpp":      "同上",
         "test_jobs.cpp":        "同上",
