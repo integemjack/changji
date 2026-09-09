@@ -115,6 +115,35 @@ void Scheduler::set_free_vram_probe(FreeVramProbe probe) {
     free_vram_ = std::move(probe);
 }
 
+std::string out_of_vram_message(Slot slot) {
+    // **每个槽给的出路不一样。** 只说一句"显存不够"的话，用户下一步
+    // 无从下手——尤其是配音：它是唯一一个有现成外部服务可换的，
+    // 而那条路不用改一行代码，改个配置就行。
+    const std::string base =
+        std::string("显存不够加载 ") + to_string(slot) +
+        "。腾不出空间——别的槽正被借用着，或者这张卡确实太小。";
+    switch (slot) {
+        case Slot::TTS:
+            return base +
+                   "\n配音这一步**不必占显存**：把 changji.toml 里的 "
+                   "[tts].backend 改成 \"http\"，再填 [tts].base_url "
+                   "指向一个外部配音服务，本机就不用装配音模型了。"
+                   "\n（backend 还认 \"comfy\" 和 \"local\"，"
+                   "local 就是现在这条、进程内跑的。）";
+        case Slot::LLM:
+            return base +
+                   "\n写剧本这一步也可以不占显存：[llm].base_url 指向"
+                   "任何一个兼容 OpenAI 接口的服务就行，本地的云上的都可以。";
+        case Slot::Image:
+        case Slot::Video:
+            return base +
+                   "\n出图出片是躲不掉的显存开销。能调的两处：把 "
+                   "[models].weights 改成 \"cpu\"（权重放内存，"
+                   "慢一些但省显存），或者在设置页把档位分辨率调低。";
+    }
+    return base;
+}
+
 bool Scheduler::make_room(std::size_t need, Slot keep) {
     if (budget_ == 0) return true;  // 不限制
 
@@ -184,9 +213,7 @@ Lease Scheduler::acquire(Slot slot) {
     }
 
     if (!make_room(e->spec.vram_estimate, slot)) {
-        throw std::runtime_error(
-            std::string("显存不够加载 ") + to_string(slot) +
-            "。腾不出空间——多半是别的槽正被借用着。");
+        throw std::runtime_error(out_of_vram_message(slot));
     }
 
     // 加载可能很慢（要读几个 GB），不能一直占着锁。

@@ -457,3 +457,34 @@ TEST_CASE("显存真空着的时候别瞎卸模型") {
         CHECK(image_unloads == 1);
     }
 }
+
+TEST_CASE("显存不够时，每个槽要给出各自的出路") {
+    // 只说一句"显存不够"用户无从下手。配音和大模型都能换成外部服务
+    // （改配置，不改代码），出图出片躲不掉、只能在放内存和降分辨率之间挑。
+    SUBCASE("配音要点名外接 API 这条路") {
+        const std::string m = out_of_vram_message(Slot::TTS);
+        CHECK(m.find("tts") != std::string::npos);
+        CHECK(m.find("base_url") != std::string::npos);
+        CHECK(m.find("http") != std::string::npos);
+    }
+    SUBCASE("大模型同样") {
+        const std::string m = out_of_vram_message(Slot::LLM);
+        CHECK(m.find("llm") != std::string::npos);
+        CHECK(m.find("OpenAI") != std::string::npos);
+    }
+    SUBCASE("出图出片给的是另外两条，别乱指外接服务") {
+        for (const Slot s : {Slot::Image, Slot::Video}) {
+            const std::string m = out_of_vram_message(s);
+            CHECK(m.find("weights") != std::string::npos);
+            CHECK(m.find("分辨率") != std::string::npos);
+            // 这两个槽没有外部服务可换，别给假出路
+            CHECK(m.find("base_url") == std::string::npos);
+        }
+    }
+    SUBCASE("每一条都得先说清是哪个槽") {
+        for (const Slot s : {Slot::LLM, Slot::Image, Slot::Video, Slot::TTS}) {
+            CHECK(out_of_vram_message(s).find(to_string(s)) !=
+                  std::string::npos);
+        }
+    }
+}
