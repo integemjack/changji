@@ -30,7 +30,7 @@ const apiKeyInput = ref('')
 const SECTIONS = [
   { id: 'engine', title: '引擎', icon: 'link' },
   { id: 'llm', title: '大模型', icon: 'sparkle' },
-  { id: 'comfy', title: 'ComfyUI', icon: 'image' },
+  { id: 'render', title: '出图出片', icon: 'image' },
   { id: 'tts', title: '配音', icon: 'info' },
   { id: 'quality', title: '画质档位', icon: 'film' },
   { id: 'assembly', title: '成片装配', icon: 'board' },
@@ -213,9 +213,6 @@ async function saveNode() {
 /** 连接类设置。改了等于换一台干活的机器，保存完引擎会自动重新体检。 */
 async function saveConnections() {
   const patch = {
-    comfy_base_url: conn.value.comfy_base_url,
-    comfy_job_timeout_s: Number(conn.value.comfy_job_timeout_s),
-    comfy_max_retries: Number(conn.value.comfy_max_retries),
     llm_base_url: conn.value.llm_base_url,
     llm_model: conn.value.llm_model,
     llm_temperature: Number(conn.value.llm_temperature),
@@ -491,34 +488,18 @@ function scrollTo(id) {
             </div>
           </section>
 
-          <!-- ComfyUI -->
-          <section id="sec-comfy" class="card">
+          <!-- 出图出片 -->
+          <section id="sec-render" class="card">
             <div class="card__head">
               <div>
-                <div class="card__title">ComfyUI API</div>
-                <div class="card__sub">出图、图生视频、口型、配音都提交到这台机器。</div>
+                <div class="card__title">出图出片</div>
+                <div class="card__sub">
+                  首帧和视频都在这个进程里跑，没有外部服务要配。
+                  模型文件在配置文件的 [models] 一节。
+                </div>
               </div>
             </div>
             <div class="card__body grid grid--2">
-              <label class="field">
-                <span class="field__label">
-                  API 地址
-                  <span v-if="envLocked.comfy_base_url" class="pill pill--warn tiny">
-                    被 {{ envLocked.comfy_base_url }} 顶着
-                  </span>
-                </span>
-                <input v-model="conn.comfy_base_url" class="input mono" placeholder="http://127.0.0.1:8188" />
-                <span class="field__hint">可以指向局域网里任意一台有显卡的机器。</span>
-              </label>
-              <label class="field">
-                <span class="field__label">单任务超时（秒）</span>
-                <input v-model.number="conn.comfy_job_timeout_s" class="input numeric" type="number" />
-                <span class="field__hint">成片档一个镜头可能要好几分钟，1800 是合理起点。</span>
-              </label>
-              <label class="field">
-                <span class="field__label">失败重试次数</span>
-                <input v-model.number="conn.comfy_max_retries" class="input numeric" type="number" min="0" />
-              </label>
               <label class="field">
                 <span class="field__label">显存覆盖（GB）</span>
                 <input
@@ -529,9 +510,21 @@ function scrollTo(id) {
                   placeholder="留空表示自动探测"
                 />
                 <span class="field__hint">
-                  ComfyUI 在别的机器上时本机探测不到显卡，用它手动指定，画质档位按它推。
+                  只影响画质档位怎么推，不是"这张卡有多少显存"。
+                  想要更高的成片档就把它调大。
                 </span>
               </label>
+              <div class="field">
+                <span class="field__label">当前档位</span>
+                <span class="mono">
+                  <template v-if="hardware?.tiers?.final">
+                    成片 {{ hardware.tiers.final.width }}×{{ hardware.tiers.final.height }}
+                    / {{ hardware.tiers.final.steps }} 步
+                  </template>
+                  <template v-else>—</template>
+                </span>
+                <span class="field__hint">在下面「画质档位」那节可以逐项改。</span>
+              </div>
             </div>
           </section>
 
@@ -547,7 +540,7 @@ function scrollTo(id) {
               <label class="field">
                 <span class="field__label">后端</span>
                 <select v-model="conn.tts_backend" class="select">
-                  <option value="comfy">通过 ComfyUI 节点</option>
+                  <option value="local">进程内跑（不用装别的东西）</option>
                   <option value="http">独立 HTTP 服务</option>
                 </select>
               </label>
