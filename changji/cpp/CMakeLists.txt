@@ -187,10 +187,22 @@ if(CHANGJI_LLAMA)
     find_package(Python3 COMPONENTS Interpreter REQUIRED)
 
     foreach(opt LLAMA_BUILD_TESTS LLAMA_BUILD_TOOLS LLAMA_BUILD_EXAMPLES
-                LLAMA_BUILD_SERVER LLAMA_BUILD_APP LLAMA_BUILD_COMMON
+                LLAMA_BUILD_SERVER LLAMA_BUILD_APP
                 LLAMA_BUILD_UI LLAMA_OPENSSL)
         set(${opt} OFF CACHE BOOL "" FORCE)
     endforeach()
+
+    # **common 要开。** 上面那批全关掉时它也在里面，本来是对的——
+    # 配音只要 mtmd。但进程内跑文本大模型要**按 JSON Schema 约束输出**，
+    # 而 `json_schema_to_grammar` 只在 common 里，libllama 的公开头文件里
+    # 只有吃 GBNF 文本的 `llama_sampler_init_grammar`。
+    #
+    # 不约束的后果不是"偶尔格式不对"：整条流水线是无人值守跑的，
+    # 一次解析失败就是一集卡住，而模型下一次未必吐得更好。
+    #
+    # mtmd 那边**不能**链 common（它自己的 CMakeLists 里有断言），
+    # 我们链在 changji 上，两者不冲突。
+    set(LLAMA_BUILD_COMMON ON CACHE BOOL "" FORCE)
 
     # **配音要 mtmd，而 mtmd 在 tools/ 底下。**
     # Qwen3-TTS 的实现（models/qwen3tts-gen.cpp、qwen3tts-spkenc.cpp）
@@ -303,6 +315,7 @@ add_executable(changji
     src/stages/tts_backends.cpp
     src/infer/ggml_abi.cpp
     src/infer/llama_tts.cpp
+    src/infer/llama_chat.cpp
     src/infer/scheduler.cpp
     src/infer/sd_backend.cpp
     src/infer/sd_image.cpp
@@ -376,7 +389,8 @@ target_compile_definitions(changji PRIVATE
 if(CHANGJI_LLAMA)
     # mtmd 而不只是 llama：Qwen3-TTS 的实现在 mtmd 里。
     # mtmd 的 PUBLIC 链接里已经带上了 llama 和 ggml。
-    target_link_libraries(changji PRIVATE mtmd)
+    # mtmd 带来 llama 和 ggml；llama-common 是为了 json_schema_to_grammar。
+    target_link_libraries(changji PRIVATE mtmd llama-common)
     target_compile_definitions(changji PRIVATE CHANGJI_HAVE_LLAMA=1)
     # ggml 的头。开了 CHANGJI_LLAMA 时它由 llama.cpp 提供，
     # 而 doctor 的 ABI 探针要 include "ggml.h"。
@@ -603,6 +617,7 @@ if(CHANGJI_BUILD_TESTS)
         # test_facades.cpp 验的就是那一支的行为。
         src/infer/ggml_abi.cpp
         src/infer/llama_tts.cpp
+        src/infer/llama_chat.cpp
         src/infer/scheduler.cpp
         src/infer/sd_backend.cpp
         src/infer/sd_image.cpp
