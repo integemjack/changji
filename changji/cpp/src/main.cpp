@@ -8,6 +8,7 @@
 #include <cstdlib>
 #include <cctype>
 #include <iostream>
+#include <optional>
 #include <string>
 
 #include "infer/worker_server.hpp"
@@ -50,6 +51,8 @@ void print_usage() {
         "  --host <addr>         监听地址，默认 127.0.0.1（只有本机连得上）\n"
         "                        要让局域网连进来才填 0.0.0.0——这套接口没有\n"
         "                        鉴权，连上就能读项目、改分镜、起流水线\n"
+        "  --project <目录>      默认打开的项目。这个项目里的 changji.toml\n"
+        "                        也会一并读进来，盖过全局配置——不给就只有全局的\n"
         "  --doctor              跑一遍环境体检然后退出\n"
         "\n"
         "  当工作进程跑（多卡时一张卡起一个，见方案「多卡和多机」）：\n"
@@ -247,6 +250,10 @@ int run(int argc, char** argv) {
     std::string say_text, say_voice, say_model, say_decoder;
     std::string say_out = "say.wav";
 
+    // 默认打开的项目。**它同时决定读不读那个项目里的 changji.toml**——
+    // 不给就只有全局配置，和以前一样。
+    std::optional<std::filesystem::path> project_dir;
+
     for (std::size_t i = 1; i < av.size(); ++i) {
         const std::string& a = av[i];
         auto next = [&](const char* what) -> std::string {
@@ -262,6 +269,8 @@ int run(int argc, char** argv) {
         else if (a == "--worker") want_worker = true;
         else if (a == "--gpu") worker_gpu = std::atoi(next("显卡序号").c_str());
         else if (a == "--doctor") want_doctor = true;
+        else if (a == "--project")
+            project_dir = changji::paths::from_utf8(next("项目目录"));
         else if (a == "--say") say_text = next("要念的话");
         else if (a == "--out") say_out = next("输出文件名");
         else if (a == "--voice") say_voice = next("参考音色文件");
@@ -308,7 +317,7 @@ int run(int argc, char** argv) {
 
     changji::config::Settings settings;
     try {
-        settings = changji::config::load_settings();
+        settings = changji::config::load_settings(project_dir);
     } catch (const std::exception& e) {
         // 配置解析失败是致命的，而且消息里带着是哪个文件第几行。
         // 用默认值硬撑会让用户以为配置生效了。
