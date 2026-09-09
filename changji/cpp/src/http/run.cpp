@@ -138,6 +138,15 @@ ApiResult post_run(const json& body, const RunDeps& deps) {
     const bool force = opt_bool(body, "force", false);
     const bool all_episodes = opt_bool(body, "all_episodes", false);
     const auto stage_names = opt_str_list(body, "stages");
+    // **C++ 独有。** "episode"（默认）= 一集跑完再跑下一集，Python 就这样；
+    // "stage" = 所有集先配音，再所有集出首帧……多卡时用这个，见任务体里的注释。
+    std::string order = "episode";
+    if (const auto it = body.find("order"); it != body.end() && it->is_string()) {
+        order = it->get<std::string>();
+    }
+    if (order != "episode" && order != "stage") {
+        throw ApiError(400, "order 只能是 episode 或 stage");
+    }
 
     // 409 在读项目之前判。两个都错时回哪一个是可观测的，照抄 Python 的顺序。
     if (pipeline::jobs().running(pipeline::JobKind::Run)) {
@@ -159,10 +168,8 @@ ApiResult post_run(const json& body, const RunDeps& deps) {
 
     const bool started = pipeline::jobs().start(
         pipeline::JobKind::Run, queue[0],
-        [store, queue, skip_final, force, stage_names,
+        [store, queue, skip_final, force, stage_names, order,
          deps](pipeline::JobProgress& p) {
-            p.set_queue(0, static_cast<int>(queue.size()));
-
             // 配置和后端在**任务开始时**取一次，不是注册时。
             // 用户改完模型文件不用重启，但一次跑的中途不会换——
             // 中途换的话同一集里前半段和后半段用的是不同的模型。
@@ -170,33 +177,88 @@ ApiResult post_run(const json& body, const RunDeps& deps) {
             const HardwareProfile profile = deps.profile();
             const pipeline::Backends backends = deps.backends(settings, store);
 
+            // 阶段名的校验在这里，不在上面的路由里：
+            // Python 那边它在 run_stages 内部，错误落进任务状态
+            // 而不是变成 400。见 parse_stages 的注释。
+            std::optional<std::vector<pipeline::Stage>> only;
+            if (stage_names.has_value() && !stage_names->empty()) {
+                try {
+                    only = parse_stages(*stage_names);
+                } catch (const std::exception& e) {
+                    p.set_error(e.what());
+                    return;
+                }
+            }
+
             std::vector<std::string> errors;
-            int done = 0;
-            for (const auto& id : queue) {
-                if (p.cancelled()) return;
+            // 跑一集的某几个阶段。出错记下来，不拖垮后面的。
+            const auto run_one = [&](const std::string& id,
+                                     std::optional<std::vector<pipeline::Stage>> which) {
                 p.set_episode_id(id);
                 try {
                     pipeline::RunOptions opts;
                     opts.episode_id = id;
                     opts.skip_final = skip_final;
                     opts.force = force;
-                    // 阶段名的校验在这里，不在上面的路由里：
-                    // Python 那边它在 run_stages 内部，错误落进任务状态
-                    // 而不是变成 400。见 parse_stages 的注释。
-                    if (stage_names.has_value() && !stage_names->empty()) {
-                        opts.only = parse_stages(*stage_names);
-                    }
-
+                    opts.only = std::move(which);
                     const auto report = pipeline::run_episode(
                         store, profile, settings, opts, backends, p, p.token());
                     if (!report.errors.empty()) {
                         errors.push_back(id + "：" + join(report.errors, "；"));
                     }
                 } catch (const std::exception& e) {
-                    // 一集出错不拖垮后面几集。
                     errors.push_back(std::string(id) + "：" + e.what());
                 }
-                p.set_queue(++done, static_cast<int>(queue.size()));
+            };
+
+            if (order == "stage") {
+                // **按阶段排。** 所有集先配音，再所有集出首帧……
+                //
+                // 为什么多卡时要这样：按集排的话每一集都要经历一次配音
+                // （串行、协调者那张卡）→ 首帧 → 草稿 → 成片 → 装配（CPU），
+                // 其间八个工作进程反复空转；每个阶段结尾都有一条"等最慢那镜"
+                // 的尾巴；每换一个阶段所有工作进程都要换一次模型。十集就是
+                // 十遍。按阶段排，尾巴从十条变一条，模型每个阶段只换一次。
+                //
+                // 阶段内部的代码一行不动：每个阶段就是 run_episode 带
+                // only={那一个阶段} 跑一遍，挑镜头仍然按状态来，断点续跑照旧。
+                std::vector<pipeline::Stage> stages = {
+                    pipeline::Stage::Audio, pipeline::Stage::Frames,
+                    pipeline::Stage::Draft, pipeline::Stage::Final,
+                    pipeline::Stage::Assemble};
+                if (only.has_value()) {
+                    // 用户只要某几个阶段：保留顺序，只留要的
+                    std::vector<pipeline::Stage> kept;
+                    for (auto st : stages) {
+                        if (std::find(only->begin(), only->end(), st) != only->end()) {
+                            kept.push_back(st);
+                        }
+                    }
+                    stages = std::move(kept);
+                }
+                if (skip_final) {
+                    stages.erase(std::remove(stages.begin(), stages.end(),
+                                             pipeline::Stage::Final),
+                                 stages.end());
+                }
+                const int total = static_cast<int>(stages.size() * queue.size());
+                p.set_queue(0, total);
+                int done = 0;
+                for (const auto st : stages) {
+                    for (const auto& id : queue) {
+                        if (p.cancelled()) return;
+                        run_one(id, std::vector<pipeline::Stage>{st});
+                        p.set_queue(++done, total);
+                    }
+                }
+            } else {
+                p.set_queue(0, static_cast<int>(queue.size()));
+                int done = 0;
+                for (const auto& id : queue) {
+                    if (p.cancelled()) return;
+                    run_one(id, only);
+                    p.set_queue(++done, static_cast<int>(queue.size()));
+                }
             }
             if (!errors.empty()) p.set_error(join(errors, "；"));
         });

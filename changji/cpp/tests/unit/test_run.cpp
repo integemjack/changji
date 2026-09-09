@@ -9,6 +9,7 @@
 
 #include <chrono>
 #include <cstdlib>
+#include <algorithm>
 #include <filesystem>
 #include <fstream>
 #include <thread>
@@ -640,4 +641,126 @@ TEST_CASE("成片列表：项目路径为空是 400") {
     } catch (const http::ApiError& e) {
         CHECK(e.status() == 400);
     }
+}
+
+// ---------------------------------------------------------------------------
+// 队列按阶段排（order = "stage"）。
+//
+// 多卡时按集排的代价：每一集都要经历一次配音 → 首帧 → 草稿 → 成片 → 装配，
+// 其间工作进程反复空转、每个阶段结尾都有一条尾巴、每换阶段都换一次模型。
+// 按阶段排就是所有集先出首帧，再所有集出草稿……
+//
+// 这里用一条**合并的**调用序列来证明顺序：Fakes 里 frames 和 videos 是
+// 两个表，分开记是看不出"第二集的首帧在第一集的视频之前"的。
+// ---------------------------------------------------------------------------
+
+namespace {
+
+struct OrderedFakes {
+    std::vector<std::string> seq;   ///< "F:ep01_sh1" / "V:ep01_sh1"，按发生顺序
+
+    http::RunDeps deps() {
+        http::RunDeps d;
+        d.settings = [] { return config::Settings{}; };
+        d.profile = [] {
+            models::HardwareProfile p;
+            p.vram_gb = 6.0;
+            p.tiers = models::tiers_for_vram(6.0);
+            p.detected = true;
+            return p;
+        };
+        d.backends = [this](const config::Settings&, const models::ProjectStore&) {
+            pipeline::Backends b;
+            b.frame = [this](const models::Shot& s, const stages::PromptBundle&,
+                             const models::TierSpec&, const fs::path& dest,
+                             pipeline::CancelToken&, const infer::StepCallback&) {
+                seq.push_back("F:" + s.shot_id);
+                Fakes::stub(dest);
+            };
+            b.video = [this](const models::Shot& s, const stages::RenderPlan&,
+                             const std::optional<fs::path>&, const fs::path& dest,
+                             pipeline::CancelToken&, const infer::StepCallback&) {
+                seq.push_back("V:" + s.shot_id);
+                Fakes::stub(dest);
+            };
+            return b;
+        };
+        return d;
+    }
+};
+
+std::size_t first_index(const std::vector<std::string>& v, const std::string& x) {
+    return static_cast<std::size_t>(
+        std::find(v.begin(), v.end(), x) - v.begin());
+}
+
+}  // namespace
+
+TEST_CASE("order=stage：所有集先出首帧，再所有集出视频") {
+    quiesce();
+    const auto store = make_store("按阶段", {{"ep01", 2}, {"ep02", 2}});
+    OrderedFakes f;
+
+    const auto r = http::post_run({{"project", project_arg(store)},
+                                   {"episode_id", "ep01"},
+                                   {"all_episodes", true},
+                                   {"skip_final", true},
+                                   {"order", "stage"}},
+                                  f.deps());
+    pipeline::jobs().wait_idle();
+    CHECK(r.status == 200);
+
+    // 两集四镜：四条首帧全在任何一条视频之前
+    REQUIRE(f.seq.size() == 8);
+    const std::size_t last_frame = std::max({
+        first_index(f.seq, "F:ep01_sh1"), first_index(f.seq, "F:ep01_sh2"),
+        first_index(f.seq, "F:ep02_sh1"), first_index(f.seq, "F:ep02_sh2")});
+    const std::size_t first_video = std::min({
+        first_index(f.seq, "V:ep01_sh1"), first_index(f.seq, "V:ep01_sh2"),
+        first_index(f.seq, "V:ep02_sh1"), first_index(f.seq, "V:ep02_sh2")});
+    CAPTURE(f.seq);
+    CHECK(last_frame < first_video);
+    // 阶段之内仍然按集的顺序
+    CHECK(first_index(f.seq, "F:ep01_sh1") < first_index(f.seq, "F:ep02_sh1"));
+    CHECK(first_index(f.seq, "V:ep01_sh1") < first_index(f.seq, "V:ep02_sh1"));
+
+    SUBCASE("队列进度按 阶段×集 计") {
+        // 跳了成片档：配音、首帧、草稿、装配 四个阶段 × 两集
+        const auto snap = pipeline::jobs().snapshot(pipeline::JobKind::Run);
+        CHECK(snap["queue_total"] == 8);
+        CHECK(snap["queue_done"] == 8);
+    }
+}
+
+TEST_CASE("默认 order=episode：第一集的视频在第二集的首帧之前") {
+    // 这条钉的是"默认行为一个字没变"——Python 就是一集跑完再跑下一集。
+    quiesce();
+    const auto store = make_store("按集", {{"ep01", 1}, {"ep02", 1}});
+    OrderedFakes f;
+
+    http::post_run({{"project", project_arg(store)},
+                    {"episode_id", "ep01"},
+                    {"all_episodes", true},
+                    {"skip_final", true}},
+                   f.deps());
+    pipeline::jobs().wait_idle();
+
+    CAPTURE(f.seq);
+    CHECK(first_index(f.seq, "V:ep01_sh1") < first_index(f.seq, "F:ep02_sh1"));
+}
+
+TEST_CASE("order 只认 episode 和 stage") {
+    quiesce();
+    const auto store = make_store("错order", {{"ep01", 1}});
+    Fakes fakes;
+    try {
+        http::post_run({{"project", project_arg(store)},
+                        {"episode_id", "ep01"},
+                        {"order", "random"}},
+                       fakes.deps());
+        FAIL("该抛");
+    } catch (const http::ApiError& e) {
+        CHECK(e.status() == 400);
+    }
+    pipeline::jobs().wait_idle();
 }
