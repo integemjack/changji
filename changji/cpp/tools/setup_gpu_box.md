@@ -11,10 +11,13 @@
 |---|---|---|
 | 出片 | Wan 5B fp16 9.4 GB + umt5-xxl 11 GB + VAE 1.4 GB | **≈22 GB** |
 | 出首帧 | Qwen-Image fp8 20 GB + Qwen2.5-VL **bf16** 16 GB | **≈36 GB** |
-| 出首帧（省显存） | Qwen-Image fp8 20 GB + Qwen2.5-VL **fp8** 8.8 GB | **≈29 GB** |
+| 出首帧（省显存） | Qwen-Image fp8 20 GB + Qwen2.5-VL **Q8_0 GGUF** ≈8 GB | **≈28 GB** |
 
 - **≥40 GB**（L20 48 GB / A100）：随便配，bf16 编码器也行。
-- **32 GB**（5090）：**必须用 fp8 编码器**，否则出首帧那一步装不下。
+- **32 GB**（5090）：文本编码器要用 **`Qwen2.5-VL-7B-Instruct-Q8_0.gguf`**
+  （约 8 GB，sd.cpp 上游 `docs/qwen_image.md` 里的命令行用的就是它）。
+  用 bf16 那份（16 GB）会超，auto_fit 只能把一部分赶回内存，出首帧那一步变慢。
+  **不要用 Comfy 的 `fp8_scaled`**——见下面第 1 节第 2 条。
 - **≤24 GB**：`weights = "cpu"`，权重放系统内存、用到才搬进显存。能跑，
   但每张卡大约 1 秒忙 2 秒闲（实测 35% 利用率），瓶颈在 PCIe。
 
@@ -30,7 +33,8 @@
     # 出首帧：Qwen-Image **基础模型**
     qwen_image_fp8_e4m3fn.safetensors         20 GB
     qwen_image_vae.safetensors               243 MB
-    qwen_2.5_vl_7b_bf16.safetensors           16 GB   # 32 GB 卡上换 fp8 那份
+    qwen_2.5_vl_7b_bf16.safetensors           16 GB   # ≥40 GB 卡用这份
+    Qwen2.5-VL-7B-Instruct-Q8_0.gguf         ~8 GB   # 32 GB 卡用这份
 
     # 配音：Qwen3-TTS
     Qwen3-TTS-12Hz-1.7B-Base-bf16.gguf       3.3 GB
@@ -43,7 +47,8 @@
    靠"方差不为零"判"不是空图"会一路绿灯。抽帧看一眼，十秒钟的事。
 2. **文本编码器别用 Comfy 的 `fp8_scaled` 那份。** 那种格式带 scale 张量，
    sd.cpp 的加载器里没有一行处理 scaled，会按普通 fp8 读——不报错，
-   只是文本条件全是垃圾。用 `bf16` 或普通 `fp8`。
+   只是文本条件全是垃圾。用 `bf16`（大卡）或 `Q8_0` 的 GGUF（小卡），
+   后者正是上游 `docs/qwen_image.md` 命令行里用的那份。
 
 国内拉权重：`aria2c -x 8 -s 8 -k 4M -o <名字> https://hf-mirror.com/...`。
 单连接只有 1～2 MB/s，八连接能跑满带宽。
