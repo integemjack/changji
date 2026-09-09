@@ -203,7 +203,12 @@ stages::VideoRenderer WorkerPool::video_renderer() {
         t.tier = plan.tier;
         if (start_image) t.start_image = paths::to_utf8(*start_image);
         t.dest = paths::to_utf8(dest);
-        t.seed = stages::frame_seed(shot.shot_id, shot.attempts);
+        // **出片用 render_seed，不是 frame_seed。** 两个是不同的函数，
+        // 算出来的种子不同、画面就不同。写错了不会报错、不会变慢，
+        // 只是走池出来的片和进程内的不一样——而没有哪一层会去比这个。
+        // 是"产物逐字节比"抓出来的：同一条路跑两遍字节相同（GPU 是确定的），
+        // 池和进程内比就不同，差别就在这一行。
+        t.seed = stages::render_seed(shot.shot_id, shot.attempts);
         impl->run_task(t, tok, on_step);
     };
 }
