@@ -75,6 +75,15 @@ FrameRenderer sd_renderer_with_seed(std::int64_t seed);
 /// shots 会被就地改：成功的置 FRAME_DONE 并记下 frame_path，
 /// 失败的 attempts 加一。调用方负责存盘——这一层不碰 ProjectStore，
 /// 因为"什么时候存"是流水线的决定（一镜一存还是整集一存）。
+/// 出一批首帧。
+///
+/// `concurrency` 是同时在跑的镜头数。**1 就是原来的行为**（逐镜串行）。
+/// 大于 1 时只并行**渲染**那一步——渲染器收的是 `const Shot&`，只读；
+/// 写回 `frame_path` / `status` / `attempts` 一律等全部收完之后
+/// 在调用线程上顺序做。这条守住，"单一写者"就不破。
+///
+/// 多卡时取工作进程数：`FrameStage` 那一层不知道有几张卡，
+/// 但它知道池里有几个。
 std::vector<FrameOutcome> run_frames(
     std::vector<models::Shot*>& shots,
     const models::AssetLibrary& assets,
@@ -82,6 +91,7 @@ std::vector<FrameOutcome> run_frames(
     const models::ProjectPaths& paths,
     const FrameRenderer& render,
     pipeline::JobProgress& progress,
-    pipeline::CancelToken& tok);
+    pipeline::CancelToken& tok,
+    int concurrency);
 
 }  // namespace changji::stages

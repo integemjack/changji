@@ -43,6 +43,9 @@ RunDeps default_run_deps() {
             b.video = pool->video_renderer();
             b.frame_backend_name =
                 "sd.cpp（" + std::to_string(pool->size()) + " 个工作进程）";
+            // **并发上限就是池的大小。** 没有池时保持 1——
+            // 进程内不能并发（sd.cpp 的进度回调是全局的）。
+            b.render_lanes = static_cast<int>(pool->size());
             // 池要活到渲染结束。Backends 只存 std::function，
             // 捕获一份 shared_ptr 让它跟着活。
             b.keepalive.push_back(pool);

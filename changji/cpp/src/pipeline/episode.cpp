@@ -218,8 +218,14 @@ RunReport run_episode(const ProjectStore& store,
         emit(progress, stage_name, "start", msg, 0,
              static_cast<int>(todo.size()));
 
+        // fps 走配置，不是写死的 24。Python 那边是
+        // `RenderStage(..., fps=self.settings.assembly.fps)`；这儿以前
+        // 漏了这个参数吃了默认值，`[assembly].fps = 30` 时两边算出来的
+        // 帧数不同——**片长会不一样**，而没有任何一层会报错。
         return stages::render_batch(todo, assets, spec, store.paths(),
-                                    backends.video, progress, tok);
+                                    backends.video, progress, tok,
+                                    settings.assembly.fps,
+                                    backends.render_lanes);
     };
 
     try {
@@ -291,7 +297,11 @@ RunReport run_episode(const ProjectStore& store,
 
                 report.frames = stages::run_frames(
                     todo, assets, profile.tiers.at(Tier::DRAFT),
-                    store.paths(), backends.frame, progress, tok);
+                    store.paths(), backends.frame, progress, tok,
+                    // 同时跑几镜。**没有池就是 1**，行为和以前一样。
+                    // 有池就取池的大小——这一层不知道有几张卡，
+                    // 但它知道池里有几个工作进程。
+                    backends.render_lanes);
                 save();
 
                 const int n = static_cast<int>(report.frames.size());

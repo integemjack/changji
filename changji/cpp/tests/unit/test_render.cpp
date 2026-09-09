@@ -471,3 +471,116 @@ TEST_CASE("4n+1 这条硬要求，每一条都得满足") {
         CHECK(f <= cap);        // 不超上限
     }
 }
+
+// ---------------------------------------------------------------------------
+// 并发出片时，状态改动还对不对。
+//
+// 出片是整条流水线最花时间的一环，多卡加速就加在这儿。但并行的只该是
+// **渲染**——`video_path` / `status` / `attempts` 的写回必须仍然单线程、
+// 按镜头原顺序，不然存盘时最后一个写的赢，而且一声不吭。
+// ---------------------------------------------------------------------------
+
+TEST_CASE("并发出片和串行的结果一模一样") {
+    const models::ProjectPaths paths(temp_root("并发一致"));
+
+    auto run_with = [&](int lanes) {
+        std::vector<models::Shot> owned;
+        for (int i = 0; i < 6; ++i) {
+            owned.push_back(make_shot("sh" + std::to_string(i + 1),
+                                      2.0 + 0.5 * i));
+        }
+        std::vector<models::Shot*> shots;
+        for (auto& s : owned) shots.push_back(&s);
+
+        pipeline::JobTable table;
+        pipeline::CancelToken tok;
+        table.start(pipeline::JobKind::Run, "ep01",
+                    [&](pipeline::JobProgress& p) {
+                        stages::render_batch(shots, make_assets(), make_spec(),
+                                             paths, fake_ok(), p, tok, 24,
+                                             lanes);
+                    });
+        table.wait_idle();
+
+        std::vector<std::string> summary;
+        for (const auto& s : owned) {
+            summary.push_back(s.shot_id + "|" +
+                              std::string(models::to_string(s.status)) + "|" +
+                              std::to_string(s.attempts) + "|" +
+                              s.video_path.value_or("(无)"));
+        }
+        return summary;
+    };
+
+    const auto serial = run_with(1);
+    const auto parallel = run_with(4);
+
+    REQUIRE(serial.size() == 6);
+    // 并发只该改变"多快"，不该改变"是什么"。
+    CHECK(serial == parallel);
+}
+
+TEST_CASE("并发出片失败时 attempts 只加一次") {
+    // attempts 是闸门的重试计数，多加一次就可能直接判超限降级，
+    // 那一镜从此变成静帧加运镜——画面还在，只是不动了。
+    const models::ProjectPaths paths(temp_root("并发失败"));
+    std::vector<models::Shot> owned;
+    for (int i = 0; i < 5; ++i) {
+        owned.push_back(make_shot("sh" + std::to_string(i + 1)));
+    }
+    std::vector<models::Shot*> shots;
+    for (auto& s : owned) shots.push_back(&s);
+
+    const stages::VideoRenderer always_fail =
+        [](const models::Shot& shot, const stages::RenderPlan&,
+           const std::optional<fs::path>&, const fs::path&,
+           pipeline::CancelToken&, const infer::StepCallback&) {
+            throw std::runtime_error(shot.shot_id + " 出片失败：造出来的错");
+        };
+
+    pipeline::JobTable table;
+    pipeline::CancelToken tok;
+    std::vector<stages::RenderOutcome> outs;
+    table.start(pipeline::JobKind::Run, "ep01", [&](pipeline::JobProgress& p) {
+        outs = stages::render_batch(shots, make_assets(), make_spec(), paths,
+                                    always_fail, p, tok, 24, 4);
+    });
+    table.wait_idle();
+
+    CHECK(outs.size() == 5);
+    for (const auto& s : owned) {
+        CAPTURE(s.shot_id);
+        CHECK(s.attempts == 1);                 // 不是 0，也不是 2
+        CHECK_FALSE(s.video_path.has_value());  // 失败不该留下路径
+    }
+}
+
+TEST_CASE("并发出片每一镜都真的出了自己的那个文件") {
+    // 派活要是算错了下标，可能两个线程领到同一镜、另一镜没人做——
+    // 而 outcomes 的条数照样对得上，状态也照样是 draft_done。
+    // 所以这里数的是**盘上的文件**。
+    const models::ProjectPaths paths(temp_root("并发覆盖"));
+    std::vector<models::Shot> owned;
+    for (int i = 0; i < 7; ++i) {
+        owned.push_back(make_shot("sh" + std::to_string(i + 1)));
+    }
+    std::vector<models::Shot*> shots;
+    for (auto& s : owned) shots.push_back(&s);
+
+    pipeline::JobTable table;
+    pipeline::CancelToken tok;
+    std::vector<stages::RenderOutcome> outs;
+    table.start(pipeline::JobKind::Run, "ep01", [&](pipeline::JobProgress& p) {
+        outs = stages::render_batch(shots, make_assets(), make_spec(), paths,
+                                    fake_ok(), p, tok, 24, 3);
+    });
+    table.wait_idle();
+
+    REQUIRE(outs.size() == 7);
+    for (const auto& s : owned) {
+        CAPTURE(s.shot_id);
+        REQUIRE(s.video_path.has_value());
+        CHECK(fs::is_regular_file(paths.abs(*s.video_path)));
+        CHECK(s.status == models::ShotStatus::DRAFT_DONE);
+    }
+}

@@ -1,8 +1,10 @@
 #include "stages/render.hpp"
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cmath>
+#include <thread>
 
 #include "util/human_time.hpp"
 #include "util/paths.hpp"
@@ -72,123 +74,180 @@ std::vector<RenderOutcome> render_batch(std::vector<Shot*>& shots,
                                         const ProjectPaths& paths,
                                         const VideoRenderer& render,
                                         pipeline::JobProgress& progress,
-                                        pipeline::CancelToken& tok, int fps) {
+                                        pipeline::CancelToken& tok, int fps,
+                                        int concurrency) {
     const PromptComposer composer(assets);
     const std::string stage_name =
         spec.tier == Tier::FINAL ? "final" : "draft";
 
-    std::vector<RenderOutcome> outcomes;
     const int total = static_cast<int>(shots.size());
-    int index = 0;
+
+    /// 一镜跑完之后的东西。**只装数据，不碰 Shot。**
+    struct Done {
+        bool ok = false;
+        std::string error;
+        std::string rel_path;
+        double elapsed_s = 0.0;
+        bool skipped = false;  ///< 取消了，没跑
+    };
+    std::vector<Done> done(shots.size());
 
     // 开跑前的预计来自一张按显存推的静态表，实测能差一倍。
     // 跑起来之后用真实耗时重算，等的人才知道还要等多久。
     const double stage_started = now_seconds();
 
-    for (Shot* shot : shots) {
-        ++index;
-        if (tok.cancelled()) break;
+    // 同时跑几镜。**上限是镜头数**——池里八个而只有三镜时，
+    // 起八个线程只是白占。
+    const int lanes = std::max(1, std::min(concurrency, total));
 
-        const double started = now_seconds();
-        RenderOutcome out;
-        out.shot_id = shot->shot_id;
+    std::atomic<int> next{0};
+    std::atomic<int> finished{0};
 
-        {
-            pipeline::Event e;
-            e.stage = stage_name;
-            e.kind = "progress";
-            e.current = index;
-            e.total = total;
-            e.shot_id = shot->shot_id;
-            e.message = "出视频 " + shot->shot_id;
-            progress.report(e);
-        }
-
-        try {
-            const RenderPlan plan =
-                make_plan(*shot, spec, composer, assets.style.aspect_ratio, fps);
-
-            // 首帧是这一镜的起点。没有的话退回纯文生视频——
-            // 那样跨镜头一致性会掉一大截，但总比整条流水线卡住强。
-            std::optional<fs::path> start;
-            if (shot->frame_path.has_value() && !shot->frame_path->empty()) {
-                const fs::path frame = paths.abs(*shot->frame_path);
-                std::error_code ec;
-                if (fs::is_regular_file(frame, ec)) {
-                    start = frame;
-                } else {
-                    pipeline::Event e;
-                    e.stage = stage_name;
-                    e.kind = "warn";
-                    e.shot_id = shot->shot_id;
-                    e.message = shot->shot_id +
-                                " 记着首帧但文件不在，这一镜退回纯文生视频";
-                    progress.report(e);
-                }
+    const auto lane = [&] {
+        for (;;) {
+            const int i = next.fetch_add(1);
+            if (i >= total) return;
+            if (tok.cancelled()) {
+                done[i].skipped = true;
+                continue;
             }
 
-            // 按档位分目录。草稿和成片混在一起的话，重跑成片时
-            // 分不清哪个 mp4 是哪一档的，而它们文件名只差一个后缀。
-            const fs::path dest = paths.shots(stage_name) /
-                                  paths::from_utf8(shot->shot_id + ".mp4");
+            Shot* shot = shots[i];
+            const int index = i + 1;
+            const double started = now_seconds();
 
-            const auto on_step = [&](int step, int steps, double,
-                                     bool loading) {
+            {
                 pipeline::Event e;
                 e.stage = stage_name;
                 e.kind = "progress";
                 e.current = index;
                 e.total = total;
                 e.shot_id = shot->shot_id;
-                e.message =
-                    loading ? "加载出片模型 " + std::to_string(step) + "/" +
-                                  std::to_string(steps)
-                            : "出视频 " + shot->shot_id + "（第 " +
-                                  std::to_string(step) + "/" +
-                                  std::to_string(steps) + " 步）";
+                e.message = "出视频 " + shot->shot_id;
                 progress.report(e);
-            };
+            }
 
-            render(*shot, plan, start, dest, tok, on_step);
+            try {
+                const RenderPlan plan = make_plan(
+                    *shot, spec, composer, assets.style.aspect_ratio, fps);
 
-            shot->video_path = paths.rel(dest);
+                // 首帧是这一镜的起点。没有的话退回纯文生视频——
+                // 那样跨镜头一致性会掉一大截，但总比整条流水线卡住强。
+                std::optional<fs::path> start;
+                if (shot->frame_path.has_value() && !shot->frame_path->empty()) {
+                    const fs::path frame = paths.abs(*shot->frame_path);
+                    std::error_code ec;
+                    if (fs::is_regular_file(frame, ec)) {
+                        start = frame;
+                    } else {
+                        pipeline::Event e;
+                        e.stage = stage_name;
+                        e.kind = "warn";
+                        e.shot_id = shot->shot_id;
+                        e.message = shot->shot_id +
+                                    " 记着首帧但文件不在，这一镜退回纯文生视频";
+                        progress.report(e);
+                    }
+                }
+
+                // 按档位分目录。草稿和成片混在一起的话，重跑成片时
+                // 分不清哪个 mp4 是哪一档的，而它们文件名只差一个后缀。
+                const fs::path dest = paths.shots(stage_name) /
+                                      paths::from_utf8(shot->shot_id + ".mp4");
+
+                // **并发时几镜同时报**，靠 Event 里的 shot_id 分得开；
+                // JobProgress::report 自己有锁。
+                const auto on_step = [&](int step, int steps, double,
+                                         bool loading) {
+                    pipeline::Event e;
+                    e.stage = stage_name;
+                    e.kind = "progress";
+                    e.current = index;
+                    e.total = total;
+                    e.shot_id = shot->shot_id;
+                    e.message =
+                        loading ? "加载出片模型 " + std::to_string(step) + "/" +
+                                      std::to_string(steps)
+                                : "出视频 " + shot->shot_id + "（第 " +
+                                      std::to_string(step) + "/" +
+                                      std::to_string(steps) + " 步）";
+                    progress.report(e);
+                };
+
+                render(*shot, plan, start, dest, tok, on_step);
+                done[i].ok = true;
+                done[i].rel_path = paths.rel(dest);
+            } catch (const std::exception& e) {
+                done[i].ok = false;
+                done[i].error = e.what();
+
+                pipeline::Event ev;
+                ev.stage = stage_name;
+                ev.kind = "warn";
+                ev.shot_id = shot->shot_id;
+                ev.message = shot->shot_id + " 出视频失败：" + done[i].error;
+                progress.report(ev);
+            }
+
+            done[i].elapsed_s = now_seconds() - started;
+
+            // 剩余时间按**已经跑完的这几镜**推，不按静态表。
+            // 失败的那几镜也算进去：它们也花了时间（而且往往花得更多，
+            // 失败通常发生在跑完大半之后）。
+            //
+            // 分母用**跑完的个数**而不是序号：并发时序号先到的未必先跑完，
+            // 而 `墙上时间 / 跑完个数` 恰好就是吞吐的倒数——几路都对。
+            const int did = finished.fetch_add(1) + 1;
+            const int left = total - did;
+            if (left > 0) {
+                const double per = (now_seconds() - stage_started) / did;
+                pipeline::Event e;
+                e.stage = stage_name;
+                e.kind = "eta";
+                e.current = did;
+                e.total = total;
+                e.message = "还剩 " + std::to_string(left) +
+                            " 个镜头，按目前速度约 " +
+                            util::human_time(per * left);
+                progress.report(e);
+            }
+        }
+    };
+
+    if (lanes == 1) {
+        lane();  // 串行那条路一个线程都不起
+    } else {
+        std::vector<std::thread> pool;
+        pool.reserve(static_cast<std::size_t>(lanes));
+        for (int k = 0; k < lanes; ++k) pool.emplace_back(lane);
+        for (auto& t : pool) t.join();
+    }
+
+    // ---- 收。**在调用线程上顺序改 Shot** ----
+    //
+    // 上面那一段一个字节都没往 Shot 里写。写回集中在这儿，
+    // 单线程、按镜头原顺序——存盘的那份 project.json 因此仍然只有一个写者。
+    std::vector<RenderOutcome> outcomes;
+    for (int i = 0; i < total; ++i) {
+        if (done[i].skipped) continue;
+        Shot* shot = shots[i];
+        RenderOutcome out;
+        out.shot_id = shot->shot_id;
+        out.elapsed_s = done[i].elapsed_s;
+        if (done[i].ok) {
+            shot->video_path = done[i].rel_path;
             // **两个状态不能混。** 草稿档的片子当成片发出去，
             // 用户会以为模型质量就这样。
             shot->status = spec.tier == Tier::FINAL ? ShotStatus::FINAL_DONE
                                                     : ShotStatus::DRAFT_DONE;
             out.ok = true;
-            out.path = *shot->video_path;
-        } catch (const std::exception& e) {
+            out.path = done[i].rel_path;
+        } else {
             shot->attempts += 1;
             out.ok = false;
-            out.error = e.what();
-
-            pipeline::Event ev;
-            ev.stage = stage_name;
-            ev.kind = "warn";
-            ev.shot_id = shot->shot_id;
-            ev.message = shot->shot_id + " 出视频失败：" + out.error;
-            progress.report(ev);
+            out.error = done[i].error;
         }
-
-        out.elapsed_s = now_seconds() - started;
         outcomes.push_back(out);
-
-        // 剩余时间按**已经跑过的这几镜**的平均值推，不按静态表。
-        // 失败的那几镜也算进去：它们也花了时间（而且往往花得更多，
-        // 失败通常发生在跑完大半之后）。
-        const int left = total - index;
-        if (left > 0) {
-            const double per = (now_seconds() - stage_started) / index;
-            pipeline::Event e;
-            e.stage = stage_name;
-            e.kind = "eta";
-            e.current = index;
-            e.total = total;
-            e.message = "还剩 " + std::to_string(left) + " 个镜头，按目前速度约 " +
-                        util::human_time(per * left);
-            progress.report(e);
-        }
     }
     return outcomes;
 }

@@ -1,5 +1,7 @@
 #include "stages/frames.hpp"
 
+#include <atomic>
+#include <thread>
 #include <optional>
 
 #include <chrono>
@@ -81,83 +83,130 @@ std::vector<FrameOutcome> run_frames(std::vector<Shot*>& shots,
                                      const ProjectPaths& paths,
                                      const FrameRenderer& render,
                                      pipeline::JobProgress& progress,
-                                     pipeline::CancelToken& tok) {
+                                     pipeline::CancelToken& tok,
+                                     int concurrency) {
     const PromptComposer composer(assets);
     // 按画幅缩放。分辨率必须是 32 的倍数，否则潜空间对不齐。
     const TierSpec scaled = spec.scaled_to(assets.style.aspect_ratio);
 
-    std::vector<FrameOutcome> outcomes;
     const int total = static_cast<int>(shots.size());
-    int index = 0;
 
-    for (Shot* shot : shots) {
-        ++index;
-        if (tok.cancelled()) break;
+    /// 一镜的渲染结果。**只装数据，不碰 Shot**——
+    /// 写回统一放到后面在调用线程上做。
+    struct Done {
+        bool ok = false;
+        std::string error;
+        std::string rel_path;
+        double elapsed_s = 0.0;
+        bool skipped = false;   ///< 取消了，没跑
+    };
+    std::vector<Done> done(shots.size());
 
-        const double started = now_seconds();
-        FrameOutcome out;
-        out.shot_id = shot->shot_id;
+    // 取多少并发。**上限是镜头数**——池里有八个而只有三镜时，
+    // 起八个线程只是白占。
+    const int lanes = std::max(1, std::min(concurrency, total));
 
-        {
-            pipeline::Event e;
-            e.stage = "frames";
-            e.kind = "progress";
-            e.current = index;
-            e.total = total;
-            e.shot_id = shot->shot_id;
-            e.message = "出首帧 " + shot->shot_id;
-            progress.report(e);
-        }
+    std::atomic<int> next{0};
+    const auto worker = [&] {
+        for (;;) {
+            const int i = next.fetch_add(1);
+            if (i >= total) return;
+            if (tok.cancelled()) { done[i].skipped = true; continue; }
 
-        try {
-            const PromptBundle prompts = composer.compose(*shot);
-            const fs::path dest =
-                paths.frames() / paths::from_utf8(shot->shot_id + ".png");
+            Shot* shot = shots[i];
+            const double started = now_seconds();
+            const int index = i + 1;
 
-            // 逐步进度。采样一步在低配机器上要好几秒，不报的话界面上
-            // 就是一条几分钟不动的进度条，用户分不清是在跑还是卡死了。
-            const auto on_step = [&](int step, int steps, double,
-                                     bool loading) {
+            {
                 pipeline::Event e;
                 e.stage = "frames";
                 e.kind = "progress";
                 e.current = index;
                 e.total = total;
                 e.shot_id = shot->shot_id;
-                e.message =
-                    loading ? "加载出图模型 " + std::to_string(step) + "/" +
-                                  std::to_string(steps)
-                            : "出首帧 " + shot->shot_id + "（第 " +
-                                  std::to_string(step) + "/" +
-                                  std::to_string(steps) + " 步）";
+                e.message = "出首帧 " + shot->shot_id;
                 progress.report(e);
-            };
+            }
 
-            render(*shot, prompts, scaled, dest, tok, on_step);
+            try {
+                const PromptBundle prompts = composer.compose(*shot);
+                const fs::path dest =
+                    paths.frames() / paths::from_utf8(shot->shot_id + ".png");
 
-            shot->frame_path = paths.rel(dest);
+                // 逐步进度。采样一步在低配机器上要好几秒，不报的话界面上
+                // 就是一条几分钟不动的进度条，用户分不清是在跑还是卡死了。
+                //
+                // **并发时几镜同时报**，靠 Event 里的 shot_id 分得开；
+                // JobProgress::report 自己有锁。
+                const auto on_step = [&](int step, int steps, double,
+                                         bool loading) {
+                    pipeline::Event e;
+                    e.stage = "frames";
+                    e.kind = "progress";
+                    e.current = index;
+                    e.total = total;
+                    e.shot_id = shot->shot_id;
+                    e.message =
+                        loading ? "加载出图模型 " + std::to_string(step) + "/" +
+                                      std::to_string(steps)
+                                : "出首帧 " + shot->shot_id + "（第 " +
+                                      std::to_string(step) + "/" +
+                                      std::to_string(steps) + " 步）";
+                    progress.report(e);
+                };
+
+                render(*shot, prompts, scaled, dest, tok, on_step);
+                done[i].ok = true;
+                done[i].rel_path = paths.rel(dest);
+            } catch (const std::exception& e) {
+                // 一镜失败不拖垮后面几镜。跑一晚上，早上发现第三镜挂了
+                // 导致后面三十镜都没动，那这一晚上就白熬了。
+                done[i].ok = false;
+                done[i].error = e.what();
+
+                pipeline::Event ev;
+                ev.stage = "frames";
+                ev.kind = "warn";
+                ev.shot_id = shot->shot_id;
+                ev.message = shot->shot_id + " 出首帧失败：" + done[i].error;
+                progress.report(ev);
+            }
+            done[i].elapsed_s = now_seconds() - started;
+        }
+    };
+
+    if (lanes == 1) {
+        worker();               // 串行那条路一个线程都不起
+    } else {
+        std::vector<std::thread> pool;
+        pool.reserve(static_cast<std::size_t>(lanes));
+        for (int k = 0; k < lanes; ++k) pool.emplace_back(worker);
+        for (auto& t : pool) t.join();
+    }
+
+    // ---- 收。**在调用线程上顺序改 Shot** ----
+    //
+    // 上面那一段一个字节都没往 Shot 里写。写回集中在这儿，
+    // 单线程、按镜头原顺序——存盘的那份 project.json 因此仍然只有一个写者。
+    std::vector<FrameOutcome> outcomes;
+    for (int i = 0; i < total; ++i) {
+        if (done[i].skipped) continue;
+        Shot* shot = shots[i];
+        FrameOutcome out;
+        out.shot_id = shot->shot_id;
+        out.elapsed_s = done[i].elapsed_s;
+        if (done[i].ok) {
+            shot->frame_path = done[i].rel_path;
             shot->status = ShotStatus::FRAME_DONE;
             out.ok = true;
-            out.path = *shot->frame_path;
-        } catch (const std::exception& e) {
-            // 一镜失败不拖垮后面几镜。跑一晚上，早上发现第三镜挂了
-            // 导致后面三十镜都没动，那这一晚上就白熬了。
-            //
+            out.path = done[i].rel_path;
+        } else {
             // attempts 加一是给闸门的重试计数用的：超限之后流水线会
             // 降级成静帧加运镜，保证整集能出片。
             shot->attempts += 1;
             out.ok = false;
-            out.error = e.what();
-
-            pipeline::Event ev;
-            ev.stage = "frames";
-            ev.kind = "warn";
-            ev.shot_id = shot->shot_id;
-            ev.message = shot->shot_id + " 出首帧失败：" + out.error;
-            progress.report(ev);
+            out.error = done[i].error;
         }
-
-        out.elapsed_s = now_seconds() - started;
         outcomes.push_back(out);
     }
     return outcomes;

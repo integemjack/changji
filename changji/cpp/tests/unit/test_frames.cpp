@@ -144,7 +144,7 @@ TEST_CASE("成功时记下路径并置为已出首帧") {
     std::vector<stages::FrameOutcome> outs;
     table.start(pipeline::JobKind::Run, "ep01", [&](pipeline::JobProgress& p) {
         outs = stages::run_frames(shots, make_assets(), make_spec(), paths,
-                                  fake_ok(), p, tok);
+                                  fake_ok(), p, tok, 1);
     });
     table.wait_idle();
 
@@ -192,7 +192,7 @@ TEST_CASE("一镜失败不拖垮后面几镜") {
     std::vector<stages::FrameOutcome> outs;
     table.start(pipeline::JobKind::Run, "ep01", [&](pipeline::JobProgress& p) {
         outs = stages::run_frames(shots, make_assets(), make_spec(), paths,
-                                  renderer, p, tok);
+                                  renderer, p, tok, 1);
     });
     table.wait_idle();
 
@@ -228,7 +228,7 @@ TEST_CASE("引用了未注册角色算这一镜失败，不是整批挂掉") {
     std::vector<stages::FrameOutcome> outs;
     table.start(pipeline::JobKind::Run, "ep01", [&](pipeline::JobProgress& p) {
         outs = stages::run_frames(shots, make_assets(), make_spec(), paths,
-                                  fake_ok(), p, tok);
+                                  fake_ok(), p, tok, 1);
     });
     table.wait_idle();
 
@@ -266,7 +266,7 @@ TEST_CASE("取消之后不再往下跑") {
 
     table.start(pipeline::JobKind::Run, "ep01", [&](pipeline::JobProgress& p) {
         outs = stages::run_frames(shots, make_assets(), make_spec(), paths,
-                                  renderer, p, tok);
+                                  renderer, p, tok, 1);
     });
     table.wait_idle();
 
@@ -298,7 +298,7 @@ TEST_CASE("逐步进度会广播出去") {
     pipeline::CancelToken tok;
     table.start(pipeline::JobKind::Run, "ep01", [&](pipeline::JobProgress& p) {
         stages::run_frames(shots, make_assets(), make_spec(), paths,
-                           fake_ok(), p, tok);
+                           fake_ok(), p, tok, 1);
     });
     table.wait_idle();
 
@@ -341,7 +341,7 @@ TEST_CASE("提示词按画幅缩放后传给后端") {
     pipeline::CancelToken tok;
     table.start(pipeline::JobKind::Run, "ep01", [&](pipeline::JobProgress& p) {
         stages::run_frames(shots, make_assets(), make_spec(), paths,
-                           renderer, p, tok);
+                           renderer, p, tok, 1);
     });
     table.wait_idle();
 
@@ -366,7 +366,7 @@ TEST_CASE("每一镜拿到的提示词都带完整的身份层") {
     pipeline::CancelToken tok;
     table.start(pipeline::JobKind::Run, "ep01", [&](pipeline::JobProgress& p) {
         stages::run_frames(shots, make_assets(), make_spec(), paths,
-                           fake_ok(&prompts), p, tok);
+                           fake_ok(&prompts), p, tok, 1);
     });
     table.wait_idle();
 
@@ -461,7 +461,7 @@ TEST_CASE("首帧阶段的状态变化和 Python 一样") {
                     [&](pipeline::JobProgress& p) {
                         outs = stages::run_frames(shots, make_assets(),
                                                   make_spec(), paths, scripted,
-                                                  p, tok);
+                                                  p, tok, 1);
                     });
         table.wait_idle();
 
@@ -485,5 +485,109 @@ TEST_CASE("首帧阶段的状态变化和 Python 一样") {
             const bool want_path = !want_shots[i].at("frame_path").is_null();
             CHECK(owned[i].frame_path.has_value() == want_path);
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 并发跑的时候，状态改动还对不对。
+//
+// **这是派—收那个改动最容易出错的地方。** 渲染并行了，但写回 Shot 必须
+// 仍然是单线程、按原顺序的——不然两个线程同时改同一批镜头，存盘时
+// 最后一个写的赢，而且不报错。
+// ---------------------------------------------------------------------------
+
+TEST_CASE("并发出首帧和串行的结果一模一样") {
+    const models::ProjectPaths paths(temp_root("并发一致"));
+
+    // 同一批镜头跑两遍：一遍 1 路，一遍 4 路。
+    auto run_with = [&](int lanes) {
+        std::vector<models::Shot> owned;
+        for (int i = 0; i < 6; ++i) {
+            owned.push_back(make_shot("sh" + std::to_string(i + 1)));
+        }
+        std::vector<models::Shot*> shots;
+        for (auto& s : owned) shots.push_back(&s);
+
+        pipeline::JobTable table;
+        pipeline::CancelToken tok;
+        table.start(pipeline::JobKind::Run, "ep01",
+                    [&](pipeline::JobProgress& p) {
+                        stages::run_frames(shots, make_assets(), make_spec(),
+                                           paths, fake_ok(), p, tok, lanes);
+                    });
+        table.wait_idle();
+
+        std::vector<std::string> summary;
+        for (const auto& s : owned) {
+            summary.push_back(s.shot_id + "|" +
+                              std::string(models::to_string(s.status)) + "|" +
+                              std::to_string(s.attempts) + "|" +
+                              s.frame_path.value_or("(无)"));
+        }
+        return summary;
+    };
+
+    const auto serial = run_with(1);
+    const auto parallel = run_with(4);
+
+    REQUIRE(serial.size() == 6);
+    // **逐条比**：状态、attempts、产物路径全都要一样。
+    // 并发只该改变"多快"，不该改变"是什么"。
+    CHECK(serial == parallel);
+}
+
+TEST_CASE("并发时失败那镜的 attempts 只加一次") {
+    // 写回要是漏了同步，同一镜可能被加两次——而 attempts 是闸门的重试
+    // 计数，多加一次就可能直接判超限降级，画面从此变成静帧加运镜。
+    const models::ProjectPaths paths(temp_root("并发失败"));
+    std::vector<models::Shot> owned;
+    for (int i = 0; i < 5; ++i) {
+        owned.push_back(make_shot("sh" + std::to_string(i + 1)));
+    }
+    std::vector<models::Shot*> shots;
+    for (auto& s : owned) shots.push_back(&s);
+
+    const stages::FrameRenderer always_fail =
+        [](const models::Shot& shot, const stages::PromptBundle&,
+           const models::TierSpec&, const fs::path&, pipeline::CancelToken&,
+           const infer::StepCallback&) {
+            throw std::runtime_error(shot.shot_id + " 出首帧失败：造出来的错");
+        };
+
+    pipeline::JobTable table;
+    pipeline::CancelToken tok;
+    std::vector<stages::FrameOutcome> outs;
+    table.start(pipeline::JobKind::Run, "ep01", [&](pipeline::JobProgress& p) {
+        outs = stages::run_frames(shots, make_assets(), make_spec(), paths,
+                                  always_fail, p, tok, 4);
+    });
+    table.wait_idle();
+
+    CHECK(outs.size() == 5);
+    for (const auto& s : owned) {
+        CAPTURE(s.shot_id);
+        CHECK(s.attempts == 1);                 // 不是 0，也不是 2
+        CHECK_FALSE(s.frame_path.has_value());  // 失败不该留下路径
+    }
+}
+
+TEST_CASE("并发上限不超过镜头数") {
+    // 池里八个而只有两镜时，起八个线程只是白占。
+    const models::ProjectPaths paths(temp_root("并发上限"));
+    std::vector<models::Shot> owned{make_shot("sh1"), make_shot("sh2")};
+    std::vector<models::Shot*> shots{&owned[0], &owned[1]};
+
+    pipeline::JobTable table;
+    pipeline::CancelToken tok;
+    std::vector<stages::FrameOutcome> outs;
+    table.start(pipeline::JobKind::Run, "ep01", [&](pipeline::JobProgress& p) {
+        outs = stages::run_frames(shots, make_assets(), make_spec(), paths,
+                                  fake_ok(), p, tok, 8);
+    });
+    table.wait_idle();
+
+    CHECK(outs.size() == 2);
+    for (const auto& s : owned) {
+        CHECK(s.status == models::ShotStatus::FRAME_DONE);
     }
 }

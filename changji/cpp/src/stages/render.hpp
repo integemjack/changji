@@ -84,10 +84,15 @@ using VideoRenderer = std::function<void(
     const std::filesystem::path& dest, pipeline::CancelToken&,
     const infer::StepCallback&)>;
 
-/// 顺序渲染一批镜头。
+/// 渲染一批镜头。
 ///
-/// **刻意不并发。** 显卡就一张，并发只会让每个任务都变慢并增加显存不足的
-/// 风险；而且两个上下文同时占显存正是 6GB 卡上跑不动的原因。
+/// `concurrency` 是同时在跑的镜头数。**1 就是逐镜串行**——单卡就该是 1，
+/// 一张卡上并发只会让每个任务都更慢并且更容易爆显存（两个上下文同时占显存
+/// 正是 6GB 卡上跑不动的原因）。多卡时取工作进程数，一进程一张卡。
+///
+/// 大于 1 时并行的只是**渲染**那一步：渲染器收的是 `const Shot&`，只读。
+/// 写回 `video_path` / `status` / `attempts` 一律等全部收完之后
+/// 在调用线程上按镜头原顺序做——存盘那份 project.json 仍然只有一个写者。
 ///
 /// 成功的镜头按档位置成 DRAFT_DONE 或 FINAL_DONE——**这两个状态不能混**，
 /// 草稿档的片子当成片发出去，用户会以为模型质量就这样。
@@ -99,6 +104,7 @@ std::vector<RenderOutcome> render_batch(
     const VideoRenderer& render,
     pipeline::JobProgress& progress,
     pipeline::CancelToken& tok,
-    int fps = 24);
+    int fps = 24,
+    int concurrency = 1);
 
 }  // namespace changji::stages
