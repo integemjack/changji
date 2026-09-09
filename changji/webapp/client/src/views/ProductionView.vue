@@ -189,14 +189,23 @@ const shotNumberOf = (shotId) => {
   return at ? at.order + 1 : ''
 }
 
-/** 现在在跑哪一镜。缩略图墙上把它标出来，跑到哪儿了一眼能看见。 */
-const activeShotId = computed(() => {
-  if (!runStore.running) return ''
+/**
+ * 现在在跑哪几镜。多卡时同时有好几镜，缩略图墙上一起点亮。
+ *
+ * 优先用引擎推上来的"正在跑"表；表是空的（老引擎没带 kind，或者
+ * 还没收到第一条）就退回"最后一条带 shot_id 的事件"。
+ */
+const activeShotIds = computed(() => {
+  if (!runStore.running) return new Set()
+  if (runStore.inflight.length) return new Set(runStore.inflight.map((x) => x.shot_id))
   for (let i = runStore.events.length - 1; i >= 0; i -= 1) {
-    if (runStore.events[i].shot_id) return runStore.events[i].shot_id
+    if (runStore.events[i].shot_id) return new Set([runStore.events[i].shot_id])
   }
-  return ''
+  return new Set()
 })
+
+/** 一镜跑了多久。 */
+const sinceText = (ms) => humanTime(Math.max(0, (Date.now() - ms) / 1000))
 </script>
 
 <template>
@@ -263,6 +272,23 @@ const activeShotId = computed(() => {
             :detail="`${runStore.state.queue_done} / ${runStore.state.queue_total} 集`"
             tone="ok"
           />
+
+          <div v-if="runStore.inflight.length" class="inflight">
+            <div class="inflight__head tiny dim">
+              同时在跑 {{ runStore.inflight.length }} 镜
+            </div>
+            <div
+              v-for="x in runStore.inflight"
+              :key="x.shot_id"
+              class="inflight__row"
+            >
+              <span class="inflight__no numeric">#{{ shotNumberOf(x.shot_id) || '?' }}</span>
+              <span class="inflight__id mono truncate">{{ x.shot_id }}</span>
+              <span class="inflight__stage tiny">{{ STAGE_LABELS[x.stage] || x.stage }}</span>
+              <span class="inflight__msg truncate dim">{{ x.message }}</span>
+              <span class="inflight__since tiny dim numeric nowrap">{{ sinceText(x.since) }}</span>
+            </div>
+          </div>
 
           <p v-if="runStore.state?.error" class="alert alert--bad">
             <AppIcon name="warn" :size="15" />
@@ -455,7 +481,7 @@ const activeShotId = computed(() => {
               class="tile"
               :class="[
                 `tile--${statusOf(s.status).tone}`,
-                { 'tile--active': s.shot_id === activeShotId },
+                { 'tile--active': activeShotIds.has(s.shot_id) },
               ]"
               :title="`${s.order + 1}. ${s.visual_desc || ''}｜${statusOf(s.status).label}`"
             >
@@ -794,5 +820,28 @@ const activeShotId = computed(() => {
   50% {
     box-shadow: 0 0 0 5px var(--accent-soft);
   }
+}
+
+/* 正在跑的几镜 */
+.inflight {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm, 6px);
+  background: var(--surface-2, rgba(127, 127, 127, 0.08));
+}
+.inflight__row {
+  display: grid;
+  grid-template-columns: 3.5em minmax(6em, 12em) 4.5em 1fr auto;
+  gap: 8px;
+  align-items: center;
+  font-size: 0.92em;
+}
+.inflight__no { text-align: right; }
+.inflight__stage {
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--accent-soft, rgba(80, 140, 255, 0.15));
 }
 </style>

@@ -200,13 +200,19 @@ void JobTable::record(JobKind kind, Event ev) {
         // 取 round(time.time(),3)，同一个位置。
         if (ev.at == 0.0) ev.at = now_unix();
 
-        st.stage = ev.stage;
         // 只有带总数的事件才更新进度。不加这个判断的话，
         // 一条 total=0 的日志事件会把进度条清零。
         if (ev.total) {
-            st.current = ev.current;
+            // **同一阶段里 current 只进不退。** 多卡时几镜同时在跑，
+            // 各自的进度事件带的是自己的序号：3、11、7、12……原样写进去
+            // 进度条就来回蹦。Python 那边是串行的，序号天然单调，
+            // 所以它直接赋值也对；这里加一道 max，串行时结果一个字不差。
+            // 换了阶段就从头来——新阶段的 1/12 当然要比上一阶段的 12/12 小。
+            const bool same_stage = st.stage == ev.stage;
+            st.current = same_stage ? std::max(st.current, ev.current) : ev.current;
             st.total = ev.total;
         }
+        st.stage = ev.stage;
         st.message = ev.message;
 
         st.events.push_back(ev);
@@ -215,6 +221,12 @@ void JobTable::record(JobKind kind, Event ev) {
         job_id = st.job_id;
         msg = {
             {"type", ev.kind == "error" ? "error" : "progress"},
+            // 原样带上 kind。type 只分 progress / error 两种，warn、gate、
+            // shot_done 到了界面全成了 "progress"——界面因此分不出
+            // 一个镜头是"还在跑"还是"跑完了"。多卡之后六镜同时在跑，
+            // 不带这个字段界面上就是六条进度轮流刷同一个位置。
+            // **加字段不改旧字段**，老客户端照旧。
+            {"kind", ev.kind},
             {"job_id", job_id},
             {"stage", ev.stage},
             {"step", ev.current},

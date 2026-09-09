@@ -47,6 +47,45 @@ describe('applyMessage', () => {
     expect(s.events[0].kind).toBe('progress')
   })
 
+  it('正在跑的镜头：进来、跑完出去、失败出去', () => {
+    // 多卡之后同一时刻好几镜在出，界面要列得出"哪几镜、各到第几步"。
+    const s = useRun()
+    const at = (shot, kind, step = 1) =>
+      s.applyMessage({ type: 'progress', kind, stage: 'draft', shot_id: shot,
+                       step, total: 12, message: `${shot} ${kind}` })
+    at('sh1', 'progress')
+    at('sh2', 'progress')
+    at('sh3', 'progress', 3)
+    expect(s.inflight.map((x) => x.shot_id)).toEqual(['sh1', 'sh2', 'sh3'])
+
+    at('sh2', 'shot_done')             // 跑完了
+    at('sh3', 'warn')                  // 这一轮失败了
+    expect(s.inflight.map((x) => x.shot_id)).toEqual(['sh1'])
+
+    at('sh3', 'progress', 4)           // 重试又进来
+    expect(s.inflight.map((x) => x.shot_id)).toEqual(['sh1', 'sh3'])
+    expect(s.inflight.at(-1).step).toBe(4)
+
+    // 事件日志里的 kind 也要是引擎给的，视图按它标颜色
+    expect(s.events.find((e) => e.kind === 'shot_done')?.shot_id).toBe('sh2')
+  })
+
+  it('老引擎不带 kind：全当 progress，表只进不出', () => {
+    const s = useRun()
+    s.applyMessage({ type: 'progress', stage: 'draft', shot_id: 'sh1', step: 1, total: 3 })
+    expect(s.inflight).toHaveLength(1)
+    expect(s.events[0].kind).toBe('progress')
+  })
+
+  it('任务结束清空正在跑的表', async () => {
+    const s = useRun()
+    s.applyMessage({ type: 'progress', kind: 'progress', stage: 'draft',
+                     shot_id: 'sh1', step: 1, total: 3 })
+    expect(s.inflight).toHaveLength(1)
+    s.applyMessage({ type: 'done' })
+    expect(s.inflight).toHaveLength(0)
+  })
+
   it('hello 不动状态', () => {
     // 连上时服务端先发一条问候。把它当进度处理的话，
     // 会凭空造出一个 running=true 的状态。

@@ -11,6 +11,7 @@
 
 #include <doctest/doctest.h>
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <set>
@@ -578,4 +579,61 @@ TEST_CASE("没跑过的槽，快照里的累积字段是空的不是缺的") {
     const json write = t.snapshot(JobKind::Write);
     REQUIRE(write.at("episodes").is_array());
     CHECK(write.at("episodes").empty());
+}
+
+// ---------------------------------------------------------------------------
+// 多卡之后几镜同时报进度，快照里的 current 不能来回蹦。
+// ---------------------------------------------------------------------------
+
+TEST_CASE("同一阶段里 current 只进不退，换阶段从头来") {
+    JobTable table;
+    table.start(JobKind::Run, "ep01", [&](JobProgress& p) {
+        auto at = [&](const char* stage, int cur, int total) {
+            Event e;
+            e.stage = stage;
+            e.kind = "progress";
+            e.current = cur;
+            e.total = total;
+            p.report(e);
+        };
+        // 六路并发时先到的未必序号小
+        at("draft", 3, 12);
+        at("draft", 11, 12);
+        at("draft", 7, 12);     // 不能把 11 拉回 7
+        CHECK(table.snapshot(JobKind::Run)["current"] == 11);
+        at("draft", 12, 12);
+        CHECK(table.snapshot(JobKind::Run)["current"] == 12);
+        // 进了下一阶段，1/5 就是 1/5
+        at("final", 1, 5);
+        CHECK(table.snapshot(JobKind::Run)["current"] == 1);
+        CHECK(table.snapshot(JobKind::Run)["total"] == 5);
+    });
+    table.wait_idle();
+}
+
+TEST_CASE("WebSocket 消息原样带 kind") {
+    // 界面靠它分清 shot_done 和 progress。type 只有两种取值，分不出来。
+    JobTable table;
+    std::vector<nlohmann::json> msgs;
+    table.set_sink([&](const std::string&, const nlohmann::json& m) {
+        msgs.push_back(m);
+    });
+    table.start(JobKind::Run, "ep01", [&](JobProgress& p) {
+        Event e;
+        e.stage = "draft";
+        e.kind = "shot_done";
+        e.shot_id = "sh1";
+        e.current = 1;
+        e.total = 3;
+        p.report(e);
+    });
+    table.wait_idle();
+    // 任务函数返回之后表还会再广播一条 {"type":"done"}，所以不能拿
+    // 最后一条——按 shot_id 找那条我们发的。
+    const auto it = std::find_if(msgs.begin(), msgs.end(), [](const auto& m) {
+        return m.value("shot_id", "") == "sh1";
+    });
+    REQUIRE(it != msgs.end());
+    CHECK(it->value("kind", "") == "shot_done");
+    CHECK(it->value("type", "") == "progress");   // 旧字段没动
 }

@@ -57,9 +57,44 @@ export const useRun = defineStore('run', () => {
   })
   const events = computed(() => state.value?.events ?? [])
 
+  /**
+   * 正在跑的镜头。多卡之后同一时刻有好几镜在出，这张表就是"哪几镜、
+   * 各到第几步"。键是 shot_id，值是最后一条进度。
+   *
+   * 进：任何带 shot_id 的 progress。
+   * 出：shot_done（跑完了）、warn / gate（这一轮结束了，重试会再进来）、
+   *     error，以及整个任务结束。
+   *
+   * 靠的是引擎在 WebSocket 消息里带的 kind。老引擎不带这个字段的话
+   * 全按 progress 算——表只进不出，但至少不会漏掉正在跑的。
+   */
+  const inflightMap = ref(new Map())
+  const inflight = computed(() => [...inflightMap.value.values()])
+
+  function trackInflight(msg) {
+    if (!msg.shot_id) return
+    const kind = msg.kind ?? (msg.type === 'error' ? 'error' : 'progress')
+    const next = new Map(inflightMap.value)
+    if (kind === 'progress') {
+      const prev = next.get(msg.shot_id)
+      next.set(msg.shot_id, {
+        shot_id: msg.shot_id,
+        stage: msg.stage ?? prev?.stage ?? '',
+        message: msg.message ?? prev?.message ?? '',
+        step: typeof msg.step === 'number' ? msg.step : (prev?.step ?? 0),
+        total: typeof msg.total === 'number' ? msg.total : (prev?.total ?? 0),
+        since: prev?.since ?? Date.now(),
+      })
+    } else {
+      next.delete(msg.shot_id)
+    }
+    inflightMap.value = next
+  }
+
   async function poll() {
     try {
       state.value = await api.runStatus()
+      if (!state.value?.running) inflightMap.value = new Map()
       missCount = 0
     } catch {
       // 引擎重启时会连着失败几次。立刻报错太吵，连丢三次再说。
@@ -76,9 +111,12 @@ export const useRun = defineStore('run', () => {
     if (msg.type === 'done' || msg.type === 'error') {
       // 终止消息只说"完了"，产出和完整事件要再拉一次。
       // **不能只把 running 置 false 就完事**：产出列表是这一屏的结果。
+      inflightMap.value = new Map()
       poll()
       return
     }
+
+    trackInflight(msg)
 
     // 字段名不一样：推上来的叫 step，快照里叫 current。
     // 直接把 msg 铺进 state 的话，进度条会读到 undefined。
@@ -97,7 +135,7 @@ export const useRun = defineStore('run', () => {
         {
           at: Date.now() / 1000,
           stage: msg.stage ?? '',
-          kind: msg.type === 'error' ? 'error' : 'progress',
+          kind: msg.kind ?? (msg.type === 'error' ? 'error' : 'progress'),
           message: msg.message ?? '',
           shot_id: msg.shot_id,
           current: msg.step ?? 0,
@@ -143,7 +181,7 @@ export const useRun = defineStore('run', () => {
   }
 
   return {
-    state, running, percent, stageLabel, events, polling, live,
+    state, running, percent, stageLabel, events, inflight, polling, live,
     poll, start, stop, applyMessage,
   }
 })
