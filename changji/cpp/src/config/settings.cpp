@@ -276,6 +276,9 @@ void apply_table(const toml::table& doc, Settings& s) {
         take(t, "temperature", s.llm.temperature);
     }
     if (auto t = doc["workers"].as_table()) {
+        if (auto v = (*t)["gpu"].value<std::int64_t>()) {
+            s.workers.gpu = static_cast<int>(*v);
+        }
         if (auto arr = (*t)["endpoints"].as_array()) {
             s.workers.endpoints.clear();
             for (const auto& v : *arr) {

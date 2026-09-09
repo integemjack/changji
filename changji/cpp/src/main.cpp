@@ -328,6 +328,14 @@ int run(int argc, char** argv) {
                        say_decoder);
     }
 
+    // **协调者也绑卡。** 不绑的话 llama.cpp 默认把配音模型摊到所有卡上，
+    // 实测比只用一张慢 39%（PCIe 上的通信开销比省下的算力多），
+    // 而且会和每一个 worker 抢显存。配 [workers].gpu 就绑。
+    if (!want_worker && settings.workers.gpu >= 0) {
+        changji::paths::set_env("CUDA_VISIBLE_DEVICES",
+                                std::to_string(settings.workers.gpu));
+    }
+
     if (want_worker) {
 
         // 工作进程：只算，不发接口、不碰项目文件。
