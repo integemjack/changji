@@ -6,6 +6,7 @@
 #include <cmath>
 #include <thread>
 
+#include "gates/checks.hpp"
 #include "util/human_time.hpp"
 #include "util/paths.hpp"
 #include "util/text.hpp"
@@ -25,6 +26,17 @@ double now_seconds() {
 
 /// Python 的 round()：银行家舍入。
 long py_round(double v) { return static_cast<long>(std::nearbyint(v)); }
+
+/// 把闸门给的几条理由拼成一句。分隔符照抄 gates 那边的全角分号——
+/// 这句会原样进 gate_notes，人在界面上读的就是它。
+std::string join_reasons(const std::vector<std::string>& v) {
+    std::string out;
+    for (std::size_t i = 0; i < v.size(); ++i) {
+        if (i) out += "；";
+        out += v[i];
+    }
+    return out;
+}
 
 }  // namespace
 
@@ -75,20 +87,25 @@ std::vector<RenderOutcome> render_batch(std::vector<Shot*>& shots,
                                         const VideoRenderer& render,
                                         pipeline::JobProgress& progress,
                                         pipeline::CancelToken& tok, int fps,
-                                        int concurrency) {
+                                        int concurrency,
+                                        const GateHooks& gate) {
     const PromptComposer composer(assets);
     const std::string stage_name =
         spec.tier == Tier::FINAL ? "final" : "draft";
 
     const int total = static_cast<int>(shots.size());
 
-    /// 一镜跑完之后的东西。**只装数据，不碰 Shot。**
+    /// 一镜跑完之后的东西。**只装数据，不碰调用方的 Shot。**
+    ///
+    /// `shot` 是那份本地副本，闸门循环改的就是它。收的时候整份写回去——
+    /// 一次赋值，比逐个字段抄少一类"新加了字段忘了抄"的错。
     struct Done {
         bool ok = false;
         std::string error;
         std::string rel_path;
         double elapsed_s = 0.0;
         bool skipped = false;  ///< 取消了，没跑
+        Shot shot;
     };
     std::vector<Done> done(shots.size());
 
@@ -116,78 +133,148 @@ std::vector<RenderOutcome> render_batch(std::vector<Shot*>& shots,
             const int index = i + 1;
             const double started = now_seconds();
 
+            // **本地副本。** 重试要改 attempts，而 attempts 进种子——
+            // 不换种子的重试就是把同一张牌再打一遍。改副本是为了让
+            // 并行那一段仍然一个字节都不往 shots 里写。
+            Shot local = *shot;
+
             {
                 pipeline::Event e;
                 e.stage = stage_name;
                 e.kind = "progress";
                 e.current = index;
                 e.total = total;
-                e.shot_id = shot->shot_id;
-                e.message = "出视频 " + shot->shot_id;
+                e.shot_id = local.shot_id;
+                e.message = "出视频 " + local.shot_id;
                 progress.report(e);
             }
 
-            try {
-                const RenderPlan plan = make_plan(
-                    *shot, spec, composer, assets.style.aspect_ratio, fps);
+            const auto say = [&](const char* kind, const std::string& msg) {
+                pipeline::Event e;
+                e.stage = stage_name;
+                e.kind = kind;
+                e.current = index;
+                e.total = total;
+                e.shot_id = local.shot_id;
+                e.message = msg;
+                progress.report(e);
+            };
 
-                // 首帧是这一镜的起点。没有的话退回纯文生视频——
-                // 那样跨镜头一致性会掉一大截，但总比整条流水线卡住强。
-                std::optional<fs::path> start;
-                if (shot->frame_path.has_value() && !shot->frame_path->empty()) {
-                    const fs::path frame = paths.abs(*shot->frame_path);
-                    std::error_code ec;
-                    if (fs::is_regular_file(frame, ec)) {
-                        start = frame;
-                    } else {
-                        pipeline::Event e;
-                        e.stage = stage_name;
-                        e.kind = "warn";
-                        e.shot_id = shot->shot_id;
-                        e.message = shot->shot_id +
-                                    " 记着首帧但文件不在，这一镜退回纯文生视频";
-                        progress.report(e);
+            // 重试超限，用能用的东西顶上。**不是停下来**——
+            // 无人值守时停下来等于整集废掉。
+            const auto fallback = [&](const std::string& reason) {
+                local.status = ShotStatus::FALLBACK;
+                local.gate_notes = {reason};
+                // Python 的 _fallback 发的这条**不带 current/total**——
+                // 它不在循环那几条的行列里。照抄，别顺手"补全"。
+                pipeline::Event e;
+                e.stage = stage_name;
+                e.kind = "warn";
+                e.shot_id = local.shot_id;
+                e.message = local.shot_id + " 重试超限，降级处理：" + reason;
+                progress.report(e);
+            };
+
+            const ShotStatus want_after = spec.tier == Tier::FINAL
+                                              ? ShotStatus::FINAL_DONE
+                                              : ShotStatus::DRAFT_DONE;
+
+            for (;;) {
+                if (tok.cancelled()) { done[i].skipped = true; break; }
+
+                fs::path dest;
+                RenderPlan plan;
+                try {
+                    plan = make_plan(local, spec, composer,
+                                     assets.style.aspect_ratio, fps);
+
+                    // 首帧是这一镜的起点。没有的话退回纯文生视频——
+                    // 那样跨镜头一致性会掉一大截，但总比整条流水线卡住强。
+                    std::optional<fs::path> start;
+                    if (local.frame_path.has_value() &&
+                        !local.frame_path->empty()) {
+                        const fs::path frame = paths.abs(*local.frame_path);
+                        std::error_code ec;
+                        if (fs::is_regular_file(frame, ec)) {
+                            start = frame;
+                        } else {
+                            say("warn", local.shot_id +
+                                            " 记着首帧但文件不在，这一镜退回纯文生视频");
+                        }
                     }
+
+                    // 按档位分目录。草稿和成片混在一起的话，重跑成片时
+                    // 分不清哪个 mp4 是哪一档的，而它们文件名只差一个后缀。
+                    dest = paths.shots(stage_name) /
+                           paths::from_utf8(local.shot_id + ".mp4");
+
+                    // **并发时几镜同时报**，靠 Event 里的 shot_id 分得开；
+                    // JobProgress::report 自己有锁。
+                    const auto on_step = [&](int step, int steps, double,
+                                             bool loading) {
+                        say("progress",
+                            loading ? "加载出片模型 " + std::to_string(step) +
+                                          "/" + std::to_string(steps)
+                                    : "出视频 " + local.shot_id + "（第 " +
+                                          std::to_string(step) + "/" +
+                                          std::to_string(steps) + " 步）");
+                    };
+
+                    render(local, plan, start, dest, tok, on_step);
+                    local.video_path = paths.rel(dest);
+                } catch (const std::exception& e) {
+                    // 一镜失败不拖垮后面几镜。跑一晚上，早上发现第三镜挂了
+                    // 导致后面三十镜都没动，那这一晚上就白熬了。
+                    local.attempts += 1;
+                    done[i].error = e.what();
+                    say("warn", local.shot_id + " 渲染失败：" + done[i].error);
+                    if (local.attempts >= gate.max_attempts) {
+                        fallback(std::string("渲染连续失败：") + e.what());
+                        break;
+                    }
+                    continue;
                 }
 
-                // 按档位分目录。草稿和成片混在一起的话，重跑成片时
-                // 分不清哪个 mp4 是哪一档的，而它们文件名只差一个后缀。
-                const fs::path dest = paths.shots(stage_name) /
-                                      paths::from_utf8(shot->shot_id + ".mp4");
+                if (!gate.check) {
+                    // 没配闸门。这是加这个参数之前的行为。
+                    local.status = want_after;
+                    done[i].ok = true;
+                    done[i].rel_path = *local.video_path;
+                    say("shot_done", local.shot_id + " 完成");
+                    break;
+                }
 
-                // **并发时几镜同时报**，靠 Event 里的 shot_id 分得开；
-                // JobProgress::report 自己有锁。
-                const auto on_step = [&](int step, int steps, double,
-                                         bool loading) {
-                    pipeline::Event e;
-                    e.stage = stage_name;
-                    e.kind = "progress";
-                    e.current = index;
-                    e.total = total;
-                    e.shot_id = shot->shot_id;
-                    e.message =
-                        loading ? "加载出片模型 " + std::to_string(step) + "/" +
-                                      std::to_string(steps)
-                                : "出视频 " + shot->shot_id + "（第 " +
-                                      std::to_string(step) + "/" +
-                                      std::to_string(steps) + " 步）";
-                    progress.report(e);
-                };
+                const gates::GateResult res = gate.check(local, dest, plan);
+                if (res.ok()) {
+                    local.status = want_after;
+                    local.gate_notes.clear();
+                    done[i].ok = true;
+                    done[i].rel_path = *local.video_path;
+                    say("shot_done", local.shot_id + " 通过闸门");
+                    break;
+                }
 
-                render(*shot, plan, start, dest, tok, on_step);
-                done[i].ok = true;
-                done[i].rel_path = paths.rel(dest);
-            } catch (const std::exception& e) {
-                done[i].ok = false;
-                done[i].error = e.what();
+                const gates::Verdict verdict = gate.decide(res, local);
+                local.gate_notes = res.reasons;
+                say("gate", res.describe());
 
-                pipeline::Event ev;
-                ev.stage = stage_name;
-                ev.kind = "warn";
-                ev.shot_id = shot->shot_id;
-                ev.message = shot->shot_id + " 出视频失败：" + done[i].error;
-                progress.report(ev);
+                if (verdict == gates::Verdict::Retry) {
+                    local.attempts += 1;
+                    continue;
+                }
+                if (verdict == gates::Verdict::Fallback) {
+                    fallback(join_reasons(res.reasons));
+                    break;
+                }
+                // Regress：重跑没用，标记后交给人。
+                local.status = spec.tier == Tier::FINAL
+                                   ? ShotStatus::FINAL_REJECTED
+                                   : ShotStatus::DRAFT_REJECTED;
+                done[i].error = join_reasons(res.reasons);
+                break;
             }
+
+            done[i].shot = std::move(local);
 
             done[i].elapsed_s = now_seconds() - started;
 
@@ -234,19 +321,12 @@ std::vector<RenderOutcome> render_batch(std::vector<Shot*>& shots,
         RenderOutcome out;
         out.shot_id = shot->shot_id;
         out.elapsed_s = done[i].elapsed_s;
-        if (done[i].ok) {
-            shot->video_path = done[i].rel_path;
-            // **两个状态不能混。** 草稿档的片子当成片发出去，
-            // 用户会以为模型质量就这样。
-            shot->status = spec.tier == Tier::FINAL ? ShotStatus::FINAL_DONE
-                                                    : ShotStatus::DRAFT_DONE;
-            out.ok = true;
-            out.path = done[i].rel_path;
-        } else {
-            shot->attempts += 1;
-            out.ok = false;
-            out.error = done[i].error;
-        }
+        // 整份写回。状态、attempts、gate_notes、video_path 都在副本里，
+        // 闸门循环已经按 Python 的判定改好了——这儿只负责搬。
+        *shot = std::move(done[i].shot);
+        out.ok = done[i].ok;
+        out.path = done[i].rel_path;
+        out.error = done[i].error;
         outcomes.push_back(out);
     }
     return outcomes;

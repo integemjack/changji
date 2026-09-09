@@ -218,6 +218,51 @@ RunReport run_episode(const ProjectStore& store,
         emit(progress, stage_name, "start", msg, 0,
              static_cast<int>(todo.size()));
 
+        // ---- 闸门 ----
+        //
+        // 以前这儿没有。`gate_video` 和 `decide_next` 移植了、也和 Python
+        // 一条不差地对过，但真二进制里从来没人调——出完片直接置
+        // DRAFT_DONE。也就是 C++ 从不拦废片、从不重试、从不降级，
+        // 而 Python 默认每一镜都过。整套质量控制在这边是空的。
+        stages::GateHooks gate;
+        // 上限**不管闸门开没开都生效**：渲染抛错的重试也数它。
+        gate.max_attempts = settings.gates.max_attempts_per_shot;
+        if (settings.gates.enabled) {
+            if (backends.ffmpeg) {
+                const media::FFmpeg& ff = *backends.ffmpeg;
+                const config::GateConfig& gcfg = settings.gates;
+                const int fps = settings.assembly.fps;
+                // Python：f"{spec.tier.value} 档闸门"
+                const std::string gate_name =
+                    std::string(models::to_string(tier)) + " 档闸门";
+                gate.check = [&ff, &gcfg, fps, gate_name](
+                                 const Shot& shot,
+                                 const std::filesystem::path& video,
+                                 const stages::RenderPlan& plan) {
+                    // 期望时长按帧数反推，不按 duration_s——帧数是 4n+1
+                    // 截过的，真片长就是它。Python 也是这么算的。
+                    const double expected =
+                        static_cast<double>(
+                            stages::frames_for(shot.duration_s, fps)) /
+                        fps;
+                    return gates::gate_video(
+                        shot, video, ff, gcfg, expected,
+                        std::make_pair(plan.spec.width, plan.spec.height),
+                        gate_name);
+                };
+                gate.decide = [&gcfg](const gates::GateResult& r,
+                                      const Shot& s) {
+                    return gates::decide_next(r, s, gcfg);
+                };
+            } else {
+                // Python 这时候会在 gate_video 里炸。这边选择说一声然后
+                // 不过闸门——没装 ffmpeg 的机器上前几步照样能跑，
+                // 而"跑到闸门才说缺 ffmpeg"最气人。装配那一步也是这么处理的。
+                emit(progress, stage_name, "warn",
+                     "闸门开着但没找到 ffmpeg，这一档不过闸门");
+            }
+        }
+
         // fps 走配置，不是写死的 24。Python 那边是
         // `RenderStage(..., fps=self.settings.assembly.fps)`；这儿以前
         // 漏了这个参数吃了默认值，`[assembly].fps = 30` 时两边算出来的
@@ -225,7 +270,7 @@ RunReport run_episode(const ProjectStore& store,
         return stages::render_batch(todo, assets, spec, store.paths(),
                                     backends.video, progress, tok,
                                     settings.assembly.fps,
-                                    backends.render_lanes);
+                                    backends.render_lanes, gate);
     };
 
     try {

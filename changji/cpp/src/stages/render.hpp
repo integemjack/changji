@@ -11,6 +11,7 @@
 #include <string>
 #include <vector>
 
+#include "gates/checks.hpp"
 #include "infer/sd_image.hpp"
 #include "models/character.hpp"
 #include "models/hardware.hpp"
@@ -84,6 +85,27 @@ using VideoRenderer = std::function<void(
     const std::filesystem::path& dest, pipeline::CancelToken&,
     const infer::StepCallback&)>;
 
+/// 出片之后过闸门用的两个钩子。
+///
+/// **注入而不是直接调 `gates::gate_video`**，理由和渲染器一样：
+/// 闸门要跑 ffmpeg，而"闸门没过怎么办"这段编排（重试几次、什么时候降级、
+/// 降级之后状态是什么）全是纯逻辑，得能在不装 ffmpeg 的机器上测死。
+/// 而它恰恰是最不能错的一段——判错了要么无限重跑，要么第一次失败
+/// 就把镜头判死。
+struct GateHooks {
+    /// 过一遍闸门。**空的表示不过**，等价于 Python 的 `[gates] enabled = false`。
+    std::function<gates::GateResult(const models::Shot&,
+                                    const std::filesystem::path& video,
+                                    const RenderPlan&)>
+        check;
+    /// 没过的时候决定下一步。`check` 非空时这个也必须非空。
+    std::function<gates::Verdict(const gates::GateResult&, const models::Shot&)>
+        decide;
+    /// 一个镜头最多试几次。到了就降级——**不是停下来**，
+    /// 无人值守时停下来等于整集废掉。
+    int max_attempts = 3;
+};
+
 /// 渲染一批镜头。
 ///
 /// `concurrency` 是同时在跑的镜头数。**1 就是逐镜串行**——单卡就该是 1，
@@ -96,6 +118,10 @@ using VideoRenderer = std::function<void(
 ///
 /// 成功的镜头按档位置成 DRAFT_DONE 或 FINAL_DONE——**这两个状态不能混**，
 /// 草稿档的片子当成片发出去，用户会以为模型质量就这样。
+///
+/// `gate` 给了就每出一镜过一遍闸门，没过按 `decide` 的判定重试 / 退回 /
+/// 降级，和 Python 的 `_render_one` 一样。**不给等于不过闸门**——
+/// 那是这个参数加进来之前的行为。
 std::vector<RenderOutcome> render_batch(
     std::vector<models::Shot*>& shots,
     const models::AssetLibrary& assets,
@@ -105,6 +131,7 @@ std::vector<RenderOutcome> render_batch(
     pipeline::JobProgress& progress,
     pipeline::CancelToken& tok,
     int fps = 24,
-    int concurrency = 1);
+    int concurrency = 1,
+    const GateHooks& gate = {});
 
 }  // namespace changji::stages

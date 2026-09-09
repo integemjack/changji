@@ -7,11 +7,14 @@
 
 #include <nlohmann/json.hpp>
 
+#include <algorithm>
 #include <filesystem>
 #include <fstream>
 #include <string>
 #include <vector>
 
+#include "config/settings.hpp"
+#include "gates/checks.hpp"
 #include "models/character.hpp"
 #include "models/project.hpp"
 #include "models/shot.hpp"
@@ -342,9 +345,15 @@ TEST_CASE("一镜失败不拖垮后面几镜") {
     CHECK(outs[0].ok);
     CHECK_FALSE(outs[1].ok);
     CHECK(outs[2].ok);
-    CHECK(owned[1].attempts == 1);
-    CHECK(owned[1].status != models::ShotStatus::DRAFT_DONE);
+    // 失败那镜按 Python 的 _render_one 重试到 max_attempts_per_shot（默认 3）
+    // 再降级——不是失败一次就放下。这几个数由 golden/render_loop.json
+    // 那条"渲染连续失败到上限"从真 Python 上导出来的。
+    CHECK(owned[1].attempts == 3);
+    CHECK(owned[1].status == models::ShotStatus::FALLBACK);
     CHECK_FALSE(owned[1].video_path.has_value());
+    // 另外两镜不受影响
+    CHECK(owned[0].status == models::ShotStatus::DRAFT_DONE);
+    CHECK(owned[2].status == models::ShotStatus::DRAFT_DONE);
 
     std::error_code ec;
     fs::remove_all(root, ec);
@@ -520,9 +529,10 @@ TEST_CASE("并发出片和串行的结果一模一样") {
     CHECK(serial == parallel);
 }
 
-TEST_CASE("并发出片失败时 attempts 只加一次") {
-    // attempts 是闸门的重试计数，多加一次就可能直接判超限降级，
-    // 那一镜从此变成静帧加运镜——画面还在，只是不动了。
+TEST_CASE("并发出片失败时每镜的 attempts 都恰好停在上限") {
+    // attempts 是闸门的重试计数。并发下要是写回漏了同步，同一镜可能被
+    // 两个线程各加一遍，停在 6 而不是 3；或者被另一镜的写回盖掉停在 0。
+    // 两种都不报错，只是断点续跑时重试次数不对。
     const models::ProjectPaths paths(temp_root("并发失败"));
     std::vector<models::Shot> owned;
     for (int i = 0; i < 5; ++i) {
@@ -550,7 +560,8 @@ TEST_CASE("并发出片失败时 attempts 只加一次") {
     CHECK(outs.size() == 5);
     for (const auto& s : owned) {
         CAPTURE(s.shot_id);
-        CHECK(s.attempts == 1);                 // 不是 0，也不是 2
+        CHECK(s.attempts == 3);                 // 不是 0，也不是 6
+        CHECK(s.status == models::ShotStatus::FALLBACK);
         CHECK_FALSE(s.video_path.has_value());  // 失败不该留下路径
     }
 }
@@ -582,5 +593,172 @@ TEST_CASE("并发出片每一镜都真的出了自己的那个文件") {
         REQUIRE(s.video_path.has_value());
         CHECK(fs::is_regular_file(paths.abs(*s.video_path)));
         CHECK(s.status == models::ShotStatus::DRAFT_DONE);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 渲染→过闸门→重试/退回/降级，和 Python 的 _render_one 逐条比。
+//
+// 语料 golden/render_loop.json 是 export_render_loop_golden.py 跑**真的**
+// Python 循环导出来的：渲染器和 gate_video 按剧本出结果，decide_next 是真的。
+// 这边用同一份剧本喂 render_batch，比镜头最后长什么样、渲染被叫了几次、
+// 以及吐出来的 warn / gate / shot_done 序列。
+//
+// 这个循环以前在 C++ 里根本不存在——出完片直接置 DRAFT_DONE，
+// gate_video 和 decide_next 只有测试在调。
+// ---------------------------------------------------------------------------
+
+namespace {
+
+nlohmann::json render_loop_golden() {
+    const std::string path =
+        std::string(CHANGJI_GOLDEN_DIR) + "/render_loop.json";
+    std::ifstream in(paths::from_utf8(path), std::ios::binary);
+    REQUIRE_MESSAGE(in.good(), "读不到语料 " << path);
+    return nlohmann::json::parse(in);
+}
+
+gates::Verdict verdict_from(const std::string& s) {
+    if (s == "pass") return gates::Verdict::Pass;
+    if (s == "retry") return gates::Verdict::Retry;
+    if (s == "regress") return gates::Verdict::Regress;
+    FAIL("剧本里不认识的闸门结果：" << s);
+    return gates::Verdict::Pass;
+}
+
+}  // namespace
+
+TEST_CASE("出片循环的每一条路和 Python 一样") {
+    const nlohmann::json g = render_loop_golden();
+    REQUIRE(g["cases"].size() >= 11);
+
+    for (const auto& c : g["cases"]) {
+        const std::string name = c["name"];
+        CAPTURE(name);
+        INFO(c["why"].get<std::string>());
+
+        const bool is_final = c["tier"] == "final";
+        const models::Tier tier = is_final ? models::Tier::FINAL
+                                           : models::Tier::DRAFT;
+        const fs::path root = temp_root("循环_" + std::to_string(&c - &g["cases"][0]));
+        const models::ProjectPaths paths(root);
+
+        models::Shot shot = make_shot("sh001", 3.0);
+        shot.status = is_final ? models::ShotStatus::DRAFT_DONE
+                               : models::ShotStatus::FRAME_DONE;
+        shot.attempts = c["preset_attempts"];
+        shot.gate_notes = c["preset_gate_notes"].get<std::vector<std::string>>();
+        std::vector<models::Shot*> shots{&shot};
+
+        // ---- 剧本 ----
+        const auto render_script = c["render"].get<std::vector<std::string>>();
+        const auto gate_script = c["gate"].get<std::vector<std::string>>();
+        int render_calls = 0, gate_calls = 0;
+        const auto pick = [](const std::vector<std::string>& v, int i) {
+            REQUIRE_MESSAGE(!v.empty(), "剧本里没给这一步");
+            return v[static_cast<std::size_t>(std::min<int>(i, static_cast<int>(v.size()) - 1))];
+        };
+
+        const stages::VideoRenderer renderer =
+            [&](const models::Shot&, const stages::RenderPlan&,
+                const std::optional<fs::path>&, const fs::path& dest,
+                pipeline::CancelToken&, const infer::StepCallback&) {
+                const int i = render_calls++;
+                if (pick(render_script, i) == "fail") {
+                    throw std::runtime_error("造出来的错 #" + std::to_string(i + 1));
+                }
+                std::error_code ec;
+                fs::create_directories(dest.parent_path(), ec);
+                std::ofstream(dest, std::ios::binary) << std::string(4096, 'x');
+            };
+
+        config::GateConfig gcfg;
+        gcfg.max_attempts_per_shot = c["max_attempts_per_shot"];
+        gcfg.fallback_on_exhausted = c["fallback_on_exhausted"];
+
+        stages::GateHooks hooks;
+        hooks.max_attempts = gcfg.max_attempts_per_shot;
+        if (c["gates_enabled"].get<bool>()) {
+            const std::string gate_name =
+                std::string(models::to_string(tier)) + " 档闸门";
+            hooks.check = [&, gate_name](const models::Shot& s, const fs::path&,
+                                         const stages::RenderPlan&) {
+                const int i = gate_calls++;
+                gates::GateResult r;
+                r.shot_id = s.shot_id;
+                r.gate = gate_name;
+                r.verdict = verdict_from(pick(gate_script, i));
+                if (r.verdict == gates::Verdict::Retry) {
+                    r.reasons = {"造出来的理由 #" + std::to_string(i + 1), "第二条理由"};
+                } else if (r.verdict == gates::Verdict::Regress) {
+                    r.reasons = {"重跑也没用的那种"};
+                }
+                return r;
+            };
+            hooks.decide = [&](const gates::GateResult& r, const models::Shot& s) {
+                return gates::decide_next(r, s, gcfg);
+            };
+        }
+
+        // ---- 跑 ----
+        pipeline::JobTable table;
+        std::vector<nlohmann::json> msgs;
+        table.set_sink([&](const std::string&, const nlohmann::json& m) {
+            msgs.push_back(m);
+        });
+        pipeline::CancelToken tok;
+        std::vector<stages::RenderOutcome> outs;
+        table.start(pipeline::JobKind::Run, "ep01", [&](pipeline::JobProgress& p) {
+            outs = stages::render_batch(shots, make_assets(), make_spec(tier),
+                                        paths, renderer, p, tok, 24, 1, hooks);
+        });
+        table.wait_idle();
+
+        // ---- 镜头最后长什么样 ----
+        CHECK(std::string(models::to_string(shot.status)) == c["status"].get<std::string>());
+        CHECK(shot.attempts == c["attempts"].get<int>());
+        CHECK(shot.gate_notes == c["gate_notes"].get<std::vector<std::string>>());
+        CHECK(shot.video_path.has_value() == c["has_video_path"].get<bool>());
+        CHECK(render_calls == c["render_calls"].get<int>());
+        CHECK(gate_calls == c["gate_calls"].get<int>());
+
+        // ---- 事件序列 ----
+        // Python 的 _render_one 只吐 warn / gate / shot_done；C++ 这层还会吐
+        // progress 和 eta，那两种不在这个循环里，滤掉再比。
+        //
+        // **从快照里拿，不从 sink 拿。** sink 收到的是 WebSocket 那个形状，
+        // kind 被压成了 type=progress/error——warn、gate、shot_done 到那儿
+        // 全是 "progress"，分不出来。快照里的 events 才是 Event::to_json。
+        // **先接住快照再遍历。** `for (auto& m : snapshot()["events"])` 是
+        // 对临时对象的子对象取引用——临时在 init 语句结束就没了，循环
+        // 跑在悬空引用上。C++23 之前不延长这种生命周期；这里表现为 0 条，
+        // 不崩，所以特别难看出来。
+        const nlohmann::json snap = table.snapshot(pipeline::JobKind::Run);
+        std::vector<nlohmann::json> got;
+        for (const auto& m : snap["events"]) {
+            const std::string k = m.value("kind", "");
+            if (k == "warn" || k == "gate" || k == "shot_done") {
+                got.push_back({{"kind", k},
+                               {"message", m.value("message", "")},
+                               {"shot_id", m.value("shot_id", nlohmann::json())},
+                               {"current", m.value("current", 0)},
+                               {"total", m.value("total", 0)}});
+            }
+        }
+        REQUIRE(got.size() == c["events"].size());
+        for (std::size_t i = 0; i < got.size(); ++i) {
+            CAPTURE(i);
+            // MSVC 在 doctest 的宏里对 json==json 报 C7692（重写候选被同名 != 排除），
+            // 所以比 dump 出来的字符串。语义一样，而且失败时打印出来更好读。
+            const nlohmann::json& want = c["events"][i];
+            CHECK(got[i]["kind"].dump() == want["kind"].dump());
+            CHECK(got[i]["message"].dump() == want["message"].dump());
+            CHECK(got[i]["shot_id"].dump() == want["shot_id"].dump());
+            CHECK(got[i]["current"].dump() == want["current"].dump());
+            CHECK(got[i]["total"].dump() == want["total"].dump());
+        }
+
+        std::error_code ec;
+        fs::remove_all(root, ec);
     }
 }
