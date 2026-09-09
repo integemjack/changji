@@ -499,8 +499,13 @@ void run(const config::Settings& settings, const Options& opts) {
         const auto s = config::runtime().snapshot();
         json locked = json::object();
         for (const auto& [k, v] : config::env_overridden()) locked[k] = v;
+        // **embedded 告诉前端"引擎就是我自己"。**
+        // 由引擎自己答这个请求时，"引擎地址"和"请求超时"两个输入框是空的、
+        // 也没有意义（改了也没人读），显示出来只会让人以为哪里没配好。
+        // 起 Node 那层转发时答的是另一份，带真地址，那时才该显示。
         return json_response(
-            {{"engineBaseUrl", ""},
+            {{"embedded", true},
+             {"engineBaseUrl", ""},
              {"engineTimeoutMs", 0},
              {"configFile", changji::paths::to_utf8(config::user_config_path())},
              {"envLocked", locked}});

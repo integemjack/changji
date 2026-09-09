@@ -149,6 +149,15 @@ async function pickProvider(event) {
 }
 const envLocked = computed(() => conn.value?.env_locked ?? {})
 const nodeLocked = computed(() => node.value?.envLocked ?? {})
+
+/**
+ * 引擎是不是就是发这个页面的那个进程。
+ *
+ * 是的话「引擎地址」和「请求超时」两个输入框没有意义：它们是给 Node 那层
+ * 转发用的，由引擎自己答时是空的，改了也没人读。显示出来只会让人以为
+ * 哪里没配好——地址栏空着、旁边还挂个"已连接 0ms"。
+ */
+const embedded = computed(() => node.value?.embedded === true)
 const hardware = computed(() => overview.value?.hardware)
 
 async function load() {
@@ -297,7 +306,9 @@ function scrollTo(id) {
             <div>
               <div class="card__title">引擎</div>
               <div class="card__sub">
-                真正干活的 Python 服务。可以在本机，也可以在局域网另一台机器上。
+                {{ embedded
+                  ? '这个页面就是引擎自己发的，同一个进程，没有别的服务要配。'
+                  : '真正干活的服务。可以在本机，也可以在局域网另一台机器上。' }}
               </div>
             </div>
             <span class="pill" :class="engineOnline ? 'pill--ok' : 'pill--danger'">
@@ -310,7 +321,7 @@ function scrollTo(id) {
               {{ overview?.engine?.error || '引擎离线，下面的设置读不到也存不了。' }}
             </p>
 
-            <div class="grid grid--2">
+            <div v-if="!embedded" class="grid grid--2">
               <label class="field">
                 <span class="field__label">
                   引擎地址
@@ -327,9 +338,31 @@ function scrollTo(id) {
                 <span class="field__hint">出分镜这类活儿要几分钟，别调太小。</span>
               </label>
             </div>
+            <!-- 自带引擎时，把这张卡片换成有用的东西：跑在什么机器上、
+                 配置从哪读的。地址和超时那两栏在这种情况下是空的。 -->
+            <div v-if="embedded" class="grid grid--2">
+              <div class="field">
+                <span class="field__label">显卡</span>
+                <span class="mono">
+                  {{ hardware?.gpu || '未探测到显卡' }}
+                  <template v-if="hardware?.vram_gb"> · {{ hardware.vram_gb }} GB</template>
+                </span>
+              </div>
+              <div class="field">
+                <span class="field__label">画质档位</span>
+                <span class="mono">
+                  <template v-if="hardware?.tiers?.final">
+                    成片 {{ hardware.tiers.final.width }}×{{ hardware.tiers.final.height }}
+                    / {{ hardware.tiers.final.steps }} 步
+                  </template>
+                  <template v-else>—</template>
+                </span>
+                <span class="field__hint">在下面「画质档位」那节改。</span>
+              </div>
+            </div>
             <p class="tiny dim mono">配置文件：{{ node.configFile }}</p>
           </div>
-          <div class="card__foot">
+          <div v-if="!embedded" class="card__foot">
             <button class="btn btn--primary" type="button" :disabled="isBusy('node')" @click="saveNode">
               保存引擎地址
             </button>
