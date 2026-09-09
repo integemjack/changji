@@ -231,6 +231,13 @@ if(CHANGJI_SD)
     set(SD_BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
     if(CHANGJI_SD_CUDA)
         set(SD_CUDA ON CACHE BOOL "" FORCE)
+        # **llama.cpp 的 ggml 走的是另一个开关。**
+        # 开了 CHANGJI_LLAMA 时 ggml 由 llama.cpp 提供，而它的 CUDA 后端
+        # 由 GGML_CUDA 控制，不认 SD_CUDA。只设 SD_CUDA 的话编出来的是
+        # 一个**完全没有 CUDA 的**二进制——不报错，全在 CPU 上跑，
+        # 表现就是"能跑但莫名其妙地慢"。
+        # 实测过：那一版 GGML_CUDA:BOOL=OFF，连 libggml-cuda.a 都没有。
+        set(GGML_CUDA ON CACHE BOOL "" FORCE)
         # ggml 读的是 CMAKE_CUDA_ARCHITECTURES。在拉它之前设好，
         # 拉完再设就晚了——那时候目标已经建出来了。
         set(CMAKE_CUDA_ARCHITECTURES "${CHANGJI_CUDA_ARCH}" CACHE STRING "" FORCE)
