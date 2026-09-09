@@ -114,6 +114,12 @@ struct WorkerPool::Impl {
 
         // 轮询。**间隔别太短**：出一张图是几十秒到几分钟，
         // 每 100 毫秒问一次纯粹是给对面添乱。
+        //
+        // **进度没变就不往上报。** 以前每问一次就报一次，同一步在事件里
+        // 出现三四遍：快照只留最后 200 条，几镜并行时全被这种重复填满，
+        // 真正的 warn / gate 被挤出去；WebSocket 那头每秒收十几条一样的。
+        int last_step = -1, last_steps = -1;
+        bool last_loading = false;
         for (;;) {
             if (tok.cancelled()) {
                 cli.Post(prefix + "/task/" + id + "/cancel", "",
@@ -135,8 +141,13 @@ struct WorkerPool::Impl {
                 throw std::runtime_error("工作进程回的进度不是 JSON");
             }
             const auto p = task_progress_from_json(body);
-            if (p.steps > 0 && on_step) {
+            const bool changed = p.step != last_step || p.steps != last_steps ||
+                                 p.loading != last_loading;
+            if (p.steps > 0 && on_step && changed) {
                 on_step(p.step, p.steps, 0.0, p.loading);
+                last_step = p.step;
+                last_steps = p.steps;
+                last_loading = p.loading;
             }
             if (p.state == "done" || p.state == "failed") {
                 if (!p.result) throw std::runtime_error("跑完了却没有结果");
