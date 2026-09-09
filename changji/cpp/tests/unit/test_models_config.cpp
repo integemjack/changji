@@ -350,7 +350,8 @@ TEST_CASE("模板的 [models] 那一节列出了每一个会被读的键") {
                             "video_moe_boundary", "video_llm",
                             "video_llm_vision", "video_audio_vae",
                             "video_rng", "video_lora",
-                            "video_lora_strength"}) {
+                            "video_lora_strength", "video_vae_tile",
+                            "vae_vram_min_gb"}) {
         CAPTURE(key);
         // 模板里这一节整个是注释掉的，所以形状是 `# 键 = `
         const std::string want = std::string("# ") + key + " = ";
@@ -412,6 +413,47 @@ TEST_CASE("[models].weights：默认 cpu，认 auto，别的拒") {
     fs::remove_all(tmp, ec);
 }
 
+TEST_CASE("weights = smart：按显存决定 VAE 放哪") {
+    // 用户要的是"显存超过多少就把 VAE 放进显存，适配更多情况"。
+    // 门槛 40 GB 是量出来的：5090（32.6 GB）上扩散 17.9 + VAE 5.5 = 23.4 GB
+    // 权重，加扩散自己约 9 GB 的计算缓冲差 112 MB 装不下。
+    // 这笔账值 63 秒一镜（解码 71 秒 → 8 秒）。
+    config::ModelsConfig m;
+    m.weights = "smart";
+
+    CHECK(m.weights_for(32.6) == "te=cpu,vae=cpu");   // 5090，放不下
+    CHECK(m.weights_for(39.9) == "te=cpu,vae=cpu");   // 门槛下方
+    CHECK(m.weights_for(40.0) == "te=cpu");           // 正好够
+    CHECK(m.weights_for(48.0) == "te=cpu");           // L40S
+    CHECK(m.weights_for(80.0) == "te=cpu");           // A100/H100
+
+    // **文本编码器永远放内存**：它每镜只跑一次（H3 实测 8 到 9 秒），
+    // 却是最大的一块（18.9 GB）。80 GB 的卡上也不该占着它。
+    CHECK(m.weights_for(80.0).find("te=cpu") != std::string::npos);
+
+    // 门槛可配
+    m.vae_vram_min_gb = 24.0;
+    CHECK(m.weights_for(32.6) == "te=cpu");
+
+    // 别的取值原样传下去，不碰
+    for (const char* w : {"cpu", "auto", "te=cpu,vae=cpu"}) {
+        config::ModelsConfig other;
+        other.weights = w;
+        CAPTURE(w);
+        CHECK(other.weights_for(8.0) == w);
+        CHECK(other.weights_for(80.0) == w);
+    }
+
+    // 负门槛要拒
+    config::Settings bad;
+    bad.models.vae_vram_min_gb = -1.0;
+    bool said = false;
+    for (const auto& e : bad.validate()) {
+        if (e.find("vae_vram_min_gb") != std::string::npos) said = true;
+    }
+    CHECK(said);
+}
+
 TEST_CASE("[models]：双专家视频模型的两项") {
     // Wan 2.2 的 A14B 是混合专家：高噪声专家跑前几步定构图和运动，
     // 低噪声专家跑后几步出细节。换它的理由是 TI2V-5B 的动作质量不够
@@ -459,6 +501,17 @@ TEST_CASE("[models]：双专家视频模型的两项") {
         const auto got = config::load_settings(tmp);
         CHECK(got.models.video_lora == "loras/turbo.safetensors");
         CHECK(got.models.video_lora_strength == doctest::Approx(0.8));
+
+        // VAE 分块：0 = 用内置的 16×11，负数拒。调小它换显存——
+        // VAE 放内存解码 71 秒，放显存 8 秒，而按内置块大小放显存差 112 MB。
+        CHECK(config::ModelsConfig{}.video_vae_tile == 0);
+        config::Settings bad;
+        bad.models.video_vae_tile = -1;
+        bool said = false;
+        for (const auto& e : bad.validate()) {
+            if (e.find("video_vae_tile") != std::string::npos) said = true;
+        }
+        CHECK(said);
     }
     SUBCASE("随机数发生器：默认 cuda，认 cpu/std，别的拒") {
         // sd.cpp 的默认是 cuda，Wan 那一路就用它；上游给 MiniMax-H3 的

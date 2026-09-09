@@ -187,6 +187,8 @@ struct SdContext::Impl {
     /// 要活到 generate_video 调完，不能用临时 string 的 c_str()。
     std::string lora;
     float lora_strength = 1.0f;
+    /// VAE 分块大小的覆盖值，0 = 用请求里带的默认。
+    int vae_tile = 0;
     /// Qwen-Image 那一路的文本编码器（sd.cpp 的 llm_path）和它的视觉塔。
     /// **和 text_encoder 互斥**：一次只填其中一边——Wan 走 t5xxl，
     /// Qwen-Image 走 llm，两个参数位不是一回事。
@@ -248,6 +250,7 @@ std::shared_ptr<SdContext> SdContext::create(const config::Settings& settings,
         impl.lora = paths::to_utf8(m.resolve(m.video_lora, ws));
         impl.lora_strength = static_cast<float>(m.video_lora_strength);
     }
+    if (is_video && m.video_vae_tile > 0) impl.vae_tile = m.video_vae_tile;
 
     // 音频 VAE：MiniMax-H3 那类画面和声音一起出的模型才有。
     if (is_video && !m.video_audio_vae.empty()) {
@@ -489,8 +492,11 @@ void SdContext::generate_video(const VideoRequest& req, const fs::path& raw_dest
     // 直接失败。见 VideoRequest 里那张实测表。
     g.vae_tiling_params.enabled = req.vae_tiling;
     g.vae_tiling_params.temporal_tiling = req.vae_temporal_tiling;
-    g.vae_tiling_params.tile_size_x = req.vae_tile_x;
-    g.vae_tiling_params.tile_size_y = req.vae_tile_y;
+    // 配置里给了就盖掉请求带的默认：调小分块换显存，好让 VAE 权重常驻。
+    g.vae_tiling_params.tile_size_x =
+        impl_->vae_tile > 0 ? impl_->vae_tile : req.vae_tile_x;
+    g.vae_tiling_params.tile_size_y =
+        impl_->vae_tile > 0 ? impl_->vae_tile : req.vae_tile_y;
     g.vae_tiling_params.target_overlap = static_cast<float>(req.vae_tile_overlap);
     // 显式清零：rel_size 非零时 sd.cpp 优先用比例、忽略上面的绝对块大小
     // （见 vae.hpp 的 get_tile_size）。依赖 init 把它清成 0 的话，
@@ -598,8 +604,19 @@ void register_sd_slots(const config::Settings& settings,
     register_sd_slots([settings] { return settings; }, profile);
 }
 
-void register_sd_slots(SettingsProvider provider,
+void register_sd_slots(SettingsProvider raw_provider,
                        const models::HardwareProfile& profile) {
+    // **weights = "smart" 在这里展开成 sd.cpp 认的组件规格。**
+    // 只有这一层拿得到这张卡真实的显存（profile），而 SdContext::create
+    // 只看 Settings。包一层 provider，下面所有地方看到的都是展开后的值——
+    // 包括 budget_for 和 set_budget，它们都按 weights 的取值分支。
+    const double card_gb = profile.gpu.has_value() ? profile.gpu->vram_gb()
+                                                   : profile.vram_gb;
+    const SettingsProvider provider = [raw_provider, card_gb] {
+        config::Settings s = raw_provider();
+        s.models.weights = s.models.weights_for(card_gb);
+        return s;
+    };
     // 预算取探测到的显存，留一成给驱动上下文和别的程序。
     //
     // 估高了是 OOM 直接崩，估低了只是多分段（慢）。所以往低了取——

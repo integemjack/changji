@@ -117,6 +117,45 @@
     video_vae       = "minimax_h3_video_vae_fp16.safetensors"
     video_audio_vae = "minimax_h3_audio_vae_fp32.safetensors"
 
+### 权重放哪：让它自己按显存决定
+
+`[models].weights = "smart"` 是**跨机器最省心的一档**，展开规则：
+
+| 这张卡的显存 | 展开成 | 扩散模型 | 文本编码器 | VAE |
+|---|---|---|---|---|
+| < `vae_vram_min_gb`（默认 40 GB） | `te=cpu,vae=cpu` | 显存 | 内存 | 内存 |
+| ≥ 40 GB | `te=cpu` | 显存 | 内存 | **显存** |
+
+两条规则都是量出来的，不是拍的（5090 32.6 GB + MiniMax-H3）：
+
+- **文本编码器永远放内存。** 它是最大的一块（Qwen3-VL-32B 18.9 GB），
+  但每镜只跑一次，实测 8 到 9 秒。放显存换那几秒不值。
+- **VAE 看卡。** 放内存时每镜解码 71 秒（5.5 GB 每次搬过 PCIe），
+  放显存只要 8 秒，**一镜省 63 秒**。但 32 GB 上放不下：扩散 17.9 +
+  VAE 5.5 = 23.4 GB 权重，加扩散自己约 9 GB 的计算缓冲，**差 112 MB**
+  （`need 142.17 MB device, available 29.75 MB device`）。
+  调小 `video_vae_tile` 救不了——缺的不是分块缓冲，是扩散模型那块没还。
+
+### MiniMax-H3 的提速：Turbo LoRA
+
+网上说 ComfyUI 上 H3 快 500%，就是这个。实测（5090，960×544，73 帧）：
+
+| | 采样 | VAE 解码 | 每镜合计 |
+|---|---|---|---|
+| 28 步，无 LoRA | 164 秒 | 71 秒 | **242 秒** |
+| **6 步 + Turbo LoRA** | **41 秒** | 71 秒 | **124 秒** |
+
+    [models]
+    video_lora = "loras/minimax_h3_turbo_v4_step600_ema.safetensors"
+    # 步数要跟着改，否则白挂：POST /api/settings {"final_steps":6}
+
+sd.cpp 认这个给 ComfyUI 做的 LoRA（日志里有 `apply lora at runtime`）。
+**判据是耗时，不是"没报错"**——不认时只是加载不上，画面照出、耗时照旧。
+画质：用户看过 6 步和 28 步的同一镜，看不出差别。
+
+挂上 LoRA 之后瓶颈换人了：VAE 解码从 29% 变成 57%。所以大卡上
+`weights = "smart"` 的收益比小卡大得多——41 + 8 = 49 秒一镜。
+
 ## 2. 配置
 
 `~/.config/changji/config.toml`（工作进程的 systemd 单元里要设

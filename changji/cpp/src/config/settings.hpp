@@ -287,6 +287,43 @@ struct ModelsConfig {
 
     /// 上面那个 LoRA 的权重。1.0 是原样，调低减弱它的影响。
     double video_lora_strength = 1.0;
+
+    /// 出片时 VAE 解码的分块大小（潜空间格子）。**C++ 独有。** 0 = 用内置的 16×11。
+    ///
+    /// 调小它换的是显存：每块的计算缓冲小一点，剩给权重的就多一点。
+    ///
+    /// **5090 + MiniMax-H3 上这个旋钮救不了场，别指望它。** 那台机器上
+    /// VAE 放内存解码 71 秒（每次把 5.5 GB 搬过 PCIe），放显存只要 8 秒，
+    /// 很想让它常驻；但放显存时 VAE 解码会失败，而且**从 16×11 调到 10×10
+    /// 一点没变**。日志说明了原因：
+    ///
+    ///     cannot make enough memory available on CUDA0:
+    ///       need 142.17 MB device / 638.80 MB budget,
+    ///       available 29.75 MB device / 7248.04 MB budget
+    ///
+    /// **预算还剩 7.2 GB，显卡上只剩 29.75 MB。** 缺的不是分块的缓冲，是
+    /// 扩散模型的计算缓冲一直占着没还——分块再小也腾不出那块地方。
+    /// 留着这一项是给别的卡和别的分辨率用的。
+    ///
+    /// 太小会变慢（块多了重叠部分重复算），也别调到 0 以下。
+    int video_vae_tile = 0;
+
+    /// `weights = "smart"` 时，显存到多少才把 VAE 放显存（GB）。**C++ 独有。**
+    ///
+    /// 默认 40 是量出来的，不是拍的。5090（32.6 GB）跑 MiniMax-H3：
+    /// 扩散模型 17.9 GB + VAE 5.5 GB = 23.4 GB 权重，加上扩散模型
+    /// 自己那块约 9 GB 的计算缓冲就是 32.4 GB，**差 112 MB 装不下**
+    /// （日志：`need 142.17 MB device, available 29.75 MB device`）。
+    /// 40 GB 的卡才留得出余量，所以门槛定在这儿。
+    ///
+    /// 这笔账值不值得：VAE 放内存时每镜解码 71 秒（5.5 GB 搬过 PCIe），
+    /// 放显存只要 8 秒——一镜省 63 秒。所以大卡上一定要放进去。
+    double vae_vram_min_gb = 40.0;
+
+    /// 按这张卡的显存把 `weights` 展开成 sd.cpp 认的组件规格。
+    ///
+    /// 只有 `"smart"` 需要展开，别的取值原样返回。
+    std::string weights_for(double vram_gb) const;
     double image_cfg = 2.5;
     double image_flow_shift = 3.0;
 
@@ -299,6 +336,7 @@ struct ModelsConfig {
     std::string frame_tier = "draft";
 
     /// `weights = "auto"` 时给**计算缓冲**留多少显存（GB）。**C++ 独有。**
+    ///
     ///
     /// auto 的预算是给权重的；生成时还要一块计算缓冲，那块比"给驱动留一成"
     /// 大一个量级。5090（32 GB）上出 1280×704 的首帧实测：VAE 解码要

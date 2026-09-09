@@ -164,6 +164,17 @@ std::vector<std::string> ModelsConfig::validate() const {
     return errs;
 }
 
+std::string ModelsConfig::weights_for(double vram_gb) const {
+    if (weights != "smart") return weights;
+    // **文本编码器永远放内存。** 它每镜只跑一次（H3 的 Qwen3-VL-32B 实测
+    // 8 到 9 秒），而它是这一套里最大的一块（18.9 GB）。放显存换来的那几秒
+    // 远不如把地方让给扩散模型。
+    //
+    // VAE 看卡：放内存时每镜解码 71 秒（5.5 GB 搬过 PCIe），放显存 8 秒，
+    // 一镜差 63 秒；但 32 GB 的卡上放不下（见 vae_vram_min_gb 那段的账）。
+    return vram_gb >= vae_vram_min_gb ? "te=cpu" : "te=cpu,vae=cpu";
+}
+
 std::vector<std::string> Settings::validate() const {
     std::vector<std::string> errs;
     auto merge = [&errs](std::vector<std::string> more) {
@@ -185,6 +196,12 @@ std::vector<std::string> Settings::validate() const {
         errs.push_back(
             "[models].video_high_noise 填了但 [models].video 是空的："
             "双专家要两份，video 填低噪声那份");
+    }
+    if (models.vae_vram_min_gb < 0) {
+        errs.push_back("[models].vae_vram_min_gb 不能是负的");
+    }
+    if (models.video_vae_tile < 0) {
+        errs.push_back("[models].video_vae_tile 不能是负的（0 = 用内置值）");
     }
     if (models.video_rng != "cuda" && models.video_rng != "cpu" &&
         models.video_rng != "std") {
@@ -385,6 +402,8 @@ void apply_table(const toml::table& doc, Settings& s) {
         take(t, "video_rng", s.models.video_rng);
         take(t, "video_lora", s.models.video_lora);
         take(t, "video_lora_strength", s.models.video_lora_strength);
+        take(t, "video_vae_tile", s.models.video_vae_tile);
+        take(t, "vae_vram_min_gb", s.models.vae_vram_min_gb);
     }
     take_path_str(&doc, "workspace", s.workspace);
     if (auto node = doc.get("vram_gb_override")) {
@@ -629,6 +648,17 @@ subtitle_font = "Source Han Sans SC"
 # 要实测：不认时只是加载不上、画面照出，判据得看耗时有没有真降下来。
 # video_lora = "loras/minimax_h3_turbo_v4_step600_ema.safetensors"
 # video_lora_strength = 1.0
+#
+# 出片时 VAE 解码的分块大小（潜空间格子），0 = 用内置的 16×11。
+# 调小换显存：块的计算缓冲小了，VAE 权重才有机会常驻显存。5090 上实测
+# VAE 放内存解码要 71 秒、放显存只要 8 秒，而按内置块大小放显存会差 112 MB。
+# video_vae_tile = 12
+#
+# weights = "smart" 时，显存到多少才把 VAE 放显存（GB）。默认 40 是量出来的：
+# 5090（32.6 GB）上扩散 17.9 + VAE 5.5 = 23.4 GB 权重，加扩散自己约 9 GB 的
+# 计算缓冲就差 112 MB 装不下。VAE 放内存每镜解码 71 秒、放显存 8 秒，
+# 所以大卡上一定要放进去。
+# vae_vram_min_gb = 40.0
 #
 # weights = "auto" 时给计算缓冲留多少显存（GB）。auto 的预算是给权重的，
 # 而生成时那块计算缓冲比"给驱动留一成"大一个量级：1280×704 的 VAE 解码
