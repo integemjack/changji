@@ -22,6 +22,7 @@
 
 #include <cstddef>
 #include <functional>
+#include <optional>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -117,6 +118,13 @@ public:
     /// 和别的程序占的。设小了只是多分段（慢），设大了是 OOM（崩），
     /// 所以宁可保守。0 表示不限制。
     void set_budget(std::size_t vram_bytes);
+
+    /// 换掉"现在还空多少显存"的问法。默认问 nvidia-smi。
+    ///
+    /// **给测试用的**：单元测试里不该真去跑 nvidia-smi（跑不跑得动看机器，
+    /// 而且慢）。回 nullopt 表示问不到，那时按静态估算走。
+    using FreeVramProbe = std::function<std::optional<double>()>;
+    void set_free_vram_probe(FreeVramProbe probe);
     std::size_t budget() const;
 
     /// 注册一个槽。同一个槽重复注册会覆盖，但**只在它没加载时**——
@@ -164,6 +172,7 @@ private:
     mutable std::mutex mu_;
     std::vector<Entry> entries_;
     std::size_t budget_ = 0;
+    FreeVramProbe free_vram_;
     std::uint64_t clock_ = 0;
 };
 

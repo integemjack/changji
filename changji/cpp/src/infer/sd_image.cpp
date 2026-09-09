@@ -660,6 +660,11 @@ void register_sd_slots(SettingsProvider raw_provider,
     // 图像模型 + 它的编码器 + 视频模型 + umt5，直接 CUDA OOM，进程 abort。
     //
     // 预算按 auto 那条路的数取：它才是真占显存的那个。
+    // **把实时显存的问法装上。** 不装的话调度器只信静态估算，
+    // 每次切阶段都卸一个再装一个——一次重装几十秒到几分钟，
+    // 而卡上可能一直空着一大半（权重放内存时显存里只有计算缓冲）。
+    scheduler().set_free_vram_probe([] { return models::free_vram_gb(); });
+
     scheduler().set_budget(
         static_cast<std::size_t>(
             (provider().models.weights == "auto" ? physical : budget) * 1024) *

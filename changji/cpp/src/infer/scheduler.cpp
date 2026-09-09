@@ -110,6 +110,11 @@ void Scheduler::do_unload(Entry& e) {
     e.is_loaded = false;
 }
 
+void Scheduler::set_free_vram_probe(FreeVramProbe probe) {
+    std::lock_guard lg(mu_);
+    free_vram_ = std::move(probe);
+}
+
 bool Scheduler::make_room(std::size_t need, Slot keep) {
     if (budget_ == 0) return true;  // 不限制
 
@@ -118,6 +123,24 @@ bool Scheduler::make_room(std::size_t need, Slot keep) {
         if (e.is_loaded) used += e.spec.vram_estimate;
     }
     if (used + need <= budget_) return true;
+
+    // **静态估算说装不下之前，先真去问一眼卡上还空着多少。**
+    //
+    // vram_estimate 是每个槽按整份预算估的（"同时只装得下一个"），
+    // 那是保守的：权重放内存时显存里其实只有计算缓冲，两个槽同时在也没事。
+    // 只信估算的话，每次切阶段都要卸一个再装一个——一次重装是几十秒到几分钟，
+    // 而卡上可能一直空着一大半。
+    //
+    // 问不到就退回估算。**"问不到"不等于"没空间"**，但那时也没有更好的依据。
+    const FreeVramProbe probe = free_vram_;
+    if (probe) {
+        const auto free_gb = probe();
+        if (free_gb.has_value()) {
+            const auto free_bytes = static_cast<std::size_t>(
+                *free_gb * 1024.0 * 1024.0 * 1024.0);
+            if (need <= free_bytes) return true;
+        }
+    }
 
     // 候选：已加载、没被借用、不是要保住的那个。
     //

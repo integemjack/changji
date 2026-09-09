@@ -1,6 +1,7 @@
 #include "models/hardware.hpp"
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <cstdio>
 #include <sstream>
@@ -155,6 +156,44 @@ std::optional<GPUInfo> detect_gpu() {
                        15000);
     if (!r.launched) return std::nullopt;
     return parse_gpu_query(r.out);
+}
+
+std::optional<double> parse_free_vram(const std::string& out) {
+    // 一张卡一行，只认第一行（卡 0）。**多卡时这个数没有意义**——
+    // 我们的工作进程绑一张卡，而 nvidia-smi 不知道绑的是哪张，
+    // 所以多卡直接回 nullopt，让调用方退回静态估算。
+    // 一行都没有就没什么可解析的。
+    const std::string first = out.substr(0, out.find('\n'));
+    std::string trimmed;
+    for (char c : first) {
+        if (!std::isspace(static_cast<unsigned char>(c))) trimmed += c;
+    }
+    if (trimmed.empty()) return std::nullopt;
+    // 末尾可能带 " MiB"，nounits 时没有；两种都吃。
+    std::size_t digits = 0;
+    while (digits < trimmed.size() &&
+           std::isdigit(static_cast<unsigned char>(trimmed[digits]))) {
+        ++digits;
+    }
+    if (digits == 0) return std::nullopt;
+    try {
+        const double mib = std::stod(trimmed.substr(0, digits));
+        if (mib <= 0) return std::nullopt;
+        return mib / 1024.0;
+    } catch (const std::exception&) {
+        return std::nullopt;
+    }
+}
+
+std::optional<double> free_vram_gb() {
+    if (!proc::which("nvidia-smi")) return std::nullopt;
+    // **超时要短。** 这个函数在每次借槽的路径上，卡住比问不到更糟；
+    // 问不到只是退回静态估算。
+    auto r = proc::run(
+        "nvidia-smi",
+        {"--query-gpu=memory.free", "--format=csv,noheader,nounits"}, 5000);
+    if (!r.launched || r.exit_code != 0) return std::nullopt;
+    return parse_free_vram(r.out);
 }
 
 std::optional<GPUInfo> parse_gpu_query(const std::string& out) {

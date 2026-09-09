@@ -221,3 +221,18 @@ TEST_CASE("档位按单卡算，不按总显存") {
     CHECK(summed.at(Tier::FINAL).width >=
           one.at(Tier::FINAL).width);
 }
+
+TEST_CASE("解析实时空闲显存") {
+    // nounits 格式：一张卡一行，纯数字（MiB）
+    CHECK(parse_free_vram("12873\n").value() ==
+          doctest::Approx(12.571).epsilon(0.01));
+    // 带单位的也吃
+    CHECK(parse_free_vram("12873 MiB\n").value() ==
+          doctest::Approx(12.571).epsilon(0.01));
+    // 问不到时**必须回空，不能回 0**——回 0 会被当成"没空间"，
+    // 而"问不到"和"没空间"是两回事：前者该退回静态估算。
+    CHECK_FALSE(parse_free_vram("").has_value());
+    CHECK_FALSE(parse_free_vram("\n").has_value());
+    CHECK_FALSE(parse_free_vram("N/A\n").has_value());
+    CHECK_FALSE(parse_free_vram("0\n").has_value());
+}

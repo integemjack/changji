@@ -9,6 +9,7 @@
 
 #include <doctest/doctest.h>
 
+#include <optional>
 #include <atomic>
 #include <stdexcept>
 #include <string>
@@ -409,4 +410,50 @@ TEST_CASE("按阶段分批比按镜头串行少换很多次模型") {
     CHECK(batched == 2);              // 一共就加载两次
     CHECK(serial == kShots * 2);      // 每镜换两次
     CHECK(serial > batched * 30);
+}
+
+TEST_CASE("显存真空着的时候别瞎卸模型") {
+    // vram_estimate 是按整份预算估的（"同时只装得下一个"），那是保守的：
+    // 权重放内存时显存里只有计算缓冲，两个槽同时在也没事。只信估算的话，
+    // 每次切阶段都要卸一个再装一个，而一次重装是几十秒到几分钟。
+    Scheduler s;
+    s.set_budget(10ull << 30);          // 预算 10 GB
+
+    int image_unloads = 0;
+    SlotSpec img;
+    img.slot = Slot::Image;
+    img.vram_estimate = 8ull << 30;     // 估 8 GB
+    img.load = [] {};
+    img.unload = [&image_unloads] { ++image_unloads; };
+    s.register_slot(img);
+
+    SlotSpec vid;
+    vid.slot = Slot::Video;
+    vid.vram_estimate = 8ull << 30;
+    vid.load = [] {};
+    vid.unload = [] {};
+    s.register_slot(vid);
+
+    { auto lease = s.acquire(Slot::Image); }   // 装上图像槽
+    CHECK(image_unloads == 0);
+
+    SUBCASE("卡上真的空着 20 GB：不该卸") {
+        s.set_free_vram_probe([] { return std::optional<double>(20.0); });
+        { auto lease = s.acquire(Slot::Video); }
+        CHECK(image_unloads == 0);
+    }
+    SUBCASE("卡上只剩 1 GB：照旧按估算卸") {
+        s.set_free_vram_probe([] { return std::optional<double>(1.0); });
+        { auto lease = s.acquire(Slot::Video); }
+        CHECK(image_unloads == 1);
+    }
+    SUBCASE("问不到就退回估算——**问不到不等于有空间**") {
+        s.set_free_vram_probe([] { return std::optional<double>{}; });
+        { auto lease = s.acquire(Slot::Video); }
+        CHECK(image_unloads == 1);
+    }
+    SUBCASE("没装探针时和以前一样") {
+        { auto lease = s.acquire(Slot::Video); }
+        CHECK(image_unloads == 1);
+    }
 }

@@ -96,6 +96,21 @@ std::optional<GPUInfo> parse_gpu_query(const std::string& out);
 /// 真正的推理可能根本不在同一台机器上。
 std::optional<GPUInfo> detect_gpu();
 
+/// 现在这张卡还空着多少显存（GB）。**每次调用都真去问一遍。**
+///
+/// 和 `detect_gpu()` 报的总量不是一回事：总量是静态的，这个是实时的，
+/// 会随着别的进程、别的槽的占用变化。调度器拿它决定"要不要卸掉别的模型"
+/// ——静态估算说装不下、而实际空着一大块的时候，卸载是纯浪费：
+/// 一次重新加载是几十秒到几分钟。
+///
+/// 问不到（没有 nvidia-smi、多卡、解析失败）就回 nullopt，
+/// 调用方退回原来的静态估算。**不要把"问不到"当成"没有空间"**。
+std::optional<double> free_vram_gb();
+
+/// 从 `nvidia-smi --query-gpu=memory.free` 的输出里解析空闲显存。
+/// 单独拆出来是为了能测——测试里不该真去跑 nvidia-smi。
+std::optional<double> parse_free_vram(const std::string& out);
+
 /// 按显存推导三个档位的参数。
 std::map<Tier, TierSpec> tiers_for_vram(double vram_gb);
 
