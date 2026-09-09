@@ -351,3 +351,27 @@ TEST_CASE("模板自己解析得动，而且解析出来就是默认值") {
     CHECK(s2.llm.model == def.llm.model);
     CHECK(s2.comfy.base_url == def.comfy.base_url);
 }
+
+TEST_CASE("[models].weights：默认 cpu，认 auto，别的拒") {
+    // 默认必须是 cpu——这是 6 GB 卡上能跑的前提，不能因为大卡上想快就改默认。
+    CHECK(config::ModelsConfig{}.weights == "cpu");
+
+    const fs::path tmp = fs::temp_directory_path() / "changji_weights_cfg";
+    std::error_code ec;
+    fs::create_directories(tmp, ec);
+    {
+        std::ofstream f(tmp / "changji.toml", std::ios::binary);
+        f << "[models]\nweights = \"auto\"\n";
+    }
+    CHECK(config::load_settings(tmp).models.weights == "auto");
+
+    config::Settings s;
+    s.models.weights = "gpu";   // 没有这个值：auto 才是"能进显存就进"
+    const auto errs = s.validate();
+    bool said = false;
+    for (const auto& e : errs) {
+        if (e.find("weights") != std::string::npos) said = true;
+    }
+    CHECK(said);
+    fs::remove_all(tmp, ec);
+}

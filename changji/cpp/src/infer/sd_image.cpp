@@ -228,13 +228,21 @@ std::shared_ptr<SdContext> SdContext::create(const config::Settings& settings,
                                       m.resolve(m.video_text_encoder, ws));
     }
     impl.max_vram = vram_arg(vram_budget_gb);
-    // 权重放系统内存，用到才搬进显存。**这是 6GB 卡上能跑的关键**——
-    // 见方案里"跨模型调度"那一节。默认（权重直接进显存）在这台机器上
+    // 权重放哪，见 ModelsConfig::weights。
+    //
+    // cpu：权重放系统内存，用到才搬进显存。**这是 6GB 卡上能跑的关键**——
+    // 见方案里"跨模型调度"那一节。不管的话（权重直接进显存）在那台机器上
     // 加载阶段就 OOM。
-    impl.params_backend = "cpu";
+    //
+    // auto：params_backend 留空 + auto_fit。sd.cpp 只在两个后端 spec 都为空时
+    // 才启用 auto_fit（stable-diffusion.cpp 里那一行 `&& params_backend_spec.empty()`），
+    // 所以这里**不能**填 "" 之外的任何东西。它按这张卡真实的空闲显存逐组件放。
+    const bool auto_fit = m.weights == "auto";
+    impl.params_backend = auto_fit ? "" : "cpu";
 
     sd_ctx_params_t p{};
     ::sd_ctx_params_init(&p);
+    p.auto_fit = auto_fit;
     p.diffusion_model_path = impl.diffusion.c_str();
     if (!impl.vae.empty()) p.vae_path = impl.vae.c_str();
     if (!impl.text_encoder.empty()) {
@@ -498,6 +506,15 @@ void register_sd_slots(SettingsProvider provider,
     // 估高了是 OOM 直接崩，估低了只是多分段（慢）。所以往低了取——
     // 这条和 Scheduler 里那个 vram_estimate 的取舍是同一个道理。
     const double budget = profile.vram_gb > 0 ? profile.vram_gb * 0.9 : 0.0;
+    // **auto 模式的预算按物理显存算，不按 vram_gb_override。**
+    // override 是拿来挑档位的（44 GB 的卡想要 1280×704 的成片档就填 20），
+    // 拿它当显存预算的话 auto_fit 会把本来装得下的编码器赶去内存。
+    // 探测不到卡（没有 nvidia-smi）就退回上面那个数。
+    const double physical =
+        profile.gpu.has_value() ? profile.gpu->vram_gb() * 0.9 : budget;
+    const auto budget_for = [budget, physical](const config::Settings& s) {
+        return s.models.weights == "auto" ? physical : budget;
+    };
     const std::size_t estimate =
         static_cast<std::size_t>(budget * 1024) * 1024 * 1024;
 
@@ -512,8 +529,9 @@ void register_sd_slots(SettingsProvider provider,
         // 视频模型重新加载更贵（文件大得多），所以图像的优先级更低，
         // 腾地方时先卸它。
         spec.evict_priority = 5;
-        spec.load = [provider, budget] {
-            auto ctx = SdContext::create(provider(), budget, ModelRole::Image);
+        spec.load = [provider, budget_for] {
+            const config::Settings s = provider();
+            auto ctx = SdContext::create(s, budget_for(s), ModelRole::Image);
             std::lock_guard lg(g_ctx_mu);
             g_image_ctx = std::move(ctx);
         };
@@ -529,8 +547,9 @@ void register_sd_slots(SettingsProvider provider,
         spec.residency = Residency::Cached;
         spec.vram_estimate = estimate;
         spec.evict_priority = 9;
-        spec.load = [provider, budget] {
-            auto ctx = SdContext::create(provider(), budget, ModelRole::Video);
+        spec.load = [provider, budget_for] {
+            const config::Settings s = provider();
+            auto ctx = SdContext::create(s, budget_for(s), ModelRole::Video);
             std::lock_guard lg(g_ctx_mu);
             g_video_ctx = std::move(ctx);
         };

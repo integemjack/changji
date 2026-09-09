@@ -179,6 +179,10 @@ std::vector<std::string> Settings::validate() const {
     if (vram_gb_override && *vram_gb_override <= 0) {
         errs.push_back("vram_gb_override 必须大于 0");
     }
+    if (models.weights != "cpu" && models.weights != "auto") {
+        errs.push_back("[models].weights 只能是 cpu 或 auto，现在是 " +
+                       models.weights);
+    }
     return errs;
 }
 
@@ -337,6 +341,7 @@ void apply_table(const toml::table& doc, Settings& s) {
         take(t, "tts", s.models.tts);
         take(t, "tts_decoder", s.models.tts_decoder);
         take(t, "diffusion_flash_attn", s.models.diffusion_flash_attn);
+        take(t, "weights", s.models.weights);
     }
     take_path_str(&doc, "workspace", s.workspace);
     if (auto node = doc.get("vram_gb_override")) {
@@ -533,6 +538,11 @@ subtitle_font = "Source Han Sans SC"
 # image_text_encoder = "Qwen2.5-VL-7B-Instruct-Q2_K.gguf"
 # 2509 及以后的 Qwen-Image-Edit 还要视觉塔，初版可以不填
 # image_text_encoder_vision = "Qwen2.5-VL-7B-Instruct-mmproj-BF16.gguf"
+#
+# 权重放哪。cpu（默认）= 放系统内存、用到才搬进显存，小卡上能跑全靠它，
+# 代价是每一步都在等 PCIe。auto = 交给 sd.cpp 按这张卡真实的空闲显存决定，
+# 装得下的常驻显存——大卡（≥ 24 GB）上用这个，实测出片阶段利用率从 35% 起飞。
+# weights = "auto"
 )";
 
 }  // namespace

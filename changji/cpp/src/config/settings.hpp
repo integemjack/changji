@@ -192,6 +192,18 @@ struct ModelsConfig {
     /// 关掉它比重编一个二进制容易。
     bool diffusion_flash_attn = true;
 
+    /// 权重放哪：`cpu`（默认）还是 `auto`。**C++ 独有。**
+    ///
+    /// cpu：权重放系统内存，用到才搬进显存。6 GB 卡上能跑全靠它，
+    /// 但每一步都在等 PCIe——8 张 L20 上实测每张卡 1 秒忙 2 秒闲，
+    /// 利用率 35%，工作进程 CPU 60～80%。
+    ///
+    /// auto：交给 sd.cpp 的 auto_fit。它按**这张卡真实的空闲显存**逐个组件放，
+    /// 装得下的留显存，装不下的才放内存。44 GB 卡上视频模型 + 编码器 + VAE
+    /// 全能常驻。预算给的是物理显存，不是 vram_gb_override——那个数是拿来
+    /// 挑档位的，和这张卡实际有多少显存是两回事。
+    std::string weights = "cpu";
+
     /// 配音的解码器（Qwen3-TTS 的 tokenizer，GGUF）。
     ///
     /// 这一份把 12.5 Hz 的码本还原成 24 kHz 波形。**必须和 tts 配套**，
