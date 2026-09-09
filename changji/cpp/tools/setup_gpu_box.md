@@ -7,17 +7,32 @@
 
 一进程一张卡，**不做跨卡切分**，所以只看单卡容量：
 
-| 阶段 | 要常驻的 | 合计 |
+**算的时候别忘了计算缓冲。** 权重只是一半：生成时还要一块 buffer，
+1280×704 的 VAE 解码实测 **6.6 GB**。权重把显存占满就出不来图，
+而且在 sd.cpp 的日志接上之前只报一句"出图失败"。
+
+| 阶段 | 权重 | 加缓冲 |
 |---|---|---|
-| 出片 | Wan 5B fp16 9.4 GB + umt5-xxl 11 GB + VAE 1.4 GB | **≈22 GB** |
-| 出首帧 | Qwen-Image fp8 20 GB + Qwen2.5-VL **bf16** 16 GB | **≈36 GB** |
-| 出首帧（省显存） | Qwen-Image fp8 20 GB + Qwen2.5-VL **Q8_0 GGUF** ≈8 GB | **≈28 GB** |
+| 出片 | Wan 5B fp16 9.4 + umt5-xxl 11 + VAE 1.4 ≈ **22 GB** | ≈29 GB |
+| 出首帧（fp8） | Qwen-Image fp8 20 + Qwen2.5-VL Q8_0 8 ≈ **28 GB** | ≈35 GB ✗ |
+| 出首帧（**Q6_K**） | Qwen-Image Q6_K 16 + Qwen2.5-VL Q8_0 8 ≈ **24 GB** | ≈31 GB ✓ |
 
 - **≥40 GB**（L20 48 GB / A100）：随便配，bf16 编码器也行。
-- **32 GB**（5090）：文本编码器要用 **`Qwen2.5-VL-7B-Instruct-Q8_0.gguf`**
-  （约 8 GB，sd.cpp 上游 `docs/qwen_image.md` 里的命令行用的就是它）。
-  用 bf16 那份（16 GB）会超，auto_fit 只能把一部分赶回内存，出首帧那一步变慢。
+- **32 GB**（5090）：**图像模型用 `qwen-image-Q6_K.gguf`（16 GB），不是
+  fp8 那份（20 GB）**；文本编码器用 `Qwen2.5-VL-7B-Instruct-Q8_0.gguf`（8 GB）。
   **不要用 Comfy 的 `fp8_scaled`**——见下面第 1 节第 2 条。
+
+  实测（5090，704×1280 首帧）：
+
+  | | 权重放哪 | 利用率 | 每张 |
+  |---|---|---|---|
+  | fp8 20 GB + `weights=cpu` | 全在内存 | **26%** | 136 秒 |
+  | **Q6_K 16 GB + `weights=auto`** | 扩散模型常驻显存 | **89%** | **34 秒** |
+
+  fp8 那份在 32 GB 上只能用 `weights=cpu`——常驻之后 VAE 解码的 6.6 GB
+  挤不进来。而 cpu 模式每一步都要把 19.5 GB 从内存搬过 PCIe，
+  卡就在那儿等（逐秒采样是 2-3-2-3 的锯齿）。换 Q6_K 之后权重常驻，
+  **快 4 倍，画质看不出差别**。
 - **≤24 GB**：`weights = "cpu"`，权重放系统内存、用到才搬进显存。能跑，
   但每张卡大约 1 秒忙 2 秒闲（实测 35% 利用率），瓶颈在 PCIe。
 
@@ -30,8 +45,9 @@
     Wan2.2_VAE.safetensors                   1.4 GB
     umt5_xxl_fp16.safetensors                 11 GB
 
-    # 出首帧：Qwen-Image **基础模型**
-    qwen_image_fp8_e4m3fn.safetensors         20 GB
+    # 出首帧：Qwen-Image **基础模型**。≥40 GB 的卡用 fp8，32 GB 用 Q6_K
+    qwen_image_fp8_e4m3fn.safetensors         20 GB   # ≥40 GB 卡
+    qwen-image-Q6_K.gguf                      16 GB   # 32 GB 卡
     qwen_image_vae.safetensors               243 MB
     qwen_2.5_vl_7b_bf16.safetensors           16 GB   # ≥40 GB 卡用这份
     Qwen2.5-VL-7B-Instruct-Q8_0.gguf         ~8 GB   # 32 GB 卡用这份

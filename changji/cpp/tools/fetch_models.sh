@@ -65,9 +65,20 @@ dl umt5_xxl_fp16.safetensors \
 echo "== 出首帧（Qwen-Image **基础模型**，不是 Edit） =="
 # Edit 是图生图编辑模型，拿它做文生图出来的是彩色雪花——而且方差比真图还大，
 # 靠"方差不为零"判"不是空图"会一路绿灯。这台机器上栽过。
-dl qwen_image_fp8_e4m3fn.safetensors \
-   "$B/Comfy-Org/Qwen-Image_ComfyUI/resolve/main/split_files/diffusion_models/qwen_image_fp8_e4m3fn.safetensors" \
-   20430635136
+if [ "$ENC" = "bf16" ]; then
+  # ≥40 GB 的卡：fp8 那份
+  dl qwen_image_fp8_e4m3fn.safetensors \
+     "$B/Comfy-Org/Qwen-Image_ComfyUI/resolve/main/split_files/diffusion_models/qwen_image_fp8_e4m3fn.safetensors" \
+     20430635136
+else
+  # 32 GB 的卡：**Q6_K，不是 fp8**。fp8 20 GB 常驻之后，1280×704 的
+  # VAE 解码要的 6.6 GB 缓冲挤不进 32 GB，只能退回 weights="cpu"——
+  # 那样每一步都要把 19.5 GB 搬过 PCIe，实测利用率 26%、每张 136 秒。
+  # Q6_K 16 GB 能常驻，利用率 89%、每张 34 秒，**画质看不出差别**。
+  dl qwen-image-Q6_K.gguf \
+     "$B/city96/Qwen-Image-gguf/resolve/main/qwen-image-Q6_K.gguf" \
+     16824990240
+fi
 dl qwen_image_vae.safetensors \
    "$B/Comfy-Org/Qwen-Image_ComfyUI/resolve/main/split_files/vae/qwen_image_vae.safetensors" \
    253806246
@@ -97,6 +108,12 @@ du -sh "$DIR"
 ls -la "$DIR" "$DIR/llm" | awk '$5 > 1000000 {printf "  %10.1f GB  %s\n", $5/1073741824, $9}'
 echo
 echo "配置照着写：cpp/tools/setup_gpu_box.md 第 2 节"
-[ "$ENC" = "bf16" ] \
-  && echo '  image_text_encoder = "qwen_2.5_vl_7b_bf16.safetensors"' \
-  || echo '  image_text_encoder = "Qwen2.5-VL-7B-Instruct-Q8_0.gguf"'
+if [ "$ENC" = "bf16" ]; then
+  echo '  image = "qwen_image_fp8_e4m3fn.safetensors"'
+  echo '  image_text_encoder = "qwen_2.5_vl_7b_bf16.safetensors"'
+  echo '  weights = "auto"'
+else
+  echo '  image = "qwen-image-Q6_K.gguf"'
+  echo '  image_text_encoder = "Qwen2.5-VL-7B-Instruct-Q8_0.gguf"'
+  echo '  weights = "auto"        # Q6_K 能常驻，别用 cpu——那样慢 4 倍'
+fi
