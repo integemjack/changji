@@ -59,6 +59,16 @@ struct RunOptions {
     /// 只跑草稿档就停。快速验证叙事时用——成片档一个镜头几分钟，
     /// 而叙事对不对看草稿就够了。
     bool skip_final = false;
+    /// 跳过草稿档，首帧出完直接上成片档。
+    ///
+    /// **两档画质拉不开差距的时候，草稿档就是白跑一遍。** 挂 Turbo LoRA
+    /// 之后就是这个局面：草稿 6 步、成片 6 步，同一个分辨率，出来几乎一样，
+    /// 而每镜多花两分钟。用户 2026-09-10 的原话："草稿档和成片档一样，
+    /// 现在根本不需要草稿档了还浪费时间"。
+    ///
+    /// 跳过之后成片档要收 FRAME_DONE 那批镜头——它们没经过草稿档，
+    /// 状态停在首帧完成。这一条在 render_entry_states 里。
+    bool skip_draft = false;
     /// 无视状态，全部重跑。
     bool force = false;
     /// 只跑这几个阶段。
@@ -131,6 +141,8 @@ std::vector<models::Shot*> pick(models::Episode& ep,
 ///
 /// 草稿档收 `AUDIO_DONE` 是关键：首帧失败的镜头状态停在那里，
 /// 不收的话它永远出不了片；收了就退回纯文生视频。
-std::set<models::ShotStatus> render_entry_states(models::Tier tier);
+/// `skip_draft` 为真时成片档还要收 FRAME_DONE 那批——它们没走草稿档。
+std::set<models::ShotStatus> render_entry_states(models::Tier tier,
+                                                 bool skip_draft = false);
 
 }  // namespace changji::pipeline

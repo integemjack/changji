@@ -44,6 +44,14 @@ struct ComfyConfig {
 
 /// 剧本和分镜用的大模型。默认走本地 Ollama。
 struct LLMConfig {
+    /// 大模型跑在哪：`remote`（默认，走 base_url）或 `local`（进程内）。
+    /// **C++ 独有**——Python 那边只有远端一条路。
+    ///
+    /// local 是"一个程序跑所有"的那条：不用另起 llama-server，
+    /// 而且**归调度器管**，出片要显存时它会按实时空闲显存决定要不要让开。
+    /// 权重路径在 `[models].llm`。
+    std::string backend = "remote";
+
     std::string base_url = "http://127.0.0.1:11434/v1";
     std::string model = "qwen3:14b";
     std::string api_key = "ollama";  ///< 本地服务通常不校验

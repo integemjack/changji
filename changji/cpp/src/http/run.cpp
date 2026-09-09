@@ -135,6 +135,8 @@ ApiResult post_run(const json& body, const RunDeps& deps) {
     const std::string project_path = need_str(body, "project");
     const std::string episode_id = need_str(body, "episode_id");
     const bool skip_final = opt_bool(body, "skip_final", false);
+    // 两档画质拉不开差距时草稿档就是白跑一遍——挂 Turbo LoRA 之后正是如此。
+    const bool skip_draft = opt_bool(body, "skip_draft", false);
     const bool force = opt_bool(body, "force", false);
     const bool all_episodes = opt_bool(body, "all_episodes", false);
     const auto stage_names = opt_str_list(body, "stages");
@@ -168,7 +170,7 @@ ApiResult post_run(const json& body, const RunDeps& deps) {
 
     const bool started = pipeline::jobs().start(
         pipeline::JobKind::Run, queue[0],
-        [store, queue, skip_final, force, stage_names, order,
+        [store, queue, skip_final, skip_draft, force, stage_names, order,
          deps](pipeline::JobProgress& p) {
             // 配置和后端在**任务开始时**取一次，不是注册时。
             // 用户改完模型文件不用重启，但一次跑的中途不会换——
@@ -199,6 +201,7 @@ ApiResult post_run(const json& body, const RunDeps& deps) {
                     pipeline::RunOptions opts;
                     opts.episode_id = id;
                     opts.skip_final = skip_final;
+                    opts.skip_draft = skip_draft;
                     opts.force = force;
                     opts.only = std::move(which);
                     const auto report = pipeline::run_episode(
@@ -239,6 +242,11 @@ ApiResult post_run(const json& body, const RunDeps& deps) {
                 if (skip_final) {
                     stages.erase(std::remove(stages.begin(), stages.end(),
                                              pipeline::Stage::Final),
+                                 stages.end());
+                }
+                if (skip_draft) {
+                    stages.erase(std::remove(stages.begin(), stages.end(),
+                                             pipeline::Stage::Draft),
                                  stages.end());
                 }
                 const int total = static_cast<int>(stages.size() * queue.size());

@@ -322,6 +322,7 @@ add_executable(changji
     src/infer/sd_video.cpp
     src/infer/sd_upscale.cpp
     src/llm/client.cpp
+    src/llm/local_client.cpp
     src/llm/client_http.cpp
     src/infer/worker_pool.cpp
     src/infer/worker_server.cpp
@@ -635,6 +636,7 @@ if(CHANGJI_BUILD_TESTS)
         src/gates/checks.cpp
         src/media/assemble.cpp
         src/llm/client.cpp
+        src/llm/local_client.cpp
         src/config/settings.cpp
         src/config/writeback.cpp
         src/config/runtime.cpp

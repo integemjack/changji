@@ -847,3 +847,25 @@ TEST_CASE("pick 返回的是指针，改了状态要能落到剧集上") {
 
     CHECK(ep.shots[0].status == models::ShotStatus::AUDIO_DONE);
 }
+
+TEST_CASE("跳过草稿档时，成片档要收首帧刚做完的那批") {
+    // 挂 Turbo LoRA 之后两档画质拉不开差距，草稿档就是白跑一遍。
+    // 但**跳过它有个坑**：镜头状态停在 FRAME_DONE，而成片档原来只收
+    // DRAFT_DONE——一个镜头都挑不到，还不报错，表现是"跑完了什么都没出"。
+    const auto normal = pipeline::render_entry_states(models::Tier::FINAL, false);
+    CHECK(normal.count(models::ShotStatus::DRAFT_DONE) == 1);
+    CHECK(normal.count(models::ShotStatus::FRAME_DONE) == 0);
+
+    const auto skipped = pipeline::render_entry_states(models::Tier::FINAL, true);
+    CHECK(skipped.count(models::ShotStatus::DRAFT_DONE) == 1);
+    CHECK(skipped.count(models::ShotStatus::FRAME_DONE) == 1);
+    // 首帧失败那批（状态停在 AUDIO_DONE）也要收，否则整集卡在它们身上
+    CHECK(skipped.count(models::ShotStatus::AUDIO_DONE) == 1);
+
+    // 草稿档自己不受这个开关影响
+    for (const bool skip : {true, false}) {
+        const auto d = pipeline::render_entry_states(models::Tier::DRAFT, skip);
+        CHECK(d.count(models::ShotStatus::FRAME_DONE) == 1);
+        CHECK(d.count(models::ShotStatus::DRAFT_DONE) == 0);
+    }
+}

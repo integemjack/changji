@@ -46,9 +46,19 @@ std::vector<Shot*> pick(Episode& ep, const std::set<ShotStatus>& want,
 /// 首帧失败的镜头状态还停在 AUDIO_DONE（配音接上之前是 PLANNED）。
 /// **它们不该被跳过**，而是退回纯文生视频——画面一致性差一些，
 /// 但整集不会卡在这里。
-std::set<ShotStatus> render_entry_states(Tier tier) {
+std::set<ShotStatus> render_entry_states(Tier tier, bool skip_draft) {
     if (tier == Tier::FINAL) {
-        return {ShotStatus::DRAFT_DONE, ShotStatus::FINAL_REJECTED};
+        std::set<ShotStatus> in{ShotStatus::DRAFT_DONE,
+                                ShotStatus::FINAL_REJECTED};
+        // **跳过草稿档时，成片档要收首帧刚做完的那一批。**
+        // 不收的话它们卡在 FRAME_DONE 上，成片阶段一个镜头都挑不到，
+        // 而且不报错——表现是"跑完了，什么都没出"。
+        if (skip_draft) {
+            in.insert(ShotStatus::FRAME_DONE);
+            in.insert(ShotStatus::DRAFT_REJECTED);
+            in.insert(ShotStatus::AUDIO_DONE);
+        }
+        return in;
     }
     return {ShotStatus::FRAME_DONE, ShotStatus::DRAFT_REJECTED,
             ShotStatus::AUDIO_DONE};
@@ -195,7 +205,7 @@ RunReport run_episode(const ProjectStore& store,
     // 渲染一个档位。草稿和成片只差三个东西：入口状态、档位参数、事件名。
     const auto render_tier = [&](Tier tier, bool force) {
         const char* stage_name = tier == Tier::FINAL ? "final" : "draft";
-        auto todo = pick(*ep, render_entry_states(tier), force);
+        auto todo = pick(*ep, render_entry_states(tier, opts.skip_draft), force);
         if (todo.empty()) {
             emit(progress, stage_name, "done",
                  std::string(models::to_string(tier)) + " 档已完成，跳过");
@@ -370,7 +380,11 @@ RunReport run_episode(const ProjectStore& store,
         }
 
         // ---- 草稿档 ----
-        if (wants(opts, Stage::Draft) && !tok.cancelled()) {
+        //
+        // skip_draft：两档拉不开差距时它就是白跑一遍（挂 Turbo LoRA 之后
+        // 正是这个局面）。跳过之后成片档会收 FRAME_DONE 那批，
+        // 见 render_entry_states。
+        if (!opts.skip_draft && wants(opts, Stage::Draft) && !tok.cancelled()) {
             report.draft = render_tier(Tier::DRAFT, opts.force);
             save();
         }

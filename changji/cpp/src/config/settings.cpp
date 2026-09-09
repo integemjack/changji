@@ -81,6 +81,9 @@ std::vector<std::string> ComfyConfig::validate() const {
 
 std::vector<std::string> LLMConfig::validate() const {
     std::vector<std::string> errs;
+    if (backend != "remote" && backend != "local") {
+        errs.push_back("llm.backend 只能是 remote 或 local，当前是 " + backend);
+    }
     check_gt(errs, "llm.timeout_s", timeout_s, 0);
     check_range(errs, "llm.temperature", temperature, 0.0, 2.0);
     return errs;
@@ -325,6 +328,7 @@ void apply_table(const toml::table& doc, Settings& s) {
         take(t, "max_retries", s.comfy.max_retries);
     }
     if (auto t = doc["llm"].as_table()) {
+        take(t, "backend", s.llm.backend);
         take(t, "base_url", s.llm.base_url);
         take(t, "model", s.llm.model);
         take(t, "api_key", s.llm.api_key);
@@ -531,8 +535,12 @@ job_timeout_s = 1800
 max_retries = 3
 
 [llm]
-# 剧本和分镜用的大模型。默认走本地 Ollama。
-# 也可以填任何兼容 OpenAI 接口的服务。
+# 剧本和分镜用的大模型。backend 两个值：
+#   remote —— 默认。走下面的 base_url，任何兼容 OpenAI 接口的服务都行。
+#   local  —— **进程内跑，不用另起 llama-server**。权重填 [models].llm，
+#             输出按 JSON Schema 约束（走语法采样）。这条归调度器管：
+#             出片要显存时按**实时空闲显存**决定要不要让开，够就不动。
+backend = "remote"
 base_url = "http://127.0.0.1:11434/v1"
 model = "qwen3:14b"
 
