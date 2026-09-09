@@ -529,6 +529,20 @@ void register_sd_slots(SettingsProvider provider,
     const std::size_t estimate =
         static_cast<std::size_t>(budget * 1024) * 1024 * 1024;
 
+    // **预算要真的设上。** 不设的话 Scheduler::make_room 第一行就
+    // `budget_ == 0 → return true`，谁也不驱逐谁——下面"同时只装得下一个"
+    // 那句注释描述的行为从来没生效过。
+    //
+    // 权重放系统内存时看不出来（显存里只有计算缓冲）；换成 weights = "auto"
+    // 之后两套权重都常驻显存，出完首帧切去出片时一张 45 GB 的卡上是
+    // 图像模型 + 它的编码器 + 视频模型 + umt5，直接 CUDA OOM，进程 abort。
+    //
+    // 预算按 auto 那条路的数取：它才是真占显存的那个。
+    scheduler().set_budget(
+        static_cast<std::size_t>(
+            (provider().models.weights == "auto" ? physical : budget) * 1024) *
+        1024 * 1024);
+
     // 两个槽的估值都按整个预算算，也就是**同时只装得下一个**。
     // 这不是保守，是事实：6GB 卡上图像模型和视频模型任意一个都要占满，
     // 让调度器知道这件事，它才会在切阶段时先卸掉另一个。

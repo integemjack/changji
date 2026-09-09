@@ -341,7 +341,12 @@ RunReport run_episode(const ProjectStore& store,
                      0, static_cast<int>(todo.size()));
 
                 report.frames = stages::run_frames(
-                    todo, assets, profile.tiers.at(Tier::DRAFT),
+                    todo, assets,
+                    // 首帧按哪个档位出，见 ModelsConfig::frame_tier。
+                    // 默认草稿档，和 Python 一样。
+                    profile.tiers.at(settings.models.frame_tier == "final"
+                                         ? Tier::FINAL
+                                         : Tier::DRAFT),
                     store.paths(), backends.frame, progress, tok,
                     // 同时跑几镜。**没有池就是 1**，行为和以前一样。
                     // 有池就取池的大小——这一层不知道有几张卡，

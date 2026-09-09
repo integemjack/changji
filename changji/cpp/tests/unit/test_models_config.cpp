@@ -326,7 +326,7 @@ TEST_CASE("模板的 [models] 那一节列出了每一个会被读的键") {
                             "image_text_encoder", "image_text_encoder_vision",
                             "tts", "tts_decoder", "weights",
                             "video_cfg", "video_flow_shift",
-                            "image_cfg", "image_flow_shift"}) {
+                            "image_cfg", "image_flow_shift", "frame_tier"}) {
         CAPTURE(key);
         // 模板里这一节整个是注释掉的，所以形状是 `# 键 = `
         const std::string want = std::string("# ") + key + " = ";
@@ -376,4 +376,23 @@ TEST_CASE("[models].weights：默认 cpu，认 auto，别的拒") {
     }
     CHECK(said);
     fs::remove_all(tmp, ec);
+}
+
+TEST_CASE("[models].frame_tier：默认 draft，认 final，别的拒") {
+    // 默认必须和 Python 一样（草稿档出首帧），不能因为大卡上想清楚就改默认。
+    CHECK(config::ModelsConfig{}.frame_tier == "draft");
+
+    config::Settings ok;
+    ok.models.frame_tier = "final";
+    for (const auto& e : ok.validate()) {
+        CHECK_MESSAGE(e.find("frame_tier") == std::string::npos, e);
+    }
+
+    config::Settings bad;
+    bad.models.frame_tier = "preview";   // 有这个档位，但首帧只认两个
+    bool said = false;
+    for (const auto& e : bad.validate()) {
+        if (e.find("frame_tier") != std::string::npos) said = true;
+    }
+    CHECK(said);
 }

@@ -214,6 +214,14 @@ struct ModelsConfig {
     double image_cfg = 2.5;
     double image_flow_shift = 3.0;
 
+    /// 首帧按哪个档位出：`draft`（默认）还是 `final`。**C++ 独有。**
+    ///
+    /// 默认草稿档，和 Python 一样（`spec = self.profile.tiers[Tier.DRAFT]`）。
+    /// 但首帧是**跨镜头一致性的锚点**，而且会当起始图喂给出片那一步——
+    /// 草稿档 352×640 的首帧配成片档 704×1280 的视频，等于把锚点放大两倍
+    /// 再用。锚点糊了后面每一镜都糊。大卡上填 final。
+    std::string frame_tier = "draft";
+
     /// 配音的解码器（Qwen3-TTS 的 tokenizer，GGUF）。
     ///
     /// 这一份把 12.5 Hz 的码本还原成 24 kHz 波形。**必须和 tts 配套**，

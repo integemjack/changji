@@ -179,6 +179,10 @@ std::vector<std::string> Settings::validate() const {
     if (vram_gb_override && *vram_gb_override <= 0) {
         errs.push_back("vram_gb_override 必须大于 0");
     }
+    if (models.frame_tier != "draft" && models.frame_tier != "final") {
+        errs.push_back("[models].frame_tier 只能是 draft 或 final，现在是 " +
+                       models.frame_tier);
+    }
     if (models.weights != "cpu" && models.weights != "auto") {
         errs.push_back("[models].weights 只能是 cpu 或 auto，现在是 " +
                        models.weights);
@@ -346,6 +350,7 @@ void apply_table(const toml::table& doc, Settings& s) {
         take(t, "video_flow_shift", s.models.video_flow_shift);
         take(t, "image_cfg", s.models.image_cfg);
         take(t, "image_flow_shift", s.models.image_flow_shift);
+        take(t, "frame_tier", s.models.frame_tier);
     }
     take_path_str(&doc, "workspace", s.workspace);
     if (auto node = doc.get("vram_gb_override")) {
@@ -554,6 +559,11 @@ subtitle_font = "Source Han Sans SC"
 # video_flow_shift = 3.0
 # image_cfg = 2.5
 # image_flow_shift = 3.0
+#
+# 首帧按哪个档位出。默认 draft（和 Python 一样）；首帧是跨镜头一致性的锚点，
+# 又会当起始图喂给出片那一步，草稿档的首帧配成片档的视频等于把锚点放大两倍
+# 再用。显存够就填 final，慢一些但清楚。
+# frame_tier = "final"
 )";
 
 }  // namespace
