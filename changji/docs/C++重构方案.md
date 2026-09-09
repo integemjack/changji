@@ -1446,23 +1446,33 @@ llama.cpp PR 是 2026-08-04 合的），实际用的是
 删 Python 引擎那一行在表里只有五个字，实际盘了一遍之后**它是一扇单向门**，
 比"只剩两层"听起来严重得多。
 
-引擎本体只有 31 个 `.py`、1.2 MB。真正的问题是**周边有 16 个脚本 import 它**：
+引擎本体只有 31 个 `.py`、0.4 MB。真正的问题是**周边有一堆脚本 import 它**：
 
-| 一起没掉的 | 后果 |
-|---|---|
-| `tests/export_*.py`（9 个） | **金语料再也生不出来**。以后 Python 侧行为变了、或者要加新用例，没有源头 |
-| `tools/gen_*_golden.py`（5 个） | 同上，comfy / ffmpeg / 字幕 / 配音 / 提示词那几份都冻住 |
-| `tools/audit_routes.py` | 路由表（48/48）再也推不出来 |
-| `tools/serve_python.py` | **对拍本身没了**——没有 Python 那一侧可比 |
+| | 2026-09-08 手数 | **2026-09-09 跑工具** |
+|---|---|---|
+| 删了就废掉的脚本 | 16 | **31** |
+| 删了照样能跑的 | 3 | **8** |
+| 能活下来的语料 | 49 份 JSON | **50 份** |
 
-不依赖引擎、删了照样能跑的只有三个：`tools/fake_llm.py`（假模型）、
-`tools/gen_eaw.py`（东亚字宽表，数据来自 Unicode）、
-`tools/gen_workflows.py`（工作流嵌入）。
+**一天翻了一倍。** 因为这期间每补一份语料就多一个生成器。手数的数字会过期，
+而且不会有人发现——所以补了 `cpp/tools/stage8_inventory.py`，每次从真实文件
+算，和 `regen_golden.py` / `contract_audit.py` 一个思路：**别信文档里写的**。
 
-**能活下来的安全网是 `tests/golden/` 那 49 份 JSON**（2026-09-08 点的数，
-连子目录一起）：它们进了版本库，539 条单元测试直接读文件，不碰 Python。
-所以删完之后"C++ 有没有改坏"仍然测得出来，
-测不出来的是"**Python 现在还是不是这样**"。
+废掉的那 31 个分布：`cpp/tests/` 22 个（全是 `export_*_golden.py`——
+**金语料再也生不出来**，以后 Python 侧行为变了、或者要加新用例，没有源头）、
+`cpp/tools/` 9 个（`gen_*_golden.py` 那几份同理；`audit_routes.py` 一走
+路由表 48/48 再也推不出来；`check_template_compat.py` 是"两个后端共用一份
+用户配置"那件事的检查；而 `serve_python.py` 一走**对拍本身就没了**——
+没有 Python 那一侧可比）。
+
+删了照样能跑的 8 个：`fake_llm.py`（假模型）、`gen_eaw.py`（东亚字宽表，
+数据来自 Unicode）、`gen_workflows.py`（工作流嵌入）、`gen_webapp.py`
+（前端产物嵌进二进制）、`contract_audit.py`、`coverage_audit.py`、
+`regen_golden.py`（这三个只读 C++ 侧的文件）、以及这个清点工具自己。
+
+**能活下来的安全网是 `tests/golden/` 那 50 份 JSON**：它们进了版本库，
+578 条单元测试直接读文件，不碰 Python。所以删完之后"C++ 有没有改坏"
+仍然测得出来，测不出来的是"**Python 现在还是不是这样**"。
 
 **这些数字会过期，所以别信这里写的，去跑一遍。**
 `cpp/tools/regen_golden.py` 把每个生成器重跑一遍再和版本库比；
