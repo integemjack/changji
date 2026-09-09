@@ -3,6 +3,8 @@
 #include <atomic>
 #include <filesystem>
 #include <map>
+#include <chrono>
+#include <cstdlib>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -248,6 +250,39 @@ void run_worker(const config::Settings& settings, const WorkerOptions& opts) {
     CROW_LOG_INFO << "工作进程 gpu=" << opts.gpu << " 听 " << opts.host << ":"
                   << opts.port;
     app.bindaddr(opts.host).port(static_cast<std::uint16_t>(opts.port)).run();
+
+    // ---- 收到信号，run() 返回了 ----
+    //
+    // **别让它走到静态析构。** 出片那个线程是 detach 的，可能还在 sd.cpp 里；
+    // 调度器里的 SdContext（带 CUDA 上下文）在它脚下被析构，最后是
+    // std::terminate——systemctl restart 时 journal 里那条
+    // "code=dumped, status=6/ABRT" 就是它。
+    //
+    // 先取消当前任务，等它自己退出来（取消令牌在采样回调里查，一两步就停），
+    // 最多等 30 秒，然后 _Exit：跳过所有析构。工作进程没有任何值得析构的
+    // 东西——它的全部状态是内存里的模型缓存，进程一没就没了。
+    {
+        std::shared_ptr<Live> running;
+        {
+            std::lock_guard lg(state->mu);
+            running = state->current;
+        }
+        if (running) {
+            running->tok.request();
+            const auto deadline =
+                std::chrono::steady_clock::now() + std::chrono::seconds(30);
+            for (;;) {
+                {
+                    std::lock_guard lg(state->mu);
+                    const auto& st = running->progress.state;
+                    if (st == "done" || st == "failed") break;
+                }
+                if (std::chrono::steady_clock::now() > deadline) break;
+                std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            }
+        }
+    }
+    std::_Exit(0);
 }
 
 }  // namespace changji::infer
