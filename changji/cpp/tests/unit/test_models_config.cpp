@@ -351,7 +351,7 @@ TEST_CASE("模板的 [models] 那一节列出了每一个会被读的键") {
                             "video_llm_vision", "video_audio_vae",
                             "video_rng", "video_lora",
                             "video_lora_strength", "video_vae_tile",
-                            "vae_vram_min_gb"}) {
+                            "vae_vram_min_gb", "video_lora_tiers"}) {
         CAPTURE(key);
         // 模板里这一节整个是注释掉的，所以形状是 `# 键 = `
         const std::string want = std::string("# ") + key + " = ";
@@ -411,6 +411,30 @@ TEST_CASE("[models].weights：默认 cpu，认 auto，别的拒") {
     }
     CHECK(said);
     fs::remove_all(tmp, ec);
+}
+
+TEST_CASE("video_lora_tiers：Turbo 只挂草稿档") {
+    // Turbo 那类蒸馏 LoRA 拿画质换速度（实测采样 164 秒 → 41 秒），
+    // 所以适合只挂草稿档：草稿看叙事和构图，成片跑满步数要最好的画面。
+    // 上下文是两档共用的，所以这个决定落在**每次请求**上。
+    CHECK(config::ModelsConfig{}.video_lora_tiers == "both");
+
+    for (const char* v : {"draft", "final", "both"}) {
+        CAPTURE(v);
+        config::Settings ok;
+        ok.models.video_lora_tiers = v;
+        for (const auto& e : ok.validate()) {
+            CHECK_MESSAGE(e.find("video_lora_tiers") == std::string::npos, e);
+        }
+    }
+
+    config::Settings bad;
+    bad.models.video_lora_tiers = "草稿";   // 只认那三个英文值
+    bool said = false;
+    for (const auto& e : bad.validate()) {
+        if (e.find("video_lora_tiers") != std::string::npos) said = true;
+    }
+    CHECK(said);
 }
 
 TEST_CASE("weights = smart：按显存决定 VAE 放哪") {

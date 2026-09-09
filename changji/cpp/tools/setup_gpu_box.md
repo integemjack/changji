@@ -156,6 +156,24 @@ sd.cpp 认这个给 ComfyUI 做的 LoRA（日志里有 `apply lora at runtime`�
 挂上 LoRA 之后瓶颈换人了：VAE 解码从 29% 变成 57%。所以大卡上
 `weights = "smart"` 的收益比小卡大得多——41 + 8 = 49 秒一镜。
 
+**推荐的分档法：Turbo 只挂草稿档。** 蒸馏 LoRA 是拿画质换速度的，
+而草稿档本来就是用来看叙事和构图的：
+
+    [models]
+    video_lora       = "loras/minimax_h3_turbo_v4_step600_ema.safetensors"
+    video_lora_tiers = "draft"        # 成片档不挂，跑满步数
+
+配上两档步数（`POST /api/settings`，草稿 6 步、成片 48 步），实测同一镜：
+
+| 档位 | 步数 | LoRA | 采样 | 每镜合计 |
+|---|---|---|---|---|
+| 草稿 | 6 | 挂 | 41 秒 | **125 秒** |
+| 成片 | 48 | 不挂 | 292 秒 | **372 秒** |
+
+**上下文是两档共用的**，所以挂不挂只能在每次请求上决定，不能在建上下文时定
+（见 `VideoRequest::use_lora`）。判据是日志里 `apply lora at runtime`
+的条数：跑一遍两档应该只出现一次。
+
 ## 2. 配置
 
 `~/.config/changji/config.toml`（工作进程的 systemd 单元里要设

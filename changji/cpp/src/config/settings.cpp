@@ -197,6 +197,12 @@ std::vector<std::string> Settings::validate() const {
             "[models].video_high_noise 填了但 [models].video 是空的："
             "双专家要两份，video 填低噪声那份");
     }
+    if (models.video_lora_tiers != "draft" &&
+        models.video_lora_tiers != "final" &&
+        models.video_lora_tiers != "both") {
+        errs.push_back("[models].video_lora_tiers 只能是 draft / final / both，现在是 " +
+                       models.video_lora_tiers);
+    }
     if (models.vae_vram_min_gb < 0) {
         errs.push_back("[models].vae_vram_min_gb 不能是负的");
     }
@@ -402,6 +408,7 @@ void apply_table(const toml::table& doc, Settings& s) {
         take(t, "video_rng", s.models.video_rng);
         take(t, "video_lora", s.models.video_lora);
         take(t, "video_lora_strength", s.models.video_lora_strength);
+        take(t, "video_lora_tiers", s.models.video_lora_tiers);
         take(t, "video_vae_tile", s.models.video_vae_tile);
         take(t, "vae_vram_min_gb", s.models.vae_vram_min_gb);
     }
@@ -648,6 +655,10 @@ subtitle_font = "Source Han Sans SC"
 # 要实测：不认时只是加载不上、画面照出，判据得看耗时有没有真降下来。
 # video_lora = "loras/minimax_h3_turbo_v4_step600_ema.safetensors"
 # video_lora_strength = 1.0
+#
+# LoRA 挂在哪些档位：draft / final / both（默认）。Turbo 那类蒸馏 LoRA 拿
+# 画质换速度，适合只挂草稿档——草稿看叙事和构图，6 步够；成片跑满步数不挂。
+# video_lora_tiers = "draft"
 #
 # 出片时 VAE 解码的分块大小（潜空间格子），0 = 用内置的 16×11。
 # 调小换显存：块的计算缓冲小了，VAE 权重才有机会常驻显存。5090 上实测

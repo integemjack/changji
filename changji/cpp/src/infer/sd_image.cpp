@@ -477,7 +477,7 @@ void SdContext::generate_video(const VideoRequest& req, const fs::path& raw_dest
     // LoRA。**这个数组要活到 generate_video 返回**——sd_vid_gen_params_t
     // 存的是指针，不拷贝。放在这一层的局部变量里正好（下面就调用了）。
     sd_lora_t lora{};
-    if (!impl_->lora.empty()) {
+    if (!impl_->lora.empty() && req.use_lora) {
         lora.path = impl_->lora.c_str();
         lora.multiplier = impl_->lora_strength;
         // H3 不是混合专家，高噪声那份不存在；A14B 挂 LoRA 的话这里要分两条。

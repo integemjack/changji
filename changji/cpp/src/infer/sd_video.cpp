@@ -93,7 +93,8 @@ stages::VideoRenderer make_video_renderer(
     const config::Settings& settings,
     std::optional<std::int64_t> seed_override) {
     const config::AssemblyConfig assembly = settings.assembly;
-    return [assembly, seed_override](
+    const std::string lora_tiers = settings.models.video_lora_tiers;
+    return [assembly, seed_override, lora_tiers](
                const models::Shot& shot, const stages::RenderPlan& plan,
                       const std::optional<fs::path>& start_image,
                       const fs::path& dest, pipeline::CancelToken& tok,
@@ -115,6 +116,13 @@ stages::VideoRenderer make_video_renderer(
                        ? *seed_override
                        : stages::render_seed(shot.shot_id, shot.attempts);
         req.start_image = start_image;
+        // LoRA 按档位挂。上下文是草稿和成片共用的，所以这个决定只能
+        // 落在每次请求上——建上下文的时候还不知道这一镜跑哪一档。
+        const std::string& tiers = lora_tiers;
+        req.use_lora =
+            tiers == "both" ||
+            (tiers == "draft" && plan.spec.tier == models::Tier::DRAFT) ||
+            (tiers == "final" && plan.spec.tier == models::Tier::FINAL);
 
         const fs::path raw = raw_temp_for(dest);
         TempFile guard{raw};
