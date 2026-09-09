@@ -179,6 +179,9 @@ std::vector<std::string> Settings::validate() const {
     if (vram_gb_override && *vram_gb_override <= 0) {
         errs.push_back("vram_gb_override 必须大于 0");
     }
+    if (models.vram_reserve_gb < 0) {
+        errs.push_back("[models].vram_reserve_gb 不能是负的");
+    }
     if (models.frame_tier != "draft" && models.frame_tier != "final") {
         errs.push_back("[models].frame_tier 只能是 draft 或 final，现在是 " +
                        models.frame_tier);
@@ -351,6 +354,7 @@ void apply_table(const toml::table& doc, Settings& s) {
         take(t, "image_cfg", s.models.image_cfg);
         take(t, "image_flow_shift", s.models.image_flow_shift);
         take(t, "frame_tier", s.models.frame_tier);
+        take(t, "vram_reserve_gb", s.models.vram_reserve_gb);
     }
     take_path_str(&doc, "workspace", s.workspace);
     if (auto node = doc.get("vram_gb_override")) {
@@ -564,6 +568,12 @@ subtitle_font = "Source Han Sans SC"
 # 又会当起始图喂给出片那一步，草稿档的首帧配成片档的视频等于把锚点放大两倍
 # 再用。显存够就填 final，慢一些但清楚。
 # frame_tier = "final"
+#
+# weights = "auto" 时给计算缓冲留多少显存（GB）。auto 的预算是给权重的，
+# 而生成时那块计算缓冲比"给驱动留一成"大一个量级：1280×704 的 VAE 解码
+# 实测要 6.6 GB。留少了的症状是出图全失败、日志里 decode_first_stage failed。
+# 出更大的图要调大它。
+# vram_reserve_gb = 6.0
 )";
 
 }  // namespace

@@ -42,4 +42,13 @@ std::vector<std::string> sd_schedulers();
 using SdLogSink = std::function<void(int level, const std::string& text)>;
 void sd_set_log_sink(SdLogSink sink);
 
+/// 装一个把 sd.cpp 的日志写到 stderr 的 sink。
+///
+/// **不装的话一条都不会落地**：trampoline 拿不到 sink 就把消息丢了，
+/// 而出图失败时抛的是"看一眼上面 sd.cpp 打的日志"——上面什么都没有。
+///
+/// `min_level` 是压过之后的四档（0 debug / 1 info / 2 warn / 3 error）。
+/// 默认 1：debug 那一档是逐层加载张量的流水账，一次几百行。
+void sd_log_to_stderr(int min_level = 1);
+
 }  // namespace changji::infer

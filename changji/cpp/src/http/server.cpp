@@ -30,6 +30,7 @@
 #include "http/webapp.hpp"
 #include "http/ws.hpp"
 #include "comfy/client.hpp"
+#include "infer/sd_backend.hpp"
 #include "infer/sd_image.hpp"
 #include "pipeline/jobs.hpp"
 
@@ -125,6 +126,9 @@ void run(const config::Settings& settings, const Options& opts) {
     //
     // 注册不等于加载。真正加载要等第一次 acquire——一个视频模型好几个 G，
     // 起服务时就加载的话，只想看看分镜表的人也要等上几十秒。
+    // 同工作进程那边：不接的话 sd.cpp 一条日志都不会落地，
+    // 而出图失败时抛的是"看一眼上面 sd.cpp 打的日志"。
+    infer::sd_log_to_stderr();
     infer::register_sd_slots([] { return config::runtime().snapshot(); },
                              config::runtime().profile());
 

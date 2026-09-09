@@ -14,6 +14,7 @@
 #include <crow.h>
 
 #include "infer/scheduler.hpp"
+#include "infer/sd_backend.hpp"
 #include "infer/sd_image.hpp"
 #include "infer/sd_video.hpp"
 #include "infer/worker_proto.hpp"
@@ -127,6 +128,11 @@ void run_worker(const config::Settings& settings, const WorkerOptions& opts) {
 
     // 和主进程一样注册两个槽。**每个工作进程一份**——
     // 进程边界把"每卡一份预算"白送了，Scheduler 一行没改。
+    // **把 sd.cpp 的日志接到 stderr。** 不接的话一条都不会落地，而出图失败
+    // 时抛的是"看一眼上面 sd.cpp 打的日志"——上面什么都没有。工作进程是
+    // 独立进程，它的 stderr 就是排查出图问题唯一的地方。
+    sd_log_to_stderr();
+
     register_sd_slots(settings, models::HardwareProfile::detect(
                                     settings.vram_gb_override));
 

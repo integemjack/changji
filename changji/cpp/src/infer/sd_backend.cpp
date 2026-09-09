@@ -1,5 +1,6 @@
 #include "infer/sd_backend.hpp"
 
+#include <cstdio>
 #include <mutex>
 
 #ifdef CHANGJI_HAVE_SD
@@ -69,6 +70,18 @@ std::vector<std::string> sd_schedulers() {
         if (n) out.emplace_back(n);
     }
     return out;
+}
+
+void sd_log_to_stderr(int min_level) {
+    sd_set_log_sink([min_level](int level, const std::string& text) {
+        if (level < min_level) return;
+        static const char* kTag[] = {"debug", "info", "warn", "error"};
+        const char* tag = (level >= 0 && level < 4) ? kTag[level] : "info";
+        // sd.cpp 自己的消息大多带换行，带了就不再补一个。
+        std::fputs(("[sd " + std::string(tag) + "] " + text).c_str(), stderr);
+        if (text.empty() || text.back() != '\n') std::fputc('\n', stderr);
+        std::fflush(stderr);
+    });
 }
 
 void sd_set_log_sink(SdLogSink sink) {

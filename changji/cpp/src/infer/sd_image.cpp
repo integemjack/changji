@@ -521,8 +521,17 @@ void register_sd_slots(SettingsProvider provider,
     // override 是拿来挑档位的（44 GB 的卡想要 1280×704 的成片档就填 20），
     // 拿它当显存预算的话 auto_fit 会把本来装得下的编码器赶去内存。
     // 探测不到卡（没有 nvidia-smi）就退回上面那个数。
+    // **先减计算缓冲的余量，再乘系数。**
+    //
+    // 0.9 那一成是给驱动上下文和别的程序留的，**不是给计算缓冲留的**——
+    // 缓冲比它大一个量级：1280×704 的 VAE 解码实测 6576 MB。
+    // 不减的话权重会把显存占满，然后 decode_first_stage 失败，
+    // 而在接上 sd.cpp 的日志之前，上层只看得到一句"出图失败"。
+    const double reserve = provider().models.vram_reserve_gb;
     const double physical =
-        profile.gpu.has_value() ? profile.gpu->vram_gb() * 0.9 : budget;
+        profile.gpu.has_value()
+            ? std::max(1.0, profile.gpu->vram_gb() - reserve) * 0.9
+            : budget;
     const auto budget_for = [budget, physical](const config::Settings& s) {
         return s.models.weights == "auto" ? physical : budget;
     };

@@ -345,7 +345,8 @@ TEST_CASE("模板的 [models] 那一节列出了每一个会被读的键") {
                             "image_text_encoder", "image_text_encoder_vision",
                             "tts", "tts_decoder", "weights",
                             "video_cfg", "video_flow_shift",
-                            "image_cfg", "image_flow_shift", "frame_tier"}) {
+                            "image_cfg", "image_flow_shift", "frame_tier",
+                            "vram_reserve_gb"}) {
         CAPTURE(key);
         // 模板里这一节整个是注释掉的，所以形状是 `# 键 = `
         const std::string want = std::string("# ") + key + " = ";
@@ -414,4 +415,26 @@ TEST_CASE("[models].frame_tier：默认 draft，认 final，别的拒") {
         if (e.find("frame_tier") != std::string::npos) said = true;
     }
     CHECK(said);
+}
+
+TEST_CASE("[models].vram_reserve_gb：默认 6，负数拒") {
+    // 默认 6 GB 是量出来的：5090 上 1280×704 的 VAE 解码要 6576 MB。
+    // 留少了的症状是出图全失败，而且在 sd.cpp 的日志接上之前，
+    // 上层只看得到一句"出图失败，看一眼上面 sd.cpp 打的日志"。
+    CHECK(config::ModelsConfig{}.vram_reserve_gb == doctest::Approx(6.0));
+
+    config::Settings bad;
+    bad.models.vram_reserve_gb = -1.0;
+    bool said = false;
+    for (const auto& e : bad.validate()) {
+        if (e.find("vram_reserve_gb") != std::string::npos) said = true;
+    }
+    CHECK(said);
+
+    // 0 是合法的：大卡上不想留就不留
+    config::Settings zero;
+    zero.models.vram_reserve_gb = 0.0;
+    for (const auto& e : zero.validate()) {
+        CHECK_MESSAGE(e.find("vram_reserve_gb") == std::string::npos, e);
+    }
 }
