@@ -13,6 +13,14 @@
 
 param(
     [string]$Dest = "$PSScriptRoot\..\..\..\models",
+    # min  = 最小档，验通路（约 21 GB）。6 GB 卡上只能用这个。
+    # full = 全尺寸，看真实效果（约 70 GB）。48 GB 卡起步。
+    #
+    # **别叫 $Profile**：那是 PowerShell 的自动变量（指向 profile 脚本），
+    # 拿它当参数名不报错，但取到的永远不是你传进来的值——
+    # 表现是 -Profile full 静默地下了最小档。
+    [ValidateSet("min", "full")]
+    [string]$Preset = "min",
     [switch]$WhatIf
 )
 
@@ -69,6 +77,51 @@ $files = @(
        u='https://huggingface.co/Comfy-Org/Qwen-Image_ComfyUI/resolve/main/split_files/vae/qwen_image_vae.safetensors'
        f='qwen_image_vae.safetensors' }
 )
+
+# ---- 全尺寸档 ----
+#
+# **扩散模型走 bf16，文本编码器走 fp8。** 不是省事，是显存算出来的：
+#   图像 bf16 38.05 GB + 它的文本编码器 bf16 15.45 GB = 53.5 GB > 48 GB，
+#   一张 L20 装不下。而 8 路并行是**每个进程在自己那张卡上放满一套**，
+#   不是八张卡分着放。
+# 文本编码器换成 fp8_scaled（8.74 GB）之后是 47 GB，刚好塞得下。
+# L20 是 Ada，有原生 FP8 张量核，这一档不是模拟出来的。
+#
+# 画质由扩散模型决定，文本编码器的精度影响小得多。真要对比，
+# 单独再下一份 bf16 的编码器（15.45 GB），配置里换一行 image_text_encoder
+# 就切，别的都不用重下。
+#
+# **写剧本那个 27.5 GB 的没放进来**：到今天为止流水线一次都没用过它
+# （剧本和分镜走外部 Ollama 或者手写分镜表）。要进程内跑再单独加。
+$fullFiles = @(
+    @{ n='图像 Qwen-Image-Edit bf16（全尺寸）'; mb=38963
+       u='https://huggingface.co/Comfy-Org/Qwen-Image-Edit_ComfyUI/resolve/main/split_files/diffusion_models/qwen_image_edit_bf16.safetensors'
+       f='qwen_image_edit_bf16.safetensors' },
+    @{ n='图像的文本编码器 Qwen2.5-VL fp8（装得下的那一档）'; mb=8950
+       u='https://huggingface.co/Comfy-Org/Qwen-Image_ComfyUI/resolve/main/split_files/text_encoders/qwen_2.5_vl_7b_fp8_scaled.safetensors'
+       f='qwen_2.5_vl_7b_fp8_scaled.safetensors' },
+    @{ n='图像 VAE'; mb=246
+       u='https://huggingface.co/Comfy-Org/Qwen-Image_ComfyUI/resolve/main/split_files/vae/qwen_image_vae.safetensors'
+       f='qwen_image_vae.safetensors' },
+    @{ n='视频 Wan2.2-TI2V-5B fp16（全尺寸）'; mb=9534
+       u='https://huggingface.co/Comfy-Org/Wan_2.2_ComfyUI_Repackaged/resolve/main/split_files/diffusion_models/wan2.2_ti2v_5B_fp16.safetensors'
+       f='wan2.2_ti2v_5B_fp16.safetensors' },
+    @{ n='视频 VAE'; mb=1344
+       u='https://huggingface.co/Comfy-Org/Wan_2.2_ComfyUI_Repackaged/resolve/main/split_files/vae/wan2.2_vae.safetensors'
+       f='Wan2.2_VAE.safetensors' },
+    @{ n='视频的文本编码器 umt5-xxl fp16（全尺寸）'; mb=10844
+       u='https://huggingface.co/Comfy-Org/Wan_2.2_ComfyUI_Repackaged/resolve/main/split_files/text_encoders/umt5_xxl_fp16.safetensors'
+       f='umt5_xxl_fp16.safetensors' },
+    @{ n='配音骨干 Qwen3-TTS bf16（全尺寸）'; mb=3308
+       u='https://huggingface.co/ggml-org/Qwen3-TTS-12Hz-1.7B-Base-GGUF/resolve/main/Qwen3-TTS-12Hz-1.7B-Base-bf16.gguf'
+       f='Qwen3-TTS-12Hz-1.7B-Base-bf16.gguf' },
+    @{ n='配音解码器 mmproj bf16'; mb=635
+       u='https://huggingface.co/ggml-org/Qwen3-TTS-12Hz-1.7B-Base-GGUF/resolve/main/mmproj-Qwen3-TTS-12Hz-1.7B-Base-bf16.gguf'
+       f='mmproj-Qwen3-TTS-12Hz-1.7B-Base-bf16.gguf' }
+)
+
+if ($Preset -eq "full") { $files = $fullFiles }
+
 
 $dest = [System.IO.Path]::GetFullPath($Dest)
 # **只算还差多少，不是算一共多少。**

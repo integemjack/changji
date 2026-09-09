@@ -124,6 +124,25 @@ endif()
 option(CHANGJI_SD "链接 stable-diffusion.cpp" ON)
 option(CHANGJI_SD_CUDA "sd.cpp 用 CUDA 后端" OFF)
 
+# 编给哪些显卡架构。**必须显式给**。
+#
+# 不给的话交由 CMake/nvcc 的默认值决定，而默认值经常不含新卡的架构。
+# 那时候不会报错——CUDA 退回 PTX JIT，第一次跑每个内核现编一遍。
+# 表现是"能跑，但莫名其妙地慢"，而且慢在哪儿完全看不出来。
+#
+# 常见的几张：
+#   L20 / L40S / RTX 4090   → 89（Ada）
+#   A100                    → 80
+#   H100                    → 90
+#   RTX 3090 / A10          → 86
+#   RTX 2060（开发机）       → 75（Turing）
+#
+# 多种卡混着用就写 "75;86;89"，编译时间和产物大小会跟着涨。
+# `native` 只编当前机器上那张卡的——**在容器里构建时别用**，
+# 构建机和跑的机器不一定是同一张卡。
+set(CHANGJI_CUDA_ARCH "89" CACHE STRING
+    "CUDA 架构号，分号隔开。L20/L40S/4090 是 89，A100 是 80，H100 是 90")
+
 # ---- llama.cpp（阶段 9：进程内 TTS）----
 #
 # **默认关。** 开着会让每一次干净构建多编一份 llama.cpp + 一份打过补丁的
@@ -212,6 +231,11 @@ if(CHANGJI_SD)
     set(SD_BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
     if(CHANGJI_SD_CUDA)
         set(SD_CUDA ON CACHE BOOL "" FORCE)
+        # ggml 读的是 CMAKE_CUDA_ARCHITECTURES。在拉它之前设好，
+        # 拉完再设就晚了——那时候目标已经建出来了。
+        set(CMAKE_CUDA_ARCHITECTURES "${CHANGJI_CUDA_ARCH}" CACHE STRING "" FORCE)
+        message(STATUS "CUDA 架构：${CHANGJI_CUDA_ARCH}"
+                       "（不对的话会退回 PTX JIT，不报错但很慢）")
     endif()
 
     FetchContent_Declare(stable_diffusion_cpp
