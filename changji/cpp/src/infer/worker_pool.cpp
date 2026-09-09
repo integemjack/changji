@@ -1,8 +1,12 @@
 #include "infer/worker_pool.hpp"
 
+#include "infer/worker_roster.hpp"
+
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
+#include <optional>
+#include <set>
 #include <mutex>
 #include <stdexcept>
 #include <thread>
@@ -37,52 +41,53 @@ std::pair<std::string, std::string> split_url(const std::string& url) {
 struct WorkerPool::Impl {
     struct Worker {
         WorkerEndpoint ep;
-        /// 这个工作进程正忙着。**一个进程一次只跑一个任务**——
-        /// 它那边也会拒（409），这里只是不去撞而已。
-        bool busy = false;
     };
 
     std::vector<Worker> workers;
+    /// 谁忙着、谁坏了。策略在 worker_roster.hpp，那份不含网络代码、能测。
+    std::unique_ptr<WorkerRoster> roster;
     std::mutex mu;
     std::condition_variable cv;
 
-    /// 借一个空闲的。没有就等——**不是失败**：
+    /// 借一个能用的。没有就等——**不是失败**：
     /// 阶段那一层的并发上限就是靠这个卡住的。
-    std::size_t take() {
+    ///
+    /// 返回空表示**每一个都试过了、都连不上**，那才轮到调用方把这一镜判失败。
+    std::optional<std::size_t> take(const std::set<std::size_t>& skip = {}) {
         std::unique_lock lk(mu);
-        cv.wait(lk, [&] {
-            for (const auto& w : workers) {
-                if (!w.busy) return true;
-            }
-            return false;
-        });
-        for (std::size_t i = 0; i < workers.size(); ++i) {
-            if (!workers[i].busy) {
-                workers[i].busy = true;
-                return i;
-            }
-        }
-        throw std::runtime_error("借工作进程时状态乱了");  // 到不了
+        if (skip.size() >= workers.size()) return std::nullopt;
+        cv.wait(lk, [&] { return roster->worth_waiting(skip); });
+        return roster->take(skip, std::chrono::steady_clock::now());
+    }
+
+    void mark_bad(std::size_t i) {
+        std::lock_guard lg(mu);
+        roster->mark_bad(i, std::chrono::steady_clock::now());
+    }
+
+    void mark_ok(std::size_t i) {
+        std::lock_guard lg(mu);
+        roster->mark_ok(i);
     }
 
     void give_back(std::size_t i) {
         {
             std::lock_guard lg(mu);
-            workers[i].busy = false;
+            roster->give_back(i);
         }
         cv.notify_one();
     }
 
     /// 把一个任务跑完。**同步**——阶段那一层本来就在自己的线程里等。
-    void run_task(const Task& task, pipeline::CancelToken& tok,
-                  const StepCallback& on_step) {
-        const std::size_t idx = take();
-        struct Release {
-            Impl* self;
-            std::size_t i;
-            ~Release() { self->give_back(i); }
-        } release{this, idx};
+    /// 这个工作进程连不上。**和"这一镜渲染失败"是两回事**：
+    /// 前者换台机器立刻就好，后者换台机器还是一样。
+    struct Unreachable : std::runtime_error {
+        using std::runtime_error::runtime_error;
+    };
 
+    /// 在指定的工作进程上把任务跑完。连不上抛 Unreachable，其余照旧。
+    void run_on(std::size_t idx, const Task& task, pipeline::CancelToken& tok,
+                const StepCallback& on_step) {
         const auto [origin, prefix] = split_url(workers[idx].ep.url);
         httplib::Client cli(origin);
         cli.set_connection_timeout(10, 0);
@@ -91,8 +96,8 @@ struct WorkerPool::Impl {
         auto res = cli.Post(prefix + "/task", to_json(task).dump(),
                             "application/json");
         if (!res) {
-            throw std::runtime_error("连不上工作进程 " + workers[idx].ep.url +
-                                     "：" + httplib::to_string(res.error()));
+            throw Unreachable("连不上工作进程 " + workers[idx].ep.url + "：" +
+                              httplib::to_string(res.error()));
         }
         if (res->status == 409) {
             throw std::runtime_error("工作进程 " + workers[idx].ep.url +
@@ -130,11 +135,10 @@ struct WorkerPool::Impl {
 
             auto st = cli.Get(prefix + "/task/" + id);
             if (!st) {
-                throw std::runtime_error(
-                    "工作进程 " + workers[idx].ep.url +
-                    " 断了。**这一镜算失败，整条不停**——"
-                    "崩溃隔离就是这么来的：" +
-                    httplib::to_string(st.error()));
+                // 跑到一半断的。**也是 Unreachable**：这一镜在别的机器上
+                // 从头跑一遍就行，不该记到镜头的重试次数上。
+                throw Unreachable("工作进程 " + workers[idx].ep.url + " 断了：" +
+                                  httplib::to_string(st.error()));
             }
             const auto body = json::parse(st->body, nullptr, false);
             if (body.is_discarded()) {
@@ -156,11 +160,50 @@ struct WorkerPool::Impl {
             }
         }
     }
+
+    /// 把一个任务跑完。**同步**——阶段那一层本来就在自己的线程里等。
+    ///
+    /// 连不上就换一个再试。**这不是镜头的重试**：镜头的 attempts 管的是
+    /// "这一镜的画面不行，换个种子再来"，而一台机器崩了跟画面没关系。
+    /// 8×L20 上真发生过：一个工作进程 OOM 崩了、systemd 正在重启它，
+    /// 十一个镜头连着挑中它，每个 attempts 加到 3 直接降级成静帧——
+    /// 而池子里另外七个好好的，一个都没被试过。
+    void run_task(const Task& task, pipeline::CancelToken& tok,
+                  const StepCallback& on_step) {
+        std::set<std::size_t> tried;
+        std::string last_error;
+        for (;;) {
+            const auto got = take(tried);
+            if (!got) {
+                throw std::runtime_error(
+                    "池里每一个工作进程都连不上（试过 " +
+                    std::to_string(tried.size()) + " 个）：" + last_error);
+            }
+            const std::size_t idx = *got;
+            struct Release {
+                Impl* self;
+                std::size_t i;
+                ~Release() { self->give_back(i); }
+            } release{this, idx};
+
+            try {
+                run_on(idx, task, tok, on_step);
+                mark_ok(idx);
+                return;
+            } catch (const Unreachable& e) {
+                mark_bad(idx);
+                tried.insert(idx);
+                last_error = e.what();
+                // 换一个再来。**不往上抛**——抛上去就成了镜头的一次失败。
+            }
+        }
+    }
 };
 
 WorkerPool::WorkerPool(std::vector<WorkerEndpoint> endpoints)
     : impl_(std::make_unique<Impl>()) {
-    for (auto& e : endpoints) impl_->workers.push_back({std::move(e), false});
+    for (auto& e : endpoints) impl_->workers.push_back({std::move(e)});
+    impl_->roster = std::make_unique<WorkerRoster>(impl_->workers.size());
 }
 
 WorkerPool::~WorkerPool() = default;
