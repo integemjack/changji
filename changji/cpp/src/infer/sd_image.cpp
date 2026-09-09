@@ -98,7 +98,14 @@ void progress_trampoline(int step, int steps, float time, void* /*data*/) {
         std::lock_guard lg(a.mu);
         want = a.want_steps;
     }
-    // 总数对不上我们要的步数，就是在加载权重，不是在采样
+    // 总数对不上我们要的步数，就说明这一轮回调不是采样。
+    //
+    // **但它不一定是"加载模型"。** sd.cpp 拿同一个回调报好几种阶段，
+    // 总数各不相同：分段搬权重（权重放内存时每镜都要搬一遍）、
+    // VAE 分块解码（每块一格）、首次从磁盘载权重。上层只看得到
+    // (step, steps)，分不出是哪一种，所以文案不能写死成"加载模型"——
+    // 写死之后每镜都冒出来，看着像"模型被重载了 22 次"，
+    // 而实际整轮只从磁盘载过一次。
     const bool loading = want > 0 && steps != want;
     if (cb) cb(step, steps, static_cast<double>(time), loading);
 

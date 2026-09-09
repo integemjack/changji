@@ -213,8 +213,12 @@ std::vector<RenderOutcome> render_batch(std::vector<Shot*>& shots,
                     const auto on_step = [&](int step, int steps, double,
                                              bool loading) {
                         say("progress",
-                            loading ? "加载出片模型 " + std::to_string(step) +
-                                          "/" + std::to_string(steps)
+                            // 不是采样的那些阶段（搬权重、VAE 分块解码、
+                            // 首次载权重）分不开，所以只说"准备"，
+                            // 别说"加载模型"——那会让人以为每镜都重载。
+                            loading ? "出视频 " + local.shot_id + "（准备 " +
+                                          std::to_string(step) + "/" +
+                                          std::to_string(steps) + "）"
                                     : "出视频 " + local.shot_id + "（第 " +
                                           std::to_string(step) + "/" +
                                           std::to_string(steps) + " 步）");

@@ -147,8 +147,11 @@ std::vector<FrameOutcome> run_frames(std::vector<Shot*>& shots,
                     e.total = total;
                     e.shot_id = shot->shot_id;
                     e.message =
-                        loading ? "加载出图模型 " + std::to_string(step) + "/" +
-                                      std::to_string(steps)
+                        // 同 render.cpp：这一支不只是"加载模型"，
+                        // 也可能是搬权重或 VAE 分块解码，分不开。
+                        loading ? "出首帧 " + shot->shot_id + "（准备 " +
+                                      std::to_string(step) + "/" +
+                                      std::to_string(steps) + "）"
                                 : "出首帧 " + shot->shot_id + "（第 " +
                                       std::to_string(step) + "/" +
                                       std::to_string(steps) + " 步）";
