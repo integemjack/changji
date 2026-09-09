@@ -56,6 +56,11 @@
     Wan2.2_VAE.safetensors                   1.4 GB
     umt5_xxl_fp16.safetensors                 11 GB
 
+    # 出片（更好的图生视频）：Wan 2.2 I2V-A14B，双专家。VAE 换成 2.1 那份
+    Wan2.2-I2V-A14B-HighNoise-Q8_0.gguf     15.4 GB
+    Wan2.2-I2V-A14B-LowNoise-Q8_0.gguf      15.4 GB
+    wan_2.1_vae.safetensors                 0.25 GB
+
     # 出首帧：Qwen-Image **基础模型**。32 GB 的卡两份都能跑（见上面）
     qwen_image_fp8_e4m3fn.safetensors         20 GB   # 画质好；32 GB 上要 weights=te=cpu,vae=cpu
     qwen-image-Q6_K.gguf                      16 GB   # 稳；weights=auto
@@ -79,6 +84,38 @@
 
 国内拉权重：`aria2c -x 8 -s 8 -k 4M -o <名字> https://hf-mirror.com/...`。
 单连接只有 1～2 MB/s，八连接能跑满带宽。
+
+### 出片模型选哪个
+
+`TI2V-5B` 是 Wan 家族里最小的一档，多家评测点名它的动作质量不如专门的
+14B 图生视频模型。想要更好的图生视频就换 **I2V-A14B**：它是混合专家，
+高噪声专家跑前几步定构图和运动，低噪声专家跑后几步出细节。
+
+    [models]
+    video            = "Wan2.2-I2V-A14B-LowNoise-Q8_0.gguf"
+    video_high_noise = "Wan2.2-I2V-A14B-HighNoise-Q8_0.gguf"
+    video_vae        = "wan_2.1_vae.safetensors"   # 不是 2.2 那份
+    video_cfg        = 3.5                          # 上游给 A14B 的值，5B 是 6.0
+
+**32 GB 的卡装不下两个专家**：15.4 + 15.4 + umt5 11.4 + VAE 0.25 = 42.5 GB。
+而 sd.cpp 的组件规格里两个专家都算 `diffusion`，没法只把其中一份赶去内存
+（见 `core/ggml_extend_backend.cpp` 的 `parse_backend_module`）。所以要
+`weights = "cpu"`——上游 `docs/wan.md` 给 A14B 的命令行自己就带
+`--offload-to-cpu`，那个开关就是这个意思。代价是每步都要搬权重，慢。
+
+想让权重常驻显存就降量化：Q5_K_M 每份 10.8 GB，两份 21.6 GB，配
+`weights = "te=cpu"` 能装下，留约 10 GB 给计算缓冲。画质比 Q8 低一档。
+
+**MiniMax-H3** 是另一条路：画面和立体声一起生成。它在 sd.cpp 里用的参数位
+和 Wan 不一样，编码器走 `video_llm`（裁过的 Qwen3-VL-32B）不是
+`video_text_encoder`，另外多一个 `video_audio_vae`。**授权有地域限制**：
+美国、欧盟、英国、韩国的创作者不能分发用开源权重生成的视频。
+
+    [models]
+    video           = "minimax_h3_fl2va-Q4_K_M.gguf"       # 18.8 GB
+    video_llm       = "qwen3vl_32b_minimax_h3-Q4_K_M.gguf" # 18.2 GB，放内存
+    video_vae       = "minimax_h3_video_vae_fp16.safetensors"
+    video_audio_vae = "minimax_h3_audio_vae_fp32.safetensors"
 
 ## 2. 配置
 
