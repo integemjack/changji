@@ -186,6 +186,11 @@ std::vector<std::string> Settings::validate() const {
             "[models].video_high_noise 填了但 [models].video 是空的："
             "双专家要两份，video 填低噪声那份");
     }
+    if (models.video_rng != "cuda" && models.video_rng != "cpu" &&
+        models.video_rng != "std") {
+        errs.push_back("[models].video_rng 只能是 cuda / cpu / std，现在是 " +
+                       models.video_rng);
+    }
     if (!models.video_llm.empty() && !models.video_text_encoder.empty()) {
         // 两个参数位只能填一个。都填了的话下面按 llm 走、t5xxl 那份被
         // 静默丢掉——症状是"出的片和提示词没关系"，没有任何报错指到这儿。
@@ -377,6 +382,7 @@ void apply_table(const toml::table& doc, Settings& s) {
         take(t, "video_llm", s.models.video_llm);
         take(t, "video_llm_vision", s.models.video_llm_vision);
         take(t, "video_audio_vae", s.models.video_audio_vae);
+        take(t, "video_rng", s.models.video_rng);
     }
     take_path_str(&doc, "workspace", s.workspace);
     if (auto node = doc.get("vram_gb_override")) {
@@ -610,6 +616,11 @@ subtitle_font = "Source Han Sans SC"
 # 音频 VAE。给 MiniMax-H3 这类画面和声音一起生成的模型用；不填的话联合扩散
 # 照跑，但出来的片没有解码好的音轨。
 # video_audio_vae = "minimax_h3_audio_vae_fp32.safetensors"
+#
+# 出片用哪种随机数发生器：cuda（默认，Wan 那一路）/ cpu / std。
+# 上游给 MiniMax-H3 的命令行是 --rng cpu；发生器不同则同一个种子出的画面不同，
+# 而且不报错。只影响出片，出图那条不动。
+# video_rng = "cpu"
 #
 # weights = "auto" 时给计算缓冲留多少显存（GB）。auto 的预算是给权重的，
 # 而生成时那块计算缓冲比"给驱动留一成"大一个量级：1280×704 的 VAE 解码

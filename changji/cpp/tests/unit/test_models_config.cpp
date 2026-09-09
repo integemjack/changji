@@ -348,7 +348,8 @@ TEST_CASE("模板的 [models] 那一节列出了每一个会被读的键") {
                             "image_cfg", "image_flow_shift", "frame_tier",
                             "vram_reserve_gb", "video_high_noise",
                             "video_moe_boundary", "video_llm",
-                            "video_llm_vision", "video_audio_vae"}) {
+                            "video_llm_vision", "video_audio_vae",
+                            "video_rng"}) {
         CAPTURE(key);
         // 模板里这一节整个是注释掉的，所以形状是 `# 键 = `
         const std::string want = std::string("# ") + key + " = ";
@@ -440,6 +441,25 @@ TEST_CASE("[models]：双专家视频模型的两项") {
         bool said = false;
         for (const auto& e : bad.validate()) {
             if (e.find("video_high_noise") != std::string::npos) said = true;
+        }
+        CHECK(said);
+    }
+    SUBCASE("随机数发生器：默认 cuda，认 cpu/std，别的拒") {
+        // sd.cpp 的默认是 cuda，Wan 那一路就用它；上游给 MiniMax-H3 的
+        // 命令行是 --rng cpu。发生器不同则同一个种子出的画面不同，
+        // **而且不报错**，所以这一项必须能配、且拼错要拦住。
+        CHECK(config::ModelsConfig{}.video_rng == "cuda");
+        {
+            std::ofstream f(tmp / "changji.toml", std::ios::binary);
+            f << "[models]\nvideo_rng = \"cpu\"\n";
+        }
+        CHECK(config::load_settings(tmp).models.video_rng == "cpu");
+
+        config::Settings bad;
+        bad.models.video_rng = "gpu";   // 没有这个取值，是 cuda
+        bool said = false;
+        for (const auto& e : bad.validate()) {
+            if (e.find("video_rng") != std::string::npos) said = true;
         }
         CHECK(said);
     }

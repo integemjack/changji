@@ -281,6 +281,12 @@ std::shared_ptr<SdContext> SdContext::create(const config::Settings& settings,
     }
     if (!impl.vae.empty()) p.vae_path = impl.vae.c_str();
     if (!impl.audio_vae.empty()) p.audio_vae_path = impl.audio_vae.c_str();
+    // 随机数发生器。**sd.cpp 的默认是 cuda**，而上游给 MiniMax-H3 的命令行
+    // 是 --rng cpu。发生器不同则初始噪声不同，同一个种子出的画面就不一样，
+    // 而且没有任何报错。只在出片这条路上认这一项。
+    if (is_video && m.video_rng != "cuda") {
+        p.rng_type = ::str_to_rng_type(m.video_rng.c_str());
+    }
     if (!impl.text_encoder.empty()) {
         // **是 t5xxl_path，不是 embeddings_connectors_path。**
         //

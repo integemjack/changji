@@ -264,6 +264,14 @@ struct ModelsConfig {
     /// 给 MiniMax-H3 这种画面和声音一起生成的模型用。不填的话联合扩散
     /// 照跑，但出来的片没有解码好的音轨（上游 docs/minimax_h3.md 写的）。
     std::string video_audio_vae;
+
+    /// 出片这条路用哪种随机数发生器。**C++ 独有。** 取值 cuda / cpu / std。
+    ///
+    /// sd.cpp 的默认是 `cuda`，Wan 那一路就用它。但**上游给 MiniMax-H3 的
+    /// 命令行明写着 `--rng cpu`**（docs/minimax_h3.md）——不同的发生器
+    /// 出的初始噪声不一样，同一个种子出来的画面就不一样，而且不报错。
+    /// 只影响出片那条上下文，出图那条不动（改了会连首帧一起变）。
+    std::string video_rng = "cuda";
     double image_cfg = 2.5;
     double image_flow_shift = 3.0;
 
