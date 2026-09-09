@@ -19,6 +19,14 @@ namespace changji::paths {
 /// Windows: %LOCALAPPDATA%\changji
 /// macOS:   ~/Library/Application Support/changji
 /// Linux:   $XDG_CONFIG_HOME/changji 或 ~/.config/changji
+/// 家目录。Windows 读 USERPROFILE（退回 HOMEDRIVE+HOMEPATH），
+/// 别的系统读 HOME。
+///
+/// **导出它是给测试用的**：语料里存的是相对家目录的路径（存绝对路径的话
+/// 里面带着用户名，换台机器就对不上），而"家目录是哪个"必须和代码用的
+/// 是同一个——测试自己再算一遍就可能算出别的来。
+std::filesystem::path home_dir();
+
 std::filesystem::path user_config_dir(const std::string& app_name);
 
 /// 用户数据目录。

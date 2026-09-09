@@ -98,8 +98,6 @@ std::string env(const char* name) {
 #endif
 }
 
-namespace {
-
 fs::path home_dir() {
 #ifdef _WIN32
     std::string p = env("USERPROFILE");
@@ -111,7 +109,7 @@ fs::path home_dir() {
 #endif
 }
 
-}  // namespace
+
 
 fs::path user_config_dir(const std::string& app_name) {
 #if defined(_WIN32)

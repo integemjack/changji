@@ -137,10 +137,39 @@ TEST_CASE("配置文件的位置和 Python 一致（默认环境）") {
     };
 
     const std::string app = g.at("app_name").get<std::string>();
-    CHECK(fwd(paths::user_config_dir(app)) ==
-          g.at("user_config_dir").get<std::string>());
-    CHECK(fwd(paths::user_data_dir(app)) ==
-          g.at("user_data_dir").get<std::string>());
+
+    // **语料按平台存，值是相对家目录的。**
+    //
+    // 以前存的是 `C:/Users/ultra/AppData/Local/changji` ——连用户名都在里面。
+    // 那样在 Linux 上必然失败，换一台 Windows 机器也会失败。而部署目标是
+    // Linux：测试在真实平台上全绿不了，"C++ 有没有改坏"在那儿就测不出来。
+#if defined(_WIN32)
+    const char* plat = "windows";
+#elif defined(__APPLE__)
+    const char* plat = "macos";
+#else
+    const char* plat = "linux";
+#endif
+    REQUIRE_MESSAGE(g.at("platforms").contains(plat),
+                    "语料里没有 " << plat << " 那一份。"
+                    "在这个平台上跑一遍 export_paths_golden.py 补上——"
+                    "**别把这一条跳过去**，它钉的是两个后端读同一个配置文件。");
+    const auto& want = g.at("platforms").at(plat);
+
+    // 家目录从 C++ 这边取。比的是"相对家目录的那一段"，
+    // 所以换台机器、换个用户名都还成立。
+    const fs::path home = paths::home_dir();
+    const auto under_home = [&](const fs::path& p) {
+        std::string s = fwd(p);
+        const std::string h = fwd(home);
+        if (s.rfind(h + "/", 0) == 0) return s.substr(h.size() + 1);
+        return s;
+    };
+
+    CHECK(under_home(paths::user_config_dir(app)) ==
+          want.at("user_config_dir").get<std::string>());
+    CHECK(under_home(paths::user_data_dir(app)) ==
+          want.at("user_data_dir").get<std::string>());
 
     // 文件名也得一样，否则目录对了读的还是两个文件
     CHECK(g.at("config_file_name").get<std::string>() == "config.toml");

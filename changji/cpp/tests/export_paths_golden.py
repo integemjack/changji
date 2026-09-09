@@ -55,20 +55,47 @@ def fwd(p) -> str:
 
 
 def main() -> int:
+    # **相对家目录**，而且**只更新当前平台那一项**。
+    #
+    # 存绝对路径的话里面带着用户名（`C:/Users/ultra/...`），换台机器就对不上；
+    # 只存一个平台的话，在别的系统上跑测试必然失败——而部署目标是 Linux，
+    # 测试在真实平台上全绿不了，"C++ 有没有改坏"在那儿就测不出来。
+    #
+    # 别的平台那几项原样留着：在 Windows 上跑一遍就把 Linux 那份抹掉的话，
+    # 下次在 Linux 上又得手工补回来。
+    home = Path.home()
+
+    def rel_home(p: str) -> str:
+        """换算成相对家目录。不在家目录下就原样留着（那说明这台机器的
+        平台约定和我们假设的不一样，硬算会得到一串 `../..`）。"""
+        try:
+            return fwd(Path(p).relative_to(home))
+        except ValueError:
+            return fwd(Path(p))
+
+    key = {"win32": "windows", "darwin": "macos"}.get(sys.platform, "linux")
+    platforms = {}
+    if DEST.is_file():
+        platforms = json.loads(DEST.read_text(encoding="utf-8")).get(
+            "platforms", {})
+    platforms[key] = {
+        "user_config_dir": rel_home(user_config_dir(APP_NAME, appauthor=False)),
+        "user_data_dir": rel_home(user_data_dir(APP_NAME, appauthor=False)),
+        "user_config_path": rel_home(str(user_config_path())),
+    }
+
     payload = {
         "app_name": APP_NAME,
         # 文件名两边必须一样，否则读的不是同一个文件
         "config_file_name": "config.toml",
         "project_file_name": "changji.toml",
-        # 默认环境下的实际取值。C++ 侧比这个——但只在
-        # LOCALAPPDATA 和 API 给的值相同时才该相等，用例里写明了。
-        "user_config_dir": fwd(user_config_dir(APP_NAME, appauthor=False)),
-        "user_data_dir": fwd(user_data_dir(APP_NAME, appauthor=False)),
-        "user_config_path": fwd(user_config_path()),
+        "platforms": platforms,
         "note": (
             "由 cpp/tests/export_paths_golden.py 生成，不要手改。"
-            "只有默认环境下的值——Python 走 Windows 已知文件夹 API，"
-            "C++ 读 LOCALAPPDATA，机制不同，改了环境变量就没有可比性。"
+            "值是相对家目录的，按平台分开存——platformdirs 在不同系统上算法"
+            "不同，而绝对路径里带着用户名，换台机器就对不上。"
+            "只有默认环境下的值：Python 走 Windows 已知文件夹 API，C++ 读 "
+            "LOCALAPPDATA，机制不同，改了环境变量就没有可比性。"
             "详见脚本开头和方案里那一节。"
         ),
     }
@@ -76,9 +103,11 @@ def main() -> int:
     io.open(DEST, "w", encoding="utf-8", newline="\n").write(
         json.dumps(payload, ensure_ascii=False, indent=2) + "\n")
     print(f"写入 {DEST}")
-    for k in ("app_name", "config_file_name", "user_config_dir",
-              "user_config_path"):
-        print(f"  {k:20} {payload[k]}")
+    print(f"  这次更新的是 {key}")
+    for k, v in platforms[key].items():
+        print(f"  {k:20} ~/{v}")
+    for other in sorted(set(platforms) - {key}):
+        print(f"  （{other} 那份原样留着）")
     return 0
 
 

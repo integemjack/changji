@@ -23,9 +23,27 @@
 using namespace changji;
 namespace fs = std::filesystem;
 
+namespace {
+
+/// 一条这个平台上真正算绝对的路径，带中文。
+///
+/// **不能写死 `D:/模型`。** 那在 Windows 上是绝对路径，在 Linux 上是
+/// 相对路径——`resolve` 会把它接到工作区后面，断言全错。而这几条用例
+/// 钉的是"绝对路径原样用、相对路径接 dir 后面"，和盘符没关系。
+/// 中文目录名保留：那是这几条的另一半意图，中文一路走到底不能乱码。
+std::string abs_utf8(const char* tail) {
+#ifdef _WIN32
+    return std::string("D:/") + tail;
+#else
+    return std::string("/mnt/") + tail;
+#endif
+}
+
+}  // namespace
+
 TEST_CASE("模型路径解析") {
     config::ModelsConfig m;
-    const fs::path ws = paths::from_utf8("C:/工作区");
+    const fs::path ws = paths::from_utf8(abs_utf8("工作区"));
 
     SUBCASE("空的返回空") {
         // 没配就是没配，不能返回一个"目录/"这样的半截路径——
@@ -35,16 +53,17 @@ TEST_CASE("模型路径解析") {
     }
 
     SUBCASE("相对路径接在 dir 后面") {
-        m.dir = "D:/模型";
-        CHECK(m.resolve("a.gguf", ws) == paths::from_utf8("D:/模型/a.gguf"));
+        m.dir = abs_utf8("模型");
+        CHECK(m.resolve("a.gguf", ws) == paths::from_utf8(abs_utf8("模型/a.gguf")));
         // 带子目录的相对路径
-        CHECK(m.resolve("wan/b.gguf", ws) == paths::from_utf8("D:/模型/wan/b.gguf"));
+        CHECK(m.resolve("wan/b.gguf", ws) ==
+              paths::from_utf8(abs_utf8("模型/wan/b.gguf")));
     }
 
     SUBCASE("绝对路径原样用，不拼 dir") {
         // 多台机器共享网络盘时会这么填
-        m.dir = "D:/模型";
-        const fs::path abs = paths::from_utf8("E:/共享/c.gguf");
+        m.dir = abs_utf8("模型");
+        const fs::path abs = paths::from_utf8(abs_utf8("共享/c.gguf"));
         CHECK(m.resolve(paths::to_utf8(abs), ws) == abs);
     }
 
@@ -100,17 +119,17 @@ TEST_CASE("模型配置能从 toml 读出来") {
         std::ofstream out(cfg, std::ios::binary);
         REQUIRE(out.good());
         out << "[models]\n"
-               "dir = \"D:/模型库\"\n"
-               "llm = \"Qwen3-14B-Q4_K_M.gguf\"\n"
-               "video = \"Wan2.2-TI2V-5B-Q4_K_M.gguf\"\n"
-               "video_vae = \"Wan2.2_VAE.safetensors\"\n"
-               "video_text_encoder = \"umt5-xxl-encoder-Q5_K_M.gguf\"\n"
-               "image = \"Qwen-Image-Edit-Q4_K_M.gguf\"\n";
+            << "dir = \"" << abs_utf8("模型库") << "\"\n"
+            << "llm = \"Qwen3-14B-Q4_K_M.gguf\"\n"
+            << "video = \"Wan2.2-TI2V-5B-Q4_K_M.gguf\"\n"
+            << "video_vae = \"Wan2.2_VAE.safetensors\"\n"
+            << "video_text_encoder = \"umt5-xxl-encoder-Q5_K_M.gguf\"\n"
+            << "image = \"Qwen-Image-Edit-Q4_K_M.gguf\"\n";
     }
 
     const config::Settings s = config::load_settings(tmp);
     REQUIRE(s.models.dir.has_value());
-    CHECK(*s.models.dir == "D:/模型库");
+    CHECK(*s.models.dir == abs_utf8("模型库"));
     CHECK(s.models.llm == "Qwen3-14B-Q4_K_M.gguf");
     CHECK(s.models.video == "Wan2.2-TI2V-5B-Q4_K_M.gguf");
     CHECK(s.models.video_vae == "Wan2.2_VAE.safetensors");
@@ -120,7 +139,7 @@ TEST_CASE("模型配置能从 toml 读出来") {
     // 中文目录名要能一路走到底而不乱码。MSVC 上 fs::path 和 std::string
     // 之间用错转换函数的话，这里会变成问号或者直接抛异常。
     CHECK(s.models.resolve(s.models.llm, tmp) ==
-          paths::from_utf8("D:/模型库/Qwen3-14B-Q4_K_M.gguf"));
+          paths::from_utf8(abs_utf8("模型库/Qwen3-14B-Q4_K_M.gguf")));
 
     SUBCASE("没写的项保持空，不会被填上猜的默认值") {
         const fs::path cfg2 = tmp / "changji.toml";
