@@ -11,6 +11,7 @@
 #include <optional>
 #include <string>
 
+#include "infer/sd_upscale.hpp"
 #include "infer/worker_server.hpp"
 #include "config/settings.hpp"
 #include "infer/llama_tts.hpp"
@@ -248,6 +249,9 @@ int run(int argc, char** argv) {
     // 做成命令行而不是接口，是因为它要在"整条流水线还跑不起来"的时候
     // 就能单独验——出一集要模型、要 ffmpeg，那些是另外的坎。
     std::string say_text, say_voice, say_model, say_decoder;
+    // 超分那条命令行的参数。见 sd_upscale.hpp 里为什么要有它。
+    std::string up_in, up_out, up_model;
+    int up_w = 0, up_h = 0;
     std::string say_out = "say.wav";
 
     // 默认打开的项目。**它同时决定读不读那个项目里的 changji.toml**——
@@ -279,6 +283,21 @@ int run(int argc, char** argv) {
         // 本身就容易忘记改回来。
         else if (a == "--tts-model") say_model = next("骨干模型文件");
         else if (a == "--tts-decoder") say_decoder = next("解码器文件");
+        else if (a == "--upscale") {
+            up_in = next("要超分的视频");
+            up_out = next("输出文件");
+        }
+        else if (a == "--upscale-model") up_model = next("ESRGAN 权重文件");
+        else if (a == "--upscale-size") {
+            const std::string wh = next("目标尺寸，形如 1088x1920");
+            const auto x = wh.find('x');
+            if (x == std::string::npos) {
+                std::cerr << "--upscale-size 要写成 1088x1920 这样\n";
+                return 2;
+            }
+            up_w = std::atoi(wh.substr(0, x).c_str());
+            up_h = std::atoi(wh.substr(x + 1).c_str());
+        }
         else if (a == "--init-config") want_init = true;
         else if (a == "--force") want_force = true;
         else {
@@ -330,6 +349,32 @@ int run(int argc, char** argv) {
         std::cerr << "配置有问题：\n";
         for (const auto& e : errs) std::cerr << "  - " << e << "\n";
         return 1;
+    }
+
+    // 超分：把出好的片子逐帧过 ESRGAN 再压到目标尺寸。
+    // **它是"不换硬件把分辨率拉上去"的那条路**——H3 在 32 GB 的卡上
+    // 只出得了 960×544。风险是逐帧超分没有帧间一致性，细密纹理会闪，
+    // 所以做完一定要看片子，别只看单帧。
+    if (!up_in.empty()) {
+        if (up_model.empty()) {
+            std::cerr << "--upscale 还要 --upscale-model 指一个 ESRGAN 权重\n";
+            return 2;
+        }
+        if (up_w <= 0 || up_h <= 0) {
+            std::cerr << "--upscale 还要 --upscale-size，形如 1088x1920\n";
+            return 2;
+        }
+        try {
+            changji::infer::upscale_video(changji::paths::from_utf8(up_in),
+                                          changji::paths::from_utf8(up_out),
+                                          changji::paths::from_utf8(up_model),
+                                          up_w, up_h, settings.assembly);
+            std::cout << "超分好了：" << up_out << "\n";
+            return 0;
+        } catch (const std::exception& e) {
+            std::cerr << e.what() << "\n";
+            return 1;
+        }
     }
 
     if (!say_text.empty()) {

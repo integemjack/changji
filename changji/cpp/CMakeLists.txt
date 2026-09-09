@@ -307,6 +307,7 @@ add_executable(changji
     src/infer/sd_backend.cpp
     src/infer/sd_image.cpp
     src/infer/sd_video.cpp
+    src/infer/sd_upscale.cpp
     src/llm/client.cpp
     src/llm/client_http.cpp
     src/infer/worker_pool.cpp
@@ -606,6 +607,7 @@ if(CHANGJI_BUILD_TESTS)
         src/infer/sd_backend.cpp
         src/infer/sd_image.cpp
         src/infer/sd_video.cpp
+        src/infer/sd_upscale.cpp
         src/pipeline/jobs.cpp
         src/pipeline/episode.cpp
         src/comfy/workflow.cpp
