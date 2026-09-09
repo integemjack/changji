@@ -220,6 +220,32 @@ sd.cpp 认这个给 ComfyUI 做的 LoRA（日志里有 `apply lora at runtime`�
 
 ## 3. 进程
 
+### 单机：一个进程就够
+
+**推荐这条。** 编一份全开的二进制（SD + CUDA + LLAMA），把
+`[workers].endpoints` 留空，什么都在进程内跑：
+
+    cmake -S cpp -B build-all -DCMAKE_BUILD_TYPE=Release       -DCHANGJI_SD=ON -DCHANGJI_SD_CUDA=ON -DCHANGJI_LLAMA=ON       -DCHANGJI_CUDA_ARCH=120 -DCMAKE_CUDA_ARCHITECTURES=120
+    cmake --build build-all --target changji -j 64
+
+    # 配置里
+    [workers]
+    endpoints = []          # 留空 = 全部进程内
+
+    [llm]
+    backend = "local"       # 不用另起 llama-server
+
+    ./build-all/changji --port 8080 --host 0.0.0.0
+
+出图、出片、配音、大模型、webapp、接口全在这一个进程里。
+**判据是 `pgrep -c changji` 等于 1。**
+
+这条能成立靠两件事：`run_deps.cpp` 里 `make_worker_pool` 拿到空列表时
+返回空，上面那三行进程内的默认原样生效；以及大模型是调度器的一个槽
+（`Slot::LLM`），出片要显存时按**实时空闲显存**决定要不要让开。
+
+### 多卡：拆成协调者加工作进程
+
 一张卡一个工作进程，协调者一个，大模型一个。
 
     # 工作进程（systemd 模板，%i 是卡号）
@@ -233,7 +259,8 @@ sd.cpp 认这个给 ComfyUI 做的 LoRA（日志里有 `apply lora at runtime`�
     ExecStart=/root/changji/build-coord/changji --port 8080 --host 0.0.0.0
     Environment=CHANGJI_WORKSPACE=/root/.local/share/changji/projects
 
-    # 大模型：找一张没被工作进程占的卡
+    # 大模型：找一张没被工作进程占的卡。
+    # **单机不需要这个**，[llm].backend = "local" 就在进程内跑。
     CUDA_VISIBLE_DEVICES=6 llama-server -m Qwen3-14B-Q4_K_M.gguf \
       --port 8081 --host 127.0.0.1 -ngl 99 -c 65536 \
       --chat-template-kwargs '{"enable_thinking":false}'
