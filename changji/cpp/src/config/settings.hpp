@@ -31,6 +31,28 @@ inline constexpr const char* kAppName = "changji";
 inline constexpr const char* kEnvPrefix = "CHANGJI_";
 
 /// 剧本和分镜用的大模型。默认走本地 Ollama。
+/// 画质档位的显式覆盖。
+///
+/// **默认全 0 = 用按显存推出来的那套**（见 models/hardware.cpp 的档位表）。
+///
+/// 这一节 2026-09-10 加的。以前档位只能通过 `POST /api/settings` 改，而且
+/// **有意不写回文件**——当时的理由是"档位是按显存推的，写死等于把这台机器
+/// 的显存刻进配置"。那个理由站不住：`[models]` 里全是这台机器的模型路径，
+/// 这个文件本来就是机器专属的。真实后果是**设完重启就丢**：用户把成片档
+/// 调成 1280×704 跑了一集，重启之后回到 960×544，而界面上没有任何提示。
+///
+/// 填了就以填的为准，没填的项照旧按显存推。
+struct TiersConfig {
+    int draft_width = 0;
+    int draft_height = 0;
+    int draft_steps = 0;
+    int final_width = 0;
+    int final_height = 0;
+    int final_steps = 0;
+
+    std::vector<std::string> validate() const;
+};
+
 struct LLMConfig {
     /// 大模型跑在哪：`remote`（默认，走 base_url）或 `local`（进程内）。
     /// **C++ 独有**——Python 那边只有远端一条路。
@@ -402,6 +424,7 @@ struct WorkersConfig {
 /// 全部配置。
 struct Settings {
     LLMConfig llm;
+    TiersConfig tiers;
     TTSConfig tts;
     GateConfig gates;
     AssemblyConfig assembly;

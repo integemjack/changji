@@ -641,3 +641,36 @@ TEST_CASE("[models].vram_reserve_gb：默认 6，负数拒") {
         CHECK_MESSAGE(e.find("vram_reserve_gb") == std::string::npos, e);
     }
 }
+
+TEST_CASE("[tiers]：填了以填的为准，没填按显存推") {
+    // **这一节是被"设完重启就丢"逼出来的。** 档位以前只在进程内生效，
+    // 用户把成片档调成 1280×704 跑了一集，重启回到 960×544，界面没提示。
+    config::TiersConfig t;
+    CHECK(t.draft_width == 0);          // 0 = 没填
+    CHECK(t.validate().empty());
+
+    SUBCASE("分辨率要是 32 的倍数") {
+        // 不是的话 Wan 那一族潜空间对不齐，出图直接失败而日志指不到这儿。
+        // **这条以前只在接口层查**，从配置文件进来是绕过的。
+        config::TiersConfig bad;
+        bad.final_width = 1000;
+        bool said = false;
+        for (const auto& e : bad.validate()) {
+            if (e.find("final_width") != std::string::npos) said = true;
+        }
+        CHECK(said);
+
+        config::TiersConfig ok;
+        ok.final_width = 1280;
+        ok.final_height = 704;
+        CHECK(ok.validate().empty());
+    }
+    SUBCASE("负数拒，步数不要求 32 的倍数") {
+        config::TiersConfig bad;
+        bad.final_steps = -1;
+        CHECK_FALSE(bad.validate().empty());
+        config::TiersConfig ok;
+        ok.final_steps = 6;             // 6 不是 32 的倍数，但步数不受这条管
+        CHECK(ok.validate().empty());
+    }
+}

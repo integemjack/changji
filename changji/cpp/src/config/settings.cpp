@@ -61,6 +61,29 @@ void check_ge(std::vector<std::string>& errs, const char* name, double v, double
 
 }  // namespace
 
+std::vector<std::string> TiersConfig::validate() const {
+    std::vector<std::string> errs;
+    // **分辨率必须是 32 的倍数**，否则 Wan 那一族的潜空间对不齐。
+    // 这一条以前只在接口层查（config_api.cpp），从配置文件进来是绕过的——
+    // 而绕过之后的症状是出图直接失败，日志里指不到这儿。
+    const std::pair<const char*, int> res[] = {
+        {"tiers.draft_width", draft_width}, {"tiers.draft_height", draft_height},
+        {"tiers.final_width", final_width}, {"tiers.final_height", final_height},
+    };
+    for (const auto& [name, v] : res) {
+        if (v < 0) errs.push_back(std::string(name) + " 不能是负的");
+        if (v > 0 && v % 32 != 0) {
+            errs.push_back(std::string(name) + " 要是 32 的倍数，现在是 " +
+                           std::to_string(v));
+        }
+    }
+    for (const auto& [name, v] : {std::pair<const char*, int>{"tiers.draft_steps", draft_steps},
+                                  {"tiers.final_steps", final_steps}}) {
+        if (v < 0) errs.push_back(std::string(name) + " 不能是负的");
+    }
+    return errs;
+}
+
 std::vector<std::string> LLMConfig::validate() const {
     std::vector<std::string> errs;
     if (backend != "remote" && backend != "local") {
@@ -180,6 +203,7 @@ std::vector<std::string> Settings::validate() const {
                     std::make_move_iterator(more.end()));
     };
     merge(llm.validate());
+    merge(tiers.validate());
     merge(tts.validate());
     merge(gates.validate());
     merge(assembly.validate());
@@ -313,6 +337,14 @@ void take_path_str(const toml::table* tbl, const char* key,
 }
 
 void apply_table(const toml::table& doc, Settings& s) {
+    if (auto t = doc["tiers"].as_table()) {
+        take(t, "draft_width", s.tiers.draft_width);
+        take(t, "draft_height", s.tiers.draft_height);
+        take(t, "draft_steps", s.tiers.draft_steps);
+        take(t, "final_width", s.tiers.final_width);
+        take(t, "final_height", s.tiers.final_height);
+        take(t, "final_steps", s.tiers.final_steps);
+    }
     if (auto t = doc["llm"].as_table()) {
         take(t, "backend", s.llm.backend);
         take(t, "base_url", s.llm.base_url);
@@ -510,6 +542,19 @@ constexpr const char* kDefaultToml = R"(# 场记配置文件
 
 # 显存覆盖。推理服务跑在另一台机器时本机探测不到显卡，用它手动指定。
 # vram_gb_override = 16
+
+[tiers]
+# 画质档位。**不填就按显存推**（见 models/hardware.cpp 的档位表），
+# 填了就以填的为准，一项一项来。分辨率要是 32 的倍数（Wan 的潜空间对齐）。
+#
+# 设置页改档位会写回这一节。以前只在进程内生效，重启就丢——
+# 用户把成片档调成 1280×704 跑了一集，重启回到 960×544 而界面没有提示。
+# draft_width = 960
+# draft_height = 544
+# draft_steps = 6
+# final_width = 1280
+# final_height = 704
+# final_steps = 6
 
 [llm]
 # 剧本和分镜用的大模型。backend 两个值：

@@ -363,16 +363,25 @@ TEST_CASE("画质档位真的生效，这是有意和 Python 不一样") {
     REQUIRE(fbefore != before.tiers.end());
     CHECK(fit->second.width == fbefore->second.width);
 
-    SUBCASE("清掉之后退回探测值") {
+    SUBCASE("清掉进程内覆盖之后退回探测值") {
+        // **前提是 [tiers] 里没填。** 填了的话清掉进程内那份只会退到
+        // 文件里那份，不会退到探测值——两层覆盖，文件在下、进程内在上。
         config::runtime().clear_tier_overrides();
+        auto s = config::runtime().snapshot();
+        s.tiers = config::TiersConfig{};
+        config::runtime().replace(s);
         const auto back = config::runtime().profile();
         CHECK(back.tiers.at(models::Tier::DRAFT).width == bit->second.width);
     }
 }
 
-TEST_CASE("档位不写回配置文件") {
-    // 档位是按显存推出来的，写死在配置里等于把这台机器的显存刻进项目，
-    // 换台机器就不对了。所以它只在进程内生效，重启即失效。
+TEST_CASE("档位要写回配置文件——设完重启不能丢") {
+    // **这条用例 2026-09-10 反过来了。** 原来断言的是"档位不写回"，
+    // 理由是"档位按显存推，写死等于把这台机器的显存刻进配置"。
+    // 那个理由站不住：这个文件里 [models] 全是这台机器的模型路径。
+    //
+    // 真实后果是用户把成片档调成 1280×704 跑了一集，重启回到 960×544，
+    // 而界面上没有任何提示。现在写进 [tiers]，没填的项还是 0（按显存推）。
     reset_runtime();
     const auto r = http::guard([] {
         return http::post_settings(
@@ -380,8 +389,7 @@ TEST_CASE("档位不写回配置文件") {
     });
     REQUIRE(r.status == 200);
     CHECK(r.body.at("changed") == json::array({"draft_width"}));
-    // 只有档位这一项，没有可写回的东西，所以不该写文件
-    CHECK(r.body.at("saved_to").is_null());
+    CHECK_FALSE(r.body.at("saved_to").is_null());
 }
 
 TEST_CASE("多余字段要拒") {

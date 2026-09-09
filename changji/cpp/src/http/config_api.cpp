@@ -389,8 +389,12 @@ ApiResult post_settings(const json& body) {
 
     // ---- 画质档位 ----
     //
-    // 只在进程内生效，不写回配置：档位是按显存推出来的，写死在配置里
-    // 等于把这台机器的显存刻进项目，换台机器就不对了。
+    // **既在进程内生效，也写回 [tiers]。** 以前有意不写回，理由是"档位是
+    // 按显存推的，写死等于把这台机器的显存刻进配置"。那个理由站不住：
+    // 这个文件里 [models] 全是这台机器的模型路径，本来就是机器专属的。
+    // 真实后果是**设完重启就丢**——用户把成片档调成 1280×704 跑了一集，
+    // 重启回到 960×544，而界面上没有任何提示。
+    // 没填的项在 [tiers] 里是 0，照旧按显存推。
     for (const auto& [tier, prefix] :
          std::vector<std::pair<models::Tier, std::string>>{
              {models::Tier::DRAFT, "draft"}, {models::Tier::FINAL, "final"}}) {
@@ -413,6 +417,15 @@ ApiResult post_settings(const json& body) {
             if (std::string(field) == "width") spec.width = v;
             else if (std::string(field) == "height") spec.height = v;
             else spec.steps = v;
+            // 同时落到配置对象上，下面 persist 那一步会写进文件
+            const bool is_draft = tier == models::Tier::DRAFT;
+            if (std::string(field) == "width") {
+                (is_draft ? s.tiers.draft_width : s.tiers.final_width) = v;
+            } else if (std::string(field) == "height") {
+                (is_draft ? s.tiers.draft_height : s.tiers.final_height) = v;
+            } else {
+                (is_draft ? s.tiers.draft_steps : s.tiers.final_steps) = v;
+            }
             changed.push_back(key);
             touched = true;
         }
@@ -473,8 +486,22 @@ ApiResult post_settings(const json& body) {
     if (persist && !changed.empty()) {
         json payload = json::object();
         for (const auto& key : changed) {
+            // 档位六项不在 kSettingSections 里（那张表是和 Python 共用的），
+            // 单独落到 [tiers]。**不写回的话设完重启就丢**。
+            static const std::map<std::string, int TiersConfig::*> kTierKeys = {
+                {"draft_width", &TiersConfig::draft_width},
+                {"draft_height", &TiersConfig::draft_height},
+                {"draft_steps", &TiersConfig::draft_steps},
+                {"final_width", &TiersConfig::final_width},
+                {"final_height", &TiersConfig::final_height},
+                {"final_steps", &TiersConfig::final_steps},
+            };
+            if (const auto tk = kTierKeys.find(key); tk != kTierKeys.end()) {
+                payload["tiers"][key] = s.tiers.*(tk->second);
+                continue;
+            }
             const auto it = setting_sections().find(key);
-            if (it == setting_sections().end()) continue;   // 档位不写回
+            if (it == setting_sections().end()) continue;
             const auto& [section, field] = it->second;
             json value;
             if (section == "assembly") {
