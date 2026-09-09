@@ -1,11 +1,13 @@
 #include "infer/worker_server.hpp"
 
 #include <atomic>
+#include <filesystem>
 #include <map>
 #include <memory>
 #include <mutex>
 #include <string>
 #include <thread>
+#include <vector>
 
 #include <crow.h>
 
@@ -13,6 +15,7 @@
 #include "infer/sd_image.hpp"
 #include "infer/sd_video.hpp"
 #include "infer/worker_proto.hpp"
+#include "media/ffmpeg.hpp"
 #include "pipeline/jobs.hpp"
 #include "stages/frames.hpp"
 #include "stages/render.hpp"
@@ -25,10 +28,16 @@ namespace {
 using nlohmann::json;
 
 /// 一个任务的活动状态。
+///
+/// **不存 std::thread。** 存了就得保证析构前 join 或 detach，而这里有好几条
+/// 路走不到那一步：没人来查状态、进程收到 SIGTERM、任务还在跑时被顶掉。
+/// 析构一个还 joinable 的 thread 会直接 `terminate called without an active
+/// exception`——实机上就是这么崩的，日志里只有那一行，看不出和线程有关系。
+///
+/// 改成建完就 detach，靠 lambda 捕获的 shared_ptr<Live> 保证对象活到线程结束。
 struct Live {
     TaskProgress progress;
     pipeline::CancelToken tok;
-    std::thread worker;
 };
 
 struct State {
@@ -39,6 +48,63 @@ struct State {
     std::string current_id;
     std::atomic<std::uint64_t> next_id{1};
 };
+
+/// 接任务之前先看这活干不干得成。干不成就当场说，别跑到一半才发现。
+///
+/// **这条是实机烧出来的**：第一次跑出片，扩散 8 步全跑完，到最后编码那一步
+/// 才报"找不到 ffmpeg"。本机上 doctor 会在起跑前拦，但直接给 worker 派任务
+/// 绕过了那道检查。在 8 卡机器上，"跑几十秒再失败"乘以八就是几分钟白烧。
+///
+/// 回空串表示能干。
+std::string cannot_do(const Task& t, const config::Settings& s) {
+    const auto ws = s.workspace_path();
+
+    // 出图出片都要扩散模型和它的文本编码器
+    const std::string& which = t.kind == TaskKind::Video ? s.models.video
+                                                        : s.models.image;
+    if (which.empty()) {
+        return std::string(t.kind == TaskKind::Video ? "[models].video"
+                                                     : "[models].image") +
+               " 没配，这个 worker 干不了" +
+               (t.kind == TaskKind::Video ? "出片" : "出图");
+    }
+    for (const auto& [key, name] : std::vector<std::pair<const char*, std::string>>{
+             {"扩散模型", which},
+             {"VAE", t.kind == TaskKind::Video
+                         ? s.models.video_vae
+                         : (s.models.image_vae.empty() ? s.models.video_vae
+                                                       : s.models.image_vae)},
+         }) {
+        if (name.empty()) continue;
+        std::error_code ec;
+        const auto p = s.models.resolve(name, ws);
+        if (!std::filesystem::is_regular_file(p, ec)) {
+            return std::string(key) + " 找不到：" + paths::to_utf8(p);
+        }
+    }
+
+    // **出片要 ffmpeg 把帧编成 mp4。** 就是这一条烧过一次。
+    if (t.kind == TaskKind::Video) {
+        // check() 是 void，缺了就抛。这里把异常翻成一句话回给调用方。
+        try {
+            const media::FFmpeg ff(s.assembly.ffmpeg_path,
+                                   s.assembly.ffprobe_path,
+                                   media::default_runner());
+            ff.check();
+        } catch (const std::exception& e) {
+            return e.what();
+        }
+    }
+
+    // 产物目录得写得进去
+    std::error_code ec;
+    const auto dir = std::filesystem::path(paths::from_utf8(t.dest)).parent_path();
+    if (!dir.empty()) {
+        std::filesystem::create_directories(dir, ec);
+        if (ec) return "产物目录建不出来：" + paths::to_utf8(dir);
+    }
+    return {};
+}
 
 crow::response json_res(const json& body, int code = 200) {
     crow::response res(code, body.dump());
@@ -83,6 +149,11 @@ void run_worker(const config::Settings& settings, const WorkerOptions& opts) {
                                 400);
             }
 
+            // **先自检再排队。** 干不成就当场说——这一条是烧过一次换来的。
+            if (const auto why = cannot_do(task, settings); !why.empty()) {
+                return json_res({{"detail", why}, {"shot_id", task.shot_id}}, 400);
+            }
+
             std::lock_guard lg(state->mu);
             if (state->current) {
                 // **不排队。** 见文件头。
@@ -94,7 +165,9 @@ void run_worker(const config::Settings& settings, const WorkerOptions& opts) {
             auto live = std::make_shared<Live>();
             live->progress.state = "running";
 
-            live->worker = std::thread([state, live, task, settings] {
+            // **建完就 detach**，见 Live 的注释。live 是 shared_ptr，
+            // 被 lambda 捕获一份，线程跑多久它就活多久。
+            std::thread([state, live, task, settings] {
                 const auto on_step = [state, live](int step, int steps,
                                                   double, bool loading) {
                     std::lock_guard lg(state->mu);
@@ -141,7 +214,7 @@ void run_worker(const config::Settings& settings, const WorkerOptions& opts) {
                 std::lock_guard lg(state->mu);
                 live->progress.state = result.ok ? "done" : "failed";
                 live->progress.result = result;
-            });
+            }).detach();
 
             state->current = live;
             state->current_id = id;
@@ -156,10 +229,8 @@ void run_worker(const config::Settings& settings, const WorkerOptions& opts) {
         const auto p = state->current->progress;
         if (p.state == "done" || p.state == "failed") {
             // 收完就放，好接下一个
-            auto done = state->current;
             state->current.reset();
             state->current_id.clear();
-            if (done->worker.joinable()) done->worker.detach();
         }
         return json_res(to_json(p));
     });
