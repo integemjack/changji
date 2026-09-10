@@ -193,6 +193,24 @@ ApiResult post_run(const json& body, const RunDeps& deps) {
                 it != profile.tiers.end()) {
                 it->second.width = vw;
                 it->second.height = vh;
+
+                // **挂了 Turbo 就按 6 步走。**
+                //
+                // 档位表里的步数是按显存推的，那套数字假设的是不带蒸馏
+                // LoRA 的模型（28 步）。挂着 Turbo 还跑 28 步不只是慢：
+                // 资料和实测都说超过 8 步就开始过锐，画面反而变差。
+                //
+                // 只在用户**没有显式指定**步数时才动（[tiers].final_steps
+                // 是 0 就算没指定）——显式填了 12 的人是有意的，
+                // 我们不该替他改。
+                const auto lora = settings.models.resolve(
+                    settings.models.video_lora, settings.workspace_path());
+                std::error_code ec;
+                const bool turbo = !settings.models.video_lora.empty() &&
+                                   std::filesystem::is_regular_file(lora, ec);
+                if (turbo && settings.tiers.final_steps == 0) {
+                    it->second.steps = 6;
+                }
             }
             const pipeline::Backends backends = deps.backends(settings, store);
 

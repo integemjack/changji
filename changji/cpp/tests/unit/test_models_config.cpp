@@ -513,10 +513,14 @@ TEST_CASE("[models]：双专家视频模型的两项") {
         }
         CHECK(said);
     }
-    SUBCASE("出片的 LoRA：默认不挂，路径和权重都读得到") {
+    SUBCASE("出片的 LoRA：默认就指着 Turbo 那份") {
         // 用途是 Turbo 那类蒸馏适配器：H3 的 Turbo LoRA 把 28 步压到 6 步。
         // **挂上之后步数要跟着改**，不改的话白挂，28 步跑 Turbo 只会更糊。
-        CHECK(config::ModelsConfig{}.video_lora.empty());
+        // **默认非空**（2026-09-10 改的）：用户要"都使用 turbo 加速"，
+        // 那就不该是个要手填的旋钮。文件不在时按"没配"处理并在日志里
+        // 说一声——没下过 LoRA 的机器照样出片，只是慢。
+        CHECK(config::ModelsConfig{}.video_lora.find("turbo") !=
+              std::string::npos);
         CHECK(config::ModelsConfig{}.video_lora_strength ==
               doctest::Approx(1.0));
         {

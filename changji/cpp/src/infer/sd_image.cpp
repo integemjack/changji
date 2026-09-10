@@ -247,8 +247,22 @@ std::shared_ptr<SdContext> SdContext::create(const config::Settings& settings,
 
     // 出片的 LoRA（Turbo 那类蒸馏适配器）。
     if (is_video && !m.video_lora.empty()) {
-        impl.lora = paths::to_utf8(m.resolve(m.video_lora, ws));
-        impl.lora_strength = static_cast<float>(m.video_lora_strength);
+        const auto p = m.resolve(m.video_lora, ws);
+        std::error_code ec;
+        if (fs::is_regular_file(p, ec)) {
+            impl.lora = paths::to_utf8(p);
+            impl.lora_strength = static_cast<float>(m.video_lora_strength);
+        } else {
+            // **默认就指着 Turbo 那份，所以"文件不在"是常态，不是错误**
+            // ——没下过 LoRA 的机器照样能出片，只是慢四倍。
+            // 但要说一声：不说的话用户以为 Turbo 在跑，
+            // 而实际每镜多花两分钟，他只会觉得"这机器怎么这么慢"。
+            std::fprintf(
+                stderr,
+                "[出片] 没找到加速 LoRA（%s），这一轮不挂它。出片会慢"
+                "几倍。下载见 tools/fetch_models.sh\n",
+                paths::to_utf8(p).c_str());
+        }
     }
     if (is_video && m.video_vae_tile > 0) impl.vae_tile = m.video_vae_tile;
 

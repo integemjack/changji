@@ -319,7 +319,11 @@ struct ModelsConfig {
     /// 留空就是不挂。sd.cpp 有自己的张量名转换，**认不认这类给 ComfyUI
     /// 做的 LoRA 要实测**：不认时它只是加载不上，画面照出，所以判据得看
     /// 耗时有没有真的降下来，不能只看"没报错"。
-    std::string video_lora;
+    ///
+    /// **默认就指着 Turbo 那份。** 用户 2026-09-10：“都使用 turbo 加速”。
+    /// 文件不在就当没配（日志里说一声），不报错——没下过 LoRA 的机器
+    /// 照样能出片，只是慢。
+    std::string video_lora = "loras/minimax_h3_turbo_v4_step600_ema.safetensors";
 
     /// 上面那个 LoRA 的权重。1.0 是原样，调低减弱它的影响。
     double video_lora_strength = 1.0;
