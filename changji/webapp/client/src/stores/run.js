@@ -83,6 +83,16 @@ export const useRun = defineStore('run', () => {
    */
   const settled = ref(0)
 
+  /**
+   * 正在跑的镜头此刻长什么样：shot_id → `data:image/png;base64,…`。
+   *
+   * 引擎每一步把潜空间投影成一张小图推上来（88×160 那种），牌子上放大
+   * 显示，随着步数推进由糊到清。**落定就删**：那时候真图已经落盘，
+   * 重拉之后牌子上换成它，预览再留着只会盖住真图。
+   */
+  const previewBy = ref(new Map())
+  const previewOf = (shotId) => previewBy.value.get(shotId) ?? ''
+
   function trackInflight(msg) {
     if (!msg.shot_id) return
     const kind = msg.kind ?? (msg.type === 'error' ? 'error' : 'progress')
@@ -155,8 +165,25 @@ export const useRun = defineStore('run', () => {
       // 终止消息只说"完了"，产出和完整事件要再拉一次。
       // **不能只把 running 置 false 就完事**：产出列表是这一屏的结果。
       inflightMap.value = new Map()
+      previewBy.value = new Map()
       poll()
       return
+    }
+
+    // 预览图：只更新那一格的画面，**不是一步**——不进事件流、不动进度。
+    if (msg.kind === 'preview') {
+      if (msg.shot_id && msg.preview) {
+        const next = new Map(previewBy.value)
+        next.set(msg.shot_id, msg.preview)
+        previewBy.value = next
+      }
+      return
+    }
+    // 这一镜落定了（跑完、失败、过闸没过），预览让位给真图
+    if (msg.shot_id && msg.kind && msg.kind !== 'progress' && previewBy.value.has(msg.shot_id)) {
+      const next = new Map(previewBy.value)
+      next.delete(msg.shot_id)
+      previewBy.value = next
     }
 
     trackInflight(msg)
@@ -235,6 +262,7 @@ export const useRun = defineStore('run', () => {
 
   return {
     state, running, percent, stageLabel, events, inflight, polling, live, settled,
+    previewBy, previewOf,
     poll, start, stop, applyMessage,
   }
 })

@@ -765,3 +765,47 @@ TEST_CASE("pending 不进 /api/run 的快照") {
     });
     table.wait_idle();
 }
+
+TEST_CASE("预览图只广播：不进事件环，不进快照，不动进度") {
+    // 一张几十 KB，五百条的环塞不下几张；/api/run 的事件数组和 Python
+    // 逐字节对拍，多一个 preview 键就是一处破契约；它也不是"一步"，
+    // 不能把 current/total 带跑。
+    JobTable table;
+    std::vector<nlohmann::json> msgs;
+    table.set_sink([&](const std::string&, const nlohmann::json& m) {
+        msgs.push_back(m);
+    });
+    table.start(JobKind::Run, "ep01", [&](JobProgress& p) {
+        Event step;
+        step.stage = "frames";
+        step.kind = "progress";
+        step.shot_id = "sh1";
+        step.current = 3;
+        step.total = 22;
+        p.report(step);
+
+        Event pv;
+        pv.kind = "preview";
+        pv.shot_id = "sh1";
+        pv.current = 5;
+        pv.preview = "data:image/png;base64,iVBORw0KGgo=";
+        p.report(pv);
+    });
+    table.wait_idle();
+
+    const auto it = std::find_if(msgs.begin(), msgs.end(), [](const auto& m) {
+        return m.value("kind", "") == "preview";
+    });
+    REQUIRE(it != msgs.end());
+    CHECK(it->value("shot_id", "") == "sh1");
+    CHECK(it->value("step", -1) == 5);
+    CHECK(it->value("preview", "").rfind("data:image/png;base64,", 0) == 0);
+
+    const auto snap = table.snapshot(JobKind::Run);
+    // 环里只有那一条 progress
+    CHECK(snap.at("events").size() == 1);
+    for (const auto& e : snap.at("events")) CHECK_FALSE(e.contains("preview"));
+    // 进度还是那一步的，没被预览的 5 带跑
+    CHECK(snap.at("current").get<int>() == 3);
+    CHECK(snap.at("total").get<int>() == 22);
+}

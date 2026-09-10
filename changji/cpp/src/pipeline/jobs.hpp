@@ -71,6 +71,11 @@ struct Event {
     /// 用户会以为 Turbo 没生效（2026-09-10 已经问过一次了）。
     bool shot_prep = false;
 
+    /// 采样中途的预览图（`data:image/png;base64,…`），只在 kind == "preview"
+    /// 的事件上有。**只广播，不进事件环、不进 to_json()。** 一张几十 KB，
+    /// 五百条的环塞不下几张；而 /api/run 的事件数组和 Python 逐字节对拍。
+    std::string preview;
+
     nlohmann::json to_json() const;
 };
 

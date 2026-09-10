@@ -120,6 +120,25 @@ describe('applyMessage', () => {
     expect(s.settled).toBe(2)
   })
 
+  it('预览图：只换那一格的画面，落定就删，不进事件流', () => {
+    // 引擎每一步推一张潜空间投影的小图，牌子上放大显示，由糊到清。
+    // 它不是"一步"——不能进事件流、不能动进度；落定之后真图落盘了，
+    // 预览再留着只会盖住真图。
+    const s = useRun()
+    const pv = (shot, data) =>
+      s.applyMessage({ type: 'progress', kind: 'preview', shot_id: shot, step: 4, preview: data })
+    pv('sh1', 'data:image/png;base64,AAA')
+    pv('sh1', 'data:image/png;base64,BBB')     // 新的一步盖掉旧的
+    expect(s.previewOf('sh1')).toBe('data:image/png;base64,BBB')
+    expect(s.previewOf('sh2')).toBe('')
+    expect(s.events).toHaveLength(0)             // 不进事件流
+    expect(s.inflight).toHaveLength(0)           // 也不算"正在跑"的一步
+
+    s.applyMessage({ type: 'progress', kind: 'shot_done', stage: 'frames',
+                     shot_id: 'sh1', step: 1, total: 3 })
+    expect(s.previewOf('sh1')).toBe('')          // 落定就删
+  })
+
   it('停下轮询时也清空正在跑的表', () => {
     // **它是一份快照，停下之后没有任何东西再更新它。**
     // 留着的话，切到别的页面再切回来，那几镜的进度条冻在离开那一刻的

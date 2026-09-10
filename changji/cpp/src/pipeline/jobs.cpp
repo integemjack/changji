@@ -195,6 +195,24 @@ bool JobTable::cancel(JobKind kind) {
 void JobTable::record(JobKind kind, Event ev) {
     std::string job_id;
     json msg;
+
+    // 预览图**只广播**：不进事件环（几十 KB 一张，环放不下），不动进度
+    // （它不是一步，是一步中间的样子），不进 /api/run（和 Python 对拍）。
+    // 老客户端不认识 kind = preview，按 progress 处理也只是多刷一次状态。
+    if (ev.kind == "preview") {
+        {
+            std::lock_guard lg(mu_);
+            job_id = slot(kind).state.job_id;
+        }
+        emit(job_id, json{{"type", "progress"},
+                          {"kind", "preview"},
+                          {"job_id", job_id},
+                          {"stage", ev.stage},
+                          {"shot_id", ev.shot_id.value_or("")},
+                          {"step", ev.current},
+                          {"preview", ev.preview}});
+        return;
+    }
     {
         std::lock_guard lg(mu_);
         Slot& s = slot(kind);

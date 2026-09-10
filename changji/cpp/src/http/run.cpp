@@ -11,6 +11,7 @@
 #include <vector>
 
 #include "config/runtime.hpp"
+#include "infer/sd_image.hpp"
 #include "models/project.hpp"
 #include "pipeline/jobs.hpp"
 #include "util/fs_time.hpp"
@@ -189,6 +190,22 @@ ApiResult post_run(const json& body, const RunDeps& deps) {
             // 中途换的话同一集里前半段和后半段用的是不同的模型。
             config::Settings settings = deps.settings();
             HardwareProfile profile = deps.profile();
+
+            // 采样中途的预览图往界面推。落点是进程一个的（sd.cpp 的回调
+            // 也是），任务开始时装上、结束时卸掉——`p` 只在这个任务体里有效，
+            // 卸晚了下一条预览会写进一个已经不存在的任务。
+            infer::set_preview_sink(
+                [&p](const std::string& tag, int step, std::string data_url) {
+                    pipeline::Event e;
+                    e.kind = "preview";
+                    e.shot_id = tag;
+                    e.current = step;
+                    e.preview = std::move(data_url);
+                    p.report(e);
+                });
+            struct PreviewSinkGuard {
+                ~PreviewSinkGuard() { infer::set_preview_sink({}); }
+            } preview_sink_guard;
 
             // **项目自己的 changji.toml 盖在全局上。** 画幅和清晰度
             // （[video]）写在那儿：一台机器上可以同时有竖屏短剧和横屏

@@ -501,8 +501,11 @@ export function useShots() {
     watchShots(false)
   })
 
+  /** 这一镜此刻的预览图（采样中途），没有就是空串。见 run store 的 previewBy。 */
+  const previewOf = (shotId) => runStore.previewOf(shotId)
+
   return {
-    shots, loading, load, bust,
+    shots, loading, load, bust, previewOf,
     inflightBy, pct, shotState, busy, shotRunning, isWaiting,
     start, stop, shotAction, stepBtn, shotTone,
     running: computed(() => runStore.running),

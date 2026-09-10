@@ -111,6 +111,8 @@ stages::VideoRenderer make_video_renderer(
         req.height = plan.spec.height;
         req.steps = plan.spec.steps;
         req.frames = plan.frames;
+        req.tag = shot.shot_id;   // 预览挂到哪一格，见 VideoRequest::tag
+
         req.fps = assembly.fps;
         req.seed = seed_override
                        ? *seed_override

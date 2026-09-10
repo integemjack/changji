@@ -61,6 +61,8 @@ FrameRenderer make_sd_renderer(std::optional<std::int64_t> seed_override) {
         req.width = spec.width;
         req.height = spec.height;
         req.steps = spec.steps;
+        // 预览要挂到墙上哪一格，靠这个。见 ImageRequest::tag。
+        req.tag = shot.shot_id;
         req.seed = seed_override ? *seed_override
                                  : frame_seed(shot.shot_id, shot.attempts);
         for (const auto& r : prompts.reference_images) {

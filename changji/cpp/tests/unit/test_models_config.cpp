@@ -874,13 +874,19 @@ TEST_CASE("[models].image_weights：图像模型的权重放哪，不跟 weights
     config::ModelsConfig m;
     CHECK(m.image_weights == "smart");
     m.weights = "cpu";
-    // 大卡：扩散常驻，编码器和 VAE 在内存——量出来最快的那档
-    CHECK(m.image_weights_for(32.0) == "te=cpu,vae=cpu");
+    // **按模型大小算，不是按卡算。** 32.6 GB 的 5090：
+    //   fp8 20 GB → 20 + 6.6 + 4 = 30.6 > 29.3，装不下→cpu（实测第 34/62 段 OOM）
+    //   Q6_K 16 GB → 26.6 ≤ 29.3，装得下→常驻
+    CHECK(m.image_weights_for(32.6, 20.0) == "cpu");
+    CHECK(m.image_weights_for(32.6, 16.0) == "te=cpu,vae=cpu");
+    CHECK(m.image_weights_for(32.6, 12.0) == "te=cpu,vae=cpu");
     // 小卡：全放内存，不然加载就 OOM
-    CHECK(m.image_weights_for(6.0) == "cpu");
+    CHECK(m.image_weights_for(6.0, 12.0) == "cpu");
+    // 拿不到模型大小：按装不下处理——猜错是六镜全废，放内存只是慢
+    CHECK(m.image_weights_for(32.6, 0.0) == "cpu");
     // 显式填了就照填的来
     m.image_weights = "auto";
-    CHECK(m.image_weights_for(32.0) == "auto");
+    CHECK(m.image_weights_for(32.6, 20.0) == "auto");
     // 视频那一项一个字不动
     CHECK(m.weights_for(32.0) == "cpu");
 }

@@ -57,6 +57,25 @@ std::string sd_model_problem(const config::Settings& settings, ModelRole role) {
            "或者把出图交给推理服务";
 }
 
+namespace {
+
+/// 预览的落点。进程一个，跟 sd.cpp 的回调一样。
+std::mutex& preview_mu() {
+    static std::mutex m;
+    return m;
+}
+PreviewSink& preview_sink_slot() {
+    static PreviewSink s;
+    return s;
+}
+
+}  // namespace
+
+void set_preview_sink(PreviewSink sink) {
+    std::lock_guard lg(preview_mu());
+    preview_sink_slot() = std::move(sink);
+}
+
 #ifdef CHANGJI_HAVE_SD
 
 namespace {
@@ -75,11 +94,71 @@ struct ActiveGeneration {
     /// 这一次生成**要采样几步**。sd.cpp 的进度回调加载权重和采样共用一个，
     /// 靠"报上来的总数是不是等于我们要的步数"把两者分开。
     int want_steps = 0;
+    /// 给哪一镜的。预览回调也是全局的，靠它把小图挂到墙上对的那一格。
+    std::string tag;
 };
 
 ActiveGeneration& active() {
     static ActiveGeneration a;
     return a;
+}
+
+std::string base64(const std::vector<unsigned char>& in) {
+    static const char* k =
+        "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    std::string out;
+    out.reserve((in.size() + 2) / 3 * 4);
+    std::size_t i = 0;
+    for (; i + 2 < in.size(); i += 3) {
+        const unsigned v = (in[i] << 16) | (in[i + 1] << 8) | in[i + 2];
+        out += k[(v >> 18) & 63];
+        out += k[(v >> 12) & 63];
+        out += k[(v >> 6) & 63];
+        out += k[v & 63];
+    }
+    if (i < in.size()) {
+        unsigned v = in[i] << 16;
+        if (i + 1 < in.size()) v |= in[i + 1] << 8;
+        out += k[(v >> 18) & 63];
+        out += k[(v >> 12) & 63];
+        out += (i + 1 < in.size()) ? k[(v >> 6) & 63] : '=';
+        out += '=';
+    }
+    return out;
+}
+
+/// 采样中途 sd.cpp 给的预览。**只取第一帧**：视频的潜空间投影每帧一张，
+/// 而牌子上只放得下一张。编成 PNG 再 base64 交给落点，由它推给界面。
+/// 没装落点或者这次生成没带 tag，就什么都不做——一张不要的 PNG 也别编。
+void preview_trampoline(int step, int frame_count, sd_image_t* frames,
+                        bool /*is_noisy*/, void* /*data*/) {
+    if (frame_count <= 0 || frames == nullptr || frames[0].data == nullptr) return;
+    std::string tag;
+    {
+        std::lock_guard lg(active().mu);
+        tag = active().tag;
+    }
+    PreviewSink sink;
+    {
+        std::lock_guard lg(preview_mu());
+        sink = preview_sink_slot();
+    }
+    if (!sink || tag.empty()) return;
+
+    const sd_image_t& img = frames[0];
+    std::vector<unsigned char> buf;
+    const auto append = [](void* ctx, void* data, int size) {
+        auto* out = static_cast<std::vector<unsigned char>*>(ctx);
+        const auto* p = static_cast<const unsigned char*>(data);
+        out->insert(out->end(), p, p + size);
+    };
+    if (!::stbi_write_png_to_func(append, &buf, static_cast<int>(img.width),
+                                  static_cast<int>(img.height),
+                                  static_cast<int>(img.channel), img.data,
+                                  static_cast<int>(img.width * img.channel))) {
+        return;
+    }
+    sink(tag, step, "data:image/png;base64," + base64(buf));
 }
 
 void progress_trampoline(int step, int steps, float time, void* /*data*/) {
@@ -407,9 +486,15 @@ void SdContext::generate(const ImageRequest& req, const fs::path& dest,
         a.on_step = &on_step;
         a.tok = &tok;
         a.want_steps = req.steps;
+        a.tag = req.tag;
     }
     a.cancel_sent.store(false, std::memory_order_relaxed);
     ::sd_set_progress_callback(progress_trampoline, nullptr);
+    // PREVIEW_PROJ：潜空间线性投影成 RGB，不走 VAE，每步一张几乎不花时间。
+    // denoised=true 要的是"预测出来的干净图"，那才是逐渐成形的那个；
+    // 带噪那份对人没有意义。间隔 1 = 每步都给。
+    ::sd_set_preview_callback(preview_trampoline, PREVIEW_PROJ, 1, true, false,
+                              nullptr);
 
     sd_image_t* out = nullptr;
     int count = 0;
@@ -421,7 +506,9 @@ void SdContext::generate(const ImageRequest& req, const fs::path& dest,
         a.on_step = nullptr;
         a.tok = nullptr;
         a.want_steps = 0;
+        a.tag.clear();
     }
+    ::sd_set_preview_callback(nullptr, PREVIEW_NONE, 0, false, false, nullptr);
 
     if (tok.cancelled()) {
         if (out) ::free_sd_images(out, count);
@@ -529,9 +616,15 @@ void SdContext::generate_video(const VideoRequest& req, const fs::path& raw_dest
         a.on_step = &on_step;
         a.tok = &tok;
         a.want_steps = req.steps;
+        a.tag = req.tag;
     }
     a.cancel_sent.store(false, std::memory_order_relaxed);
     ::sd_set_progress_callback(progress_trampoline, nullptr);
+    // PREVIEW_PROJ：潜空间线性投影成 RGB，不走 VAE，每步一张几乎不花时间。
+    // denoised=true 要的是"预测出来的干净图"，那才是逐渐成形的那个；
+    // 带噪那份对人没有意义。间隔 1 = 每步都给。
+    ::sd_set_preview_callback(preview_trampoline, PREVIEW_PROJ, 1, true, false,
+                              nullptr);
 
     sd_image_t* frames = nullptr;
     int count = 0;
@@ -544,7 +637,9 @@ void SdContext::generate_video(const VideoRequest& req, const fs::path& raw_dest
         a.on_step = nullptr;
         a.tok = nullptr;
         a.want_steps = 0;
+        a.tag.clear();
     }
+    ::sd_set_preview_callback(nullptr, PREVIEW_NONE, 0, false, false, nullptr);
 
     struct FrameGuard {
         sd_image_t*& f;
@@ -633,7 +728,16 @@ void register_sd_slots(SettingsProvider raw_provider,
     const SettingsProvider provider = [raw_provider, card_gb] {
         config::Settings s = raw_provider();
         s.models.weights = s.models.weights_for(card_gb);
-        s.models.image_weights = s.models.image_weights_for(card_gb);
+        // 图像模型放哪要看它**有多大**：fp8 的 Qwen-Image 20 GB，Q6_K 16 GB，
+        // Q4 12 GB——同一张 32 GB 的卡，前者常驻不下，后两者可以。
+        double image_gb = 0.0;
+        {
+            std::error_code ec;
+            const auto p = s.models.resolve(s.models.image, s.workspace_path());
+            const auto bytes = p.empty() ? 0 : fs::file_size(p, ec);
+            if (!ec && bytes > 0) image_gb = static_cast<double>(bytes) / (1024.0 * 1024 * 1024);
+        }
+        s.models.image_weights = s.models.image_weights_for(card_gb, image_gb);
         return s;
     };
     // 预算取探测到的显存，留一成给驱动上下文和别的程序。
@@ -662,9 +766,16 @@ void register_sd_slots(SettingsProvider raw_provider,
     // "segment 56/62 failed during weight preparation"。整卡按 0.9 给。
     const double whole =
         profile.gpu.has_value() ? profile.gpu->vram_gb() * 0.9 : budget;
-    const auto budget_for = [budget, physical, whole](const config::Settings& s) {
-        if (s.models.weights == "auto") return physical;
-        if (s.models.weights == "cpu") return budget;
+    // **按角色取自己那一项。** 2026-09-10 这里只看全局的 weights：视频那项
+    // 是 "cpu"，走 `budget`（按 vram_gb_override = 20 算出 18 GB），而图像
+    // 上下文拿的是常驻放置——20 GB 权重配 18 GB 上限，sd.cpp 在第 34/62 段
+    // 报 "failed during weight preparation"，六镜首帧全废。
+    const auto budget_for = [budget, physical, whole](const config::Settings& s,
+                                                      ModelRole role) {
+        const std::string& w =
+            role == ModelRole::Video ? s.models.weights : s.models.image_weights;
+        if (w == "auto") return physical;
+        if (w == "cpu") return budget;
         return whole;
     };
     const std::size_t estimate =
@@ -702,7 +813,8 @@ void register_sd_slots(SettingsProvider raw_provider,
         spec.evict_priority = 5;
         spec.load = [provider, budget_for] {
             const config::Settings s = provider();
-            auto ctx = SdContext::create(s, budget_for(s), ModelRole::Image);
+            auto ctx = SdContext::create(s, budget_for(s, ModelRole::Image),
+                                         ModelRole::Image);
             std::lock_guard lg(g_ctx_mu);
             g_image_ctx = std::move(ctx);
         };
@@ -720,7 +832,8 @@ void register_sd_slots(SettingsProvider raw_provider,
         spec.evict_priority = 9;
         spec.load = [provider, budget_for] {
             const config::Settings s = provider();
-            auto ctx = SdContext::create(s, budget_for(s), ModelRole::Video);
+            auto ctx = SdContext::create(s, budget_for(s, ModelRole::Video),
+                                         ModelRole::Video);
             std::lock_guard lg(g_ctx_mu);
             g_video_ctx = std::move(ctx);
         };

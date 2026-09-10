@@ -233,11 +233,16 @@ std::string ModelsConfig::weights_for(double vram_gb) const {
     return vram_gb >= vae_vram_min_gb ? "te=cpu" : "te=cpu,vae=cpu";
 }
 
-std::string ModelsConfig::image_weights_for(double vram_gb) const {
+std::string ModelsConfig::image_weights_for(double vram_gb,
+                                            double model_gb) const {
     if (image_weights != "smart") return image_weights;
-    // 7 GB 的 fp8 图像模型加上 1280×704 的解码缓冲（实测 6.6 GB）要 14 GB
-    // 上下，16 GB 以上的卡才敢让扩散权重常驻。再小的卡只能全放内存。
-    return vram_gb >= 16.0 ? "te=cpu,vae=cpu" : "cpu";
+    // 常驻要放得下：权重本身 + 1280×704 解码缓冲 6.6 GB（实测）+ 采样缓冲和
+    // 别的上下文的残留（视频上下文卸掉之后 CUDA 还占 1.4 GB）约 4 GB。
+    // 卡按九成算——那一成是驱动和别的程序的。拿不到模型大小按装不下处理：
+    // 猜错的代价是六镜首帧全废，而放内存只是慢。
+    const double need = model_gb + 6.6 + 4.0;
+    if (model_gb <= 0.0) return "cpu";
+    return vram_gb * 0.9 >= need ? "te=cpu,vae=cpu" : "cpu";
 }
 
 std::vector<std::string> Settings::validate() const {
@@ -789,9 +794,10 @@ subtitle_font = "Source Han Sans SC"
 # weights = "auto"
 #
 # 图像模型单独一项。**别跟着 weights 一起改成 cpu**：那是给 18 GB 的视频
-# 模型准备的，7 GB 的图像模型放内存会慢五倍（5090 上实测采样时 GPU 利用率
-# 18%、一步 6.8 秒；扩散权重常驻是 82%、一步 1.25 秒）。
-# smart = 卡 ≥ 16 GB 就 te=cpu,vae=cpu（扩散常驻显存），否则 cpu。
+# 模型准备的，图像模型放内存会慢五倍（5090 上实测采样时 GPU 利用率 18%、
+# 一步 6.8 秒；扩散权重常驻是 82%、一步 1.25 秒）。
+# smart = 按模型文件大小算装不装得下（权重 + 解码缓冲 6.6 GB + 余量 4 GB
+# ≤ 显存的九成）：fp8 20 GB 在 32 GB 卡上装不下→cpu；Q6_K 16 GB 装得下→常驻。
 # image_weights = "smart"
 #
 # 采样旋钮，按角色分开。默认值是 sd.cpp 上游文档给这两个模型的推荐值，

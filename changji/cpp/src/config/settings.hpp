@@ -261,7 +261,7 @@ struct ModelsConfig {
     ///
     /// **和 `weights` 分开是量出来的。** 2026-09-10 为了让 18 GB 的 MiniMax
     /// 视频模型跑起来把 `weights` 改成了 "cpu"（权重全放内存）——而它是
-    /// 全局的一个旋钮，7 GB 的图像模型也跟着每一步从内存往显卡搬权重。
+    /// 全局的一个旋钮，图像模型也跟着每一步从内存往显卡搬权重。
     /// 5090 上实测：出首帧的采样阶段 GPU 利用率平均 **18%**、最高 37%，
     /// 一步 6.8 秒；同一个模型让扩散权重常驻显存时是 82%、一步 1.25 秒。
     /// 慢五倍，而且看起来像是"显卡没吃满，要不要并发"——其实是 PCIe 在等。
@@ -269,12 +269,16 @@ struct ModelsConfig {
     /// 出首帧和出片是两个阶段，中间调度器会把上一个模型卸掉，所以图像模型
     /// 常驻显存**不和视频模型抢地方**。
     ///
-    /// `smart`：卡够大（≥ 16 GB）就 "te=cpu,vae=cpu"（扩散常驻，编码器和
-    /// VAE 在内存——量出来最快的那档），不够就 "cpu"。
+    /// `smart`：**看模型文件多大**再决定。fp8 的 Qwen-Image 是 20 GB，
+    /// 常驻还要给 1280×704 的解码缓冲 6.6 GB、采样缓冲和别的上下文留的
+    /// 余量再加 4 GB——32.6 GB 的卡按九成算是 29.3，装不下（实测第 34/62 段
+    /// OOM，而且 2026-09-09 装下过的那次峰值 31.9 GB，只是运气）。
+    /// Q6_K 16 GB、Q4 12 GB 就装得下。装得下才 "te=cpu,vae=cpu"，否则 "cpu"。
     std::string image_weights = "smart";
 
-    /// 把 `image_weights` 的 smart 按这张卡展开。见 weights_for。
-    std::string image_weights_for(double vram_gb) const;
+    /// 把 `image_weights` 的 smart 按这张卡和这个模型展开。
+    /// `model_gb` 是图像模型文件的大小，拿不到就传 0（按装不下处理）。
+    std::string image_weights_for(double vram_gb, double model_gb) const;
 
     /// 采样的两个旋钮，按角色分开。默认值照抄 sd.cpp 上游文档的推荐命令行：
     /// docs/wan.md 给 Wan2.2 TI2V-5B 的是 `--cfg-scale 6.0 --flow-shift 3.0`，

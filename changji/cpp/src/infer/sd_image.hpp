@@ -55,6 +55,10 @@ struct ImageRequest {
     int vae_tile_x = 16;
     int vae_tile_y = 11;
     double vae_tile_overlap = 0.25;
+
+    /// 这一次生成是给哪一镜的（shot_id）。**只给预览用**：sd.cpp 的预览回调
+    /// 是全局的，靠它才知道推上来的小图该挂在墙上哪一格。空就不推预览。
+    std::string tag;
 };
 
 /// 每一步的进度。
@@ -69,6 +73,19 @@ struct ImageRequest {
 /// 像是跑到头又倒回去了——而 1927 这个数对他没有任何意义。
 using StepCallback =
     std::function<void(int step, int total, double seconds, bool loading)>;
+
+/// 采样中途的预览图。
+///
+/// `tag` 是请求里带的 shot_id；`data_url` 是一张 `data:image/png;base64,…`
+/// 的小图——潜空间分辨率（704×1280 出来是 88×160），由 sd.cpp 的
+/// PREVIEW_PROJ 把潜空间线性投影成 RGB 得来，**不走 VAE**，几乎不花时间。
+/// 放大到格子大小自然是糊的，随着步数推进内容逐渐成形。
+using PreviewSink =
+    std::function<void(const std::string& tag, int step, std::string data_url)>;
+
+/// 装（或传空函数卸）预览的落点。**进程一个**，跟 sd.cpp 的回调一样。
+/// 没装或请求里没带 tag，就不编码也不推——一张不要的 PNG 也别编。
+void set_preview_sink(PreviewSink sink);
 
 /// 一次出视频的参数。
 struct VideoRequest {
@@ -123,6 +140,9 @@ struct VideoRequest {
     /// 蒸馏 LoRA 拿画质换速度，草稿档挂着划算，成片档不该挂。
     /// 上下文是两档共用的，所以只能在每次请求上决定，不能在建上下文时定。
     bool use_lora = true;
+
+    /// 同 ImageRequest::tag。视频取第一帧做预览。
+    std::string tag;
 };
 
 /// 这个上下文装的是哪个模型。

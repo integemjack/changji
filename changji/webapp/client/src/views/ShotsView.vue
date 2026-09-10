@@ -43,7 +43,7 @@ const { run, isBusy, error } = useAction()
 
 // 镜头表、每镜进度、重出队列，全在这儿。见 useShots。
 const {
-  shots, loading, load, bust,
+  shots, loading, load, bust, previewOf,
   pct, shotState, busy, shotRunning,
   start, stop, shotAction, stepBtn, shotTone, running,
 } = useShots()
@@ -752,6 +752,17 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
             />
             <AppIcon v-else name="image" :size="18" class="cell__blank" />
 
+            <!-- **采样中途的预览。** 引擎每一步把潜空间投影成一张 88×160 的
+                 小图推上来，盖在这一格上、放大到格子大小——低分辨率放大本来
+                 就是糊的，随着步数推进内容逐渐成形。落定就没了（真图上来）。
+                 pointer-events 关掉：底下要是播放器，别挡它的控件。 -->
+            <img
+              v-if="previewOf(s.shot_id)"
+              class="cell__preview"
+              :src="previewOf(s.shot_id)"
+              alt=""
+            />
+
             <input
               class="cell__check"
               type="checkbox"
@@ -1087,6 +1098,17 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
   position: absolute;
   inset: 0;
   margin: auto;
+}
+/* 采样中途的预览盖在画面上。88×160 放大到格子大小，浏览器默认的
+   平滑缩放正好给出"糊"的样子，别开 pixelated。 */
+.cell__preview {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  z-index: 1;
+  pointer-events: none;
 }
 .cell__check {
   position: absolute;
