@@ -125,7 +125,11 @@ std::string* models_field(config::ModelsConfig& m, const std::string& role) {
     // 一张平表而不是一串 if：漏一个角色的表现是"下完了但配置里没写上"，
     // 而那要到出片时才报"模型没配"，离这里隔着十万八千里。
     // 加字段时这里也要加——test_setup.cpp 拿 catalog 里出现过的角色查这张表。
-    static const std::map<std::string, std::string config::ModelsConfig::*> kMap = {
+    // **成员指针类型先起个别名。** 直接把 `std::string config::ModelsConfig::*`
+    // 写进模板实参表里，MSVC 解析不了（error C2059，然后 kMap 整个没声明成）；
+    // GCC 接受，所以只在 Windows 上编不过。别名两边都认。
+    using Field = std::string config::ModelsConfig::*;
+    static const std::map<std::string, Field> kMap = {
         {"llm", &config::ModelsConfig::llm},
         {"video", &config::ModelsConfig::video},
         {"video_high_noise", &config::ModelsConfig::video_high_noise},

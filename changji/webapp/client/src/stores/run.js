@@ -20,18 +20,11 @@
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 import { api } from '@/api'
+// **阶段名只有一份**（`@/api/labels`）。这儿原来自己抄了一份，两份已经
+// 分叉了：gate 一边写「闸门」一边写「质量闸门」，assemble 一边「装配」
+// 一边「装配成片」——同一个阶段在不同组件里显示成不同的名字。
+import { STAGE_LABELS } from '@/api/labels'
 import { openJobSocket } from '@/composables/useJobSocket'
-
-const STAGE_LABELS = {
-  audio: '配音',
-  frames: '首帧',
-  draft: '草稿档',
-  final: '成片档',
-  lipsync: '口型',
-  gate: '闸门',
-  assemble: '装配',
-  done: '完成',
-}
 
 /** 轮询兜底的间隔。和原来一样，用户对这个节奏已经有预期。 */
 const POLL_MS = 1200
