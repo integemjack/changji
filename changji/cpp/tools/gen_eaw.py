@@ -22,6 +22,23 @@ import sys
 import unicodedata
 from pathlib import Path
 
+# **Windows 上标准输出默认不是 UTF-8。**
+#
+# GitHub 的 windows runner 跑 Python 时控制台编码是 cp1252，而下面那些进度
+# 是中文——print 到一半直接 UnicodeEncodeError，脚本非零退出。CMake 那边
+# 报的是"patch step 失败"、MSBuild 报 MSB8066，**和真正的原因（编码）
+# 差着十万八千里**，日志里要翻到最底下才看得见那行 UnicodeEncodeError。
+# 2026-09-11 六平台流水线头一次跑，windows-x64 和 windows-arm64 两格就
+# 挂在这儿，另外四个平台全过。
+#
+# errors="replace"：宁可某个字打成问号，也不能因为一个字让整个构建挂掉。
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:  # 老 Python 或者被重定向成不支持的对象
+        pass
+
+
 HERE = Path(__file__).resolve()
 CPP = HERE.parent.parent
 OUT = CPP / "src" / "media" / "east_asian_width.inc.hpp"
