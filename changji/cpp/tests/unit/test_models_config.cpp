@@ -142,6 +142,23 @@ TEST_CASE("模型配置能从 toml 读出来") {
           paths::from_utf8(abs_utf8("模型库/Qwen3-14B-Q4_K_M.gguf")));
 
     SUBCASE("没写的项保持空，不会被填上猜的默认值") {
+        // **把用户级配置隔离掉。** load_settings 先读 user_config_path()
+        // 再读项目里的 changji.toml，两份是叠加的。这台机器上要是真配过
+        // 模型（服务器上就是），那几项永远不会是空的——这条用例于是在
+        // 干净机器上过、在真在用的机器上挂。2026-09-10 在服务器上撞到：
+        // 整套 575 个用例常年红一个，红着红着就没人看了，真回归也照样漏过去。
+        //
+        // Linux/BSD 认 XDG_CONFIG_HOME，Windows 认 LOCALAPPDATA，
+        // 都指到一个空的临时目录，用户级那份就等于不存在。
+        const fs::path empty_cfg = tmp / "空配置";
+        fs::create_directories(empty_cfg, ec);
+#ifdef _WIN32
+        const changji::test::ScopedEnv iso("LOCALAPPDATA",
+                                           paths::to_utf8(empty_cfg));
+#else
+        const changji::test::ScopedEnv iso("XDG_CONFIG_HOME",
+                                           paths::to_utf8(empty_cfg));
+#endif
         const fs::path cfg2 = tmp / "changji.toml";
         {
             std::ofstream out(cfg2, std::ios::binary);
