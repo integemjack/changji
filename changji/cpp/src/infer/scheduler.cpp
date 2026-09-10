@@ -117,12 +117,30 @@ void Scheduler::set_free_vram_probe(FreeVramProbe probe) {
 
 void Scheduler::record_measured_vram(Slot slot, std::size_t bytes) {
     if (bytes == 0) return;
+    MeasuredSink sink;
+    {
+        std::lock_guard lg(mu_);
+        // **只往上记，不往下调。** 同一个槽不同镜头的占用会有出入（帧数、
+        // 分辨率、有没有挂 LoRA），取见过的最大值才安全——按最近一次记的话，
+        // 一个小镜头会把上限拉低，下一个大镜头就 OOM 了。
+        auto& cur = measured_[slot];
+        if (bytes <= cur) return;   // 没长高，不用惊动落盘
+        cur = bytes;
+        sink = measured_sink_;
+    }
+    // **锁外调。** 落盘要写文件，拿着调度器的锁做 IO 会把别的借槽请求
+    // 一起卡住，而借槽是出图出片的关键路径。
+    if (sink) sink(slot, bytes);
+}
+
+std::map<Slot, std::size_t> Scheduler::all_measured() const {
     std::lock_guard lg(mu_);
-    // **只往上记，不往下调。** 同一个槽不同镜头的占用会有出入（帧数、
-    // 分辨率、有没有挂 LoRA），取见过的最大值才安全——按最近一次记的话，
-    // 一个小镜头会把上限拉低，下一个大镜头就 OOM 了。
-    auto& cur = measured_[slot];
-    if (bytes > cur) cur = bytes;
+    return measured_;
+}
+
+void Scheduler::set_measured_sink(MeasuredSink sink) {
+    std::lock_guard lg(mu_);
+    measured_sink_ = std::move(sink);
 }
 
 std::size_t Scheduler::measured_vram(Slot slot) const {

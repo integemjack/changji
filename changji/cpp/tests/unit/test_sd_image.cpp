@@ -14,6 +14,7 @@
 
 #include <cmath>
 #include <filesystem>
+#include <map>
 #include <string>
 
 #include "config/settings.hpp"
@@ -281,4 +282,50 @@ TEST_CASE("尺寸不成样子：整张递下去，不算出负数来") {
     CHECK(infer::center_crop_box(0, 0, 544, 928).whole(0, 0));
     CHECK(infer::center_crop_box(704, 1280, 0, 928).whole(704, 1280));
     CHECK(infer::center_crop_box(-4, 8, 544, 928).whole(-4, 8));
+}
+
+// ---- 实测显存的落盘格式 ----
+//
+// 这个文件在两次运行之间保存的是**决定要不要卸模型的依据**。解析出错的
+// 代价不对称：多算了只是白卸一次（慢），少算了是 CUDA OOM——而 OOM 在
+// sd.cpp 里走的是 GGML_ASSERT，abort() 把整个服务带走。所以坏数据一律
+// 当"没量过"，回到保守那条。
+
+TEST_CASE("实测显存：写出去再读回来，要一模一样") {
+    std::map<infer::Slot, std::size_t> m;
+    m[infer::Slot::Video] = 80ull << 30;
+    m[infer::Slot::Image] = 26ull << 30;
+
+    const auto back = infer::parse_measured_vram(infer::serialize_measured_vram(m));
+    CHECK(back.size() == 2);
+    CHECK(back.at(infer::Slot::Video) == (80ull << 30));
+    CHECK(back.at(infer::Slot::Image) == (26ull << 30));
+    // 没量过的槽不该凭空冒出来
+    CHECK(back.find(infer::Slot::LLM) == back.end());
+}
+
+TEST_CASE("实测显存：0 不写出去") {
+    // 0 的语义是"没量过"，写进文件再读回来会被当成量过了 0 字节。
+    std::map<infer::Slot, std::size_t> m;
+    m[infer::Slot::TTS] = 0;
+    CHECK(infer::parse_measured_vram(infer::serialize_measured_vram(m)).empty());
+}
+
+TEST_CASE("实测显存：坏数据一律当没量过，绝不瞎猜") {
+    // 少算了是 OOM，所以宁可回到保守那条。
+    CHECK(infer::parse_measured_vram("").empty());
+    CHECK(infer::parse_measured_vram("{ 这不是 json").empty());
+    CHECK(infer::parse_measured_vram("[1,2,3]").empty());          // 不是对象
+    CHECK(infer::parse_measured_vram(R"({"视频":"很多"})").empty());  // 不是数
+    CHECK(infer::parse_measured_vram(R"({"视频":-5})").empty());      // 负数
+    CHECK(infer::parse_measured_vram(R"({"视频":0})").empty());       // 0
+    CHECK(infer::parse_measured_vram(R"({"没这个槽":123})").empty());
+}
+
+TEST_CASE("实测显存：一条坏的不该带垮整份") {
+    // 换了版本、多了个字段的时候，别把还认得的那几条一起丢掉。
+    const auto m = infer::parse_measured_vram(
+        R"({"视频":85899345920,"没这个槽":1,"图像":"坏的"})");
+    CHECK(m.size() == 1);
+    CHECK(m.at(infer::Slot::Video) == 85899345920ull);
 }

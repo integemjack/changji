@@ -2,10 +2,13 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cstdint>
 #include <cstring>
 #include <fstream>
 #include <mutex>
 #include <vector>
+
+#include <nlohmann/json.hpp>
 
 #include "infer/scheduler.hpp"
 #include "models/hardware.hpp"
@@ -107,6 +110,39 @@ CropBox center_crop_box(int src_w, int src_h, int dst_w, int dst_h) {
     box.x = (src_w - box.w) / 2;
     box.y = (src_h - box.h) / 2;
     return box;
+}
+
+// 这两个在 #ifdef 外面，理由同 center_crop_box：纯转换，写在里面就测不到。
+
+std::string serialize_measured_vram(const std::map<Slot, std::size_t>& m) {
+    nlohmann::json j = nlohmann::json::object();
+    for (const auto& [slot, bytes] : m) {
+        if (bytes == 0) continue;
+        j[to_string(slot)] = bytes;
+    }
+    return j.dump();
+}
+
+std::map<Slot, std::size_t> parse_measured_vram(const std::string& text) {
+    std::map<Slot, std::size_t> out;
+    if (text.empty()) return out;
+    nlohmann::json j;
+    try {
+        j = nlohmann::json::parse(text);
+    } catch (const std::exception&) {
+        // 整个文件坏掉就当没量过。**不能瞎猜**：这个数决定要不要卸模型，
+        // 猜小了是 OOM。回到保守那条只是慢一点。
+        return out;
+    }
+    if (!j.is_object()) return out;
+    const Slot kAll[] = {Slot::LLM, Slot::Image, Slot::Video, Slot::TTS};
+    for (const Slot s : kAll) {
+        const auto it = j.find(to_string(s));
+        if (it == j.end() || !it->is_number_unsigned()) continue;
+        const auto v = it->get<std::uint64_t>();
+        if (v > 0) out[s] = static_cast<std::size_t>(v);
+    }
+    return out;
 }
 
 #ifdef CHANGJI_HAVE_SD
@@ -909,6 +945,36 @@ void register_sd_slots(SettingsProvider raw_provider,
     // 每次切阶段都卸一个再装一个——一次重装几十秒到几分钟，
     // 而卡上可能一直空着一大半（权重放内存时显存里只有计算缓冲）。
     scheduler().set_free_vram_probe([] { return models::free_vram_gb(); });
+
+    // **把上次量到的读回来，并且以后量到新的就写下去。**
+    //
+    // 实测值只活在进程里的话，每次重启后的第一次出片都会白白卸掉大模型
+    // ——那时候还没量到，走的是保守那条。而这个进程一天可能重启好几次
+    // （改配置、换模型、崩了被拉起来）。
+    //
+    // 落在数据目录而不是配置目录：这是程序自己量出来的运行时事实，
+    // 不是用户填的东西，不该混进他手写的 changji.toml 边上。
+    {
+        const fs::path store =
+            paths::user_data_dir("changji") / "vram_measured.json";
+        std::error_code ec;
+        std::ifstream in(store, std::ios::binary);
+        if (in) {
+            const std::string text((std::istreambuf_iterator<char>(in)),
+                                   std::istreambuf_iterator<char>());
+            for (const auto& [slot, bytes] : parse_measured_vram(text)) {
+                scheduler().record_measured_vram(slot, bytes);
+            }
+        }
+        scheduler().set_measured_sink([store](Slot, std::size_t) {
+            // 整份重写，不是追加——就四个槽，文件几十字节。
+            std::error_code e;
+            fs::create_directories(store.parent_path(), e);
+            std::ofstream out(store, std::ios::binary | std::ios::trunc);
+            if (!out) return;   // 写不了就算了，下次重新量，不该因此影响出图
+            out << serialize_measured_vram(scheduler().all_measured());
+        });
+    }
 
     scheduler().set_budget(
         static_cast<std::size_t>(

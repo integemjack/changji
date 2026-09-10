@@ -172,6 +172,19 @@ public:
 
     /// 取实测值。没量过回 0。
     std::size_t measured_vram(Slot slot) const;
+
+    /// 现在量到的全部，按槽列出来。给持久化用。
+    std::map<Slot, std::size_t> all_measured() const;
+
+    /// 有新的高水位时叫一声。**用来落盘**——量到的数只活在进程里的话，
+    /// 每次重启后的头一次出片都会白白卸掉大模型（那时候还没量到，
+    /// 走的是保守那条），而这个进程可能一天重启好几次。
+    ///
+    /// 回调放在调度器外面，是不想让它碰文件系统：它在借槽的关键路径上，
+    /// 而那条路上已经有一次 nvidia-smi 了，不该再加一次磁盘 IO 的不确定性。
+    /// **回调是在锁外调的**，实现里可以放心写文件。
+    using MeasuredSink = std::function<void(Slot, std::size_t)>;
+    void set_measured_sink(MeasuredSink sink);
     std::size_t budget() const;
 
     /// 注册一个槽。同一个槽重复注册会覆盖，但**只在它没加载时**——
@@ -222,6 +235,7 @@ private:
     FreeVramProbe free_vram_;
     /// 每个槽实测的占用。见 record_measured_vram。
     std::map<Slot, std::size_t> measured_;
+    MeasuredSink measured_sink_;
     std::uint64_t clock_ = 0;
 };
 

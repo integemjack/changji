@@ -15,10 +15,12 @@
 #include <functional>
 #include <memory>
 #include <stdexcept>
+#include <map>
 #include <string>
 #include <vector>
 
 #include "config/settings.hpp"
+#include "infer/scheduler.hpp"
 #include "models/hardware.hpp"
 #include "pipeline/jobs.hpp"
 
@@ -198,6 +200,18 @@ struct CropBox {
 /// 比例本来就一样（含尺寸完全相同）时返回整张图，
 /// 让调用方能靠 `whole()` 跳过拷贝。
 CropBox center_crop_box(int src_w, int src_h, int dst_w, int dst_h);
+
+/// 实测显存的落盘格式：把 `{槽名: 字节数}` 转成一行 JSON，和反过来。
+///
+/// **单独拆出来是为了能测。** 读写文件那半没法在单元测试里跑，
+/// 但"字段名对不对、坏数据会不会让程序崩"是能测也必须测的——
+/// 这个文件在两次运行之间保存的是**决定要不要卸模型的依据**，
+/// 解析出错的代价是要么白卸（慢），要么不该不卸（OOM）。
+std::string serialize_measured_vram(const std::map<Slot, std::size_t>& m);
+
+/// 坏行、缺字段、负数、不认得的槽名，一律**跳过那一条**，不影响别的。
+/// 整个文件解不开就返回空——那等于"没量过"，回到保守那条，安全。
+std::map<Slot, std::size_t> parse_measured_vram(const std::string& text);
 
 /// sd.cpp 的上下文。**贵**：建一次要解析模型文件、建张量图、分配运行时缓冲。
 ///
