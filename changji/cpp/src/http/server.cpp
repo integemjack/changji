@@ -34,6 +34,7 @@
 #include "http/ws.hpp"
 #include "infer/sd_backend.hpp"
 #include "infer/sd_image.hpp"
+#include "models/hardware.hpp"
 #include "pipeline/jobs.hpp"
 
 namespace changji::http {
@@ -556,6 +557,30 @@ void run(const config::Settings& settings, const Options& opts) {
         out["settings"] = get_settings(s).body;
         out["hardware"] =
             get_hardware(s, config::runtime().profile()).body;
+        // **这一轮真正会用的规格。C++ 独有，所以放在 /bff。**
+        //
+        // `hardware.tiers.final` 是档位表按显存推出来的，出片时会被两件事
+        // 盖掉：画幅来自项目的 [video]，步数在挂了 Turbo 时压到 6。
+        // 设置页照着档位表显示的话，写的是"成片步数 28"而实际跑 6 步——
+        // 用户看了会问"怎么没用 turbo"。真发生过。
+        //
+        // 和 run.cpp 调的是同一个函数，两边不会分叉。
+        {
+            const auto& prof = config::runtime().profile();
+            int table = 0;
+            if (const auto it = prof.tiers.find(models::Tier::FINAL);
+                it != prof.tiers.end()) {
+                table = it->second.steps;
+            }
+            const auto eff = config::effective_spec(s, table);
+            out["effective"] = {{"width", eff.width},
+                                {"height", eff.height},
+                                {"finalSteps", eff.final_steps},
+                                {"frameSteps", eff.frame_steps},
+                                {"turbo", eff.turbo},
+                                {"stepsPinned", eff.steps_pinned},
+                                {"tableSteps", table}};
+        }
         // **体检要发网络请求，最坏二十多秒。** Node 那份也是同步等的，
         // 形状要一致就只能照做；Crow 是线程池，占住一个工作线程不影响别的请求。
         out["doctor"] = to_json(doctor::run_checks(s));

@@ -576,6 +576,34 @@ Settings load_settings(const std::optional<fs::path>& project_dir) {
     return s;
 }
 
+EffectiveSpec effective_spec(const Settings& s, int table_final_steps) {
+    EffectiveSpec out;
+    const auto [w, h] = s.video.size();
+    out.width = w;
+    out.height = h;
+
+    // 档位表里的步数假设的是**不带蒸馏 LoRA** 的模型（28 步左右）。
+    // 挂着 Turbo 还跑 28 步不只是慢：资料和实测都说超过 8 步开始过锐，
+    // 画面反而变差。
+    std::error_code ec;
+    const auto lora = s.models.resolve(s.models.video_lora, s.workspace_path());
+    out.turbo = !s.models.video_lora.empty() &&
+                fs::is_regular_file(lora, ec);
+    out.steps_pinned = s.tiers.final_steps != 0;
+
+    out.final_steps = out.steps_pinned ? s.tiers.final_steps : table_final_steps;
+    // 显式填了步数的人是有意的，别替他改。
+    if (out.turbo && !out.steps_pinned) out.final_steps = 6;
+
+    // **首帧不跟着 Turbo 走。** 那个 LoRA 只挂在视频模型上，出图那一步
+    // 没有它；跟着变成 6 步就是裸跑 6 步，出来的首帧糊。而首帧是喂给
+    // 出片那一步的起始图，也是跨镜头一致性的锚点——糊了后面每一镜都糊，
+    // 而且全程不报错。
+    out.frame_steps = s.models.frame_steps > 0 ? s.models.frame_steps
+                                               : table_final_steps;
+    return out;
+}
+
 std::vector<std::string> migrate_legacy(Settings& s) {
     std::vector<std::string> notes;
     // **拆掉一条路之后，老配置不能让程序起不来。**

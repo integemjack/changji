@@ -197,39 +197,18 @@ ApiResult post_run(const json& body, const RunDeps& deps) {
             // 只在这一层合，不在 deps.settings() 里——那个函数不知道
             // 当前跑的是哪个项目，而同一个进程会轮流跑好几个。
             settings = config::load_settings(store.root());
-            const auto [vw, vh] = settings.video.size();
-            // 档位表是按显存推的，画幅定下来之后直接盖掉成片档的宽高。
-            // **步数不动**：那是速度和画质的权衡，和画幅无关。
+            // **画幅、出片步数、首帧步数一次算出来。**
+            // 这段判断以前写在这儿，而设置页那边照着档位表自己显示，
+            // 两处于是分叉：界面写"成片步数 28"，实际每一镜跑 Turbo 的 6 步。
+            // 现在两边都调这一个函数，见 config::effective_spec。
             if (auto it = profile.tiers.find(models::Tier::FINAL);
                 it != profile.tiers.end()) {
-                it->second.width = vw;
-                it->second.height = vh;
-
-                // **挂了 Turbo 就按 6 步走。**
-                //
-                // 档位表里的步数是按显存推的，那套数字假设的是不带蒸馏
-                // LoRA 的模型（28 步）。挂着 Turbo 还跑 28 步不只是慢：
-                // 资料和实测都说超过 8 步就开始过锐，画面反而变差。
-                //
-                // 只在用户**没有显式指定**步数时才动（[tiers].final_steps
-                // 是 0 就算没指定）——显式填了 12 的人是有意的，
-                // 我们不该替他改。
-                const auto lora = settings.models.resolve(
-                    settings.models.video_lora, settings.workspace_path());
-                std::error_code ec;
-                const bool turbo = !settings.models.video_lora.empty() &&
-                                   std::filesystem::is_regular_file(lora, ec);
-                if (turbo && settings.tiers.final_steps == 0) {
-                    // **Turbo 只挂在视频模型上，出图那一步没有它。**
-                    // 首帧现在默认也走成片档（要的是画幅），要是连步数
-                    // 一起跟过去，图像模型就变成 6 步裸跑——出来的首帧糊，
-                    // 而首帧是跨镜头一致性的锚点，糊了后面每一镜都糊。
-                    // 这条同样**不报错**。
-                    if (settings.models.frame_steps == 0) {
-                        settings.models.frame_steps = it->second.steps;
-                    }
-                    it->second.steps = 6;
-                }
+                const auto eff =
+                    config::effective_spec(settings, it->second.steps);
+                it->second.width = eff.width;
+                it->second.height = eff.height;
+                it->second.steps = eff.final_steps;
+                settings.models.frame_steps = eff.frame_steps;
             }
             const pipeline::Backends backends = deps.backends(settings, store);
 

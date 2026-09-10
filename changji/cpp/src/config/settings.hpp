@@ -521,6 +521,31 @@ std::filesystem::path user_config_path();
 /// 「配置坏了」而不指出哪一份，用户只能挨个翻。
 Settings load_settings(const std::optional<std::filesystem::path>& project_dir = std::nullopt);
 
+/// 这一轮实际会用的规格：画幅、出片步数、首帧步数。
+///
+/// **抽出来是因为它有两个读者，而它们必须给出同一个数。** 一个是
+/// `run.cpp`（真去跑的那条路），一个是设置页（`/bff/settings/overview`）。
+/// 各算各的必然会分叉，而分叉的表现是**界面上的数字和实际跑的不是一回事**：
+/// 2026-09-10 就是这样——设置页照着档位表显示"成片步数 28"，
+/// 而每一镜实际跑的是 Turbo 的 6 步。用户于是问"怎么没用 turbo"。
+///
+/// 显示错的数字比不显示更糟：它会让人去调一个根本没生效的东西。
+struct EffectiveSpec {
+    int width = 0;         ///< 成片画幅，来自项目的 [video]
+    int height = 0;
+    int final_steps = 0;   ///< 出视频跑几步
+    int frame_steps = 0;   ///< 出首帧跑几步。**和上面不是一个数**
+    bool turbo = false;    ///< 挂上 Turbo LoRA 了没有（文件真的在）
+    /// 步数是用户在 [tiers].final_steps 里写死的（那样 Turbo 不改它）
+    bool steps_pinned = false;
+};
+
+/// 按配置和档位表算出这一轮真正会用的规格。
+///
+/// `table_final_steps` 是档位表推出来的成片步数（`HardwareProfile` 里那个）。
+/// 这一层不认识 HardwareProfile——config 不该反过来依赖 models。
+EffectiveSpec effective_spec(const Settings& s, int table_final_steps);
+
 /// 把已经拆掉的老取值换成现在的，返回每一处换了什么。
 ///
 /// **拆掉一条路之后，老配置不能让程序起不来。** 拆 ComfyUI 时只在

@@ -797,3 +797,70 @@ TEST_CASE("没有老取值时迁移一句话都不说") {
     CHECK(config::migrate_legacy(http).empty());
     CHECK(http.tts.backend == "http");
 }
+
+TEST_CASE("这一轮真正会用的规格：出片跟 Turbo，首帧不跟") {
+    // **界面和真跑的必须是同一个数。** 2026-09-10 用户问"怎么没用 turbo"，
+    // 因为设置页照着档位表显示"成片步数 28"，而每一镜实际跑的是 6 步。
+    // 那时候这段判断只写在 run.cpp 里，设置页那边自己算——必然分叉。
+    // 现在两边都调 effective_spec，这条用例钉住它的行为。
+    config::Settings s;
+    s.video.orientation = "portrait";
+    s.video.quality = "720p";
+
+    SUBCASE("没挂 Turbo：出片和首帧都用档位表的数") {
+        // video_lora 留空 = 没挂
+        s.models.video_lora = "";
+        const auto e = config::effective_spec(s, 28);
+        CHECK_FALSE(e.turbo);
+        CHECK(e.final_steps == 28);
+        CHECK(e.frame_steps == 28);
+        CHECK(e.width == 704);
+        CHECK(e.height == 1280);
+    }
+
+    SUBCASE("挂了 Turbo：出片 6 步，首帧还是档位表那个数") {
+        // 文件真的要在——配了个不存在的路径不算挂上，那时候压到 6 步
+        // 就是拿一个没有 LoRA 的模型跑 6 步，画面直接废掉。
+        const auto dir = std::filesystem::temp_directory_path() /
+                         "changji_eff_spec";
+        std::filesystem::create_directories(dir / "loras");
+        { std::ofstream f(dir / "loras" / "turbo.safetensors"); f << "x"; }
+        s.models.dir = paths::to_utf8(dir);
+        s.models.video_lora = "loras/turbo.safetensors";
+
+        const auto e = config::effective_spec(s, 28);
+        CHECK(e.turbo);
+        CHECK(e.final_steps == 6);
+        // **这一条是关键**：Turbo 只挂在视频模型上，出图那一步没有它。
+        CHECK(e.frame_steps == 28);
+
+        // 配了但文件不在 = 没挂上
+        config::Settings missing = s;
+        missing.models.video_lora = "loras/不存在.safetensors";
+        const auto m = config::effective_spec(missing, 28);
+        CHECK_FALSE(m.turbo);
+        CHECK(m.final_steps == 28);
+
+        std::filesystem::remove_all(dir);
+    }
+
+    SUBCASE("用户在 [tiers] 里写死了步数，Turbo 不许改它") {
+        s.tiers.final_steps = 12;
+        const auto e = config::effective_spec(s, 28);
+        CHECK(e.steps_pinned);
+        CHECK(e.final_steps == 12);
+    }
+
+    SUBCASE("[models].frame_steps 填了就以它为准") {
+        s.models.frame_steps = 20;
+        CHECK(config::effective_spec(s, 28).frame_steps == 20);
+    }
+
+    SUBCASE("画幅跟项目走") {
+        s.video.orientation = "landscape";
+        s.video.quality = "2k";
+        const auto e = config::effective_spec(s, 28);
+        CHECK(e.width == 2560);
+        CHECK(e.height == 1440);
+    }
+}

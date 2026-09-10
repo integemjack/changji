@@ -184,6 +184,19 @@ async function switchLlm(e) {
 }
 const hardware = computed(() => overview.value?.hardware)
 
+/**
+ * 这一轮**真正会用**的步数和画幅。
+ *
+ * **别拿 hardware.tiers.final 显示。** 那是档位表按显存推出来的，出片时
+ * 会被两件事盖掉：画幅来自项目的 [video]，步数在挂了 Turbo 时压到 6。
+ * 照着档位表显示的话，界面写"成片步数 28"而每一镜实际跑 6 步——
+ * 用户看了会问"怎么没用 turbo"。真发生过（2026-09-10）。
+ *
+ * 引擎那边和 run.cpp 调的是同一个函数（config::effective_spec），
+ * 两边不会分叉。
+ */
+const effective = computed(() => overview.value?.effective ?? null)
+
 async function load() {
   loading.value = true
   try {
@@ -552,17 +565,40 @@ function scrollTo(id) {
                   想要更高的成片档就把它调大。
                 </span>
               </label>
-              <!-- **只显示步数，不显示宽高。**
-                   档位表推出来的宽高（这台 6 GB 的卡上是 768×448）出片时
-                   会被项目的 [video] 整个盖掉，一次都不会被用到。摆在这儿
-                   的后果是：用户在项目页选了竖屏 720p，回到设置页看到
-                   768×448，以为哪里没生效。上面那张「引擎」卡片已经因为
-                   同一个理由改过一遍了。 -->
+              <!-- **显示的是真正会用的数，不是档位表推的。**
+                   档位表那份（宽高和步数）出片时会被两件事盖掉：画幅来自
+                   项目的 [video]，步数在挂了 Turbo 时压到 6。照着档位表显示
+                   的话，这儿写"成片步数 28"而每一镜实际跑 6 步——
+                   用户看了会问"怎么没用 turbo"。真发生过（2026-09-10）。
+                   引擎那边和 run.cpp 算的是同一个函数，见 effective。 -->
               <div class="field">
-                <span class="field__label">成片步数</span>
-                <span class="mono">{{ hardware?.tiers?.final?.steps ?? '—' }}</span>
+                <span class="field__label">步数</span>
+                <span class="mono">
+                  出片 {{ effective?.finalSteps ?? '—' }}
+                  <span v-if="effective?.turbo" class="pill pill--ok tiny">Turbo</span>
+                  <span v-else-if="effective?.stepsPinned" class="pill pill--neutral tiny">
+                    配置里写死
+                  </span>
+                  · 首帧 {{ effective?.frameSteps ?? '—' }}
+                </span>
+                <span v-if="effective?.turbo" class="field__hint">
+                  挂着 Turbo LoRA，出视频按 6 步走（档位表推的是
+                  {{ effective?.tableSteps }} 步）。首帧不跟着变——那个 LoRA
+                  只挂在视频模型上，出图那一步没有它，跟着降到 6 步会让首帧糊，
+                  而首帧是后面每一镜的锚点。
+                </span>
+                <span v-else class="field__hint">
+                  档位表按显存推的。想提速就在 [models].video_lora 填一个
+                  蒸馏 LoRA，出视频会自动按 6 步走。
+                </span>
+              </div>
+              <div class="field">
+                <span class="field__label">成片画幅</span>
+                <span class="mono">
+                  {{ effective ? `${effective.width}×${effective.height}` : '—' }}
+                </span>
                 <span class="field__hint">
-                  画幅和清晰度是每部剧自己的，在项目页的「画面」那张卡选。
+                  每部剧自己的，在项目页的「画面」那张卡选。
                 </span>
               </div>
             </div>
