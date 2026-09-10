@@ -69,6 +69,57 @@ async function load() {
   }
 }
 
+/**
+ * 这部剧的画面规格。**存在项目目录里**，不是全局设置——一台机器上可以
+ * 同时有竖屏短剧和横屏片子。
+ *
+ * `saved` 存的是刚读回来那一份的快照，用来判断有没有改动：直接比对象
+ * 会因为引用相同而永远相等。
+ */
+const video = ref(null)
+const savedVideo = ref('')
+const videoDirty = computed(
+  () => video.value && JSON.stringify(video.value) !== savedVideo.value,
+)
+const sizeText = computed(() =>
+  video.value ? `${video.value.width}×${video.value.height}` : '—',
+)
+
+async function loadVideo() {
+  if (!session.projectPath) {
+    video.value = null
+    return
+  }
+  try {
+    const d = await api.projectVideo(session.projectPath)
+    video.value = { ...d }
+    savedVideo.value = JSON.stringify(video.value)
+  } catch (err) {
+    // 读不到不该让整页红——项目可能是老的，还没有这一节。
+    // 那时候按默认值显示，用户存一次就写进去了。
+    video.value = { orientation: 'portrait', quality: '720p', width: 704, height: 1280 }
+    savedVideo.value = ''
+    ui.warn(`读不到画面设置，按默认显示：${err.message}`)
+  }
+}
+
+async function saveVideo() {
+  const d = await run(
+    () =>
+      api.saveProjectVideo({
+        path: session.projectPath,
+        orientation: video.value.orientation,
+        quality: video.value.quality,
+      }),
+    { key: 'video', success: '画面设置已保存' },
+  )
+  if (!d) return
+  // **拿服务端算出来的宽高回填。** 前端不该自己算——那样两处规则会漂，
+  // 而 32 对齐这种事错了要到出图那一步才发现。
+  video.value = { ...d }
+  savedVideo.value = JSON.stringify(video.value)
+}
+
 async function loadStyle() {
   if (!session.projectPath) return
   try {
@@ -102,7 +153,14 @@ async function saveStyle() {
 }
 
 onMounted(load)
-watch(() => session.projectPath, loadStyle, { immediate: true })
+watch(
+  () => session.projectPath,
+  () => {
+    loadStyle()
+    loadVideo()
+  },
+  { immediate: true },
+)
 
 function open(project) {
   if (project.broken) {
@@ -273,6 +331,62 @@ function progressOf(p) {
         </div>
       </section>
     </Transition>
+
+    <!-- 画面规格。和风格一样，是这部剧的属性，不是这台机器的 -->
+    <section v-if="session.hasProject && video" class="card">
+      <div class="card__head">
+        <div>
+          <div class="card__title">
+            画面
+            <span class="pill pill--neutral">
+              {{ video.orientation === 'landscape' ? '横屏' : '竖屏' }}
+              · {{ video.quality === '2k' ? '2K' : '720p' }}
+            </span>
+          </div>
+          <div class="card__sub">
+            出多大的画面。宽高由这两项算出来，不用自己填数字。
+          </div>
+        </div>
+        <span v-if="videoDirty" class="pill pill--warn">未保存</span>
+      </div>
+      <div class="card__body stack">
+        <div class="grid grid--form">
+          <label class="field">
+            <span class="field__label">画幅</span>
+            <select v-model="video.orientation" class="select">
+              <option value="portrait">竖屏（短剧、手机）</option>
+              <option value="landscape">横屏</option>
+            </select>
+          </label>
+          <label class="field">
+            <span class="field__label">清晰度</span>
+            <select v-model="video.quality" class="select">
+              <option value="720p">720p</option>
+              <option value="2k">2K</option>
+            </select>
+            <span class="field__hint">
+              出来是 {{ sizeText }}。
+              <template v-if="video.quality === '2k'">
+                <strong>2K 很吃显存</strong>，一张 32 GB 的卡跑不动——
+                那时候要么换大卡，要么出 720p 再单独走一次超分。
+              </template>
+            </span>
+          </label>
+        </div>
+      </div>
+      <div class="card__foot">
+        <button
+          class="btn btn--primary"
+          type="button"
+          :disabled="!videoDirty || isBusy('video')"
+          @click="saveVideo"
+        >
+          保存画面设置
+        </button>
+        <span class="spacer" />
+        <span class="tiny dim">改它只影响以后出的镜头，已经出好的不动</span>
+      </div>
+    </section>
 
     <!-- 全剧风格。选中项目之后才有意义 -->
     <section v-if="session.hasProject && savedStyle" class="card">

@@ -83,6 +83,10 @@ export const api = {
   engineStatus: () => get('/bff/settings/status'),
   settingsOverview: () => get('/bff/settings/overview'),
   nodeConfig: () => get('/bff/settings/config'),
+  // 这部剧的画面规格。**一部剧一份**，不是全局设置——一台机器上可以
+  // 同时有竖屏短剧和横屏片子。
+  projectVideo: (project) => get('/bff/project/video', { path: project }),
+  saveProjectVideo: (payload) => post('/bff/project/video', payload),
   saveNodeConfig: (patch) => post('/bff/settings/config', patch),
   flow: (project, episodeId) =>
     get('/bff/flow', { path: project, episode_id: episodeId }),

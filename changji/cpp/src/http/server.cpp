@@ -15,6 +15,7 @@
 #include "http/upload.hpp"
 #include "http/readonly.hpp"
 #include "config/runtime.hpp"
+#include "config/writeback.hpp"
 #include "http/batch.hpp"
 #include "http/config_api.hpp"
 #include "http/episodes.hpp"
@@ -560,6 +561,73 @@ void run(const config::Settings& settings, const Options& opts) {
         out["errors"] = json::object();
         return json_response(out);
     });
+
+    // ---- 这部剧的画面规格 ----
+    //
+    // 竖屏还是横屏、720p 还是 2K。**一部剧一份**，写在项目目录的
+    // changji.toml 里——一台机器上可以同时有竖屏短剧和横屏片子。
+    //
+    // 走 /bff 不走 /api：这两项是 C++ 独有的，而 /api/project 那份 JSON
+    // 在对拍覆盖范围内，Python 没有它们。
+    CROW_ROUTE(app, "/bff/project/video")([](const crow::request& req) {
+        auto r = guard([&] {
+            const auto root =
+                changji::paths::from_utf8(required_query(req, "path"));
+            const auto s = config::load_settings(root);
+            const auto [w, h] = s.video.size();
+            return ApiResult{200,
+                             {{"orientation", s.video.orientation},
+                              {"quality", s.video.quality},
+                              // 把算出来的尺寸也回去：界面上要显示
+                              // "720p 竖屏 = 704×1280"，用户才知道自己选的
+                              // 到底是多大。
+                              {"width", w},
+                              {"height", h}}};
+        });
+        return json_response(r.body, r.status);
+    });
+
+    CROW_ROUTE(app, "/bff/project/video")
+        .methods("POST"_method)([](const crow::request& req) {
+            auto r = guard([&] {
+                const auto body = parse_body(req.body);
+                const auto pick = [&body](const char* k) {
+                    const auto it = body.find(k);
+                    if (it == body.end() || !it->is_string()) {
+                        throw ApiError(400, std::string("缺 ") + k);
+                    }
+                    return it->get<std::string>();
+                };
+                const auto root = changji::paths::from_utf8(pick("path"));
+                config::VideoConfig v;
+                v.orientation = pick("orientation");
+                v.quality = pick("quality");
+                // **先校验再写。** 写进去再报错的话，文件已经坏了，
+                // 而下一次加载会整个失败——那时候连界面都打不开。
+                const auto errs = v.validate();
+                if (!errs.empty()) {
+                    std::string msg;
+                    for (const auto& e : errs) {
+                        if (!msg.empty()) msg += "；";
+                        msg += e;
+                    }
+                    throw ApiError(400, msg);
+                }
+
+                config::save_user_config(
+                    json{{"video",
+                          {{"orientation", v.orientation},
+                           {"quality", v.quality}}}},
+                    root / "changji.toml");
+                const auto [w, h] = v.size();
+                return ApiResult{200,
+                                 {{"orientation", v.orientation},
+                                  {"quality", v.quality},
+                                  {"width", w},
+                                  {"height", h}}};
+            });
+            return json_response(r.body, r.status);
+        });
 
     // ---- 投递（第八步）：这一套没搬进来 ----
     //
