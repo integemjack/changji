@@ -452,7 +452,7 @@ const sinceText = (ms) => humanTime(Math.max(0, (Date.now() - ms) / 1000))
                 {{ doctor.can_run ? '可以开工' : '还不能跑' }}
               </span>
             </div>
-            <div class="card__sub">ComfyUI、大模型、FFmpeg 三样缺一不可。</div>
+            <div class="card__sub">模型文件、大模型、FFmpeg 三样缺一不可。</div>
           </div>
           <button class="btn btn--ghost btn--sm" type="button" @click="loadDoctor">
             <AppIcon name="refresh" :size="14" />

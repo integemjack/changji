@@ -65,9 +65,10 @@ watch(() => session.projectPath, load, { immediate: true })
 /**
  * 问服务端有哪些参考音色。
  *
- * 这一问要走到 ComfyUI 那台机器上。它没起来的时候会一直等到超时，
- * 所以必须有个「正在问」的状态——否则下拉框空着一分钟，
- * 用户以为这个项目没有音色可选。
+ * **现在两条配音后端都没有服务端清单**，这一问回的是一句说明：
+ * 进程内配音的音色是用户自己给的参考音频，外部服务的音色由那个服务自己管。
+ * 接口留着是因为它承担了"告诉用户音色怎么配"这件事——那句话比一个空
+ * 下拉框有用。「正在问」的状态也留着：接口本身还是异步的。
  */
 async function loadVoices() {
   voicesError.value = ''
@@ -370,7 +371,7 @@ async function clearRef(charId, slot) {
                     <option v-for="v in voices" :key="v" :value="v">{{ v }}</option>
                   </select>
                   <span v-if="voicesLoading" class="field__hint">
-                    正在问 ComfyUI 有哪些音色…它没起来的话要等到超时。
+                    正在问有哪些音色…
                   </span>
                   <span v-else-if="voicesError" class="field__error">
                     {{ voicesError }}
@@ -379,7 +380,7 @@ async function clearRef(charId, slot) {
                     没问到音色。留「自动挑」也能跑，配音时按性别和中文样本挑。
                   </span>
                   <span v-else class="field__hint">
-                    列表来自 ComfyUI 那台机器，装了哪些插件就有哪些选项。
+                    音色来自参考音频：填一段人声片段的路径，模型照着它念。
                   </span>
                 </label>
 

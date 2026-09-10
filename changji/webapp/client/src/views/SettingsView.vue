@@ -581,7 +581,7 @@ function scrollTo(id) {
               >
                 {{ isBusy('conn') ? '保存中…' : '保存连接设置并重新体检' }}
               </button>
-              <span class="tiny dim">大模型、ComfyUI、配音后端三项一起保存。</span>
+              <span class="tiny dim">大模型和配音后端一起保存。</span>
             </div>
           </section>
 
@@ -781,7 +781,7 @@ function scrollTo(id) {
             <div class="card__head">
               <div>
                 <div class="card__title">体检</div>
-                <div class="card__sub">ComfyUI、大模型、FFmpeg 三样缺一不可。</div>
+                <div class="card__sub">模型文件、大模型、FFmpeg 三样缺一不可。</div>
               </div>
               <span
                 v-if="overview?.doctor"
