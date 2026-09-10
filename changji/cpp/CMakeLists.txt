@@ -388,6 +388,10 @@ add_executable(changji
     src/http/run.cpp
     src/http/voices.cpp
     src/http/run_deps.cpp
+    src/setup/catalog.cpp
+    src/setup/source.cpp
+    src/setup/downloader.cpp
+    src/http/setup_api.cpp
     src/http/server.cpp
 )
 
@@ -599,6 +603,7 @@ if(CHANGJI_BUILD_TESTS)
         tests/unit/test_audio_plan.cpp
         tests/unit/test_audio.cpp
         tests/unit/test_tts_backends.cpp
+        tests/unit/test_setup.cpp
         tests/unit/test_compat_diff.cpp
         tests/compat/diff.cpp
 
@@ -676,6 +681,13 @@ if(CHANGJI_BUILD_TESTS)
         src/http/reset.cpp
         src/http/run.cpp
         src/http/voices.cpp
+        # 首次运行那一页。**进得来**：清单是常量表，下载器只拉外部进程
+        # （走 util/proc），接口层碰的是 config 和 catalog——三个文件
+        # 一个网络库都不链。
+        src/setup/catalog.cpp
+        src/setup/source.cpp
+        src/setup/downloader.cpp
+        src/http/setup_api.cpp
     )
     # Crow 的头目录：ws.cpp 要 <crow/websocket.h>。Crow 是纯头文件库，
     # 加个包含路径就够，不用链它的 app（测试里只碰 Hub 那个纯数据结构）。

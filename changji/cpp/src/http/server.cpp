@@ -25,6 +25,7 @@
 #include "http/run.hpp"
 #include "http/voices.hpp"
 #include "http/scripting.hpp"
+#include "http/setup_api.hpp"
 #include "llm/client.hpp"
 #include "infer/llama_chat.hpp"
 #include "llm/local_client.hpp"
@@ -652,6 +653,46 @@ void run(const config::Settings& settings, const Options& opts) {
             {{"running", pipeline::jobs().running(pipeline::JobKind::Run)},
              {"shot_ids", pipeline::jobs().pending(pipeline::JobKind::Run)}});
     });
+
+    // ---- 首次运行：把模型下下来 ----
+    //
+    // **C++ 独有，所以在 /bff 不在 /api。** Python 那边模型是 ComfyUI 管的，
+    // 它根本不知道文件在哪，更没有"下模型"这件事。
+    //
+    // 装好程序之后 `[models]` 是空的，界面能打开、项目能建，点到「出片」
+    // 才发现什么都跑不了——那时候用户手上只有一句"本地模型一个都没配"
+    // 和一个配置文件路径。这四条接口把那段路变成"看推荐、点下载、等"。
+
+    CROW_ROUTE(app, "/bff/setup/state")([] {
+        auto r = guard([&] {
+            return get_setup_state(config::runtime().snapshot(),
+                                   config::runtime().profile());
+        });
+        return json_response(r.body, r.status);
+    });
+
+    CROW_ROUTE(app, "/bff/setup/download")
+        .methods("POST"_method)([](const crow::request& req) {
+            auto r = guard([&] {
+                return post_setup_download(config::runtime().snapshot(),
+                                           parse_body(req.body));
+            });
+            return json_response(r.body, r.status);
+        });
+
+    // 前端一秒问一次。**故意不走 WebSocket**：进度是一个可以随时重新问出来
+    // 的状态，不是一串必须收全的事件。刷新页面、换台设备、下到一半关掉浏览器
+    // 第二天回来——轮询这三种都对，而事件流每一种都要另写一段补偿。
+    CROW_ROUTE(app, "/bff/setup/progress")([] {
+        auto r = guard([&] { return get_setup_progress(); });
+        return json_response(r.body, r.status);
+    });
+
+    CROW_ROUTE(app, "/bff/setup/cancel")
+        .methods("POST"_method)([](const crow::request&) {
+            auto r = guard([&] { return post_setup_cancel(); });
+            return json_response(r.body, r.status);
+        });
 
     CROW_ROUTE(app, "/bff/project/video")([](const crow::request& req) {
         auto r = guard([&] {

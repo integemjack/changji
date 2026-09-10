@@ -10,6 +10,7 @@
 import { computed, onMounted, ref, watch } from 'vue'
 
 import AppIcon from '@/components/AppIcon.vue'
+import ModelPicker from '@/components/ModelPicker.vue'
 import StepHeader from '@/components/StepHeader.vue'
 import { api } from '@/api'
 import { useAction } from '@/composables/useAction'
@@ -30,6 +31,7 @@ const apiKeyInput = ref('')
 const SECTIONS = [
   { id: 'engine', title: '引擎', icon: 'link' },
   { id: 'llm', title: '大模型', icon: 'sparkle' },
+  { id: 'models', title: '模型', icon: 'wand' },
   { id: 'render', title: '出图出片', icon: 'image' },
   { id: 'tts', title: '配音', icon: 'info' },
   { id: 'assembly', title: '成片装配', icon: 'board' },
@@ -545,6 +547,32 @@ function scrollTo(id) {
             </div>
           </section>
 
+          <!-- 模型 -->
+          <!--
+            **和初始化页是同一个组件**（ModelPicker）。分两份写的话，量化档的
+            说明、显存门槛、"换家族要清空上一家的键"这些迟早只改一边，
+            而分家的表现是两页各写一套，用户不知道该信哪个。
+
+            这一节做两件事：把缺的模型下下来，和**在已经下过的几档之间切换**。
+            后一件以前只能改配置文件——而配置里那十来个键（video / video_llm /
+            video_vae / video_audio_vae / video_lora…）必须整组配套换，
+            漏一个不报错，只是出一段和提示词没关系的片。
+          -->
+          <section id="sec-models" class="card">
+            <div class="card__head">
+              <div>
+                <div class="card__title">模型</div>
+                <div class="card__sub">
+                  下新模型，或者在已经下过的几档之间换。换完立刻写进配置，
+                  下一次出片就用新的。
+                </div>
+              </div>
+            </div>
+            <div class="card__body">
+              <ModelPicker dense @applied="load" />
+            </div>
+          </section>
+
           <!-- 出图出片 -->
           <section id="sec-render" class="card">
             <div class="card__head">
@@ -555,6 +583,12 @@ function scrollTo(id) {
                   模型文件在配置文件的 [models] 一节。
                 </div>
               </div>
+              <!-- 模型本身在上面那一节挑。这儿只放个指路的，
+                   免得看完步数和画幅之后还要满页找在哪儿换模型。 -->
+              <button class="btn btn--sm" type="button" @click="scrollTo('models')">
+                <AppIcon name="wand" :size="14" />
+                换模型 / 下模型
+              </button>
             </div>
             <div class="card__body grid grid--2">
               <!-- **「显存覆盖」那个输入框删了（2026-09-10）。**
@@ -1100,5 +1134,10 @@ function scrollTo(id) {
 /* 配置里有 vram_gb_override 顶着真实显存时那句提醒 */
 .warn-text {
   color: var(--warn);
+}
+
+/* 「上传」那个图标转过来当下载用。为一个箭头再画一个图标不值当。 */
+.down {
+  transform: rotate(180deg);
 }
 </style>

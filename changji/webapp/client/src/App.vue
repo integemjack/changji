@@ -21,6 +21,9 @@ const stepIndex = computed(() =>
 )
 const current = computed(() => STEP_ROUTES[stepIndex.value] ?? null)
 const isSettings = computed(() => route.name === 'settings')
+// 初始化页要整块屏幕。顶栏、侧边栏、集号条这时候一个都点不动
+// （还没有项目，引擎也还没有模型），摆在那儿只会让人以为哪里没加载出来。
+const bare = computed(() => route.meta?.chrome === false)
 
 // 换项目、换集都要重新算一遍进度，否则侧边栏的对勾会停在上一个项目上
 watch(
@@ -46,7 +49,7 @@ function cycleTheme() {
 
 <template>
   <div class="shell">
-    <header class="topbar">
+    <header v-if="!bare" class="topbar">
       <button
         class="topbar__menu btn btn--ghost"
         type="button"
@@ -88,19 +91,19 @@ function cycleTheme() {
     </header>
 
     <div class="body">
-      <StepRail :class="{ 'is-open': ui.railOpen }" />
+      <StepRail v-if="!bare" :class="{ 'is-open': ui.railOpen }" />
       <div
-        v-if="ui.railOpen"
+        v-if="ui.railOpen && !bare"
         class="scrim"
         aria-hidden="true"
         @click="ui.railOpen = false"
       />
 
       <main class="main">
-        <ContextBar v-if="!isSettings" />
+        <ContextBar v-if="!isSettings && !bare" />
 
         <div class="main__scroll">
-          <div class="main__inner">
+          <div class="main__inner" :class="{ 'main__inner--bare': bare }">
             <!-- 页面崩了要说出来，而不是白屏。见 ErrorBoundary 里的说明。 -->
             <ErrorBoundary>
               <RouterView v-slot="{ Component }">
@@ -112,7 +115,7 @@ function cycleTheme() {
           </div>
         </div>
 
-        <nav v-if="current" class="stepbar">
+        <nav v-if="current && !bare" class="stepbar">
           <RouterLink
             v-if="stepIndex > 0"
             class="btn btn--ghost"
@@ -248,6 +251,14 @@ function cycleTheme() {
   padding-left: max(var(--s6), env(safe-area-inset-left));
   padding-right: max(var(--s6), env(safe-area-inset-right));
 }
+/* 初始化页自己排版。**必须排在上面那条后面**——同样的特指度，
+   靠源码顺序覆盖，写在前面的话内边距根本不会被去掉。 */
+.main__inner--bare {
+  max-width: none;
+  padding: 0;
+  padding-left: env(safe-area-inset-left);
+  padding-right: env(safe-area-inset-right);
+}
 
 .scrim {
   position: fixed;
@@ -312,6 +323,10 @@ function cycleTheme() {
   }
   .main__inner {
     padding: var(--s4) var(--s4) var(--s10);
+  }
+  /* 手机上这条媒体查询排在后面，不再写一遍的话会把上面那条盖掉。 */
+  .main__inner--bare {
+    padding: 0;
   }
   .stepbar {
     padding: var(--s2) var(--s3);

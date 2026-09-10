@@ -21,6 +21,8 @@
 
 import { createRouter, createWebHistory } from 'vue-router'
 
+import { shouldSetup } from '@/composables/useSetupGate'
+
 export const PHASES = {
   series: { title: '全剧', hint: '做一次，整部剧共用' },
   episode: { title: '分集', hint: '每一集重复走一遍' },
@@ -122,6 +124,20 @@ const routes = [
     component: () => import('@/views/SettingsView.vue'),
     meta: { title: '设置' },
   },
+  // 首次运行：把模型下下来。
+  //
+  // **不在 STEP_ROUTES 里**，所以侧边栏和「上一步/下一步」都看不见它——
+  // 它不是这八步中的一步，是八步开始之前的一次性准备。
+  //
+  // `chrome: false` 让 App.vue 把顶栏、侧边栏、集号条全收起来：
+  // 那些东西这时候一个都点不动（还没有项目、引擎也还没模型），
+  // 摆在那儿只会让人以为哪里没加载出来。
+  {
+    path: '/setup',
+    name: 'setup',
+    component: () => import('@/views/SetupView.vue'),
+    meta: { title: '初始化', chrome: false },
+  },
   // 老路径。合并之前它们是两页，收藏夹里可能还留着。
   { path: '/storyboard', redirect: '/shots' },
   { path: '/production', redirect: '/shots' },
@@ -132,6 +148,18 @@ export const router = createRouter({
   history: createWebHistory(),
   routes,
   scrollBehavior: () => ({ top: 0 }),
+})
+
+/**
+ * 缺模型就先去初始化页。
+ *
+ * **只拦一次，而且拦不住就放行。** 判据在引擎那边（见 useSetupGate），
+ * 问不到时一律放行——引擎没起来的时候把人钉在初始化页上，
+ * 他连"引擎没起来"这件事都看不到，那一页自己也读不到清单。
+ */
+router.beforeEach(async (to) => {
+  if (to.name === 'setup' || to.name === 'settings') return true
+  return (await shouldSetup()) ? { name: 'setup' } : true
 })
 
 router.afterEach((to) => {

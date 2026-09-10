@@ -91,6 +91,12 @@ export const api = {
   // 大模型跑在哪：内置还是外接。**两条都留着**——本机跑不动大模型的、
   // 想用云上更强模型的、团队共用一台推理机的，都要能切。
   saveLlmBackend: (backend) => post('/bff/settings/llm', { backend }),
+  // 首次运行那一页。**四条都在 /bff**：下模型这件事引擎独有，
+  // /api 那一套在和 Python 的对拍范围内，加进去就是一处破契约。
+  setupState: () => get('/bff/setup/state'),
+  startSetupDownload: (payload) => post('/bff/setup/download', payload),
+  setupProgress: () => get('/bff/setup/progress'),
+  cancelSetupDownload: () => post('/bff/setup/cancel', {}),
   saveProjectVideo: (payload) => post('/bff/project/video', payload),
   saveNodeConfig: (patch) => post('/bff/settings/config', patch),
   flow: (project, episodeId) =>

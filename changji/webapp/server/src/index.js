@@ -17,6 +17,7 @@ import { proxy } from './engine.js'
 import { settingsRouter } from './routes/settings.js'
 import { publishRouter } from './routes/publish.js'
 import { flowRouter } from './routes/flow.js'
+import { setupRouter } from './routes/setup.js'
 import { attachWs } from './ws.js'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
@@ -35,6 +36,9 @@ app.get('/bff/health', (_req, res) => {
 app.use('/bff/settings', settingsRouter)
 app.use('/bff/publish', publishRouter)
 app.use('/bff/flow', flowRouter)
+// 首次运行那一页。**只是转发**，判断全在引擎那边——缺不缺模型是引擎
+// 所在那台机器的事实，Node 这边一样都不知道。
+app.use('/bff/setup', setupRouter)
 
 app.use('/api', proxy)
 

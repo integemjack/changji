@@ -57,6 +57,36 @@ export function humanTime(seconds) {
   return `${h} 小时 ${m % 60} 分`
 }
 
+/**
+ * 字节数转成「18.8 GB」。初始化页整页都靠它。
+ *
+ * **用 1000 进制不是 1024。** 模型页上的数字要和用户在硬盘属性、
+ * 云盘、HuggingFace 页面上看到的对得上——那些地方一律是 GB（1000³）。
+ * 换成 GiB 的话，同一个文件这里写 17.5、别处写 18.8，
+ * 用户会以为下漏了一块。
+ */
+export function humanBytes(bytes) {
+  const n = Number(bytes) || 0
+  if (n <= 0) return '0 B'
+  const units = ['B', 'KB', 'MB', 'GB', 'TB']
+  let value = n
+  let at = 0
+  while (value >= 1000 && at < units.length - 1) {
+    value /= 1000
+    at += 1
+  }
+  // 字节和 KB 不带小数：「512 B」比「512.0 B」好读
+  const digits = at <= 1 ? 0 : value >= 100 ? 0 : 1
+  return `${value.toFixed(digits)} ${units[at]}`
+}
+
+/** 每秒多少字节转成「12.4 MB/s」。0 或者算不出来时返回空串。 */
+export function humanRate(bytesPerSecond) {
+  const n = Number(bytesPerSecond) || 0
+  if (n <= 0) return ''
+  return `${humanBytes(n)}/s`
+}
+
 /** 时间戳转成「3 分钟前」。项目列表和投递记录用。 */
 export function humanAgo(input) {
   const t = typeof input === 'number' ? input * 1000 : Date.parse(input)

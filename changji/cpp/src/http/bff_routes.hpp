@@ -29,6 +29,12 @@ inline constexpr std::string_view kBffRoutes[] = {
     "/bff/project/video",
     "/bff/settings/llm",
     "/bff/run/pending",
+    // 首次运行那一页。漏一条的表现和当年漏 overview 一样难看：
+    // 界面停在"正在读取模型清单"，而顶栏写着引擎已连接。
+    "/bff/setup/state",
+    "/bff/setup/download",
+    "/bff/setup/progress",
+    "/bff/setup/cancel",
     // 投递那一套**没搬进来**，但这几条仍然要答——回空形状加一句说明，
     // 而不是 404。前端 Promise.all 一挂整页就是个红框，
     // 用户分不清是"没做"还是"坏了"。
