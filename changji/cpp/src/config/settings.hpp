@@ -76,13 +76,17 @@ struct TiersConfig {
 };
 
 struct LLMConfig {
-    /// 大模型跑在哪：`remote`（默认，走 base_url）或 `local`（进程内）。
+    /// 大模型跑在哪：`local`（默认，进程内）或 `remote`（走 base_url）。
     /// **C++ 独有**——Python 那边只有远端一条路。
     ///
-    /// local 是"一个程序跑所有"的那条：不用另起 llama-server，
-    /// 而且**归调度器管**，出片要显存时它会按实时空闲显存决定要不要让开。
+    /// **默认内置**：那是"一个程序跑所有"的那条，不用另起 llama-server，
+    /// 而且归调度器管——出片要显存时它按实时空闲显存决定要不要让开。
     /// 权重路径在 `[models].llm`。
-    std::string backend = "remote";
+    ///
+    /// **remote 那条一直留着**，不是过渡方案：本机跑不动大模型的、
+    /// 想用云上更强模型的、团队共用一台推理机的，都走它。设置页上能切。
+    /// 编译时没带 llama.cpp 的话 local 会自动退回 remote 并在日志里说一声。
+    std::string backend = "local";
 
     std::string base_url = "http://127.0.0.1:11434/v1";
     std::string model = "qwen3:14b";

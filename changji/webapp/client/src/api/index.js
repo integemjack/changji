@@ -86,6 +86,9 @@ export const api = {
   // 这部剧的画面规格。**一部剧一份**，不是全局设置——一台机器上可以
   // 同时有竖屏短剧和横屏片子。
   projectVideo: (project) => get('/bff/project/video', { path: project }),
+  // 大模型跑在哪：内置还是外接。**两条都留着**——本机跑不动大模型的、
+  // 想用云上更强模型的、团队共用一台推理机的，都要能切。
+  saveLlmBackend: (backend) => post('/bff/settings/llm', { backend }),
   saveProjectVideo: (payload) => post('/bff/project/video', payload),
   saveNodeConfig: (patch) => post('/bff/settings/config', patch),
   flow: (project, episodeId) =>

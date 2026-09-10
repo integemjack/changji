@@ -26,7 +26,8 @@ using namespace changji::models;
 /// 而 C++ 侧那个函数返回的是拷贝——照抄名字会让所有状态改动写进临时对象，
 /// 存盘时一个字段都没变。
 std::vector<Shot*> pick(Episode& ep, const std::set<ShotStatus>& want,
-                        bool force) {
+                        bool force,
+                        const std::set<std::string>& only_shots) {
     std::vector<Shot*> all;
     all.reserve(ep.shots.size());
     for (auto& s : ep.shots) all.push_back(&s);
@@ -36,6 +37,9 @@ std::vector<Shot*> pick(Episode& ep, const std::set<ShotStatus>& want,
 
     std::vector<Shot*> todo;
     for (Shot* s : all) {
+        // 指定了镜头就只认这几个。**先筛这一层**：不筛的话
+        // force 会把整集都拉进来，而用户点的是某一镜的"重新生成"。
+        if (!only_shots.empty() && only_shots.count(s->shot_id) == 0) continue;
         if (force || want.count(s->status)) todo.push_back(s);
     }
     return todo;
@@ -205,7 +209,8 @@ RunReport run_episode(const ProjectStore& store,
     // 渲染一个档位。草稿和成片只差三个东西：入口状态、档位参数、事件名。
     const auto render_tier = [&](Tier tier, bool force) {
         const char* stage_name = tier == Tier::FINAL ? "final" : "draft";
-        auto todo = pick(*ep, render_entry_states(tier, opts.skip_draft), force);
+        auto todo = pick(*ep, render_entry_states(tier, opts.skip_draft), force,
+                         opts.only_shots);
         if (todo.empty()) {
             emit(progress, stage_name, "done",
                  std::string(models::to_string(tier)) + " 档已完成，跳过");
@@ -289,7 +294,7 @@ RunReport run_episode(const ProjectStore& store,
         // **在生成任何画面之前跑完。** 它决定镜头时长，而时长决定帧数。
         // 顺序反过来的话，配音出来装不进已经渲好的视频里。
         if (wants(opts, Stage::Audio) && !tok.cancelled()) {
-            auto todo = pick(*ep, {ShotStatus::PLANNED}, opts.force);
+            auto todo = pick(*ep, {ShotStatus::PLANNED}, opts.force, opts.only_shots);
             if (todo.empty()) {
                 emit(progress, "audio", "done", "配音已完成，跳过");
             } else {
@@ -341,7 +346,7 @@ RunReport run_episode(const ProjectStore& store,
             // 阶段 5 时这里临时放宽收了 PLANNED（那会儿配音还没移植），
             // 现在配音接上了，收回来。配音失败的镜头状态停在 PLANNED，
             // 于是自动被挡在首帧之外——那是对的，它们带着错的时长。
-            auto todo = pick(*ep, {ShotStatus::AUDIO_DONE}, opts.force);
+            auto todo = pick(*ep, {ShotStatus::AUDIO_DONE}, opts.force, opts.only_shots);
             if (todo.empty()) {
                 emit(progress, "frames", "done", "首帧已完成，跳过");
             } else {

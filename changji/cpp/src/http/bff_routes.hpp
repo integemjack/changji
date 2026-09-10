@@ -27,6 +27,7 @@ inline constexpr std::string_view kBffRoutes[] = {
     "/bff/settings/overview",
     "/bff/flow",
     "/bff/project/video",
+    "/bff/settings/llm",
     // 投递那一套**没搬进来**，但这几条仍然要答——回空形状加一句说明，
     // 而不是 404。前端 Promise.all 一挂整页就是个红框，
     // 用户分不清是"没做"还是"坏了"。

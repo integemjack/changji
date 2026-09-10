@@ -625,11 +625,12 @@ constexpr const char* kDefaultToml = R"(# 场记配置文件
 
 [llm]
 # 剧本和分镜用的大模型。backend 两个值：
-#   remote —— 默认。走下面的 base_url，任何兼容 OpenAI 接口的服务都行。
-#   local  —— **进程内跑，不用另起 llama-server**。权重填 [models].llm，
-#             输出按 JSON Schema 约束（走语法采样）。这条归调度器管：
-#             出片要显存时按**实时空闲显存**决定要不要让开，够就不动。
-backend = "remote"
+#   local  —— **默认，进程内跑**，不用另起 llama-server。权重填
+#             [models].llm，输出按 JSON Schema 约束（走语法采样）。
+#             归调度器管：出片要显存时按实时空闲显存决定要不要让开。
+#   remote —— 走下面的 base_url，任何兼容 OpenAI 接口的服务都行。
+#             本机跑不动、想用云上更强的模型、团队共用一台推理机，都走它。
+backend = "local"
 base_url = "http://127.0.0.1:11434/v1"
 model = "qwen3:14b"
 

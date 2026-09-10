@@ -170,6 +170,19 @@ const embedded = computed(() => node.value?.embedded === true)
  * Python 没有这个字段，加进去就是一处破契约。
  */
 const llmLocal = computed(() => node.value?.llmBackend === 'local')
+
+/** 内置和外接之间切。切完重读一遍——体检那几项会跟着变。 */
+async function switchLlm(e) {
+  const backend = e.target.value
+  const ok = await run(() => api.saveLlmBackend(backend), {
+    key: 'llmBackend',
+    success: backend === 'local' ? '大模型改成内置' : '大模型改成外接 API',
+  })
+  // 失败时把下拉框拨回去——不拨的话它显示的是没生效的那个值，
+  // 而用户会以为已经切过去了。
+  e.target.value = ok ? backend : node.value?.llmBackend || 'local'
+  if (ok) await load()
+}
 const hardware = computed(() => overview.value?.hardware)
 
 async function load() {
@@ -390,13 +403,29 @@ function scrollTo(id) {
                     : '写剧本和出分镜用它。任何兼容 OpenAI 接口的服务都行。' }}
                 </div>
               </div>
-              <span v-if="llmLocal" class="pill pill--ok">进程内</span>
             </div>
-            <p v-if="llmLocal" class="card__body tiny dim">
-              下面这些是走外部服务时才读的。想换成外部服务，
-              把配置文件里 [llm].backend 改成 "remote"。
-            </p>
-            <div class="card__body grid grid--2" :class="{ 'is-muted': llmLocal }">
+            <div class="card__body">
+              <label class="field">
+                <span class="field__label">跑在哪</span>
+                <select
+                  class="select"
+                  :value="node?.llmBackend || 'local'"
+                  :disabled="isBusy('llmBackend')"
+                  @change="switchLlm"
+                >
+                  <option value="local">内置（这个进程里跑，不用装别的）</option>
+                  <option value="remote">外接 API（任何兼容 OpenAI 接口的服务）</option>
+                </select>
+                <span class="field__hint">
+                  {{ llmLocal
+                    ? '权重在配置文件的 [models].llm。出片要显存时它会自动让开。'
+                    : '下面填那个服务的地址和模型名。' }}
+                </span>
+              </label>
+            </div>
+            <!-- 走内置时这一整排都不读，直接不显示。压暗过一版，
+                 但"看得见却不生效"仍然要人自己判断，不如不给。 -->
+            <div v-if="!llmLocal" class="card__body grid grid--2">
               <label class="field field--wide">
                 <span class="field__label">平台</span>
                 <select
@@ -1076,12 +1105,5 @@ function scrollTo(id) {
     margin-top: 0;
     white-space: nowrap;
   }
-}
-
-/* 走进程内大模型时，下面那排远端字段仍然显示（能看到当前值），
-   但压暗一档表示"现在不读它"。**不用 disabled**：那样连复制都做不了，
-   而用户常常要把地址拷出来贴到别处。 */
-.is-muted {
-  opacity: 0.55;
 }
 </style>

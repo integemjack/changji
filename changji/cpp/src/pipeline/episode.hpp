@@ -78,6 +78,15 @@ struct RunOptions {
     /// 把"人不需要"翻译成结构体默认值的话，波及的是所有直接调用方——
     /// 14 个测试用例当场变红，而它们测的正是草稿档那条路，没有一个是错的。
     bool skip_draft = false;
+
+    /// 只跑这几个镜头。**空表示整集。**
+    ///
+    /// 新界面上每个镜头自己有一个"重新生成"按钮——用户看着某一镜不对，
+    /// 想重跑的就是那一个。没有这一项的话只能整集重跑，而整集是一小时。
+    ///
+    /// 和 `force` 是两回事：这一项管"跑哪几个"，force 管"已完成的要不要
+    /// 重来"。重跑单镜通常两个都要给。
+    std::set<std::string> only_shots;
     /// 无视状态，全部重跑。
     bool force = false;
     /// 只跑这几个阶段。
@@ -142,9 +151,12 @@ RunReport run_episode(const models::ProjectStore& store,
 /// 不重试、日志里一行都没有，表现是"成片里少了一个镜头"，
 /// 而你会先怀疑分镜、怀疑渲染、怀疑装配。
 /// 所以它和下面那个不留在匿名 namespace 里，好让语料够得着。
+/// `only_shots` 非空时只认这几个镜头（按 shot_id）。**先筛这一层**：
+/// 不筛的话 force 会把整集都拉进来，而用户点的是某一镜的"重新生成"。
 std::vector<models::Shot*> pick(models::Episode& ep,
                                 const std::set<models::ShotStatus>& want,
-                                bool force);
+                                bool force,
+                                const std::set<std::string>& only_shots = {});
 
 /// 一个档位的入口状态。
 ///

@@ -138,6 +138,16 @@ ApiResult post_run(const json& body, const RunDeps& deps) {
     // **默认跳过。** 挂 Turbo LoRA 之后两档画质拉不开差距，草稿档就是
     // 白跑一遍。想留着的话显式传 skip_draft: false。
     const bool skip_draft = opt_bool(body, "skip_draft", true);
+    // 只跑这几个镜头。**空表示整集**——新界面上每个镜头自己有一个
+    // "重新生成"，用户看着某一镜不对，想重跑的就是那一个；
+    // 没有这一项的话只能整集重跑，而整集是一小时。
+    std::set<std::string> only_shots;
+    if (const auto it = body.find("shot_ids");
+        it != body.end() && it->is_array()) {
+        for (const auto& v : *it) {
+            if (v.is_string()) only_shots.insert(v.get<std::string>());
+        }
+    }
     const bool force = opt_bool(body, "force", false);
     const bool all_episodes = opt_bool(body, "all_episodes", false);
     const auto stage_names = opt_str_list(body, "stages");
@@ -171,7 +181,8 @@ ApiResult post_run(const json& body, const RunDeps& deps) {
 
     const bool started = pipeline::jobs().start(
         pipeline::JobKind::Run, queue[0],
-        [store, queue, skip_final, skip_draft, force, stage_names, order,
+        [store, queue, skip_final, skip_draft, only_shots, force, stage_names,
+         order,
          deps](pipeline::JobProgress& p) {
             // 配置和后端在**任务开始时**取一次，不是注册时。
             // 用户改完模型文件不用重启，但一次跑的中途不会换——
@@ -237,6 +248,7 @@ ApiResult post_run(const json& body, const RunDeps& deps) {
                     opts.episode_id = id;
                     opts.skip_final = skip_final;
                     opts.skip_draft = skip_draft;
+                    opts.only_shots = only_shots;
                     opts.force = force;
                     opts.only = std::move(which);
                     const auto report = pipeline::run_episode(

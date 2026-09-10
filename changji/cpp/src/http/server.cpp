@@ -26,6 +26,7 @@
 #include "http/voices.hpp"
 #include "http/scripting.hpp"
 #include "llm/client.hpp"
+#include "infer/llama_chat.hpp"
 #include "llm/local_client.hpp"
 #include "http/flow.hpp"
 #include "util/paths.hpp"
@@ -561,6 +562,43 @@ void run(const config::Settings& settings, const Options& opts) {
         out["errors"] = json::object();
         return json_response(out);
     });
+
+    // ---- 大模型跑在哪：内置还是外接 ----
+    //
+    // 走 /bff 不走 /api/connections：那个接口在对拍覆盖范围内，
+    // Python 没有 llm.backend 这个字段。
+    //
+    // **两条都要留着。** 默认内置（一个程序跑所有），但本机跑不动大模型的、
+    // 想用云上更强模型的、团队共用一台推理机的，都要能切到外接。
+    CROW_ROUTE(app, "/bff/settings/llm")
+        .methods("POST"_method)([](const crow::request& req) {
+            auto r = guard([&] {
+                const auto body = parse_body(req.body);
+                const auto it = body.find("backend");
+                if (it == body.end() || !it->is_string()) {
+                    throw ApiError(400, "缺 backend");
+                }
+                const auto backend = it->get<std::string>();
+                if (backend != "local" && backend != "remote") {
+                    throw ApiError(400, "backend 只能是 local 或 remote");
+                }
+                if (backend == "local" && !infer::llama_chat_available()) {
+                    // **说清是构建选项，不是配置写错了。** 只说"不支持"
+                    // 的话用户会去翻配置文件找哪里填错了。
+                    throw ApiError(
+                        400,
+                        "这个二进制没编进程内大模型（构建时 "
+                        "CHANGJI_LLAMA=OFF）。用外接：backend = remote "
+                        "并填 [llm].base_url");
+                }
+                config::save_user_config(json{{"llm", {{"backend", backend}}}});
+                auto s = config::runtime().snapshot();
+                s.llm.backend = backend;
+                config::runtime().replace(s);
+                return ApiResult{200, {{"backend", backend}}};
+            });
+            return json_response(r.body, r.status);
+        });
 
     // ---- 这部剧的画面规格 ----
     //
