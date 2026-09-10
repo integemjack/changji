@@ -3910,5 +3910,30 @@ Python 那边走的是 `self.composer._sep`，composer 是从资产库建的，
 - 加了 `--version`。发布之后"手上这个二进制是哪一版"必须问得出来，
   而在此之前整个仓库一个版本号都没有
 
-**留了一处没动：`src/net/ws_client.cpp`。** 它现在只有自己的两个测试在用——
-对拍工具是它唯一的消费者。删还是留是另一个判断，没有跟着这一刀走。
+### `ws_client` 为什么留着（2026-09-10）
+
+阶段 8 那一刀先把它留下了，当天单独判了一次。**结论是留。**
+
+先说清楚它是什么，因为很容易看岔：**引擎确实靠 WebSocket 跟界面通信，
+但那是服务端那一侧**（`src/http/ws.cpp` 的 Hub，Crow 提供），
+和这个文件无关。`src/net/ws_client.*` 是**客户端**那一侧，而且只有协议
+那一半——`parse_url` / `handshake_request` / `accept_key` / `random_key` /
+`decode_frame` / `encode_frame`，一行 I/O 都没有。连 socket 的那段一直住在
+`tests/compat/main.cpp` 的 `WsPeek` 里，随对拍一起走了。
+
+按"有没有调用方"判的话它该删：现在只有 `test_ws_client.cpp` 引它，
+而它还编在 `changji` 目标的源文件表上——发布的二进制里带着它。
+
+**没删，是因为有一个真的去处：多机互联，一个 changji 连另一个 changji 的
+`/ws`。** 这一条只有用户知道，代码里看不出来——多卡多机现在那条路
+（`worker_pool.cpp`）走的是 httplib 轮询（`POST /task`、`GET /task/:id`），
+所以从代码往外推只会推出"没人要它"。
+
+所以这次做的不是删，是**把理由写进头文件**。差点删掉它的过程本身就是
+证据：一个没有调用方、而且头文件开头写着"给对拍工具用"（那东西已经不存在）
+的文件，下一个人还会再判一次，而他手上未必有这条信息。同一个文件已经
+险过两回了——上一回是拆 ComfyUI 时按目录差点带走，教训记在上面那一节。
+
+顺带记下这一半的现状，免得接手的人以为拿来就能连：
+**传输要自己写**，几十行 asio，去 `git show
+17514f1:changji/cpp/tests/compat/main.cpp` 里抄 `WsPeek`。

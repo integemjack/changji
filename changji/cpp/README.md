@@ -119,7 +119,7 @@ src/
 ├── llm/            OpenAI 兼容客户端
 ├── stages/         剧本、圣经、分镜、提示词、首帧、渲染、配音
 ├── infer/          sd.cpp 门面、显存调度、ggml ABI 探针、进程内配音
-├── net/            通用 WebSocket 客户端
+├── net/            WebSocket 客户端的协议部分（留给多机互联，暂无调用方）
 ├── setup/          首次运行那一页：模型清单、下载源、下载器
 ├── media/          ffmpeg、字幕、装配
 ├── gates/          质量闸门
