@@ -425,8 +425,9 @@ function scrollTo(id) {
                 </div>
               </div>
               <span class="field__hint">
-                按这张卡的显存和模型文件大小算出来的。**权重放内存不等于出了问题**——
-                装不下时放内存反而更快，显卡腾出来的地方全给了计算。
+                按这张卡的显存和模型文件大小算出来的。
+                <strong>权重放内存不等于出了问题</strong>——装不下时放内存反而更快，
+                显卡腾出来的地方全给了计算。
               </span>
             </div>
             <p class="tiny dim mono">配置文件：{{ node.configFile }}</p>
