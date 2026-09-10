@@ -517,6 +517,83 @@ void run(const config::Settings& settings, const Options& opts) {
              {"envLocked", locked}});
     });
 
+    // **设置页真正用的是这一条**，不是上面那两条。
+    //
+    // 漏了它的后果很难看懂：顶栏读 /bff/settings/status 显示"引擎已连接"，
+    // 而设置页读这一条拿到 404，于是整页当引擎离线处理——地址空、
+    // 配置文件空、右上角写"连不上"。**同一个页面上两个相反的结论。**
+    //
+    // 形状照抄 Node 那份（webapp/server/src/routes/settings.js）：它要去
+    // 发四次 HTTP，我们在进程内直接取。errors 留空对象——那几项是它
+    // 转发失败时填的，我们没有转发这一层。
+    CROW_ROUTE(app, "/bff/settings/overview")([] {
+        json locked = json::object();
+        for (const auto& [k, v] : config::env_overridden()) locked[k] = v;
+        const auto s = config::runtime().snapshot();
+
+        json out;
+        out["node"] = {
+            {"embedded", true},
+            {"engineBaseUrl", ""},
+            {"engineTimeoutMs", 0},
+            {"configFile", changji::paths::to_utf8(config::user_config_path())},
+            {"envLocked", locked}};
+        // 由引擎自己答就说明它活着，再 ping 自己一次没有意义。
+        out["engine"] = {{"online", true},
+                         {"baseUrl", ""},
+                         {"latencyMs", 0},
+                         {"service", "changji"}};
+        out["connections"] = get_connections().body;
+        out["settings"] = get_settings(s).body;
+        out["hardware"] =
+            get_hardware(s, config::runtime().profile()).body;
+        // **体检要发网络请求，最坏二十多秒。** Node 那份也是同步等的，
+        // 形状要一致就只能照做；Crow 是线程池，占住一个工作线程不影响别的请求。
+        out["doctor"] = to_json(doctor::run_checks(s));
+        out["errors"] = json::object();
+        return json_response(out);
+    });
+
+    // ---- 投递（第八步）：这一套没搬进来 ----
+    //
+    // 它要存投递记录、要平台配置和凭据，是另一套东西。**但不能就这么
+    // 404**：前端 `Promise.all([api.platforms(), api.publishTargets()])`
+    // 一挂，整页就是一个红框，用户不知道是"没做"还是"坏了"。
+    //
+    // 回一个合法的空形状加一句说明——页面画得出来，而且说得清为什么是空的。
+    const auto publish_not_here = [](const char* field) {
+        return [field] {
+            json body{{field, json::array()},
+                      {"error",
+                       "投递功能要起 webapp 那层 Node 服务（webapp/server）。"
+                       "这个二进制自带的是制作那七步，投递没搬进来——"
+                       "它要存投递记录和各平台的凭据，是另一套东西。"}};
+            return json_response(body);
+        };
+    };
+    CROW_ROUTE(app, "/bff/publish/platforms")(publish_not_here("platforms"));
+    CROW_ROUTE(app, "/bff/publish/targets")(publish_not_here("targets"));
+    CROW_ROUTE(app, "/bff/publish/records")(publish_not_here("records"));
+
+    // 写那几条直接说清楚。回 501 而不是 404：404 像"地址写错了"，
+    // 501 是"这条路存在但这个部署没实现"，而后者才是实情。
+    const auto publish_write = [](const crow::request&) {
+        return json_response(
+            {{"detail",
+              "投递要起 webapp 那层 Node 服务（webapp/server），"
+              "这个二进制没带这一套。"}},
+            501);
+    };
+    CROW_ROUTE(app, "/bff/publish/targets").methods("POST"_method)(publish_write);
+    CROW_ROUTE(app, "/bff/publish/deliver").methods("POST"_method)(publish_write);
+    CROW_ROUTE(app, "/bff/publish/batch").methods("POST"_method)(publish_write);
+    // 删投递目标：前端拼的是 /bff/publish/targets/<id>。
+    CROW_ROUTE(app, "/bff/publish/targets/<string>")
+        .methods("DELETE"_method)(
+            [publish_write](const crow::request& req, const std::string&) {
+                return publish_write(req);
+            });
+
     // 八步走到哪一步了。
     CROW_ROUTE(app, "/bff/flow")([](const crow::request& req) {
         const char* raw_path = req.url_params.get("path");

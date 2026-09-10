@@ -134,3 +134,36 @@ describe('URL 拼接', () => {
       'http://engine.test:8080/api/health')
   })
 })
+
+describe('引擎连不上时那句提示', () => {
+  // 这句话是用户排查时唯一的线索。它错了没有任何别的测试会红——
+  // 用户 2026-09-10 就问过"为什么我这里引擎显示是连不上的"，
+  // 而当时页面上只有一句"引擎离线"，看不出试的是哪个地址。
+  it('要把试的那个地址说出来', async () => {
+    const { offlineHint } = await import('./engine.js')
+    const s = offlineHint('http://127.0.0.1:8080', 'fetch failed')
+    expect(s).toMatch(/127\.0\.0\.1:8080/)
+    expect(s).toMatch(/fetch failed/)
+  })
+
+  it('本机地址：给"起引擎"和"打隧道"两条路', async () => {
+    const { offlineHint } = await import('./engine.js')
+    const s = offlineHint('http://localhost:8080', 'ECONNREFUSED')
+    expect(s).toMatch(/changji --port/)
+    expect(s).toMatch(/ssh -L/)
+  })
+
+  it('远程地址：不该叫人去本机起引擎', async () => {
+    const { offlineHint } = await import('./engine.js')
+    const s = offlineHint('http://192.168.1.9:8080', 'timeout')
+    expect(s).not.toMatch(/changji --port/)
+    expect(s).toMatch(/端口/)
+  })
+
+  it('地址没填也要有话说，不能是空的', async () => {
+    const { offlineHint } = await import('./engine.js')
+    const s = offlineHint('', 'no url')
+    expect(s.length).toBeGreaterThan(10)
+    expect(s).toMatch(/没填/)
+  })
+})

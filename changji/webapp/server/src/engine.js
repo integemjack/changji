@@ -194,7 +194,29 @@ export async function engineStatus() {
       online: false,
       baseUrl: cfg.engineBaseUrl,
       latencyMs: Date.now() - started,
-      error: err.message,
+      // **把地址和两条出路一起说出来。**
+      // 原来只回 err.message（"fetch failed" 之类），页面上就是一句
+      // "引擎离线"，看不出它试的是哪个地址，也不知道下一步做什么。
+      // 最常见的两种情形都在这句里：引擎没起（本机跑就直接起它），
+      // 或者引擎在别的机器上（那要打隧道或者改地址）。
+      error: offlineHint(cfg.engineBaseUrl, err.message),
     }
   }
+}
+
+/**
+ * 引擎连不上时给用户的一句话。
+ *
+ * **单独抽出来是为了能测**——这句话是用户排查时唯一的线索，
+ * 而它错了没有任何测试会红。
+ */
+export function offlineHint(baseUrl, reason) {
+  const where = baseUrl || '（没填地址）'
+  const local = /127\.0\.0\.1|localhost/.test(baseUrl || '')
+  const fix = local
+    ? '引擎没起来的话直接起它：changji --port 8080。' +
+      '引擎在别的机器上的话，要么打隧道（ssh -L 8080:127.0.0.1:8080 …），' +
+      '要么把上面的引擎地址改成那台机器的。'
+    : '检查那台机器上的引擎起没起、端口通不通（防火墙、安全组）。'
+  return `连不上 ${where}（${reason}）。${fix}`
 }
