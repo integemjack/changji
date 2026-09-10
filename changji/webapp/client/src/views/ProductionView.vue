@@ -29,6 +29,14 @@ const doctor = ref(null)
 const shots = ref([])
 
 const allEpisodes = ref(false)
+// **「只跑到草稿档」那个开关删了（2026-09-10）。**
+//
+// 草稿档已经默认不跑——挂 Turbo LoRA 之后两档画质拉不开差距。
+// 而勾上"只跑到草稿档"发的是 skip_final，于是两头都跳过，
+// **一个镜头都不出，而且不报错**：跑完了，什么也没有。
+//
+// 这个常量留着是因为下面几处还在发这个字段；发 false 和不发一样。
+// 等制作页整体重排时一起清掉。
 const skipFinal = ref(false)
 const force = ref(false)
 /**
@@ -427,11 +435,6 @@ const sinceText = (ms) => humanTime(Math.max(0, (Date.now() - ms) / 1000))
               <input v-model="stageMajor" type="checkbox" />
               <span>按阶段排队列（多卡）</span>
               <span class="field__hint">所有集先配音，再所有集出首帧、出草稿……多张卡时省掉每集之间的空转和换模型。</span>
-            </label>
-            <label class="switch">
-              <input v-model="skipFinal" type="checkbox" />
-              <span>只跑到草稿档</span>
-              <span class="field__hint">先看叙事和构图对不对，过了再升成片档。快十几倍。</span>
             </label>
             <label class="switch">
               <input v-model="force" type="checkbox" />
