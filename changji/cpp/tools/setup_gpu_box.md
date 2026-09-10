@@ -145,34 +145,39 @@
 | 28 步，无 LoRA | 164 秒 | 71 秒 | **242 秒** |
 | **6 步 + Turbo LoRA** | **41 秒** | 71 秒 | **124 秒** |
 
-    [models]
-    video_lora = "loras/minimax_h3_turbo_v4_step600_ema.safetensors"
-    # 步数要跟着改，否则白挂：POST /api/settings {"final_steps":6}
+**默认就开着，不用配。** `[models].video_lora` 的默认值就指着
+`loras/minimax_h3_turbo_v4_step600_ema.safetensors`，挂上之后步数自动按
+6 走。文件不在时按"没配"处理并在日志里说一声——没下过 LoRA 的机器照样
+出片，只是慢几倍。
 
 sd.cpp 认这个给 ComfyUI 做的 LoRA（日志里有 `apply lora at runtime`）。
 **判据是耗时，不是"没报错"**——不认时只是加载不上，画面照出、耗时照旧。
-画质：用户看过 6 步和 28 步的同一镜，看不出差别。
+画质：用户看过 6 步和 28 步的同一镜，看不出差别；后来又比过 6 步和 48 步，
+说 48 步"细节确实多"，但换成 1280×704 之后 6 步就够了。
 
 挂上 LoRA 之后瓶颈换人了：VAE 解码从 29% 变成 57%。所以大卡上
 `weights = "smart"` 的收益比小卡大得多——41 + 8 = 49 秒一镜。
 
-**推荐的分档法：Turbo 只挂草稿档。** 蒸馏 LoRA 是拿画质换速度的，
-而草稿档本来就是用来看叙事和构图的：
+**草稿档 2026-09-10 起默认不跑。** 两档都挂 Turbo 之后画质拉不开差距，
+那一遍就是白跑（一集 54 分钟）。想要的话 `POST /api/run` 传
+`skip_draft: false`。
 
-    [models]
-    video_lora       = "loras/minimax_h3_turbo_v4_step600_ema.safetensors"
-    video_lora_tiers = "draft"        # 成片档不挂，跑满步数
+### 画幅和清晰度写在项目里
 
-配上两档步数（`POST /api/settings`，草稿 6 步、成片 48 步），实测同一镜：
+**不在全局设置里。** 一台机器上可以同时有竖屏短剧和横屏片子——画幅是
+这部剧的属性，不是这台机器的属性。项目目录的 `changji.toml`：
 
-| 档位 | 步数 | LoRA | 采样 | 每镜合计 |
-|---|---|---|---|---|
-| 草稿 | 6 | 挂 | 41 秒 | **125 秒** |
-| 成片 | 48 | 不挂 | 292 秒 | **372 秒** |
+    [video]
+    orientation = "portrait"   # 或 landscape
+    quality     = "720p"       # 或 2k
 
-**上下文是两档共用的**，所以挂不挂只能在每次请求上决定，不能在建上下文时定
-（见 `VideoRequest::use_lora`）。判据是日志里 `apply lora at runtime`
-的条数：跑一遍两档应该只出现一次。
+宽高由这两项算出来，用户不填数字。**720p 的短边是 704 不是 720**：
+720 ÷ 32 = 22.5 除不尽，而 32 对齐是 Wan 那一族的硬约束（不对齐出图直接
+失败，日志里指不到那儿）。这一条第一版就写错了，是单元测试抓住的。
+
+**2K 一张 32 GB 的卡跑不动**（1280×704 时计算缓冲已 19.7 GB，2K 是四倍
+像素）。**不会悄悄降档**——选了 2K 拿到 720p 且没有提示，比失败更糟。
+那时候要么换大卡，要么出 720p 再 `changji --upscale`。
 
 ## 2. 配置
 
@@ -192,18 +197,26 @@ sd.cpp 认这个给 ComfyUI 做的 LoRA（日志里有 `apply lora at runtime`�
     # 权重放哪。auto = 交给 sd.cpp 按这张卡真实的空闲显存决定，装得下就常驻；
     # cpu = 全放系统内存（小卡唯一的选择，慢）
     weights = "auto"
-    video = "wan2.2_ti2v_5B_fp16.safetensors"
-    video_vae = "Wan2.2_VAE.safetensors"
-    video_text_encoder = "umt5_xxl_fp16.safetensors"
+    # 出片：MiniMax-H3（编码器走 video_llm 不是 video_text_encoder，
+    # cfg 1.0、rng cpu——三处和 Wan 不一样，错了都不报错）
+    video = "minimax_h3_fl2va-Q4_K_M.gguf"
+    video_vae = "minimax_h3_video_vae_fp16.safetensors"
+    video_audio_vae = "minimax_h3_audio_vae_fp32.safetensors"
+    video_llm = "qwen3vl_32b_minimax_h3-Q4_K_M.gguf"
+    video_cfg = 1.0
+    video_rng = "cpu"
+    # 加速 LoRA 默认就指着这个路径，不用写；文件不在会在日志里说一声
+    # video_lora = "loras/minimax_h3_turbo_v4_step600_ema.safetensors"
     image = "qwen_image_fp8_e4m3fn.safetensors"
     image_vae = "qwen_image_vae.safetensors"
     image_text_encoder = "qwen_2.5_vl_7b_bf16.safetensors"
     tts = "Qwen3-TTS-12Hz-1.7B-Base-bf16.gguf"
     tts_decoder = "mmproj-Qwen3-TTS-12Hz-1.7B-Base-bf16.gguf"
-    # 首帧按哪个档位出。默认 draft（和 Python 一样），但首帧是跨镜头一致性的
-    # 锚点、又会当起始图喂给出片那一步——草稿档 352×640 的首帧配成片档
-    # 704×1280 的视频等于把锚点放大两倍再用。显存够就填 final。
+    # 首帧按哪个档位出。首帧是跨镜头一致性的锚点、又会当起始图喂给出片
+    # 那一步，出小了等于把锚点放大再用。显存够就填 final。
     frame_tier = "final"
+    # 大模型：进程内跑
+    llm = "llm/Qwen3-14B-Q4_K_M.gguf"
 
     [tts]
     backend = "local"          # 进程内 Qwen3-TTS，不用起别的服务
