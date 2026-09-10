@@ -71,28 +71,48 @@ const inflightBy = computed(() => {
 })
 
 /**
- * 刚点过「重新生成」、但引擎还没报出第一条进度的那几镜。
+ * 已经交给引擎、但它还没报出第一条进度的那几镜。
  *
  * **点下去到第一条进度之间能隔一分钟**——那段时间引擎在载模型，
  * 一个字都不会报。这期间牌子上显示的还是上一轮的"成片完成"：
  * 用户点了按钮，画面一动不动，只能再点一次。
- *
- * 进：点「重新生成」并且接口回了 started。
- * 出：这一镜的第一条进度到了（换成真进度），或者整轮跑完了。
  */
-const queued = ref(new Set())
+const sent = ref(new Set())
 
-/** 这一镜正在被处理——不管是引擎已经报了进度，还是刚点完还在等。 */
+/**
+ * 还没交给引擎、在这儿排着的那几镜。
+ *
+ * **队列在前端，不在引擎。** `POST /api/run` 在有任务跑着的时候回 409
+ * （"已经在跑 ep01 了"），而那条 409 是和 Python 逐字节对拍的，动不得。
+ * 所以跑着的时候点别的镜头不发请求，先记在这儿，这一轮完了一次性提交。
+ *
+ * 这样"点一个别的都点不了"就没有了——用户可以一路点过去，
+ * 挑出十几个要重出的，然后走开。
+ */
+const waiting = ref(new Set())
+
+/** 这一镜正在被处理：引擎在跑、已提交、或者在前端排着。 */
 function busy(shotId) {
-  return Boolean(inflightBy.value[shotId]) || queued.value.has(shotId)
+  return (
+    Boolean(inflightBy.value[shotId]) ||
+    sent.value.has(shotId) ||
+    waiting.value.has(shotId)
+  )
 }
 
-// 引擎开始报这一镜了，"排队中"就该让位给真进度。
+// 引擎开始报这一镜了，"排队中"就该让位给真进度。**两个集合都要清**：
+// 只清 sent 的话，一个既在 waiting 里又被引擎跑着的镜头会同时显示
+// "首帧"（状态取 inflight）和"不重出这一镜了"（按钮取 waiting），
+// 同一格上两个互相矛盾的说法。
 watch(inflightBy, (now) => {
-  if (!queued.value.size) return
-  const next = new Set(queued.value)
-  for (const id of Object.keys(now)) next.delete(id)
-  if (next.size !== queued.value.size) queued.value = next
+  const ids = Object.keys(now)
+  if (!ids.length) return
+  for (const set of [sent, waiting]) {
+    if (!set.value.size) continue
+    const next = new Set(set.value)
+    for (const id of ids) next.delete(id)
+    if (next.size !== set.value.size) set.value = next
+  }
 })
 
 async function loadShots() {
@@ -163,14 +183,15 @@ watch(
   (now, before) => {
     if (before && !now) {
       loadShots()
-      // 跑完了就没有"排队中"了。不清的话那几格会一直挂着，
-      // 而它们其实已经跑完（或者失败）了。
-      queued.value = new Set()
+      // 这一轮交出去的那几个跑完了（或者失败了），不该再挂着"排队中"。
+      sent.value = new Set()
       // 刚跑完，磁盘上那几个 mp4 换过了但路径没变。见 bust 的注释。
       bust.value += 1
       session.refresh()
       if (runStore.state?.error) ui.error(runStore.state.error)
       else ui.ok('这一轮跑完了')
+      // 跑的过程中攒下的那几镜，现在一次性交出去。
+      flushWaiting()
     }
   },
 )
@@ -200,10 +221,86 @@ async function start(ids = []) {
     { key: one ? `re:${ids[0]}` : 'start' },
   )
   if (!started) return
-  // **先把牌子点亮，别等引擎。** 见 queued 的注释：载模型那一分钟里
+  // **先把牌子点亮，别等引擎。** 见 sent 的注释：载模型那一分钟里
   // 引擎一个字都不报，不先点亮的话用户看到的是"点了没反应"。
-  if (one) queued.value = new Set([...queued.value, ...ids])
+  if (one) sent.value = new Set([...sent.value, ...ids])
   runStore.start()
+}
+
+/** 把攒着的那几镜一次性交给引擎。空的就什么都不做。 */
+function flushWaiting() {
+  const ids = [...waiting.value]
+  if (!ids.length) return
+  waiting.value = new Set()
+  start(ids)
+}
+
+/**
+ * 牌子上那个按钮。**同一个位置三件事**，看这一镜此刻是什么状态：
+ *
+ *   在前端排着 → 取消，从队列里拿掉，不发任何请求
+ *   引擎正在跑 → 停下这一轮（引擎只有整轮的停，没有单镜的停）
+ *   其余       → 重新生成这一镜；正跑着别的就先排队
+ */
+async function shotAction(s) {
+  const id = s.shot_id
+  // **先判"引擎正在跑它"。** 反过来的话，一个刚排进队列、紧接着就被
+  // 引擎接手的镜头会一直按"排队中"处理——按钮画的是取消，
+  // 而它其实已经在跑了，取消什么都不会发生。
+  if (inflightBy.value[id] || sent.value.has(id)) {
+    await stop()
+    return
+  }
+  if (waiting.value.has(id)) {
+    const next = new Set(waiting.value)
+    next.delete(id)
+    waiting.value = next
+    return
+  }
+  if (runStore.running) {
+    waiting.value = new Set([...waiting.value, id])
+    return
+  }
+  await start([id])
+}
+
+/**
+ * 牌子底栏上那句话：**这一镜在干什么，到第几步了。**
+ *
+ * 只有阶段名（"首帧"）的话，一条几十秒不动的进度条和卡死了看着一样。
+ * 带上步数就有了在走的证据。步数只有引擎在报这一镜时才有——
+ * 搬权重、VAE 解码那几条不带（见 Event::shot_steps），那时候只写阶段。
+ */
+function shotState(s) {
+  const x = inflightBy.value[s.shot_id]
+  if (x) {
+    const stage = STAGE_LABELS[x.stage] || x.stage || ''
+    if (typeof x.shotStep === 'number' && x.shotSteps) {
+      return `${stage} ${x.shotStep}/${x.shotSteps}`
+    }
+    return stage || '跑着'
+  }
+  if (busy(s.shot_id)) return '排队中'
+  return statusOf(s.status).label
+}
+
+/** 这一格的按钮该画成什么。 */
+function shotBtn(s) {
+  const id = s.shot_id
+  // 顺序和 shotAction 一致，理由见那儿。
+  if (inflightBy.value[id] || sent.value.has(id)) {
+    // 引擎没有"暂停这一镜"，只有停下整轮。**按钮上写清楚它到底做什么**，
+    // 画个暂停号却停掉整轮就是骗人。停下之后跑完的镜头都留着，
+    // 再点「出片」会从没跑完的那些接着来——所以叫暂停是站得住的。
+    return { icon: 'pause', title: '停下这一轮（跑完的镜头留着）' }
+  }
+  if (waiting.value.has(id)) {
+    return { icon: 'close', title: '不重出这一镜了' }
+  }
+  if (runStore.running) {
+    return { icon: 'refresh', title: '排进队列，这一轮跑完就重出这一镜' }
+  }
+  return { icon: 'refresh', title: '重新生成这一镜' }
 }
 
 /**
@@ -341,47 +438,35 @@ async function stop() {
           />
           <AppIcon v-else name="image" :size="18" class="shot__blank" />
 
-          <!-- **进度画在镜头上。** 这一镜跑到哪了，看它自己就够，
-               不用去别处对。 -->
-          <span v-if="busy(s.shot_id)" class="shot__live">
-            <!-- **用 shotStep 不是 step。** step/total 是整集的位置
-                 （第 21 镜 / 共 22 镜）——拿它画单镜的条，正在跑的那一镜
-                 一出现就是 95%，六步走完还是 95%。一条不动而且是错的
-                 进度条比没有更糟。
-                 引擎没给这一镜的步数时（"准备中"那几条、老引擎）画走马灯，
-                 别硬凑一个百分比。 -->
-            <span
-              v-if="pct(s.shot_id) !== null"
-              class="shot__bar"
-              :style="{ width: pct(s.shot_id) + '%' }"
-            />
-            <span v-else class="shot__bar shot__bar--idle" />
-          </span>
         </div>
 
+        <!-- **进度就是这一行的底色。** 原来是画面底边上一条 3px 的线，
+             牌子里换成真播放器之后那条线和播放器自己的控件挤在一起。
+             铺成这一行的背景既不占地方，也比一条细线看得清——
+             而且"跑到哪了"和"这一镜叫什么、什么状态"本来就该在一起看。 -->
         <div class="shot__bottom">
+          <span
+            v-if="busy(s.shot_id)"
+            class="shot__fill"
+            :class="{ 'shot__fill--idle': pct(s.shot_id) === null }"
+            :style="pct(s.shot_id) !== null ? { width: pct(s.shot_id) + '%' } : null"
+          />
           <span class="shot__no numeric">{{ s.order + 1 }}</span>
-          <!-- 说明也跟着走：正在跑就报阶段，刚点完还没轮到就说"排队中"。
-               不这么分的话，那一分钟里显示的是上一轮的"成片完成"——
-               和"没点上"看起来一模一样。 -->
-          <span class="shot__state tiny">
-            {{
-              inflightBy[s.shot_id]
-                ? STAGE_LABELS[inflightBy[s.shot_id].stage] || inflightBy[s.shot_id].stage
-                : queued.has(s.shot_id)
-                  ? '排队中'
-                  : statusOf(s.status).label
-            }}
-          </span>
+          <!-- 状态和步数都在这儿，见 shotState。 -->
+          <span class="shot__state tiny">{{ shotState(s) }}</span>
           <span class="spacer" />
+          <!-- **不跟着别人一起变灰。** 原来是 `runStore.running` 一真
+               整墙的按钮全禁掉：重出一镜要等一小时的整轮跑完才能点第二个。
+               现在跑着的时候点别的镜头是排队（队列在前端，见 waiting），
+               点正在跑的那个是停下。 -->
           <button
             class="iconbtn"
             type="button"
-            :title="busy(s.shot_id) ? '这一镜正在跑' : '重新生成这一镜'"
-            :disabled="runStore.running || isBusy(`re:${s.shot_id}`)"
-            @click="start([s.shot_id])"
+            :title="shotBtn(s).title"
+            :disabled="isBusy(`re:${s.shot_id}`) || isBusy('stop')"
+            @click="shotAction(s)"
           >
-            <AppIcon name="refresh" :size="14" />
+            <AppIcon :name="shotBtn(s).icon" :size="14" />
           </button>
         </div>
       </article>
@@ -446,44 +531,44 @@ async function stop() {
 
 
 /* 进度条贴在缩略图底边。**画在镜头上**，不去别处看 */
-/* **进度条贴上边，不是下边。** 下边被播放器自己的控件占了——重出一镜
-   时那一镜的旧片子还在（路径没变），于是控件和进度条会叠在一起。 */
-.shot__live {
+/* 进度铺成底部那一行的背景。**在文字后面**，所以是 z-index 0 加上
+   兄弟节点提到 1——不这么做的话镜号和状态会被它盖住。 */
+.shot__fill {
   position: absolute;
   left: 0;
-  right: 0;
   top: 0;
-  height: 3px;
-  background: color-mix(in srgb, var(--accent) 25%, transparent);
-  /* 走马灯靠 translateX 走出去，不裁的话会画到牌子外面 */
-  overflow: hidden;
-}
-.shot__bar {
-  display: block;
-  height: 100%;
-  background: var(--accent);
+  bottom: 0;
+  z-index: 0;
+  background: color-mix(in srgb, var(--accent) 30%, transparent);
   transition: width 0.3s;
 }
 /* 不知道跑到哪一步时的走马灯。**别停着不动**——静止的进度条和
    "卡死了"看起来一模一样，而这一步（搬权重、VAE 解码）本来就要几十秒。 */
-.shot__bar--idle {
-  width: 35%;
-  animation: shot-slide 1.4s ease-in-out infinite;
+.shot__fill--idle {
+  width: 40%;
+  animation: shot-slide 1.6s ease-in-out infinite;
 }
 @keyframes shot-slide {
   0% { transform: translateX(-100%); }
-  100% { transform: translateX(286%); }
+  100% { transform: translateX(250%); }
 }
 @media (prefers-reduced-motion: reduce) {
-  .shot__bar--idle { animation: none; width: 100%; opacity: 0.5; }
+  .shot__fill--idle { animation: none; width: 100%; opacity: 0.6; }
 }
 
 .shot__bottom {
+  position: relative;   /* 进度底色是绝对定位的，见 .shot__fill */
   display: flex;
   align-items: center;
   gap: 6px;
   padding: 4px 6px;
   border-top: 1px solid var(--line);
+  overflow: hidden;     /* 走马灯靠 translateX 走出去，不裁会画到牌子外面 */
+}
+/* 这一行的内容全部压在进度底色上面 */
+.shot__bottom > :not(.shot__fill) {
+  position: relative;
+  z-index: 1;
 }
 .shot__no {
   color: var(--text-3);

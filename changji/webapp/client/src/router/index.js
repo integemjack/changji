@@ -83,7 +83,8 @@ export const STEP_ROUTES = [
     name: 'production',
     phase: 'episode',
     title: '制作',
-    tagline: '配音、首帧、草稿、成片',
+    // 草稿档 2026-09-10 砍了（挂 Turbo 之后两档拉不开差距，白跑一遍）
+    tagline: '配音、首帧、成片',
     icon: 'gear',
     component: () => import('@/views/ProductionView.vue'),
   },
