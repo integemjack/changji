@@ -286,6 +286,10 @@ std::vector<std::string> Settings::validate() const {
     if (models.vram_reserve_gb < 0) {
         errs.push_back("[models].vram_reserve_gb 不能是负的");
     }
+    if (models.frame_steps < 0) {
+        errs.push_back("[models].frame_steps 不能是负数，现在是 " +
+                       std::to_string(models.frame_steps));
+    }
     if (models.frame_tier != "draft" && models.frame_tier != "final") {
         errs.push_back("[models].frame_tier 只能是 draft 或 final，现在是 " +
                        models.frame_tier);
@@ -468,6 +472,7 @@ void apply_table(const toml::table& doc, Settings& s) {
         take(t, "image_cfg", s.models.image_cfg);
         take(t, "image_flow_shift", s.models.image_flow_shift);
         take(t, "frame_tier", s.models.frame_tier);
+        take(t, "frame_steps", s.models.frame_steps);
         take(t, "vram_reserve_gb", s.models.vram_reserve_gb);
         take(t, "video_high_noise", s.models.video_high_noise);
         take(t, "video_moe_boundary", s.models.video_moe_boundary);
@@ -718,7 +723,8 @@ subtitle_font = "Source Han Sans SC"
 # 首帧按哪个档位出。默认 draft（和 Python 一样）；首帧是跨镜头一致性的锚点，
 # 又会当起始图喂给出片那一步，草稿档的首帧配成片档的视频等于把锚点放大两倍
 # 再用。显存够就填 final，慢一些但清楚。
-# frame_tier = "final"
+# frame_tier = "draft"   # 默认 final；小卡上显存不够才降到 draft
+# frame_steps = 0        # 首帧出几步，0 = 跟档位走（Turbo 压的 6 步不算）
 #
 # 双专家视频模型的高噪声那一份（Wan 2.2 的 A14B 系列）。video 填低噪声那份，
 # 这里填高噪声那份，留空就是单模型。高噪声专家跑前几步定构图和运动，

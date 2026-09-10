@@ -220,6 +220,14 @@ ApiResult post_run(const json& body, const RunDeps& deps) {
                 const bool turbo = !settings.models.video_lora.empty() &&
                                    std::filesystem::is_regular_file(lora, ec);
                 if (turbo && settings.tiers.final_steps == 0) {
+                    // **Turbo 只挂在视频模型上，出图那一步没有它。**
+                    // 首帧现在默认也走成片档（要的是画幅），要是连步数
+                    // 一起跟过去，图像模型就变成 6 步裸跑——出来的首帧糊，
+                    // 而首帧是跨镜头一致性的锚点，糊了后面每一镜都糊。
+                    // 这条同样**不报错**。
+                    if (settings.models.frame_steps == 0) {
+                        settings.models.frame_steps = it->second.steps;
+                    }
                     it->second.steps = 6;
                 }
             }

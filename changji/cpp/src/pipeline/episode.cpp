@@ -50,6 +50,23 @@ std::vector<Shot*> pick(Episode& ep, const std::set<ShotStatus>& want,
 /// 首帧失败的镜头状态还停在 AUDIO_DONE（配音接上之前是 PLANNED）。
 /// **它们不该被跳过**，而是退回纯文生视频——画面一致性差一些，
 /// 但整集不会卡在这里。
+models::TierSpec frame_spec(const models::HardwareProfile& profile,
+                            const config::Settings& settings) {
+    const auto tier =
+        settings.models.frame_tier == "draft" ? Tier::DRAFT : Tier::FINAL;
+    auto it = profile.tiers.find(tier);
+    // 档位表里没有这一档就退回另一档。**不抛**：档位表是推出来的，
+    // 少一档也该照样出片，而不是让整集跑不起来。
+    if (it == profile.tiers.end()) {
+        it = profile.tiers.find(tier == Tier::DRAFT ? Tier::FINAL : Tier::DRAFT);
+    }
+    if (it == profile.tiers.end()) return {};
+
+    models::TierSpec spec = it->second;
+    if (settings.models.frame_steps > 0) spec.steps = settings.models.frame_steps;
+    return spec;
+}
+
 std::set<ShotStatus> render_entry_states(Tier tier, bool skip_draft) {
     if (tier == Tier::FINAL) {
         std::set<ShotStatus> in{ShotStatus::DRAFT_DONE,
@@ -356,12 +373,7 @@ RunReport run_episode(const ProjectStore& store,
                      0, static_cast<int>(todo.size()));
 
                 report.frames = stages::run_frames(
-                    todo, assets,
-                    // 首帧按哪个档位出，见 ModelsConfig::frame_tier。
-                    // 默认草稿档，和 Python 一样。
-                    profile.tiers.at(settings.models.frame_tier == "final"
-                                         ? Tier::FINAL
-                                         : Tier::DRAFT),
+                    todo, assets, frame_spec(profile, settings),
                     store.paths(), backends.frame, progress, tok,
                     // 同时跑几镜。**没有池就是 1**，行为和以前一样。
                     // 有池就取池的大小——这一层不知道有几张卡，

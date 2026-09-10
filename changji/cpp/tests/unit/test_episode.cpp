@@ -869,3 +869,40 @@ TEST_CASE("跳过草稿档时，成片档要收首帧刚做完的那批") {
         CHECK(d.count(models::ShotStatus::DRAFT_DONE) == 0);
     }
 }
+
+TEST_CASE("首帧的规格：默认跟成片档的画幅，但不跟 Turbo 压出来的步数") {
+    // 两条都**不报错**，只让出来的图"看着不太行"，所以钉在这儿。
+    //
+    // 1. 画幅（[video]）只盖成片档。首帧走草稿档 = 512×288 的锚点
+    //    配 704×1280 的视频，放大两倍再用。
+    // 2. 成片档的步数会被 Turbo LoRA 压到 6，但那个 LoRA 只挂在视频
+    //    模型上。首帧跟着变成 6 步裸跑就糊了。
+    models::HardwareProfile profile;
+    profile.tiers[models::Tier::DRAFT] = {models::Tier::DRAFT, 512, 288, 12};
+    profile.tiers[models::Tier::FINAL] = {models::Tier::FINAL, 704, 1280, 6};
+
+    config::Settings s;
+    REQUIRE(s.models.frame_tier == "final");   // 默认就该是成片档
+    s.models.frame_steps = 28;                 // run.cpp 压步数前存下来的
+
+    const auto spec = pipeline::frame_spec(profile, s);
+    CHECK(spec.width == 704);
+    CHECK(spec.height == 1280);
+    CHECK(spec.steps == 28);   // 不是 6
+
+    // 没存过就跟档位表里的数走
+    config::Settings bare;
+    CHECK(pipeline::frame_spec(profile, bare).steps == 6);
+
+    // 小卡上有意降到草稿档
+    config::Settings draft;
+    draft.models.frame_tier = "draft";
+    CHECK(pipeline::frame_spec(profile, draft).width == 512);
+    CHECK(pipeline::frame_spec(profile, draft).steps == 12);
+
+    // 档位表缺一档也得出得来东西，不能抛——档位表是推出来的
+    models::HardwareProfile only_draft;
+    only_draft.tiers[models::Tier::DRAFT] = {models::Tier::DRAFT, 512, 288, 12};
+    CHECK(pipeline::frame_spec(only_draft, s).width == 512);
+    CHECK(pipeline::frame_spec(models::HardwareProfile{}, s).width == 0);
+}

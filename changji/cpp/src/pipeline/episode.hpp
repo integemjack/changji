@@ -166,4 +166,19 @@ std::vector<models::Shot*> pick(models::Episode& ep,
 std::set<models::ShotStatus> render_entry_states(models::Tier tier,
                                                  bool skip_draft = false);
 
+/// 首帧该按什么规格出。
+///
+/// 两件事在这儿汇到一起，各自都**不会报错**、只会让片子"看着不太行"：
+///
+/// 1. **档位**：`[models].frame_tier`，默认 `final`。画幅（`[video]`）
+///    只盖成片档，首帧走草稿档就会拿 512×288 去配 704×1280 的视频。
+/// 2. **步数**：成片档的步数在挂了 Turbo LoRA 之后会被压到 6 步，
+///    但那个 LoRA 只挂在**视频**模型上。首帧要用挂 LoRA 之前的步数，
+///    也就是 `[models].frame_steps`（run.cpp 在压步数时顺手存下来的，
+///    用户也能自己填）。
+///
+/// 单拎出来是为了能测：这两条错了都得盯着出来的图才看得见。
+models::TierSpec frame_spec(const models::HardwareProfile& profile,
+                            const config::Settings& settings);
+
 }  // namespace changji::pipeline

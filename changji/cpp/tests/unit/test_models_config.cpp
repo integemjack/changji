@@ -348,6 +348,7 @@ TEST_CASE("模板的 [models] 那一节列出了每一个会被读的键") {
                             "tts", "tts_decoder", "weights",
                             "video_cfg", "video_flow_shift",
                             "image_cfg", "image_flow_shift", "frame_tier",
+                            "frame_steps",
                             "vram_reserve_gb", "video_high_noise",
                             "video_moe_boundary", "video_llm",
                             "video_llm_vision", "video_audio_vae",
@@ -605,9 +606,22 @@ TEST_CASE("[models]：双专家视频模型的两项") {
 
 }
 
-TEST_CASE("[models].frame_tier：默认 draft，认 final，别的拒") {
-    // 默认必须和 Python 一样（草稿档出首帧），不能因为大卡上想清楚就改默认。
-    CHECK(config::ModelsConfig{}.frame_tier == "draft");
+TEST_CASE("[models].frame_tier：默认 final，认 draft，别的拒") {
+    // **默认是 final，别改回 draft。** 曾经跟 Python 一样默认草稿档，
+    // 但画幅搬到项目上（`[video]`）之后，那个默认只盖成片档的宽高，
+    // 草稿档还停在档位表里的 512×288。默认草稿档 = 新用户什么都不配
+    // 就拿 512×288 的首帧去喂 704×1280 的视频，锚点放大两倍再用。
+    //
+    // 这条**不会报错**，出来的片子只是"看着不太行"。所以钉在这儿。
+    CHECK(config::ModelsConfig{}.frame_tier == "final");
+
+    // 变量别叫 small：Windows 的 rpcndr.h 里 `#define small char`，
+    // 报错是"Settings 后面接 char 是非法的"，指着的是下一行。
+    config::Settings tiny;
+    tiny.models.frame_tier = "draft";   // 小卡上显存不够，有意降档
+    for (const auto& e : tiny.validate()) {
+        CHECK_MESSAGE(e.find("frame_tier") == std::string::npos, e);
+    }
 
     config::Settings ok;
     ok.models.frame_tier = "final";
