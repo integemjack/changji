@@ -22,6 +22,11 @@
 import { createRouter, createWebHistory } from 'vue-router'
 
 import { shouldSetup } from '@/composables/useSetupGate'
+import {
+  clearReloadMark,
+  isChunkLoadError,
+  shouldAutoReload,
+} from './chunk-error'
 
 export const PHASES = {
   series: { title: '全剧', hint: '做一次，整部剧共用' },
@@ -162,6 +167,49 @@ router.beforeEach(async (to) => {
   return (await shouldSetup()) ? { name: 'setup' } : true
 })
 
+/**
+ * 每一页都是 `() => import(...)` 懒加载的，那就有一种必然会发生的坏法：
+ *
+ *   换了一版 → 浏览器手里还是旧的 index.html（缓存）→ 里面写的资源名
+ *   已经不在包里了 → 动态 import 失败 → **路由导航直接中止**。
+ *
+ * 中止之后什么都不渲染，用户看到的就是白屏。而 `app.config.errorHandler`
+ * **接不到这个**——它只管组件内部抛的错，导航失败不走那条路。所以不接的话
+ * 页面全白、控制台一行、界面上一个字都没有。
+ *
+ * 服务端那边已经改成「带哈希的资源找不到就回 404」并给 index.html 发
+ * no-cache（见 webapp_cache_control）。但那两条只对**之后**拿到新 html
+ * 的浏览器有效；手里已经攥着一份旧 html 的，还得靠这里整页重载一次。
+ *
+ * **重载要防死循环**：真的是资源丢了、重载也拿不回来的话，会一直刷。
+ * 用 sessionStorage 记一笔，一次会话只自动重载一次，第二次就老实报错。
+ */
+
+router.onError((err, to) => {
+  if (!isChunkLoadError(err)) {
+    // 别的导航错误照样要说出来，不能又是一片白。
+    window.dispatchEvent(
+      new CustomEvent('changji:error', {
+        detail: `打开页面失败：${err?.message || err}`,
+      }),
+    )
+    return
+  }
+  if (!shouldAutoReload(globalThis.sessionStorage)) {
+    window.dispatchEvent(
+      new CustomEvent('changji:error', {
+        detail: '页面资源加载不出来。刷新一次还是这样的话，多半是这一版没部署完整。',
+      }),
+    )
+    return
+  }
+  // 整页重载（不是 router.push）：要的就是**重新去要一份 index.html**。
+  window.location.assign(to.fullPath)
+})
+
 router.afterEach((to) => {
   document.title = to.meta?.title ? `${to.meta.title} · 场记` : '场记'
+  // 进得来就说明资源是好的，把"重载过一次"那一笔清掉——
+  // 不清的话这一会话里下次真遇到换版，就不会自动重载了。
+  clearReloadMark(globalThis.sessionStorage)
 })
