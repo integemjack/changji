@@ -19,6 +19,7 @@
 
 #pragma once
 
+#include <utility>
 #include <filesystem>
 #include <map>
 #include <optional>
@@ -42,6 +43,27 @@ inline constexpr const char* kEnvPrefix = "CHANGJI_";
 /// 调成 1280×704 跑了一集，重启之后回到 960×544，而界面上没有任何提示。
 ///
 /// 填了就以填的为准，没填的项照旧按显存推。
+/// 这部剧的画面规格。**放在项目目录的 changji.toml 里**，一部剧一份。
+///
+/// 用户要决定的是"竖屏还是横屏、720p 还是 2K"，不是"1280 还是 1440"。
+/// 宽高由这两项算出来（`models::VideoSpec::size()`），中间那层换算不该
+/// 甩给用户——填错一个不是 32 倍数的数，报错要到出图那一步才出现。
+///
+/// **为什么在项目上而不是全局**：一台机器上可以同时有竖屏短剧和横屏
+/// 片子，画幅是这部剧的属性，不是这台机器的属性。全局那份
+/// `[tiers]` 还在，作为没配项目时的回落。
+struct VideoConfig {
+    /// portrait / landscape
+    std::string orientation = "portrait";
+    /// 720p / 2k
+    std::string quality = "720p";
+
+    std::vector<std::string> validate() const;
+
+    /// 算出宽高。两边都是 32 的倍数。
+    std::pair<int, int> size() const;
+};
+
 struct TiersConfig {
     int draft_width = 0;
     int draft_height = 0;
@@ -448,6 +470,7 @@ struct WorkersConfig {
 struct Settings {
     LLMConfig llm;
     TiersConfig tiers;
+    VideoConfig video;
     TTSConfig tts;
     GateConfig gates;
     AssemblyConfig assembly;

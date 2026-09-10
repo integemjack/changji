@@ -24,6 +24,7 @@
 // paths::to_utf8 / paths::from_utf8。项目目录允许是 E:\AI短剧\ 这种路径，
 // 直接用 path.string() 或 fs::path(str) 会在 MSVC 上抛异常，见 verify/RESULTS.md。
 
+#include <utility>
 #include <filesystem>
 #include <map>
 #include <optional>

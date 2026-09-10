@@ -61,6 +61,42 @@ void check_ge(std::vector<std::string>& errs, const char* name, double v, double
 
 }  // namespace
 
+std::vector<std::string> VideoConfig::validate() const {
+    std::vector<std::string> errs;
+    if (orientation != "portrait" && orientation != "landscape") {
+        errs.push_back("video.orientation 只能是 portrait 或 landscape，现在是 " +
+                       orientation);
+    }
+    if (quality != "720p" && quality != "2k") {
+        errs.push_back("video.quality 只能是 720p 或 2k，现在是 " + quality);
+    }
+    return errs;
+}
+
+std::pair<int, int> VideoConfig::size() const {
+    // **两边都取 32 的倍数**——Wan 那一族的潜空间要求，不对齐的话
+    // 出图直接失败，而日志里指不到这儿。
+    //
+    // **所以 "720p" 的短边是 704 不是 720**：720 ÷ 32 = 22.5，除不尽。
+    // 704（= 32 × 22）是实测跑通的那个尺寸，MiniMax-H3 和 Wan 都按它出。
+    // 差的那 16 个像素在手机上看不出来，而对齐这件事是硬约束。
+    // 第一版这里写的就是 720，单元测试当场抓住了——那条用例存在的
+    // 全部意义就是这个。
+    //
+    // 2K 那两个数（1440 = 32 × 45、2560 = 32 × 80）本来就整除。
+    //
+    // **2K 一张 32 GB 的卡跑不动**：1280×704 时计算缓冲已经 19.7 GB，
+    // 2K 是它四倍像素。跑不动时由上层决定怎么办（换大卡，或者出 720p
+    // 再 `changji --upscale`）。**在这里悄悄降档是不行的**——
+    // 用户选了 2K 却拿到 720p，而且没有任何提示。
+    const bool two_k = quality == "2k";
+    const int long_side = two_k ? 2560 : 1280;
+    const int short_side = two_k ? 1440 : 704;
+    return orientation == "landscape"
+               ? std::pair<int, int>{long_side, short_side}
+               : std::pair<int, int>{short_side, long_side};
+}
+
 std::vector<std::string> TiersConfig::validate() const {
     std::vector<std::string> errs;
     // **分辨率必须是 32 的倍数**，否则 Wan 那一族的潜空间对不齐。
@@ -204,6 +240,7 @@ std::vector<std::string> Settings::validate() const {
     };
     merge(llm.validate());
     merge(tiers.validate());
+    merge(video.validate());
     merge(tts.validate());
     merge(gates.validate());
     merge(assembly.validate());
@@ -337,6 +374,10 @@ void take_path_str(const toml::table* tbl, const char* key,
 }
 
 void apply_table(const toml::table& doc, Settings& s) {
+    if (auto t = doc["video"].as_table()) {
+        take(t, "orientation", s.video.orientation);
+        take(t, "quality", s.video.quality);
+    }
     if (auto t = doc["tiers"].as_table()) {
         take(t, "draft_width", s.tiers.draft_width);
         take(t, "draft_height", s.tiers.draft_height);

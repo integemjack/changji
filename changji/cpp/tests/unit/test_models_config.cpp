@@ -674,3 +674,56 @@ TEST_CASE("[tiers]：填了以填的为准，没填按显存推") {
         CHECK(ok.validate().empty());
     }
 }
+
+TEST_CASE("[video]：横竖屏加清晰度，宽高算出来") {
+    // **用户要决定的是"竖屏还是横屏、720p 还是 2K"**，不是
+    // "1280 还是 1440、704 还是 720"。中间那层换算不该甩给用户——
+    // 填错一个不是 32 倍数的数，报错要到出图那一步才出现。
+    //
+    // 这一节放在**项目目录的 changji.toml** 里，一部剧一份：一台机器上
+    // 可以同时有竖屏短剧和横屏片子，画幅是剧的属性不是机器的属性。
+    // 不进 project.json——那份在对拍覆盖范围内，Python 没有这些字段。
+    SUBCASE("默认竖屏 720p") {
+        const config::VideoConfig v;
+        CHECK(v.orientation == "portrait");
+        CHECK(v.quality == "720p");
+        // **短边是 704 不是 720**：720 ÷ 32 除不尽，而 32 对齐是硬约束。
+        // 704 是实测跑通的那个尺寸。
+        CHECK(v.size() == std::pair<int, int>{704, 1280});
+    }
+    SUBCASE("横屏把长短边调过来") {
+        config::VideoConfig v;
+        v.orientation = "landscape";
+        CHECK(v.size() == std::pair<int, int>{1280, 704});
+        v.quality = "2k";
+        CHECK(v.size() == std::pair<int, int>{2560, 1440});
+    }
+    SUBCASE("**四种组合的宽高都得是 32 的倍数**") {
+        // Wan 那一族的潜空间要求。不对齐出图直接失败，日志里指不到这儿，
+        // 所以这条要钉死，不能靠人每次心算。
+        for (const char* o : {"portrait", "landscape"}) {
+            for (const char* q : {"720p", "2k"}) {
+                config::VideoConfig v;
+                v.orientation = o;
+                v.quality = q;
+                const auto [w, h] = v.size();
+                // CAPTURE 一个 const char* 打的是指针，看不出是哪一组
+                CAPTURE(std::string(o));
+                CAPTURE(std::string(q));
+                CHECK(w % 32 == 0);
+                CHECK(h % 32 == 0);
+            }
+        }
+    }
+    SUBCASE("认不出的取值要拒，别悄悄当默认") {
+        for (const auto& [field, bad] :
+             std::vector<std::pair<std::string, std::string>>{
+                 {"orientation", "竖"}, {"quality", "1080p"}}) {
+            config::VideoConfig v;
+            (field == "orientation" ? v.orientation : v.quality) = bad;
+            CAPTURE(field);
+            CAPTURE(bad);
+            CHECK_FALSE(v.validate().empty());
+        }
+    }
+}

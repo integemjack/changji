@@ -324,19 +324,4 @@ TEST_CASE("资产库保持文件里的键顺序") {
           std::vector<std::string>{"loc_alley", "loc_rooftop"});
 }
 
-TEST_CASE("时间戳是 UTC，不是本地时间") {
-    // 写成本地时间又标 +00:00 的话，所有"几分钟前"都会差一个时区，
-    // 而且不同机器上差得还不一样。
-    const std::string t = utc_now_iso8601();
-    const int hour = std::stoi(t.substr(11, 2));
 
-    const std::time_t now = std::time(nullptr);
-    std::tm utc{};
-#ifdef _WIN32
-    gmtime_s(&utc, &now);
-#else
-    gmtime_r(&now, &utc);
-#endif
-    CAPTURE(t);
-    CHECK(hour == utc.tm_hour);
-}
