@@ -612,16 +612,29 @@ void run(const config::Settings& settings, const Options& opts) {
                 // **实测占用也给出来。** 估算和真实差得离谱（video 那一路
                 // 算 14.6 GB、实测 74 GB），界面上只显示估算会误导人。
                 // 量到之前是 null——那时候调度器走的也正是保守估算。
-                const auto measured = [](infer::Slot sl) {
-                    const std::size_t b = infer::scheduler().measured_vram(sl);
-                    return b == 0 ? json(nullptr)
-                                  : json(static_cast<double>(b) /
-                                         (1024.0 * 1024 * 1024));
+                const auto all = infer::scheduler().all_measured();
+                const auto measured = [&all](infer::Slot sl) {
+                    const auto it = all.find(sl);
+                    return (it == all.end() || it->second.bytes == 0)
+                               ? json(nullptr)
+                               : json(static_cast<double>(it->second.bytes) /
+                                      (1024.0 * 1024 * 1024));
+                };
+                // **量的是多大的活也要给出来。** 光给一个"实测 74.6 GB"
+                // 是没法判断的：那个数只在"活不比当时大"时才算数，
+                // 而画幅档位差七倍多。见 Scheduler::record_measured_vram。
+                const auto measured_work = [&all](infer::Slot sl) {
+                    const auto it = all.find(sl);
+                    return (it == all.end() || it->second.work == 0)
+                               ? json(nullptr)
+                               : json(static_cast<double>(it->second.work));
                 };
                 json vid = pack(config::video_placement(ex));
                 json img = pack(config::image_placement(ex));
                 vid["measuredVramGb"] = measured(infer::Slot::Video);
                 img["measuredVramGb"] = measured(infer::Slot::Image);
+                vid["measuredWork"] = measured_work(infer::Slot::Video);
+                img["measuredWork"] = measured_work(infer::Slot::Image);
                 // **最近一次"要不要腾地方"的判断，原样露出来。**
                 // 这个判断错了的表现是"该留的时候卸了"（慢）或者"该卸的
                 // 时候没卸"（CUDA OOM 把整个服务带走），而以前只能登上

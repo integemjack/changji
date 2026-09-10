@@ -207,7 +207,21 @@ const placementRows = computed(() => {
   return [
     { key: 'image', label: '出首帧', ...(p.image ?? {}) },
     { key: 'video', label: '出片', ...(p.video ?? {}) },
-  ].filter((r) => r.weights !== undefined)
+  ]
+    .filter((r) => r.weights !== undefined)
+    .map((r) => ({
+      ...r,
+      // **实测值以前后端算了、发了，界面上却没显示。** 只显示估算是误导：
+      // 出片这一路估 14.6 GB、实测 74 GB，差五倍，而"够就不清理"判的是
+      // 实测那个数。摆出来，估算和实测差多少一眼看得见。
+      measured: typeof r.measuredVramGb === 'number' ? r.measuredVramGb : null,
+      // 量的是多大的活（像素 × 帧数）。这个数只在"活不比当时大"时才算数，
+      // 而画幅档位从 0.5 MP 到 3.7 MP 差七倍多——所以不能只报字节数。
+      measuredWorkMp:
+        typeof r.measuredWork === 'number' && r.measuredWork > 0
+          ? Math.round(r.measuredWork / 1e6)
+          : null,
+    }))
 })
 
 /**
@@ -446,8 +460,11 @@ function scrollTo(id) {
                     {{ row.resident ? '常驻显存' : '权重放内存' }}
                   </span>
                   <template v-if="row.modelGb > 0">
-                    模型 {{ row.modelGb.toFixed(1) }} GB，跑起来约占
-                    {{ row.liveVramGb.toFixed(1) }} GB
+                    模型 {{ row.modelGb.toFixed(1) }} GB，估计占
+                    {{ row.liveVramGb.toFixed(1) }} GB<template v-if="row.measured !== null">，
+                    <strong>实测 {{ row.measured.toFixed(1) }} GB</strong><template
+                      v-if="row.measuredWorkMp !== null"
+                    >（在 {{ row.measuredWorkMp }} MP·帧 那么大的活上量的）</template></template>
                   </template>
                   <template v-else>（模型没配或读不到文件）</template>
                 </div>
@@ -456,6 +473,10 @@ function scrollTo(id) {
                 按这张卡的显存和模型文件大小算出来的。
                 <strong>权重放内存不等于出了问题</strong>——装不下时放内存反而更快，
                 显卡腾出来的地方全给了计算。
+                <strong>「够就不清理」判的是实测那个数</strong>，估算只在还没量过时顶一下；
+                实测和估算差得远是正常的（出片这一路估 14.6 GB、实测过 74 GB）。
+                「MP·帧」是画幅乘帧数——换更大的画幅要重新量，在小画幅量到的数
+                不会拿去给大画幅背书。
               </span>
             </div>
             <!-- 最近一次腾地方的判断。没发生过就不显示——刚起服务时
