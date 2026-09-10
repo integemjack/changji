@@ -1069,10 +1069,25 @@ void register_sd_slots(SettingsProvider raw_provider,
         spec.slot = Slot::Video;
         spec.residency = Residency::Cached;
         spec.vram_estimate = estimate;
-        spec.live_vram = [provider, live_bytes] {
-            const config::Settings s = provider();
-            return live_bytes(config::video_placement(s).live_vram_gb);
-        };
+        // **出片这个槽故意不给 live_vram。**
+        //
+        // 别的槽给了估算，是因为那个估算被实测对上过：图像走 "cpu" 那一路
+        // 算 10.6 GB、实测也是 10.6；大模型 9 GB 的文件算 15.25、实测 15.4。
+        // 出片这一路两条分支都被实测**推翻**过，而且是往小了错：
+        //   weights="cpu"    算 14.6 GB，实测 74 GB
+        //   weights="te=cpu" 算 81.8 GB，实际超过 95.6 GB，当场 CUDA OOM
+        // 原因写在 Scheduler::record_measured_vram 上面：权重放不放显存
+        // 决定不了占用，ggml 照样按层往显存搬、分配器还留着大池子，
+        // 而这些随模型大小、画幅、帧数剧烈变化。
+        //
+        // 拿一个往小了错五倍的数去判"够，不卸"，下一步就是 CUDA OOM——
+        // 走 GGML_ASSERT 直接 abort()，整个服务没了。不给这个数，
+        // 没量过时就退回整份预算那条保守路：第一镜该卸就卸（慢几十秒），
+        // 跑完这一镜就量到了，之后每一镜都按真数判。这正是
+        // scheduler.hpp 上写的那句"没量到之前一律走保守那条"。
+        //
+        // 估算本身没删——设置页还照样显示它，和实测值并排摆着，
+        // 差多少一眼看得见。只是不再拿它去做驱逐判断。
         spec.evict_priority = 9;
         spec.load = [provider, budget_for] {
             const config::Settings s = provider();
