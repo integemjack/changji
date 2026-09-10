@@ -366,21 +366,25 @@ async function clearRef(charId, slot) {
                       猜的性别：{{ c.voice_gender === 'female' ? '女' : '男' }}
                     </span>
                   </span>
-                  <select v-model="edits[c.char_id].voice_id" class="select">
-                    <option :value="null">自动挑（按性别和中文样本）</option>
-                    <option v-for="v in voices" :key="v" :value="v">{{ v }}</option>
-                  </select>
+                  <!-- **是输入框不是下拉框。** 拆掉 ComfyUI 之后音色不再是
+                       服务端的一份清单：进程内配音要的是一段参考音频的路径，
+                       外部服务要的是那个服务认的音色名。两种都得能手填——
+                       留成下拉框的话，列表永远是空的，用户**根本填不进去**。
+                       服务端真给了清单（将来某个后端支持）就走 datalist。 -->
+                  <input
+                    v-model="edits[c.char_id].voice_id"
+                    class="input mono"
+                    :list="voices.length ? 'voices-' + c.char_id : undefined"
+                    placeholder="留空 = 自动挑（按性别和中文样本）"
+                  />
+                  <datalist v-if="voices.length" :id="'voices-' + c.char_id">
+                    <option v-for="v in voices" :key="v" :value="v" />
+                  </datalist>
                   <span v-if="voicesLoading" class="field__hint">
                     正在问有哪些音色…
                   </span>
-                  <span v-else-if="voicesError" class="field__error">
-                    {{ voicesError }}
-                  </span>
-                  <span v-else-if="!voices.length" class="field__hint">
-                    没问到音色。留「自动挑」也能跑，配音时按性别和中文样本挑。
-                  </span>
                   <span v-else class="field__hint">
-                    音色来自参考音频：填一段人声片段的路径，模型照着它念。
+                    {{ voicesError || '留空也能跑，配音时按性别和中文样本挑。' }}
                   </span>
                 </label>
 
