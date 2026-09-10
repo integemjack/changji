@@ -1021,26 +1021,36 @@ void run(const config::Settings& settings, const Options& opts) {
     // 进度消息由 job 表通过上面那个 sink 推过来。
     // 前端可以只连 WebSocket，也可以继续轮询 /api/run——两条路并存，
     // WebSocket 断了退回轮询就行，任务本身不受影响。
+    //
+    // **两个地址是同一条路**，见 kWsRoutes 里为什么。
+    const auto on_open = [](crow::websocket::connection& conn) {
+        ws::hub().add(&conn);
+        conn.send_text(json{{"type", "hello"},
+                            {"service", "changji"}}.dump());
+    };
+    // 形参个数跟 Crow 版本走：1.2.0 是 (connection&, reason)，更新的版本
+    // 多一个 uint16_t 关闭码。升级 Crow 时这里会编译报错，那是好事——
+    // 静默的签名不匹配会让 onclose 根本不被调用，连接泄漏在注册表里，
+    // 直到某次广播向已析构的对象发送才崩。
+    const auto on_close = [](crow::websocket::connection& conn,
+                             const std::string& /*reason*/) {
+        ws::hub().remove(&conn);
+    };
+    const auto on_message = [](crow::websocket::connection& conn,
+                               const std::string& data, bool is_binary) {
+        if (is_binary) return;  // 上行没有二进制消息，忽略
+        ws::hub().handle_client_message(&conn, data);
+    };
 
     CROW_WEBSOCKET_ROUTE(app, "/ws")
-        .onopen([](crow::websocket::connection& conn) {
-            ws::hub().add(&conn);
-            conn.send_text(json{{"type", "hello"},
-                                {"service", "changji"}}.dump());
-        })
-        .onclose([](crow::websocket::connection& conn,
-                    const std::string& /*reason*/) {
-            // 形参个数跟 Crow 版本走：1.2.0 是 (connection&, reason)，
-            // 更新的版本多一个 uint16_t 关闭码。升级 Crow 时这里会编译报错，
-            // 那是好事——静默的签名不匹配会让 onclose 根本不被调用，
-            // 连接泄漏在注册表里，直到某次广播向已析构的对象发送才崩。
-            ws::hub().remove(&conn);
-        })
-        .onmessage([](crow::websocket::connection& conn,
-                      const std::string& data, bool is_binary) {
-            if (is_binary) return;  // 上行没有二进制消息，忽略
-            ws::hub().handle_client_message(&conn, data);
-        });
+        .onopen(on_open)
+        .onclose(on_close)
+        .onmessage(on_message);
+
+    CROW_WEBSOCKET_ROUTE(app, "/api/ws")
+        .onopen(on_open)
+        .onclose(on_close)
+        .onmessage(on_message);
 
     CROW_LOG_INFO << "changji 监听 " << opts.host << ":" << opts.port;
 

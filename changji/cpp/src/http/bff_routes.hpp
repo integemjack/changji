@@ -40,4 +40,25 @@ inline constexpr std::string_view kBffRoutes[] = {
     "/bff/publish/batch",
 };
 
+/// 这个二进制上能连 WebSocket 的地址。
+///
+/// **为什么有两个。** 引擎自己一直是 `/ws`。而前端拼的是 `/api/ws`——
+/// 它原来跑在 Node 那层后面，那层把 `/api/*` 整个转给引擎，`/api/ws`
+/// 落到引擎就成了 `/ws`。webapp 嵌进二进制之后转发那一层没了，前端
+/// 连的地址就再也没人应答。
+///
+/// **症状不是"没有进度"，而是"进度看着是对的、只有单镜那一块不动"。**
+/// 连不上时 run store 会退回 1.2 秒一次的轮询，顶上的总进度、阶段名、
+/// 事件流全都照常走；只有镜头墙上每张牌的进度和状态是**只**吃 WebSocket
+/// 的（`trackInflight`）。于是表现是：点了「重新生成」，那一格没有任何
+/// 反应，而页面别处一切正常。
+///
+/// 两个地址都留着：`/ws` 是引擎自己的，对拍那套 WebSocket 验收连的是它；
+/// `/api/ws` 是前端连的。**在 server.cpp 里加一个 WS 地址时这里也要加**——
+/// 下面那条测试拿打包进来的前端代码里出现的 ws 地址来核对这份清单。
+inline constexpr std::string_view kWsRoutes[] = {
+    "/ws",
+    "/api/ws",
+};
+
 }  // namespace changji::http

@@ -134,3 +134,54 @@ TEST_CASE("webapp 要的每一条 /bff 接口，C++ 这边都得有") {
         CHECK(have);
     }
 }
+TEST_CASE("webapp 连的那个 WebSocket 地址，C++ 这边得有") {
+    // **同 /bff 那条，同一个形状，又栽了一次。**
+    //
+    // 引擎自己一直是 /ws，而前端拼的是 /api/ws——它原来跑在 Node 那层
+    // 后面，那层把 /api/* 整个转给引擎。webapp 嵌进二进制之后转发没了，
+    // 前端连的地址 404。
+    //
+    // **这次的症状特别难往这儿想**：连不上时 run store 退回 1.2 秒轮询，
+    // 顶上的总进度、阶段名、事件流全都照常走。只有镜头墙上每张牌的进度
+    // 和状态是**只**吃 WebSocket 的。于是用户点了「重新生成」，那一格
+    // 一动不动，而页面别处一切正常——看着像那一格坏了。
+    std::set<std::string> wanted;
+    for (const auto& [name, content] : http::kBundledWebappChunks) {
+        const std::string body(content);
+        // 前端拼的是 `${proto}//${host}/api/ws`，打包之后那一段字面量
+        // 就是 "/api/ws"。按同样的办法找出所有 ws 结尾的路径。
+        for (std::size_t i = body.find("/ws"); i != std::string::npos;
+             i = body.find("/ws", i + 1)) {
+            // 往前吃到路径开头（可能是 /api/ws 这种带前缀的）
+            std::size_t b = i;
+            while (b > 0) {
+                const char c = body[b - 1];
+                if (std::isalnum(static_cast<unsigned char>(c)) != 0 ||
+                    c == '/' || c == '_' || c == '-') {
+                    --b;
+                } else {
+                    break;
+                }
+            }
+            // 后面紧跟字母数字的不算（比如 "/wsdl"、"/ws_foo"）
+            const std::size_t after = i + 3;
+            if (after < body.size() &&
+                (std::isalnum(static_cast<unsigned char>(body[after])) != 0 ||
+                 body[after] == '_' || body[after] == '-')) {
+                continue;
+            }
+            const std::string path = body.substr(b, after - b);
+            if (!path.empty() && path[0] == '/') wanted.insert(path);
+        }
+    }
+    REQUIRE_MESSAGE(!wanted.empty(),
+                    "打包进来的前端里一个 ws 地址都没找到，这个用例失效了");
+
+    for (const auto& path : wanted) {
+        CAPTURE(path);
+        const bool have =
+            std::find(std::begin(http::kWsRoutes), std::end(http::kWsRoutes),
+                      std::string_view(path)) != std::end(http::kWsRoutes);
+        CHECK(have);
+    }
+}

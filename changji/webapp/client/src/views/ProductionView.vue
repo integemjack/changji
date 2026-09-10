@@ -70,6 +70,31 @@ const inflightBy = computed(() => {
   return m
 })
 
+/**
+ * 刚点过「重新生成」、但引擎还没报出第一条进度的那几镜。
+ *
+ * **点下去到第一条进度之间能隔一分钟**——那段时间引擎在载模型，
+ * 一个字都不会报。这期间牌子上显示的还是上一轮的"成片完成"：
+ * 用户点了按钮，画面一动不动，只能再点一次。
+ *
+ * 进：点「重新生成」并且接口回了 started。
+ * 出：这一镜的第一条进度到了（换成真进度），或者整轮跑完了。
+ */
+const queued = ref(new Set())
+
+/** 这一镜正在被处理——不管是引擎已经报了进度，还是刚点完还在等。 */
+function busy(shotId) {
+  return Boolean(inflightBy.value[shotId]) || queued.value.has(shotId)
+}
+
+// 引擎开始报这一镜了，"排队中"就该让位给真进度。
+watch(inflightBy, (now) => {
+  if (!queued.value.size) return
+  const next = new Set(queued.value)
+  for (const id of Object.keys(now)) next.delete(id)
+  if (next.size !== queued.value.size) queued.value = next
+})
+
 async function loadShots() {
   if (!session.projectPath || !session.episodeId) {
     shots.value = []
@@ -138,6 +163,9 @@ watch(
   (now, before) => {
     if (before && !now) {
       loadShots()
+      // 跑完了就没有"排队中"了。不清的话那几格会一直挂着，
+      // 而它们其实已经跑完（或者失败）了。
+      queued.value = new Set()
       // 刚跑完，磁盘上那几个 mp4 换过了但路径没变。见 bust 的注释。
       bust.value += 1
       session.refresh()
@@ -171,7 +199,11 @@ async function start(ids = []) {
       }),
     { key: one ? `re:${ids[0]}` : 'start' },
   )
-  if (started) runStore.start()
+  if (!started) return
+  // **先把牌子点亮，别等引擎。** 见 queued 的注释：载模型那一分钟里
+  // 引擎一个字都不报，不先点亮的话用户看到的是"点了没反应"。
+  if (one) queued.value = new Set([...queued.value, ...ids])
+  runStore.start()
 }
 
 /**
@@ -278,7 +310,7 @@ async function stop() {
         class="shot"
         :class="[
           `shot--${statusOf(s.status).tone}`,
-          { 'shot--live': inflightBy[s.shot_id] },
+          { 'shot--live': busy(s.shot_id) },
         ]"
       >
         <div class="shot__frame">
@@ -311,7 +343,7 @@ async function stop() {
 
           <!-- **进度画在镜头上。** 这一镜跑到哪了，看它自己就够，
                不用去别处对。 -->
-          <span v-if="inflightBy[s.shot_id]" class="shot__live">
+          <span v-if="busy(s.shot_id)" class="shot__live">
             <!-- **用 shotStep 不是 step。** step/total 是整集的位置
                  （第 21 镜 / 共 22 镜）——拿它画单镜的条，正在跑的那一镜
                  一出现就是 95%，六步走完还是 95%。一条不动而且是错的
@@ -329,18 +361,23 @@ async function stop() {
 
         <div class="shot__bottom">
           <span class="shot__no numeric">{{ s.order + 1 }}</span>
+          <!-- 说明也跟着走：正在跑就报阶段，刚点完还没轮到就说"排队中"。
+               不这么分的话，那一分钟里显示的是上一轮的"成片完成"——
+               和"没点上"看起来一模一样。 -->
           <span class="shot__state tiny">
             {{
               inflightBy[s.shot_id]
                 ? STAGE_LABELS[inflightBy[s.shot_id].stage] || inflightBy[s.shot_id].stage
-                : statusOf(s.status).label
+                : queued.has(s.shot_id)
+                  ? '排队中'
+                  : statusOf(s.status).label
             }}
           </span>
           <span class="spacer" />
           <button
             class="iconbtn"
             type="button"
-            title="重新生成这一镜"
+            :title="busy(s.shot_id) ? '这一镜正在跑' : '重新生成这一镜'"
             :disabled="runStore.running || isBusy(`re:${s.shot_id}`)"
             @click="start([s.shot_id])"
           >
