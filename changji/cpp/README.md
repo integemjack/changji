@@ -1,12 +1,23 @@
-# changji C++ 后端
+# changji 引擎
 
-场记引擎的 C++ 实现。目标是**一个二进制**：接口、编排、推理全在进程内，
-不依赖 Python 解释器。方案见 [../docs/C++重构方案.md](../docs/C++重构方案.md)。
+场记引擎。**一个二进制**：界面、接口、编排、推理全在进程内。
+方案见 [../docs/C++重构方案.md](../docs/C++重构方案.md)。
 
-迁移期间它和 Python 引擎并存，靠**对拍**（`tools/duiping.ps1`）保证两边
-行为一致。删掉 Python 是阶段 8 的事，闸门见方案里「阶段 8 的清单」。
+迁移期间它和一份 Python 引擎并存，靠**对拍**逐条比响应保证两边一致。
+阶段 8 之后 Python 那一侧连同对拍工具一起删了——留下的安全网是
+`tests/golden/` 里那批 JSON：当年由 Python 侧真实函数导出，现在冻在
+版本库里，单元测试直接读文件。所以"C++ 有没有改坏"仍然测得出来，
+测不出来的是"Python 现在还是不是这样"，而那个问题已经没有意义了。
 
 ## 构建
+
+要 CMake ≥ 3.20 和一个 C++17 编译器。Linux/macOS 上装好 cmake、ninja、
+git 就能编；发布用的六个平台由
+[.github/workflows/release.yml](../../.github/workflows/release.yml) 编。
+
+**开了 `CHANGJI_LLAMA` 还要一个 Python 解释器**——llama.cpp 拉下来要就地
+打 leejet 的扩展补丁，配置期找不到解释器会当场停。这是构建期依赖，
+跑的时候不需要。
 
 Windows 上是 **MSVC 2022 Build Tools + Ninja**。先进 MSVC 的环境：
 
@@ -30,8 +41,9 @@ cmake --build build
 | `CHANGJI_SD` | ON | 链 stable-diffusion.cpp，进程内出图出片 |
 | `CHANGJI_SD_CUDA` | OFF | sd.cpp 走 CUDA。要 CUDA Toolkit，而且 MSBuild 查的是**版本化**的 `CUDA_PATH_V13_3` 而不是 `CUDA_PATH`，两个都要在进程环境里 |
 | `CHANGJI_LLAMA` | OFF | 链 llama.cpp + mtmd，**进程内配音**（阶段 9）。开着会让干净构建多编一份 llama.cpp 和一份打过补丁的 ggml |
-| `CHANGJI_BUILD_TESTS` | ON | 编 `changji_tests.exe` 和对拍工具 |
-| `CHANGJI_STATIC_RUNTIME` | ON | 静态链运行时。"零运行时依赖"是这个后端存在的理由之一 |
+| `CHANGJI_BUILD_TESTS` | ON | 编 `changji_tests.exe` |
+| `CHANGJI_STATIC_RUNTIME` | ON | 静态链运行时。"零运行时依赖"是这个后端存在的理由之一。**macOS 上自动忽略**——Apple 的工具链没有静态 libc++ |
+| `CHANGJI_VERSION` | `dev` | 写进二进制的版本号，`--version` 打印它。发布时由 CI 填 git tag |
 
 开 `CHANGJI_LLAMA` 时 ggml 由 llama.cpp 提供，并且**就地打上 leejet 的扩展
 补丁**（`patches/apply_to_llamacpp.py`，接在 FetchContent 的 `PATCH_COMMAND`
@@ -44,9 +56,10 @@ matmul），调用点没有 `#ifdef` 守卫。来龙去脉见
 ## 运行
 
 ```bash
+./build/changji.exe --version      # 手上这个是哪一版
 ./build/changji.exe --doctor       # 命令行体检，退出码非 0 表示有必须解决的项
 ./build/changji.exe --init-config  # 生成带注释的配置模板
-./build/changji.exe --port 8080    # 起服务
+./build/changji.exe --port 8080    # 起服务，前端嵌在二进制里，直接开浏览器
 ```
 
 进程内配音（要 `CHANGJI_LLAMA=ON` 的二进制）：
@@ -71,7 +84,7 @@ matmul），调用点没有 `#ifdef` 守卫。来龙去脉见
 
 ## 测试
 
-一条命令把全部六样跑完（在 `changji/` 下）：
+一条命令把全部四样跑完（在 `changji/` 下）：
 
 ```bash
 powershell -ExecutionPolicy Bypass -File verify_all.ps1
@@ -80,28 +93,19 @@ powershell -ExecutionPolicy Bypass -File verify_all.ps1 -Quick   # 跳过 llama 
 
 它替你做了两件容易出错的事：**进 MSVC 环境**（忘了的话报的是
 `fatal error C1083: 无法打开包括文件: "algorithm"`，看着像代码问题），
-以及**检查对拍的条数**——"不同 0"出自 20 条和出自 165 条完全是两回事。
+以及**检查用例条数**——退出码为 0 只说明"跑到的都过了"，
+有测试文件没编进 CMakeLists 的话剩下的照样全绿。
 
 也可以分开跑：
 
 ```bash
-./build/changji_tests.exe                                    # 437 条单元测试
-powershell -ExecutionPolicy Bypass -File tools\duiping.ps1   # 对拍（会自己起四个进程）
-powershell ... -File tools\duiping.ps1 -CppExe build_llama\changji.exe
-powershell ... -File tools\duiping.ps1 -Case 改台词 -ShowRequests
+./build/changji_tests.exe            # 单元测试
+ctest --test-dir build               # 一样的东西，走 ctest
 ```
 
-对拍一条命令起齐四个进程（Python 后端、C++ 后端、两个假大模型），跑完收干净。
-**两个假模型不共用**：`/api/plan` 一次要问模型两遍，共用队列会永远错位一条。
-
-九层覆盖：数据层往返、录制 GET、实时 GET、写接口、编辑接口、上传（multipart）、
-`/api/media` 的 Range、LLM 阶段（**逐字节比提示词**）、推理层。
-当前 **165 条一致、0 条不同、跳过 0 条**。
-
-「跳过」是零，这是专门去挣的：一条跳过的用例和一条通过的用例在总数里长得
-一样，但前者什么都没保证。三处有意的偏差（`GET /`、多区间 Range、
-Python 的 StoryboardError 穿透 bug）都是**验**而不是跳过——既验 Python 还是
-那个样子，也验 C++ 确实回了想要的。
+**语料读不到会当成失败，不是跳过。** 一条跳过的用例和一条通过的用例在总数里
+长得一样，但前者什么都没保证——`CHANGJI_GOLDEN_DIR` 指偏了的时候，
+那批读语料的用例会静静地什么都不验。
 
 ## 目录
 
@@ -115,7 +119,8 @@ src/
 ├── llm/            OpenAI 兼容客户端
 ├── stages/         剧本、圣经、分镜、提示词、首帧、渲染、配音
 ├── infer/          sd.cpp 门面、显存调度、ggml ABI 探针、进程内配音
-├── comfy/          ComfyUI 可选后端（工作流转换、客户端、WebSocket）
+├── net/            通用 WebSocket 客户端
+├── setup/          首次运行那一页：模型清单、下载源、下载器
 ├── media/          ffmpeg、字幕、装配
 ├── gates/          质量闸门
 ├── pipeline/       job 表与整集流水线
@@ -123,26 +128,24 @@ src/
 
 tests/
 ├── unit/           单元测试，读 tests/golden/ 里的语料
-├── compat/         对拍工具（changji_compat.exe）
-├── golden/         28 份金语料，由 Python 侧导出，**进版本库**
-└── export_*.py     语料导出脚本（import Python 引擎）
+└── golden/         金语料，当年由 Python 侧导出，**冻在版本库里**
 
-tools/              对拍与语料生成的脚手架
+tools/              codegen（前端、东亚字宽）与假大模型
 patches/            leejet/ggml 扩展补丁集 + 自动应用脚本
 verify/             前置验证工程（一次性，结论在 RESULTS.md）
 ```
 
 ## 现在到哪儿了
 
-阶段 0–7 代码完成，阶段 9 的链路也通了（编译、链接、自检），
-**但推理那部分一次都没真跑过**——这台机器上没有模型、没有 ffmpeg。
+阶段 0–9 走完了。进程内配音真出过声，进程内大模型在 5090 上跑通过，
+显存驱逐验过；**阶段 8 已经执行——Python 引擎、对拍工具、以及那 27 个
+import 引擎的脚本全删了**，只剩这一个二进制加一层可选的 Node BFF。
 
-| 还差 | 需要 |
+| 还没验透 | |
 |---|---|
-| 配音真出声 | Qwen3-TTS 权重（`download_tts_gguf.ps1`，1.34 GB），或者起一个 ComfyUI |
-| 首帧 / 视频 / 成片 | Wan 2.2 权重（约 11.3 GB）+ ffmpeg |
-| 阶段 8 删 Python | 以上跑通之后。**那是单向门**，见方案里「阶段 8 的清单」 |
+| 真出图、真成片 | 装配那一半验过，画面是占位的。这两样恰恰是重构最难、而且现在再也没有参照物的部分 |
+| macOS / arm64 | 由 CI 编出来了，但没有在真机上跑过一整集 |
 
-契约兼容的标准是**字段名、嵌套结构、取值、状态码一致，key 顺序不管**；
+契约兼容当初的标准是**字段名、嵌套结构、取值、状态码一致，key 顺序不管**；
 **提示词的拼接要逐字节一致**；校验错误的**文字**不算契约。
-破契约项重审之后只剩 `GET /` 一条，不影响前端。
+这些标准现在只对着 `tests/golden/` 里那批冻住的语料成立。

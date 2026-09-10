@@ -32,13 +32,14 @@ json load_golden(const std::string& name) {
     const std::string path = std::string(CHANGJI_GOLDEN_DIR) + "/" + name + ".json";
     std::ifstream in(path, std::ios::binary);
     REQUIRE_MESSAGE(in.good(), "读不到语料 " << path
-                    << "（先跑 cpp/tests/export_golden.py）");
+                    << "（语料在版本库里，Python 引擎删掉之后不再重新生成）");
     json j;
     in >> j;
     return j;
 }
 
-/// Python 建出来的那个项目目录。名字带中文是测试的一部分。
+/// 当年 Python 建出来、随后冻进版本库的那个项目目录。
+/// 名字带中文是测试的一部分。
 fs::path golden_project_root(const json& exp) {
     return changji::paths::from_utf8(std::string(CHANGJI_GOLDEN_DIR)) /
            changji::paths::from_utf8(exp.at("root_name").get<std::string>());
@@ -51,7 +52,7 @@ TEST_CASE("读 Python 写的项目：中文目录名、中文内容") {
     const fs::path root = golden_project_root(exp);
 
     REQUIRE_MESSAGE(fs::exists(root),
-                    "项目目录不存在，先跑 export_golden.py");
+                    "项目目录不存在——它在版本库里，检查一下检出是否完整");
 
     const ProjectStore store(root);
     REQUIRE(store.exists());

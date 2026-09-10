@@ -1,0 +1,330 @@
+# 编全平台全架构，然后发到 Release。
+#
+# 打个 tag 就出六个包：
+#
+#     git tag v1.2.0 && git push origin v1.2.0
+#
+# 手动跑（workflow_dispatch）也编这六个，但**不发布**——产物留在
+# Actions 的 artifacts 里，想验一版能不能编得过时用这个。
+#
+# 六个格子的对应关系：
+#
+#   linux-x64     ubuntu-22.04       用 22.04 不用 24.04：glibc 2.35 而不是 2.39，
+#                                    编出来的二进制往老一点的发行版上拷得动
+#   linux-arm64   ubuntu-22.04-arm   同上。树莓派、ARM 服务器、Apple 上的 Linux 虚拟机
+#   macos-arm64   macos-15
+#   macos-x64     macos-15-intel     Intel Mac。macos-13 那批已经退役
+#   windows-x64   windows-2022
+#   windows-arm64 windows-11-arm     原生 arm64 跑 MSVC，不是交叉编译
+#
+# 换 runner 标签就改矩阵里那一行，别的地方不用动。
+
+name: 发布
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+# 同一个 ref 上新推一次就把上一次没跑完的取消掉。tag 上一般只跑一次，
+# 这条主要是给手动重跑用的。
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # tag 触发时是 v1.2.0 这样的版本号，手动跑时是短 sha。
+  # 写进二进制，`changji --version` 打印它——报故障时第一句话就是这个。
+  CHANGJI_VERSION: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || format('dev-{0}', github.sha) }}
+
+jobs:
+  # ---- 前端 ----
+  #
+  # **前端只编一次，六个格子共用。**
+  #
+  # 打包好的 dist 是嵌进二进制的（cpp/src/http/bundled_webapp.inc.hpp），
+  # 那个文件进了版本库，所以不重新生成也编得过——**但那样发出去的界面
+  # 可能是上一次有人记得跑 gen_webapp.py 时的样子**。表现是"打开是旧界面"，
+  # 而版本号、接口、二进制全是新的，没有任何地方会报错。
+  #
+  # 所以这里重新 build 一次再嵌，产物当 artifact 传给六个构建格子。
+  webapp:
+    name: 前端（打包 + 嵌进头文件）
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: changji/webapp/package-lock.json
+
+      - name: 装依赖
+        working-directory: changji/webapp
+        run: npm ci
+
+      # 前端的测试放在这儿跑：它是唯一会碰前端的格子，而且比六个 C++
+      # 构建快得多——前端坏了不该等半小时才知道。
+      - name: 测试
+        working-directory: changji/webapp
+        run: npm test
+
+      # client 的 build 脚本是 `eslint src && vite build`，lint 不过就不出包。
+      - name: 打包
+        working-directory: changji/webapp
+        run: npm run build
+
+      - name: 嵌进头文件
+        run: python3 changji/cpp/tools/gen_webapp.py
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bundled-webapp
+          path: changji/cpp/src/http/bundled_webapp.inc.hpp
+          retention-days: 1
+
+  # ---- 单元测试 ----
+  #
+  # **不链 sd.cpp / llama.cpp**：这一档要的是快，几分钟出结论。
+  # 那两个库编一次几十分钟，而单元测试目标本来就不链它们
+  # （测的是没编进来时的那一支存根）。
+  #
+  # 两个平台都跑：路径那一层按平台分支，`user_dirs.json` 里
+  # macos / linux / windows 各存一份，只在 Linux 上跑的话 macOS 那份
+  # 永远没人验。Windows 那格由下面的构建覆盖（编得过就说明没写坏）。
+  test:
+    name: 单元测试 (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 装 ninja
+        run: |
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            sudo apt-get update && sudo apt-get install -y ninja-build
+          else
+            brew install ninja
+          fi
+
+      - name: 配置
+        run: |
+          cmake -S changji/cpp -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCHANGJI_SD=OFF \
+            -DCHANGJI_LLAMA=OFF \
+            -DCHANGJI_BUILD_TESTS=ON
+
+      - name: 编
+        run: cmake --build build --target changji_tests --parallel
+
+      - name: 跑
+        run: ctest --test-dir build --output-on-failure
+
+  # ---- 六个平台 ----
+  build:
+    name: 编 ${{ matrix.target }}
+    needs: [webapp, test]
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      # 一格挂掉不连累别的格子：六个平台各有各的坑，一次看全比修一个
+      # 再等一轮省事。
+      fail-fast: false
+      matrix:
+        include:
+          - target: linux-x64
+            runner: ubuntu-22.04
+          - target: linux-arm64
+            runner: ubuntu-22.04-arm
+          - target: macos-arm64
+            runner: macos-15
+          - target: macos-x64
+            runner: macos-15-intel
+          - target: windows-x64
+            runner: windows-2022
+            arch: x64
+          - target: windows-arm64
+            runner: windows-11-arm
+            arch: ARM64
+    steps:
+      - uses: actions/checkout@v4
+
+      # CHANGJI_LLAMA=ON 要一个 Python：llama.cpp 拉下来要就地打 leejet 的
+      # 扩展补丁（patches/apply_to_llamacpp.py），配置期找不到解释器会当场停。
+      # 各个 runner 自带的 python 版本不一样，钉一个免得哪天镜像换了才发现。
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: bundled-webapp
+          path: changji/cpp/src/http/
+
+      - name: 装 ninja（Unix）
+        if: runner.os != 'Windows'
+        run: |
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            sudo apt-get update && sudo apt-get install -y ninja-build
+          else
+            brew install ninja
+          fi
+
+      # **GGML_NATIVE=OFF 是这里最要紧的一个开关。**
+      #
+      # ggml 默认开着它，也就是 -march=native：编出来的二进制带着**构建机
+      # 那颗 CPU** 的指令集。发布包这么编的话，用户机器老一点就
+      # SIGILL / "非法指令" 闪退，而那个报错和"这个程序有 bug"看着一模一样。
+      # 关掉之后 x86 走 AVX2 基线（2013 年的 Haswell 起），arm64 走通用 armv8。
+      #
+      # macOS 上顺带钉两样：
+      #   - 部署目标 13.3，不跟着 runner 的系统版本走。不钉的话编出来的东西
+      #     要 macOS 15 才肯跑，而买 Intel Mac 的人多半没升到 15。
+      #   - Metal 着色器嵌进二进制。不嵌的话运行时要在旁边找 .metallib，
+      #     "单文件"就不成立了。
+      - name: 配置（Unix）
+        if: runner.os != 'Windows'
+        run: |
+          EXTRA=""
+          if [ "$RUNNER_OS" = "macOS" ]; then
+            EXTRA="-DCMAKE_OSX_DEPLOYMENT_TARGET=13.3 -DGGML_METAL_EMBED_LIBRARY=ON"
+          fi
+          cmake -S changji/cpp -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCHANGJI_VERSION="$CHANGJI_VERSION" \
+            -DCHANGJI_SD=ON \
+            -DCHANGJI_LLAMA=ON \
+            -DCHANGJI_BUILD_TESTS=OFF \
+            -DGGML_NATIVE=OFF \
+            $EXTRA
+
+      # **Windows 上用 Visual Studio 生成器，不是 Ninja。**
+      # Ninja 那条要先 call vcvarsall.bat，而两台 Windows runner 的
+      # VS 装在哪、装了哪个组件不完全一样。VS 生成器自己去找工具链，
+      # 一行参数管两个架构，少一类"只在 arm64 那格挂"的故障。
+      - name: 配置（Windows）
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          cmake -S changji/cpp -B build -G "Visual Studio 17 2022" -A ${{ matrix.arch }} `
+            -DCHANGJI_VERSION="$env:CHANGJI_VERSION" `
+            -DCHANGJI_SD=ON `
+            -DCHANGJI_LLAMA=ON `
+            -DCHANGJI_BUILD_TESTS=OFF `
+            -DGGML_NATIVE=OFF
+
+      # 只编 changji 这一个目标。测试目标已经在上面那一档跑过了，
+      # 这里再编一遍是白等几十分钟。
+      - name: 编
+        run: cmake --build build --config Release --target changji --parallel
+
+      # 编出来的东西到底是不是能跑的，在这儿花一秒钟问一句。
+      # 交叉编译、静态链接、Metal 嵌入这几样出问题时，产物看着都正常，
+      # 只有跑一下才知道。arm64 那两格是原生 runner，所以跑得起来。
+      - name: 验一下它能起来（Unix）
+        if: runner.os != 'Windows'
+        run: |
+          ./build/changji --version
+          test "$(./build/changji --version)" = "$CHANGJI_VERSION"
+
+      - name: 验一下它能起来（Windows）
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $v = & build/Release/changji.exe --version
+          Write-Host $v
+          if ($v -ne $env:CHANGJI_VERSION) { throw "版本号对不上：$v" }
+
+      - name: 打包（Unix）
+        if: runner.os != 'Windows'
+        run: |
+          mkdir -p dist stage
+          cp build/changji stage/
+          cp changji/README.md stage/
+          tar -czf "dist/changji-${{ matrix.target }}.tar.gz" -C stage .
+
+      - name: 打包（Windows）
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist, stage | Out-Null
+          Copy-Item build/Release/changji.exe stage/
+          Copy-Item changji/README.md stage/
+          Compress-Archive -Path stage/* -DestinationPath "dist/changji-${{ matrix.target }}.zip"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: changji-${{ matrix.target }}
+          path: dist/*
+
+  # ---- 发布 ----
+  release:
+    name: 发到 Release
+    needs: build
+    # 手动跑不发布：那一档是用来验"还编得过吗"的，产物在 artifacts 里。
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: changji-*
+          path: dist
+          merge-multiple: true
+
+      # **校验和要出。** install.sh 会下这份来对，对不上就不装——
+      # 半路断掉的下载装上去的表现是"Exec format error"，
+      # 那个报错和网络问题看不出关系。
+      - name: 算 SHA256SUMS
+        working-directory: dist
+        run: |
+          sha256sum changji-* | tee SHA256SUMS
+          ls -lh
+
+      - name: 建 Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          cat > notes.md <<'EOF'
+          ## 下载
+
+          | 系统 | 架构 | 包 |
+          |---|---|---|
+          | Linux | x64 | `changji-linux-x64.tar.gz` |
+          | Linux | arm64 | `changji-linux-arm64.tar.gz` |
+          | macOS | Apple 芯片 | `changji-macos-arm64.tar.gz` |
+          | macOS | Intel | `changji-macos-x64.tar.gz` |
+          | Windows | x64 | `changji-windows-x64.zip` |
+          | Windows | arm64 | `changji-windows-arm64.zip` |
+
+          Linux / macOS 上也可以一条命令装：
+
+          ```bash
+          curl -fsSL https://raw.githubusercontent.com/${{ github.repository }}/main/changji/install.sh | bash
+          ```
+
+          解开就是一个可执行文件，没有运行时依赖。**装配和字幕烧录要
+          ffmpeg**，系统 PATH 里有就行。模型权重不在包里，第一次打开界面
+          会让你选，选完它自己下。
+
+          ```
+          changji --doctor        体检，缺什么它会说
+          changji --port 8080     起服务，浏览器打开 http://127.0.0.1:8080
+          ```
+
+          `SHA256SUMS` 是这些包的校验和。
+
+          ---
+          EOF
+          gh release create "${{ github.ref_name }}" \
+            --repo "${{ github.repository }}" \
+            --title "${{ github.ref_name }}" \
+            --notes-file notes.md \
+            --generate-notes \
+            dist/*

@@ -1,5 +1,11 @@
 cmake_minimum_required(VERSION 3.20)
 project(changji C CXX)
+
+# **版本号从外面给。** 发布时 CI 用 git tag 填（见
+# .github/workflows/release.yml），本地编就是 dev。
+# 不给默认值的话本地构建会印一个空串，而"版本号是空的"和
+# "这个二进制是自己编的"看着一样——dev 至少说清楚了。
+set(CHANGJI_VERSION "dev" CACHE STRING "写进二进制的版本号，--version 打印它")
 # C 也要启用：ggml 是 C 写的，而且 sd.cpp 声明了 target_compile_features(c_std_11)。
 # 只写 CXX 的话 configure 会在 generate 阶段报 "No known features for C compiler"，
 # 而那句话看不出和缺 C 语言有关系。
@@ -417,6 +423,7 @@ target_compile_definitions(changji PRIVATE
     ASIO_STANDALONE
     # cpp-httplib 默认要 OpenSSL 才能发 https。阶段 0 只连本机 http 服务，
     # 先不引 OpenSSL。等真要连云端 LLM 时再打开 CPPHTTPLIB_OPENSSL_SUPPORT。
+    CHANGJI_VERSION="${CHANGJI_VERSION}"
 )
 
 if(CHANGJI_LLAMA)
@@ -515,6 +522,17 @@ if(CHANGJI_STATIC_RUNTIME AND NOT MSVC)
         # 后者漏掉 libwinpthread-1.dll——std::mutex 和 std::thread 走的就是它，
         # 结果是 exe 在开发机上能跑，拷到别的机器上闪退且没有任何提示。
         target_link_options(changji PRIVATE -static)
+    elseif(APPLE)
+        # **macOS 上这一项无声地不做。**
+        #
+        # Apple 的工具链不提供静态 libc++，`-static-libstdc++` 是
+        # "argument unused" 警告（clang 收下但什么都不做），
+        # `-static` 直接 ld 报错。而这里本来也不需要：libc++ 和
+        # libSystem 是系统自带的，任何一台 macOS 上都在。
+        #
+        # 做成静默跳过而不是报错，是为了让六个平台共用同一行构建命令——
+        # 报错的话 CI 的矩阵里 macOS 那两格就得单独写一份参数。
+        message(STATUS "macOS：CHANGJI_STATIC_RUNTIME 跳过（系统自带 libc++）")
     else()
         # Linux 上不做全静态：glibc 静态链接会在 getaddrinfo 这类
         # 依赖 NSS 的调用上出问题，而我们要连 LLM 和推理服务，全是域名解析。
@@ -604,8 +622,6 @@ if(CHANGJI_BUILD_TESTS)
         tests/unit/test_audio.cpp
         tests/unit/test_tts_backends.cpp
         tests/unit/test_setup.cpp
-        tests/unit/test_compat_diff.cpp
-        tests/compat/diff.cpp
 
         # 被测的源码。刻意不包含 doctor.cpp、http/server.cpp、
         # llm/client_http.cpp、comfy/client_http.cpp 和 http/run_deps.cpp ——
@@ -716,7 +732,8 @@ if(CHANGJI_BUILD_TESTS)
     add_dependencies(changji_tests changji_argecho)
     target_compile_features(changji_tests PRIVATE cxx_std_20)
 
-    # 对拍语料的位置。测试要读 Python 写出来的真实项目文件。
+    # 金语料的位置。这些 JSON 当初由 Python 侧真实的函数导出，
+    # Python 引擎删掉之后它们就是冻住的答案——单元测试直接读文件。
     target_compile_definitions(changji_tests PRIVATE
         CHANGJI_GOLDEN_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/golden")
 
@@ -727,49 +744,4 @@ if(CHANGJI_BUILD_TESTS)
     endif()
 
     add_test(NAME unit COMMAND changji_tests)
-
-    # ---- 对拍程序 ----
-    #
-    # 方案第六节。**这个目标补的是单元测试够不着的那一层**：
-    # 那边直接调 http/*.cpp 里的纯函数，绕过了路由注册、查询参数解析、
-    # 状态码和 Content-Type。阶段 3 就是这么丢过四个接口的——
-    # 函数写好了、测试也过了，但根本没挂上路由。
-    #
-    # 不进 add_test：它要连一个活着的后端，不是能在 ctest 里无条件跑的东西。
-    add_executable(changji_compat
-        tests/compat/main.cpp
-        tests/compat/diff.cpp
-    )
-    target_include_directories(changji_compat PRIVATE src tests/compat)
-    target_include_directories(changji_compat BEFORE PRIVATE "${httplib_SOURCE_DIR}")
-    target_link_libraries(changji_compat PRIVATE
-        nlohmann_json::nlohmann_json httplib::httplib)
-    target_compile_features(changji_compat PRIVATE cxx_std_20)
-    # 数据层对拍要真的读写项目文件，所以要把 models 那几个编进来。
-    target_sources(changji_compat PRIVATE
-        src/util/paths.cpp
-        src/util/text.cpp
-        src/models/shot.cpp
-        src/models/character.cpp
-        src/models/project.cpp
-        src/models/hardware.cpp
-        src/util/proc.cpp
-        src/net/ws_client.cpp
-        # WebSocket 层要连 /ws。协议那部分是纯函数，传输直接用 asio。
-    )
-    target_include_directories(changji_compat PRIVATE "${ASIO_INCLUDE_DIR}")
-    target_compile_definitions(changji_compat PRIVATE ASIO_STANDALONE)
-    if(WIN32)
-        target_compile_definitions(changji_compat PRIVATE
-            NOMINMAX WIN32_LEAN_AND_MEAN UNICODE _UNICODE
-            _WIN32_WINNT=0x0A00)
-        target_link_libraries(changji_compat PRIVATE ws2_32 shell32)
-    endif()
-    if(MSVC)
-        target_compile_options(changji_compat PRIVATE /utf-8 /Zc:__cplusplus /W4)
-        if(CHANGJI_STATIC_RUNTIME)
-            set_property(TARGET changji_compat PROPERTY
-                         MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
-        endif()
-    endif()
 endif()

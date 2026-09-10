@@ -1,8 +1,12 @@
-# 一条命令拉起全套：Web 平台、编排引擎、ComfyUI、大模型服务。
+# 一条命令拉起全套：Web 平台、引擎、大模型服务。
 #
 #   docker compose up -d
 #
 # 然后打开 http://localhost:5174
+#
+# **ComfyUI 那个服务 2026-09-10 拆了。** 出图出片现在走引擎进程内的
+# sd.cpp，没有第二个推理服务要起。老的 COMFYUI_* 变量留在 .env 里
+# 不起作用，可以删掉。
 name: changji
 
 services:
@@ -28,20 +32,14 @@ services:
     restart: unless-stopped
 
 
-  # 编排引擎与 Web 界面。不做推理，不需要显卡。
+  # 引擎。接口、编排、推理全在这一个进程里。
+  # 镜像编的是 CPU 后端，显卡的事留给宿主机上直接跑的那个二进制。
   changji:
-    # **迁移期间两份都在。** 默认还是 Python 那版；要换成 C++ 引擎，
-    # 在 .env 里写这两行（镜像 tag 一起换，免得两版覆盖同一个 tag，
-    # 回滚时分不清手上是哪一个）：
-    #
-    #     CHANGJI_DOCKERFILE=Dockerfile.cpp
-    #     CHANGJI_IMAGE=changji/changji:cpp
-    #
-    # 做成一个变量而不是另起一个 service，是因为 webapp 的 depends_on 指着
-    # 这个名字——另起一个的话那条依赖要跟着分叉，两边都得维护。
+    # 阶段 8 之前这里有个 CHANGJI_DOCKERFILE 开关，用来在 Python 和 C++
+    # 两份引擎之间切。Python 那份删了，开关跟着没了。
     build:
       context: .
-      dockerfile: ${CHANGJI_DOCKERFILE:-Dockerfile}
+      dockerfile: Dockerfile
     image: ${CHANGJI_IMAGE:-changji/changji:latest}
     container_name: changji
     ports:
@@ -55,59 +53,15 @@ services:
     environment:
       # SEED 开头的只在首次启动播种进配置文件，之后界面上改的说了算。
       # 用环境变量常驻会永久盖住界面改的值，那样「保存」就是假的。
-      - CHANGJI_SEED_COMFY_URL=http://comfyui:8188
+      #
       # 默认连本 compose 起的 ollama。本机已经在跑 Ollama 的话，
       # 在 .env 里设 CHANGJI_LLM_URL=http://host.docker.internal:11434/v1
       - CHANGJI_SEED_LLM_URL=${CHANGJI_LLM_URL:-http://ollama:11434/v1}
       - CHANGJI_SEED_LLM_MODEL=${CHANGJI_LLM_MODEL:-qwen3:14b}
-      # ComfyUI 在另一个容器里，本机探测不到显卡，手动告知显存
+      # 容器里探测不到显卡，手动告知显存
       - CHANGJI_SEED_VRAM_GB=${CHANGJI_VRAM_GB:-16}
       # 项目库位置由挂载决定，不是给用户在界面上改的，所以仍用环境变量
       - CHANGJI_WORKSPACE=/data/projects
-    depends_on:
-      comfyui:
-        condition: service_healthy
-    restart: unless-stopped
-
-  # 推理服务。需要显卡。
-  comfyui:
-    image: ${COMFYUI_IMAGE:-changji/comfyui:cu130}
-    build:
-      context: ./docker/comfyui
-    container_name: changji-comfyui
-    ports:
-      - "${COMFYUI_PORT:-8188}:8188"
-    volumes:
-      # 模型跟机器走不跟项目走，所以单独一个卷。
-      # 配音模型权重也落在这里面，十几 GB，绝不能跟着容器丢。
-      # 已经下好模型的机器把 COMFYUI_MODELS 指过去，避免重下十几 GB
-      - ${COMFYUI_MODELS:-./data/comfyui/models}:/app/ComfyUI/models
-      # 注意这里挂的是 custom_nodes 下的子目录，不是整个目录。
-      # 挂载会覆盖镜像内容，整个挂会把镜像里烤好的配音节点包盖掉。
-      - ./data/comfyui/custom_nodes:/app/ComfyUI/custom_nodes/user
-      - ./data/comfyui/output:/app/ComfyUI/output
-      - ./data/comfyui/input:/app/ComfyUI/input
-      - ./data/comfyui/user:/app/ComfyUI/user
-    environment:
-      # 国内直连 HuggingFace 下大文件会传到一半断流。实测下 Qwen3-TTS
-      # 的 12GB 权重时卡在 2.7GB 不动，留下 .incomplete 文件。
-      # 走镜像站更稳。huggingface_hub 能正确处理它的跳转，
-      # 早先用 curl 时因为跳转问题放弃过，那是 curl 的局限不是镜像站的。
-      - HF_ENDPOINT=${HF_ENDPOINT:-https://hf-mirror.com}
-    shm_size: "8gb"
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [gpu]
-    healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8188/system_stats"]
-      interval: 20s
-      timeout: 5s
-      start_period: 180s
-      retries: 20
     restart: unless-stopped
 
   # 剧本与分镜用的大模型。

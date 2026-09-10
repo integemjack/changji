@@ -2,14 +2,13 @@ r"""把打包好的 webapp 嵌进二进制。
 
 跑法（在 changji/ 目录下）：
     cd webapp/client && npm run build && cd ../..
-    .venv/Scripts/python.exe cpp/tools/gen_webapp.py
+    python cpp/tools/gen_webapp.py
 
 产出：
     cpp/src/http/bundled_webapp.inc.hpp
 
-**为什么嵌进去而不是随程序放一个目录。** 和内置工作流那份同一个理由
-（见 `gen_workflows.py`）："单一二进制、零运行时依赖"是这个后端的立项理由
-之一。带着一个 `webapp/` 目录走，迟早出现"exe 拷过去了、目录忘了拷"，
+**为什么嵌进去而不是随程序放一个目录。**
+"单一二进制、零运行时依赖"是这个后端的立项理由之一。带着一个 `webapp/` 目录走，迟早出现"exe 拷过去了、目录忘了拷"，
 而表现是**打开端口一片空白**——比报错更难查，因为服务本身是活的、
 接口也都好使。
 

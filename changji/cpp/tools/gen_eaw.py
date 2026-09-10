@@ -1,7 +1,7 @@
 """从 Python 的 unicodedata 里导出「东亚宽度是宽的」那些码点区间。
 
 跑法（在 changji/ 下）：
-    .venv/Scripts/python.exe cpp/tools/gen_eaw.py
+    python cpp/tools/gen_eaw.py
 
 产出：
     cpp/src/media/east_asian_width.inc.hpp

@@ -8,7 +8,8 @@ AI 短剧生产流水线。从剧本到成片的本地编排引擎，支持真�
 ## 这是什么
 
 它不是生成模型，是把一堆生成模型串成生产线的编排层。
-真正的推理交给 ComfyUI，大模型推理交给 Ollama 或任何兼容 OpenAI 接口的服务。
+**一个二进制**：界面、接口、编排、出图、出片、配音、大模型全在进程内，
+没有第二个服务要起。大模型也可以指到远端任何兼容 OpenAI 接口的服务上。
 场记负责的是分镜表、资产库、任务调度、质量闸门和成片装配。
 
 ## 设计要点
@@ -27,22 +28,28 @@ AI 短剧生产流水线。从剧本到成片的本地编排引擎，支持真�
 ## 可移植性
 
 - 安装目录和项目数据目录分开，换机器把项目目录拷走即可
-- ComfyUI 是配置里的一个地址，可以指向局域网任意一台有显卡的机器
+- 大模型和配音都能改成远端地址，指向局域网里任意一台有显卡的机器
 - 画质档位由运行时探测到的显存推导，不写死
 - 配置优先级：环境变量 > 项目配置 > 用户全局配置 > 默认值
 
 ## 安装
 
-需要 Python 3.11 或更高版本。
+下一个二进制就能用，没有运行时依赖（除了 ffmpeg，装配和字幕烧录要它）。
 
 ```bash
-pip install -e .
+curl -fsSL https://raw.githubusercontent.com/Ireoo/changji/main/changji/install.sh | bash
 ```
 
-首次运行前生成配置模板：
+或者去 [Releases](https://github.com/Ireoo/changji/releases) 直接下对应平台的包。
+Windows / macOS / Linux，x64 和 arm64 都有，包名形如
+`changji-linux-arm64.tar.gz`。
+
+自己编见 [cpp/README.md](cpp/README.md)。
 
 ```bash
-changji init
+changji --doctor        # 体检，缺什么它会说
+changji --init-config   # 生成一份带注释的配置模板
+changji --port 8080     # 起服务
 ```
 
 ## Web 平台
@@ -55,81 +62,73 @@ changji init
 ```
 
 每一步都能让大模型代劳，每一步的结果都看得见。环境和参数全收在设置页，
-包括大模型 API 地址和 ComfyUI API 地址。电脑和手机都能开。
+包括大模型地址和各个模型权重的位置。电脑和手机都能开。
+
+**打包好的前端嵌在二进制里**，起了服务直接打开
+http://127.0.0.1:8080 就是它，不用装 Node：
 
 ```bash
-changji serve --port 8080      # 引擎
+changji --port 8080
+```
+
+改前端的时候才需要那一套开发服务器：
+
+```bash
 cd webapp && npm install && npm run dev
 ```
 
 或者 `docker compose up -d` 一次拉起全套，然后打开 http://localhost:5174 。
 细节见 `webapp/README.md`。
 
-`changji serve` 自己在 8080 根路径上还挂着一个更早的手写界面，功能重叠，
-不装 Node 时可用。新功能只加在 webapp 那一套里。
+## 外部依赖
 
-## 依赖的外部服务
+只剩一样是硬的：
 
-| 服务 | 用途 | 默认地址 |
+| | 用途 | 默认 |
 |---|---|---|
-| ComfyUI | 出图、图生视频、口型 | http://127.0.0.1:8188 |
-| Ollama 或兼容服务 | 剧本、分镜 | http://127.0.0.1:11434/v1 |
-| FFmpeg | 成片装配 | 系统 PATH |
+| FFmpeg | 成片装配、字幕烧录 | 系统 PATH |
 
-三者都可以在别的机器上，改配置即可。
+出图出片走进程内的 stable-diffusion.cpp，大模型和配音默认也在进程内
+（llama.cpp）。**权重不在包里**——第一次打开界面会让你选，选完它自己下。
 
-## 接入真实配音
+大模型想用别的机器上的，把 `[llm].backend` 改成 `remote` 再填地址，
+Ollama 和任何兼容 OpenAI 接口的服务都行。配音同理，`[tts].backend = "http"`。
 
-默认的配音后端只算时长不出声音，用途是让流水线在没装 TTS 的机器上也能
-跑通。要出真实语音，把 TTS 跑在 ComfyUI 那台机器上。
+## 配音
 
-先看服务端有哪些可用节点：
+默认 `[tts].backend = "local"`：进程内跑，权重是
+`[models].tts` 和 `[models].tts_decoder` 两个 GGUF，第一次打开界面时
+跟别的模型一起选着下。不用起任何服务。
 
-```bash
-changji nodes tts
-```
-
-ComfyUI 自带的 TTS 节点全是云 API，要联网和密钥。本地方案需要装节点包，
-社区生态已收敛到 TTS-Audio-Suite，它覆盖十几个引擎：
+**出不出得了声，一句话就知道**——不用建项目、不用起服务、不用 ffmpeg：
 
 ```bash
-cd ComfyUI/custom_nodes
-git clone https://github.com/diodiogod/TTS-Audio-Suite.git
-cd TTS-Audio-Suite && python install.py
+changji --say "雨夜的天台上，他没有回头。"
+changji --say "试一句" --voice 一段人声.wav      # 参考音色
 ```
 
-装完重启 ComfyUI，再跑一次 `changji nodes tts` 确认节点已加载。
+权重没下、或者二进制是不带 llama.cpp 编的，配音会退回估算后端：
+只算时长不出声，流水线照样跑得通，成片是静音的。**这一步会在日志里
+说一声**，不会假装成功。
 
-然后在 ComfyUI 界面里搭一个配音工作流，导出保存到项目的
-`workflows/tts.json`。场记会自动识别并启用它，不需要改配置。
+要用别的引擎，把后端改成外部 HTTP 服务：
 
-工作流里的文本节点参数名可以是 text、prompt、input_text、tts_text 或
-content 中的任意一个，音色可以是 voice、voice_id、speaker 或
-reference_audio，情绪可以是 emotion、style 或 instruct。场记按键名匹配，
-所以换引擎通常不用改代码。
+```toml
+[tts]
+backend = "http"
+base_url = "http://某台机器:9880"
+```
+
+很多 TTS 项目自带 api 服务，跑在哪台机器上都行。
 
 选型建议见 `docs/`。简单说：要商用无争议就选 Apache 2.0 的
-Qwen3-TTS 或 CosyVoice 3，不要用 IndexTTS-2 和 Fish Speech，
+CosyVoice 3 或 Qwen3-TTS，不要用 IndexTTS-2 和 Fish Speech，
 前者的商用授权有争议，后者的权重是非商用许可。
 
-### 配音引擎的兼容性
-
-默认用 CosyVoice 3，Apache 2.0 可商用，已实测跑通。
-
-不要换成 Qwen3-TTS：它在 transformers 5.x 下加载失败，报
-`Failed to load Qwen3-TTS model: 'default'`。模型 config 声明的是
-4.57.3，节点代码没跟上 5.x 的接口变化，而 ComfyUI 本身需要 5.x，
-不能靠降级解决。
-
-也不要换成 IndexTTS 或 Fish Speech，前者商用授权有争议，
-后者权重是非商用许可。
-
-这类失败有个共同表现：节点内部捕获异常后输出一个一秒的空音频并正常
-返回，ComfyUI 报的任务状态是 success。场记会检测并拦下这种空音频，
-但排查时要直接看 ComfyUI 的日志才能知道真正原因。
-
-同一个节点包里还有 CosyVoice、IndexTTS、F5TTS 等引擎，
-换 `workflows/tts.json` 里的引擎节点即可，不用改代码。
+**"成功了但没出声"是这一环最阴的故障。** 不少 TTS 实现在内部捕获异常
+之后会输出一秒的空音频然后正常返回，状态是成功。场记按时长的绝对下限和
+相对下限两条一起拦这种产出，宁可误杀一句"嗯。"，也不让一整集静音文件
+被当成配音成功。
 
 ## 已知问题
 

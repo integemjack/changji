@@ -24,7 +24,7 @@ json load_golden(const std::string& name) {
     const std::string path = std::string(CHANGJI_GOLDEN_DIR) + "/" + name + ".json";
     std::ifstream in(path, std::ios::binary);
     REQUIRE_MESSAGE(in.good(), "读不到语料 " << path
-                    << "（先跑 cpp/tests/export_golden.py）");
+                    << "（语料在版本库里，Python 引擎删掉之后不再重新生成）");
     json j;
     in >> j;
     return j;

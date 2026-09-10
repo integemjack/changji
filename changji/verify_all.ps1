@@ -1,12 +1,16 @@
 ﻿# 把"这份代码还是好的吗"这个问题一次问完。
 #
-# 五件事，顺序是**按发现问题的快慢排的**，前面的先跑：
+# 四件事，顺序是**按发现问题的快慢排的**，前面的先跑：
 #   1. 默认构建（sd.cpp，不带进程内配音）
 #   2. 单元测试
-#   3. 配置模板 Python 还读不读得动（迁移期间两边共用一份配置）
-#   4. 对拍（会自己起四个进程：Python 后端、C++ 后端、两个假大模型）
-#   5. llama 构建（CHANGJI_LLAMA=ON）+ 拿它再跑一遍对拍
-#   6. webapp 的测试和客户端构建
+#   3. llama 构建（CHANGJI_LLAMA=ON）
+#   4. webapp 的测试和客户端构建
+#
+# **原来这里还有两步对拍**（起 Python 后端和 C++ 后端逐条比响应），
+# 外加一步"配置模板 Python 还读不读得动"。阶段 8 删掉 Python 引擎之后
+# 没有另一侧可比了，那三步跟着走。剩下的安全网是 cpp/tests/golden/ 里
+# 那批 JSON——当年由 Python 真实函数导出、现在冻在版本库里，
+# 单元测试直接读文件。
 #
 # 为什么值得有这个脚本：
 #
@@ -22,7 +26,8 @@
 #     powershell -ExecutionPolicy Bypass -File verify_all.ps1
 #     powershell ... -File verify_all.ps1 -Quick    # 跳过 llama 构建那一档
 #
-# ⚠️ 这个文件必须带 UTF-8 BOM，理由见 cpp/tools/duiping.ps1 的文件头。
+# ⚠️ 这个文件必须带 UTF-8 BOM：不带的话 PowerShell 5.1 按本地代码页读，
+# 里面的中文全变成乱码，而报错信息不会提到编码。
 
 param(
     # 跳过 CHANGJI_LLAMA 那一档。它要多编一份 llama.cpp，冷启动几分钟；
@@ -84,45 +89,10 @@ Step "单元测试" {
     if ($line -notmatch 'test cases:\s*(\d+)') { return $false }
     $n = [int]$matches[1]
     if ($n -lt 400) {
-        Write-Host "  只有 $n 条用例，正常是 480 多条——多半是有测试文件没编进去" -ForegroundColor Red
+        Write-Host "  只有 $n 条用例——多半是有测试文件没编进 CMakeLists" -ForegroundColor Red
         return $false
     }
     return $true
-}
-
-Step "配置模板两边都读得动" {
-    # 迁移期间两个后端共用一份用户配置。模板里出现一个 Python 不认的键，
-    # **Python 整份加载失败、后端起不来**——今天断过一次，症状是对拍里
-    # 152 条全变成"Python 侧：连不上"，看着像端口问题。
-    $py = Join-Path $root '.venv\Scripts\python.exe'
-    if (-not (Test-Path $py)) { Write-Host "  没有 .venv，跳不了也测不了" -ForegroundColor Yellow; return $false }
-    $out = & $py (Join-Path $cpp 'tools\check_template_compat.py') 2>&1
-    $out | ForEach-Object { Write-Host "  $_" }
-    return ($LASTEXITCODE -eq 0)
-}
-
-Step "对拍（默认构建）" {
-    $out = powershell -ExecutionPolicy Bypass -File (Join-Path $cpp 'tools\duiping.ps1') 2>&1
-    $line = $out | Select-String -Pattern '一致 \d'
-    if (-not $line) {
-        Write-Host "  对拍没跑起来，最后几行：" -ForegroundColor Red
-        $out | Select-Object -Last 6 | ForEach-Object { Write-Host "    $_" }
-        return $false
-    }
-    Write-Host "  $line"
-    # 「不同」不是 0 就算没过；「跳过」也要看一眼，跳过等于放弃检查。
-    #
-    # **还要看条数。** "不同 0" 出自 20 条和出自 165 条完全是两回事——
-    # 对拍工具的 --golden 默认是相对路径，工作目录不对时语料一份都读不到，
-    # 那些模式静静地不跑，结论照样是"不同 0、跳过 0"、退出码 0。
-    # 第一次跑这个脚本就是这么骗过我的（报了 20 条，差点当成过了）。
-    if ($line -notmatch '一致 (\d+)') { return $false }
-    $n = [int]$matches[1]
-    if ($n -lt 150) {
-        Write-Host "  只跑了 $n 条，正常是 160 多条——多半是语料没读到" -ForegroundColor Red
-        return $false
-    }
-    return ($line -match '不同 0' -and $line -match '跳过 0')
 }
 
 if (-not $Quick) {
@@ -137,19 +107,6 @@ if (-not $Quick) {
         if ($bad) { $bad | Select-Object -First 5 | ForEach-Object { Write-Host "  $_" -ForegroundColor Red }; return $false }
         Write-Host "  编过了"
         return $true
-    }
-
-    Step "对拍（llama 构建）" {
-        $out = powershell -ExecutionPolicy Bypass -File (Join-Path $cpp 'tools\duiping.ps1') `
-            -CppExe 'build_llama\changji.exe' 2>&1
-        $line = $out | Select-String -Pattern '一致 \d'
-        if (-not $line) { Write-Host "  没跑起来" -ForegroundColor Red; return $false }
-        Write-Host "  $line"
-        if ($line -notmatch '一致 (\d+)' -or [int]$matches[1] -lt 150) {
-            Write-Host "  条数不对，多半是语料没读到" -ForegroundColor Red
-            return $false
-        }
-        return ($line -match '不同 0' -and $line -match '跳过 0')
     }
 }
 

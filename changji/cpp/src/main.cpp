@@ -44,6 +44,12 @@ int parse_port(const std::string& raw) {
     return static_cast<int>(v);
 }
 
+// 构建脚本会用 -DCHANGJI_VERSION="…" 覆盖它。留个兜底是为了
+// 不经过 CMake 的编法（临时 g++ 一下）也编得过。
+#ifndef CHANGJI_VERSION
+#define CHANGJI_VERSION "dev"
+#endif
+
 void print_usage() {
     std::cout <<
         "用法: changji [选项]\n"
@@ -62,6 +68,7 @@ void print_usage() {
         "  --init-config         生成一份带注释的配置模板然后退出\n"
         "  --force               配合 --init-config：已有配置也照样覆盖\n"
         "  --help                显示这段话\n"
+        "  --version             打印版本号然后退出\n"
         "\n"
         "  用进程内配音念一句然后退出（不用起服务，也不用建项目）：\n"
         "  --say <文本>          要念的话\n"
@@ -241,7 +248,7 @@ int run(int argc, char** argv) {
     // Windows 上 argv 是按 ANSI 代码页编的，中文参数直接用是乱码。
     // 现在的选项都是 ASCII 所以碰不上，但将来加 --config <路径> 就会踩——
     // 而那时候的表现是"配置文件找不到"，看不出是参数被编码毁了。
-    // 对拍程序就是这么栽的一次，见 tests/compat/main.cpp。
+    // 当年的对拍程序就是这么栽的一次（那个目标随 Python 引擎一起删了）。
     const std::vector<std::string> av = changji::paths::utf8_args(argc, argv);
 
     // --say 那一组。**这是阶段 9 唯一的实机判据**：进程内配音那条路
@@ -268,6 +275,9 @@ int run(int argc, char** argv) {
             return av[++i];
         };
         if (a == "--help" || a == "-h") { print_usage(); return 0; }
+        // 装好之后手上这个二进制是哪一版，只有它说得出来。
+        // 报故障时第一句话就是这个。
+        else if (a == "--version") { std::cout << CHANGJI_VERSION << "\n"; return 0; }
         else if (a == "--port") opts.port = parse_port(next("端口号"));
         else if (a == "--host") opts.host = next("监听地址");
         else if (a == "--worker") want_worker = true;
