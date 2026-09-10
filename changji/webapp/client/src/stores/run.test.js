@@ -100,6 +100,19 @@ describe('applyMessage', () => {
     expect(s.events[0].kind).toBe('progress')
   })
 
+  it('停下轮询时也清空正在跑的表', () => {
+    // **它是一份快照，停下之后没有任何东西再更新它。**
+    // 留着的话，切到别的页面再切回来，那几镜的进度条冻在离开那一刻的
+    // 位置上——而它们多半早就跑完了。用户报的原话是
+    // "切换之前完成的会卡在原来的位置上"。
+    const s = useRun()
+    s.applyMessage({ type: 'progress', kind: 'progress', stage: 'frames',
+                     shot_id: 'sh1', step: 1, total: 3 })
+    expect(s.inflight).toHaveLength(1)
+    s.stop()
+    expect(s.inflight).toHaveLength(0)
+  })
+
   it('任务结束清空正在跑的表', async () => {
     const s = useRun()
     s.applyMessage({ type: 'progress', kind: 'progress', stage: 'draft',

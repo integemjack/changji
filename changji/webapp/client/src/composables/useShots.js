@@ -43,6 +43,26 @@ export const STEPS = [
   { id: 'final', icon: 'film', label: '成片', hint: '留着首帧，只重出视频' },
 ]
 
+/**
+ * 重出队列**放在模块作用域，不放在组件里**。
+ *
+ * 组件里的话，切到别的页面那一刻整个 useShots 就析构了，队列跟着没——
+ * 切回来时排着的那几镜全变回普通状态，用户报的原话是
+ * "从别的页面切回来排队中的不会再显示排队中了"。
+ *
+ * 而队列的寿命本来就该比一个页面长：点几个要重出的、去改改剧本、
+ * 回来接着排，这是很正常的用法。
+ *
+ * 换项目或换集时清空（见下面那个 watch）——那时候这些 shot_id 已经
+ * 不属于当前这一集了，留着只会在别的集上点亮几个不相干的格子。
+ */
+const sent = ref(new Set())
+const waiting = ref(new Map())
+/** 播放器和缩略图的换代号。同样跨页面留着，否则切回来又会看到缓存里的旧片子。 */
+const bust = ref(0)
+/** 上一次这几个集合属于哪一集。换了就清空。 */
+let ownedBy = ''
+
 export function useShots() {
   const session = useSession()
   const ui = useUi()
@@ -50,18 +70,6 @@ export function useShots() {
 
   const shots = ref([])
   const loading = ref(false)
-
-  /**
-   * 播放器和缩略图的换代号。跑完一轮加一，拼进 `src` 里。
-   *
-   * **重出一镜之后文件路径一个字都没变**（还是 shots/final/ep01_sh002.mp4），
-   * 浏览器于是把缓存里那份旧的接着放——用户点了「重新生成」、等了两分钟、
-   * 看到的还是原来那段，而且没有任何东西提示他看的是旧的。
-   *
-   * 只在跑完时加一，不是每次刷新都加：跑的过程中加会把正在看的那一镜
-   * 从头打断。`preload="none"` 让这次换代几乎不花钱。
-   */
-  const bust = ref(0)
 
   async function load() {
     if (!session.projectPath || !session.episodeId) {
@@ -81,7 +89,21 @@ export function useShots() {
     }
   }
 
-  watch(() => [session.projectPath, session.episodeId], load, { immediate: true })
+  watch(
+    () => [session.projectPath, session.episodeId],
+    () => {
+      // 换项目或换集：队列里那些 shot_id 不属于这一集了，留着只会在
+      // 别的集上点亮几个不相干的格子。见 sent / waiting 的注释。
+      const key = `${session.projectPath}::${session.episodeId}`
+      if (key !== ownedBy) {
+        ownedBy = key
+        sent.value = new Set()
+        waiting.value = new Map()
+      }
+      load()
+    },
+    { immediate: true },
+  )
 
   // ---- 每一镜此刻在干什么 ----
 
@@ -91,30 +113,6 @@ export function useShots() {
     for (const x of runStore.inflight) m[x.shot_id] = x
     return m
   })
-
-  /**
-   * 已经交给引擎、但它还没报出第一条进度的那几镜。
-   *
-   * **点下去到第一条进度之间能隔一分钟**——那段时间引擎在载模型，
-   * 一个字都不会报。这期间牌子上显示的还是上一轮的"成片完成"：
-   * 用户点了按钮，画面一动不动，只能再点一次。
-   */
-  const sent = ref(new Set())
-
-  /**
-   * 还没交给引擎、在这儿排着的。**`shot_id` → 要重出哪几段**。
-   *
-   * **队列在前端，不在引擎。** `POST /api/run` 在有任务跑着的时候回 409
-   * （"已经在跑 ep01 了"），而那条 409 是和 Python 逐字节对拍的，动不得。
-   * 所以跑着的时候点别的镜头不发请求，先记在这儿，这一轮完了再提交。
-   *
-   * 这样"点一个别的都点不了"就没有了——用户可以一路点过去，
-   * 挑出十几个要重出的，然后走开。
-   *
-   * 值是集合而不是单个字符串：同一镜可以同时排着"重出首帧"和"重出成片"，
-   * 后点的不该把先点的顶掉。
-   */
-  const waiting = ref(new Map())
 
   /** 这一镜正在被处理：引擎在跑、已提交、或者在前端排着。 */
   function busy(shotId) {
@@ -187,7 +185,16 @@ export function useShots() {
       }
       return stage || '跑着'
     }
-    if (busy(shot.shot_id)) return '排队中'
+    // **排的队盖不住已经出来的东西。**
+    //
+    // 整集出片时排队的是所有没到终态的镜头，其中不少已经有首帧了——
+    // 它们在等的是出视频那一段。可牌子上一律写「排队中」的话，
+    // 一张已经出好的首帧就被这三个字盖住了，用户看到的是
+    // "首帧完成了还不显示图片和首帧完成"（2026-09-10 报的）。
+    //
+    // 有东西可看就说它是什么；"在排队"这件事由边框和那条走马灯说，
+    // 不占这一行的字。什么都没有的才写「排队中」——那时候确实没别的可说。
+    if (busy(shot.shot_id) && blank(shot)) return '排队中'
 
     // **牌子上说的该是"这一格能看到什么"，不是流水线跑到哪一步了。**
     //
@@ -430,7 +437,18 @@ export function useShots() {
   // 不开的话，跑着的时候刷新一下页面（或者从别处点进来），整面墙一动不动：
   // 引擎在跑，而这一页既没轮询也没连上 WebSocket，什么都不知道。
   // 原来这一句在 ProductionView 的 onMounted 里，两页合并时漏掉了。
-  onMounted(() => runStore.start())
+  onMounted(async () => {
+    runStore.start()
+    // **回到页面时对一次账。**
+    //
+    // 走开的这段时间里那一轮可能已经跑完了，而"清空 sent、把 waiting 交出去"
+    // 的那个 watch 只在页面开着的时候才会触发。不对账的话，切回来看到的是
+    // 几格永远的「排队中」，而队列里排着的那几镜谁也不会去跑。
+    await runStore.poll()
+    if (runStore.running) return
+    if (sent.value.size) sent.value = new Set()
+    flushWaiting()
+  })
   onUnmounted(() => {
     runStore.stop()
     watchShots(false)
