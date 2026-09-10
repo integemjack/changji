@@ -170,6 +170,7 @@ std::vector<FrameOutcome> run_frames(std::vector<Shot*>& shots,
                     // 镜头墙上那条进度条要的是这个。见 Event::shot_steps。
                     e.shot_step = step;
                     e.shot_steps = steps;
+                    e.shot_prep = loading;
                     e.message =
                         // 同 render.cpp：这一支不只是"加载模型"，
                         // 也可能是搬权重或 VAE 分块解码，分不开。

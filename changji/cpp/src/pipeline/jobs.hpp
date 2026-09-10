@@ -64,6 +64,13 @@ struct Event {
     int shot_step = 0;
     int shot_steps = 0;
 
+    /// 这一对数说的是**准备**（搬权重、VAE 分块解码），不是采样。
+    ///
+    /// 两件事的量级完全不同：准备可能是 26/28 段，而挂了 Turbo 的采样
+    /// 只有 6 步。牌子上不分的话，"成片 26/28" 看着就是"跑了 28 步"——
+    /// 用户会以为 Turbo 没生效（2026-09-10 已经问过一次了）。
+    bool shot_prep = false;
+
     nlohmann::json to_json() const;
 };
 

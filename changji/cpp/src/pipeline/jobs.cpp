@@ -241,6 +241,7 @@ void JobTable::record(JobKind kind, Event ev) {
         if (ev.shot_steps > 0) {
             msg["shot_step"] = ev.shot_step;
             msg["shot_steps"] = ev.shot_steps;
+            msg["shot_prep"] = ev.shot_prep;
         }
     }
     // 广播放在锁外：Hub 自己有锁，嵌套两把锁是死锁的常见来源。

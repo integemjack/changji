@@ -80,16 +80,19 @@ const inflightBy = computed(() => {
 const sent = ref(new Set())
 
 /**
- * 还没交给引擎、在这儿排着的那几镜。
+ * 还没交给引擎、在这儿排着的。**`shot_id` → 要重出哪几段**。
  *
  * **队列在前端，不在引擎。** `POST /api/run` 在有任务跑着的时候回 409
  * （"已经在跑 ep01 了"），而那条 409 是和 Python 逐字节对拍的，动不得。
- * 所以跑着的时候点别的镜头不发请求，先记在这儿，这一轮完了一次性提交。
+ * 所以跑着的时候点别的镜头不发请求，先记在这儿，这一轮完了再提交。
  *
  * 这样"点一个别的都点不了"就没有了——用户可以一路点过去，
  * 挑出十几个要重出的，然后走开。
+ *
+ * 值是一个集合而不是一个字符串：同一镜可以同时排着"重出首帧"和
+ * "重出成片"，后点的不该把先点的顶掉。
  */
-const waiting = ref(new Set())
+const waiting = ref(new Map())
 
 /** 这一镜正在被处理：引擎在跑、已提交、或者在前端排着。 */
 function busy(shotId) {
@@ -100,6 +103,24 @@ function busy(shotId) {
   )
 }
 
+/**
+ * 出片分两段，**分开重出**。
+ *
+ * 一段是首帧（图像模型，28 步，约一分钟），一段是成片（视频模型，
+ * Turbo 6 步，约两分钟）。原来一个按钮把配音、首帧、成片全重跑一遍，
+ * 而实际要改的往往只有一段：
+ *
+ *   构图不对、人物站错位置 → 重出首帧（然后多半也要重出成片）
+ *   构图是对的、只是动得不好 → **只重出成片**，留着那张首帧
+ *
+ * 后一种以前也得连首帧一起重跑：多花一分钟，而且换来一张不一样的
+ * 首帧——本来满意的那张就没了，等于把已经对的东西推倒重来。
+ */
+const STEPS = [
+  { id: 'frames', icon: 'image', label: '首帧', hint: '只重出这一镜的首帧图' },
+  { id: 'final', icon: 'film', label: '成片', hint: '留着首帧，只重出视频' },
+]
+
 // 引擎开始报这一镜了，"排队中"就该让位给真进度。**两个集合都要清**：
 // 只清 sent 的话，一个既在 waiting 里又被引擎跑着的镜头会同时显示
 // "首帧"（状态取 inflight）和"不重出这一镜了"（按钮取 waiting），
@@ -107,11 +128,15 @@ function busy(shotId) {
 watch(inflightBy, (now) => {
   const ids = Object.keys(now)
   if (!ids.length) return
-  for (const set of [sent, waiting]) {
-    if (!set.value.size) continue
-    const next = new Set(set.value)
+  if (sent.value.size) {
+    const next = new Set(sent.value)
     for (const id of ids) next.delete(id)
-    if (next.size !== set.value.size) set.value = next
+    if (next.size !== sent.value.size) sent.value = next
+  }
+  if (waiting.value.size) {
+    const next = new Map(waiting.value)
+    for (const id of ids) next.delete(id)
+    if (next.size !== waiting.value.size) waiting.value = next
   }
 })
 
@@ -205,8 +230,14 @@ onUnmounted(() => {
   watchShots(false)
 })
 
-/** 开跑。`ids` 为空是整集，非空是只跑那几镜（镜头牌上的「重新生成」）。 */
-async function start(ids = []) {
+/**
+ * 开跑。
+ *
+ * `ids` 为空是整集全流程。非空是只跑那几镜；再给 `stages` 就只跑那几段
+ * （`['frames']` 只出首帧，`['final']` 只出视频，不给就是配音、首帧、
+ * 成片全走一遍）。
+ */
+async function start(ids = [], stages = null) {
   const one = ids.length > 0
   const started = await run(
     () =>
@@ -217,6 +248,7 @@ async function start(ids = []) {
         // 不带的话它不在待办里，跑完什么都没变而且不报错。
         force: one,
         ...(one ? { shot_ids: ids } : {}),
+        ...(stages ? { stages } : {}),
       }),
     { key: one ? `re:${ids[0]}` : 'start' },
   )
@@ -228,22 +260,50 @@ async function start(ids = []) {
   return true
 }
 
-/** 把攒着的那几镜一次性交给引擎。空的就什么都不做。 */
+/**
+ * 把攒着的交给引擎。空的就什么都不做。
+ *
+ * **按段分组，一次只交一组**：`/api/run` 的 `stages` 是整个请求共用的，
+ * 一次请求没法让 A 镜只出首帧、B 镜只出成片。而它在有任务跑着时回 409，
+ * 所以也不能连发两个。交完一组，剩下的留到这一组跑完再交——
+ * 最多两组，自己会排干。
+ *
+ * **首帧那一组先走**：真有一镜两段都排着的话，顺序本来就该是先首帧
+ * 再成片（成片拿首帧当起始图）。反过来的话那一镜的成片用的是旧首帧。
+ */
 function flushWaiting() {
-  const ids = [...waiting.value]
-  if (!ids.length) return
-  waiting.value = new Set()
-  start(ids)
+  if (!waiting.value.size) return
+  for (const step of STEPS) {
+    const ids = [...waiting.value.entries()]
+      .filter(([, steps]) => steps.has(step.id))
+      .map(([id]) => id)
+    if (!ids.length) continue
+
+    const next = new Map()
+    for (const [id, steps] of waiting.value) {
+      const rest = new Set([...steps].filter((x) => x !== step.id))
+      if (rest.size) next.set(id, rest)
+    }
+    waiting.value = next
+    start(ids, [step.id])
+    return
+  }
+}
+
+/** 这一镜的这一段，是不是在队列里排着。 */
+function isWaiting(shotId, step) {
+  return Boolean(waiting.value.get(shotId)?.has(step))
 }
 
 /**
- * 牌子上那个按钮。**同一个位置三件事**，看这一镜此刻是什么状态：
+ * 点了牌子上的「首帧」或「成片」。**四件事**，看此刻是什么状态：
  *
- *   在前端排着 → 取消，从队列里拿掉，不发任何请求
- *   引擎正在跑 → 停下这一轮（引擎只有整轮的停，没有单镜的停）
- *   其余       → 重新生成这一镜；正跑着别的就先排队
+ *   这一段在排队    → 取消，从队列里拿掉，不发任何请求
+ *   这一镜正在跑    → 停下这一轮（引擎只有整轮的停，没有单镜的停）
+ *   有别的在跑      → 排进队列，这一轮完了再交
+ *   什么都没在跑    → 立刻交出去，只跑这一段
  */
-async function shotAction(s) {
+async function shotAction(s, step) {
   const id = s.shot_id
   // **先判"引擎正在跑它"。** 反过来的话，一个刚排进队列、紧接着就被
   // 引擎接手的镜头会一直按"排队中"处理——按钮画的是取消，
@@ -252,9 +312,11 @@ async function shotAction(s) {
     await stop()
     return
   }
-  if (waiting.value.has(id)) {
-    const next = new Set(waiting.value)
-    next.delete(id)
+  if (isWaiting(id, step)) {
+    const next = new Map(waiting.value)
+    const rest = new Set([...next.get(id)].filter((x) => x !== step))
+    if (rest.size) next.set(id, rest)
+    else next.delete(id)
     waiting.value = next
     return
   }
@@ -269,17 +331,22 @@ async function shotAction(s) {
   //
   // 判据换成"这一轮已经交出去过东西了"（sent 非空），并且**同步**先记上，
   // 那个窗口就不存在了。
+  const enqueue = () => {
+    const next = new Map(waiting.value)
+    next.set(id, new Set([...(next.get(id) ?? []), step]))
+    waiting.value = next
+  }
   if (runStore.running || sent.value.size > 0) {
-    waiting.value = new Set([...waiting.value, id])
+    enqueue()
     return
   }
   sent.value = new Set([...sent.value, id])
-  const ok = await start([id])
+  const ok = await start([id], [step])
   if (!ok) {
     // 没提交上（引擎正忙、或者别的浏览器抢先了）。**别丢掉**，
     // 挪进队列等这一轮完——丢掉的话用户点过的那一下就白点了。
     sent.value = new Set([...sent.value].filter((x) => x !== id))
-    waiting.value = new Set([...waiting.value, id])
+    enqueue()
   }
 }
 
@@ -295,7 +362,11 @@ function shotState(s) {
   if (x) {
     const stage = STAGE_LABELS[x.stage] || x.stage || ''
     if (typeof x.shotStep === 'number' && x.shotSteps) {
-      return `${stage} ${x.shotStep}/${x.shotSteps}`
+      // **准备和采样要分开说。** 准备（搬权重、VAE 分块解码）可能是
+      // 26/28 段，而挂了 Turbo 的采样只有 6 步。都写成"成片 26/28"的话，
+      // 看着就是跑了 28 步——用户会以为 Turbo 没生效，已经问过一次了。
+      if (x.shotPrep) return `${stage}·准备 ${x.shotStep}/${x.shotSteps}`
+      return `${stage} ${x.shotStep}/${x.shotSteps} 步`
     }
     return stage || '跑着'
   }
@@ -303,23 +374,20 @@ function shotState(s) {
   return statusOf(s.status).label
 }
 
-/** 这一格的按钮该画成什么。 */
-function shotBtn(s) {
-  const id = s.shot_id
-  // 顺序和 shotAction 一致，理由见那儿。
-  if (inflightBy.value[id] || sent.value.has(id)) {
-    // 引擎没有"暂停这一镜"，只有停下整轮。**按钮上写清楚它到底做什么**，
-    // 画个暂停号却停掉整轮就是骗人。停下之后跑完的镜头都留着，
-    // 再点「出片」会从没跑完的那些接着来——所以叫暂停是站得住的。
-    return { icon: 'pause', title: '停下这一轮（跑完的镜头留着）' }
+/** 引擎正在跑这一镜（或者刚交出去还没回音）。那时候只给一个暂停。 */
+function shotRunning(s) {
+  return Boolean(inflightBy.value[s.shot_id]) || sent.value.has(s.shot_id)
+}
+
+/** 「首帧」或「成片」那个按钮该画成什么。 */
+function stepBtn(s, step) {
+  if (isWaiting(s.shot_id, step)) {
+    return { icon: 'close', title: `不重出${step.label}了` }
   }
-  if (waiting.value.has(id)) {
-    return { icon: 'close', title: '不重出这一镜了' }
+  if (runStore.running || sent.value.size > 0) {
+    return { icon: step.icon, title: `排进队列，这一轮跑完重出${step.label}` }
   }
-  if (runStore.running) {
-    return { icon: 'refresh', title: '排进队列，这一轮跑完就重出这一镜' }
-  }
-  return { icon: 'refresh', title: '重新生成这一镜' }
+  return { icon: step.icon, title: step.hint }
 }
 
 /**
@@ -444,14 +512,16 @@ async function stop() {
             :key="s.shot_id + ':' + bust"
             class="shot__video"
             :src="mediaUrl(session.projectPath, s.video_path) + '&_=' + bust"
-            :poster="s.frame_path ? mediaUrl(session.projectPath, s.frame_path) : undefined"
+            :poster="s.frame_path
+              ? mediaUrl(session.projectPath, s.frame_path) + '&_=' + bust
+              : undefined"
             controls
             playsinline
             preload="none"
           />
           <img
             v-else-if="s.frame_path"
-            :src="mediaUrl(session.projectPath, s.frame_path)"
+            :src="mediaUrl(session.projectPath, s.frame_path) + '&_=' + bust"
             :alt="s.visual_desc"
             loading="lazy"
           />
@@ -474,19 +544,37 @@ async function stop() {
           <!-- 状态和步数都在这儿，见 shotState。 -->
           <span class="shot__state tiny">{{ shotState(s) }}</span>
           <span class="spacer" />
-          <!-- **不跟着别人一起变灰。** 原来是 `runStore.running` 一真
-               整墙的按钮全禁掉：重出一镜要等一小时的整轮跑完才能点第二个。
-               现在跑着的时候点别的镜头是排队（队列在前端，见 waiting），
-               点正在跑的那个是停下。 -->
+          <!-- **首帧和成片分开重出，不是一个按钮全重跑。**
+               构图不对就重出首帧；构图对、只是动得不好，就只重出成片、
+               留着那张首帧。原来一个按钮把配音、首帧、成片全跑一遍——
+               后一种情况多花一分钟，还换来一张不一样的首帧，
+               本来满意的那张就没了。
+
+               **不跟着别人一起变灰**：跑着的时候点别的镜头是排队
+               （队列在前端，见 waiting），点正在跑的那个是停下。 -->
           <button
+            v-if="shotRunning(s)"
             class="iconbtn"
             type="button"
-            :title="shotBtn(s).title"
-            :disabled="isBusy(`re:${s.shot_id}`) || isBusy('stop')"
-            @click="shotAction(s)"
+            title="停下这一轮（跑完的镜头留着）"
+            :disabled="isBusy('stop')"
+            @click="shotAction(s, 'final')"
           >
-            <AppIcon :name="shotBtn(s).icon" :size="14" />
+            <AppIcon name="pause" :size="14" />
           </button>
+          <template v-else>
+            <button
+              v-for="step in STEPS"
+              :key="step.id"
+              class="iconbtn"
+              type="button"
+              :title="stepBtn(s, step).title"
+              :disabled="isBusy(`re:${s.shot_id}`)"
+              @click="shotAction(s, step.id)"
+            >
+              <AppIcon :name="stepBtn(s, step).icon" :size="14" />
+            </button>
+          </template>
         </div>
       </article>
     </div>

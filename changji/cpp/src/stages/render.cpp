@@ -157,7 +157,8 @@ std::vector<RenderOutcome> render_batch(std::vector<Shot*>& shots,
             // 画的是前者——拿后者画的话，正在跑的那一镜从头到尾都显示
             // 21/22 那个百分比。默认 0，只有采样回调那条会填。
             const auto say = [&](const char* kind, const std::string& msg,
-                                 int shot_step = 0, int shot_steps = 0) {
+                                 int shot_step = 0, int shot_steps = 0,
+                                 bool shot_prep = false) {
                 pipeline::Event e;
                 e.stage = stage_name;
                 e.kind = kind;
@@ -167,6 +168,7 @@ std::vector<RenderOutcome> render_batch(std::vector<Shot*>& shots,
                 e.message = msg;
                 e.shot_step = shot_step;
                 e.shot_steps = shot_steps;
+                e.shot_prep = shot_prep;
                 progress.report(e);
             };
 
@@ -232,7 +234,7 @@ std::vector<RenderOutcome> render_batch(std::vector<Shot*>& shots,
                                     : "出视频 " + local.shot_id + "（第 " +
                                           std::to_string(step) + "/" +
                                           std::to_string(steps) + " 步）",
-                            step, steps);
+                            step, steps, loading);
                     };
 
                     render(local, plan, start, dest, tok, on_step);
