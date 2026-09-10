@@ -18,18 +18,19 @@ if [ ! -f "$CFG" ]; then
 
 vram_gb_override = ${CHANGJI_SEED_VRAM_GB:-16}
 
-[comfy]
-# 同一个 compose 里的服务用服务名互访，不是 localhost。
-base_url = "${CHANGJI_SEED_COMFY_URL:-http://comfyui:8188}"
-job_timeout_s = 1800
-max_retries = 3
-
 [llm]
+# **播的是 remote，不是内置的那条。** 引擎默认 backend = "local"（权重
+# 在 [models].llm），而镜像里没有权重；容器场景下大模型本来就该是
+# compose 里那个 ollama 或者别的机器。要用进程内的，在界面上改回 local。
+backend = "${CHANGJI_SEED_LLM_BACKEND:-remote}"
+# 同一个 compose 里的服务用服务名互访，不是 localhost。
 base_url = "${CHANGJI_SEED_LLM_URL:-http://ollama:11434/v1}"
 model = "${CHANGJI_SEED_LLM_MODEL:-qwen3:14b}"
 
 [tts]
-backend = "comfy"
+# local 是进程内配音，要 [models].tts / tts_decoder 那两个权重；
+# 没下权重的话在界面上改成 http、填一个外部配音服务的地址。
+backend = "${CHANGJI_SEED_TTS_BACKEND:-local}"
 engine = "cosyvoice3"
 
 [gates]

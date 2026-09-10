@@ -152,8 +152,9 @@ TEST_CASE("配置文件的位置和 Python 一致（默认环境）") {
 #endif
     REQUIRE_MESSAGE(g.at("platforms").contains(plat),
                     "语料里没有 " << plat << " 那一份。"
-                    "在这个平台上跑一遍 export_paths_golden.py 补上——"
-                    "**别把这一条跳过去**，它钉的是两个后端读同一个配置文件。");
+                    "生成它的脚本随 Python 引擎一起删了，照 util/paths.cpp 里"
+                    "这个平台的分支往 user_dirs.json 里补一份——"
+                    "**别把这一条跳过去**，它钉的是配置文件到底落在哪儿。");
     const auto& want = g.at("platforms").at(plat);
 
     // 家目录从 C++ 这边取。比的是"相对家目录的那一段"，

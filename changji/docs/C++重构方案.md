@@ -663,7 +663,7 @@ cpp/
 | **5** | 链接 sd.cpp，frames + render；逐步进度接进 WS 广播 | ✅ **已达成，2026-09-09 整集端到端跑通**（5090 单卡：首帧 22/22 fp8 704×1280 共 795 秒；草稿档 22/22 一次全过闸门，0 个 sd 错误）。见下面「2026-09-09：5090 上整集端到端」 |
 | **6** | 移植 `comfy/`，ComfyUI 作为可选后端接回来 | ✅ 已达成。`[models].engine` 一个键切换；`/api/voices` 已恢复，路由表 48/48 |
 | **7** | 配音编排 + 组装：`audio.py` 的编排逻辑、ffmpeg、字幕、成片 | ✅ **已达成，2026-09-09 实机产出一集**：`output/ep01.mp4` 71.9 秒、352×640、h264 + aac，草稿+装配 1089 秒。闸门抓到一处项目状态和磁盘不一致（sh019 有 wav 没写回时长），见同一节 |
-| **8** | 删 Python 引擎 | 只剩两层。**这是一扇单向门**——16 个周边脚本 import 引擎，删了之后金语料再也生不出来、对拍本身也没了。闸门不只是"对拍通过"，是"对拍覆盖到你愿意永久放弃它的程度"。清单见下面「阶段 8 的清单」 |
+| **8** | 删 Python 引擎 | ✅ **已执行，2026-09-10**。那扇单向门推过去了：引擎本体、对拍工具、27 个 import 引擎的脚本一起走。留下的是 `tests/golden/` 那批 JSON。清单见下面「阶段 8 的清单」和「阶段 8 执行了：真正删掉了什么」 |
 | **9** | Qwen3-TTS 的 C++ 化 | ✅ **已达成，2026-09-08 真出声了**。`changji.exe --say "雨下了一整夜。"` → 1.92 秒 24 kHz 单声道，峰值 12.2% 满幅、RMS 756、66.6% 样本在噪声底之上——**验过不是静音**。权重 ggml-org/Qwen3-TTS-12Hz-1.7B-Base-GGUF（骨干 988 MB + mmproj 426 MB）。见下面「第一次出声」。⚠️ **`--say` 那条判据不够**——它只调一次，而真实用法是复用同一个实例；顺序调用的 KV 缓存 bug 是跑真流水线才发现的，见「第二句台词配不出来」 |
 
 ### 阶段 4 的逐块核对（2026-09-08）
@@ -3868,3 +3868,72 @@ Python 那边走的是 `self.composer._sep`，composer 是从资产库建的，
 一个欠账：删掉 `engine/` 之后，这三块 BFF 逻辑没有任何测试覆盖了
 （原来那 3,255 行测试全都在测死代码）。`/bff/flow` 的判定规则是有实际
 业务含义的一块，值得单独补一次测试。
+
+
+### 阶段 8 执行了：真正删掉了什么（2026-09-10）
+
+清单里那句"别信文档里写的，去跑一遍"是对的：`stage8_inventory.py` 跑出来
+是 **27 个废掉的脚本**，不是文档里记的 31 个，也不是更早手数的 16 个。
+差额来自 ComfyUI 拆除那次——`gen_comfy_golden.py` 那一批的一部分已经先走了。
+
+删掉的：
+
+- `src/changji/` 引擎本体，`tests/` 那 22 个 Python 测试，`pyproject.toml`
+- `cpp/tests/export_*.py` 18 个、`cpp/tools/` 9 个（含 `serve_python.py`）
+- `cpp/tools/duiping.ps1` 和 `cpp/tests/compat/`——**对拍程序本身**。
+  它是 C++ 写的，但它存在的全部理由是和另一侧比；没有另一侧就没有它。
+  跟着走的还有 `test_compat_diff.cpp`（测的是 diff 引擎）
+- `cpp/tools/regen_golden.py`、`contract_audit.py`、`stage8_inventory.py`。
+  清单把这三个归在"删了照样能跑"，**那个判断只看了 import**：
+  regen 重跑的生成器全没了，contract_audit 的判据是"语料由 import 引擎的
+  脚本生成"，两个的答案都变成恒等式。stage8_inventory 自己更是只为这一步存在
+- `cpp/tools/gen_workflows.py`：它往 `cpp/src/comfy/` 里写，而那个目录
+  9 月 10 日随 ComfyUI 一起没了。清单里也把它归在"照样能跑"——
+  **同一类误判：能不能 import 和有没有用，是两件事**
+
+留下的：`tests/golden/` 里那批 JSON（`user_dirs.json` 补了 macos 一份，
+照 `util/paths.cpp` 的 `__APPLE__` 分支写，因为导出脚本没了）、
+`gen_webapp.py`（前端产物嵌进二进制）、`gen_eaw.py`（东亚字宽表，
+数据来自 Unicode）、`coverage_audit.py`（只读 C++ 侧）、
+`fake_llm.py`（假模型，不 import 引擎，手工试 LLM 阶段时还用得上）。
+
+顺带做完的：
+
+- `Dockerfile.cpp` 盖掉了 `Dockerfile`，compose 里那个
+  `CHANGJI_DOCKERFILE` 开关跟着删。镜像改成 `CHANGJI_SD=ON` +
+  `CHANGJI_LLAMA=ON` 编——原来两样都关是因为推理交给 comfyui 服务，
+  而 ComfyUI 拆了之后 `[models].engine` 只认 `sd`，两样都关编出来的二进制
+  **配置校验都过不去**，起来就报错。compose 里的 comfyui 服务和
+  entrypoint 播的 `[comfy]` 段一起删
+- `install.sh` 从"建 venv + pip install"改成"下 Release 里的二进制"
+- `verify_all.ps1` 六步剩四步（两步对拍 + 一步"配置模板 Python 还读得动"没了）
+- 加了 `--version`。发布之后"手上这个二进制是哪一版"必须问得出来，
+  而在此之前整个仓库一个版本号都没有
+
+### `ws_client` 为什么留着（2026-09-10）
+
+阶段 8 那一刀先把它留下了，当天单独判了一次。**结论是留。**
+
+先说清楚它是什么，因为很容易看岔：**引擎确实靠 WebSocket 跟界面通信，
+但那是服务端那一侧**（`src/http/ws.cpp` 的 Hub，Crow 提供），
+和这个文件无关。`src/net/ws_client.*` 是**客户端**那一侧，而且只有协议
+那一半——`parse_url` / `handshake_request` / `accept_key` / `random_key` /
+`decode_frame` / `encode_frame`，一行 I/O 都没有。连 socket 的那段一直住在
+`tests/compat/main.cpp` 的 `WsPeek` 里，随对拍一起走了。
+
+按"有没有调用方"判的话它该删：现在只有 `test_ws_client.cpp` 引它，
+而它还编在 `changji` 目标的源文件表上——发布的二进制里带着它。
+
+**没删，是因为有一个真的去处：多机互联，一个 changji 连另一个 changji 的
+`/ws`。** 这一条只有用户知道，代码里看不出来——多卡多机现在那条路
+（`worker_pool.cpp`）走的是 httplib 轮询（`POST /task`、`GET /task/:id`），
+所以从代码往外推只会推出"没人要它"。
+
+所以这次做的不是删，是**把理由写进头文件**。差点删掉它的过程本身就是
+证据：一个没有调用方、而且头文件开头写着"给对拍工具用"（那东西已经不存在）
+的文件，下一个人还会再判一次，而他手上未必有这条信息。同一个文件已经
+险过两回了——上一回是拆 ComfyUI 时按目录差点带走，教训记在上面那一节。
+
+顺带记下这一半的现状，免得接手的人以为拿来就能连：
+**传输要自己写**，几十行 asio，去 `git show
+17514f1:changji/cpp/tests/compat/main.cpp` 里抄 `WsPeek`。

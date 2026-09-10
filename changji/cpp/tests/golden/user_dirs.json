@@ -19,5 +19,5 @@
       "user_config_path": "Library/Application Support/changji/config.toml"
     }
   },
-  "note": "由 cpp/tests/export_paths_golden.py 生成，不要手改。值是相对家目录的，按平台分开存——platformdirs 在不同系统上算法不同，而绝对路径里带着用户名，换台机器就对不上。只有默认环境下的值：Python 走 Windows 已知文件夹 API，C++ 读 LOCALAPPDATA，机制不同，改了环境变量就没有可比性。详见脚本开头和方案里那一节。"
+  "note": "原来由 cpp/tests/export_paths_golden.py 从 platformdirs 导出，Python 引擎删掉之后那个脚本没了，这份就是冻住的答案。值是相对家目录的，按平台分开存——各系统的算法不同，而绝对路径里带着用户名，换台机器就对不上。只有默认环境下的值：改了 XDG_CONFIG_HOME / LOCALAPPDATA 就没有可比性。macos 那一份是照 util/paths.cpp 的 __APPLE__ 分支补的（platformdirs 在 macOS 上给的也是这个位置）。"
 }
