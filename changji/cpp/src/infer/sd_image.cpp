@@ -1,6 +1,8 @@
 #include "infer/sd_image.hpp"
 
+#include <algorithm>
 #include <atomic>
+#include <cstring>
 #include <fstream>
 #include <mutex>
 #include <vector>
@@ -74,6 +76,36 @@ PreviewSink& preview_sink_slot() {
 void set_preview_sink(PreviewSink sink) {
     std::lock_guard lg(preview_mu());
     preview_sink_slot() = std::move(sink);
+}
+
+// 这个也在 #ifdef 外面，理由同 sd_model_problem：纯算术，没它测不到。
+CropBox center_crop_box(int src_w, int src_h, int dst_w, int dst_h) {
+    CropBox all{0, 0, src_w, src_h};
+    // 参数不成样子就别裁——宁可把原图整张递下去，也别在这儿算出一个
+    // 负宽度让下游去崩。
+    if (src_w <= 0 || src_h <= 0 || dst_w <= 0 || dst_h <= 0) return all;
+
+    // 比较 src_w/src_h 和 dst_w/dst_h，交叉相乘避开浮点。
+    const long long lhs = static_cast<long long>(src_w) * dst_h;
+    const long long rhs = static_cast<long long>(dst_w) * src_h;
+    if (lhs == rhs) return all;  // 比例已经对上，一刀都不用裁
+
+    CropBox box;
+    if (lhs > rhs) {
+        // 源比目标宽，裁两侧。
+        box.h = src_h;
+        box.w = static_cast<int>(rhs / dst_h);
+    } else {
+        // 源比目标高，裁上下。
+        box.w = src_w;
+        box.h = static_cast<int>(lhs / dst_w);
+    }
+    // 整除会往下取，取到 0 的话下游拿到一张空图。夹到至少 1 像素。
+    box.w = std::max(1, std::min(box.w, src_w));
+    box.h = std::max(1, std::min(box.h, src_h));
+    box.x = (src_w - box.w) / 2;
+    box.y = (src_h - box.h) / 2;
+    return box;
 }
 
 #ifdef CHANGJI_HAVE_SD
@@ -241,6 +273,34 @@ sd_image_t load_image(const fs::path& p) {
     img.channel = 3;
     img.data = data;
     return img;
+}
+
+/// 按 box 把 img 裁掉，**就地**改，不重新分配。
+///
+/// 就地是有意的：`img.data` 是 stbi_load 给的，调用方拿 stbi_image_free 去还。
+/// 换成自己 malloc 的buffer就把所有权绑在"stbi_image_free 正好是 free"
+/// 这个实现细节上了。裁剪只会变小，原地挪得开。
+///
+/// 挪的方向也安全：目标下标 3*(y*新宽+x) 恒不大于源下标
+/// 3*((y+y0)*宽+x+x0)（因为 新宽≤宽、x0≥0、y0≥0），所以从头往后拷不会
+/// 覆盖还没读的像素。
+void crop_in_place(sd_image_t& img, const CropBox& box) {
+    if (box.whole(static_cast<int>(img.width), static_cast<int>(img.height))) {
+        return;
+    }
+    const auto ch = static_cast<std::size_t>(img.channel);
+    const auto src_w = static_cast<std::size_t>(img.width);
+    for (int y = 0; y < box.h; ++y) {
+        const std::size_t dst = static_cast<std::size_t>(y) *
+                                static_cast<std::size_t>(box.w) * ch;
+        const std::size_t src =
+            (static_cast<std::size_t>(y + box.y) * src_w +
+             static_cast<std::size_t>(box.x)) * ch;
+        std::memmove(img.data + dst, img.data + src,
+                     static_cast<std::size_t>(box.w) * ch);
+    }
+    img.width = static_cast<uint32_t>(box.w);
+    img.height = static_cast<uint32_t>(box.h);
 }
 
 std::string vram_arg(double gb) {
@@ -542,6 +602,9 @@ void SdContext::generate_video(const VideoRequest& req, const fs::path& raw_dest
     if (req.start_image.has_value()) {
         start = load_image(*req.start_image);
         has_start = true;
+        crop_in_place(start, center_crop_box(static_cast<int>(start.width),
+                                             static_cast<int>(start.height),
+                                             req.width, req.height));
     }
     struct StartGuard {
         sd_image_t& img;

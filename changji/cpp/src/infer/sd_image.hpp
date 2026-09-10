@@ -167,6 +167,38 @@ enum class ModelRole {
 /// 压根没法告诉 generate_image 出几帧。
 std::string sd_model_problem(const config::Settings& settings, ModelRole role);
 
+/// 中心裁剪矩形，单位像素。
+struct CropBox {
+    int x = 0;
+    int y = 0;
+    int w = 0;
+    int h = 0;
+
+    /// 不用裁：矩形就是整张图。
+    bool whole(int src_w, int src_h) const {
+        return x == 0 && y == 0 && w == src_w && h == src_h;
+    }
+};
+
+/// 把 src 按 dst 的**长宽比**中心裁一刀。只裁不缩，尺寸交给下游。
+///
+/// **为什么要有这一步。** 出片时首帧是当 `init_image` 传给 sd.cpp 的，
+/// 而它内部走 `sd_image_to_tensor(img, 目标宽, 目标高)`——那个函数在
+/// 尺寸不一致时直接 `interpolate` 到目标，**不管长宽比**。也就是说
+/// 喂一张比例不同的首帧进去，出来的片是被拉扁或拉长的，
+/// 而且**不报错也不打日志**，只是人脸变宽了一点。
+///
+/// 这条路是真会走到的：首帧和成片是分开的两个动作，用户完全可以
+/// 只重出成片、留着以前的首帧。2026-09-10 把画幅从 704×1280 改成
+/// 544×928，两者比例 0.550 对 0.586，差 6%——够看出来了。
+///
+/// 先中心裁到目标比例，再让 sd.cpp 去缩，出来的就是正的。
+/// 裁掉的是长边两头，构图中心不动。
+///
+/// 比例本来就一样（含尺寸完全相同）时返回整张图，
+/// 让调用方能靠 `whole()` 跳过拷贝。
+CropBox center_crop_box(int src_w, int src_h, int dst_w, int dst_h);
+
 /// sd.cpp 的上下文。**贵**：建一次要解析模型文件、建张量图、分配运行时缓冲。
 ///
 /// 所以它不是每次出图新建一个，而是挂在调度器的槽位上复用。
