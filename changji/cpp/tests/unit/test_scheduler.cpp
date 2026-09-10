@@ -810,3 +810,71 @@ TEST_CASE("问不到卡的时候，用量到的推算空闲") {
         CHECK(un == 1);
     }
 }
+
+TEST_CASE("最近一次腾地方的判断要留痕，界面上读得到") {
+    // 这个判断错了的表现是"该留的时候卸了"（慢）或者"该卸的时候没卸"
+    // （CUDA OOM 把整个服务带走）。而以前只能登上机器看 stderr——
+    // 2026-09-11 服务器连不上那几个钟头，这条线索彻底断了。
+    Scheduler s;
+    const std::size_t budget = 86ull << 30;
+    s.set_budget(budget);
+
+    SlotSpec llm;
+    llm.slot = Slot::LLM;
+    llm.vram_estimate = budget;
+    llm.evict_priority = 1;
+    llm.load = [] {};
+    llm.unload = [] {};
+    s.register_slot(llm);
+
+    SlotSpec vid;
+    vid.slot = Slot::Video;
+    vid.vram_estimate = budget;
+    vid.evict_priority = 9;
+    vid.load = [] {};
+    vid.unload = [] {};
+    s.register_slot(vid);
+
+    SUBCASE("还没判过的时候是空的，不能装作判过") {
+        CHECK_FALSE(s.last_room_decision().valid);
+    }
+
+    SUBCASE("够、没卸：把依据一并记下") {
+        s.record_measured_vram(Slot::Video, 74ull << 30);
+        s.set_free_vram_probe([] { return std::optional<double>(80.0); });
+        { auto a = s.acquire(Slot::LLM); }
+        { auto b = s.acquire(Slot::Video); }
+        const auto d = s.last_room_decision();
+        REQUIRE(d.valid);
+        CHECK(d.slot == Slot::Video);
+        CHECK(d.kept);
+        CHECK(d.evicted == 0);
+        CHECK(d.probed);                       // 是问卡问来的
+        CHECK(d.live == (74ull << 30));        // 用的是实测值
+        CHECK(d.free_seen > 0);
+    }
+
+    SUBCASE("不够、卸了：记下卸了几个") {
+        s.record_measured_vram(Slot::Video, 90ull << 30);
+        s.set_free_vram_probe([] { return std::optional<double>(80.0); });
+        { auto a = s.acquire(Slot::LLM); }
+        { auto b = s.acquire(Slot::Video); }
+        const auto d = s.last_room_decision();
+        REQUIRE(d.valid);
+        CHECK_FALSE(d.kept);
+        CHECK(d.evicted >= 1);
+    }
+
+    SUBCASE("问不到卡时也要记，并且标明空闲不是问来的") {
+        s.set_total_vram(96ull << 30);
+        s.record_measured_vram(Slot::LLM, 15ull << 30);
+        s.record_measured_vram(Slot::Video, 74ull << 30);
+        s.set_free_vram_probe([] { return std::optional<double>{}; });
+        { auto a = s.acquire(Slot::LLM); }
+        { auto b = s.acquire(Slot::Video); }
+        const auto d = s.last_room_decision();
+        REQUIRE(d.valid);
+        CHECK(d.kept);
+        CHECK_FALSE(d.probed);   // 推算出来的，不是问来的
+    }
+}

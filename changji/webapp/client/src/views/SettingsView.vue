@@ -210,6 +210,29 @@ const placementRows = computed(() => {
   ].filter((r) => r.weights !== undefined)
 })
 
+/**
+ * 最近一次「要不要腾地方」的判断，翻成人话。
+ *
+ * 这个判断错了的表现是"该留的时候卸了"（出片前白等几十秒重装大模型）
+ * 或者"该卸的时候没卸"（显存爆掉，整个服务没了）。以前只能登上机器看
+ * stderr——服务器连不上的时候这条线索就断了。摆在这儿，谁都看得见。
+ */
+const roomDecision = computed(() => {
+  const d = placement.value?.lastRoomDecision
+  if (!d) return null
+  const gb = (v) => (typeof v === 'number' ? `${v.toFixed(1)} GB` : '不知道')
+  return {
+    slot: d.slot,
+    verdict: d.kept ? '够，没动别的模型' : `不够，卸了 ${d.evicted} 个`,
+    ok: Boolean(d.kept),
+    need: gb(d.liveGb),
+    free: gb(d.freeSeenGb),
+    // **这一位最要紧**：空闲是问显卡问来的，还是拿量到的数推算的。
+    // 一直显示"推算"就说明问卡那条路没通，那本身就是个要查的问题。
+    how: d.probed ? '问显卡问来的' : '问不到卡，按量到的推算',
+  }
+})
+
 async function load() {
   loading.value = true
   try {
@@ -428,6 +451,22 @@ function scrollTo(id) {
                 按这张卡的显存和模型文件大小算出来的。
                 <strong>权重放内存不等于出了问题</strong>——装不下时放内存反而更快，
                 显卡腾出来的地方全给了计算。
+              </span>
+            </div>
+            <!-- 最近一次腾地方的判断。没发生过就不显示——刚起服务时
+                 还没借过槽，摆一行"还没判过"只是噪音。 -->
+            <div v-if="embedded && roomDecision" class="field">
+              <span class="field__label">上次腾显存怎么判的</span>
+              <div class="mono tiny">
+                借「{{ roomDecision.slot }}」时：需要 {{ roomDecision.need }}，
+                当时空闲 {{ roomDecision.free }}（{{ roomDecision.how }}）
+                <span :class="roomDecision.ok ? 'pill pill--ok tiny' : 'pill pill--warn tiny'">
+                  {{ roomDecision.verdict }}
+                </span>
+              </div>
+              <span class="field__hint">
+                「够就不清理」靠的就是这一步。要是这里长期显示
+                <strong>问不到卡</strong>，说明显存探测没走通，该查。
               </span>
             </div>
             <p class="tiny dim mono">配置文件：{{ node.configFile }}</p>

@@ -622,8 +622,30 @@ void run(const config::Settings& settings, const Options& opts) {
                 json img = pack(config::image_placement(ex));
                 vid["measuredVramGb"] = measured(infer::Slot::Video);
                 img["measuredVramGb"] = measured(infer::Slot::Image);
-                out["effective"]["placement"] = {
-                    {"video", vid}, {"image", img}, {"cardGb", card_gb}};
+                // **最近一次"要不要腾地方"的判断，原样露出来。**
+                // 这个判断错了的表现是"该留的时候卸了"（慢）或者"该卸的
+                // 时候没卸"（CUDA OOM 把整个服务带走），而以前只能登上
+                // 机器看 stderr。2026-09-11 服务器连不上那几个钟头，
+                // 这条线索就彻底断了。
+                const auto d = infer::scheduler().last_room_decision();
+                json dec = json(nullptr);
+                if (d.valid) {
+                    const auto gb = [](std::size_t b) {
+                        return static_cast<double>(b) / (1024.0 * 1024 * 1024);
+                    };
+                    dec = json{{"slot", infer::to_string(d.slot)},
+                               {"needGb", gb(d.need)},
+                               {"liveGb", gb(d.live)},
+                               {"freeSeenGb", d.free_seen ? json(gb(d.free_seen))
+                                                          : json(nullptr)},
+                               {"probed", d.probed},
+                               {"kept", d.kept},
+                               {"evicted", d.evicted}};
+                }
+                out["effective"]["placement"] = {{"video", vid},
+                                                 {"image", img},
+                                                 {"cardGb", card_gb},
+                                                 {"lastRoomDecision", dec}};
             }
         }
         // **体检要发网络请求，最坏二十多秒。** Node 那份也是同步等的，

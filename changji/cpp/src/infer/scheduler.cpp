@@ -152,6 +152,11 @@ void Scheduler::set_total_vram(std::size_t bytes) {
     total_vram_ = bytes;
 }
 
+Scheduler::RoomDecision Scheduler::last_room_decision() const {
+    std::lock_guard lg(mu_);
+    return last_decision_;
+}
+
 std::size_t Scheduler::measured_vram(Slot slot) const {
     std::lock_guard lg(mu_);
     const auto it = measured_.find(slot);
@@ -245,10 +250,12 @@ bool Scheduler::make_room(std::size_t need, Slot keep) {
 
     // 先问卡。
     std::optional<std::size_t> free_bytes;
+    bool probed = false;
     if (probe) {
         if (const auto free_gb = probe(); free_gb.has_value()) {
             free_bytes = static_cast<std::size_t>(
                 *free_gb * 1024.0 * 1024.0 * 1024.0);
+            probed = true;
         }
     }
     if (dbg) {
@@ -301,7 +308,11 @@ bool Scheduler::make_room(std::size_t need, Slot keep) {
                          live / 1073741824.0, *free_bytes / 1073741824.0,
                          live <= *free_bytes ? "够，不卸" : "不够，要卸");
         }
-        if (live <= *free_bytes) return true;
+        if (live <= *free_bytes) {
+            last_decision_ = RoomDecision{true, keep, need, live, *free_bytes,
+                                          probed, /*kept=*/true, 0};
+            return true;
+        }
     }
 
     // 候选：已加载、没被借用、不是要保住的那个。
@@ -322,12 +333,23 @@ bool Scheduler::make_room(std::size_t need, Slot keep) {
         return a->last_used < b->last_used;
     });
 
+    int evicted = 0;
     for (Entry* e : cands) {
         if (used + need <= budget_) break;
         const std::size_t freed = e->spec.vram_estimate;
         do_unload(*e);
         used -= std::min(used, freed);
+        ++evicted;
     }
+    // 记下这一次是怎么判的，界面上读得到。见 RoomDecision。
+    last_decision_ = RoomDecision{true,
+                                  keep,
+                                  need,
+                                  live,
+                                  free_bytes ? *free_bytes : 0,
+                                  probed,
+                                  /*kept=*/false,
+                                  evicted};
     return used + need <= budget_;
 }
 

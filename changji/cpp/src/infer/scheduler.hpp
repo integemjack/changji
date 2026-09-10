@@ -198,6 +198,25 @@ public:
     /// 只用量到的数，不猜——有任何一个装着的槽没量过，就老老实实回到
     /// 保守那条去卸。这样永远不会比事实更乐观。
     void set_total_vram(std::size_t bytes);
+
+    /// 最近一次"要不要腾地方"的判断过程，给界面看的。
+    ///
+    /// **为什么要把它露出来。** 这个判断出错的表现是"该留的时候卸了"或者
+    /// "该卸的时候没卸"，前者只是慢，后者是 CUDA OOM 把整个服务带走。
+    /// 而它一直只能靠登上机器看 stderr 才查得到——2026-09-11 服务器连不上
+    /// 的那几个钟头里，这条线索完全断了。
+    /// 记在进程里、从接口读得到，比什么都强。
+    struct RoomDecision {
+        bool valid = false;       ///< 还没发生过判断时是假
+        Slot slot = Slot::Image;  ///< 当时要借哪个槽
+        std::size_t need = 0;     ///< 保守估值
+        std::size_t live = 0;     ///< 真正拿来比的那个数
+        std::size_t free_seen = 0;///< 当时认为空闲多少。0 = 没拿到
+        bool probed = false;      ///< 空闲是问卡问来的（否则是推算的）
+        bool kept = false;        ///< 结论：够，没卸
+        int evicted = 0;          ///< 卸掉了几个槽
+    };
+    RoomDecision last_room_decision() const;
     std::size_t budget() const;
 
     /// 注册一个槽。同一个槽重复注册会覆盖，但**只在它没加载时**——
@@ -251,6 +270,7 @@ private:
     MeasuredSink measured_sink_;
     /// 整张卡的显存。0 = 不知道，那时候没有退路可走。
     std::size_t total_vram_ = 0;
+    RoomDecision last_decision_;
     std::uint64_t clock_ = 0;
 };
 
