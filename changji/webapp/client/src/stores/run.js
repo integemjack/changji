@@ -83,6 +83,16 @@ export const useRun = defineStore('run', () => {
         message: msg.message ?? prev?.message ?? '',
         step: typeof msg.step === 'number' ? msg.step : (prev?.step ?? 0),
         total: typeof msg.total === 'number' ? msg.total : (prev?.total ?? 0),
+        // **这一镜自己**跑到第几步。和上面那对不是一回事：
+        // step/total 是整集的位置（第 21 镜 / 共 22 镜），拿它画单镜的
+        // 进度条，那一镜从头到尾都停在 95%——一条不动而且是错的进度条。
+        //
+        // 引擎不带这两个字段时留 null，牌子上就画一条走马灯而不是
+        // 一个具体的百分比。老引擎、以及"准备中"那几条都是这种。
+        shotStep:
+          typeof msg.shot_step === 'number' ? msg.shot_step : (prev?.shotStep ?? null),
+        shotSteps:
+          typeof msg.shot_steps === 'number' ? msg.shot_steps : (prev?.shotSteps ?? null),
         since: prev?.since ?? Date.now(),
       })
     } else {

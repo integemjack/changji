@@ -152,7 +152,12 @@ std::vector<RenderOutcome> render_batch(std::vector<Shot*>& shots,
                 progress.report(e);
             }
 
-            const auto say = [&](const char* kind, const std::string& msg) {
+            // `shot_step` / `shot_steps` 是**这一镜自己**的进度，
+            // 和 current/total（整集第几镜）是两回事。镜头墙上每张牌
+            // 画的是前者——拿后者画的话，正在跑的那一镜从头到尾都显示
+            // 21/22 那个百分比。默认 0，只有采样回调那条会填。
+            const auto say = [&](const char* kind, const std::string& msg,
+                                 int shot_step = 0, int shot_steps = 0) {
                 pipeline::Event e;
                 e.stage = stage_name;
                 e.kind = kind;
@@ -160,6 +165,8 @@ std::vector<RenderOutcome> render_batch(std::vector<Shot*>& shots,
                 e.total = total;
                 e.shot_id = local.shot_id;
                 e.message = msg;
+                e.shot_step = shot_step;
+                e.shot_steps = shot_steps;
                 progress.report(e);
             };
 
@@ -224,7 +231,8 @@ std::vector<RenderOutcome> render_batch(std::vector<Shot*>& shots,
                                           std::to_string(steps) + "）"
                                     : "出视频 " + local.shot_id + "（第 " +
                                           std::to_string(step) + "/" +
-                                          std::to_string(steps) + " 步）");
+                                          std::to_string(steps) + " 步）",
+                            step, steps);
                     };
 
                     render(local, plan, start, dest, tok, on_step);

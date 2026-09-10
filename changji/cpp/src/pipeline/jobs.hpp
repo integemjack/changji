@@ -50,6 +50,20 @@ struct Event {
     int current = 0;
     int total = 0;
 
+    /// **这一镜自己**跑到第几步、一共几步。**C++ 独有，只走 WebSocket。**
+    ///
+    /// `current` / `total` 是整集的位置（第 21 镜 / 共 22 镜）。镜头墙上
+    /// 每张牌要画的是**这一镜**的进度条，拿 21/22 去画的话，正在跑的那一
+    /// 镜刚开始就显示 95%，六步走完还是 95%——一个不动的、而且一直是错的
+    /// 进度条，比没有更糟。
+    ///
+    /// **不进 `to_json()`。** 那个是 `/api/run` 用的，逐字节和 Python 对拍，
+    /// 多一个字段就是一处破契约（Python 的事件只有 at/stage/kind/message/
+    /// shot_id/current/total）。WebSocket 那条 **Python 侧根本没有**
+    /// （`web/server.py` 开头写明了不用 WebSocket），所以只在那边加。
+    int shot_step = 0;
+    int shot_steps = 0;
+
     nlohmann::json to_json() const;
 };
 

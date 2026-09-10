@@ -637,3 +637,77 @@ TEST_CASE("WebSocket 消息原样带 kind") {
     CHECK(it->value("kind", "") == "shot_done");
     CHECK(it->value("type", "") == "progress");   // 旧字段没动
 }
+
+TEST_CASE("这一镜自己的步数只走 WebSocket，不进 /api/run 的事件") {
+    // **两个进度，别混。**
+    //   current/total = 整集的位置（第 21 镜 / 共 22 镜）
+    //   shot_step/shot_steps = 这一镜自己（第 4 步 / 共 6 步）
+    //
+    // 镜头墙上每张牌画的是后者。以前 WebSocket 里只有前者，牌子上那条
+    // 进度条于是从这一镜开始就是 95%、跑完还是 95%——不动而且是错的，
+    // 比没有更糟。
+    //
+    // **同时它不能进 to_json()**：那个是 /api/run 用的，逐字节和 Python
+    // 对拍，而 Python 的事件只有 at/stage/kind/message/shot_id/current/total。
+    // WebSocket 那条 Python 侧根本没有，所以只在那边加安全。
+    JobTable table;
+    std::vector<nlohmann::json> msgs;
+    table.set_sink([&](const std::string&, const nlohmann::json& m) {
+        msgs.push_back(m);
+    });
+    table.start(JobKind::Run, "ep01", [&](JobProgress& p) {
+        Event e;
+        e.stage = "final";
+        e.kind = "progress";
+        e.shot_id = "sh1";
+        e.current = 21;
+        e.total = 22;
+        e.shot_step = 4;
+        e.shot_steps = 6;
+        p.report(e);
+
+        Event bare;   // 不带单镜步数的（"准备中"那几条）
+        bare.stage = "final";
+        bare.kind = "progress";
+        bare.shot_id = "sh2";
+        bare.current = 21;
+        bare.total = 22;
+        p.report(bare);
+    });
+    table.wait_idle();
+
+    const auto find = [&](const char* id) {
+        return std::find_if(msgs.begin(), msgs.end(), [id](const auto& m) {
+            return m.value("shot_id", "") == id;
+        });
+    };
+
+    const auto one = find("sh1");
+    REQUIRE(one != msgs.end());
+    CHECK(one->value("shot_step", -1) == 4);
+    CHECK(one->value("shot_steps", -1) == 6);
+    // 整集那一对没被顶掉
+    CHECK(one->value("step", -1) == 21);
+    CHECK(one->value("total", -1) == 22);
+
+    // **没给就不加。** 补个 0 会让每张牌上都挂一条永远空着的槽，
+    // 而界面正是靠"有没有这两个字段"决定画进度还是画走马灯。
+    const auto two = find("sh2");
+    REQUIRE(two != msgs.end());
+    CHECK_FALSE(two->contains("shot_step"));
+    CHECK_FALSE(two->contains("shot_steps"));
+
+    // /api/run 那份一个字都不能多
+    Event e;
+    e.stage = "final";
+    e.kind = "progress";
+    e.shot_id = "sh1";
+    e.current = 21;
+    e.total = 22;
+    e.shot_step = 4;
+    e.shot_steps = 6;
+    const auto rest = e.to_json();
+    CHECK_FALSE(rest.contains("shot_step"));
+    CHECK_FALSE(rest.contains("shot_steps"));
+    CHECK(rest.size() == 7);   // at/stage/kind/message/shot_id/current/total
+}

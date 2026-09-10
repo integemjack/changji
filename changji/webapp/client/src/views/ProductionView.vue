@@ -36,6 +36,18 @@ const playing = ref(null)
 
 const blocked = computed(() => doctor.value && doctor.value.can_run === false)
 
+/**
+ * 这一镜跑到百分之几。**没在跑、或者引擎没给这一镜的步数就返回 null**，
+ * 由模板决定画走马灯还是画具体进度。
+ *
+ * 别用 inflight 里的 step/total：那是整集的位置（第 21 镜 / 共 22 镜）。
+ */
+function pct(shotId) {
+  const x = inflightBy.value[shotId]
+  if (!x || typeof x.shotStep !== 'number' || !x.shotSteps) return null
+  return Math.min(100, Math.round((x.shotStep / x.shotSteps) * 100))
+}
+
 /** 还没出片的镜头数。0 就是这一集做完了。 */
 const pending = computed(
   () => shots.value.filter((s) => !s.video_path).length,
@@ -265,17 +277,18 @@ async function stop() {
           <!-- **进度画在镜头上。** 这一镜跑到哪了，看它自己就够，
                不用去别处对。 -->
           <span v-if="inflightBy[s.shot_id]" class="shot__live">
+            <!-- **用 shotStep 不是 step。** step/total 是整集的位置
+                 （第 21 镜 / 共 22 镜）——拿它画单镜的条，正在跑的那一镜
+                 一出现就是 95%，六步走完还是 95%。一条不动而且是错的
+                 进度条比没有更糟。
+                 引擎没给这一镜的步数时（"准备中"那几条、老引擎）画走马灯，
+                 别硬凑一个百分比。 -->
             <span
+              v-if="pct(s.shot_id) !== null"
               class="shot__bar"
-              :style="{
-                width:
-                  inflightBy[s.shot_id].total > 0
-                    ? Math.round(
-                        (inflightBy[s.shot_id].step / inflightBy[s.shot_id].total) * 100,
-                      ) + '%'
-                    : '10%',
-              }"
+              :style="{ width: pct(s.shot_id) + '%' }"
             />
+            <span v-else class="shot__bar shot__bar--idle" />
           </span>
         </button>
 
@@ -402,12 +415,27 @@ async function stop() {
   bottom: 0;
   height: 3px;
   background: color-mix(in srgb, var(--accent) 25%, transparent);
+  /* 走马灯靠 translateX 走出去，不裁的话会画到牌子外面 */
+  overflow: hidden;
 }
 .shot__bar {
   display: block;
   height: 100%;
   background: var(--accent);
   transition: width 0.3s;
+}
+/* 不知道跑到哪一步时的走马灯。**别停着不动**——静止的进度条和
+   "卡死了"看起来一模一样，而这一步（搬权重、VAE 解码）本来就要几十秒。 */
+.shot__bar--idle {
+  width: 35%;
+  animation: shot-slide 1.4s ease-in-out infinite;
+}
+@keyframes shot-slide {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(286%); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .shot__bar--idle { animation: none; width: 100%; opacity: 0.5; }
 }
 
 .shot__bottom {

@@ -234,6 +234,14 @@ void JobTable::record(JobKind kind, Event ev) {
             {"message", ev.message},
         };
         if (ev.shot_id.has_value()) msg["shot_id"] = *ev.shot_id;
+        // 这一镜自己的进度。**只在这条路上给**，`/api/run` 的事件数组
+        // 要和 Python 一字不差。见 Event::shot_steps 的注释。
+        // 没有就不加：镜头墙靠"有没有这两个字段"决定画不画那条进度条，
+        // 补个 0 会让每张牌上都挂一条永远空着的槽。
+        if (ev.shot_steps > 0) {
+            msg["shot_step"] = ev.shot_step;
+            msg["shot_steps"] = ev.shot_steps;
+        }
     }
     // 广播放在锁外：Hub 自己有锁，嵌套两把锁是死锁的常见来源。
     emit(job_id, msg);
