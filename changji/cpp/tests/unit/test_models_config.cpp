@@ -383,9 +383,11 @@ TEST_CASE("模板自己解析得动，而且解析出来就是默认值") {
     CHECK(s2.models.engine == def.models.engine);
 }
 
-TEST_CASE("[models].weights：默认 cpu，认 auto，别的拒") {
-    // 默认必须是 cpu——这是 6 GB 卡上能跑的前提，不能因为大卡上想快就改默认。
-    CHECK(config::ModelsConfig{}.weights == "cpu");
+TEST_CASE("[models].weights：默认 smart，认 auto，别的拒") {
+    // **默认 smart（2026-09-10 起）**：按模型多大、卡多大自己算，换卡不用改。
+    // 原来默认 cpu，是"6 GB 卡上能跑"的保守选择，但代价是大卡上一直走慢路
+    // 且没提示——用户："都应该让程序自己算。"smart 在小卡上自己会退回 cpu。
+    CHECK(config::ModelsConfig{}.weights == "smart");
 
     const fs::path tmp = fs::temp_directory_path() / "changji_weights_cfg";
     std::error_code ec;
@@ -441,35 +443,41 @@ TEST_CASE("video_lora_tiers：Turbo 只挂草稿档") {
     CHECK(said);
 }
 
-TEST_CASE("weights = smart：按显存决定 VAE 放哪") {
-    // 用户要的是"显存超过多少就把 VAE 放进显存，适配更多情况"。
-    // 门槛 40 GB 是量出来的：5090（32.6 GB）上扩散 17.9 + VAE 5.5 = 23.4 GB
-    // 权重，加扩散自己约 9 GB 的计算缓冲差 112 MB 装不下。
-    // 这笔账值 63 秒一镜（解码 71 秒 → 8 秒）。
+TEST_CASE("weights = smart：按视频模型多大和卡多大算，不用人填") {
+    // 用户的原话："都应该让程序自己算。"以前 smart 只看卡，5090 上要人手填
+    // cpu；换了大卡还得记得改回来，不改就一直走慢路，而且没有任何提示。
+    //
+    // 账是 5090 上量的：扩散权重常驻还要给 1280×704 的计算缓冲 19.7 GB
+    // 和余量 4 GB；VAE 也常驻再加 5.5 GB；卡按九成算。
     config::ModelsConfig m;
     m.weights = "smart";
+    const double h3 = 18.8;   // MiniMax-H3 Q4_K_M
 
-    CHECK(m.weights_for(32.6) == "te=cpu,vae=cpu");   // 5090，放不下
-    CHECK(m.weights_for(39.9) == "te=cpu,vae=cpu");   // 门槛下方
-    CHECK(m.weights_for(40.0) == "te=cpu");           // 正好够
-    CHECK(m.weights_for(48.0) == "te=cpu");           // L40S
-    CHECK(m.weights_for(80.0) == "te=cpu");           // A100/H100
+    // **实测锚点**：5090（32.6 GB）上 H3 18.8 GB 常驻差 788 MB 装不下 → cpu，
+    // 和用户之前手填的一样，只是现在不用填了
+    CHECK(m.weights_for(32.6, h3) == "cpu");   // 18.8 + 14.6 = 33.4 > 32.6
+    // 小模型（Wan 5B 约 10 GB）在同一张卡上就装得下：10 + 14.6 = 24.6 ≤ 32.6
+    CHECK(m.weights_for(32.6, 10.0) == "te=cpu,vae=cpu");
+    // 大卡全装得下 → 只有文本编码器留内存（18.8 + 14.6 + 5.5 = 38.9 ≤ 80，且 ≥ 40）
+    CHECK(m.weights_for(80.0, h3) == "te=cpu");
+    // 拿不到模型大小：按装不下处理——猜错是整集出片失败，放内存只是慢
+    CHECK(m.weights_for(80.0, 0.0) == "cpu");
 
     // **文本编码器永远放内存**：它每镜只跑一次（H3 实测 8 到 9 秒），
     // 却是最大的一块（18.9 GB）。80 GB 的卡上也不该占着它。
-    CHECK(m.weights_for(80.0).find("te=cpu") != std::string::npos);
+    CHECK(m.weights_for(80.0, h3).find("te=cpu") != std::string::npos);
 
-    // 门槛可配
-    m.vae_vram_min_gb = 24.0;
-    CHECK(m.weights_for(32.6) == "te=cpu");
+    // VAE 那道门槛仍然可配：抬高它，80 GB 也不让 VAE 进显存
+    m.vae_vram_min_gb = 100.0;
+    CHECK(m.weights_for(80.0, h3) == "te=cpu,vae=cpu");
 
     // 别的取值原样传下去，不碰
     for (const char* w : {"cpu", "auto", "te=cpu,vae=cpu"}) {
         config::ModelsConfig other;
         other.weights = w;
         CAPTURE(w);
-        CHECK(other.weights_for(8.0) == w);
-        CHECK(other.weights_for(80.0) == w);
+        CHECK(other.weights_for(8.0, h3) == w);
+        CHECK(other.weights_for(80.0, h3) == w);
     }
 
     // 负门槛要拒
@@ -888,5 +896,5 @@ TEST_CASE("[models].image_weights：图像模型的权重放哪，不跟 weights
     m.image_weights = "auto";
     CHECK(m.image_weights_for(32.6, 20.0) == "auto");
     // 视频那一项一个字不动
-    CHECK(m.weights_for(32.0) == "cpu");
+    CHECK(m.weights_for(32.0, 18.8) == "cpu");
 }

@@ -86,7 +86,8 @@ public:
     ///
     /// ⚠️ 调用方要自己持锁：它读写 `last_sent_`，而 `broadcast` 已经
     /// 拿着 `mu_` 了，这里再锁一次就是自锁。
-    bool should_throttle(const std::string& job_id, const std::string& type);
+    bool should_throttle(const std::string& job_id, const std::string& type,
+                         const std::string& kind);
 
 private:
 

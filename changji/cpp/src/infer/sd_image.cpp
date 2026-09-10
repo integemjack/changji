@@ -727,24 +727,31 @@ void register_sd_slots(SettingsProvider raw_provider,
                                                    : profile.vram_gb;
     const SettingsProvider provider = [raw_provider, card_gb] {
         config::Settings s = raw_provider();
-        s.models.weights = s.models.weights_for(card_gb);
+        // 两个模型放哪都按文件大小算。视频那份 smart 以前只看卡，
+        // 换了卡还要人去改 cpu——用户的原话："都应该让程序自己算。"
+        const auto size_gb = [&s](const std::string& entry) {
+            std::error_code ec;
+            const auto p = s.models.resolve(entry, s.workspace_path());
+            const auto bytes = p.empty() ? 0 : fs::file_size(p, ec);
+            return (!ec && bytes > 0) ? static_cast<double>(bytes) / (1024.0 * 1024 * 1024) : 0.0;
+        };
+        s.models.weights = s.models.weights_for(card_gb, size_gb(s.models.video));
         // 图像模型放哪要看它**有多大**：fp8 的 Qwen-Image 20 GB，Q6_K 16 GB，
         // Q4 12 GB——同一张 32 GB 的卡，前者常驻不下，后两者可以。
-        double image_gb = 0.0;
-        {
-            std::error_code ec;
-            const auto p = s.models.resolve(s.models.image, s.workspace_path());
-            const auto bytes = p.empty() ? 0 : fs::file_size(p, ec);
-            if (!ec && bytes > 0) image_gb = static_cast<double>(bytes) / (1024.0 * 1024 * 1024);
-        }
-        s.models.image_weights = s.models.image_weights_for(card_gb, image_gb);
+        s.models.image_weights =
+            s.models.image_weights_for(card_gb, size_gb(s.models.image));
         return s;
     };
     // 预算取探测到的显存，留一成给驱动上下文和别的程序。
     //
     // 估高了是 OOM 直接崩，估低了只是多分段（慢）。所以往低了取——
     // 这条和 Scheduler 里那个 vram_estimate 的取舍是同一个道理。
-    const double budget = profile.vram_gb > 0 ? profile.vram_gb * 0.9 : 0.0;
+    // **预算一律按物理显存，不按 vram_gb_override。** 那个数是拿来挑档位的。
+    // 2026-09-10 配置里写着 override = 12，这一行就算出 10.8 GB 的上限——
+    // 20 GB 的图像模型在第 34/62 段 OOM。卡真有多少显存，探到了就用探到的。
+    const double budget = profile.gpu.has_value()
+                              ? profile.gpu->vram_gb() * 0.9
+                              : (profile.vram_gb > 0 ? profile.vram_gb * 0.9 : 0.0);
     // **auto 模式的预算按物理显存算，不按 vram_gb_override。**
     // override 是拿来挑档位的（44 GB 的卡想要 1280×704 的成片档就填 20），
     // 拿它当显存预算的话 auto_fit 会把本来装得下的编码器赶去内存。

@@ -222,15 +222,25 @@ std::vector<std::string> ModelsConfig::validate() const {
     return errs;
 }
 
-std::string ModelsConfig::weights_for(double vram_gb) const {
+std::string ModelsConfig::weights_for(double vram_gb, double model_gb) const {
     if (weights != "smart") return weights;
     // **文本编码器永远放内存。** 它每镜只跑一次（H3 的 Qwen3-VL-32B 实测
     // 8 到 9 秒），而它是这一套里最大的一块（18.9 GB）。放显存换来的那几秒
     // 远不如把地方让给扩散模型。
     //
-    // VAE 看卡：放内存时每镜解码 71 秒（5.5 GB 搬过 PCIe），放显存 8 秒，
-    // 一镜差 63 秒；但 32 GB 的卡上放不下（见 vae_vram_min_gb 那段的账）。
-    return vram_gb >= vae_vram_min_gb ? "te=cpu" : "te=cpu,vae=cpu";
+    // 拿不到模型大小按装不下处理：猜错是整集出片失败，放内存只是慢。
+    if (model_gb <= 0.0) return "cpu";
+    // **计算缓冲直接绑实测。** 5090（32.6 GB）上 H3 18.8 GB 扩散常驻时，
+    // 跑到第 46/51 段差 788 MB——也就是留给缓冲的 32.6 − 18.8 = 13.8 GB
+    // 还差一点，它要 ~14.6 GB。这个数是 1280×704 量的（换分辨率会变，
+    // 但这张卡上也只跑这一档）。缓冲已经把驱动余量算在内（那 788 MB 是
+    // 连驱动一起差的），所以直接和整卡显存比，不再乘 0.9。
+    constexpr double kBuffer = 14.6;
+    if (model_gb + kBuffer > vram_gb) return "cpu";   // 权重都常驻不下
+    // VAE 也常驻要再加 5.5 GB（放内存每镜解码多花 63 秒）。既要真装得下，
+    // 也要过 vae_vram_min_gb 那道门槛。
+    const bool vae_fits = model_gb + kBuffer + 5.5 <= vram_gb;
+    return (vram_gb >= vae_vram_min_gb && vae_fits) ? "te=cpu" : "te=cpu,vae=cpu";
 }
 
 std::string ModelsConfig::image_weights_for(double vram_gb,
@@ -791,7 +801,9 @@ subtitle_font = "Source Han Sans SC"
 # 权重放哪。cpu（默认）= 放系统内存、用到才搬进显存，小卡上能跑全靠它，
 # 代价是每一步都在等 PCIe。auto = 交给 sd.cpp 按这张卡真实的空闲显存决定，
 # 装得下的常驻显存——大卡（≥ 24 GB）上用这个，实测出片阶段利用率从 35% 起飞。
-# weights = "auto"
+# **默认 smart：按视频模型文件多大和这张卡多大算，换卡不用改。**
+# 别写死。写死 cpu 的后果：换了 48 GB 的卡还在每一步搬权重，而且没有任何提示。
+# weights = "smart"
 #
 # 图像模型单独一项。**别跟着 weights 一起改成 cpu**：那是给 18 GB 的视频
 # 模型准备的，图像模型放内存会慢五倍（5090 上实测采样时 GPU 利用率 18%、

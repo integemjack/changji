@@ -133,40 +133,54 @@ TEST_CASE("progress 在间隔内只放第一条过") {
     ws::Hub h;
     // 第一条永远放过：一个任务刚开始就被节流掉的话，前端在第一个间隔里
     // 什么都看不到，看起来像没启动。
-    CHECK_FALSE(h.should_throttle("job1", "progress"));
-    CHECK(h.should_throttle("job1", "progress"));
-    CHECK(h.should_throttle("job1", "progress"));
+    CHECK_FALSE(h.should_throttle("job1", "progress", "progress"));
+    CHECK(h.should_throttle("job1", "progress", "progress"));
+    CHECK(h.should_throttle("job1", "progress", "progress"));
 }
 
 TEST_CASE("done 和 error 永远不节流") {
     ws::Hub h;
     // 先把这个 job 的节流窗口点着。
-    CHECK_FALSE(h.should_throttle("job1", "progress"));
-    CHECK(h.should_throttle("job1", "progress"));
+    CHECK_FALSE(h.should_throttle("job1", "progress", "progress"));
+    CHECK(h.should_throttle("job1", "progress", "progress"));
 
     // 紧接着的 done / error 必须原样放过。
-    CHECK_FALSE(h.should_throttle("job1", "done"));
-    CHECK_FALSE(h.should_throttle("job1", "error"));
-    CHECK_FALSE(h.should_throttle("job1", "start"));
+    CHECK_FALSE(h.should_throttle("job1", "done", "done"));
+    CHECK_FALSE(h.should_throttle("job1", "error", "error"));
+    CHECK_FALSE(h.should_throttle("job1", "start", "start"));
     // 连着来几条也一样，它们不进节流的账。
-    CHECK_FALSE(h.should_throttle("job1", "done"));
+    CHECK_FALSE(h.should_throttle("job1", "done", "done"));
+}
+
+TEST_CASE("预览和进度各占各的节流桶，别互相饿死") {
+    // **这条是被一个真 bug 逼出来的。** 采样进度（kind=progress）和预览图
+    // （kind=preview）都用 type=progress 广播。共用一个桶的话，sd.cpp 每步
+    // 先调预览、后调进度，预览抢先占了这 200ms 的槽，紧接着的真进度被丢——
+    // 表现是预览在动、步数却冻在开跑那一下（实测 6 秒 6 条预览 0 条进度）。
+    ws::Hub h;
+    // 预览点着自己的桶
+    CHECK_FALSE(h.should_throttle("run", "progress", "preview"));
+    CHECK(h.should_throttle("run", "progress", "preview"));
+    // 进度那一桶还是空的，第一条必须放过
+    CHECK_FALSE(h.should_throttle("run", "progress", "progress"));
+    CHECK(h.should_throttle("run", "progress", "progress"));
 }
 
 TEST_CASE("两个任务各算各的") {
     // 按 job_id 记，不是全局一个窗口——否则同时跑两集时，
     // 后一集的进度会被前一集压住。
     ws::Hub h;
-    CHECK_FALSE(h.should_throttle("job1", "progress"));
-    CHECK_FALSE(h.should_throttle("job2", "progress"));
-    CHECK(h.should_throttle("job1", "progress"));
-    CHECK(h.should_throttle("job2", "progress"));
+    CHECK_FALSE(h.should_throttle("job1", "progress", "progress"));
+    CHECK_FALSE(h.should_throttle("job2", "progress", "progress"));
+    CHECK(h.should_throttle("job1", "progress", "progress"));
+    CHECK(h.should_throttle("job2", "progress", "progress"));
 }
 
 TEST_CASE("过了间隔又放行") {
     ws::Hub h;
-    CHECK_FALSE(h.should_throttle("job1", "progress"));
-    CHECK(h.should_throttle("job1", "progress"));
+    CHECK_FALSE(h.should_throttle("job1", "progress", "progress"));
+    CHECK(h.should_throttle("job1", "progress", "progress"));
     // kThrottleInterval 是 200 毫秒，多睡一点避开时钟粒度。
     std::this_thread::sleep_for(ws::kThrottleInterval + std::chrono::milliseconds(80));
-    CHECK_FALSE(h.should_throttle("job1", "progress"));
+    CHECK_FALSE(h.should_throttle("job1", "progress", "progress"));
 }

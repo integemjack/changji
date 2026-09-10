@@ -83,17 +83,25 @@ size_t Hub::subscriber_count(const std::string& job_id) {
     return it == subs_.end() ? 0 : it->second.size();
 }
 
-bool Hub::should_throttle(const std::string& job_id, const std::string& type) {
+bool Hub::should_throttle(const std::string& job_id, const std::string& type,
+                          const std::string& kind) {
     // 完成和失败永远不节流。这两条消息漏发一次，前端就会一直显示
     // 「生成中」直到用户手动刷新——比进度条不流畅严重得多。
     if (type != "progress") return false;
 
+    // **按"流"分桶，不只按 job_id。** 采样进度（kind=progress）和预览图
+    // （kind=preview）都用 type=progress 广播，但它们是两条独立的流：
+    // 一条几十字节、要跟得上步数，一条几十 KB、够看个大概就行。
+    // 共用一个桶的话，sd.cpp 每步先调预览回调、后调进度回调，预览抢先占了
+    // 这个 200ms 的槽，紧接着的真进度就被丢掉——表现是预览在动、步数
+    // 却冻在开跑那一下（2026-09-10 实测：6 秒里 6 条预览、0 条进度）。
+    const std::string key = job_id + "|" + (kind.empty() ? type : kind);
     auto now = std::chrono::steady_clock::now();
-    auto it = last_sent_.find(job_id);
+    auto it = last_sent_.find(key);
     if (it != last_sent_.end() && now - it->second < kThrottleInterval) {
         return true;
     }
-    last_sent_[job_id] = now;
+    last_sent_[key] = now;
     return false;
 }
 
@@ -121,7 +129,12 @@ void Hub::broadcast(const std::string& job_id, const json& msg) {
         (type_it != msg.end() && type_it->is_string())
             ? type_it->get<std::string>()
             : std::string{};
-    if (should_throttle(job_id, type)) return;
+    const auto kind_it = msg.find("kind");
+    const std::string kind =
+        (kind_it != msg.end() && kind_it->is_string())
+            ? kind_it->get<std::string>()
+            : std::string{};
+    if (should_throttle(job_id, type, kind)) return;
 
     // 收件人有两种：订了这个**具体 job_id** 的，和订了这一**类**任务的。
     //

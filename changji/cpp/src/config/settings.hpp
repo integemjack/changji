@@ -255,7 +255,11 @@ struct ModelsConfig {
     /// 放内存几乎不影响速度。auto 自己推出来的也正是这个规格
     /// （日志里 `auto-fit: --params-backend "te=cpu,vae=cpu"`），
     /// 只是它推的时候预算已经被自己占掉了。
-    std::string weights = "cpu";
+    ///
+    /// **默认 `smart`（2026-09-10 起），按视频模型文件多大和这张卡多大算**——
+    /// 见 weights_for。用户的原话："都应该让程序自己算。"写死一个 cpu 的
+    /// 后果已经见过：换了大卡还在走慢路，而且没有任何提示。
+    std::string weights = "smart";
 
     /// **图像模型**的权重放哪。取值和 `weights` 一样，外加 `smart`（默认）。
     ///
@@ -398,7 +402,14 @@ struct ModelsConfig {
     /// 按这张卡的显存把 `weights` 展开成 sd.cpp 认的组件规格。
     ///
     /// 只有 `"smart"` 需要展开，别的取值原样返回。
-    std::string weights_for(double vram_gb) const;
+    /// `model_gb` 是视频扩散模型文件的大小；拿不到传 0，按装不下处理。
+    ///
+    /// 账（5090 上量的）：1280×704 的计算缓冲 ~14.6 GB——H3 18.8 GB 常驻时
+    /// 差 788 MB 装不下就是这个数（32.6 − 18.8 = 13.8，还差 0.8）。缓冲已含
+    /// 驱动余量，直接和整卡显存比。VAE 也常驻再加 5.5 GB。
+    ///   32.6 GB + H3 18.8：18.8 + 14.6 = 33.4 > 32.6 → "cpu"（和之前手填的一样）
+    ///   80 GB：18.8 + 14.6 + 5.5 = 38.9 ≤ 80 且 ≥ 40 → "te=cpu"（只文本编码器在内存）
+    std::string weights_for(double vram_gb, double model_gb) const;
     double image_cfg = 2.5;
     double image_flow_shift = 3.0;
 

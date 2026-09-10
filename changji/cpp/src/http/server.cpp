@@ -580,6 +580,15 @@ void run(const config::Settings& settings, const Options& opts) {
                                 {"turbo", eff.turbo},
                                 {"stepsPinned", eff.steps_pinned},
                                 {"tableSteps", table}};
+            // **显卡真有多少显存，和配置里顶着的那个数分开给。**
+            // /api/hardware 的 vram_gb 在有 vram_gb_override 时回的是 override
+            // （Python 就这样，对拍不能动），于是设置页写着 "5090 · 12 GB"——
+            // 用户说"硬件 GPU 显存有获取不准的 bug"。探到的数单独回，
+            // 顶着的那个也回，界面把两件事说清楚。
+            out["effective"]["physicalVramGb"] =
+                prof.gpu.has_value() ? json(prof.gpu->vram_gb()) : json(nullptr);
+            out["effective"]["vramOverride"] =
+                s.vram_gb_override.has_value() ? json(*s.vram_gb_override) : json(nullptr);
         }
         // **体检要发网络请求，最坏二十多秒。** Node 那份也是同步等的，
         // 形状要一致就只能照做；Crow 是线程池，占住一个工作线程不影响别的请求。

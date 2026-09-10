@@ -256,9 +256,6 @@ async function saveConnections() {
     tts_backend: conn.value.tts_backend,
     tts_base_url: conn.value.tts_base_url ?? '',
     tts_engine: conn.value.tts_engine,
-    vram_gb_override: conn.value.vram_gb_override
-      ? Number(conn.value.vram_gb_override)
-      : null,
   }
   // 密钥只在用户真填了新的时候才提交。空着就是「别动它」，
   // 提交空串会把原来的密钥抹掉。
@@ -377,11 +374,21 @@ function scrollTo(id) {
             <!-- **成片步数不在这儿显示。** 下面「出图出片」那张卡上有同一个
                  数、同一句说明；一字不差地重复两遍只是让这一页更长。
                  这里只留跟"跑在哪台机器上"有关的：显卡，和配置文件路径。 -->
+            <!-- **显存显示的是探到的那个数，不是配置里顶着的。**
+                 /api/hardware 的 vram_gb 在有 vram_gb_override 时回的是 override，
+                 这里以前照着显示，于是写着 "5090 · 12 GB"——用户报的
+                 "硬件 GPU 显存有获取不准的 bug"。真实显存从 effective 拿。 -->
             <div v-if="embedded" class="field">
               <span class="field__label">显卡</span>
               <span class="mono">
                 {{ hardware?.gpu || '未探测到显卡' }}
-                <template v-if="hardware?.vram_gb"> · {{ hardware.vram_gb }} GB</template>
+                <template v-if="effective?.physicalVramGb">
+                  · {{ Number(effective.physicalVramGb).toFixed(1) }} GB
+                </template>
+              </span>
+              <span v-if="effective?.vramOverride" class="field__hint warn-text">
+                配置里 vram_gb_override = {{ effective.vramOverride }} 顶着这张卡，
+                档位表按它推。程序会自己算，把这一行从配置文件里删掉。
               </span>
             </div>
             <p class="tiny dim mono">配置文件：{{ node.configFile }}</p>
@@ -550,21 +557,12 @@ function scrollTo(id) {
               </div>
             </div>
             <div class="card__body grid grid--2">
-              <label class="field">
-                <span class="field__label">显存覆盖（GB）</span>
-                <input
-                  v-model="conn.vram_gb_override"
-                  class="input numeric"
-                  type="number"
-                  step="1"
-                  placeholder="留空表示自动探测"
-                />
-                <span class="field__hint">
-                  只影响档位表怎么推（步数那些），不是"这张卡有多少显存"。
-                  画幅和清晰度在项目页上选。
-                  想要更高的成片档就把它调大。
-                </span>
-              </label>
+              <!-- **「显存覆盖」那个输入框删了（2026-09-10）。**
+                   它做的事是让档位表按一个假的显存数推，而这个假数还会被
+                   /api/hardware 当成探测结果回出去——设置页上写着
+                   "5090 · 12 GB"。画幅早就是项目自己的了，步数由 Turbo 定，
+                   它剩下的用途只有制造误会。用户的原话："都应该让程序自己算。"
+                   配置文件里还认这个键（老配置不报错），但界面上不再给。 -->
               <!-- **显示的是真正会用的数，不是档位表推的。**
                    档位表那份（宽高和步数）出片时会被两件事盖掉：画幅来自
                    项目的 [video]，步数在挂了 Turbo 时压到 6。照着档位表显示
@@ -659,7 +657,7 @@ function scrollTo(id) {
               <!-- 大模型走内置时上面一个大模型字段都没显示，
                    还说"大模型和配音后端一起保存"就是在说一件没发生的事。 -->
               <span class="tiny dim">
-                {{ llmLocal ? '配音后端和显存覆盖一起保存。' : '大模型和配音后端一起保存。' }}
+                {{ llmLocal ? '保存配音后端。' : '大模型和配音后端一起保存。' }}
               </span>
             </div>
           </section>
@@ -1098,5 +1096,9 @@ function scrollTo(id) {
     margin-top: 0;
     white-space: nowrap;
   }
+}
+/* 配置里有 vram_gb_override 顶着真实显存时那句提醒 */
+.warn-text {
+  color: var(--warn);
 }
 </style>
