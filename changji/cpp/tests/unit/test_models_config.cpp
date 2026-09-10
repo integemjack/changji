@@ -745,3 +745,55 @@ TEST_CASE("[video]：横竖屏加清晰度，宽高算出来") {
         }
     }
 }
+
+TEST_CASE("老配置里的 comfy 自己换掉，不是让程序起不来") {
+    // **拆掉一条路之后，老配置不能让程序起不来。**
+    //
+    // 拆 ComfyUI 时只在 validate() 里加了迁移说明，于是升级上来的用户
+    // 遇到的是：程序直接退出，往 stderr 打一句"已经不支持了"。
+    // 双击启动的人连那句都看不到，窗口一闪就没了。而那句话让他去改的
+    // toml，正是他多半不知道在哪的那个文件——他本来会去设置页改，
+    // 可设置页就是这个进程发的，起不来就打不开。
+    //
+    // 这一条是在本机跑二进制时真栽的：自己的 ~/.config 里还留着
+    // tts.backend = "comfy"，程序起不来。
+    config::Settings s;
+    s.tts.backend = "comfy";
+    s.models.engine = "comfy";
+
+    const auto notes = config::migrate_legacy(s);
+
+    CHECK(s.tts.backend == "local");
+    CHECK(s.models.engine == "sd");
+    // 换完必须是合法的，否则只是把"起不来"往后挪了一步
+    for (const auto& e : s.validate()) {
+        CHECK_MESSAGE(e.find("tts.backend") == std::string::npos, e);
+        CHECK_MESSAGE(e.find("models.engine") == std::string::npos, e);
+    }
+
+    // **两处都要说一声。** 悄悄换掉比报错更糟：用户以为还在走 ComfyUI。
+    REQUIRE(notes.size() == 2);
+    bool said_tts = false, said_engine = false;
+    for (const auto& n : notes) {
+        if (n.find("[tts].backend") != std::string::npos) said_tts = true;
+        if (n.find("[models].engine") != std::string::npos) said_engine = true;
+        CHECK(n.find("comfy") != std::string::npos);   // 说清是从什么换过来的
+    }
+    CHECK(said_tts);
+    CHECK(said_engine);
+}
+
+TEST_CASE("没有老取值时迁移一句话都不说") {
+    // 每次启动都刷两行"已经帮你改了"，用户会当噪音略过——
+    // 而真需要看的那一次也就跟着略过了。
+    config::Settings s;
+    CHECK(config::migrate_legacy(s).empty());
+    CHECK(s.tts.backend == "local");
+    CHECK(s.models.engine == "sd");
+
+    // 认得的取值也不该被动
+    config::Settings http;
+    http.tts.backend = "http";
+    CHECK(config::migrate_legacy(http).empty());
+    CHECK(http.tts.backend == "http");
+}

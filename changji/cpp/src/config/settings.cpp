@@ -1,5 +1,6 @@
 #include "config/settings.hpp"
 
+#include <cstdio>
 #include <fstream>
 #include <iterator>
 #include <sstream>
@@ -568,7 +569,40 @@ Settings load_settings(const std::optional<fs::path>& project_dir) {
     s.llm.base_url = strip_trailing_slash(s.llm.base_url);
     if (s.tts.base_url) s.tts.base_url = strip_trailing_slash(*s.tts.base_url);
 
+    // 往 stderr 打，不走日志：这一步发生在任何日志接上之前。
+    for (const auto& note : migrate_legacy(s)) {
+        std::fprintf(stderr, "[配置] %s\n", note.c_str());
+    }
     return s;
+}
+
+std::vector<std::string> migrate_legacy(Settings& s) {
+    std::vector<std::string> notes;
+    // **拆掉一条路之后，老配置不能让程序起不来。**
+    //
+    // 2026-09-10 拆 ComfyUI 时只在 validate() 里加了迁移说明，
+    // 于是升级上来的用户是这个遭遇：程序**直接退出**，只往 stderr 打一句
+    // "tts.backend = comfy 已经不支持了"。双击启动的人连那句都看不到，
+    // 窗口一闪就没了。而那句话让他去改的 toml，正是他多半不知道在哪的
+    // 那个文件——他本来会去设置页改，可设置页是这个进程发的，起不来就打不开。
+    //
+    // 两处 comfy 都只有一个像样的去处，那就自己换掉、大声说一句。
+    // 换错的代价（本机跑而不是走 ComfyUI）远小于起不来。
+    if (s.tts.backend == "comfy") {
+        s.tts.backend = "local";
+        notes.push_back(
+            "[tts].backend 原来是 \"comfy\"，ComfyUI 那条路已拆除，"
+            "这次按 \"local\"（进程内跑）起。要外接配音服务就改成 "
+            "\"http\" 并填 [tts].base_url。");
+    }
+    if (s.models.engine == "comfy") {
+        s.models.engine = "sd";
+        notes.push_back(
+            "[models].engine 原来是 \"comfy\"，出图出片现在都走进程内的 "
+            "sd.cpp，这次按 \"sd\" 起。模型文件在 [models] 的 image / "
+            "video 几项。");
+    }
+    return notes;
 }
 
 std::map<std::string, std::string> env_overridden() {

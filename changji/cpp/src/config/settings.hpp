@@ -521,6 +521,20 @@ std::filesystem::path user_config_path();
 /// 「配置坏了」而不指出哪一份，用户只能挨个翻。
 Settings load_settings(const std::optional<std::filesystem::path>& project_dir = std::nullopt);
 
+/// 把已经拆掉的老取值换成现在的，返回每一处换了什么。
+///
+/// **拆掉一条路之后，老配置不能让程序起不来。** 拆 ComfyUI 时只在
+/// `validate()` 里加了迁移说明，于是升级上来的用户遇到的是：程序直接退出，
+/// 往 stderr 打一句"已经不支持了"。双击启动的人连那句都看不到。而那句话
+/// 让他去改的 toml 文件，恰恰是他多半不知道在哪的那个——他本来会去设置页
+/// 改，可设置页就是这个进程发的，起不来就打不开。
+///
+/// 只处理**有唯一像样去处**的取值（comfy → local / sd）。拿不准的仍然
+/// 交给 `validate()` 去拦：猜错一个地址比起不来更糟。
+///
+/// `load_settings` 会自己调一遍并把返回的话打到 stderr。单独暴露是为了能测。
+std::vector<std::string> migrate_legacy(Settings& s);
+
 /// 哪些设置正被环境变量顶着。
 ///
 /// 环境变量优先级最高。容器里用 compose 注入地址是常态，这时候在界面上

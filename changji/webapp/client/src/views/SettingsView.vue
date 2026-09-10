@@ -361,27 +361,15 @@ function scrollTo(id) {
             </div>
             <!-- 自带引擎时，把这张卡片换成有用的东西：跑在什么机器上、
                  配置从哪读的。地址和超时那两栏在这种情况下是空的。 -->
-            <div v-if="embedded" class="grid grid--2">
-              <div class="field">
-                <span class="field__label">显卡</span>
-                <span class="mono">
-                  {{ hardware?.gpu || '未探测到显卡' }}
-                  <template v-if="hardware?.vram_gb"> · {{ hardware.vram_gb }} GB</template>
-                </span>
-              </div>
-              <!-- **只显示步数，不显示宽高。**
-                   宽高由项目的 [video] 说了算，而这里读的是全局档位表——
-                   两个数不一样时（很常见：全局 960×544、项目 704×1280）
-                   显示出来只会让人以为设置没生效。 -->
-              <div class="field">
-                <span class="field__label">成片步数</span>
-                <span class="mono">
-                  {{ hardware?.tiers?.final?.steps ?? '—' }}
-                </span>
-                <span class="field__hint">
-                  画幅和清晰度是每部剧自己的，在项目页的「画面」那张卡选。
-                </span>
-              </div>
+            <!-- **成片步数不在这儿显示。** 下面「出图出片」那张卡上有同一个
+                 数、同一句说明；一字不差地重复两遍只是让这一页更长。
+                 这里只留跟"跑在哪台机器上"有关的：显卡，和配置文件路径。 -->
+            <div v-if="embedded" class="field">
+              <span class="field__label">显卡</span>
+              <span class="mono">
+                {{ hardware?.gpu || '未探测到显卡' }}
+                <template v-if="hardware?.vram_gb"> · {{ hardware.vram_gb }} GB</template>
+              </span>
             </div>
             <p class="tiny dim mono">配置文件：{{ node.configFile }}</p>
           </div>
@@ -564,16 +552,18 @@ function scrollTo(id) {
                   想要更高的成片档就把它调大。
                 </span>
               </label>
+              <!-- **只显示步数，不显示宽高。**
+                   档位表推出来的宽高（这台 6 GB 的卡上是 768×448）出片时
+                   会被项目的 [video] 整个盖掉，一次都不会被用到。摆在这儿
+                   的后果是：用户在项目页选了竖屏 720p，回到设置页看到
+                   768×448，以为哪里没生效。上面那张「引擎」卡片已经因为
+                   同一个理由改过一遍了。 -->
               <div class="field">
-                <span class="field__label">当前档位</span>
-                <span class="mono">
-                  <template v-if="hardware?.tiers?.final">
-                    成片 {{ hardware.tiers.final.width }}×{{ hardware.tiers.final.height }}
-                    / {{ hardware.tiers.final.steps }} 步
-                  </template>
-                  <template v-else>—</template>
+                <span class="field__label">成片步数</span>
+                <span class="mono">{{ hardware?.tiers?.final?.steps ?? '—' }}</span>
+                <span class="field__hint">
+                  画幅和清晰度是每部剧自己的，在项目页的「画面」那张卡选。
                 </span>
-                <span class="field__hint">在项目页的「画面」那张卡改。</span>
               </div>
             </div>
           </section>
@@ -630,7 +620,11 @@ function scrollTo(id) {
               >
                 {{ isBusy('conn') ? '保存中…' : '保存连接设置并重新体检' }}
               </button>
-              <span class="tiny dim">大模型和配音后端一起保存。</span>
+              <!-- 大模型走内置时上面一个大模型字段都没显示，
+                   还说"大模型和配音后端一起保存"就是在说一件没发生的事。 -->
+              <span class="tiny dim">
+                {{ llmLocal ? '配音后端和显存覆盖一起保存。' : '大模型和配音后端一起保存。' }}
+              </span>
             </div>
           </section>
 
@@ -786,7 +780,12 @@ function scrollTo(id) {
             <div class="card__head">
               <div>
                 <div class="card__title">体检</div>
-                <div class="card__sub">模型文件、大模型、FFmpeg 三样缺一不可。</div>
+                <!-- 别再写"三样缺一不可"：大模型现在是黄字不是红字——
+                     出片那条路不用它，分镜表也可以手写。说成必需的，
+                     用户会为了一条不挡出片的警告卡在这儿。 -->
+                <div class="card__sub">
+                  红的必须先解决，黄的是"这一块还用不了"，其余照跑。
+                </div>
               </div>
               <span
                 v-if="overview?.doctor"

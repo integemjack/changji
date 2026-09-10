@@ -165,10 +165,19 @@ Check check_llm(const config::Settings& s) {
                     "构建时要 CHANGJI_LLAMA=ON；"
                     "或者把 [llm].backend 改回 remote 并填 base_url"};
         }
-        return {"大模型", Level::OK,
-                "进程内跑（" + (s.models.llm.empty() ? std::string("[models].llm 没填")
-                                                    : s.models.llm) + "）",
-                s.models.llm.empty() ? "要在 [models].llm 填一份 GGUF 权重" : ""};
+        // **没填权重就不是 OK。** 进程内是现在的默认，而刚装好的机器
+        // [models].llm 一定是空的——那时候写剧本和出分镜一步都走不了。
+        // 报绿的后果是用户点了「写剧本」才撞上一个运行期错误，
+        // 而他刚看过一份全绿的体检报告。
+        //
+        // 是 WARN 不是 FAIL：出片那条路不用大模型，分镜表也可以手写。
+        // FAIL 会把制作页的开工按钮一起锁掉。
+        if (s.models.llm.empty()) {
+            return {"大模型", Level::WARN, "进程内跑，但 [models].llm 没填",
+                    "下一份 GGUF 放进模型目录，在 [models].llm 填文件名。\n"
+                    "不想在本机跑就去设置页把「跑在哪」改成外接 API。"};
+        }
+        return {"大模型", Level::OK, "进程内跑（" + s.models.llm + "）", ""};
     }
 
     const std::string& url = s.llm.base_url;
@@ -285,10 +294,9 @@ Check check_ggml() {
 
 /// 进程内配音编进来了没有。
 ///
-/// **不是 WARN 也不是 FAIL。** 没编进来是完全正常的形态——配音走
-/// ComfyUI 或独立 HTTP 服务是阶段 8 之后相当长一段时间的实际形态，
-/// 方案风险一那一节写明了这一点。报警告等于让报告长期挂一条
-/// 永远不会去处理的黄字。
+/// **不是 WARN 也不是 FAIL。** 没编进来是完全正常的形态——配音走独立
+/// HTTP 服务是相当长一段时间的实际形态（ComfyUI 那条 2026-09-10 拆了）。
+/// 报警告等于让报告长期挂一条永远不会去处理的黄字。
 Check check_local_tts(const config::Settings& settings) {
     const auto probe = infer::probe_llama_tts();
     if (!probe.ok) return {"进程内配音", Level::WARN, probe.detail, ""};
@@ -322,14 +330,26 @@ Check check_local_tts(const config::Settings& settings) {
     return {"进程内配音", selected ? Level::FAIL : Level::OK,
             probe.detail + "；缺模型：" + missing +
                 (selected ? "，配音会退回估算后端（出静音）" : "（当前没选它）"),
-            selected ? "填上 [models].tts（Qwen3-TTS 的 talker）和 "
-                       "[models].tts_decoder（tokenizer/解码器），两份都是 GGUF。"
+            // **两条路都要说。** 只说"下模型"的话，小卡上的用户下完才
+            // 发现配音和出片挤不进同一张卡——而外接一个配音服务不用改
+            // 一行代码、也不占本机显存，那多半才是他要的那条。
+            selected ? "两条路挑一条：\n"
+                       "  本机跑：填 [models].tts（Qwen3-TTS 的 talker）和 "
+                       "[models].tts_decoder（tokenizer/解码器），两份都是 "
+                       "GGUF。\n"
+                       "  外接：把上面的「后端」改成「独立 HTTP 服务」并填"
+                       "服务地址，本机就不用装配音模型、也不占显存。"
                      : ""};
 }
 
 Check check_sd() {
     if (!infer::sd_available()) {
-        return {"出图后端", Level::OK, "没编进来，出图走推理服务", ""};
+        // **拆掉 ComfyUI 之后这就不再是 OK 了。** 原来的话是"出图走推理
+        // 服务"——那个服务没了，没编进 sd.cpp 就是一张图都出不来。
+        return {"出图后端", Level::FAIL, "没编进来，出图出片都跑不了",
+                "这份二进制构建时 CHANGJI_SD=OFF。换一份编了的，"
+                "或者自己编时打开 CHANGJI_SD（要出片还得 "
+                "CHANGJI_SD_CUDA=ON，不然只能用 CPU 跑，一镜要几小时）。"};
     }
     // 系统信息里带着编进去的后端和 CPU 特性（AVX2、CUDA 之类）。
     // 这一行是出画质问题时第一个要看的东西：同一份模型在 AVX2 和
@@ -342,11 +362,11 @@ Check check_sd() {
 
 /// 本地模型文件。
 ///
-/// 一项都没配是 OK 不是 WARN——走 ComfyUI 那条路的用户根本不需要这一节，
-/// 给他们报警告等于让体检报告长期挂着一条永远不会去处理的黄字，
-/// 报告里有常驻噪音之后，真正的警告就没人看了。
+/// **一项都没配现在是 WARN。** 以前是 OK，理由是"走 ComfyUI 那条路的用户
+/// 根本不需要这一节"——那条路 2026-09-10 拆了。现在出图出片全在进程内，
+/// 一项都没配就等于什么都出不来，报绿是在骗人。
 ///
-/// 配了但文件不在才报警告。这种情况几乎一定是笔误或者模型没下完。
+/// 配了但文件不在也报警告。这种情况几乎一定是笔误或者模型没下完。
 Check check_models(const config::Settings& s) {
     const fs::path ws = s.workspace_path();
     const auto& m = s.models;
@@ -371,7 +391,13 @@ Check check_models(const config::Settings& s) {
     }
 
     if (configured.empty()) {
-        return {"本地模型", Level::OK, "没配，走推理服务", ""};
+        // 是 WARN 不是 FAIL：装好程序还没下模型是常态，那时候用户仍然
+        // 要能进界面、能写剧本分镜。FAIL 会把开工按钮一起锁掉。
+        return {"本地模型", Level::WARN, "一个都没配，出图出片跑不了",
+                "至少要 [models].image（首帧）和 [models].video + "
+                "video_vae（视频）。\n"
+                "相对路径是相对 dir 解析的，dir 留空时是项目库下的 models/。\n"
+                "当前 dir：" + paths::to_utf8(m.dir_path(ws))};
     }
 
     if (!missing.empty()) {
