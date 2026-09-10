@@ -784,10 +784,11 @@ TEST_CASE("问不到卡的时候，用量到的推算空闲") {
         { auto lease = s.acquire(Slot::Video); }
         CHECK(llm_unloads == 1);
     }
-    SUBCASE("装着的槽有没量过的：不推算，保守驱逐") {
+    SUBCASE("装着的槽既没量过也估不出：不推算，保守驱逐") {
         // **这一条是安全底线。** 不知道别人占多少就敢算空闲的话，
         // 算出来的数会偏大，然后 OOM——而 OOM 走 GGML_ASSERT，
         // abort() 把整个服务带走。
+        // 这里的 llm 没设 live_vram，所以连估都估不出来。
         s.record_measured_vram(Slot::Video, 74ull << 30);    // LLM 没量过
         { auto lease = s.acquire(Slot::LLM); }
         { auto lease = s.acquire(Slot::Video); }
@@ -808,6 +809,87 @@ TEST_CASE("问不到卡的时候，用量到的推算空闲") {
         { auto lease = s2.acquire(Slot::LLM); }
         { auto lease = s2.acquire(Slot::Video); }
         CHECK(un == 1);
+    }
+}
+
+TEST_CASE("探针失灵时，没量过的槽用它自己的估算顶上") {
+    // **为什么非要留这条估算的口子。**
+    //
+    // 大模型那份实测值是"装之前问一次显存、装完再问一次"的差值，问的还是
+    // 同一个 nvidia-smi。探针问不到的时候，那两次也一样问不到，于是大模型
+    // 永远拿不到实测值。只认实测的话，"问不到就推算"这条在"探针失灵"这个
+    // 它唯一要救的场景里从来不会生效——出片每次都会把大模型踢掉。
+    //
+    // 估算只往高了用：把别人占的算大，推出来的空闲偏小，顶多多卸一次。
+    const std::size_t budget = 86 * GB;
+    int llm_unloads = 0;
+
+    auto setup = [&](Scheduler& s, std::size_t llm_live) {
+        s.set_budget(budget);
+        s.set_total_vram(96 * GB);
+        s.set_free_vram_probe([] { return std::optional<double>{}; });  // 问不到
+
+        SlotSpec llm;
+        llm.slot = Slot::LLM;
+        llm.vram_estimate = budget;
+        llm.evict_priority = 1;
+        llm.load = [] {};
+        llm.unload = [&llm_unloads] { ++llm_unloads; };
+        if (llm_live > 0) llm.live_vram = [llm_live] { return llm_live; };
+        s.register_slot(std::move(llm));
+
+        SlotSpec vid;
+        vid.slot = Slot::Video;
+        vid.vram_estimate = budget;
+        vid.evict_priority = 9;
+        vid.load = [] {};
+        vid.unload = [] {};
+        s.register_slot(std::move(vid));
+
+        s.record_measured_vram(Slot::Video, 74 * GB);
+    };
+
+    auto run = [](Scheduler& s) {
+        { auto lease = s.acquire(Slot::LLM); }
+        { auto lease = s.acquire(Slot::Video); }
+    };
+
+    SUBCASE("大模型估 20 GB：96 − 20 = 76，放得下 74，不卸") {
+        Scheduler s;
+        setup(s, 20 * GB);
+        run(s);
+        CHECK(llm_unloads == 0);
+    }
+    SUBCASE("大模型估 30 GB：96 − 30 = 66，放不下 74，照卸") {
+        Scheduler s;
+        setup(s, 30 * GB);
+        run(s);
+        CHECK(llm_unloads == 1);
+    }
+    SUBCASE("既没量过也估不出：还是保守驱逐") {
+        Scheduler s;
+        setup(s, 0);
+        run(s);
+        CHECK(llm_unloads == 1);
+    }
+    SUBCASE("量到了就按量到的算，不用估的那个") {
+        // 估算说 30（会卸），实测说 15（不卸）。实测是证据，估算是模型，
+        // 有证据就别再用模型——否则量得越准反而卸得越勤。
+        Scheduler s;
+        setup(s, 30 * GB);
+        s.record_measured_vram(Slot::LLM, 15 * GB);
+        run(s);
+        CHECK(llm_unloads == 0);
+    }
+    SUBCASE("留痕里要标明空闲不是问来的") {
+        Scheduler s;
+        setup(s, 20 * GB);
+        run(s);
+        const auto d = s.last_room_decision();
+        REQUIRE(d.valid);
+        CHECK(d.probed == false);
+        CHECK(d.kept == true);
+        CHECK(d.free_seen == 76 * GB);
     }
 }
 

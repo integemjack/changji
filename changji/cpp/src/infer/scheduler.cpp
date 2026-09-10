@@ -279,25 +279,40 @@ bool Scheduler::make_room(std::size_t need, Slot keep) {
     // NVIDIA 明确不支持的做法。以前问不到就一路走到驱逐，于是
     // "显存够就不清理"在真机上等于从来没生效过。
     //
-    // 推算只用**已经量到的**数，不猜：装着的槽里只要有一个没量过，
-    // 就放弃推算、回到保守那条去卸。这样永远不会比事实更乐观。
+    // 推算优先用**已经量到的**数。没量过的槽退回它自己的老实数估算，
+    // 而且只往高了算——把别人占的算大，推出来的空闲就偏小，顶多多卸一次，
+    // 不会因为算多了空闲去撞 OOM。
+    //
+    // **这条估算的口子是必须留的。** 大模型那份实测是"装之前问一次、装完
+    // 再问一次"的差值，问的还是同一个 nvidia-smi。探针问不到的时候那两次
+    // 也一样问不到，大模型就永远没有实测值——只认实测的话，这条推算在
+    // "探针失灵"这个它唯一要救的场景里从来不会生效。
+    //
+    // 两样都没有才放弃推算、回到保守那条去卸。
     if (!free_bytes && total_vram_ > 0) {
         std::size_t others = 0;
         bool all_known = true;
         for (const Entry& e : entries_) {
             if (!e.is_loaded || e.spec.slot == keep) continue;
-            const auto it = measured_.find(e.spec.slot);
-            if (it == measured_.end() || it->second == 0) {
+            std::size_t take = 0;
+            if (const auto it = measured_.find(e.spec.slot);
+                it != measured_.end() && it->second > 0) {
+                take = it->second;
+            } else if (e.spec.live_vram) {
+                // 每次现问，理由同上面那处：模型可能已经被换过了。
+                take = e.spec.live_vram();
+            }
+            if (take == 0) {
                 all_known = false;
                 break;
             }
-            others += it->second;
+            others += take;
         }
         if (all_known && others < total_vram_) {
             free_bytes = total_vram_ - others;
             if (dbg) {
                 std::fprintf(stderr,
-                             "[vram]   问不到，按量到的推算空闲=%.1fG"
+                             "[vram]   问不到，按量到/估到的推算空闲=%.1fG"
                              "（总量 %.1fG − 别人占的 %.1fG）\n",
                              *free_bytes / 1073741824.0,
                              total_vram_ / 1073741824.0,
@@ -305,7 +320,7 @@ bool Scheduler::make_room(std::size_t need, Slot keep) {
             }
         } else if (dbg) {
             std::fprintf(stderr,
-                         "[vram]   问不到，且有槽没量过，推算不了 -> 保守驱逐\n");
+                         "[vram]   问不到，且有槽既没量过也估不出，推算不了 -> 保守驱逐\n");
         }
     }
 
