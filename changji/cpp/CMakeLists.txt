@@ -358,6 +358,7 @@ add_executable(changji
     src/llm/local_client.cpp
     src/llm/client_http.cpp
     src/infer/worker_pool.cpp
+    src/infer/worker_farm.cpp
     src/infer/worker_server.cpp
     src/infer/worker_proto.cpp
     src/http/flow.cpp
@@ -605,6 +606,7 @@ if(CHANGJI_BUILD_TESTS)
         # 它们链 httplib、asio 或 Crow，而各自的逻辑部分都已经拆到
         # 不依赖网络库的文件里了。
         src/infer/worker_proto.cpp
+        src/infer/worker_farm.cpp
         src/http/flow.cpp
         src/http/webapp.cpp
         src/models/shot.cpp

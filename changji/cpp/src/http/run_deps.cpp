@@ -6,6 +6,8 @@
 //
 // 换句话说，这个文件里没有任何值得测的判断——它只是把
 // "配置说走哪条路" 翻译成 "装哪两个函数对象"。
+#include <chrono>
+#include <thread>
 #include <memory>
 
 #include "llm/client.hpp"
@@ -15,6 +17,7 @@
 #include "http/run.hpp"
 #include "infer/sd_image.hpp"
 #include "infer/sd_video.hpp"
+#include "infer/worker_farm.hpp"
 #include "infer/worker_pool.hpp"
 #include "stages/frames.hpp"
 
@@ -33,9 +36,37 @@ RunDeps default_run_deps() {
         b.video = infer::sd_video_renderer(s);
         b.frame_backend_name = "sd.cpp";
 
+        // **本机多卡：自己把每张卡的工作进程拉起来。**
+        // 用户启动的仍然是一个命令，多卡编排由它自己做。只在 endpoints
+        // 为空、探到多于一张卡时才动手（见 WorkerFarm::start）。
+        //
+        // farm 是静态的：拉起来的子进程要活到进程结束，每次建 Backends
+        // 都拉一遍的话，跑第二集时会再起 N 个、端口还撞上。
+        static std::shared_ptr<infer::WorkerFarm> farm =
+            infer::WorkerFarm::start(
+                s, config::runtime().profile(),
+                [](const std::string& base, int seconds) {
+                    // 工作进程的 /health 对 GET 和 POST 都答，
+                    // 为一次探活单独引一条 HTTP 路径不值得。
+                    auto post = llm::default_http_post();
+                    const auto deadline =
+                        std::chrono::steady_clock::now() +
+                        std::chrono::seconds(seconds);
+                    while (std::chrono::steady_clock::now() < deadline) {
+                        if (post(base + "/health", "", {}, 2.0).status == 200) {
+                            return true;
+                        }
+                        std::this_thread::sleep_for(
+                            std::chrono::milliseconds(400));
+                    }
+                    return false;
+                });
+        const std::vector<std::string> endpoints =
+            farm ? farm->endpoints() : s.workers.endpoints;
+
         // **配了工作进程就派出去算。** 空的话上面那两行原样生效——
         // 行为和以前一模一样，这是这一步能安全落地的前提。
-        if (auto pool = infer::make_worker_pool(s.workers.endpoints)) {
+        if (auto pool = infer::make_worker_pool(endpoints)) {
             b.frame = pool->frame_renderer();
             b.video = pool->video_renderer();
             b.frame_backend_name =
@@ -46,6 +77,7 @@ RunDeps default_run_deps() {
             // 池要活到渲染结束。Backends 只存 std::function，
             // 捕获一份 shared_ptr 让它跟着活。
             b.keepalive.push_back(pool);
+            if (farm) b.keepalive.push_back(farm);
         }
 
         // 装配和闸门要用。路径从配置来——用户可能把 ffmpeg 装在

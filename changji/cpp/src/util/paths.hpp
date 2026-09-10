@@ -72,6 +72,15 @@ std::string to_utf8(const std::filesystem::path& p);
 /// （已经是 UTF-8）。只要 PATH 里有一个目录名带非 ASCII 字符，--doctor 就整个崩掉。
 std::filesystem::path from_utf8(const std::string& s);
 
+/// 这个进程自己的可执行文件路径。
+///
+/// 多卡时单进程要拉起每张卡一个工作进程，而**拉起的必须是自己这一份**——
+/// 靠 PATH 找 "changji" 会找到别的构建（机器上常常有好几个 build- 目录），
+/// 那时候症状是"工作进程行为和主进程对不上"，极难联想到是版本不同。
+///
+/// 取不到时回空（那时候多卡自动拉起会退回单进程，并说清原因）。
+std::filesystem::path self_exe();
+
 /// 命令行参数，**UTF-8 的**。
 ///
 /// Windows 上 `char** argv` 是按当前 ANSI 代码页编的。一个中文路径

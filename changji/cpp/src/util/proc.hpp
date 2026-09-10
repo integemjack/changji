@@ -5,6 +5,8 @@
 
 #pragma once
 
+#include <cstdint>
+#include <filesystem>
 #include <optional>
 #include <string>
 #include <vector>
@@ -47,5 +49,29 @@ std::optional<std::string> which(const std::string& name);
 Result run(const std::string& exe,
            const std::vector<std::string>& args,
            int timeout_ms = 15000);
+
+/// 起一个**不等它结束**的子进程，返回一个能用来杀它的句柄。
+///
+/// `run` 是同步的：起了就等，等到它退出或者超时。工作进程要跑几小时，
+/// 那条路用不上。
+///
+/// 子进程的 stdout/stderr 追加写到 `log`（空则丢弃）。**不能继承父进程的**：
+/// 多张卡就是多个子进程，混在一起的日志分不清是哪张卡出的错。
+///
+/// 返回 0 表示起不来。句柄在 POSIX 上是 pid，Windows 上是进程 id。
+using ProcHandle = std::uint64_t;
+ProcHandle spawn(const std::string& exe, const std::vector<std::string>& args,
+                 const std::filesystem::path& log);
+
+/// 杀掉 `spawn` 起的那个。已经退了的话什么都不做。
+///
+/// 先客气地要求退出（POSIX 是 SIGTERM，Windows 直接 Terminate——那边没有
+/// 对应的东西），等 `grace_ms`，还活着就来硬的。
+/// **要留出宽限期**：工作进程收到 SIGTERM 会把当前这一镜取消掉再退，
+/// 直接 SIGKILL 会留下半截的 mp4。
+void kill_spawned(ProcHandle h, int grace_ms = 5000);
+
+/// 那个进程还活着吗。
+bool alive(ProcHandle h);
 
 }  // namespace changji::proc

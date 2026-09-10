@@ -8,8 +8,11 @@
 
 #include <doctest/doctest.h>
 
+#include <set>
+
 #include <string>
 
+#include "infer/worker_farm.hpp"
 #include "infer/worker_proto.hpp"
 
 using namespace changji;
@@ -137,4 +140,47 @@ TEST_CASE("种子必须由协调者给，不能让工作进程自己算") {
     auto j = infer::to_json(sample_frame());
     j.erase("seed");
     CHECK_THROWS_AS(infer::task_from_json(j), std::runtime_error);
+}
+
+TEST_CASE("多卡自动拉起：端口按卡号排，不会撞") {
+    // 端口撞了的表现是"某张卡的工作进程起不来"，而日志里只有一句连不上，
+    // 看不出是端口规则算错了。所以这条规则单独拿出来测。
+    CHECK(infer::worker_port_for(9001, 0) == 9001);
+    CHECK(infer::worker_port_for(9001, 7) == 9008);
+    // 八张卡两两不同
+    std::set<int> seen;
+    for (int g = 0; g < 8; ++g) seen.insert(infer::worker_port_for(9001, g));
+    CHECK(seen.size() == 8);
+}
+
+TEST_CASE("多卡自动拉起：这四种情况都不该动手") {
+    // **不动手时要退回单卡进程内跑**，不是报错——多卡拉不起来该继续干活。
+    models::HardwareProfile two;
+    models::GPUInfo g;
+    g.count = 2;
+    two.gpu = g;
+
+    SUBCASE("用户自己填了 endpoints（包括跨机）") {
+        config::Settings s;
+        s.workers.endpoints = {"http://别的机器:9001"};
+        CHECK(infer::WorkerFarm::start(s, two) == nullptr);
+    }
+    SUBCASE("显式关掉了") {
+        config::Settings s;
+        s.workers.auto_spawn = false;
+        CHECK(infer::WorkerFarm::start(s, two) == nullptr);
+    }
+    SUBCASE("只有一张卡：进程内跑更省事") {
+        config::Settings s;
+        models::HardwareProfile one;
+        models::GPUInfo g1;
+        g1.count = 1;
+        one.gpu = g1;
+        CHECK(infer::WorkerFarm::start(s, one) == nullptr);
+    }
+    SUBCASE("压根没探到显卡") {
+        config::Settings s;
+        models::HardwareProfile none;
+        CHECK(infer::WorkerFarm::start(s, none) == nullptr);
+    }
 }

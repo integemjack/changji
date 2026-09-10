@@ -10,6 +10,7 @@
 #ifdef _WIN32
 #include <windows.h>
 #else
+#include <fcntl.h>
 #include <sys/wait.h>
 #include <csignal>
 #include <unistd.h>
@@ -288,6 +289,133 @@ Result run(const std::string& exe, const std::vector<std::string>& args, int tim
 
     r.exit_code = WIFEXITED(status) ? WEXITSTATUS(status) : 1;
     return r;
+#endif
+}
+
+// ---------------------------------------------------------------------------
+// 起一个不等它结束的子进程。多卡时每张卡一个工作进程，都是这么起的。
+
+ProcHandle spawn(const std::string& exe, const std::vector<std::string>& args,
+                 const fs::path& log) {
+    const auto resolved = which(exe);
+    if (!resolved.has_value()) return 0;
+
+#ifdef _WIN32
+    // 引用规则和上面 run() 那段一样，复用同一个 quote()。
+    std::wstring cmd = paths::from_utf8(quote(*resolved)).wstring();
+    for (const auto& a : args) {
+        cmd += L" ";
+        cmd += paths::from_utf8(quote(a)).wstring();
+    }
+    std::vector<wchar_t> mutable_cmd(cmd.begin(), cmd.end());
+    mutable_cmd.push_back(L'\0');
+
+    SECURITY_ATTRIBUTES sa{};
+    sa.nLength = sizeof(sa);
+    sa.bInheritHandle = TRUE;
+    HANDLE out = INVALID_HANDLE_VALUE;
+    if (!log.empty()) {
+        out = ::CreateFileW(log.wstring().c_str(), FILE_APPEND_DATA,
+                            FILE_SHARE_READ | FILE_SHARE_WRITE, &sa,
+                            OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    }
+    STARTUPINFOW si{};
+    si.cb = sizeof(si);
+    if (out != INVALID_HANDLE_VALUE) {
+        si.dwFlags = STARTF_USESTDHANDLES;
+        si.hStdOutput = out;
+        si.hStdError = out;
+    }
+    PROCESS_INFORMATION pi{};
+    const BOOL ok = ::CreateProcessW(
+        nullptr, mutable_cmd.data(), nullptr, nullptr,
+        out != INVALID_HANDLE_VALUE, CREATE_NEW_PROCESS_GROUP, nullptr,
+        nullptr, &si, &pi);
+    if (out != INVALID_HANDLE_VALUE) ::CloseHandle(out);
+    if (!ok) return 0;
+    ::CloseHandle(pi.hThread);
+    ::CloseHandle(pi.hProcess);
+    return static_cast<ProcHandle>(pi.dwProcessId);
+#else
+    const pid_t pid = ::fork();
+    if (pid < 0) return 0;
+    if (pid == 0) {
+        // **自己开一个会话。** 不开的话父进程收到 Ctrl-C 时整个进程组
+        // 一起被打断，工作进程来不及把当前这一镜收尾。
+        ::setsid();
+        if (!log.empty()) {
+            const int fd = ::open(log.c_str(),
+                                  O_WRONLY | O_CREAT | O_APPEND, 0644);
+            if (fd >= 0) {
+                ::dup2(fd, STDOUT_FILENO);
+                ::dup2(fd, STDERR_FILENO);
+                ::close(fd);
+            }
+        }
+        // stdin 接到 /dev/null：工作进程不读输入，留着终端句柄会让它
+        // 在后台被 SIGTTIN 停住。
+        const int devnull = ::open("/dev/null", O_RDONLY);
+        if (devnull >= 0) {
+            ::dup2(devnull, STDIN_FILENO);
+            ::close(devnull);
+        }
+        std::vector<char*> argv;
+        argv.push_back(const_cast<char*>(resolved->c_str()));
+        for (const auto& a : args) argv.push_back(const_cast<char*>(a.c_str()));
+        argv.push_back(nullptr);
+        ::execv(resolved->c_str(), argv.data());
+        ::_exit(127);
+    }
+    return static_cast<ProcHandle>(pid);
+#endif
+}
+
+bool alive(ProcHandle h) {
+    if (h == 0) return false;
+#ifdef _WIN32
+    HANDLE p = ::OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE,
+                             static_cast<DWORD>(h));
+    if (p == nullptr) return false;
+    DWORD code = 0;
+    const bool ok = ::GetExitCodeProcess(p, &code) && code == STILL_ACTIVE;
+    ::CloseHandle(p);
+    return ok;
+#else
+    // 先收尸，否则僵尸进程 kill(0) 仍然返回 0，永远"活着"。
+    int status = 0;
+    ::waitpid(static_cast<pid_t>(h), &status, WNOHANG);
+    return ::kill(static_cast<pid_t>(h), 0) == 0;
+#endif
+}
+
+void kill_spawned(ProcHandle h, int grace_ms) {
+    if (h == 0) return;
+#ifdef _WIN32
+    // Windows 上没有 SIGTERM 的对应物。CTRL_BREAK 只对同一个控制台组里的
+    // 进程有用，而我们用 CREATE_NEW_PROCESS_GROUP 起的，收得到。
+    ::GenerateConsoleCtrlEvent(CTRL_BREAK_EVENT, static_cast<DWORD>(h));
+#else
+    ::kill(static_cast<pid_t>(h), SIGTERM);
+#endif
+    // **等它自己收尾。** 工作进程收到信号会把当前这一镜取消掉再退，
+    // 直接来硬的会留下半截的 mp4——那种文件比没有更麻烦，
+    // 它看着像成品，要播一遍才发现是坏的。
+    const auto deadline =
+        std::chrono::steady_clock::now() + std::chrono::milliseconds(grace_ms);
+    while (std::chrono::steady_clock::now() < deadline) {
+        if (!alive(h)) return;
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    }
+#ifdef _WIN32
+    HANDLE p = ::OpenProcess(PROCESS_TERMINATE, FALSE, static_cast<DWORD>(h));
+    if (p != nullptr) {
+        ::TerminateProcess(p, 1);
+        ::CloseHandle(p);
+    }
+#else
+    ::kill(static_cast<pid_t>(h), SIGKILL);
+    int status = 0;
+    ::waitpid(static_cast<pid_t>(h), &status, 0);
 #endif
 }
 

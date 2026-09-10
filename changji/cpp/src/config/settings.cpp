@@ -357,6 +357,12 @@ void apply_table(const toml::table& doc, Settings& s) {
         if (auto v = (*t)["gpu"].value<std::int64_t>()) {
             s.workers.gpu = static_cast<int>(*v);
         }
+        if (auto v = (*t)["auto_spawn"].value<bool>()) {
+            s.workers.auto_spawn = *v;
+        }
+        if (auto v = (*t)["base_port"].value<std::int64_t>()) {
+            s.workers.base_port = static_cast<int>(*v);
+        }
         if (auto arr = (*t)["endpoints"].as_array()) {
             s.workers.endpoints.clear();
             for (const auto& v : *arr) {
@@ -555,6 +561,15 @@ constexpr const char* kDefaultToml = R"(# 场记配置文件
 # final_width = 1280
 # final_height = 704
 # final_steps = 6
+
+[workers]
+# **本机多卡不用填 endpoints**：留空时主进程会按显卡数自己拉起每张卡一个
+# 工作进程（auto_spawn，默认开），第 i 张卡监听 base_port + i。
+# 也就是说多卡上你启动的仍然只是一个命令。
+#
+# 跨机部署才填：endpoints = ["http://别的机器:9001", ...]，协议一模一样。
+# auto_spawn = true
+# base_port = 9001
 
 [llm]
 # 剧本和分镜用的大模型。backend 两个值：

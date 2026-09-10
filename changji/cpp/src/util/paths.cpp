@@ -1,13 +1,17 @@
 #include "util/paths.hpp"
 
 #include <cstdlib>
+#ifdef __APPLE__
+#include <mach-o/dyld.h>
+#endif
 
 #ifdef _WIN32
 #include <windows.h>
 // CommandLineToArgvW 在这里，不在 windows.h
 #include <shellapi.h>
-#include <vector>
 #endif
+
+#include <vector>
 
 namespace changji::paths {
 
@@ -146,6 +150,31 @@ fs::path expand_user(const std::string& raw) {
     if (raw.size() == 1) return home_dir();
     if (raw[1] == '/' || raw[1] == '\\') return home_dir() / from_utf8(raw.substr(2));
     return from_utf8(raw);  // ~someuser 这种形式不支持，原样返回
+}
+
+fs::path self_exe() {
+#ifdef _WIN32
+    std::vector<wchar_t> buf(32768);
+    const DWORD n = ::GetModuleFileNameW(nullptr, buf.data(),
+                                         static_cast<DWORD>(buf.size()));
+    if (n == 0 || n >= buf.size()) return {};
+    return fs::path(std::wstring(buf.data(), n));
+#elif defined(__APPLE__)
+    std::uint32_t size = 0;
+    _NSGetExecutablePath(nullptr, &size);
+    std::string buf(size, '\0');
+    if (_NSGetExecutablePath(buf.data(), &size) != 0) return {};
+    std::error_code ec;
+    const fs::path p = fs::weakly_canonical(fs::path(buf.c_str()), ec);
+    return ec ? fs::path(buf.c_str()) : p;
+#else
+    // /proc/self/exe 是符号链接，read_symlink 直接给目标。
+    // **别用 argv[0]**：它是调用方给什么就是什么，用相对路径起的进程
+    // 之后再 chdir 就找不着自己了。
+    std::error_code ec;
+    const fs::path p = fs::read_symlink("/proc/self/exe", ec);
+    return ec ? fs::path{} : p;
+#endif
 }
 
 }  // namespace changji::paths
