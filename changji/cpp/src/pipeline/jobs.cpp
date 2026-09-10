@@ -273,6 +273,14 @@ void JobTable::record(JobKind kind, Event ev) {
             msg["shot_step"] = ev.shot_step;
             msg["shot_steps"] = ev.shot_steps;
             msg["shot_prep"] = ev.shot_prep;
+        } else if (ev.shot_prep) {
+            // **还没进采样：没有步数，但"正在准备"这件事要说。**
+            // 借槽那一下是阻塞的——可能先卸大模型腾地方，再从磁盘读
+            // 十几二十 GB 进来，几十秒起。这一整段 sd.cpp 还没跑，
+            // 它的进度回调一次都不触发，牌子上就是一动不动。
+            // 只给这个标志、不给步数：上面那条"补个 0 会挂一条空进度槽"
+            // 的规矩还在，进度条照样不画。
+            msg["shot_prep"] = true;
         }
     }
     // 广播放在锁外：Hub 自己有锁，嵌套两把锁是死锁的常见来源。

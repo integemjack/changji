@@ -100,6 +100,11 @@ stages::VideoRenderer make_video_renderer(
                       const fs::path& dest, pipeline::CancelToken& tok,
                       const StepCallback& on_step) {
         // 每一镜借一次视频槽。跨阶段的显存回收由调度器决定。
+        // 同 frames.cpp：借之前先说一句。视频模型更大，卸大模型 + 读盘
+        // 这一段更长，而 sd.cpp 的进度回调要等它跑起来才有。
+        if (!scheduler().loaded(Slot::Video)) {
+            on_step(0, 0, 0.0, /*loading=*/true);
+        }
         auto lease = scheduler().acquire(Slot::Video);
         auto ctx = current_video_context();
         if (!ctx) throw SdError("出视频上下文没准备好");

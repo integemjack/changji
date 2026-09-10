@@ -183,6 +183,9 @@ export function useShots() {
         if (x.shotPrep) return `${stage}·准备 ${x.shotStep}/${x.shotSteps}`
         return `${stage} ${x.shotStep}/${x.shotSteps} 步`
       }
+      // 有准备标志但没步数：正在腾显存 / 从磁盘读模型，还没进采样。
+      // 这一段几十秒起，只写阶段名的话和卡死了看着一样。
+      if (x.shotPrep) return `${stage}·正在准备模型`
       return stage || '跑着'
     }
     // **排的队盖不住已经出来的东西。**

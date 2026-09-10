@@ -809,3 +809,40 @@ TEST_CASE("预览图只广播：不进事件环，不进快照，不动进度") 
     CHECK(snap.at("current").get<int>() == 3);
     CHECK(snap.at("total").get<int>() == 22);
 }
+
+TEST_CASE("借槽那一下：只报「正在准备」，不挂空进度条") {
+    // 点了出片之后，acquire 可能先把大模型卸掉腾地方，再从磁盘读十几二十
+    // GB 进来，几十秒起。这一整段 sd.cpp 还没跑，它的进度回调一次都不触发，
+    // 牌子上就是一动不动——用户看到的是"卡死了"，而实际上正是他要的
+    // "点击出片清理掉大模型"在发生。
+    //
+    // 所以这一下要报一条 shot_prep=true、**但没有步数**的事件：
+    //   有 shot_prep  → 牌子上写「正在准备模型」
+    //   没有 shot_steps → 进度条不画（补个 0 会让每张牌挂一条永远空着的槽）
+    changji::pipeline::JobTable table;
+    std::vector<nlohmann::json> msgs;
+    table.set_sink([&](const std::string&, const nlohmann::json& m) {
+        msgs.push_back(m);
+    });
+    table.start(changji::pipeline::JobKind::Run, "ep01",
+                [&](changji::pipeline::JobProgress& p) {
+        changji::pipeline::Event prep;
+        prep.stage = "final";
+        prep.kind = "progress";
+        prep.shot_id = "sh9";
+        prep.shot_step = 0;
+        prep.shot_steps = 0;      // 还没进采样
+        prep.shot_prep = true;
+        p.report(prep);
+    });
+    table.wait_idle();
+
+    const auto it = std::find_if(msgs.begin(), msgs.end(), [](const auto& m) {
+        return m.value("shot_id", "") == "sh9";
+    });
+    REQUIRE(it != msgs.end());
+    CHECK(it->value("shot_prep", false) == true);
+    // 步数一个都不许带——带了牌子上就多一条空槽。
+    CHECK(it->find("shot_steps") == it->end());
+    CHECK(it->find("shot_step") == it->end());
+}

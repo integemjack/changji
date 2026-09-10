@@ -51,6 +51,16 @@ FrameRenderer make_sd_renderer(std::optional<std::int64_t> seed_override) {
         // 每次借一下。**不在外面借一次拿着不放**——那样跑首帧期间
         // 别的槽（比如视频模型）永远腾不出地方，
         // 而按阶段分批的整个意义就是让它们轮流占显存。
+        // **借之前先说一句。** acquire 是阻塞的：它可能要先把大模型卸掉
+        // 腾地方，再从磁盘把出图模型读进来（16~20 GB，几十秒起）。
+        // 这一整段里 sd.cpp 还没开始跑，它那个进度回调一次都不会触发——
+        // 界面上就是点了出片之后一动不动。用户看到的是"卡死了"，
+        // 而实际上正是他要的"点击出片清理掉大模型"在发生。
+        //
+        // steps 传 0 表示"还没进入采样，没有步数可报"，文案由上层按这个分支写。
+        if (!infer::scheduler().loaded(infer::Slot::Image)) {
+            on_step(0, 0, 0.0, /*loading=*/true);
+        }
         auto lease = infer::scheduler().acquire(infer::Slot::Image);
         auto ctx = infer::current_image_context();
         if (!ctx) throw infer::SdError("出图上下文没准备好");
@@ -176,7 +186,11 @@ std::vector<FrameOutcome> run_frames(std::vector<Shot*>& shots,
                     e.message =
                         // 同 render.cpp：这一支不只是"加载模型"，
                         // 也可能是搬权重或 VAE 分块解码，分不开。
-                        loading ? "出首帧 " + shot->shot_id + "（准备 " +
+                        // steps == 0：还没开始采样，正在腾显存 / 装模型。
+                        // 这一支没有步数可报，写"准备 0/0"只会让人以为出错了。
+                        (loading && steps == 0)
+                            ? "出首帧 " + shot->shot_id + "（正在准备模型，可能要先腾出显存）"
+                        : loading ? "出首帧 " + shot->shot_id + "（准备 " +
                                       std::to_string(step) + "/" +
                                       std::to_string(steps) + "）"
                                 : "出首帧 " + shot->shot_id + "（第 " +

@@ -228,7 +228,11 @@ std::vector<RenderOutcome> render_batch(std::vector<Shot*>& shots,
                             // 不是采样的那些阶段（搬权重、VAE 分块解码、
                             // 首次载权重）分不开，所以只说"准备"，
                             // 别说"加载模型"——那会让人以为每镜都重载。
-                            loading ? "出视频 " + local.shot_id + "（准备 " +
+                            // steps == 0：还没开始采样，正在腾显存 / 装模型。
+                            // 这一支没有步数，写"准备 0/0"只会让人以为出错了。
+                            (loading && steps == 0)
+                                ? "出视频 " + local.shot_id + "（正在准备模型，可能要先腾出显存）"
+                            : loading ? "出视频 " + local.shot_id + "（准备 " +
                                           std::to_string(step) + "/" +
                                           std::to_string(steps) + "）"
                                     : "出视频 " + local.shot_id + "（第 " +
