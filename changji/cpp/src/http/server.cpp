@@ -959,10 +959,14 @@ void run(const config::Settings& settings, const Options& opts) {
     // 要算进预估里，不然改完分辨率预演的时间不变，看着像是没生效。
     CROW_ROUTE(app, "/api/run/preview")([](const crow::request& req) {
         auto r = guard([&] {
+            // skip_draft 默认真，和 POST /api/run 一致。
+            // **预览和实际必须是同一套默认**，否则它说的是另一件事。
+            const char* sd = req.url_params.get("skip_draft");
+            const bool skip_draft = sd == nullptr || std::string(sd) != "false";
             return get_run_preview(required_query(req, "path"),
                                    query(req, "episode_id"),
                                    query_bool(req, "all_episodes"),
-                                   query_bool(req, "skip_final"),
+                                   query_bool(req, "skip_final"), skip_draft,
                                    query_bool(req, "force"),
                                    config::runtime().profile());
         });

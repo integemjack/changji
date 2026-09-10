@@ -494,7 +494,8 @@ TEST_CASE("预演：一个镜头会一路走完后面所有阶段") {
     const auto store = make_store("预演", {{"ep01", 2}});
 
     const auto r = http::get_run_preview(project_arg(store), "ep01", false,
-                                         false, false, preview_profile(false));
+                                         false, /*skip_draft=*/false, false,
+                                         preview_profile(false));
     REQUIRE(r.status == 200);
     // 两镜都是 PLANNED，四个阶段各两镜
     CHECK(stage_shots(r.body, "audio") == 2);
@@ -512,7 +513,8 @@ TEST_CASE("预演：已完成的镜头不算进去") {
     set_status(store, "ep01_sh2", models::ShotStatus::FRAME_DONE);
 
     const auto r = http::get_run_preview(project_arg(store), "ep01", false,
-                                         false, false, preview_profile(false));
+                                         false, /*skip_draft=*/false, false,
+                                         preview_profile(false));
     // sh1 完成了，sh2 从草稿开始，sh3 从配音开始
     CHECK(stage_shots(r.body, "audio") == 1);
     CHECK(stage_shots(r.body, "frames") == 1);
@@ -523,8 +525,8 @@ TEST_CASE("预演：已完成的镜头不算进去") {
         set_status(store, "ep01_sh2", models::ShotStatus::FINAL_DONE);
         set_status(store, "ep01_sh3", models::ShotStatus::FINAL_DONE);
         const auto r2 = http::get_run_preview(project_arg(store), "ep01", false,
-                                              false, false,
-                                              preview_profile(false));
+                                              false, /*skip_draft=*/false,
+                                              false, preview_profile(false));
         CHECK(r2.body["idle"] == true);
         CHECK(r2.body["stages"].empty());
         // 没事可做时不报时间，报"0 秒"会让人以为是估算坏了
@@ -540,13 +542,14 @@ TEST_CASE("预演：人工确认过的镜头不重跑，除非明确要求") {
     set_status(store, "ep01_sh1", models::ShotStatus::LOCKED);
 
     const auto r = http::get_run_preview(project_arg(store), "ep01", false,
-                                         false, false, preview_profile(false));
+                                         false, /*skip_draft=*/false, false,
+                                         preview_profile(false));
     CHECK(stage_shots(r.body, "audio") == 1);
 
     SUBCASE("force 时连锁定的也算") {
         const auto r2 = http::get_run_preview(project_arg(store), "ep01", false,
-                                              false, true,
-                                              preview_profile(false));
+                                              false, /*skip_draft=*/false,
+                                              true, preview_profile(false));
         CHECK(stage_shots(r2.body, "audio") == 2);
         CHECK(stage_shots(r2.body, "final") == 2);
     }
@@ -555,7 +558,8 @@ TEST_CASE("预演：人工确认过的镜头不重跑，除非明确要求") {
 TEST_CASE("预演：skip_final 时不算成片档") {
     const auto store = make_store("跳成片预演", {{"ep01", 2}});
     const auto r = http::get_run_preview(project_arg(store), "ep01", false,
-                                         true, false, preview_profile(true));
+                                         true, /*skip_draft=*/false, false,
+                                         preview_profile(true));
     CHECK(stage_shots(r.body, "final") == -1);   // 整项都不出现
     CHECK(stage_shots(r.body, "draft") == 2);
 
@@ -570,7 +574,8 @@ TEST_CASE("预演：没标定过就只算配音和首帧那部分") {
     // 所以报出来的是一个偏小的数，这一条钉的是"至少不为零"。
     const auto store = make_store("没标定", {{"ep01", 1}});
     const auto r = http::get_run_preview(project_arg(store), "ep01", false,
-                                         false, false, preview_profile(false));
+                                         false, /*skip_draft=*/false, false,
+                                         preview_profile(false));
     CHECK(r.body["estimate_s"] == 20);   // 8 + 12
     CHECK(r.body["estimate_text"] == "20 秒");
 }
@@ -579,7 +584,8 @@ TEST_CASE("预演：all_episodes 只看有分镜的集") {
     const auto store =
         make_store("预演整季", {{"ep01", 1}, {"ep02", 0}, {"ep03", 2}});
     const auto r = http::get_run_preview(project_arg(store), "", true, false,
-                                         false, preview_profile(false));
+                                         /*skip_draft=*/false, false,
+                                         preview_profile(false));
     CHECK(r.body["episodes"] == json::array({"ep01", "ep03"}));
     CHECK(r.body["shots"] == 3);
 }
@@ -587,7 +593,7 @@ TEST_CASE("预演：all_episodes 只看有分镜的集") {
 TEST_CASE("预演：没有可跑的剧集时 400") {
     const auto store = make_store("预演空", {{"ep01", 1}});
     try {
-        http::get_run_preview(project_arg(store), "ep99", false, false, false,
+        http::get_run_preview(project_arg(store), "ep99", false, false, false, false,
                               preview_profile(false));
         FAIL("该抛");
     } catch (const http::ApiError& e) {
@@ -793,4 +799,32 @@ TEST_CASE("order 只认 episode 和 stage") {
         CHECK(e.status() == 400);
     }
     pipeline::jobs().wait_idle();
+}
+
+TEST_CASE("预演的默认和实际出片的默认必须一致") {
+    // **一个和实际不符的预演比不给还糟**：用户按它安排时间。
+    //
+    // 草稿档 2026-09-10 起默认不跑，而预演当时还在按两档算——
+    // 报"草稿 22 镜加成片 22 镜、1.8 小时"，实际只跑成片、Turbo 6 步。
+    const auto store = make_store("预演默认", {{"ep01", 2}});
+
+    // **要用带标定的档位表。** 没标定时估时落到一个兜底数，
+    // 两边一样，这条用例就测不出东西了——第一版就是这么写的，
+    // 断言 40 < 40 当场红。
+    const auto skipped = http::get_run_preview(project_arg(store), "ep01",
+                                               false, false,
+                                               /*skip_draft=*/true, false,
+                                               preview_profile(true));
+    CHECK(stage_shots(skipped.body, "draft") == -1);   // 整项都不出现
+    CHECK(stage_shots(skipped.body, "final") == 2);
+
+    const auto kept = http::get_run_preview(project_arg(store), "ep01", false,
+                                            false, /*skip_draft=*/false, false,
+                                            preview_profile(true));
+    CHECK(stage_shots(kept.body, "draft") == 2);
+
+    // 跳过一档之后估时必须变小——不变的话说明估算没跟着走，
+    // 而那正是"预演和实际不符"的样子。
+    CHECK(skipped.body["estimate_s"].get<double>() <
+          kept.body["estimate_s"].get<double>());
 }

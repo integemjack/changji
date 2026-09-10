@@ -52,9 +52,12 @@ ApiResult post_run(const nlohmann::json& body, const RunDeps& deps);
 /// **一个镜头从它现在的状态开始，会一路走完后面所有阶段。** 只按当前状态
 /// 归到一个阶段的话，会告诉人"配音 2 镜，粗估 16 秒"，而实际上那两镜还要
 /// 出首帧、跑草稿档、跑成片档，得等十几分钟。报小了的预演比没有预演更糟。
+/// `skip_draft` 默认真，和 `POST /api/run` 一致。**预览和实际必须是同一套
+/// 默认**——不一致的话它报的是另一件事（"草稿 22 镜加成片 22 镜、1.8 小时"
+/// 而实际只跑成片、Turbo 6 步），而用户按它安排时间。
 ApiResult get_run_preview(const std::string& path,
                           const std::string& episode_id, bool all_episodes,
-                          bool skip_final, bool force,
+                          bool skip_final, bool skip_draft, bool force,
                           const models::HardwareProfile& profile);
 
 /// GET /api/outputs —— 列出已经出好的成片。审片时直接在界面里播。

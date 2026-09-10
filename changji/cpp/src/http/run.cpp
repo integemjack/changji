@@ -330,7 +330,7 @@ ApiResult post_run(const json& body, const RunDeps& deps) {
 
 ApiResult get_run_preview(const std::string& path,
                           const std::string& episode_id, bool all_episodes,
-                          bool skip_final, bool force,
+                          bool skip_final, bool skip_draft, bool force,
                           const HardwareProfile& profile) {
     const ProjectStore store = open_project(path);
     const Project project = load_or_400(store);
@@ -374,6 +374,11 @@ ApiResult get_run_preview(const std::string& path,
             if (start_at < 0) continue;
             for (int i = start_at; i < kCount; ++i) {
                 if (skip_final && i == 3) continue;
+                // **草稿档默认不跑，预览要跟上。** 不跟的话它报的是
+                // "草稿 22 镜 + 成片 22 镜，1.8 小时"，而实际只跑成片、
+                // 用 Turbo 6 步——**一个和实际不符的预览没有意义**，
+                // 比不给还糟：用户按它安排时间。
+                if (skip_draft && i == 2) continue;
                 ++counts[i];
             }
         }
