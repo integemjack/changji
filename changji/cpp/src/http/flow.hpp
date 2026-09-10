@@ -1,6 +1,6 @@
 #pragma once
 
-// 引导流程的进度判定：八步走到哪一步了。
+// 引导流程的进度判定：七步走到哪一步了。
 //
 // **这一层原来在 Node 那个 BFF 里**（`webapp/server/src/routes/flow.js`）。
 // 引擎自己发前端之后，走那条路的人拿不到 `/bff/*`——表现是界面能打开、
@@ -20,7 +20,10 @@
 
 namespace changji::http {
 
-/// 八步的定义。前端的侧边导航按 `phase` 分段。
+/// 七步的定义。前端的侧边导航按 `phase` 分段。
+///
+/// **2026-09-10 从八步变七步**：分镜和制作合成一步「镜头」，
+/// 因为那两页也合成一页了（前端 `ShotsView`）。
 ///
 /// 和 `flow.js` 的 `STEPS` 逐字对齐——前端按 `key` 认人，改一个字
 /// 侧边栏就少一格。
@@ -33,7 +36,7 @@ nlohmann::json flow_steps();
 /// 只会让侧边栏停在某一步上，用户不知道为什么走不下去。
 ///
 /// `episode_id` 为空表示还没选集——这时按全剧那三步判定，
-/// 按集的五步一律未完成。
+/// 按集的四步一律未完成。
 nlohmann::json flow_assess(const nlohmann::json& project,
                            const nlohmann::json& shots,
                            const nlohmann::json& outputs,

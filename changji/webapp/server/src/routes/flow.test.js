@@ -78,32 +78,43 @@ describe('场景这一步', () => {
   })
 })
 
-describe('分镜和制作', () => {
-  it('有镜头才算出了分镜', () => {
-    expect(assess(project(), [], null, new Set()).done.storyboard).toBe(false)
-    expect(assess(project(), [shot()], null, new Set()).done.storyboard).toBe(true)
+describe('镜头', () => {
+  // 分镜和制作 2026-09-10 合成一步。**判据取的是原来「制作」那条**：
+  // 这一格代表"这一集的镜头做完了"，光有分镜表不算——那时候一帧画面
+  // 都还没有，而侧边栏打了勾用户就以为这一步过了。
+  it('光有分镜表不算做完', () => {
+    expect(assess(project(), [], null, new Set()).done.shots).toBe(false)
+    expect(assess(project(), [shot()], null, new Set()).done.shots).toBe(false)
   })
 
-  it('所有镜头都到终态才算制作完', () => {
+  it('所有镜头都到终态才算做完', () => {
     const two = [shot({ shot_id: 'a', status: 'final_done' }), shot({ shot_id: 'b' })]
-    expect(assess(project(), two, null, new Set()).done.production).toBe(false)
+    expect(assess(project(), two, null, new Set()).done.shots).toBe(false)
 
     const bothDone = [
       shot({ shot_id: 'a', status: 'final_done' }),
       shot({ shot_id: 'b', status: 'locked' }),
     ]
-    expect(assess(project(), bothDone, null, new Set()).done.production).toBe(true)
+    expect(assess(project(), bothDone, null, new Set()).done.shots).toBe(true)
   })
 
   it('fallback 也算终态', () => {
     // 闸门判它退回兜底方案，那也是"这一镜不会再动了"。
     const r = assess(project(), [shot({ status: 'fallback' })], null, new Set())
-    expect(r.done.production).toBe(true)
+    expect(r.done.shots).toBe(true)
   })
 
-  it('一个镜头都没有时不算制作完', () => {
+  it('一个镜头都没有时不算做完', () => {
     // 0 === 0 会让"全都做完了"意外成立，要单独挡一下。
-    expect(assess(project(), [], null, new Set()).done.production).toBe(false)
+    expect(assess(project(), [], null, new Set()).done.shots).toBe(false)
+  })
+
+  it('老的 storyboard / production 两个 key 不再出现', () => {
+    // 前端按 key 认人。留着旧 key 的话侧边栏会多出两格灰的，
+    // 而它们永远不会打勾——没有任何东西再去写它们了。
+    const d = assess(project(), [shot()], null, new Set()).done
+    expect('storyboard' in d).toBe(false)
+    expect('production' in d).toBe(false)
   })
 })
 

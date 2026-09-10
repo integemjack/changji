@@ -24,8 +24,8 @@ export const STEPS = [
   { key: 'script', phase: 'series', title: '剧本大纲', hint: '全剧讲什么、分几集、每集写什么' },
   { key: 'characters', phase: 'series', title: '角色', hint: '从剧本提人物，全剧同一批' },
   { key: 'scenes', phase: 'episode', title: '场景', hint: '这一集在哪儿拍' },
-  { key: 'storyboard', phase: 'episode', title: '分镜', hint: '把这一集拆成一个个镜头' },
-  { key: 'production', phase: 'episode', title: '制作', hint: '配音、首帧、草稿、成片' },
+  // 分镜和制作 2026-09-10 合成一步「镜头」，见 flow.cpp 里同一处的注释
+  { key: 'shots', phase: 'episode', title: '镜头', hint: '拆镜头、改镜头、把它们拍出来' },
   { key: 'film', phase: 'episode', title: '成片', hint: '看装配好的这一集' },
   { key: 'publish', phase: 'episode', title: '上传至平台', hint: '带上标题和话题投递出去' },
 ]
@@ -72,11 +72,11 @@ export function assess(project, shots, episode, publishedIds) {
   const missing = [...used].filter((id) => !known.has(id))
   done.scenes = known.size > 0 && missing.length === 0 && unlinked === 0
 
-  done.storyboard = shots.length > 0
-
+  // 判据取的是原来「制作」那条，不是「分镜」那条：这一格现在代表
+  // "这一集的镜头做完了"，光有分镜表不算——那时候一帧画面都还没有。
   const finalStates = new Set(['final_done', 'locked', 'fallback'])
   const producedShots = shots.filter((s) => finalStates.has(s.status)).length
-  done.production = shots.length > 0 && producedShots === shots.length
+  done.shots = shots.length > 0 && producedShots === shots.length
   done.film = false // 由调用方按 outputs 回填
   done.publish = Boolean(episode && publishedIds.has(episode.episode_id))
 

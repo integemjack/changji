@@ -137,7 +137,7 @@ function onTimeUpdate(event) {
       title="还没有成片"
       hint="所有镜头跑完之后，流水线会把它们装配成一整集。回上一步把制作跑完。"
     >
-      <RouterLink to="/production" class="btn btn--primary">去制作</RouterLink>
+      <RouterLink to="/shots" class="btn btn--primary">去做镜头</RouterLink>
     </EmptyState>
 
     <div v-else-if="files.length" class="film">

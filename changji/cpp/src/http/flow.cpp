@@ -47,10 +47,12 @@ json flow_steps() {
              {"hint", "从剧本提人物，全剧同一批"}},
         json{{"key", "scenes"}, {"phase", "episode"}, {"title", "场景"},
              {"hint", "这一集在哪儿拍"}},
-        json{{"key", "storyboard"}, {"phase", "episode"}, {"title", "分镜"},
-             {"hint", "把这一集拆成一个个镜头"}},
-        json{{"key", "production"}, {"phase", "episode"}, {"title", "制作"},
-             {"hint", "配音、首帧、草稿、成片"}},
+        // **分镜和制作 2026-09-10 合成一步「镜头」。** 那两页读的是同一张
+        // 分镜表，一页排一页跑，而人的动作是"看片子→改台词→重出"，
+        // 在同一镜上来回。合成一个页面之后侧边栏也该只有一格：
+        // 两格指向同一个地方，只会让人以为点错了。
+        json{{"key", "shots"}, {"phase", "episode"}, {"title", "镜头"},
+             {"hint", "拆镜头、改镜头、把它们拍出来"}},
         json{{"key", "film"}, {"phase", "episode"}, {"title", "成片"},
              {"hint", "看装配好的这一集"}},
         json{{"key", "publish"}, {"phase", "episode"}, {"title", "上传至平台"},
@@ -112,10 +114,12 @@ json flow_assess(const json& project, const json& shots, const json& outputs,
     }
     done["scenes"] = !known.empty() && missing.empty() && unlinked == 0;
 
-    // ---- 分镜 ----
-    done["storyboard"] = !shots.empty();
-
-    // ---- 制作：每一镜都出到成片状态才算完 ----
+    // ---- 镜头：每一镜都出到成片状态才算完 ----
+    //
+    // **判据取的是原来「制作」那条，不是「分镜」那条。** 合成一步之后
+    // 这一格代表的是"这一集的镜头做完了"，光有分镜表不算做完——
+    // 那时候一帧画面都还没有。宽松的判据会让侧边栏早早打勾，
+    // 而用户回头发现什么都没出。
     static const std::set<std::string> kFinal = {"final_done", "locked",
                                                  "fallback"};
     int produced = 0;
@@ -129,8 +133,8 @@ json flow_assess(const json& project, const json& shots, const json& outputs,
             planned += s["duration_s"].get<double>();
         }
     }
-    done["production"] = !shots.empty() &&
-                         produced == static_cast<int>(shots.size());
+    done["shots"] = !shots.empty() &&
+                    produced == static_cast<int>(shots.size());
 
     // ---- 成片：产物里有这一集的 ----
     bool has_film = false;

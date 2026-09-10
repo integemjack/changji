@@ -393,6 +393,19 @@ std::vector<ShotAudioPlan> AudioStage::run(std::vector<models::Shot*>& shots,
         try {
             plans.push_back(process_shot(*shot, assets, tok));
             shot->status = models::ShotStatus::AUDIO_DONE;
+            // **这一镜完了要说一声。** 界面把"带 shot_id 的 progress"当成
+            // "这一镜正在跑"，靠一条非 progress 的事件把它移出去。
+            // 只报 progress 不报完成的话，这一镜会永远挂在"正在配音"上——
+            // 一集二十二镜跑完配音之后，整面墙都写着「配音」，包括那些
+            // 其实只是在等的。用户看到的就是这个（2026-09-10 报的）。
+            pipeline::Event done;
+            done.stage = "audio";
+            done.kind = "shot_done";
+            done.current = index;
+            done.total = total;
+            done.shot_id = shot->shot_id;
+            done.message = shot->shot_id + " 配音完成";
+            progress.report(done);
         } catch (const std::exception& e) {
             // 一镜配音失败不拖垮后面几镜。这一镜的状态不推进，
             // 后面的闸门会看出"有台词但没有配音时长"。

@@ -550,6 +550,7 @@ if(CHANGJI_BUILD_TESTS)
         tests/unit/main.cpp
         tests/unit/test_worker_proto.cpp
         tests/unit/test_worker_roster.cpp
+        tests/unit/test_flow.cpp
         tests/unit/test_webapp.cpp
         tests/unit/test_shot.cpp
         tests/unit/test_character.cpp

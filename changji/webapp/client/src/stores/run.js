@@ -75,6 +75,22 @@ export const useRun = defineStore('run', () => {
     if (!msg.shot_id) return
     const kind = msg.kind ?? (msg.type === 'error' ? 'error' : 'progress')
     const next = new Map(inflightMap.value)
+
+    // **换阶段了就把上一阶段留下的全清掉。**
+    //
+    // 流水线是严格分阶段的：所有镜头先配音，再所有镜头出首帧，再出成片。
+    // 所以一收到新阶段的消息，上一阶段还挂在表里的那些必然已经跑完了。
+    //
+    // 这是一道兜底。正路是引擎每跑完一镜报一条 shot_done（三个阶段现在
+    // 都报了）。但漏报的代价太大——2026-09-10 配音和首帧两个阶段都只报
+    // progress 不报完成，于是跑过的镜头全部永久挂在表里，整面墙都写着
+    // 「配音」，包括那些其实只是在等的。而这件事不报错，只是显示得不对。
+    if (msg.stage) {
+      for (const [id, x] of next) {
+        if (x.stage && x.stage !== msg.stage) next.delete(id)
+      }
+    }
+
     if (kind === 'progress') {
       const prev = next.get(msg.shot_id)
       next.set(msg.shot_id, {

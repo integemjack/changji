@@ -67,32 +67,23 @@ export const STEP_ROUTES = [
     icon: 'scene',
     component: () => import('@/views/ScenesView.vue'),
   },
-  // **分镜和制作是同一个页面**（2026-09-10 合的，见 ShotsView 的注释）。
+  // **分镜和制作合成一步「镜头」**（2026-09-10）。
   //
-  // 侧边栏仍然是两步，因为那是两个**真实的里程碑**，完成判据也不一样：
-  // storyboard = 有分镜，production = 每一镜都出到成片。`/bff/flow` 里
-  // 那两行一个字没改。不该对应两个页面的是"内容"，不是"进度"。
+  // 原来是两页：一页排镜头（AI 出分镜、改台词、调顺序），一页跑镜头
+  // （出片、看进度、重出）。而人的动作是"看片子 → 改台词 → 重出"，
+  // 在同一镜上来回——换页就断了，还得记住自己刚才看的是第几镜。
   //
-  // 两条路径都留着：外面可能有人存了书签。
+  // 合成一页之后侧边栏也只留一格：两格指向同一个地方只会让人以为点错了。
+  // `/bff/flow` 那边同步改成一个 `shots`，判据取原来「制作」那条
+  // （每镜都出到成片）——光有分镜表不算做完，那时候一帧画面都还没有。
   {
-    key: 'storyboard',
-    path: '/storyboard',
-    name: 'storyboard',
+    key: 'shots',
+    path: '/shots',
+    name: 'shots',
     phase: 'episode',
-    title: '分镜',
-    tagline: '把这一集拆成一个个镜头',
+    title: '镜头',
+    tagline: '拆镜头、改镜头、把它们拍出来',
     icon: 'board',
-    component: () => import('@/views/ShotsView.vue'),
-  },
-  {
-    key: 'production',
-    path: '/production',
-    name: 'production',
-    phase: 'episode',
-    title: '制作',
-    // 草稿档 2026-09-10 砍了（挂 Turbo 之后两档拉不开差距，白跑一遍）
-    tagline: '配音、首帧、成片',
-    icon: 'gear',
     component: () => import('@/views/ShotsView.vue'),
   },
   {
@@ -131,6 +122,9 @@ const routes = [
     component: () => import('@/views/SettingsView.vue'),
     meta: { title: '设置' },
   },
+  // 老路径。合并之前它们是两页，收藏夹里可能还留着。
+  { path: '/storyboard', redirect: '/shots' },
+  { path: '/production', redirect: '/shots' },
   { path: '/:pathMatch(.*)*', redirect: '/project' },
 ]
 

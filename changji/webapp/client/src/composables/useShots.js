@@ -18,7 +18,7 @@
  * 编排那一半（改台词、调顺序、批量锁定）不在这儿：那是页面自己的事，
  * 而且只有一个页面用。
  */
-import { computed, onUnmounted, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 
 import { api } from '@/api'
 import { STAGE_LABELS, statusOf } from '@/api/labels'
@@ -200,25 +200,42 @@ export function useShots() {
    * （`['frames']` 只出首帧，`['final']` 只出视频，不给就是配音、首帧、
    * 成片全走一遍）。
    */
-  async function start(ids = [], stages = null) {
+  async function start(ids = [], stages = null, force = null) {
     const one = ids.length > 0
+    // **点下去立刻点亮，别等引擎。**
+    //
+    // 引擎要载模型，第一条进度可能是一分钟以后的事。这一分钟里牌子上
+    // 显示的还是上一轮的状态，和"没点上"看起来一模一样。
+    //
+    // 整集出片时点亮的是**引擎接下来会挨个跑的那些**——也就是还没到终态
+    // 的。以前这儿只处理了单镜那条（`if (one)`），点「出片」整面墙一动
+    // 不动，用户报的就是这个。
+    const lit = one
+      ? ids
+      : shots.value
+          .filter((s) => !['final_done', 'locked', 'fallback'].includes(s.status))
+          .map((s) => s.shot_id)
+    // **同步先记上**，在 await 之前。紧接着再点别的镜头时，判据
+    // （`sent` 非空）才来得及生效，否则那一下会走提交那条路撞 409。
+    const before = sent.value
+    sent.value = new Set([...sent.value, ...lit])
     try {
       await api.run({
         project: session.projectPath,
         episode_id: session.episodeId,
         // 重跑单镜时**一定要带 force**：那一镜已经是完成状态，
         // 不带的话它不在待办里，跑完什么都没变而且不报错。
-        force: one,
+        // 整集那条默认不 force（接着没跑完的往下跑）；「全部重出」
+        // 会显式传真，否则那个按钮点了什么都不会发生。
+        force: force === null ? one : force,
         ...(one ? { shot_ids: ids } : {}),
         ...(stages ? { stages } : {}),
       })
     } catch (err) {
+      sent.value = before   // 没起来就别亮着
       // 409（已经在跑）由调用方接住改成排队，别在这儿弹红框。
       return { ok: false, error: err }
     }
-    // **先把牌子点亮，别等引擎。** 见 sent 的注释：载模型那一分钟里
-    // 引擎一个字都不报，不先点亮的话用户看到的是"点了没反应"。
-    if (one) sent.value = new Set([...sent.value, ...ids])
     runStore.start()
     return { ok: true }
   }
@@ -357,7 +374,16 @@ export function useShots() {
     },
   )
 
-  onUnmounted(() => watchShots(false))
+  // **进页面就把轮询和 WebSocket 开起来。**
+  //
+  // 不开的话，跑着的时候刷新一下页面（或者从别处点进来），整面墙一动不动：
+  // 引擎在跑，而这一页既没轮询也没连上 WebSocket，什么都不知道。
+  // 原来这一句在 ProductionView 的 onMounted 里，两页合并时漏掉了。
+  onMounted(() => runStore.start())
+  onUnmounted(() => {
+    runStore.stop()
+    watchShots(false)
+  })
 
   return {
     shots, loading, load, bust,

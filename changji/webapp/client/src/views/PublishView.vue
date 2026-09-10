@@ -284,7 +284,7 @@ function retry(record) {
       title="还没有能投的片"
       hint="投递的是装配好的整集。回第六步把制作跑完，第七步确认过再来。"
     >
-      <RouterLink to="/production" class="btn btn--primary">去制作</RouterLink>
+      <RouterLink to="/shots" class="btn btn--primary">去做镜头</RouterLink>
     </EmptyState>
 
     <template v-else>

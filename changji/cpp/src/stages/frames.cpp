@@ -209,6 +209,24 @@ std::vector<FrameOutcome> run_frames(std::vector<Shot*>& shots,
                 apply(i);
                 commit();
             }
+
+            // **这一张完了要说一声。** 同 audio.cpp 那处：界面把"带 shot_id
+            // 的 progress"当成"这一镜正在跑"，靠一条非 progress 的事件把它
+            // 移出去。只报 progress 的话，跑过的每一镜都永远挂在"正在出首帧"
+            // 上，而墙上那些其实只是在等的镜头也跟着显示同一句。
+            {
+                // 变量别叫 done：外面那个数组就叫 done，遮蔽之后
+                // `done[i]` 到底指谁要靠"声明点之前还是之后"来判断。
+                pipeline::Event fin;
+                fin.stage = "frames";
+                fin.kind = "shot_done";
+                fin.current = index;
+                fin.total = total;
+                fin.shot_id = shot->shot_id;
+                fin.message =
+                    shot->shot_id + (done[i].ok ? " 首帧完成" : " 首帧失败");
+                progress.report(fin);
+            }
         }
     };
 

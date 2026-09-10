@@ -70,6 +70,29 @@ describe('applyMessage', () => {
     expect(s.events.find((e) => e.kind === 'shot_done')?.shot_id).toBe('sh2')
   })
 
+  it('换阶段时，上一阶段留下的全清掉', () => {
+    // **这一条是被一个真 bug 逼出来的。** 配音和首帧两个阶段只报 progress、
+    // 不报 shot_done，于是跑过的镜头全部永久挂在表里——一集跑完配音之后
+    // 整面墙都写着「配音」，包括那些其实只是在等的。用户报的就是这个。
+    //
+    // 引擎那边已经补了 shot_done。这里是兜底：流水线是严格分阶段的
+    // （所有镜头先配音、再所有镜头出首帧），所以一收到新阶段的消息，
+    // 上一阶段还挂着的必然已经跑完了。
+    const s = useRun()
+    const at = (shot, stage) =>
+      s.applyMessage({ type: 'progress', kind: 'progress', stage,
+                       shot_id: shot, step: 1, total: 3 })
+    at('sh1', 'audio')
+    at('sh2', 'audio')
+    at('sh3', 'audio')
+    expect(s.inflight).toHaveLength(3)
+
+    // 进首帧阶段了，配音那三条不该再挂着
+    at('sh1', 'frames')
+    expect(s.inflight.map((x) => x.shot_id)).toEqual(['sh1'])
+    expect(s.inflight[0].stage).toBe('frames')
+  })
+
   it('老引擎不带 kind：全当 progress，表只进不出', () => {
     const s = useRun()
     s.applyMessage({ type: 'progress', stage: 'draft', shot_id: 'sh1', step: 1, total: 3 })

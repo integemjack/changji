@@ -412,6 +412,26 @@ async function batch(action) {
   await load()
 }
 
+/**
+ * 顶上那个主按钮。
+ *
+ * 还有没出的就接着往下跑（不 force）。都出完了的时候它是「全部重出」，
+ * 那就**必须带 force**——不带的话每一镜都已经是终态，引擎一个都挑不到，
+ * 跑完什么都没变而且不报错，按钮点了像是没反应。
+ */
+async function startAll() {
+  if (!pending.value &&
+      !confirm('这一集已经全部出完了。重出会把每一镜从头再跑一遍，确定？')) {
+    return
+  }
+  const r = await start([], null, !pending.value)
+  if (r.ok) return
+  // 409 = 已经在跑了（多半是另一个浏览器、或者另一个标签页点的）。
+  // **那不是错误**，跟着看进度就行——轮询和 WebSocket 进页面就开着了。
+  if (r.error?.status === 409) ui.info('已经在跑了，下面跟着看进度就行')
+  else ui.error('起不来：' + (r.error?.message ?? '未知原因'))
+}
+
 /** 选中的那几镜一起重出某一段。挑十几个要重做的，一次交出去。 */
 async function batchRerun(step) {
   const ids = [...selected.value]
@@ -488,7 +508,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
             class="btn btn--primary"
             type="button"
             :disabled="blocked || isBusy('start')"
-            @click="start()"
+            @click="startAll"
           >
             <AppIcon name="film" :size="15" />
             {{ pending ? `出片（还差 ${pending} 镜）` : '全部重出' }}
