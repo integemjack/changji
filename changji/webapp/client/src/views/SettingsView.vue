@@ -32,7 +32,6 @@ const SECTIONS = [
   { id: 'llm', title: '大模型', icon: 'sparkle' },
   { id: 'render', title: '出图出片', icon: 'image' },
   { id: 'tts', title: '配音', icon: 'info' },
-  { id: 'quality', title: '画质档位', icon: 'film' },
   { id: 'assembly', title: '成片装配', icon: 'board' },
   { id: 'gates', title: '质量闸门', icon: 'check' },
   { id: 'doctor', title: '体检', icon: 'warn' },
@@ -370,16 +369,18 @@ function scrollTo(id) {
                   <template v-if="hardware?.vram_gb"> · {{ hardware.vram_gb }} GB</template>
                 </span>
               </div>
+              <!-- **只显示步数，不显示宽高。**
+                   宽高由项目的 [video] 说了算，而这里读的是全局档位表——
+                   两个数不一样时（很常见：全局 960×544、项目 704×1280）
+                   显示出来只会让人以为设置没生效。 -->
               <div class="field">
-                <span class="field__label">画质档位</span>
+                <span class="field__label">成片步数</span>
                 <span class="mono">
-                  <template v-if="hardware?.tiers?.final">
-                    成片 {{ hardware.tiers.final.width }}×{{ hardware.tiers.final.height }}
-                    / {{ hardware.tiers.final.steps }} 步
-                  </template>
-                  <template v-else>—</template>
+                  {{ hardware?.tiers?.final?.steps ?? '—' }}
                 </span>
-                <span class="field__hint">在下面「画质档位」那节改。</span>
+                <span class="field__hint">
+                  画幅和清晰度是每部剧自己的，在项目页的「画面」那张卡选。
+                </span>
               </div>
             </div>
             <p class="tiny dim mono">配置文件：{{ node.configFile }}</p>
@@ -558,7 +559,8 @@ function scrollTo(id) {
                   placeholder="留空表示自动探测"
                 />
                 <span class="field__hint">
-                  只影响画质档位怎么推，不是"这张卡有多少显存"。
+                  只影响档位表怎么推（步数那些），不是"这张卡有多少显存"。
+                  画幅和清晰度在项目页上选。
                   想要更高的成片档就把它调大。
                 </span>
               </label>
@@ -571,7 +573,7 @@ function scrollTo(id) {
                   </template>
                   <template v-else>—</template>
                 </span>
-                <span class="field__hint">在下面「画质档位」那节可以逐项改。</span>
+                <span class="field__hint">在项目页的「画面」那张卡改。</span>
               </div>
             </div>
           </section>
@@ -632,59 +634,15 @@ function scrollTo(id) {
             </div>
           </section>
 
-          <!-- 画质档位 -->
-          <section id="sec-quality" class="card">
-            <div class="card__head">
-              <div>
-                <div class="card__title">画质档位</div>
-                <div class="card__sub">
-                  草稿档比成片档快十几倍。叙事和构图在草稿档判完，过了闸门才升级。
-                </div>
-              </div>
-              <span v-if="hardware" class="pill pill--neutral">
-                {{ hardware.gpu || '未探测到显卡' }} · {{ hardware.vram_gb }} GB
-              </span>
-            </div>
-            <div class="card__body stack">
-              <div class="tierbox">
-                <div class="tierbox__head">草稿档</div>
-                <div class="grid grid--3">
-                  <label class="field">
-                    <span class="field__label">宽</span>
-                    <input v-model.number="params.draft_width" class="input numeric" type="number" step="16" />
-                  </label>
-                  <label class="field">
-                    <span class="field__label">高</span>
-                    <input v-model.number="params.draft_height" class="input numeric" type="number" step="16" />
-                  </label>
-                  <label class="field">
-                    <span class="field__label">步数</span>
-                    <input v-model.number="params.draft_steps" class="input numeric" type="number" />
-                  </label>
-                </div>
-              </div>
-              <div class="tierbox">
-                <div class="tierbox__head">成片档</div>
-                <div class="grid grid--3">
-                  <label class="field">
-                    <span class="field__label">宽</span>
-                    <input v-model.number="params.final_width" class="input numeric" type="number" step="16" />
-                  </label>
-                  <label class="field">
-                    <span class="field__label">高</span>
-                    <input v-model.number="params.final_height" class="input numeric" type="number" step="16" />
-                  </label>
-                  <label class="field">
-                    <span class="field__label">步数</span>
-                    <input v-model.number="params.final_steps" class="input numeric" type="number" />
-                  </label>
-                </div>
-              </div>
-              <p class="tiny dim">
-                默认值由探测到的显存推导，不写死。显存紧张就把成片档降到 960×544。
-              </p>
-            </div>
-          </section>
+          <!-- **「画质档位」那一节删了（2026-09-10）。**
+
+               画幅和清晰度搬到项目上了（项目页的「画面」卡片），
+               因为一台机器上可以同时有竖屏短剧和横屏片子。
+               搬完之后这里改宽高**不再生效**——出片时项目的 [video]
+               会盖掉它，而界面照旧显示"已应用"。
+
+               步数还有意义（[tiers].final_steps，0 = 挂了 Turbo 就按
+               6 走），但那是专家旋钮，留在配置文件里。 -->
 
           <!-- 装配 -->
           <section id="sec-assembly" class="card">
