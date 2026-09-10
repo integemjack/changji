@@ -189,10 +189,12 @@ bool Scheduler::make_room(std::size_t need, Slot keep) {
             // 空闲显存就永远不够，这条分支等于不存在，
             // 每次切阶段照样卸。见 SlotSpec::live_vram_estimate。
             const Entry* self = find(keep);
-            const std::size_t live =
-                (self && self->spec.live_vram_estimate > 0)
-                    ? self->spec.live_vram_estimate
-                    : need;
+            // 每次现问：模型可能已经被换过了。见 SlotSpec::live_vram。
+            std::size_t live = need;
+            if (self && self->spec.live_vram) {
+                const std::size_t got = self->spec.live_vram();
+                if (got > 0) live = got;
+            }
             if (live <= free_bytes) return true;
         }
     }

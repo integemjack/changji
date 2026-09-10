@@ -235,7 +235,10 @@ std::optional<TTSBackend> local_tts_backend(const fs::path& backbone,
         spec.residency = infer::Residency::Cached;
         // 1.5 GB 的权重加上它自己的缓冲，按 3 GB 记。四个槽里最小的一个。
         spec.vram_estimate = static_cast<std::size_t>(3) * 1024 * 1024 * 1024;
-        spec.live_vram_estimate = spec.vram_estimate;   // 小到不用分两个数
+        // 小到不用跟着模型走：配音那两份权重加起来就 1.5 GB 上下，
+        // 换一份也还在同一个量级。给个定值就够。
+        const std::size_t tts_bytes = spec.vram_estimate;
+        spec.live_vram = [tts_bytes] { return tts_bytes; };
         // **比大模型还先被卸。** 配音一句话几秒，重载比出图出片便宜得多。
         spec.evict_priority = 0;
         spec.load = [] {

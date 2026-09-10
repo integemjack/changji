@@ -83,7 +83,9 @@ void register_llm_slot(std::function<config::Settings()> provider,
     // **老实数：真正要占的显存。** 只在问到了卡上空闲显存时才拿来比。
     // 不给的话这条"够就不卸"是单向的——出片时保住了大模型，回头写剧本
     // 借 LLM 槽走的还是整份预算，反过来把图像模型卸掉，两边来回踢。
-    {
+    // 每次借槽时现算，不存定值：大模型也能在初始化页换掉，
+    // 而槽一个进程只注册一次。见 SlotSpec::live_vram。
+    spec.live_vram = [provider]() -> std::size_t {
         const config::Settings s = provider();
         std::error_code ec;
         const auto p = s.models.resolve(s.models.llm, s.workspace_path());
@@ -92,9 +94,8 @@ void register_llm_slot(std::function<config::Settings()> provider,
                                     ? static_cast<double>(bytes) / (1024.0 * 1024 * 1024)
                                     : 0.0;
         const double live = s.models.llm_live_vram_gb(model_gb);
-        spec.live_vram_estimate =
-            live > 0 ? static_cast<std::size_t>(live * 1024) * 1024 * 1024 : 0;
-    }
+        return live > 0 ? static_cast<std::size_t>(live * 1024) * 1024 * 1024 : 0;
+    };
     // **优先级最低，腾地方时先卸它。** 写剧本一集只跑一次，
     // 出图出片每镜都要——重装大模型的代价摊在一集上，比每镜重装小得多。
     spec.evict_priority = 1;

@@ -851,14 +851,6 @@ void register_sd_slots(SettingsProvider raw_provider,
         return gb > 0 ? static_cast<std::size_t>(gb * 1024) * 1024 * 1024
                       : static_cast<std::size_t>(0);
     };
-    const auto model_gb = [](const config::Settings& s, const std::string& entry) {
-        std::error_code ec;
-        const auto p = s.models.resolve(entry, s.workspace_path());
-        const auto bytes = p.empty() ? 0 : fs::file_size(p, ec);
-        return (!ec && bytes > 0)
-                   ? static_cast<double>(bytes) / (1024.0 * 1024 * 1024)
-                   : 0.0;
-    };
 
     // **预算要真的设上。** 不设的话 Scheduler::make_room 第一行就
     // `budget_ == 0 → return true`，谁也不驱逐谁——下面"同时只装得下一个"
@@ -887,11 +879,12 @@ void register_sd_slots(SettingsProvider raw_provider,
         spec.slot = Slot::Image;
         spec.residency = Residency::Cached;   // 每个镜头都要，别反复卸
         spec.vram_estimate = estimate;
-        {
+        // 每次借槽时现算：模型可能已经被换掉了（初始化页就能换），
+        // 而槽一个进程只注册一次。见 SlotSpec::live_vram。
+        spec.live_vram = [provider, live_bytes] {
             const config::Settings s = provider();
-            spec.live_vram_estimate = live_bytes(s.models.image_live_vram_gb(
-                s.models.image_weights, model_gb(s, s.models.image)));
-        }
+            return live_bytes(config::image_placement(s).live_vram_gb);
+        };
         // 视频模型重新加载更贵（文件大得多），所以图像的优先级更低，
         // 腾地方时先卸它。
         spec.evict_priority = 5;
@@ -913,11 +906,10 @@ void register_sd_slots(SettingsProvider raw_provider,
         spec.slot = Slot::Video;
         spec.residency = Residency::Cached;
         spec.vram_estimate = estimate;
-        {
+        spec.live_vram = [provider, live_bytes] {
             const config::Settings s = provider();
-            spec.live_vram_estimate = live_bytes(s.models.video_live_vram_gb(
-                s.models.weights, model_gb(s, s.models.video)));
-        }
+            return live_bytes(config::video_placement(s).live_vram_gb);
+        };
         spec.evict_priority = 9;
         spec.load = [provider, budget_for] {
             const config::Settings s = provider();

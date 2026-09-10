@@ -538,7 +538,7 @@ TEST_CASE("生产里 vram_estimate 就等于整份预算：老实数才救得回
     // 卡上真空着 23 GB（大模型占了 8 GB 左右）。
     SUBCASE("图像这一路真占 10.6 GB：够，不该卸大模型") {
         // Q4 图像模型放内存：缓冲 6.6 + 4.0，权重不常驻。
-        img.live_vram_estimate = 10ull << 30;
+        img.live_vram = [] { return std::size_t(10ull << 30); };
         s.register_slot(img);
         { auto lease = s.acquire(Slot::LLM); }
         s.set_free_vram_probe([] { return std::optional<double>(23.0); });
@@ -546,7 +546,7 @@ TEST_CASE("生产里 vram_estimate 就等于整份预算：老实数才救得回
         CHECK(llm_unloads == 0);
     }
     SUBCASE("图像这一路真占 26.6 GB：不够，照卸") {
-        img.live_vram_estimate = 26ull << 30;
+        img.live_vram = [] { return std::size_t(26ull << 30); };
         s.register_slot(img);
         { auto lease = s.acquire(Slot::LLM); }
         s.set_free_vram_probe([] { return std::optional<double>(23.0); });
@@ -554,7 +554,7 @@ TEST_CASE("生产里 vram_estimate 就等于整份预算：老实数才救得回
         CHECK(llm_unloads == 1);
     }
     SUBCASE("没给老实数：退回 vram_estimate，也就是老行为") {
-        s.register_slot(img);                 // live_vram_estimate 留 0
+        s.register_slot(img);                 // live_vram 没装
         { auto lease = s.acquire(Slot::LLM); }
         s.set_free_vram_probe([] { return std::optional<double>(23.0); });
         { auto lease = s.acquire(Slot::Image); }
@@ -581,7 +581,7 @@ TEST_CASE("老实数只走问到卡那条路，静态那条一点不放松") {
     SlotSpec img;
     img.slot = Slot::Image;
     img.vram_estimate = budget;
-    img.live_vram_estimate = 10ull << 30;     // 老实数很小
+    img.live_vram = [] { return std::size_t(10ull << 30); };     // 老实数很小
     img.evict_priority = 5;
     img.load = [] {};
     img.unload = [] {};
@@ -634,4 +634,49 @@ TEST_CASE("配音显存不够时，抛出来的就是那条带出路的话") {
     CHECK(msg.find("http") != std::string::npos);
     // 别把人指到一个已经拆掉的取值上。
     CHECK(msg.find("comfy") == std::string::npos);
+}
+
+
+TEST_CASE("老实数是现问的，不是注册时定死的") {
+    // 槽**一个进程只注册一次**（已加载的槽重新注册会抛），而模型可以在
+    // 运行中被换掉——初始化页就能换。存成定值的话：开机时还没配模型，
+    // 算出来只有计算缓冲那几 GB；用户下了一份 20 GB 的 fp8 之后，这个数
+    // 还停在开机那一刻，调度器以为够、不腾地方，然后 CUDA OOM。
+    // **估低了是崩**，这个方向最不能错。
+    Scheduler s;
+    const std::size_t budget = 28ull << 30;
+    s.set_budget(budget);
+
+    int llm_unloads = 0;
+    SlotSpec llm;
+    llm.slot = Slot::LLM;
+    llm.vram_estimate = budget;
+    llm.evict_priority = 1;
+    llm.load = [] {};
+    llm.unload = [&llm_unloads] { ++llm_unloads; };
+    s.register_slot(llm);
+
+    // 注册时这个数很小（还没配模型），之后变大（换了个大模型）。
+    std::size_t current = 10ull << 30;
+    SlotSpec img;
+    img.slot = Slot::Image;
+    img.vram_estimate = budget;
+    img.live_vram = [&current] { return current; };
+    img.evict_priority = 5;
+    img.load = [] {};
+    img.unload = [] {};
+    s.register_slot(img);
+
+    s.set_free_vram_probe([] { return std::optional<double>(23.0); });
+
+    { auto lease = s.acquire(Slot::LLM); }
+    { auto lease = s.acquire(Slot::Image); }
+    CHECK(llm_unloads == 0);          // 10 GB ≤ 23 GB，够，不卸
+
+    // 换了个大模型。注册没重来过，但下一次借槽要按新的数算。
+    s.evict(Slot::Image);
+    current = 26ull << 30;
+    { auto lease = s.acquire(Slot::LLM); }
+    { auto lease = s.acquire(Slot::Image); }
+    CHECK(llm_unloads == 1);          // 26 GB > 23 GB，这回得卸
 }
