@@ -31,7 +31,6 @@ import {
   SHOT_SIZES,
   TRANSITIONS,
   sizeLabel,
-  statusOf,
 } from '@/api/labels'
 import { humanTime, useAction } from '@/composables/useAction'
 import { STEPS, useShots } from '@/composables/useShots'
@@ -46,7 +45,7 @@ const { run, isBusy, error } = useAction()
 const {
   shots, loading, load, bust,
   pct, shotState, busy, shotRunning,
-  start, stop, shotAction, stepBtn, running,
+  start, stop, shotAction, stepBtn, shotTone, running,
 } = useShots()
 
 const openId = ref('')
@@ -590,7 +589,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
               v-for="s in shots"
               :key="s.shot_id"
               class="tl"
-              :class="[`tl--${statusOf(s.status).tone}`, { 'tl--on': openId === s.shot_id }]"
+              :class="[`tl--${shotTone(s)}`, { 'tl--on': openId === s.shot_id }]"
               type="button"
               :style="{ width: Math.max(2, ((s.duration_s || 0) / (totalDuration || 1)) * 100) + '%' }"
               :title="`${s.order + 1}. ${sizeLabel(s.shot_size)} ${s.duration_s}s`"
@@ -667,7 +666,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
           :key="s.shot_id"
           class="cell"
           :class="[
-            `cell--${statusOf(s.status).tone}`,
+            `cell--${shotTone(s)}`,
             {
               'cell--live': busy(s.shot_id),
               'cell--open': openId === s.shot_id,
@@ -768,7 +767,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
       <aside class="drawer__panel">
         <header class="drawer__head">
           <b class="numeric">{{ openShot.order + 1 }}</b>
-          <span class="pill nowrap" :class="`pill--${statusOf(openShot.status).tone}`">
+          <span class="pill nowrap" :class="`pill--${shotTone(openShot)}`">
             {{ shotState(openShot) }}
           </span>
           <span v-if="openShot.needs_lipsync" class="pill pill--info nowrap tiny">口型</span>

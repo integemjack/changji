@@ -188,7 +188,37 @@ export function useShots() {
       return stage || '跑着'
     }
     if (busy(shot.shot_id)) return '排队中'
-    return statusOf(shot.status).label
+
+    // **牌子上说的该是"这一格能看到什么"，不是流水线跑到哪一步了。**
+    //
+    // 一个既没首帧也没片子的镜头，格子里是空的，而状态是 audio_done，
+    // 于是底下写着「配音完成」——技术上没错（配音跑过了、时长锁了），
+    // 但在一面看画面的墙上，"完成"两个字读起来就是"这一镜做好了"。
+    // 用户报的原话是"什么都没有的还是显示成配音完成"。
+    //
+    // 出问题的状态（未过闸、降级）**照原样显示**：那是必须看见的东西，
+    // 不能被一句"还没出画面"盖掉。
+    const st = statusOf(shot.status)
+    if (blank(shot) && st.tone !== 'warn') return '还没出画面'
+    return st.label
+  }
+
+  /** 这一格什么都没有：没首帧也没片子，看过去就是一块空的。 */
+  function blank(shot) {
+    return !shot.frame_path && !shot.video_path
+  }
+
+  /**
+   * 牌子边框和时间轴那一格的颜色。
+   *
+   * 同 shotState 一个道理：`audio_done` 的 tone 是 info（"进行中"的蓝），
+   * 而那一格里什么都没有。蓝色配一块空白，扫过去会当成"这几镜在跑"。
+   * 什么都没出的一律按"未开工"的灰算，除非它是个要看见的问题。
+   */
+  function shotTone(shot) {
+    const st = statusOf(shot.status)
+    if (blank(shot) && st.tone !== 'warn') return 'neutral'
+    return st.tone
   }
 
   // ---- 开跑、停下、排队 ----
@@ -388,7 +418,7 @@ export function useShots() {
   return {
     shots, loading, load, bust,
     inflightBy, pct, shotState, busy, shotRunning, isWaiting,
-    start, stop, shotAction, stepBtn,
+    start, stop, shotAction, stepBtn, shotTone,
     running: computed(() => runStore.running),
   }
 }
