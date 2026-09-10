@@ -11,6 +11,10 @@
 #include <optional>
 #include <string>
 
+#ifdef _MSC_VER
+#include <intrin.h>   // __cpuid / __cpuidex，给上面 cpu_ok 用
+#endif
+
 #include "infer/sd_upscale.hpp"
 #include "infer/worker_server.hpp"
 #include "config/settings.hpp"
@@ -219,7 +223,66 @@ int run(int argc, char** argv);
 
 }  // namespace
 
+namespace {
+
+/// 这台 CPU 撑不撑得起这个二进制。撑不住就说清楚，别让它闷声崩掉。
+///
+/// **发布版按 AVX2 基线编**（CI 里 GGML_NATIVE=OFF，也就是 2013 年
+/// Haswell 起的那条线）。CPU 没有 AVX2 的话，跑到用了那些指令的地方会
+/// 收到 SIGILL——表现是**进程直接没了，一个字都不打**，dmesg 里才有一行
+/// `trap invalid opcode`，而普通用户根本不会去看 dmesg。
+///
+/// 2026-09-11 在一台 QEMU Virtual CPU 2.5+ 的机器上实测到：服务起得来、
+/// 首页也发得出，一打开设置页（体检那条路）就没了。看着像"网页把服务
+/// 搞崩了"，其实是 CPU 不支持。
+///
+/// 检查本身不能用 AVX2——`__builtin_cpu_supports` 走的是 CPUID，安全。
+bool cpu_ok(std::string& missing) {
+#if defined(__x86_64__) || defined(_M_X64)
+#if defined(_MSC_VER)
+    // **MSVC 没有 __builtin_cpu_supports，得自己问 CPUID。**
+    // windows-x64 那个包正是 MSVC 编的，而 Windows 上老 CPU 最常见——
+    // 少了这一支，最需要这个提示的平台反而没有。
+    int regs[4] = {0, 0, 0, 0};
+    __cpuid(regs, 0);
+    const int max_leaf = regs[0];
+    if (max_leaf >= 1) {
+        __cpuid(regs, 1);
+        // leaf 1, ECX bit 12 = FMA
+        if ((regs[2] & (1 << 12)) == 0) { missing = "FMA"; return false; }
+    }
+    if (max_leaf >= 7) {
+        __cpuidex(regs, 7, 0);
+        // leaf 7 子叶 0, EBX bit 5 = AVX2
+        if ((regs[1] & (1 << 5)) == 0) { missing = "AVX2"; return false; }
+    } else {
+        missing = "AVX2";   // 连 leaf 7 都没有的 CPU，肯定没 AVX2
+        return false;
+    }
+#elif defined(__GNUC__) || defined(__clang__)
+    if (!__builtin_cpu_supports("avx2")) { missing = "AVX2"; return false; }
+    if (!__builtin_cpu_supports("fma"))  { missing = "FMA";  return false; }
+#endif
+#endif
+    (void)missing;
+    return true;
+}
+
+}  // namespace
+
 int main(int argc, char** argv) {
+    // **先看 CPU 撑不撑得住，再干别的。** 见 cpu_ok。
+    if (std::string missing; !cpu_ok(missing)) {
+        std::cerr
+            << "这台机器的 CPU 不支持 " << missing << "，跑不了这个版本。\n"
+            << "发布版是按 AVX2 基线编的（2013 年的 Haswell 之后都有）。\n"
+            << "常见于很老的机器、或者虚拟机里选了通用 CPU 型号——\n"
+            << "后者改一下虚拟机的 CPU 型号（host-passthrough 之类）就行。\n"
+            << "要在这台上跑，只能自己编一份：\n"
+            << "  cmake -S cpp -B build -DGGML_NATIVE=OFF -DGGML_AVX2=OFF\n";
+        return 2;
+    }
+
     // 顶层兜异常。没有它的话，任何漏出来的异常会走 std::terminate 到 abort，
     // 在 Windows 上表现为进程以 0xC0000409 消失、一个字都不打印，
     // 而那个错误码字面意思是"栈缓冲区溢出"，会把人往完全错误的方向带。
