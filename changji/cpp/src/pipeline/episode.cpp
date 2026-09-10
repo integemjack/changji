@@ -321,7 +321,6 @@ RunReport run_episode(const ProjectStore& store,
                 // 只说 "estimate" 的话，用户跑完一整集才发现成片是静音的。
                 const std::string how =
                     backend.name == "estimate" ? "只算时长不出声音，成片会是静音"
-                    : backend.name == "comfy"  ? "走 ComfyUI 配音节点"
                     : backend.name == "http"   ? "走独立配音服务"
                                                : backend.name;
                 emit(progress, "audio", "start",

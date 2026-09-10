@@ -476,15 +476,28 @@ TEST_CASE("显存不够时，每个槽要给出各自的出路") {
         for (const Slot s : {Slot::Image, Slot::Video}) {
             const std::string m = out_of_vram_message(s);
             CHECK(m.find("weights") != std::string::npos);
-            CHECK(m.find("分辨率") != std::string::npos);
+            CHECK(m.find("清晰度") != std::string::npos);
             // 这两个槽没有外部服务可换，别给假出路
             CHECK(m.find("base_url") == std::string::npos);
+            // **清晰度不在设置页了**（2026-09-10 搬到项目的「画面」卡）。
+            // 指错地方的话用户会在设置页翻半天，而这句话是他此刻唯一的线索。
+            CHECK(m.find("项目页") != std::string::npos);
+            CHECK(m.find("设置页") == std::string::npos);
         }
     }
     SUBCASE("每一条都得先说清是哪个槽") {
         for (const Slot s : {Slot::LLM, Slot::Image, Slot::Video, Slot::TTS}) {
             CHECK(out_of_vram_message(s).find(to_string(s)) !=
                   std::string::npos);
+        }
+    }
+    SUBCASE("一条都不许再提 comfy") {
+        // ComfyUI 2026-09-10 拆了，comfy 现在连配置校验都过不去。
+        // 把人指到一个不存在的取值上，比只说一句"显存不够"更糟。
+        for (const Slot s : {Slot::LLM, Slot::Image, Slot::Video, Slot::TTS}) {
+            CAPTURE(to_string(s));
+            CHECK(out_of_vram_message(s).find("comfy") == std::string::npos);
+            CHECK(out_of_vram_message(s).find("ComfyUI") == std::string::npos);
         }
     }
 }

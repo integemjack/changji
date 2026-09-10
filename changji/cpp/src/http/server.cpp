@@ -783,9 +783,9 @@ void run(const config::Settings& settings, const Options& opts) {
     // 而且打开引擎的端口看不到任何东西。现在把打包好的前端嵌进二进制
     // 直接发（见 http/webapp.hpp）。
     //
-    // ⚠️ 只发静态文件，不替代 Node 那个 BFF：`/bff/*` 仍然只有它有。
-    // 制作页（看跑批进度）只用 `/api/*`，走这条路能用；
-    // 设置页和上传页要 `/bff/*`，得起 Node 那一层。
+    // `/bff/*` 现在也在上面答了（清单见 bff_routes.hpp），所以整个界面
+    // 都能用，不用再起 Node 那一层。
+    //
     // **逐字段填 res，不要整个赋值。**
     // catchall 拿到的 `crow::response&` 已经带着这次连接的内部状态，
     // `res = 另一个 response` 会把那些状态一起覆盖掉——浏览器收到的是

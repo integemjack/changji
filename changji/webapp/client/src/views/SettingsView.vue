@@ -194,13 +194,13 @@ async function load() {
     // 引擎把参数分了组，界面上摊平成一层，提交时再拆回去
     const s = data.settings
     if (s) {
+      // **档位那六项不进来。** 「画质档位」那一节 2026-09-10 删了
+      // （画幅搬到项目上），但字段当时还留在这儿——界面上没有控件，
+      // 值却照样跟着「保存参数」写回配置文件。后果不是多存几行：
+      // `[tiers].final_steps` 一旦有值，出片时的 Turbo 6 步就不再生效
+      // （run.cpp 只在它是 0 时才动），每一镜悄悄变回 28 步、慢四倍，
+      // 而界面上只说了一句"参数已保存到配置文件"。
       params.value = {
-        draft_width: s.tiers?.draft?.width,
-        draft_height: s.tiers?.draft?.height,
-        draft_steps: s.tiers?.draft?.steps,
-        final_width: s.tiers?.final?.width,
-        final_height: s.tiers?.final?.height,
-        final_steps: s.tiers?.final?.steps,
         ...s.assembly,
         ...s.gates,
         tts_tolerance_s: s.tts?.tolerance_s,
@@ -773,7 +773,7 @@ function scrollTo(id) {
                 :disabled="isBusy('params')"
                 @click="saveParams"
               >
-                {{ isBusy('params') ? '保存中…' : '保存画质、装配与闸门参数' }}
+                {{ isBusy('params') ? '保存中…' : '保存装配与闸门参数' }}
               </button>
               <span class="tiny dim">
                 {{ persist ? '会写回配置文件，重启还在。' : '只对本次进程生效，重启就没了。' }}

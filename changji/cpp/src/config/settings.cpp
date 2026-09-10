@@ -610,8 +610,13 @@ constexpr const char* kDefaultToml = R"(# 场记配置文件
 # 画质档位。**不填就按显存推**（见 models/hardware.cpp 的档位表），
 # 填了就以填的为准，一项一项来。分辨率要是 32 的倍数（Wan 的潜空间对齐）。
 #
-# 设置页改档位会写回这一节。以前只在进程内生效，重启就丢——
-# 用户把成片档调成 1280×704 跑了一集，重启回到 960×544 而界面没有提示。
+# **界面上没有这一节了**：画幅（竖屏/横屏、720p/2K）搬到每个项目自己的
+# changji.toml 的 [video] 里，出片时会盖掉这里的 final_width/final_height。
+# 留在这儿的是专家旋钮，最有用的一项是 final_steps：
+#
+#   **填了 final_steps，挂 Turbo LoRA 时的 6 步就不再自动生效**
+#   （run.cpp 只在它是 0 时才动它）。想固定步数才填，否则别碰——
+#   填成档位表推出来的 28，每一镜会慢四倍，而且哪儿都不会提示。
 # draft_width = 960
 # draft_height = 544
 # draft_steps = 6
