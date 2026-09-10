@@ -31,10 +31,20 @@ const { run, isBusy } = useAction()
 const shots = ref([])
 const doctor = ref(null)
 const video = ref(null)
-/** 点开在看的那一镜。null = 没在看。 */
-const playing = ref(null)
-
 const blocked = computed(() => doctor.value && doctor.value.can_run === false)
+
+/**
+ * 播放器的换代号。跑完一轮加一，拼进 `src` 里。
+ *
+ * **重出一镜之后文件路径一个字都没变**（还是 shots/final/ep01_sh002.mp4），
+ * 浏览器于是把缓存里那份旧的接着放——用户点了「重新生成」、等了两分钟、
+ * 看到的还是原来那段，而且没有任何东西提示他看的是旧的。
+ *
+ * 只在跑完时加一，不是每次刷新都加：跑的过程中加会把正在看的那一镜
+ * 从头打断。`preload="none"` 让这次换代几乎不花钱——没点播放的那些
+ * 一个字节都不会重下。
+ */
+const bust = ref(0)
 
 /**
  * 这一镜跑到百分之几。**没在跑、或者引擎没给这一镜的步数就返回 null**，
@@ -128,6 +138,8 @@ watch(
   (now, before) => {
     if (before && !now) {
       loadShots()
+      // 刚跑完，磁盘上那几个 mp4 换过了但路径没变。见 bust 的注释。
+      bust.value += 1
       session.refresh()
       if (runStore.state?.error) ui.error(runStore.state.error)
       else ui.ok('这一轮跑完了')
@@ -161,6 +173,21 @@ async function start(ids = []) {
   )
   if (started) runStore.start()
 }
+
+/**
+ * 每张牌的画幅。**跟着项目的 [video] 走，不是写死竖屏。**
+ *
+ * 牌子里现在是真的播放器，`object-fit: contain`——槽的比例和片子对不上
+ * 就会留黑边。写死 9:16 的话，横屏项目的每张牌都是上下两条黑、
+ * 中间一小条画面，一屏看不了几镜。
+ *
+ * 读不到就退回竖屏：这是短剧工具，竖屏是常态。
+ */
+const cellRatio = computed(() => {
+  const v = video.value
+  if (!v?.width || !v?.height) return '9 / 16'
+  return `${v.width} / ${v.height}`
+})
 
 /** 副标题里直说这一集会出多大的画面——按下去之前该知道。 */
 const tagline = computed(() => {
@@ -244,7 +271,7 @@ async function stop() {
     />
 
     <!-- 镜头墙。**这一页的全部内容。** -->
-    <div v-else class="wall">
+    <div v-else class="wall" :style="{ '--cell-ratio': cellRatio }">
       <article
         v-for="s in shots"
         :key="s.shot_id"
@@ -254,25 +281,33 @@ async function stop() {
           { 'shot--live': inflightBy[s.shot_id] },
         ]"
       >
-        <button
-          class="shot__frame"
-          type="button"
-          :disabled="!s.video_path"
-          :title="s.video_path ? '点开看这一镜' : statusOf(s.status).label"
-          @click="s.video_path && (playing = s)"
-        >
+        <div class="shot__frame">
+          <!-- **出好的镜头直接就是播放器，不用点开。**
+               原来是点一格弹一个浮层。一集二十二镜要一格格点开再关掉，
+               而看片子这件事恰恰要来回比对相邻两镜接不接得上——浮层
+               每次只给看一镜，正好把这件事挡住了。
+
+               `preload="none"` + `poster`：不点播放就一个字节都不下，
+               所以二十二个播放器和二十二张缩略图一样轻。海报用的就是
+               这一镜的首帧，画面和以前一模一样。
+               `playsinline` 是给手机的，不加会被系统全屏播放器接管。 -->
+          <video
+            v-if="s.video_path"
+            :key="s.shot_id + ':' + bust"
+            class="shot__video"
+            :src="mediaUrl(session.projectPath, s.video_path) + '&_=' + bust"
+            :poster="s.frame_path ? mediaUrl(session.projectPath, s.frame_path) : undefined"
+            controls
+            playsinline
+            preload="none"
+          />
           <img
-            v-if="s.frame_path"
+            v-else-if="s.frame_path"
             :src="mediaUrl(session.projectPath, s.frame_path)"
             :alt="s.visual_desc"
             loading="lazy"
           />
           <AppIcon v-else name="image" :size="18" class="shot__blank" />
-
-          <!-- 出好的才有播放标；没出的不给，免得点了没反应 -->
-          <span v-if="s.video_path" class="shot__play">
-            <AppIcon name="film" :size="16" />
-          </span>
 
           <!-- **进度画在镜头上。** 这一镜跑到哪了，看它自己就够，
                不用去别处对。 -->
@@ -290,7 +325,7 @@ async function stop() {
             />
             <span v-else class="shot__bar shot__bar--idle" />
           </span>
-        </button>
+        </div>
 
         <div class="shot__bottom">
           <span class="shot__no numeric">{{ s.order + 1 }}</span>
@@ -315,41 +350,15 @@ async function stop() {
       </article>
     </div>
 
-    <!-- 看片。点墙上任意一格出好的镜头 -->
-    <div v-if="playing" class="viewer" @click.self="playing = null">
-      <div class="viewer__box">
-        <video
-          :src="mediaUrl(session.projectPath, playing.video_path)"
-          controls
-          autoplay
-          class="viewer__video"
-        />
-        <div class="viewer__foot">
-          <span class="numeric">{{ playing.order + 1 }}</span>
-          <span class="truncate muted small">{{ playing.visual_desc }}</span>
-          <span class="spacer" />
-          <button
-            class="btn btn--ghost btn--sm"
-            type="button"
-            :disabled="runStore.running"
-            @click="start([playing.shot_id])"
-          >
-            <AppIcon name="refresh" :size="14" />
-            重新生成
-          </button>
-          <button class="btn btn--ghost btn--sm" type="button" @click="playing = null">
-            关掉
-          </button>
-        </div>
-      </div>
-    </div>
   </div>
 </template>
 
 <style scoped>
 .wall {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(148px, 1fr));
+  /* 148 → 190：格子里现在是真的播放器，原来那个宽度下浏览器自带的
+     控件会挤成一团，进度条拖不动。 */
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
   gap: var(--s3);
 }
 
@@ -370,21 +379,27 @@ async function stop() {
   position: relative;
   display: block;
   width: 100%;
-  aspect-ratio: 9 / 16;
-  padding: 0;
-  border: none;
+  /* 跟项目的画幅走，见 cellRatio。横屏项目写死 9/16 的话每张牌
+     都是上下两条黑。 */
+  aspect-ratio: var(--cell-ratio, 9 / 16);
   background: var(--bg-sunken);
   color: var(--text-3);
-  cursor: pointer;
 }
-.shot__frame:disabled {
-  cursor: default;
-}
-.shot__frame img {
+.shot__frame img,
+.shot__video {
   width: 100%;
   height: 100%;
-  object-fit: cover;
   display: block;
+}
+.shot__frame img {
+  object-fit: cover;
+}
+/* **播放器用 contain 不是 cover。** 牌子是 9:16 的槽，而横屏项目出来的
+   片子是 16:9——cover 会把它裁掉两边，等于让用户看一个和成片不一样的
+   画幅。留黑边是对的：那就是这一镜真正的样子。 */
+.shot__video {
+  object-fit: contain;
+  background: #000;
 }
 .shot__blank {
   position: absolute;
@@ -392,27 +407,15 @@ async function stop() {
   margin: auto;
 }
 
-/* 播放标只在能播的时候出现。悬停才显形，免得盖住画面 */
-.shot__play {
-  position: absolute;
-  inset: 0;
-  display: grid;
-  place-items: center;
-  background: color-mix(in srgb, black 35%, transparent);
-  color: #fff;
-  opacity: 0;
-  transition: opacity 0.12s;
-}
-.shot__frame:hover .shot__play {
-  opacity: 1;
-}
 
 /* 进度条贴在缩略图底边。**画在镜头上**，不去别处看 */
+/* **进度条贴上边，不是下边。** 下边被播放器自己的控件占了——重出一镜
+   时那一镜的旧片子还在（路径没变），于是控件和进度条会叠在一起。 */
 .shot__live {
   position: absolute;
   left: 0;
   right: 0;
-  bottom: 0;
+  top: 0;
   height: 3px;
   background: color-mix(in srgb, var(--accent) 25%, transparent);
   /* 走马灯靠 translateX 走出去，不裁的话会画到牌子外面 */
@@ -473,30 +476,4 @@ async function stop() {
   cursor: default;
 }
 
-.viewer {
-  position: fixed;
-  inset: 0;
-  z-index: 50;
-  display: grid;
-  place-items: center;
-  padding: var(--s5);
-  background: color-mix(in srgb, black 70%, transparent);
-}
-.viewer__box {
-  display: flex;
-  flex-direction: column;
-  gap: var(--s2);
-  max-width: min(92vw, 520px);
-}
-.viewer__video {
-  width: 100%;
-  max-height: 78vh;
-  border-radius: var(--r);
-  background: #000;
-}
-.viewer__foot {
-  display: flex;
-  align-items: center;
-  gap: var(--s2);
-}
 </style>
