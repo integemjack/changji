@@ -230,6 +230,29 @@ export function useShots() {
    * （`['frames']` 只出首帧，`['final']` 只出视频，不给就是配音、首帧、
    * 成片全走一遍）。
    */
+  /**
+   * 整集跑一轮时，引擎会碰到哪几镜。
+   *
+   * **和点亮牌子那件事必须对得上。** 多点亮一格，那一格就挂着「排队中」
+   * 直到整轮结束，而引擎根本没打算碰它。
+   *
+   * `force` 之下 `pick` 不看状态，全都要跑。否则按各阶段的入口状态算：
+   * 只出首帧 → 还没有首帧的；只出成片 → 还没有视频的；全流程 → 没到终态的。
+   */
+  function willRun(stages, force) {
+    const all = shots.value
+    if (force) return all
+    const only = new Set(stages ?? [])
+    if (only.size && !only.has('final')) {
+      if (only.has('frames')) return all.filter((s) => !s.frame_path)
+      return all   // audio 之类：这一层不细分，宁可多亮不要漏
+    }
+    if (only.has('final')) return all.filter((s) => !s.video_path)
+    return all.filter(
+      (s) => !['final_done', 'locked', 'fallback'].includes(s.status),
+    )
+  }
+
   async function start(ids = [], stages = null, force = null) {
     const one = ids.length > 0
     // **点下去立刻点亮，别等引擎。**
@@ -240,11 +263,9 @@ export function useShots() {
     // 整集出片时点亮的是**引擎接下来会挨个跑的那些**——也就是还没到终态
     // 的。以前这儿只处理了单镜那条（`if (one)`），点「出片」整面墙一动
     // 不动，用户报的就是这个。
-    const lit = one
-      ? ids
-      : shots.value
-          .filter((s) => !['final_done', 'locked', 'fallback'].includes(s.status))
-          .map((s) => s.shot_id)
+    // 点亮哪些，要和引擎**实际会跑**哪些对上。多点亮一格的后果是
+    // 那一格挂着「排队中」直到整轮结束，而引擎根本没打算碰它。
+    const lit = one ? ids : willRun(stages, force).map((s) => s.shot_id)
     // **同步先记上**，在 await 之前。紧接着再点别的镜头时，判据
     // （`sent` 非空）才来得及生效，否则那一下会走提交那条路撞 409。
     const before = sent.value

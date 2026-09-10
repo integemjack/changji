@@ -71,6 +71,8 @@ const problemCount = computed(
 )
 /** 还没出片的镜头数。0 就是这一集做完了。 */
 const pending = computed(() => shots.value.filter((s) => !s.video_path).length)
+/** 还没有首帧的镜头数。「只出首帧」那个按钮按它显示。 */
+const pendingFrames = computed(() => shots.value.filter((s) => !s.frame_path).length)
 
 /**
  * id 到名字。
@@ -431,6 +433,32 @@ async function startAll() {
   else ui.error('起不来：' + (r.error?.message ?? '未知原因'))
 }
 
+/**
+ * 只把首帧出出来，不出视频。
+ *
+ * **先看一眼构图再决定要不要花那两分钟。** 首帧一张约一分钟，视频一镜约
+ * 两分钟；构图不对的话视频跑得再好也是白跑。一集二十几镜先把首帧铺开，
+ * 扫一眼哪几镜不对、改完提示词再出片，比整集跑完再返工省得多。
+ *
+ * 缺首帧时**连配音一起跑**：出首帧要求这一镜的配音已经跑完（时长锁了，
+ * 入口状态是 AUDIO_DONE）。只发 `frames` 的话，还停在「未开工」的那些
+ * 一个都挑不到——点了什么都不会发生，而且不报错。
+ * 全部重出时反过来：force 之下 pick 不看状态，就别再把配音重跑一遍了。
+ */
+async function startFrames() {
+  const missing = pendingFrames.value
+  if (!missing &&
+      !confirm('每一镜都已经有首帧了。重出会把它们全部换掉（视频不动），确定？')) {
+    return
+  }
+  const r = missing
+    ? await start([], ['audio', 'frames'], false)
+    : await start([], ['frames'], true)
+  if (r.ok) return
+  if (r.error?.status === 409) ui.info('已经在跑了，下面跟着看进度就行')
+  else ui.error('起不来：' + (r.error?.message ?? '未知原因'))
+}
+
 /** 选中的那几镜一起重出某一段。挑十几个要重做的，一次交出去。 */
 async function batchRerun(step) {
   const ids = [...selected.value]
@@ -502,6 +530,24 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
             <AppIcon name="sparkle" :size="15" />
             {{ isBusy('plan') ? '正在拆镜头…' : shots.length ? 'AI 重出分镜' : 'AI 从剧本出分镜' }}
           </button>
+          <!-- **先出首帧，看一眼再决定要不要花那两分钟出视频。**
+               构图不对的话视频跑得再好也是白跑，而首帧只要它的三分之一。 -->
+          <button
+            v-if="shots.length"
+            class="btn btn--ghost"
+            type="button"
+            :title="pendingFrames
+              ? '先把缺的首帧铺开，不出视频'
+              : '每一镜都有首帧了；点了会全部重出（视频不动）'"
+            :disabled="blocked || isBusy('start')"
+            @click="startFrames"
+          >
+            <AppIcon name="image" :size="15" />
+            {{ pendingFrames ? `只出首帧（还差 ${pendingFrames} 镜）` : '重出所有首帧' }}
+          </button>
+          <!-- 都出完了的时候这个按钮是「全部重出」，那就**必须带 force**：
+               不带的话每一镜都已经是终态，引擎一个都挑不到，跑完什么都没变
+               而且不报错——按钮点了像是没反应。 -->
           <button
             v-if="shots.length"
             class="btn btn--primary"
