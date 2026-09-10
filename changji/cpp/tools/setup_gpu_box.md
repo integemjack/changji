@@ -278,7 +278,10 @@ sd.cpp 认这个给 ComfyUI 做的 LoRA（日志里有 `apply lora at runtime`�
 **别加 `--reasoning-format none`**：加了它空的 `<think></think>` 会原样留在
 content 里；默认（auto）会剥到 `reasoning_content`，content 才干净。
 
-## 4. 两份构建
+## 4. 构建
+
+**单机就编一份全开的**（见上面第 3 节）。下面这个脚本编的是多卡那套的
+两份——工作进程和协调者各关掉一半，那是为了多卡上一张卡一个进程。
 
     bash cpp/tools/build_gpu_box.sh /root/changji /root/autodl-tmp 120
 
