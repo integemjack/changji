@@ -226,6 +226,11 @@ const roomDecision = computed(() => {
     verdict: d.kept ? '够，没动别的模型' : `不够，卸了 ${d.evicted} 个`,
     ok: Boolean(d.kept),
     need: gb(d.liveGb),
+    // **要多少这个数本身是量出来的还是估出来的。** 估的那条在 video
+    // 这一路错得离谱（算 14.6 GB、实测 74 GB），拿它判出来的"够，不卸"
+    // 随时可能是 CUDA OOM 的前一步——而 OOM 直接 abort，整个服务没了。
+    needHow: d.liveMeasured ? '量出来的' : '估的，这个槽还没量过',
+    needTrusted: Boolean(d.liveMeasured),
     free: gb(d.freeSeenGb),
     // **这一位最要紧**：空闲是问显卡问来的，还是拿量到的数推算的。
     // 一直显示"推算"就说明问卡那条路没通，那本身就是个要查的问题。
@@ -458,7 +463,8 @@ function scrollTo(id) {
             <div v-if="embedded && roomDecision" class="field">
               <span class="field__label">上次腾显存怎么判的</span>
               <div class="mono tiny">
-                借「{{ roomDecision.slot }}」时：需要 {{ roomDecision.need }}，
+                借「{{ roomDecision.slot }}」时：需要 {{ roomDecision.need }}
+                （{{ roomDecision.needHow }}），
                 当时空闲 {{ roomDecision.free }}（{{ roomDecision.how }}）
                 <span :class="roomDecision.ok ? 'pill pill--ok tiny' : 'pill pill--warn tiny'">
                   {{ roomDecision.verdict }}
@@ -467,6 +473,15 @@ function scrollTo(id) {
               <span class="field__hint">
                 「够就不清理」靠的就是这一步。要是这里长期显示
                 <strong>问不到卡</strong>，说明显存探测没走通，该查。
+              </span>
+              <!-- 判「够」却是拿估的判的：这正是 CUDA OOM 的前一步。
+                   估算在 video 这一路算 14.6 GB、实测 74 GB，差五倍。 -->
+              <span v-if="roomDecision.ok && !roomDecision.needTrusted"
+                    class="field__hint">
+                ⚠ 这次的「够」是拿<strong>估算</strong>判的，这个槽还没量过。
+                估算在出片这一路偏小很多（算 14.6 GB、实测 74 GB），
+                真跑起来可能不够——显存爆掉是直接把服务带走的那种。
+                跑完一次出片量到真实占用后，这里会变成「量出来的」。
               </span>
             </div>
             <p class="tiny dim mono">配置文件：{{ node.configFile }}</p>

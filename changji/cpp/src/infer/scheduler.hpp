@@ -215,6 +215,13 @@ public:
         bool probed = false;      ///< 空闲是问卡问来的（否则是推算的）
         bool kept = false;        ///< 结论：够，没卸
         int evicted = 0;          ///< 卸掉了几个槽
+        /// live 是量出来的（真），还是估出来的（假）。
+        ///
+        /// **这一位决定上面那个"够"值不值得信。** 估算在这一路上错得很离谱
+        /// ——video 走 weights="cpu" 时算 14.6 GB、实测 74 GB。拿这种数判出
+        /// 来的"够，不卸"，后果是 CUDA OOM，而 OOM 走 GGML_ASSERT，
+        /// abort() 把整个服务带走，不是一条能读的报错。
+        bool live_measured = false;
     };
     RoomDecision last_room_decision() const;
     std::size_t budget() const;

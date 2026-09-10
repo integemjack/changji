@@ -222,7 +222,8 @@ bool Scheduler::make_room(std::size_t need, Slot keep) {
         // 而那次很可能是"卸了"——用户看着以为刚才又卸了一回，实际这次
         // 根本没压力。留一条"够，没动"比留一条过期的准。
         last_decision_ = RoomDecision{true,  keep, need, need, 0,
-                                      false, /*kept=*/true, 0};
+                                      false, /*kept=*/true, 0,
+                                      /*live_measured=*/false};
         return true;
     }
 
@@ -246,9 +247,11 @@ bool Scheduler::make_room(std::size_t need, Slot keep) {
     // 估算那条只会让我们更保守——多卸一次，不会 OOM。
     const Entry* self = find(keep);
     std::size_t live = need;
+    bool live_measured = false;
     if (const auto it = measured_.find(keep);
         it != measured_.end() && it->second > 0) {
         live = it->second;
+        live_measured = true;
     } else if (self && self->spec.live_vram) {
         // 每次现问：模型可能已经被换过了。见 SlotSpec::live_vram。
         const std::size_t got = self->spec.live_vram();
@@ -326,13 +329,16 @@ bool Scheduler::make_room(std::size_t need, Slot keep) {
 
     if (free_bytes) {
         if (dbg) {
-            std::fprintf(stderr, "[vram]   老实数=%.1fG 空闲=%.1fG -> %s\n",
-                         live / 1073741824.0, *free_bytes / 1073741824.0,
+            std::fprintf(stderr, "[vram]   老实数=%.1fG（%s） 空闲=%.1fG -> %s\n",
+                         live / 1073741824.0,
+                         live_measured ? "量到的" : "估的，没量过",
+                         *free_bytes / 1073741824.0,
                          live <= *free_bytes ? "够，不卸" : "不够，要卸");
         }
         if (live <= *free_bytes) {
             last_decision_ = RoomDecision{true, keep, need, live, *free_bytes,
-                                          probed, /*kept=*/true, 0};
+                                          probed, /*kept=*/true, 0,
+                                          live_measured};
             return true;
         }
     }
@@ -371,7 +377,8 @@ bool Scheduler::make_room(std::size_t need, Slot keep) {
                                   free_bytes ? *free_bytes : 0,
                                   probed,
                                   /*kept=*/false,
-                                  evicted};
+                                  evicted,
+                                  live_measured};
     return used + need <= budget_;
 }
 

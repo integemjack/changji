@@ -947,6 +947,51 @@ TEST_CASE("最近一次腾地方的判断要留痕，界面上读得到") {
         CHECK(d.evicted >= 1);
     }
 
+    SUBCASE("要多少这个数是量来的还是估的，也要记") {
+        // **这一位决定上面那个"够"值不值得信。** 估算在 video 这一路
+        // 算 14.6 GB、实测 74 GB，差五倍。拿估的判出"够，不卸"，
+        // 下一步就可能是 CUDA OOM——那个直接 abort，服务整个没了。
+        s.set_free_vram_probe([] { return std::optional<double>(80.0); });
+        SUBCASE("量过：标成真") {
+            s.record_measured_vram(Slot::Video, 74ull << 30);
+            { auto a = s.acquire(Slot::LLM); }
+            { auto b = s.acquire(Slot::Video); }
+            const auto d = s.last_room_decision();
+            REQUIRE(d.valid);
+            CHECK(d.kept);
+            CHECK(d.live_measured);
+        }
+        SUBCASE("没量过、拿估算判的：标成假，界面上要能警告") {
+            Scheduler s2;
+            s2.set_budget(budget);
+            s2.set_free_vram_probe([] { return std::optional<double>(80.0); });
+            SlotSpec a2 = llm;
+            s2.register_slot(a2);
+            SlotSpec v2 = vid;
+            v2.live_vram = [] { return 14ull << 30; };   // 估得偏小的那个数
+            s2.register_slot(v2);
+            { auto a = s2.acquire(Slot::LLM); }
+            { auto b = s2.acquire(Slot::Video); }
+            const auto d = s2.last_room_decision();
+            REQUIRE(d.valid);
+            CHECK(d.kept);                  // 估算说够
+            CHECK_FALSE(d.live_measured);   // 但这个"够"不可信
+        }
+        SUBCASE("静态那条就够、根本没查过实测：也标成假") {
+            Scheduler s3;
+            s3.set_budget(budget);
+            SlotSpec only = vid;
+            only.vram_estimate = 10 * GB;
+            s3.register_slot(only);
+            s3.record_measured_vram(Slot::Video, 74ull << 30);
+            { auto b = s3.acquire(Slot::Video); }
+            const auto d = s3.last_room_decision();
+            REQUIRE(d.valid);
+            CHECK(d.kept);
+            CHECK_FALSE(d.live_measured);   // 这一路压根没拿实测去比
+        }
+    }
+
     SUBCASE("问不到卡时也要记，并且标明空闲不是问来的") {
         s.set_total_vram(96ull << 30);
         s.record_measured_vram(Slot::LLM, 15ull << 30);

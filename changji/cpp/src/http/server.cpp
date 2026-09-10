@@ -639,6 +639,11 @@ void run(const config::Settings& settings, const Options& opts) {
                                {"freeSeenGb", d.free_seen ? json(gb(d.free_seen))
                                                           : json(nullptr)},
                                {"probed", d.probed},
+                               // **"够"是拿量到的数判的还是拿估的判的。**
+                               // 估算在 video 这一路错得离谱（算 14.6 GB、
+                               // 实测 74 GB），拿它判出来的"够，不卸"随时
+                               // 可能是 CUDA OOM 的前一步。界面上要分开说。
+                               {"liveMeasured", d.live_measured},
                                {"kept", d.kept},
                                {"evicted", d.evicted}};
                 }
