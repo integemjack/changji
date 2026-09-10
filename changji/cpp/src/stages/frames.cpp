@@ -1,6 +1,7 @@
 #include "stages/frames.hpp"
 
 #include <atomic>
+#include <mutex>
 #include <thread>
 #include <optional>
 
@@ -84,7 +85,8 @@ std::vector<FrameOutcome> run_frames(std::vector<Shot*>& shots,
                                      const FrameRenderer& render,
                                      pipeline::JobProgress& progress,
                                      pipeline::CancelToken& tok,
-                                     int concurrency) {
+                                     int concurrency,
+                                     const pipeline::ShotCommit& commit) {
     const PromptComposer composer(assets);
     // 按画幅缩放。分辨率必须是 32 的倍数，否则潜空间对不齐。
     const TierSpec scaled = spec.scaled_to(assets.style.aspect_ratio);
@@ -98,9 +100,27 @@ std::vector<FrameOutcome> run_frames(std::vector<Shot*>& shots,
         std::string error;
         std::string rel_path;
         double elapsed_s = 0.0;
-        bool skipped = false;   ///< 取消了，没跑
+        bool skipped = false;     ///< 取消了，没跑
+        bool committed = false;   ///< 已经写回 Shot 了，收尾时别再写一遍
     };
     std::vector<Done> done(shots.size());
+
+    // 写回一镜。**收尾和逐镜落盘共用这一份**——两份的话，
+    // `attempts += 1` 这种不幂等的操作迟早在一边漏掉或者做两遍，
+    // 而做两遍的表现是"这一镜莫名其妙被判定重试超限"。
+    const auto apply = [&](int i) {
+        Shot* shot = shots[i];
+        if (done[i].ok) {
+            shot->frame_path = done[i].rel_path;
+            shot->status = ShotStatus::FRAME_DONE;
+        } else {
+            // attempts 加一是给闸门的重试计数用的：超限之后流水线会
+            // 降级成静帧加运镜，保证整集能出片。
+            shot->attempts += 1;
+        }
+        done[i].committed = true;
+    };
+    std::mutex commit_mu;
 
     // 取多少并发。**上限是镜头数**——池里有八个而只有三镜时，
     // 起八个线程只是白占。
@@ -175,6 +195,15 @@ std::vector<FrameOutcome> run_frames(std::vector<Shot*>& shots,
                 progress.report(ev);
             }
             done[i].elapsed_s = now_seconds() - started;
+
+            // **出完一镜就落一次盘。** 不落的话这一批（一集二十二镜）
+            // 跑完之前，制作页问到的永远是开跑那一刻的样子——
+            // 镜头墙上一张缩略图都没有。
+            if (commit) {
+                std::lock_guard<std::mutex> lg(commit_mu);
+                apply(i);
+                commit();
+            }
         }
     };
 
@@ -198,15 +227,11 @@ std::vector<FrameOutcome> run_frames(std::vector<Shot*>& shots,
         FrameOutcome out;
         out.shot_id = shot->shot_id;
         out.elapsed_s = done[i].elapsed_s;
+        if (!done[i].committed) apply(i);
         if (done[i].ok) {
-            shot->frame_path = done[i].rel_path;
-            shot->status = ShotStatus::FRAME_DONE;
             out.ok = true;
             out.path = done[i].rel_path;
         } else {
-            // attempts 加一是给闸门的重试计数用的：超限之后流水线会
-            // 降级成静帧加运镜，保证整集能出片。
-            shot->attempts += 1;
             out.ok = false;
             out.error = done[i].error;
         }

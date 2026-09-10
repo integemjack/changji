@@ -762,3 +762,39 @@ TEST_CASE("出片循环的每一条路和 Python 一样") {
         fs::remove_all(root, ec);
     }
 }
+
+TEST_CASE("每出完一镜就落一次盘，不是整批跑完才落") {
+    // 同 test_frames 里那条，只是这一档更要紧：成片一镜两分钟，
+    // 二十二镜就是一个小时。这一个小时里制作页问到的要是永远还是
+    // 开跑那一刻的样子，"已经生产的可以点击播放看效果"就不成立。
+    const models::ProjectPaths paths(temp_root("逐镜落盘"));
+    std::vector<models::Shot> owned{make_shot("sh1"), make_shot("sh2"),
+                                    make_shot("sh3")};
+    std::vector<models::Shot*> shots{&owned[0], &owned[1], &owned[2]};
+
+    std::vector<int> done_at_commit;
+    pipeline::JobTable table;
+    pipeline::CancelToken tok;
+    table.start(pipeline::JobKind::Run, "ep01", [&](pipeline::JobProgress& p) {
+        stages::render_batch(shots, make_assets(), make_spec(), paths,
+                             fake_ok(), p, tok, 24, 1, {}, [&] {
+                                 int n = 0;
+                                 for (const auto& s : owned) {
+                                     if (s.video_path.has_value()) ++n;
+                                 }
+                                 done_at_commit.push_back(n);
+                             });
+    });
+    table.wait_idle();
+
+    REQUIRE(done_at_commit.size() == 3);
+    CHECK(done_at_commit[0] == 1);
+    CHECK(done_at_commit[1] == 2);
+    CHECK(done_at_commit[2] == 3);
+    // 落过盘的镜头收尾时不能被再搬一次（那份已经被移走了）
+    for (const auto& s : owned) {
+        REQUIRE(s.video_path.has_value());
+        CHECK_FALSE(s.video_path->empty());
+        CHECK(s.status == models::ShotStatus::DRAFT_DONE);
+    }
+}

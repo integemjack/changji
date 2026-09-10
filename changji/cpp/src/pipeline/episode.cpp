@@ -45,11 +45,6 @@ std::vector<Shot*> pick(Episode& ep, const std::set<ShotStatus>& want,
     return todo;
 }
 
-/// 一个档位的入口状态。
-///
-/// 首帧失败的镜头状态还停在 AUDIO_DONE（配音接上之前是 PLANNED）。
-/// **它们不该被跳过**，而是退回纯文生视频——画面一致性差一些，
-/// 但整集不会卡在这里。
 models::TierSpec frame_spec(const models::HardwareProfile& profile,
                             const config::Settings& settings) {
     const auto tier =
@@ -67,6 +62,11 @@ models::TierSpec frame_spec(const models::HardwareProfile& profile,
     return spec;
 }
 
+/// 一个档位的入口状态。
+///
+/// 首帧失败的镜头状态还停在 AUDIO_DONE（配音接上之前是 PLANNED）。
+/// **它们不该被跳过**，而是退回纯文生视频——画面一致性差一些，
+/// 但整集不会卡在这里。
 std::set<ShotStatus> render_entry_states(Tier tier, bool skip_draft) {
     if (tier == Tier::FINAL) {
         std::set<ShotStatus> in{ShotStatus::DRAFT_DONE,
@@ -302,7 +302,7 @@ RunReport run_episode(const ProjectStore& store,
         return stages::render_batch(todo, assets, spec, store.paths(),
                                     backends.video, progress, tok,
                                     settings.assembly.fps,
-                                    backends.render_lanes, gate);
+                                    backends.render_lanes, gate, save);
     };
 
     try {
@@ -377,7 +377,10 @@ RunReport run_episode(const ProjectStore& store,
                     // 同时跑几镜。**没有池就是 1**，行为和以前一样。
                     // 有池就取池的大小——这一层不知道有几张卡，
                     // 但它知道池里有几个工作进程。
-                    backends.render_lanes);
+                    backends.render_lanes,
+                    // 每出完一张就存一次。见 pipeline::ShotCommit——
+                    // 不存的话这一批跑完之前镜头墙上一张缩略图都没有。
+                    save);
                 save();
 
                 const int n = static_cast<int>(report.frames.size());

@@ -132,6 +132,9 @@ std::vector<RenderOutcome> render_batch(
     pipeline::CancelToken& tok,
     int fps = 24,
     int concurrency = 1,
-    const GateHooks& gate = {});
+    const GateHooks& gate = {},
+    /// 每出完一镜调一次（写回之后）。见 pipeline::ShotCommit。
+    /// **不给就是老行为**：整批跑完再统一写回。
+    const pipeline::ShotCommit& commit = {});
 
 }  // namespace changji::stages

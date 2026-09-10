@@ -4,6 +4,7 @@
 #include <atomic>
 #include <chrono>
 #include <cmath>
+#include <mutex>
 #include <thread>
 
 #include "gates/checks.hpp"
@@ -87,8 +88,8 @@ std::vector<RenderOutcome> render_batch(std::vector<Shot*>& shots,
                                         const VideoRenderer& render,
                                         pipeline::JobProgress& progress,
                                         pipeline::CancelToken& tok, int fps,
-                                        int concurrency,
-                                        const GateHooks& gate) {
+                                        int concurrency, const GateHooks& gate,
+                                        const pipeline::ShotCommit& commit) {
     const PromptComposer composer(assets);
     const std::string stage_name =
         spec.tier == Tier::FINAL ? "final" : "draft";
@@ -106,8 +107,10 @@ std::vector<RenderOutcome> render_batch(std::vector<Shot*>& shots,
         double elapsed_s = 0.0;
         bool skipped = false;  ///< 取消了，没跑
         Shot shot;
+        bool committed = false;   ///< 已经写回去了，收尾时别再写一遍
     };
     std::vector<Done> done(shots.size());
+    std::mutex commit_mu;
 
     // 开跑前的预计来自一张按显存推的静态表，实测能差一倍。
     // 跑起来之后用真实耗时重算，等的人才知道还要等多久。
@@ -282,6 +285,19 @@ std::vector<RenderOutcome> render_batch(std::vector<Shot*>& shots,
 
             done[i].elapsed_s = now_seconds() - started;
 
+            // **出完一镜就落一次盘。** 一集二十二镜、一镜两分钟，
+            // 不落的话这一个小时里制作页看到的还是开跑那一刻：
+            // 没有能点开看的片子，而那正是用户要的。
+            // 进程被杀掉时更糟——mp4 躺在磁盘上，project.json 一条没记。
+            //
+            // **拷贝，不是移动**：下面收尾那一段还要用 done[i].shot。
+            if (commit) {
+                std::lock_guard<std::mutex> lg(commit_mu);
+                *shots[i] = done[i].shot;
+                done[i].committed = true;
+                commit();
+            }
+
             // 剩余时间按**已经跑完的这几镜**推，不按静态表。
             // 失败的那几镜也算进去：它们也花了时间（而且往往花得更多，
             // 失败通常发生在跑完大半之后）。
@@ -327,7 +343,8 @@ std::vector<RenderOutcome> render_batch(std::vector<Shot*>& shots,
         out.elapsed_s = done[i].elapsed_s;
         // 整份写回。状态、attempts、gate_notes、video_path 都在副本里，
         // 闸门循环已经按 Python 的判定改好了——这儿只负责搬。
-        *shot = std::move(done[i].shot);
+        // 逐镜落盘那条路已经搬过了，别再搬一次（那份已经被移走了）。
+        if (!done[i].committed) *shot = std::move(done[i].shot);
         out.ok = done[i].ok;
         out.path = done[i].rel_path;
         out.error = done[i].error;

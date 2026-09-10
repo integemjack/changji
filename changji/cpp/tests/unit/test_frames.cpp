@@ -591,3 +591,72 @@ TEST_CASE("并发上限不超过镜头数") {
         CHECK(s.status == models::ShotStatus::FRAME_DONE);
     }
 }
+
+TEST_CASE("每出完一张就落一次盘，不是整批跑完才落") {
+    // **这是"已经生产的可以点击播放看效果"能不能成立的前提。**
+    //
+    // 原来整批跑完才写回 Shot、才存盘。一集二十二镜、一镜几十秒，
+    // 那就是十几分钟里制作页每六秒问一次 /api/shots，问到的永远是
+    // 开跑那一刻的样子——镜头墙上一张缩略图都没有。
+    // 进程被杀掉时更糟：PNG 躺在磁盘上，project.json 一条没记，
+    // 下次跑当成没跑过，全部重来。
+    const models::ProjectPaths paths(temp_root("逐镜落盘"));
+    std::vector<models::Shot> owned{make_shot("sh1"), make_shot("sh2"),
+                                    make_shot("sh3")};
+    std::vector<models::Shot*> shots{&owned[0], &owned[1], &owned[2]};
+
+    // 每次落盘时数一下**此刻**有几镜已经写回去了。
+    std::vector<int> done_at_commit;
+
+    pipeline::JobTable table;
+    pipeline::CancelToken tok;
+    table.start(pipeline::JobKind::Run, "ep01", [&](pipeline::JobProgress& p) {
+        stages::run_frames(shots, make_assets(), make_spec(), paths, fake_ok(),
+                           p, tok, 1, [&] {
+                               int n = 0;
+                               for (const auto& s : owned) {
+                                   if (s.frame_path.has_value()) ++n;
+                               }
+                               done_at_commit.push_back(n);
+                           });
+    });
+    table.wait_idle();
+
+    // 三镜就该落三次，而且第一次落的时候只有一镜写回去了——
+    // 要是三次看到的都是 3，说明写回还是攒到最后一起做的。
+    REQUIRE(done_at_commit.size() == 3);
+    CHECK(done_at_commit[0] == 1);
+    CHECK(done_at_commit[1] == 2);
+    CHECK(done_at_commit[2] == 3);
+    for (const auto& s : owned) {
+        CHECK(s.status == models::ShotStatus::FRAME_DONE);
+    }
+}
+
+TEST_CASE("逐镜落盘时 attempts 只加一次") {
+    // 写回有两条路（逐镜落盘、收尾），`attempts += 1` 不幂等。
+    // 两条都跑一遍的话这一镜凭空多一次重试计数，超限之后会被降级成
+    // 静帧加运镜——而日志里只会说"重试超限"，看不出是多算的。
+    const models::ProjectPaths paths(temp_root("落盘不重复"));
+    std::vector<models::Shot> owned{make_shot("sh1")};
+    std::vector<models::Shot*> shots{&owned[0]};
+    const int before = owned[0].attempts;
+
+    pipeline::JobTable table;
+    pipeline::CancelToken tok;
+    table.start(pipeline::JobKind::Run, "ep01", [&](pipeline::JobProgress& p) {
+        const stages::FrameRenderer boom =
+            [](const models::Shot&, const stages::PromptBundle&,
+               const models::TierSpec&, const fs::path&,
+               pipeline::CancelToken&,
+               const infer::StepCallback&) -> void {
+            throw std::runtime_error("显存不够");
+        };
+        stages::run_frames(shots, make_assets(), make_spec(), paths, boom, p,
+                           tok, 1, [] {});
+    });
+    table.wait_idle();
+
+    CHECK(owned[0].attempts == before + 1);
+    CHECK_FALSE(owned[0].frame_path.has_value());
+}
