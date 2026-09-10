@@ -43,7 +43,11 @@ double resident_vram(bool image, double model_gb) {
 /// **估偏了的代价不对称**：估低了用户挑一个装不下的，llama.cpp 直接报错
 /// 载不进去；估高了只是推荐保守一档。所以宁可往高了估。
 double llm_vram(double model_gb) {
-    return std::ceil((model_gb * 1.25 + 4.0) * 2.0) / 2.0;
+    // **式子只有一份**，在 ModelsConfig::llm_live_vram_gb——调度器判断
+    // "显存够不够不用卸"用的也是它。抄两份迟早只改一处，然后初始化页说
+    // 装得下、调度器说装不下，或者反过来。
+    // 这里往上取到 0.5 GB 是给人看的：清单上写 15.5 比 15.25 干净。
+    return std::ceil(config::ModelsConfig{}.llm_live_vram_gb(model_gb) * 2.0) / 2.0;
 }
 
 /// 这一档量化本身怎么样。**同一把尺子量所有家族**，省得每处各写一句

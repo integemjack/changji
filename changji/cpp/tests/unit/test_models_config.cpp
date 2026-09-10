@@ -944,8 +944,13 @@ TEST_CASE("老实数要和 *_for 的判断对得上") {
 
 TEST_CASE("大模型的老实数：权重 + KV 缓存和上下文") {
     config::ModelsConfig m;
-    // 实测那一组：9 GB 的文件载进去 15.4 GB。
-    CHECK(m.llm_live_vram_gb(9.0) == doctest::Approx(15.4));
+    // 实测那一组：9 GB 的文件载进去 15.4 GB，式子给 15.25，对得上。
+    CHECK(m.llm_live_vram_gb(9.0) == doctest::Approx(15.25));
+    // **多出来的那部分不是常数**：KV 缓存跟着模型大小走。
+    // 写成"加一个固定值"的话只在锚点上对，模型一换就偏。
+    const double d1 = m.llm_live_vram_gb(4.0) - 4.0;
+    const double d2 = m.llm_live_vram_gb(20.0) - 20.0;
+    CHECK(d2 > d1);
     // 拿不到文件大小就说"没有"，让调用方退回保守估算。
     // **不许猜**：猜小了是 OOM，退回保守只是多卸一次。
     CHECK(m.llm_live_vram_gb(0.0) == doctest::Approx(0.0));
