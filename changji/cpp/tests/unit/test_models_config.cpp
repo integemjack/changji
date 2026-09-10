@@ -899,3 +899,60 @@ TEST_CASE("[models].image_weights：图像模型的权重放哪，不跟 weights
     // 视频那一项一个字不动
     CHECK(m.weights_for(32.0, 18.8) == "cpu");
 }
+
+// ---- 老实的显存需求（调度器问过卡之后拿它比） ----
+
+TEST_CASE("老实数 = 常驻权重 + 计算缓冲，和决定放哪用同一组常数") {
+    config::ModelsConfig m;
+
+    SUBCASE("权重全放内存：只剩缓冲") {
+        // 视频 14.6；图像 6.6 + 4.0。
+        CHECK(m.video_live_vram_gb("cpu", 18.8) == doctest::Approx(14.6));
+        CHECK(m.image_live_vram_gb("cpu", 20.0) == doctest::Approx(10.6));
+    }
+    SUBCASE("只有扩散常驻") {
+        CHECK(m.video_live_vram_gb("te=cpu,vae=cpu", 18.8) ==
+              doctest::Approx(18.8 + 14.6));
+        CHECK(m.image_live_vram_gb("te=cpu,vae=cpu", 16.0) ==
+              doctest::Approx(16.0 + 10.6));
+    }
+    SUBCASE("VAE 也常驻：再加 5.5") {
+        CHECK(m.video_live_vram_gb("te=cpu", 18.8) ==
+              doctest::Approx(18.8 + 14.6 + 5.5));
+    }
+    SUBCASE("不认得的规格按全常驻算——估高只是多卸一次，估低是 OOM") {
+        CHECK(m.video_live_vram_gb("auto", 18.8) ==
+              doctest::Approx(18.8 + 14.6 + 5.5));
+    }
+}
+
+TEST_CASE("老实数要和 *_for 的判断对得上") {
+    // 两边共用常数，所以"算得下"和"要占多少"必须自洽：
+    // weights_for 说装得下的时候，老实数就该不超过整卡。
+    config::ModelsConfig m;
+    const double card = 32.6;
+    const double model = 16.0;             // Q6_K
+    const std::string w = m.weights_for(card, model);
+    CHECK(m.video_live_vram_gb(w, model) <= card);
+
+    // 而 H3 那种 18.8 GB 的，同一张卡上 weights_for 会判 "cpu"，
+    // 老实数也就只剩缓冲，仍然装得下。
+    const std::string w2 = m.weights_for(card, 18.8);
+    CHECK(w2 == "cpu");
+    CHECK(m.video_live_vram_gb(w2, 18.8) <= card);
+}
+
+TEST_CASE("大模型的老实数：权重 + KV 缓存和上下文") {
+    config::ModelsConfig m;
+    // 实测那一组：9 GB 的文件载进去 15.4 GB，式子给 15.25，对得上。
+    CHECK(m.llm_live_vram_gb(9.0) == doctest::Approx(15.25));
+    // **多出来的那部分不是常数**：KV 缓存跟着模型大小走。
+    // 写成"加一个固定值"的话只在锚点上对，模型一换就偏。
+    const double d1 = m.llm_live_vram_gb(4.0) - 4.0;
+    const double d2 = m.llm_live_vram_gb(20.0) - 20.0;
+    CHECK(d2 > d1);
+    // 拿不到文件大小就说"没有"，让调用方退回保守估算。
+    // **不许猜**：猜小了是 OOM，退回保守只是多卸一次。
+    CHECK(m.llm_live_vram_gb(0.0) == doctest::Approx(0.0));
+    CHECK(m.llm_live_vram_gb(-1.0) == doctest::Approx(0.0));
+}

@@ -1,6 +1,8 @@
 #include "infer/sd_image.hpp"
 
+#include <algorithm>
 #include <atomic>
+#include <cstring>
 #include <fstream>
 #include <mutex>
 #include <vector>
@@ -74,6 +76,36 @@ PreviewSink& preview_sink_slot() {
 void set_preview_sink(PreviewSink sink) {
     std::lock_guard lg(preview_mu());
     preview_sink_slot() = std::move(sink);
+}
+
+// 这个也在 #ifdef 外面，理由同 sd_model_problem：纯算术，没它测不到。
+CropBox center_crop_box(int src_w, int src_h, int dst_w, int dst_h) {
+    CropBox all{0, 0, src_w, src_h};
+    // 参数不成样子就别裁——宁可把原图整张递下去，也别在这儿算出一个
+    // 负宽度让下游去崩。
+    if (src_w <= 0 || src_h <= 0 || dst_w <= 0 || dst_h <= 0) return all;
+
+    // 比较 src_w/src_h 和 dst_w/dst_h，交叉相乘避开浮点。
+    const long long lhs = static_cast<long long>(src_w) * dst_h;
+    const long long rhs = static_cast<long long>(dst_w) * src_h;
+    if (lhs == rhs) return all;  // 比例已经对上，一刀都不用裁
+
+    CropBox box;
+    if (lhs > rhs) {
+        // 源比目标宽，裁两侧。
+        box.h = src_h;
+        box.w = static_cast<int>(rhs / dst_h);
+    } else {
+        // 源比目标高，裁上下。
+        box.w = src_w;
+        box.h = static_cast<int>(lhs / dst_w);
+    }
+    // 整除会往下取，取到 0 的话下游拿到一张空图。夹到至少 1 像素。
+    box.w = std::max(1, std::min(box.w, src_w));
+    box.h = std::max(1, std::min(box.h, src_h));
+    box.x = (src_w - box.w) / 2;
+    box.y = (src_h - box.h) / 2;
+    return box;
 }
 
 #ifdef CHANGJI_HAVE_SD
@@ -241,6 +273,34 @@ sd_image_t load_image(const fs::path& p) {
     img.channel = 3;
     img.data = data;
     return img;
+}
+
+/// 按 box 把 img 裁掉，**就地**改，不重新分配。
+///
+/// 就地是有意的：`img.data` 是 stbi_load 给的，调用方拿 stbi_image_free 去还。
+/// 换成自己 malloc 的buffer就把所有权绑在"stbi_image_free 正好是 free"
+/// 这个实现细节上了。裁剪只会变小，原地挪得开。
+///
+/// 挪的方向也安全：目标下标 3*(y*新宽+x) 恒不大于源下标
+/// 3*((y+y0)*宽+x+x0)（因为 新宽≤宽、x0≥0、y0≥0），所以从头往后拷不会
+/// 覆盖还没读的像素。
+void crop_in_place(sd_image_t& img, const CropBox& box) {
+    if (box.whole(static_cast<int>(img.width), static_cast<int>(img.height))) {
+        return;
+    }
+    const auto ch = static_cast<std::size_t>(img.channel);
+    const auto src_w = static_cast<std::size_t>(img.width);
+    for (int y = 0; y < box.h; ++y) {
+        const std::size_t dst = static_cast<std::size_t>(y) *
+                                static_cast<std::size_t>(box.w) * ch;
+        const std::size_t src =
+            (static_cast<std::size_t>(y + box.y) * src_w +
+             static_cast<std::size_t>(box.x)) * ch;
+        std::memmove(img.data + dst, img.data + src,
+                     static_cast<std::size_t>(box.w) * ch);
+    }
+    img.width = static_cast<uint32_t>(box.w);
+    img.height = static_cast<uint32_t>(box.h);
 }
 
 std::string vram_arg(double gb) {
@@ -542,6 +602,9 @@ void SdContext::generate_video(const VideoRequest& req, const fs::path& raw_dest
     if (req.start_image.has_value()) {
         start = load_image(*req.start_image);
         has_start = true;
+        crop_in_place(start, center_crop_box(static_cast<int>(start.width),
+                                             static_cast<int>(start.height),
+                                             req.width, req.height));
     }
     struct StartGuard {
         sd_image_t& img;
@@ -788,6 +851,22 @@ void register_sd_slots(SettingsProvider raw_provider,
     const std::size_t estimate =
         static_cast<std::size_t>(budget * 1024) * 1024 * 1024;
 
+    // 老实数：这一路跑起来真正要占的显存（常驻权重 + 计算缓冲）。
+    // 只有问到了卡上的空闲显存时才拿它比，见 SlotSpec::live_vram_estimate。
+    // 这里能算是因为 provider 已经把 smart 展开成具体规格了。
+    const auto live_bytes = [](double gb) {
+        return gb > 0 ? static_cast<std::size_t>(gb * 1024) * 1024 * 1024
+                      : static_cast<std::size_t>(0);
+    };
+    const auto model_gb = [](const config::Settings& s, const std::string& entry) {
+        std::error_code ec;
+        const auto p = s.models.resolve(entry, s.workspace_path());
+        const auto bytes = p.empty() ? 0 : fs::file_size(p, ec);
+        return (!ec && bytes > 0)
+                   ? static_cast<double>(bytes) / (1024.0 * 1024 * 1024)
+                   : 0.0;
+    };
+
     // **预算要真的设上。** 不设的话 Scheduler::make_room 第一行就
     // `budget_ == 0 → return true`，谁也不驱逐谁——下面"同时只装得下一个"
     // 那句注释描述的行为从来没生效过。
@@ -815,6 +894,11 @@ void register_sd_slots(SettingsProvider raw_provider,
         spec.slot = Slot::Image;
         spec.residency = Residency::Cached;   // 每个镜头都要，别反复卸
         spec.vram_estimate = estimate;
+        {
+            const config::Settings s = provider();
+            spec.live_vram_estimate = live_bytes(s.models.image_live_vram_gb(
+                s.models.image_weights, model_gb(s, s.models.image)));
+        }
         // 视频模型重新加载更贵（文件大得多），所以图像的优先级更低，
         // 腾地方时先卸它。
         spec.evict_priority = 5;
@@ -836,6 +920,11 @@ void register_sd_slots(SettingsProvider raw_provider,
         spec.slot = Slot::Video;
         spec.residency = Residency::Cached;
         spec.vram_estimate = estimate;
+        {
+            const config::Settings s = provider();
+            spec.live_vram_estimate = live_bytes(s.models.video_live_vram_gb(
+                s.models.weights, model_gb(s, s.models.video)));
+        }
         spec.evict_priority = 9;
         spec.load = [provider, budget_for] {
             const config::Settings s = provider();

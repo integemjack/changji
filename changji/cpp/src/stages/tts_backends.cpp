@@ -3,8 +3,10 @@
 #include <array>
 #include <cstdio>
 #include <fstream>
+#include <mutex>
 
 #include "infer/llama_tts.hpp"
+#include "infer/scheduler.hpp"
 #include "stages/audio.hpp"
 #include "stages/audio_plan.hpp"
 #include "util/paths.hpp"
@@ -13,6 +15,32 @@
 namespace fs = std::filesystem;
 
 namespace changji::stages {
+
+namespace {
+
+/// 进程内配音的引擎和它的路径。**进程一个**：调度器的槽也是进程一个，
+/// 两者要对得上。load/unload 是无捕获的函数指针（SlotSpec 存 std::function，
+/// 但这里不带状态更省心），所以状态放在这几个访问器后面。
+struct TtsPaths {
+    fs::path backbone;
+    fs::path decoder;
+    bool use_gpu = true;
+};
+
+std::mutex& tts_mu() {
+    static std::mutex m;
+    return m;
+}
+TtsPaths& tts_engine_paths() {
+    static TtsPaths p;
+    return p;
+}
+std::shared_ptr<infer::LlamaTts>& tts_engine() {
+    static std::shared_ptr<infer::LlamaTts> e;
+    return e;
+}
+
+}  // namespace
 
 namespace {
 
@@ -189,15 +217,63 @@ std::optional<TTSBackend> local_tts_backend(const fs::path& backbone,
         return std::nullopt;
     }
 
-    // **模型只载一次，跟着后端的生命周期走。**
-    // 1.5 GB 的权重，每句台词重载一遍的话一集就是几十次。
-    auto engine = std::shared_ptr<infer::LlamaTts>(
-        infer::LlamaTts::load(backbone, decoder, use_gpu, why));
-    if (!engine) return std::nullopt;
+    // **配音也要走调度器。**
+    //
+    // 以前这里直接 LlamaTts::load，绕开调度器：配音模型占的显存没人记账，
+    // 而且显存不够时报的是 llama.cpp 那句底层错误。out_of_vram_message
+    // 里给配音写的那段出路（改成 [tts].backend = "http" 接外部服务，
+    // 本机就不用装配音模型）**只在 acquire 失败时才抛**——没人借这个槽，
+    // 那段话就是死代码，用户永远看不到。而配音恰恰是四个槽里唯一一个
+    // 有现成外部服务可换、不用改一行代码的。
+    //
+    // 1.5 GB 的权重，仍然只载一次（Cached），每句台词重载一遍的话
+    // 一集就是几十次。
+    tts_engine_paths() = {backbone, decoder, use_gpu};
+    {
+        infer::SlotSpec spec;
+        spec.slot = infer::Slot::TTS;
+        spec.residency = infer::Residency::Cached;
+        // 1.5 GB 的权重加上它自己的缓冲，按 3 GB 记。四个槽里最小的一个。
+        spec.vram_estimate = static_cast<std::size_t>(3) * 1024 * 1024 * 1024;
+        spec.live_vram_estimate = spec.vram_estimate;   // 小到不用分两个数
+        // **比大模型还先被卸。** 配音一句话几秒，重载比出图出片便宜得多。
+        spec.evict_priority = 0;
+        spec.load = [] {
+            const auto& p = tts_engine_paths();
+            std::string why;
+            auto e = std::shared_ptr<infer::LlamaTts>(
+                infer::LlamaTts::load(p.backbone, p.decoder, p.use_gpu, why));
+            if (!e) throw std::runtime_error("配音模型载不起来：" + why);
+            std::lock_guard lg(tts_mu());
+            tts_engine() = std::move(e);
+        };
+        spec.unload = [] {
+            std::lock_guard lg(tts_mu());
+            tts_engine().reset();
+        };
+        // 重新建依赖时会再走一遍这里。槽还借着的话 register_slot 会抛，
+        // 那种情况下沿用已经注册好的那份就行——路径上面已经更新过了。
+        try {
+            infer::scheduler().evict(infer::Slot::TTS);
+            infer::scheduler().register_slot(std::move(spec));
+        } catch (const std::exception&) {
+            // 正被借用：保持原样，下次合成照常走。
+        }
+    }
+
+    // 先借一次当验模型：载不起来（文件缺了、权重不匹配）就退回估算后端，
+    // 和另外两条路一样。**显存不够也走这里**，而此时 why 拿到的是那段
+    // 带出路的话，不是一句底层报错。
+    try {
+        auto probe = infer::scheduler().acquire(infer::Slot::TTS);
+    } catch (const std::exception& e) {
+        why = e.what();
+        return std::nullopt;
+    }
 
     TTSBackend b;
     b.name = "local";
-    b.synthesize = [engine, ff](const std::string& text, const fs::path& out,
+    b.synthesize = [ff](const std::string& text, const fs::path& out,
                                 const std::optional<std::string>& voice,
                                 const std::string& emotion, double intensity) {
         // 情绪和强度这一版用不上：Qwen3-TTS 的情绪是靠参考音色带的，
@@ -205,6 +281,16 @@ std::optional<TTSBackend> local_tts_backend(const fs::path& backbone,
         // 比明说不支持更糟。留在这儿等接参考音色时一起做。
         (void)emotion;
         (void)intensity;
+
+        // 每句都借一次。已经装着的话这一步几乎不花时间；被驱逐了就在这里
+        // 重新装上。借不到时抛的是那条带出路的消息，直接成为这一镜的错误。
+        auto lease = infer::scheduler().acquire(infer::Slot::TTS);
+        std::shared_ptr<infer::LlamaTts> engine;
+        {
+            std::lock_guard lg(tts_mu());
+            engine = tts_engine();
+        }
+        if (!engine) throw AudioError("配音模型没准备好（槽借到了但引擎是空的）");
 
         infer::LlamaTtsRequest req;
         req.text = text;

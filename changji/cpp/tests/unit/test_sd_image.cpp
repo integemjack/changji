@@ -12,6 +12,7 @@
 
 #include <doctest/doctest.h>
 
+#include <cmath>
 #include <filesystem>
 #include <string>
 
@@ -219,4 +220,65 @@ TEST_CASE("出片没配 video：单独一句话") {
     const std::string why = infer::sd_model_problem(s, infer::ModelRole::Video);
     REQUIRE_FALSE(why.empty());
     CHECK(why.find("video") != std::string::npos);
+}
+
+// ---- 首帧和画幅比例对不上时的中心裁剪 ----
+//
+// 这一组测的是 center_crop_box 的算术。它存在的理由见头文件：
+// sd.cpp 拿到比例不同的 init_image 会直接拉伸，不报错。
+
+TEST_CASE("比例本来就一样：一刀不裁") {
+    // 尺寸不同但比例相同——缩放交给下游，这里不该动。
+    const auto box = infer::center_crop_box(1408, 2560, 704, 1280);
+    CHECK(box.whole(1408, 2560));
+
+    const auto same = infer::center_crop_box(544, 928, 544, 928);
+    CHECK(same.whole(544, 928));
+}
+
+TEST_CASE("旧首帧 704x1280 出 544x928 的片：裁上下，宽不动") {
+    // 就是 2026-09-10 改画幅留下的那批图。
+    // 源 0.550 比目标 0.586 窄，所以是高的那一维多了。
+    const auto box = infer::center_crop_box(704, 1280, 544, 928);
+    CHECK(box.w == 704);
+    CHECK(box.h == 704 * 928 / 544);  // 1200
+    CHECK(box.x == 0);
+    CHECK(box.y == (1280 - box.h) / 2);
+    CHECK_FALSE(box.whole(704, 1280));
+    // 裁完的比例要和目标一致（整除的余数之内）
+    CHECK(std::abs(static_cast<double>(box.w) / box.h -
+                   544.0 / 928.0) < 0.002);
+}
+
+TEST_CASE("源比目标宽：裁两侧，高不动") {
+    const auto box = infer::center_crop_box(1920, 1080, 544, 928);
+    CHECK(box.h == 1080);
+    CHECK(box.w == 1080 * 544 / 928);  // 633
+    CHECK(box.y == 0);
+    CHECK(box.x == (1920 - box.w) / 2);
+}
+
+TEST_CASE("裁出来的框不许跑到图外面") {
+    const int cases[][4] = {
+        {704, 1280, 544, 928}, {1920, 1080, 544, 928},
+        {100, 3000, 544, 928}, {3000, 100, 544, 928},
+        {1, 1, 544, 928},      {544, 928, 2560, 1440},
+    };
+    for (const auto& c : cases) {
+        const auto box = infer::center_crop_box(c[0], c[1], c[2], c[3]);
+        CAPTURE(c[0]);
+        CAPTURE(c[1]);
+        CHECK(box.w >= 1);
+        CHECK(box.h >= 1);
+        CHECK(box.x >= 0);
+        CHECK(box.y >= 0);
+        CHECK(box.x + box.w <= c[0]);
+        CHECK(box.y + box.h <= c[1]);
+    }
+}
+
+TEST_CASE("尺寸不成样子：整张递下去，不算出负数来") {
+    CHECK(infer::center_crop_box(0, 0, 544, 928).whole(0, 0));
+    CHECK(infer::center_crop_box(704, 1280, 0, 928).whole(704, 1280));
+    CHECK(infer::center_crop_box(-4, 8, 544, 928).whole(-4, 8));
 }

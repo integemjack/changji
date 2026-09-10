@@ -483,6 +483,13 @@ TEST_CASE("显存不够时，每个槽要给出各自的出路") {
             // 指错地方的话用户会在设置页翻半天，而这句话是他此刻唯一的线索。
             CHECK(m.find("项目页") != std::string::npos);
             CHECK(m.find("设置页") == std::string::npos);
+            // **档位名要和下拉框里写的一样。** 界面上是「标准（544×928）」；
+            // 取值虽然还叫 "720p"（老项目的配置文件里存的就是它），但那个
+            // 字符串不该出现在给人看的话里——2026-09-10 画幅改成 544×928
+            // 之后，叫 720p 就是假的，用户会在那张卡上找一个不存在的选项。
+            CHECK(m.find("标准") != std::string::npos);
+            CHECK(m.find("544") != std::string::npos);
+            CHECK(m.find("720p") == std::string::npos);
         }
     }
     SUBCASE("每一条都得先说清是哪个槽") {
@@ -500,4 +507,131 @@ TEST_CASE("显存不够时，每个槽要给出各自的出路") {
             CHECK(out_of_vram_message(s).find("ComfyUI") == std::string::npos);
         }
     }
+}
+
+TEST_CASE("生产里 vram_estimate 就等于整份预算：老实数才救得回来") {
+    // 上面那组用的是 8 GB 估值配 10 GB 预算，探针一问就够。
+    // **生产不长这样**：register_sd_slots 把每个槽的 vram_estimate 都设成
+    // 整份预算（整卡的九成），谁也凑不出第二份。那时候拿 vram_estimate
+    // 去问"卡上够不够"，答案永远是不够——这条分支等于不存在，
+    // 每次点出片照样把大模型卸掉。这一组盯的就是那个形状。
+    Scheduler s;
+    const std::size_t budget = 28ull << 30;   // 32 GB 卡的九成，约 28 GB
+    s.set_budget(budget);
+
+    int llm_unloads = 0;
+    SlotSpec llm;
+    llm.slot = Slot::LLM;
+    llm.vram_estimate = budget;               // 和预算一样大，生产就是这样
+    llm.evict_priority = 1;
+    llm.load = [] {};
+    llm.unload = [&llm_unloads] { ++llm_unloads; };
+    s.register_slot(llm);
+
+    SlotSpec img;
+    img.slot = Slot::Image;
+    img.vram_estimate = budget;
+    img.evict_priority = 5;
+    img.load = [] {};
+    img.unload = [] {};
+
+    // 卡上真空着 23 GB（大模型占了 8 GB 左右）。
+    SUBCASE("图像这一路真占 10.6 GB：够，不该卸大模型") {
+        // Q4 图像模型放内存：缓冲 6.6 + 4.0，权重不常驻。
+        img.live_vram_estimate = 10ull << 30;
+        s.register_slot(img);
+        { auto lease = s.acquire(Slot::LLM); }
+        s.set_free_vram_probe([] { return std::optional<double>(23.0); });
+        { auto lease = s.acquire(Slot::Image); }
+        CHECK(llm_unloads == 0);
+    }
+    SUBCASE("图像这一路真占 26.6 GB：不够，照卸") {
+        img.live_vram_estimate = 26ull << 30;
+        s.register_slot(img);
+        { auto lease = s.acquire(Slot::LLM); }
+        s.set_free_vram_probe([] { return std::optional<double>(23.0); });
+        { auto lease = s.acquire(Slot::Image); }
+        CHECK(llm_unloads == 1);
+    }
+    SUBCASE("没给老实数：退回 vram_estimate，也就是老行为") {
+        s.register_slot(img);                 // live_vram_estimate 留 0
+        { auto lease = s.acquire(Slot::LLM); }
+        s.set_free_vram_probe([] { return std::optional<double>(23.0); });
+        { auto lease = s.acquire(Slot::Image); }
+        CHECK(llm_unloads == 1);
+    }
+}
+
+TEST_CASE("老实数只走问到卡那条路，静态那条一点不放松") {
+    // 探针问不到（没有 nvidia-smi）的时候，老实数不许拿来当依据——
+    // "问不到"不等于"有空间"。
+    Scheduler s;
+    const std::size_t budget = 28ull << 30;
+    s.set_budget(budget);
+
+    int llm_unloads = 0;
+    SlotSpec llm;
+    llm.slot = Slot::LLM;
+    llm.vram_estimate = budget;
+    llm.evict_priority = 1;
+    llm.load = [] {};
+    llm.unload = [&llm_unloads] { ++llm_unloads; };
+    s.register_slot(llm);
+
+    SlotSpec img;
+    img.slot = Slot::Image;
+    img.vram_estimate = budget;
+    img.live_vram_estimate = 10ull << 30;     // 老实数很小
+    img.evict_priority = 5;
+    img.load = [] {};
+    img.unload = [] {};
+    s.register_slot(img);
+
+    { auto lease = s.acquire(Slot::LLM); }
+    SUBCASE("没装探针") {
+        { auto lease = s.acquire(Slot::Image); }
+        CHECK(llm_unloads == 1);
+    }
+    SUBCASE("装了但问不到") {
+        s.set_free_vram_probe([] { return std::optional<double>{}; });
+        { auto lease = s.acquire(Slot::Image); }
+        CHECK(llm_unloads == 1);
+    }
+}
+
+TEST_CASE("配音显存不够时，抛出来的就是那条带出路的话") {
+    // 消息内容上面测过了，这一条测的是**够不够得着**：
+    // out_of_vram_message 只在 acquire 失败时抛，所以必须真有人借这个槽。
+    // 2026-09-10 之前没人借——tts_backends 直接 LlamaTts::load 绕开了调度器，
+    // 那段"改成 [tts].backend = http 接外部服务"的话是死代码，用户看不到。
+    Scheduler s;
+    s.set_budget(4ull << 30);
+
+    SlotSpec big;
+    big.slot = Slot::Video;
+    big.vram_estimate = 4ull << 30;
+    big.load = [] {};
+    big.unload = [] {};
+    s.register_slot(big);
+
+    SlotSpec tts;
+    tts.slot = Slot::TTS;
+    tts.vram_estimate = 3ull << 30;
+    tts.load = [] {};
+    tts.unload = [] {};
+    s.register_slot(tts);
+
+    // 视频槽借着不放，腾不出地方。
+    auto held = s.acquire(Slot::Video);
+    std::string msg;
+    try {
+        auto lease = s.acquire(Slot::TTS);
+        FAIL("显存不够却借到了");
+    } catch (const std::exception& e) {
+        msg = e.what();
+    }
+    CHECK(msg.find("base_url") != std::string::npos);
+    CHECK(msg.find("http") != std::string::npos);
+    // 别把人指到一个已经拆掉的取值上。
+    CHECK(msg.find("comfy") == std::string::npos);
 }
