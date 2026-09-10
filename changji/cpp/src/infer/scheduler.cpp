@@ -115,6 +115,22 @@ void Scheduler::set_free_vram_probe(FreeVramProbe probe) {
     free_vram_ = std::move(probe);
 }
 
+void Scheduler::record_measured_vram(Slot slot, std::size_t bytes) {
+    if (bytes == 0) return;
+    std::lock_guard lg(mu_);
+    // **只往上记，不往下调。** 同一个槽不同镜头的占用会有出入（帧数、
+    // 分辨率、有没有挂 LoRA），取见过的最大值才安全——按最近一次记的话，
+    // 一个小镜头会把上限拉低，下一个大镜头就 OOM 了。
+    auto& cur = measured_[slot];
+    if (bytes > cur) cur = bytes;
+}
+
+std::size_t Scheduler::measured_vram(Slot slot) const {
+    std::lock_guard lg(mu_);
+    const auto it = measured_.find(slot);
+    return it == measured_.end() ? 0 : it->second;
+}
+
 std::string out_of_vram_message(Slot slot) {
     // **每个槽给的出路不一样。** 只说一句"显存不够"的话，用户下一步
     // 无从下手——尤其是配音：它是唯一一个有现成外部服务可换的，
@@ -189,9 +205,15 @@ bool Scheduler::make_room(std::size_t need, Slot keep) {
             // 空闲显存就永远不够，这条分支等于不存在，
             // 每次切阶段照样卸。见 SlotSpec::live_vram_estimate。
             const Entry* self = find(keep);
-            // 每次现问：模型可能已经被换过了。见 SlotSpec::live_vram。
+            // **实测值优先。** 静态估算差得离谱（见 record_measured_vram），
+            // 量过一次之后就按量到的算。没量过才退回估算，而估算这条路
+            // 只会让我们更保守——多卸一次，不会 OOM。
             std::size_t live = need;
-            if (self && self->spec.live_vram) {
+            if (const auto it = measured_.find(keep);
+                it != measured_.end() && it->second > 0) {
+                live = it->second;
+            } else if (self && self->spec.live_vram) {
+                // 每次现问：模型可能已经被换过了。见 SlotSpec::live_vram。
                 const std::size_t got = self->spec.live_vram();
                 if (got > 0) live = got;
             }

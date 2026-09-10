@@ -33,6 +33,7 @@
 #include "util/paths.hpp"
 #include "http/webapp.hpp"
 #include "http/ws.hpp"
+#include "infer/scheduler.hpp"
 #include "infer/sd_backend.hpp"
 #include "infer/sd_image.hpp"
 #include "models/hardware.hpp"
@@ -608,10 +609,21 @@ void run(const config::Settings& settings, const Options& opts) {
                                 {"liveVramGb", p.live_vram_gb},
                                 {"resident", p.resident}};
                 };
+                // **实测占用也给出来。** 估算和真实差得离谱（video 那一路
+                // 算 14.6 GB、实测 74 GB），界面上只显示估算会误导人。
+                // 量到之前是 null——那时候调度器走的也正是保守估算。
+                const auto measured = [](infer::Slot sl) {
+                    const std::size_t b = infer::scheduler().measured_vram(sl);
+                    return b == 0 ? json(nullptr)
+                                  : json(static_cast<double>(b) /
+                                         (1024.0 * 1024 * 1024));
+                };
+                json vid = pack(config::video_placement(ex));
+                json img = pack(config::image_placement(ex));
+                vid["measuredVramGb"] = measured(infer::Slot::Video);
+                img["measuredVramGb"] = measured(infer::Slot::Image);
                 out["effective"]["placement"] = {
-                    {"video", pack(config::video_placement(ex))},
-                    {"image", pack(config::image_placement(ex))},
-                    {"cardGb", card_gb}};
+                    {"video", vid}, {"image", img}, {"cardGb", card_gb}};
             }
         }
         // **体检要发网络请求，最坏二十多秒。** Node 那份也是同步等的，

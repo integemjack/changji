@@ -22,6 +22,7 @@
 
 #include <cstddef>
 #include <functional>
+#include <map>
 #include <optional>
 #include <memory>
 #include <mutex>
@@ -154,6 +155,23 @@ public:
     /// 而且慢）。回 nullopt 表示问不到，那时按静态估算走。
     using FreeVramProbe = std::function<std::optional<double>()>;
     void set_free_vram_probe(FreeVramProbe probe);
+
+    /// 记下某个槽**实测**跑起来占了多少显存（字节）。
+    ///
+    /// **这是"根据实时的显存情况来判断"里最要紧的一块。** 静态估算靠不住：
+    /// 2026-09-11 在 96 GB 卡上实测，`weights="cpu"` 那一路我算 14.6 GB、
+    /// 真实峰值 **74 GB**，差五倍；`te=cpu` 那一路我算 81.8 GB，实际超过
+    /// 95.6 GB 直接 CUDA OOM 把整个进程带走。原因是权重放不放显存并不能
+    /// 决定占用——ggml 仍然按层往显存搬，分配器还留着大池子，而这些随
+    /// 模型大小、画幅、帧数剧烈变化，不是一两个常数估得准的。
+    ///
+    /// 所以改成**量**：跑第一次时按保守估算办事（该卸就卸，绝不冒险），
+    /// 跑的过程中记下真实占用，之后就按这个数判断。自校准，且**永远不会
+    /// 因为乐观而 OOM**——没量到之前一律走保守那条。
+    void record_measured_vram(Slot slot, std::size_t bytes);
+
+    /// 取实测值。没量过回 0。
+    std::size_t measured_vram(Slot slot) const;
     std::size_t budget() const;
 
     /// 注册一个槽。同一个槽重复注册会覆盖，但**只在它没加载时**——
@@ -202,6 +220,8 @@ private:
     std::vector<Entry> entries_;
     std::size_t budget_ = 0;
     FreeVramProbe free_vram_;
+    /// 每个槽实测的占用。见 record_measured_vram。
+    std::map<Slot, std::size_t> measured_;
     std::uint64_t clock_ = 0;
 };
 

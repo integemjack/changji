@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "infer/scheduler.hpp"
+#include "models/hardware.hpp"
 #include "util/paths.hpp"
 
 #ifdef CHANGJI_HAVE_SD
@@ -128,6 +129,11 @@ struct ActiveGeneration {
     int want_steps = 0;
     /// 给哪一镜的。预览回调也是全局的，靠它把小图挂到墙上对的那一格。
     std::string tag;
+    /// 这一次占的是哪个槽。量到的显存要记到它名下。
+    Slot slot = Slot::Image;
+    /// 这一轮量过了没有。**一次生成只量一次**：问一次 nvidia-smi 要
+    /// 一百毫秒上下，每一步都问的话出图那种几十步的会明显变慢。
+    bool sampled = false;
 };
 
 ActiveGeneration& active() {
@@ -219,6 +225,40 @@ void progress_trampoline(int step, int steps, float time, void* /*data*/) {
     // 而实际整轮只从磁盘载过一次。
     const bool loading = want > 0 && steps != want;
     if (cb) cb(step, steps, static_cast<double>(time), loading);
+
+    // **在这儿量一次真实占用。**
+    //
+    // 挑第一个采样步：这时候权重和计算缓冲都已经分配好，正是峰值附近
+    // （96 GB 卡上实测，第 1 步就到 75.8 GB，一直保持到最后一步）。
+    // 再早量到的是加载中途的数，再晚就错过了。
+    //
+    // 量它是因为**静态估算靠不住**：同一路 weights="cpu"，我算 14.6 GB、
+    // 实测 74 GB。见 Scheduler::record_measured_vram。
+    if (!loading && step >= 1) {
+        bool first = false;
+        Slot slot = Slot::Image;
+        {
+            std::lock_guard lg(a.mu);
+            if (!a.sampled) {
+                a.sampled = true;
+                first = true;
+                slot = a.slot;
+            }
+        }
+        if (first) {
+            const auto free_gb = models::free_vram_gb();
+            const auto prof = models::HardwareProfile::detect(std::nullopt);
+            const double total_gb =
+                prof.gpu.has_value() ? prof.gpu->vram_gb() : 0.0;
+            if (free_gb.has_value() && total_gb > 0.0) {
+                const double used_gb = total_gb - *free_gb;
+                if (used_gb > 0.0) {
+                    scheduler().record_measured_vram(
+                        slot, static_cast<std::size_t>(used_gb * 1024) * 1024 * 1024);
+                }
+            }
+        }
+    }
 
     // 取消是**在这里**发出去的。sd.cpp 的采样循环没有别的插手点，
     // 不在回调里发的话，点了停止要等这一镜跑完——低配机器上那是好几分钟。
@@ -547,6 +587,8 @@ void SdContext::generate(const ImageRequest& req, const fs::path& dest,
         a.tok = &tok;
         a.want_steps = req.steps;
         a.tag = req.tag;
+        a.slot = Slot::Image;
+        a.sampled = false;   // 每次生成重新量一遍，见 progress_trampoline
     }
     a.cancel_sent.store(false, std::memory_order_relaxed);
     ::sd_set_progress_callback(progress_trampoline, nullptr);
@@ -680,6 +722,8 @@ void SdContext::generate_video(const VideoRequest& req, const fs::path& raw_dest
         a.tok = &tok;
         a.want_steps = req.steps;
         a.tag = req.tag;
+        a.slot = Slot::Video;
+        a.sampled = false;
     }
     a.cancel_sent.store(false, std::memory_order_relaxed);
     ::sd_set_progress_callback(progress_trampoline, nullptr);

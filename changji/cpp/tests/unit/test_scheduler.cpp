@@ -680,3 +680,64 @@ TEST_CASE("老实数是现问的，不是注册时定死的") {
     { auto lease = s.acquire(Slot::Image); }
     CHECK(llm_unloads == 1);          // 26 GB > 23 GB，这回得卸
 }
+
+TEST_CASE("实测值一旦量到，就压过静态估算") {
+    // 静态估算差得离谱：2026-09-11 在 96 GB 卡上实测，weights="cpu" 那一路
+    // 算出来 14.6 GB、真实峰值 74 GB（差五倍）；te=cpu 那一路算 81.8 GB、
+    // 实际超过 95.6 GB 直接 OOM 把进程带走。所以量到之后必须以量到的为准。
+    Scheduler s;
+    const std::size_t budget = 28ull << 30;
+    s.set_budget(budget);
+
+    int llm_unloads = 0;
+    SlotSpec llm;
+    llm.slot = Slot::LLM;
+    llm.vram_estimate = budget;
+    llm.evict_priority = 1;
+    llm.load = [] {};
+    llm.unload = [&llm_unloads] { ++llm_unloads; };
+    s.register_slot(llm);
+
+    SlotSpec img;
+    img.slot = Slot::Image;
+    img.vram_estimate = budget;
+    img.live_vram = [] { return std::size_t(10ull << 30); };  // 估算说只要 10 GB
+    img.evict_priority = 5;
+    img.load = [] {};
+    img.unload = [] {};
+    s.register_slot(img);
+
+    s.set_free_vram_probe([] { return std::optional<double>(23.0); });
+
+    SUBCASE("没量过：按估算，10 ≤ 23，不卸") {
+        { auto lease = s.acquire(Slot::LLM); }
+        { auto lease = s.acquire(Slot::Image); }
+        CHECK(llm_unloads == 0);
+    }
+    SUBCASE("量到真占 26 GB：估算说够也得卸") {
+        s.record_measured_vram(Slot::Image, 26ull << 30);
+        { auto lease = s.acquire(Slot::LLM); }
+        { auto lease = s.acquire(Slot::Image); }
+        CHECK(llm_unloads == 1);
+    }
+}
+
+TEST_CASE("实测值只往上记，不往下调") {
+    // 同一个槽不同镜头占用有出入（帧数、画幅、挂没挂 LoRA）。按最近一次
+    // 记的话，一个小镜头会把上限拉低，紧接着一个大镜头就 OOM 了。
+    Scheduler s;
+    s.record_measured_vram(Slot::Video, 70ull << 30);
+    CHECK(s.measured_vram(Slot::Video) == (70ull << 30));
+
+    s.record_measured_vram(Slot::Video, 40ull << 30);   // 小的那一镜
+    CHECK(s.measured_vram(Slot::Video) == (70ull << 30));  // 上限不该被拉低
+
+    s.record_measured_vram(Slot::Video, 80ull << 30);   // 更大的
+    CHECK(s.measured_vram(Slot::Video) == (80ull << 30));
+
+    // 没量过的槽回 0，调用方据此退回保守估算
+    CHECK(s.measured_vram(Slot::TTS) == 0);
+    // 0 不记账——量不到的时候（没有 nvidia-smi）别把上限清成 0
+    s.record_measured_vram(Slot::Video, 0);
+    CHECK(s.measured_vram(Slot::Video) == (80ull << 30));
+}
