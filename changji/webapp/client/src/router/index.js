@@ -67,6 +67,13 @@ export const STEP_ROUTES = [
     icon: 'scene',
     component: () => import('@/views/ScenesView.vue'),
   },
+  // **分镜和制作是同一个页面**（2026-09-10 合的，见 ShotsView 的注释）。
+  //
+  // 侧边栏仍然是两步，因为那是两个**真实的里程碑**，完成判据也不一样：
+  // storyboard = 有分镜，production = 每一镜都出到成片。`/bff/flow` 里
+  // 那两行一个字没改。不该对应两个页面的是"内容"，不是"进度"。
+  //
+  // 两条路径都留着：外面可能有人存了书签。
   {
     key: 'storyboard',
     path: '/storyboard',
@@ -75,7 +82,7 @@ export const STEP_ROUTES = [
     title: '分镜',
     tagline: '把这一集拆成一个个镜头',
     icon: 'board',
-    component: () => import('@/views/StoryboardView.vue'),
+    component: () => import('@/views/ShotsView.vue'),
   },
   {
     key: 'production',
@@ -86,7 +93,7 @@ export const STEP_ROUTES = [
     // 草稿档 2026-09-10 砍了（挂 Turbo 之后两档拉不开差距，白跑一遍）
     tagline: '配音、首帧、成片',
     icon: 'gear',
-    component: () => import('@/views/ProductionView.vue'),
+    component: () => import('@/views/ShotsView.vue'),
   },
   {
     key: 'film',
