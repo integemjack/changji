@@ -71,9 +71,25 @@ def main() -> int:
     # 由下面那个脚本按锚点手工解。**返回码非零是预期的**，
     # 有 .rej 就会非零——所以不能用 check=True。
     print("[ggml 补丁] git apply --reject …")
-    subprocess.run(
+    # **输出必须收进来，不能让它直接淌到构建工具眼前。**
+    #
+    # git apply --reject 会把"这个 hunk 没打上"写到 stderr，措辞是
+    # `error: patch failed: ggml/include/ggml-rpc.h:8`。那 6 条是**预期的**
+    # （下面有脚本按锚点手工解），可 MSBuild 会照错误格式去解析工具的
+    # stderr，于是把它们记成 CUSTOMBUILD : error，整个自定义生成步骤判失败、
+    # 退出码 1 —— 而这个脚本明明 return 0。
+    # Linux/macOS 走 Make/Ninja，stderr 不会变成构建错误，所以只有
+    # Windows 那两格挂。2026-09-11 六平台流水线卡在这儿。
+    applied = subprocess.run(
         ["git", "apply", "--reject", "--directory=ggml", str(PATCH)],
-        cwd=root, check=False)
+        cwd=root, check=False,
+        capture_output=True, text=True, encoding="utf-8", errors="replace")
+    # 还是要能看，只是换成普通输出、并且不带 "error:" 那个前缀，
+    # 免得下一个构建工具又把它当成错误。查问题时这几行是关键。
+    for line in (applied.stderr or "").splitlines():
+        print("    | " + line.replace("error:", "note:"))
+    print(f"[ggml 补丁] git apply 退出码 {applied.returncode}"
+          f"（有 .rej 时非零是正常的）")
 
     print("[ggml 补丁] 解那 6 个冲突 …")
     done = subprocess.run([sys.executable, str(RESOLVE)], cwd=root, check=False)
