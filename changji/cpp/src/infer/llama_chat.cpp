@@ -168,9 +168,15 @@ bool LlamaChat::complete(const std::string& prompt, const std::string& schema,
             why = "llama_decode 失败（第 " + std::to_string(produced) + " 个 token）";
             return false;
         }
+        // **别再 accept 一次。** `llama_sampler_sample` 内部已经调过
+        // `llama_sampler_accept`（llama-sampler.cpp 两条返回路径上都有）。
+        // 再手动接一次的话语法状态被推进两遍，第一个 token 就炸：
+        //   Unexpected empty grammar stack after accepting piece: \n (515)
+        // 而报错指向"语法/schema 有问题"，和真因隔着好几层。
+        // 不是 const：llama_batch_get_one 要非 const 指针（它不会改，
+        // 但接口没标 const）。
         llama_token id = llama_sampler_sample(chain, im.lctx, -1);
         if (llama_vocab_is_eog(vocab, id)) break;
-        llama_sampler_accept(chain, id);
 
         char buf[256];
         const int n = llama_token_to_piece(vocab, id, buf, sizeof(buf), 0, true);

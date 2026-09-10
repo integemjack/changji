@@ -1,5 +1,7 @@
 #include "doctor/doctor.hpp"
 
+#include "infer/llama_chat.hpp"
+
 
 #include <algorithm>
 #include <cctype>
@@ -149,6 +151,26 @@ Check check_tts(const config::Settings& s) {
 }
 
 Check check_llm(const config::Settings& s) {
+    // **选了进程内就不该去问那个远端地址。**
+    // 不分这一支的话，配了 backend = "local" 的人会看到
+    // "大模型：连不上 http://127.0.0.1:8081/v1" 加一句"用 Docker 起 ollama"
+    // ——而那个服务他根本没打算起。这和拆 ComfyUI 之前体检无条件报
+    // "推理服务连不上"是同一类错：**报告说错了比不说更糟**，
+    // 它把人支去解决一个不存在的问题。
+    // 权重在不在由「本地模型」那一项查。
+    if (s.llm.backend == "local") {
+        if (!infer::llama_chat_available()) {
+            return {"大模型", Level::FAIL,
+                    "配了进程内跑，但这个二进制没编进来",
+                    "构建时要 CHANGJI_LLAMA=ON；"
+                    "或者把 [llm].backend 改回 remote 并填 base_url"};
+        }
+        return {"大模型", Level::OK,
+                "进程内跑（" + (s.models.llm.empty() ? std::string("[models].llm 没填")
+                                                    : s.models.llm) + "）",
+                s.models.llm.empty() ? "要在 [models].llm 填一份 GGUF 权重" : ""};
+    }
+
     const std::string& url = s.llm.base_url;
     const std::string& model = s.llm.model;
     httplib::Headers h{{"Authorization", "Bearer " + s.llm.api_key}};
