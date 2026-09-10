@@ -291,23 +291,46 @@ TEST_CASE("尺寸不成样子：整张递下去，不算出负数来") {
 // sd.cpp 里走的是 GGML_ASSERT，abort() 把整个服务带走。所以坏数据一律
 // 当"没量过"，回到保守那条。
 
+using M = infer::Scheduler::Measured;
+
 TEST_CASE("实测显存：写出去再读回来，要一模一样") {
-    std::map<infer::Slot, std::size_t> m;
-    m[infer::Slot::Video] = 80ull << 30;
-    m[infer::Slot::Image] = 26ull << 30;
+    std::map<infer::Slot, M> m;
+    m[infer::Slot::Video] = M{80ull << 30, 2560ull * 1440 * 81};
+    m[infer::Slot::Image] = M{26ull << 30, 2560ull * 1440};
 
     const auto back = infer::parse_measured_vram(infer::serialize_measured_vram(m));
     CHECK(back.size() == 2);
-    CHECK(back.at(infer::Slot::Video) == (80ull << 30));
-    CHECK(back.at(infer::Slot::Image) == (26ull << 30));
+    CHECK(back.at(infer::Slot::Video).bytes == (80ull << 30));
+    // **量的是多大的活也要一起存。** 光存字节数的话，在 720p 量到的数
+    // 重启之后会被拿去给 2K 那一镜背书，而那正是 CUDA OOM 的前一步。
+    CHECK(back.at(infer::Slot::Video).work == 2560ull * 1440 * 81);
+    CHECK(back.at(infer::Slot::Image).bytes == (26ull << 30));
+    CHECK(back.at(infer::Slot::Image).work == 2560ull * 1440);
     // 没量过的槽不该凭空冒出来
     CHECK(back.find(infer::Slot::LLM) == back.end());
 }
 
+TEST_CASE("实测显存：老文件里那个光秃秃的数还认，但当成不知道多大的活") {
+    // 升级之前存下来的是 {"视频": 字节数}，没有 work。丢掉太浪费，
+    // 但也不能当成"什么活都罩得住"——读回来 work = 0，调度器见到 0
+    // 就不会拿它给指定了大小的那一镜背书，跑一镜自己就补上了。
+    const auto m = infer::parse_measured_vram(R"({"视频":85899345920})");
+    REQUIRE(m.size() == 1);
+    CHECK(m.at(infer::Slot::Video).bytes == 85899345920ull);
+    CHECK(m.at(infer::Slot::Video).work == 0);
+}
+
+TEST_CASE("实测显存：新格式里缺 work 也不丢这一条") {
+    const auto m = infer::parse_measured_vram(R"({"视频":{"bytes":123}})");
+    REQUIRE(m.size() == 1);
+    CHECK(m.at(infer::Slot::Video).bytes == 123);
+    CHECK(m.at(infer::Slot::Video).work == 0);
+}
+
 TEST_CASE("实测显存：0 不写出去") {
     // 0 的语义是"没量过"，写进文件再读回来会被当成量过了 0 字节。
-    std::map<infer::Slot, std::size_t> m;
-    m[infer::Slot::TTS] = 0;
+    std::map<infer::Slot, M> m;
+    m[infer::Slot::TTS] = M{0, 123};
     CHECK(infer::parse_measured_vram(infer::serialize_measured_vram(m)).empty());
 }
 
@@ -317,6 +340,9 @@ TEST_CASE("实测显存：坏数据一律当没量过，绝不瞎猜") {
     CHECK(infer::parse_measured_vram("{ 这不是 json").empty());
     CHECK(infer::parse_measured_vram("[1,2,3]").empty());          // 不是对象
     CHECK(infer::parse_measured_vram(R"({"视频":"很多"})").empty());  // 不是数
+    CHECK(infer::parse_measured_vram(R"({"视频":{"bytes":"多"}})").empty());
+    CHECK(infer::parse_measured_vram(R"({"视频":{"work":9}})").empty());  // 缺 bytes
+    CHECK(infer::parse_measured_vram(R"({"视频":{"bytes":0,"work":9}})").empty());
     CHECK(infer::parse_measured_vram(R"({"视频":-5})").empty());      // 负数
     CHECK(infer::parse_measured_vram(R"({"视频":0})").empty());       // 0
     CHECK(infer::parse_measured_vram(R"({"没这个槽":123})").empty());
@@ -327,5 +353,5 @@ TEST_CASE("实测显存：一条坏的不该带垮整份") {
     const auto m = infer::parse_measured_vram(
         R"({"视频":85899345920,"没这个槽":1,"图像":"坏的"})");
     CHECK(m.size() == 1);
-    CHECK(m.at(infer::Slot::Video) == 85899345920ull);
+    CHECK(m.at(infer::Slot::Video).bytes == 85899345920ull);
 }

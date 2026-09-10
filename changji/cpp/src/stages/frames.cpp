@@ -61,7 +61,12 @@ FrameRenderer make_sd_renderer(std::optional<std::int64_t> seed_override) {
         if (!infer::scheduler().loaded(infer::Slot::Image)) {
             on_step(0, 0, 0.0, /*loading=*/true);
         }
-        auto lease = infer::scheduler().acquire(infer::Slot::Image);
+        // **借之前先说这一镜多大。** 以前量到的显存只在"量过的活不小于
+        // 这次要干的活"时才算数——在 720p 量到的数不能拿去给 2K 背书。
+        // 见 Scheduler::record_measured_vram。
+        auto lease = infer::scheduler().acquire(
+            infer::Slot::Image,
+            static_cast<std::size_t>(spec.width) * spec.height);
         auto ctx = infer::current_image_context();
         if (!ctx) throw infer::SdError("出图上下文没准备好");
 

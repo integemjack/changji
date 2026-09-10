@@ -207,11 +207,12 @@ CropBox center_crop_box(int src_w, int src_h, int dst_w, int dst_h);
 /// 但"字段名对不对、坏数据会不会让程序崩"是能测也必须测的——
 /// 这个文件在两次运行之间保存的是**决定要不要卸模型的依据**，
 /// 解析出错的代价是要么白卸（慢），要么不该不卸（OOM）。
-std::string serialize_measured_vram(const std::map<Slot, std::size_t>& m);
+std::string serialize_measured_vram(
+    const std::map<Slot, Scheduler::Measured>& m);
 
 /// 坏行、缺字段、负数、不认得的槽名，一律**跳过那一条**，不影响别的。
 /// 整个文件解不开就返回空——那等于"没量过"，回到保守那条，安全。
-std::map<Slot, std::size_t> parse_measured_vram(const std::string& text);
+std::map<Slot, Scheduler::Measured> parse_measured_vram(const std::string& text);
 
 /// sd.cpp 的上下文。**贵**：建一次要解析模型文件、建张量图、分配运行时缓冲。
 ///

@@ -893,6 +893,119 @@ TEST_CASE("探针失灵时，没量过的槽用它自己的估算顶上") {
     }
 }
 
+TEST_CASE("在小画幅量到的数，不能拿去给大画幅背书") {
+    // **这条是 2026-09-11 补的安全底线。**
+    //
+    // "量出来的数比估算准"这个设计是对的，但量到的数**不带画幅**。
+    // 档位从 544×928（0.5 MP）到 2560×1440（3.7 MP）差七倍多，占用跟着
+    // 画幅和帧数走。在 720p 量到 20 GB、下一镜切 2K 还按 20 GB 判
+    // "够，不卸"，就是拿偏小的数去赌——赌输了是 CUDA OOM，走 GGML_ASSERT
+    // 直接 abort()，整个服务没了，不是一条能读的报错。
+    //
+    // 所以量的时候记下量的是多大的活，用的时候只认"量过的活不小于这次的活"。
+    const std::size_t budget = 86 * GB;
+    const std::size_t small = 544ull * 928 * 81;    // 720p 档
+    const std::size_t big = 2560ull * 1440 * 81;    // 2K 档
+
+    int llm_unloads = 0;
+    auto setup = [&](Scheduler& s) {
+        s.set_budget(budget);
+        s.set_free_vram_probe([] { return std::optional<double>(80.0); });
+        SlotSpec llm;
+        llm.slot = Slot::LLM;
+        llm.vram_estimate = budget;
+        llm.evict_priority = 1;
+        llm.load = [] {};
+        llm.unload = [&llm_unloads] { ++llm_unloads; };
+        s.register_slot(std::move(llm));
+        SlotSpec vid;
+        vid.slot = Slot::Video;
+        vid.vram_estimate = budget;   // 保守估值 = 整份预算
+        vid.evict_priority = 9;
+        vid.load = [] {};
+        vid.unload = [] {};
+        s.register_slot(std::move(vid));
+    };
+
+    SUBCASE("量过的活更大：认，不卸") {
+        Scheduler s;
+        setup(s);
+        s.record_measured_vram(Slot::Video, 20 * GB, big);
+        { auto a = s.acquire(Slot::LLM); }
+        { auto b = s.acquire(Slot::Video, small); }
+        CHECK(llm_unloads == 0);
+        CHECK(s.last_room_decision().live_measured);
+    }
+    SUBCASE("活一样大：认") {
+        Scheduler s;
+        setup(s);
+        s.record_measured_vram(Slot::Video, 20 * GB, small);
+        { auto a = s.acquire(Slot::LLM); }
+        { auto b = s.acquire(Slot::Video, small); }
+        CHECK(llm_unloads == 0);
+    }
+    SUBCASE("这次的活更大：不认，回到保守那条") {
+        Scheduler s;
+        setup(s);
+        s.record_measured_vram(Slot::Video, 20 * GB, small);
+        { auto a = s.acquire(Slot::LLM); }
+        { auto b = s.acquire(Slot::Video, big); }
+        CHECK(llm_unloads == 1);
+        CHECK_FALSE(s.last_room_decision().live_measured);
+    }
+    SUBCASE("老文件里的数不知道多大的活：这次说了大小就不认") {
+        Scheduler s;
+        setup(s);
+        s.record_measured_vram(Slot::Video, 20 * GB);   // work 缺省 0
+        { auto a = s.acquire(Slot::LLM); }
+        { auto b = s.acquire(Slot::Video, big); }
+        CHECK(llm_unloads == 1);
+    }
+    SUBCASE("调用方没说这次多大：按老规矩认") {
+        // 大模型、配音这些槽和画幅无关，不该因为这条新规矩变得更保守。
+        Scheduler s;
+        setup(s);
+        s.record_measured_vram(Slot::Video, 20 * GB, small);
+        { auto a = s.acquire(Slot::LLM); }
+        { auto b = s.acquire(Slot::Video); }
+        CHECK(llm_unloads == 0);
+    }
+}
+
+TEST_CASE("实测值：字节数和活各记各的高水位") {
+    Scheduler s;
+    const std::size_t small = 544ull * 928 * 81;
+    const std::size_t big = 2560ull * 1440 * 81;
+
+    SUBCASE("先大活小占用、后小活大占用：两边都留最大的") {
+        s.record_measured_vram(Slot::Video, 20 * GB, big);
+        s.record_measured_vram(Slot::Video, 30 * GB, small);
+        const auto m = s.all_measured().at(Slot::Video);
+        CHECK(m.bytes == 30 * GB);
+        // **work 不能跟着 bytes 被拉回去。** 拉回去的话，此后每一镜 2K
+        // 都当没量过办，白卸一次大模型——而我们明明见过 2K 只用了 20 GB。
+        CHECK(m.work == big);
+    }
+    SUBCASE("占用没长高但活更大：也要落盘") {
+        int sunk = 0;
+        s.set_measured_sink([&sunk](Slot, std::size_t) { ++sunk; });
+        s.record_measured_vram(Slot::Video, 30 * GB, small);
+        CHECK(sunk == 1);
+        s.record_measured_vram(Slot::Video, 20 * GB, big);
+        CHECK(sunk == 2);   // 字节数没长，但"罩得住多大的活"长了
+        const auto m = s.all_measured().at(Slot::Video);
+        CHECK(m.bytes == 30 * GB);
+        CHECK(m.work == big);
+    }
+    SUBCASE("两样都没长：不惊动落盘") {
+        int sunk = 0;
+        s.record_measured_vram(Slot::Video, 30 * GB, big);
+        s.set_measured_sink([&sunk](Slot, std::size_t) { ++sunk; });
+        s.record_measured_vram(Slot::Video, 20 * GB, small);
+        CHECK(sunk == 0);
+    }
+}
+
 TEST_CASE("最近一次腾地方的判断要留痕，界面上读得到") {
     // 这个判断错了的表现是"该留的时候卸了"（慢）或者"该卸的时候没卸"
     // （CUDA OOM 把整个服务带走）。而以前只能登上机器看 stderr——

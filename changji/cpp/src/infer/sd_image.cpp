@@ -114,17 +114,22 @@ CropBox center_crop_box(int src_w, int src_h, int dst_w, int dst_h) {
 
 // 这两个在 #ifdef 外面，理由同 center_crop_box：纯转换，写在里面就测不到。
 
-std::string serialize_measured_vram(const std::map<Slot, std::size_t>& m) {
+std::string serialize_measured_vram(
+    const std::map<Slot, Scheduler::Measured>& m) {
     nlohmann::json j = nlohmann::json::object();
-    for (const auto& [slot, bytes] : m) {
-        if (bytes == 0) continue;
-        j[to_string(slot)] = bytes;
+    for (const auto& [slot, v] : m) {
+        if (v.bytes == 0) continue;
+        // **形状换了：数 -> 对象。** 光记字节数不够——那个数只在"活不比
+        // 当时大"的前提下算数，见 Scheduler::record_measured_vram。
+        j[to_string(slot)] = nlohmann::json{{"bytes", v.bytes},
+                                            {"work", v.work}};
     }
     return j.dump();
 }
 
-std::map<Slot, std::size_t> parse_measured_vram(const std::string& text) {
-    std::map<Slot, std::size_t> out;
+std::map<Slot, Scheduler::Measured> parse_measured_vram(
+    const std::string& text) {
+    std::map<Slot, Scheduler::Measured> out;
     if (text.empty()) return out;
     nlohmann::json j;
     try {
@@ -138,9 +143,26 @@ std::map<Slot, std::size_t> parse_measured_vram(const std::string& text) {
     const Slot kAll[] = {Slot::LLM, Slot::Image, Slot::Video, Slot::TTS};
     for (const Slot s : kAll) {
         const auto it = j.find(to_string(s));
-        if (it == j.end() || !it->is_number_unsigned()) continue;
-        const auto v = it->get<std::uint64_t>();
-        if (v > 0) out[s] = static_cast<std::size_t>(v);
+        if (it == j.end()) continue;
+        // **老文件里是个光秃秃的数**，那时候还没记"量的是多大的活"。
+        // 读回来 work = 0，调度器见到 0 就知道这个数不能拿来给
+        // 指定了大小的那一镜背书——跑一镜自己就补上了。
+        if (it->is_number_unsigned()) {
+            const auto v = it->get<std::uint64_t>();
+            if (v > 0) out[s] = Scheduler::Measured{static_cast<std::size_t>(v), 0};
+            continue;
+        }
+        if (!it->is_object()) continue;
+        const auto b = it->find("bytes");
+        if (b == it->end() || !b->is_number_unsigned()) continue;
+        const auto bv = b->get<std::uint64_t>();
+        if (bv == 0) continue;
+        std::size_t work = 0;
+        if (const auto w = it->find("work");
+            w != it->end() && w->is_number_unsigned()) {
+            work = static_cast<std::size_t>(w->get<std::uint64_t>());
+        }
+        out[s] = Scheduler::Measured{static_cast<std::size_t>(bv), work};
     }
     return out;
 }
@@ -167,6 +189,10 @@ struct ActiveGeneration {
     std::string tag;
     /// 这一次占的是哪个槽。量到的显存要记到它名下。
     Slot slot = Slot::Image;
+    /// 这一次干的活有多大：像素 × 帧数。量到的显存要连它一起记——
+    /// 光记字节数的话，在 720p 量到的数会被拿去给 2K 那一镜背书。
+    /// 见 Scheduler::record_measured_vram。
+    std::size_t work = 0;
     /// 这一轮量过了没有。**一次生成只量一次**：问一次 nvidia-smi 要
     /// 一百毫秒上下，每一步都问的话出图那种几十步的会明显变慢。
     bool sampled = false;
@@ -273,12 +299,14 @@ void progress_trampoline(int step, int steps, float time, void* /*data*/) {
     if (!loading && step >= 1) {
         bool first = false;
         Slot slot = Slot::Image;
+        std::size_t work = 0;
         {
             std::lock_guard lg(a.mu);
             if (!a.sampled) {
                 a.sampled = true;
                 first = true;
                 slot = a.slot;
+                work = a.work;
             }
         }
         if (first) {
@@ -305,7 +333,8 @@ void progress_trampoline(int step, int steps, float time, void* /*data*/) {
                     if (used_gb > 0.0) {
                         scheduler().record_measured_vram(
                             slot,
-                            static_cast<std::size_t>(used_gb * 1024) * 1024 * 1024);
+                            static_cast<std::size_t>(used_gb * 1024) * 1024 * 1024,
+                            work);
                     }
                 }
             }
@@ -640,6 +669,7 @@ void SdContext::generate(const ImageRequest& req, const fs::path& dest,
         a.want_steps = req.steps;
         a.tag = req.tag;
         a.slot = Slot::Image;
+        a.work = static_cast<std::size_t>(req.width) * req.height;
         a.sampled = false;   // 每次生成重新量一遍，见 progress_trampoline
     }
     a.cancel_sent.store(false, std::memory_order_relaxed);
@@ -775,6 +805,8 @@ void SdContext::generate_video(const VideoRequest& req, const fs::path& raw_dest
         a.want_steps = req.steps;
         a.tag = req.tag;
         a.slot = Slot::Video;
+        a.work = static_cast<std::size_t>(req.width) * req.height *
+                 std::max(1, req.frames);
         a.sampled = false;
     }
     a.cancel_sent.store(false, std::memory_order_relaxed);
@@ -983,8 +1015,8 @@ void register_sd_slots(SettingsProvider raw_provider,
         if (in) {
             const std::string text((std::istreambuf_iterator<char>(in)),
                                    std::istreambuf_iterator<char>());
-            for (const auto& [slot, bytes] : parse_measured_vram(text)) {
-                scheduler().record_measured_vram(slot, bytes);
+            for (const auto& [slot, v] : parse_measured_vram(text)) {
+                scheduler().record_measured_vram(slot, v.bytes, v.work);
             }
         }
         scheduler().set_measured_sink([store](Slot, std::size_t) {

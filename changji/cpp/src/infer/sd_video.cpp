@@ -1,5 +1,6 @@
 #include "infer/sd_video.hpp"
 
+#include <algorithm>
 #include <fstream>
 #include <random>
 
@@ -105,7 +106,13 @@ stages::VideoRenderer make_video_renderer(
         if (!scheduler().loaded(Slot::Video)) {
             on_step(0, 0, 0.0, /*loading=*/true);
         }
-        auto lease = scheduler().acquire(Slot::Video);
+        // **借之前先说这一镜多大。** 画幅从 544×928 到 2560×1440 差七倍多，
+        // 帧数也不一样，而以前量到的显存是不带这个的——在 720p 量到的数
+        // 拿去给 2K 判"够，不卸"，赌输了就是 CUDA OOM。
+        // 见 Scheduler::record_measured_vram。
+        auto lease = scheduler().acquire(
+            Slot::Video, static_cast<std::size_t>(plan.spec.width) *
+                             plan.spec.height * std::max(1, plan.frames));
         auto ctx = current_video_context();
         if (!ctx) throw SdError("出视频上下文没准备好");
 

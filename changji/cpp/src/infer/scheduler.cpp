@@ -119,7 +119,8 @@ void Scheduler::set_free_vram_probe(FreeVramProbe probe) {
     free_vram_ = std::move(probe);
 }
 
-void Scheduler::record_measured_vram(Slot slot, std::size_t bytes) {
+void Scheduler::record_measured_vram(Slot slot, std::size_t bytes,
+                                     std::size_t work) {
     if (bytes == 0) return;
     MeasuredSink sink;
     {
@@ -127,9 +128,19 @@ void Scheduler::record_measured_vram(Slot slot, std::size_t bytes) {
         // **只往上记，不往下调。** 同一个槽不同镜头的占用会有出入（帧数、
         // 分辨率、有没有挂 LoRA），取见过的最大值才安全——按最近一次记的话，
         // 一个小镜头会把上限拉低，下一个大镜头就 OOM 了。
+        //
+        // work 同样只往上记，而且**和 bytes 各记各的**：
+        // bytes 是见过的最大占用，work 是见过的最大的活。两者合起来说的是
+        // "干到这么大的活为止，没见过超过这么多字节"——正好是用的时候要
+        // 问的那句。分开记还避免一种长期悲观：先在 2K 量到 74 GB、后来在
+        // 720p 量到 60 GB，如果 work 跟着 bytes 走就会被拉回 720p，
+        // 此后每一镜 2K 都当没量过办。
         auto& cur = measured_[slot];
-        if (bytes <= cur) return;   // 没长高，不用惊动落盘
-        cur = bytes;
+        const bool up = bytes > cur.bytes || work > cur.work;
+        if (!up) return;   // 没长高，不用惊动落盘
+        cur.bytes = std::max(cur.bytes, bytes);
+        cur.work = std::max(cur.work, work);
+        bytes = cur.bytes;
         sink = measured_sink_;
     }
     // **锁外调。** 落盘要写文件，拿着调度器的锁做 IO 会把别的借槽请求
@@ -137,7 +148,7 @@ void Scheduler::record_measured_vram(Slot slot, std::size_t bytes) {
     if (sink) sink(slot, bytes);
 }
 
-std::map<Slot, std::size_t> Scheduler::all_measured() const {
+std::map<Slot, Scheduler::Measured> Scheduler::all_measured() const {
     std::lock_guard lg(mu_);
     return measured_;
 }
@@ -160,7 +171,7 @@ Scheduler::RoomDecision Scheduler::last_room_decision() const {
 std::size_t Scheduler::measured_vram(Slot slot) const {
     std::lock_guard lg(mu_);
     const auto it = measured_.find(slot);
-    return it == measured_.end() ? 0 : it->second;
+    return it == measured_.end() ? 0 : it->second.bytes;
 }
 
 std::string out_of_vram_message(Slot slot) {
@@ -210,7 +221,7 @@ std::string out_of_vram_message(Slot slot) {
     return base;
 }
 
-bool Scheduler::make_room(std::size_t need, Slot keep) {
+bool Scheduler::make_room(std::size_t need, Slot keep, std::size_t work) {
     if (budget_ == 0) return true;  // 不限制
 
     std::size_t used = 0;
@@ -248,9 +259,23 @@ bool Scheduler::make_room(std::size_t need, Slot keep) {
     const Entry* self = find(keep);
     std::size_t live = need;
     bool live_measured = false;
+    // **量过的活得不小于这次要干的活，那个数才算数。**
+    //
+    // 画幅档位从 544×928 到 2560×1440 差七倍多，占用跟着画幅和帧数走。
+    // 在 720p 量到的数拿去给 2K 判"够，不卸"，是拿一个偏小的数去赌，
+    // 赌输了是 CUDA OOM——abort() 把整个服务带走，不是能读的报错。
+    //
+    // work == 0 表示调用方没说这次多大（大模型、配音这些和画幅无关），
+    // 那就按老规矩认。measured work == 0 是老持久化文件里的数，不知道
+    // 当时量的是多大的活，这次又明确说了大小 —— 不认，跑一镜就自己补上。
+    const auto usable = [&](const Measured& m) {
+        if (m.bytes == 0) return false;
+        if (work == 0) return true;
+        return m.work >= work;
+    };
     if (const auto it = measured_.find(keep);
-        it != measured_.end() && it->second > 0) {
-        live = it->second;
+        it != measured_.end() && usable(it->second)) {
+        live = it->second.bytes;
         live_measured = true;
     } else if (self && self->spec.live_vram) {
         // 每次现问：模型可能已经被换过了。见 SlotSpec::live_vram。
@@ -299,8 +324,10 @@ bool Scheduler::make_room(std::size_t need, Slot keep) {
             if (!e.is_loaded || e.spec.slot == keep) continue;
             std::size_t take = 0;
             if (const auto it = measured_.find(e.spec.slot);
-                it != measured_.end() && it->second > 0) {
-                take = it->second;
+                it != measured_.end() && it->second.bytes > 0) {
+                // 这里不卡 work：算的是**别人现在占了多少**，那和这次
+                // 要干多大的活无关，而且已经装在卡上了，量到多少就是多少。
+                take = it->second.bytes;
             } else if (e.spec.live_vram) {
                 // 每次现问，理由同上面那处：模型可能已经被换过了。
                 take = e.spec.live_vram();
@@ -382,7 +409,7 @@ bool Scheduler::make_room(std::size_t need, Slot keep) {
     return used + need <= budget_;
 }
 
-Lease Scheduler::acquire(Slot slot) {
+Lease Scheduler::acquire(Slot slot, std::size_t work) {
     std::unique_lock lk(mu_);
     Entry* e = find(slot);
     if (!e) {
@@ -396,7 +423,7 @@ Lease Scheduler::acquire(Slot slot) {
         return Lease(this, slot);
     }
 
-    if (!make_room(e->spec.vram_estimate, slot)) {
+    if (!make_room(e->spec.vram_estimate, slot, work)) {
         throw std::runtime_error(out_of_vram_message(slot));
     }
 

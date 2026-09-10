@@ -168,13 +168,29 @@ public:
     /// 所以改成**量**：跑第一次时按保守估算办事（该卸就卸，绝不冒险），
     /// 跑的过程中记下真实占用，之后就按这个数判断。自校准，且**永远不会
     /// 因为乐观而 OOM**——没量到之前一律走保守那条。
-    void record_measured_vram(Slot slot, std::size_t bytes);
+    /// `work` 是**这次量的是多大的活**：像素 × 帧数。0 表示没说。
+    ///
+    /// **不带这个数的实测值是有毒的。** 画幅档位从 544×928（0.5 MP）
+    /// 一直到 2560×1440（3.7 MP），差七倍多，而占用随画幅和帧数剧烈
+    /// 变化（上面那段已经写了）。在 720p 量到的 20 GB 拿去给 2K 那一镜
+    /// 判"够，不卸"，就是拿一个偏小五倍的数去赌——赌输了是 CUDA OOM，
+    /// abort() 把整个服务带走。所以量的时候要记下量的是多大的活，
+    /// 用的时候只认"量过的活不小于这次要干的活"。
+    void record_measured_vram(Slot slot, std::size_t bytes,
+                              std::size_t work = 0);
 
-    /// 取实测值。没量过回 0。
+    /// 取实测值（字节）。没量过回 0。
     std::size_t measured_vram(Slot slot) const;
 
+    /// 一次实测：占了多少，以及量的是多大的活。
+    struct Measured {
+        std::size_t bytes = 0;
+        /// 像素 × 帧数。0 = 不知道（老的持久化文件里没有这一项）。
+        std::size_t work = 0;
+    };
+
     /// 现在量到的全部，按槽列出来。给持久化用。
-    std::map<Slot, std::size_t> all_measured() const;
+    std::map<Slot, Measured> all_measured() const;
 
     /// 有新的高水位时叫一声。**用来落盘**——量到的数只活在进程里的话，
     /// 每次重启后的头一次出片都会白白卸掉大模型（那时候还没量到，
@@ -234,7 +250,11 @@ public:
     ///
     /// 加载失败会抛异常，而且**已经被驱逐的槽不会自动加载回来**——
     /// 那会把一次失败变成一串连锁加载。
-    Lease acquire(Slot slot);
+    ///
+    /// `work` 是这一次要干多大的活（像素 × 帧数），用来判断以前量到的
+    /// 实测值还算不算数。见 record_measured_vram。不给就等于"没说"，
+    /// 那时按老规矩认实测值——大模型、配音这些和画幅无关的槽就不用给。
+    Lease acquire(Slot slot, std::size_t work = 0);
 
     /// 卸载一个槽。正在被借用时返回 false，不强卸。
     bool evict(Slot slot);
@@ -265,7 +285,8 @@ private:
     Entry* find(Slot slot);
     const Entry* find(Slot slot) const;
     /// 腾出 need 字节。腾不出来返回 false。调用方必须持锁。
-    bool make_room(std::size_t need, Slot keep);
+    /// work 见 acquire。
+    bool make_room(std::size_t need, Slot keep, std::size_t work);
     void do_unload(Entry& e);
 
     mutable std::mutex mu_;
@@ -273,7 +294,7 @@ private:
     std::size_t budget_ = 0;
     FreeVramProbe free_vram_;
     /// 每个槽实测的占用。见 record_measured_vram。
-    std::map<Slot, std::size_t> measured_;
+    std::map<Slot, Measured> measured_;
     MeasuredSink measured_sink_;
     /// 整张卡的显存。0 = 不知道，那时候没有退路可走。
     std::size_t total_vram_ = 0;
