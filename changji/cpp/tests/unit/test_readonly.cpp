@@ -153,9 +153,18 @@ TEST_CASE("六个只读接口的响应与 Python 一致") {
         // 换台机器必然不同，不是行为契约。显存已经用 pinned_vram_gb
         // 钉住了，所以下面档位表那一堆还是逐条比的——真正决定行为的是它。
         if (name == "hardware" && have.is_object() && have.contains("gpu")) {
-            const bool gpu_ok = have["gpu"].is_string() &&
-                                !have["gpu"].get<std::string>().empty();
-            CHECK_MESSAGE(gpu_ok, "gpu 该是个非空字符串");
+            // **契约是"非空字符串 **或** null"，不是"一定有卡"。**
+            //
+            // get_hardware 探不到卡时回的就是 null。原来这里要求它必须是
+            // 非空字符串，等于假定"跑测试的机器插着显卡"——本机和 Mac 上
+            // 碰巧成立，而 **CI 的 Linux runner 一张卡都没有**，这一条
+            // 就永远过不去，整条流水线卡在单元测试上编都编不了。
+            // 2026-09-11 第一次把流水线跑起来时就卡在这儿。
+            const auto& g = have["gpu"];
+            const bool gpu_ok =
+                g.is_null() ||
+                (g.is_string() && !g.get<std::string>().empty());
+            CHECK_MESSAGE(gpu_ok, "gpu 要么是非空字符串，要么是 null");
             have.erase("gpu");
             want.erase("gpu");
         }
