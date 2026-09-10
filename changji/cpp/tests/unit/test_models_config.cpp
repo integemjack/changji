@@ -981,3 +981,63 @@ TEST_CASE("大模型的老实数：权重 + KV 缓存和上下文") {
     CHECK(m.llm_live_vram_gb(0.0) == doctest::Approx(0.0));
     CHECK(m.llm_live_vram_gb(-1.0) == doctest::Approx(0.0));
 }
+
+// ---- 三档画幅 ----
+//
+// 2026-09-10 按用户要求把标准档从 704×1280 改成 544×928；9-11 他说
+// "糊掉、变形"。同一集里 sh001 是 704×1280、sh002 是 544×928，像素
+// 90 万对 50 万，差 44%——就是这个。所以把 704×1280 作为「高清」加回来，
+// 让他自己挑，而不是我来回翻。
+
+TEST_CASE("画幅三档，每一档都必须是 32 的倍数") {
+    // 不对齐的话 Wan 那一族的潜空间对不上，**出图直接失败而且日志里
+    // 指不到这儿**。第一版把 920 写进去时就是这条用例抓住的。
+    config::VideoConfig v;
+    for (const char* q : {"720p", "hd", "2k"}) {
+        v.quality = q;
+        for (const char* o : {"portrait", "landscape"}) {
+            v.orientation = o;
+            const auto [w, h] = v.size();
+            CAPTURE(q);
+            CAPTURE(o);
+            CHECK(w % 32 == 0);
+            CHECK(h % 32 == 0);
+            CHECK(w > 0);
+            CHECK(h > 0);
+        }
+    }
+}
+
+TEST_CASE("三档的具体尺寸和界面上写的一致") {
+    config::VideoConfig v;
+    v.orientation = "portrait";
+    v.quality = "720p";
+    CHECK(v.size() == std::pair<int, int>{544, 928});
+    v.quality = "hd";
+    CHECK(v.size() == std::pair<int, int>{704, 1280});
+    v.quality = "2k";
+    CHECK(v.size() == std::pair<int, int>{1440, 2560});
+
+    // 横屏是长短边对调，不是另一套数
+    v.orientation = "landscape";
+    v.quality = "hd";
+    CHECK(v.size() == std::pair<int, int>{1280, 704});
+}
+
+TEST_CASE("清晰度只认这三个值") {
+    config::VideoConfig v;
+    v.orientation = "portrait";
+    for (const char* q : {"720p", "hd", "2k"}) {
+        v.quality = q;
+        CAPTURE(q);
+        CHECK(v.validate().empty());
+    }
+    // 写错了要拦下来并且**把认得的值列出来**——只说"不合法"的话
+    // 用户不知道该填什么
+    v.quality = "1080p";
+    const auto errs = v.validate();
+    REQUIRE_FALSE(errs.empty());
+    CHECK(errs[0].find("hd") != std::string::npos);
+    CHECK(errs[0].find("720p") != std::string::npos);
+    CHECK(errs[0].find("2k") != std::string::npos);
+}

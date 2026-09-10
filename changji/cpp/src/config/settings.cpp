@@ -68,8 +68,8 @@ std::vector<std::string> VideoConfig::validate() const {
         errs.push_back("video.orientation 只能是 portrait 或 landscape，现在是 " +
                        orientation);
     }
-    if (quality != "720p" && quality != "2k") {
-        errs.push_back("video.quality 只能是 720p 或 2k，现在是 " + quality);
+    if (quality != "720p" && quality != "hd" && quality != "2k") {
+        errs.push_back("video.quality 只能是 720p、hd 或 2k，现在是 " + quality);
     }
     return errs;
 }
@@ -93,9 +93,25 @@ std::pair<int, int> VideoConfig::size() const {
     // 2K 是它四倍像素。跑不动时由上层决定怎么办（换大卡，或者出标准档
     // 再 `changji --upscale`）。**在这里悄悄降档是不行的**——
     // 用户选了 2K 却拿到标准档，而且没有任何提示。
-    const bool two_k = quality == "2k";
-    const int long_side = two_k ? 2560 : 928;
-    const int short_side = two_k ? 1440 : 544;
+    // **三档，全部 32 对齐。**
+    //   720p → 544×928   省时间，一镜约 2 分钟
+    //   hd   → 704×1280   2026-09-11 加回来的。改成 544×928 之后用户说
+    //                     "糊掉、变形"，而同一集里 sh001 是 704×1280、
+    //                     sh002 是 544×928，像素 90 万 vs 50 万，差 44%。
+    //                     这一档是 9-10 之前一直在用、用户认可过的那个。
+    //   2k   → 1440×2560  一张 32 GB 的卡跑不动，见下面
+    //
+    // **不做成"自己填宽高"**：填出个不是 32 倍数的值，出图直接失败而且
+    // 日志里指不到那儿。三个定好的档位挡住了这一整类问题。
+    int long_side = 928;
+    int short_side = 544;
+    if (quality == "2k") {
+        long_side = 2560;   // 32 × 80
+        short_side = 1440;  // 32 × 45
+    } else if (quality == "hd") {
+        long_side = 1280;   // 32 × 40
+        short_side = 704;   // 32 × 22
+    }
     return orientation == "landscape"
                ? std::pair<int, int>{long_side, short_side}
                : std::pair<int, int>{short_side, long_side};

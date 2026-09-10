@@ -365,11 +365,18 @@ function progressOf(p) {
                    字符串，改了名老项目就读不出来。显示的是真实尺寸——
                    2026-09-10 把它从 704×1280 改成 544×928 之后，
                    再叫 "720p" 就是假的（720p 是 720 行）。 -->
-              <option value="720p">标准（544×928）</option>
-              <option value="2k">2K（2560×1440）</option>
+              <option value="720p">标准（544×928）· 快</option>
+              <option value="hd">高清（704×1280）· 推荐</option>
+              <option value="2k">2K（2560×1440）· 很吃显存</option>
             </select>
             <span class="field__hint">
               出来是 {{ sizeText }}。
+              <template v-if="video.quality === '720p'">
+                像素只有高清档的一半多一点，出得快，但细节和人脸容易糊。
+              </template>
+              <template v-else-if="video.quality === 'hd'">
+                <strong>画质和速度的平衡点</strong>，多数情况选它。
+              </template>
               <template v-if="video.quality === '2k'">
                 <strong>2K 很吃显存</strong>，一张 32 GB 的卡跑不动——
                 那时候要么换大卡，要么出标准档再单独走一次超分。
