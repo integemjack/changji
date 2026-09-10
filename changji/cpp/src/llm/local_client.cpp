@@ -7,6 +7,7 @@
 
 #include "infer/llama_chat.hpp"
 #include "infer/scheduler.hpp"
+#include "models/hardware.hpp"
 
 namespace changji::llm {
 
@@ -102,10 +103,23 @@ void register_llm_slot(std::function<config::Settings()> provider,
     spec.load = [provider] {
         const config::Settings s = provider();
         const auto path = s.models.resolve(s.models.llm, s.workspace_path());
+        // **装之前先记一眼显存。** 装完再记一次，差值就是这份权重实际
+        // 占了多少——比"总量减空闲"准得多，那个会把别的槽的账也算进来。
+        // 加载这一步本来就要几秒，多问一次 nvidia-smi 无所谓。
+        const auto before = models::free_vram_gb();
         std::string why;
         auto chat = std::shared_ptr<infer::LlamaChat>(
             infer::LlamaChat::load(path, /*use_gpu=*/true, why));
         if (!chat) throw std::runtime_error("大模型载不起来：" + why);
+        {
+            const auto after = models::free_vram_gb();
+            if (before.has_value() && after.has_value() && *before > *after) {
+                const double used_gb = *before - *after;
+                infer::scheduler().record_measured_vram(
+                    infer::Slot::LLM,
+                    static_cast<std::size_t>(used_gb * 1024) * 1024 * 1024);
+            }
+        }
         std::lock_guard lg(g_mu);
         g_chat = std::move(chat);
     };

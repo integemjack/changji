@@ -185,6 +185,19 @@ public:
     /// **回调是在锁外调的**，实现里可以放心写文件。
     using MeasuredSink = std::function<void(Slot, std::size_t)>;
     void set_measured_sink(MeasuredSink sink);
+
+    /// 整张卡有多少显存（字节）。**问不到卡时的退路要靠它。**
+    ///
+    /// nvidia-smi 不是永远问得到：这个进程初始化 CUDA 之后映射着十几 GB，
+    /// 而 free_vram_gb 是 fork + exec 去跑 nvidia-smi 的，在这种进程里
+    /// fork 本来就是 NVIDIA 明确不支持的做法。问不到就一路走到驱逐，
+    /// 于是"显存够就不清理"在真机上等于从来没生效过。
+    ///
+    /// 有了总量，就能拿**已经量到的**那些槽推算空闲：
+    ///     空闲 ≈ 总量 − Σ(已装着的槽各自量到的占用)
+    /// 只用量到的数，不猜——有任何一个装着的槽没量过，就老老实实回到
+    /// 保守那条去卸。这样永远不会比事实更乐观。
+    void set_total_vram(std::size_t bytes);
     std::size_t budget() const;
 
     /// 注册一个槽。同一个槽重复注册会覆盖，但**只在它没加载时**——
@@ -236,6 +249,8 @@ private:
     /// 每个槽实测的占用。见 record_measured_vram。
     std::map<Slot, std::size_t> measured_;
     MeasuredSink measured_sink_;
+    /// 整张卡的显存。0 = 不知道，那时候没有退路可走。
+    std::size_t total_vram_ = 0;
     std::uint64_t clock_ = 0;
 };
 

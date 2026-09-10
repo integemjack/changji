@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <cstdio>
+#include <optional>
 #include <stdexcept>
 
 #include "util/paths.hpp"
@@ -146,6 +147,11 @@ void Scheduler::set_measured_sink(MeasuredSink sink) {
     measured_sink_ = std::move(sink);
 }
 
+void Scheduler::set_total_vram(std::size_t bytes) {
+    std::lock_guard lg(mu_);
+    total_vram_ = bytes;
+}
+
 std::size_t Scheduler::measured_vram(Slot slot) const {
     std::lock_guard lg(mu_);
     const auto it = measured_.find(slot);
@@ -224,41 +230,78 @@ bool Scheduler::make_room(std::size_t need, Slot keep) {
                      to_string(keep), used / 1073741824.0, need / 1073741824.0,
                      budget_ / 1073741824.0, probe ? "有" : "没装");
     }
+    // 这个槽跑起来到底要多少：实测优先，没量过才退回估算。
+    // 估算那条只会让我们更保守——多卸一次，不会 OOM。
+    const Entry* self = find(keep);
+    std::size_t live = need;
+    if (const auto it = measured_.find(keep);
+        it != measured_.end() && it->second > 0) {
+        live = it->second;
+    } else if (self && self->spec.live_vram) {
+        // 每次现问：模型可能已经被换过了。见 SlotSpec::live_vram。
+        const std::size_t got = self->spec.live_vram();
+        if (got > 0) live = got;
+    }
+
+    // 先问卡。
+    std::optional<std::size_t> free_bytes;
     if (probe) {
-        const auto free_gb = probe();
-        if (dbg) {
-            std::fprintf(stderr, "[vram]   探到空闲=%s\n",
-                         free_gb.has_value()
-                             ? (std::to_string(*free_gb) + "G").c_str()
-                             : "问不到");
-        }
-        if (free_gb.has_value()) {
-            const auto free_bytes = static_cast<std::size_t>(
+        if (const auto free_gb = probe(); free_gb.has_value()) {
+            free_bytes = static_cast<std::size_t>(
                 *free_gb * 1024.0 * 1024.0 * 1024.0);
-            // **比的是老实数，不是 need。** need 是按整份预算估的，
-            // 生产里它就等于整卡的九成——拿它来比，另一个槽只要装着，
-            // 空闲显存就永远不够，这条分支等于不存在，
-            // 每次切阶段照样卸。见 SlotSpec::live_vram_estimate。
-            const Entry* self = find(keep);
-            // **实测值优先。** 静态估算差得离谱（见 record_measured_vram），
-            // 量过一次之后就按量到的算。没量过才退回估算，而估算这条路
-            // 只会让我们更保守——多卸一次，不会 OOM。
-            std::size_t live = need;
-            if (const auto it = measured_.find(keep);
-                it != measured_.end() && it->second > 0) {
-                live = it->second;
-            } else if (self && self->spec.live_vram) {
-                // 每次现问：模型可能已经被换过了。见 SlotSpec::live_vram。
-                const std::size_t got = self->spec.live_vram();
-                if (got > 0) live = got;
-            }
-            if (dbg) {
-                std::fprintf(stderr, "[vram]   老实数=%.1fG 空闲=%.1fG -> %s\n",
-                             live / 1073741824.0, free_bytes / 1073741824.0,
-                             live <= free_bytes ? "够，不卸" : "不够，要卸");
-            }
-            if (live <= free_bytes) return true;
         }
+    }
+    if (dbg) {
+        std::fprintf(stderr, "[vram]   探到空闲=%s\n",
+                     free_bytes ? (std::to_string(*free_bytes / 1073741824.0)
+                                   + "G").c_str()
+                                : "问不到");
+    }
+
+    // **问不到就用量到的推算。**
+    //
+    // nvidia-smi 不是永远问得到：free_vram_gb 是 fork + exec 去跑它的，
+    // 而这个进程初始化 CUDA 之后映射着十几 GB，在这种进程里 fork 本来就是
+    // NVIDIA 明确不支持的做法。以前问不到就一路走到驱逐，于是
+    // "显存够就不清理"在真机上等于从来没生效过。
+    //
+    // 推算只用**已经量到的**数，不猜：装着的槽里只要有一个没量过，
+    // 就放弃推算、回到保守那条去卸。这样永远不会比事实更乐观。
+    if (!free_bytes && total_vram_ > 0) {
+        std::size_t others = 0;
+        bool all_known = true;
+        for (const Entry& e : entries_) {
+            if (!e.is_loaded || e.spec.slot == keep) continue;
+            const auto it = measured_.find(e.spec.slot);
+            if (it == measured_.end() || it->second == 0) {
+                all_known = false;
+                break;
+            }
+            others += it->second;
+        }
+        if (all_known && others < total_vram_) {
+            free_bytes = total_vram_ - others;
+            if (dbg) {
+                std::fprintf(stderr,
+                             "[vram]   问不到，按量到的推算空闲=%.1fG"
+                             "（总量 %.1fG − 别人占的 %.1fG）\n",
+                             *free_bytes / 1073741824.0,
+                             total_vram_ / 1073741824.0,
+                             others / 1073741824.0);
+            }
+        } else if (dbg) {
+            std::fprintf(stderr,
+                         "[vram]   问不到，且有槽没量过，推算不了 -> 保守驱逐\n");
+        }
+    }
+
+    if (free_bytes) {
+        if (dbg) {
+            std::fprintf(stderr, "[vram]   老实数=%.1fG 空闲=%.1fG -> %s\n",
+                         live / 1073741824.0, *free_bytes / 1073741824.0,
+                         live <= *free_bytes ? "够，不卸" : "不够，要卸");
+        }
+        if (live <= *free_bytes) return true;
     }
 
     // 候选：已加载、没被借用、不是要保住的那个。

@@ -741,3 +741,72 @@ TEST_CASE("实测值只往上记，不往下调") {
     s.record_measured_vram(Slot::Video, 0);
     CHECK(s.measured_vram(Slot::Video) == (80ull << 30));
 }
+
+TEST_CASE("问不到卡的时候，用量到的推算空闲") {
+    // nvidia-smi 不是永远问得到：free_vram_gb 是 fork + exec 去跑它的，
+    // 而这个进程初始化 CUDA 之后映射着十几 GB，在这种进程里 fork 本来就是
+    // NVIDIA 明确不支持的做法。以前问不到就一路走到驱逐，
+    // "显存够就不清理"在真机上等于从来没生效过。
+    Scheduler s;
+    const std::size_t budget = 86ull << 30;
+    s.set_budget(budget);
+    s.set_total_vram(96ull << 30);
+    s.set_free_vram_probe([] { return std::optional<double>{}; });  // 问不到
+
+    int llm_unloads = 0;
+    SlotSpec llm;
+    llm.slot = Slot::LLM;
+    llm.vram_estimate = budget;
+    llm.evict_priority = 1;
+    llm.load = [] {};
+    llm.unload = [&llm_unloads] { ++llm_unloads; };
+    s.register_slot(llm);
+
+    SlotSpec vid;
+    vid.slot = Slot::Video;
+    vid.vram_estimate = budget;
+    vid.evict_priority = 9;
+    vid.load = [] {};
+    vid.unload = [] {};
+    s.register_slot(vid);
+
+    SUBCASE("两边都量过：96 − 15 = 81 够放 74，不卸") {
+        s.record_measured_vram(Slot::LLM, 15ull << 30);
+        s.record_measured_vram(Slot::Video, 74ull << 30);
+        { auto lease = s.acquire(Slot::LLM); }
+        { auto lease = s.acquire(Slot::Video); }
+        CHECK(llm_unloads == 0);
+    }
+    SUBCASE("量到的放不下：照卸") {
+        s.record_measured_vram(Slot::LLM, 15ull << 30);
+        s.record_measured_vram(Slot::Video, 90ull << 30);   // 96 − 15 = 81 < 90
+        { auto lease = s.acquire(Slot::LLM); }
+        { auto lease = s.acquire(Slot::Video); }
+        CHECK(llm_unloads == 1);
+    }
+    SUBCASE("装着的槽有没量过的：不推算，保守驱逐") {
+        // **这一条是安全底线。** 不知道别人占多少就敢算空闲的话，
+        // 算出来的数会偏大，然后 OOM——而 OOM 走 GGML_ASSERT，
+        // abort() 把整个服务带走。
+        s.record_measured_vram(Slot::Video, 74ull << 30);    // LLM 没量过
+        { auto lease = s.acquire(Slot::LLM); }
+        { auto lease = s.acquire(Slot::Video); }
+        CHECK(llm_unloads == 1);
+    }
+    SUBCASE("不知道整卡多大：也不推算") {
+        Scheduler s2;
+        s2.set_budget(budget);
+        s2.set_free_vram_probe([] { return std::optional<double>{}; });
+        // 故意不调 set_total_vram
+        int un = 0;
+        SlotSpec a = llm;
+        a.unload = [&un] { ++un; };
+        s2.register_slot(a);
+        s2.register_slot(vid);
+        s2.record_measured_vram(Slot::LLM, 15ull << 30);
+        s2.record_measured_vram(Slot::Video, 74ull << 30);
+        { auto lease = s2.acquire(Slot::LLM); }
+        { auto lease = s2.acquire(Slot::Video); }
+        CHECK(un == 1);
+    }
+}

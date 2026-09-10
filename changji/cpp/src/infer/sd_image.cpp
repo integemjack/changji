@@ -961,6 +961,11 @@ void register_sd_slots(SettingsProvider raw_provider,
     // 每次切阶段都卸一个再装一个——一次重装几十秒到几分钟，
     // 而卡上可能一直空着一大半（权重放内存时显存里只有计算缓冲）。
     scheduler().set_free_vram_probe([] { return models::free_vram_gb(); });
+    // 整卡显存，给"问不到卡"时的推算用。见 Scheduler::set_total_vram。
+    if (card_gb > 0.0) {
+        scheduler().set_total_vram(
+            static_cast<std::size_t>(card_gb * 1024) * 1024 * 1024);
+    }
 
     // **把上次量到的读回来，并且以后量到新的就写下去。**
     //
