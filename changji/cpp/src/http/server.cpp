@@ -632,6 +632,18 @@ void run(const config::Settings& settings, const Options& opts) {
     //
     // 走 /bff 不走 /api：这两项是 C++ 独有的，而 /api/project 那份 JSON
     // 在对拍覆盖范围内，Python 没有它们。
+    // ---- 这一轮还没落定的镜头 ----
+    //
+    // **C++ 独有，所以在 /bff 不在 /api。** 镜头墙上的「排队中」原来只存在
+    // 浏览器内存里：刷新一下、换个标签页、换台设备，排着的全没了，正在跑的
+    // 那一镜也要等到下一条进度才亮。引擎自己一直知道这一轮还有哪几镜没跑完
+    // （每个阶段开工登记一批，每落定一镜划掉一个）——页面一进来问它就是了。
+    CROW_ROUTE(app, "/bff/run/pending")([] {
+        return json_response(
+            {{"running", pipeline::jobs().running(pipeline::JobKind::Run)},
+             {"shot_ids", pipeline::jobs().pending(pipeline::JobKind::Run)}});
+    });
+
     CROW_ROUTE(app, "/bff/project/video")([](const crow::request& req) {
         auto r = guard([&] {
             const auto root =

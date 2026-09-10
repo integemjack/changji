@@ -108,6 +108,15 @@ void emit(JobProgress& p, const char* stage, const char* kind,
     p.report(e);
 }
 
+/// 一批镜头的 id。给 JobProgress::set_pending 用——每个阶段开工时登记
+/// "这一轮还有哪几镜没落定"，界面刷新之后靠它把「排队中」重新点亮。
+std::vector<std::string> ids_of(const std::vector<Shot*>& shots) {
+    std::vector<std::string> out;
+    out.reserve(shots.size());
+    for (const Shot* s : shots) out.push_back(s->shot_id);
+    return out;
+}
+
 /// 装配成片。
 ///
 /// 单独一个函数只是为了让 run_episode 里那一段短一点——它已经有五个阶段了。
@@ -228,6 +237,7 @@ RunReport run_episode(const ProjectStore& store,
         const char* stage_name = tier == Tier::FINAL ? "final" : "draft";
         auto todo = pick(*ep, render_entry_states(tier, opts.skip_draft), force,
                          opts.only_shots);
+        progress.set_pending(ids_of(todo));
         if (todo.empty()) {
             emit(progress, stage_name, "done",
                  std::string(models::to_string(tier)) + " 档已完成，跳过");
@@ -312,6 +322,7 @@ RunReport run_episode(const ProjectStore& store,
         // 顺序反过来的话，配音出来装不进已经渲好的视频里。
         if (wants(opts, Stage::Audio) && !tok.cancelled()) {
             auto todo = pick(*ep, {ShotStatus::PLANNED}, opts.force, opts.only_shots);
+            progress.set_pending(ids_of(todo));
             if (todo.empty()) {
                 emit(progress, "audio", "done", "配音已完成，跳过");
             } else {
@@ -363,6 +374,7 @@ RunReport run_episode(const ProjectStore& store,
             // 现在配音接上了，收回来。配音失败的镜头状态停在 PLANNED，
             // 于是自动被挡在首帧之外——那是对的，它们带着错的时长。
             auto todo = pick(*ep, {ShotStatus::AUDIO_DONE}, opts.force, opts.only_shots);
+            progress.set_pending(ids_of(todo));
             if (todo.empty()) {
                 emit(progress, "frames", "done", "首帧已完成，跳过");
             } else {

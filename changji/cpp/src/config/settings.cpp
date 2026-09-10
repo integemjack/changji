@@ -233,6 +233,13 @@ std::string ModelsConfig::weights_for(double vram_gb) const {
     return vram_gb >= vae_vram_min_gb ? "te=cpu" : "te=cpu,vae=cpu";
 }
 
+std::string ModelsConfig::image_weights_for(double vram_gb) const {
+    if (image_weights != "smart") return image_weights;
+    // 7 GB 的 fp8 图像模型加上 1280×704 的解码缓冲（实测 6.6 GB）要 14 GB
+    // 上下，16 GB 以上的卡才敢让扩散权重常驻。再小的卡只能全放内存。
+    return vram_gb >= 16.0 ? "te=cpu,vae=cpu" : "cpu";
+}
+
 std::vector<std::string> Settings::validate() const {
     std::vector<std::string> errs;
     auto merge = [&errs](std::vector<std::string> more) {
@@ -468,6 +475,7 @@ void apply_table(const toml::table& doc, Settings& s) {
         take(t, "tts_decoder", s.models.tts_decoder);
         take(t, "diffusion_flash_attn", s.models.diffusion_flash_attn);
         take(t, "weights", s.models.weights);
+        take(t, "image_weights", s.models.image_weights);
         take(t, "video_cfg", s.models.video_cfg);
         take(t, "video_flow_shift", s.models.video_flow_shift);
         take(t, "image_cfg", s.models.image_cfg);
@@ -779,6 +787,12 @@ subtitle_font = "Source Han Sans SC"
 # 代价是每一步都在等 PCIe。auto = 交给 sd.cpp 按这张卡真实的空闲显存决定，
 # 装得下的常驻显存——大卡（≥ 24 GB）上用这个，实测出片阶段利用率从 35% 起飞。
 # weights = "auto"
+#
+# 图像模型单独一项。**别跟着 weights 一起改成 cpu**：那是给 18 GB 的视频
+# 模型准备的，7 GB 的图像模型放内存会慢五倍（5090 上实测采样时 GPU 利用率
+# 18%、一步 6.8 秒；扩散权重常驻是 82%、一步 1.25 秒）。
+# smart = 卡 ≥ 16 GB 就 te=cpu,vae=cpu（扩散常驻显存），否则 cpu。
+# image_weights = "smart"
 #
 # 采样旋钮，按角色分开。默认值是 sd.cpp 上游文档给这两个模型的推荐值，
 # 一般不用动。图像那条路 cfg 太高（比如 7）出来的就是噪点。

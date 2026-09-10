@@ -100,6 +100,26 @@ describe('applyMessage', () => {
     expect(s.events[0].kind).toBe('progress')
   })
 
+  it('一镜落定就把 settled 加一，progress 不算', () => {
+    // 镜头墙靠它重拉。原来靠六秒定时器，而 Chrome 把后台标签页的
+    // setInterval 压到一分钟一次（实测两分半只拉了两次）：首帧出来了，
+    // 牌子上要等一分钟才变。WebSocket 不受这个限制，shot_done 就是信号。
+    const s = useRun()
+    const at = (kind, shot = 'sh1') =>
+      s.applyMessage({ type: 'progress', kind, stage: 'frames', shot_id: shot, step: 1, total: 3 })
+    expect(s.settled).toBe(0)
+    at('progress')
+    at('progress')
+    expect(s.settled).toBe(0)          // 走着的步子不算落定
+    at('shot_done')
+    expect(s.settled).toBe(1)
+    at('warn', 'sh2')                   // 失败也是落定——那一镜不会再动了
+    expect(s.settled).toBe(2)
+    // 不带 shot_id 的（整体 warn / eta）不算
+    s.applyMessage({ type: 'progress', kind: 'eta', stage: 'frames', step: 1, total: 3 })
+    expect(s.settled).toBe(2)
+  })
+
   it('停下轮询时也清空正在跑的表', () => {
     // **它是一份快照，停下之后没有任何东西再更新它。**
     // 留着的话，切到别的页面再切回来，那几镜的进度条冻在离开那一刻的

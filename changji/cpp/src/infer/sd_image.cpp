@@ -303,8 +303,12 @@ std::shared_ptr<SdContext> SdContext::create(const config::Settings& settings,
     // 所以这里**不能**填 "" 之外的任何东西。它按这张卡真实的空闲显存逐组件放。
     // auto 时留空（sd.cpp 只在两个 spec 都为空时才启用 auto_fit）；
     // cpu 就是 "cpu"；别的原样传下去当组件规格。
-    const bool auto_fit = m.weights == "auto";
-    impl.params_backend = auto_fit ? "" : m.weights;
+    // **图像和视频各用各的。** `weights` 是为视频模型定的（18 GB 只能放内存），
+    // 图像模型跟着放内存就是每一步从内存搬 7 GB 权重——见
+    // ModelsConfig::image_weights 上面那组数字。
+    const std::string& w = is_video ? m.weights : m.image_weights;
+    const bool auto_fit = w == "auto";
+    impl.params_backend = auto_fit ? "" : w;
 
     sd_ctx_params_t p{};
     ::sd_ctx_params_init(&p);
@@ -629,6 +633,7 @@ void register_sd_slots(SettingsProvider raw_provider,
     const SettingsProvider provider = [raw_provider, card_gb] {
         config::Settings s = raw_provider();
         s.models.weights = s.models.weights_for(card_gb);
+        s.models.image_weights = s.models.image_weights_for(card_gb);
         return s;
     };
     // 预算取探测到的显存，留一成给驱动上下文和别的程序。

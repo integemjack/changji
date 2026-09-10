@@ -71,6 +71,18 @@ export const useRun = defineStore('run', () => {
   const inflightMap = ref(new Map())
   const inflight = computed(() => [...inflightMap.value.values()])
 
+  /**
+   * 又有一镜落定了（跑完、失败、过闸没过）。**一个只增不减的计数**，
+   * 界面 watch 它去重拉镜头表。
+   *
+   * 镜头墙原来靠六秒一次的定时器重拉。可 Chrome 对不在前台的标签页会把
+   * setInterval 压到**一分钟一次**（实测：两分半里 /api/shots 只拉了两次），
+   * 于是首帧出来了，牌子上要等一分钟才变。而 WebSocket **不受这个限制**，
+   * 引擎每落定一镜正好发一条 shot_done——那就是"该重拉了"的信号本身，
+   * 没道理收到了还去等定时器。
+   */
+  const settled = ref(0)
+
   function trackInflight(msg) {
     if (!msg.shot_id) return
     const kind = msg.kind ?? (msg.type === 'error' ? 'error' : 'progress')
@@ -148,6 +160,8 @@ export const useRun = defineStore('run', () => {
     }
 
     trackInflight(msg)
+    // 带 shot_id 的非 progress 事件 = 这一镜落定了。见 settled。
+    if (msg.shot_id && msg.kind && msg.kind !== 'progress') settled.value += 1
 
     // 字段名不一样：推上来的叫 step，快照里叫 current。
     // 直接把 msg 铺进 state 的话，进度条会读到 undefined。
@@ -220,7 +234,7 @@ export const useRun = defineStore('run', () => {
   }
 
   return {
-    state, running, percent, stageLabel, events, inflight, polling, live,
+    state, running, percent, stageLabel, events, inflight, polling, live, settled,
     poll, start, stop, applyMessage,
   }
 })

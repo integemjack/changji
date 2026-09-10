@@ -257,6 +257,25 @@ struct ModelsConfig {
     /// 只是它推的时候预算已经被自己占掉了。
     std::string weights = "cpu";
 
+    /// **图像模型**的权重放哪。取值和 `weights` 一样，外加 `smart`（默认）。
+    ///
+    /// **和 `weights` 分开是量出来的。** 2026-09-10 为了让 18 GB 的 MiniMax
+    /// 视频模型跑起来把 `weights` 改成了 "cpu"（权重全放内存）——而它是
+    /// 全局的一个旋钮，7 GB 的图像模型也跟着每一步从内存往显卡搬权重。
+    /// 5090 上实测：出首帧的采样阶段 GPU 利用率平均 **18%**、最高 37%，
+    /// 一步 6.8 秒；同一个模型让扩散权重常驻显存时是 82%、一步 1.25 秒。
+    /// 慢五倍，而且看起来像是"显卡没吃满，要不要并发"——其实是 PCIe 在等。
+    ///
+    /// 出首帧和出片是两个阶段，中间调度器会把上一个模型卸掉，所以图像模型
+    /// 常驻显存**不和视频模型抢地方**。
+    ///
+    /// `smart`：卡够大（≥ 16 GB）就 "te=cpu,vae=cpu"（扩散常驻，编码器和
+    /// VAE 在内存——量出来最快的那档），不够就 "cpu"。
+    std::string image_weights = "smart";
+
+    /// 把 `image_weights` 的 smart 按这张卡展开。见 weights_for。
+    std::string image_weights_for(double vram_gb) const;
+
     /// 采样的两个旋钮，按角色分开。默认值照抄 sd.cpp 上游文档的推荐命令行：
     /// docs/wan.md 给 Wan2.2 TI2V-5B 的是 `--cfg-scale 6.0 --flow-shift 3.0`，
     /// docs/qwen_image.md 给 Qwen-Image 的是 `--cfg-scale 2.5 --flow-shift 3`。

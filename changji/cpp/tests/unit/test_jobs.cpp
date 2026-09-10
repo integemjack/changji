@@ -711,3 +711,57 @@ TEST_CASE("这一镜自己的步数只走 WebSocket，不进 /api/run 的事件"
     CHECK_FALSE(rest.contains("shot_steps"));
     CHECK(rest.size() == 7);   // at/stage/kind/message/shot_id/current/total
 }
+
+TEST_CASE("这一轮还没落定的镜头：开工登记一批，落定一个划一个，跑完清空") {
+    // **「排队中」不能只活在浏览器内存里。** 刷新一下、换个标签页、换台
+    // 设备，排着的全没了；正在跑的那一镜也要等到下一条进度才亮。引擎自己
+    // 一直知道这一轮还有哪几镜没跑完，/bff/run/pending 回的就是这份。
+    //
+    // 划掉的判据和界面 trackInflight 一字不差：带 shot_id 的非 progress。
+    // 两边判据不一样的话，刷新前后同一镜的「排队中」会不一样。
+    JobTable table;
+    std::vector<std::size_t> seen;
+    table.start(JobKind::Run, "ep01", [&](JobProgress& p) {
+        p.set_pending({"sh1", "sh2", "sh3"});
+        seen.push_back(table.pending(JobKind::Run).size());   // 3
+
+        Event e;
+        e.stage = "frames";
+        e.kind = "progress";
+        e.shot_id = "sh1";
+        e.current = 1;
+        e.total = 3;
+        p.report(e);
+        seen.push_back(table.pending(JobKind::Run).size());   // 还在跑，不算落定：3
+
+        e.kind = "shot_done";
+        p.report(e);
+        seen.push_back(table.pending(JobKind::Run).size());   // 2
+
+        e.kind = "warn";                                       // 失败也是落定
+        e.shot_id = "sh2";
+        p.report(e);
+        seen.push_back(table.pending(JobKind::Run).size());   // 1
+
+        Event bare;                                            // 不带 shot_id 的不动它
+        bare.stage = "frames";
+        bare.kind = "eta";
+        p.report(bare);
+        seen.push_back(table.pending(JobKind::Run).size());   // 1
+    });
+    table.wait_idle();
+    CHECK(seen == std::vector<std::size_t>{3, 3, 2, 1, 1});
+
+    // 跑完了就该空——留着的话下一次页面一进来，会把上一轮剩下的当成还在排队
+    CHECK(table.pending(JobKind::Run).empty());
+}
+
+TEST_CASE("pending 不进 /api/run 的快照") {
+    // 快照和 Python 逐字节对拍，多一个键就是一处破契约。
+    JobTable table;
+    table.start(JobKind::Run, "ep01", [&](JobProgress& p) {
+        p.set_pending({"sh1"});
+        CHECK_FALSE(table.snapshot(JobKind::Run).contains("pending"));
+    });
+    table.wait_idle();
+}

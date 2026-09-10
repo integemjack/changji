@@ -415,6 +415,46 @@ export function useShots() {
     }
   }
   watch(() => runStore.running, (now) => watchShots(now))
+
+  // **落定一镜就立刻重拉，别等定时器。**
+  //
+  // 上面那个六秒的定时器在标签页不在前台时会被 Chrome 压到一分钟一次
+  // （实测两分半里只拉了两次），首帧出来了牌子上要等一分钟才变。
+  // 而 WebSocket 不受这个限制，引擎每落定一镜发一条 shot_done——那条就是
+  // 信号本身。多镜连着落定时合并成一次拉，免得一秒内打好几个请求。
+  let settleTimer = null
+  watch(() => runStore.settled, () => {
+    if (settleTimer) clearTimeout(settleTimer)
+    settleTimer = setTimeout(load, 250)
+  })
+
+  /**
+   * 问引擎这一轮还有哪几镜没落定，把它们点亮。
+   *
+   * **「排队中」不能只活在浏览器内存里。** 刷新一下、换个标签页、换台设备，
+   * 排着的全没了；正在跑的那一镜也要等到下一条进度才亮。引擎每个阶段
+   * 开工时登记一批、每落定一镜划掉一个，`/bff/run/pending` 就是那份名单。
+   * 已经在 inflight 里的不动——那是比「排队中」更具体的信息。
+   */
+  async function syncPending() {
+    try {
+      const d = await api.runPending()
+      if (!d?.running || !d.shot_ids?.length) return
+      const add = d.shot_ids.filter((id) => !inflightBy.value[id])
+      if (add.length) sent.value = new Set([...sent.value, ...add])
+    } catch {
+      // 老引擎没有这条。那就退回浏览器自己记的那份。
+    }
+  }
+
+  // **回到前台那一刻也拉一次。** 藏在后台时定时器基本停摆，
+  // 切回来看到的还是走开那一刻的墙——先拉一遍再说。
+  function onVisible() {
+    if (document.visibilityState !== 'visible') return
+    load()
+    runStore.poll()
+    syncPending()
+  }
   watch(
     () => runStore.running,
     (now, before) => {
@@ -438,6 +478,7 @@ export function useShots() {
   // 引擎在跑，而这一页既没轮询也没连上 WebSocket，什么都不知道。
   // 原来这一句在 ProductionView 的 onMounted 里，两页合并时漏掉了。
   onMounted(async () => {
+    document.addEventListener('visibilitychange', onVisible)
     runStore.start()
     // **回到页面时对一次账。**
     //
@@ -445,11 +486,17 @@ export function useShots() {
     // 的那个 watch 只在页面开着的时候才会触发。不对账的话，切回来看到的是
     // 几格永远的「排队中」，而队列里排着的那几镜谁也不会去跑。
     await runStore.poll()
-    if (runStore.running) return
+    if (runStore.running) {
+      // 正跑着：把引擎还没落定的那几镜点亮，别等它们各自报出第一条进度。
+      syncPending()
+      return
+    }
     if (sent.value.size) sent.value = new Set()
     flushWaiting()
   })
   onUnmounted(() => {
+    document.removeEventListener('visibilitychange', onVisible)
+    if (settleTimer) clearTimeout(settleTimer)
     runStore.stop()
     watchShots(false)
   })

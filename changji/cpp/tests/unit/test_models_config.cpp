@@ -354,7 +354,8 @@ TEST_CASE("模板的 [models] 那一节列出了每一个会被读的键") {
                             "video_llm_vision", "video_audio_vae",
                             "video_rng", "video_lora",
                             "video_lora_strength", "video_vae_tile",
-                            "vae_vram_min_gb", "video_lora_tiers"}) {
+                            "vae_vram_min_gb", "video_lora_tiers",
+                            "image_weights"}) {
         CAPTURE(key);
         // 模板里这一节整个是注释掉的，所以形状是 `# 键 = `
         const std::string want = std::string("# ") + key + " = ";
@@ -863,4 +864,23 @@ TEST_CASE("这一轮真正会用的规格：出片跟 Turbo，首帧不跟") {
         CHECK(e.width == 2560);
         CHECK(e.height == 1440);
     }
+}
+
+
+TEST_CASE("[models].image_weights：图像模型的权重放哪，不跟 weights 走") {
+    // **量出来的。** 5090 上 weights = "cpu"（给 18 GB 视频模型的）让 7 GB
+    // 图像模型也每一步从内存搬权重：采样时 GPU 利用率 18%、一步 6.8 秒；
+    // 扩散权重常驻时 82%、一步 1.25 秒。慢五倍，而且看起来像"显卡没吃满"。
+    config::ModelsConfig m;
+    CHECK(m.image_weights == "smart");
+    m.weights = "cpu";
+    // 大卡：扩散常驻，编码器和 VAE 在内存——量出来最快的那档
+    CHECK(m.image_weights_for(32.0) == "te=cpu,vae=cpu");
+    // 小卡：全放内存，不然加载就 OOM
+    CHECK(m.image_weights_for(6.0) == "cpu");
+    // 显式填了就照填的来
+    m.image_weights = "auto";
+    CHECK(m.image_weights_for(32.0) == "auto");
+    // 视频那一项一个字不动
+    CHECK(m.weights_for(32.0) == "cpu");
 }

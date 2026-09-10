@@ -127,6 +127,9 @@ bool JobTable::start(JobKind kind, const std::string& episode_id, Body body,
             Slot& sl = slot(kind);
             sl.state.running = false;
             sl.active = false;
+            // 跑完了就没有"还没落定"的了。留着的话下一次页面一进来，
+            // 会把上一轮剩下的当成还在排队。
+            sl.state.pending.clear();
             // done / error 是终止消息，**不受节流影响**——
             // 被节流掉的话前端会永远停在"跑着"的状态。
             //
@@ -181,6 +184,7 @@ bool JobTable::cancel(JobKind kind) {
     // 代价是 running 不再等价于"线程还活着"。所以 start() 里那句 join
     // 不能删：槽看着空了，上一条线程可能还在收尾。
     s.state.running = false;
+    s.state.pending.clear();
     // 任务自己指定的那句优先。同一个槽上跑的两件事说法不一样：
     // 写整季停了是"已经写好的几集留着"，批量出分镜停了是"已经出好的分镜留着"。
     s.state.error = s.state.stop_message.empty() ? stopped_message(kind)
@@ -218,6 +222,15 @@ void JobTable::record(JobKind kind, Event ev) {
         st.events.push_back(ev);
         while (st.events.size() > kMaxEvents) st.events.pop_front();
 
+        // 一镜落定（shot_done / warn / gate……任何带 shot_id 的非 progress）
+        // 就从"还没落定"里划掉。和界面 trackInflight 的判据一字不差——
+        // 两边判据不一样的话，刷新前后同一镜的「排队中」会不一样。
+        if (ev.shot_id.has_value() && ev.kind != "progress") {
+            auto& pend = st.pending;
+            pend.erase(std::remove(pend.begin(), pend.end(), *ev.shot_id),
+                       pend.end());
+        }
+
         job_id = st.job_id;
         msg = {
             {"type", ev.kind == "error" ? "error" : "progress"},
@@ -246,6 +259,11 @@ void JobTable::record(JobKind kind, Event ev) {
     }
     // 广播放在锁外：Hub 自己有锁，嵌套两把锁是死锁的常见来源。
     emit(job_id, msg);
+}
+
+std::vector<std::string> JobTable::pending(JobKind kind) const {
+    std::lock_guard lg(mu_);
+    return slot(kind).state.pending;
 }
 
 json JobTable::snapshot(JobKind kind) const {
@@ -335,6 +353,10 @@ void JobProgress::set_total(int total) {
 void JobProgress::add_episode(nlohmann::json ep) {
     table_->mutate(kind_,
                    [&](JobState& s) { s.episodes.push_back(std::move(ep)); });
+}
+
+void JobProgress::set_pending(std::vector<std::string> shot_ids) {
+    table_->mutate(kind_, [&](JobState& s) { s.pending = std::move(shot_ids); });
 }
 
 void JobProgress::set_output(std::string path) {

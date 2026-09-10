@@ -125,6 +125,14 @@ struct JobState {
 
     /// 手动停止时写进 error 的话。空表示用这一类的默认值。
     std::string stop_message;
+
+    /// 这一轮**还没落定**的镜头。**C++ 独有，不进 snapshot()。**
+    ///
+    /// 镜头墙上的「排队中」原来只存在浏览器内存里：刷新一下、换个标签页、
+    /// 换台设备，排着的全没了，正在跑的那一镜也要等到下一条进度才亮。
+    /// 引擎自己一直知道这一轮还有哪几镜没跑完——每个阶段开工时登记一批，
+    /// 每落定一镜（shot_done / warn / gate）划掉一个，`/bff/run/pending` 回它。
+    std::vector<std::string> pending;
 };
 
 /// 消息汇。job 表产生的进度和终止消息往这里送。
@@ -184,6 +192,9 @@ public:
     /// 记一条错误。**不终止任务**——写整季时一集写砸了不该让前面几集白写。
     void set_error(std::string e);
 
+    /// 登记这一阶段要跑的镜头。见 JobState::pending。
+    void set_pending(std::vector<std::string> shot_ids);
+
     /// 该停了吗。耗时循环里要主动查。
     bool cancelled() const;
 
@@ -234,6 +245,8 @@ public:
     nlohmann::json snapshot(JobKind kind) const;
 
     bool running(JobKind kind) const;
+    /// 这一轮还没落定的镜头。见 JobState::pending。
+    std::vector<std::string> pending(JobKind kind) const;
     std::string job_id(JobKind kind) const;
 
     /// 等所有在跑的任务结束。析构和优雅关停时用。
