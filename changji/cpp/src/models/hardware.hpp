@@ -111,6 +111,19 @@ std::optional<double> free_vram_gb();
 /// 单独拆出来是为了能测——测试里不该真去跑 nvidia-smi。
 std::optional<double> parse_free_vram(const std::string& out);
 
+/// 从 `vm_stat` 的输出里算出「还能用多少内存」（GB）。
+///
+/// **苹果机器上这就是"还剩多少显存"**：统一内存，CPU 和 GPU 共用一块。
+///
+/// 不能只看 "Pages free"——这台 16 GB 的 iMac 上它只有 4124 页（67 MB），
+/// 拿它当依据的话调度器会以为一点空间都没有，每次都卸模型。macOS 真正
+/// 能拿来用的是 free + inactive + purgeable + speculative：inactive 是
+/// 有主但随时可以回收的，purgeable 是明说可以丢的。
+///
+/// 页大小从输出头一行 "(page size of N bytes)" 里读——**别写死 4096**，
+/// 苹果芯片是 16384。写死的话算出来差四倍。
+std::optional<double> parse_vm_stat(const std::string& out);
+
 /// 按显存推导三个档位的参数。
 std::map<Tier, TierSpec> tiers_for_vram(double vram_gb);
 

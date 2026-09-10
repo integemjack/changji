@@ -515,6 +515,14 @@ if(CHANGJI_STATIC_RUNTIME AND NOT MSVC)
         # 后者漏掉 libwinpthread-1.dll——std::mutex 和 std::thread 走的就是它，
         # 结果是 exe 在开发机上能跑，拷到别的机器上闪退且没有任何提示。
         target_link_options(changji PRIVATE -static)
+    elseif(APPLE)
+        # **macOS 上这两个选项根本不存在。** Apple clang 直接报
+        # `unsupported option '-static-libgcc'`，而且是在链接那一步才报——
+        # 前面 97% 的编译全白跑。
+        #
+        # 也不需要：苹果的 libc++ 是系统自带的，每台 Mac 上都有同一份，
+        # 没有 Linux 上那个"编译机和运行机 libstdc++ 版本不一样"的问题。
+        # 静态链接系统库在 macOS 上本来就是不支持的做法。
     else()
         # Linux 上不做全静态：glibc 静态链接会在 getaddrinfo 这类
         # 依赖 NSS 的调用上出问题，而我们要连 LLM 和推理服务，全是域名解析。

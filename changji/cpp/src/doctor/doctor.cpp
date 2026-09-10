@@ -17,6 +17,7 @@
 
 #include "infer/ggml_abi.hpp"
 #include "infer/llama_tts.hpp"
+#include "models/hardware.hpp"
 #include "infer/sd_backend.hpp"
 #include "util/paths.hpp"
 #include "util/proc.hpp"
@@ -221,25 +222,25 @@ Check check_llm(const config::Settings& s) {
 }
 
 Check check_gpu(const config::Settings& s) {
-    if (proc::which("nvidia-smi")) {
-        auto r = proc::run("nvidia-smi",
-                           {"--query-gpu=name,memory.total",
-                            "--format=csv,noheader,nounits"});
-        if (r.launched && !r.out.empty()) {
-            std::string first = r.out.substr(0, r.out.find('\n'));
-            size_t comma = first.find(',');
-            if (comma != std::string::npos) {
-                std::string name = first.substr(0, comma);
-                double mb = 0;
-                try { mb = std::stod(first.substr(comma + 1)); } catch (...) {}
-                std::ostringstream os;
-                os << name << "  ";
-                os.setf(std::ios::fixed);
-                os.precision(1);
-                os << (mb / 1024.0) << " GB";
-                return {"显卡", Level::OK, os.str(), ""};
-            }
+    // **走 models::detect_gpu()，不再自己问一遍 nvidia-smi。**
+    //
+    // 这里原来是一份独立的探测：直接 `nvidia-smi --query-gpu=...`。
+    // 于是探测逻辑有了两份，而它们会分岔——2026-09-11 在 Mac 上就分岔了：
+    // detect_gpu() 已经会按统一内存算苹果芯片的显存了，doctor 却还只认
+    // nvidia-smi，于是一台 Mac 上「显卡」那行永远是"本机未探测到"，
+    // 而同一个进程里的档位推导用的是另一个数。
+    //
+    // 现在只有一份。加一种新硬件只要改 detect_gpu()，体检跟着就对。
+    if (const auto gpu = models::detect_gpu(); gpu.has_value()) {
+        std::ostringstream os;
+        os << gpu->name << "  ";
+        os.setf(std::ios::fixed);
+        os.precision(1);
+        os << gpu->vram_gb() << " GB";
+        if (gpu->count > 1) {
+            os << "（共 " << gpu->count << " 张，显存是单卡的）";
         }
+        return {"显卡", Level::OK, os.str(), ""};
     }
     if (s.vram_gb_override) {
         std::ostringstream os;

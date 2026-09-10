@@ -28,6 +28,17 @@ using json = nlohmann::json;
 
 namespace {
 
+/// 取规范形式再比路径。
+///
+/// macOS 上 /var 是 /private/var 的软链，而 ProjectPaths 构造时会
+/// weakly_canonical——于是"传进去的路径"和"回来的路径"字面上不相等，
+/// 尽管指的是同一个目录。两边都规范化，比的才是同一件事。
+fs::path canon(const fs::path& p) {
+    std::error_code ec;
+    fs::path c = fs::weakly_canonical(p, ec);
+    return ec ? p : c;
+}
+
 /// 一个临时的项目库。settings.workspace 指到这里。
 struct Workspace {
     fs::path root;
@@ -68,7 +79,12 @@ TEST_CASE("新建项目：只填名字就落在项目库里") {
 
     const fs::path made = paths::from_utf8(r.body.at("root").get<std::string>());
     CHECK(fs::is_directory(made));
-    CHECK(made.parent_path() == ws.root);
+    // **两边都取规范形式再比。** ProjectPaths 的构造函数会
+    // weakly_canonical 一下（那是有意的，projects.cpp 的"在不在库里"
+    // 靠它），而 macOS 上 /var 是 /private/var 的软链——
+    // 临时目录拿到的是 /var/folders/...，规范化之后变成 /private/var/...，
+    // 直接比字符串就永远不相等。Windows 和 Linux 上两者本来就一样。
+    CHECK(canon(made.parent_path()) == canon(ws.root));
     CHECK(models::ProjectStore(made).exists());
 
     const models::Project p = models::ProjectStore(made).load_project();
@@ -91,7 +107,8 @@ TEST_CASE("新建项目：带路径分隔符的当绝对/相对路径用") {
     });
     REQUIRE(r.status == 200);
     // 没被塞进项目库
-    CHECK(paths::from_utf8(r.body.at("root").get<std::string>()) == elsewhere);
+    CHECK(canon(paths::from_utf8(r.body.at("root").get<std::string>())) ==
+          canon(elsewhere));
     CHECK(models::ProjectStore(elsewhere).exists());
     fs::remove_all(elsewhere, ec);
 }

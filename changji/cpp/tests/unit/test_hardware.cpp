@@ -236,3 +236,58 @@ TEST_CASE("解析实时空闲显存") {
     CHECK_FALSE(parse_free_vram("N/A\n").has_value());
     CHECK_FALSE(parse_free_vram("0\n").has_value());
 }
+
+// ---- 苹果机器：统一内存当显存 ----
+//
+// 这台机器上没有 nvidia-smi，而 detect_gpu 以前只认它：探不到就退回
+// "按 12 GB 估算"。一台 128 GB 的 Mac 于是被当成 12 GB，档位、权重放哪、
+// "显存够就不用清理"全部按 12 GB 算——**而且不报错**，只是什么都跑不大。
+
+/// 真机上抓的（iMac21,1 / Apple M1 / 16 GB，页大小 16384）。
+static const char* kVmStat =
+    "Mach Virtual Memory Statistics: (page size of 16384 bytes)\n"
+    "Pages free:                                     6364.\n"
+    "Pages active:                                 360261.\n"
+    "Pages inactive:                               385709.\n"
+    "Pages speculative:                             10817.\n"
+    "Pages throttled:                                   0.\n"
+    "Pages wired down:                             127621.\n"
+    "Pages purgeable:                               25885.\n"
+    "\"Translation faults\":                      574116357.\n"
+    "Pages copy-on-write:                        20675625.\n";
+
+TEST_CASE("vm_stat：算的是「还能用多少」，不是「完全空着多少」") {
+    const auto gb = parse_vm_stat(kVmStat);
+    REQUIRE(gb.has_value());
+
+    // free 6364 + inactive 385709 + purgeable 25885 + speculative 10817
+    // = 428775 页 × 16384 字节 = 6.54 GB
+    CHECK(*gb == doctest::Approx(6.54).epsilon(0.01));
+
+    // **只看 Pages free 是不行的**：那只有 6364 页 ≈ 0.1 GB，
+    // 调度器会以为一点空间都没有，每次都去卸模型。
+    CHECK(*gb > 1.0);
+}
+
+TEST_CASE("vm_stat：页大小必须从输出里读，不能写死 4096") {
+    // 苹果芯片是 16384。写死 4096 的话算出来差四倍——而这不会报错，
+    // 只是调度器一直以为显存不够。
+    std::string small = kVmStat;
+    const auto pos = small.find("16384");
+    REQUIRE(pos != std::string::npos);
+    small.replace(pos, 5, "4096");
+    const auto a = parse_vm_stat(kVmStat);
+    const auto b = parse_vm_stat(small);
+    REQUIRE(a.has_value());
+    REQUIRE(b.has_value());
+    CHECK(*a == doctest::Approx(*b * 4.0).epsilon(0.01));
+}
+
+TEST_CASE("vm_stat：读不出来就说读不出来，别猜") {
+    // 猜一个数比没有更糟：调度器会拿它当真，而"问不到"那条路本来就有
+    // 保守的退路（见 Scheduler::make_room）。
+    CHECK_FALSE(parse_vm_stat("").has_value());
+    CHECK_FALSE(parse_vm_stat("完全不相干的输出").has_value());
+    // 没有页大小那一行 → 不猜
+    CHECK_FALSE(parse_vm_stat("Pages free: 100.\n").has_value());
+}

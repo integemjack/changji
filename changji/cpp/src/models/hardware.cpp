@@ -2,10 +2,13 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstdint>
+#include <cstring>
 #include <cmath>
 #include <cstdio>
 #include <sstream>
 
+#include "util/paths.hpp"
 #include "util/proc.hpp"
 
 namespace changji::models {
@@ -147,7 +150,97 @@ TierSpec TierSpec::scaled_to(const std::string& aspect_ratio) const {
     return out;
 }
 
+#if defined(__APPLE__)
+// **必须写绝对路径。** sysctl 在 /usr/sbin，而子进程拿到的最小 PATH 里
+// 没有 /usr/sbin（实测是 /usr/gnu/bin:/usr/local/bin:/bin:/usr/bin:.）。
+// 只写名字的话 proc::run 找不到它，探测直接失败——**而失败是静默的**，
+// 表现就是"未探测到显卡，按 12 GB 估算"，一台 128 GB 的 Mac 被当成 12 GB。
+// 2026-09-11 就是这么查出来的：Metal 明明起来了，显存却一直是 12 GB。
+constexpr const char* kSysctl = "/usr/sbin/sysctl";
+constexpr const char* kVmStat = "/usr/bin/vm_stat";
+
+/// Apple Silicon 的「显存」。
+///
+/// **这台机器上没有 nvidia-smi，而以前的代码只认它**：探不到就退回
+/// "按 12 GB 估算"。于是一台 128 GB 的 Mac 被当成 12 GB，档位、权重放哪、
+/// "显存够就不用清理"全部按 12 GB 算——而这**不报错**，只是什么都跑不大。
+///
+/// 苹果芯片是统一内存：CPU 和 GPU 共用同一块，没有独立显存这回事。
+/// GPU 能用多少由 `iogpu.wired_limit_pct` 决定，默认不是全部——
+/// 系统自己要留一份。读得到就用它，读不到按 75% 算（苹果文档里
+/// recommendedMaxWorkingSetSize 在这一档附近）。
+///
+/// **Intel Mac 不走这条**：那些机器要么是独显（另说），要么核显性能
+/// 根本跑不动这套东西，按统一内存算会得出一个大得离谱的数。
+std::optional<GPUInfo> detect_apple_gpu() {
+    const bool dbg = !paths::env("CHANGJI_DEBUG_HW").empty();
+    const auto sysctl_num = [dbg](const char* key) -> std::optional<std::uint64_t> {
+        auto r = proc::run(kSysctl, {"-n", key}, 5000);
+        if (dbg) {
+            std::fprintf(stderr, "[hw] sysctl %s: launched=%d exit=%d out=[%s]\n",
+                         key, static_cast<int>(r.launched), r.exit_code,
+                         r.out.c_str());
+        }
+        if (!r.launched || r.exit_code != 0) return std::nullopt;
+        std::string t;
+        for (char c : r.out) {
+            if (std::isdigit(static_cast<unsigned char>(c))) t += c;
+        }
+        if (t.empty()) return std::nullopt;
+        try {
+            return std::stoull(t);
+        } catch (...) {
+            return std::nullopt;
+        }
+    };
+
+    // 芯片名。拿不到就给个能看的兜底，不影响算数。
+    std::string name = "Apple Silicon";
+    auto br = proc::run(kSysctl, {"-n", "machdep.cpu.brand_string"}, 5000);
+    if (dbg) {
+        std::fprintf(stderr, "[hw] brand: launched=%d exit=%d out=[%s]\n",
+                     static_cast<int>(br.launched), br.exit_code, br.out.c_str());
+    }
+    if (auto& r = br; r.launched && r.exit_code == 0) {
+        std::string t = r.out;
+        while (!t.empty() && (t.back() == '\n' || t.back() == '\r' ||
+                              t.back() == ' ')) {
+            t.pop_back();
+        }
+        // 只认苹果自家的芯片。Intel Mac 的 brand_string 是 "Intel(R) Core..."，
+        // 那种机器不该按统一内存算。
+        if (t.rfind("Apple", 0) != 0) return std::nullopt;
+        if (!t.empty()) name = t;
+    } else {
+        return std::nullopt;
+    }
+
+    const auto total = sysctl_num("hw.memsize");
+    if (!total.has_value() || *total == 0) return std::nullopt;
+
+    // GPU 能用的那一份。iogpu.wired_limit_pct 是百分数，0 表示"系统自己定"。
+    double pct = 75.0;
+    if (const auto p = sysctl_num("iogpu.wired_limit_pct");
+        p.has_value() && *p > 0 && *p <= 100) {
+        pct = static_cast<double>(*p);
+    }
+
+    GPUInfo g;
+    g.name = name + "（统一内存）";
+    const double usable_bytes = static_cast<double>(*total) * pct / 100.0;
+    g.vram_mb = static_cast<int>(usable_bytes / (1024.0 * 1024.0));
+    g.count = 1;
+    return g;
+}
+#endif
+
 std::optional<GPUInfo> detect_gpu() {
+#if defined(__APPLE__)
+    // 苹果机器优先按统一内存算。**放在 nvidia-smi 之前**：有人在 Mac 上
+    // 装过 nvidia 的工具链，那时候 nvidia-smi 在但没有 N 卡，
+    // 探出来的是空的，反而把统一内存那条盖掉。
+    if (auto apple = detect_apple_gpu(); apple.has_value()) return apple;
+#endif
     if (!proc::which("nvidia-smi")) return std::nullopt;
 
     auto r = proc::run("nvidia-smi",
@@ -185,7 +278,69 @@ std::optional<double> parse_free_vram(const std::string& out) {
     }
 }
 
+std::optional<double> parse_vm_stat(const std::string& out) {
+    if (out.empty()) return std::nullopt;
+
+    // 头一行： "Mach Virtual Memory Statistics: (page size of 16384 bytes)"
+    std::uint64_t page = 0;
+    if (const auto pos = out.find("page size of"); pos != std::string::npos) {
+        std::string digits;
+        for (std::size_t i = pos; i < out.size() && out[i] != ')'; ++i) {
+            if (std::isdigit(static_cast<unsigned char>(out[i]))) digits += out[i];
+        }
+        if (!digits.empty()) {
+            try {
+                page = std::stoull(digits);
+            } catch (...) {
+                page = 0;
+            }
+        }
+    }
+    if (page == 0) return std::nullopt;   // 读不到页大小就别猜
+
+    const auto pages_of = [&out](const char* label) -> std::uint64_t {
+        const auto pos = out.find(label);
+        if (pos == std::string::npos) return 0;
+        std::string digits;
+        for (std::size_t i = pos + std::strlen(label); i < out.size(); ++i) {
+            const char ch = out[i];
+            if (std::isdigit(static_cast<unsigned char>(ch))) {
+                digits += ch;
+            } else if (!digits.empty()) {
+                break;      // 数字读完了（后面是那个句点）
+            } else if (ch == '\n') {
+                break;      // 这一行压根没有数
+            }
+        }
+        if (digits.empty()) return 0;
+        try {
+            return std::stoull(digits);
+        } catch (...) {
+            return 0;
+        }
+    };
+
+    // 见头文件：只数 free 是不够的。
+    const std::uint64_t usable = pages_of("Pages free:") +
+                                 pages_of("Pages inactive:") +
+                                 pages_of("Pages purgeable:") +
+                                 pages_of("Pages speculative:");
+    if (usable == 0) return std::nullopt;
+    return static_cast<double>(usable) * static_cast<double>(page) /
+           (1024.0 * 1024.0 * 1024.0);
+}
+
 std::optional<double> free_vram_gb() {
+#if defined(__APPLE__)
+    // 统一内存：能用的系统内存就是能用的"显存"。
+    // nvidia-smi 在这台机器上不存在，不走这条的话调度器永远拿不到实时
+    // 空闲量，只能按保守估算办事——也就是每次切阶段都卸一个模型。
+    if (auto r = proc::run(kVmStat, {}, 5000);
+        r.launched && r.exit_code == 0) {
+        if (auto gb = parse_vm_stat(r.out); gb.has_value()) return gb;
+    }
+    return std::nullopt;
+#endif
     if (!proc::which("nvidia-smi")) return std::nullopt;
     // **超时要短。** 这个函数在每次借槽的路径上，卡住比问不到更糟；
     // 问不到只是退回静态估算。
