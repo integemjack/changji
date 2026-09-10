@@ -1,11 +1,19 @@
-# 编全平台全架构，然后发到 Release。
+# 编全平台全架构，然后发出去。
 #
-# 打个 tag 就出六个包：
+# **两条道，走哪条由推的是什么决定：**
 #
-#     git tag v1.2.0 && git push origin v1.2.0
+#   打 tag（v 开头）  → 正式 Release，tag 就是版本号
+#                        git tag v1.2.0 && git push origin v1.2.0
+#   推任意分支        → 滚动预发布，**永远发在同一个 `beta` tag 上**
+#   手动跑            → 同上，也发 beta
 #
-# 手动跑（workflow_dispatch）也编这六个，但**不发布**——产物留在
-# Actions 的 artifacts 里，想验一版能不能编得过时用这个。
+# beta 那条是"最后一次推的分支说了算"：每次把 `beta` 这个 Release 连同
+# tag 删掉重建，指到这次的提交。所以上面永远只有一套包，不会攒下
+# 半年前某个分支留的产物——**旧产物混在里面比没有更糟**，
+# 下载的人分不出哪个是新的。
+#
+# `beta` 是预发布，所以 `/releases/latest` 不会指到它，install.sh 默认
+# 装的仍然是正式版。想装 beta：`CHANGJI_VERSION=beta bash install.sh`。
 #
 # 六个格子的对应关系：
 #
@@ -18,27 +26,50 @@
 #   windows-arm64 windows-11-arm     原生 arm64 跑 MSVC，不是交叉编译
 #
 # 换 runner 标签就改矩阵里那一行，别的地方不用动。
+#
+# ⚠️ **每推一次分支就是六个平台各编一遍 sd.cpp + llama.cpp**，一轮几十分钟。
+# 只改文档也照编。嫌费的话在 on.push 底下加 paths-ignore。
 
 name: 发布
 
 on:
   push:
-    tags:
-      - 'v*'
+    branches: ['**']
+    tags: ['v*']
   workflow_dispatch:
 
-# 同一个 ref 上新推一次就把上一次没跑完的取消掉。tag 上一般只跑一次，
-# 这条主要是给手动重跑用的。
+# 同一个分支上连推两次，把上一次没跑完的取消掉——beta 上只留最后一次的
+# 结果，早一次跑完也是白跑。
 concurrency:
-  group: release-${{ github.ref }}
+  group: build-${{ github.ref }}
   cancel-in-progress: true
 
-env:
-  # tag 触发时是 v1.2.0 这样的版本号，手动跑时是短 sha。
-  # 写进二进制，`changji --version` 打印它——报故障时第一句话就是这个。
-  CHANGJI_VERSION: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || format('dev-{0}', github.sha) }}
-
 jobs:
+  # ---- 这一趟是什么 ----
+  #
+  # 版本号和发布方式在一处算完，后面几个 job 只管取。
+  # 分散在各处用 `if: startsWith(github.ref, ...)` 判的话，改一次要改四处，
+  # 漏一处的表现是"编出来的二进制版本号对，发布的地方不对"。
+  meta:
+    name: 这一趟发到哪
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      channel: ${{ steps.v.outputs.channel }}
+    steps:
+      - id: v
+        run: |
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            echo "version=${GITHUB_REF_NAME}"  >> "$GITHUB_OUTPUT"
+            echo "channel=release"             >> "$GITHUB_OUTPUT"
+          else
+            # 分支名里的 / 换成 -：它会进 `changji --version` 的输出，
+            # 也会进文件名一类的地方，带斜杠迟早咬人。
+            echo "version=beta-${GITHUB_REF_NAME//\//-}-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+            echo "channel=beta" >> "$GITHUB_OUTPUT"
+          fi
+          cat "$GITHUB_OUTPUT"
+
   # ---- 前端 ----
   #
   # **前端只编一次，六个格子共用。**
@@ -129,8 +160,12 @@ jobs:
   # ---- 六个平台 ----
   build:
     name: 编 ${{ matrix.target }}
-    needs: [webapp, test]
+    needs: [meta, webapp, test]
     runs-on: ${{ matrix.runner }}
+    env:
+      # 写进二进制，`changji --version` 打印它——报故障时第一句话就是这个。
+      # 正式版是 tag，beta 是 `beta-<分支>-<短 sha>`，一眼看得出是哪一条。
+      CHANGJI_VERSION: ${{ needs.meta.outputs.version }}
     strategy:
       # 一格挂掉不连累别的格子：六个平台各有各的坑，一次看全比修一个
       # 再等一轮省事。
@@ -263,14 +298,19 @@ jobs:
           path: dist/*
 
   # ---- 发布 ----
-  release:
-    name: 发到 Release
-    needs: build
-    # 手动跑不发布：那一档是用来验"还编得过吗"的，产物在 artifacts 里。
-    if: startsWith(github.ref, 'refs/tags/')
+  publish:
+    name: 发到 ${{ needs.meta.outputs.channel == 'release' && 'Release' || 'beta 预发布' }}
+    needs: [meta, build]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
+    # **不按 ref 分组，按渠道分组，而且不取消。**
+    # 两个分支同时推的话，两趟都要往同一个 beta 上发；取消或者并发跑
+    # 都可能撞在"删掉旧的、还没建新的"那个空档上，那时候 beta 是不存在的。
+    # 排队让它们一个一个来，最后一个跑完的说了算。
+    concurrency:
+      group: publish-${{ needs.meta.outputs.channel }}
+      cancel-in-progress: false
     steps:
       - uses: actions/download-artifact@v4
         with:
@@ -287,13 +327,9 @@ jobs:
           sha256sum changji-* | tee SHA256SUMS
           ls -lh
 
-      - name: 建 Release
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: 写发布说明
         run: |
           cat > notes.md <<'EOF'
-          ## 下载
-
           | 系统 | 架构 | 包 |
           |---|---|---|
           | Linux | x64 | `changji-linux-x64.tar.gz` |
@@ -303,28 +339,90 @@ jobs:
           | Windows | x64 | `changji-windows-x64.zip` |
           | Windows | arm64 | `changji-windows-arm64.zip` |
 
-          Linux / macOS 上也可以一条命令装：
-
-          ```bash
-          curl -fsSL https://raw.githubusercontent.com/${{ github.repository }}/main/changji/install.sh | bash
-          ```
-
           解开就是一个可执行文件，没有运行时依赖。**装配和字幕烧录要
           ffmpeg**，系统 PATH 里有就行。模型权重不在包里，第一次打开界面
           会让你选，选完它自己下。
 
           ```
+          changji --version       手上这个是哪一版
           changji --doctor        体检，缺什么它会说
           changji --port 8080     起服务，浏览器打开 http://127.0.0.1:8080
           ```
 
           `SHA256SUMS` 是这些包的校验和。
-
-          ---
           EOF
+
+      - name: 建 Release（正式版）
+        if: needs.meta.outputs.channel == 'release'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          {
+            echo "## 下载"
+            echo
+            cat notes.md
+            echo
+            echo "Linux / macOS 上也可以一条命令装："
+            echo
+            echo '```bash'
+            echo "curl -fsSL https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/main/changji/install.sh | bash"
+            echo '```'
+            echo
+            echo "---"
+          } > body.md
           gh release create "${{ github.ref_name }}" \
-            --repo "${{ github.repository }}" \
+            --repo "$GITHUB_REPOSITORY" \
             --title "${{ github.ref_name }}" \
-            --notes-file notes.md \
+            --notes-file body.md \
             --generate-notes \
+            dist/*
+
+      # **beta 是删掉重建，不是往上加。**
+      #
+      # 往上加（`gh release upload --clobber`）看着更温和，但有两处不对：
+      # tag 会一直钉在第一次建它的那个提交上（`gh release edit --target`
+      # 只对草稿有效），而某个平台这一趟没编出来时，上面还留着**上一趟
+      # 那个平台的包**——下载的人分不出哪个是新的，而且那正是他最需要
+      # 分清的时候。
+      #
+      # 空档期的代价是几秒钟内 beta 不存在，比发出去一套新旧混装的包轻。
+      - name: 建 beta 预发布
+        if: needs.meta.outputs.channel == 'beta'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release delete beta --repo "$GITHUB_REPOSITORY" --yes --cleanup-tag \
+            || echo "没有旧的 beta Release，跳过"
+          # 兜底：上一步只在"Release 存在"时才会顺手删 tag。
+          # 光有 tag 没有 Release 的话（手工打过、或者上一趟半路挂了），
+          # 下面的 create 会沿用那个旧 tag，**发出来的东西指着旧提交**。
+          gh api -X DELETE "repos/$GITHUB_REPOSITORY/git/refs/tags/beta" --silent \
+            || echo "没有残留的 beta tag，跳过"
+          {
+            echo "**滚动预发布。** 最后一次推分支编出来的，随时会被下一次盖掉。"
+            echo "要稳定版去 [Releases](https://github.com/$GITHUB_REPOSITORY/releases) 里找 v 开头的。"
+            echo
+            echo "| | |"
+            echo "|---|---|"
+            echo "| 分支 | \`${GITHUB_REF_NAME}\` |"
+            echo "| 提交 | ${GITHUB_SHA} |"
+            echo "| 版本号 | \`${{ needs.meta.outputs.version }}\`（\`changji --version\` 打印这个） |"
+            echo "| 编于 | $(date -u '+%Y-%m-%d %H:%M UTC') |"
+            echo
+            echo "## 下载"
+            echo
+            cat notes.md
+            echo
+            echo "装 beta："
+            echo
+            echo '```bash'
+            echo "CHANGJI_VERSION=beta bash <(curl -fsSL https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/main/changji/install.sh)"
+            echo '```'
+          } > body.md
+          gh release create beta \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --prerelease \
+            --title "beta（${GITHUB_REF_NAME}）" \
+            --notes-file body.md \
             dist/*

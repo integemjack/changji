@@ -44,6 +44,9 @@ curl -fsSL https://raw.githubusercontent.com/Ireoo/changji/main/changji/install.
 Windows / macOS / Linux，x64 和 arm64 都有，包名形如
 `changji-linux-arm64.tar.gz`。
 
+想试还没发版的：`beta` 那个预发布是每推一次分支就重编重传的滚动版本，
+`CHANGJI_VERSION=beta bash install.sh` 装它。
+
 自己编见 [cpp/README.md](cpp/README.md)。
 
 ```bash

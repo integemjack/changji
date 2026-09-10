@@ -5,6 +5,9 @@
 #   curl -fsSL https://raw.githubusercontent.com/Ireoo/changji/main/changji/install.sh | bash
 # 装某一版而不是最新版：
 #   CHANGJI_VERSION=v1.2.0 bash install.sh
+# 装每次推分支都会刷新的滚动预发布：
+#   CHANGJI_VERSION=beta bash install.sh
+# （默认走 /releases/latest，而预发布不在那里面，所以不写就永远是正式版）
 # 已经有本地编好的二进制：
 #   CHANGJI_BINARY=/path/to/changji bash install.sh
 #
