@@ -607,6 +607,36 @@ struct EffectiveSpec {
 /// 这一层不认识 HardwareProfile——config 不该反过来依赖 models。
 EffectiveSpec effective_spec(const Settings& s, int table_final_steps);
 
+/// 把 `weights` / `image_weights` 里的 `"smart"` 按这张卡和模型文件大小
+/// 展开成 sd.cpp 认的组件规格，返回展开后的那份 Settings。
+///
+/// **只有这一份展开逻辑。** 出图出片建上下文要它（决定权重放哪），
+/// 设置页要它（把程序算出来的结果显示给用户看）。两处各写一遍的话，
+/// 界面上说"扩散模型常驻显存"而实际跑在内存里——用户看着数对不上，
+/// 却没有任何报错。2026-09-10 已经在大模型显存那条式子上栽过一次。
+///
+/// `card_gb` 传这张卡**物理**显存，不是 vram_gb_override——那个数是
+/// 拿来挑画质档位的，拿它算放置会把本来常驻得下的模型赶去内存。
+/// 传 0（探不到卡）时按装不下处理，也就是全放内存。
+Settings expand_placement(Settings s, double card_gb);
+
+/// 一个模型这一轮的放置结果，给界面显示用。
+struct PlacementInfo {
+    /// 展开后的组件规格："cpu" / "te=cpu" / "te=cpu,vae=cpu" / 用户写死的值。
+    std::string weights;
+    /// 模型文件多大（GB）。读不到是 0。
+    double model_gb = 0.0;
+    /// 这一路跑起来真正要占的显存（GB）。
+    double live_vram_gb = 0.0;
+    /// 扩散模型的权重是不是常驻显存。**这一条是用户最该看到的**：
+    /// 放内存时每一步都要从内存搬权重过去，卡上算得再快也等在 PCIe 上。
+    bool resident = false;
+};
+
+/// 从展开后的 Settings 里读出两个模型各自的放置结果。
+PlacementInfo video_placement(const Settings& expanded);
+PlacementInfo image_placement(const Settings& expanded);
+
 /// 把已经拆掉的老取值换成现在的，返回每一处换了什么。
 ///
 /// **拆掉一条路之后，老配置不能让程序起不来。** 拆 ComfyUI 时只在

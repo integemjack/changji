@@ -789,21 +789,14 @@ void register_sd_slots(SettingsProvider raw_provider,
     const double card_gb = profile.gpu.has_value() ? profile.gpu->vram_gb()
                                                    : profile.vram_gb;
     const SettingsProvider provider = [raw_provider, card_gb] {
-        config::Settings s = raw_provider();
         // 两个模型放哪都按文件大小算。视频那份 smart 以前只看卡，
         // 换了卡还要人去改 cpu——用户的原话："都应该让程序自己算。"
-        const auto size_gb = [&s](const std::string& entry) {
-            std::error_code ec;
-            const auto p = s.models.resolve(entry, s.workspace_path());
-            const auto bytes = p.empty() ? 0 : fs::file_size(p, ec);
-            return (!ec && bytes > 0) ? static_cast<double>(bytes) / (1024.0 * 1024 * 1024) : 0.0;
-        };
-        s.models.weights = s.models.weights_for(card_gb, size_gb(s.models.video));
-        // 图像模型放哪要看它**有多大**：fp8 的 Qwen-Image 20 GB，Q6_K 16 GB，
-        // Q4 12 GB——同一张 32 GB 的卡，前者常驻不下，后两者可以。
-        s.models.image_weights =
-            s.models.image_weights_for(card_gb, size_gb(s.models.image));
-        return s;
+        // 图像那份还要看它**有多大**：fp8 的 Qwen-Image 20 GB、Q6_K 16 GB、
+        // Q4 12 GB，同一张 32 GB 的卡，前者常驻不下、后两者可以。
+        //
+        // **展开逻辑不写在这儿**：设置页也要拿同一份结果显示给用户看，
+        // 各写一遍就会分叉。见 config::expand_placement。
+        return config::expand_placement(raw_provider(), card_gb);
     };
     // 预算取探测到的显存，留一成给驱动上下文和别的程序。
     //

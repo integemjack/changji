@@ -199,6 +199,17 @@ const hardware = computed(() => overview.value?.hardware)
  */
 const effective = computed(() => overview.value?.effective ?? null)
 
+// 程序算出来的权重放置。两个模型各一行；没有这一项（老引擎）就整块不显示。
+const placement = computed(() => effective.value?.placement ?? null)
+const placementRows = computed(() => {
+  const p = placement.value
+  if (!p) return []
+  return [
+    { key: 'image', label: '出首帧', ...(p.image ?? {}) },
+    { key: 'video', label: '出片', ...(p.video ?? {}) },
+  ].filter((r) => r.weights !== undefined)
+})
+
 async function load() {
   loading.value = true
   try {
@@ -391,6 +402,31 @@ function scrollTo(id) {
               <span v-if="effective?.vramOverride" class="field__hint warn-text">
                 配置里 vram_gb_override = {{ effective.vramOverride }} 顶着这张卡，
                 档位表按它推。程序会自己算，把这一行从配置文件里删掉。
+              </span>
+            </div>
+            <!-- **程序给两个模型算出来的权重放置。**
+                 weights 不让人在这儿填（"都应该让程序自己算"），但算完了
+                 不给看是另一个极端：出图慢到底是卡不行、还是权重在内存里
+                 每步搬一趟，用户没有线索。排查 GPU 利用率 18% 那次，
+                 答案就是这一项，当时得连上机器看日志才知道。 -->
+            <div v-if="embedded && placement" class="field">
+              <span class="field__label">权重放哪（程序自己算的）</span>
+              <div class="stack">
+                <div v-for="row in placementRows" :key="row.key" class="mono tiny">
+                  {{ row.label }}：
+                  <span :class="row.resident ? 'pill pill--ok tiny' : 'pill pill--warn tiny'">
+                    {{ row.resident ? '常驻显存' : '权重放内存' }}
+                  </span>
+                  <template v-if="row.modelGb > 0">
+                    模型 {{ row.modelGb.toFixed(1) }} GB，跑起来约占
+                    {{ row.liveVramGb.toFixed(1) }} GB
+                  </template>
+                  <template v-else>（模型没配或读不到文件）</template>
+                </div>
+              </div>
+              <span class="field__hint">
+                按这张卡的显存和模型文件大小算出来的。**权重放内存不等于出了问题**——
+                装不下时放内存反而更快，显卡腾出来的地方全给了计算。
               </span>
             </div>
             <p class="tiny dim mono">配置文件：{{ node.configFile }}</p>

@@ -648,6 +648,46 @@ Settings load_settings(const std::optional<fs::path>& project_dir) {
     return s;
 }
 
+namespace {
+
+/// 模型文件多大（GB）。读不到回 0——上游按"装不下"处理，也就是放内存。
+double model_size_gb(const Settings& s, const std::string& entry) {
+    std::error_code ec;
+    const auto p = s.models.resolve(entry, s.workspace_path());
+    const auto bytes = p.empty() ? 0 : fs::file_size(p, ec);
+    return (!ec && bytes > 0) ? static_cast<double>(bytes) / (1024.0 * 1024 * 1024)
+                              : 0.0;
+}
+
+}  // namespace
+
+Settings expand_placement(Settings s, double card_gb) {
+    s.models.weights = s.models.weights_for(card_gb, model_size_gb(s, s.models.video));
+    s.models.image_weights =
+        s.models.image_weights_for(card_gb, model_size_gb(s, s.models.image));
+    return s;
+}
+
+PlacementInfo video_placement(const Settings& expanded) {
+    PlacementInfo p;
+    p.weights = expanded.models.weights;
+    p.model_gb = model_size_gb(expanded, expanded.models.video);
+    p.live_vram_gb = expanded.models.video_live_vram_gb(p.weights, p.model_gb);
+    // "cpu" = 权重全在内存。别的规格里扩散那份都是常驻的
+    // （te=cpu 只把文本编码器放内存，te=cpu,vae=cpu 再加上 VAE）。
+    p.resident = p.weights != "cpu";
+    return p;
+}
+
+PlacementInfo image_placement(const Settings& expanded) {
+    PlacementInfo p;
+    p.weights = expanded.models.image_weights;
+    p.model_gb = model_size_gb(expanded, expanded.models.image);
+    p.live_vram_gb = expanded.models.image_live_vram_gb(p.weights, p.model_gb);
+    p.resident = p.weights != "cpu";
+    return p;
+}
+
 EffectiveSpec effective_spec(const Settings& s, int table_final_steps) {
     EffectiveSpec out;
     const auto [w, h] = s.video.size();

@@ -590,6 +590,29 @@ void run(const config::Settings& settings, const Options& opts) {
                 prof.gpu.has_value() ? json(prof.gpu->vram_gb()) : json(nullptr);
             out["effective"]["vramOverride"] =
                 s.vram_gb_override.has_value() ? json(*s.vram_gb_override) : json(nullptr);
+            // **程序给两个模型算出来的权重放置，显示给用户看。**
+            //
+            // weights 已经不让人在界面上填了（用户："都应该让程序自己算"），
+            // 但算完了不给看是另一个极端：出图慢到底是卡不行还是权重在内存里
+            // 每步搬一趟，用户没有任何线索。2026-09-10 排查 GPU 利用率只有
+            // 18% 那次，答案就是这一项——当时得连上机器看日志才知道。
+            //
+            // 和出图出片建上下文走的是同一个 expand_placement，不会分叉。
+            {
+                const double card_gb = prof.gpu.has_value() ? prof.gpu->vram_gb()
+                                                            : prof.vram_gb;
+                const auto ex = config::expand_placement(s, card_gb);
+                const auto pack = [](const config::PlacementInfo& p) {
+                    return json{{"weights", p.weights},
+                                {"modelGb", p.model_gb},
+                                {"liveVramGb", p.live_vram_gb},
+                                {"resident", p.resident}};
+                };
+                out["effective"]["placement"] = {
+                    {"video", pack(config::video_placement(ex))},
+                    {"image", pack(config::image_placement(ex))},
+                    {"cardGb", card_gb}};
+            }
         }
         // **体检要发网络请求，最坏二十多秒。** Node 那份也是同步等的，
         // 形状要一致就只能照做；Crow 是线程池，占住一个工作线程不影响别的请求。
