@@ -878,3 +878,25 @@ TEST_CASE("最近一次腾地方的判断要留痕，界面上读得到") {
         CHECK_FALSE(d.probed);   // 推算出来的，不是问来的
     }
 }
+
+TEST_CASE("显存宽裕时也要留痕，别让界面显示上一次的旧结论") {
+    // 不记的话，界面上显示的还是更早那次——而那次很可能是"卸了"。
+    // 用户看着以为刚才又卸了一回，实际这次根本没压力。
+    Scheduler s;
+    s.set_budget(100ull << 30);
+
+    SlotSpec a;
+    a.slot = Slot::Image;
+    a.vram_estimate = 10ull << 30;   // 宽裕，静态那步就过
+    a.load = [] {};
+    a.unload = [] {};
+    s.register_slot(a);
+
+    CHECK_FALSE(s.last_room_decision().valid);
+    { auto lease = s.acquire(Slot::Image); }
+    const auto d = s.last_room_decision();
+    REQUIRE(d.valid);
+    CHECK(d.slot == Slot::Image);
+    CHECK(d.kept);
+    CHECK(d.evicted == 0);
+}

@@ -217,7 +217,14 @@ bool Scheduler::make_room(std::size_t need, Slot keep) {
     for (const Entry& e : entries_) {
         if (e.is_loaded) used += e.spec.vram_estimate;
     }
-    if (used + need <= budget_) return true;
+    if (used + need <= budget_) {
+        // **这一支也要留痕。** 不记的话界面上显示的还是更早那次的结论，
+        // 而那次很可能是"卸了"——用户看着以为刚才又卸了一回，实际这次
+        // 根本没压力。留一条"够，没动"比留一条过期的准。
+        last_decision_ = RoomDecision{true,  keep, need, need, 0,
+                                      false, /*kept=*/true, 0};
+        return true;
+    }
 
     // **静态估算说装不下之前，先真去问一眼卡上还空着多少。**
     //
