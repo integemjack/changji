@@ -1,5 +1,6 @@
 #include "setup/source.hpp"
 
+#include <chrono>
 #include <mutex>
 #include <string>
 
@@ -83,7 +84,49 @@ std::string resolve_url(Source source, const std::string& repo,
     }
 }
 
-SourceProbe probe_sources() {
+namespace {
+
+/// 探测结果的缓存。见头文件里为什么要有它。
+struct ProbeCache {
+    std::mutex mu;
+    bool has = false;
+    std::chrono::steady_clock::time_point at{};
+    SourceProbe value;
+};
+ProbeCache& probe_cache() {
+    static ProbeCache c;
+    return c;
+}
+constexpr auto kProbeTtl = std::chrono::minutes(5);
+
+SourceProbe probe_sources_uncached();
+
+}  // namespace
+
+SourceProbe probe_sources(bool force) {
+    ProbeCache& c = probe_cache();
+    if (!force) {
+        std::lock_guard lg(c.mu);
+        if (c.has && std::chrono::steady_clock::now() - c.at < kProbeTtl) {
+            return c.value;
+        }
+    }
+    // **探的时候不拿着锁。** 两次 HEAD 最多 12 秒，拿着锁的话所有并发
+    // 请求全排在后面等，白屏反而更长——那正是这个缓存要治的病。
+    // 代价是偶尔有两个请求同时去探，各自写一次缓存，写的是同一类值，无所谓。
+    SourceProbe fresh = probe_sources_uncached();
+    {
+        std::lock_guard lg(c.mu);
+        c.value = fresh;
+        c.at = std::chrono::steady_clock::now();
+        c.has = true;
+    }
+    return fresh;
+}
+
+namespace {
+
+SourceProbe probe_sources_uncached() {
     SourceProbe out;
 
     const std::string forced = paths::env("CHANGJI_MODEL_SOURCE");
@@ -125,6 +168,8 @@ SourceProbe probe_sources() {
     }
     return out;
 }
+
+}  // namespace
 
 Source detect_source() {
     // **一个进程只探一次。** 探一次要两个 HEAD、最坏 12 秒，

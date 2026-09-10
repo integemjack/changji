@@ -73,6 +73,15 @@ struct SourceProbe {
     double modelscope_s = -1.0;
     double huggingface_s = -1.0;
 };
-SourceProbe probe_sources();
+/// 探一眼两个下载源哪个快。
+///
+/// **结果会缓存住**（默认 5 分钟）。这一步要向两个远端各发一次 HEAD，
+/// 每次最多 6 秒——而 `/bff/setup/state` 每次都调它，前端的路由守卫又
+/// **等着它才渲染**。于是刷新一次页面先白屏三到四秒，网络差的时候十几秒，
+/// 用户报的"刷新页面白屏"就是这个。答案在一次会话里几乎不会变，没有理由
+/// 每次都去问。
+///
+/// `force = true` 跳过缓存重新探（初始化页上让用户手动重试用）。
+SourceProbe probe_sources(bool force = false);
 
 }  // namespace changji::setup

@@ -121,3 +121,34 @@ describe('什么时候把人拦到初始化页', () => {
     expect(await gate.shouldSetup()).toBe(false)
   })
 })
+
+describe('问引擎慢的时候不许把界面吊着', () => {
+  beforeEach(() => {
+    localStorage.clear()
+    setupState.mockReset()
+  })
+
+  it('引擎半天不回：放行，不能让路由守卫一直等', async () => {
+    // 用户报的"刷新页面白屏"就是这个：守卫 await 这一下，Promise 不落地
+    // 界面上一个像素都不画。/bff/setup/state 那边要向两个下载源各发一次
+    // HEAD，实测 3.5~4 秒，网络差时两个各等 6 秒超时。
+    setupState.mockReturnValue(new Promise(() => {}))   // 永远不落地
+    const gate = await freshGate()
+    const t0 = Date.now()
+    await expect(gate.shouldSetup()).resolves.toBe(false)
+    // 得在超时上限附近回来，不能一直挂着
+    expect(Date.now() - t0).toBeLessThan(3000)
+  })
+
+  it('超时不记账：下一次还要再问一遍', async () => {
+    // 记成 false 的话这一整个会话都不再问，而超时多半只是这一下慢，
+    // 不是"不需要初始化"。真缺模型的人就再也拦不住了。
+    setupState.mockReturnValueOnce(new Promise(() => {}))
+    const gate = await freshGate()
+    await expect(gate.shouldSetup()).resolves.toBe(false)
+
+    setupState.mockResolvedValueOnce({ needed: true })
+    await expect(gate.shouldSetup()).resolves.toBe(true)
+    expect(setupState).toHaveBeenCalledTimes(2)
+  })
+})

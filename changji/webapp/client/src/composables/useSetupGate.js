@@ -70,18 +70,45 @@ export function clearSetupCheck() {
  * 接口 404（跑在老的 Node 层后面）都会走到这里，而那时候把人拦在
  * 初始化页上只会让他更不知道发生了什么——那一页自己也读不到清单。
  */
+/**
+ * 问引擎的那一下**必须有个上限**。
+ *
+ * 路由守卫是 await 它的，也就是说这个 Promise 不落地，界面上一个像素都
+ * 不会画——用户看到的就是白屏。而 /bff/setup/state 那边要向两个下载源
+ * 各发一次 HEAD，实测 3.5 到 4 秒，网络差的时候两个各等 6 秒超时。
+ * 用户报的"刷新页面白屏"就是这么来的：不是崩了，是守卫还在等。
+ *
+ * 引擎那边已经把探测结果缓存住了，但**前端不能依赖那个**：老版本的引擎、
+ * 反向代理卡住、连接被中间设备吊着不放，都会让这一下无限期挂着。
+ * 超时了就当"问不到"——那条路本来就是放行，见上面的注释。
+ */
+const ASK_TIMEOUT_MS = 1500
+
+function withTimeout(p, ms) {
+  return Promise.race([
+    p,
+    new Promise((_, reject) =>
+      setTimeout(() => reject(new Error('问引擎超时')), ms)),
+  ])
+}
+
 export async function shouldSetup() {
   if (checked !== undefined) return checked
   try {
-    const state = await api.setupState()
+    const state = await withTimeout(api.setupState(), ASK_TIMEOUT_MS)
     // 正在下就一定回去看进度，跳过标记不管用。
     if (state?.download?.state === 'running') {
       checked = true
       return true
     }
     checked = !setupHandled() && Boolean(state?.needed)
-  } catch {
+  } catch (err) {
+    // **超时不记账。** 记成 false 的话这一整个会话都不会再问，
+    // 而超时多半是这一下慢，不是"不需要初始化"。下次导航再问一遍，
+    // 那时引擎那边的缓存多半已经热了，几毫秒就回来。
+    if (String(err?.message || '').includes('超时')) return false
     checked = false
+    return checked
   }
   return checked
 }
