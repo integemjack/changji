@@ -225,8 +225,18 @@ sd.cpp 认这个给 ComfyUI 做的 LoRA（日志里有 `apply lora at runtime`�
 **推荐这条。** 编一份全开的二进制（SD + CUDA + LLAMA），把
 `[workers].endpoints` 留空，什么都在进程内跑：
 
-    cmake -S cpp -B build-all -DCMAKE_BUILD_TYPE=Release       -DCHANGJI_SD=ON -DCHANGJI_SD_CUDA=ON -DCHANGJI_LLAMA=ON       -DCHANGJI_CUDA_ARCH=120 -DCMAKE_CUDA_ARCHITECTURES=120
+    cmake -S cpp -B build-all -DCMAKE_BUILD_TYPE=Release       -DCHANGJI_SD=ON -DCHANGJI_SD_CUDA=ON -DCHANGJI_LLAMA=ON       -DCHANGJI_CUDA_ARCH=120 -DCMAKE_CUDA_ARCHITECTURES=120       -DCMAKE_CUDA_COMPILER=/usr/local/cuda/bin/nvcc
     cmake --build build-all --target changji -j 64
+
+**编完先验一句**，别急着跑：
+
+    strings build-all/changji | grep -c ggml_cuda      # 要几千，0 就是没编进去
+
+**0 的后果是"能跑但慢一百倍"，而且哪一层都不报错。** 2026-09-10 在这台
+5090 上栽过：手敲配置命令漏了 `-DCMAKE_CUDA_COMPILER`，而这台机器的 nvcc
+不在 PATH 上。CMake 配置成功、编译成功、服务起得来、任务开跑，
+1280×704 的一镜跑了五个多小时才两步——进程占着 52 GB 内存、395% CPU，
+而 `nvidia-smi` 上一个计算进程都没有。现在 CMake 会在配置期直接停下来。
 
     # 配置里
     [workers]

@@ -253,6 +253,39 @@ if(CHANGJI_SD)
         # ggml 读的是 CMAKE_CUDA_ARCHITECTURES。在拉它之前设好，
         # 拉完再设就晚了——那时候目标已经建出来了。
         set(CMAKE_CUDA_ARCHITECTURES "${CHANGJI_CUDA_ARCH}" CACHE STRING "" FORCE)
+
+        # **配置期就要确认 nvcc 找得到，找不到当场停。**
+        #
+        # 不停的话整条链子一声不吭：CMake 配置成功、编译成功、服务起得来、
+        # 任务开跑——只是 ggml 的 CUDA 后端根本没编进去，全部退到 CPU。
+        # 2026-09-10 在 5090 上栽过：手敲配置命令漏了
+        # `-DCMAKE_CUDA_COMPILER`，而那台机器的 nvcc 不在 PATH 上。
+        # 结果是 1280×704 的一镜跑了五个多小时才两步，进程占着 52 GB 内存、
+        # 395% CPU，而 `nvidia-smi` 上一个计算进程都没有。
+        # 查出来靠的是 `strings 二进制 | grep -c ggml_cuda` —— 0 对 2348。
+        #
+        # 已经设过 CMAKE_CUDA_COMPILER 的话就信它（交叉编译、多版本共存
+        # 都可能指到非默认位置）；没设就自己找一遍常见路径。
+        if(NOT CMAKE_CUDA_COMPILER)
+            find_program(CHANGJI_NVCC nvcc
+                HINTS ENV CUDA_PATH ENV CUDA_HOME
+                PATHS /usr/local/cuda/bin /usr/local/cuda-12/bin
+                      /usr/local/cuda-13/bin
+                PATH_SUFFIXES bin)
+            if(CHANGJI_NVCC)
+                set(CMAKE_CUDA_COMPILER "${CHANGJI_NVCC}" CACHE STRING "" FORCE)
+                message(STATUS "CUDA 编译器：${CHANGJI_NVCC}（自动找到的）")
+            else()
+                message(FATAL_ERROR
+                    "开了 CHANGJI_SD_CUDA 但找不到 nvcc。\n"
+                    "**不能就这么编下去**：编出来的二进制没有 CUDA 后端，"
+                    "不报错、只是全在 CPU 上跑，慢一百倍而且很难看出原因。\n"
+                    "  装了 CUDA 的话显式指一下："
+                    "-DCMAKE_CUDA_COMPILER=/usr/local/cuda/bin/nvcc\n"
+                    "  真不想用 CUDA 就关掉：-DCHANGJI_SD_CUDA=OFF")
+            endif()
+        endif()
+
         message(STATUS "CUDA 架构：${CHANGJI_CUDA_ARCH}"
                        "（不对的话会退回 PTX JIT，不报错但很慢）")
     endif()
