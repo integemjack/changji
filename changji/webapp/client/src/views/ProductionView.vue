@@ -220,11 +220,12 @@ async function start(ids = []) {
       }),
     { key: one ? `re:${ids[0]}` : 'start' },
   )
-  if (!started) return
+  if (!started) return false
   // **先把牌子点亮，别等引擎。** 见 sent 的注释：载模型那一分钟里
   // 引擎一个字都不报，不先点亮的话用户看到的是"点了没反应"。
   if (one) sent.value = new Set([...sent.value, ...ids])
   runStore.start()
+  return true
 }
 
 /** 把攒着的那几镜一次性交给引擎。空的就什么都不做。 */
@@ -257,11 +258,29 @@ async function shotAction(s) {
     waiting.value = next
     return
   }
-  if (runStore.running) {
+
+  // **这一段必须在 await 之前跑完。** 连着点两下的话，第二下发生在
+  // 第一下的请求还没回来的时候，那时 runStore.running 还是假
+  // （它要等下一次轮询，最长 1.2 秒），于是第二镜也走了提交那条路——
+  // 而那条路上有两道门把它悄悄吃掉：useAction 的 busy 是**全页共用的**，
+  // 第二次调用直接返回 undefined 连请求都不发；就算发了，引擎那边
+  // `POST /api/run` 有任务跑着时回 409。两种情况都是 `if (!started) return`，
+  // 那一格什么都不会显示——用户报的"排队的并没有显示 wait 状态"就是这个。
+  //
+  // 判据换成"这一轮已经交出去过东西了"（sent 非空），并且**同步**先记上，
+  // 那个窗口就不存在了。
+  if (runStore.running || sent.value.size > 0) {
     waiting.value = new Set([...waiting.value, id])
     return
   }
-  await start([id])
+  sent.value = new Set([...sent.value, id])
+  const ok = await start([id])
+  if (!ok) {
+    // 没提交上（引擎正忙、或者别的浏览器抢先了）。**别丢掉**，
+    // 挪进队列等这一轮完——丢掉的话用户点过的那一下就白点了。
+    sent.value = new Set([...sent.value].filter((x) => x !== id))
+    waiting.value = new Set([...waiting.value, id])
+  }
 }
 
 /**
