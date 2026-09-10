@@ -965,6 +965,33 @@ void run(const config::Settings& settings, const Options& opts) {
             return webapp_route(req);
         });
 
+    // **单段的前端路由也走普通路由。**
+    //
+    // 2026-09-11 实测：catchall **把 body 整个丢了**——`/project` 回
+    // 200 但 0 字节，`/nope.js` 回 404 也是 0 字节，而同样的内容从普通
+    // 路由出去是完整的。上面那条注释记的"从 catchall 出去只有 65389 字节"
+    // 是同一个毛病，当时以为只有大 body 受影响，就把静态资源挪走了、
+    // 把单页应用的兜底留下了。**留下的那半正是白屏**：
+    // 从 `/` 进去能用，一刷新（或者直接打开 /shots）就是空白页，
+    // 而且刷多少次都一样——body 压根没发出来。
+    //
+    // `<string>` 只吃一段，不含斜杠，所以 `/api/run` 这类两段的接口不会被
+    // 它抢走（上面那条注释说的 `<path>` 会吃斜杠，才是不能用的那个）。
+    // 现在所有前端路由都是单段：/project、/shots、/settings……
+    CROW_ROUTE(app, "/<string>")(
+        [fill_webapp](const crow::request& req, const std::string&) {
+            crow::response res;
+            if (!webapp_owns(req.url)) {
+                // 单段的接口路径没匹配上，照常回 404 JSON，别拿 index.html 顶
+                res.code = 404;
+                res.body = R"({"detail":"Not Found"})";
+                res.set_header("Content-Type", "application/json");
+                return res;
+            }
+            fill_webapp(req, res);
+            return res;
+        });
+
     // **兜底用 CROW_CATCHALL_ROUTE，不能用 `/<path>`。**
     // Crow 的 `<path>` 连斜杠一起吃，写成路由的话它会把 `/api/outputs`、
     // `/api/run` 这些全匹配走——对拍当场报出来：Python 回 200，C++ 回 404。
