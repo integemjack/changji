@@ -209,14 +209,23 @@ sd.cpp 认这个给 ComfyUI 做的 LoRA（日志里有 `apply lora at runtime`�
     backend = "local"          # 进程内 Qwen3-TTS，不用起别的服务
 
     [workers]
-    gpu = 7                    # 协调者自己（进程内配音）绑哪张卡
-    endpoints = ["http://127.0.0.1:9001", ...]   # 一张卡一个
+    gpu = 0                    # 主进程自己（配音、大模型）绑哪张卡
+    # endpoints 留空：本机多卡时主进程会自己拉起每张卡一个工作进程。
+    # 只有跨机才填：endpoints = ["http://别的机器:9001", ...]
 
     [llm]
+    backend = "local"          # 进程内跑，不用另起 llama-server
+    # backend = "remote" 时才用下面这几个
     base_url = "http://127.0.0.1:8081/v1"
     model = "qwen3-14b"
     api_key = "none"
     timeout_s = 1800.0
+
+    [tiers]
+    # 画质档位，不填按显存推。设置页改了会写回这里。
+    final_width = 1280
+    final_height = 704
+    final_steps = 6            # 挂了 Turbo LoRA 就 6 步
 
 ## 3. 进程
 
