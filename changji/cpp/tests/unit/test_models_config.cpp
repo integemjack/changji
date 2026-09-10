@@ -941,3 +941,13 @@ TEST_CASE("老实数要和 *_for 的判断对得上") {
     CHECK(w2 == "cpu");
     CHECK(m.video_live_vram_gb(w2, 18.8) <= card);
 }
+
+TEST_CASE("大模型的老实数：权重 + KV 缓存和上下文") {
+    config::ModelsConfig m;
+    // 实测那一组：9 GB 的文件载进去 15.4 GB。
+    CHECK(m.llm_live_vram_gb(9.0) == doctest::Approx(15.4));
+    // 拿不到文件大小就说"没有"，让调用方退回保守估算。
+    // **不许猜**：猜小了是 OOM，退回保守只是多卸一次。
+    CHECK(m.llm_live_vram_gb(0.0) == doctest::Approx(0.0));
+    CHECK(m.llm_live_vram_gb(-1.0) == doctest::Approx(0.0));
+}

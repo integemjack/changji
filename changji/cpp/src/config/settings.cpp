@@ -240,6 +240,9 @@ constexpr double kVideoVae = 5.5;
 constexpr double kImageDecode = 6.6;
 /// 采样缓冲，加上别的上下文的残留——视频上下文卸掉之后 CUDA 还占 1.4 GB。
 constexpr double kImageSlack = 4.0;
+/// 大模型权重之外还要的：KV 缓存 + CUDA 上下文 + 计算缓冲。
+/// 实测 5090 上 Qwen3-14B-Q4_K_M 文件 9 GB、载进去 15.4 GB。
+constexpr double kLlmOverhead = 6.4;
 }  // namespace
 
 std::string ModelsConfig::weights_for(double vram_gb, double model_gb) const {
@@ -289,6 +292,13 @@ double ModelsConfig::image_live_vram_gb(const std::string& placement,
     const double buffer = kImageDecode + kImageSlack;
     if (placement == "cpu") return buffer;
     return model_gb + buffer;
+}
+
+double ModelsConfig::llm_live_vram_gb(double model_gb) const {
+    // 拿不到文件大小就别猜。返回 0 表示"没有老实数"，调用方会退回保守估算——
+    // 猜小了是 OOM，而退回保守只是多卸一次。
+    if (model_gb <= 0.0) return 0.0;
+    return model_gb + kLlmOverhead;
 }
 
 std::vector<std::string> Settings::validate() const {

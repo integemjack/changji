@@ -300,6 +300,17 @@ struct ModelsConfig {
     double video_live_vram_gb(const std::string& placement, double model_gb) const;
     double image_live_vram_gb(const std::string& placement, double model_gb) const;
 
+    /// 大模型载进显存要占多少（GB）。权重全在显存（`use_gpu=true`），
+    /// 再加 KV 缓存、CUDA 上下文和计算缓冲。
+    ///
+    /// 实测（5090）：Qwen3-14B-Q4_K_M 文件 9 GB，载进去 15.4 GB，
+    /// 也就是权重之外还要 ~6.4 GB。
+    ///
+    /// **这个也得有，否则那条"够就不卸"是单向的。** 只给出图出片配老实数
+    /// 的话：点出片时保住了大模型，可回头去写剧本，借 LLM 槽走的还是
+    /// 整份预算那个估值——于是反过来把图像模型卸掉，两边来回踢。
+    double llm_live_vram_gb(double model_gb) const;
+
     /// 采样的两个旋钮，按角色分开。默认值照抄 sd.cpp 上游文档的推荐命令行：
     /// docs/wan.md 给 Wan2.2 TI2V-5B 的是 `--cfg-scale 6.0 --flow-shift 3.0`，
     /// docs/qwen_image.md 给 Qwen-Image 的是 `--cfg-scale 2.5 --flow-shift 3`。

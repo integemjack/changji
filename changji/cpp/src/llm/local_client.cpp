@@ -2,6 +2,7 @@
 
 #include "config/runtime.hpp"
 #include <cstdio>
+#include <filesystem>
 #include <mutex>
 
 #include "infer/llama_chat.hpp"
@@ -76,9 +77,24 @@ void register_llm_slot(std::function<config::Settings()> provider,
     // 常驻：用户要的"默认加载 llm"。显存真不够时才被驱逐。
     spec.residency = infer::Residency::Cached;
     // 估值按整份预算算，和出图出片一致——"同时只装得下一个"是保守但安全的
-    // 假设，而真装得下的时候实时显存那条会救回来（不会白卸）。
+    // 假设。真装得下的时候由下面那个老实数救回来（不会白卸）。
     const double budget = profile.vram_gb > 0 ? profile.vram_gb * 0.9 : 0.0;
     spec.vram_estimate = static_cast<std::size_t>(budget * 1024) * 1024 * 1024;
+    // **老实数：真正要占的显存。** 只在问到了卡上空闲显存时才拿来比。
+    // 不给的话这条"够就不卸"是单向的——出片时保住了大模型，回头写剧本
+    // 借 LLM 槽走的还是整份预算，反过来把图像模型卸掉，两边来回踢。
+    {
+        const config::Settings s = provider();
+        std::error_code ec;
+        const auto p = s.models.resolve(s.models.llm, s.workspace_path());
+        const auto bytes = p.empty() ? 0 : std::filesystem::file_size(p, ec);
+        const double model_gb = (!ec && bytes > 0)
+                                    ? static_cast<double>(bytes) / (1024.0 * 1024 * 1024)
+                                    : 0.0;
+        const double live = s.models.llm_live_vram_gb(model_gb);
+        spec.live_vram_estimate =
+            live > 0 ? static_cast<std::size_t>(live * 1024) * 1024 * 1024 : 0;
+    }
     // **优先级最低，腾地方时先卸它。** 写剧本一集只跑一次，
     // 出图出片每镜都要——重装大模型的代价摊在一集上，比每镜重装小得多。
     spec.evict_priority = 1;
