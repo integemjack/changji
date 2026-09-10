@@ -851,6 +851,22 @@ void register_sd_slots(SettingsProvider raw_provider,
     const std::size_t estimate =
         static_cast<std::size_t>(budget * 1024) * 1024 * 1024;
 
+    // 老实数：这一路跑起来真正要占的显存（常驻权重 + 计算缓冲）。
+    // 只有问到了卡上的空闲显存时才拿它比，见 SlotSpec::live_vram_estimate。
+    // 这里能算是因为 provider 已经把 smart 展开成具体规格了。
+    const auto live_bytes = [](double gb) {
+        return gb > 0 ? static_cast<std::size_t>(gb * 1024) * 1024 * 1024
+                      : static_cast<std::size_t>(0);
+    };
+    const auto model_gb = [](const config::Settings& s, const std::string& entry) {
+        std::error_code ec;
+        const auto p = s.models.resolve(entry, s.workspace_path());
+        const auto bytes = p.empty() ? 0 : fs::file_size(p, ec);
+        return (!ec && bytes > 0)
+                   ? static_cast<double>(bytes) / (1024.0 * 1024 * 1024)
+                   : 0.0;
+    };
+
     // **预算要真的设上。** 不设的话 Scheduler::make_room 第一行就
     // `budget_ == 0 → return true`，谁也不驱逐谁——下面"同时只装得下一个"
     // 那句注释描述的行为从来没生效过。
@@ -878,6 +894,11 @@ void register_sd_slots(SettingsProvider raw_provider,
         spec.slot = Slot::Image;
         spec.residency = Residency::Cached;   // 每个镜头都要，别反复卸
         spec.vram_estimate = estimate;
+        {
+            const config::Settings s = provider();
+            spec.live_vram_estimate = live_bytes(s.models.image_live_vram_gb(
+                s.models.image_weights, model_gb(s, s.models.image)));
+        }
         // 视频模型重新加载更贵（文件大得多），所以图像的优先级更低，
         // 腾地方时先卸它。
         spec.evict_priority = 5;
@@ -899,6 +920,11 @@ void register_sd_slots(SettingsProvider raw_provider,
         spec.slot = Slot::Video;
         spec.residency = Residency::Cached;
         spec.vram_estimate = estimate;
+        {
+            const config::Settings s = provider();
+            spec.live_vram_estimate = live_bytes(s.models.video_live_vram_gb(
+                s.models.weights, model_gb(s, s.models.video)));
+        }
         spec.evict_priority = 9;
         spec.load = [provider, budget_for] {
             const config::Settings s = provider();

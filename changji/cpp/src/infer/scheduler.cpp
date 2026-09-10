@@ -173,7 +173,16 @@ bool Scheduler::make_room(std::size_t need, Slot keep) {
         if (free_gb.has_value()) {
             const auto free_bytes = static_cast<std::size_t>(
                 *free_gb * 1024.0 * 1024.0 * 1024.0);
-            if (need <= free_bytes) return true;
+            // **比的是老实数，不是 need。** need 是按整份预算估的，
+            // 生产里它就等于整卡的九成——拿它来比，另一个槽只要装着，
+            // 空闲显存就永远不够，这条分支等于不存在，
+            // 每次切阶段照样卸。见 SlotSpec::live_vram_estimate。
+            const Entry* self = find(keep);
+            const std::size_t live =
+                (self && self->spec.live_vram_estimate > 0)
+                    ? self->spec.live_vram_estimate
+                    : need;
+            if (live <= free_bytes) return true;
         }
     }
 

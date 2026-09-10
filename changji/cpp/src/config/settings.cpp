@@ -225,6 +225,23 @@ std::vector<std::string> ModelsConfig::validate() const {
     return errs;
 }
 
+// 出图出片那几个实测数，**只有这一份**。
+//
+// 判断"装不装得下"（weights_for / image_weights_for）和回答"要占多少"
+// （*_live_vram_gb）用的是同一组数，抄两份迟早只改一处。
+namespace {
+/// 视频 1280×704 的计算缓冲。5090（32.6 GB）上 H3 18.8 GB 常驻时跑到
+/// 第 46/51 段差 788 MB，也就是 32.6 − 18.8 = 13.8 还差一点，它要 ~14.6。
+/// **已含驱动余量**（那 788 MB 是连驱动一起差的），所以直接和整卡比，不乘 0.9。
+constexpr double kVideoBuffer = 14.6;
+/// VAE 也常驻要再加这么多（放内存的话每镜解码多花 63 秒）。
+constexpr double kVideoVae = 5.5;
+/// 图像 1280×704 的解码缓冲，实测。
+constexpr double kImageDecode = 6.6;
+/// 采样缓冲，加上别的上下文的残留——视频上下文卸掉之后 CUDA 还占 1.4 GB。
+constexpr double kImageSlack = 4.0;
+}  // namespace
+
 std::string ModelsConfig::weights_for(double vram_gb, double model_gb) const {
     if (weights != "smart") return weights;
     // **文本编码器永远放内存。** 它每镜只跑一次（H3 的 Qwen3-VL-32B 实测
@@ -233,16 +250,11 @@ std::string ModelsConfig::weights_for(double vram_gb, double model_gb) const {
     //
     // 拿不到模型大小按装不下处理：猜错是整集出片失败，放内存只是慢。
     if (model_gb <= 0.0) return "cpu";
-    // **计算缓冲直接绑实测。** 5090（32.6 GB）上 H3 18.8 GB 扩散常驻时，
-    // 跑到第 46/51 段差 788 MB——也就是留给缓冲的 32.6 − 18.8 = 13.8 GB
-    // 还差一点，它要 ~14.6 GB。这个数是 1280×704 量的（换分辨率会变，
-    // 但这张卡上也只跑这一档）。缓冲已经把驱动余量算在内（那 788 MB 是
-    // 连驱动一起差的），所以直接和整卡显存比，不再乘 0.9。
-    constexpr double kBuffer = 14.6;
-    if (model_gb + kBuffer > vram_gb) return "cpu";   // 权重都常驻不下
+    // 缓冲用 kVideoBuffer，那个数是怎么来的写在它头上。
+    if (model_gb + kVideoBuffer > vram_gb) return "cpu";   // 权重都常驻不下
     // VAE 也常驻要再加 5.5 GB（放内存每镜解码多花 63 秒）。既要真装得下，
     // 也要过 vae_vram_min_gb 那道门槛。
-    const bool vae_fits = model_gb + kBuffer + 5.5 <= vram_gb;
+    const bool vae_fits = model_gb + kVideoBuffer + kVideoVae <= vram_gb;
     return (vram_gb >= vae_vram_min_gb && vae_fits) ? "te=cpu" : "te=cpu,vae=cpu";
 }
 
@@ -253,9 +265,30 @@ std::string ModelsConfig::image_weights_for(double vram_gb,
     // 别的上下文的残留（视频上下文卸掉之后 CUDA 还占 1.4 GB）约 4 GB。
     // 卡按九成算——那一成是驱动和别的程序的。拿不到模型大小按装不下处理：
     // 猜错的代价是六镜首帧全废，而放内存只是慢。
-    const double need = model_gb + 6.6 + 4.0;
+    const double need = model_gb + kImageDecode + kImageSlack;
     if (model_gb <= 0.0) return "cpu";
     return vram_gb * 0.9 >= need ? "te=cpu,vae=cpu" : "cpu";
+}
+
+// 常驻权重：规格里写了 vae=cpu 就只有扩散那份，写了整个 "cpu" 就一份都不常驻。
+// 缓冲不管放哪都要，所以它在两个函数里都是无条件加上的。
+double ModelsConfig::video_live_vram_gb(const std::string& placement,
+                                        double model_gb) const {
+    if (placement == "cpu") return kVideoBuffer;
+    // te=cpu：文本编码器在内存，扩散和 VAE 都常驻。
+    if (placement == "te=cpu") return model_gb + kVideoBuffer + kVideoVae;
+    // te=cpu,vae=cpu：只有扩散常驻。
+    // auto / 别的自定义规格按"全常驻"算——宁可估高，估高只是多卸一次，
+    // 估低是 OOM。
+    if (placement == "te=cpu,vae=cpu") return model_gb + kVideoBuffer;
+    return model_gb + kVideoBuffer + kVideoVae;
+}
+
+double ModelsConfig::image_live_vram_gb(const std::string& placement,
+                                        double model_gb) const {
+    const double buffer = kImageDecode + kImageSlack;
+    if (placement == "cpu") return buffer;
+    return model_gb + buffer;
 }
 
 std::vector<std::string> Settings::validate() const {

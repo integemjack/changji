@@ -284,6 +284,22 @@ struct ModelsConfig {
     /// `model_gb` 是图像模型文件的大小，拿不到就传 0（按装不下处理）。
     std::string image_weights_for(double vram_gb, double model_gb) const;
 
+    /// 这一路跑起来时**真正要占的显存**（GB）：常驻权重 + 计算缓冲。
+    ///
+    /// 和上面两个 `*_for` 是同一个数的两面——它们拿这个数判断"装不装得下"，
+    /// 这两个把它直接说出来。所以常数只有一份，改一处两边一起动。
+    ///
+    /// **给谁用的：调度器的实时显存那条路。** `SlotSpec::vram_estimate` 是
+    /// 按整份预算估的（"同时只装得下一个"），保守但不真实：卡上真空着的时候
+    /// 拿它去问"够不够"，答案永远是不够——预算就是整卡的九成，另一个槽一装上
+    /// 就再也凑不出第二份。结果是每次点出片都把大模型卸掉，
+    /// 而用户要的是"如果显存够就不用清理"。
+    ///
+    /// 这两个给的是老实数，专门用在那条问卡的分支上。
+    /// `placement` 传展开后的规格（`weights_for` / `image_weights_for` 的返回值）。
+    double video_live_vram_gb(const std::string& placement, double model_gb) const;
+    double image_live_vram_gb(const std::string& placement, double model_gb) const;
+
     /// 采样的两个旋钮，按角色分开。默认值照抄 sd.cpp 上游文档的推荐命令行：
     /// docs/wan.md 给 Wan2.2 TI2V-5B 的是 `--cfg-scale 6.0 --flow-shift 3.0`，
     /// docs/qwen_image.md 给 Qwen-Image 的是 `--cfg-scale 2.5 --flow-shift 3`。
