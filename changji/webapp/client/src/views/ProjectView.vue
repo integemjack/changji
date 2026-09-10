@@ -97,7 +97,7 @@ async function loadVideo() {
   } catch (err) {
     // 读不到不该让整页红——项目可能是老的，还没有这一节。
     // 那时候按默认值显示，用户存一次就写进去了。
-    video.value = { orientation: 'portrait', quality: '720p', width: 704, height: 1280 }
+    video.value = { orientation: 'portrait', quality: '720p', width: 544, height: 928 }
     savedVideo.value = ''
     ui.warn(`读不到画面设置，按默认显示：${err.message}`)
   }
@@ -340,7 +340,7 @@ function progressOf(p) {
             画面
             <span class="pill pill--neutral">
               {{ video.orientation === 'landscape' ? '横屏' : '竖屏' }}
-              · {{ video.quality === '2k' ? '2K' : '720p' }}
+              · {{ video.quality === '2k' ? '2K' : '标准' }}
             </span>
           </div>
           <div class="card__sub">
@@ -361,14 +361,18 @@ function progressOf(p) {
           <label class="field">
             <span class="field__label">清晰度</span>
             <select v-model="video.quality" class="select">
-              <option value="720p">720p</option>
-              <option value="2k">2K</option>
+              <!-- **取值仍然是 "720p"**：那是存在每个项目 changji.toml 里的
+                   字符串，改了名老项目就读不出来。显示的是真实尺寸——
+                   2026-09-10 把它从 704×1280 改成 544×928 之后，
+                   再叫 "720p" 就是假的（720p 是 720 行）。 -->
+              <option value="720p">标准（544×928）</option>
+              <option value="2k">2K（2560×1440）</option>
             </select>
             <span class="field__hint">
               出来是 {{ sizeText }}。
               <template v-if="video.quality === '2k'">
                 <strong>2K 很吃显存</strong>，一张 32 GB 的卡跑不动——
-                那时候要么换大卡，要么出 720p 再单独走一次超分。
+                那时候要么换大卡，要么出标准档再单独走一次超分。
               </template>
             </span>
           </label>

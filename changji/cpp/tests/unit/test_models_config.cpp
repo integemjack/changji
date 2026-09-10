@@ -704,7 +704,7 @@ TEST_CASE("[tiers]：填了以填的为准，没填按显存推") {
 
 TEST_CASE("[video]：横竖屏加清晰度，宽高算出来") {
     // **用户要决定的是"竖屏还是横屏、720p 还是 2K"**，不是
-    // "1280 还是 1440、704 还是 720"。中间那层换算不该甩给用户——
+    // "928 还是 1440、544 还是 920"。中间那层换算不该甩给用户——
     // 填错一个不是 32 倍数的数，报错要到出图那一步才出现。
     //
     // 这一节放在**项目目录的 changji.toml** 里，一部剧一份：一台机器上
@@ -714,14 +714,15 @@ TEST_CASE("[video]：横竖屏加清晰度，宽高算出来") {
         const config::VideoConfig v;
         CHECK(v.orientation == "portrait");
         CHECK(v.quality == "720p");
-        // **短边是 704 不是 720**：720 ÷ 32 除不尽，而 32 对齐是硬约束。
-        // 704 是实测跑通的那个尺寸。
-        CHECK(v.size() == std::pair<int, int>{704, 1280});
+        // **标准档 544×928**（2026-09-10 用户定的）。920 ÷ 32 = 28.75
+        // 除不尽，取最近的 928 = 32 × 29；544 = 32 × 17。
+        // 32 对齐是硬约束，不对齐 sd.cpp 直接出图失败。
+        CHECK(v.size() == std::pair<int, int>{544, 928});
     }
     SUBCASE("横屏把长短边调过来") {
         config::VideoConfig v;
         v.orientation = "landscape";
-        CHECK(v.size() == std::pair<int, int>{1280, 704});
+        CHECK(v.size() == std::pair<int, int>{928, 544});
         v.quality = "2k";
         CHECK(v.size() == std::pair<int, int>{2560, 1440});
     }
@@ -823,8 +824,8 @@ TEST_CASE("这一轮真正会用的规格：出片跟 Turbo，首帧不跟") {
         CHECK_FALSE(e.turbo);
         CHECK(e.final_steps == 28);
         CHECK(e.frame_steps == 28);
-        CHECK(e.width == 704);
-        CHECK(e.height == 1280);
+        CHECK(e.width == 544);      // 标准档 2026-09-10 从 704×1280 改成
+        CHECK(e.height == 928);     // 544×928，见 VideoConfig::size()
     }
 
     SUBCASE("挂了 Turbo：出片 6 步，首帧还是档位表那个数") {

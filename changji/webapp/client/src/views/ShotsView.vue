@@ -111,7 +111,7 @@ const tagline = computed(() => {
   const v = video.value
   const size = v
     ? `${v.orientation === 'landscape' ? '横屏' : '竖屏'} ${
-        v.quality === '2k' ? '2K' : '720p'
+        v.quality === '2k' ? '2K' : '标准'
       } · ${v.width}×${v.height}`
     : ''
   if (!shots.value.length) return size || '把这一集拆成一个个镜头，然后拍出来'
