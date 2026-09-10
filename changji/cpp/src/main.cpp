@@ -271,8 +271,20 @@ bool cpu_ok(std::string& missing) {
 }  // namespace
 
 int main(int argc, char** argv) {
-    // **先看 CPU 撑不撑得住，再干别的。** 见 cpu_ok。
-    if (std::string missing; !cpu_ok(missing)) {
+    // **--version 和 --help 要放行。**
+    //
+    // 那两条是"任何情况下都该答得上来"的。CPU 撑不住的机器上也一样——
+    // 报故障时第一句话就是版本号，而"跑不了"和"跑不了的是哪一版"是两件事。
+    // 2026-09-11 实测发现的：新包在没有 AVX2 的机器上 `--version` 打印的是
+    // 那段 CPU 说明，版本号反而问不到了。
+    bool asking_meta = false;
+    for (int i = 1; i < argc; ++i) {
+        const std::string a = argv[i];
+        if (a == "--version" || a == "--help" || a == "-h") asking_meta = true;
+    }
+
+    // **再看 CPU 撑不撑得住。** 见 cpu_ok。
+    if (std::string missing; !asking_meta && !cpu_ok(missing)) {
         std::cerr
             << "这台机器的 CPU 不支持 " << missing << "，跑不了这个版本。\n"
             << "发布版是按 AVX2 基线编的（2013 年的 Haswell 之后都有）。\n"
