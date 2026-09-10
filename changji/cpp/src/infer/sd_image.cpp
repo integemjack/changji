@@ -282,15 +282,31 @@ void progress_trampoline(int step, int steps, float time, void* /*data*/) {
             }
         }
         if (first) {
-            const auto free_gb = models::free_vram_gb();
-            const auto prof = models::HardwareProfile::detect(std::nullopt);
-            const double total_gb =
-                prof.gpu.has_value() ? prof.gpu->vram_gb() : 0.0;
-            if (free_gb.has_value() && total_gb > 0.0) {
-                const double used_gb = total_gb - *free_gb;
-                if (used_gb > 0.0) {
-                    scheduler().record_measured_vram(
-                        slot, static_cast<std::size_t>(used_gb * 1024) * 1024 * 1024);
+            // **只在这个槽是唯一装着的时候才记。**
+            //
+            // 量的是"总量 − 空闲"，也就是**整张卡上被占掉的**，不是这个槽
+            // 单独占的。别的槽（大模型 15 GB）同时装着的话，那 15 GB 会被
+            // 算到这个槽头上，于是它的上限被抬高，以后每次都以为自己要
+            // 90 GB——该留的时候反而去卸别人。
+            //
+            // 只在独占时记，数就是干净的。代价是记得少一点：开机后第一次
+            // 出片通常正好是独占（别的还没装），够用了。
+            // **这里不能 return**：底下还有取消检查（sd_cancel_generation
+            // 就是在这个回调里发的），提前返回等于让「停止」在这一步失灵。
+            const auto loaded = scheduler().loaded_slots();
+            const bool alone = loaded.size() == 1 && loaded.front() == slot;
+            if (alone) {
+                const auto free_gb = models::free_vram_gb();
+                const auto prof = models::HardwareProfile::detect(std::nullopt);
+                const double total_gb =
+                    prof.gpu.has_value() ? prof.gpu->vram_gb() : 0.0;
+                if (free_gb.has_value() && total_gb > 0.0) {
+                    const double used_gb = total_gb - *free_gb;
+                    if (used_gb > 0.0) {
+                        scheduler().record_measured_vram(
+                            slot,
+                            static_cast<std::size_t>(used_gb * 1024) * 1024 * 1024);
+                    }
                 }
             }
         }

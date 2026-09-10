@@ -2,7 +2,10 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <cstdio>
 #include <stdexcept>
+
+#include "util/paths.hpp"
 
 namespace changji::infer {
 
@@ -213,9 +216,22 @@ bool Scheduler::make_room(std::size_t need, Slot keep) {
     // 而卡上可能一直空着一大半。
     //
     // 问不到就退回估算。**"问不到"不等于"没空间"**，但那时也没有更好的依据。
+    const bool dbg = !paths::env("CHANGJI_DEBUG_VRAM").empty();
     const FreeVramProbe probe = free_vram_;
+    if (dbg) {
+        std::fprintf(stderr,
+                     "[vram] make_room slot=%s used=%.1fG need=%.1fG budget=%.1fG probe=%s\n",
+                     to_string(keep), used / 1073741824.0, need / 1073741824.0,
+                     budget_ / 1073741824.0, probe ? "有" : "没装");
+    }
     if (probe) {
         const auto free_gb = probe();
+        if (dbg) {
+            std::fprintf(stderr, "[vram]   探到空闲=%s\n",
+                         free_gb.has_value()
+                             ? (std::to_string(*free_gb) + "G").c_str()
+                             : "问不到");
+        }
         if (free_gb.has_value()) {
             const auto free_bytes = static_cast<std::size_t>(
                 *free_gb * 1024.0 * 1024.0 * 1024.0);
@@ -235,6 +251,11 @@ bool Scheduler::make_room(std::size_t need, Slot keep) {
                 // 每次现问：模型可能已经被换过了。见 SlotSpec::live_vram。
                 const std::size_t got = self->spec.live_vram();
                 if (got > 0) live = got;
+            }
+            if (dbg) {
+                std::fprintf(stderr, "[vram]   老实数=%.1fG 空闲=%.1fG -> %s\n",
+                             live / 1073741824.0, free_bytes / 1073741824.0,
+                             live <= free_bytes ? "够，不卸" : "不够，要卸");
             }
             if (live <= free_bytes) return true;
         }
