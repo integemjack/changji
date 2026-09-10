@@ -16,6 +16,7 @@
 // **进不去首页是有意的**（只在必需的那几组缺东西时）。可以跳过，
 // 但默认拦一下——一个什么都跑不了的首页不比这一页有用。
 
+#include <filesystem>
 #include <string>
 
 #include <nlohmann/json.hpp>
@@ -50,6 +51,16 @@ ApiResult post_setup_cancel();
 ///
 /// 编剧和配音有另一条出路：接外面的服务。那时候本机一个模型文件都没有
 /// 也算配齐了——**不认这一条的话，用云端大模型的人会被永远挡在这一页上**。
+/// 这个模型文件还在下载中途吗（旁边有没有 aria2 的控制文件）。
+///
+/// **光比大小是判不出来的**：aria2c 一开始就把文件按最终大小整个预分配好，
+/// 再往里填。所以下到 10% 的时候 `file_size` 返回的正好是清单里那个数，
+/// "大小对上了 = 下完了"这条就被骗过去。2026-09-10 真被坑到：61.7 GB 的
+/// bf16 才下了 6 GB，初始化页显示已完成，用户选了它，出片直接花屏——
+/// 而且**没有任何报错**，safetensors 的头在文件开头早下下来了，解析得
+/// 好好的，错的是后面那些还是零的张量。
+bool download_in_progress(const std::filesystem::path& model_file);
+
 bool group_satisfied(const setup::Group& g, const config::Settings& settings);
 
 /// 把 `config_patch` 那种 patch 应用到内存里的配置。

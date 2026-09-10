@@ -185,3 +185,43 @@ TEST_CASE("webapp 连的那个 WebSocket 地址，C++ 这边得有") {
         CHECK(have);
     }
 }
+
+TEST_CASE("要文件还是要路由，得分得开") {
+    // 分不开的话「找不到就回 index.html」会把缺失的资源也变成一页 HTML，
+    // 而且是 200——浏览器按 <script> 取回一页 HTML，解析当场失败、页面全白，
+    // 可每一个请求都是 200，什么都提示不出来。2026-09-10 排查白屏卡在这。
+    SUBCASE("前端路由：没有扩展名") {
+        CHECK_FALSE(http::wants_file("shots"));
+        CHECK_FALSE(http::wants_file("project"));
+        CHECK_FALSE(http::wants_file(""));
+        CHECK_FALSE(http::wants_file("settings/"));
+    }
+    SUBCASE("具体文件：带扩展名") {
+        CHECK(http::wants_file("index.html"));
+        CHECK(http::wants_file("assets/index-Abc123.js"));
+        CHECK(http::wants_file("assets/ShotsView-x9.css"));
+        CHECK(http::wants_file("favicon.ico"));
+        CHECK(http::wants_file("fonts/x.woff2"));
+    }
+    SUBCASE("以点开头的不当资源") {
+        CHECK_FALSE(http::wants_file(".gitkeep"));
+    }
+    SUBCASE("点在结尾也不算") {
+        CHECK_FALSE(http::wants_file("weird."));
+    }
+}
+
+TEST_CASE("缓存头：index.html 每次核，带哈希的资源随便缓存") {
+    // index.html 里写死了带哈希的资源名。不发 no-cache 的话浏览器会按
+    // 启发式规则自己缓存它，换一版之后照着旧 html 去取已经不存在的资源，
+    // **刷新也没用**——刷新拿到的还是缓存里那份 html。
+    CHECK(http::webapp_cache_control("index.html") == "no-cache");
+    CHECK(http::webapp_cache_control("") == "no-cache");
+
+    const std::string a = http::webapp_cache_control("assets/index-Abc123.js");
+    CHECK(a.find("immutable") != std::string::npos);
+    CHECK(a.find("max-age=") != std::string::npos);
+
+    // assets 底下的目录形式不是资源，别给长缓存
+    CHECK(http::webapp_cache_control("assets/") == "no-cache");
+}

@@ -26,6 +26,13 @@ using setup::Item;
 using setup::kNoneOption;
 using setup::Option;
 
+bool download_in_progress(const fs::path& p) {
+    std::error_code ec;
+    fs::path ctrl = p;
+    ctrl += ".aria2";
+    return fs::exists(ctrl, ec);
+}
+
 namespace {
 
 std::uint64_t size_of(const fs::path& p) {
@@ -33,6 +40,8 @@ std::uint64_t size_of(const fs::path& p) {
     const auto n = fs::file_size(p, ec);
     return ec ? 0 : static_cast<std::uint64_t>(n);
 }
+
+
 
 /// 这个目录（或者它最近的一个存在的上级）所在盘还剩多少。
 ///
@@ -61,10 +70,16 @@ json option_json(const Option& o, const fs::path& models_dir, double vram_gb) {
     std::uint64_t have = 0;
     bool complete = !o.files.empty();
     for (const auto& f : o.files) {
-        const std::uint64_t on_disk = size_of(models_dir / paths::from_utf8(f.name));
-        const bool present = f.bytes > 0 && on_disk == f.bytes;
+        const fs::path full = models_dir / paths::from_utf8(f.name);
+        const std::uint64_t on_disk = size_of(full);
+        // 还在下就一律不算齐，哪怕大小已经对上了（预分配，见上面）。
+        const bool present =
+            f.bytes > 0 && on_disk == f.bytes && !download_in_progress(full);
         if (present) have += f.bytes;
-        else if (on_disk > 0 && on_disk < f.bytes) have += on_disk;  // 下了一半的也算上
+        // 下了一半的也算上。**预分配的那种算不出来**：文件已经是最终大小，
+        // 真下了多少只有 .aria2 里的位图知道。那种情况这里记 0，
+        // 界面上进度偏小——比显示"已完成"好，后者会让人拿一份零文件去出片。
+        else if (on_disk > 0 && on_disk < f.bytes) have += on_disk;
         if (!present) complete = false;
         files.push_back({{"name", f.name},
                          {"note", f.note},

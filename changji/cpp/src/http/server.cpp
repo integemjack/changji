@@ -912,10 +912,23 @@ void run(const config::Settings& settings, const Options& opts) {
         }
         const std::string* body = find_webapp_file(rel);
         std::string name = rel;
+        if (!body && wants_file(rel)) {
+            // **要的是具体文件却没有，就老老实实 404。**
+            //
+            // 以前这里也回 index.html，代价很大：浏览器按 <script> 去取
+            // assets/index-旧哈希.js，拿回来的是一整页 HTML，还是 200。
+            // 解析当场失败、页面全白，而 F12 里每一个请求都是 200，
+            // 日志里也全是 200 —— 没有任何东西提示出了错。
+            // 换一版之后浏览器还拿着旧 index.html 的时候就是这个场面。
+            res.code = 404;
+            res.body = "没有这个文件：" + rel;
+            res.set_header("Content-Type", "text/plain; charset=utf-8");
+            res.set_header("Cache-Control", "no-store");
+            return;
+        }
         if (!body) {
-            // **找不到就回 index.html**：单页应用的深链接靠这个。
-            // 直接打开 /production 这种地址，服务端并没有对应文件，
-            // 回 404 的话用户看到的是一片空白而不是界面。
+            // 前端路由（/shots 这种，没有扩展名）回 index.html：
+            // 单页应用的深链接靠这个。
             body = find_webapp_file("index.html");
             name = "index.html";
         }
@@ -930,6 +943,8 @@ void run(const config::Settings& settings, const Options& opts) {
         res.code = 200;
         res.body = *body;
         res.set_header("Content-Type", webapp_content_type(name));
+        // 带哈希的资源长期缓存，index.html 每次核一遍。见 webapp_cache_control。
+        res.set_header("Cache-Control", webapp_cache_control(name));
     };
 
     const auto webapp_route = [fill_webapp](const crow::request& req) {

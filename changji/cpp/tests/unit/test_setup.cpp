@@ -22,6 +22,8 @@
 #include <doctest/doctest.h>
 
 #include <algorithm>
+#include <filesystem>
+#include <fstream>
 #include <map>
 #include <set>
 #include <string>
@@ -413,4 +415,35 @@ TEST_CASE("进度快照能转成 JSON，字段一个都不少") {
         CAPTURE(key);
         CHECK(j.contains(key));
     }
+}
+
+TEST_CASE("下到一半的模型不能算齐——aria2c 会把文件先按最终大小占好") {
+    // 2026-09-10 真栽在这上面：61.7 GB 的 bf16 才下了 6 GB，而 aria2c
+    // 一开始就把整个文件预分配了，于是 file_size 返回的**正好是**清单里
+    // 那个字节数。"大小对上 = 下完了"这条被骗过去，初始化页显示已完成，
+    // 用户选了它去出片——花屏。而且一句报错都没有：safetensors 的头在
+    // 文件开头，早下下来了，解析得好好的，错的是后面还是零的那些张量。
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    const fs::path tmp =
+        fs::temp_directory_path() / "changji_dl_test";
+    fs::remove_all(tmp, ec);
+    fs::create_directories(tmp, ec);
+
+    const fs::path model = tmp / "big.safetensors";
+    { std::ofstream f(model, std::ios::binary); f << "xxxx"; }
+
+    SUBCASE("没有控制文件：不在下载中") {
+        CHECK_FALSE(http::download_in_progress(model));
+    }
+    SUBCASE("有 .aria2 控制文件：还在下，哪怕大小已经对上") {
+        fs::path ctrl = model;
+        ctrl += ".aria2";
+        { std::ofstream f(ctrl, std::ios::binary); f << "ctrl"; }
+        CHECK(http::download_in_progress(model));
+    }
+    SUBCASE("文件压根不存在也不算在下载") {
+        CHECK_FALSE(http::download_in_progress(tmp / "根本没有这个.gguf"));
+    }
+    fs::remove_all(tmp, ec);
 }

@@ -95,4 +95,27 @@ bool webapp_owns(std::string_view request_path) {
     return true;
 }
 
+bool wants_file(std::string_view rel_path) {
+    // 只看最后一段有没有点。`/assets/index-abc.js` 有，`/shots` 没有。
+    const std::size_t slash = rel_path.find_last_of('/');
+    const std::string_view last =
+        slash == std::string_view::npos ? rel_path : rel_path.substr(slash + 1);
+    if (last.empty()) return false;               // 目录形式，当路由
+    const std::size_t dot = last.find_last_of('.');
+    if (dot == std::string_view::npos) return false;
+    if (dot == 0) return false;                   // ".gitkeep" 这种，不当资源
+    return dot + 1 < last.size();                 // 点后面得真有东西
+}
+
+std::string webapp_cache_control(std::string_view rel_path) {
+    // 带内容哈希的资源：内容一变文件名就变，可以往死里缓存。
+    // Vite 出来的是 `assets/名字-哈希.js`。
+    if (rel_path.rfind("assets/", 0) == 0 && wants_file(rel_path)) {
+        return "public, max-age=31536000, immutable";
+    }
+    // 其余的（首要是 index.html）每次都回来核一遍。
+    // **不能用 no-store**：那样连 304 都不走，每次整包重下。
+    return "no-cache";
+}
+
 }  // namespace changji::http

@@ -150,7 +150,15 @@ TEST_CASE("模型配置能从 toml 读出来") {
         //
         // Linux/BSD 认 XDG_CONFIG_HOME，Windows 认 LOCALAPPDATA，
         // 都指到一个空的临时目录，用户级那份就等于不存在。
-        const fs::path empty_cfg = tmp / "空配置";
+        // **这个隔离目录用纯 ASCII 名。** 外面那个 tmp 故意带中文（这条
+        // 用例本来就要测中文路径能不能一路走到底），但那是给「模型库」用的。
+        // 把带中文的路径塞进 LOCALAPPDATA 会在 Windows 上抛
+        // "No mapping for the Unicode character exists in the target
+        // multi-byte code page"——环境变量那条路上有一步窄字符转换，
+        // 而这跟这条用例要测的东西没关系，别把两件事绞在一起。
+        const fs::path empty_cfg =
+            fs::temp_directory_path() / "changji_empty_cfg_for_test";
+        fs::remove_all(empty_cfg, ec);
         fs::create_directories(empty_cfg, ec);
 #ifdef _WIN32
         const changji::test::ScopedEnv iso("LOCALAPPDATA",

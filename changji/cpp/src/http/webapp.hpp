@@ -49,4 +49,29 @@ std::string normalize_webapp_path(std::string_view request_path);
 /// 直接打开 /production 这种地址才不会 404）。
 bool webapp_owns(std::string_view request_path);
 
+/// 这个路径要的是一个**具体文件**，还是一条前端路由。
+///
+/// 分这一刀是因为「找不到就回 index.html」不能一视同仁：
+///   `/shots`            —— 路由，回 index.html 是对的（深链接靠它）
+///   `/assets/index-A.js` —— 文件，找不到就该 404
+///
+/// **回 index.html 的代价在第二种上是致命的**：浏览器按 `<script>` 去取
+/// 那个 js，拿回来的却是一整页 HTML，还是 200。解析当场失败，页面一片空白，
+/// 而**没有任何一个请求是失败的**——F12 里全是 200，日志里也全是 200。
+/// 2026-09-10 排查"刷新就白屏"时就卡在这上面。
+///
+/// 判据是**有没有扩展名**。前端路由都是 /shots、/project 这种光秃秃的路径；
+/// 带 .js/.css/.png/.woff2 的一律是文件。
+bool wants_file(std::string_view rel_path);
+
+/// 这个文件该怎么缓存。返回值直接当 `Cache-Control` 发出去。
+///
+/// **index.html 必须每次回源核一遍**（no-cache）。不发这个头的话浏览器
+/// 会按启发式规则自己缓存，而 index.html 里写死了带哈希的资源名——
+/// 换一版之后旧的那些文件已经不在包里了，浏览器却还照着旧 html 去取，
+/// 刷新也没用（刷新拿到的还是缓存里那份 html）。用户看到的就是白屏。
+///
+/// 带哈希的资源正相反：内容变了名字就变了，可以放心长期缓存。
+std::string webapp_cache_control(std::string_view rel_path);
+
 }  // namespace changji::http
