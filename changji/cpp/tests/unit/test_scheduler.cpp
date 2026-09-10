@@ -591,3 +591,40 @@ TEST_CASE("老实数只走问到卡那条路，静态那条一点不放松") {
         CHECK(llm_unloads == 1);
     }
 }
+
+TEST_CASE("配音显存不够时，抛出来的就是那条带出路的话") {
+    // 消息内容上面测过了，这一条测的是**够不够得着**：
+    // out_of_vram_message 只在 acquire 失败时抛，所以必须真有人借这个槽。
+    // 2026-09-10 之前没人借——tts_backends 直接 LlamaTts::load 绕开了调度器，
+    // 那段"改成 [tts].backend = http 接外部服务"的话是死代码，用户看不到。
+    Scheduler s;
+    s.set_budget(4ull << 30);
+
+    SlotSpec big;
+    big.slot = Slot::Video;
+    big.vram_estimate = 4ull << 30;
+    big.load = [] {};
+    big.unload = [] {};
+    s.register_slot(big);
+
+    SlotSpec tts;
+    tts.slot = Slot::TTS;
+    tts.vram_estimate = 3ull << 30;
+    tts.load = [] {};
+    tts.unload = [] {};
+    s.register_slot(tts);
+
+    // 视频槽借着不放，腾不出地方。
+    auto held = s.acquire(Slot::Video);
+    std::string msg;
+    try {
+        auto lease = s.acquire(Slot::TTS);
+        FAIL("显存不够却借到了");
+    } catch (const std::exception& e) {
+        msg = e.what();
+    }
+    CHECK(msg.find("base_url") != std::string::npos);
+    CHECK(msg.find("http") != std::string::npos);
+    // 别把人指到一个已经拆掉的取值上。
+    CHECK(msg.find("comfy") == std::string::npos);
+}
