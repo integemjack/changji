@@ -553,13 +553,12 @@ function scrollTo(id) {
                   placeholder="后端选 http 时必填"
                 />
               </label>
-              <label class="field">
-                <span class="field__label">引擎</span>
-                <input v-model="conn.tts_engine" class="input mono" placeholder="cosyvoice3" />
-                <span class="field__hint">
-                  默认 CosyVoice 3，Apache 2.0 可商用。别换 Qwen3-TTS，它在 transformers 5.x 下加载失败。
-                </span>
-              </label>
+              <!-- **[tts].engine 那一项没了。** 它是 ComfyUI 时代的字段
+                   （选哪个 TTS 节点），而两条现存后端都不读它：进程内跑的是
+                   [models].tts 指的那份权重，HTTP 后端发出去的请求体里根本
+                   没有这个字段（Python 那版也一样，两边一致）。
+                   配置和接口里保留是为了不破契约，提交时原样带回去；
+                   界面上摆着只会让人调了没反应——那比没有这一项更糟。 -->
               <label class="field">
                 <span class="field__label">时长容差（秒）</span>
                 <input
