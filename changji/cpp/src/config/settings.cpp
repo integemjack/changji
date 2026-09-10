@@ -590,6 +590,17 @@ constexpr const char* kDefaultToml = R"(# 场记配置文件
 # 显存覆盖。推理服务跑在另一台机器时本机探测不到显卡，用它手动指定。
 # vram_gb_override = 16
 
+[video]
+# **这一节写在项目目录的 changji.toml 里**，一部剧一份——一台机器上可以
+# 同时有竖屏短剧和横屏片子，画幅是这部剧的属性不是这台机器的属性。
+#   orientation = "portrait" | "landscape"
+#   quality     = "720p" | "2k"
+# 宽高由这两项算出来（720p 短边是 704 不是 720：32 对齐是硬约束）。
+# **2K 一张 32 GB 的卡跑不动**，那时候要么换大卡，要么出 720p 再
+# `changji --upscale`。这里不会悄悄降档。
+# orientation = "portrait"
+# quality = "720p"
+
 [tiers]
 # 画质档位。**不填就按显存推**（见 models/hardware.cpp 的档位表），
 # 填了就以填的为准，一项一项来。分辨率要是 32 的倍数（Wan 的潜空间对齐）。

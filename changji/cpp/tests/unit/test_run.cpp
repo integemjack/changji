@@ -146,8 +146,31 @@ TEST_CASE("开跑立刻返回，把队列一起给出来") {
     CHECK(r.body["started"] == true);
     CHECK(r.body["queue"] == json::array({"ep01"}));
     CHECK(fakes.frames.size() == 2);
-    // 草稿档加成片档，两镜各两次
-    CHECK(fakes.videos.size() == 4);
+    // **两镜各一次，不是各两次。** 草稿档默认不跑了——挂 Turbo LoRA
+    // 之后两档画质拉不开差距，那一遍是白跑（一集 54 分钟）。
+    // 想要两档的显式传 skip_draft: false，下面那条用例钉的就是它。
+    CHECK(fakes.videos.size() == 2);
+}
+
+TEST_CASE("草稿档：默认不跑，显式要才跑") {
+    // 这条把"默认值是什么"钉死。默认改过一次（2026-09-10），
+    // 而默认值这种东西改了不会有任何编译错误——只有用例会红。
+    quiesce();
+    const auto store = make_store("草稿默认", {{"ep01", 2}});
+    Fakes fakes;
+
+    SUBCASE("默认：只出成片档") {
+        run_and_wait({{"project", project_arg(store)}, {"episode_id", "ep01"}},
+                     fakes);
+        CHECK(fakes.videos.size() == 2);
+    }
+    SUBCASE("显式要草稿档：两档都出") {
+        run_and_wait({{"project", project_arg(store)},
+                      {"episode_id", "ep01"},
+                      {"skip_draft", false}},
+                     fakes);
+        CHECK(fakes.videos.size() == 4);
+    }
 }
 
 TEST_CASE("已经在跑时回 409，而且说清在跑哪一集") {
@@ -330,7 +353,8 @@ TEST_CASE("stages 空数组走全流程，给了内容才只跑那几个") {
                       {"stages", json::array()}},
                      fakes);
         CHECK(fakes.frames.size() == 1);
-        CHECK(fakes.videos.size() == 2);
+        // 一镜一次：草稿档默认不跑
+        CHECK(fakes.videos.size() == 1);
     }
 
     SUBCASE("只跑配音和首帧") {
@@ -705,6 +729,10 @@ TEST_CASE("order=stage：所有集先出首帧，再所有集出视频") {
                                    {"episode_id", "ep01"},
                                    {"all_episodes", true},
                                    {"skip_final", true},
+                                   // **要草稿档**：这条测的是阶段顺序，
+                                   // 得有视频调用才看得出先后。草稿默认
+                                   // 关掉之后加上 skip_final 就一条都没有了。
+                                   {"skip_draft", false},
                                    {"order", "stage"}},
                                   f.deps());
     pipeline::jobs().wait_idle();
@@ -741,7 +769,9 @@ TEST_CASE("默认 order=episode：第一集的视频在第二集的首帧之前"
     http::post_run({{"project", project_arg(store)},
                     {"episode_id", "ep01"},
                     {"all_episodes", true},
-                    {"skip_final", true}},
+                    {"skip_final", true},
+                    // 同上：要有视频调用才看得出先后
+                    {"skip_draft", false}},
                    f.deps());
     pipeline::jobs().wait_idle();
 

@@ -135,8 +135,9 @@ ApiResult post_run(const json& body, const RunDeps& deps) {
     const std::string project_path = need_str(body, "project");
     const std::string episode_id = need_str(body, "episode_id");
     const bool skip_final = opt_bool(body, "skip_final", false);
-    // 两档画质拉不开差距时草稿档就是白跑一遍——挂 Turbo LoRA 之后正是如此。
-    const bool skip_draft = opt_bool(body, "skip_draft", false);
+    // **默认跳过。** 挂 Turbo LoRA 之后两档画质拉不开差距，草稿档就是
+    // 白跑一遍。想留着的话显式传 skip_draft: false。
+    const bool skip_draft = opt_bool(body, "skip_draft", true);
     const bool force = opt_bool(body, "force", false);
     const bool all_episodes = opt_bool(body, "all_episodes", false);
     const auto stage_names = opt_str_list(body, "stages");
@@ -175,8 +176,24 @@ ApiResult post_run(const json& body, const RunDeps& deps) {
             // 配置和后端在**任务开始时**取一次，不是注册时。
             // 用户改完模型文件不用重启，但一次跑的中途不会换——
             // 中途换的话同一集里前半段和后半段用的是不同的模型。
-            const config::Settings settings = deps.settings();
-            const HardwareProfile profile = deps.profile();
+            config::Settings settings = deps.settings();
+            HardwareProfile profile = deps.profile();
+
+            // **项目自己的 changji.toml 盖在全局上。** 画幅和清晰度
+            // （[video]）写在那儿：一台机器上可以同时有竖屏短剧和横屏
+            // 片子，画幅是这部剧的属性。
+            //
+            // 只在这一层合，不在 deps.settings() 里——那个函数不知道
+            // 当前跑的是哪个项目，而同一个进程会轮流跑好几个。
+            settings = config::load_settings(store.root());
+            const auto [vw, vh] = settings.video.size();
+            // 档位表是按显存推的，画幅定下来之后直接盖掉成片档的宽高。
+            // **步数不动**：那是速度和画质的权衡，和画幅无关。
+            if (auto it = profile.tiers.find(models::Tier::FINAL);
+                it != profile.tiers.end()) {
+                it->second.width = vw;
+                it->second.height = vh;
+            }
             const pipeline::Backends backends = deps.backends(settings, store);
 
             // 阶段名的校验在这里，不在上面的路由里：
