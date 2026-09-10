@@ -537,6 +537,13 @@ void run(const config::Settings& settings, const Options& opts) {
             {"engineBaseUrl", ""},
             {"engineTimeoutMs", 0},
             {"configFile", changji::paths::to_utf8(config::user_config_path())},
+            // **这两条走 bff 而不是 /api/connections。** 那个接口在对拍
+            // 覆盖范围内，Python 没有这两个字段，加进去就是一处破契约。
+            // bff 这一层是我们自己的，前端要拿它决定哪些输入框该显示——
+            // backend = local 时"API 地址/模型名/密钥"三项一个都不读，
+            // 摆着只会让人调了没反应。
+            {"llmBackend", s.llm.backend},
+            {"ttsBackend", s.tts.backend},
             {"envLocked", locked}};
         // 由引擎自己答就说明它活着，再 ping 自己一次没有意义。
         out["engine"] = {{"online", true},

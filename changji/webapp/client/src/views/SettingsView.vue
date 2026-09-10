@@ -158,6 +158,18 @@ const nodeLocked = computed(() => node.value?.envLocked ?? {})
  * 哪里没配好——地址栏空着、旁边还挂个"已连接 0ms"。
  */
 const embedded = computed(() => node.value?.embedded === true)
+
+/**
+ * 大模型跑在哪：`local`（进程内）还是 `remote`（走 base_url）。
+ *
+ * 走 local 时下面那一整排远端字段——平台、API 地址、模型名、密钥——
+ * **一个都不读**。摆着只会让人调了没反应，和之前那个"配音引擎"输入框
+ * 一样。权重路径在配置文件的 [models].llm。
+ *
+ * 这一项从 bff 拿，不从 /api/connections：那个接口在对拍覆盖范围内，
+ * Python 没有这个字段，加进去就是一处破契约。
+ */
+const llmLocal = computed(() => node.value?.llmBackend === 'local')
 const hardware = computed(() => overview.value?.hardware)
 
 async function load() {
@@ -371,13 +383,20 @@ function scrollTo(id) {
           <section id="sec-llm" class="card">
             <div class="card__head">
               <div>
-                <div class="card__title">大模型 API</div>
+                <div class="card__title">大模型</div>
                 <div class="card__sub">
-                  写剧本和出分镜用它。任何兼容 OpenAI 接口的服务都行，默认走本地 Ollama。
+                  {{ llmLocal
+                    ? '写剧本和出分镜用它。当前是进程内跑，不用另起服务——权重在配置文件的 [models].llm。'
+                    : '写剧本和出分镜用它。任何兼容 OpenAI 接口的服务都行。' }}
                 </div>
               </div>
+              <span v-if="llmLocal" class="pill pill--ok">进程内</span>
             </div>
-            <div class="card__body grid grid--2">
+            <p v-if="llmLocal" class="card__body tiny dim">
+              下面这些是走外部服务时才读的。想换成外部服务，
+              把配置文件里 [llm].backend 改成 "remote"。
+            </p>
+            <div class="card__body grid grid--2" :class="{ 'is-muted': llmLocal }">
               <label class="field field--wide">
                 <span class="field__label">平台</span>
                 <select
@@ -1057,5 +1076,12 @@ function scrollTo(id) {
     margin-top: 0;
     white-space: nowrap;
   }
+}
+
+/* 走进程内大模型时，下面那排远端字段仍然显示（能看到当前值），
+   但压暗一档表示"现在不读它"。**不用 disabled**：那样连复制都做不了，
+   而用户常常要把地址拷出来贴到别处。 */
+.is-muted {
+  opacity: 0.55;
 }
 </style>
