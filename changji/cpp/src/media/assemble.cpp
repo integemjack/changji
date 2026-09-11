@@ -274,10 +274,30 @@ std::vector<std::string> burn_args(const fs::path& video,
 
 std::string escape_filter_path(const fs::path& path) {
     std::string text = fwd(path);
-    // 冒号是滤镜的参数分隔符，要转义。反斜杠上面已经换成正斜杠了。
     std::string out;
     for (const char c : text) {
-        if (c == ':') out += '\\';
+        // 冒号是滤镜的参数分隔符，要转义。反斜杠上面已经换成正斜杠了。
+        if (c == ':') {
+            out += '\\';
+            out += c;
+            continue;
+        }
+        // **单引号 2026-09-11 才补上。**
+        //
+        // 调用方写的是 -vf subtitles='<路径>'，路径里再出现一个单引号
+        // 就提前收尾，后面的字变成滤镜的其它参数，ffmpeg 报一句语法错。
+        //
+        // 以前不修是有理由的：Python 侧那个 _escape_filter_path 也只做了
+        // \\ -> / 和 : -> \\:，单方面改会让对拍多一条"不同"。当时写的是
+        // "真要修就两边一起修（阶段 8 删掉 Python 之后就只剩一侧）"——
+        // **Python 已经删了，那个前提到了**。而且 concat 清单那边刚补过
+        // 同样的转义（见 concat_quote），两处不一致本身也是个坑。
+        //
+        // 规矩和 concat 那边一样：收掉引用、贴一个转义的单引号、再开回引用。
+        if (c == '\'') {
+            out += "'\\''";
+            continue;
+        }
         out += c;
     }
     return out;
