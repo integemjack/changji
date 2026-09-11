@@ -1,80 +1,45 @@
-# AI 短剧 — ComfyUI (Docker) + Wan 2.2
+# 场记 changji
 
-本机环境：RTX 5080 16GB / Ryzen 9 9950X / 31GB 内存 / Windows 11
+AI 短剧生产流水线：从剧本到成片的本地编排引擎。
 
-## 目录结构
+**一个二进制跑全部**——界面、接口、编排、出图、出片、配音、大模型全在
+一个进程里，没有第二个服务要起。
 
-```
-E:\AI短剧\
-├── Dockerfile              # PyTorch 2.14 + CUDA 13.0（50 系显卡必须 cu130+）
-├── docker-compose.yml      # 服务定义，GPU 直通，整个 ComfyUI 目录挂载到容器
-├── extra-requirements.txt  # 自定义节点的额外 pip 依赖，改完要重新 build
-├── .dockerignore           # 防止把模型文件塞进构建上下文
-├── start.ps1               # 一键启动
-├── download_models.ps1     # 模型下载（断点续传+自动重试）
-└── ComfyUI\                # 代码、模型、输出都在这里，容器重建不丢
-    ├── models\
-    │   ├── diffusion_models\wan2.2_ti2v_5B_fp16.safetensors
-    │   ├── vae\wan2.2_vae.safetensors
-    │   └── text_encoders\umt5_xxl_fp8_e4m3fn_scaled.safetensors
-    ├── output\             # 生成的视频在这里
-    ├── input\              # 首帧图片放这里
-    └── user\default\workflows\Wan2.2_5B_图生视频.json
+👉 **完整文档在 [changji/README.md](changji/README.md)**（这是什么、设计要点、
+安装、Web 平台、配音、已知问题）。
+
+## 装
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/integemjack/changji/main/changji/install.sh | bash
 ```
 
-## 使用
+或去 [Releases](https://github.com/integemjack/changji/releases) 下对应平台的包。
+Windows / macOS / Linux，x64 和 arm64 都有。装完先跑一遍体检：
 
-启动：
-
-```powershell
-pwsh -File E:\AI短剧\start.ps1
+```bash
+changji --doctor        # 缺什么它会说，并且给出怎么办
+changji --port 8080     # 起服务，浏览器打开 http://127.0.0.1:8080
 ```
 
-然后浏览器打开 http://localhost:8188
+## 目录
 
-常用命令：
-
-```powershell
-docker logs -f comfyui                                    # 看日志
-docker compose -f E:\AI短剧\docker-compose.yml down       # 停止
-docker compose -f E:\AI短剧\docker-compose.yml build      # 改了依赖后重建
-docker compose -f E:\AI短剧\docker-compose.yml up -d      # 启动
+```
+changji/          # 程序本体
+  cpp/            # C++ 引擎（界面、接口、编排、推理全在这里）
+  webapp/         # 前端源码，打包后嵌进二进制
+  docs/           # 方案和手册
 ```
 
-## 跑第一个镜头
+## 关于根目录这堆 ComfyUI/Docker 的东西
 
-1. 把首帧图片放进 `ComfyUI\input\`
-2. 界面左上角 Workflow → Open，选 `Wan2.2_5B_图生视频`
-3. 在 LoadImage 节点选你的图片
-4. 改正向提示词，描述这个镜头要发生什么
-5. 点 Run，视频输出到 `ComfyUI\output\video\`
+`Dockerfile`、`docker-compose.yml`、`start.ps1`、`download_*.ps1`、
+`extra-requirements.txt`、`frontend/`、`bench_shot.py`、`smoke_test.py`
+这些是**更早那一版的遗留**：
+当时是 Docker 里跑一个 ComfyUI，靠手工摆节点出片。
 
-## 参数说明
+那条路 2026-09-10 拆掉了——出图、出片、配音、大模型现在全在场记这一个
+进程里跑，不需要 ComfyUI，也不需要 Docker。这些文件暂时留着只是备查，
+跑现在这套一个都用不到。
 
-| 节点 | 参数 | 说明 |
-|---|---|---|
-| Wan22ImageToVideoLatent | 1280x704 | 分辨率，显存紧张就降到 960x544 |
-| Wan22ImageToVideoLatent | length 121 | 帧数，121 帧 @24fps = 5 秒 |
-| KSampler | steps 30 | 步数，20 出草稿，30-40 出成片 |
-| KSampler | cfg 5 | 提示词遵循度，3-7 之间调 |
-| ModelSamplingSD3 | shift 8 | 运动幅度，值大动作大 |
-| CreateVideo | fps 24 | 帧率，要和帧数换算对应 |
-
-## 装自定义节点
-
-界面里用 Manager 装（已内置）。如果某个节点需要额外的 pip 包，写进
-`extra-requirements.txt` 然后重新 build，否则容器重建后依赖会丢。
-
-## 后续要加的环节
-
-- 配音：Qwen3-TTS（中文和方言强，4GB 显存够用）
-- 口型：LatentSync 1.6，或用 Wan 的 InfiniteTalk 分支直接音频驱动
-- 角色一致性：主角训 LoRA + IPAdapter 锁脸 + ControlNet 锁姿势
-- 剪辑：FFmpeg 脚本批量拼接，或导入剪映精修
-
-## 已知问题处理
-
-Docker Desktop 报 `initializing Inference manager` 或 `Secrets Engine` 启动失败，
-是残留的 socket 文件删不掉。处理方法：关掉 Docker，把
-`%LOCALAPPDATA%\Docker\run` 和 `%LOCALAPPDATA%\docker-secrets-engine`
-两个目录改名，再重新创建空目录，然后启动。本机已把 Docker AI 关掉减少复发。
+（这一页在 2026-09-11 之前一直还是那版旧文档，照着做会去装 ComfyUI。）
