@@ -27,9 +27,15 @@ class LlamaChat {
 public:
     /// 载模型。失败回 nullptr 并把原因写进 `why`。
     ///
-    /// `n_gpu_layers` 传 0 就是纯 CPU 跑。显存紧张时调用方可以这么退。
+    /// `use_gpu` 传 false 就是纯 CPU 跑。显存紧张时调用方可以这么退。
+    ///
+    /// `parallel` 是**最多**开几个上下文，也就是最多同时跑几路。权重只载
+    /// 一份，每个上下文自己一份 KV cache——花的是那几份的显存。
+    /// **开不出来就少开一个**：第一个就开不出来才算失败，后面的开不出来
+    /// 只是并发度低一档。所以显存决定实际并发度，这个参数只是上限。
     static std::unique_ptr<LlamaChat> load(const std::filesystem::path& model,
-                                           bool use_gpu, std::string& why);
+                                           bool use_gpu, std::string& why,
+                                           int parallel = 1);
 
     ~LlamaChat();
     LlamaChat(const LlamaChat&) = delete;
@@ -46,6 +52,9 @@ public:
 
     /// 这个模型的上下文长度。提示词超了要先知道，别等它自己截断。
     int context_tokens() const;
+
+    /// 实际开出来几个上下文，也就是能同时跑几路。**可能比要的少**。
+    int slots() const;
 
 private:
     LlamaChat();

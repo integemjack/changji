@@ -113,13 +113,23 @@ const ordered& analyze_schema() {
             {"type", "string"}, {"description", "照抄给你的那个，不要改"}};
         chapter_props["summary"] = {
             {"type", "string"}, {"description", "这一章发生了什么，三五句，归纳不是摘抄"}};
-        chapter_props["hook"] = {
+        ordered hook_props = ordered::object();
+        hook_props["text"] = {
             {"type", "string"},
-            {"description", "这一章结束时悬着的那件事：悬念、反转，或明确的情绪落点"}};
-        chapter_props["hook_after"] = {
+            {"description", "这里悬着的是什么：悬念、反转，或明确的情绪落点"}};
+        hook_props["after"] = {
             {"type", "string"},
             {"description",
-             "钩子前面最后一句的原文，照抄十到二十个字。程序靠它定位切点"}};
+             "这个位置前面那句的原文，照抄十到二十个字。程序靠它定位切点"}};
+        chapter_props["hooks"] = {
+            {"type", "array"},
+            {"description",
+             "这一章里可以收一集的地方，按先后排，最后一个是章尾。"
+             "一章会切成好几集，别只给章尾那一个"},
+            {"items", {{"type", "object"},
+                       {"properties", hook_props},
+                       {"required", {"text", "after"}},
+                       {"additionalProperties", false}}}};
         chapter_props["characters"] = {
             {"type", "array"},
             {"description", "这一章出场的人物名"},
@@ -134,7 +144,7 @@ const ordered& analyze_schema() {
             {"description", "每一章一条，chapter_id 照抄，不要漏章"},
             {"items", {{"type", "object"},
                        {"properties", chapter_props},
-                       {"required", {"chapter_id", "summary", "hook"}},
+                       {"required", {"chapter_id", "summary", "hooks"}},
                        {"additionalProperties", false}}}};
 
         ordered s = ordered::object();
@@ -243,29 +253,41 @@ Story apply_analysis(const Story& story, const std::string& raw) {
             if (loc_names.count(n)) target->locations.push_back(n);
         }
 
-        const std::string hook = text::clean_field(get_str(c, "hook"));
-        if (hook.empty()) continue;
-
-        // 钩子落在哪：拿模型抄的那句原文去正文里查。查不到就挂章尾——
-        // 章尾本来就是合法切点，比把钩子丢掉强。
+        // 钩子落在哪：拿模型抄的那句原文去正文里查。**查不到就丢掉那一条**
+        // ——一章有好几个钩子，查不到的全堆到章尾的话，章尾会被一个中间
+        // 情节的说法占掉。只有下面那条老形状的单钩子值得兜底。
         const int len = target->text_len();
-        int at = find_after(target->text, get_str(c, "hook_after"));
-        if (at < 0 || at > len) at = len;
-
-        // 同一个位置已经有机械切点了就把说法补上去，别多挂一个。
-        bool merged = false;
-        for (auto& h : target->hooks) {
-            if (h.at_char == at) {
-                h.text = hook;
-                merged = true;
-                break;
+        const auto put = [&](int at, const std::string& why) {
+            if (why.empty() || at < 0 || at > len) return;
+            for (auto& h : target->hooks) {
+                if (h.at_char == at) {
+                    // 已经有说法的不覆盖：先到的是按先后给的那几个，
+                    // 盖掉等于把中间那一集的钩子丢了。
+                    if (h.text.empty()) h.text = why;
+                    return;
+                }
             }
-        }
-        if (!merged) {
             Hook h;
             h.at_char = at;
-            h.text = hook;
+            h.text = why;
             target->hooks.push_back(std::move(h));
+        };
+
+        const auto hooks = c.find("hooks");
+        if (hooks != c.end() && hooks->is_array()) {
+            for (const auto& h : *hooks) {
+                const std::string why = text::clean_field(get_str(h, "text"));
+                if (why.empty()) continue;
+                const int at = find_after(target->text, get_str(h, "after"));
+                if (at >= 0) put(at, why);
+            }
+        }
+        // 老形状：单个 hook + hook_after，查不到时兜底挂章尾。
+        const std::string legacy = text::clean_field(get_str(c, "hook"));
+        if (!legacy.empty()) {
+            int at = find_after(target->text, get_str(c, "hook_after"));
+            if (at < 0 || at > len) at = len;
+            put(at, legacy);
         }
     }
 

@@ -52,21 +52,42 @@ int chapter_target_chars(const Story& story) {
     return std::max(kChapterTargetChars, cap * kEpisodesPerChapter);
 }
 
+int chapter_hook_count(const Story& story) {
+    const int cap = prose_budget_chars(story.episode_duration_s);
+    if (cap <= 0) return kEpisodesPerChapter;
+    const int n = chapter_target_chars(story) / cap;
+    // 至少两个：只有一个的话就退化回「只有章尾」，那正是要修的毛病。
+    return std::max(2, n);
+}
+
 const ordered& chapter_schema() {
     static const ordered schema = [] {
+        ordered hook_props = ordered::object();
+        hook_props["text"] = {
+            {"type", "string"},
+            {"description", "这里悬着的是什么：悬念、反转，或明确的情绪落点"}};
+        hook_props["after"] = {
+            {"type", "string"},
+            {"description",
+             "这个位置前面那句的原文，照抄十到二十个字。程序靠它定位切点"}};
+
         ordered props = ordered::object();
         props["text"] = {
             {"type", "string"},
             {"description", "这一章的正文，小说体，不要剧本格式的标记"}};
-        props["hook_after"] = {
-            {"type", "string"},
+        props["hooks"] = {
+            {"type", "array"},
             {"description",
-             "结尾钩子前面最后一句的原文，照抄十到二十个字。程序靠它定位切点"}};
+             "这一章里可以收一集的地方，按正文里的先后排。最后一个是章尾"},
+            {"items", {{"type", "object"},
+                       {"properties", hook_props},
+                       {"required", {"text", "after"}},
+                       {"additionalProperties", false}}}};
 
         ordered s = ordered::object();
         s["type"] = "object";
         s["properties"] = props;
-        s["required"] = {"text"};
+        s["required"] = {"text", "hooks"};
         s["additionalProperties"] = false;
         return s;
     }();
@@ -87,6 +108,8 @@ std::string build_chapter_prompt(const Story& story,
     out += prompt::kChapterSeg1;
     out += std::to_string(chapter_target_chars(story));
     out += prompt::kChapterSeg2;
+    out += std::to_string(chapter_hook_count(story));
+    out += prompt::kChapterSeg3;
     out += prompt::kChapterRules;
     out += prompt::kChapterContextHead;
 
@@ -182,7 +205,25 @@ ChapterDraft parse_chapter(const std::string& raw) {
     // 失控往下写个没完的时候截住。这段正文会整份存进 story.json，
     // 而且后面每一集的提示词都要读它。
     d.text = text::truncate_utf8(d.text, prompt::kChapterMaxChars);
-    d.hook_after = text::strip_ws(get_str(data, "hook_after"));
+
+    const auto hooks = data.find("hooks");
+    if (hooks != data.end() && hooks->is_array()) {
+        for (const auto& h : *hooks) {
+            DraftHook dh;
+            dh.text = text::clean_field(get_str(h, "text"));
+            dh.after = text::strip_ws(get_str(h, "after"));
+            if (dh.text.empty()) continue;
+            d.hooks.push_back(std::move(dh));
+        }
+    }
+    // 老形状：只有一个 hook_after，说法在大纲那一章上。留着是因为改 schema
+    // 之前存下来的草稿还可能走到这儿。
+    const std::string legacy = text::strip_ws(get_str(data, "hook_after"));
+    if (d.hooks.empty() && !legacy.empty()) {
+        DraftHook dh;
+        dh.after = legacy;
+        d.hooks.push_back(std::move(dh));
+    }
     return d;
 }
 
@@ -192,10 +233,11 @@ Story apply_chapter(const Story& story, const std::string& chapter_id,
     Chapter* me = out.chapter_by_id(chapter_id);
     if (me == nullptr) throw StoryError("没有这一章：" + chapter_id);
 
-    // 大纲那个钩子的说法要留着——它是这一章该停在哪的判断，和正文无关。
-    std::string hook_text;
+    // 大纲那个钩子的说法要留着——它是**这一章整体**该停在哪，和中间几集
+    // 收在哪不是一回事，所以它归章尾。
+    std::string chapter_hook;
     for (const auto& h : me->hooks) {
-        if (!h.text.empty()) hook_text = h.text;
+        if (!h.text.empty()) chapter_hook = h.text;
     }
 
     me->text = draft.text;
@@ -204,26 +246,34 @@ Story apply_chapter(const Story& story, const std::string& chapter_id,
     // at_char = 0），正文落进去之后它们一个都不成立了，留着会让分集把刀
     // 切在章首。
     me->hooks = paragraph_hooks(me->text);
+    const int len = me->text_len();
 
-    if (!hook_text.empty()) {
-        const int len = me->text_len();
-        int at = find_after(me->text, draft.hook_after);
+    // 在已有候选上补说法；那个位置还没有候选就新加一个。
+    const auto put = [&](int at, const std::string& why) {
+        if (why.empty()) return;
         if (at < 0 || at > len) at = len;
-        bool merged = false;
         for (auto& h : me->hooks) {
             if (h.at_char == at) {
-                h.text = hook_text;
-                merged = true;
-                break;
+                // 同一个位置已经有说法了就不覆盖：先到的是模型按先后给的，
+                // 后到的多半是章尾那一个，盖掉等于把中间那集的钩子丢了。
+                if (h.text.empty()) h.text = why;
+                return;
             }
         }
-        if (!merged) {
-            Hook h;
-            h.at_char = at;
-            h.text = hook_text;
-            me->hooks.push_back(std::move(h));
-        }
+        Hook h;
+        h.at_char = at;
+        h.text = why;
+        me->hooks.push_back(std::move(h));
+    };
+
+    for (const auto& dh : draft.hooks) {
+        // 查不到就不放：一章有好几个钩子，查不到的那个要是都堆到章尾，
+        // 章尾会被一个中间情节的说法占掉。**只有章尾那一个值得兜底。**
+        const int at = find_after(me->text, dh.after);
+        if (at >= 0) put(at, dh.text);
     }
+    // 章尾兜底：大纲给的那句挂上去，模型自己标了章尾就不动它。
+    put(len, chapter_hook);
 
     return out;
 }

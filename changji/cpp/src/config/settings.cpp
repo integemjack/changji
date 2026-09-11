@@ -147,6 +147,9 @@ std::vector<std::string> LLMConfig::validate() const {
     }
     check_gt(errs, "llm.timeout_s", timeout_s, 0);
     check_range(errs, "llm.temperature", temperature, 0.0, 2.0);
+    // 上限给 8：再多也开不出来（每个上下文一份 KV cache），而写得离谱
+    // 会在起服务时白白试八次、每次失败都往 stderr 上打一行。
+    check_range(errs, "llm.parallel", static_cast<double>(parallel), 1.0, 8.0);
     return errs;
 }
 
@@ -485,6 +488,7 @@ void apply_table(const toml::table& doc, Settings& s) {
         take(t, "api_key", s.llm.api_key);
         take(t, "timeout_s", s.llm.timeout_s);
         take(t, "temperature", s.llm.temperature);
+        take(t, "parallel", s.llm.parallel);
     }
     if (auto t = doc["workers"].as_table()) {
         if (auto v = (*t)["gpu"].value<std::int64_t>()) {

@@ -1015,7 +1015,8 @@ Story pasted_story() {
     return s;
 }
 
-json good_analysis() {
+/// 老形状：单个 hook + hook_after。留一条用例盯着它还能读。
+json good_analysis_legacy() {
     return json{
         {"logline", "一把伞牵出五年前的事"},
         {"genre", "都市情感"},
@@ -1042,6 +1043,19 @@ json good_analysis() {
                   {"hook_after", "回到五年前的那个雨夜。"}},
          })},
     };
+}
+
+/// 新形状：每章好几个钩子，各自带一句原文当锚。
+json good_analysis() {
+    json j = good_analysis_legacy();
+    for (auto& c : j["chapters"]) {
+        const std::string hook = c.value("hook", std::string());
+        const std::string after = c.value("hook_after", std::string());
+        c.erase("hook");
+        c.erase("hook_after");
+        c["hooks"] = json::array({json{{"text", hook}, {"after", after}}});
+    }
+    return j;
 }
 
 }  // namespace
@@ -1101,7 +1115,13 @@ TEST_CASE("schema：人物那三块和大纲那份长一样") {
     CHECK(a.at("locations") == o.at("locations"));
     // 章名不给模型改——那是作者自己写的
     CHECK_FALSE(a.at("chapters").at("items").at("properties").contains("title"));
-    CHECK(a.at("chapters").at("items").at("properties").contains("hook_after"));
+    // **每章要标好几个钩子，不是只标章尾。** 一章会切成好几集，只给章尾
+    // 那一个的话前面几集只能收在无名的段落边界上——实跑时 12 集里只有 3 集
+    // 停在真悬念上，就是这么来的。
+    const auto& ch = a.at("chapters").at("items").at("properties");
+    CHECK(ch.contains("hooks"));
+    CHECK(ch.at("hooks").at("type") == "array");
+    CHECK(ch.at("hooks").at("items").at("properties").contains("after"));
 }
 
 TEST_CASE("并回去：正文一个字不动，钩子落在那句话后面") {
@@ -1140,8 +1160,20 @@ TEST_CASE("并回去：正文一个字不动，钩子落在那句话后面") {
 TEST_CASE("并回去：模型糊弄时的几种情况") {
     const Story s = pasted_story();
 
-    SUBCASE("hook_after 查不到——挂章尾，别把钩子丢了") {
+    SUBCASE("after 查不到——那一条丢掉，不能都堆到章尾") {
+        // 一章有好几个钩子，查不到的全往章尾堆的话，章尾会被一个中间情节的
+        // 说法占掉，而那一集的结尾写的就是别处的事。
         json j = good_analysis();
+        j["chapters"][0]["hooks"][0]["after"] = "正文里根本没有这句话";
+        const Story got = changji::stages::apply_analysis(s, j.dump());
+        for (const auto& h : got.chapters[0].hooks) {
+            CHECK(h.text != "她认出那把伞");
+        }
+        CHECK(got.validate().empty());
+    }
+
+    SUBCASE("老形状（单个 hook + hook_after）还能读，查不到时兜底挂章尾") {
+        json j = good_analysis_legacy();
         j["chapters"][0]["hook_after"] = "正文里根本没有这句话";
         const Story got = changji::stages::apply_analysis(s, j.dump());
         bool found = false;
@@ -1155,11 +1187,27 @@ TEST_CASE("并回去：模型糊弄时的几种情况") {
         CHECK(got.validate().empty());
     }
 
+    SUBCASE("一章标好几个钩子，各就各位") {
+        json j = good_analysis();
+        j["chapters"][0]["hooks"] = json::array({
+            json{{"text", "他进来了"}, {"after", "他推门进来，伞还在手里。"}},
+            json{{"text", "她认出那把伞"}, {"after", "林晚认出了那把伞。"}},
+        });
+        const Story got = changji::stages::apply_analysis(s, j.dump());
+        int named = 0;
+        for (const auto& h : got.chapters[0].hooks) {
+            if (!h.text.empty()) ++named;
+        }
+        // 两个都落下去了——这正是「12 集只有 3 集停在真悬念上」要修的地方
+        CHECK(named == 2);
+        CHECK(got.validate().empty());
+    }
+
     SUBCASE("编了个不存在的章号——跳过，别把它当新章") {
         json j = good_analysis();
         j["chapters"].push_back(json{{"chapter_id", "ch99"},
                                      {"summary", "查无此章"},
-                                     {"hook", "无"}});
+                                     {"hooks", json::array()}});
         const Story got = changji::stages::apply_analysis(s, j.dump());
         CHECK(got.chapters.size() == s.chapters.size());
         CHECK(got.validate().empty());
@@ -1226,8 +1274,14 @@ TEST_CASE("POST /api/story/analyze：没正文可读") {
 
 namespace {
 
-json good_chapter(const std::string& body, const std::string& after) {
-    return json{{"text", body}, {"hook_after", after}};
+/// 模型写回来的一章：正文 + 几个可以收一集的地方。
+json good_chapter(const std::string& body,
+                  const std::vector<std::pair<std::string, std::string>>& hooks = {}) {
+    json hs = json::array();
+    for (const auto& [why, after] : hooks) {
+        hs.push_back(json{{"text", why}, {"after", after}});
+    }
+    return json{{"text", body}, {"hooks", hs}};
 }
 
 /// 大纲写出来的故事：有梗概有钩子，没有正文。
@@ -1352,7 +1406,7 @@ TEST_CASE("并回去：钩子全部重建，说法留着") {
         "她认出来了。";
     const Story got = changji::stages::apply_chapter(
         s, "ch01", changji::stages::parse_chapter(
-                       good_chapter(body, "那把伞的骨架断了一根。").dump()));
+                       good_chapter(body, {{"她认出那把伞", "那把伞的骨架断了一根。"}}).dump()));
 
     const Chapter& c = got.chapters[0];
     CHECK(c.text == body);
@@ -1388,7 +1442,9 @@ TEST_CASE("并回去：hook_after 查不到就挂章尾") {
     const Story got = changji::stages::apply_chapter(
         s, "ch01",
         changji::stages::parse_chapter(
-            good_chapter("就这么一段。\n没有第二段。", "正文里没有这句").dump()));
+            good_chapter("就这么一段。\n没有第二段。",
+                         {{"她认出那把伞", "正文里没有这句"}})
+                .dump()));
     const Chapter& c = got.chapters[0];
     bool at_end = false;
     for (const auto& h : c.hooks) {
@@ -1413,7 +1469,7 @@ TEST_CASE("POST /api/story/chapter：写完落库，分集跟着重算") {
         for (int k = 0; k < 100; ++k) body += "字";
         body += "\n";
     }
-    llm::ReplayClient client({good_chapter(body, "").dump()});
+    llm::ReplayClient client({good_chapter(body).dump()});
     pipeline::CancelToken tok;
 
     const auto r = http::post_story_chapter(
@@ -1432,7 +1488,7 @@ TEST_CASE("POST /api/story/chapter：写完落库，分集跟着重算") {
     CHECK(saved.validate().empty());
 
     SUBCASE("已经有正文了要显式 overwrite") {
-        llm::ReplayClient c2({good_chapter("重写的正文。", "").dump()});
+        llm::ReplayClient c2({good_chapter("重写的正文。").dump()});
         pipeline::CancelToken t2;
         CHECK_THROWS_AS(
             http::post_story_chapter(
@@ -1440,7 +1496,7 @@ TEST_CASE("POST /api/story/chapter：写完落库，分集跟着重算") {
             http::ApiError);
         CHECK(c2.calls().empty());
 
-        llm::ReplayClient c3({good_chapter("重写的正文。", "").dump()});
+        llm::ReplayClient c3({good_chapter("重写的正文。").dump()});
         pipeline::CancelToken t3;
         const auto again = http::post_story_chapter(
             json{{"project", p_str(root)},
@@ -1459,7 +1515,7 @@ TEST_CASE("POST /api/story/chapter：没有这一章") {
     const fs::path root = fresh_project("没这章");
     ProjectStore store(root);
     store.save_story(outline_only_story());
-    llm::ReplayClient client({good_chapter("x", "").dump()});
+    llm::ReplayClient client({good_chapter("x").dump()});
     pipeline::CancelToken tok;
     try {
         http::post_story_chapter(
@@ -1487,7 +1543,7 @@ TEST_CASE("展开正文之后，写剧本拿到的是真正文不是梗概") {
     std::string body;
     for (int i = 0; i < 10; ++i) body += "这是真正的正文内容。\n";
     s = changji::stages::apply_chapter(
-        s, "ch01", changji::stages::parse_chapter(good_chapter(body, "").dump()));
+        s, "ch01", changji::stages::parse_chapter(good_chapter(body).dump()));
     s.plan = changji::stages::plan_episodes(s, 60.0);
 
     CHECK_FALSE(changji::stages::episode_text(s, s.plan[0]).empty());
@@ -1523,8 +1579,12 @@ TEST_CASE("POST /api/story/chapters：一口气展开，每写完一章就落库
     REQUIRE(s.chapters.size() == 2);
 
     auto client = std::make_shared<llm::ReplayClient>(std::vector<std::string>{
-        json{{"text", "第一章的正文。\n他推门进来。"}, {"hook_after", "他推门进来。"}}.dump(),
-        json{{"text", "第二章的正文。\n她终于开口。"}, {"hook_after", "她终于开口。"}}.dump(),
+        good_chapter("第一章的正文。\n他推门进来。",
+                     {{"他终于来了", "他推门进来。"}})
+            .dump(),
+        good_chapter("第二章的正文。\n她终于开口。",
+                     {{"她开口了", "她终于开口。"}})
+            .dump(),
     });
 
     const auto r = http::post_story_chapters(json{{"project", p_str(root)}}, client);

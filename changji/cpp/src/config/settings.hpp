@@ -94,6 +94,17 @@ struct LLMConfig {
     double timeout_s = 300.0;
     double temperature = 0.7;
 
+    /// 进程内那条最多**同时**跑几路。
+    ///
+    /// 一个 llama context 一次只能跑一路（llama.cpp 的单 context 不支持
+    /// 并发 decode），所以并发靠在同一份权重上多开几个 context——权重共用，
+    /// 每个 context 自己一份 KV cache。**要花的就是那几份 KV cache 的显存。**
+    ///
+    /// 两路是个稳妥的默认：同时编两个项目不至于互相干等，又不至于把出片
+    /// 要用的显存吃掉。开不出那么多就少开几个（见 LlamaChat::load），
+    /// 也就是说**显存决定实际并发度，配置只是上限**。池满了才排队。
+    int parallel = 2;
+
     std::vector<std::string> validate() const;
 };
 

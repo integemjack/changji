@@ -15,6 +15,7 @@
 
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 #include <nlohmann/json.hpp>
 
@@ -23,11 +24,25 @@
 
 namespace changji::stages {
 
+/// 一个钩子：这一章里可以收一集的地方。
+struct DraftHook {
+    std::string text;  ///< 这里悬着的是什么
+    /// 这个位置前面那句原文，照抄十到二十个字。程序靠它在正文里定位。
+    ///
+    /// 让模型报字符偏移是行不通的——它数不准，报出来的数会落在别的段落上。
+    /// 让它抄一句原文，程序自己去查，这是唯一可靠的定位手段。
+    std::string after;
+};
+
 /// 模型写回来的一章。
 struct ChapterDraft {
     std::string text;
-    /// 结尾钩子前面那句原文。程序靠它定位切点，见 story_analyze 里同名的做法。
-    std::string hook_after;
+    /// 这一章里所有可以收一集的地方，按先后。
+    ///
+    /// **不是只有章尾那一个。** 一章要切成好几集，只给一个钩子的话，
+    /// 其余几集只能收在无名的段落边界上——端到端实跑时 12 集里只有 3 集
+    /// 停在真悬念上，就是这么来的。
+    std::vector<DraftHook> hooks;
 };
 
 /// 一章的基准篇幅。
@@ -52,6 +67,12 @@ inline constexpr int kEpisodesPerChapter = 3;
 /// 四集。
 int chapter_target_chars(const models::Story& story);
 
+/// 这一章要标几个钩子。
+///
+/// **按它会被切成几集算**：每一集的结尾都该落在一个真钩子上。写死一个
+/// 「章尾」是不够的——那只够最后一集用。
+int chapter_hook_count(const models::Story& story);
+
 /// 请求里带的 JSON Schema。
 const nlohmann::ordered_json& chapter_schema();
 
@@ -65,8 +86,9 @@ ChapterDraft parse_chapter(const std::string& raw);
 /// 把写好的一章并回故事里。
 ///
 /// **只动这一章。** 正文落进去之后钩子要重建：段落边界重新登记成候选切点
-/// （原来那些是对着空正文算的，全都作废），再把大纲里那一章的钩子按
-/// hook_after 定位上去。
+/// （原来那些是对着空正文算的，全都作废），再把模型标的那几个钩子按各自的
+/// after 定位上去。大纲里那一章的钩子说法留着挂在章尾——那是这一章整体
+/// 该停在哪，和中间几集收在哪不是一回事。
 models::Story apply_chapter(const models::Story& story,
                             const std::string& chapter_id,
                             const ChapterDraft& draft);

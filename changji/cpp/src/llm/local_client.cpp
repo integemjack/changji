@@ -3,7 +3,6 @@
 #include "config/runtime.hpp"
 #include <cstdio>
 #include <filesystem>
-#include <chrono>
 #include <mutex>
 #include <thread>
 
@@ -23,39 +22,19 @@ std::shared_ptr<infer::LlamaChat> current() {
     return g_chat;
 }
 
-/// 推理排队用的锁。**和上面那个 g_mu 不是一回事**：g_mu 只护 g_chat 那个
-/// 指针，这个护的是「同一时刻只有一路在跑推理」。
-///
-/// 进程内的大模型只有**一个 llama context**，而 llama.cpp 的单 context
-/// 不支持并发 decode。两路同时打进来——批量展开正文跑着，另一个页面上点了
-/// 「AI 写故事」——会把整个进程带走，连带出图、出片、配音一起没。
-/// 2026-09-11 端到端实跑时真撞上了一次：日志停在一个 /api/story/outline 上，
-/// 没有任何错误信息，进程直接没了。
-///
-/// **调度器的租约挡不住这个**：Scheduler::acquire 里 `++e->leases` 是个
-/// 引用计数，作用是「有人在用，别卸」，不是互斥。
-///
-/// 排队不是偷懒，是单 context 的事实。真并发要么多开 context（每份再吃
-/// 一份 KV cache 的显存），要么用 llama.cpp 的多序列槽——都要另花显存，
-/// 而这台机器上大模型是跟出图出片抢显存的。等十几秒，比整个服务没了强。
-std::timed_mutex g_infer_mu;
-
 }  // namespace
 
 std::string LocalClient::complete(const Request& req,
                                   pipeline::CancelToken& tok) {
     if (tok.cancelled()) throw LlmError("已取消");
 
-    // 排队。**在借槽之前**——借槽会为了腾地方卸别的模型，排在后面的那一路
-    // 要是先卸了再干等，就是白卸一次。
+    // **并发在 LlamaChat 里管**：同一份权重上开了几个上下文，几路就能同时
+    // 跑，池满了才在那儿等（见 LlamaChat::load 和 Impl::Lease）。
     //
-    // 等的时候要还能取消：排在前面那一路可能要跑几十秒，而用户按了停之后
-    // 界面上得真的停下来。
-    std::unique_lock<std::timed_mutex> infer_lk(g_infer_mu, std::defer_lock);
-    while (!infer_lk.try_lock_for(std::chrono::milliseconds(200))) {
-        if (tok.cancelled()) throw LlmError("已取消");
-    }
-
+    // 这里不能再加一把全局互斥——加了就等于把并发按回 1，同时编两个项目时
+    // 第二个人干等十几秒。而这一层看不到显存够开几个上下文，那个判断只有
+    // LlamaChat 做得了。
+    //
     // 借槽。**调度器可能在这一步把出图或出片的模型卸掉腾地方**，
     // 也可能什么都不做（实时空闲显存够的时候）——见
     // Scheduler::set_free_vram_probe。借不到时抛的是那条带出路的消息。
@@ -157,7 +136,7 @@ void register_llm_slot(std::function<config::Settings()> provider,
         const auto before = models::free_vram_gb();
         std::string why;
         auto chat = std::shared_ptr<infer::LlamaChat>(
-            infer::LlamaChat::load(path, /*use_gpu=*/true, why));
+            infer::LlamaChat::load(path, /*use_gpu=*/true, why, s.llm.parallel));
         if (!chat) {
             // **上不了 GPU 就退回 CPU，别整个失败。**
             //
@@ -176,7 +155,7 @@ void register_llm_slot(std::function<config::Settings()> provider,
                          why.c_str());
             std::string why_cpu;
             chat = std::shared_ptr<infer::LlamaChat>(
-                infer::LlamaChat::load(path, /*use_gpu=*/false, why_cpu));
+                infer::LlamaChat::load(path, /*use_gpu=*/false, why_cpu, s.llm.parallel));
             if (!chat) {
                 throw std::runtime_error("大模型载不起来：显存那次是「" + why +
                                          "」，内存那次是「" + why_cpu + "」");

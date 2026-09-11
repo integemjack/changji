@@ -1,5 +1,9 @@
 #include "infer/llama_chat.hpp"
 
+#include <chrono>
+#include <condition_variable>
+#include <cstdio>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -72,20 +76,74 @@ std::string apply_chat_template(llama_model* model, const std::string& user) {
 
 struct LlamaChat::Impl {
     llama_model* model = nullptr;
-    llama_context* lctx = nullptr;
+    /// 同一份权重上的几个上下文。**权重共用，KV cache 各自一份。**
+    ///
+    /// 为什么不是一个上下文跑多路：llama.cpp 的单 context 不支持并发
+    /// decode，两路同时进去会把进程带走（2026-09-11 端到端实跑时撞过一次，
+    /// 日志停在一个请求上，没有任何错误，进程直接没了）。
+    std::vector<llama_context*> ctxs;
     int n_ctx = 0;
 
+    // 空闲上下文的取还。池空了就等——**等，不是失败**：同时编两个项目时，
+    // 第二个人宁可多等十几秒，也不该看见一句"忙，稍后再试"。
+    std::mutex mu;
+    std::condition_variable cv;
+    std::vector<llama_context*> idle;
+
     ~Impl() {
-        if (lctx != nullptr) llama_free(lctx);
+        for (llama_context* c : ctxs) {
+            if (c != nullptr) llama_free(c);
+        }
         if (model != nullptr) llama_model_free(model);
     }
+
+    /// 借一个上下文，出作用域自动还回去。
+    ///
+    /// 用 RAII 而不是手动还：中间任何一条 return 或者抛异常忘了还，那个槽
+    /// 就永久少一个，表现是并发度悄悄降到 0 然后全部卡死——而那时候没有
+    /// 任何报错。放在 Impl 里面是因为 Impl 是 LlamaChat 的私有嵌套类型，
+    /// 外面的类写不出它的名字。
+    class Lease {
+    public:
+        Lease(Impl& im, pipeline::CancelToken& tok) : im_(im) {
+            std::unique_lock lk(im_.mu);
+            // 每 200ms 醒一次查取消：排在前面那一路可能要跑几十秒，
+            // 用户按了停，界面上得真的停下来。
+            while (im_.idle.empty()) {
+                if (tok.cancelled()) return;
+                im_.cv.wait_for(lk, std::chrono::milliseconds(200));
+            }
+            ctx_ = im_.idle.back();
+            im_.idle.pop_back();
+        }
+
+        ~Lease() {
+            if (ctx_ == nullptr) return;
+            {
+                std::lock_guard lg(im_.mu);
+                im_.idle.push_back(ctx_);
+            }
+            im_.cv.notify_one();
+        }
+
+        Lease(const Lease&) = delete;
+        Lease& operator=(const Lease&) = delete;
+
+        llama_context* get() const { return ctx_; }
+
+    private:
+        Impl& im_;
+        llama_context* ctx_ = nullptr;
+    };
 };
+
+
 
 LlamaChat::LlamaChat() : impl_(std::make_unique<Impl>()) {}
 LlamaChat::~LlamaChat() = default;
 
 std::unique_ptr<LlamaChat> LlamaChat::load(const fs::path& model, bool use_gpu,
-                                           std::string& why) {
+                                           std::string& why, int parallel) {
     if (model.empty()) {
         why = "[models].llm 没填。进程内跑大模型要一份 GGUF 权重";
         return nullptr;
@@ -115,16 +173,34 @@ std::unique_ptr<LlamaChat> LlamaChat::load(const fs::path& model, bool use_gpu,
     // 写剧本的提示词轻松过千 token，512 会被静默截断——症状是模型
     // 答非所问，指不到"上下文开小了"。配音那边栽过同一条，见 llama_tts.cpp。
     cp.n_ctx = 0;
-    im.lctx = llama_init_from_model(im.model, cp);
-    if (im.lctx == nullptr) {
-        why = "建不出 llama context";
-        return nullptr;
+
+    const int want = parallel < 1 ? 1 : parallel;
+    for (int i = 0; i < want; ++i) {
+        llama_context* c = llama_init_from_model(im.model, cp);
+        if (c == nullptr) {
+            // **第一个开不出来才算失败。** 后面的开不出来只说明显存只够这么
+            // 多路——那正是"显存不够就排队"该有的样子，不是错误。
+            if (i == 0) {
+                why = "建不出 llama context";
+                return nullptr;
+            }
+            std::fprintf(stderr,
+                         "[llm] 只开出 %d 个上下文（要 %d 个）：显存不够，"
+                         "同时跑的路数按这个来
+",
+                         i, want);
+            break;
+        }
+        im.ctxs.push_back(c);
     }
-    im.n_ctx = static_cast<int>(llama_n_ctx(im.lctx));
+    im.idle = im.ctxs;
+    im.n_ctx = static_cast<int>(llama_n_ctx(im.ctxs.front()));
     return self;
 }
 
 int LlamaChat::context_tokens() const { return impl_->n_ctx; }
+
+int LlamaChat::slots() const { return static_cast<int>(impl_->ctxs.size()); }
 
 bool LlamaChat::complete(const std::string& prompt, const std::string& schema,
                          double temperature, int max_tokens,
@@ -200,7 +276,18 @@ bool LlamaChat::complete(const std::string& prompt, const std::string& schema,
     llama_sampler_chain_add(chain, llama_sampler_init_dist(LLAMA_DEFAULT_SEED));
 
     // ---- 跑 ----
-    llama_memory_clear(llama_get_memory(im.lctx), true);
+    //
+    // 借一个空闲上下文。**同一个上下文同一时刻只有一路**——llama.cpp 的
+    // 单 context 不支持并发 decode。池里有空的就直接开跑（真并发），
+    // 全忙着就在这儿等（排队）。
+    Impl::Lease lease(im, tok);
+    if (lease.get() == nullptr) {
+        why = "已取消";
+        return false;
+    }
+    llama_context* lctx = lease.get();
+
+    llama_memory_clear(llama_get_memory(lctx), true);
     llama_batch batch = llama_batch_get_one(toks.data(), n_prompt);
 
     for (int produced = 0; produced < max_tokens; ++produced) {
@@ -208,7 +295,7 @@ bool LlamaChat::complete(const std::string& prompt, const std::string& schema,
         // 不查的话点了停止要等它自己写完。
         if (tok.cancelled()) return true;
 
-        if (llama_decode(im.lctx, batch) != 0) {
+        if (llama_decode(lctx, batch) != 0) {
             why = "llama_decode 失败（第 " + std::to_string(produced) + " 个 token）";
             return false;
         }
@@ -219,7 +306,7 @@ bool LlamaChat::complete(const std::string& prompt, const std::string& schema,
         // 而报错指向"语法/schema 有问题"，和真因隔着好几层。
         // 不是 const：llama_batch_get_one 要非 const 指针（它不会改，
         // 但接口没标 const）。
-        llama_token id = llama_sampler_sample(chain, im.lctx, -1);
+        llama_token id = llama_sampler_sample(chain, lctx, -1);
         if (llama_vocab_is_eog(vocab, id)) break;
 
         char buf[256];
@@ -243,12 +330,13 @@ LlamaChat::LlamaChat() : impl_(std::make_unique<Impl>()) {}
 LlamaChat::~LlamaChat() = default;
 
 std::unique_ptr<LlamaChat> LlamaChat::load(const fs::path&, bool,
-                                           std::string& why) {
+                                           std::string& why, int) {
     why = "这个二进制没编进程内大模型（构建时 CHANGJI_LLAMA=OFF）。"
           "用 [llm].base_url 指向一个兼容 OpenAI 接口的服务";
     return nullptr;
 }
 int LlamaChat::context_tokens() const { return 0; }
+int LlamaChat::slots() const { return 0; }
 bool LlamaChat::complete(const std::string&, const std::string&, double, int,
                          pipeline::CancelToken&, std::string&,
                          std::string& why) {
