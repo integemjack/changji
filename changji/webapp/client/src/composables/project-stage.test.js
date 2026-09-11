@@ -30,6 +30,13 @@ describe('projectStage', () => {
     )
   })
 
+  it('一镜都没跑，不能说成「出片 0%」', () => {
+    // 那读起来像在进行中，而实际是分镜出好了、还没按开始
+    const s = projectStage(P({ episodes: 1, shots: 8 }))
+    expect(s.key).toBe('ready')
+    expect(s.label).toBe('8 镜待出片')
+  })
+
   it('出片中报百分比', () => {
     const s = projectStage(P({ episodes: 1, shots: 10, done_shots: 4 }))
     expect(s.key).toBe('shooting')

@@ -45,6 +45,11 @@ export function projectStage(p) {
     if (done >= shots) {
       return { key: 'assemble', label: '镜头出完了，还没装配', percent: 95, tone: 'warn' }
     }
+    // **一镜都没跑不是「出片 0%」。** 后者读起来像在进行中，而实际是
+    // 分镜出好了、还没按开始。这两种状态下用户要做的事不一样。
+    if (done === 0) {
+      return { key: 'ready', label: `${shots} 镜待出片`, percent: 60, tone: 'accent' }
+    }
     return {
       key: 'shooting',
       label: `出片 ${Math.round((done / shots) * 100)}%`,
