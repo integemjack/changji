@@ -328,7 +328,12 @@ function watchBatch() {
       // 但那之前这一章看着就是坏的。
       buf[msg.chapter_id] =
         msg.seq === 0 ? (msg.text ?? '') : (buf[msg.chapter_id] ?? '') + (msg.text ?? '')
-      streaming.value = { chapter_id: msg.chapter_id, from: 0 }
+      // at：AI 写到哪个字了。批量是从头往下写，所以就是当前长度。
+      streaming.value = {
+        chapter_id: msg.chapter_id,
+        from: 0,
+        at: buf[msg.chapter_id].length,
+      }
       // **跟着它翻页。** 一次只看一章，不跟的话批量跑一个多小时，眼前
       // 这一章一个字都不动——"看着它写"就落空了。
       //
@@ -540,10 +545,39 @@ function paragraphs(text, at) {
     while (lo > 0 && !spans[lo - 1].blank) lo--
     while (hi < spans.length - 1 && !spans[hi + 1].blank) hi++
   }
-  return spans.map((s, i) => ({ text: s.text, now: i >= lo && i <= hi }))
+  // from 带出去：AI 光标要靠它算出"落在哪一行的第几个字"
+  return spans.map((s, i) => ({ text: s.text, from: s.from, now: i >= lo && i <= hi }))
 }
 
 const blocks = computed(() => paragraphs(body.value, caret.value))
+
+/**
+ * AI 正在写到哪个字。**和用户自己的光标是两回事**：
+ *
+ * 用户的光标是原生 caret，AI 写着的时候那一章是只读的、caret 被藏起来了；
+ * 这个是画在镜像层上的另一个记号，位置由流出来的字数决定，跟用户上次点在
+ * 哪儿没有关系。两个同时存在过（改一段时用户的光标还停在选区上），所以
+ * 颜色和形状都得不一样，不能只画一根一样的竖线。
+ *
+ * 不是这一章就返回 null——别的章在写字，不该在眼前这一章上画个光标。
+ */
+const aiAt = computed(() =>
+  streaming.value?.chapter_id === current.value &&
+  typeof streaming.value.at === 'number'
+    ? streaming.value.at
+    : null,
+)
+/** AI 光标落在第几行、那一行的第几个字。找不到就是 null。 */
+const aiSpot = computed(() => {
+  const at = aiAt.value
+  if (at === null) return null
+  const bs = blocks.value
+  for (let i = 0; i < bs.length; i++) {
+    const end = bs[i].from + bs[i].text.length
+    if (at <= end) return { line: i, col: Math.max(0, at - bs[i].from) }
+  }
+  return bs.length ? { line: bs.length - 1, col: bs[bs.length - 1].text.length } : null
+})
 // 正文一变，等镜像排完再量行高（flush: 'post'）
 watch(blocks, measureLines, { flush: 'post' })
 
@@ -740,6 +774,8 @@ async function revise() {
         if (msg.job_id !== streamId) return
         if (msg.type === 'story_token') {
           acc += msg.text ?? ''
+          // 改一段是插在中间的，所以是选区起点加上已经流出来的长度
+          streaming.value = { chapter_id: id, from: at.from, at: at.from + acc.length }
           paint(acc)
         }
         // done / error 不在这儿收尾：请求本身的返回才是权威的那一份
@@ -1011,8 +1047,9 @@ async function writeChapter(chapterId, overwrite = false) {
   let sock = null
   let opened = false
 
-  // 从这一刻起就锁章，不等第一个字到
-  streaming.value = { chapter_id: chapterId, from: 0 }
+  // 从这一刻起就锁章，不等第一个字到。**at 先给 0**：光标从头上开始，
+  // 第一个字到之前也看得见"它准备从这儿写"。
+  streaming.value = { chapter_id: chapterId, from: 0, at: 0 }
 
   await new Promise((resolve) => {
     sock = openJobSocket(
@@ -1021,7 +1058,7 @@ async function writeChapter(chapterId, overwrite = false) {
         if (msg.job_id !== streamId || msg.type !== 'story_token') return
         acc += msg.text ?? ''
         buf[chapterId] = acc
-        streaming.value = { chapter_id: chapterId, from: 0 }
+        streaming.value = { chapter_id: chapterId, from: 0, at: acc.length }
         await nextTick()
         fit(boxes[chapterId])
         keepEndVisible(chapterId)
@@ -1469,8 +1506,12 @@ async function stopWriting() {
               <div class="ed__page">
                 <!-- 镜像常驻：不在专注模式时字是透明的，只为量行高。
                      写在一行上——块之间多一个空白文本节点，pre-wrap 会把它
-                     排成一行，行号就全错一格。 -->
-                <div ref="mirror" class="ed__mirror" aria-hidden="true"><div v-for="(b, i) in blocks" :key="i" class="ed__mline" :class="{ 'is-now': b.now }">{{ b.text || ZW }}</div></div>
+                     排成一行，行号就全错一格。
+                     **AI 光标画在这一层**：这里的每个字和输入框里那个字
+                     一一对应，所以把光标插在第几个字后面，它就正好落在
+                     屏幕上那个位置——不用去算像素。那个 <i> 宽度为零，
+                     不挤动一个字。 -->
+                <div ref="mirror" class="ed__mirror" aria-hidden="true"><div v-for="(b, i) in blocks" :key="i" class="ed__mline" :class="{ 'is-now': b.now }"><template v-if="aiSpot && aiSpot.line === i">{{ b.text.slice(0, aiSpot.col) }}<i class="ed__ai" data-ai="AI"></i>{{ b.text.slice(aiSpot.col) }}<template v-if="!b.text">{{ ZW }}</template></template><template v-else>{{ b.text || ZW }}</template></div></div>
               <textarea
                 :key="current"
                 :ref="(el) => (boxes[current] = el)"
@@ -2014,9 +2055,58 @@ async function stopWriting() {
 .ed__area::placeholder {
   color: var(--text-3);
 }
-/* AI 写着的时候锁章：光标藏起来，字照常显示 */
+/* AI 写着的时候锁章：**用户自己的光标藏起来**，字照常显示。
+   藏它是为了不和下面那个 AI 光标混在一起——两根一样的竖线杵在不同位置，
+   人第一反应是"我的光标怎么跑了"。 */
 .ed__area[readonly] {
   caret-color: transparent;
+}
+
+/* AI 光标。画在镜像层上，**宽度为零**，不挤动一个字。
+ *
+ * 和用户那根刻意长得不一样：用户的是细的、跟着主题色闪；这个是**粗一点、
+ * 圆头、带一个 AI 标**，一眼能分出"这是它在写，不是我在写"。位置由流出来
+ * 的字数决定，跟用户上次点在哪儿没关系——改一段时两个会同时在屏幕上。
+ *
+ * 镜像平时字是透明的（只为量行高），但这根竖线有自己的底色，所以在不在
+ * 专注模式都看得见。 */
+.ed__ai {
+  position: relative;
+  display: inline-block;
+  width: 0;
+  height: 1em;
+  vertical-align: text-bottom;
+}
+.ed__ai::before {
+  content: '';
+  position: absolute;
+  left: -1px;
+  top: -0.12em;
+  width: 3px;
+  height: 1.25em;
+  border-radius: 2px;
+  background: var(--accent);
+  animation: ed-ai-blink 1.1s steps(2, start) infinite;
+}
+/* 那个小标签。**绝对定位**，同样不占位；贴在竖线右上角，跟着一起走。 */
+.ed__ai::after {
+  content: attr(data-ai);
+  position: absolute;
+  left: 4px;
+  top: -1.05em;
+  padding: 0 4px;
+  border-radius: 3px;
+  background: var(--accent);
+  color: var(--bg);
+  font-size: 10px;
+  line-height: 1.4;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+}
+@keyframes ed-ai-blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
 }
 
 /* 选中才出现的那两个按钮 */
