@@ -169,7 +169,7 @@ function open(project) {
   }
   session.selectProject(project.path)
   ui.ok(`已切到「${project.name}」`)
-  router.push('/script')
+  router.push('/story')
 }
 
 async function create() {
@@ -187,7 +187,7 @@ async function create() {
   draft.value = { path: '', title: '', style_line: 'realistic' }
   await load()
   session.selectProject(result.root)
-  router.push('/script')
+  router.push('/story')
 }
 
 /** 按路径打开一个项目库以外的项目。先问引擎认不认，再切过去。 */
@@ -203,7 +203,7 @@ async function openByPath() {
   opening.value = false
   openPath.value = ''
   ui.ok(`已切到「${info.title || info.project_id}」`)
-  router.push('/script')
+  router.push('/story')
 }
 
 async function remove() {

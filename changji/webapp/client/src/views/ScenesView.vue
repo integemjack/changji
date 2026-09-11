@@ -279,7 +279,7 @@ async function clearEmpty(locationId) {
       title="还没选到某一集"
       hint="场景是按某一集的剧本出的。先在上面挑一集，没有的话回第二步写。"
     >
-      <RouterLink to="/script" class="btn btn--primary">去剧本大纲</RouterLink>
+      <RouterLink to="/story" class="btn btn--primary">去故事页</RouterLink>
     </EmptyState>
 
     <template v-else>
@@ -314,7 +314,7 @@ async function clearEmpty(locationId) {
         title="场景库还是空的"
         hint="场景从剧本里提。先把这一集的剧本写好，再点上面的按钮，AI 会读剧本把地点列出来。"
       >
-        <RouterLink to="/script" class="btn">回去写剧本</RouterLink>
+        <RouterLink to="/story" class="btn">回去写故事</RouterLink>
       </EmptyState>
 
       <template v-else>

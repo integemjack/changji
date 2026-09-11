@@ -67,7 +67,8 @@ TEST_CASE("镜头、成片、上传合成了一步「这一集」") {
     CHECK(steps.count("shots") == 0);
     CHECK(steps.count("film") == 0);
     CHECK(steps.count("publish") == 0);
-    CHECK(http::flow_steps().size() == 6);
+    CHECK(steps.count("script") == 0);  // 剧本大纲那一格也没有了
+    CHECK(http::flow_steps().size() == 5);
 }
 
 TEST_CASE("「故事」这一格") {

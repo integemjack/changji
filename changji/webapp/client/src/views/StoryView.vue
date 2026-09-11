@@ -33,10 +33,14 @@ const { run, isBusy } = useAction()
 const story = ref(null)
 const loading = ref(false)
 const draft = ref(null) // AI 写完、还没采用的那一份
+const trailerDraft = ref(null)
 const keywords = ref('')
 const openChapter = ref('')
 const pasting = ref(false)
 const pasted = ref('')
+const trailerDurationS = ref(20)
+// 预告片挂在固定集号上，只有一条，重剪覆盖上一条
+const TRAILER_ID = 'trailer'
 
 const premise = ref('')
 const savedPremise = ref('')
@@ -277,6 +281,68 @@ async function writeAllChapters() {
 async function stopWriting() {
   await run(() => api.stopSeries(), { key: 'stopWrite', success: '已停' })
   writer.poll()
+}
+
+/**
+ * 剪一条预告片。
+ *
+ * 对流水线来说预告片就是特别短的一集：采用之后照样走镜头、成片、发布。
+ * 区别只在写的时候——要的是钩子不是完整故事，所以它**不占集号**，也不参与
+ * 「接着前几集写」的上下文。放在折叠区里：整部剧只剪一两次，常驻一张卡
+ * 是在跟主线抢注意力。
+ */
+async function writeTrailer() {
+  const result = await run(
+    () =>
+      api.writeTrailer({
+        project: session.projectPath,
+        duration_s: trailerDurationS.value,
+      }),
+    { key: 'trailer' },
+  )
+  if (result) trailerDraft.value = result
+}
+
+async function adoptTrailer() {
+  if (!trailerDraft.value) return
+  await run(
+    async () => {
+      const exists = session.episodes.some((e) => e.episode_id === TRAILER_ID)
+      if (!exists) {
+        await api.newEpisode({
+          project: session.projectPath,
+          episode_id: TRAILER_ID,
+          title: trailerDraft.value.title,
+          target_duration_s: trailerDurationS.value,
+        })
+      }
+      await api.saveScript({
+        project: session.projectPath,
+        episode_id: TRAILER_ID,
+        script: trailerDraft.value.script,
+        duration_s: trailerDurationS.value,
+        synopsis: trailerDraft.value.logline,
+      })
+      trailerDraft.value = null
+    },
+    { key: 'adoptTrailer', success: '预告片存下了', refresh: true },
+  )
+}
+
+/** 手动加一集。没走故事那条路的老项目还得有这个口子。 */
+async function addEpisode() {
+  const created = await run(
+    () =>
+      api.newEpisode({
+        project: session.projectPath,
+        target_duration_s: durationS.value,
+      }),
+    { key: 'addEp', success: '新建了一集' },
+  )
+  if (created) {
+    await session.refresh()
+    session.selectEpisode(created.episode_id)
+  }
 }
 
 async function adoptDraft() {
@@ -659,6 +725,82 @@ async function adoptDraft() {
           </div>
         </aside>
       </div>
+
+      <!-- 支线收在这里。整部剧只用一两次的东西常驻在页面上，是在跟主线
+           抢注意力——这一页的主线是故事和分集。 -->
+      <details class="more">
+        <summary class="more__head">还有两件事：预告片、手动加一集</summary>
+        <div class="more__body stack">
+          <div class="row row--wrap">
+            <label class="field field--inline">
+              <span class="field__label">预告片时长</span>
+              <select v-model.number="trailerDurationS" class="select select--slim">
+                <option v-for="d in [15, 20, 30, 45]" :key="d" :value="d">
+                  {{ d }} 秒
+                </option>
+              </select>
+            </label>
+            <button
+              class="btn btn--ai btn--sm"
+              type="button"
+              :disabled="isBusy('trailer')"
+              @click="writeTrailer"
+            >
+              {{ isBusy('trailer') ? '剪着…' : '剪一条预告片' }}
+            </button>
+            <span class="tiny dim">预告片不占集号，采用后照样走镜头、成片、发布</span>
+          </div>
+
+          <section v-if="trailerDraft" class="card card--draft">
+            <div class="card__head">
+              <div>
+                <div class="card__title">{{ trailerDraft.title }}</div>
+                <div class="card__sub">{{ trailerDraft.logline }}</div>
+              </div>
+              <span
+                class="pill nowrap"
+                :class="trailerDraft.fit === '合适' ? 'pill--ok' : 'pill--warn'"
+              >
+                {{ trailerDraft.fit }}
+              </span>
+            </div>
+            <div class="card__body stack stack--sm">
+              <pre class="more__script">{{ trailerDraft.script }}</pre>
+              <div class="row">
+                <button
+                  class="btn btn--primary btn--sm"
+                  type="button"
+                  :disabled="isBusy('adoptTrailer')"
+                  @click="adoptTrailer"
+                >
+                  采用
+                </button>
+                <button
+                  class="btn btn--ghost btn--sm"
+                  type="button"
+                  @click="trailerDraft = null"
+                >
+                  丢弃
+                </button>
+              </div>
+            </div>
+          </section>
+
+          <div class="row">
+            <button
+              class="btn btn--ghost btn--sm"
+              type="button"
+              :disabled="isBusy('addEp')"
+              @click="addEpisode"
+            >
+              手动加一集
+            </button>
+            <span class="tiny dim">
+              不从故事切出来的一集。老项目和临时加的片段用得上。
+            </span>
+          </div>
+        </div>
+      </details>
     </template>
   </div>
 </template>
@@ -837,5 +979,32 @@ async function adoptDraft() {
 }
 .draftlist b {
   margin-right: var(--s2);
+}
+
+/* ---- 折叠起来的支线 ---- */
+
+.more {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+}
+.more__head {
+  padding: var(--s3) var(--s4);
+  color: var(--text-2);
+  font-size: var(--fs-sm);
+  cursor: pointer;
+}
+.more__body {
+  padding: 0 var(--s4) var(--s4);
+}
+.more__script {
+  max-height: 16rem;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font: inherit;
+  font-size: var(--fs-sm);
+  line-height: 1.8;
+  color: var(--text-2);
 }
 </style>

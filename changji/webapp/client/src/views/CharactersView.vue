@@ -246,7 +246,7 @@ async function clearRef(charId, slot) {
         title="还没有角色"
         hint="角色设定从剧本里提。先把第二步的剧本写好，再点上面的「AI 从剧本出角色」。"
       >
-        <RouterLink to="/script" class="btn">回去写剧本</RouterLink>
+        <RouterLink to="/story" class="btn">回去写故事</RouterLink>
         <button class="btn btn--ai" type="button" @click="generate(false)">
           <AppIcon name="sparkle" :size="15" />
           现在就出

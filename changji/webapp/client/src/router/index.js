@@ -58,16 +58,6 @@ export const STEP_ROUTES = [
     component: () => import('@/views/StoryView.vue'),
   },
   {
-    key: 'script',
-    path: '/script',
-    name: 'script',
-    phase: 'series',
-    title: '剧本大纲',
-    tagline: '全剧讲什么、分几集、每集写什么',
-    icon: 'script',
-    component: () => import('@/views/ScriptView.vue'),
-  },
-  {
     key: 'characters',
     path: '/characters',
     name: 'characters',
@@ -141,6 +131,10 @@ const routes = [
     meta: { title: '初始化', chrome: false },
   },
   // 老路径。合并之前它们是两页，收藏夹里可能还留着。
+  // 「剧本大纲」那一页 2026-09-11 删了：全剧那半（梗概、分集、章节）
+  // 在故事页，单集那半在「这一集」的剧本视图，预告片和手动加一集收进了
+  // 故事页的折叠区。一页同时干六件事，那一页就不会有重点。
+  { path: '/script', redirect: '/story' },
   { path: '/storyboard', redirect: '/episode?view=shots' },
   { path: '/production', redirect: '/episode?view=shots' },
   { path: '/shots', redirect: '/episode?view=shots' },

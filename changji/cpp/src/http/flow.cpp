@@ -46,8 +46,6 @@ json flow_steps() {
         // 先把完整故事和分集定下来，剧本才有得可写。
         json{{"key", "story"}, {"phase", "series"}, {"title", "故事"},
              {"hint", "讲什么、分几章、按每集时长切成几集"}},
-        json{{"key", "script"}, {"phase", "series"}, {"title", "剧本大纲"},
-             {"hint", "全剧讲什么、分几集、每集写什么"}},
         json{{"key", "characters"}, {"phase", "series"}, {"title", "角色"},
              {"hint", "从剧本提人物，全剧同一批"}},
         json{{"key", "scenes"}, {"phase", "episode"}, {"title", "场景"},
@@ -80,7 +78,11 @@ json flow_assess(const json& project, const json& shots, const json& outputs,
     counters["chapters"] = story_chapters.size();
     counters["plannedEpisodes"] = arr_of(story, "plan").size();
 
-    // ---- 剧本大纲：有梗概，而且至少有一集写过东西 ----
+    // ---- 「剧本大纲」那一格 2026-09-11 没有了 ----
+    //
+    // 全剧那半在故事页，单集那半在「这一集」的剧本视图。写过几集这个数
+    // 还留着当计数用：故事页要显示「已落成几集」，而 done 里不该有一个
+    // 没有格子对应的键（test_flow 的「多出来的 key 是死代码」那条盯着）。
     const auto& episodes = arr_of(project, "episodes");
     int written = 0;
     for (const auto& e : episodes) {
@@ -89,7 +91,7 @@ json flow_assess(const json& project, const json& shots, const json& outputs,
                                e["shots"].get<int>() > 0;
         if (has_shots || !str_of(e, "synopsis").empty()) ++written;
     }
-    done["script"] = !blank(str_of(project, "premise")) && written > 0;
+    counters["writtenEpisodes"] = written;
 
     // ---- 角色 ----
     const auto& characters = arr_of(project, "characters");
