@@ -28,6 +28,46 @@ struct BackendGuard {
 };
 void ensure_backend() { static BackendGuard g; }
 
+/// 把提示词套进模型自带的对话模板。
+///
+/// **不套模板等于把 instruct 模型当补全模型用。** Qwen3 这种指令模型训练时
+/// 每一轮都裹着 `<|im_start|>role ... <|im_end|>`，裸喂一段中文它只是在
+/// "续写"，时好时坏——实测症状是把 JSON Schema 里的字段说明原样当内容吐
+/// 回来（title 填成"标题"），或者整串 XXXX。挂了语法采样也救不回来，
+/// 因为语法只管形状不管内容。
+///
+/// 模板从 GGUF 元数据里取。llama_chat_apply_template **不跑 jinja**，它按
+/// 特征串认一批内置模板（Qwen 走 chatml 那条）；认不出来返回负数，那就
+/// 退回裸提示词——比硬套一个错模板强。
+std::string apply_chat_template(llama_model* model, const std::string& user) {
+    const char* tmpl = llama_model_chat_template(model, nullptr);
+    if (tmpl == nullptr) return user;
+
+    const llama_chat_message msg{"user", user.c_str()};
+    // 文档建议的大小是所有消息字符数的两倍，再加一截给模板自己的标记。
+    std::vector<char> buf(user.size() * 2 + 1024);
+    int32_t n = llama_chat_apply_template(tmpl, &msg, 1, /*add_ass=*/true,
+                                          buf.data(),
+                                          static_cast<int32_t>(buf.size()));
+    if (n > static_cast<int32_t>(buf.size())) {
+        buf.resize(static_cast<std::size_t>(n) + 1);
+        n = llama_chat_apply_template(tmpl, &msg, 1, /*add_ass=*/true,
+                                      buf.data(),
+                                      static_cast<int32_t>(buf.size()));
+    }
+    if (n <= 0) return user;
+    std::string out(buf.data(), static_cast<std::size_t>(n));
+
+    // **Qwen3 默认开思考。** 模板里出现 enable_thinking 就是这一族。开着的话
+    // 助手那一轮从 `<think>` 起头，而我们挂了 JSON 语法——语法把 `<think>`
+    // 直接判非法，模型第一个 token 就被逼进死角。Qwen 官方的关法就是替它把
+    // 思考段写成空的，和模板在 enable_thinking=false 时吐的一模一样。
+    if (std::string(tmpl).find("enable_thinking") != std::string::npos) {
+        out += "<think>\n\n</think>\n\n";
+    }
+    return out;
+}
+
 }  // namespace
 
 struct LlamaChat::Impl {
@@ -95,16 +135,20 @@ bool LlamaChat::complete(const std::string& prompt, const std::string& schema,
     const llama_vocab* vocab = llama_model_get_vocab(im.model);
 
     // ---- 提示词切词 ----
-    const int n_prompt = -llama_tokenize(vocab, prompt.c_str(),
-                                         static_cast<int32_t>(prompt.size()),
+    // 先套对话模板再切词。parse_special 必须是 true，否则 `<|im_start|>`
+    // 会被当成普通文字切碎，模板等于白套。
+    const std::string templated = apply_chat_template(im.model, prompt);
+
+    const int n_prompt = -llama_tokenize(vocab, templated.c_str(),
+                                         static_cast<int32_t>(templated.size()),
                                          nullptr, 0, true, true);
     if (n_prompt <= 0) {
         why = "提示词切不出 token";
         return false;
     }
     std::vector<llama_token> toks(static_cast<std::size_t>(n_prompt));
-    if (llama_tokenize(vocab, prompt.c_str(),
-                       static_cast<int32_t>(prompt.size()), toks.data(),
+    if (llama_tokenize(vocab, templated.c_str(),
+                       static_cast<int32_t>(templated.size()), toks.data(),
                        n_prompt, true, true) < 0) {
         why = "提示词切词失败";
         return false;
