@@ -149,6 +149,12 @@ export const api = {
   // 一口气展开所有还没正文的章。走长跑作业，进度在 seriesStatus 里，
   // 和「写整季」共用同一个任务槽。
   writeChapters: (payload) => post('/api/story/chapters', payload),
+  // 选中一段让 AI 改。**只回草稿**——改稿落错了盖掉的是作者自己写的字。
+  reviseStory: (payload) => post('/api/story/revise', payload),
+  // 把改好的那一段写回去。不碰大模型，纯字符串替换 + 重算切点和分集。
+  applyRevision: (payload) => post('/api/story/revise/apply', payload),
+  // 老项目：从已有剧集反推一份故事骨架。不碰大模型，也不重新分集。
+  storyFromEpisodes: (payload) => post('/api/story/from_episodes', payload),
 
   // ---- 引擎：角色 / 场景 / 风格 ----
   assets: (path) => get('/api/assets', { path }),

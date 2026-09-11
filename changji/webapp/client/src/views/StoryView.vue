@@ -1,20 +1,26 @@
 <script setup>
 /**
- * 故事。整条流水线的源头。
+ * 故事。原稿，也只有原稿。
  *
- * 这一页回答的是「这部剧讲什么、分几集」。**集数不在这里填**——它是按
- * 故事体量和每集时长算出来的。原来那个「我要写 N 集」的输入框没有了，
- * 那正是逐集续写那套的病根：集数由人拍脑袋定，故事就没有全局结构、
- * 写到第五集开始失忆、也永远没有结尾。
+ * 用户 2026-09-11：**故事这个页面重点在创作，创作就应该更多的是人和 AI 的
+ * 互动，人可以选中某一段让 AI 继续修改优化，也可以通过对话形式修改原稿。**
  *
- * 分集是**章节之间那条线**，不是另一张表。单独做成一页的话，人只能看到
- * 「第 3 集覆盖第 5~6 章」而看不见线画在哪，还得回去翻第 5 章是什么。
+ * 所以这一页现在只有一件事：**看着自己的稿子，改它**。章节表、分集切线、
+ * 每集时长、人物地点索引，全搬去「设定」那三格了——那些是在看创作出来的
+ * 东西被切成什么样，是另一件事，摆在这儿只会跟写字抢注意力。
  *
- * 右栏是**索引不是画廊**：名字 + 一句话，点开去角色页。人物和场景本来
- * 就是从故事里提的，摆在故事旁边才看得出这层关系。往右栏里塞可编辑的
- * 字段，这一页就会长回 ScriptView 今天的样子。
+ * **正文是一整篇连着读的**，不是一章一个折叠块。小说就是这么读的；折起来
+ * 的话你永远看不到第三章接第四章那一下顺不顺，而那正是最该看的地方。
+ *
+ * 选中 → 说一句 → 它改 → 你看 → 用不用。**改完不直接落库**，摆出来等你
+ * 点；也不是每次都从头说起，之前那几轮来回都带着，所以"再短一点"才有
+ * 意义。
+ *
+ * ⚠️ 位置一律换算成 **Unicode 码点**再送给引擎。浏览器给的是 UTF-16 单元，
+ * 碰上代理对（生僻字、emoji）会差一个，而差一个的后果是替换的时候切在
+ * 半个字上。`[...s].length` 才是码点数。
  */
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 
 import AppIcon from '@/components/AppIcon.vue'
 import EmptyState from '@/components/EmptyState.vue'
@@ -32,58 +38,59 @@ const { run, isBusy } = useAction()
 
 const story = ref(null)
 const loading = ref(false)
-const draft = ref(null) // AI 写完、还没采用的那一份
-const trailerDraft = ref(null)
+const draft = ref(null) // AI 写完、还没采用的那一份大纲
 const keywords = ref('')
-const openChapter = ref('')
 const pasting = ref(false)
 const pasted = ref('')
-const trailerDurationS = ref(20)
-// 预告片挂在固定集号上，只有一条，重剪覆盖上一条
-const TRAILER_ID = 'trailer'
-
 const premise = ref('')
 const savedPremise = ref('')
 
+// **体量在这一页，每集时长在「设定 · 分集」。** 两个数看着像一对，其实是
+// 两件事：体量是"这个故事有多长"（创作，写大纲时就要定），每集时长是
+// "把它切成多长一段"（设定，什么时候改都行）。摆在一起的话，改一个会让
+// 人以为另一个也跟着变了。
 const SCALES = [
   { key: 'short', label: '短篇', hint: '四章左右，一口气讲完' },
   { key: 'medium', label: '中篇', hint: '八章左右' },
   { key: 'long', label: '长篇', hint: '十六章左右，主线能铺开' },
 ]
-const DURATIONS = [30, 60, 90, 120, 180]
+const scale = ref('medium')
+
+// ---- 改稿 ----
+/** 选中的那一段：{chapter_id, from, to, text}。没选就是 null。 */
+const sel = ref(null)
+/** 这一段上聊过的来回。换一段就清空——"再短一点"是相对上一版说的。 */
+const chat = ref([])
+/** AI 改出来还没采用的那一版。 */
+const revision = ref(null)
+const instruction = ref('')
+const msRef = ref(null)
 
 const chapters = computed(() => story.value?.chapters ?? [])
-const plan = computed(() => story.value?.plan ?? [])
-const characters = computed(() => story.value?.characters ?? [])
-const locations = computed(() => story.value?.locations ?? [])
-const relations = computed(() => story.value?.relations ?? [])
-const scale = computed(() => story.value?.scale ?? 'medium')
-const durationS = computed(() => story.value?.episode_duration_s ?? 60)
 const hasStory = computed(() => chapters.value.length > 0)
 const premiseDirty = computed(() => premise.value.trim() !== savedPremise.value)
-/** 有正文但一个人物都没提出来——粘进来的故事就是这样。 */
-const needsAnalysis = computed(
-  () => hasStory.value && !characters.value.length && writtenCount.value > 0,
-)
-/** 还没展开正文的章数。 */
-const unwritten = computed(() => chapters.value.length - writtenCount.value)
 const writtenCount = computed(
   () => chapters.value.filter((c) => (c.text ?? '').trim()).length,
 )
-
-/** 这一章之后要画的那几条分集线（在这一章结束的集）。 */
-function cutsAfter(chapterId) {
-  return plan.value.filter((p) => p.to_chapter === chapterId)
-}
-
-function relationsOf(name) {
-  return relations.value.filter((r) => r.a === name || r.b === name)
-}
+const unwritten = computed(() => chapters.value.length - writtenCount.value)
+const totalChars = computed(() =>
+  chapters.value.reduce((n, c) => n + [...(c.text ?? '')].length, 0),
+)
+/** 有正文但一个人物都没提出来——粘进来的故事就是这样。 */
+const needsAnalysis = computed(
+  () =>
+    hasStory.value &&
+    !(story.value?.characters ?? []).length &&
+    writtenCount.value > 0,
+)
+/** 老项目：有剧集、没故事。给它一条接回新流程的路。 */
+const canReverse = computed(() => !hasStory.value && session.episodes.length > 0)
 
 function setStory(payload) {
   story.value = payload?.story ?? null
   premise.value = story.value?.premise ?? ''
   savedPremise.value = premise.value.trim()
+  if (story.value?.scale) scale.value = story.value.scale
 }
 
 async function load() {
@@ -103,13 +110,14 @@ async function load() {
 
 onMounted(() => {
   load()
-  // 可能是上次离开页面时还在跑的那一轮
-  writer.poll()
+  writer.poll() // 可能是上次离开页面时还在跑的那一轮
+  document.addEventListener('selectionchange', onSelect)
 })
-onUnmounted(() => writer.stop())
+onUnmounted(() => {
+  writer.stop()
+  document.removeEventListener('selectionchange', onSelect)
+})
 watch(() => session.projectPath, load)
-
-// 批量展开跑完了把故事重新读一遍——正文是在引擎那边一章一章落库的
 watch(
   () => writer.running,
   (now, before) => {
@@ -117,42 +125,137 @@ watch(
   },
 )
 
-async function savePremise() {
-  if (!premiseDirty.value || !session.projectPath) return
-  const result = await run(
-    () =>
-      api.saveStory({ project: session.projectPath, premise: premise.value.trim() }),
-    { key: 'premise', success: '梗概已存下' },
-  )
-  if (result) setStory(result)
-}
+// ---------------------------------------------------------------------------
+// 选中一段
+// ---------------------------------------------------------------------------
 
-async function pickScale(next) {
-  if (next === scale.value) return
-  const result = await run(
-    () => api.saveStory({ project: session.projectPath, scale: next }),
-    { key: 'scale' },
-  )
-  if (result) setStory(result)
+/** 这个节点属于哪一章。选中跨章时两头会不一样。 */
+function chapterOf(node) {
+  let el = node instanceof Element ? node : node?.parentElement
+  while (el && !el.dataset?.chapter) el = el.parentElement
+  return el?.dataset?.chapter ?? ''
 }
 
 /**
- * 换每集时长。
+ * 浏览器给的 UTF-16 偏移换算成**码点**偏移。
  *
- * 有故事就重算分集表——集数跟着时长走，这是这一页的主张。没故事就只存
- * 下来，等写完大纲再算。
+ * 中文基本都在 BMP 里，两者相等；但生僻字和 emoji 是代理对，差一个。
+ * 差一个的后果不是显示错位，是替换的时候切在半个字上——存进 story.json
+ * 的就是一段非法 UTF-8，一路流到提示词和字幕。
  */
-async function pickDuration(event) {
-  const next = Number(event.target.value)
+function codePoints(text, utf16Offset) {
+  return [...text.slice(0, utf16Offset)].length
+}
+
+function onSelect() {
+  const s = window.getSelection()
+  if (!s || s.isCollapsed || !msRef.value) {
+    // **不清掉已经选好的那一段。** 点进右边的输入框时浏览器会收掉选区，
+    // 收一次就把面板关掉的话，这个功能永远用不成。
+    return
+  }
+  const a = chapterOf(s.anchorNode)
+  const b = chapterOf(s.focusNode)
+  if (!a || !b) return
+  if (a !== b) {
+    ui.warn('一次只能改一章里的一段')
+    return
+  }
+  const el = msRef.value.querySelector(`[data-chapter="${a}"]`)
+  if (!el || !el.contains(s.anchorNode)) return
+
+  const full = el.textContent ?? ''
+  const lo = Math.min(s.anchorOffset, s.focusOffset)
+  const hi = Math.max(s.anchorOffset, s.focusOffset)
+  // 两头都在同一个文本节点里才算数：正文是一整个文本节点渲染的，
+  // 跨节点说明选到了别的东西（标题、按钮），那不是正文。
+  if (s.anchorNode !== s.focusNode) return
+
+  const from = codePoints(full, lo)
+  const to = codePoints(full, hi)
+  if (to - from < 2) return // 手滑点一下不算选中
+
+  const picked = [...full].slice(from, to).join('')
+  if (sel.value?.chapter_id === a && sel.value?.from === from && sel.value?.to === to) {
+    return
+  }
+  sel.value = { chapter_id: a, from, to, text: picked }
+  // 换了一段就从头聊：上一段的来回套在这一段上只会让它改错方向
+  chat.value = []
+  revision.value = null
+}
+
+function clearSelection() {
+  sel.value = null
+  chat.value = []
+  revision.value = null
+  instruction.value = ''
+  window.getSelection()?.removeAllRanges()
+}
+
+// ---------------------------------------------------------------------------
+// 让 AI 改
+// ---------------------------------------------------------------------------
+
+async function revise() {
+  const want = instruction.value.trim()
+  if (!sel.value) return
+  if (!want) {
+    ui.warn('说一句要改成什么样，比如「这儿太赶了，铺一下情绪」')
+    return
+  }
   const result = await run(
     () =>
-      hasStory.value
-        ? api.planEpisodes({ project: session.projectPath, duration_s: next })
-        : api.saveStory({
-            project: session.projectPath,
-            episode_duration_s: next,
-          }),
-    { key: 'duration' },
+      api.reviseStory({
+        project: session.projectPath,
+        chapter_id: sel.value.chapter_id,
+        from_char: sel.value.from,
+        to_char: sel.value.to,
+        instruction: want,
+        history: chat.value,
+      }),
+    { key: 'revise' },
+  )
+  if (!result) return
+  chat.value = [
+    ...chat.value,
+    { role: 'user', text: want },
+    { role: 'assistant', text: result.note || '改完了' },
+  ]
+  revision.value = result
+  instruction.value = ''
+}
+
+/** 用这一版。**到这一步才落库。** */
+async function applyRevision() {
+  if (!revision.value) return
+  const r = revision.value
+  const result = await run(
+    () =>
+      api.applyRevision({
+        project: session.projectPath,
+        chapter_id: r.chapter_id,
+        from_char: r.from_char,
+        to_char: r.to_char,
+        text: r.text,
+      }),
+    { key: 'apply' },
+  )
+  if (!result) return
+  setStory(result)
+  ui.ok(`改好了，这一章现在 ${result.chars} 字，分集重算过了`)
+  clearSelection()
+}
+
+// ---------------------------------------------------------------------------
+// 从无到有的三条路
+// ---------------------------------------------------------------------------
+
+async function savePremise() {
+  if (!premiseDirty.value || !session.projectPath) return
+  const result = await run(
+    () => api.saveStory({ project: session.projectPath, premise: premise.value.trim() }),
+    { key: 'premise', success: '梗概已存下' },
   )
   if (result) setStory(result)
 }
@@ -163,7 +266,7 @@ async function pickDuration(event) {
  * **梗概不是必填的。** 三个入口里只有「我自己有个想法」那条是从手写的
  * 一句话开始的；给几个关键词、或者什么都不给让它来一个，同样正当。
  * 选题本来就是整条流水线上最难从零开始的一步，把它做成硬门槛等于又把人
- * 摁回空白框前面发呆。空着写出来的那一句会回填到梗概框里。
+ * 摁回空白框前面发呆。
  */
 async function writeStory() {
   const result = await run(
@@ -179,33 +282,7 @@ async function writeStory() {
   if (result) draft.value = result
 }
 
-/**
- * 把分集表落成真的剧集。
- *
- * 和「采用大纲」分开，是因为改每集时长是个随手的动作（当场重算分集表），
- * 而建剧集会动到已经写好剧本、已经出过片的那几集。后端对已存在的同号
- * 剧集只补元数据，script 和 shots 一个字不碰。
- */
-async function makeEpisodes() {
-  const result = await run(
-    () => api.makeEpisodes({ project: session.projectPath }),
-    { key: 'episodes', refresh: true },
-  )
-  if (result) {
-    setStory(result)
-    const n = result.created?.length ?? 0
-    ui.ok(n ? `建了 ${n} 集，后面几步可以对着它们干活了` : '剧集都在，元数据对齐了一遍')
-  }
-}
-
-/**
- * 粘一段现成的东西进来。
- *
- * 三个入口里的第二条。切章节不走大模型——那是机械活，靠标题行和段落边界
- * 就能做，而且比模型稳：同一段文本让模型切两次，结果会不一样。
- *
- * 切出来的章节自带正文，所以后面写剧本时展开的是真正文，不是梗概。
- */
+/** 粘一段现成的进来。切章节不走大模型——那是机械活，而且比模型稳。 */
 async function importPasted() {
   if (!pasted.value.trim()) {
     ui.warn('先把文本粘进来')
@@ -222,14 +299,22 @@ async function importPasted() {
   }
 }
 
+/** 老项目：把已经写好的那几集反推成故事骨架。不碰大模型，也不重新分集。 */
+async function reverseFromEpisodes() {
+  const result = await run(
+    () => api.storyFromEpisodes({ project: session.projectPath, overwrite: true }),
+    { key: 'reverse' },
+  )
+  if (!result) return
+  setStory(result)
+  ui.ok(`反推出 ${result.chapters} 章。接着点「让 AI 读一遍」把人物提出来`)
+}
+
 /**
- * 让 AI 读一遍正文。
+ * 让 AI 读一遍正文，把人物关系地点提出来。**正文一个字不动。**
  *
- * 粘进来的故事只有正文，人物关系地点全是空的——走到「设定」那一步资产库
- * 还是空的，再往下分镜指不到任何角色。这一步补那个洞，**正文一个字不动**。
- *
- * 顺带把机械切点换成真钩子：粘贴时登记的段落边界只保证不切在半句话中间，
- * 读过之后能切在真正的悬念上，所以分集表会跟着重算。
+ * 粘进来和反推出来的故事都只有正文，不读一遍的话走到「设定」那一步资产库
+ * 是空的，再往下分镜指不到任何角色。
  */
 async function analyzeStory() {
   const result = await run(
@@ -239,34 +324,43 @@ async function analyzeStory() {
   if (result) draft.value = result
 }
 
-/**
- * 展开一章的正文。
- *
- * 大纲写出来的故事只有「这一章发生什么，三五句」，没有正文——写剧本时
- * 展开的就是那三五句，按字符切分那套机器一直用不上。这一步把它补上。
- *
- * **直接落库，不走草稿。** 别的几个都是「先摆出来再采用」，这里破例：
- * 它只往一个空字段里填东西，没有什么会被顶掉；而一部十六章的故事逐章
- * 展开，走草稿-采用就是三十二次点击。
- */
-async function writeChapter(chapterId, overwrite = false) {
+async function adoptDraft() {
+  if (!draft.value) return
   const result = await run(
     () =>
-      api.writeChapter({
+      api.adoptStory({
         project: session.projectPath,
-        chapter_id: chapterId,
-        overwrite,
+        story: draft.value.story,
+        overwrite: true,
       }),
-    { key: 'chapter:' + chapterId },
+    { key: 'adopt', success: '采用了，写进项目了', refresh: true },
   )
   if (result) {
     setStory(result)
-    openChapter.value = chapterId
-    ui.ok(`${chapterId} 写了 ${result.chars} 字，分集重算过了`)
+    draft.value = null
   }
 }
 
-/** 一口气展开所有还没正文的章。 */
+// ---------------------------------------------------------------------------
+// 展开正文
+// ---------------------------------------------------------------------------
+
+/** 展开一章的正文。**直接落库**：它只往一个空字段里填东西，没什么会被顶掉。 */
+async function writeChapter(chapterId) {
+  const result = await run(
+    () =>
+      api.writeChapter({ project: session.projectPath, chapter_id: chapterId }),
+    { key: 'chapter:' + chapterId },
+  )
+  if (!result) return
+  setStory(result)
+  ui.ok(`${chapterId} 写了 ${result.chars} 字`)
+  await nextTick()
+  msRef.value
+    ?.querySelector(`[data-chapter="${chapterId}"]`)
+    ?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+}
+
 async function writeAllChapters() {
   const started = await run(
     () => api.writeChapters({ project: session.projectPath }),
@@ -282,86 +376,6 @@ async function stopWriting() {
   await run(() => api.stopSeries(), { key: 'stopWrite', success: '已停' })
   writer.poll()
 }
-
-/**
- * 剪一条预告片。
- *
- * 对流水线来说预告片就是特别短的一集：采用之后照样走镜头、成片、发布。
- * 区别只在写的时候——要的是钩子不是完整故事，所以它**不占集号**，也不参与
- * 「接着前几集写」的上下文。放在折叠区里：整部剧只剪一两次，常驻一张卡
- * 是在跟主线抢注意力。
- */
-async function writeTrailer() {
-  const result = await run(
-    () =>
-      api.writeTrailer({
-        project: session.projectPath,
-        duration_s: trailerDurationS.value,
-      }),
-    { key: 'trailer' },
-  )
-  if (result) trailerDraft.value = result
-}
-
-async function adoptTrailer() {
-  if (!trailerDraft.value) return
-  await run(
-    async () => {
-      const exists = session.episodes.some((e) => e.episode_id === TRAILER_ID)
-      if (!exists) {
-        await api.newEpisode({
-          project: session.projectPath,
-          episode_id: TRAILER_ID,
-          title: trailerDraft.value.title,
-          target_duration_s: trailerDurationS.value,
-        })
-      }
-      await api.saveScript({
-        project: session.projectPath,
-        episode_id: TRAILER_ID,
-        script: trailerDraft.value.script,
-        duration_s: trailerDurationS.value,
-        synopsis: trailerDraft.value.logline,
-      })
-      trailerDraft.value = null
-    },
-    { key: 'adoptTrailer', success: '预告片存下了', refresh: true },
-  )
-}
-
-/** 手动加一集。没走故事那条路的老项目还得有这个口子。 */
-async function addEpisode() {
-  const created = await run(
-    () =>
-      api.newEpisode({
-        project: session.projectPath,
-        target_duration_s: durationS.value,
-      }),
-    { key: 'addEp', success: '新建了一集' },
-  )
-  if (created) {
-    await session.refresh()
-    session.selectEpisode(created.episode_id)
-  }
-}
-
-async function adoptDraft() {
-  if (!draft.value) return
-  const result = await run(
-    () =>
-      api.adoptStory({
-        project: session.projectPath,
-        story: draft.value.story,
-        // 已经展开过正文时后端会拦一下，这里明确表示"就是要换"
-        overwrite: true,
-      }),
-    { key: 'adopt', success: '采用了，写进项目了', refresh: true },
-  )
-  if (result) {
-    setStory(result)
-    draft.value = null
-  }
-}
 </script>
 
 <template>
@@ -369,21 +383,31 @@ async function adoptDraft() {
     <StepHeader>
       <template #actions>
         <button
+          v-if="hasStory && unwritten && !writer.running"
           class="btn btn--ai"
           type="button"
-          :disabled="!session.hasProject || isBusy('write')"
-          @click="writeStory"
+          :disabled="isBusy('chapters')"
+          @click="writeAllChapters"
         >
           <AppIcon name="sparkle" :size="15" />
-          {{
-            isBusy('write')
-              ? '大模型正在写…'
-              : hasStory
-                ? '重写故事'
-                : premise.trim() || keywords.trim()
-                  ? 'AI 写故事'
-                  : 'AI 来一个'
-          }}
+          展开全部 {{ unwritten }} 章
+        </button>
+        <template v-if="writer.running">
+          <span class="pill pill--accent nowrap">
+            正在展开 {{ writer.state?.done ?? 0 }} / {{ writer.state?.total ?? 0 }}
+          </span>
+          <button class="btn btn--danger btn--sm" type="button" @click="stopWriting">
+            停
+          </button>
+        </template>
+        <button
+          v-if="needsAnalysis"
+          class="btn btn--ai"
+          type="button"
+          :disabled="isBusy('analyze')"
+          @click="analyzeStory"
+        >
+          {{ isBusy('analyze') ? '正在读…' : '让 AI 读一遍，提人物' }}
         </button>
       </template>
     </StepHeader>
@@ -393,618 +417,357 @@ async function adoptDraft() {
       icon="folder"
       tone="warn"
       title="还没选项目"
-      hint="故事挂在项目上。先回第一步选一个，或者新建一个。"
-    >
-      <RouterLink to="/project" class="btn btn--primary">去第一步</RouterLink>
-    </EmptyState>
+      hint="故事挂在项目上。在项目库那条栏里点一个。"
+    />
 
     <template v-else>
       <!-- 草稿。AI 写完先摆出来给人看，点了采用才落库 -->
       <section v-if="draft" class="card card--draft">
         <div class="card__head">
           <div>
-            <div class="card__title">
-              <AppIcon name="sparkle" :size="15" class="inline-icon" />
-              大模型写了一份，还没存
-            </div>
-            <div class="card__sub">{{ draft.story?.logline }}</div>
-            <div
-              v-if="draft.story?.premise && draft.story.premise !== savedPremise"
-              class="tiny dim"
-            >
-              选题：{{ draft.story.premise }}
+            <div class="card__title">{{ draft.story?.logline || '一份新的故事' }}</div>
+            <div class="card__sub">
+              {{ draft.chapters }} 章 ·
+              {{ draft.story?.characters?.length ?? 0 }} 个人 ·
+              {{ draft.story?.locations?.length ?? 0 }} 个地方。
+              采用之前原来那份一个字不动。
             </div>
           </div>
-          <span class="pill pill--accent nowrap">
-            {{ draft.chapters }} 章 · 分 {{ draft.episodes }} 集
-          </span>
-        </div>
-        <div v-if="draft.needs_analysis" class="card__body">
-          <p class="tiny dim">
-            粘进来的只有正文，人物和地点还没提出来——那要读懂内容才做得到，
-            是下一步的事。先采用，章节和分集已经能看了。
-          </p>
         </div>
         <div class="card__body stack stack--sm">
-          <ol class="draftlist">
-            <li v-for="c in draft.story?.chapters ?? []" :key="c.chapter_id">
-              <b>{{ c.title }}</b>
-              <span class="dim">{{ c.summary }}</span>
-            </li>
-          </ol>
-          <div class="row">
+          <div v-for="c in draft.story?.chapters ?? []" :key="c.chapter_id" class="dch">
+            <b>{{ c.title }}</b>
+            <span class="small dim">{{ c.summary }}</span>
+          </div>
+        </div>
+        <div class="card__foot">
+          <button
+            class="btn btn--primary"
+            type="button"
+            :disabled="isBusy('adopt')"
+            @click="adoptDraft"
+          >
+            采用这一份
+          </button>
+          <button class="btn btn--ghost" type="button" @click="draft = null">
+            丢弃
+          </button>
+        </div>
+      </section>
+
+      <!-- 还没有故事：三条入口 -->
+      <section v-if="!hasStory && !loading" class="card">
+        <div class="card__body stack">
+          <textarea
+            v-model="premise"
+            class="textarea"
+            rows="3"
+            placeholder="想好了就写一句，比如：深夜便利店，前任推门进来，手里拿着五年前她送的那把伞。&#10;没想好就空着，直接点下面那个按钮让它来一个。"
+            @blur="savePremise"
+          />
+          <input
+            v-model="keywords"
+            class="input"
+            placeholder="想往哪个方向？热点词、题材都行，可留空（比如：重生复仇、破镜重圆）"
+          />
+          <div class="row row--wrap">
+            <div class="scales">
+              <button
+                v-for="sc in SCALES"
+                :key="sc.key"
+                class="scale"
+                :class="{ 'is-on': scale === sc.key }"
+                type="button"
+                :title="sc.hint"
+                @click="scale = sc.key"
+              >
+                {{ sc.label }}
+              </button>
+            </div>
             <button
-              class="btn btn--primary"
+              class="btn btn--ai"
               type="button"
-              :disabled="isBusy('adopt')"
-              @click="adoptDraft"
+              :disabled="isBusy('write')"
+              @click="writeStory"
             >
-              采用这一份
+              <AppIcon name="sparkle" :size="15" />
+              {{ isBusy('write') ? '正在写…' : '让 AI 写一份' }}
             </button>
-            <button class="btn btn--ghost" type="button" @click="draft = null">
-              丢弃
+            <button class="btn" type="button" @click="pasting = !pasting">
+              我有现成的，粘进来
             </button>
+            <button
+              v-if="canReverse"
+              class="btn btn--ghost"
+              type="button"
+              :disabled="isBusy('reverse')"
+              @click="reverseFromEpisodes"
+            >
+              {{ isBusy('reverse') ? '正在反推…' : `从已有的 ${session.episodes.length} 集反推` }}
+            </button>
+            <span class="spacer" />
+            <span class="tiny dim">分几集在「设定 · 分集」那儿定</span>
+          </div>
+
+          <div v-if="pasting" class="stack stack--sm">
+            <textarea
+              v-model="pasted"
+              class="textarea mono"
+              rows="10"
+              placeholder="小说、剧本、大纲都行。认得出「第三章」「## 标题」就照它分章，认不出就按字数在段落边界上切。版权自负。"
+            />
+            <div class="row">
+              <button
+                class="btn btn--primary"
+                type="button"
+                :disabled="isBusy('import')"
+                @click="importPasted"
+              >
+                {{ isBusy('import') ? '切着…' : '切成章节' }}
+              </button>
+              <button class="btn btn--ghost" type="button" @click="pasting = false">
+                取消
+              </button>
+            </div>
           </div>
         </div>
       </section>
 
-      <div class="story">
-        <div class="story__main stack">
-          <!-- 梗概 + 体量 + 每集时长。集数是算出来的，不在这里填 -->
-          <section class="card">
-            <div class="card__body stack">
-              <textarea
-                v-model="premise"
-                class="textarea"
-                rows="3"
-                placeholder="想好了就写一句，比如：深夜便利店，前任推门进来，手里拿着五年前她送的那把伞。&#10;没想好就空着，直接点右上角让它来一个。"
-                @blur="savePremise"
-              />
+      <div v-if="loading" class="tiny dim">读取中…</div>
 
-              <div class="row row--wrap">
-                <div class="scales">
-                  <button
-                    v-for="s in SCALES"
-                    :key="s.key"
-                    class="scale"
-                    :class="{ 'is-on': scale === s.key }"
-                    type="button"
-                    :title="s.hint"
-                    :disabled="isBusy('scale')"
-                    @click="pickScale(s.key)"
-                  >
-                    {{ s.label }}
-                  </button>
-                </div>
+      <!-- ---- 原稿 ---- -->
+      <div v-else-if="hasStory" class="ms" :class="{ 'ms--picked': sel }">
+        <div ref="msRef" class="ms__paper">
+          <p class="ms__meta tiny dim">
+            {{ chapters.length }} 章 · {{ totalChars }} 字 ·
+            已展开 {{ writtenCount }} 章
+            <template v-if="unwritten">（还有 {{ unwritten }} 章只有梗概）</template>
+            · 选中一段就能让 AI 改它
+          </p>
 
-                <label class="field field--inline">
-                  <span class="field__label">每集</span>
-                  <select
-                    class="select select--slim"
-                    :value="durationS"
-                    :disabled="isBusy('duration')"
-                    @change="pickDuration"
-                  >
-                    <option v-for="d in DURATIONS" :key="d" :value="d">
-                      {{ d }} 秒
-                    </option>
-                  </select>
-                </label>
-
-                <span v-if="hasStory" class="pill pill--accent nowrap">
-                  {{ chapters.length }} 章 → {{ plan.length }} 集
-                </span>
-                <span v-else class="tiny dim">
-                  集数由故事体量和每集时长算出来，不用填
-                </span>
-              </div>
-
-              <input
-                v-model="keywords"
-                class="input"
-                placeholder="想往哪个方向？热点词、题材都行，可留空（比如：重生复仇、破镜重圆）"
-              />
-            </div>
-          </section>
-
-          <!-- 章节 + 分集切线 -->
-          <section class="stack stack--sm">
-            <div v-if="loading" class="tiny dim">读取中…</div>
-
-            <section v-if="pasting" class="card">
-              <div class="card__head">
-                <div>
-                  <div class="card__title">粘一段现成的进来</div>
-                  <div class="card__sub">
-                    小说、剧本、大纲都行。认得出「第三章」「## 标题」就照它分章，
-                    认不出就按字数在段落边界上切。版权自负。
-                  </div>
-                </div>
-                <button
-                  class="btn btn--ghost btn--sm"
-                  type="button"
-                  @click="pasting = false"
-                >
-                  收起
-                </button>
-              </div>
-              <div class="card__body stack stack--sm">
-                <textarea
-                  v-model="pasted"
-                  class="textarea"
-                  rows="10"
-                  placeholder="把正文粘在这里…"
-                />
-                <div class="row row--between">
-                  <span class="tiny dim numeric">
-                    {{ [...pasted].length }} 字
-                  </span>
-                  <button
-                    class="btn btn--primary"
-                    type="button"
-                    :disabled="isBusy('import')"
-                    @click="importPasted"
-                  >
-                    {{ isBusy('import') ? '切分中…' : '切成章节' }}
-                  </button>
-                </div>
-              </div>
-            </section>
-
-            <EmptyState
-              v-else-if="!hasStory"
-              icon="script"
-              title="还没有故事"
-              hint="选个体量，点右上角让它写。梗概和方向都可以空着——空着就让它自己定选题。"
-            >
-              <button class="btn" type="button" @click="pasting = true">
-                我有现成的，粘进来
-              </button>
-            </EmptyState>
-
-            <template v-else>
-              <div class="row row--between">
-                <span class="tiny dim">
-                  章节 {{ chapters.length }} · 已展开正文 {{ writtenCount }}
-                  <template v-if="writtenCount < chapters.length">
-                    （没展开的那些，写剧本时用的是梗概不是正文）
-                  </template>
-                </span>
-                <div class="row">
-                  <button
-                    v-if="!writer.running && unwritten"
-                    class="btn btn--ai btn--sm"
-                    type="button"
-                    :disabled="isBusy('chapters')"
-                    @click="writeAllChapters"
-                  >
-                    展开全部 {{ unwritten }} 章
-                  </button>
-                  <template v-if="writer.running">
-                    <span class="pill pill--accent nowrap">
-                      正在展开 {{ writer.state?.done ?? 0 }} /
-                      {{ writer.state?.total ?? 0 }}
-                    </span>
-                    <button class="btn btn--danger btn--sm" type="button" @click="stopWriting">
-                      停
-                    </button>
-                  </template>
-                  <button
-                    v-if="needsAnalysis"
-                    class="btn btn--ai btn--sm"
-                    type="button"
-                    :disabled="isBusy('analyze')"
-                    @click="analyzeStory"
-                  >
-                    {{ isBusy('analyze') ? '正在读…' : '让 AI 读一遍，提人物' }}
-                  </button>
-                  <button
-                    class="btn btn--ghost btn--sm"
-                    type="button"
-                    @click="pasting = !pasting"
-                  >
-                    粘一段进来
-                  </button>
-                  <span class="tiny dim">横线就是分集，切在钩子上</span>
-                </div>
-              </div>
-
-              <p v-if="writer.state?.message" class="tiny dim">
-                {{ writer.state.message }}
-              </p>
-              <p
-                v-for="(w, i) in writer.state?.episodes ?? []"
-                :key="i"
-                class="tiny"
-                :class="w.error ? 'warn-text' : 'dim'"
+          <article v-for="(c, i) in chapters" :key="c.chapter_id" class="ch">
+            <h3 class="ch__title">
+              <span class="ch__no numeric">{{ i + 1 }}</span>
+              {{ c.title }}
+            </h3>
+            <!-- 正文渲染成**一个文本节点**：选区偏移直接就是这一章里的
+                 位置，不用在 DOM 里爬着累加。中间插任何标签都会让偏移
+                 算错，而算错的后果是替换时切在半句话上。 -->
+            <div v-if="c.text" class="ms__text" :data-chapter="c.chapter_id">{{ c.text }}</div>
+            <div v-else class="ch__todo">
+              <p class="small dim">{{ c.summary }}</p>
+              <button
+                class="btn btn--ai btn--sm"
+                type="button"
+                :disabled="isBusy('chapter:' + c.chapter_id)"
+                @click="writeChapter(c.chapter_id)"
               >
-                {{ w.chapter_id }}
-                {{ w.error ? '写砸了：' + w.error : w.title + ' · ' + w.chars + ' 字' }}
-              </p>
+                {{ isBusy('chapter:' + c.chapter_id) ? '写着…' : '展开这一章的正文' }}
+              </button>
+            </div>
+          </article>
 
-              <template v-for="(c, i) in chapters" :key="c.chapter_id">
-                <div
-                  class="chap"
-                  :class="{ 'is-open': openChapter === c.chapter_id }"
-                  @click="openChapter = openChapter === c.chapter_id ? '' : c.chapter_id"
-                >
-                  <span class="chap__no numeric">{{ i + 1 }}</span>
-                  <div class="chap__text">
-                    <div class="chap__title">{{ c.title }}</div>
-                    <div v-if="openChapter === c.chapter_id" class="chap__sum">
-                      <p v-if="c.summary">{{ c.summary }}</p>
-                      <pre v-if="c.text" class="chap__text">{{ c.text }}</pre>
-                    </div>
-                  </div>
-                  <span v-if="c.text" class="tiny dim numeric nowrap">
-                    {{ [...c.text].length }} 字
-                  </span>
-                  <button
-                    v-else
-                    class="btn btn--ai btn--sm nowrap"
-                    type="button"
-                    :disabled="isBusy('chapter:' + c.chapter_id)"
-                    @click.stop="writeChapter(c.chapter_id)"
-                  >
-                    {{ isBusy('chapter:' + c.chapter_id) ? '写着…' : '展开正文' }}
-                  </button>
-                </div>
-
-                <div v-for="ep in cutsAfter(c.chapter_id)" :key="ep.episode_id" class="cut">
-                  <span class="cut__id numeric">{{ ep.episode_id }}</span>
-                  <span class="cut__dur numeric">{{ ep.target_duration_s }}s</span>
-                  <span v-if="ep.hook" class="cut__hook truncate">
-                    钩子：{{ ep.hook }}
-                  </span>
-                  <span v-else class="cut__hook dim">章尾</span>
-                </div>
-              </template>
-
-              <div class="row row--between">
-                <span class="tiny dim">
-                  分集表是计划。落成剧集之后，后面几步才有东西可对。
-                </span>
-                <button
-                  class="btn btn--primary btn--sm"
-                  type="button"
-                  :disabled="isBusy('episodes')"
-                  @click="makeEpisodes"
-                >
-                  {{ isBusy('episodes') ? '正在建…' : '落成剧集' }}
-                </button>
-              </div>
-            </template>
-          </section>
+          <p v-if="writer.state?.message" class="tiny dim">{{ writer.state.message }}</p>
+          <p
+            v-for="(w, i) in writer.state?.episodes ?? []"
+            :key="i"
+            class="tiny"
+            :class="w.error ? 'warn-text' : 'dim'"
+          >
+            {{ w.chapter_id }}
+            {{ w.error ? '写砸了：' + w.error : w.title + ' · ' + w.chars + ' 字' }}
+          </p>
         </div>
 
-        <!-- 右栏：索引，不是画廊。点开去角色页改外观 -->
-        <aside v-if="hasStory" class="story__side stack stack--sm">
-          <div v-if="needsAnalysis" class="side__group side__group--warn">
-            <div class="side__head">还没提人物</div>
-            <p class="side__hint tiny">
-              粘进来的只有正文。让 AI 读一遍才能把人和地方提出来，
-              不然走到「设定」那一步资产库是空的。
-            </p>
+        <!-- 选中之后才出现。常驻一条空的对话栏是在跟正文抢地方，
+             而这一页的正文才是主角。 -->
+        <aside v-if="sel" class="ai stack stack--sm">
+          <div class="row row--between">
+            <b class="ai__head">改这一段</b>
+            <button class="btn btn--ghost btn--sm" type="button" @click="clearSelection">
+              收起
+            </button>
+          </div>
+          <blockquote class="ai__quote small">{{ sel.text }}</blockquote>
+          <p class="tiny dim">
+            {{ sel.chapter_id }} 第 {{ sel.from }}–{{ sel.to }} 字，
+            共 {{ sel.to - sel.from }} 字。只改这一段，别的一个字不动。
+          </p>
+
+          <div v-for="(t, i) in chat" :key="i" class="turn" :class="'turn--' + t.role">
+            <span class="turn__who tiny">{{ t.role === 'user' ? '你' : 'AI' }}</span>
+            <span class="small">{{ t.text }}</span>
           </div>
 
-          <div class="side__group">
-            <div class="side__head">人 {{ characters.length }}</div>
-            <RouterLink
-              v-for="c in characters"
-              :key="c.name"
-              to="/characters"
-              class="side__row"
-              :title="c.identity"
-            >
-              <span class="side__name truncate">{{ c.name }}</span>
-              <span v-if="relationsOf(c.name).length" class="tiny dim nowrap">
-                {{ relationsOf(c.name).length }} 段关系
-              </span>
-            </RouterLink>
-          </div>
-
-          <div class="side__group">
-            <div class="side__head">地方 {{ locations.length }}</div>
-            <RouterLink
-              v-for="l in locations"
-              :key="l.name"
-              to="/scenes"
-              class="side__row"
-              :title="l.what"
-            >
-              <span class="side__name truncate">{{ l.name }}</span>
-            </RouterLink>
-          </div>
-
-          <div v-if="relations.length" class="side__group">
-            <div class="side__head">关系</div>
-            <div v-for="(r, i) in relations" :key="i" class="side__rel tiny">
-              <b>{{ r.a }} — {{ r.b }}</b>
-              <span class="dim">{{ r.kind }}</span>
+          <section v-if="revision" class="ai__draft">
+            <div class="tiny dim">改完是这样（还没写进去）</div>
+            <div class="ai__new small">{{ revision.text }}</div>
+            <div class="row">
+              <button
+                class="btn btn--primary btn--sm"
+                type="button"
+                :disabled="isBusy('apply')"
+                @click="applyRevision"
+              >
+                {{ isBusy('apply') ? '写着…' : '用这一版' }}
+              </button>
+              <button class="btn btn--ghost btn--sm" type="button" @click="revision = null">
+                不要
+              </button>
             </div>
-          </div>
-        </aside>
-      </div>
+          </section>
 
-      <!-- 支线收在这里。整部剧只用一两次的东西常驻在页面上，是在跟主线
-           抢注意力——这一页的主线是故事和分集。 -->
-      <details class="more">
-        <summary class="more__head">还有两件事：预告片、手动加一集</summary>
-        <div class="more__body stack">
-          <div class="row row--wrap">
-            <label class="field field--inline">
-              <span class="field__label">预告片时长</span>
-              <select v-model.number="trailerDurationS" class="select select--slim">
-                <option v-for="d in [15, 20, 30, 45]" :key="d" :value="d">
-                  {{ d }} 秒
-                </option>
-              </select>
-            </label>
+          <textarea
+            v-model="instruction"
+            class="textarea textarea--tight"
+            rows="3"
+            :placeholder="
+              chat.length
+                ? '接着说，比如「再短一点」「语气冷一些」'
+                : '要改成什么样？比如「这儿太赶了，铺一下情绪」「这句对白太书面」'
+            "
+            @keydown.ctrl.enter="revise"
+          />
+          <div class="row">
             <button
               class="btn btn--ai btn--sm"
               type="button"
-              :disabled="isBusy('trailer')"
-              @click="writeTrailer"
+              :disabled="isBusy('revise')"
+              @click="revise"
             >
-              {{ isBusy('trailer') ? '剪着…' : '剪一条预告片' }}
+              <AppIcon name="sparkle" :size="14" />
+              {{ isBusy('revise') ? '改着…' : chat.length ? '再改一版' : '改' }}
             </button>
-            <span class="tiny dim">预告片不占集号，采用后照样走镜头、成片、发布</span>
+            <span class="tiny dim">Ctrl+Enter</span>
           </div>
-
-          <section v-if="trailerDraft" class="card card--draft">
-            <div class="card__head">
-              <div>
-                <div class="card__title">{{ trailerDraft.title }}</div>
-                <div class="card__sub">{{ trailerDraft.logline }}</div>
-              </div>
-              <span
-                class="pill nowrap"
-                :class="trailerDraft.fit === '合适' ? 'pill--ok' : 'pill--warn'"
-              >
-                {{ trailerDraft.fit }}
-              </span>
-            </div>
-            <div class="card__body stack stack--sm">
-              <pre class="more__script">{{ trailerDraft.script }}</pre>
-              <div class="row">
-                <button
-                  class="btn btn--primary btn--sm"
-                  type="button"
-                  :disabled="isBusy('adoptTrailer')"
-                  @click="adoptTrailer"
-                >
-                  采用
-                </button>
-                <button
-                  class="btn btn--ghost btn--sm"
-                  type="button"
-                  @click="trailerDraft = null"
-                >
-                  丢弃
-                </button>
-              </div>
-            </div>
-          </section>
-
-          <div class="row">
-            <button
-              class="btn btn--ghost btn--sm"
-              type="button"
-              :disabled="isBusy('addEp')"
-              @click="addEpisode"
-            >
-              手动加一集
-            </button>
-            <span class="tiny dim">
-              不从故事切出来的一集。老项目和临时加的片段用得上。
-            </span>
-          </div>
-        </div>
-      </details>
+        </aside>
+      </div>
     </template>
   </div>
 </template>
 
 <style scoped>
-.story {
+/* 原稿占主位，改稿栏在右边。选中之前右边这一条不存在——常驻一条空栏
+   是在跟正文抢地方，而这一页的正文才是主角。 */
+.ms {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 15rem;
-  gap: var(--s5);
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--s4);
   align-items: start;
 }
+.ms--picked {
+  grid-template-columns: minmax(0, 1fr) 320px;
+}
 @media (max-width: 900px) {
-  .story {
+  .ms--picked {
     grid-template-columns: minmax(0, 1fr);
   }
 }
-.story__main {
-  min-width: 0;
+
+/* 一整篇连着读。行宽卡在 38 个中文字上下——再宽眼睛要回扫，
+   而这一页是拿来读的。 */
+.ms__paper {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  padding: var(--s5) var(--s5) var(--s6);
+}
+.ms__meta {
+  margin: 0 0 var(--s4);
+}
+.ch {
+  margin: 0 0 var(--s5);
+  max-width: 38em;
+}
+.ch__title {
+  font-size: var(--fs-lg);
+  margin: 0 0 var(--s3);
+}
+.ch__no {
+  color: var(--text-3);
+  margin-right: 8px;
+}
+.ms__text {
+  white-space: pre-wrap;
+  line-height: 1.85;
+  /* 选中是这一页的主要动作，给它一个明显的底色 */
+  cursor: text;
+}
+.ms__text::selection,
+.ms__text ::selection {
+  background: var(--accent-soft);
+}
+.ch__todo {
+  border-left: 2px solid var(--line);
+  padding-left: var(--s3);
 }
 
-/* ---- 体量三档 ---- */
+.ai {
+  position: sticky;
+  top: var(--s4);
+  background: var(--surface);
+  border: 1px solid var(--accent);
+  border-radius: var(--r-md);
+  padding: var(--s4);
+}
+.ai__head {
+  color: var(--accent);
+}
+.ai__quote {
+  margin: 0;
+  padding: var(--s2) var(--s3);
+  border-left: 2px solid var(--accent);
+  background: var(--accent-soft);
+  color: var(--text-2);
+  max-height: 8em;
+  overflow: auto;
+  white-space: pre-wrap;
+}
+.turn {
+  display: flex;
+  gap: 6px;
+  align-items: baseline;
+}
+.turn__who {
+  color: var(--text-3);
+  flex: none;
+  min-width: 1.6em;
+}
+.ai__draft {
+  border: 1px dashed var(--accent);
+  border-radius: var(--r-sm);
+  padding: var(--s3);
+  display: grid;
+  gap: var(--s2);
+}
+.ai__new {
+  white-space: pre-wrap;
+  max-height: 16em;
+  overflow: auto;
+}
+
+.dch {
+  display: flex;
+  gap: var(--s3);
+  align-items: baseline;
+}
 
 .scales {
-  display: flex;
-  gap: 2px;
-  padding: 2px;
-  background: var(--surface-2);
+  display: inline-flex;
   border: 1px solid var(--line);
-  border-radius: 10px;
+  border-radius: var(--r-sm);
+  overflow: hidden;
 }
 .scale {
   padding: 5px 12px;
   border: 0;
-  border-radius: 8px;
   background: transparent;
   color: var(--text-2);
   font-size: var(--fs-sm);
   cursor: pointer;
 }
 .scale.is-on {
-  background: var(--surface);
-  color: var(--accent);
-  font-weight: 600;
-  box-shadow: 0 1px 2px rgb(0 0 0 / 8%);
-}
-
-/* ---- 章节与分集切线 ---- */
-
-.chap {
-  display: flex;
-  align-items: center;
-  gap: var(--s3);
-  padding: var(--s3) var(--s4);
-  background: var(--surface);
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  cursor: pointer;
-}
-.chap:hover {
-  border-color: var(--accent-line);
-}
-.chap__no {
-  flex: none;
-  width: 1.6rem;
-  color: var(--text-3);
-  font-size: var(--fs-sm);
-}
-.chap__text {
-  flex: 1;
-  min-width: 0;
-}
-.chap__title {
-  font-weight: 600;
-}
-.chap__sum {
-  margin-top: 2px;
-  color: var(--text-2);
-  font-size: var(--fs-sm);
-  line-height: 1.6;
-}
-.chap__text {
-  margin-top: var(--s3);
-  padding-top: var(--s3);
-  border-top: 1px solid var(--line);
-  max-height: 24rem;
-  overflow-y: auto;
-  white-space: pre-wrap;
-  word-break: break-word;
-  font: inherit;
-  color: var(--text);
-}
-
-/* 分集就是章节之间这条线。它是这一页的主角，所以给足对比度。 */
-.cut {
-  display: flex;
-  align-items: center;
-  gap: var(--s3);
-  margin: 2px 0;
-  padding: 3px var(--s4);
-  border-top: 2px dashed var(--accent-line);
-  color: var(--accent);
-  font-size: var(--fs-sm);
-}
-.cut__id {
-  font-weight: 700;
-}
-.cut__dur {
-  color: var(--text-3);
-}
-.cut__hook {
-  min-width: 0;
-  color: var(--text-2);
-}
-
-/* ---- 右栏索引 ---- */
-
-.story__side {
-  position: sticky;
-  top: var(--s4);
-}
-.side__group {
-  background: var(--surface);
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  overflow: hidden;
-}
-.side__head {
-  padding: var(--s2) var(--s3);
-  background: var(--surface-2);
-  border-bottom: 1px solid var(--line);
-  color: var(--text-3);
-  font-size: var(--fs-xs);
-  font-weight: 600;
-}
-.side__row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--s2);
-  padding: var(--s2) var(--s3);
-  color: var(--text);
-  text-decoration: none;
-  font-size: var(--fs-sm);
-}
-.side__row:hover {
   background: var(--accent-soft);
-  text-decoration: none;
-}
-.side__name {
-  min-width: 0;
-}
-.side__group--warn {
-  border-color: color-mix(in srgb, var(--warn) 40%, transparent);
-}
-.side__hint {
-  padding: var(--s2) var(--s3);
-  color: var(--text-2);
-  line-height: 1.6;
-}
-.side__rel {
-  display: flex;
-  justify-content: space-between;
-  gap: var(--s2);
-  padding: 4px var(--s3);
-}
-
-/* ---- 草稿 ---- */
-
-.draftlist {
-  margin: 0;
-  padding-left: 1.4rem;
-  display: grid;
-  gap: 4px;
-  font-size: var(--fs-sm);
-  line-height: 1.6;
-}
-.draftlist b {
-  margin-right: var(--s2);
-}
-
-/* ---- 折叠起来的支线 ---- */
-
-.more {
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  background: var(--surface);
-}
-.more__head {
-  padding: var(--s3) var(--s4);
-  color: var(--text-2);
-  font-size: var(--fs-sm);
-  cursor: pointer;
-}
-.more__body {
-  padding: 0 var(--s4) var(--s4);
-}
-.more__script {
-  max-height: 16rem;
-  overflow-y: auto;
-  white-space: pre-wrap;
-  word-break: break-word;
-  font: inherit;
-  font-size: var(--fs-sm);
-  line-height: 1.8;
-  color: var(--text-2);
+  color: var(--accent);
 }
 </style>

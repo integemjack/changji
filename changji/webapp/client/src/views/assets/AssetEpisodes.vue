@@ -29,16 +29,12 @@ const story = ref(null)
 const loading = ref(false)
 const openChapter = ref('')
 
-const SCALES = [
-  { key: 'short', label: '短篇', hint: '四章左右，一口气讲完' },
-  { key: 'medium', label: '中篇', hint: '八章左右' },
-  { key: 'long', label: '长篇', hint: '十六章左右，主线能铺开' },
-]
+// **体量不在这一格。** 它是"这个故事有多长"，写大纲时就要定，属于创作，
+// 所以留在「故事」那一页。这一格只管"把它切成多长一段"。
 const DURATIONS = [30, 60, 90, 120, 180]
 
 const chapters = computed(() => story.value?.chapters ?? [])
 const plan = computed(() => story.value?.plan ?? [])
-const scale = computed(() => story.value?.scale ?? 'medium')
 const durationS = computed(() => story.value?.episode_duration_s ?? 60)
 const hasStory = computed(() => chapters.value.length > 0)
 const writtenCount = computed(
@@ -68,14 +64,6 @@ async function load() {
 }
 watch(() => session.projectPath, load, { immediate: true })
 
-async function pickScale(key) {
-  const result = await run(
-    () => api.saveStory({ project: session.projectPath, scale: key }),
-    { key: 'scale' },
-  )
-  if (result) story.value = result.story ?? story.value
-}
-
 async function pickDuration(event) {
   const seconds = Number(event.target.value)
   // **改时长就是重新分集。** 存一个数然后等人再按一次「重算」，那一下
@@ -102,6 +90,77 @@ async function makeEpisodes() {
   await load()
 }
 
+// ---------------------------------------------------------------------------
+// 支线。整部剧只用一两次的东西，收在折叠区里
+// ---------------------------------------------------------------------------
+
+const extras = ref(false)
+const trailerDraft = ref(null)
+const trailerDurationS = ref(20)
+/** 预告片挂在固定集号上，只有一条，重剪覆盖上一条 */
+const TRAILER_ID = 'trailer'
+
+/**
+ * 剪一条预告片。
+ *
+ * 对流水线来说预告片就是特别短的一集：采用之后照样走镜头、成片、发布。
+ * 区别只在写的时候——要的是钩子不是完整故事，所以它**不占集号**，也不参与
+ * 「接着前几集写」的上下文。
+ */
+async function writeTrailer() {
+  const result = await run(
+    () =>
+      api.writeTrailer({
+        project: session.projectPath,
+        duration_s: trailerDurationS.value,
+      }),
+    { key: 'trailer' },
+  )
+  if (result) trailerDraft.value = result
+}
+
+async function adoptTrailer() {
+  if (!trailerDraft.value) return
+  await run(
+    async () => {
+      const exists = session.episodes.some((e) => e.episode_id === TRAILER_ID)
+      if (!exists) {
+        await api.newEpisode({
+          project: session.projectPath,
+          episode_id: TRAILER_ID,
+          title: trailerDraft.value.title,
+          target_duration_s: trailerDurationS.value,
+        })
+      }
+      await api.saveScript({
+        project: session.projectPath,
+        episode_id: TRAILER_ID,
+        script: trailerDraft.value.script,
+        duration_s: trailerDurationS.value,
+        synopsis: trailerDraft.value.logline,
+      })
+      trailerDraft.value = null
+    },
+    { key: 'adoptTrailer', success: '预告片存下了', refresh: true },
+  )
+}
+
+/** 手动加一集。没走故事那条路的老项目还得有这个口子。 */
+async function addEpisode() {
+  const created = await run(
+    () =>
+      api.newEpisode({
+        project: session.projectPath,
+        target_duration_s: durationS.value,
+      }),
+    { key: 'addEp', success: '新建了一集' },
+  )
+  if (created) {
+    await session.refresh()
+    session.selectEpisode(created.episode_id)
+  }
+}
+
 defineExpose({ load })
 </script>
 
@@ -117,21 +176,6 @@ defineExpose({ load })
 
     <section class="card">
       <div class="card__body row row--wrap">
-        <div class="scales">
-          <button
-            v-for="s in SCALES"
-            :key="s.key"
-            class="scale"
-            :class="{ 'is-on': scale === s.key }"
-            type="button"
-            :title="s.hint"
-            :disabled="isBusy('scale')"
-            @click="pickScale(s.key)"
-          >
-            {{ s.label }}
-          </button>
-        </div>
-
         <label class="field field--inline">
           <span class="field__label">每集</span>
           <select
@@ -219,6 +263,75 @@ defineExpose({ load })
         <AppIcon name="info" :size="13" />
       </p>
     </section>
+
+    <!-- 支线。整部剧只用一两次的东西常驻在页面上，是在跟主线抢注意力 -->
+    <section class="stack stack--sm">
+      <button class="fold" type="button" @click="extras = !extras">
+        <AppIcon :name="extras ? 'arrowLeft' : 'arrowRight'" :size="14" />
+        <span class="strong">预告片 · 手动加一集</span>
+        <span class="tiny dim">整部剧只用一两次</span>
+      </button>
+
+      <div v-if="extras" class="stack stack--sm">
+        <section v-if="trailerDraft" class="card card--draft">
+          <div class="card__head">
+            <div>
+              <div class="card__title">{{ trailerDraft.title }}</div>
+              <div class="card__sub">{{ trailerDraft.logline }}</div>
+            </div>
+          </div>
+          <div class="card__body">
+            <pre class="mono small trailer__script">{{ trailerDraft.script }}</pre>
+          </div>
+          <div class="card__foot">
+            <button
+              class="btn btn--primary btn--sm"
+              type="button"
+              :disabled="isBusy('adoptTrailer')"
+              @click="adoptTrailer"
+            >
+              存成 trailer 这一集
+            </button>
+            <button
+              class="btn btn--ghost btn--sm"
+              type="button"
+              @click="trailerDraft = null"
+            >
+              丢弃
+            </button>
+          </div>
+        </section>
+
+        <div class="row row--wrap">
+          <label class="field field--inline">
+            <span class="field__label">预告片</span>
+            <select v-model.number="trailerDurationS" class="select select--slim">
+              <option :value="15">15 秒</option>
+              <option :value="20">20 秒</option>
+              <option :value="30">30 秒</option>
+            </select>
+          </label>
+          <button
+            class="btn btn--ai btn--sm"
+            type="button"
+            :disabled="!hasStory || isBusy('trailer')"
+            @click="writeTrailer"
+          >
+            {{ isBusy('trailer') ? '剪着…' : '剪一条' }}
+          </button>
+          <span class="spacer" />
+          <button
+            class="btn btn--ghost btn--sm"
+            type="button"
+            :disabled="isBusy('addEp')"
+            @click="addEpisode"
+          >
+            手动加一集
+          </button>
+          <span class="tiny dim">加出来的那集不在分集表里，走老路径</span>
+        </div>
+      </div>
+    </section>
   </div>
 </template>
 
@@ -233,25 +346,6 @@ defineExpose({ load })
   font-weight: 400;
   color: var(--text-3);
   margin-top: 2px;
-}
-
-.scales {
-  display: inline-flex;
-  border: 1px solid var(--line);
-  border-radius: var(--r-sm);
-  overflow: hidden;
-}
-.scale {
-  padding: 5px 12px;
-  border: 0;
-  background: transparent;
-  color: var(--text-2);
-  font-size: var(--fs-sm);
-  cursor: pointer;
-}
-.scale.is-on {
-  background: var(--accent-soft);
-  color: var(--accent);
 }
 
 /* 章节一行，分集线画在两行之间——线在哪一眼就看得见，
@@ -306,5 +400,22 @@ defineExpose({ load })
 .cut__hook {
   flex: 1;
   min-width: 0;
+}
+
+.fold {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  padding: 6px 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-2);
+  cursor: pointer;
+}
+.trailer__script {
+  white-space: pre-wrap;
+  max-height: 20em;
+  overflow: auto;
+  margin: 0;
 }
 </style>
