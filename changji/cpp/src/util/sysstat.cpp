@@ -1,12 +1,15 @@
 #include "util/sysstat.hpp"
 
 #include <algorithm>
+#include <atomic>
 #include <cctype>
 #include <chrono>
+#include <condition_variable>
 #include <cstdlib>
 #include <fstream>
 #include <mutex>
 #include <sstream>
+#include <thread>
 
 #include "util/proc.hpp"
 
@@ -174,6 +177,87 @@ Load sample() {
     return l;
 }
 
+namespace {
+
+/// 多久采一次。
+///
+/// 比推送那条的两秒略快一点，这样每次推送手上都有一份刚采的。再快没意义
+/// ——顶栏那三个小表是给人看的，不是给示波器看的。
+constexpr int kSampleEveryMs = 1500;
+
+struct Sampler {
+    std::mutex mu;
+    std::condition_variable cv;
+    Load last;
+    std::chrono::steady_clock::time_point at{};
+    bool have = false;
+    bool stop = false;
+    std::thread th;
+};
+
+Sampler& sam() {
+    static Sampler s;
+    return s;
+}
+
+}  // namespace
+
+void start_sampler() {
+    Sampler& s = sam();
+    if (s.th.joinable()) return;   // 已经在跑
+    {
+        std::lock_guard lg(s.mu);
+        s.stop = false;
+    }
+    s.th = std::thread([&s] {
+        for (;;) {
+            // **在锁外采。** 这一下可能要十几秒（卡满负荷时 NVML 被驱动
+            // 挂住），持着锁的话读缓存的人跟着一起卡，等于白做。
+            Load l = sample();
+            {
+                std::lock_guard lg(s.mu);
+                if (s.stop) return;
+                s.last = std::move(l);
+                s.at = std::chrono::steady_clock::now();
+                s.have = true;
+            }
+            std::unique_lock lk(s.mu);
+            s.cv.wait_for(lk, std::chrono::milliseconds(kSampleEveryMs),
+                          [&s] { return s.stop; });
+            if (s.stop) return;
+        }
+    });
+}
+
+void stop_sampler() {
+    Sampler& s = sam();
+    if (!s.th.joinable()) return;
+    {
+        std::lock_guard lg(s.mu);
+        s.stop = true;
+    }
+    s.cv.notify_all();
+    // **可能要等上十几秒**：它多半正挂在 NVML 上，而那一下打不断。
+    // 关停时等着是对的——不等就是在它还在写 last 的时候析构掉它。
+    s.th.join();
+}
+
+Load latest() {
+    Sampler& s = sam();
+    {
+        std::lock_guard lg(s.mu);
+        if (s.have) {
+            Load l = s.last;
+            l.age_s = std::chrono::duration<double>(
+                          std::chrono::steady_clock::now() - s.at)
+                          .count();
+            return l;
+        }
+    }
+    // 采样器没起：命令行和单元测试走这条，当场采。
+    return sample();
+}
+
 nlohmann::json to_json(const Load& l) {
     nlohmann::json gpus = nlohmann::json::array();
     for (const auto& g : l.gpus) {
@@ -186,7 +270,10 @@ nlohmann::json to_json(const Load& l) {
     return {{"cpu_percent", l.cpu_percent},
             {"mem_used_gb", l.mem_used_gb},
             {"mem_total_gb", l.mem_total_gb},
-            {"gpus", gpus}};
+            {"gpus", gpus},
+            // 这份读数多旧了。见 Load::age_s——界面靠它把"读不动"和
+            // "真没在动"分开。
+            {"age_s", l.age_s}};
 }
 
 std::optional<CpuTicks> parse_proc_stat(const std::string& text) {

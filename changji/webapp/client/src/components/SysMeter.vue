@@ -11,7 +11,7 @@
  * 每一项一个数加一条 3px 的小杠。杠是给眼角看的：写字的时候不会去读
  * 数字，但余光看得见杠满没满；满了变红。
  */
-import { onMounted, onUnmounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 
 import { openJobSocket } from '@/composables/useJobSocket'
 
@@ -80,6 +80,19 @@ onUnmounted(() => {
   sock?.close()
 })
 
+/**
+ * 这份读数旧了没有。
+ *
+ * **"读不动"和"真没在动"是两回事，而屏幕上长得一模一样。** 显卡满负荷时
+ * 问 NVML 会被驱动挂住好几秒（服务器上实测大模型生成时 13 秒都有），
+ * 那几秒里引擎推过来的必然是旧读数。不说的话，用户看到的是一个不动的
+ * 数字——2026-09-11 就为这个来问过一次「GPU 基本 0、显存基本 22.1 都
+ * 没变过」。
+ *
+ * 三秒以内不吭声：正常就是一秒半采一次，一两秒的抖动说出来只是噪音。
+ */
+const stale = computed(() => (stat.value?.age_s ?? 0) >= 3)
+
 function pct(used, total) {
   return total > 0 ? Math.min(100, Math.round((used / total) * 100)) : 0
 }
@@ -89,7 +102,12 @@ function gb(v) {
 </script>
 
 <template>
-  <div v-if="stat" class="sys">
+  <div
+    v-if="stat"
+    class="sys"
+    :class="{ 'is-stale': stale }"
+    :title="stale ? `显卡正忙，问不动它——这是 ${Math.round(stat.age_s)} 秒前的读数` : ''"
+  >
     <span
       v-for="g in stat.gpus"
       :key="g.index"
@@ -138,6 +156,11 @@ function gb(v) {
 </template>
 
 <style scoped>
+/* 旧读数：整块压暗，鼠标放上去说清楚是多久以前的。**不是清空**——
+   显卡忙的时候旧读数仍然有用（"刚才是 98%"），清掉反而少了一半信息。 */
+.sys.is-stale {
+  opacity: 0.45;
+}
 .sys {
   display: flex;
   align-items: center;

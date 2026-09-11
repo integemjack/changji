@@ -3,6 +3,9 @@
 
 #include <doctest/doctest.h>
 
+#include <chrono>
+#include <thread>
+
 #include "util/sysstat.hpp"
 
 using namespace changji::sysstat;
@@ -81,4 +84,60 @@ TEST_CASE("sysstat: to_json 的形状，前端照这个读") {
     REQUIRE(j["gpus"].size() == 1);
     CHECK(j["gpus"][0]["util_percent"] == 50);
     CHECK(j["gpus"][0]["name"] == "X");
+}
+
+// ---------------------------------------------------------------------------
+// 后台采样
+// ---------------------------------------------------------------------------
+//
+// **这一组是补一个实测出来的洞。** 2026-09-11 在服务器上量到：空闲时
+// `/api/system` 1 毫秒，大模型一开始生成就变成 13.4 秒，还有一次超过 20 秒
+// ——而同一时刻 `/api/health` 始终是 0.6 毫秒。卡在问 NVML 上：显卡满负荷时
+// 驱动会把这一下挂住。后果不是"慢一点"：每两秒推一条的那条 WebSocket 用的
+// 是同一个采样，它一停，前端八秒的看门狗就把整块表清掉——**表恰恰在最该看
+// 的时候空掉**。
+
+TEST_CASE("没起采样器时 latest 当场采，和 sample 一个形状") {
+    // 命令行和单元测试走这条。
+    const Load l = latest();
+    CHECK(l.mem_total_gb >= 0.0);
+    // 当场采的不算旧
+    CHECK(l.age_s == doctest::Approx(0.0));
+}
+
+TEST_CASE("起了采样器之后，读缓存是立刻返回的") {
+    start_sampler();
+    // 等它采上第一份
+    for (int i = 0; i < 100 && latest().age_s == 0.0; ++i) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
+
+    // **要点是"不管采样多慢，读都是快的"。** 这里量的是读，不是采。
+    const auto t0 = std::chrono::steady_clock::now();
+    for (int i = 0; i < 200; ++i) {
+        (void)latest();
+    }
+    const auto took = std::chrono::steady_clock::now() - t0;
+    CHECK(took < std::chrono::milliseconds(200));
+
+    stop_sampler();
+}
+
+TEST_CASE("停了再起没事，重复起也没事") {
+    // 起服务、优雅关停、测试里反复调——都不该留下第二条线程。
+    start_sampler();
+    start_sampler();   // 已经在跑，应该当场返回
+    stop_sampler();
+    stop_sampler();    // 没在跑，也不该卡住
+    start_sampler();
+    stop_sampler();
+    CHECK(true);   // 跑到这儿没卡死、没崩就是过了
+}
+
+TEST_CASE("age_s 进 JSON：界面靠它把「读不动」和「真没在动」分开") {
+    Load l;
+    l.age_s = 12.5;
+    const auto j = to_json(l);
+    REQUIRE(j.contains("age_s"));
+    CHECK(j.at("age_s").get<double>() == doctest::Approx(12.5));
 }

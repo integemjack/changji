@@ -49,6 +49,26 @@
 
 namespace changji::http {
 
+namespace {
+
+/// 开几条 Crow 线程。0 = 自己定。
+///
+/// **要多少条，看的是"能同时卡住几条"**，不是这台机器有多少核。会卡住
+/// 一条线程的是那几个同步 AI 接口（写一章、改稿、出参考图、朗读），一个
+/// 人手快也就同时点出三五个，而它们现在还会排队等显存——排着的那几个
+/// 同样占着线程。给三十二条，等于给了一个人的操作留足余量，而代价只是
+/// 三十来个基本闲着的线程。
+///
+/// 小机器上不必开这么多：取机器核数和 32 的小的那个，但不少于 8——
+/// 少于 8 的话一条长任务就能吃掉可观的一份。
+unsigned resolve_concurrency(unsigned want) {
+    if (want > 0) return want;
+    const unsigned cores = std::max(1u, std::thread::hardware_concurrency());
+    return std::max(8u, std::min(32u, cores));
+}
+
+}  // namespace
+
 namespace fs = std::filesystem;
 using json = nlohmann::json;
 
@@ -160,10 +180,17 @@ void run(const config::Settings& settings, const Options& opts) {
     // （界面上会说"正在装大模型"）；而显存被莫名占着是看不懂的。
 
     // 顶栏那三个小表：CPU、内存、每张卡。**推，不轮询**（用户 2026-09-11：
-    // 「使用 ws 方式」）。有人订了 "system" 才采样、才发；没人听的时候这条
-    // 线程只是每两秒看一眼订阅数。采样本身是进程内的（NVML、/proc），
-    // 微秒级，唯一会 fork 的那条退路在 sysstat 里限了五秒一次。
+    // 「使用 ws 方式」）。
     //
+    // **采样单独一条线程**，这里和 /api/system 都只读它采好的那份。
+    // 原因是问卡会挂：显卡满负荷时 NVML 被驱动挂住好几秒（实测大模型
+    // 生成时 13.4 秒，还有一次超过 20 秒）。以前两处各自现采，于是一开始
+    // 写字，`/api/system` 就从 1 毫秒变成十几秒、推送也跟着停——而前端
+    // 八秒没消息就当断线，把整块表清掉。**表恰恰在最该看的时候空掉。**
+    // 采归采、推归推之后，推送永远准时，数据顶多旧几秒，而旧了多少
+    // 界面上说得出来（age_s）。
+    sysstat::start_sampler();
+
     // 停的方式：run() 回来后析构，析构里先立旗再 join。
     // 睡眠切成 100ms 一段，Ctrl+C 之后最多再等零点一秒。
     std::atomic<bool> stop_pump{false};
@@ -173,11 +200,14 @@ void run(const config::Settings& settings, const Options& opts) {
         ~PumpAtExit() {
             stop = true;
             if (t.joinable()) t.join();
+            // 采样线程也在这儿收：它可能正挂在 NVML 上，join 要等，
+            // 但不等就是在它还在写缓存的时候把缓存析构掉。
+            sysstat::stop_sampler();
         }
     } sys_pump{stop_pump, std::thread([&stop_pump] {
         while (!stop_pump) {
             if (ws::hub().subscriber_count("system") > 0) {
-                json msg = sysstat::to_json(sysstat::sample());
+                json msg = sysstat::to_json(sysstat::latest());
                 // **搭这趟车，不另开一条。** 顶栏那块"AI 作业中"要的就是
                 // 两秒一次的心跳，而这条通道已经在跑了；另开一个轮询等于
                 // 为同一个节奏做两遍功。
@@ -226,7 +256,7 @@ void run(const config::Settings& settings, const Options& opts) {
     // 这个留给 curl 看一眼和排查用。
     CROW_ROUTE(app, "/api/system")([] {
         auto r = guard([]() -> ApiResult {
-            auto body = sysstat::to_json(sysstat::sample());
+            auto body = sysstat::to_json(sysstat::latest());
             // **和推过去的那份一样**，而且是同一个函数拼的——见
             // pipeline::running_work()。两边各拼一次的话迟早只改一边。
             body["jobs"] = pipeline::running_work();
@@ -1495,7 +1525,7 @@ void run(const config::Settings& settings, const Options& opts) {
 
     app.bindaddr(opts.host)
         .port(static_cast<std::uint16_t>(opts.port))
-        .concurrency(opts.concurrency)
+        .concurrency(resolve_concurrency(opts.concurrency))
         .run();
 
     // 预热线程由上面那个 JoinAtExit 在这儿收掉。**一定要等它**：
