@@ -204,6 +204,18 @@ function watchBatch() {
       // chapter_id，不靠顺序猜——猜错的话字会长进隔壁那一章。
       buf[msg.chapter_id] = (buf[msg.chapter_id] ?? '') + (msg.text ?? '')
       streaming.value = { chapter_id: msg.chapter_id, from: 0 }
+      // **跟着它翻页。** 一次只看一章，不跟的话批量跑一个多小时，眼前
+      // 这一章一个字都不动——"看着它写"就落空了。
+      //
+      // **手上有没存的改动就不跟**：翻走了那几个字还在 buf 里没丢，但人
+      // 会以为自己刚打的东西没了。宁可这一章不跟，也别让人以为丢了稿子。
+      //
+      // 判据用 dirtySnapshot（人真敲过字）而不是"buf 和落库那份不一样"——
+      // 后者在**刚流完上一章**时也成立（那一章 buf 里有字、故事里还没落），
+      // 于是跟到第二章就停了。
+      if (current.value !== msg.chapter_id && !dirtySnapshot.has(current.value)) {
+        current.value = msg.chapter_id
+      }
       await nextTick()
       fit(boxes[msg.chapter_id])
     },
@@ -848,6 +860,7 @@ async function stopWriting() {
               第 {{ i + 1 }} 章 · {{ c.title }}
               {{ (c.text ?? '').trim() ? `（${[...(buf[c.chapter_id] ?? '')].length} 字）` : '（还没写）' }}
               {{ (buf[c.chapter_id] ?? '') !== (c.text ?? '') ? ' ·未存' : '' }}
+              {{ streaming?.chapter_id === c.chapter_id ? ' ·正在写' : '' }}
             </option>
           </select>
           <span v-if="currentDirty" class="pill pill--warn nowrap">未存</span>
