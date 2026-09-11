@@ -28,7 +28,6 @@ changji --port 8080     # 起服务，浏览器打开 http://127.0.0.1:8080
 changji/                # 程序本体（cpp 引擎 + webapp 源码 + docs）
 download_wan_gguf.ps1   # 拉出片模型的 GGUF，给进程内的 sd.cpp
 download_tts_gguf.ps1   # 拉配音模型的 GGUF，给进程内的 llama.cpp + mtmd
-docs/                   # 选型结论
 models/  bin/           # 本机的权重和外部可执行文件，不进版本库
 ```
 
