@@ -754,3 +754,19 @@ if(CHANGJI_BUILD_TESTS)
 
     add_test(NAME unit COMMAND changji_tests)
 endif()
+
+# ---- 前端嵌入头：显式声明依赖 ----
+#
+# **改了这个头，必须让 webapp.cpp 重编。** 它是 gen_webapp.py 生成的，
+# 里面是整个前端的内容；不重编的话，本地编出来的二进制装的是**旧界面**，
+# 而版本号、接口、C++ 全是新的——没有任何地方会报错。
+#
+# 靠编译器扫 #include 在这儿不管用：2026-09-11 实测，改了这个头、
+# 连 touch 都试过，ninja 仍然说 "no work to do"，webapp.cpp.obj 的时间戳
+# 停在二十分钟前，而 changji.exe 照样重链了一次（别的文件变了）。
+# 排查起来很难：二进制是新的、页面是旧的、日志干干净净。
+#
+# CI 不受影响（每次都是干净构建），这条是给本地开发兜底的。
+set_property(SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/src/http/webapp.cpp
+             APPEND PROPERTY OBJECT_DEPENDS
+             ${CMAKE_CURRENT_SOURCE_DIR}/src/http/bundled_webapp.inc.hpp)

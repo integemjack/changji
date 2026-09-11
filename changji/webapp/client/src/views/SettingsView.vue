@@ -199,6 +199,26 @@ const hardware = computed(() => overview.value?.hardware)
  */
 const effective = computed(() => overview.value?.effective ?? null)
 
+/**
+ * 大模型现在装着没有。
+ *
+ * 「默认加载 llm，点击出片清理掉大模型，够就不清理」——这三句描述的都是
+ * 同一个状态，而它以前在界面上完全看不到：用户只能看到"跑在哪"是内置，
+ * 看不出此刻权重是在显存里还是已经被出片腾走了。
+ *
+ * 是页面打开那一刻的快照，刷新才更新——够用了：用户是在出片前后各看一眼
+ * 来确认"到底清没清"。
+ */
+const llmState = computed(() => {
+  const n = overview.value?.node ?? {}
+  const gb = typeof n.llmMeasuredVramGb === 'number'
+    ? `${n.llmMeasuredVramGb.toFixed(1)} GB`
+    : ''
+  // 没有这个字段（老引擎）时不硬猜，只说"不知道"。
+  if (typeof n.llmLoaded !== 'boolean') return { text: '不知道', measured: gb }
+  return { text: n.llmLoaded ? '装着' : '没装（要用时自动装）', measured: gb }
+})
+
 // 程序算出来的权重放置。两个模型各一行；没有这一项（老引擎）就整块不显示。
 const placement = computed(() => effective.value?.placement ?? null)
 const placementRows = computed(() => {
@@ -545,6 +565,14 @@ function scrollTo(id) {
                   {{ llmLocal
                     ? '权重在配置文件的 [models].llm。出片要显存时它会自动让开。'
                     : '下面填那个服务的地址和模型名。' }}
+                </span>
+                <!-- **"它会自动让开"是句空话，除非能看到让没让开。**
+                     "默认加载 llm、点击出片清理掉大模型"说的都是这个状态，
+                     而界面上一直看不到它。 -->
+                <span v-if="llmLocal" class="field__hint mono tiny">
+                  现在：
+                  <strong>{{ llmState.text }}</strong>
+                  <template v-if="llmState.measured">（实测占 {{ llmState.measured }}）</template>
                 </span>
               </label>
             </div>

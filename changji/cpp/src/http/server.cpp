@@ -558,6 +558,19 @@ void run(const config::Settings& settings, const Options& opts) {
             // 摆着只会让人调了没反应。
             {"llmBackend", s.llm.backend},
             {"ttsBackend", s.tts.backend},
+            // **大模型现在到底装着没有。** "默认加载 llm，点击出片清理掉
+            // 大模型"——这两句描述的都是一个状态，而用户在界面上一直看不到
+            // 它。设置页那句"出片要显存时它会自动让开"是句空话，除非能看到
+            // 让没让开。量到多少一并给出来：没量过是 null。
+            {"llmLoaded", infer::scheduler().loaded(infer::Slot::LLM)},
+            {"llmMeasuredVramGb",
+             [] {
+                 const std::size_t b =
+                     infer::scheduler().measured_vram(infer::Slot::LLM);
+                 return b == 0 ? json(nullptr)
+                               : json(static_cast<double>(b) /
+                                      (1024.0 * 1024 * 1024));
+             }()},
             {"envLocked", locked}};
         // 由引擎自己答就说明它活着，再 ping 自己一次没有意义。
         out["engine"] = {{"online", true},
