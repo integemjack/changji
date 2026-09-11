@@ -271,10 +271,19 @@ std::optional<GPUInfo> detect_gpu() {
 }
 
 std::optional<double> parse_free_vram(const std::string& out) {
-    // 一张卡一行，只认第一行（卡 0）。**多卡时这个数没有意义**——
-    // 我们的工作进程绑一张卡，而 nvidia-smi 不知道绑的是哪张，
-    // 所以多卡直接回 nullopt，让调用方退回静态估算。
-    // 一行都没有就没什么可解析的。
+    // 一张卡一行，只认第一行（卡 0）。一行都没有就没什么可解析的。
+    //
+    // **注意这里并没有"多卡就回 nullopt"那道门**（2026-09-11 发现：
+    // 这行注释原来是这么写的，但代码里从来没有过这个判断）。
+    // 实际行为是：不管几张卡，报的都是卡 0 的。NVML 那条也一样，
+    // 拿的是 index 0，两条路一致。
+    //
+    // 多卡时这个数**可能是错的**：进程真正用的可能不是卡 0
+    // （CUDA_VISIBLE_DEVICES 一改，NVML 和 nvidia-smi 的编号都不跟着走）。
+    // 报小了只是多卸一次模型；报大了是拿别人卡上的空闲去判"够，不卸"，
+    // 下一步就是 OOM。**上多卡之前必须先把这里改对**——
+    // 要么按 PCI 总线号对上真正在用的那张，要么多卡时老实回 nullopt。
+    // 现在不动，是因为手上这台是单卡，改成什么样验证不了。
     const std::string first = out.substr(0, out.find('\n'));
     std::string trimmed;
     for (char c : first) {
