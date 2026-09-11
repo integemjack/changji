@@ -132,6 +132,18 @@ ApiResult post_script(const json& body, llm::Client& client,
     if (dit != body.end() && dit->is_number() && dit->get<double>() != 0.0) {
         ep->target_duration_s = dit->get<double>();
     }
+    // 梗概。**空字符串不算给了**——手工存剧本时前端不带这一项，
+    // 带了也可能是空的，那种情况下不能把已有的梗概洗掉。
+    //
+    // 以前这一项根本不收，结果单集这条路上 synopsis 永远是空的
+    // （只有「批量写整季」会写）。连着坏三处：剧本页的「已写 N 集」
+    // 一直是 0、「AI 剪一条预告片」永远点不亮、下次写新一集时
+    // build_premise_prompt/build_script_prompt 的 existing 也是空的——
+    // 「接着前几集写」勾了等于没勾，上下文断在这儿。
+    const std::string synopsis = text::strip_ws(opt_str(body, "synopsis", ""));
+    if (!synopsis.empty()) {
+        ep->synopsis = text::truncate_utf8(synopsis, 2000);
+    }
 
     json out = {{"saved", true}, {"regenerated", false}};
     if (regenerate) {

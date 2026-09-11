@@ -225,6 +225,10 @@ async function adoptDraft() {
         episode_id: episodeId,
         script: draft.value.script,
         duration_s: targetDuration,
+        // 一句话梗概跟着剧本一起存。不存的话这一集在项目里就是"没梗概"，
+        // 下面的「已写 N 集」和预告片那个按钮都当它不存在，
+        // 下次写新一集也接不上前文。
+        synopsis: draft.value.logline,
       })
       // 后面几步跟着这一集走
       session.selectEpisode(episodeId)
