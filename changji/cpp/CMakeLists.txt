@@ -827,6 +827,7 @@ if(CHANGJI_BUILD_TESTS)
         tests/unit/test_story_revise.cpp
         tests/unit/test_json_stream.cpp
         tests/unit/test_activity.cpp
+        tests/unit/test_scheduler_queue.cpp
         tests/unit/test_repetition.cpp
         tests/unit/test_ref_images.cpp
         tests/unit/test_sysstat.cpp

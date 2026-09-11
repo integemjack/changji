@@ -7,6 +7,7 @@
 
 #include "infer/llama_tts.hpp"
 #include "infer/scheduler.hpp"
+#include "pipeline/activity.hpp"
 #include "stages/audio.hpp"
 #include "stages/audio_plan.hpp"
 #include "util/paths.hpp"
@@ -293,7 +294,10 @@ std::optional<TTSBackend> local_tts_backend(const fs::path& backbone,
 
         // 每句都借一次。已经装着的话这一步几乎不花时间；被驱逐了就在这里
         // 重新装上。借不到时抛的是那条带出路的消息，直接成为这一镜的错误。
-        auto lease = infer::scheduler().acquire(infer::Slot::TTS);
+        infer::Scheduler::AcquireOptions opt;
+        opt.wait = infer::kAcquireWait;
+        opt.on_queued = pipeline::note_queued;
+        auto lease = infer::scheduler().acquire(infer::Slot::TTS, opt);
         std::shared_ptr<infer::LlamaTts> engine;
         {
             std::lock_guard lg(tts_mu());

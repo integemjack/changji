@@ -83,9 +83,15 @@ Rendered render_ref(const ProjectStore& store, const std::string& stem,
     pipeline::Activity act{"image", paths::to_utf8(store.root()), "",
                            "正在画参考图"};
 
-    auto lease = infer::scheduler().acquire(
-        infer::Slot::Image,
-        static_cast<std::size_t>(spec.width) * spec.height);
+    // **借不到就排队等**，不当场抛。撞车的常态是"另一边正在写一章"
+    // （一两分钟），当场抛的话用户得到一个 500，而他唯一能做的就是过会儿
+    // 再点一次——那正是机器该替他做的事。排队的时候顶栏那句话会变成
+    // 「排队中，等「LLM」用完」。
+    infer::Scheduler::AcquireOptions opt;
+    opt.work = static_cast<std::size_t>(spec.width) * spec.height;
+    opt.wait = infer::kAcquireWait;
+    opt.on_queued = pipeline::note_queued;
+    auto lease = infer::scheduler().acquire(infer::Slot::Image, opt);
     auto ctx = infer::current_image_context();
     if (!ctx) throw ApiError(503, "出图后端没准备好，这个版本大概没链 sd.cpp");
 

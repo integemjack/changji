@@ -13,6 +13,7 @@
 
 #include "infer/llama_chat.hpp"
 #include "infer/scheduler.hpp"
+#include "pipeline/activity.hpp"
 #include "models/hardware.hpp"
 
 namespace changji::llm {
@@ -80,7 +81,10 @@ std::string LocalClient::complete(const Request& req, pipeline::CancelToken& tok
     // 借槽。**调度器可能在这一步把出图或出片的模型卸掉腾地方**，
     // 也可能什么都不做（实时空闲显存够的时候）——见
     // Scheduler::set_free_vram_probe。借不到时抛的是那条带出路的消息。
-    auto lease = infer::scheduler().acquire(infer::Slot::LLM);
+    infer::Scheduler::AcquireOptions opt;
+    opt.wait = infer::kAcquireWait;
+    opt.on_queued = pipeline::note_queued;
+    auto lease = infer::scheduler().acquire(infer::Slot::LLM, opt);
     auto chat = current();
     if (!chat) throw LlmError("大模型没准备好（槽借到了但上下文是空的）");
 

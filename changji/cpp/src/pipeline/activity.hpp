@@ -50,9 +50,26 @@ public:
     void set_message(std::string m);
     void set_progress(int current, int total);
 
+    /// 盖在那句话上的一层：排队时写「排队中，前面还有 2 件」，轮到了就清掉。
+    ///
+    /// **盖一层而不是改那句话**，是因为排完了还得说回原来那句（"正在画参考
+    /// 图"），而那句话是谁写的、写的什么，排队这一层不知道也不该知道。
+    void set_note(std::string n);
+
 private:
     std::uint64_t id_ = 0;
 };
+
+/// 这个线程此刻在干的那件活。没有就是 nullptr。
+///
+/// **给深处的代码用的。** 排队发生在调度器里（infer/scheduler），而那句
+/// "排队中"要写到顶栏的账本上；一层层往下传一个回调的话，llm、sd、tts
+/// 三条路每一条都要改签名，而它们和"界面上显示什么"没有半点关系。
+Activity* current_activity();
+
+/// 接到 Scheduler::AcquireOptions::on_queued 上：把排队情况写到当前线程
+/// 那件活的那句话上。`ahead < 0` 表示不排了（轮到了或者不等了）。
+void note_queued(int ahead, const std::string& blocker);
 
 /// 此刻在干的那些短活，一行一个。形状和 JobTable::running_jobs() 一样，
 /// 顶栏把两边接成一个列表。

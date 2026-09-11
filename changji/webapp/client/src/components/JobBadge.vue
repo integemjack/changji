@@ -17,10 +17,13 @@
  * 此刻在跑的那几件（`jobs`）——要的就是这个节奏，另开一条等于为同一件事
  * 做两遍功。
  *
- * ⚠️ **"排队中"现在没有。** 引擎里长跑任务一种只有一个槽，同种再点会当场
- * 被拒（409「已经在写了」），不是排到后面。所以这儿列的都是真在跑的；
- * 等哪天做了真排队，再在同一个列表里往下接。写在这儿是免得下一个人以为
- * 漏了。
+ * **"排队中"是真的。** 显存这一层现在会排队：借不到槽的活按先来后到
+ * 排成一列等着（见 Scheduler::AcquireOptions），排到自己才干。所以这个
+ * 列表里两种行都有，靠 `queued` 分——不靠那句话的前缀，那句话改一个字
+ * 界面就会悄悄把排队的全算成在跑的。
+ *
+ * ⚠️ 长跑任务（出片、写整季）不在此列：一种只有一个槽，同种再点当场被拒
+ * （409「已经在写了」）。那是另一个层面的事，要排也得先有个任务队列。
  */
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
@@ -152,6 +155,10 @@ const rows = computed(() =>
   }),
 )
 
+/** 真在跑的有几件。**顶栏那个数只数这些**：排队的还没开始干。 */
+const running = computed(() => rows.value.filter((r) => !r.queued).length)
+const queued = computed(() => rows.value.length - running.value)
+
 /**
  * 点一行就过去。
  *
@@ -179,7 +186,10 @@ async function go(row) {
     >
       <span class="jb__dot" />
       <span class="jb__t">AI 作业中</span>
-      <span v-if="rows.length > 1" class="jb__n">{{ rows.length }}</span>
+      <span v-if="running > 1" class="jb__n">{{ running }}</span>
+      <!-- 排队的单独说。混进上面那个数的话，"3 件"里可能只有 1 件真在跑，
+           而用户是照着这个数判断"还要等多久"的。 -->
+      <span v-if="queued" class="jb__q">+{{ queued }} 排队</span>
       <AppIcon :name="open ? 'arrowLeft' : 'arrowRight'" :size="11" />
     </button>
 
@@ -188,6 +198,7 @@ async function go(row) {
         v-for="(r, i) in rows"
         :key="i"
         class="jb__row"
+        :class="{ 'is-queued': r.queued }"
         type="button"
         :title="`去 ${r.name || '这个项目'} 的${r.label}页`"
         @click="go(r)"
@@ -247,6 +258,14 @@ async function go(row) {
 .jb__n {
   font-variant-numeric: tabular-nums;
   opacity: 0.8;
+}
+.jb__q {
+  font-variant-numeric: tabular-nums;
+  opacity: 0.65;
+}
+/* 排队的那几行压下去一点：一眼能看出哪几件真在动。 */
+.jb__row.is-queued {
+  opacity: 0.62;
 }
 
 .jb__pop {

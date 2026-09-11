@@ -312,6 +312,9 @@ json JobTable::running_jobs() const {
             {"current", k == JobKind::Run ? s.current : s.done},
             {"total", s.total},
             {"message", s.message},
+            // 长跑任务没有"排队"这一说：一种一个槽，起得来就是在跑。
+            // 字段还是要有，前端一套代码画两边。
+            {"queued", false},
         });
     }
     return out;

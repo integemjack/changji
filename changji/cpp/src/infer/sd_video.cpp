@@ -5,6 +5,7 @@
 #include <random>
 
 #include "infer/scheduler.hpp"
+#include "pipeline/activity.hpp"
 #include "util/paths.hpp"
 #include "util/proc.hpp"
 
@@ -110,9 +111,14 @@ stages::VideoRenderer make_video_renderer(
         // 帧数也不一样，而以前量到的显存是不带这个的——在 720p 量到的数
         // 拿去给 2K 判"够，不卸"，赌输了就是 CUDA OOM。
         // 见 Scheduler::record_measured_vram。
-        auto lease = scheduler().acquire(
-            Slot::Video, static_cast<std::size_t>(plan.spec.width) *
-                             plan.spec.height * std::max(1, plan.frames));
+        // 借不到就排队等。成片是最贵的一步，为了"另一边正在写字"整镜
+        // 报错，等于把已经跑完的前几步全扔了。
+        Scheduler::AcquireOptions opt;
+        opt.work = static_cast<std::size_t>(plan.spec.width) * plan.spec.height *
+                   std::max(1, plan.frames);
+        opt.wait = kAcquireWait;
+        opt.on_queued = pipeline::note_queued;
+        auto lease = scheduler().acquire(Slot::Video, opt);
         auto ctx = current_video_context();
         if (!ctx) throw SdError("出视频上下文没准备好");
 

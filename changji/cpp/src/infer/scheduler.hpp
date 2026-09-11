@@ -20,7 +20,10 @@
 // 一是分层，二是很实际的原因——接上真模型之后每个用例要跑几分钟，
 // 策略层的 bug 就没法反复撞了。策略要在接推理之前测死。
 
+#include <chrono>
+#include <condition_variable>
 #include <cstddef>
+#include <deque>
 #include <functional>
 #include <map>
 #include <optional>
@@ -50,6 +53,14 @@ const char* to_string(Slot s);
 /// 都能换成外部服务（改配置就行，不用改代码），而出图出片躲不掉，
 /// 只能在"权重放内存"和"降分辨率"之间挑。
 std::string out_of_vram_message(Slot s);
+
+/// 排队最多等多久。
+///
+/// 五分钟的来历：挡路的活最长就是出一镜成片、写一章这个量级（一两分钟），
+/// 五分钟足够把常见的撞车全等过去。再长没意义——排不上的那种是有一条长
+/// 任务（出片、写整季）一直占着卡，那时候用户要看的是顶栏那块「AI 作业中」，
+/// 而不是一个转了十分钟的圈。
+inline constexpr std::chrono::seconds kAcquireWait{300};
 
 /// 驻留策略。
 enum class Residency {
@@ -274,7 +285,37 @@ public:
     /// `work` 是这一次要干多大的活（像素 × 帧数），用来判断以前量到的
     /// 实测值还算不算数。见 record_measured_vram。不给就等于"没说"，
     /// 那时按老规矩认实测值——大模型、配音这些和画幅无关的槽就不用给。
+    ///
+    /// **这个签名不排队**：借不到当场抛。留着它是给"探一下能不能用"那种
+    /// 地方（见 tts_backends 里挑后端那段）——探一下要是也排队，体检页会
+    /// 在别人写字的时候卡住几分钟。真要干活的地方走下面那个。
     Lease acquire(Slot slot, std::size_t work = 0);
+
+    /// 借一个槽，借不到就**排队等**。
+    struct AcquireOptions {
+        /// 这一次要干多大的活。见上面那个 acquire。
+        std::size_t work = 0;
+
+        /// 最多等多久。0 = 不等，当场抛。
+        ///
+        /// 等不是白等：一张卡上同时只跑得动一个大模型，所以"借不到"的正常
+        /// 含义是"另一件活正在干"，而那件活几十秒到一两分钟就完。当场抛
+        /// 的后果是用户点一下得到一个 500，而他唯一能做的就是过会儿再点
+        /// 一次——那正是机器该替他做的事。
+        std::chrono::milliseconds wait{0};
+
+        /// 排上队了叫一声，`ahead` 是前面还有几件、`blocker` 是挡路的那个槽
+        /// （轮到自己了但显存还腾不动时才有）。位置变了会再叫一次。
+        ///
+        /// 给它是为了界面上那句「排队中」能说出前面还有几件。不给就是
+        /// 默默等着。
+        std::function<void(int ahead, const std::string& blocker)> on_queued;
+    };
+    /// ⚠️ **手里攥着一个槽的时候别来排队。** 排头等的是"有人还回槽"，
+    /// 而你要还的那个正攥在自己手里——那就成了自己等自己，只能等到超时。
+    /// 现在没有哪条路这么用（每处都是借一个、用完、还掉），上限就是为了
+    /// 万一有人以后这么写时，结果是慢，不是整个卡死。
+    Lease acquire(Slot slot, const AcquireOptions& opt);
 
     /// 卸载一个槽。正在被借用时返回 false，不强卸。
     bool evict(Slot slot);
@@ -305,6 +346,13 @@ private:
     };
 
     void give_back(Slot slot);
+    /// 借一次，不排队。借不到时抛内部的 SlotBusy（见 .cpp）。
+    Lease acquire_once(Slot slot, std::size_t work);
+    /// 退票。拿到槽了、超时了、抛异常了，都要退——不退的话后面的人
+    /// 永远排不到头。
+    void leave_queue(std::uint64_t ticket);
+    /// 前面还有几个在排。调用方必须持锁。
+    int queue_ahead(std::uint64_t ticket) const;
     Entry* find(Slot slot);
     const Entry* find(Slot slot) const;
     /// 腾出 need 字节。腾不出来返回 false。调用方必须持锁。
@@ -334,6 +382,22 @@ private:
     ///
     /// ⚠️ load() 里不许再调 acquire，会自锁。现在没有哪个 load 这么干。
     mutable std::mutex load_mu_;
+
+    /// **真排队。** 借不到的人按票排成一列，一次只有排头去试。
+    ///
+    /// 不排队的话，两个人同时等一个槽是谁醒得早谁拿走，一件活可能一直
+    /// 被后来的插队插到超时——而用户看到的是"点了半天没反应，别人点一下
+    /// 就成了"。
+    ///
+    /// 代价是排头卡住时后面的人跟着卡，哪怕他要的那个槽正空着。这在一张
+    /// 卡上是划算的：排头借不到，意思就是显存已经满了，后面那位多半也
+    /// 借不到；而换来的是一个说得清的顺序——界面上那句「前面还有 2 件」
+    /// 要有意义，就得真有个先后。
+    std::deque<std::uint64_t> waiters_;
+    std::uint64_t next_ticket_ = 1;
+    /// 有人还回槽、或者队伍动了，就叫醒排队的。
+    mutable std::condition_variable queue_cv_;
+
     std::vector<Entry> entries_;
     std::size_t budget_ = 0;
     FreeVramProbe free_vram_;

@@ -56,12 +56,54 @@ TEST_CASE("行的形状和长跑任务那边一样") {
     // 前端一套模板画两边，少一个键就得在模板里到处判空
     for (const char* k :
          {"kind", "project", "episode_id", "stage", "current", "total",
-          "message"}) {
+          "message", "queued"}) {
         CAPTURE(k);
         CHECK(row.contains(k));
     }
     CHECK(row["episode_id"] == "ch01");
     CHECK(row["stage"] == "");
+}
+
+TEST_CASE("排队那句盖在原话上，清掉就露出原话") {
+    Activity a{"image", "/p", "", "正在画参考图"};
+    CHECK(running_activities()[0]["queued"] == false);
+
+    a.set_note("排队中，前面还有 2 件");
+    auto row = running_activities()[0];
+    CHECK(row["queued"] == true);
+    // 两句都要有：在排队，而且排的是哪件事
+    CHECK(row["message"] == "排队中，前面还有 2 件：正在画参考图");
+
+    a.set_note("");
+    row = running_activities()[0];
+    CHECK(row["queued"] == false);
+    CHECK(row["message"] == "正在画参考图");
+}
+
+TEST_CASE("note_queued：写到当前线程那件活上") {
+    Activity a{"image", "/p", "", "正在画参考图"};
+    CHECK(changji::pipeline::current_activity() != nullptr);
+
+    changji::pipeline::note_queued(2, "");
+    CHECK(running_activities()[0]["message"] ==
+          "排队中，前面还有 2 件：正在画参考图");
+
+    // 轮到自己了但显存腾不动：点名挡路的那个槽
+    changji::pipeline::note_queued(0, "LLM");
+    CHECK(running_activities()[0]["message"] ==
+          "排队中，等「LLM」用完：正在画参考图");
+
+    // -1 = 不排了
+    changji::pipeline::note_queued(-1, "");
+    CHECK(running_activities()[0]["message"] == "正在画参考图");
+}
+
+TEST_CASE("没活在干的时候 note_queued 什么也不干，不崩") {
+    // 调度器是从底下调上来的，而底下不知道上头有没有登记过活——
+    // 命令行跑流水线时就一个都没有。
+    CHECK(changji::pipeline::current_activity() == nullptr);
+    changji::pipeline::note_queued(3, "图像");
+    CHECK(running_activities().empty());
 }
 
 TEST_CASE("进度改得动，话也改得动") {

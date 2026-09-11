@@ -10,6 +10,20 @@
 
 namespace changji::infer {
 
+namespace {
+
+/// 借不到、但**是被另一件正在干的活挡住的**。
+///
+/// 和"这张卡真的装不下"分开，是因为两者的出路完全相反：前者等一等就好，
+/// 后者等到天亮也没用，得去降画幅或换小模型。只有分得清，上一层才敢排队
+/// ——对着一张装不下的卡排队，等于把一个立刻能看见的报错拖成三分钟的转圈。
+struct SlotBusy {
+    std::string why;      ///< 挡路的是哪几个槽，拼好的
+    std::string message;  ///< 给用户看的那整段话
+};
+
+}  // namespace
+
 const char* to_string(Slot s) {
     switch (s) {
         case Slot::LLM:   return "LLM";
@@ -450,7 +464,7 @@ bool Scheduler::make_room(std::size_t need, Slot keep, std::size_t work) {
     return used + need <= budget_;
 }
 
-Lease Scheduler::acquire(Slot slot, std::size_t work) {
+Lease Scheduler::acquire_once(Slot slot, std::size_t work) {
     // **装模型这件事，一次只能有一个在干。** 见 load_mu_ 上那段——两个槽
     // 同时往卡上装，第二个撞到的是 abort()，不是一个能读的报错。
     //
@@ -512,13 +526,17 @@ Lease Scheduler::acquire(Slot slot, std::size_t work) {
             why += std::string(why.empty() ? "" : "、") + to_string(b);
         }
         if (!why.empty()) {
-            throw std::runtime_error(
+            // **内部异常**：上一层看见它才知道"这件事等得到"，从而去排队。
+            // 抛 runtime_error 的话上一层分不清该等还是这张卡真的装不下。
+            throw SlotBusy{
+                why,
                 std::string("显存不够加载 ") + to_string(slot) + "：「" + why +
-                "」正用着，腾不动它。\n"
-                "等那件事干完就腾出来了（出一张图几十秒，出一个镜头一两分钟），"
-                "过会儿再点一次。\n"
-                "要是一直这样，才是这张卡真的装不下——那时候看下面这些路：\n" +
-                out_of_vram_message(slot));
+                    "」正用着，腾不动它。\n"
+                    "等那件事干完就腾出来了（出一张图几十秒，出一个镜头一两"
+                    "分钟），过会儿再点一次。\n"
+                    "要是一直这样，才是这张卡真的装不下——那时候看下面这些"
+                    "路：\n" +
+                    out_of_vram_message(slot)};
         }
         throw std::runtime_error(out_of_vram_message(slot));
     }
@@ -548,6 +566,127 @@ Lease Scheduler::acquire(Slot slot, std::size_t work) {
     return Lease(this, slot);
 }
 
+// ---------------------------------------------------------------------------
+// 排队
+// ---------------------------------------------------------------------------
+
+int Scheduler::queue_ahead(std::uint64_t ticket) const {
+    int ahead = 0;
+    for (const std::uint64_t t : waiters_) {
+        if (t == ticket) return ahead;
+        ++ahead;
+    }
+    return 0;  // 不在队里就是排头（拿到了或者退了票）
+}
+
+void Scheduler::leave_queue(std::uint64_t ticket) {
+    {
+        std::lock_guard lg(mu_);
+        for (auto it = waiters_.begin(); it != waiters_.end(); ++it) {
+            if (*it == ticket) {
+                waiters_.erase(it);
+                break;
+            }
+        }
+    }
+    // 队伍动了就叫醒所有人：新的排头要去试一次。
+    queue_cv_.notify_all();
+}
+
+Lease Scheduler::acquire(Slot slot, std::size_t work) {
+    try {
+        return acquire_once(slot, work);
+    } catch (const SlotBusy& b) {
+        // 不排队这条路上，"被占着"和"卡太小"对调用方是一回事：都得现在
+        // 就回一句话。
+        throw std::runtime_error(b.message);
+    }
+}
+
+Lease Scheduler::acquire(Slot slot, const AcquireOptions& opt) {
+    if (opt.wait <= std::chrono::milliseconds::zero()) {
+        return acquire(slot, opt.work);
+    }
+
+    const auto deadline = std::chrono::steady_clock::now() + opt.wait;
+
+    std::uint64_t ticket = 0;
+    {
+        std::lock_guard lg(mu_);
+        ticket = next_ticket_++;
+        waiters_.push_back(ticket);
+    }
+    // **退票必须万无一失。** 半路抛异常（加载失败、上层取消）不退票的话，
+    // 队伍里留一张永远排在前面的死票，后面所有人一律超时——而那时候机器
+    // 明明是闲着的，从现象上完全看不出是排队的问题。
+    struct Ticket {
+        Scheduler* s;
+        std::uint64_t t;
+        ~Ticket() { s->leave_queue(t); }
+    } guard{this, ticket};
+
+    // 只在情况变了的时候通知上层：不然界面上那句话每醒一次重写一遍，
+    // 而它多半一个字都没变。
+    bool said = false;
+    int said_ahead = 0;
+    std::string said_blocker;
+    const auto tell = [&](int ahead, const std::string& blocker) {
+        if (!opt.on_queued) return;
+        if (said && ahead == said_ahead && blocker == said_blocker) return;
+        said = true;
+        said_ahead = ahead;
+        said_blocker = blocker;
+        opt.on_queued(ahead, blocker);
+    };
+
+    std::string last_message;
+    for (;;) {
+        int ahead = 0;
+        {
+            std::unique_lock lk(mu_);
+            ahead = queue_ahead(ticket);
+            if (ahead > 0) {
+                // 还没轮到。**等的时候不去试**——试了就是插队，而插队一多
+                // 就会有人一直排不上。
+                queue_cv_.wait_until(lk, deadline);
+            }
+        }
+        if (ahead > 0) {
+            tell(ahead, "");
+            if (std::chrono::steady_clock::now() >= deadline) break;
+            continue;
+        }
+
+        // 轮到自己了，去试。
+        try {
+            Lease got = acquire_once(slot, opt.work);
+            // **排完了要说一声。** 不说的话界面上那句"排队中"会一直挂着，
+            // 而活其实已经在干了——比不显示更误导。
+            tell(-1, "");
+            return got;
+        } catch (const SlotBusy& b) {
+            last_message = b.message;
+            tell(0, b.why);
+        }
+        if (std::chrono::steady_clock::now() >= deadline) break;
+        // 排头也借不到：显存被正在干的活占着。等它还回来，或者等到超时。
+        // **这里必须带上限**：还回槽时会 notify，但万一那件活是被 kill 掉
+        // 的（没走到 give_back），没有上限就永远醒不过来。
+        std::unique_lock lk(mu_);
+        queue_cv_.wait_until(lk, deadline);
+    }
+
+    if (!last_message.empty()) throw std::runtime_error(last_message);
+    // 一次都没轮到自己。**这句话不能说成"显存不够"**——显存够不够根本
+    // 还没轮到我们去问，说它就是在猜。
+    throw std::runtime_error(
+        std::string("排了一会儿还没轮到 ") + to_string(slot) +
+        "：前面的活还没干完。\n"
+        "等它们干完再点一次就行；要是一直排不上，多半是有一件长任务"
+        "（出片、写整季）一直占着卡。\n"
+        "顶栏那块「AI 作业中」点开能看到现在在跑什么。");
+}
+
 void Scheduler::give_back(Slot slot) {
     std::lock_guard lg(mu_);
     Entry* e = find(slot);
@@ -558,14 +697,19 @@ void Scheduler::give_back(Slot slot) {
     if (e->leases == 0 && e->spec.residency == Residency::Ephemeral) {
         do_unload(*e);
     }
+    // **还回来了就叫醒排队的。** 排头正等着的就是这一下。
+    queue_cv_.notify_all();
 }
 
 bool Scheduler::evict(Slot slot) {
-    std::lock_guard lg(mu_);
-    Entry* e = find(slot);
-    if (!e) return false;
-    if (e->leases > 0) return false;  // 正在用，不强卸
-    do_unload(*e);
+    {
+        std::lock_guard lg(mu_);
+        Entry* e = find(slot);
+        if (!e) return false;
+        if (e->leases > 0) return false;  // 正在用，不强卸
+        do_unload(*e);
+    }
+    queue_cv_.notify_all();  // 腾出地方了，排队的该去试一次
     return true;
 }
 
@@ -583,6 +727,7 @@ void Scheduler::evict_all() {
     // 多出来的"（腾显存：卸了 1 个模型）"挂掉，而且看不出是谁干的。
     last_decision_ = RoomDecision{};
     busy_.clear();
+    queue_cv_.notify_all();
 }
 
 bool Scheduler::loaded(Slot slot) const {
