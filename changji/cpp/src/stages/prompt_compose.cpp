@@ -140,6 +140,28 @@ PromptBundle PromptComposer::compose(const Shot& shot) const {
     }
 
     PromptBundle out;
+    // **ASCII 圆括号和方括号在 sd.cpp 里是权重语法，这里没有转义。**
+    //
+    // stable-diffusion.cpp 的 parse_prompt_attention 把 ( ) 当加权、
+    // [ ] 当减权，\( 才是字面的括号。它自己的注释里有例子：
+    //     parse_prompt_attention("(unnecessary)(parens)")
+    //       -> [["unnecessaryparens", 1.1]]
+    // 括号被吃掉、里面的词被加权。更糟的是不配对的那种：
+    //     parse_prompt_attention("(unbalanced") -> [["unbalanced", 1.1]]
+    // 一个孤零零的左括号会把它后面的词全部加权。
+    //
+    // 提示词里混着大模型写的分镜描述，它偶尔会吐 ASCII 括号——那时候
+    // 出来的图会悄悄变一点，**不报错也不好察觉**。
+    //
+    // **为什么先不转义。** 转了的话，有人故意在资产库里写 "(红裙:1.3)"
+    // 调权重的能力就没了。这个能力没写进文档、界面上也没有，但它是通的。
+    // 两边都是"悄悄地不按预期工作"，而这个项目自己从不使用权重语法
+    // （2026-09-11 查过：stages/ 和 models/ 下一处都没有，金语料里的
+    // 提示词是纯中文全角标点）。
+    //
+    // 要动的话判据是这个：**用户想不想要权重这个能力**。
+    //   想要 -> 保持现状，顶多在拼完之后检一遍不配对的括号并告警；
+    //   不想要 -> 把 ( ) [ ] 全转义成 \( 那种字面形式，一了百了。
     out.positive = join_nonempty(kept, sep_);
     // 负向提示词是镜头自己的加上全剧的。镜头级的在前——
     // 它是针对这一镜的具体问题加的，权重该更高。
