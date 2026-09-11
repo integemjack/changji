@@ -1049,8 +1049,22 @@ void register_sd_slots(SettingsProvider raw_provider,
         if (in) {
             const std::string text((std::istreambuf_iterator<char>(in)),
                                    std::istreambuf_iterator<char>());
+            int no_work = 0;
             for (const auto& [slot, v] : parse_measured_vram(text)) {
                 scheduler().record_measured_vram(slot, v.bytes, v.work);
+                if (v.work == 0) ++no_work;
+            }
+            // **说一声第一镜为什么会卸模型。**
+            // 老版本存下来的实测值里没有"当时量的是多大的活"，按画幅门
+            // 的规矩就不能拿来背书（见 Scheduler::record_measured_vram）。
+            // 于是升级之后第一镜必定先卸一次、重新量。不说的话用户看到的
+            // 是"又卸了"，会以为根本没修好。
+            if (no_work > 0) {
+                std::fprintf(stderr,
+                             "[vram] 读到 %d 条老格式的实测值（没记画幅）。"
+                             "第一镜会重新量一次，那一镜会先腾显存；"
+                             "量完之后「够就不清理」照常。\n",
+                             no_work);
             }
         }
         scheduler().set_measured_sink([store](Slot, std::size_t) {
