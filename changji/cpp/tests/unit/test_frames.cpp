@@ -10,10 +10,12 @@
 #include <nlohmann/json.hpp>
 
 #include <filesystem>
+#include <optional>
 #include <fstream>
 #include <string>
 #include <vector>
 
+#include "infer/scheduler.hpp"
 #include "models/character.hpp"
 #include "models/project.hpp"
 #include "models/shot.hpp"
@@ -280,6 +282,73 @@ TEST_CASE("取消之后不再往下跑") {
         CHECK(owned[i].attempts == 0);
     }
 
+    std::error_code ec;
+    fs::remove_all(root, ec);
+}
+
+TEST_CASE("腾显存的结论挂在第一步，而且只挂自己那个槽的") {
+    // **用户点完出片盯的是进度条**，而"卸没卸大模型"的结论在设置页上。
+    // 一镜一句，就在他眼前。见 Scheduler::room_note。
+    //
+    // 两处判断以前只在 diff 里看得见，没人钉住：挂在第几步、挂哪个槽。
+    // 挂错步数是每步刷屏，挂错槽是把别的阶段的判断安在这一镜头上——
+    // 用户会以为刚刚为它卸过模型。
+    auto& sched = infer::scheduler();
+    sched.evict_all();
+
+    // 摆一个"借出图槽时卸掉了大模型"的局面。
+    const std::size_t budget = 10ull << 30;
+    sched.set_budget(budget);
+    sched.set_free_vram_probe([] { return std::optional<double>{}; });
+    infer::SlotSpec llm;
+    llm.slot = infer::Slot::LLM;
+    llm.vram_estimate = budget;
+    llm.evict_priority = 1;
+    llm.load = [] {};
+    llm.unload = [] {};
+    sched.register_slot(llm);
+    infer::SlotSpec img;
+    img.slot = infer::Slot::Image;
+    img.vram_estimate = budget;
+    img.evict_priority = 9;
+    img.load = [] {};
+    img.unload = [] {};
+    sched.register_slot(img);
+    { auto a = sched.acquire(infer::Slot::LLM); }
+    { auto b = sched.acquire(infer::Slot::Image); }   // 这一下会卸掉 LLM
+    REQUIRE(sched.room_note(infer::Slot::Image) == "腾显存：卸了 1 个模型");
+
+    const fs::path root = temp_root("腾显存文案");
+    const models::ProjectPaths paths(root);
+    auto owned = std::vector<models::Shot>{make_shot("ep01_sh001")};
+    std::vector<models::Shot*> shots = {&owned[0]};
+
+    pipeline::JobTable table;
+    Collector c;
+    c.install(table);
+    pipeline::CancelToken tok;
+    table.start(pipeline::JobKind::Run, "ep01", [&](pipeline::JobProgress& p) {
+        stages::run_frames(shots, make_assets(), make_spec(), paths,
+                           fake_ok(), p, tok, 1);
+    });
+    table.wait_idle();
+
+    int first = 0, second = 0;
+    for (const auto& m : c.msgs) {
+        const std::string msg = m.value("message", "");
+        if (msg.find("第 1/2 步") != std::string::npos &&
+            msg.find("腾显存：卸了 1 个模型") != std::string::npos) {
+            ++first;
+        }
+        if (msg.find("第 2/2 步") != std::string::npos &&
+            msg.find("腾显存") != std::string::npos) {
+            ++second;
+        }
+    }
+    CHECK(first == 1);    // 第一步带上
+    CHECK(second == 0);   // 往后每步都挂就是刷屏
+
+    sched.evict_all();    // 别把状态留给后面的用例
     std::error_code ec;
     fs::remove_all(root, ec);
 }
