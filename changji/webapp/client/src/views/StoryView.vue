@@ -202,7 +202,13 @@ function watchBatch() {
       if (msg.type !== 'story_token' || !msg.chapter_id) return
       // **落到它自己那一章上。** 批量是一章一章顺着写的，但消息里带着
       // chapter_id，不靠顺序猜——猜错的话字会长进隔壁那一章。
-      buf[msg.chapter_id] = (buf[msg.chapter_id] ?? '') + (msg.text ?? '')
+      //
+      // **seq 归零就是重头来。** 批量那条写砸了会自动再要一次（实跑里
+      // 第一次就用上了），而重试是从头生成的——照旧往后接的话，编辑器里
+      // 会是"写砸的那半截 + 重写的全文"接在一起。跑完 load() 会把它冲掉，
+      // 但那之前这一章看着就是坏的。
+      buf[msg.chapter_id] =
+        msg.seq === 0 ? (msg.text ?? '') : (buf[msg.chapter_id] ?? '') + (msg.text ?? '')
       streaming.value = { chapter_id: msg.chapter_id, from: 0 }
       // **跟着它翻页。** 一次只看一章，不跟的话批量跑一个多小时，眼前
       // 这一章一个字都不动——"看着它写"就落空了。
