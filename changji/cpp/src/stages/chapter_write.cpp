@@ -82,7 +82,7 @@ ordered chapter_schema(int target_paras) {
              "这个位置前面那句的原文，照抄十到二十个字。程序靠它定位切点"}};
 
         ordered props = ordered::object();
-        props["paragraphs"] = {
+        props[kChapterBodyField] = {
             {"type", "array"},
             {"description",
              "这一章的**完整正文**，一段一项：一段一两句话、三四十个字，动作一段、对白一段，整章几千字。小说体。不是标题、不是梗概、不是提纲，也不要剧本格式的标记"},
@@ -108,7 +108,7 @@ ordered chapter_schema(int target_paras) {
         ordered s = ordered::object();
         s["type"] = "object";
         s["properties"] = props;
-        s["required"] = {"paragraphs", "hooks"};
+        s["required"] = {kChapterBodyField, "hooks"};
         s["additionalProperties"] = false;
         return s;
     }();
@@ -271,7 +271,8 @@ ChapterDraft parse_chapter(const std::string& raw, int min_chars) {
     ChapterDraft d;
     // 新形状：paragraphs 一段一项，拼回一段一行的正文。老形状（text 一个
     // 字符串）照样认——粘贴导入和改 schema 之前存的草稿走这条。
-    if (const auto ps = data.find("paragraphs"); ps != data.end() && ps->is_array()) {
+    if (const auto ps = data.find(kChapterBodyField);
+        ps != data.end() && ps->is_array()) {
         for (const auto& p : *ps) {
             if (!p.is_string()) continue;
             const std::string one = text::strip_ws(p.get<std::string>());

@@ -12,6 +12,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include "stages/chapter_write.hpp"
 #include "stages/json_stream.hpp"
 
 using changji::stages::JsonFieldStreamer;
@@ -180,4 +181,34 @@ TEST_CASE("老形状还认：text 是一个字符串") {
     JsonFieldStreamer s("text");
     CHECK(s.feed(R"({"text":"整段正文。"})") == "整段正文。");
     CHECK(s.done());
+}
+
+// ---------------------------------------------------------------------------
+// 把两处字符串钉在一起
+// ---------------------------------------------------------------------------
+
+TEST_CASE("流式抠的那个字段，必须真的在 schema 里") {
+    // **这一条是为了让 2026-09-11 那个 bug 不可能再发生。**
+    //
+    // 当时 schema 从 `text` 改成 `paragraphs`，而流式那一层还在找 text，
+    // 于是它一个字都抠不出来：编辑器一两分钟一动不动，后端不报任何错
+    // （正文照样解析、落库、重算分集），查起来毫无线索。
+    //
+    // 现在两边共用 `kChapterBodyField`。这条用例守的是"它确实是 schema 里
+    // 的一个键"——以后谁再改 schema 而忘了改常量，这里当场红。
+    const auto& schema = changji::stages::chapter_schema(20);
+    REQUIRE(schema.contains("properties"));
+    CHECK(schema.at("properties").contains(changji::stages::kChapterBodyField));
+
+    // 而且它得是**一串字符串**：JsonFieldStreamer 的数组那条才用得上。
+    const auto& field = schema.at("properties").at(changji::stages::kChapterBodyField);
+    CHECK(field.at("type") == "array");
+    CHECK(field.at("items").at("type") == "string");
+
+    // required 里也得有它，否则模型可以整个不写
+    bool required = false;
+    for (const auto& r : schema.at("required")) {
+        if (r == changji::stages::kChapterBodyField) required = true;
+    }
+    CHECK(required);
 }

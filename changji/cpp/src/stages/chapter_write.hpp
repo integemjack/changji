@@ -45,6 +45,18 @@ struct ChapterDraft {
     std::vector<DraftHook> hooks;
 };
 
+/// 章节正文在模型那份 JSON 里的字段名。
+///
+/// **不能各写各的。** 这个名字有两个读者：`chapter_schema()` 写进 schema，
+/// 而流式那一层（`stages::JsonFieldStreamer`）要照着它从 token 流里把正文
+/// 抠出来推给编辑器。2026-09-11 就栽在这儿——schema 从 `text` 改成
+/// `paragraphs`，流式那边没跟着改，于是它一个字都抠不出来：编辑器整整
+/// 一两分钟一动不动，而**后端不报任何错**（正文照样解析、落库、重算分集），
+/// 查起来毫无线索。
+///
+/// 现在两边都用这一个常量，再配一条用例钉住它确实是 schema 里的键。
+inline constexpr const char* kChapterBodyField = "paragraphs";
+
 /// 一章的基准篇幅。
 ///
 /// **一章是一个完整的故事单元，不是一集。** 三千字是网文一章的常见体量，
