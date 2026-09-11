@@ -28,8 +28,13 @@ inline constexpr const char* kPoseBack =
     R"CJ(背对镜头，看得清发型和背影轮廓)CJ";
 
 // ---- 场景空景图 ----
+//
+// ⚠️ **别在这儿写「空镜」。** 那是电影行话，意思是"这一镜里没有人"；
+// 而出图模型看见的是「空」，理解成"这地方是空的"。2026-09-12 实见：
+// 便利店的货架一件东西都没有，像一家倒闭清仓完的店——而它是这部剧一半
+// 戏要发生的地方，后面每一镜都拿它当底子。
 inline constexpr const char* kRefLocationHead =
-    R"CJ(场景参考图，空镜，广角，画面清晰)CJ";
+    R"CJ(场景参考图，广角，画面清晰)CJ";
 
 /// **这一条是硬要求，所以单独一段。**
 ///
@@ -37,7 +42,7 @@ inline constexpr const char* kRefLocationHead =
 /// 那个人会被当成这个地方的一部分，一路复制到每一镜里去——而那是个
 /// 不属于任何角色、也没法改的人。
 inline constexpr const char* kRefLocationNoPeople =
-    R"CJ(画面里没有任何人物)CJ";
+    R"CJ(画面里没有任何人物，但这个地方该有的陈设、家具和物品都在原位)CJ";
 
 // ---- 负向 ----
 //

@@ -96,7 +96,13 @@ TEST_CASE("空景图里不许有人") {
     // 空景图是场景一致性的锚点，里面站个人的话，那个人会被当成这个地方的
     // 一部分，一路复制到每一镜里去——而那是个不属于任何角色、也没法改的人
     CHECK(p.find("画面里没有任何人物") != std::string::npos);
-    CHECK(p.find("空镜") != std::string::npos);
+    // **但屋里的东西要在。** 「没有人」和「这地方是空的」是两回事，而出图
+    // 模型很容易听成后者：2026-09-12 实见便利店货架一件货都没有，像一家
+    // 清仓完的店——而它是这部剧一半戏发生的地方。
+    CHECK(p.find("陈设") != std::string::npos);
+    // ⚠️ **不许再写「空镜」。** 那是电影行话（这一镜没有人），而模型看见的
+    // 是「空」。它正是上面那张空货架的来源。
+    CHECK(p.find("空镜") == std::string::npos);
     // 外观块照样逐字用
     CHECK(p.find(a_location().render_prompt(StyleLine::REALISTIC)) !=
           std::string::npos);
