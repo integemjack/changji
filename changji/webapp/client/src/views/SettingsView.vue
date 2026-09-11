@@ -14,14 +14,12 @@ import ModelPicker from '@/components/ModelPicker.vue'
 import StepHeader from '@/components/StepHeader.vue'
 import { api } from '@/api'
 import { useAction } from '@/composables/useAction'
-import { useSession } from '@/stores/session'
 import { useUi } from '@/stores/ui'
 import { describeRoomDecision } from '@/composables/room-decision'
 import { describeLlmState } from '@/composables/llm-state'
 import { placementRows as buildPlacementRows } from '@/composables/placement-rows'
 
 const ui = useUi()
-const session = useSession()
 const { run, isBusy } = useAction()
 
 const overview = ref(null)
@@ -34,10 +32,6 @@ const persist = ref(true)
 const apiKeyInput = ref('')
 
 const SECTIONS = [
-  // **「这个项目」排在最前面。** 画幅和全剧风格是每部剧自己的，改得比
-  // 全局那些勤；而且它们原来在项目页上，那一页的活是"选哪部剧"，
-  // 和"改这一部剧的设置"是两件事，挤在一页就没有重点了。
-  { id: 'project', title: '这个项目', icon: 'folder' },
   { id: 'engine', title: '引擎', icon: 'link' },
   { id: 'llm', title: '大模型', icon: 'sparkle' },
   { id: 'models', title: '模型', icon: 'wand' },
@@ -48,107 +42,6 @@ const SECTIONS = [
   { id: 'doctor', title: '体检', icon: 'warn' },
   { id: 'look', title: '外观', icon: 'moon' },
 ]
-
-// ---- 这个项目的设置 ----
-//
-// **从项目页搬过来的**（2026-09-11）。它们是项目级的，不是全局的——
-// 一台机器上可以同时有竖屏短剧和横屏片子，所以画幅跟着项目走，不能回到
-// 全局设置里当全局项。但也不该待在项目页：那一页的活是"选哪部剧"，
-// 而这两张卡改的是"当前那一部"，两件事挤在一页就没有重点。
-//
-// 所以放这儿，但**单开一节明确标着「这个项目」**，和底下那些全局项分开。
-
-// 全剧风格。所有镜头共用的一层，属于项目的创作常量，
-// 跟「选哪个项目」放在同一页——开工时定一次，后面基本不动。
-const style = ref({ global_style: '', negative_prompt: '', aspect_ratio: '9:16' })
-const savedStyle = ref('')
-const styleLine = ref('')
-const resetOnStyle = ref(false)
-const styleDirty = computed(() => JSON.stringify(style.value) !== savedStyle.value)
-
-
-/**
- * 这部剧的画面规格。**存在项目目录里**，不是全局设置——一台机器上可以
- * 同时有竖屏短剧和横屏片子。
- *
- * `saved` 存的是刚读回来那一份的快照，用来判断有没有改动：直接比对象
- * 会因为引用相同而永远相等。
- */
-const video = ref(null)
-const savedVideo = ref('')
-const videoDirty = computed(
-  () => video.value && JSON.stringify(video.value) !== savedVideo.value,
-)
-const sizeText = computed(() =>
-  video.value ? `${video.value.width}×${video.value.height}` : '—',
-)
-
-async function loadVideo() {
-  if (!session.projectPath) {
-    video.value = null
-    return
-  }
-  try {
-    const d = await api.projectVideo(session.projectPath)
-    video.value = { ...d }
-    savedVideo.value = JSON.stringify(video.value)
-  } catch (err) {
-    // 读不到不该让整页红——项目可能是老的，还没有这一节。
-    // 那时候按默认值显示，用户存一次就写进去了。
-    video.value = { orientation: 'portrait', quality: '720p', width: 544, height: 928 }
-    savedVideo.value = ''
-    ui.warn(`读不到画面设置，按默认显示：${err.message}`)
-  }
-}
-
-async function saveVideo() {
-  const d = await run(
-    () =>
-      api.saveProjectVideo({
-        path: session.projectPath,
-        orientation: video.value.orientation,
-        quality: video.value.quality,
-      }),
-    { key: 'video', success: '画面设置已保存' },
-  )
-  if (!d) return
-  // **拿服务端算出来的宽高回填。** 前端不该自己算——那样两处规则会漂，
-  // 而 32 对齐这种事错了要到出图那一步才发现。
-  video.value = { ...d }
-  savedVideo.value = JSON.stringify(video.value)
-}
-
-async function loadStyle() {
-  if (!session.projectPath) return
-  try {
-    const data = await api.assets(session.projectPath)
-    styleLine.value = data.style?.style_line ?? ''
-    style.value = {
-      global_style: data.style?.global_style ?? '',
-      negative_prompt: data.style?.negative_prompt ?? '',
-      aspect_ratio: data.style?.aspect_ratio ?? '9:16',
-    }
-    savedStyle.value = JSON.stringify(style.value)
-  } catch {
-    // 项目坏了或者刚建好还没有资产库，这一张卡不显示就是了
-    savedStyle.value = ''
-  }
-}
-
-async function saveStyle() {
-  const result = await run(
-    () =>
-      api.saveStyle({
-        project: session.projectPath,
-        patch: style.value,
-        reset_shots: resetOnStyle.value,
-      }),
-    { key: 'style', refresh: true },
-  )
-  if (!result) return
-  savedStyle.value = JSON.stringify(style.value)
-  ui.ok(result.reset_shots ? `风格已改，${result.reset_shots} 个镜头退回重跑` : '已保存')
-}
 
 const engineOnline = computed(() => Boolean(overview.value?.engine?.online))
 
@@ -376,18 +269,6 @@ onMounted(() => {
   loadProviders()
 })
 
-// 「这个项目」那一节跟着当前项目走。换项目时要重读——不重读的话，
-// 切到另一部剧之后那两张卡显示的还是上一部的画幅和风格，而点保存会把
-// 上一部的值写进这一部。
-watch(
-  () => session.projectPath,
-  () => {
-    loadVideo()
-    loadStyle()
-  },
-  { immediate: true },
-)
-
 async function saveNode() {
   const result = await run(() => api.saveNodeConfig(node.value), {
     key: 'node',
@@ -483,165 +364,6 @@ function scrollTo(id) {
       </nav>
 
       <div class="stack stack--lg set__body">
-        <!-- 这个项目。**项目级，不是全局**——一台机器上可以同时有竖屏短剧
-             和横屏片子，所以画幅跟着项目走。 -->
-        <section id="sec-project" class="card set__scope">
-          <div class="card__head">
-            <div>
-              <div class="card__title">
-                这个项目
-                <span v-if="session.project" class="pill pill--accent">
-                  {{ session.project.title || session.project.project_id }}
-                </span>
-              </div>
-              <div class="card__sub">
-                下面两项只影响这一部剧，不是这台机器的设置。换个项目就是另一套。
-              </div>
-            </div>
-          </div>
-        </section>
-
-<section v-if="session.hasProject && video" class="card">
-      <div class="card__head">
-        <div>
-          <div class="card__title">
-            画面
-            <span class="pill pill--neutral">
-              {{ video.orientation === 'landscape' ? '横屏' : '竖屏' }}
-              · {{ video.quality === '2k' ? '2K' : '标准' }}
-            </span>
-          </div>
-          <div class="card__sub">
-            出多大的画面。宽高由这两项算出来，不用自己填数字。
-          </div>
-        </div>
-        <span v-if="videoDirty" class="pill pill--warn">未保存</span>
-      </div>
-      <div class="card__body stack">
-        <div class="grid grid--form">
-          <label class="field">
-            <span class="field__label">画幅</span>
-            <select v-model="video.orientation" class="select">
-              <option value="portrait">竖屏（短剧、手机）</option>
-              <option value="landscape">横屏</option>
-            </select>
-          </label>
-          <label class="field">
-            <span class="field__label">清晰度</span>
-            <select v-model="video.quality" class="select">
-              <!-- **取值仍然是 "720p"**：那是存在每个项目 changji.toml 里的
-                   字符串，改了名老项目就读不出来。显示的是真实尺寸——
-                   2026-09-10 把它从 704×1280 改成 544×928 之后，
-                   再叫 "720p" 就是假的（720p 是 720 行）。 -->
-              <option value="720p">标准（544×928）· 快</option>
-              <option value="hd">高清（704×1280）· 推荐</option>
-              <option value="2k">2K（2560×1440）· 很吃显存</option>
-            </select>
-            <span class="field__hint">
-              出来是 {{ sizeText }}。
-              <template v-if="video.quality === '720p'">
-                像素只有高清档的一半多一点，出得快，但细节和人脸容易糊。
-              </template>
-              <template v-else-if="video.quality === 'hd'">
-                <strong>画质和速度的平衡点</strong>，多数情况选它。
-              </template>
-              <template v-if="video.quality === '2k'">
-                <strong>2K 很吃显存</strong>，一张 32 GB 的卡跑不动——
-                那时候要么换大卡，要么出标准档再单独走一次超分。
-              </template>
-            </span>
-          </label>
-        </div>
-      </div>
-      <div class="card__foot">
-        <button
-          class="btn btn--primary"
-          type="button"
-          :disabled="!videoDirty || isBusy('video')"
-          @click="saveVideo"
-        >
-          保存画面设置
-        </button>
-        <span class="spacer" />
-        <span class="tiny dim">改它只影响以后出的镜头，已经出好的不动</span>
-      </div>
-    </section>
-
-    
-    <section v-if="session.hasProject && savedStyle" class="card">
-      <div class="card__head">
-        <div>
-          <div class="card__title">
-            全剧风格
-            <span class="pill pill--neutral">
-              {{ styleLine === 'anime' ? '动漫线' : '写实线' }}
-            </span>
-          </div>
-          <div class="card__sub">
-            所有镜头共用的一层，开工时定一次。改它等于整部剧换调性。
-          </div>
-        </div>
-        <span v-if="styleDirty" class="pill pill--warn">未保存</span>
-      </div>
-      <div class="card__body stack">
-        <div class="grid grid--form">
-          <label class="field">
-            <span class="field__label">画风与质感</span>
-            <textarea
-              v-model="style.global_style"
-              class="textarea textarea--tight"
-              rows="3"
-              placeholder="例如：电影感冷调，浅景深，胶片颗粒"
-            />
-          </label>
-          <label class="field">
-            <span class="field__label">负向提示词</span>
-            <textarea
-              v-model="style.negative_prompt"
-              class="textarea textarea--tight"
-              rows="3"
-              placeholder="例如：多手多脚，文字水印，糊脸"
-            />
-          </label>
-        </div>
-
-        <div class="field">
-          <span class="field__label">画幅</span>
-          <div class="chips">
-            <button
-              v-for="r in ['9:16', '16:9', '1:1', '4:5']"
-              :key="r"
-              class="chip"
-              :class="{ 'chip--on': style.aspect_ratio === r }"
-              type="button"
-              @click="style.aspect_ratio = r"
-            >
-              {{ r }}{{ r === '9:16' ? ' 竖屏' : r === '16:9' ? ' 横屏' : '' }}
-            </button>
-          </div>
-          <span class="field__hint">短剧平台基本都吃 9:16。改画幅要重跑所有镜头。</span>
-        </div>
-
-        <label class="switch">
-          <input v-model="resetOnStyle" type="checkbox" />
-          <span>顺便把已渲染的镜头退回重跑</span>
-          <span class="field__hint">
-            不勾的话新风格只对之后才跑的镜头生效，一集里前后会不一致。
-          </span>
-        </label>
-      </div>
-      <div class="card__foot">
-        <button
-          class="btn btn--primary"
-          type="button"
-          :disabled="!styleDirty || isBusy('style')"
-          @click="saveStyle"
-        >
-          {{ isBusy('style') ? '保存中…' : '保存风格' }}
-        </button>
-      </div>
-    </section>
-
         <!-- 引擎 -->
         <section id="sec-engine" class="card">
           <div class="card__head">
@@ -1051,7 +773,7 @@ function scrollTo(id) {
                   {{ effective ? `${effective.width}×${effective.height}` : '—' }}
                 </span>
                 <span class="field__hint">
-                  每部剧自己的，在上面「这个项目」那一节里选。
+                  每部剧自己的，在项目页上选。
                 </span>
               </div>
             </div>
@@ -1119,7 +841,7 @@ function scrollTo(id) {
 
           <!-- **「画质档位」那一节删了（2026-09-10）。**
 
-               画幅和清晰度搬到项目上了（本页「这个项目」那一节），
+               画幅和清晰度搬到项目上了（项目页），
                因为一台机器上可以同时有竖屏短剧和横屏片子。
                搬完之后这里改宽高**不再生效**——出片时项目的 [video]
                会盖掉它，而界面照旧显示"已应用"。

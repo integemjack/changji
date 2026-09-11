@@ -1,608 +1,418 @@
 <script setup>
 /**
- * 第一步：项目。
+ * 这一部剧。
  *
- * 进来第一眼要看到「我有哪些项目」，而不是一个让人填绝对路径的输入框。
- * 容器里项目库挂在哪，用户根本不知道，问引擎要列表才是对的。
+ * **这一页只说当前这个项目。** 选哪一部在右边那条常驻的项目库里——
+ * 原来两件事挤在一页：上半页是「这一部的设置」，下半页是「挑另一部」，
+ * 而挑另一部这件事在写故事、看镜头的时候也想干，走到这一页再走回去，
+ * 当前那一页的状态就丢了。
+ *
+ * 所以这一页显示的是：这是哪部剧（剧名、logline）、到哪一步了、
+ * 这一部剧自己的设置（画面、全剧风格）、以及删掉它。
+ *
+ * 画面和全剧风格**是项目级的**——一台机器上可以同时有竖屏短剧和横屏
+ * 片子，所以它们不能回全局设置页；而这一页就是这一部剧的地方。
  */
-import { computed, onMounted, ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { computed, onMounted, ref, watch } from 'vue'
 
-import AppIcon from '@/components/AppIcon.vue'
 import EmptyState from '@/components/EmptyState.vue'
-import { projectStage } from '@/composables/project-stage'
 import StepHeader from '@/components/StepHeader.vue'
+import { projectStage } from '@/composables/project-stage'
 import { api } from '@/api'
-import { humanAgo, useAction } from '@/composables/useAction'
+import { humanAgo } from '@/composables/useAction'
+import { useAction } from '@/composables/useAction'
+import { useProjects } from '@/stores/projects'
 import { useSession } from '@/stores/session'
 import { useUi } from '@/stores/ui'
 
-const router = useRouter()
+const store = useProjects()
 const session = useSession()
 const ui = useUi()
-const { run, isBusy, busy } = useAction()
+const { run, isBusy } = useAction()
 
-const workspace = ref('')
-const projects = ref([])
-const loading = ref(true)
-const loadError = ref('')
-const keyword = ref('')
-
-const creating = ref(false)
-const draft = ref({ path: '', title: '', style_line: 'realistic' })
-
-// 项目库以外的项目。整个目录拷到别的机器就能接着做，所以项目常常躺在
-// 移动硬盘或者共享盘上，不在项目库根目录下面——那些以前在界面上够不着。
-const opening = ref(false)
-const openPath = ref('')
-
-const removing = ref(null) // 待删项目
+const removing = ref(false)
 const confirmName = ref('')
 
-const shown = computed(() => {
-  const kw = keyword.value.trim().toLowerCase()
-  if (!kw) return projects.value
-  return projects.value.filter(
-    (p) =>
-      p.name?.toLowerCase().includes(kw) || p.dir?.toLowerCase().includes(kw),
-  )
-})
+/** 项目库里这一条。统计和阶段都从它来，和右边那条栏读的是同一份。 */
+const me = computed(() => store.byPath(session.projectPath))
+const stage = computed(() => (me.value ? projectStage(me.value) : null))
+const title = computed(
+  () => session.project?.title || session.project?.project_id || '',
+)
 
-async function load() {
-  loading.value = true
-  loadError.value = ''
+// 全剧风格。所有镜头共用的一层，是这部剧的创作常量：开工时定一次，
+// 后面基本不动。改一次会让已经出好的镜头退回重跑，所以下面那个勾要人自己点。
+const style = ref({ global_style: '', negative_prompt: '', aspect_ratio: '9:16' })
+const savedStyle = ref('')
+const styleLine = ref('')
+const resetOnStyle = ref(false)
+const styleDirty = computed(() => JSON.stringify(style.value) !== savedStyle.value)
+
+const video = ref(null)
+const savedVideo = ref('')
+const videoDirty = computed(
+  () => video.value && JSON.stringify(video.value) !== savedVideo.value,
+)
+const sizeText = computed(() =>
+  video.value ? `${video.value.width}×${video.value.height}` : '—',
+)
+
+async function loadVideo() {
+  if (!session.projectPath) {
+    video.value = null
+    return
+  }
   try {
-    const data = await api.projects()
-    workspace.value = data.workspace
-    projects.value = data.projects ?? []
+    const d = await api.projectVideo(session.projectPath)
+    video.value = { ...d }
+    savedVideo.value = JSON.stringify(video.value)
   } catch (err) {
-    loadError.value = err.message
-  } finally {
-    loading.value = false
+    // 读不到不该让整页红——项目可能是老的，还没有这一节。
+    // 那时候按默认值显示，用户存一次就写进去了。
+    video.value = { orientation: 'portrait', quality: '720p', width: 544, height: 928 }
+    savedVideo.value = ''
+    ui.warn(`读不到画面设置，按默认显示：${err.message}`)
   }
 }
 
-onMounted(load)
-
-function open(project) {
-  if (project.broken) {
-    ui.error(`这个项目读不了：${project.broken}`)
-    return
-  }
-  session.selectProject(project.path)
-  ui.ok(`已切到「${project.name}」`)
-  router.push('/story')
+async function saveVideo() {
+  const d = await run(
+    () =>
+      api.saveProjectVideo({
+        path: session.projectPath,
+        orientation: video.value.orientation,
+        quality: video.value.quality,
+      }),
+    { key: 'video', success: '画面设置已保存' },
+  )
+  if (!d) return
+  // **拿服务端算出来的宽高回填。** 前端不该自己算——那样两处规则会漂，
+  // 而 32 对齐这种事错了要到出图那一步才发现。
+  video.value = { ...d }
+  savedVideo.value = JSON.stringify(video.value)
 }
 
-async function create() {
-  const name = draft.value.path.trim()
-  if (!name) {
-    ui.warn('先给项目起个名字')
-    return
+async function loadStyle() {
+  if (!session.projectPath) return
+  try {
+    const data = await api.assets(session.projectPath)
+    styleLine.value = data.style?.style_line ?? ''
+    style.value = {
+      global_style: data.style?.global_style ?? '',
+      negative_prompt: data.style?.negative_prompt ?? '',
+      aspect_ratio: data.style?.aspect_ratio ?? '9:16',
+    }
+    savedStyle.value = JSON.stringify(style.value)
+  } catch {
+    // 项目坏了或者刚建好还没有资产库，这一张卡不显示就是了
+    savedStyle.value = ''
   }
-  const result = await run(() => api.newProject({ ...draft.value, path: name }), {
-    key: 'create',
-    success: '项目建好了',
-  })
+}
+
+async function saveStyle() {
+  const result = await run(
+    () =>
+      api.saveStyle({
+        project: session.projectPath,
+        patch: style.value,
+        reset_shots: resetOnStyle.value,
+      }),
+    { key: 'style', refresh: true },
+  )
   if (!result) return
-  creating.value = false
-  draft.value = { path: '', title: '', style_line: 'realistic' }
-  await load()
-  session.selectProject(result.root)
-  router.push('/story')
-}
-
-/** 按路径打开一个项目库以外的项目。先问引擎认不认，再切过去。 */
-async function openByPath() {
-  const path = openPath.value.trim()
-  if (!path) {
-    ui.warn('填一个项目目录的完整路径')
-    return
-  }
-  const info = await run(() => api.project(path), { key: 'open' })
-  if (!info) return
-  session.selectProject(info.root)
-  opening.value = false
-  openPath.value = ''
-  ui.ok(`已切到「${info.title || info.project_id}」`)
-  router.push('/story')
+  savedStyle.value = JSON.stringify(style.value)
+  ui.ok(result.reset_shots ? `风格已改，${result.reset_shots} 个镜头退回重跑` : '已保存')
 }
 
 async function remove() {
-  if (!removing.value) return
-  const target = removing.value
+  const path = session.projectPath
   const done = await run(
-    () => api.deleteProject({ path: target.path, confirm_name: confirmName.value }),
+    () => api.deleteProject({ path, confirm_name: confirmName.value }),
     { key: 'delete', success: '已删除' },
   )
   if (!done) return
-  removing.value = null
+  removing.value = false
   confirmName.value = ''
-  if (session.projectPath === target.path) session.clear()
-  await load()
+  session.clear()
+  await store.load()
 }
 
-/** 这部剧到哪一步了。判断在 composables/project-stage.js，那儿有用例盯着。 */
-function stageOf(p) {
-  return projectStage(p)
-}
+onMounted(() => {
+  if (!store.loaded) store.load()
+})
+
+watch(
+  () => session.projectPath,
+  () => {
+    loadVideo()
+    loadStyle()
+  },
+  { immediate: true },
+)
 </script>
 
 <template>
-  <div class="stack--lg stack">
-    <StepHeader>
-      <template #actions>
-        <button class="btn btn--ghost" type="button" :disabled="loading" @click="load">
-          <AppIcon name="refresh" :size="15" />
-          刷新
-        </button>
-        <button class="btn btn--ghost" type="button" @click="opening = !opening">
-          <AppIcon name="folder" :size="15" />
-          打开其他目录
-        </button>
-        <button class="btn btn--primary" type="button" @click="creating = !creating">
-          <AppIcon name="plus" :size="15" />
-          新建项目
-        </button>
-      </template>
-    </StepHeader>
+  <div class="stack stack--lg">
+    <StepHeader :title="title || '项目'" />
 
-    <!-- 打开项目库以外的项目 -->
-    <Transition name="fold">
-      <section v-if="opening" class="card">
-        <div class="card__head">
-          <div>
-            <div class="card__title">打开其他目录的项目</div>
-            <div class="card__sub">
-              项目整个目录拷到哪儿都能接着做。不在项目库里的，填完整路径打开。
-            </div>
+    <EmptyState
+      v-if="!session.hasProject"
+      icon="folder"
+      tone="warn"
+      title="还没选项目"
+      hint="项目库那条栏里点一个切过去，或者点加号建一个。"
+    />
+
+    <template v-else>
+      <!-- 这是哪部剧、到哪一步了 -->
+      <section class="card">
+        <div class="card__body stack stack--sm">
+          <p v-if="me?.logline" class="lead">{{ me.logline }}</p>
+          <p v-else class="lead dim">还没写故事。去「故事」那一步写一句，或者粘一段进来。</p>
+
+          <div v-if="stage" class="row row--between">
+            <span class="stage" :class="`stage--${stage.tone}`">{{ stage.label }}</span>
+            <span class="tiny dim">{{ humanAgo(me?.mtime) }}</span>
           </div>
-          <button class="btn btn--ghost btn--sm" type="button" @click="opening = false">
-            <AppIcon name="close" :size="14" />
-          </button>
-        </div>
-        <div class="card__body row">
-          <input
-            v-model="openPath"
-            class="input mono"
-            placeholder="D:\短剧\雪夜  或者  /data/projects/雪夜"
-            @keyup.enter="openByPath"
-          />
-          <button
-            class="btn btn--primary nowrap"
-            type="button"
-            :disabled="isBusy('open')"
-            @click="openByPath"
-          >
-            {{ isBusy('open') ? '打开中…' : '打开' }}
-          </button>
+          <div v-if="stage" class="bar">
+            <div class="bar__fill" :class="`bar__fill--${stage.tone}`"
+                 :style="{ width: stage.percent + '%' }" />
+          </div>
+
+          <div class="stats tiny dim">
+            <span><b class="numeric">{{ me?.chapters ?? 0 }}</b> 章</span>
+            <span><b class="numeric">{{ me?.episodes ?? 0 }}</b> 集</span>
+            <span><b class="numeric">{{ me?.shots ?? 0 }}</b> 镜</span>
+            <span><b class="numeric">{{ me?.outputs ?? 0 }}</b> 成片</span>
+          </div>
+          <p class="tiny dim mono truncate">{{ session.projectPath }}</p>
         </div>
       </section>
-    </Transition>
 
-    <!-- 新建 -->
-    <Transition name="fold">
-      <section v-if="creating" class="card">
-        <div class="card__head">
-          <div>
-            <div class="card__title">新建项目</div>
-            <div class="card__sub">
-              只填名字就落在项目库里；填完整路径可以建在别处。
-            </div>
-          </div>
-          <button class="btn btn--ghost btn--sm" type="button" @click="creating = false">
-            <AppIcon name="close" :size="14" />
-          </button>
-        </div>
-        <div class="card__body grid grid--form">
-          <label class="field">
-            <span class="field__label">项目名或路径</span>
-            <input
-              v-model="draft.path"
-              class="input"
-              placeholder="例如：雪夜"
-              @keyup.enter="create"
-            />
-            <span class="field__hint">项目库：<code class="mono">{{ workspace || '读取中' }}</code></span>
-          </label>
-          <label class="field">
-            <span class="field__label">剧名</span>
-            <input v-model="draft.title" class="input" placeholder="不填就用项目名" />
-          </label>
-          <label class="field">
-            <span class="field__label">风格线</span>
-            <select v-model="draft.style_line" class="select">
-              <option value="realistic">真人写实</option>
-              <option value="anime">动漫</option>
-            </select>
-            <span class="field__hint">决定出图基座和提示词范式，建好之后不建议再改。</span>
-          </label>
-        </div>
-        <div class="card__foot">
-          <button
-            class="btn btn--primary"
-            type="button"
-            :disabled="isBusy('create')"
-            @click="create"
-          >
-            {{ isBusy('create') ? '正在建…' : '建好，去写剧本' }}
-          </button>
-          <button class="btn btn--ghost" type="button" @click="creating = false">
-            取消
-          </button>
-        </div>
-      </section>
-    </Transition>
-
-    <!-- 列表 -->
-    <section class="stack">
-      <div class="row row--between">
-        <div class="row">
-          <h2 class="section-title">项目库</h2>
-          <span v-if="projects.length" class="pill pill--neutral">
-            {{ projects.length }} 个
-          </span>
-        </div>
-        <input
-          v-if="projects.length > 6"
-          v-model="keyword"
-          class="input input--search"
-          placeholder="搜项目"
-        />
-      </div>
-
-      <div v-if="loading" class="grid grid--cards">
-        <div v-for="i in 3" :key="i" class="card skeleton" />
-      </div>
-
-      <EmptyState
-        v-else-if="loadError"
-        icon="warn"
-        tone="warn"
-        title="读不到项目库"
-        :hint="loadError"
-      >
-        <button class="btn" type="button" @click="load">重试</button>
-        <RouterLink to="/settings" class="btn btn--primary">去设置里检查引擎地址</RouterLink>
-      </EmptyState>
-
-      <EmptyState
-        v-else-if="!projects.length"
-        icon="folder"
-        title="项目库还是空的"
-        :hint="`新建一个项目就能开始。它会落在 ${workspace}，整个目录拷到别的机器就能接着做。`"
-      >
-        <button class="btn btn--primary" type="button" @click="creating = true">
-          <AppIcon name="plus" :size="15" />
-          新建第一个项目
-        </button>
-      </EmptyState>
-
-      <div v-else class="grid grid--cards">
-        <article
-          v-for="p in shown"
-          :key="p.path"
-          class="proj card"
-          :class="{
-            'proj--current': p.path === session.projectPath,
-            'proj--broken': p.broken,
-          }"
-          tabindex="0"
-          @click="open(p)"
-          @keyup.enter="open(p)"
-        >
-          <div class="proj__top">
-            <span v-if="p.path === session.projectPath" class="pill pill--accent">
-              当前
+<section v-if="session.hasProject && video" class="card">
+      <div class="card__head">
+        <div>
+          <div class="card__title">
+            画面
+            <span class="pill pill--neutral">
+              {{ video.orientation === 'landscape' ? '横屏' : '竖屏' }}
+              · {{ video.quality === '2k' ? '2K' : '标准' }}
             </span>
-            <span class="spacer" />
-            <button
-              class="btn btn--ghost btn--sm proj__del"
-              type="button"
-              title="删除项目"
-              @click.stop="((removing = p), (confirmName = ''))"
-            >
-              <AppIcon name="trash" :size="14" />
-            </button>
           </div>
-
-          <h3 class="proj__name truncate">{{ p.name }}</h3>
-          <!-- **一句话说清这是讲什么的剧。** 名字常常就是目录名（321、
-               雨夜天台），认不出剧情；logline 是故事层写下来的那一句。
-               没有故事的老项目退回用梗概，两个都没有才摆路径。 -->
-          <p v-if="p.logline" class="proj__line small truncate">{{ p.logline }}</p>
-          <p v-else class="proj__dir tiny dim truncate mono">{{ p.dir }}</p>
-
-          <p v-if="p.broken" class="proj__broken small">读不了：{{ p.broken }}</p>
-
-          <template v-else>
-            <!-- **进度说的是「到哪一步了」，不是「出片百分比」。**
-                 原来只有后者，于是刚建的空项目和故事写完还没分镜的项目
-                 都是 0%，看上去一模一样。 -->
-            <div class="proj__stage" :class="`proj__stage--${stageOf(p).tone}`">
-              {{ stageOf(p).label }}
-            </div>
-            <div class="proj__bar">
-              <div
-                class="proj__bar-fill"
-                :class="`proj__bar-fill--${stageOf(p).tone}`"
-                :style="{ width: stageOf(p).percent + '%' }"
-              />
-            </div>
-            <!-- 原始计数降级到底栏：挑项目时先看「到哪一步了」，
-                 数字是确认用的，不是用来认项目的。 -->
-            <div class="proj__foot tiny dim">
-              <span class="numeric">
-                <template v-if="p.chapters">{{ p.chapters }} 章 · </template>
-                <template v-if="p.episodes">{{ p.episodes }} 集 · </template>
-                <template v-if="p.shots">{{ p.shots }} 镜</template>
-                <template v-if="!p.chapters && !p.episodes && !p.shots">空的</template>
-              </span>
-              <span>{{ humanAgo(p.mtime) }}</span>
-            </div>
-          </template>
-        </article>
+          <div class="card__sub">
+            出多大的画面。宽高由这两项算出来，不用自己填数字。
+          </div>
+        </div>
+        <span v-if="videoDirty" class="pill pill--warn">未保存</span>
+      </div>
+      <div class="card__body stack">
+        <div class="grid grid--form">
+          <label class="field">
+            <span class="field__label">画幅</span>
+            <select v-model="video.orientation" class="select">
+              <option value="portrait">竖屏（短剧、手机）</option>
+              <option value="landscape">横屏</option>
+            </select>
+          </label>
+          <label class="field">
+            <span class="field__label">清晰度</span>
+            <select v-model="video.quality" class="select">
+              <!-- **取值仍然是 "720p"**：那是存在每个项目 changji.toml 里的
+                   字符串，改了名老项目就读不出来。显示的是真实尺寸——
+                   2026-09-10 把它从 704×1280 改成 544×928 之后，
+                   再叫 "720p" 就是假的（720p 是 720 行）。 -->
+              <option value="720p">标准（544×928）· 快</option>
+              <option value="hd">高清（704×1280）· 推荐</option>
+              <option value="2k">2K（2560×1440）· 很吃显存</option>
+            </select>
+            <span class="field__hint">
+              出来是 {{ sizeText }}。
+              <template v-if="video.quality === '720p'">
+                像素只有高清档的一半多一点，出得快，但细节和人脸容易糊。
+              </template>
+              <template v-else-if="video.quality === 'hd'">
+                <strong>画质和速度的平衡点</strong>，多数情况选它。
+              </template>
+              <template v-if="video.quality === '2k'">
+                <strong>2K 很吃显存</strong>，一张 32 GB 的卡跑不动——
+                那时候要么换大卡，要么出标准档再单独走一次超分。
+              </template>
+            </span>
+          </label>
+        </div>
+      </div>
+      <div class="card__foot">
+        <button
+          class="btn btn--primary"
+          type="button"
+          :disabled="!videoDirty || isBusy('video')"
+          @click="saveVideo"
+        >
+          保存画面设置
+        </button>
+        <span class="spacer" />
+        <span class="tiny dim">改它只影响以后出的镜头，已经出好的不动</span>
       </div>
     </section>
 
-    <!-- 删除确认 -->
-    <div v-if="removing" class="modal" @click.self="removing = null">
-      <div class="modal__box card">
-        <div class="card__head">
-          <div class="card__title">删掉「{{ removing.name }}」？</div>
+    
+    <section v-if="session.hasProject && savedStyle" class="card">
+      <div class="card__head">
+        <div>
+          <div class="card__title">
+            全剧风格
+            <span class="pill pill--neutral">
+              {{ styleLine === 'anime' ? '动漫线' : '写实线' }}
+            </span>
+          </div>
+          <div class="card__sub">
+            所有镜头共用的一层，开工时定一次。改它等于整部剧换调性。
+          </div>
         </div>
-        <div class="card__body stack">
-          <p class="small muted">
-            连同素材、配音和已经跑出来的成片一起删，删了找不回来。
-            确认的话，把目录名一字不差地打一遍：
-          </p>
-          <code class="modal__name mono">{{ removing.dir }}</code>
-          <input
-            v-model="confirmName"
-            class="input"
-            :placeholder="removing.dir"
-            autofocus
-            @keyup.enter="remove"
-          />
-        </div>
-        <div class="card__foot">
-          <button
-            class="btn btn--danger"
-            type="button"
-            :disabled="confirmName !== removing.dir || busy"
-            @click="remove"
-          >
-            {{ isBusy('delete') ? '正在删…' : '确认删除' }}
-          </button>
-          <button class="btn btn--ghost" type="button" @click="removing = null">
-            取消
-          </button>
-        </div>
+        <span v-if="styleDirty" class="pill pill--warn">未保存</span>
       </div>
-    </div>
+      <div class="card__body stack">
+        <div class="grid grid--form">
+          <label class="field">
+            <span class="field__label">画风与质感</span>
+            <textarea
+              v-model="style.global_style"
+              class="textarea textarea--tight"
+              rows="3"
+              placeholder="例如：电影感冷调，浅景深，胶片颗粒"
+            />
+          </label>
+          <label class="field">
+            <span class="field__label">负向提示词</span>
+            <textarea
+              v-model="style.negative_prompt"
+              class="textarea textarea--tight"
+              rows="3"
+              placeholder="例如：多手多脚，文字水印，糊脸"
+            />
+          </label>
+        </div>
+
+        <div class="field">
+          <span class="field__label">画幅</span>
+          <div class="chips">
+            <button
+              v-for="r in ['9:16', '16:9', '1:1', '4:5']"
+              :key="r"
+              class="chip"
+              :class="{ 'chip--on': style.aspect_ratio === r }"
+              type="button"
+              @click="style.aspect_ratio = r"
+            >
+              {{ r }}{{ r === '9:16' ? ' 竖屏' : r === '16:9' ? ' 横屏' : '' }}
+            </button>
+          </div>
+          <span class="field__hint">短剧平台基本都吃 9:16。改画幅要重跑所有镜头。</span>
+        </div>
+
+        <label class="switch">
+          <input v-model="resetOnStyle" type="checkbox" />
+          <span>顺便把已渲染的镜头退回重跑</span>
+          <span class="field__hint">
+            不勾的话新风格只对之后才跑的镜头生效，一集里前后会不一致。
+          </span>
+        </label>
+      </div>
+      <div class="card__foot">
+        <button
+          class="btn btn--primary"
+          type="button"
+          :disabled="!styleDirty || isBusy('style')"
+          @click="saveStyle"
+        >
+          {{ isBusy('style') ? '保存中…' : '保存风格' }}
+        </button>
+      </div>
+    </section>
+
+      <!-- 危险区。**摆在最底下、单独一块。** 删项目不可逆，不该和上面
+           那些随手改的东西挨着。 -->
+      <section class="card card--bad">
+        <div class="card__head">
+          <div>
+            <div class="card__title">删掉这个项目</div>
+            <div class="card__sub">
+              整个目录连同剧本、分镜、配音、成片一起没，不可撤销。
+            </div>
+          </div>
+          <button class="btn btn--ghost btn--sm" type="button" @click="removing = !removing">
+            {{ removing ? '算了' : '我要删' }}
+          </button>
+        </div>
+        <div v-if="removing" class="card__body stack stack--sm">
+          <label class="field">
+            <span class="field__label">
+              照着打一遍项目名「{{ title }}」确认
+            </span>
+            <input v-model="confirmName" class="input" :placeholder="title" />
+          </label>
+          <div class="row">
+            <button
+              class="btn btn--danger"
+              type="button"
+              :disabled="confirmName !== title || isBusy('delete')"
+              @click="remove"
+            >
+              永久删除
+            </button>
+          </div>
+        </div>
+      </section>
+    </template>
   </div>
 </template>
 
 <style scoped>
-.section-title {
-  font-size: var(--fs-lg);
-  font-weight: 600;
+.lead {
+  font-size: var(--fs-md);
+  line-height: 1.6;
 }
-.input--search {
-  width: 200px;
-}
-.grid--form {
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-}
-.grid--cards {
-  grid-template-columns: repeat(auto-fill, minmax(248px, 1fr));
-}
-
-.textarea--tight {
-  min-height: 0;
-}
-.chips {
-  display: flex;
-  gap: 6px;
-  flex-wrap: wrap;
-}
-.chip {
-  padding: 4px var(--s3);
-  border-radius: var(--r-pill);
-  border: 1px solid var(--line);
-  background: var(--surface-2);
-  color: var(--text-2);
-  font-size: var(--fs-sm);
-  cursor: pointer;
-}
-.chip--on {
-  background: var(--accent-soft);
-  border-color: var(--accent-line);
-  color: var(--accent);
-  font-weight: 600;
-}
-.switch {
-  display: grid;
-  grid-template-columns: auto 1fr;
-  align-items: center;
-  gap: var(--s2);
-  cursor: pointer;
-  font-size: var(--fs-base);
-}
-.switch input {
-  width: 16px;
-  height: 16px;
-  accent-color: var(--accent);
-}
-.switch .field__hint {
-  grid-column: 2;
-  margin-top: -4px;
-}
-
-.proj {
-  padding: var(--s4);
-  cursor: pointer;
-  transition: border-color 0.15s var(--ease), transform 0.12s var(--ease),
-    box-shadow 0.15s var(--ease);
-}
-.proj:hover {
-  border-color: var(--line-strong);
-  transform: translateY(-2px);
-  box-shadow: var(--shadow-2);
-}
-.proj--current {
-  border-color: var(--accent-line);
-  background: linear-gradient(var(--accent-soft), transparent 60%), var(--surface);
-}
-.proj--broken {
-  border-color: color-mix(in srgb, var(--danger) 40%, transparent);
-}
-
-.proj__top {
-  display: flex;
-  align-items: center;
-  gap: var(--s2);
-  margin-bottom: var(--s3);
-}
-.proj__del {
-  width: 26px;
-  padding: 0;
-  color: var(--text-3);
-  opacity: 0;
-}
-.proj:hover .proj__del,
-.proj:focus-within .proj__del {
-  opacity: 1;
-}
-.proj__del:hover {
-  color: var(--danger);
-}
-
-.proj__name {
-  font-size: var(--fs-lg);
-  font-weight: 600;
-  line-height: 1.3;
-}
-.proj__dir {
-  margin-bottom: var(--s3);
-}
-.proj__broken {
-  color: var(--danger);
-  margin-top: var(--s2);
-}
-
-.proj__stats {
-  display: flex;
-  gap: var(--s4);
-  font-size: var(--fs-sm);
-  color: var(--text-2);
-  margin-bottom: var(--s2);
-}
-.proj__stats b {
-  color: var(--text);
-  font-weight: 600;
-}
-.proj__line {
-  margin-top: 2px;
-  color: var(--text-2);
-  line-height: 1.5;
-}
-.proj__stage {
-  margin-top: var(--s3);
+.stage {
   font-size: var(--fs-sm);
   font-weight: 600;
 }
-.proj__stage--ok {
+.stage--ok {
   color: var(--ok);
 }
-.proj__stage--warn {
+.stage--warn {
   color: var(--warn);
 }
-.proj__stage--accent {
+.stage--accent {
   color: var(--accent);
 }
-.proj__stage--dim,
-.proj__stage--bad {
+.stage--dim,
+.stage--bad {
   color: var(--text-3);
   font-weight: 400;
 }
-.proj__bar-fill--ok {
-  background: var(--ok);
-}
-.proj__bar-fill--warn {
-  background: var(--warn);
-}
-.proj__bar {
+.bar {
   height: 4px;
-  border-radius: var(--r-pill);
-  background: var(--surface-3);
+  border-radius: 2px;
+  background: var(--surface-2);
   overflow: hidden;
 }
-.proj__bar-fill {
+.bar__fill {
   height: 100%;
   background: var(--accent);
-  border-radius: var(--r-pill);
-  transition: width 0.3s var(--ease);
+  transition: width 0.2s var(--ease);
 }
-.proj__foot {
+.bar__fill--ok {
+  background: var(--ok);
+}
+.bar__fill--warn {
+  background: var(--warn);
+}
+.stats {
   display: flex;
-  justify-content: space-between;
-  margin-top: 6px;
+  gap: var(--s4);
 }
-
-.skeleton {
-  height: 168px;
-  background: linear-gradient(
-    100deg,
-    var(--surface) 30%,
-    var(--surface-2) 50%,
-    var(--surface) 70%
-  );
-  background-size: 220% 100%;
-  animation: shimmer 1.3s linear infinite;
-}
-@keyframes shimmer {
-  to {
-    background-position: -120% 0;
-  }
-}
-
-.modal {
-  position: fixed;
-  inset: 0;
-  z-index: 80;
-  display: grid;
-  place-items: center;
-  padding: var(--s4);
-  background: rgba(0, 0, 0, 0.6);
-  backdrop-filter: blur(3px);
-}
-.modal__box {
-  width: min(440px, 100%);
-  box-shadow: var(--shadow-3);
-}
-.modal__name {
-  display: block;
-  padding: var(--s2) var(--s3);
-  border-radius: var(--r);
-  background: var(--bg-sunken);
-  border: 1px solid var(--line);
-  color: var(--accent);
-}
-
-.fold-enter-active,
-.fold-leave-active {
-  transition: opacity 0.18s var(--ease), transform 0.18s var(--ease);
-}
-.fold-enter-from,
-.fold-leave-to {
-  opacity: 0;
-  transform: translateY(-8px);
-}
-
-@media (max-width: 640px) {
-  .input--search {
-    width: 130px;
-  }
+.stats b {
+  color: var(--text);
+  font-size: var(--fs-base);
 }
 </style>

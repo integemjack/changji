@@ -20,6 +20,7 @@ import AppIcon from '@/components/AppIcon.vue'
 import ErrorBoundary from '@/components/ErrorBoundary.vue'
 import ToastStack from '@/components/ToastStack.vue'
 import EngineLamp from '@/components/EngineLamp.vue'
+import ProjectRail from '@/components/ProjectRail.vue'
 import { STEP_ROUTES } from '@/router'
 import { useSession } from '@/stores/session'
 import { useUi } from '@/stores/ui'
@@ -137,8 +138,9 @@ function cycleTheme() {
       </RouterLink>
     </header>
 
-    <main class="main">
-      <div class="main__scroll">
+    <div class="body">
+      <main class="main">
+        <div class="main__scroll">
         <div class="main__inner" :class="{ 'main__inner--bare': bare }">
           <!-- 页面崩了要说出来，而不是白屏。见 ErrorBoundary 里的说明。 -->
           <ErrorBoundary>
@@ -147,10 +149,15 @@ function cycleTheme() {
                 <component :is="Component" />
               </Transition>
             </RouterView>
-          </ErrorBoundary>
+            </ErrorBoundary>
+          </div>
         </div>
-      </div>
-    </main>
+      </main>
+
+      <!-- 项目库常驻在右边。换项目原来要走到第一步那一页，挑完再走回来，
+           而当前这一页的状态就丢了。常驻之后点一下就换，人还停在原来那页。 -->
+      <ProjectRail v-if="!bare" />
+    </div>
 
     <ToastStack />
   </div>
@@ -295,6 +302,11 @@ function cycleTheme() {
 
 /* ---------- 主体 ---------- */
 
+.body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
 .main {
   flex: 1;
   min-width: 0;

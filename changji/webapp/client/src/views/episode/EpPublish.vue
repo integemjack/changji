@@ -732,17 +732,7 @@ function retry(record) {
   font-weight: 600;
 }
 
-.modal {
-  position: fixed;
-  inset: 0;
-  z-index: 80;
-  display: grid;
-  place-items: center;
-  padding: var(--s4);
-  background: rgba(0, 0, 0, 0.6);
-  backdrop-filter: blur(3px);
-  overflow-y: auto;
-}
+/* .modal 提到 styles/base.css 了——它被抄过三遍。 */
 .modal__box {
   width: min(460px, 100%);
   box-shadow: var(--shadow-3);

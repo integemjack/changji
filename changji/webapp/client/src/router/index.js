@@ -40,7 +40,8 @@ export const STEP_ROUTES = [
     name: 'project',
     phase: 'series',
     title: '项目',
-    tagline: '选一个项目，或者新建一个',
+    // 别在这儿写「右边」——项目库能拖到左边去，写死了就有一半时候是错的
+    tagline: '这一部剧的进度和设置。换一部在项目库里点',
     icon: 'folder',
     component: () => import('@/views/ProjectView.vue'),
   },
