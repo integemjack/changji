@@ -145,12 +145,23 @@ struct Scene {
     std::string pov;      ///< 这一场跟谁走。一场只进一个人的心里，不跳
     std::string goal;     ///< 这一场里他想要什么
     std::string obstacle; ///< 谁、什么拦着
+    /// 这一场收场时，局面比开场时更糟在哪儿。
+    ///
+    /// **2026-09-12 加的，因为一章三场原地打转。** 实跑出来的一章里，三场
+    /// 都在同一个地方对着同一样东西，三个收尾是同一个手势的变奏（手指僵在
+    /// 半空 / 手指在伞柄上方停住 / 指尖即将碰到又缩回），切出来三集的钩子
+    /// 长得一样。
+    ///
+    /// 编剧的老规矩是「通过事情的扭转，使情况比这场戏刚开始时更加恶劣」，
+    /// 短剧那边叫「每一集都要有信息增量」。**局面更糟这件事没法重复三遍**
+    /// ——填得出来，场与场就自然往前走了。
+    std::string worse;
     /// 这一场结束时局面变成什么。**它就是这一集的钩子**，所以不能是
     /// 「他们和好了」这种收束，要是一个悬着的新局面。
     std::string turn;
 
     NLOHMANN_DEFINE_TYPE_INTRUSIVE_WITH_DEFAULT(
-        Scene, from_char, to_char, where, pov, goal, obstacle, turn)
+        Scene, from_char, to_char, where, pov, goal, obstacle, worse, turn)
 };
 
 /// 一章。故事层的情节单元。

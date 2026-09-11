@@ -1796,6 +1796,37 @@ TEST_CASE("正文在贴情绪标签就打回") {
     CHECK_NOTHROW(changji::stages::parse_chapter(json{{"scenes", one}}.dump()));
 }
 
+TEST_CASE("每一场都要说清局面更糟在哪儿") {
+    // **2026-09-12 加的，因为一章三场原地打转。** 实跑那一章三场都在同一个
+    // 地方对着同一样东西，三个收尾是同一个手势的变奏（手指僵在半空 /
+    // 手指在伞柄上方停住 / 指尖即将碰到又缩回），切出来三集的钩子长得一样。
+    //
+    // 编剧的老规矩是「通过事情的扭转，使情况比这场戏刚开始时更加恶劣」，
+    // 短剧那边叫「每一集都要有信息增量」。局面更糟这件事没法重复三遍。
+    const auto s = changji::stages::chapter_schema(3, 22);
+    const auto& sp = s.at("properties").at("scenes").at("items").at("properties");
+    REQUIRE(sp.contains("worse"));
+    CHECK(sp.at("worse").at("minLength").get<int>() >= 6);
+
+    bool required = false;
+    for (const auto& r :
+         s.at("properties").at("scenes").at("items").at("required")) {
+        if (r == "worse") required = true;
+    }
+    CHECK(required);
+
+    // **排在 turn 前面**：先定这一场把局面推到多糟，turn 才是那件事落地的
+    // 那一刻；反过来 turn 已经写完了，worse 只能补一个说法，补出来的多半
+    // 是 turn 换个说法。
+    std::vector<std::string> keys;
+    for (auto it = sp.begin(); it != sp.end(); ++it) keys.push_back(it.key());
+    const auto at = [&](const std::string& k) {
+        return std::find(keys.begin(), keys.end(), k) - keys.begin();
+    };
+    CHECK(at("worse") < at("turn"));
+    CHECK(at("obstacle") < at("worse"));
+}
+
 TEST_CASE("最后一句是单独一栏，落库之后接在这一场末尾") {
     // **禁令拦不住就别再加第四道。** 「写完 turn 就停，别再加一段点题」
     // 在提示词、schema 描述、解析守卫里各说了一遍，三道都没拦住——实跑里

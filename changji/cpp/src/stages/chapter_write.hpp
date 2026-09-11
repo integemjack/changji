@@ -43,6 +43,7 @@ struct DraftScene {
     std::string pov;
     std::string goal;
     std::string obstacle;
+    std::string worse;             ///< 这一场收场时局面比开场时更糟在哪儿
     std::string turn;              ///< 这一场结束时局面变成什么。就是这一集的钩子
     std::vector<std::string> paragraphs; ///< 这一场的正文，一段一项
 };

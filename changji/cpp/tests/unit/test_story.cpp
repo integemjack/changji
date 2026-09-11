@@ -116,6 +116,7 @@ TEST_CASE("Story 往返序列化，中文原样进出") {
     sc.pov = "林晚";
     sc.goal = "把伞要回来";
     sc.obstacle = "他不认这把伞";
+    sc.worse = "她发现伞不是他带来的，是别人放在门口的";
     sc.turn = "伞柄上刻着别人的名字";
     ch.scenes.push_back(sc);
     ch.characters.push_back("林晚");

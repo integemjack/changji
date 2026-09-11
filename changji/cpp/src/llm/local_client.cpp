@@ -98,7 +98,13 @@ std::string LocalClient::complete(const Request& req, pipeline::CancelToken& tok
     std::string why;
     // 上限给得宽：写一集剧本本来就长。真正的护栏是上下文长度，
     // LlamaChat 里会先查提示词加这个数超没超。
-    constexpr int kMaxTokens = 8192;
+    //
+    // 8192 → 12288（2026-09-12）：章节正文那一步的 schema 一路长起来了
+    // ——一章三到五场，每场八个必填字段加几十段正文。实跑撞上了：一章
+    // 三次尝试全报「找不到合法 JSON」，因为输出在半截 JSON 上被截断，
+    // 那一章落成 0 字。**截断的表现不是「写短了」而是「解析失败」**，
+    // 看报错很难想到是上限。
+    constexpr int kMaxTokens = 12288;
     const bool ok = chat->complete(req.prompt, schema, req.temperature,
                                    kMaxTokens, tok, out, why, on_token);
     dump_exchange(req.prompt, out, ok ? "ok" : why);

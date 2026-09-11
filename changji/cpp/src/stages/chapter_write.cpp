@@ -189,6 +189,14 @@ ordered chapter_schema(int target_scenes, int paras_per_scene) {
             {"type", "string"},
             {"description", "谁、什么拦着他"},
             {"minLength", 4}};
+        // **排在 turn 前面。** 先定这一场把局面推到多糟，turn 才是那件事
+        // 落地的那一刻；反过来的话 turn 已经写完了，worse 只能事后补一个
+        // 说法，而补出来的多半是 turn 换个说法。
+        scene_props["worse"] = {
+            {"type", "string"},
+            {"description",
+             "这一场收场时，局面比开场时更糟在哪儿：多了一个麻烦、少了一条退路、或者观众多知道了一件让人更担心的事。**每一场都要比上一场更糟**——三场都停在同一个僵持上，就是原地打转，切出来三集长得一样"},
+            {"minLength", 8}};
         scene_props["turn"] = {
             {"type", "string"},
             {"description",
@@ -256,8 +264,8 @@ ordered chapter_schema(int target_scenes, int paras_per_scene) {
             {"maxItems", max_scenes},
             {"items", {{"type", "object"},
                        {"properties", scene_props},
-                       {"required", {"where", "pov", "goal", "obstacle", "turn",
-                                     kChapterBodyField, "last_line"}},
+                       {"required", {"where", "pov", "goal", "obstacle", "worse",
+                                     "turn", kChapterBodyField, "last_line"}},
                        {"additionalProperties", false}}}};
 
         ordered s = ordered::object();
@@ -508,6 +516,7 @@ ChapterDraft parse_chapter(const std::string& raw, int min_chars, bool strict) {
             sc.pov = text::clean_field(get_str(s, "pov"));
             sc.goal = text::clean_field(get_str(s, "goal"));
             sc.obstacle = text::clean_field(get_str(s, "obstacle"));
+            sc.worse = text::clean_field(get_str(s, "worse"));
             sc.turn = text::clean_field(get_str(s, "turn"));
             if (const auto ps = s.find(kChapterBodyField);
                 ps != s.end() && ps->is_array()) {
@@ -866,6 +875,7 @@ Story apply_chapter(const Story& story, const std::string& chapter_id,
             s.pov = sc.pov;
             s.goal = sc.goal;
             s.obstacle = sc.obstacle;
+            s.worse = sc.worse;
             s.turn = sc.turn;
             me->scenes.push_back(std::move(s));
             scene_closing.push_back(sc.paragraphs.back());
