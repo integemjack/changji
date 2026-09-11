@@ -58,25 +58,23 @@ export const STEP_ROUTES = [
     icon: 'script',
     component: () => import('@/views/StoryView.vue'),
   },
+  // **角色和场景合成一步「设定」**（2026-09-11）。
+  //
+  // 它们本来就是同一件事：人和地方在同一个 assets.json 里，都从故事提，
+  // 做的都是传参考图、抠外观词、试音色。分两页只是让人多点一次。
+  //
+  // 顺带修掉场景那一页的错位：它原来挂在「分集」阶段、标题写着「这一集
+  // 在哪儿拍」，而**场景库是全剧共用的**——分镜表里只存 id，外观从库里
+  // 拼接，这是跨镜头一致的唯一手段。
   {
-    key: 'characters',
-    path: '/characters',
-    name: 'characters',
+    key: 'assets',
+    path: '/assets',
+    name: 'assets',
     phase: 'series',
-    title: '角色',
-    tagline: '从剧本提人物，全剧同一批',
+    title: '设定',
+    tagline: '给故事里的人和地方定妆，全剧共用一套',
     icon: 'user',
-    component: () => import('@/views/CharactersView.vue'),
-  },
-  {
-    key: 'scenes',
-    path: '/scenes',
-    name: 'scenes',
-    phase: 'episode',
-    title: '场景',
-    tagline: '这一集在哪儿拍',
-    icon: 'scene',
-    component: () => import('@/views/ScenesView.vue'),
+    component: () => import('@/views/AssetsView.vue'),
   },
   // **镜头、成片、上传合成一步「这一集」**（2026-09-11）。
   //
@@ -136,6 +134,8 @@ const routes = [
   // 在故事页，单集那半在「这一集」的剧本视图，预告片和手动加一集收进了
   // 故事页的折叠区。一页同时干六件事，那一页就不会有重点。
   { path: '/script', redirect: '/story' },
+  { path: '/characters', redirect: '/assets' },
+  { path: '/scenes', redirect: '/assets' },
   { path: '/storyboard', redirect: '/episode?view=shots' },
   { path: '/production', redirect: '/episode?view=shots' },
   { path: '/shots', redirect: '/episode?view=shots' },

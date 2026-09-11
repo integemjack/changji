@@ -185,7 +185,7 @@ async function clearRef(charId, slot) {
 
 <template>
   <div class="stack stack--lg">
-    <StepHeader>
+    <StepHeader bare>
       <template #actions>
         <button
           class="btn btn--ghost"
@@ -224,17 +224,9 @@ async function clearRef(charId, slot) {
       </template>
     </StepHeader>
 
-    <EmptyState
-      v-if="!session.hasProject"
-      icon="folder"
-      tone="warn"
-      title="还没选项目"
-      hint="角色设定挂在项目上，全剧共用。先回第一步选一个项目。"
-    >
-      <RouterLink to="/project" class="btn btn--primary">去第一步</RouterLink>
-    </EmptyState>
+    <!-- 「还没选项目」归父页面判，每块各判一遍是同一句话写两遍 -->
 
-    <template v-else>
+    <template>
       <p v-if="refsUsed === false" class="notice">
         <AppIcon name="info" :size="15" />
         <span>{{ assets?.reference_hint }}</span>

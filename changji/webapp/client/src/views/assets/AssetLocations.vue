@@ -220,7 +220,7 @@ async function clearEmpty(locationId) {
 
 <template>
   <div class="stack stack--lg">
-    <StepHeader>
+    <StepHeader bare>
       <template #actions>
         <button
           class="btn btn--ghost"
@@ -262,27 +262,12 @@ async function clearEmpty(locationId) {
       </template>
     </StepHeader>
 
-    <EmptyState
-      v-if="!session.hasProject"
-      icon="folder"
-      tone="warn"
-      title="还没选项目"
-      hint="场景库挂在项目上。先回第一步选一个项目。"
-    >
-      <RouterLink to="/project" class="btn btn--primary">去第一步</RouterLink>
-    </EmptyState>
+    <!-- 「还没选项目」归父页面判，每块各判一遍是同一句话写两遍。
+         「还没选到某一集」那条也去掉了：**场景库是全剧共用的**，
+         站在这一页上不需要先挑一集。出场景那个按钮仍然按当前集的剧本走，
+         没选集时它自己是禁用的。 -->
 
-    <EmptyState
-      v-else-if="!session.episodeId"
-      icon="script"
-      tone="warn"
-      title="还没选到某一集"
-      hint="场景是按某一集的剧本出的。先在上面挑一集，没有的话回第二步写。"
-    >
-      <RouterLink to="/story" class="btn btn--primary">去故事页</RouterLink>
-    </EmptyState>
-
-    <template v-else>
+    <template>
       <div v-if="unlinked" class="alert alert--warn">
         <AppIcon name="warn" :size="15" />
         <span>

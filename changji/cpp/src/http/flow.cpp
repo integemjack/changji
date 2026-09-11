@@ -46,10 +46,11 @@ json flow_steps() {
         // 先把完整故事和分集定下来，剧本才有得可写。
         json{{"key", "story"}, {"phase", "series"}, {"title", "故事"},
              {"hint", "讲什么、分几章、按每集时长切成几集"}},
-        json{{"key", "characters"}, {"phase", "series"}, {"title", "角色"},
-             {"hint", "从剧本提人物，全剧同一批"}},
-        json{{"key", "scenes"}, {"phase", "episode"}, {"title", "场景"},
-             {"hint", "这一集在哪儿拍"}},
+        // **角色和场景 2026-09-11 合成一步「设定」。** 它们本来就是同一件
+        // 事：人和地方在同一个 assets.json 里，都从故事提。而场景那一格
+        // 原来还挂在「分集」阶段——那是个错位，场景库是全剧共用的。
+        json{{"key", "assets"}, {"phase", "series"}, {"title", "设定"},
+             {"hint", "给故事里的人和地方定妆，全剧共用一套"}},
         // **镜头、成片、上传 2026-09-11 合成一步「这一集」。**
         //
         // 2026-09-10 已经把分镜和制作合过一次（同一张分镜表，一页排一页跑，
@@ -93,11 +94,10 @@ json flow_assess(const json& project, const json& shots, const json& outputs,
     }
     counters["writtenEpisodes"] = written;
 
-    // ---- 角色 ----
+    // ---- 设定 ----
     const auto& characters = arr_of(project, "characters");
-    done["characters"] = !characters.empty();
 
-    // ---- 场景 ----
+    // 场景那一半的判据。
     //
     // 三个条件都要：注册过场景、这一集用到的场景都注册过、
     // **而且没有"靠 scene_id 蒙对"的镜头**。
@@ -126,7 +126,15 @@ json flow_assess(const json& project, const json& shots, const json& outputs,
     for (const auto& id : used) {
         if (!known.count(id)) missing.push_back(id);
     }
-    done["scenes"] = !known.empty() && missing.empty() && unlinked == 0;
+    const bool scenes_ok = !known.empty() && missing.empty() && unlinked == 0;
+
+    // **两半都要过。** 人物和场景在同一个资产库里，缺哪一半分镜都指不到，
+    // 而下一步（出首帧）会直接报「场景未注册」或者拿不到角色的外观块。
+    done["assets"] = !characters.empty() && scenes_ok;
+    // 哪一半没过另外报出来，界面上要说得出是缺人还是缺景——
+    // 只说"设定没做完"的话，用户得自己挨个翻。
+    counters["charactersOk"] = !characters.empty();
+    counters["scenesOk"] = scenes_ok;
 
     // ---- 镜头：每一镜都出到成片状态才算完 ----
     //

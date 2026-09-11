@@ -22,8 +22,7 @@ export const flowRouter = Router()
 export const STEPS = [
   { key: 'project', phase: 'series', title: '项目', hint: '选一个项目，或者新建一个' },
   { key: 'story', phase: 'series', title: '故事', hint: '讲什么、分几章、按每集时长切成几集' },
-  { key: 'characters', phase: 'series', title: '角色', hint: '从剧本提人物，全剧同一批' },
-  { key: 'scenes', phase: 'episode', title: '场景', hint: '这一集在哪儿拍' },
+  { key: 'assets', phase: 'series', title: '设定', hint: '给故事里的人和地方定妆，全剧共用一套' },
   // 分镜和制作 2026-09-10 合成一步「镜头」，见 flow.cpp 里同一处的注释
   { key: 'episode', phase: 'episode', title: '这一集', hint: '剧本、镜头、成片、发布，都在这一集上' },
 ]
