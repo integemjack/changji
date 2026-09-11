@@ -181,4 +181,21 @@ std::set<models::ShotStatus> render_entry_states(models::Tier tier,
 models::TierSpec frame_spec(const models::HardwareProfile& profile,
                             const config::Settings& settings);
 
+/// 把**这部剧自己的** changji.toml 盖进档位表，顺手把首帧步数填进 settings。
+///
+/// 档位表是按这张卡的显存推出来的（5090 上是 1920×1088 / 30 步），而画幅是
+/// 这部剧的属性，写在项目目录的 `[video]` 里。不过这一道的话，出来的图是
+/// 1088×1920 而这部剧的每一镜是 544×928——**不报任何错**，只是慢一倍，
+/// 而且参考图和成片对不上。
+///
+/// 步数同理：`[tiers].final_steps` 那个数假设的是不挂 Turbo 的模型，挂了
+/// 就该压到 6 步；但那个 LoRA 只挂在视频模型上，首帧要用压之前的步数。
+/// 两件事都在 `config::effective_spec` 里，这里只负责盖回去。
+///
+/// **凡是要出图的路径都得先过这一道**：跑流水线是一条，设定页出参考图是
+/// 另一条。各写一遍的话两条路会分叉，而分叉的表现是"参考图和成片长得不
+/// 一样"，没有任何报错。
+void apply_project_spec(config::Settings& settings,
+                        models::HardwareProfile& profile);
+
 }  // namespace changji::pipeline

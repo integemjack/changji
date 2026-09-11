@@ -60,23 +60,10 @@ std::string check_upload(const std::string& content_type, const std::string& dat
     return suffix;
 }
 
-/// 写文件并清掉同名不同扩展名的旧图。
-///
-/// 换格式重传时不清的话，refs 里会留一张永远用不上的——而且用户看不到，
-/// 只有翻目录才发现。
+/// 写文件。落点和旧图清理交给 claim_ref_path。
 std::string write_ref(const ProjectStore& store, const std::string& stem,
                       const std::string& suffix, const std::string& data) {
-    std::error_code ec;
-    const fs::path refs = store.paths().refs();
-    fs::create_directories(refs, ec);
-
-    const fs::path dest = refs / paths::from_utf8(stem + suffix);
-    for (const auto& kv : ref_types()) {
-        const fs::path stale = refs / paths::from_utf8(stem + kv.second);
-        if (stale != dest && fs::is_regular_file(stale, ec)) {
-            fs::remove(stale, ec);
-        }
-    }
+    const fs::path dest = claim_ref_path(store, stem, suffix);
 
     std::ofstream out(dest, std::ios::binary | std::ios::trunc);
     if (!out) throw ApiError(500, "写不了文件：" + paths::to_utf8(dest));
@@ -93,6 +80,22 @@ int size_kb(const std::string& data) {
 }
 
 }  // namespace
+
+fs::path claim_ref_path(const ProjectStore& store, const std::string& stem,
+                        const std::string& suffix) {
+    std::error_code ec;
+    const fs::path refs = store.paths().refs();
+    fs::create_directories(refs, ec);
+
+    const fs::path dest = refs / paths::from_utf8(stem + suffix);
+    for (const auto& kv : ref_types()) {
+        const fs::path stale = refs / paths::from_utf8(stem + kv.second);
+        if (stale != dest && fs::is_regular_file(stale, ec)) {
+            fs::remove(stale, ec);
+        }
+    }
+    return dest;
+}
 
 std::string ref_suffix_for(const std::string& content_type) {
     for (const auto& kv : ref_types()) {

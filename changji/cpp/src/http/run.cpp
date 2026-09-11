@@ -219,15 +219,7 @@ ApiResult post_run(const json& body, const RunDeps& deps) {
             // 这段判断以前写在这儿，而设置页那边照着档位表自己显示，
             // 两处于是分叉：界面写"成片步数 28"，实际每一镜跑 Turbo 的 6 步。
             // 现在两边都调这一个函数，见 config::effective_spec。
-            if (auto it = profile.tiers.find(models::Tier::FINAL);
-                it != profile.tiers.end()) {
-                const auto eff =
-                    config::effective_spec(settings, it->second.steps);
-                it->second.width = eff.width;
-                it->second.height = eff.height;
-                it->second.steps = eff.final_steps;
-                settings.models.frame_steps = eff.frame_steps;
-            }
+            pipeline::apply_project_spec(settings, profile);
             const pipeline::Backends backends = deps.backends(settings, store);
 
             // 阶段名的校验在这里，不在上面的路由里：

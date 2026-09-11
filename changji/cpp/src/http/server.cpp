@@ -12,6 +12,7 @@
 #include "doctor/doctor.hpp"
 #include "http/editing.hpp"
 #include "http/media.hpp"
+#include "http/ref_gen.hpp"
 #include "http/upload.hpp"
 #include "http/readonly.hpp"
 #include "config/runtime.hpp"
@@ -403,6 +404,26 @@ void run(const config::Settings& settings, const Options& opts) {
             auto r = guard([&] {
                 return post_location_reference_clear(
                     parse_body(req.body));
+            });
+            return json_response(r.body, r.status);
+        });
+
+    // 参考图的另一条来路：照着设定里那段外观描述现画一张。
+    //
+    // **同步，一次一张，几十秒。** 头一张还要先把出图模型读进显存。
+    // 没走任务表的理由见 ref_gen.hpp。
+    CROW_ROUTE(app, "/api/character/reference/generate").methods("POST"_method)
+        ([](const crow::request& req) {
+            auto r = guard([&] {
+                return post_character_reference_generate(parse_body(req.body));
+            });
+            return json_response(r.body, r.status);
+        });
+
+    CROW_ROUTE(app, "/api/location/reference/generate").methods("POST"_method)
+        ([](const crow::request& req) {
+            auto r = guard([&] {
+                return post_location_reference_generate(parse_body(req.body));
             });
             return json_response(r.body, r.status);
         });

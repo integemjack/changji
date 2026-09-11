@@ -563,6 +563,7 @@ add_executable(changji
     src/http/editing_batch.cpp
     src/http/media.cpp
     src/http/upload.cpp
+    src/http/ref_gen.cpp
     src/http/scripting.cpp
     src/http/story_api.cpp
     src/http/planning.cpp
@@ -775,6 +776,7 @@ if(CHANGJI_BUILD_TESTS)
         tests/unit/test_reset.cpp
         tests/unit/test_media.cpp
         tests/unit/test_upload.cpp
+        tests/unit/test_ref_gen.cpp
         tests/unit/test_jobs.cpp
         tests/unit/test_models_config.cpp
         tests/unit/test_bible.cpp
@@ -888,6 +890,7 @@ if(CHANGJI_BUILD_TESTS)
         src/http/editing_batch.cpp
         src/http/media.cpp
         src/http/upload.cpp
+    src/http/ref_gen.cpp
         src/http/scripting.cpp
         src/http/story_api.cpp
         src/http/planning.cpp

@@ -62,6 +62,17 @@ models::TierSpec frame_spec(const models::HardwareProfile& profile,
     return spec;
 }
 
+void apply_project_spec(config::Settings& settings,
+                        models::HardwareProfile& profile) {
+    auto it = profile.tiers.find(models::Tier::FINAL);
+    if (it == profile.tiers.end()) return;
+    const auto eff = config::effective_spec(settings, it->second.steps);
+    it->second.width = eff.width;
+    it->second.height = eff.height;
+    it->second.steps = eff.final_steps;
+    settings.models.frame_steps = eff.frame_steps;
+}
+
 /// 一个档位的入口状态。
 ///
 /// 首帧失败的镜头状态还停在 AUDIO_DONE（配音接上之前是 PLANNED）。
