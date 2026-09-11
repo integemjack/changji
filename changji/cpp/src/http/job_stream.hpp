@@ -45,4 +45,25 @@ void job_progress(const std::string& stream_id, int current, int total,
 /// 存起来或者补发都会把它变成主要流量。错过就错过——下一步马上又有一张。
 void job_preview(const std::string& stream_id, int step, std::string data_url);
 
+// ---------------------------------------------------------------------------
+// 出参考图：一条名字固定的频道
+// ---------------------------------------------------------------------------
+//
+// 用户 2026-09-12：「我刷新了这个页面，正在生成的图就不会实时更新」。
+//
+// **stream id 是点一下的时候浏览器随机生成的**（`ref-a3f9b1c2`），刷新之后
+// 那串字就没了——页面回来时既不知道有活在跑，也没法订上它。而这一族活是
+// 几十秒一张、一排十几张，刷新期间正好在跑是常态，不是边角情况。
+//
+// 所以除了各自那条 stream，再往一条**名字固定**的频道上播一份，
+// 每条带上 `target`（`char_id_slot` 或者 `location_id_empty`）说这是哪一格。
+// 页面一进来就订它，不用知道任何 id。
+inline constexpr const char* kRefChannel = "refs";
+
+void ref_progress(const std::string& target, int current, int total);
+void ref_preview(const std::string& target, int step, std::string data_url);
+/// 画完了。界面据此重新拉一遍那张图。
+void ref_done(const std::string& target);
+void ref_error(const std::string& target, const std::string& message);
+
 }  // namespace changji::http

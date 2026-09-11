@@ -124,15 +124,20 @@ Rendered render_ref(const ProjectStore& store, const std::string& stem,
     // 潜空间线性投影来的（不走 VAE，几乎不花时间），第五步就看得出构图
     // 对不对，不对当场撤掉重来，不用等它画完。
     //
-    // tag 就用 stream_id：这条路上它本来就是"这件活"的身份。没有 stream
-    // （同步那条）时留空，sd.cpp 那边就不编码也不推。
-    req.tag = stream_id;
+    // tag 就用 stream_id：这条路上它本来就是"这件活"的身份。
+    //
+    // **没有 stream 时退回 stem。** 同步那条路上（老客户端、curl）本来
+    // 没人接 job_preview，但固定频道那份是给"刷新过页面的人"的——那时候
+    // 谁发起的已经不重要了，只要有人在看这一格就该推。
+    req.tag = stream_id.empty() ? stem : stream_id;
 
     // 只认自己那件活的预览。**同时可以有别人挂着**（出片那条就挂着一个），
     // 不认 tag 的话镜头墙的小图会飘到参考图这边来。
     infer::PreviewSinkHandle preview_sink(
-        [&stream_id](const std::string& tag, int step, std::string url) {
-            if (tag != stream_id) return;
+        [&stream_id, &stem](const std::string& tag, int step, std::string url) {
+            // 认自己那件活：同步那条路上 tag 是 stem。
+            if (tag != stream_id && tag != stem) return;
+            ref_preview(stem, step, url);       // 固定频道那份
             job_preview(stream_id, step, std::move(url));
         });
 
@@ -140,8 +145,8 @@ Rendered render_ref(const ProjectStore& store, const std::string& stem,
     pipeline::CancelToken tok;
     try {
         ctx->generate(req, dest, tok,
-                      [&act, &stream_id](int step, int steps, double,
-                                         bool loading) {
+                      [&act, &stream_id, &stem](int step, int steps, double,
+                                                bool loading) {
                           // 读权重和采样不是一个量级（1927 个张量 vs 8 步），
                           // 画在同一条进度条上会像"跑到头又倒回去了"。
                           // 顶栏只有一行，就只画采样那一段。
@@ -149,6 +154,8 @@ Rendered render_ref(const ProjectStore& store, const std::string& stem,
                           act.set_progress(step, steps);
                           // 异步那条路上，点了按钮的人也在等这个数。
                           job_progress(stream_id, step, steps);
+                          // 再往固定频道播一份：**刷新过页面的人只剩这条路**。
+                          ref_progress(stem, step, steps);
                       });
     } catch (const infer::SdError& e) {
         throw ApiError(500, std::string("出图失败：") + e.what());
@@ -261,12 +268,17 @@ ApiResult post_character_reference_generate(const json& body) {
     // 没有 stream 就照旧同步跑到底：结果没地方送回去。老客户端、curl、
     // 对拍脚本走的都是那条，一个字没变。
     if (opt_bool(body, "async") && !stream_id.empty()) {
-        Offload::instance().post([project_path, char_id, slot, seed, stream_id] {
+        const std::string target = char_id + "_" + slot;
+        Offload::instance().post([project_path, char_id, slot, seed, stream_id,
+                                  target] {
             try {
                 job_done(stream_id, character_ref_job(project_path, char_id,
                                                       slot, seed, stream_id));
+                // 固定频道那份：刷新过页面的人靠它知道该重新拉这张图了。
+                ref_done(target);
             } catch (const std::exception& e) {
                 job_error(stream_id, e.what());
+                ref_error(target, e.what());
             }
         });
         return {202, {{"started", true}, {"stream", stream_id}}};
@@ -324,12 +336,16 @@ ApiResult post_location_reference_generate(const json& body) {
     const std::string stream_id = opt_str(body, "stream");
 
     if (opt_bool(body, "async") && !stream_id.empty()) {
-        Offload::instance().post([project_path, location_id, seed, stream_id] {
+        const std::string target = location_id + "_empty";
+        Offload::instance().post([project_path, location_id, seed, stream_id,
+                                  target] {
             try {
                 job_done(stream_id, location_ref_job(project_path, location_id,
                                                      seed, stream_id));
+                ref_done(target);
             } catch (const std::exception& e) {
                 job_error(stream_id, e.what());
+                ref_error(target, e.what());
             }
         });
         return {202, {{"started", true}, {"stream", stream_id}}};

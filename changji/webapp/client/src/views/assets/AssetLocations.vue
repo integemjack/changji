@@ -10,7 +10,7 @@
  * 那几个：出分镜之前，AI 按这一集的剧本补新场景；出了分镜之后，按镜头
  * 实际引用的 id 分成「本集用到」和「其他集的」两组。
  */
-import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 
 import AppIcon from '@/components/AppIcon.vue'
 import EmptyState from '@/components/EmptyState.vue'
@@ -18,6 +18,7 @@ import { api, mediaUrl } from '@/api'
 import { useAction } from '@/composables/useAction'
 import { runAsyncJob } from '@/composables/useAsyncJob'
 import { useRefGen } from '@/composables/useRefGen'
+import { useRefStream } from '@/composables/useRefStream'
 import { useSession } from '@/stores/session'
 import { useUi } from '@/stores/ui'
 
@@ -25,11 +26,11 @@ const session = useSession()
 const ui = useUi()
 const { run, isBusy } = useAction()
 
-/** 每个场景画到百分之几。见 AssetCharacters 里同名那个。 */
-const genPct = reactive({})
+/** 进度、预览、在不在跑——都从那条固定频道来。见 useRefStream。 */
+const { pct: genPct, preview, live, finished } = useRefStream()
 
-/** 采样到一半那张小图。见 AssetCharacters 里同名那个。 */
-const preview = reactive({})
+/** 引擎那边怎么叫这一格。改这里就得改 ref_gen.cpp 里拼 stem 那一行。 */
+const targetOf = (id) => `${id}_empty`
 
 /** 抽屉里改的是哪一处。墙用来挑，抽屉用来改——和角色那边同一套。 */
 const openId = ref('')
@@ -157,6 +158,7 @@ onUnmounted(() => document.removeEventListener('keydown', onEsc))
 
 watch(() => [session.projectPath, session.episodeId], load, { immediate: true })
 watch(stamp, load)   // 见 AssetCharacters 里同一行
+watch(finished, load)   // 画完一张就重拉，刷新过页面的人只剩这条路
 
 function changed(id) {
   const now = edits.value[id]
@@ -255,20 +257,11 @@ async function genEmpty(locationId) {
             ...seedPayload(),
             ...extra,
           }),
-        {
-          prefix: 'ref',
-          onProgress: (cur, total) => {
-            genPct[locationId] = total > 0 ? Math.round((cur / total) * 100) : 0
-          },
-          onPreview: (url) => {
-            preview[locationId] = url
-          },
-        },
+        // 进度和预览都从固定频道来（useRefStream），这儿不用再接一遍。
+        { prefix: 'ref' },
       ),
     { key: 'gen:' + locationId },
   )
-  delete genPct[locationId]
-  delete preview[locationId]
   if (!result) return
   ui.ok(`空景图画好了（${Math.round(result.seconds)} 秒）`)
   await load()
@@ -373,7 +366,7 @@ async function clearEmpty(locationId) {
               :key="l.location_id"
               class="cell"
               :class="{
-                'cell--live': isBusy('gen:' + l.location_id),
+                'cell--live': isBusy('gen:' + l.location_id) || live[targetOf(l.location_id)],
                 'cell--open': openId === l.location_id,
               }"
             >
@@ -391,13 +384,13 @@ async function clearEmpty(locationId) {
 
                 <!-- 采样中途那张小图。见 AssetCharacters 里同一段。 -->
                 <img
-                  v-if="preview[l.location_id]"
+                  v-if="preview[targetOf(l.location_id)]"
                   class="loc__preview"
-                  :src="preview[l.location_id]"
+                  :src="preview[targetOf(l.location_id)]"
                   alt=""
                 />
-                <span v-if="genPct[l.location_id]" class="cell__pct numeric">
-                  {{ genPct[l.location_id] }}%
+                <span v-if="genPct[targetOf(l.location_id)]" class="cell__pct numeric">
+                  {{ genPct[targetOf(l.location_id)] }}%
                 </span>
                 <span v-if="usage.get(l.location_id)" class="loc__count pill pill--neutral">
                   本集 {{ usage.get(l.location_id) }} 镜
@@ -406,10 +399,14 @@ async function clearEmpty(locationId) {
 
               <div class="cell__bottom">
                 <span
-                  v-if="isBusy('gen:' + l.location_id)"
+                  v-if="isBusy('gen:' + l.location_id) || live[targetOf(l.location_id)]"
                   class="cell__fill"
-                  :class="{ 'cell__fill--idle': !genPct[l.location_id] }"
-                  :style="genPct[l.location_id] ? { width: genPct[l.location_id] + '%' } : null"
+                  :class="{ 'cell__fill--idle': !genPct[targetOf(l.location_id)] }"
+                  :style="
+                    genPct[targetOf(l.location_id)]
+                      ? { width: genPct[targetOf(l.location_id)] + '%' }
+                      : null
+                  "
                 />
                 <button class="cell__name truncate" type="button" title="改这个场景" @click="toggle(l.location_id)">
                   {{ l.name }}
@@ -448,24 +445,28 @@ async function clearEmpty(locationId) {
                   <span class="tiny">没有空景图</span>
                 </div>
                 <img
-                  v-if="preview[openLoc.location_id]"
+                  v-if="preview[targetOf(openLoc.location_id)]"
                   class="loc__preview"
-                  :src="preview[openLoc.location_id]"
+                  :src="preview[targetOf(openLoc.location_id)]"
                   alt=""
                 />
                 <div class="loc__overlay">
                   <button
                     class="btn btn--sm btn--ai"
                     type="button"
-                    :disabled="isBusy('gen:' + openLoc.location_id)"
+                    :disabled="
+                      isBusy('gen:' + openLoc.location_id) ||
+                      live[targetOf(openLoc.location_id)]
+                    "
                     title="照下面那段拼出来的提示词画一张空景，里面不会有人"
                     @click="genEmpty(openLoc.location_id)"
                   >
                     <AppIcon name="sparkle" :size="13" />
                     {{
-                      isBusy('gen:' + openLoc.location_id)
-                        ? genPct[openLoc.location_id]
-                          ? genPct[openLoc.location_id] + '%'
+                      isBusy('gen:' + openLoc.location_id) ||
+                      live[targetOf(openLoc.location_id)]
+                        ? genPct[targetOf(openLoc.location_id)]
+                          ? genPct[targetOf(openLoc.location_id)] + '%'
                           : '画着…'
                         : openLoc.ref_empty
                           ? '重画'

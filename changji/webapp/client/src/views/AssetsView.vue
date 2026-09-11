@@ -44,30 +44,46 @@ const story = ref(null)
 const bulk = ref(null)
 
 /**
- * 把还缺的参考图一次画完。
+ * 把参考图一次画完。
  *
- * **只补缺的，不重画已有的。** 已经画好的那些多半是挑过的——有的还是手
- * 传上去的真人照片。一键把它们全顶掉，等于一次点击毁掉半小时的挑选，
- * 而这种事没有撤销。要重画某一张，那一格自己有「重画」。
+ * `force = false`（「一键出图」）：**只补缺的，不重画已有的。** 已经画好的
+ * 那些多半是挑过的——有的还是手传上去的真人照片。一键把它们全顶掉，等于
+ * 一次点击毁掉半小时的挑选，而这种事没有撤销。
+ *
+ * `force = true`（「全部重画」）：连已有的一起重画，问一句再动手。
+ * **改了画风之后需要它**：那时候在磁盘上的每一张都还是老提示词出的，
+ * 只补缺的等于什么都没变——而"改了设置却看不出变化"是最容易让人以为
+ * 功能坏了的一种。
  *
  * **一张一张来。** 显存只够一张，并发只会在引擎那边排队（现在是真排队
  * 了），而排着的看不出进度。
  */
-async function genMissing() {
+async function genAll(force = false) {
   const data = await api.assets(session.projectPath)
   const jobs = []
   for (const c of data.characters ?? []) {
     for (const slot of ['front', 'three_quarter', 'back']) {
-      if (!c['ref_' + slot]) {
+      if (force || !c['ref_' + slot]) {
         jobs.push({ kind: 'char', id: c.char_id, slot, name: c.name || c.char_id })
       }
     }
   }
   for (const l of data.locations ?? []) {
-    if (!l.ref_empty) jobs.push({ kind: 'loc', id: l.location_id, name: l.name || l.location_id })
+    if (force || !l.ref_empty) {
+      jobs.push({ kind: 'loc', id: l.location_id, name: l.name || l.location_id })
+    }
   }
   if (!jobs.length) {
     ui.ok('参考图都齐了。要换某一张，在那一格点「重画」')
+    return
+  }
+  if (
+    force &&
+    !confirm(
+      `会把 ${jobs.length} 张参考图全部重画，手传上去的也会被顶掉。` +
+        `一张几十秒，大约 ${Math.ceil((jobs.length * 30) / 60)} 分钟。确定？`,
+    )
+  ) {
     return
   }
 
@@ -100,7 +116,7 @@ async function genMissing() {
             },
           },
         ),
-      { key: 'genmissing' },
+      { key: 'genall' },
     )
     // 中间砸了就停：后面那些多半栽在同一件事上（模型没配、显存不够），
     // 接着画只是让人多等十几分钟再看到同一句报错。
@@ -203,9 +219,9 @@ watch(() => session.projectPath, loadStory)
         <button
           class="btn btn--sm btn--ai"
           type="button"
-          :disabled="isBusy('genmissing')"
+          :disabled="isBusy('genall')"
           title="把还缺的参考图一次画完。已经有的不动——那些多半是挑过的"
-          @click="genMissing"
+          @click="genAll(false)"
         >
           <AppIcon name="sparkle" :size="13" />
           <template v-if="bulk">
@@ -213,6 +229,20 @@ watch(() => session.projectPath, loadStory)
             <span v-if="bulk.pct" class="numeric">{{ bulk.pct }}%</span>
           </template>
           <template v-else>一键出图</template>
+        </button>
+
+        <!-- 改了画风之后要用它：那时候磁盘上每一张都还是老提示词出的，
+             只补缺的等于什么都没变。**单独一个按钮而不是一个开关**——
+             它会顶掉手传的照片，那种事不该藏在一个勾选框后面。 -->
+        <button
+          v-if="!bulk"
+          class="btn btn--sm btn--ghost"
+          type="button"
+          :disabled="isBusy('genall')"
+          title="连已经有的一起重画。改了画风之后用——已有的图还是老提示词出的"
+          @click="genAll(true)"
+        >
+          全部重画
         </button>
       </nav>
 

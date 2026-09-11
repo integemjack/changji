@@ -6,7 +6,7 @@
  * 全剧几十个镜头的提示词都跟着变——引擎会把已渲染的镜头退回重跑，
  * 界面必须把这件事说在前面，别让人改完才发现成片全没了。
  */
-import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 
 import AppIcon from '@/components/AppIcon.vue'
 import EmptyState from '@/components/EmptyState.vue'
@@ -14,6 +14,7 @@ import { api, mediaUrl } from '@/api'
 import { useAction } from '@/composables/useAction'
 import { runAsyncJob } from '@/composables/useAsyncJob'
 import { useRefGen } from '@/composables/useRefGen'
+import { useRefStream } from '@/composables/useRefStream'
 import { useSession } from '@/stores/session'
 import { useUi } from '@/stores/ui'
 
@@ -28,19 +29,19 @@ const { run, isBusy } = useAction()
  * 推回来（见 useAsyncJob）。**有了这个数，等待才不是一片空白**——一张
  * 几十秒，而头十几秒还在把模型读进显存，那段时间一步都不会推。
  */
-const genPct = reactive({})
-
 /**
- * 采样到一半那张小图，按「角色+位置」记。
+ * 进度、采样中途那张小图、这一格在不在跑——**都从那条固定频道来**。
  *
- * 用户 2026-09-12：「画图方式也要实时返回步数图」。一张几十秒，头十几秒
- * 还在把模型读进显存，一个百分比撑不住这段等待——而这张图是潜空间线性
- * 投影来的（不走 VAE，几乎不花时间），第五步就看得出构图对不对，不对
- * 当场撤掉重来，不用等它画完。
+ * 用户 2026-09-12 两件事：「画图方式也要实时返回步数图」，和「我刷新了
+ * 这个页面，正在生成的图就不会实时更新」。后者的根子是进度原来只走"这一次
+ * 点击"那条随机 id 的 stream，刷新就断了；现在走 useRefStream 那条固定的。
  *
- * **画完就删**。真图上来之后再盖着一张糊的，比没有更糟。
+ * key 是 `char_id_slot`——**和引擎那边的 target 逐字一样**，不然对不上。
  */
-const preview = reactive({})
+const { pct: genPct, preview, live, finished } = useRefStream()
+
+/** 引擎那边怎么叫这一格。改这里就得改 ref_gen.cpp 里拼 stem 那一行。 */
+const targetOf = (charId, slot) => `${charId}_${slot}`
 
 /** 页头那个种子，和「一键出图」画完之后的那声招呼。 */
 const { stamp, seedPayload } = useRefGen()
@@ -50,16 +51,24 @@ const openChar = computed(
   () => characters.value.find((c) => c.char_id === openId.value) ?? null,
 )
 
-/** 这一格在不在画。三张里任意一张在画，整张牌子就算在跑。 */
+/**
+ * 这一格在不在画。三张里任意一张在画，整张牌子就算在跑。
+ *
+ * **`live` 要算进去**：刷新过页面之后 `isBusy` 一定是假的（那是本地点击
+ * 留下的状态，刷新就没了），而活还在跑——那时候唯一的依据就是频道上
+ * 有没有消息。
+ */
 function cellBusy(charId) {
   if (isBusy('genall:' + charId)) return true
-  return SLOTS.some((s) => isBusy('gen:' + charId + s.key))
+  return SLOTS.some(
+    (s) => isBusy('gen:' + charId + s.key) || live[targetOf(charId, s.key)],
+  )
 }
 
 /** 这一格画到百分之几。没数就回 null，界面画一条来回跑的条。 */
 function cellPct(charId) {
   for (const s of SLOTS) {
-    const v = genPct[charId + s.key]
+    const v = genPct[targetOf(charId, s.key)]
     if (v) return v
   }
   return null
@@ -119,6 +128,9 @@ watch(() => session.projectPath, load, { immediate: true })
 // 页头的「一键出图」画完一张就招呼一声，这儿跟着重拉——不然图已经在
 // 磁盘上了，界面还是一片空。
 watch(stamp, load)
+// 频道上说哪一张画完了就重拉——**刷新过页面的人只剩这条路**：
+// 发起那次请求的 promise 早随着旧页面一起没了。
+watch(finished, load)
 
 /**
  * 问服务端有哪些参考音色。
@@ -182,8 +194,21 @@ function changed(charId) {
  * 重新想一遍。
  */
 async function generate(overwrite) {
-  if (overwrite && !confirm('覆盖会冲掉手改过的设定和传过的参考图，已渲染的镜头也要重跑。继续？')) {
-    return
+  if (overwrite) {
+    // **把代价写成数字。** 「会冲掉参考图」听着像一句免责声明，而实际
+    // 发生的是十几张图连同画它们的十几分钟一起没了，且没有撤销。
+    // 2026-09-12 就这么丢过一次（15 张）。
+    const lost =
+      SLOTS.reduce(
+        (n, sl) => n + characters.value.filter((c) => c['ref_' + sl.key]).length,
+        0,
+      ) + (assets.value?.locations ?? []).filter((l) => l.ref_empty).length
+    const cost = lost
+      ? `会冲掉 ${lost} 张参考图（重画一遍约 ${Math.ceil((lost * 30) / 60)} 分钟），`
+      : ''
+    if (!confirm(`${cost}手改过的设定也会被顶掉，已渲染的镜头要重跑。继续？`)) {
+      return
+    }
   }
   const result = await run(
     () => api.makeBible({ project: session.projectPath, overwrite }),
@@ -255,20 +280,12 @@ async function genRef(charId, slot) {
             ...seedPayload(),
             ...extra,
           }),
-        {
-          prefix: 'ref',
-          onProgress: (cur, total) => {
-            genPct[charId + slot] = total > 0 ? Math.round((cur / total) * 100) : 0
-          },
-          onPreview: (url) => {
-            preview[charId + slot] = url
-          },
-        },
+        // 进度和预览都从那条固定频道来（useRefStream），这儿不用再接一遍
+        // ——接两遍等于同一张几十 KB 的小图收两次。
+        { prefix: 'ref' },
       ),
     { key: 'gen:' + charId + slot },
   )
-  delete genPct[charId + slot]
-  delete preview[charId + slot]
   if (!result) return
   ui.ok(`${SLOTS.find((s) => s.key === slot)?.label ?? slot}画好了（${Math.round(result.seconds)} 秒）`)
   await load()
@@ -291,23 +308,18 @@ async function genAllRefs(charId) {
             }),
           {
             prefix: 'ref',
+            // 「三张一起画」那个按钮上要写第几张，所以这条还留着。
             onProgress: (cur, total) => {
               genStep.value = {
                 charId,
                 label: s.label,
                 pct: total > 0 ? Math.round((cur / total) * 100) : 0,
               }
-              genPct[charId + s.key] = total > 0 ? Math.round((cur / total) * 100) : 0
-            },
-            onPreview: (url) => {
-              preview[charId + s.key] = url
             },
           },
         ),
       { key: 'genall:' + charId },
     )
-    delete genPct[charId + s.key]
-    delete preview[charId + s.key]
     // 中间某一张失败就停：后面两张多半也会栽在同一件事上（模型没配、
     // 显存不够），接着画只是让用户多等两分钟再看到同一句报错。
     if (!ok) break
@@ -414,13 +426,13 @@ async function clearRef(charId, slot) {
               <!-- 采样中途那张小图，盖在这一格上。低分辨率放大本来就是糊的，
                    随着步数推进内容逐渐成形；画完就没了（真图上来）。 -->
               <img
-                v-if="preview[c.char_id + s.key]"
+                v-if="preview[targetOf(c.char_id, s.key)]"
                 class="trio__preview"
-                :src="preview[c.char_id + s.key]"
+                :src="preview[targetOf(c.char_id, s.key)]"
                 alt=""
               />
-              <span v-if="genPct[c.char_id + s.key]" class="trio__pct numeric">
-                {{ genPct[c.char_id + s.key] }}%
+              <span v-if="genPct[targetOf(c.char_id, s.key)]" class="trio__pct numeric">
+                {{ genPct[targetOf(c.char_id, s.key)] }}%
               </span>
               <span class="trio__label tiny">{{ s.label }}</span>
             </span>
