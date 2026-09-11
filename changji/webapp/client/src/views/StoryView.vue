@@ -606,6 +606,58 @@ async function importPasted() {
   }
 }
 
+/**
+ * 直接开写：不写梗概、不挑体量、不等 AI，建一章空的就进编辑器。
+ *
+ * **这一条是"开始写之前不需要配置任何东西"。** 查到的那句原话是"你花在调
+ * 工具上的时间，工具本身就成了干扰"——而这一页在有故事之前，摆着梗概框、
+ * 关键词框、体量三选一和三个按钮，等于开写前先填一张表。
+ *
+ * 结构可以后补：写完点「让 AI 读一遍，提人物」，人物关系地点就出来了。
+ * 先写后理，本来就是很多人写东西的顺序。
+ */
+async function startBlank() {
+  const result = await run(
+    () =>
+      api.adoptStory({
+        project: session.projectPath,
+        story: {
+          premise: premise.value.trim(),
+          scale: scale.value,
+          episode_duration_s: 60,
+          chapters: [{ chapter_id: 'ch01', title: '第一章', summary: '', text: '' }],
+        },
+        overwrite: true,
+      }),
+    { key: 'blank' },
+  )
+  if (!result) return
+  setStory(result)
+  await nextTick()
+  boxes[current.value]?.focus()
+}
+
+/** 加一章。空的，接着写。 */
+async function addChapter() {
+  const next = chapters.value.map((c) => ({ ...c }))
+  const id = 'ch' + String(next.length + 1).padStart(2, '0')
+  next.push({ chapter_id: id, title: `第 ${next.length + 1} 章`, summary: '', text: '' })
+  const result = await run(
+    () =>
+      api.adoptStory({
+        project: session.projectPath,
+        story: { ...story.value, chapters: next },
+        overwrite: true,
+      }),
+    { key: 'addch' },
+  )
+  if (!result) return
+  setStory(result)
+  current.value = id
+  await nextTick()
+  boxes[id]?.focus()
+}
+
 /** 老项目：把已经写好的那几集反推成故事骨架。不碰大模型，也不重新分集。 */
 async function reverseFromEpisodes() {
   const result = await run(
@@ -845,6 +897,17 @@ async function stopWriting() {
                 {{ sc.label }}
               </button>
             </div>
+            <!-- **摆在最前面。** 查到的那句是"开始写之前不需要配置任何
+                 东西"，而这一页在它之前摆着梗概、关键词、体量和三个按钮。
+                 想自己写的人应该一眼看见"从这儿进去"。 -->
+            <button
+              class="btn btn--primary"
+              type="button"
+              :disabled="isBusy('blank')"
+              @click="startBlank"
+            >
+              直接开写
+            </button>
             <button
               class="btn btn--ai"
               type="button"
@@ -907,7 +970,11 @@ async function stopWriting() {
           <select v-model="current" class="select ed__pick">
             <option v-for="(c, i) in chapters" :key="c.chapter_id" :value="c.chapter_id">
               第 {{ i + 1 }} 章 · {{ c.title }}
-              {{ (c.text ?? '').trim() ? `（${[...(buf[c.chapter_id] ?? '')].length} 字）` : '（还没写）' }}
+              <!-- 字数和"写没写"都按**手里这份**算，不按落库那份：刚打的
+                   几个字还没存，下拉框里却写着"还没写"，看着像白打了。 -->
+              {{ (buf[c.chapter_id] ?? '').trim()
+                   ? `（${[...(buf[c.chapter_id] ?? '')].length} 字）`
+                   : '（还没写）' }}
               {{ (buf[c.chapter_id] ?? '') !== (c.text ?? '') ? ' ·未存' : '' }}
               {{ streaming?.chapter_id === c.chapter_id ? ' ·正在写' : '' }}
             </option>
@@ -953,6 +1020,15 @@ async function stopWriting() {
           >
             {{ isBusy('analyze') ? '正在读…' : '让 AI 读一遍，提人物' }}
           </button>
+          <button
+            class="btn btn--ghost btn--sm nowrap"
+            type="button"
+            :disabled="isBusy('addch')"
+            title="加一章空的，接着写"
+            @click="addChapter"
+          >
+            加一章
+          </button>
           <!-- 专注：把顶栏和项目库都收起来。**最大的干扰不在编辑器里，
                在编辑器外面**——右边那条项目库列着另外几部剧，而你正在写
                第一章。鼠标贴到窗口顶边顶栏会浮回来，Esc 退出。 -->
@@ -986,8 +1062,11 @@ async function stopWriting() {
                一模一样的镜像，由镜像画高亮，输入框本身文字透明、只留光标。
                这是给 textarea 做语法高亮的老办法，好处是保住了
                "偏移即 selectionStart"——上次改错地方的根因就是偏移。 -->
+          <!-- **永远是个编辑器。** 以前没正文时这儿摆的是"摘要 + 自动生成"
+               一块，于是想自己写的人无处下笔。摘要改成占位文字，光标点进去
+               就能写；「自动生成」本来就常驻在右下角那一排。 -->
           <div
-            v-if="chapter && (chapter.text || buf[current])"
+            v-if="chapter"
             class="ed__stack"
             :class="{ 'ed__stack--dim': ui.focusMode }"
           >
@@ -1000,6 +1079,11 @@ async function stopWriting() {
               :ref="(el) => (boxes[current] = el)"
               class="ed__area"
               spellcheck="false"
+              :placeholder="
+                chapter.summary
+                  ? '这一章要写的是：' + chapter.summary + '\n\n从这儿开始写，或者点右下角「自动生成」让 AI 先来一版。'
+                  : '从这儿开始写。写完点上面「让 AI 读一遍，提人物」，人物关系和地点就出来了。'
+              "
               :value="body"
               @input="onInput(current, $event)"
               @select="onSelectionChange(current, $event)"
@@ -1009,18 +1093,6 @@ async function stopWriting() {
               @keydown.ctrl.s.prevent="saveChapter(current)"
               @keydown.meta.s.prevent="saveChapter(current)"
             />
-          </div>
-          <div v-else-if="chapter" class="ed__todo">
-            <p class="small dim">{{ chapter.summary }}</p>
-            <button
-              class="btn btn--ai"
-              type="button"
-              :disabled="isBusy('chapter:' + current)"
-              @click="writeChapter(current)"
-            >
-              <AppIcon name="sparkle" :size="15" />
-              {{ isBusy('chapter:' + current) ? '正在写…' : '自动生成这一章' }}
-            </button>
           </div>
 
           <!-- 右下角那排。**浮在正文上**，不占版面——这一页大多数时候是在
@@ -1207,6 +1279,7 @@ async function stopWriting() {
   width: 100%;
   max-width: 38em;
   margin: 0 auto;
+  min-height: 55vh;
 }
 .ed__mirror,
 .ed__area {
@@ -1245,6 +1318,10 @@ async function stopWriting() {
   display: block;
   position: relative;
   width: 100%;
+  /* **空章也要有地方下笔。** 高度是跟着内容长的（见 fit），空章算出来
+     只有一行——一整屏空白，唯一能点的是顶上一条看不见的细缝，鼠标点哪儿
+     都进不去。给个下限，整块都是可写区。 */
+  min-height: 55vh;
   background: transparent;
   color: inherit;
   font: inherit;
