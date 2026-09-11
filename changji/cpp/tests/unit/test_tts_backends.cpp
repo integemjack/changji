@@ -26,6 +26,7 @@
 #include "stages/audio.hpp"
 #include "stages/tts_backends.hpp"
 #include "util/paths.hpp"
+#include "util/text.hpp"
 
 using namespace changji;
 namespace fs = std::filesystem;
@@ -297,6 +298,38 @@ TEST_CASE("HTTP 后端：把服务端的话带上") {
             b.synthesize("那一夜的雨下得特别大，她站在天台边上很久很久。", out,
                          std::nullopt, "neutral", 0.5),
             stages::AudioError);
+    }
+
+    SUBCASE("body 是一大段中文时按字符截，不按字节") {
+        // 2026-09-11 实跑：同样的写法在 json_extract 里截在半个汉字上，
+        // 错误消息进了任务快照之后 /api/script/series 序列化 JSON 直接 500。
+        // 配音服务出错时回的 traceback 里一样会夹中文。
+        std::string body = "Traceback:\n";
+        for (int i = 0; i < 40; ++i) body += "模型没加载，先去设置页把配音模型下下来。";
+        REQUIRE(text::utf8_len(body) > 300);
+        // 按字节截 300 落在半个汉字上——这就是要防的那一下
+        CHECK_THROWS(nlohmann::json(body.substr(0, 300)).dump());
+
+        const auto b = stages::http_tts_backend(
+            "http://x", 30.0,
+            [&](const std::string&, const std::string&,
+                const std::map<std::string, std::string>&, double) {
+                llm::HttpResponse r;
+                r.status = 500;
+                r.body = body;
+                return r;
+            },
+            std::nullopt);
+        try {
+            b.synthesize("你好", out, std::nullopt, "neutral", 0.5);
+            FAIL("该抛");
+        } catch (const stages::AudioError& e) {
+            const std::string msg = e.what();
+            CHECK(msg.find("配音服务回了 500") != std::string::npos);
+            CHECK(msg.find("模型没加载") != std::string::npos);
+            CHECK_NOTHROW(nlohmann::json(msg).dump());
+            CHECK(text::utf8_len(msg) < 350);
+        }
     }
 }
 

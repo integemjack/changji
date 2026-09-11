@@ -150,8 +150,14 @@ TTSBackend http_tts_backend(const std::string& base_url, double timeout_s,
         if (r.status < 200 || r.status >= 300) {
             // 把服务端的话带上，截断到 300 字——TTS 服务出错时
             // 常常回一整页 traceback。
+            //
+            // **按字符截，不按字节。** 这句话会变成事件流里的 warn，
+            // 进任务快照再序列化成 JSON；traceback 里夹着中文时按字节截
+            // 落在半个汉字上，nlohmann 序列化就抛 type_error.316，
+            // 整个快照接口回 500——json_extract 那一处 2026-09-11 实跑
+            // 就是这么炸的。
             throw AudioError("配音服务回了 " + std::to_string(r.status) + "：\n" +
-                             r.body.substr(0, 300));
+                             text::truncate_utf8(r.body, 300));
         }
 
         std::error_code ec;

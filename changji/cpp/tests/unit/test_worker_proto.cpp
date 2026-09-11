@@ -14,6 +14,7 @@
 
 #include "infer/worker_farm.hpp"
 #include "infer/worker_proto.hpp"
+#include "util/text.hpp"
 
 using namespace changji;
 
@@ -182,5 +183,38 @@ TEST_CASE("多卡自动拉起：这四种情况都不该动手") {
         config::Settings s;
         models::HardwareProfile none;
         CHECK(infer::WorkerFarm::start(s, none) == nullptr);
+    }
+}
+
+TEST_CASE("工作进程回的话拼进错误消息时按字符截，不按字节") {
+    // 2026-09-11 实跑：json_extract 那条错误消息 substr(0, 400) 截在半个汉字上，
+    // 进了任务快照之后 GET /api/script/series 序列化 JSON 直接 500，
+    // 批量写正文的进度就再也看不见了。这两句话走的是同一条路
+    // （事件流的 warn → 快照 → JSON），原来也是同样的写法。
+    std::string body;
+    for (int i = 0; i < 60; ++i) body += "显存不够，这一镜出不了图。";
+    REQUIRE(text::utf8_len(body) > 200);
+    // 按字节截 200 恰好落在半个汉字上（200 不是 3 的倍数）——
+    // 这就是要防的那一下：不合法的 UTF-8 装进 json 一 dump 就抛。
+    CHECK_THROWS(nlohmann::json(body.substr(0, 200)).dump());
+
+    SUBCASE("拒了任务") {
+        const std::string msg = infer::worker_rejected_message(503, body);
+        CHECK(msg.find("拒了这个任务（503）") != std::string::npos);
+        CHECK(msg.find("显存不够") != std::string::npos);
+        CHECK_NOTHROW(nlohmann::json(msg).dump());
+        CHECK(text::utf8_len(msg) < 250);
+    }
+    SUBCASE("回的不是 {\"id\":...}") {
+        const std::string msg = infer::worker_bad_accept_message(body);
+        CHECK(msg.find("{\"id\":...}") != std::string::npos);
+        CHECK_NOTHROW(nlohmann::json(msg).dump());
+        CHECK(text::utf8_len(msg) < 250);
+    }
+    SUBCASE("短的一个字不少") {
+        CHECK(infer::worker_rejected_message(500, "坏了") ==
+              "工作进程拒了这个任务（500）：坏了");
+        CHECK(infer::worker_bad_accept_message("<html>") ==
+              "工作进程回的不是 {\"id\":...}：<html>");
     }
 }

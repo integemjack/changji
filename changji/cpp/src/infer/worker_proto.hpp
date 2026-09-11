@@ -92,4 +92,18 @@ struct TaskProgress {
 nlohmann::json to_json(const TaskProgress& p);
 TaskProgress task_progress_from_json(const nlohmann::json& j);
 
+/// 工作进程拒了任务（回的不是 200/202）时给用户看的那句话。
+///
+/// body 只带前 200 个**字符**，而且按字符截、不按字节：这句话会变成
+/// 事件流里那条 warn，进任务快照，再序列化成 JSON。按字节截落在半个汉字上，
+/// nlohmann 就在序列化那一步抛 type_error.316，整个快照接口回 500，
+/// 进度全看不见——json_extract 那一处 2026-09-11 实跑就是这么炸的。
+///
+/// 放在这一层而不是 worker_pool.cpp 里，是因为那个文件链 httplib、
+/// 进不了测试目标；这两句话的形状在这儿能测。
+std::string worker_rejected_message(int status, const std::string& body);
+
+/// 工作进程回了 2xx 但 body 不是 `{"id":...}` 时的那句话。截法同上。
+std::string worker_bad_accept_message(const std::string& body);
+
 }  // namespace changji::infer

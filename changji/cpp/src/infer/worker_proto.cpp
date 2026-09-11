@@ -2,6 +2,8 @@
 
 #include <stdexcept>
 
+#include "util/text.hpp"
+
 namespace changji::infer {
 
 using nlohmann::json;
@@ -114,6 +116,16 @@ TaskProgress task_progress_from_json(const json& j) {
         p.result = task_result_from_json(j["result"]);
     }
     return p;
+}
+
+std::string worker_rejected_message(int status, const std::string& body) {
+    // 截 200 字符。**按字符，不按字节**——见头文件里那段。
+    return "工作进程拒了这个任务（" + std::to_string(status) + "）：" +
+           text::truncate_utf8(body, 200);
+}
+
+std::string worker_bad_accept_message(const std::string& body) {
+    return "工作进程回的不是 {\"id\":...}：" + text::truncate_utf8(body, 200);
 }
 
 }  // namespace changji::infer

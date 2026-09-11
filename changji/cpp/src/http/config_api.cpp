@@ -12,6 +12,7 @@
 #include "infer/scheduler.hpp"
 #include "pipeline/jobs.hpp"
 #include "util/paths.hpp"
+#include "util/text.hpp"
 
 using json = nlohmann::json;
 
@@ -162,9 +163,17 @@ ApiResult get_connections() {
 
     // 只回一个"设了没有"和一个掐头去尾的提示。回明文的话它会进浏览器的
     // 网络面板、进前端的状态、进任何一次截图。
-    const std::string hint =
-        key.size() > 6 ? key.substr(0, 2) + "***" + key.substr(key.size() - 2)
-                       : "***";
+    //
+    // 头尾按**字符**取，不按字节。密钥正常是 ASCII，但粘贴时带进一个
+    // 全角空格落在两端并不稀奇——按字节掐会留下半个字符，这个 hint
+    // 序列化成 JSON 时 nlohmann 抛 type_error.316，整个连接设置页回 500，
+    // 而且用户看不出是密钥两端多了个字符。
+    const auto chars = text::utf8_chars(key);
+    std::string hint = "***";
+    if (chars.size() > 6) {
+        hint = chars[0] + chars[1] + "***" + chars[chars.size() - 2] +
+               chars.back();
+    }
 
     json env = json::object();
     for (const auto& kv : env_overridden()) env[kv.first] = kv.second;

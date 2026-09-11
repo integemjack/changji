@@ -98,6 +98,27 @@ TEST_CASE("读连接设置时不回传密钥明文") {
         const auto r2 = http::guard([] { return http::get_connections(); });
         CHECK(r2.body.at("llm_api_key_set") == false);
     }
+
+    SUBCASE("密钥两端带全角字符时 hint 按字符掐，不按字节") {
+        // 粘贴时带进一个全角空格并不稀奇。按字节掐头去尾会留下半个字符，
+        // 这个 hint 序列化成 JSON 时 nlohmann 抛 type_error.316，整个连接
+        // 设置页回 500——和 json_extract 那条错误消息 2026-09-11 炸掉的是
+        // 同一个坑。
+        const std::string fw = "\xE3\x80\x80";  // U+3000 全角空格
+        const std::string key = fw + "sk-abcdefgh" + fw;
+        // 原来按字节那种写法留下的就是半个字符，装进 json 一 dump 就抛
+        CHECK_THROWS(
+            json(key.substr(0, 2) + "***" + key.substr(key.size() - 2)).dump());
+
+        config::Settings s = baseline();
+        s.llm.api_key = key;
+        config::runtime().replace(s);
+        const auto r2 = http::guard([] { return http::get_connections(); });
+        REQUIRE(r2.status == 200);
+        CHECK(r2.body.at("llm_api_key_hint") == fw + "s***h" + fw);
+        CHECK_NOTHROW(r2.body.dump());
+        CHECK(r2.body.dump().find("sk-abcdefgh") == std::string::npos);
+    }
 }
 
 TEST_CASE("读连接设置的字段形状") {

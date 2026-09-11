@@ -106,14 +106,14 @@ struct WorkerPool::Impl {
                                      "多半是有别人也在用同一个工作进程");
         }
         if (res->status != 202 && res->status != 200) {
-            throw std::runtime_error("工作进程拒了这个任务（" +
-                                     std::to_string(res->status) + "）：" +
-                                     res->body.substr(0, 200));
+            // 这句话会进事件流再序列化成 JSON，body 得按字符截，
+            // 拼法在 worker_proto 里（那儿能测）。
+            throw std::runtime_error(
+                worker_rejected_message(res->status, res->body));
         }
         const auto accepted = json::parse(res->body, nullptr, false);
         if (accepted.is_discarded() || !accepted.contains("id")) {
-            throw std::runtime_error("工作进程回的不是 {\"id\":...}：" +
-                                     res->body.substr(0, 200));
+            throw std::runtime_error(worker_bad_accept_message(res->body));
         }
         const std::string id = accepted["id"].get<std::string>();
 
