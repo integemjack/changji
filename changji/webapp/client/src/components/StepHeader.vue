@@ -50,6 +50,11 @@ const isDone = computed(() => Boolean(step.value && session.done[step.value.key]
   display: flex;
   align-items: flex-start;
   gap: var(--s4);
+  /* 放不下就让操作区整块掉到第二行。
+     nowrap 的时候 .head__text 会被右边的按钮挤成 0 宽（它是 flex:1
+     配 min-width:0），标题和下面那行小字于是竖着排成一列一个字——
+     镜头页出完分镜、右上角变成四个按钮时实测撞到过。 */
+  flex-wrap: wrap;
 }
 .head__badge {
   flex: none;
@@ -72,7 +77,9 @@ const isDone = computed(() => Boolean(step.value && session.done[step.value.key]
 }
 .head__text {
   min-width: 0;
-  flex: 1;
+  /* 基准不是 0：给标题这一栏一个下限，挤不动时宁可让操作区换行，
+     也不能把它压没。 */
+  flex: 1 1 16rem;
 }
 .head__title {
   font-size: var(--fs-2xl);
@@ -91,6 +98,8 @@ const isDone = computed(() => Boolean(step.value && session.done[step.value.key]
   gap: var(--s2);
   flex-wrap: wrap;
   justify-content: flex-end;
+  /* 换到第二行之后还要贴着右边，不然它会跑到徽标底下 */
+  margin-left: auto;
 }
 .head__note {
   margin-top: var(--s4);
