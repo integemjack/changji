@@ -125,7 +125,19 @@ TEST_CASE("对白字数预算") {
     CHECK(stages::budget_chars(-100.0) == 20);
 }
 
-TEST_CASE("三个提示词都和 Python 逐字节一致") {
+TEST_CASE("三个提示词逐字节钉住：改了必须是有意识地改") {
+    // **这条原来叫"和 Python 逐字节一致"**，语料是当年冻下来的 Python
+    // 答案，用来证明移植没走样。Python 引擎 2026-09-10 删了之后，这个
+    // 用途就没了——而断言还在，实际效果变成"提示词永远改不动"：
+    // 想让剧本写得更细，第一步就撞在这儿。
+    //
+    // 现在它的用途是**快照**：提示词是这套东西的行为核心，改一个字
+    // 出来的剧本就不一样，所以不能被顺手改掉。要改就连语料一起改，
+    // 让这件事在 diff 里看得见。
+    //
+    // 2026-09-11 第一次这么改：给剧本加了"动作要拍得出来"那四条
+    // （8~11），语料里 22 处跟着更新。premise 和 trailer 一个字没动。
+
     for (const auto& c : golden().at("prompts")) {
         const std::string kind = c.at("kind").get<std::string>();
         const auto line = line_from(c.at("style_line").get<std::string>());

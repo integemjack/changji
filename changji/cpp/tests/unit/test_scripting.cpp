@@ -93,7 +93,11 @@ http::ApiResult dispatch(const std::string& url, const json& body,
 
 }  // namespace
 
-TEST_CASE("三个剧本接口和 Python 逐条对拍") {
+TEST_CASE("三个剧本接口逐条钉住（其中含提示词全文）") {
+    // 同 test_script.cpp 里那条：语料本来是冻住的 Python 答案，Python
+    // 删掉之后它的用途变成快照。这里的 case 里含提示词全文，所以
+    // 改提示词会连带改这份语料——2026-09-11 改过一次（7 处）。
+
     int idx = 0;
     for (const auto& c : golden().at("cases")) {
         const std::string name = c.at("name").get<std::string>();
