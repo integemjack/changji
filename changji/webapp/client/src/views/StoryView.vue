@@ -1,6 +1,6 @@
 <script setup>
 /**
- * 故事。一个写稿子的编辑器。
+ * 故事。一整块编辑器，一次一章。
  *
  * 用户 2026-09-11 两次定方向：
  *
@@ -22,6 +22,15 @@
  * 一次，不然编辑器里会留下一行 ``` 。WebSocket 连不上就退回一次性返回，
  * 少的只是"看着它写"这件事。
  *
+ * 2026-09-11 又定细了一层：**章节用下拉框选，编辑器占满，右下角一排按钮
+ * （自动生成、对话修改、朗读）。** 于是正文不再是"一整篇连着往下滚"，而是
+ * 一次一章——一次一章才谈得上"占满"，十六章连着的话滚动条本身就是干扰。
+ * 代价是看不到第三章接第四章那一下顺不顺，换来的是写这一章时眼前没有别的
+ * 东西。下拉框里带着每章字数和"未存"，跳过去是一下的事。
+ *
+ * 右下角那排按钮**浮在正文上**，不占版面：这一页大多数时候是在读和写，
+ * 按钮常驻一条的话，稿子就被挤窄了一截。
+ *
  * **编辑器用 textarea，不是 contenteditable。** selectionStart/End 直接就是
  * 偏移，不用在 DOM 里爬；而 contenteditable 里每一次输入都可能重排节点，
  * 偏移随时失效——那正是"改到一半突然替换错地方"的来源。
@@ -34,7 +43,7 @@ import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from
 import AppIcon from '@/components/AppIcon.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import StepHeader from '@/components/StepHeader.vue'
-import { api } from '@/api'
+import { api, mediaUrl } from '@/api'
 import { useAction } from '@/composables/useAction'
 import { openJobSocket } from '@/composables/useJobSocket'
 import { useSession } from '@/stores/session'
@@ -84,6 +93,12 @@ const instruction = ref('')
 const pending = ref(null)
 /** 正在流式写入的那一段，非空时编辑器里那几个字正一个个冒出来。 */
 const streaming = ref(null)
+/** 当前在看哪一章。空串表示还没挑（进来时自动挑第一章）。 */
+const current = ref('')
+/** 右下角那排按钮展开的是哪一个面板：'' | 'ai' */
+const panel = ref('')
+/** 朗读出来的那段音频。 */
+const audio = ref(null)
 /** setStory 之前记一下哪几章是脏的。存完那一章会从这里拿掉。 */
 const dirtySnapshot = new Set()
 
@@ -116,6 +131,15 @@ const needsAnalysis = computed(
 /** 老项目：有剧集、没故事。给它一条接回新流程的路。 */
 const canReverse = computed(() => !hasStory.value && session.episodes.length > 0)
 
+const chapter = computed(
+  () => chapters.value.find((c) => c.chapter_id === current.value) ?? null,
+)
+/** 当前这一章在编辑器里的那一份。 */
+const body = computed(() => buf[current.value] ?? '')
+const currentDirty = computed(
+  () => chapter.value != null && body.value !== (chapter.value.text ?? ''),
+)
+
 function setStory(payload) {
   story.value = payload?.story ?? null
   premise.value = story.value?.premise ?? ''
@@ -127,6 +151,12 @@ function setStory(payload) {
     if (!dirtySnapshot.has(c.chapter_id)) buf[c.chapter_id] = c.text ?? ''
   }
   dirtySnapshot.clear()
+  // 进来先挑一章。**优先挑还没写正文的第一章**：那一章是接下来要干的活，
+  // 而已经写好的几章翻一下就能看到。
+  if (!chapters.value.some((c) => c.chapter_id === current.value)) {
+    const todo = chapters.value.find((c) => !(c.text ?? '').trim())
+    current.value = (todo ?? chapters.value[0])?.chapter_id ?? ''
+  }
   nextTick(fitAll)
 }
 
@@ -258,12 +288,15 @@ function onSelectionChange(id, event) {
   pending.value = null
 }
 
+/** 换一章就把改稿那摊清掉：偏移是按章算的，套到别的章上会改错地方。 */
 function clearSelection() {
   sel.value = null
   chat.value = []
   instruction.value = ''
   pending.value = null
+  audio.value = null
 }
+watch(current, clearSelection)
 
 /** 存这一章。整章当成一个选区，走的就是 AI 改稿那条写回路径。 */
 async function saveChapter(id) {
@@ -428,6 +461,43 @@ function undoRevision() {
   nextTick(() => fit(boxes[p.chapter_id]))
 }
 
+/**
+ * 念给自己听。
+ *
+ * **念的是选中的那一段，没选就从光标往下念。** 整章念完要好几分钟，而人在
+ * 编辑器里想听的通常是刚改过的那几句顺不顺口。引擎那边一次最多两百字
+ * （模型一次合成上限约 41 秒），超了它会说。
+ */
+async function readAloud() {
+  const el = boxes[current.value]
+  const full = body.value
+  if (!full.trim()) return
+  let picked = ''
+  if (el && el.selectionEnd > el.selectionStart) {
+    picked = full.slice(el.selectionStart, el.selectionEnd)
+  } else if (el) {
+    picked = full.slice(el.selectionStart)
+  }
+  if (!picked.trim()) picked = full
+
+  const result = await run(
+    () => api.say({ project: session.projectPath, text: picked }),
+    { key: 'say' },
+  )
+  if (!result) return
+  if (result.backend === 'estimate') {
+    // 估算后端出来的是等长静音。不说的话用户会对着一段没声音的音频
+    // 以为是自己音箱坏了。
+    ui.warn('还没配上配音模型，念出来的是一段等长静音。去设置页看看')
+  } else if (result.truncated) {
+    ui.ok(`念了前 ${result.chars} 字（一次最多这么多）`)
+  }
+  // 加个时间戳绕开浏览器缓存：落点是固定名字，不加的话第二次点还是老那段
+  audio.value = mediaUrl(session.projectPath, result.rel) + '&t=' + Date.now()
+  await nextTick()
+  document.querySelector('audio.say')?.play?.()
+}
+
 // ---------------------------------------------------------------------------
 // 从无到有的三条路
 // ---------------------------------------------------------------------------
@@ -532,7 +602,8 @@ async function adoptDraft() {
  * 悬念上的全部依据），只在 token 流上把 text 那个字段解出来推过来，
  * 所以这里收到的已经是干净的正文。
  */
-async function writeChapter(chapterId) {
+async function writeChapter(chapterId, overwrite = false) {
+  if (overwrite && !confirm('重写会把这一章现在的正文整份顶掉。确定？')) return
   const streamId = 'chapter-' + Math.random().toString(36).slice(2, 10)
   let acc = ''
   let sock = null
@@ -563,6 +634,7 @@ async function writeChapter(chapterId) {
       api.writeChapter({
         project: session.projectPath,
         chapter_id: chapterId,
+        overwrite,
         ...(opened ? { stream: streamId } : {}),
       }),
     { key: 'chapter:' + chapterId },
@@ -570,8 +642,10 @@ async function writeChapter(chapterId) {
   sock?.close()
   streaming.value = null
   if (!result) {
-    // 写砸了：把流出来那半截清掉，别在稿子里留一段没头没尾的东西
-    buf[chapterId] = ''
+    // 写砸了：把流出来那半截清掉，别在稿子里留一段没头没尾的东西。
+    // **重写失败要放回原来那份**，不是清空——原来那一章是好好的。
+    const was = chapters.value.find((c) => c.chapter_id === chapterId)
+    buf[chapterId] = was?.text ?? ''
     return
   }
   // 落库那份才是权威的（解析、守卫、钩子都在那边）
@@ -766,223 +840,290 @@ async function stopWriting() {
       <div v-if="loading" class="tiny dim">读取中…</div>
 
       <!-- ---- 编辑器 ---- -->
-      <div v-else-if="hasStory" class="ms" :class="{ 'ms--picked': sel }">
-        <div class="ms__paper">
-          <p class="ms__meta tiny dim">
-            {{ chapters.length }} 章 · {{ totalChars }} 字
-            <template v-if="unwritten">· 还有 {{ unwritten }} 章只有梗概</template>
-            · 直接改就行，选中一段能让 AI 改它 · Ctrl+S 存这一章
-          </p>
+      <div v-else-if="hasStory" class="ed">
+        <!-- 一条窄头：挑哪一章、这一章多少字、存没存 -->
+        <div class="ed__bar">
+          <select v-model="current" class="select ed__pick">
+            <option v-for="(c, i) in chapters" :key="c.chapter_id" :value="c.chapter_id">
+              第 {{ i + 1 }} 章 · {{ c.title }}
+              {{ (c.text ?? '').trim() ? `（${[...(buf[c.chapter_id] ?? '')].length} 字）` : '（还没写）' }}
+              {{ (buf[c.chapter_id] ?? '') !== (c.text ?? '') ? ' ·未存' : '' }}
+            </option>
+          </select>
+          <span v-if="currentDirty" class="pill pill--warn nowrap">未存</span>
+          <span class="spacer" />
+          <span class="tiny dim nowrap">
+            全书 {{ chapters.length }} 章 · {{ totalChars }} 字
+          </span>
+          <button
+            class="btn btn--sm"
+            :class="currentDirty ? 'btn--primary' : 'btn--ghost'"
+            type="button"
+            :disabled="!currentDirty || isBusy('save:' + current)"
+            @click="saveChapter(current)"
+          >
+            {{ isBusy('save:' + current) ? '存着…' : '存（Ctrl+S）' }}
+          </button>
+        </div>
 
-          <article v-for="(c, i) in chapters" :key="c.chapter_id" class="ch">
-            <h3 class="ch__title">
-              <span class="ch__no numeric">{{ i + 1 }}</span>
-              {{ c.title }}
-              <span
-                v-if="(buf[c.chapter_id] ?? '') !== (c.text ?? '')"
-                class="ch__dirty tiny"
-                >未存</span
-              >
-              <span class="spacer" />
-              <span class="tiny dim numeric">
-                {{ [...(buf[c.chapter_id] ?? '')].length }} 字
-              </span>
-            </h3>
+        <!-- 正文占满。textarea 而不是 contenteditable：selectionStart/End
+             直接就是偏移，不用在 DOM 里爬。 -->
+        <div class="ed__paper">
+          <textarea
+            v-if="chapter && (chapter.text || buf[current])"
+            :ref="(el) => (boxes[current] = el)"
+            class="ed__area"
+            spellcheck="false"
+            :value="body"
+            @input="onInput(current, $event)"
+            @select="onSelectionChange(current, $event)"
+            @mouseup="onSelectionChange(current, $event)"
+            @keyup="onSelectionChange(current, $event)"
+            @blur="saveChapter(current)"
+            @keydown.ctrl.s.prevent="saveChapter(current)"
+            @keydown.meta.s.prevent="saveChapter(current)"
+          />
+          <div v-else-if="chapter" class="ed__todo">
+            <p class="small dim">{{ chapter.summary }}</p>
+            <button
+              class="btn btn--ai"
+              type="button"
+              :disabled="isBusy('chapter:' + current)"
+              @click="writeChapter(current)"
+            >
+              <AppIcon name="sparkle" :size="15" />
+              {{ isBusy('chapter:' + current) ? '正在写…' : '自动生成这一章' }}
+            </button>
+          </div>
 
-            <!-- textarea 而不是 contenteditable：selectionStart/End 直接就是
-                 偏移，不用在 DOM 里爬；contenteditable 每次输入都可能重排
-                 节点，偏移随时失效——那正是"替换错地方"的来源。 -->
-            <textarea
-              v-if="c.text || buf[c.chapter_id]"
-              :ref="(el) => (boxes[c.chapter_id] = el)"
-              class="ms__ed"
-              spellcheck="false"
-              :value="buf[c.chapter_id] ?? ''"
-              @input="onInput(c.chapter_id, $event)"
-              @select="onSelectionChange(c.chapter_id, $event)"
-              @mouseup="onSelectionChange(c.chapter_id, $event)"
-              @keyup="onSelectionChange(c.chapter_id, $event)"
-              @blur="saveChapter(c.chapter_id)"
-              @keydown.ctrl.s.prevent="saveChapter(c.chapter_id)"
-              @keydown.meta.s.prevent="saveChapter(c.chapter_id)"
-            />
-            <div v-else class="ch__todo">
-              <p class="small dim">{{ c.summary }}</p>
+          <!-- 右下角那排。**浮在正文上**，不占版面——这一页大多数时候是在
+               读和写，按钮常驻一条的话稿子就被挤窄了一截。 -->
+          <div class="ed__acts">
+            <div v-if="panel === 'ai'" class="ed__panel stack stack--sm">
+              <div class="row row--between">
+                <b class="ai__head">{{ sel ? '改选中的这一段' : '先选中一段再说' }}</b>
+                <button class="btn btn--ghost btn--sm" type="button" @click="panel = ''">
+                  收起
+                </button>
+              </div>
+              <template v-if="sel">
+                <blockquote class="ai__quote small">{{ sel.text }}</blockquote>
+                <p class="tiny dim">
+                  第 {{ sel.from }}–{{ sel.to }} 字，共 {{ sel.to - sel.from }} 字。
+                  只改这一段，别的一个字不动。
+                </p>
+                <div v-for="(t, i) in chat" :key="i" class="turn">
+                  <span class="turn__who tiny">{{ t.role === 'user' ? '你' : 'AI' }}</span>
+                  <span class="small">{{ t.text }}</span>
+                </div>
+                <div v-if="pending" class="ai__done">
+                  <span class="tiny">已经插进稿子里了，还没存</span>
+                  <div class="row">
+                    <button
+                      class="btn btn--primary btn--sm"
+                      type="button"
+                      :disabled="isBusy('save:' + pending.chapter_id)"
+                      @click="saveChapter(pending.chapter_id)"
+                    >
+                      存下来
+                    </button>
+                    <button class="btn btn--ghost btn--sm" type="button" @click="undoRevision">
+                      撤销
+                    </button>
+                  </div>
+                </div>
+                <textarea
+                  v-model="instruction"
+                  class="textarea textarea--tight"
+                  rows="3"
+                  :placeholder="
+                    chat.length
+                      ? '接着说，比如「再短一点」「语气冷一些」'
+                      : '要改成什么样？比如「这儿太赶了，铺一下情绪」'
+                  "
+                  @keydown.ctrl.enter="revise"
+                />
+                <div class="row">
+                  <button
+                    class="btn btn--ai btn--sm"
+                    type="button"
+                    :disabled="isBusy('revise')"
+                    @click="revise"
+                  >
+                    <AppIcon name="sparkle" :size="14" />
+                    {{
+                      streaming
+                        ? '正在写…'
+                        : isBusy('revise')
+                          ? '改着…'
+                          : chat.length
+                            ? '再改一版'
+                            : '改'
+                    }}
+                  </button>
+                  <span class="tiny dim">Ctrl+Enter</span>
+                </div>
+              </template>
+              <p v-else class="tiny dim">
+                在正文里拖选一段，这里就能对着它说话。
+              </p>
+            </div>
+
+            <audio v-if="audio" :src="audio" class="say" controls />
+
+            <div class="ed__row">
+              <!-- **常驻，不看这一章写没写。** 写过的那一章点它是重写，
+                   会先问一句——三个按钮固定在那儿，找按钮不用先想"现在是
+                   哪种状态"。 -->
               <button
                 class="btn btn--ai btn--sm"
                 type="button"
-                :disabled="isBusy('chapter:' + c.chapter_id)"
-                @click="writeChapter(c.chapter_id)"
+                :disabled="!chapter || isBusy('chapter:' + current)"
+                :title="body.trim() ? '这一章重写一遍（会先问一句）' : '照大纲把这一章写出来'"
+                @click="writeChapter(current, !!body.trim())"
               >
-                {{ isBusy('chapter:' + c.chapter_id) ? '正在写…' : '展开这一章的正文' }}
+                <AppIcon name="sparkle" :size="14" />
+                {{
+                  isBusy('chapter:' + current)
+                    ? '正在写…'
+                    : body.trim()
+                      ? '重写整章'
+                      : '自动生成'
+                }}
+              </button>
+              <button
+                class="btn btn--sm"
+                :class="panel === 'ai' ? 'btn--ai' : 'btn--ghost'"
+                type="button"
+                @click="panel = panel === 'ai' ? '' : 'ai'"
+              >
+                对话修改
+              </button>
+              <button
+                class="btn btn--ghost btn--sm"
+                type="button"
+                :disabled="isBusy('say') || !body.trim()"
+                :title="'念选中的那一段；没选就从光标往下念'"
+                @click="readAloud"
+              >
+                {{ isBusy('say') ? '念着…' : '朗读' }}
               </button>
             </div>
-          </article>
-
-          <p v-if="writer.state?.message" class="tiny dim">{{ writer.state.message }}</p>
-          <p
-            v-for="(w, i) in writer.state?.episodes ?? []"
-            :key="i"
-            class="tiny"
-            :class="w.error ? 'warn-text' : 'dim'"
-          >
-            {{ w.chapter_id }}
-            {{ w.error ? '写砸了：' + w.error : w.title + ' · ' + w.chars + ' 字' }}
-          </p>
+          </div>
         </div>
 
-        <!-- 选中之后才出现。常驻一条空的对话栏是在跟正文抢地方。 -->
-        <aside v-if="sel" class="ai stack stack--sm">
-          <div class="row row--between">
-            <b class="ai__head">改这一段</b>
-            <button class="btn btn--ghost btn--sm" type="button" @click="clearSelection">
-              收起
-            </button>
-          </div>
-          <blockquote class="ai__quote small">{{ sel.text }}</blockquote>
-          <p class="tiny dim">
-            {{ sel.chapter_id }} 第 {{ sel.from }}–{{ sel.to }} 字，共
-            {{ sel.to - sel.from }} 字。只改这一段，别的一个字不动。
-          </p>
-
-          <div v-for="(t, i) in chat" :key="i" class="turn" :class="'turn--' + t.role">
-            <span class="turn__who tiny">{{ t.role === 'user' ? '你' : 'AI' }}</span>
-            <span class="small">{{ t.text }}</span>
-          </div>
-
-          <!-- 改完的东西已经在左边稿子里了，这里只留一个后悔的口子 -->
-          <div v-if="pending" class="ai__done">
-            <span class="tiny">已经插进稿子里了，还没存</span>
-            <div class="row">
-              <button
-                class="btn btn--primary btn--sm"
-                type="button"
-                :disabled="isBusy('save:' + pending.chapter_id)"
-                @click="saveChapter(pending.chapter_id)"
-              >
-                存下来
-              </button>
-              <button class="btn btn--ghost btn--sm" type="button" @click="undoRevision">
-                撤销
-              </button>
-            </div>
-          </div>
-
-          <textarea
-            v-model="instruction"
-            class="textarea textarea--tight"
-            rows="3"
-            :placeholder="
-              chat.length
-                ? '接着说，比如「再短一点」「语气冷一些」'
-                : '要改成什么样？比如「这儿太赶了，铺一下情绪」「这句对白太书面」'
-            "
-            @keydown.ctrl.enter="revise"
-          />
-          <div class="row">
-            <button
-              class="btn btn--ai btn--sm"
-              type="button"
-              :disabled="isBusy('revise')"
-              @click="revise"
-            >
-              <AppIcon name="sparkle" :size="14" />
-              {{
-                streaming
-                  ? '正在写…'
-                  : isBusy('revise')
-                    ? '改着…'
-                    : chat.length
-                      ? '再改一版'
-                      : '改'
-              }}
-            </button>
-            <span class="tiny dim">Ctrl+Enter</span>
-          </div>
-        </aside>
+        <p v-if="writer.state?.message" class="tiny dim">{{ writer.state.message }}</p>
+        <p
+          v-for="(w, i) in writer.state?.episodes ?? []"
+          :key="i"
+          class="tiny"
+          :class="w.error ? 'warn-text' : 'dim'"
+        >
+          {{ w.chapter_id }}
+          {{ w.error ? '写砸了：' + w.error : w.title + ' · ' + w.chars + ' 字' }}
+        </p>
       </div>
     </template>
   </div>
 </template>
 
 <style scoped>
-.ms {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  gap: var(--s4);
-  align-items: start;
+/* 编辑器占满剩下的高度。**一整块**，不是稿纸上放了个输入框。 */
+.ed {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s3);
+  /* 顶栏 + 页头 + 边距。留一点，别让编辑器顶到屏幕底下去 */
+  min-height: calc(100vh - 190px);
 }
-.ms--picked {
-  grid-template-columns: minmax(0, 1fr) 320px;
+.ed__bar {
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
 }
-@media (max-width: 900px) {
-  .ms--picked {
-    grid-template-columns: minmax(0, 1fr);
-  }
+.ed__pick {
+  max-width: 26em;
 }
 
-.ms__paper {
+.ed__paper {
+  position: relative;   /* 右下角那排是绝对定位的 */
+  flex: 1;
+  display: flex;
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: var(--r-md);
   padding: var(--s5) var(--s5) var(--s6);
+  overflow: auto;
 }
-.ms__meta {
-  margin: 0 0 var(--s4);
-}
-.ch {
-  margin: 0 0 var(--s5);
-  max-width: 44em;
-}
-.ch__title {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-  font-size: var(--fs-lg);
-  margin: 0 0 var(--s3);
-}
-.ch__no {
-  color: var(--text-3);
-}
-.ch__dirty {
-  color: var(--accent);
-}
-
-/* 编辑器。**没有边框没有底色**——它就是稿纸本身，不是稿纸上放了个输入框。
-   行宽卡在 38 个中文字上下，再宽眼睛要回扫。高度跟着内容长，
-   编辑器里不该有第二根滚动条。 */
-.ms__ed {
-  display: block;
+.ed__area {
+  flex: 1;
   width: 100%;
+  /* 行宽卡在 38 个中文字上下，再宽眼睛要回扫。**居中**：占满的是版面，
+     不是行长——一行拉到一米二没人读得下去。 */
   max-width: 38em;
+  margin: 0 auto;
   border: 0;
   padding: 0;
   background: transparent;
   color: inherit;
   font: inherit;
-  line-height: 1.85;
+  line-height: 1.9;
   resize: none;
   overflow: hidden;
 }
-.ms__ed:focus {
+.ed__area:focus {
   outline: none;
 }
-.ms__ed::selection {
+.ed__area::selection {
   background: var(--accent-soft);
 }
-.ch__todo {
-  border-left: 2px solid var(--line);
-  padding-left: var(--s3);
+.ed__todo {
+  margin: auto;
+  display: grid;
+  gap: var(--s3);
+  justify-items: center;
+  text-align: center;
+  max-width: 32em;
 }
 
-.ai {
+/* 右下角那排。浮在正文上，不占版面。 */
+.ed__acts {
   position: sticky;
-  top: var(--s4);
+  bottom: 0;
+  align-self: flex-end;
+  margin-left: auto;
+  display: grid;
+  gap: var(--s2);
+  justify-items: end;
+  pointer-events: none;   /* 空白处不挡正文的选中 */
+}
+.ed__acts > * {
+  pointer-events: auto;
+}
+.ed__row {
+  display: flex;
+  gap: var(--s2);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  padding: 6px;
+  box-shadow: 0 2px 12px rgb(0 0 0 / 0.25);
+}
+.ed__panel {
+  width: 320px;
+  max-height: 60vh;
+  overflow: auto;
   background: var(--surface);
   border: 1px solid var(--accent);
   border-radius: var(--r-md);
   padding: var(--s4);
+  box-shadow: 0 2px 12px rgb(0 0 0 / 0.25);
 }
+.say {
+  width: 320px;
+  height: 36px;
+}
+
 .ai__head {
   color: var(--accent);
 }

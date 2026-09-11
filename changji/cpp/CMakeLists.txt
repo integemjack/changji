@@ -566,6 +566,7 @@ add_executable(changji
     src/http/editing_batch.cpp
     src/http/media.cpp
     src/http/upload.cpp
+    src/http/tts_api.cpp
     src/http/ref_gen.cpp
     src/http/scripting.cpp
     src/http/story_api.cpp
@@ -825,9 +826,9 @@ if(CHANGJI_BUILD_TESTS)
         tests/unit/test_ref_images.cpp
 
         # 被测的源码。刻意不包含 doctor.cpp、http/server.cpp、
-        # llm/client_http.cpp、comfy/client_http.cpp 和 http/run_deps.cpp ——
-        # 它们链 httplib、asio 或 Crow，而各自的逻辑部分都已经拆到
-        # 不依赖网络库的文件里了。
+        # llm/client_http.cpp、comfy/client_http.cpp、http/run_deps.cpp
+        # 和 http/tts_api.cpp ——它们链 httplib、asio 或 Crow，而各自的
+        # 逻辑部分都已经拆到不依赖网络库的文件里了。
         src/infer/worker_proto.cpp
         src/infer/worker_farm.cpp
         src/http/flow.cpp

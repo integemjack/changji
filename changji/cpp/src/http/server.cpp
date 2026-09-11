@@ -13,6 +13,7 @@
 #include "http/editing.hpp"
 #include "http/media.hpp"
 #include "http/ref_gen.hpp"
+#include "http/tts_api.hpp"
 #include "http/upload.hpp"
 #include "http/readonly.hpp"
 #include "config/runtime.hpp"
@@ -405,6 +406,13 @@ void run(const config::Settings& settings, const Options& opts) {
                 return post_location_reference_clear(
                     parse_body(req.body));
             });
+            return json_response(r.body, r.status);
+        });
+
+    // 念一段字出来。编辑器右下角那个「朗读」。
+    CROW_ROUTE(app, "/api/tts/say").methods("POST"_method)(
+        [](const crow::request& req) {
+            auto r = guard([&] { return post_tts_say(parse_body(req.body)); });
             return json_response(r.body, r.status);
         });
 

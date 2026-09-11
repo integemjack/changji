@@ -155,6 +155,9 @@ export const api = {
   applyRevision: (payload) => post('/api/story/revise/apply', payload),
   // 老项目：从已有剧集反推一份故事骨架。不碰大模型，也不重新分集。
   storyFromEpisodes: (payload) => post('/api/story/from_episodes', payload),
+  // 念一段字出来。**一次最多两百字**（模型一次合成的上限约 41 秒），
+  // 超了回 truncated:true，界面照实说。
+  say: (payload) => post('/api/tts/say', payload),
 
   // ---- 引擎：角色 / 场景 / 风格 ----
   assets: (path) => get('/api/assets', { path }),
