@@ -2029,6 +2029,13 @@ TEST_CASE("说话方式要一路带到正文那一步") {
         s, "ch02", StyleLine::REALISTIC);
     CHECK(q.find("他怕的是：怕被人看见她根本没打算走") != std::string::npos);
 
+    // 弧光也要进来：大纲里填了、人物表里存着，而写正文这一步原来拿不到，
+    // 模型写每一章时不知道这个人要往哪儿走
+    s.characters[0].arc = "躲着走变成敢直视";
+    const std::string r = changji::stages::build_chapter_prompt(
+        s, "ch02", StyleLine::REALISTIC);
+    CHECK(r.find("他会从躲着走变成敢直视") != std::string::npos);
+
     // 没写的人不多这一段——粘贴导入的故事和老项目都没有这一栏
     s.characters[0].voice.clear();
     const std::string none = changji::stages::build_chapter_prompt(
