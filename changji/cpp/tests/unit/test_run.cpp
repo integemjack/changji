@@ -568,6 +568,42 @@ TEST_CASE("预演：skip_final 时不算成片档") {
     CHECK(r.body["estimate_text"] == "2 分钟");
 }
 
+TEST_CASE("预演：成片档要按项目自己的画幅折算，不能照抄档位表") {
+    // 真跑那条路开跑前会调 config::effective_spec，把画幅换成项目
+    // changji.toml 里 [video] 那一档、把步数换成 Turbo 的。预演要是
+    // 照抄档位表里的数字，报出来的时间能和实际差一个数量级——
+    // 实测过一次：预演说"2.1 小时"，实际跑完九分钟。
+    //
+    // 这里不钉死具体秒数（它跟着档位表和 round32 走，改表就得改这儿），
+    // 钉的是**同一批镜头、只把画幅从 720p 换成 2k，报出来的时间必须变长**。
+    const auto store = make_store("预演画幅", {{"ep01", 2}});
+
+    const auto at_720p = http::get_run_preview(project_arg(store), "ep01",
+                                               false, false,
+                                               /*skip_draft=*/true, false,
+                                               preview_profile(true));
+
+    // 项目级配置盖在全局上，[video] 就写在这儿——和
+    // POST /bff/project/video 落的是同一个文件。
+    {
+        std::ofstream toml(store.root() / "changji.toml");
+        toml << "[video]\n";
+        toml << "orientation = \"portrait\"\n";
+        toml << "quality = \"2k\"\n";
+    }
+
+    const auto at_2k = http::get_run_preview(project_arg(store), "ep01", false,
+                                             false, /*skip_draft=*/true, false,
+                                             preview_profile(true));
+
+    const auto s720 = at_720p.body["estimate_s"].get<long long>();
+    const auto s2k = at_2k.body["estimate_s"].get<long long>();
+    CHECK(s720 > 0);
+    // 2k 是 1440×2560，720p 是 544×928——像素数差七倍多，
+    // 时间不可能一样。一样就说明这一处又在照抄档位表了。
+    CHECK(s2k > s720);
+}
+
 TEST_CASE("预演：没标定过就只算配音和首帧那部分") {
     // 档位表里没有实测耗时时 estimate_episode 回空。
     // 那时候不能把渲染当成 0 秒——但也没有别的数可报，

@@ -11,6 +11,7 @@
 #include <vector>
 
 #include "config/runtime.hpp"
+#include "config/settings.hpp"
 #include "infer/sd_image.hpp"
 #include "models/project.hpp"
 #include "pipeline/jobs.hpp"
@@ -388,12 +389,53 @@ ApiResult get_run_preview(const std::string& path,
         }
     }
 
+    // **预览要和真跑的那一条用同一套画幅和步数。**
+    //
+    // 档位表里那个单镜耗时是按**表里的**画幅和步数来的（这台机器上是
+    // 1920×1088 / 30 步）。可真跑那条路在开跑前先调 config::effective_spec，
+    // 把画幅换成项目自己的 [video]（544×928）、把步数换成 Turbo 的 6 步。
+    // 预览不跟上就报"2.1 小时"，而实际十几分钟——差一个数量级，
+    // 而用户是按这个数安排时间的。
+    //
+    // 跟的方式是**按工作量缩放**，不是重算：重算会把这台机器上标定出来的
+    // 实测值扔掉，那份数据比任何公式都准。
+    //
+    // 缩放不是简单的"像素×步数"之比。一镜的时间分两段：
+    //   采样  —— 跟像素走，也跟步数走
+    //   解码  —— 跟像素走，**不跟步数走**（VAE 跑的是最后那一次潜空间，
+    //            六步和三十步解码的东西一样大）
+    // 挂 Turbo 把步数从 30 砍到 6 时，采样那段降到 1/5，解码那段一点没降。
+    // 全按步数比缩的话报出来的数会明显偏小——实测一次：报 9 分钟，
+    // 实际 14 分钟。**预演的价值在于报大不报小**，偏小比没有预演更糟。
+    //
+    // kFixedShare 是解码那段占的比例。2026-09-11 在 5090 上按
+    // 544×928 / Turbo 6 步这一档回归出来是 0.18，取 0.2 略微保守。
+    // 换模型换卡它会变，但"解码不跟步数走"这件事不会变。
+    constexpr double kFixedShare = 0.2;
+
+    const config::Settings proj_settings = config::load_settings(store.root());
+    double final_scale = 1.0;
+    if (const auto it = profile.tiers.find(Tier::FINAL);
+        it != profile.tiers.end()) {
+        const auto& spec = it->second;
+        const double table_px = static_cast<double>(spec.width) * spec.height;
+        if (table_px > 0.0 && spec.steps > 0) {
+            const auto eff = config::effective_spec(proj_settings, spec.steps);
+            const double px_ratio =
+                static_cast<double>(eff.width) * eff.height / table_px;
+            const double step_ratio = static_cast<double>(eff.final_steps) /
+                                      spec.steps;
+            final_scale = px_ratio *
+                          (kFixedShare + (1.0 - kFixedShare) * step_ratio);
+        }
+    }
+
     double seconds = 0.0;
     for (int i = 2; i < kCount; ++i) {
         if (counts[i] == 0) continue;
         const Tier tier = i == 2 ? Tier::DRAFT : Tier::FINAL;
         if (const auto est = profile.estimate_episode(counts[i], tier)) {
-            seconds += *est;
+            seconds += tier == Tier::FINAL ? *est * final_scale : *est;
         }
     }
     // 配音和首帧比渲染快得多，按经验各给一点，别报一个明显偏小的数。
