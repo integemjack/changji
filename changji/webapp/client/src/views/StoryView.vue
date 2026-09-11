@@ -95,6 +95,8 @@ const pending = ref(null)
 const streaming = ref(null)
 /** 当前在看哪一章。空串表示还没挑（进来时自动挑第一章）。 */
 const current = ref('')
+/** 光标落在正文的第几个 UTF-16 位置。打字机模式靠它决定哪一段是"现在"。 */
+const caret = ref(0)
 /** 右下角那排按钮展开的是哪一个面板：'' | 'ai' */
 const panel = ref('')
 /** 朗读出来的那段音频。 */
@@ -272,6 +274,7 @@ function fitAll() {
 
 function onInput(id, event) {
   buf[id] = event.target.value
+  caret.value = event.target.selectionStart
   dirtySnapshot.add(id)
   fit(event.target)
   // 手一动就说明这一版是自己的了，AI 那条"撤销"没有意义了
@@ -282,6 +285,41 @@ function onInput(id, event) {
 function codePoints(text, utf16Offset) {
   return [...text.slice(0, utf16Offset)].length
 }
+/**
+ * 把正文切成"段"，标出光标在哪一段。给打字机模式画高亮用。
+ *
+ * **一行一块，空行断段。** 中文小说就是这么排的：段之间空一行。按句切的话
+ * 高亮会在一段里跳来跳去，比不高亮还乱。
+ *
+ * 每一块**带着自己那个换行符**，拼起来必须和原文一字不差——镜像层和输入框
+ * 是两层叠在一起的，差一个字符两边就错位，而错位之后光标和它下面的字对不上，
+ * 那比没有高亮糟得多。
+ */
+function paragraphs(text, at) {
+  const lines = text.split('\n')
+  // 每一行在原文里的起止（含行尾那个换行符）
+  const spans = []
+  let pos = 0
+  for (let i = 0; i < lines.length; i++) {
+    const withNl = i < lines.length - 1 ? lines[i] + '\n' : lines[i]
+    spans.push({ text: withNl, from: pos, to: pos + withNl.length, blank: !lines[i].trim() })
+    pos += withNl.length
+  }
+  // 光标在哪一行
+  let hit = spans.findIndex((s) => at >= s.from && at < s.to)
+  if (hit < 0) hit = spans.length - 1
+  // 往上下各扩到空行为止，那一整块就是"现在这一段"
+  let lo = hit
+  let hi = hit
+  if (!spans[hit]?.blank) {
+    while (lo > 0 && !spans[lo - 1].blank) lo--
+    while (hi < spans.length - 1 && !spans[hi + 1].blank) hi++
+  }
+  return spans.map((s, i) => ({ text: s.text, now: i >= lo && i <= hi }))
+}
+
+const blocks = computed(() => paragraphs(body.value, caret.value))
+
 /** 码点偏移换回 UTF-16。插完字要用它把光标放回正确的位置。 */
 function utf16At(text, cp) {
   return [...text].slice(0, cp).join('').length
@@ -290,6 +328,7 @@ function utf16At(text, cp) {
 function onSelectionChange(id, event) {
   const el = event.target
   const full = el.value ?? ''
+  caret.value = el.selectionStart
   const from = codePoints(full, el.selectionStart)
   const to = codePoints(full, el.selectionEnd)
   if (to - from < 2) {
@@ -942,20 +981,35 @@ async function stopWriting() {
         <!-- 正文占满。textarea 而不是 contenteditable：selectionStart/End
              直接就是偏移，不用在 DOM 里爬。 -->
         <div class="ed__paper">
-          <textarea
+          <!-- 打字机模式：正在写的那一段亮，其余压暗。
+               **textarea 没法给单独一段上色**，所以在它后面垫一层排版
+               一模一样的镜像，由镜像画高亮，输入框本身文字透明、只留光标。
+               这是给 textarea 做语法高亮的老办法，好处是保住了
+               "偏移即 selectionStart"——上次改错地方的根因就是偏移。 -->
+          <div
             v-if="chapter && (chapter.text || buf[current])"
-            :ref="(el) => (boxes[current] = el)"
-            class="ed__area"
-            spellcheck="false"
-            :value="body"
-            @input="onInput(current, $event)"
-            @select="onSelectionChange(current, $event)"
-            @mouseup="onSelectionChange(current, $event)"
-            @keyup="onSelectionChange(current, $event)"
-            @blur="saveChapter(current)"
-            @keydown.ctrl.s.prevent="saveChapter(current)"
-            @keydown.meta.s.prevent="saveChapter(current)"
-          />
+            class="ed__stack"
+            :class="{ 'ed__stack--dim': ui.focusMode }"
+          >
+            <div v-if="ui.focusMode" class="ed__mirror" aria-hidden="true"><span
+              v-for="(b, i) in blocks"
+              :key="i"
+              :class="{ 'is-now': b.now }"
+            >{{ b.text }}</span><span>&#8203;</span></div>
+            <textarea
+              :ref="(el) => (boxes[current] = el)"
+              class="ed__area"
+              spellcheck="false"
+              :value="body"
+              @input="onInput(current, $event)"
+              @select="onSelectionChange(current, $event)"
+              @mouseup="onSelectionChange(current, $event)"
+              @keyup="onSelectionChange(current, $event)"
+              @blur="saveChapter(current)"
+              @keydown.ctrl.s.prevent="saveChapter(current)"
+              @keydown.meta.s.prevent="saveChapter(current)"
+            />
+          </div>
           <div v-else-if="chapter" class="ed__todo">
             <p class="small dim">{{ chapter.summary }}</p>
             <button
@@ -1144,15 +1198,53 @@ async function stopWriting() {
 /* **不是 flex 容器。** 是过：那时右下角那排按钮成了正文的兄弟 flex item，
    把正文挤到左边去，右边空一大片——"占满"当场落空。按钮改成绝对定位挂在
    右下角之后，正文才真的是这块版面的唯一内容。 */
-.ed__area {
-  display: block;
+/* 镜像和输入框叠在一起。**每一项影响排版的属性都要一模一样**——
+   字体、字号、行高、字距、宽度、padding、white-space、word-break。
+   差一项两层就错位，而错位之后光标和它下面的字对不上，那比没有高亮糟得多。
+   所以它们共用下面这一组声明，不各写一份。 */
+.ed__stack {
+  position: relative;
   width: 100%;
-  /* 行宽卡在 38 个中文字上下，再宽眼睛要回扫。**居中**：占满的是版面，
-     不是行长——一行拉到一米二没人读得下去。 */
   max-width: 38em;
   margin: 0 auto;
-  border: 0;
+}
+.ed__mirror,
+.ed__area {
+  font: inherit;
+  line-height: 1.9;
+  letter-spacing: inherit;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
   padding: 0;
+  border: 0;
+  margin: 0;
+  width: 100%;
+}
+.ed__mirror {
+  position: absolute;
+  inset: 0;
+  color: var(--text-1);
+  pointer-events: none;
+}
+/* 不是"现在"那一段压暗。**压暗不是变灰**——用透明度，字还在那儿，
+   扫一眼看得见上下文，只是不抢眼。 */
+.ed__stack--dim .ed__mirror span {
+  opacity: 0.28;
+  transition: opacity 0.18s;
+}
+.ed__stack--dim .ed__mirror span.is-now {
+  opacity: 1;
+}
+/* 有镜像时输入框的字透明，只留光标和选中背景 */
+.ed__stack--dim .ed__area {
+  color: transparent;
+  caret-color: var(--accent);
+}
+
+.ed__area {
+  display: block;
+  position: relative;
+  width: 100%;
   background: transparent;
   color: inherit;
   font: inherit;
