@@ -488,6 +488,10 @@ else()
     target_compile_options(changji PRIVATE -Wall -Wextra -Wpedantic)
     find_package(Threads REQUIRED)
     target_link_libraries(changji PRIVATE Threads::Threads)
+    # NVML 是运行时 dlopen 的，链接期不依赖它——但 dlopen 本身在老一点的
+    # glibc 上要链 libdl（2.34 之后并进了 libc）。CMAKE_DL_LIBS 在不需要
+    # 的平台上是空的。见 models/hardware.cpp 里的 Nvml。
+    target_link_libraries(changji PRIVATE ${CMAKE_DL_LIBS})
 endif()
 
 # 静态链接 GCC 运行时。默认打开，因为"单一二进制、零运行时依赖"
@@ -721,6 +725,7 @@ if(CHANGJI_BUILD_TESTS)
     if(NOT MSVC)
         find_package(Threads REQUIRED)
         target_link_libraries(changji_tests PRIVATE Threads::Threads)
+        target_link_libraries(changji_tests PRIVATE ${CMAKE_DL_LIBS})
     endif()
     if(WIN32)
         target_link_libraries(changji_tests PRIVATE shell32)

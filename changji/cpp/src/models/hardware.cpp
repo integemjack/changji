@@ -11,6 +11,25 @@
 #include "util/paths.hpp"
 #include "util/proc.hpp"
 
+// NVML（显卡驱动自带的那个库）**运行时加载**，不在链接期依赖它。
+// 见下面 Nvml 上面那段。Mac 上根本没有这条路，整块编译掉。
+#if !defined(__APPLE__)
+#if defined(_WIN32)
+// **这两个必须在 windows.h 之前。** 不定 NOMINMAX 的话它会把 min/max
+// 定义成宏，这个文件下面那些 std::min / std::max 当场编不过
+// （报的是"':' 右边的非法标记"，看不出跟 windows.h 有关系）。
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#else
+#include <dlfcn.h>
+#endif
+#endif
+
 namespace changji::models {
 
 namespace {
@@ -330,6 +349,111 @@ std::optional<double> parse_vm_stat(const std::string& out) {
            (1024.0 * 1024.0 * 1024.0);
 }
 
+namespace {
+#if !defined(__APPLE__)
+
+/// NVML 那个内存结构。**自己声明，不引 nvml.h**：那个头跟着 CUDA toolkit
+/// 走，而我们要的是"装了驱动就能用"，不是"装了 toolkit 才编得过"。
+/// 字段顺序和类型是 NVML 的 ABI，动不得。
+struct NvmlMemory {
+    unsigned long long total;
+    unsigned long long free;
+    unsigned long long used;
+};
+
+/// 直接问驱动要显存，**不 fork**。
+///
+/// 原来只有一条路：fork + exec 去跑 nvidia-smi。两个毛病：
+///
+///   1. **这个进程初始化 CUDA 之后映射着几十 GB**，在这种进程里 fork 是
+///      NVIDIA 明确不支持的做法。问不到的时候调度器就退回保守估算，
+///      于是"显存够就不清理"在真机上可能等于从来没生效过——2026-09-11
+///      在 96 GB 卡上看到的正是"每次出片都把大模型踢掉"。
+///   2. **一次一百毫秒上下。** 它在每次借槽、每次采样第一步的路径上。
+///
+/// NVML 是驱动自带的库（装了 NVIDIA 驱动就有，不用装 CUDA toolkit），
+/// 进程内调，微秒级，不 fork。
+///
+/// **运行时加载、链接期不依赖**：Mac、纯 CPU 的 Linux、没显卡的 Windows
+/// 都得照样起得来。加载不上就回 nullopt，调用方退回 nvidia-smi 那条老路
+/// ——这里只是**加了一条更快更稳的路，没有拆掉任何东西**。
+class Nvml {
+public:
+    /// 加载不上、初始化失败、拿不到卡，一律 nullopt。
+    static std::optional<double> free_gb() {
+        // **每次都看一眼那个开关，不是只在构造时看。** 只在构造时看的话，
+        // 第一次问过之后再设就没用了——而"出了岔子一键关掉"要的正是
+        // 随时能关。getenv 比 dlopen 便宜得多，放在这条路上不心疼。
+        if (!paths::env("CHANGJI_NO_NVML").empty()) return std::nullopt;
+        static Nvml one;   // C++11 起，局部静态的初始化是线程安全的
+        if (!one.ok_) return std::nullopt;
+        void* dev = nullptr;
+        if (one.handle_(0, &dev) != 0 || dev == nullptr) return std::nullopt;
+        NvmlMemory mem{};
+        if (one.mem_(dev, &mem) != 0) return std::nullopt;
+        // total == 0 说明这结构没被填上，别拿它当"空闲 0 字节"用——
+        // 那会让调度器以为卡满了，每次都去卸模型。
+        if (mem.total == 0) return std::nullopt;
+        return static_cast<double>(mem.free) / (1024.0 * 1024 * 1024);
+    }
+
+private:
+    using InitFn = int (*)();
+    using HandleFn = int (*)(unsigned int, void**);
+    using MemFn = int (*)(void*, NvmlMemory*);
+
+#if defined(_WIN32)
+    using LibHandle = HMODULE;
+    static LibHandle open_lib() {
+        if (LibHandle h = ::LoadLibraryA("nvml.dll")) return h;
+        // 老驱动把它装在这儿，不在 System32。
+        return ::LoadLibraryA(
+            "C:\\Program Files\\NVIDIA Corporation\\NVSMI\\nvml.dll");
+    }
+    template <class T>
+    T sym(const char* n) const {
+        return reinterpret_cast<T>(::GetProcAddress(lib_, n));
+    }
+#else
+    using LibHandle = void*;
+    static LibHandle open_lib() {
+        // 带版本号那个才是驱动装的实文件；不带的是 -dev 包里的软链，
+        // 没装开发包的机器上不存在。两个都试。
+        if (LibHandle h = ::dlopen("libnvidia-ml.so.1", RTLD_LAZY | RTLD_LOCAL)) {
+            return h;
+        }
+        return ::dlopen("libnvidia-ml.so", RTLD_LAZY | RTLD_LOCAL);
+    }
+    template <class T>
+    T sym(const char* n) const {
+        return reinterpret_cast<T>(::dlsym(lib_, n));
+    }
+#endif
+
+    Nvml() {
+        lib_ = open_lib();
+        if (!lib_) return;
+        // _v2 是现在的名字；老驱动上只有不带后缀那个。
+        InitFn init = sym<InitFn>("nvmlInit_v2");
+        if (!init) init = sym<InitFn>("nvmlInit");
+        handle_ = sym<HandleFn>("nvmlDeviceGetHandleByIndex_v2");
+        if (!handle_) handle_ = sym<HandleFn>("nvmlDeviceGetHandleByIndex");
+        mem_ = sym<MemFn>("nvmlDeviceGetMemoryInfo");
+        if (!init || !handle_ || !mem_) return;
+        // **不配 nvmlShutdown。** 这个对象活到进程结束；中途关掉的话
+        // 下次问又要重新初始化（几十毫秒），而它在借槽的关键路径上。
+        ok_ = init() == 0;
+    }
+
+    LibHandle lib_ = nullptr;
+    HandleFn handle_ = nullptr;
+    MemFn mem_ = nullptr;
+    bool ok_ = false;
+};
+
+#endif  // !__APPLE__
+}  // namespace
+
 std::optional<double> free_vram_gb() {
 #if defined(__APPLE__)
     // 统一内存：能用的系统内存就是能用的"显存"。
@@ -341,6 +465,9 @@ std::optional<double> free_vram_gb() {
     }
     return std::nullopt;
 #endif
+    // **先问 NVML**（进程内、不 fork、微秒级），问不到再走老路。
+    // 理由写在 Nvml 上面。
+    if (auto gb = Nvml::free_gb(); gb.has_value()) return gb;
     if (!proc::which("nvidia-smi")) return std::nullopt;
     // **超时要短。** 这个函数在每次借槽的路径上，卡住比问不到更糟；
     // 问不到只是退回静态估算。

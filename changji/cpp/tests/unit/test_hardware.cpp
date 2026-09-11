@@ -9,12 +9,14 @@
 
 #include <doctest/doctest.h>
 
+#include <cmath>
 #include <fstream>
 #include <string>
 
 #include <nlohmann/json.hpp>
 
 #include "models/hardware.hpp"
+#include "util/paths.hpp"
 
 using namespace changji::models;
 using json = nlohmann::json;
@@ -156,6 +158,49 @@ TEST_CASE("本机探测能跑通且不崩") {
     }
 }
 
+
+TEST_CASE("问实时空闲显存：有卡就问得到，没卡就老老实实说没有") {
+    // **这条是给 NVML 那条新路兜底的。**
+    //
+    // free_vram_gb 原来只有一条路：fork + exec 跑 nvidia-smi。这个进程
+    // 初始化 CUDA 之后 fork 是 NVIDIA 明确不支持的，问不到就退回保守
+    // 估算——"显存够就不清理"于是可能从来没生效过。现在先问 NVML
+    // （进程内、不 fork），问不到才走老路。
+    //
+    // 契约是：**要么给一个说得通的数，要么说没有，绝不给个荒唐的数**。
+    // 给荒唐的数比说没有更糟：说没有只是退回保守（多卸一次），
+    // 给个偏大的数是 CUDA OOM，abort() 把整个服务带走。
+    const auto gb = free_vram_gb();
+    if (gb.has_value()) {
+        CHECK(*gb >= 0.0);
+        CHECK(*gb < 4096.0);   // 2026 年还没有 4 TB 显存的卡
+        const HardwareProfile p = HardwareProfile::detect();
+        if (p.gpu.has_value()) {
+            // 空闲不可能比整卡还多。**这一条最要紧**：调度器拿它和
+            // "这一路要占多少"直接比，虚报一点点就是一次 OOM。
+            CHECK(*gb <= p.gpu->vram_gb() + 1.0);
+        }
+    }
+    // 没值也是合法答案（没装 NVIDIA 驱动的机器），不该因此判失败。
+}
+
+TEST_CASE("CHANGJI_NO_NVML 能把新路关掉，退回老路") {
+    // 新加一个原生库依赖，得留一个一键关掉的口子。关掉之后仍然要么
+    // 给数、要么给空——不能因为关掉就崩，也不能给个荒唐的数。
+    const auto before = free_vram_gb();
+    changji::paths::set_env("CHANGJI_NO_NVML", "1");
+    const auto after = free_vram_gb();
+    changji::paths::set_env("CHANGJI_NO_NVML", "");
+    if (after.has_value()) {
+        CHECK(*after >= 0.0);
+        CHECK(*after < 4096.0);
+    }
+    // 两条路问的是同一张卡，差得离谱就说明有一条读错了。
+    // 放宽到 4 GB：两次调用之间显存本来就在变。
+    if (before.has_value() && after.has_value()) {
+        CHECK(std::abs(*before - *after) < 4.0);
+    }
+}
 
 TEST_CASE("认得出有几张卡") {
     // **这台开发机只有一张卡，多卡那条路一行都跑不到。**
