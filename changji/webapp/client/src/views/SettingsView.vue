@@ -17,6 +17,7 @@ import { useAction } from '@/composables/useAction'
 import { useUi } from '@/stores/ui'
 import { describeRoomDecision } from '@/composables/room-decision'
 import { describeLlmState } from '@/composables/llm-state'
+import { placementRows as buildPlacementRows } from '@/composables/placement-rows'
 
 const ui = useUi()
 const { run, isBusy } = useAction()
@@ -215,28 +216,7 @@ const llmState = computed(() => describeLlmState(overview.value?.node))
 
 // 程序算出来的权重放置。两个模型各一行；没有这一项（老引擎）就整块不显示。
 const placement = computed(() => effective.value?.placement ?? null)
-const placementRows = computed(() => {
-  const p = placement.value
-  if (!p) return []
-  return [
-    { key: 'image', label: '出首帧', ...(p.image ?? {}) },
-    { key: 'video', label: '出片', ...(p.video ?? {}) },
-  ]
-    .filter((r) => r.weights !== undefined)
-    .map((r) => ({
-      ...r,
-      // **实测值以前后端算了、发了，界面上却没显示。** 只显示估算是误导：
-      // 出片这一路估 14.6 GB、实测 74 GB，差五倍，而"够就不清理"判的是
-      // 实测那个数。摆出来，估算和实测差多少一眼看得见。
-      measured: typeof r.measuredVramGb === 'number' ? r.measuredVramGb : null,
-      // 量的是多大的活（像素 × 帧数）。这个数只在"活不比当时大"时才算数，
-      // 而画幅档位从 0.5 MP 到 3.7 MP 差七倍多——所以不能只报字节数。
-      measuredWorkMp:
-        typeof r.measuredWork === 'number' && r.measuredWork > 0
-          ? Math.round(r.measuredWork / 1e6)
-          : null,
-    }))
-})
+const placementRows = computed(() => buildPlacementRows(placement.value))
 
 /**
  * 最近一次「要不要腾地方」的判断，翻成人话。
