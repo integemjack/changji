@@ -114,3 +114,70 @@ TEST_CASE("没生完也拿得到已经生出来的那些") {
     CHECK(s.text() == "写到一半");
     CHECK_FALSE(s.done());
 }
+
+// ---------------------------------------------------------------------------
+// 一串字符串：章节正文的真实形状
+// ---------------------------------------------------------------------------
+//
+// **这一组是补一个真出过的洞。** c41821d 把章节正文从 `{"text": "..."}` 改成
+// `{"paragraphs": ["...", "..."]}`，而流式这一层还在找名叫 text 的字符串字段，
+// 于是一个字都抠不出来——界面上就是"AI 写作没有热更新插入内容"，而后端不报
+// 任何错、正文最后照样落库，查起来毫无线索。
+
+TEST_CASE("一串字符串：一段一项，按换行拼回去") {
+    const std::string raw =
+        json{{"paragraphs", json::array({"第一段。", "第二段。", "第三段。"})},
+             {"hooks", json::array()}}
+            .dump();
+    // **分隔符必须和 parse_chapter 拼 paragraphs 用的那个一致**，否则边看边
+    // 写的和最后落库的段距不一样，而那种不一致没人会想到来查流式这一层。
+    const std::string want = "第一段。\n第二段。\n第三段。";
+    for (std::size_t chunk : {1u, 2u, 3u, 7u, 4096u}) {
+        CAPTURE(chunk);
+        JsonFieldStreamer s("paragraphs");
+        std::string got;
+        for (std::size_t i = 0; i < raw.size(); i += chunk) {
+            got += s.feed(raw.substr(i, chunk));
+        }
+        CHECK(got == want);
+        CHECK(s.done());
+    }
+}
+
+TEST_CASE("一串字符串：最后一项后面不留分隔符") {
+    // 补在下一项开头、不补在上一项结尾。补在结尾的话最后一项后面会多出一个，
+    // 而流式是边看边写的——那个多出来的换行会一直挂在光标前面。
+    JsonFieldStreamer s("paragraphs");
+    const std::string got = s.feed(R"({"paragraphs":["甲。","乙。"]})");
+    CHECK(got == "甲。\n乙。");
+    CHECK(s.done());
+}
+
+TEST_CASE("一串字符串：数组里的转义和 u 转义照样认") {
+    const std::string raw = R"({"paragraphs":["他说：\"走\"。","中文\n下一行"]})";
+    JsonFieldStreamer s("paragraphs");
+    CHECK(s.feed(raw) == "他说：\"走\"。\n中文\n下一行");
+}
+
+TEST_CASE("一串字符串：收完就不再收后面的 hooks") {
+    // hooks 里每一条也有 text 字段，而且它整个也是个数组。paragraphs 收完
+    // done 了就该闭嘴——不然钩子说明会被当成正文流进编辑器。
+    const std::string raw =
+        R"({"paragraphs":["正文一。","正文二。"],"hooks":[{"text":"钩子","after":"正文二。"}]})";
+    JsonFieldStreamer s("paragraphs");
+    CHECK(s.feed(raw) == "正文一。\n正文二。");
+    CHECK(s.done());
+}
+
+TEST_CASE("一串字符串：空数组也收得住") {
+    JsonFieldStreamer s("paragraphs");
+    CHECK(s.feed(R"({"paragraphs":[],"hooks":[]})").empty());
+    CHECK(s.done());
+}
+
+TEST_CASE("老形状还认：text 是一个字符串") {
+    // 粘贴导入和改 schema 之前存的草稿走的还是老形状，parse_chapter 也还认它。
+    JsonFieldStreamer s("text");
+    CHECK(s.feed(R"({"text":"整段正文。"})") == "整段正文。");
+    CHECK(s.done());
+}

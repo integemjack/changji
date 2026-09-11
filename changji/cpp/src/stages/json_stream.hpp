@@ -22,15 +22,27 @@
 
 namespace changji::stages {
 
-/// 从 JSON token 流里抠一个顶层字符串字段。
+/// 从 JSON token 流里抠一个顶层字段：**一个字符串，或者一串字符串**。
 ///
 /// 用法：每来一段 token 就 feed 一次，返回**这一次新解出来的字符**（可能
-/// 是空串）。字段的字符串一结束，done() 变真，之后 feed 一律返回空。
+/// 是空串）。字段收完了 done() 变真，之后 feed 一律返回空。
 ///
 /// 只认**顶层对象的第一层**键。嵌套对象里的同名键不认——这一层不需要，
 /// 而认了就得维护一个真正的 JSON 栈。
+///
+/// ⚠️ **数组那条的分隔符必须和落库那边拼得一模一样。** 章节正文的 schema
+/// 是 `{"paragraphs": [...]}`，`parse_chapter` 按 `\n` 把它们拼回去；
+/// 这里要是拼成别的，边看边写的和最后落库的就对不上——而人是照着流出来
+/// 那一版判断"写得行不行"的。见 `kArraySeparator`。
 class JsonFieldStreamer {
 public:
+    /// 数组那条里，两项之间补什么。
+    ///
+    /// **和 `stages::parse_chapter` 拼 paragraphs 用的那个字符一致。**
+    /// 两处各写各的话，编辑器里看到的段距和存下来的段距不一样——而那种
+    /// 不一致没人会想到去查流式这一层。
+    static constexpr const char* kArraySeparator = "\n";
+
     explicit JsonFieldStreamer(std::string field);
 
     /// 喂一段原始文本，拿回新解出来的字符。
@@ -47,7 +59,8 @@ private:
         SeekKey,    ///< 在找下一个 `"`（可能是键的开头）
         InKey,      ///< 正在读一个键名
         AfterKey,   ///< 键名读完了，等冒号
-        SeekValue,  ///< 等值那个 `"`
+        SeekValue,  ///< 等值那个 `"` 或者 `[`
+        SeekItem,   ///< 数组里，等下一项的 `"` 或者收尾的 `]`
         InValue,    ///< 正在读值，这一段才往外吐
         Escape,     ///< 值里遇到了 `\`
         Unicode,    ///< 正在收 \uXXXX 的四位
@@ -61,6 +74,8 @@ private:
     std::string hex_;      ///< \uXXXX 收到一半的那几位
     std::uint16_t high_ = 0;  ///< 代理对的高位，等低位来配
     bool key_escape_ = false;  ///< 键名里的转义。键名一般没有，但不能崩
+    bool array_ = false;       ///< 这个字段是一串字符串，不是一个字符串
+    bool wrote_any_ = false;   ///< 已经吐过至少一项（决定要不要先补分隔符）
 };
 
 }  // namespace changji::stages

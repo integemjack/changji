@@ -84,17 +84,43 @@ std::string JsonFieldStreamer::feed(const std::string& piece) {
             case State::SeekValue:
                 if (c == '"') {
                     state_ = State::InValue;
+                } else if (c == '[') {
+                    // **一串字符串。** 章节正文的 schema 就是这个形状
+                    // （paragraphs 一段一项）。2026-09-11 栽过一次：改
+                    // schema 那次这里还只认字符串，于是流式一个字都抠不
+                    // 出来——界面上就是"AI 写作没有热更新"，而后端不报
+                    // 任何错，正文最后照样落库，所以查起来毫无线索。
+                    array_ = true;
+                    state_ = State::SeekItem;
                 } else if (c != ' ' && c != '\t' && c != '\n' && c != '\r') {
-                    // 值不是字符串（数组、数字）。这一层只管字符串。
+                    // 既不是字符串也不是数组（数字、对象）。这一层不管。
                     state_ = State::SeekKey;
                 }
+                break;
+
+            case State::SeekItem:
+                if (c == '"') {
+                    // 两项之间补分隔符。**补在下一项开头、不补在上一项结尾**：
+                    // 补在结尾的话最后一项后面会多出一个，而流式是边看边写的，
+                    // 那个多出来的换行会一直挂在光标前面。
+                    if (wrote_any_) {
+                        fresh += kArraySeparator;
+                        out_ += kArraySeparator;
+                    }
+                    state_ = State::InValue;
+                } else if (c == ']') {
+                    state_ = State::Done;
+                }
+                // 逗号和空白跳过
                 break;
 
             case State::InValue:
                 if (c == '\\') {
                     state_ = State::Escape;
                 } else if (c == '"') {
-                    state_ = State::Done;
+                    wrote_any_ = true;
+                    // 数组里一项收完还有下一项；单个字符串收完就完了。
+                    state_ = array_ ? State::SeekItem : State::Done;
                 } else {
                     fresh.push_back(c);
                     out_.push_back(c);

@@ -383,7 +383,10 @@ ApiResult post_story_chapter(const json& body, llm::Client& client,
         if (stream_id.empty()) {
             raw = client.complete(req, tok);
         } else {
-            stages::JsonFieldStreamer field("text");
+            // **抠的是 paragraphs，不是 text。** c41821d 把章节正文从一个字符串
+            // 改成了一段一项的数组，而这里没跟着改——于是流式一个字都抠
+            // 不出来，界面上就是"AI 写作没有热更新"，后端不报任何错。
+            stages::JsonFieldStreamer field("paragraphs");
             int seq = 0;
             raw = client.complete(req, tok, [&](const std::string& piece) {
                 const std::string fresh = field.feed(piece);
