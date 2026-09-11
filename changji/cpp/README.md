@@ -62,7 +62,7 @@ cmake --build build
 > 一大坨运行时依赖，而且 leejet 那套 ggml 扩展补丁**没有覆盖
 > ggml-sycl**（覆盖了 CPU / CUDA / Metal / Vulkan，见
 > [patches/README.md](patches/README.md)）——SYCL 上的 fp8 权重多半加载不了。
-> 六个 GPU 包由 CI 编，见
+> 八个 GPU 包由 CI 编，见
 > [.github/workflows/release.yml](../../.github/workflows/release.yml)。
 
 开 `CHANGJI_LLAMA` 时 ggml 由 llama.cpp 提供，并且**就地打上 leejet 的扩展

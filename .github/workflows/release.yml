@@ -27,6 +27,11 @@
 #
 # 换 runner 标签就改矩阵里那一行，别的地方不用动。
 #
+# 这六个是**纯 CPU** 的包。带显卡的另有一档（下面的 build-gpu），
+# Windows 和 Linux 各四条路：cuda / rocm / sycl / vulkan，包名就是
+# `changji-<系统>-x64-<后端>`。那一档只在**打 tag 或者手动勾选**时跑，
+# 理由和触发条件写在它自己那段注释里。
+#
 # ⚠️ **每推一次分支就是六个平台各编一遍 sd.cpp + llama.cpp**，一轮几十分钟。
 # 只改文档也照编。嫌费的话在 on.push 底下加 paths-ignore。
 
@@ -37,6 +42,11 @@ on:
     branches: ['**']
     tags: ['v*']
   workflow_dispatch:
+    inputs:
+      gpu:
+        description: '连 GPU 包一起编（CUDA / ROCm / SYCL / Vulkan，八个格子，几小时）'
+        type: boolean
+        default: false
 
 # 同一个分支上连推两次，把上一次没跑完的取消掉——beta 上只留最后一次的
 # 结果，早一次跑完也是白跑。
@@ -56,9 +66,20 @@ jobs:
     outputs:
       version: ${{ steps.v.outputs.version }}
       channel: ${{ steps.v.outputs.channel }}
+      gpu: ${{ steps.v.outputs.gpu }}
     steps:
       - id: v
+        env:
+          # push 事件下这个是空串——只有手动跑才有值。
+          WANT_GPU: ${{ inputs.gpu }}
         run: |
+          # **GPU 那八格默认不跑。** 一轮几十个核·小时，而只改了一行
+          # 文案的提交也会照跑。打 tag（正式发布）时必跑，手动跑时看勾没勾。
+          if [ "${GITHUB_REF_TYPE}" = "tag" ] || [ "$WANT_GPU" = "true" ]; then
+            echo "gpu=true"  >> "$GITHUB_OUTPUT"
+          else
+            echo "gpu=false" >> "$GITHUB_OUTPUT"
+          fi
           if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
             echo "version=${GITHUB_REF_NAME}"  >> "$GITHUB_OUTPUT"
             echo "channel=release"             >> "$GITHUB_OUTPUT"
@@ -304,10 +325,557 @@ jobs:
           name: changji-${{ matrix.target }}
           path: dist/*
 
+  # ---- 八个 GPU 格子 ----
+  #
+  # 上面那六格编的是**纯 CPU** 的包：能跑，但出一镜按小时算。这一档编的是
+  # 带 GPU 后端的，Windows 和 Linux 各四条路：
+  #
+  #   *-cuda     N 卡原生。最快，也是这个项目唯一在实机上长期跑过的一条。
+  #   *-rocm     A 卡原生（HIP）。编的就是 ggml-cuda 那批 .cu，拿 ROCm 的
+  #              clang 过一遍。**跑的机器上要有 ROCm / HIP SDK。**
+  #   *-sycl     Intel 原生（oneAPI）。**跑的机器上要有 oneAPI 运行时。**
+  #   *-vulkan   N/A/I 通吃。慢于原生，但只要显卡驱动，解开就能跑——
+  #              **A 卡和 Intel 卡的用户先给这个**，另外两条是给愿意装
+  #              厂商全家桶换性能的人准备的。
+  #
+  # **这一档不跟着每次推分支跑。** 一格动辄一两个小时（每多一个显卡架构，
+  # ggml 那几百个 .cu 就整体多编一遍），八格一起是几十个核·小时。触发：
+  #
+  #   打 tag        → 跑
+  #   手动跑        → 勾上 "连 GPU 包一起编" 才跑
+  #   推分支        → 不跑（beta 上只有 CPU 包）
+  #
+  # **哪一格挂了都不挡发布。** publish 只等上面六个 CPU 格子；GPU 这边编出
+  # 几个就发几个，发布说明里那张表也是照 dist/ 里真有的东西生成的。理由是
+  # 这八格依赖四家厂商的安装器，而那些下载地址会烂——为了一个烂掉的下载
+  # 地址把整个 Release 卡住不值。
+  #
+  # **两个 Windows 安装器的地址是会烂的。** 烂了在仓库
+  # Settings → Secrets and variables → Actions → Variables 里覆盖，
+  # 不用改这个文件：
+  #   HIP_WIN_URL     AMD 每季度换一次文件名。新的在
+  #                   https://www.amd.com/en/developer/resources/rocm-hub/hip-sdk.html
+  #   ONEAPI_WIN_URL  Intel 的地址里带一串 UUID，没有稳定别名，所以没有
+  #                   默认值。没设的话 windows-x64-sycl 这一格会当场停，
+  #                   并把怎么拿这个地址打在日志里。
+  build-gpu:
+    name: 编 ${{ matrix.target }}
+    needs: [meta, webapp, test]
+    if: needs.meta.outputs.gpu == 'true'
+    runs-on: ${{ matrix.runner }}
+    # 360 就是 GitHub 的上限，而且真会用满。超时了就减下面两个架构列表。
+    timeout-minutes: 360
+    env:
+      CHANGJI_VERSION: ${{ needs.meta.outputs.version }}
+
+      # **编给哪些 N 卡架构。** `-real` 出机器码，`-virtual` 出 PTX。
+      # 75-virtual 压在最低一档是兜底：**PTX 只往新了 JIT，不往旧了**，
+      # 所以下面没列到的卡（RTX 20xx / A100 / H100 …）都能靠它跑起来——
+      # 第一次跑每个内核现编一遍，慢，但不是"跑不了"。
+      # 每多一项，这一格的时间差不多线性涨。
+      CUDA_ARCH: '75-virtual;86-real;89-real;120-real'
+      # A 卡这边**没有**那种兜底：列表外的卡运行时直接报
+      # "no kernel image is available for execution on the device"。
+      # 所以宁可列长一点，代价是编译时间和产物大小。
+      # gfx1030=RX6800/6900，gfx1100=RX7900，gfx1101=RX7800/7700，
+      # gfx1102=RX7600，gfx120x=RX9000（要 ROCm ≥ 6.4）。
+      HIP_ARCH: 'gfx1030;gfx1100;gfx1101;gfx1102;gfx1200;gfx1201'
+
+      # 版本钉死，理由同 CMakeLists 里那几个 GIT_TAG。
+      # CUDA 要 ≥ 12.8，不然 sm_120（5090）编不出来。
+      CUDA_APT: '12-8'
+      CUDA_DIR: '/usr/local/cuda-12.8'
+      CUDA_WIN_VER: '12.8.1'
+      CUDA_WIN_COMP: '12.8'
+      ROCM_VER: '6.4.1'
+      HIP_WIN_URL: ${{ vars.HIP_WIN_URL || 'https://download.amd.com/developer/eula/rocm-hub/AMD-Software-PRO-Edition-25.Q3-Win10-Win11-For-HIP.exe' }}
+      ONEAPI_WIN_URL: ${{ vars.ONEAPI_WIN_URL }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { target: linux-x64-cuda,     runner: ubuntu-22.04, gpu: cuda }
+          - { target: linux-x64-rocm,     runner: ubuntu-22.04, gpu: rocm }
+          - { target: linux-x64-sycl,     runner: ubuntu-22.04, gpu: sycl }
+          - { target: linux-x64-vulkan,   runner: ubuntu-22.04, gpu: vulkan }
+          - { target: windows-x64-cuda,   runner: windows-2022, gpu: cuda }
+          - { target: windows-x64-rocm,   runner: windows-2022, gpu: rocm }
+          - { target: windows-x64-sycl,   runner: windows-2022, gpu: sycl }
+          - { target: windows-x64-vulkan, runner: windows-2022, gpu: vulkan }
+    steps:
+      - uses: actions/checkout@v4
+
+      # runner 上只有二十几 G 空闲，而 ROCm 装完就十几 G，CUDA 的中间产物
+      # （一个架构一套）又是十几 G。**不腾地方的表现是编到一半
+      # "No space left on device"**，那行报错淹在几千行编译输出里，
+      # 看起来像是某个源文件编不过。
+      - name: 腾地方（Linux）
+        if: runner.os == 'Linux'
+        run: |
+          df -h /
+          # **别动 $AGENT_TOOLSDIRECTORY。** 下一步的 setup-python 要往那里
+          # 装东西，删了它最好的情况是白下一遍 Python，最坏是那一步直接挂。
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+                      /usr/local/share/boost /usr/local/.ghcup \
+                      /opt/hostedtoolcache/CodeQL
+          sudo apt-get clean
+          df -h /
+
+      # 理由同上面那一档：CHANGJI_LLAMA=ON 要 Python 打 leejet 的补丁。
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: bundled-webapp
+          path: changji/cpp/src/http/
+
+      - name: 装 ninja（Linux）
+        if: runner.os == 'Linux'
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq ninja-build
+
+      # Windows 上只有 rocm / sycl 两格用 Ninja（理由见下面那两步），
+      # 而 runner 自带的 ninja 不一定在 PATH 上，装一个省事。
+      - name: 装 ninja（Windows）
+        if: runner.os == 'Windows' && (matrix.gpu == 'rocm' || matrix.gpu == 'sycl')
+        run: choco install ninja -y --no-progress
+
+      # ---- 各家的工具链 ----
+
+      # **只装真正用得到的那几个包，别装 `cuda` 这个元包。**
+      # 元包 8 G 起步（nsight、profiler、示例全拖下来），这里要的只有
+      # nvcc、cudart、cublas，外加 CCCL——ggml-cuda 里用了 cub/thrust。
+      - name: 装 CUDA（Linux）
+        if: runner.os == 'Linux' && matrix.gpu == 'cuda'
+        run: |
+          curl -fsSLo /tmp/cuda-keyring.deb \
+            https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/cuda-keyring_1.1-1_all.deb
+          sudo dpkg -i /tmp/cuda-keyring.deb
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends \
+            cuda-nvcc-${CUDA_APT} cuda-cudart-dev-${CUDA_APT} \
+            cuda-cccl-${CUDA_APT} libcublas-dev-${CUDA_APT}
+          echo "${CUDA_DIR}/bin" >> "$GITHUB_PATH"
+          echo "CUDA_PATH=${CUDA_DIR}" >> "$GITHUB_ENV"
+          "${CUDA_DIR}/bin/nvcc" --version
+
+      # 网络安装器，只点名要的组件。`-s` 是静默安装。
+      - name: 装 CUDA（Windows）
+        if: runner.os == 'Windows' && matrix.gpu == 'cuda'
+        shell: pwsh
+        run: |
+          $url = "https://developer.download.nvidia.com/compute/cuda/$env:CUDA_WIN_VER/network_installers/cuda_${env:CUDA_WIN_VER}_windows_network.exe"
+          Write-Host "下载 $url"
+          curl.exe -fL --retry 3 -o cuda.exe $url
+          if ($LASTEXITCODE -ne 0) { throw "CUDA 安装器下载失败：$url" }
+          $c = $env:CUDA_WIN_COMP
+          $comp = @("nvcc","cudart","cublas","cublas_dev","thrust",
+                    "cuda_profiler_api","visual_studio_integration") |
+                  ForEach-Object { "${_}_$c" }
+          Start-Process -Wait -FilePath .\cuda.exe -ArgumentList (@("-s") + $comp)
+          $cuda = "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v$c"
+          if (-not (Test-Path "$cuda\bin\nvcc.exe")) {
+            throw "CUDA 装完了但 $cuda\bin\nvcc.exe 不在。组件名或者版本号对不上了。"
+          }
+          # **两个变量都要设。** MSBuild 的 CUDA 集成查的是带版本号的那个
+          # （CUDA_PATH_V12_8），CMake 的 find_program 查的是 CUDA_PATH。
+          # 只设一个的表现是"配置过了，编的时候说找不到 CUDA toolset"。
+          "CUDA_PATH=$cuda" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+          "CUDA_PATH_V$($c -replace '\.','_')=$cuda" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+          "$cuda\bin" | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
+          # 保险：安装器认不出 VS 的时候不会放集成文件，而那时候 CMake 报的
+          # 是 "No CUDA toolset found"，看不出和这一步有关系。
+          $bc = "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\MSBuild\Microsoft\VC\v170\BuildCustomizations"
+          $ext = "$cuda\extras\visual_studio_integration\MSBuildExtensions"
+          if ((Test-Path $ext) -and (Test-Path $bc)) {
+            Copy-Item "$ext\*" -Destination $bc -Force
+          }
+
+      # rocm-hip-sdk 把编译器、hipBLAS、rocBLAS 都带上。rocBLAS 的 Tensile
+      # 内核库很大（每个 gfx 一套），这是上面要先腾地方的主要原因。
+      - name: 装 ROCm（Linux）
+        if: runner.os == 'Linux' && matrix.gpu == 'rocm'
+        run: |
+          sudo mkdir -p /etc/apt/keyrings
+          curl -fsSL https://repo.radeon.com/rocm/rocm.gpg.key \
+            | sudo gpg --dearmor -o /etc/apt/keyrings/rocm.gpg
+          echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/rocm.gpg] https://repo.radeon.com/rocm/apt/${ROCM_VER} jammy main" \
+            | sudo tee /etc/apt/sources.list.d/rocm.list
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends \
+            rocm-hip-sdk rocblas-dev hipblas-dev
+          echo "ROCM_PATH=/opt/rocm" >> "$GITHUB_ENV"
+          echo "HIP_PATH=/opt/rocm"  >> "$GITHUB_ENV"
+          echo "/opt/rocm/bin"       >> "$GITHUB_PATH"
+          /opt/rocm/bin/hipconfig --version
+          df -h /
+
+      - name: 装 HIP SDK（Windows）
+        if: runner.os == 'Windows' && matrix.gpu == 'rocm'
+        shell: pwsh
+        run: |
+          Write-Host "下载 $env:HIP_WIN_URL"
+          # -f：404 要当场失败。AMD 每季度换文件名，不加 -f 的话下回来的是
+          # 一个 HTML 错误页，然后安装器"装完了"而什么都没装上。
+          curl.exe -fL --retry 3 -o hip-sdk.exe $env:HIP_WIN_URL
+          if ($LASTEXITCODE -ne 0) {
+            throw ("HIP SDK 下载失败。AMD 换地址了——新的在 " +
+                   "https://www.amd.com/en/developer/resources/rocm-hub/hip-sdk.html ，" +
+                   "拿到之后在仓库 Settings -> Variables 里设 HIP_WIN_URL，不用改 workflow。")
+          }
+          Start-Process -Wait -FilePath .\hip-sdk.exe -ArgumentList '-install'
+          $hip = Get-ChildItem "C:\Program Files\AMD\ROCm" -Directory -ErrorAction SilentlyContinue |
+                 Sort-Object Name | Select-Object -Last 1
+          if (-not $hip) { throw "HIP SDK 装完了但 C:\Program Files\AMD\ROCm 下什么都没有。" }
+          "HIP_PATH=$($hip.FullName)"  | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+          "ROCM_PATH=$($hip.FullName)" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+          "$($hip.FullName)\bin"       | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
+
+      # dpcpp-cpp 是编译器，mkl-devel 是 ggml-sycl 要的 BLAS。
+      # 别装 intel-basekit 那个元包，几十 G，runner 放不下。
+      - name: 装 oneAPI（Linux）
+        if: runner.os == 'Linux' && matrix.gpu == 'sycl'
+        run: |
+          curl -fsSL https://apt.repos.intel.com/intel-gpg-keys/GPG-PUB-KEY-INTEL-SW-PRODUCTS.PUB \
+            | sudo gpg --dearmor -o /usr/share/keyrings/intel-oneapi.gpg
+          echo "deb [signed-by=/usr/share/keyrings/intel-oneapi.gpg] https://apt.repos.intel.com/oneapi all main" \
+            | sudo tee /etc/apt/sources.list.d/oneAPI.list
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends \
+            intel-oneapi-compiler-dpcpp-cpp intel-oneapi-mkl-devel
+          # **setvars.sh 改的是当前 shell 的环境，而下一步是一个全新的
+          # shell。** 不把它落到 GITHUB_ENV 上的话，下一步的 icpx 根本不在
+          # PATH 上，报的是"找不到编译器"，和这一步看不出关系。
+          set +u
+          source /opt/intel/oneapi/setvars.sh --force > /dev/null
+          set -u
+          for v in PATH LD_LIBRARY_PATH LIBRARY_PATH CPATH CMAKE_PREFIX_PATH \
+                   CMPLR_ROOT MKLROOT ONEAPI_ROOT OCL_ICD_FILENAMES; do
+            printf '%s=%s\n' "$v" "${!v-}" >> "$GITHUB_ENV"
+          done
+          icpx --version
+
+      - name: 装 oneAPI（Windows）
+        if: runner.os == 'Windows' && matrix.gpu == 'sycl'
+        shell: pwsh
+        run: |
+          # 这里不用 PowerShell 的 here-string（@" ... "@）：它的结束标记必须
+          # 顶在行首，而 YAML 的块标量要求每一行都比 run: 缩进得更深——
+          # 两个要求打架，写出来的 workflow **整个文件解析不了**。
+          if (-not $env:ONEAPI_WIN_URL) {
+            throw (@(
+              '没有配 ONEAPI_WIN_URL，这一格编不了。',
+              '',
+              'Intel 的 Windows 安装器地址里带一串 UUID，没有稳定别名，',
+              '所以没法写死在 workflow 里。拿法：',
+              '  1. 开 https://www.intel.com/content/www/us/en/developer/tools/oneapi/base-toolkit-download.html',
+              '  2. 选 Windows / Offline Installer，复制那个 .exe 的直链',
+              '  3. 仓库 Settings -> Secrets and variables -> Actions -> Variables',
+              '     里加一个 ONEAPI_WIN_URL',
+              '',
+              '只想让 Intel 卡能用、不想折腾的话：windows-x64-vulkan 那个包',
+              '就跑得了 Intel 显卡，这一格可以一直红着。'
+            ) -join [Environment]::NewLine)
+          }
+          curl.exe -fL --retry 3 -o oneapi.exe $env:ONEAPI_WIN_URL
+          if ($LASTEXITCODE -ne 0) { throw "oneAPI 安装器下载失败，检查 ONEAPI_WIN_URL。" }
+          # 只点名编译器和 MKL；整个 BaseKit 几十 G，runner 放不下。
+          Start-Process -Wait -FilePath .\oneapi.exe -ArgumentList @(
+            "-s","-a","--silent","--eula","accept","--action","install",
+            "--components","intel.oneapi.win.cpp-dpcpp-common:intel.oneapi.win.mkl.devel")
+          $sv = "C:\Program Files (x86)\Intel\oneAPI\setvars.bat"
+          if (-not (Test-Path $sv)) { throw "oneAPI 装完了但找不到 $sv。" }
+
+      # LunarG 的 SDK 里带 glslc——ggml-vulkan 编之前要拿它把几百个 .comp
+      # 着色器编成 SPIR-V。发行版自带的 libvulkan-dev 只有头和 loader，
+      # 没有 glslc，那时候构建会在十几分钟之后才报"找不到 glslc"。
+      - name: 装 Vulkan SDK（Linux）
+        if: runner.os == 'Linux' && matrix.gpu == 'vulkan'
+        run: |
+          curl -fsSL https://packages.lunarg.com/lunarg-signing-key-pub.asc \
+            | sudo tee /etc/apt/trusted.gpg.d/lunarg.asc > /dev/null
+          sudo curl -fsSLo /etc/apt/sources.list.d/lunarg-vulkan-jammy.list \
+            https://packages.lunarg.com/vulkan/lunarg-vulkan-jammy.list
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq vulkan-sdk
+          glslc --version
+
+      # **这个地址故意不钉版本。** LunarG 把带版本号的下载链接收得比较勤，
+      # 钉一个具体版本反而更容易烂；而 Vulkan SDK 对我们来说只是"一个
+      # glslc 加一组头"，版本漂移的风险比链接烂掉小。装完之后目录名里带
+      # 版本号，所以下面那个路径是扫出来的，不是写死的。
+      - name: 装 Vulkan SDK（Windows）
+        if: runner.os == 'Windows' && matrix.gpu == 'vulkan'
+        shell: pwsh
+        run: |
+          curl.exe -fL --retry 3 -o vulkan-sdk.exe `
+            "https://sdk.lunarg.com/sdk/download/latest/windows/vulkan_sdk.exe"
+          if ($LASTEXITCODE -ne 0) { throw "Vulkan SDK 下载失败。" }
+          Start-Process -Wait -FilePath .\vulkan-sdk.exe `
+            -ArgumentList "--accept-licenses","--default-answer","--confirm-command","install"
+          $sdk = Get-ChildItem "C:\VulkanSDK" -Directory -ErrorAction SilentlyContinue |
+                 Sort-Object Name | Select-Object -Last 1
+          if (-not $sdk) { throw "Vulkan SDK 装完了但 C:\VulkanSDK 下什么都没有。" }
+          "VULKAN_SDK=$($sdk.FullName)" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+          "$($sdk.FullName)\Bin"        | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
+
+      # ---- 配置 + 编 ----
+      #
+      # **产物位置统一到 build/out/。** 四条路的生成器不一样（VS 生成器把
+      # 东西放 Release/ 下，Ninja 直接放构建根），而后面验证和打包的步骤是
+      # 共用的；不统一的话每一步都要再分一次叉。
+      # 带配置名的那个变量（..._RELEASE）**不会**再追加一层 Release/ 子目录，
+      # 两个都设才能让两种生成器落在同一处。
+
+      - name: 配置 + 编（Linux）
+        if: runner.os == 'Linux'
+        run: |
+          EXTRA=()
+          case "${{ matrix.gpu }}" in
+            cuda)
+              EXTRA+=(-DCHANGJI_SD_CUDA=ON "-DCHANGJI_CUDA_ARCH=$CUDA_ARCH"
+                      "-DCMAKE_CUDA_COMPILER=$CUDA_DIR/bin/nvcc") ;;
+            rocm)
+              EXTRA+=(-DCHANGJI_SD_HIP=ON "-DCHANGJI_HIP_ARCH=$HIP_ARCH"
+                      -DCMAKE_HIP_COMPILER=/opt/rocm/llvm/bin/clang++
+                      -DCMAKE_PREFIX_PATH=/opt/rocm) ;;
+            sycl)
+              EXTRA+=(-DCHANGJI_SD_SYCL=ON -DCMAKE_C_COMPILER=icx
+                      -DCMAKE_CXX_COMPILER=icpx) ;;
+            vulkan)
+              EXTRA+=(-DCHANGJI_SD_VULKAN=ON) ;;
+          esac
+          # $ORIGIN 要原样进 RUNPATH，所以是单引号。被 shell 展开的话 rpath
+          # 变成空串，而那个二进制**在构建机上照样跑得起来**（系统路径里有
+          # 那些 .so），只有别人解开包才报找不到库。
+          cmake -S changji/cpp -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCHANGJI_VERSION="$CHANGJI_VERSION" \
+            -DCHANGJI_SD=ON \
+            -DCHANGJI_LLAMA=ON \
+            -DCHANGJI_BUILD_TESTS=OFF \
+            -DGGML_NATIVE=OFF \
+            -DCMAKE_RUNTIME_OUTPUT_DIRECTORY="$PWD/out" \
+            -DCMAKE_RUNTIME_OUTPUT_DIRECTORY_RELEASE="$PWD/out" \
+            '-DCMAKE_BUILD_RPATH=$ORIGIN' \
+            "${EXTRA[@]}"
+          cmake --build build --target changji --parallel
+
+      # Windows 的 cuda / vulkan 两格用 VS 生成器，理由同上面那一档：
+      # 它自己去找工具链，不用先 call vcvarsall.bat。
+      - name: 配置 + 编（Windows：CUDA / Vulkan）
+        if: runner.os == 'Windows' && (matrix.gpu == 'cuda' || matrix.gpu == 'vulkan')
+        shell: pwsh
+        run: |
+          $out = ((Get-Location).Path -replace '\\','/') + "/out"
+          $extra = if ("${{ matrix.gpu }}" -eq "cuda") {
+            @("-DCHANGJI_SD_CUDA=ON", "-DCHANGJI_CUDA_ARCH=$env:CUDA_ARCH")
+          } else {
+            @("-DCHANGJI_SD_VULKAN=ON")
+          }
+          cmake -S changji/cpp -B build -G "Visual Studio 17 2022" -A x64 `
+            -DCHANGJI_VERSION="$env:CHANGJI_VERSION" `
+            -DCHANGJI_SD=ON `
+            -DCHANGJI_LLAMA=ON `
+            -DCHANGJI_BUILD_TESTS=OFF `
+            -DGGML_NATIVE=OFF `
+            -DCMAKE_RUNTIME_OUTPUT_DIRECTORY="$out" `
+            -DCMAKE_RUNTIME_OUTPUT_DIRECTORY_RELEASE="$out" `
+            @extra
+          if ($LASTEXITCODE -ne 0) { throw "配置失败" }
+          cmake --build build --config Release --target changji --parallel
+          if ($LASTEXITCODE -ne 0) { throw "编译失败" }
+
+      # **Windows 上的 HIP 走另一条路：整个工程都得用 HIP SDK 里那个 clang
+      # 编。** ggml 的 ggml-hip/CMakeLists.txt 里写着 Windows 上不走
+      # enable_language(HIP)，而是把那批 .cu 当普通 C++ 交给当前的 C++
+      # 编译器——所以那个编译器必须是认识 HIP 的那一个，MSVC 不行。
+      # 也因此这一格只能用 Ninja：VS 生成器换不掉编译器。
+      - name: 配置 + 编（Windows：ROCm）
+        if: runner.os == 'Windows' && matrix.gpu == 'rocm'
+        shell: pwsh
+        run: |
+          $hip = $env:HIP_PATH -replace '\\','/'
+          $out = ((Get-Location).Path -replace '\\','/') + "/out"
+          cmake -S changji/cpp -B build -G Ninja `
+            -DCMAKE_BUILD_TYPE=Release `
+            -DCMAKE_C_COMPILER="$hip/bin/clang.exe" `
+            -DCMAKE_CXX_COMPILER="$hip/bin/clang++.exe" `
+            -DCHANGJI_VERSION="$env:CHANGJI_VERSION" `
+            -DCHANGJI_SD=ON `
+            -DCHANGJI_LLAMA=ON `
+            -DCHANGJI_BUILD_TESTS=OFF `
+            -DGGML_NATIVE=OFF `
+            -DCHANGJI_SD_HIP=ON `
+            -DCHANGJI_HIP_ARCH="$env:HIP_ARCH" `
+            -DCMAKE_RUNTIME_OUTPUT_DIRECTORY="$out" `
+            -DCMAKE_RUNTIME_OUTPUT_DIRECTORY_RELEASE="$out"
+          if ($LASTEXITCODE -ne 0) { throw "配置失败" }
+          cmake --build build --target changji --parallel
+          if ($LASTEXITCODE -ne 0) { throw "编译失败" }
+
+      # setvars.bat 只能在 cmd 里 call，而且它改的环境只活在那个 cmd 进程
+      # 里——所以配置和编译得和它写在同一个批处理里一次跑完。
+      #
+      # **这个 .bat 里只能写 ASCII。** cmd 按系统 ANSI 代码页读 bat，
+      # UTF-8 的中文写在 rem 行里会被拆成乱码命令报错。所以下面没有中文。
+      - name: 配置 + 编（Windows：SYCL）
+        if: runner.os == 'Windows' && matrix.gpu == 'sycl'
+        shell: pwsh
+        run: |
+          # 一行一个元素拼出来，不用 here-string——理由同上面那一步：
+          # here-string 的结束标记要顶行首，而 YAML 块标量不许。
+          $cv = $env:CHANGJI_VERSION
+          $out = ((Get-Location).Path -replace '\\','/') + "/out"
+          $bat = @(
+            '@echo off',
+            'call "C:\Program Files (x86)\Intel\oneAPI\setvars.bat" intel64 --force',
+            'if errorlevel 1 exit /b 1',
+            'cmake -S changji/cpp -B build -G Ninja ^',
+            '  -DCMAKE_BUILD_TYPE=Release ^',
+            '  -DCMAKE_C_COMPILER=icx -DCMAKE_CXX_COMPILER=icx ^',
+            "  -DCHANGJI_VERSION=$cv ^",
+            '  -DCHANGJI_SD=ON -DCHANGJI_LLAMA=ON -DCHANGJI_BUILD_TESTS=OFF ^',
+            '  -DGGML_NATIVE=OFF -DCHANGJI_SD_SYCL=ON ^',
+            "  -DCMAKE_RUNTIME_OUTPUT_DIRECTORY=$out ^",
+            "  -DCMAKE_RUNTIME_OUTPUT_DIRECTORY_RELEASE=$out",
+            'if errorlevel 1 exit /b 1',
+            'cmake --build build --target changji --parallel',
+            'if errorlevel 1 exit /b 1'
+          )
+          Set-Content -Path build_sycl.bat -Value $bat -Encoding ascii
+          cmd /c build_sycl.bat
+          if ($LASTEXITCODE -ne 0) { throw "SYCL 构建失败（退出码 $LASTEXITCODE）" }
+
+      # ---- 验一下 ----
+      #
+      # **"编出来的二进制里到底有没有那个后端"必须在这儿问一次。**
+      #
+      # 这不是假想的：2026-09-10 在 5090 上手敲配置命令漏了
+      # -DCMAKE_CUDA_COMPILER，配置过了、编译过了、服务起得来、任务也开跑，
+      # 只是全在 CPU 上——一镜跑了五个多小时才两步，而 nvidia-smi 上一个
+      # 计算进程都没有。查出来靠的就是 `strings 二进制 | grep -c ggml_cuda`，
+      # 0 对 2348。CI 上没有显卡、跑不了真推理，但这个判据不需要显卡。
+      #
+      # rocm 那格找的也是 ggml_cuda_：ggml-hip 编的就是 ggml-cuda 那批 .cu，
+      # 函数名原样留在断言字符串里。
+      - name: 验一下（Unix）
+        if: runner.os != 'Windows'
+        run: |
+          BIN=out/changji
+          test -f "$BIN" || { echo "产物不在 $BIN，实际编到哪儿去了："; find out build -maxdepth 3 -name 'changji*' 2>/dev/null; exit 1; }
+          "$BIN" --version
+          test "$("$BIN" --version)" = "$CHANGJI_VERSION"
+          case "${{ matrix.gpu }}" in
+            cuda|rocm) MARK=ggml_cuda_ ;;
+            sycl)      MARK=ggml_sycl_ ;;
+            vulkan)    MARK=ggml_vk_ ;;
+          esac
+          N=$(strings -a "$BIN" | grep -c -- "$MARK" || true)
+          echo "$MARK 在二进制里出现 $N 次"
+          if [ "$N" -lt 1 ]; then
+            echo "**${{ matrix.gpu }} 后端根本没编进去。** 编是编出来了，但它只会用 CPU——"
+            echo "发出去的话用户看到的是「能跑，但慢得离谱」，而且查不出原因。"
+            exit 1
+          fi
+          ldd "$BIN" || true
+
+      - name: 验一下（Windows）
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $bin = "out/changji.exe"
+          if (-not (Test-Path $bin)) {
+            Get-ChildItem out, build -Recurse -Filter changji.exe -ErrorAction SilentlyContinue |
+              Select-Object FullName
+            throw "产物不在 $bin"
+          }
+          $v = & $bin --version
+          Write-Host $v
+          if ($v -ne $env:CHANGJI_VERSION) { throw "版本号对不上：$v" }
+          $mark = switch ("${{ matrix.gpu }}") {
+            "cuda"   { "ggml_cuda_" }
+            "rocm"   { "ggml_cuda_" }
+            "sycl"   { "ggml_sycl_" }
+            "vulkan" { "ggml_vk_" }
+          }
+          # 分块扫，别一次读进内存：CUDA 那格的 exe 有好几百兆，整个转成
+          # .NET 字符串是两倍大小，runner 上会直接 OOM。
+          $fs = [IO.File]::OpenRead((Resolve-Path $bin))
+          $size = 16MB
+          $buf = New-Object byte[] $size
+          $carry = ''
+          $n = 0
+          while (($read = $fs.Read($buf, 0, $size)) -gt 0) {
+            $s = $carry + [Text.Encoding]::Latin1.GetString($buf, 0, $read)
+            $n += [regex]::Matches($s, [regex]::Escape($mark)).Count
+            $carry = $s.Substring([Math]::Max(0, $s.Length - $mark.Length))
+          }
+          $fs.Close()
+          Write-Host "$mark 在二进制里出现 $n 次"
+          if ($n -lt 1) {
+            throw "**${{ matrix.gpu }} 后端根本没编进去。** 编是编出来了，但它只会用 CPU——发出去的话用户看到的是「能跑，但慢得离谱」，而且查不出原因。"
+          }
+
+      # ---- 打包 ----
+      #
+      # **cuda 和 vulkan 这两条把运行时库一起塞进包里**，解开就能跑；
+      # rocm 和 sycl 不塞——ROCm 的 rocBLAS 内核库和 oneAPI 的 MKL 都是按
+      # G 算的，塞进去 Release 挂不住。那两个包要求机器上已经装了对应的
+      # 运行时，发布说明里写了。
+      - name: 打包（Unix）
+        if: runner.os != 'Windows'
+        run: |
+          mkdir -p dist stage
+          cp out/changji stage/
+          cp changji/README.md stage/
+          # 照 ldd 说缺什么就带什么，别猜文件名——CUDA 小版本一换，写死的
+          # libcublas.so.12.8.x 就会变成"复制失败"，或者更糟：复制了一个
+          # 二进制根本不去找的文件，而包看起来是齐的。
+          # rocm / sycl 两格在这儿什么都匹配不上，于是什么都不带——是故意的，
+          # 那两家的运行时按 G 算，塞不进一个 Release 资产。
+          LIBS=$(ldd out/changji | awk '$3 ~ /libcudart|libcublas|libcublasLt|libnvrtc|libvulkan/ {print $3}' || true)
+          for so in $LIBS; do
+            cp -L "$so" stage/
+            echo "带上 $so"
+          done
+          ls -lh stage/
+          tar -czf "dist/changji-${{ matrix.target }}.tar.gz" -C stage .
+          ls -lh dist/
+
+      - name: 打包（Windows）
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist, stage | Out-Null
+          Copy-Item out/changji.exe stage/
+          Copy-Item changji/README.md stage/
+          if ("${{ matrix.gpu }}" -eq "cuda") {
+            foreach ($pat in @("cudart64_*.dll","cublas64_*.dll","cublasLt64_*.dll")) {
+              Get-ChildItem "$env:CUDA_PATH\bin" -Filter $pat |
+                ForEach-Object { Copy-Item $_.FullName stage/; Write-Host "带上 $($_.Name)" }
+            }
+          }
+          Get-ChildItem stage | Format-Table Name, Length
+          Compress-Archive -Path stage/* -DestinationPath "dist/changji-${{ matrix.target }}.zip"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: changji-${{ matrix.target }}
+          path: dist/*
+
   # ---- 发布 ----
   publish:
     name: 发到 ${{ needs.meta.outputs.channel == 'release' && 'Release' || 'beta 预发布' }}
-    needs: [meta, build]
+    # **等 build-gpu，但不被它挡住。** 写进 needs 是为了"等它跑完再发"，
+    # 不然 GPU 包编好的时候 Release 已经建完了，得再发一次。
+    # 下面那个 if 才是关键：只要六个 CPU 格子全过就发，GPU 那八格挂几个都
+    # 照发——它们依赖四家厂商的下载地址，为了一个烂掉的链接把整个 Release
+    # 卡住不值。build-gpu 被跳过（推分支那种）时 needs 的结果是 skipped，
+    # 没有 always()/!cancelled() 的话这个 job 会跟着被跳过。
+    needs: [meta, build, build-gpu]
+    if: ${{ !cancelled() && needs.build.result == 'success' && needs.meta.result == 'success' }}
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -334,21 +902,49 @@ jobs:
           sha256sum changji-* | tee SHA256SUMS
           ls -lh
 
+      # **表是照 dist/ 里真有的东西生成的，不是写死的。**
+      # GPU 那八格挂几个都照发（见上面 publish 的 if），写死一张表的话
+      # 里面会有点下去 404 的链接——而那正是用户最需要分清"这次有没有编
+      # 出来"的时候。没编出来就不列，列出来的就一定在。
       - name: 写发布说明
         run: |
-          cat > notes.md <<'EOF'
-          | 系统 | 架构 | 包 |
-          |---|---|---|
-          | Linux | x64 | `changji-linux-x64.tar.gz` |
-          | Linux | arm64 | `changji-linux-arm64.tar.gz` |
-          | macOS | Apple 芯片 | `changji-macos-arm64.tar.gz` |
-          | macOS | Intel | `changji-macos-x64.tar.gz` |
-          | Windows | x64 | `changji-windows-x64.zip` |
-          | Windows | arm64 | `changji-windows-arm64.zip` |
+          {
+            echo "| 系统 | 显卡 | 包 | 要先装什么 |"
+            echo "|---|---|---|---|"
+            while read -r name os gpu note; do
+              [ -f "dist/$name" ] || continue
+              printf '| %s | %s | `%s` | %s |\n' "$os" "$gpu" "$name" "$note"
+            done <<'ROWS'
+          changji-linux-x64.tar.gz          Linux    不用（纯CPU）  —
+          changji-linux-arm64.tar.gz        Linux(arm64) 不用（纯CPU） —
+          changji-macos-arm64.tar.gz        macOS(Apple芯片) Metal（自带） —
+          changji-macos-x64.tar.gz          macOS(Intel) 不用（纯CPU） —
+          changji-windows-x64.zip           Windows  不用（纯CPU）  —
+          changji-windows-arm64.zip         Windows(arm64) 不用（纯CPU） —
+          changji-linux-x64-cuda.tar.gz     Linux    NVIDIA         驱动就行，CUDA 运行时在包里
+          changji-linux-x64-rocm.tar.gz     Linux    AMD（原生）    **要先装 ROCm ≥ 6.1**
+          changji-linux-x64-sycl.tar.gz     Linux    Intel（原生）  **要先装 oneAPI 运行时**
+          changji-linux-x64-vulkan.tar.gz   Linux    三家通吃          驱动就行，N/A/I 都能用
+          changji-windows-x64-cuda.zip      Windows  NVIDIA         驱动就行，CUDA 运行时在包里
+          changji-windows-x64-rocm.zip      Windows  AMD（原生）    **要先装 AMD HIP SDK**
+          changji-windows-x64-sycl.zip      Windows  Intel（原生）  **要先装 oneAPI 运行时**
+          changji-windows-x64-vulkan.zip    Windows  三家通吃          驱动就行，N/A/I 都能用
+          ROWS
+            echo
+            cat <<'EOF'
+          **不知道挑哪个就看这两句：**
 
-          解开就是一个可执行文件，没有运行时依赖。**装配和字幕烧录要
-          ffmpeg**，系统 PATH 里有就行。模型权重不在包里，第一次打开界面
-          会让你选，选完它自己下。
+          - N 卡 → `-cuda`。A 卡、Intel 卡、核显 → `-vulkan`，解开就能跑。
+          - 不带后缀的那六个是**纯 CPU** 的：能跑通全流程，但出一镜按小时算，
+            适合先试试界面。
+
+          `-rocm` 和 `-sycl` 是原生后端，比 Vulkan 快，代价是机器上要先有
+          厂商的运行时（ROCm / oneAPI）——没有的话程序**起都起不来**，
+          报的是缺 .so / 缺 .dll。装了再来。
+
+          除了 `-rocm` / `-sycl`，解开就是一个可执行文件加上它要的运行时库，
+          没有别的依赖。**装配和字幕烧录要 ffmpeg**，系统 PATH 里有就行。
+          模型权重不在包里，第一次打开界面会让你选，选完它自己下。
 
           ```
           changji --version       手上这个是哪一版
@@ -358,6 +954,8 @@ jobs:
 
           `SHA256SUMS` 是这些包的校验和。
           EOF
+          } > notes.md
+          cat notes.md
 
       - name: 建 Release（正式版）
         if: needs.meta.outputs.channel == 'release'
