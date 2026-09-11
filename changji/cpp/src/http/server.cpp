@@ -756,6 +756,21 @@ void run(const config::Settings& settings, const Options& opts) {
                                                  {"lastRoomDecision", dec}};
             }
         }
+        // 进程内大模型能同时跑几路。
+        //
+        // **配的和实际开出来的要分开摆。** [llm].parallel 是上限，真开几个
+        // 由显存说了算（第一个开不出来才算失败，后面的开不出来只是并发度低
+        // 一档）。只显示配置的话，用户配了 4 会以为就是 4 路，而实际可能
+        // 只有 1 路——那时候「同时编两个项目会互相等」就成了没法解释的怪事。
+        {
+            const auto st = llm::local_llm_status();
+            out["effective"]["llm"] = {
+                {"backend", s.llm.backend},
+                {"parallelWanted", s.llm.parallel},
+                {"loaded", st.loaded},
+                {"slots", st.slots},
+                {"contextTokens", st.context_tokens}};
+        }
         // **体检要发网络请求，最坏二十多秒。** Node 那份也是同步等的，
         // 形状要一致就只能照做；Crow 是线程池，占住一个工作线程不影响别的请求。
         out["doctor"] = to_json(doctor::run_checks(s));

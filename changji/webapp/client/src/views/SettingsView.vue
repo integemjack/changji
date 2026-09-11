@@ -216,6 +216,7 @@ const llmState = computed(() => describeLlmState(overview.value?.node))
 
 // 程序算出来的权重放置。两个模型各一行；没有这一项（老引擎）就整块不显示。
 const placement = computed(() => effective.value?.placement ?? null)
+const llmRuntime = computed(() => effective.value?.llm ?? null)
 const placementRows = computed(() => buildPlacementRows(placement.value))
 
 /**
@@ -428,6 +429,45 @@ function scrollTo(id) {
                  不给看是另一个极端：出图慢到底是卡不行、还是权重在内存里
                  每步搬一趟，用户没有线索。排查 GPU 利用率 18% 那次，
                  答案就是这一项，当时得连上机器看日志才知道。 -->
+            <!-- **能同时跑几路。** 配的和实际开出来的要分开摆：
+                 [llm].parallel 是上限，真开几个由显存说了算。只显示配置的话，
+                 配了 4 的人会以为就是 4 路，而实际可能只有 1 路——那时候
+                 「同时编两个项目会互相等」就成了没法解释的怪事。 -->
+            <div
+              v-if="embedded && llmRuntime && llmRuntime.backend === 'local'"
+              class="field"
+            >
+              <span class="field__label">大模型能同时跑几路</span>
+              <div class="mono tiny">
+                <template v-if="!llmRuntime.loaded">
+                  还没装上（用到的时候才装）。配的上限是
+                  {{ llmRuntime.parallelWanted }} 路。
+                </template>
+                <template v-else>
+                  <span
+                    class="pill tiny"
+                    :class="
+                      llmRuntime.slots >= llmRuntime.parallelWanted
+                        ? 'pill--ok'
+                        : 'pill--warn'
+                    "
+                  >
+                    {{ llmRuntime.slots }} 路
+                  </span>
+                  配的上限 {{ llmRuntime.parallelWanted }} 路，每路上下文
+                  {{ llmRuntime.contextTokens }} token
+                  <template v-if="llmRuntime.slots < llmRuntime.parallelWanted">
+                    —— <strong>显存只够开这么多</strong>
+                  </template>
+                </template>
+              </div>
+              <span class="field__hint">
+                一路就是一个上下文。**权重只载一份，每路自己一份 KV cache**，
+                所以多一路就多吃一份显存——它跟出图出片抢同一张卡。
+                池满了之后新的请求**排队等**，不会失败。
+              </span>
+            </div>
+
             <div v-if="embedded && placement" class="field">
               <span class="field__label">权重放哪（程序自己算的）</span>
               <div class="stack">

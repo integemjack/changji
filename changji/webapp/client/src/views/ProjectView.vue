@@ -10,6 +10,7 @@ import { useRouter } from 'vue-router'
 
 import AppIcon from '@/components/AppIcon.vue'
 import EmptyState from '@/components/EmptyState.vue'
+import { projectStage } from '@/composables/project-stage'
 import StepHeader from '@/components/StepHeader.vue'
 import { api } from '@/api'
 import { humanAgo, useAction } from '@/composables/useAction'
@@ -220,9 +221,9 @@ async function remove() {
   await load()
 }
 
-function progressOf(p) {
-  if (!p.shots) return 0
-  return Math.round((p.done_shots / p.shots) * 100)
+/** 这部剧到哪一步了。判断在 composables/project-stage.js，那儿有用例盯着。 */
+function stageOf(p) {
+  return projectStage(p)
 }
 </script>
 
@@ -550,21 +551,37 @@ function progressOf(p) {
           </div>
 
           <h3 class="proj__name truncate">{{ p.name }}</h3>
-          <p class="proj__dir tiny dim truncate mono">{{ p.dir }}</p>
+          <!-- **一句话说清这是讲什么的剧。** 名字常常就是目录名（321、
+               雨夜天台），认不出剧情；logline 是故事层写下来的那一句。
+               没有故事的老项目退回用梗概，两个都没有才摆路径。 -->
+          <p v-if="p.logline" class="proj__line small truncate">{{ p.logline }}</p>
+          <p v-else class="proj__dir tiny dim truncate mono">{{ p.dir }}</p>
 
           <p v-if="p.broken" class="proj__broken small">读不了：{{ p.broken }}</p>
 
           <template v-else>
-            <div class="proj__stats">
-              <span><b class="numeric">{{ p.episodes }}</b> 集</span>
-              <span><b class="numeric">{{ p.shots }}</b> 镜</span>
-              <span><b class="numeric">{{ p.outputs }}</b> 成片</span>
+            <!-- **进度说的是「到哪一步了」，不是「出片百分比」。**
+                 原来只有后者，于是刚建的空项目和故事写完还没分镜的项目
+                 都是 0%，看上去一模一样。 -->
+            <div class="proj__stage" :class="`proj__stage--${stageOf(p).tone}`">
+              {{ stageOf(p).label }}
             </div>
             <div class="proj__bar">
-              <div class="proj__bar-fill" :style="{ width: progressOf(p) + '%' }" />
+              <div
+                class="proj__bar-fill"
+                :class="`proj__bar-fill--${stageOf(p).tone}`"
+                :style="{ width: stageOf(p).percent + '%' }"
+              />
             </div>
+            <!-- 原始计数降级到底栏：挑项目时先看「到哪一步了」，
+                 数字是确认用的，不是用来认项目的。 -->
             <div class="proj__foot tiny dim">
-              <span>{{ p.shots ? `${progressOf(p)}% 已出片` : '还没分镜' }}</span>
+              <span class="numeric">
+                <template v-if="p.chapters">{{ p.chapters }} 章 · </template>
+                <template v-if="p.episodes">{{ p.episodes }} 集 · </template>
+                <template v-if="p.shots">{{ p.shots }} 镜</template>
+                <template v-if="!p.chapters && !p.episodes && !p.shots">空的</template>
+              </span>
               <span>{{ humanAgo(p.mtime) }}</span>
             </div>
           </template>
@@ -740,6 +757,36 @@ function progressOf(p) {
 .proj__stats b {
   color: var(--text);
   font-weight: 600;
+}
+.proj__line {
+  margin-top: 2px;
+  color: var(--text-2);
+  line-height: 1.5;
+}
+.proj__stage {
+  margin-top: var(--s3);
+  font-size: var(--fs-sm);
+  font-weight: 600;
+}
+.proj__stage--ok {
+  color: var(--ok);
+}
+.proj__stage--warn {
+  color: var(--warn);
+}
+.proj__stage--accent {
+  color: var(--accent);
+}
+.proj__stage--dim,
+.proj__stage--bad {
+  color: var(--text-3);
+  font-weight: 400;
+}
+.proj__bar-fill--ok {
+  background: var(--ok);
+}
+.proj__bar-fill--warn {
+  background: var(--warn);
 }
 .proj__bar {
   height: 4px;

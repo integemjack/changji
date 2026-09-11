@@ -24,6 +24,16 @@ std::shared_ptr<infer::LlamaChat> current() {
 
 }  // namespace
 
+LocalLlmStatus local_llm_status() {
+    LocalLlmStatus st;
+    auto chat = current();
+    if (!chat) return st;
+    st.loaded = true;
+    st.slots = chat->slots();
+    st.context_tokens = chat->context_tokens();
+    return st;
+}
+
 std::string LocalClient::complete(const Request& req,
                                   pipeline::CancelToken& tok) {
     if (tok.cancelled()) throw LlmError("已取消");

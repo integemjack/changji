@@ -8,6 +8,7 @@
 #include "models/project.hpp"
 #include "util/fs_time.hpp"
 #include "util/paths.hpp"
+#include "util/text.hpp"
 
 namespace fs = std::filesystem;
 using json = nlohmann::json;
@@ -366,6 +367,29 @@ ApiResult get_projects(const config::Settings& settings) {
                 mtime = util::file_mtime_unix(pf);
             }
 
+            // 故事那几个数。**挑项目时真正想知道的是「这部剧讲什么、到哪
+            // 一步了」**，而不是三个产出计数——刚建的空项目和故事写完还没
+            // 分镜的项目，在「出片百分比」上都是 0%，看上去一模一样。
+            //
+            // 多读一个 story.json 的代价：它可能有几百 KB（章节正文全在
+            // 里面）。但这个列表本来就在读 project.json，而那个装着整张
+            // 分镜表，通常更大——多这一份不改变量级。
+            std::string logline;
+            int chapters = 0;
+            int written_chapters = 0;
+            int planned_episodes = 0;
+            try {
+                const auto story = store.load_story();
+                logline = story.logline.empty() ? story.premise : story.logline;
+                chapters = static_cast<int>(story.chapters.size());
+                written_chapters = story.written_chapters();
+                planned_episodes = static_cast<int>(story.plan.size());
+            } catch (const std::exception&) {
+                // 读不了就当没有。**一个坏掉的 story.json 不该让整个项目库
+                // 列不出来**——那时候用户连"去哪个项目修它"都看不见。
+            }
+            if (logline.empty()) logline = project.premise;
+
             items.push_back({json{
                 {"path", paths::to_utf8(child)},
                 // 目录名单独给，前端不该自己去切路径分隔符，
@@ -377,6 +401,10 @@ ApiResult get_projects(const config::Settings& settings) {
                 {"shots", shots},
                 {"done_shots", done},
                 {"outputs", outputs},
+                {"logline", text::truncate_utf8(text::collapse_ws(logline), 80)},
+                {"chapters", chapters},
+                {"written_chapters", written_chapters},
+                {"planned_episodes", planned_episodes},
                 {"mtime", mtime},
             }, mtime});
         }

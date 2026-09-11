@@ -23,6 +23,19 @@ public:
                          pipeline::CancelToken& tok) override;
 };
 
+/// 进程内那条现在是什么状态。设置页的引擎卡读它。
+///
+/// **并发度是算不出来的，只能问。** 配置里 `[llm].parallel` 是个上限，
+/// 实际开出来几个上下文由显存说了算（见 LlamaChat::load）。界面上不把
+/// 这两个数分开摆，用户会以为自己配了 4 就是 4 路，而实际可能只有 1 路。
+struct LocalLlmStatus {
+    bool loaded = false;
+    int slots = 0;           ///< 实际开出来的上下文数，也就是能同时跑几路
+    int context_tokens = 0;  ///< 每个上下文多长
+};
+
+LocalLlmStatus local_llm_status();
+
 /// 把大模型注册成调度器的一个槽。
 ///
 /// **`[llm].backend != "local"` 时什么都不做**：远端那条没有本地权重，
