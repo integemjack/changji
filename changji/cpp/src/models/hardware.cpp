@@ -390,7 +390,8 @@ class Nvml {
 public:
     /// 总量和空闲，**一次问出来的**。加载不上、初始化失败、拿不到卡，
     /// 一律 nullopt。
-    static std::optional<VramTotals> totals() {
+    /// idx = 这个进程绑在哪张卡上（物理编号）。见 visible_device_index。
+    static std::optional<VramTotals> totals(unsigned int idx) {
         // **每次都看一眼那个开关，不是只在构造时看。** 只在构造时看的话，
         // 第一次问过之后再设就没用了——而"出了岔子一键关掉"要的正是
         // 随时能关。getenv 比 dlopen 便宜得多，放在这条路上不心疼。
@@ -398,7 +399,7 @@ public:
         static Nvml one;   // C++11 起，局部静态的初始化是线程安全的
         if (!one.ok_) return std::nullopt;
         void* dev = nullptr;
-        if (one.handle_(0, &dev) != 0 || dev == nullptr) return std::nullopt;
+        if (one.handle_(idx, &dev) != 0 || dev == nullptr) return std::nullopt;
         NvmlMemory mem{};
         if (one.mem_(dev, &mem) != 0) return std::nullopt;
         // total == 0 说明这结构没被填上，别拿它当"空闲 0 字节"用——
@@ -466,6 +467,51 @@ private:
 #endif  // !__APPLE__
 }  // namespace
 
+std::optional<unsigned int> parse_visible_devices(const std::string& raw) {
+    // 没设 = 全部可见，进程里的 0 号就是物理 0 号。
+    std::string first;
+    for (char c : raw) {
+        if (c == ',') break;
+        if (!std::isspace(static_cast<unsigned char>(c))) first += c;
+    }
+    if (first.empty()) return 0u;
+    // **UUID 那种形式认不出来。** "GPU-xxxx" 是合法写法，但没法换算成
+    // NVML 的下标。不猜——猜错了是问到别的卡上去，而那个方向会 OOM。
+    for (char c : first) {
+        if (!std::isdigit(static_cast<unsigned char>(c))) return std::nullopt;
+    }
+    try {
+        const unsigned long v = std::stoul(first);
+        if (v > 64) return std::nullopt;   // 不像是卡号，别当真
+        return static_cast<unsigned int>(v);
+    } catch (const std::exception&) {
+        return std::nullopt;
+    }
+}
+
+std::optional<unsigned int> visible_device_index() {
+    return parse_visible_devices(paths::env("CUDA_VISIBLE_DEVICES"));
+}
+
+/// nvidia-smi 一张卡一行，取第 idx 行（从 0 数）。取不到返回空串。
+/// 理由同 visible_device_index：绑了卡就不能只看第一行。
+std::string nth_gpu_line(const std::string& out, unsigned int idx) {
+    std::size_t i = 0;
+    unsigned int seen = 0;
+    while (i <= out.size()) {
+        const std::size_t nl = out.find('\n', i);
+        const std::size_t end = nl == std::string::npos ? out.size() : nl;
+        const std::string line = out.substr(i, end - i);
+        if (line.find_first_not_of(" \t\r") != std::string::npos) {
+            if (seen == idx) return line;
+            ++seen;
+        }
+        if (nl == std::string::npos) break;
+        i = nl + 1;
+    }
+    return {};
+}
+
 std::optional<double> free_vram_gb() {
 #if defined(__APPLE__)
     // 统一内存：能用的系统内存就是能用的"显存"。
@@ -481,9 +527,13 @@ std::optional<double> free_vram_gb() {
 // 在 !__APPLE__ 里，Mac 上根本不存在。2026-09-11 就是这么挂的：
 // Windows 和 Linux 全绿，macOS 单元测试编不过（undeclared identifier）。
 #else
+    // **先算清楚这个进程绑的是哪张卡。** 认不出来就当问不到——猜错卡
+    // 是拿别人卡上的空闲去判"够，不卸"，下一步 OOM。见 visible_device_index。
+    const auto idx = visible_device_index();
+    if (!idx.has_value()) return std::nullopt;
     // **先问 NVML**（进程内、不 fork、微秒级），问不到再走老路。
     // 理由写在 Nvml 上面。
-    if (auto t = Nvml::totals(); t.has_value()) return t->free_gb;
+    if (auto t = Nvml::totals(*idx); t.has_value()) return t->free_gb;
     if (!proc::which("nvidia-smi")) return std::nullopt;
     // **超时要短。** 这个函数在每次借槽的路径上，卡住比问不到更糟；
     // 问不到只是退回静态估算。
@@ -491,7 +541,10 @@ std::optional<double> free_vram_gb() {
         "nvidia-smi",
         {"--query-gpu=memory.free", "--format=csv,noheader,nounits"}, 5000);
     if (!r.launched || r.exit_code != 0) return std::nullopt;
-    return parse_free_vram(r.out);
+    // 一张卡一行，取自己那一行，不是第一行。
+    const std::string line = nth_gpu_line(r.out, *idx);
+    if (line.empty()) return std::nullopt;
+    return parse_free_vram(line);
 #endif
 }
 
@@ -501,7 +554,9 @@ std::optional<VramTotals> vram_totals_gb() {
     // 就不硬凑一个。调用方拿不到就走原来那条两次问的老路。
     return std::nullopt;
 #else
-    if (auto t = Nvml::totals(); t.has_value()) return t;
+    const auto idx = visible_device_index();
+    if (!idx.has_value()) return std::nullopt;   // 理由同 free_vram_gb
+    if (auto t = Nvml::totals(*idx); t.has_value()) return t;
     // 退路：一次 nvidia-smi 同时要两个数。**一次，不是两次**——
     // 分两次问的话两个数来自两个时刻，差值就不是这个槽占的。
     if (!proc::which("nvidia-smi")) return std::nullopt;
@@ -510,7 +565,7 @@ std::optional<VramTotals> vram_totals_gb() {
                         "--format=csv,noheader,nounits"},
                        5000);
     if (!r.launched || r.exit_code != 0) return std::nullopt;
-    const std::string first = r.out.substr(0, r.out.find('\n'));
+    const std::string first = nth_gpu_line(r.out, *idx);
     const std::size_t comma = first.find(',');
     if (comma == std::string::npos) return std::nullopt;
     const auto total = parse_free_vram(first.substr(0, comma));

@@ -118,6 +118,37 @@ std::optional<double> free_vram_gb();
 /// 顺带把采样那条路上的 fork 去掉：detect 会跑一遍完整硬件探测
 /// （fork nvidia-smi、查 PATH、读 CPU 信息），而它是在 sd.cpp 的采样
 /// 回调里调的——那正是这个进程 CUDA 映射最满、最不该 fork 的时候。
+/// 这个进程实际在用第几张卡（**NVML / nvidia-smi 的物理编号**）。
+///
+/// **NVML 不认 `CUDA_VISIBLE_DEVICES`。** 工作进程正是靠它绑卡的
+/// （见 worker_server.cpp），于是进程里 CUDA 的 0 号可能是物理的 3 号，
+/// 而 NVML 的 0 号永远是物理 0 号。不换算的话，绑在 3 号上的工作进程
+/// 问到的是 0 号的空闲——两张卡的忙闲毫无关系。
+///
+/// 问小了只是多卸一次模型（慢）；**问大了是拿别人卡上的空闲去判
+/// "够，不卸"，下一步就是 OOM**，走 GGML_ASSERT 把整个进程带走。
+///
+/// 规则：没设这个变量就是 0 号；设了就取第一项（进程里的 0 号对应的
+/// 就是列表里第一个）。认不出来（比如写的是 UUID）返回 nullopt——
+/// 调用方**别猜**，当成问不到、退回保守那条。
+std::optional<unsigned int> visible_device_index();
+
+/// 从 `CUDA_VISIBLE_DEVICES` 的原文算上面那个编号。拆出来是为了能测——
+/// 真去改进程的环境变量再测，会互相踩。
+///
+/// **还没做的那一半：`detect_gpu()` 报的名字和整卡容量仍然取第一行**
+/// （也就是物理 0 号）。卡型号一样的机器上这没问题——容量都一样；
+/// 混插不同型号的卡才会错，而那时 set_total_vram 拿到的整卡容量偏大，
+/// "问不到卡时按总量推算空闲"这条会偏乐观。上混卡机器之前要先处理。
+/// 实时空闲那条（决定要不要卸模型的那个数）已经按绑定的卡取了。
+std::optional<unsigned int> parse_visible_devices(const std::string& raw);
+
+/// `nvidia-smi --query-gpu=...` 一张卡一行，取第 idx 行（从 0 数，空行不算）。
+/// 取不到返回空串，调用方当成"问不到"。
+///
+/// **绑了卡就不能只看第一行**，理由同 visible_device_index。
+std::string nth_gpu_line(const std::string& out, unsigned int idx);
+
 struct VramTotals {
     double total_gb = 0.0;
     double free_gb = 0.0;

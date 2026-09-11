@@ -191,6 +191,50 @@ TEST_CASE("问实时空闲显存：有卡就问得到，没卡就老老实实说
     // 没值也是合法答案（没装 NVIDIA 驱动的机器），不该因此判失败。
 }
 
+TEST_CASE("绑了哪张卡要换算对：NVML 不认 CUDA_VISIBLE_DEVICES") {
+    // **这条是给多卡兜底的。** 工作进程靠 CUDA_VISIBLE_DEVICES 绑卡
+    // （worker_server.cpp 里设的），于是进程里 CUDA 的 0 号可能是物理的
+    // 3 号——而 NVML 和 nvidia-smi 的 0 号永远是物理 0 号。不换算的话，
+    // 绑在 3 号上的工作进程问到的是 0 号的空闲，两张卡的忙闲毫无关系。
+    //
+    // 问小了只是多卸一次；**问大了是拿别人卡上的空闲去判"够，不卸"**，
+    // 下一步就是 OOM，走 GGML_ASSERT 把整个工作进程带走。
+    SUBCASE("没设：就是 0 号") {
+        CHECK(parse_visible_devices("") == 0u);
+        CHECK(parse_visible_devices("   ") == 0u);
+    }
+    SUBCASE("设了一个数：就是它") {
+        CHECK(parse_visible_devices("3") == 3u);
+        CHECK(parse_visible_devices(" 7 ") == 7u);
+    }
+    SUBCASE("设了一串：取第一个——进程里的 0 号对应列表里第一项") {
+        CHECK(parse_visible_devices("2,5,6") == 2u);
+        CHECK(parse_visible_devices("0,1") == 0u);
+    }
+    SUBCASE("UUID 那种写法：认不出来就说认不出来，不猜") {
+        // 猜错的方向会 OOM，而"认不出来"只是退回保守。
+        CHECK_FALSE(parse_visible_devices("GPU-4f2c1a").has_value());
+        CHECK_FALSE(parse_visible_devices("MIG-abc").has_value());
+    }
+    SUBCASE("离谱的数不当真") {
+        CHECK_FALSE(parse_visible_devices("999").has_value());
+    }
+}
+
+TEST_CASE("nvidia-smi 一张卡一行：取自己那一行") {
+    // 取错行和问错卡是同一个后果。
+    const std::string out = "6144\n40960\n\n81920\n";
+    CHECK(nth_gpu_line(out, 0) == "6144");
+    CHECK(nth_gpu_line(out, 1) == "40960");
+    // 空行跳过，不算一张卡
+    CHECK(nth_gpu_line(out, 2) == "81920");
+    // 没有那么多卡：返回空串，调用方当成问不到
+    CHECK(nth_gpu_line(out, 3).empty());
+    CHECK(nth_gpu_line("", 0).empty());
+    // 只有一行、没有换行符的情况（nounits 单卡输出）
+    CHECK(nth_gpu_line("6144", 0) == "6144");
+}
+
 TEST_CASE("总量和空闲要一次问出来，而且互相说得通") {
     // 算"这个槽实际占了多少"用的是 总量 − 空闲。分两次问的话两个数来自
     // 两个时刻、两条不同的路，差值就不是这个槽占的——而那个差值会被当成
