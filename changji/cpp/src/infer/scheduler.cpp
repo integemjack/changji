@@ -452,6 +452,12 @@ bool Scheduler::make_room(std::size_t need, Slot keep, std::size_t work) {
 }
 
 Lease Scheduler::acquire(Slot slot, std::size_t work) {
+    // **装模型这件事，一次只能有一个在干。** 见 load_mu_ 上那段——两个槽
+    // 同时往卡上装，第二个撞到的是 abort()，不是一个能读的报错。
+    //
+    // 锁在最外面，整个 acquire 持着（包括慢吞吞的 load）。这样
+    // make_room 问到的空闲显存到真正分配那一刻还作数——中间没人插得进来。
+    std::lock_guard load_lk(load_mu_);
     std::unique_lock lk(mu_);
     Entry* e = find(slot);
     if (!e) {

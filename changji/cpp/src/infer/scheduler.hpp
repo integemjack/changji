@@ -316,6 +316,24 @@ private:
     void do_unload(Entry& e);
 
     mutable std::mutex mu_;
+
+    /// **一次只许一个槽往卡上装东西。**
+    ///
+    /// 2026-09-11 服务被这件事整个干掉过一次：出片跑到成片那一步，另一边
+    /// 大模型正在装（8.4 GB 权重 + 6.4 GB KV），视频的文本编码器连 70 MiB
+    /// 都要不到，`GGML_ASSERT` 直接 abort()——**不是异常，兜不住**，在跑的
+    /// 任务全没了。
+    ///
+    /// 根子在 acquire 的形状：它标完 is_loaded 就放 `mu_`、再去调 load()，
+    /// 所以两个槽完全可能同时在装。而 make_room 那一刻问到的空闲显存，
+    /// 在另一个槽装到一半时就已经不作数了——它看到的是一张还空着的卡。
+    ///
+    /// 这把锁**在 `mu_` 外面**，整个 acquire 从头到尾持着，包括慢吞吞的
+    /// load()。代价是：别人正在装的那几十秒里，哪怕借一个已经装好的槽也要
+    /// 排队。这是划算的——那几十秒的等待换掉的是"整个服务没了"。
+    ///
+    /// ⚠️ load() 里不许再调 acquire，会自锁。现在没有哪个 load 这么干。
+    mutable std::mutex load_mu_;
     std::vector<Entry> entries_;
     std::size_t budget_ = 0;
     FreeVramProbe free_vram_;

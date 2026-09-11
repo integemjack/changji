@@ -1424,3 +1424,48 @@ TEST_CASE("显存宽裕时也要留痕，别让界面显示上一次的旧结论
     CHECK(d.kept);
     CHECK(d.evicted == 0);
 }
+
+TEST_CASE("两个槽不会同时往卡上装") {
+    // **2026-09-11 服务被这件事整个干掉过一次。** 出片跑到成片那一步，
+    // 另一边大模型正在装（8.4 GB 权重 + 6.4 GB KV），视频的文本编码器
+    // 连 70 MiB 都要不到，sd.cpp 的 GGML_ASSERT 直接 abort()——不是异常，
+    // 兜不住，在跑的任务全没了。
+    //
+    // 根子在 acquire 的形状：它标完 is_loaded 就放锁、再去调 load()。
+    // 而 make_room 那一刻问到的空闲显存，在另一个槽装到一半时就不作数了。
+    Scheduler s;
+    s.set_budget(0);  // 不靠预算拦，就看两次 load 会不会叠在一起
+
+    std::atomic<int> inflight{0};
+    std::atomic<int> max_inflight{0};
+    std::atomic<int> done{0};
+
+    const auto slow_spec = [&](Slot slot) {
+        SlotSpec spec;
+        spec.slot = slot;
+        spec.residency = Residency::Cached;
+        spec.vram_estimate = GB;
+        spec.load = [&] {
+            const int now = ++inflight;
+            // 记峰值。两个 load 只要有一瞬间叠上，这个数就会到 2。
+            int prev = max_inflight.load();
+            while (now > prev && !max_inflight.compare_exchange_weak(prev, now)) {
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(40));
+            --inflight;
+            ++done;
+        };
+        spec.unload = [] {};
+        return spec;
+    };
+    s.register_slot(slow_spec(Slot::LLM));
+    s.register_slot(slow_spec(Slot::Video));
+
+    std::thread a([&] { auto l = s.acquire(Slot::LLM); });
+    std::thread b([&] { auto l = s.acquire(Slot::Video); });
+    a.join();
+    b.join();
+
+    CHECK(done == 2);
+    CHECK(max_inflight == 1);
+}
