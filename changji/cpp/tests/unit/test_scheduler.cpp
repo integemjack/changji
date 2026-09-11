@@ -1119,6 +1119,73 @@ TEST_CASE("最近一次腾地方的判断要留痕，界面上读得到") {
     }
 }
 
+TEST_CASE("从头到尾走一遍用户要的那条路") {
+    // **这条把散着的几件事串起来测一遍。** 单独看每一件都有用例了，
+    // 但用户说的是一整串："默认加载 llm，点击出片清理掉大模型，如果内存
+    // 够的就不用清理，根据实时的显存情况来判断"。中间任何两件叠在一起
+    // 打架，分开测是看不出来的。
+    //
+    // 场景按 96 GB 卡摆：起服务先装上大模型，然后连出三镜。
+    const std::size_t budget = 86 * GB;
+    const std::size_t small = 544ull * 928 * 81;    // 标准档
+    const std::size_t big = 2560ull * 1440 * 81;    // 2K 档
+
+    int llm_unloads = 0, llm_loads = 0;
+    Scheduler s;
+    s.set_budget(budget);
+    s.set_total_vram(96 * GB);
+    // 卡上真实空闲：大模型占了 15，还剩 81。
+    s.set_free_vram_probe([] { return std::optional<double>(81.0); });
+
+    SlotSpec llm;
+    llm.slot = Slot::LLM;
+    llm.vram_estimate = budget;     // 静态估值 = 整份预算，和生产里一致
+    llm.evict_priority = 1;
+    llm.load = [&llm_loads] { ++llm_loads; };
+    llm.unload = [&llm_unloads] { ++llm_unloads; };
+    s.register_slot(std::move(llm));
+
+    SlotSpec vid;
+    vid.slot = Slot::Video;
+    vid.vram_estimate = budget;
+    vid.evict_priority = 9;
+    // **出片槽故意不给 live_vram**，和生产里一致（估算被实测推翻过两次）。
+    vid.load = [] {};
+    vid.unload = [] {};
+    s.register_slot(std::move(vid));
+
+    // 1）起服务：预热把大模型装上。这时候没别的槽，静态那条就够。
+    { auto warm = s.acquire(Slot::LLM); }
+    CHECK(llm_loads == 1);
+    CHECK(s.loaded(Slot::LLM));
+
+    // 2）第一镜出片：还没量过，没有估算可用 -> 保守，卸大模型。
+    //    这一步"慢几十秒"是有意的：拿没验过的数赌一把的代价是 OOM。
+    { auto v = s.acquire(Slot::Video, small); }
+    CHECK(llm_unloads == 1);
+    CHECK_FALSE(s.loaded(Slot::LLM));
+    CHECK(s.room_note(Slot::Video) == "腾显存：卸了 1 个模型");
+
+    // 3）这一镜跑起来量到了真实占用：74 GB @ 标准档。
+    s.record_measured_vram(Slot::Video, 74 * GB, small);
+
+    // 4）写下一集剧本，大模型装回来。
+    { auto a = s.acquire(Slot::LLM); }
+    CHECK(llm_loads == 2);
+
+    // 5）再出一镜（还是标准档）：74 ≤ 81，**够，不卸**——用户要的那句。
+    { auto v = s.acquire(Slot::Video, small); }
+    CHECK(llm_unloads == 1);          // 还是 1，没再卸
+    CHECK(s.loaded(Slot::LLM));
+    CHECK(s.room_note(Slot::Video) == "显存够，没动别的模型");
+
+    // 6）用户把画幅换成 2K：量过的活比这次小，那个数不算数 -> 回到保守。
+    //    在标准档量到的 74 GB 拿去给 2K 判"够"，下一步就是显存爆掉。
+    { auto v = s.acquire(Slot::Video, big); }
+    CHECK(llm_unloads == 2);
+    CHECK(s.room_note(Slot::Video) == "腾显存：卸了 1 个模型");
+}
+
 TEST_CASE("腾不出地方时，先说清是被谁挡住的") {
     // **"再等等"和"这张卡太小"是两件完全不同的事。** 以前腾不出地方
     // 一律给同一段话（"别的槽正被借用着，或者这张卡确实太小"），用户

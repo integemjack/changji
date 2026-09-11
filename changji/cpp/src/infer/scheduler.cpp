@@ -240,6 +240,13 @@ std::string out_of_vram_message(Slot slot) {
     return base;
 }
 
+bool Scheduler::measurement_covers(Slot slot, std::size_t work) const {
+    if (work == 0) return true;   // 调用方没说这次多大，按老规矩认
+    const auto it = measured_.find(slot);
+    return it != measured_.end() && it->second.bytes > 0 &&
+           it->second.work >= work;
+}
+
 bool Scheduler::make_room(std::size_t need, Slot keep, std::size_t work) {
     if (budget_ == 0) return true;  // 不限制
 
@@ -451,6 +458,20 @@ Lease Scheduler::acquire(Slot slot, std::size_t work) {
     e->last_used = ++clock_;
 
     if (e->is_loaded) {
+        // **装着不等于这次跑得下。**
+        //
+        // 同一个槽，画幅一换要占的显存差好几倍（标准 544×928 到 2K
+        // 2560×1440 差七倍多）。而"装着就直接放行"会让画幅门
+        // （见 record_measured_vram）在**最常见的那条路上完全不生效**：
+        // 标准档跑过一镜（模型已装、已量），用户切成 2K 再出片，槽是装着
+        // 的，于是一次判断都不做——大模型留在显存里，下一步 OOM。
+        //
+        // 所以量过的活不够大时，重新腾一次地方。**不看返回值**：模型已经
+        // 装着了，腾不出来也只能照跑（和以前一样），但能腾就腾——
+        // 这样只会比以前多卸一个该卸的，不会把原来跑得通的变成报错。
+        if (work > 0 && !measurement_covers(slot, work)) {
+            (void)make_room(e->spec.vram_estimate, slot, work);
+        }
         ++e->leases;
         return Lease(this, slot);
     }

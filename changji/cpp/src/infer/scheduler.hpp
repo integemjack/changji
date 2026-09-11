@@ -299,6 +299,9 @@ private:
     /// 腾出 need 字节。腾不出来返回 false。调用方必须持锁。
     /// work 见 acquire。
     bool make_room(std::size_t need, Slot keep, std::size_t work);
+    /// 量过的活是不是罩得住这次要干的活。调用方必须持锁。
+    /// work == 0（调用方没说多大）一律算罩得住。
+    bool measurement_covers(Slot slot, std::size_t work) const;
     void do_unload(Entry& e);
 
     mutable std::mutex mu_;
