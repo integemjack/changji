@@ -6,7 +6,7 @@
  * 全剧几十个镜头的提示词都跟着变——引擎会把已渲染的镜头退回重跑，
  * 界面必须把这件事说在前面，别让人改完才发现成片全没了。
  */
-import { computed, nextTick, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 
 import AppIcon from '@/components/AppIcon.vue'
 import EmptyState from '@/components/EmptyState.vue'
@@ -44,6 +44,11 @@ const preview = reactive({})
 
 /** 页头那个种子，和「一键出图」画完之后的那声招呼。 */
 const { stamp, seedPayload } = useRefGen()
+
+/** 抽屉里改的是哪一个。 */
+const openChar = computed(
+  () => characters.value.find((c) => c.char_id === openId.value) ?? null,
+)
 
 /** 这一格在不在画。三张里任意一张在画，整张牌子就算在跑。 */
 function cellBusy(charId) {
@@ -102,6 +107,13 @@ async function load() {
     loading.value = false
   }
 }
+
+function onEsc(e) {
+  // 抽屉盖着半个屏幕，而鼠标多半正停在里面——Esc 是唯一不用先瞄准的出口。
+  if (e.key === 'Escape' && openId.value) openId.value = ''
+}
+onMounted(() => document.addEventListener('keydown', onEsc))
+onUnmounted(() => document.removeEventListener('keydown', onEsc))
 
 watch(() => session.projectPath, load, { immediate: true })
 // 页头的「一键出图」画完一张就招呼一声，这儿跟着重拉——不然图已经在
@@ -439,163 +451,182 @@ async function clearRef(charId, slot) {
             </span>
           </div>
 
-          <div v-if="openId === c.char_id" class="chr__body">
-            <div class="chr__cols">
-              <!-- 外观 -->
-              <div class="stack">
-                <label class="field">
-                  <span class="field__label">称呼</span>
-                  <input v-model="edits[c.char_id].name" class="input" />
-                </label>
+        </article>
+      </div>
 
-                <label v-for="f in FIELDS" :key="f.key" class="field" :title="f.hint">
-                  <span class="field__label">{{ f.label }}</span>
-                  <textarea
-                    v-model="edits[c.char_id][f.key]"
-                    class="textarea textarea--tight"
-                    :rows="f.rows"
-                    :placeholder="f.hint"
-                  />
-                </label>
+      <!-- 点开一个角色，从右边滑出来改。**和「这一集」那面镜头墙一个做法**
+           （用户 2026-09-12：「展示方式和这一集一样」）：墙是用来挑的，
+           抽屉是用来改的——把编辑器塞回牌子里会把那一格撑成一整行，
+           一墙的牌子跟着重排，而人刚刚就是靠位置认出那张牌的。 -->
+      <div v-if="openChar" class="drawer" @click.self="openId = ''">
+        <aside class="drawer__panel">
+          <header class="drawer__head">
+            <b>{{ openChar.name }}</b>
+            <span class="tiny dim mono">{{ openChar.char_id }}</span>
+            <span v-if="changed(openChar.char_id)" class="pill pill--warn tiny">未保存</span>
+            <span class="spacer" />
+            <button class="iconbtn" type="button" title="收起（Esc）" @click="openId = ''">
+              ✕
+            </button>
+          </header>
+        <div class="drawer__body">
+          <div class="chr__cols">
+            <!-- 外观 -->
+            <div class="stack">
+              <label class="field">
+                <span class="field__label">称呼</span>
+                <input v-model="edits[openChar.char_id].name" class="input" />
+              </label>
 
-                <div class="field" title="每个镜头拿到的都是这一串，逐字节相同">
-                  <span class="field__label">拼出来的提示词</span>
-                  <p class="rendered mono">{{ c.rendered }}</p>
-                </div>
+              <label v-for="f in FIELDS" :key="f.key" class="field" :title="f.hint">
+                <span class="field__label">{{ f.label }}</span>
+                <textarea
+                  v-model="edits[openChar.char_id][f.key]"
+                  class="textarea textarea--tight"
+                  :rows="f.rows"
+                  :placeholder="f.hint"
+                />
+              </label>
+
+              <div class="field" title="每个镜头拿到的都是这一串，逐字节相同">
+                <span class="field__label">拼出来的提示词</span>
+                <p class="rendered mono">{{ openChar.rendered }}</p>
               </div>
+            </div>
 
-              <!-- 参考图与音色 -->
-              <div class="stack">
-                <div class="field">
-                  <span class="field__label">
-                    三视图参考
-                    <button
-                      class="btn btn--sm btn--ai"
-                      type="button"
-                      :disabled="isBusy('genall:' + c.char_id)"
-                      title="照左边那段拼出来的提示词画。一张几十秒，三张一张一张来"
-                      @click="genAllRefs(c.char_id)"
-                    >
-                      <AppIcon name="sparkle" :size="13" />
-                      {{
-                        isBusy('genall:' + c.char_id)
-                          ? `正在画${genStep?.label ?? ''}${genStep?.pct ? ' ' + genStep.pct + '%' : '…'}`
-                          : '三张一起画'
-                      }}
-                    </button>
-                  </span>
-                  <div class="refs">
-                    <div v-for="s in SLOTS" :key="s.key" class="ref">
-                      <div class="ref__frame">
-                        <img
-                          v-if="c['ref_' + s.key]"
-                          :src="mediaUrl(session.projectPath, c['ref_' + s.key])"
-                          :alt="s.label"
+            <!-- 参考图与音色 -->
+            <div class="stack">
+              <div class="field">
+                <span class="field__label">
+                  三视图参考
+                  <button
+                    class="btn btn--sm btn--ai"
+                    type="button"
+                    :disabled="isBusy('genall:' + openChar.char_id)"
+                    title="照左边那段拼出来的提示词画。一张几十秒，三张一张一张来"
+                    @click="genAllRefs(openChar.char_id)"
+                  >
+                    <AppIcon name="sparkle" :size="13" />
+                    {{
+                      isBusy('genall:' + openChar.char_id)
+                        ? `正在画${genStep?.label ?? ''}${genStep?.pct ? ' ' + genStep.pct + '%' : '…'}`
+                        : '三张一起画'
+                    }}
+                  </button>
+                </span>
+                <div class="refs">
+                  <div v-for="s in SLOTS" :key="s.key" class="ref">
+                    <div class="ref__frame">
+                      <img
+                        v-if="openChar['ref_' + s.key]"
+                        :src="mediaUrl(session.projectPath, openChar['ref_' + s.key])"
+                        :alt="s.label"
+                      />
+                      <AppIcon v-else name="image" :size="18" />
+                    </div>
+                    <span class="ref__label tiny">{{ s.label }}</span>
+                    <div class="ref__acts">
+                      <button
+                        class="btn btn--sm btn--ai"
+                        type="button"
+                        :disabled="isBusy('gen:' + openChar.char_id + s.key) || isBusy('genall:' + openChar.char_id)"
+                        :title="openChar['ref_' + s.key] ? '重画这一张（同一个种子，还是那张脸）' : '照提示词画一张'"
+                        @click="genRef(openChar.char_id, s.key)"
+                      >
+                        <!-- 画着的时候把百分比写出来。**一张几十秒**，
+                             一句不动的「画着…」分不清是在画还是卡住了；
+                             而头十几秒还在把模型读进显存，那段时间一步都
+                             不会推——所以没数的时候仍然显示「画着…」。 -->
+                        {{
+                          isBusy('gen:' + openChar.char_id + s.key)
+                            ? genPct[openChar.char_id + s.key]
+                              ? genPct[openChar.char_id + s.key] + '%'
+                              : '画着…'
+                            : '画'
+                        }}
+                      </button>
+                      <label class="btn btn--sm btn--ghost">
+                        {{ openChar['ref_' + s.key] ? '换' : '传' }}
+                        <input
+                          type="file"
+                          accept="image/png,image/jpeg,image/webp"
+                          hidden
+                          @change="upload(openChar.char_id, s.key, $event)"
                         />
-                        <AppIcon v-else name="image" :size="18" />
-                      </div>
-                      <span class="ref__label tiny">{{ s.label }}</span>
-                      <div class="ref__acts">
-                        <button
-                          class="btn btn--sm btn--ai"
-                          type="button"
-                          :disabled="isBusy('gen:' + c.char_id + s.key) || isBusy('genall:' + c.char_id)"
-                          :title="c['ref_' + s.key] ? '重画这一张（同一个种子，还是那张脸）' : '照提示词画一张'"
-                          @click="genRef(c.char_id, s.key)"
-                        >
-                          <!-- 画着的时候把百分比写出来。**一张几十秒**，
-                               一句不动的「画着…」分不清是在画还是卡住了；
-                               而头十几秒还在把模型读进显存，那段时间一步都
-                               不会推——所以没数的时候仍然显示「画着…」。 -->
-                          {{
-                            isBusy('gen:' + c.char_id + s.key)
-                              ? genPct[c.char_id + s.key]
-                                ? genPct[c.char_id + s.key] + '%'
-                                : '画着…'
-                              : '画'
-                          }}
-                        </button>
-                        <label class="btn btn--sm btn--ghost">
-                          {{ c['ref_' + s.key] ? '换' : '传' }}
-                          <input
-                            type="file"
-                            accept="image/png,image/jpeg,image/webp"
-                            hidden
-                            @change="upload(c.char_id, s.key, $event)"
-                          />
-                        </label>
-                        <button
-                          v-if="c['ref_' + s.key]"
-                          class="btn btn--sm btn--ghost"
-                          type="button"
-                          @click="clearRef(c.char_id, s.key)"
-                        >
-                          撤
-                        </button>
-                      </div>
+                      </label>
+                      <button
+                        v-if="openChar['ref_' + s.key]"
+                        class="btn btn--sm btn--ghost"
+                        type="button"
+                        @click="clearRef(openChar.char_id, s.key)"
+                      >
+                        撤
+                      </button>
                     </div>
                   </div>
                 </div>
-
-                <label class="field">
-                  <span class="field__label">
-                    音色
-                    <span v-if="c.voice_gender" class="pill pill--neutral tiny">
-                      猜的性别：{{ c.voice_gender === 'female' ? '女' : '男' }}
-                    </span>
-                  </span>
-                  <!-- **是输入框不是下拉框。** 拆掉 ComfyUI 之后音色不再是
-                       服务端的一份清单：进程内配音要的是一段参考音频的路径，
-                       外部服务要的是那个服务认的音色名。两种都得能手填——
-                       留成下拉框的话，列表永远是空的，用户**根本填不进去**。
-                       服务端真给了清单（将来某个后端支持）就走 datalist。 -->
-                  <input
-                    v-model="edits[c.char_id].voice_id"
-                    class="input mono"
-                    :list="voices.length ? 'voices-' + c.char_id : undefined"
-                    placeholder="留空 = 自动挑（按性别和中文样本）"
-                  />
-                  <datalist v-if="voices.length" :id="'voices-' + c.char_id">
-                    <option v-for="v in voices" :key="v" :value="v" />
-                  </datalist>
-                  <span v-if="!voicesLoading && voicesError" class="tiny warn-text">
-                    {{ voicesError }}
-                  </span>
-                </label>
-
-                <label class="field">
-                  <span class="field__label">LoRA 触发词</span>
-                  <input
-                    v-model="edits[c.char_id].lora_trigger"
-                    class="input mono"
-                    placeholder="训了角色 LoRA 才填"
-                  />
-                </label>
               </div>
-            </div>
 
-            <div class="chr__foot">
-              <button
-                class="btn btn--primary btn--sm"
-                type="button"
-                :disabled="!changed(c.char_id) || isBusy('save:' + c.char_id)"
-                title="改了外观，已渲染的镜头会退回重跑"
-                @click="save(c.char_id)"
-              >
-                {{ isBusy('save:' + c.char_id) ? '存着…' : '保存' }}
-              </button>
-              <button
-                class="btn btn--ghost btn--sm"
-                type="button"
-                :disabled="!changed(c.char_id)"
-                @click="edits[c.char_id] = { ...c }"
-              >
-                撤销
-              </button>
+              <label class="field">
+                <span class="field__label">
+                  音色
+                  <span v-if="openChar.voice_gender" class="pill pill--neutral tiny">
+                    猜的性别：{{ openChar.voice_gender === 'female' ? '女' : '男' }}
+                  </span>
+                </span>
+                <!-- **是输入框不是下拉框。** 拆掉 ComfyUI 之后音色不再是
+                     服务端的一份清单：进程内配音要的是一段参考音频的路径，
+                     外部服务要的是那个服务认的音色名。两种都得能手填——
+                     留成下拉框的话，列表永远是空的，用户**根本填不进去**。
+                     服务端真给了清单（将来某个后端支持）就走 datalist。 -->
+                <input
+                  v-model="edits[openChar.char_id].voice_id"
+                  class="input mono"
+                  :list="voices.length ? 'voices-' + openChar.char_id : undefined"
+                  placeholder="留空 = 自动挑（按性别和中文样本）"
+                />
+                <datalist v-if="voices.length" :id="'voices-' + openChar.char_id">
+                  <option v-for="v in voices" :key="v" :value="v" />
+                </datalist>
+                <span v-if="!voicesLoading && voicesError" class="tiny warn-text">
+                  {{ voicesError }}
+                </span>
+              </label>
+
+              <label class="field">
+                <span class="field__label">LoRA 触发词</span>
+                <input
+                  v-model="edits[openChar.char_id].lora_trigger"
+                  class="input mono"
+                  placeholder="训了角色 LoRA 才填"
+                />
+              </label>
             </div>
           </div>
-        </article>
+
+          <div class="chr__foot">
+            <button
+              class="btn btn--primary btn--sm"
+              type="button"
+              :disabled="!changed(openChar.char_id) || isBusy('save:' + openChar.char_id)"
+              title="改了外观，已渲染的镜头会退回重跑"
+              @click="save(openChar.char_id)"
+            >
+              {{ isBusy('save:' + openChar.char_id) ? '存着…' : '保存' }}
+            </button>
+            <button
+              class="btn btn--ghost btn--sm"
+              type="button"
+              :disabled="!changed(openChar.char_id)"
+              @click="edits[openChar.char_id] = { ...c }"
+            >
+              撤销
+            </button>
+          </div>
+        </div>
+        </aside>
       </div>
+
   </div>
 </template>
 
@@ -619,11 +650,9 @@ async function clearRef(charId, slot) {
   background: var(--surface);
 }
 .cell--live { border-color: var(--accent); }
-.cell--open {
-  outline: 2px solid var(--accent);
-  /* 展开的编辑器比一格宽得多，让它占满整行 */
-  grid-column: 1 / -1;
-}
+/* 抽屉开着的时候，墙上那张牌描一圈——不然一屏牌子长得一样，
+   收起抽屉之后找不回刚才改的是哪个。 */
+.cell--open { outline: 2px solid var(--accent); }
 
 /* 三张各占三分之一，鼠标放上去那张摊开。 */
 .trio {
@@ -740,10 +769,48 @@ async function clearRef(charId, slot) {
   position: relative;
 }
 
-.chr__body {
-  padding: var(--s3);
-  border-top: 1px solid var(--line);
+/* 抽屉。和「这一集」那面墙同一套尺寸，改一处两边就该一起改。 */
+.drawer {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  background: color-mix(in srgb, black 45%, transparent);
+  display: flex;
+  justify-content: flex-end;
 }
+.drawer__panel {
+  display: flex;
+  flex-direction: column;
+  /* 比镜头墙那个宽一些：这儿一屏要放下六段外观描述加三张参考图，
+     460px 下每个输入框只剩二十来个字宽，写「五官定型」那一段不够看。 */
+  width: min(96vw, 720px);
+  height: 100%;
+  background: var(--surface);
+  border-left: 1px solid var(--line);
+}
+.drawer__head {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  padding: var(--s3);
+  border-bottom: 1px solid var(--line);
+}
+.drawer__body {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--s3);
+}
+/* 抽屉里**上下排，不左右分栏**。七百多像素要塞下六段外观描述加三张参考图，
+   分成两栏之后每栏三百出头——输入框只剩二十来个字宽，参考图更是三张挤在
+   一起看不清脸。而这里恰恰是拿来看脸的。 */
+.drawer .chr__cols {
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--s4);
+}
+/* **参考图排到最上面。** 上下排之后，一进来先看到的应该是那三张脸——
+   这一页的活就是"看看像不像、不像就重画"，而外观那几段文字是改的时候
+   才要读的。左右分栏时两边都在视野里，上下排就得挑一个先看。 */
+.drawer .chr__cols > :nth-child(2) { order: -1; }
 .chr__cols {
   display: grid;
   grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr);
@@ -783,7 +850,10 @@ async function clearRef(charId, slot) {
 
 .refs {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  /* **minmax(0, 1fr) 不是 1fr。** `1fr` 的最小值是内容的最小宽度，而每一格
+     底下那排「画 / 换 / 撤」撑着一个下限——于是三格加起来比容器还宽，
+     第三张被切掉一半，而且是悄悄切的（外层横向滚动条在抽屉里看不见）。 */
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: var(--s3);
 }
 .ref {
