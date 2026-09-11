@@ -9,6 +9,7 @@
 #include "config/field_names.inc.hpp"
 #include "config/runtime.hpp"
 #include "config/writeback.hpp"
+#include "infer/scheduler.hpp"
 #include "pipeline/jobs.hpp"
 #include "util/paths.hpp"
 
@@ -288,6 +289,24 @@ ApiResult post_connections(const json& body, const DoctorFn& check) {
     }
 
     runtime().replace(s);
+
+    // **改成外接配音就把显存里那份放掉。**
+    //
+    // 用户切这一项多半就是为了腾显存——显存不够时，体检和
+    // out_of_vram_message 都在劝他走这条路（"配音这一步不必占显存：
+    // 把 [tts].backend 改成 http…"）。可光改配置的话，进程内那份权重
+    // 还原封不动占着，要等到下一次腾地方才顺带被卸掉。用户照着提示做了、
+    // 显存没少，只会以为这一项没生效。
+    //
+    // 正在念的时候 evict 返回 false，不强卸——那会让正在跑的那次合成
+    // 段错误。它已经不会再被借，下一次腾地方时就走了。
+    //
+    // 先看装着没有再动手：evict 的语义是"事后不装着就算成功"，
+    // 槽压根没装也返回 true。见 Scheduler::evict。
+    if (s.tts.backend != "local" &&
+        infer::scheduler().loaded(infer::Slot::TTS)) {
+        infer::scheduler().evict(infer::Slot::TTS);
+    }
 
     json saved_to = nullptr;
     if (opt_bool(body, "persist", true) && !changed.empty()) {

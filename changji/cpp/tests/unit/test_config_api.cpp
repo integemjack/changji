@@ -20,6 +20,7 @@
 #include "config/runtime.hpp"
 #include "config/settings.hpp"
 #include "http/config_api.hpp"
+#include "infer/scheduler.hpp"
 #include "models/hardware.hpp"
 #include "pipeline/jobs.hpp"
 #include "util/paths.hpp"
@@ -201,6 +202,39 @@ TEST_CASE("配音后端的两条约束") {
 
     CHECK(try_tts(json{{"tts_backend", "http"},
                        {"tts_base_url", "http://tts:9000"}}).status == 200);
+}
+
+TEST_CASE("改成外接配音要把显存里那份放掉") {
+    // **这条是需求那句话的落点。** 显存不够时，体检和 out_of_vram_message
+    // 都在劝用户"把配音改成外接 HTTP 服务，本机就不用装配音模型、也不占
+    // 显存"。他照做了，结果只改了配置、权重还占着——照着提示做了、显存
+    // 没少，只会以为这一项没生效。
+    reset_runtime();
+    auto& sched = infer::scheduler();
+    sched.evict_all();
+
+    int unloads = 0;
+    infer::SlotSpec tts;
+    tts.slot = infer::Slot::TTS;
+    tts.vram_estimate = 1;
+    tts.load = [] {};
+    tts.unload = [&unloads] { ++unloads; };
+    sched.register_slot(tts);
+    { auto lease = sched.acquire(infer::Slot::TTS); }
+    REQUIRE(sched.loaded(infer::Slot::TTS));
+
+    const auto r = http::guard([] {
+        return http::post_connections(
+            json{{"patch", {{"tts_backend", "http"},
+                            {"tts_base_url", "http://别处:9000"}}},
+                 {"persist", false}},
+            fake_doctor());
+    });
+    REQUIRE(r.status == 200);
+    CHECK(unloads == 1);
+    CHECK_FALSE(sched.loaded(infer::Slot::TTS));
+
+    sched.evict_all();   // 别把状态留给后面的用例
 }
 
 TEST_CASE("tts_base_url 填空串当作没配") {
