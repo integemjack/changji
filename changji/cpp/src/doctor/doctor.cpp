@@ -420,6 +420,62 @@ Check check_models(const config::Settings& s) {
             ""};
 }
 
+/// 权重放哪这件事，配置写死的值和这台机器对不对得上。
+///
+/// **这一项是给"配置跟着人换了机器"准备的。** 2026-09-11 实测撞到：
+/// 一份为 96 GB 卡写的 `[models].weights = "cpu"` 跟着配置文件到了一张
+/// 32 GB 卡上，而那时模型早换成 Q4 了。后果不报错——sd.cpp 老老实实照做，
+/// 把 42 GB 权重全放内存（日志里是 `VRAM 0.00MB`），每一步靠 PCIe 搬，
+/// 同一台机器上出首帧那条（没写死，走 smart）却是扩散常驻显存、GPU 99%。
+///
+/// 程序拦不住人写死，但能说一句"这个值和这台机器算出来的不一样"。
+/// **只在真的不一样时才说**：写死成和 smart 一致的值是没问题的，
+/// 长期挂一条没用的黄字比不说更糟。
+Check check_weights(const config::Settings& s) {
+    const auto profile = models::HardwareProfile::detect(s.vram_gb_override);
+    const double card = profile.gpu.has_value() ? profile.gpu->vram_gb()
+                                                : profile.vram_gb;
+    if (card <= 0) {
+        return {"权重放哪", Level::OK, "没探到显卡，这一项无从比起", ""};
+    }
+    const auto ws = s.workspace_path();
+    const auto size_gb = [&](const std::string& rel) {
+        std::error_code ec;
+        const auto p = s.models.resolve(rel, ws);
+        if (p.empty()) return 0.0;
+        const auto n = std::filesystem::file_size(p, ec);
+        return (!ec && n > 0) ? static_cast<double>(n) / (1024.0 * 1024 * 1024)
+                              : 0.0;
+    };
+
+    std::vector<std::string> off;
+    const auto one = [&](const char* label, const std::string& set,
+                         const std::string& want) {
+        // smart 和 auto 本来就是"让程序/sd.cpp 自己定"，没有对不上这回事。
+        if (set == "smart" || set == "auto") return;
+        if (set == want) return;
+        off.push_back(std::string(label) + "：配置写的是 \"" + set +
+                      "\"，按这张卡和这个模型算出来该是 \"" + want + "\"");
+    };
+    one("出片", s.models.weights, s.models.weights_for(card, size_gb(s.models.video)));
+    one("出首帧", s.models.image_weights,
+        s.models.image_weights_for(card, size_gb(s.models.image)));
+
+    if (off.empty()) {
+        return {"权重放哪", Level::OK, "配置和这台机器算出来的一致", ""};
+    }
+    std::string msg;
+    for (std::size_t i = 0; i < off.size(); ++i) {
+        if (i) msg += "；";
+        msg += off[i];
+    }
+    return {"权重放哪", Level::WARN, msg,
+            "多半是配置从别的机器带过来的。写死的值不会跟着卡变——\n"
+            "换成 \"smart\"（程序按卡和模型大小算）或者 \"auto\"\n"
+            "（装载时让 sd.cpp 按实际显存自己塞）就不用管了。\n"
+            "确实想按现在这样固定的话，这条忽略即可。"};
+}
+
 }  // namespace
 
 namespace {
@@ -463,6 +519,7 @@ Report run_checks(const config::Settings& settings) {
     r.checks.push_back(guarded("出图后端", [&] { return check_sd(); }));
     r.checks.push_back(guarded("本地模型", [&] { return check_models(settings); }));
     r.checks.push_back(guarded("显卡", [&] { return check_gpu(settings); }));
+    r.checks.push_back(guarded("权重放哪", [&] { return check_weights(settings); }));
     r.checks.push_back(guarded("项目目录", [&] { return check_workspace(settings); }));
     return r;
 }
