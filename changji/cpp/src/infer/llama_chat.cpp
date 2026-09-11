@@ -186,8 +186,7 @@ std::unique_ptr<LlamaChat> LlamaChat::load(const fs::path& model, bool use_gpu,
             }
             std::fprintf(stderr,
                          "[llm] 只开出 %d 个上下文（要 %d 个）：显存不够，"
-                         "同时跑的路数按这个来
-",
+                         "同时跑的路数按这个来\n",
                          i, want);
             break;
         }
