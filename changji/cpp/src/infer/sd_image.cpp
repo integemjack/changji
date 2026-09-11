@@ -1013,9 +1013,23 @@ void register_sd_slots(SettingsProvider raw_provider,
     // 而卡上可能一直空着一大半（权重放内存时显存里只有计算缓冲）。
     scheduler().set_free_vram_probe([] { return models::free_vram_gb(); });
     // 整卡显存，给"问不到卡"时的推算用。见 Scheduler::set_total_vram。
-    if (card_gb > 0.0) {
-        scheduler().set_total_vram(
-            static_cast<std::size_t>(card_gb * 1024) * 1024 * 1024);
+    //
+    // **优先问 NVML 要"自己这张卡"的总量。** card_gb 来自
+    // HardwareProfile::detect，那条取的是 nvidia-smi 输出的第一行，也就是
+    // 物理 0 号；而工作进程可能绑在别的卡上（CUDA_VISIBLE_DEVICES）。
+    // 同型号的多卡上两者一样，混插不同型号时 card_gb 可能偏大——
+    // 而这个数偏大，"总量 − 别人占的 = 空闲"就偏乐观，正是会 OOM 的方向。
+    // 见 models::visible_device_index。
+    {
+        double total = card_gb;
+        if (const auto t = models::vram_totals_gb();
+            t.has_value() && t->total_gb > 0.0) {
+            total = t->total_gb;
+        }
+        if (total > 0.0) {
+            scheduler().set_total_vram(
+                static_cast<std::size_t>(total * 1024) * 1024 * 1024);
+        }
     }
 
     // **把上次量到的读回来，并且以后量到新的就写下去。**
