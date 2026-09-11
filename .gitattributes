@@ -10,7 +10,7 @@
 # ——文件明明在，报的却是找不到；找不到的其实是 `/bin/sh\r` 这个解释器。
 # 这个错误信息指向的地方和真正的原因差得很远，不知道的话能查很久。
 #
-# **这一条不只影响 C++ 那份镜像**：老的 Dockerfile（Python 版）拷的是同一个
+# **这一条不只影响 C++ 那份镜像**：当初那份根目录 Dockerfile（ComfyUI/Python 版，2026-09-11 已删）拷的是同一个
 # entrypoint.sh，在 Windows 上 build 出来的镜像一样是坏的。之前没暴露，
 # 大概是因为它没在 Windows 上 build 过。
 *.sh text eol=lf

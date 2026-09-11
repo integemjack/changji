@@ -1,5 +1,5 @@
 # ComfyUI 是第三方仓库（comfyanonymous/ComfyUI）加模型权重，34GB，不入库。
-# 需要的话按 README 用 download_models.ps1 拉。
+# 需要的话用 changji/cpp/tools/download_models.ps1 拉，或者直接在初始化页下。
 ComfyUI/
 
 # Python
@@ -28,7 +28,6 @@ projects/
 changji/data/
 
 # 前端 sourcemap，57MB 纯调试产物，运行不需要
-frontend/assets/*.js.map
 
 # 本机 Claude Code 状态
 .claude/

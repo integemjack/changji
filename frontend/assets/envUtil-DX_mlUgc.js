@@ -1,1 +1,0 @@
-import"./rolldown-runtime-CM1DJQSe.js";function electronAPI(){return window.electronAPI}function showNativeSystemMenu(){electronAPI()?.showContextMenu()}function isNativeWindow(){return!1}export{isNativeWindow as n,showNativeSystemMenu as r,electronAPI as t};

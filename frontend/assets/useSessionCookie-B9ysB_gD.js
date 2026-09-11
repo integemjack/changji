@@ -1,1 +1,0 @@
-import"./rolldown-runtime-CM1DJQSe.js";import"./settingStore-KkBYyEnh.js";import"./api-D_pCbeK9.js";Promise.resolve();var useSessionCookie=()=>{let ensureSessionCookie=async()=>{},createSession=async()=>{},createSessionOrThrow=async()=>{},deleteSession=async()=>{};return{createSession,createSessionOrThrow,ensureSessionCookie,deleteSession}};export{useSessionCookie as t};

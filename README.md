@@ -22,24 +22,25 @@ changji --doctor        # 缺什么它会说，并且给出怎么办
 changji --port 8080     # 起服务，浏览器打开 http://127.0.0.1:8080
 ```
 
-## 目录
+## 根目录长什么样
 
 ```
-changji/          # 程序本体
-  cpp/            # C++ 引擎（界面、接口、编排、推理全在这里）
-  webapp/         # 前端源码，打包后嵌进二进制
-  docs/           # 方案和手册
+changji/                # 程序本体（cpp 引擎 + webapp 源码 + docs）
+download_wan_gguf.ps1   # 拉出片模型的 GGUF，给进程内的 sd.cpp
+download_tts_gguf.ps1   # 拉配音模型的 GGUF，给进程内的 llama.cpp + mtmd
+docs/                   # 选型结论
+models/  bin/           # 本机的权重和外部可执行文件，不进版本库
 ```
 
-## 关于根目录这堆 ComfyUI/Docker 的东西
+ComfyUI + Docker 那一版的东西 **2026-09-11 全删了**：`Dockerfile`、
+`docker-compose.yml`、`.dockerignore`、`start.ps1`、`extra-requirements.txt`、
+`frontend/`（ComfyUI 自带前端，570 个文件 31 MB）、
+`download_models.ps1`、`download_tts_model.ps1`（往 `ComfyUI\models` 下
+safetensors 的那两份）、`bench_shot.py`、`smoke_test.py`（连 :8188 跑
+workflow 的那两个）。
 
-`Dockerfile`、`docker-compose.yml`、`start.ps1`、`download_*.ps1`、
-`extra-requirements.txt`、`frontend/`、`bench_shot.py`、`smoke_test.py`
-这些是**更早那一版的遗留**：
-当时是 Docker 里跑一个 ComfyUI，靠手工摆节点出片。
+出图、出片、配音、大模型现在全在场记这一个进程里跑，不需要 ComfyUI，
+也不需要 Docker。要翻旧账的话 git 历史里还在。
 
-那条路 2026-09-10 拆掉了——出图、出片、配音、大模型现在全在场记这一个
-进程里跑，不需要 ComfyUI，也不需要 Docker。这些文件暂时留着只是备查，
-跑现在这套一个都用不到。
-
-（这一页在 2026-09-11 之前一直还是那版旧文档，照着做会去装 ComfyUI。）
+**留下的那两个 `download_*_gguf.ps1` 不是漏网的**：它们下的是 GGUF，
+给现在这套用的，和上面删掉的 safetensors 那两份不是一回事。

@@ -1,6 +1,7 @@
 ﻿# 下载 C++ 后端（sd.cpp）出视频要的三份权重，GGUF 格式。
 #
-# **和 download_models.ps1 不是一回事。** 那一份下的是 fp16 的 safetensors，
+# **和当初那份 download_models.ps1 不是一回事**（那个 2026-09-11 随 ComfyUI
+#   一起删了）。它下的是 fp16 的 safetensors，
 # 给 ComfyUI 用；sd.cpp 吃的是 GGUF。两条路的权重格式不通用，
 # 不要互相替代。（那一份还指着 E:\AI短剧\... —— 这台机器上没有 E 盘。）
 #

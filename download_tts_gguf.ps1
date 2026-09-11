@@ -1,6 +1,7 @@
 ﻿# 下载进程内配音（阶段 9）要的两份 GGUF 权重。
 #
-# 和 download_tts_model.ps1 的区别：**那一份下的是 safetensors，给 Python /
+# 和当初那份 download_tts_model.ps1 的区别（那个 2026-09-11 随 ComfyUI 一起
+# 删了）：**它下的是 safetensors，给 Python /
 # ComfyUI 那条路用的**；这一份下的是 GGUF，给 C++ 进程内的 llama.cpp + mtmd
 # 用。两条路的权重格式不通用，不要互相替代。
 #

@@ -68,7 +68,7 @@ npm run build
 npm start            # 默认 5174，前后端同一个端口
 ```
 
-或者用 compose 一条命令拉起全套（Web 平台 + 引擎 + ComfyUI）：
+或者用 compose 一条命令拉起全套（Web 平台 + 引擎 + ollama）：
 
 ```bash
 docker compose -f ../docker-compose.yml up -d
