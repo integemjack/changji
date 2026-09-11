@@ -1194,6 +1194,43 @@ TEST_CASE("从头到尾走一遍用户要的那条路") {
     CHECK(s.room_note(Slot::Video) == "腾显存：卸了 1 个模型");
 }
 
+TEST_CASE("卸干净之后，上一次的判断就不该还挂着") {
+    // 那条结论说的是"上一次要不要腾地方"。什么都没装着了还显示
+    // "刚才卸了 1 个模型"，是在说一件已经不成立的事。
+    //
+    // 这也是测试唯一的复位钩子：不清的话，一个用例摆的局面会顺着全局
+    // 单例漏给下一个用例——下一个要是逐字比对进度文案，就会被凭空多出来
+    // 的"（腾显存：卸了 1 个模型）"挂掉，而且看不出是谁干的。
+    Scheduler s;
+    const std::size_t budget = 10 * GB;
+    s.set_budget(budget);
+
+    SlotSpec llm;
+    llm.slot = Slot::LLM;
+    llm.vram_estimate = budget;
+    llm.evict_priority = 1;
+    llm.load = [] {};
+    llm.unload = [] {};
+    s.register_slot(llm);
+    SlotSpec vid;
+    vid.slot = Slot::Video;
+    vid.vram_estimate = budget;
+    vid.evict_priority = 9;
+    vid.load = [] {};
+    vid.unload = [] {};
+    s.register_slot(vid);
+
+    { auto a = s.acquire(Slot::LLM); }
+    { auto v = s.acquire(Slot::Video); }
+    REQUIRE(s.last_room_decision().valid);
+    REQUIRE_FALSE(s.room_note(Slot::Video).empty());
+
+    s.evict_all();
+    CHECK_FALSE(s.last_room_decision().valid);
+    CHECK(s.room_note(Slot::Video).empty());
+    CHECK(s.room_note(Slot::LLM).empty());
+}
+
 TEST_CASE("走快路的那一镜，不能照抄上一镜的结论") {
     // **接着上面那条串起来的用例继续挖。**
     //

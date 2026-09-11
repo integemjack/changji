@@ -568,6 +568,15 @@ void Scheduler::evict_all() {
     for (Entry& e : entries_) {
         if (e.leases == 0) do_unload(e);
     }
+    // **卸干净之后那条判断就过期了。** 它说的是"上一次要不要腾地方"，
+    // 而现在什么都没装着，界面上再显示"刚才卸了 1 个模型"是在说一件
+    // 已经不成立的事。
+    //
+    // 顺带这也是测试唯一的复位钩子：不清的话，一个用例摆的局面会顺着
+    // 全局单例漏给下一个用例——下一个要是逐字比对进度文案，就会被凭空
+    // 多出来的"（腾显存：卸了 1 个模型）"挂掉，而且看不出是谁干的。
+    last_decision_ = RoomDecision{};
+    busy_.clear();
 }
 
 bool Scheduler::loaded(Slot slot) const {

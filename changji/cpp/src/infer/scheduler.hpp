@@ -280,6 +280,9 @@ public:
     bool evict(Slot slot);
 
     /// 卸载所有没被借用的槽。跑完一集、或者要交出显存时用。
+    ///
+    /// **顺带把"上一次腾地方的判断"也清掉**：什么都没装着了，那条结论
+    /// 就不成立了。测试也靠这个复位——见实现里的注释。
     void evict_all();
 
     bool loaded(Slot slot) const;
