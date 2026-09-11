@@ -130,7 +130,30 @@ void register_llm_slot(std::function<config::Settings()> provider,
         std::string why;
         auto chat = std::shared_ptr<infer::LlamaChat>(
             infer::LlamaChat::load(path, /*use_gpu=*/true, why));
-        if (!chat) throw std::runtime_error("大模型载不起来：" + why);
+        if (!chat) {
+            // **上不了 GPU 就退回 CPU，别整个失败。**
+            //
+            // use_gpu 传下去是 n_gpu_layers = 999，也就是"所有层都放显存"。
+            // 这张卡装得下就最好，装不下 llama.cpp 直接返回失败——而
+            // "大模型载不起来"对用户等于整条流水线没了，其实放内存跑就行，
+            // 只是慢。
+            //
+            // **不预先估一个阈值来决定放不放。** 今天已经证过估算会错到
+            // 五倍（见 Scheduler::record_measured_vram），拿它去卡这一步，
+            // 会在本来放得下的机器上白白降到 CPU。试一次、不行再退，
+            // 结果由这台机器自己说了算，换机器不用改任何东西。
+            std::fprintf(stderr,
+                         "[llm] 权重上不了显存（%s），退回内存跑。慢一些，"
+                         "但不影响出片。\n",
+                         why.c_str());
+            std::string why_cpu;
+            chat = std::shared_ptr<infer::LlamaChat>(
+                infer::LlamaChat::load(path, /*use_gpu=*/false, why_cpu));
+            if (!chat) {
+                throw std::runtime_error("大模型载不起来：显存那次是「" + why +
+                                         "」，内存那次是「" + why_cpu + "」");
+            }
+        }
         {
             const auto after = models::free_vram_gb();
             if (alone_before && alone_now() && before.has_value() &&

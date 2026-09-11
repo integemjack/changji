@@ -349,8 +349,10 @@ Check check_sd() {
         // 服务"——那个服务没了，没编进 sd.cpp 就是一张图都出不来。
         return {"出图后端", Level::FAIL, "没编进来，出图出片都跑不了",
                 "这份二进制构建时 CHANGJI_SD=OFF。换一份编了的，"
-                "或者自己编时打开 CHANGJI_SD（要出片还得 "
-                "CHANGJI_SD_CUDA=ON，不然只能用 CPU 跑，一镜要几小时）。"};
+                "或者自己编时打开 CHANGJI_SD，再按显卡挑一个 GPU 后端："
+                "N 卡 CHANGJI_SD_CUDA、A 卡 CHANGJI_SD_HIP、"
+                "Intel CHANGJI_SD_SYCL，三家都能用的 CHANGJI_SD_VULKAN。"
+                "一个都不开就只能用 CPU 跑，一镜要几小时。"};
     }
     // 系统信息里带着编进去的后端和 CPU 特性（AVX2、CUDA 之类）。
     // 这一行是出画质问题时第一个要看的东西：同一份模型在 AVX2 和

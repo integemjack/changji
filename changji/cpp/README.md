@@ -39,11 +39,31 @@ cmake --build build
 | 选项 | 默认 | 说明 |
 |---|---|---|
 | `CHANGJI_SD` | ON | 链 stable-diffusion.cpp，进程内出图出片 |
-| `CHANGJI_SD_CUDA` | OFF | sd.cpp 走 CUDA。要 CUDA Toolkit，而且 MSBuild 查的是**版本化**的 `CUDA_PATH_V13_3` 而不是 `CUDA_PATH`，两个都要在进程环境里 |
+| `CHANGJI_SD_CUDA` | OFF | GPU 后端走 CUDA（N 卡）。要 CUDA Toolkit，而且 MSBuild 查的是**版本化**的 `CUDA_PATH_V13_3` 而不是 `CUDA_PATH`，两个都要在进程环境里 |
+| `CHANGJI_SD_HIP` | OFF | GPU 后端走 HIP / ROCm（A 卡）。要 ROCm ≥ 6.1（Linux）或 AMD HIP SDK（Windows）。跑的机器上也要有 ROCm 运行时 |
+| `CHANGJI_SD_SYCL` | OFF | GPU 后端走 SYCL（Intel 卡）。要 oneAPI 的 `icx`/`icpx`。**产物不是单文件**，跑的机器上要有 oneAPI 运行时 |
+| `CHANGJI_SD_VULKAN` | OFF | GPU 后端走 Vulkan，**N/A/I 三家都能用**。构建要 Vulkan SDK（`glslc`），跑的时候只要驱动自带的 Vulkan 运行时。A 卡和 Intel 卡想要"下载解开就能用"的话走这条 |
+| `CHANGJI_CUDA_ARCH` | `89` | 编给哪些 N 卡架构，分号隔开。发布包用的那一串在 release.yml 里 |
+| `CHANGJI_HIP_ARCH` | `gfx1030;gfx1100;gfx1101;gfx1102` | 编给哪些 A 卡架构。**列表外的卡直接跑不了**——HIP 没有 CUDA 那种 PTX 兜底 |
 | `CHANGJI_LLAMA` | OFF | 链 llama.cpp + mtmd，**进程内配音**（阶段 9）。开着会让干净构建多编一份 llama.cpp 和一份打过补丁的 ggml |
 | `CHANGJI_BUILD_TESTS` | ON | 编 `changji_tests.exe` |
 | `CHANGJI_STATIC_RUNTIME` | ON | 静态链运行时。"零运行时依赖"是这个后端存在的理由之一。**macOS 上自动忽略**——Apple 的工具链没有静态 libc++ |
 | `CHANGJI_VERSION` | `dev` | 写进二进制的版本号，`--version` 打印它。发布时由 CI 填 git tag |
+
+四个 GPU 后端**一次只能开一个**，同时开两个配置期就停。挑哪个：
+
+| 显卡 | 首选 | 备选 |
+|---|---|---|
+| NVIDIA | `CHANGJI_SD_CUDA` | `CHANGJI_SD_VULKAN` |
+| AMD | `CHANGJI_SD_VULKAN`（拿来就能跑） | `CHANGJI_SD_HIP`（快一些，但要装 ROCm） |
+| Intel | `CHANGJI_SD_VULKAN` | `CHANGJI_SD_SYCL`（要 oneAPI 运行时） |
+
+> A 卡和 Intel 卡首选 Vulkan 不是因为它快，是因为另外两条的产物都带着
+> 一大坨运行时依赖，而且 leejet 那套 ggml 扩展补丁**没有覆盖
+> ggml-sycl**（覆盖了 CPU / CUDA / Metal / Vulkan，见
+> [patches/README.md](patches/README.md)）——SYCL 上的 fp8 权重多半加载不了。
+> 六个 GPU 包由 CI 编，见
+> [.github/workflows/release.yml](../../.github/workflows/release.yml)。
 
 开 `CHANGJI_LLAMA` 时 ggml 由 llama.cpp 提供，并且**就地打上 leejet 的扩展
 补丁**（`patches/apply_to_llamacpp.py`，接在 FetchContent 的 `PATCH_COMMAND`

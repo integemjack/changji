@@ -128,7 +128,23 @@ endif()
 # （见 verify/RESULTS.md），只是现在用不上。提前统一等于现在就开始付
 # 那笔"两个上游各自前进"的维护成本，而收益要等到 llama.cpp 进来才有。
 option(CHANGJI_SD "链接 stable-diffusion.cpp" ON)
-option(CHANGJI_SD_CUDA "sd.cpp 用 CUDA 后端" OFF)
+# **一次只能开一个。** 四个开关对应 ggml 的四个后端目录，
+# 同时开两个的下场见下面 "挑一个 GPU 后端" 那一段。
+#
+#   CUDA    N 卡原生。最快，也是这个项目唯一在实机上长期跑过的一条。
+#   HIP     A 卡原生（ROCm）。编的是 ggml-cuda 那批 .cu，用 hipcc 过一遍。
+#   SYCL    Intel 原生（oneAPI）。要 icpx，产物**不是单文件**，
+#           跑的机器上得有 oneAPI 运行时。
+#   VULKAN  N/A/I 通吃。只要驱动自带的 Vulkan 运行时，产物接近单文件；
+#           A 卡和 Intel 卡想"下载解开就能用"的话走这条。
+option(CHANGJI_SD_CUDA   "GPU 后端：CUDA（NVIDIA）"            OFF)
+option(CHANGJI_SD_HIP    "GPU 后端：HIP / ROCm（AMD）"         OFF)
+option(CHANGJI_SD_SYCL   "GPU 后端：SYCL / oneAPI（Intel）"    OFF)
+option(CHANGJI_SD_VULKAN "GPU 后端：Vulkan（N/A/I 都能用）"    OFF)
+
+# 名字里带 SD_ 是历史原因（当初只有 sd.cpp 用 GPU）。**它们管的是 ggml，
+# 不只是 sd.cpp**——开了 CHANGJI_LLAMA 时进程内配音和文本模型走的是同一个
+# 后端。改名要连着 README、doctor 的提示、CI 一起改，收益不抵风险，留着。
 
 # 编给哪些显卡架构。**必须显式给**。
 #
@@ -141,13 +157,35 @@ option(CHANGJI_SD_CUDA "sd.cpp 用 CUDA 后端" OFF)
 #   A100                    → 80
 #   H100                    → 90
 #   RTX 3090 / A10          → 86
+#   RTX 5090                → 120（Blackwell，要 CUDA ≥ 12.8）
 #   RTX 2060（开发机）       → 75（Turing）
 #
 # 多种卡混着用就写 "75;86;89"，编译时间和产物大小会跟着涨。
+# 带后缀的写法（CMake ≥ 3.18）在发布包里很有用：
+#   `89-real`    只出 sm_89 的机器码
+#   `75-virtual` 只出 compute_75 的 PTX，**比它新的卡都能 JIT 上去**
+# 发布包用的那一串在 .github/workflows/release.yml 里，一处改。
+#
 # `native` 只编当前机器上那张卡的——**在容器里构建时别用**，
 # 构建机和跑的机器不一定是同一张卡。
 set(CHANGJI_CUDA_ARCH "89" CACHE STRING
-    "CUDA 架构号，分号隔开。L20/L40S/4090 是 89，A100 是 80，H100 是 90")
+    "CUDA 架构号，分号隔开。L20/L40S/4090 是 89，A100 是 80，H100 是 90，5090 是 120")
+
+# A 卡这边对应的东西叫 gfx 号，不是数字。查自己那张卡：`rocminfo | grep gfx`。
+#
+#   RX 6800/6900、W6800     → gfx1030（RDNA2）
+#   RX 7900 XTX/XT          → gfx1100（RDNA3）
+#   RX 7800/7700            → gfx1101
+#   RX 7600、780M 核显      → gfx1102
+#   RX 9070                 → gfx1201（RDNA4，要 ROCm ≥ 6.4）
+#   MI210/MI250             → gfx90a
+#   MI300                   → gfx942
+#
+# **和 CUDA 那边不一样：HIP 没有 PTX 那种"新卡能 JIT 老代码"的兜底。**
+# 列表里没有的卡就是跑不了，运行时报 "no kernel image is available"。
+# 所以这个列表宁可长一点，代价是编译时间和产物大小。
+set(CHANGJI_HIP_ARCH "gfx1030;gfx1100;gfx1101;gfx1102" CACHE STRING
+    "AMD GPU 架构号（gfx 开头），分号隔开。`rocminfo | grep gfx` 查自己的")
 
 # ---- llama.cpp（阶段 9：进程内 TTS）----
 #
@@ -164,6 +202,186 @@ set(CHANGJI_CUDA_ARCH "89" CACHE STRING
 # 手工步骤自动化——verify/ 是一次性工程，人可以在中间插一次手；
 # 主工程靠 FetchContent 拉源码，没人插得进去。
 option(CHANGJI_LLAMA "链接 llama.cpp（进程内 TTS）" OFF)
+
+# ---- 挑一个 GPU 后端 ----
+#
+# **这一段的位置是要紧的：它必须跑在 FetchContent 拉 llama.cpp 和 sd.cpp
+# 之前。**
+#
+# ggml 的后端开关（GGML_CUDA / GGML_HIP / GGML_SYCL / GGML_VULKAN）是 ggml
+# 自己的 CMakeLists 读的，读完就决定了 add_subdirectory 哪几个后端目录。
+# **谁先把 ggml 带进来，谁那一刻看到的值就说了算**——开了 CHANGJI_LLAMA 时
+# 那是 llama.cpp，而它在下面几十行就拉下来了。
+#
+# 这几行原来写在 `if(CHANGJI_SD)` 里，也就是拉完 llama.cpp 之后。于是
+# `CHANGJI_LLAMA=ON` 加任何一个 GPU 后端，**干净配置一次编出来的二进制里
+# 根本没有那个后端**。清掉 build 目录重配才复现，因为第二次配置时
+# GGML_CUDA 已经躺在缓存里了——"第二次就好了"正是这类故障最难查的地方。
+# 症状和下面 nvcc 那一条一模一样：不报错，全在 CPU 上跑。
+#
+# 四个后端互斥。CUDA 和 HIP 编的是同一批 .cu，物理上不可能同时存在；
+# 另外两个技术上叠得起来，但那只是把编译时间翻倍换一个没人用的组合。
+set(CHANGJI_GPU_BACKEND "")
+foreach(pair "CHANGJI_SD_CUDA;CUDA" "CHANGJI_SD_HIP;HIP"
+             "CHANGJI_SD_SYCL;SYCL" "CHANGJI_SD_VULKAN;Vulkan")
+    list(GET pair 0 _flag)
+    list(GET pair 1 _name)
+    if(${_flag})
+        if(CHANGJI_GPU_BACKEND)
+            message(FATAL_ERROR
+                "GPU 后端一次只能开一个，现在 ${CHANGJI_GPU_BACKEND} 和 "
+                "${_name} 都开着。\n"
+                "  N 卡：-DCHANGJI_SD_CUDA=ON\n"
+                "  A 卡：-DCHANGJI_SD_HIP=ON（或者 -DCHANGJI_SD_VULKAN=ON）\n"
+                "  Intel：-DCHANGJI_SD_SYCL=ON（或者 -DCHANGJI_SD_VULKAN=ON）")
+        endif()
+        set(CHANGJI_GPU_BACKEND "${_name}")
+    endif()
+endforeach()
+
+if(CHANGJI_SD_CUDA)
+    set(SD_CUDA ON CACHE BOOL "" FORCE)
+    # **llama.cpp 的 ggml 走的是另一个开关。**
+    # 开了 CHANGJI_LLAMA 时 ggml 由 llama.cpp 提供，而它的 CUDA 后端
+    # 由 GGML_CUDA 控制，不认 SD_CUDA。只设 SD_CUDA 的话编出来的是
+    # 一个**完全没有 CUDA 的**二进制——不报错，全在 CPU 上跑，
+    # 表现就是"能跑但莫名其妙地慢"。
+    # 实测过：那一版 GGML_CUDA:BOOL=OFF，连 libggml-cuda.a 都没有。
+    set(GGML_CUDA ON CACHE BOOL "" FORCE)
+    set(CMAKE_CUDA_ARCHITECTURES "${CHANGJI_CUDA_ARCH}" CACHE STRING "" FORCE)
+
+    # **配置期就要确认 nvcc 找得到，找不到当场停。**
+    #
+    # 不停的话整条链子一声不吭：CMake 配置成功、编译成功、服务起得来、
+    # 任务开跑——只是 ggml 的 CUDA 后端根本没编进去，全部退到 CPU。
+    # 2026-09-10 在 5090 上栽过：手敲配置命令漏了
+    # `-DCMAKE_CUDA_COMPILER`，而那台机器的 nvcc 不在 PATH 上。
+    # 结果是 1280×704 的一镜跑了五个多小时才两步，进程占着 52 GB 内存、
+    # 395% CPU，而 `nvidia-smi` 上一个计算进程都没有。
+    # 查出来靠的是 `strings 二进制 | grep -c ggml_cuda` —— 0 对 2348。
+    #
+    # 已经设过 CMAKE_CUDA_COMPILER 的话就信它（交叉编译、多版本共存
+    # 都可能指到非默认位置）；没设就自己找一遍常见路径。
+    if(NOT CMAKE_CUDA_COMPILER)
+        find_program(CHANGJI_NVCC nvcc
+            HINTS ENV CUDA_PATH ENV CUDA_HOME
+            PATHS /usr/local/cuda/bin /usr/local/cuda-12/bin
+                  /usr/local/cuda-13/bin
+            PATH_SUFFIXES bin)
+        if(CHANGJI_NVCC)
+            set(CMAKE_CUDA_COMPILER "${CHANGJI_NVCC}" CACHE STRING "" FORCE)
+            message(STATUS "CUDA 编译器：${CHANGJI_NVCC}（自动找到的）")
+        else()
+            message(FATAL_ERROR
+                "开了 CHANGJI_SD_CUDA 但找不到 nvcc。\n"
+                "**不能就这么编下去**：编出来的二进制没有 CUDA 后端，"
+                "不报错、只是全在 CPU 上跑，慢一百倍而且很难看出原因。\n"
+                "  装了 CUDA 的话显式指一下："
+                "-DCMAKE_CUDA_COMPILER=/usr/local/cuda/bin/nvcc\n"
+                "  真不想用 CUDA 就关掉：-DCHANGJI_SD_CUDA=OFF")
+        endif()
+    endif()
+
+    message(STATUS "CUDA 架构：${CHANGJI_CUDA_ARCH}"
+                   "（不对的话会退回 PTX JIT，不报错但很慢）")
+
+elseif(CHANGJI_SD_HIP)
+    set(SD_HIPBLAS ON CACHE BOOL "" FORCE)
+    set(GGML_HIP ON CACHE BOOL "" FORCE)
+
+    # **架构列表三个名字都给。** ggml 这两年把 AMDGPU_TARGETS 改叫
+    # GPU_TARGETS，再由它推出 CMAKE_HIP_ARCHITECTURES；Windows 上又不走
+    # enable_language(HIP)、直接读 CMAKE_HIP_ARCHITECTURES。三个都设上，
+    # 免得跟着上游改名走——设多了不会错，漏了的表现是**编出来只有默认那
+    # 一两个 gfx**，换张卡跑就 "no kernel image is available for execution"。
+    set(GPU_TARGETS        "${CHANGJI_HIP_ARCH}" CACHE STRING "" FORCE)
+    set(AMDGPU_TARGETS     "${CHANGJI_HIP_ARCH}" CACHE STRING "" FORCE)
+    set(CMAKE_HIP_ARCHITECTURES "${CHANGJI_HIP_ARCH}" CACHE STRING "" FORCE)
+
+    # 同 nvcc 那条：找不到工具链当场停，不要等到链接期报一堆找不到
+    # hipblas 符号——那时候没人会想到是"ROCm 没装/没在 PATH 上"。
+    # **只认 ROCm 自带的那几个名字。** 原来这里还写了 `clang++`，
+    # 那会在一台装了普通 clang、没装 ROCm 的机器上找到 /usr/bin/clang++
+    # 然后放行——这个检查存在的全部意义就是不放行那种机器。
+    find_program(CHANGJI_HIPCC NAMES hipcc hipcc.bat amdclang++
+        HINTS ENV HIP_PATH ENV ROCM_PATH
+        PATHS /opt/rocm /opt/rocm/llvm
+        PATH_SUFFIXES bin)
+    if(NOT CHANGJI_HIPCC)
+        message(FATAL_ERROR
+            "开了 CHANGJI_SD_HIP 但找不到 ROCm 的编译器。\n"
+            "**不能就这么编下去**：理由同 CUDA 那条，编出来是个没有 GPU "
+            "后端的二进制。\n"
+            "  Linux：装 ROCm（rocm-hip-sdk + rocblas-dev + hipblas-dev），"
+            "然后 export ROCM_PATH=/opt/rocm\n"
+            "  Windows：装 AMD HIP SDK，配置时把 C/C++ 编译器指到 "
+            "%HIP_PATH%/bin/clang++.exe\n"
+            "  只想用 A 卡但不想折腾 ROCm：改用 -DCHANGJI_SD_VULKAN=ON，"
+            "那条只要驱动")
+    endif()
+
+    message(STATUS "HIP 架构：${CHANGJI_HIP_ARCH}"
+                   "（列表外的卡跑不了，HIP 没有 PTX 那种兜底）")
+
+elseif(CHANGJI_SD_SYCL)
+    set(SD_SYCL ON CACHE BOOL "" FORCE)
+    set(GGML_SYCL ON CACHE BOOL "" FORCE)
+
+    # **必须是 Intel 的 icx/icpx。** sd.cpp 往 CMAKE_CXX_FLAGS 里直接塞
+    # `-fsycl`，MSVC 和 GCC 都不认那个参数。让它编下去的话报的是几百行
+    # 模板展开错误，第一行离真正的原因（编译器选错了）差着十万八千里。
+    if(NOT CMAKE_CXX_COMPILER_ID STREQUAL "IntelLLVM")
+        message(FATAL_ERROR
+            "开了 CHANGJI_SD_SYCL，但 C++ 编译器是 "
+            "${CMAKE_CXX_COMPILER_ID}，不是 IntelLLVM。\n"
+            "  先进 oneAPI 的环境（Linux：source /opt/intel/oneapi/setvars.sh，"
+            "Windows：setvars.bat），再配置：\n"
+            "    -DCMAKE_C_COMPILER=icx -DCMAKE_CXX_COMPILER=icpx"
+            "（Windows 上是 icx-cl）\n"
+            "  只想用 Intel 卡但不想装 oneAPI：改用 -DCHANGJI_SD_VULKAN=ON")
+    endif()
+
+    # **这条产物不是单文件。** SYCL 要 oneAPI 的运行时（libsycl、
+    # libsvml、MKL 那一串），静态链不了。跑的机器上得有 oneAPI 运行时，
+    # 或者把那些库跟二进制放一起。发布包在 release.yml 里是这么处理的。
+    message(WARNING
+        "SYCL 后端：编出来的二进制**依赖 oneAPI 运行时**，不是单文件。"
+        "另外 leejet 那套 ggml 扩展补丁没有覆盖 ggml-sycl，"
+        "fp8 权重多半跑不起来——见 patches/README.md。")
+
+elseif(CHANGJI_SD_VULKAN)
+    set(SD_VULKAN ON CACHE BOOL "" FORCE)
+    set(GGML_VULKAN ON CACHE BOOL "" FORCE)
+
+    # ggml-vulkan 编之前要先把几百个 .comp 着色器用 glslc 编成 SPIR-V
+    # （它自己建一个 vulkan-shaders-gen host 工具来干这事）。少了 glslc
+    # 的表现是构建到一半报"找不到 glslc"，而那时候已经等了十几分钟。
+    find_package(Vulkan QUIET COMPONENTS glslc)
+    if(NOT Vulkan_FOUND)
+        message(FATAL_ERROR
+            "开了 CHANGJI_SD_VULKAN 但找不到 Vulkan SDK。\n"
+            "  Linux：装 LunarG 的 vulkan-sdk，或者发行版的 "
+            "libvulkan-dev + glslc\n"
+            "  Windows：装 https://vulkan.lunarg.com 的 SDK，"
+            "装完 VULKAN_SDK 这个环境变量会指到它")
+    endif()
+    if(NOT Vulkan_glslc_FOUND)
+        message(FATAL_ERROR
+            "Vulkan 找到了，但没有 glslc。ggml 的着色器编不出来。\n"
+            "  Ubuntu：apt install glslc（或者装完整的 vulkan-sdk）")
+    endif()
+    message(STATUS "Vulkan：${Vulkan_LIBRARY}，glslc：${Vulkan_GLSLC_EXECUTABLE}")
+endif()
+
+if(CHANGJI_GPU_BACKEND)
+    message(STATUS "GPU 后端：${CHANGJI_GPU_BACKEND}")
+else()
+    # 不是 FATAL：单元测试和协调者那份就是要 CPU 的。但要说出来——
+    # "编好了但出图特别慢"最常见的原因就是这一行没人看见。
+    message(STATUS "GPU 后端：没有，全走 CPU。出片会慢到不可用，"
+                   "一镜按小时算。要 GPU 就开 CHANGJI_SD_CUDA / "
+                   "CHANGJI_SD_HIP / CHANGJI_SD_SYCL / CHANGJI_SD_VULKAN 之一")
+endif()
 
 # **GGML_MAX_NAME 要在顶层定义，链了 ggml 就要，不管它是谁带进来的。**
 #
@@ -247,54 +465,9 @@ if(CHANGJI_SD)
     set(SD_WEBP OFF CACHE BOOL "" FORCE)
     set(SD_WEBM OFF CACHE BOOL "" FORCE)
     set(SD_BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
-    if(CHANGJI_SD_CUDA)
-        set(SD_CUDA ON CACHE BOOL "" FORCE)
-        # **llama.cpp 的 ggml 走的是另一个开关。**
-        # 开了 CHANGJI_LLAMA 时 ggml 由 llama.cpp 提供，而它的 CUDA 后端
-        # 由 GGML_CUDA 控制，不认 SD_CUDA。只设 SD_CUDA 的话编出来的是
-        # 一个**完全没有 CUDA 的**二进制——不报错，全在 CPU 上跑，
-        # 表现就是"能跑但莫名其妙地慢"。
-        # 实测过：那一版 GGML_CUDA:BOOL=OFF，连 libggml-cuda.a 都没有。
-        set(GGML_CUDA ON CACHE BOOL "" FORCE)
-        # ggml 读的是 CMAKE_CUDA_ARCHITECTURES。在拉它之前设好，
-        # 拉完再设就晚了——那时候目标已经建出来了。
-        set(CMAKE_CUDA_ARCHITECTURES "${CHANGJI_CUDA_ARCH}" CACHE STRING "" FORCE)
-
-        # **配置期就要确认 nvcc 找得到，找不到当场停。**
-        #
-        # 不停的话整条链子一声不吭：CMake 配置成功、编译成功、服务起得来、
-        # 任务开跑——只是 ggml 的 CUDA 后端根本没编进去，全部退到 CPU。
-        # 2026-09-10 在 5090 上栽过：手敲配置命令漏了
-        # `-DCMAKE_CUDA_COMPILER`，而那台机器的 nvcc 不在 PATH 上。
-        # 结果是 1280×704 的一镜跑了五个多小时才两步，进程占着 52 GB 内存、
-        # 395% CPU，而 `nvidia-smi` 上一个计算进程都没有。
-        # 查出来靠的是 `strings 二进制 | grep -c ggml_cuda` —— 0 对 2348。
-        #
-        # 已经设过 CMAKE_CUDA_COMPILER 的话就信它（交叉编译、多版本共存
-        # 都可能指到非默认位置）；没设就自己找一遍常见路径。
-        if(NOT CMAKE_CUDA_COMPILER)
-            find_program(CHANGJI_NVCC nvcc
-                HINTS ENV CUDA_PATH ENV CUDA_HOME
-                PATHS /usr/local/cuda/bin /usr/local/cuda-12/bin
-                      /usr/local/cuda-13/bin
-                PATH_SUFFIXES bin)
-            if(CHANGJI_NVCC)
-                set(CMAKE_CUDA_COMPILER "${CHANGJI_NVCC}" CACHE STRING "" FORCE)
-                message(STATUS "CUDA 编译器：${CHANGJI_NVCC}（自动找到的）")
-            else()
-                message(FATAL_ERROR
-                    "开了 CHANGJI_SD_CUDA 但找不到 nvcc。\n"
-                    "**不能就这么编下去**：编出来的二进制没有 CUDA 后端，"
-                    "不报错、只是全在 CPU 上跑，慢一百倍而且很难看出原因。\n"
-                    "  装了 CUDA 的话显式指一下："
-                    "-DCMAKE_CUDA_COMPILER=/usr/local/cuda/bin/nvcc\n"
-                    "  真不想用 CUDA 就关掉：-DCHANGJI_SD_CUDA=OFF")
-            endif()
-        endif()
-
-        message(STATUS "CUDA 架构：${CHANGJI_CUDA_ARCH}"
-                       "（不对的话会退回 PTX JIT，不报错但很慢）")
-    endif()
+    # GPU 后端的开关（SD_CUDA / SD_HIPBLAS / SD_SYCL / SD_VULKAN 和对应的
+    # GGML_*）在上面"挑一个 GPU 后端"那一段里就设好了，**不在这儿**。
+    # 理由见那一段：晚一步设，开了 CHANGJI_LLAMA 时就赶不上了。
 
     FetchContent_Declare(stable_diffusion_cpp
         GIT_REPOSITORY https://github.com/leejet/stable-diffusion.cpp.git
