@@ -27,6 +27,9 @@ const edits = ref({}) // char_id -> 编辑中的副本
 const voices = ref([])
 const voicesError = ref('')
 const voicesLoading = ref(false)
+// 「三张一起画」画到哪一张了。三张各要几十秒，不报的话按钮上就是一句
+// 不动的「画着…」，用户分不清是在画还是卡住了。
+const genStep = ref(null)
 
 const SLOTS = [
   { key: 'front', label: '正面' },
@@ -113,11 +116,15 @@ function changed(charId) {
 }
 
 /**
- * 从剧本提角色。
+ * 照故事给人定妆。
  *
- * 角色是全剧共用的一批，所以不指定集号——引擎会挑第一集有内容的剧本。
- * 默认只补新出现的人物：老角色的设定和参考图都留着。第五集冒出一个新
- * 角色时，不该把前四集主角的脸重新想一遍。
+ * **这一步不创作新的人**——人是故事里定的，这里只是把故事里那份名单翻成
+ * "长什么样"：身份、体型、五官发型、默认服装。有故事就从故事里读，没有
+ * 才回落到剧本（引擎那边的 source=auto）。
+ *
+ * 角色是全剧共用的一批，所以不指定集号。默认只补还没定过妆的人：老角色
+ * 的设定和参考图都留着。第五集冒出一个新角色时，不该把前四集主角的脸
+ * 重新想一遍。
  */
 async function generate(overwrite) {
   if (overwrite && !confirm('覆盖会冲掉手改过的设定和传过的参考图，已渲染的镜头也要重跑。继续？')) {
@@ -171,6 +178,42 @@ async function upload(charId, slot, event) {
   await load()
 }
 
+/**
+ * 照着上面那段"拼出来的提示词"现画一张。
+ *
+ * **这是这一页上唯一真正在用 AI 的地方**（还有场景那张空景图）：人是谁、
+ * 要什么、什么关系，都在故事里定完了；这一页只负责把那些人翻成可画的
+ * 描述，再照着描述画出来。
+ *
+ * 一张几十秒，头一张还要先把出图模型读进显存。所以每个位置各自有自己的
+ * 忙碌状态，画着的那张只停自己那一格，另外两格照样能点。
+ */
+async function genRef(charId, slot) {
+  const result = await run(
+    () => api.generateReference({ project: session.projectPath, char_id: charId, slot }),
+    { key: 'gen:' + charId + slot },
+  )
+  if (!result) return
+  ui.ok(`${SLOTS.find((s) => s.key === slot)?.label ?? slot}画好了（${Math.round(result.seconds)} 秒）`)
+  await load()
+}
+
+/** 三张一起画。**一张一张来**：显存只够一张，并发只会排队，还看不出进度。 */
+async function genAllRefs(charId) {
+  for (const s of SLOTS) {
+    genStep.value = { charId, label: s.label }
+    const ok = await run(
+      () => api.generateReference({ project: session.projectPath, char_id: charId, slot: s.key }),
+      { key: 'genall:' + charId },
+    )
+    // 中间某一张失败就停：后面两张多半也会栽在同一件事上（模型没配、
+    // 显存不够），接着画只是让用户多等两分钟再看到同一句报错。
+    if (!ok) break
+  }
+  genStep.value = null
+  await load()
+}
+
 async function clearRef(charId, slot) {
   const result = await run(
     () => api.clearReference({ project: session.projectPath, char_id: charId, slot }),
@@ -187,7 +230,10 @@ async function clearRef(charId, slot) {
   <div class="stack stack--lg">
     <h2 class="asec">
       人物
-      <span class="asec__sub">全剧同一批。外观只存在这儿，分镜表里只有 id——这是跨镜头一致的唯一手段。</span>
+      <span class="asec__sub">
+        人是故事里定的，这一页只给他们定妆：把故事里的人翻成"长什么样"，再照着画出参考图。
+        外观只存在这儿，分镜表里只有 id——这是跨镜头一致的唯一手段。
+      </span>
     </h2>
 
     <StepHeader bare>
@@ -209,7 +255,7 @@ async function clearRef(charId, slot) {
           title="同名角色用新出的顶掉旧的，手改过的设定和参考图会丢"
           @click="generate(true)"
         >
-          全部重出
+          全部重新定妆
         </button>
         <button
           class="btn btn--ai"
@@ -218,13 +264,7 @@ async function clearRef(charId, slot) {
           @click="generate(false)"
         >
           <AppIcon name="sparkle" :size="15" />
-          {{
-            isBusy('bible')
-              ? '大模型正在读剧本…'
-              : characters.length
-                ? 'AI 补新角色'
-                : 'AI 从剧本出角色'
-          }}
+          {{ isBusy('bible') ? '正在读故事…' : '照故事定妆' }}
         </button>
       </template>
     </StepHeader>
@@ -244,12 +284,12 @@ async function clearRef(charId, slot) {
         v-if="!loading && !characters.length"
         icon="user"
         title="还没有角色"
-        hint="角色设定从剧本里提。先把第二步的剧本写好，再点上面的「AI 从剧本出角色」。"
+        hint="人是故事里定的，这一页只给他们定妆。先去把故事写出来，再回来点「照故事定妆」。"
       >
         <RouterLink to="/story" class="btn">回去写故事</RouterLink>
         <button class="btn btn--ai" type="button" @click="generate(false)">
           <AppIcon name="sparkle" :size="15" />
-          现在就出
+          现在就定妆
         </button>
       </EmptyState>
 
@@ -321,7 +361,23 @@ async function clearRef(charId, slot) {
               <!-- 参考图与音色 -->
               <div class="stack">
                 <div class="field">
-                  <span class="field__label">三视图参考</span>
+                  <span class="field__label">
+                    三视图参考
+                    <button
+                      class="btn btn--sm btn--ai"
+                      type="button"
+                      :disabled="isBusy('genall:' + c.char_id)"
+                      title="照左边那段拼出来的提示词画。一张几十秒，三张一张一张来"
+                      @click="genAllRefs(c.char_id)"
+                    >
+                      <AppIcon name="sparkle" :size="13" />
+                      {{
+                        isBusy('genall:' + c.char_id)
+                          ? `正在画${genStep?.label ?? ''}…`
+                          : '三张一起画'
+                      }}
+                    </button>
+                  </span>
                   <div class="refs">
                     <div v-for="s in SLOTS" :key="s.key" class="ref">
                       <div class="ref__frame">
@@ -334,6 +390,15 @@ async function clearRef(charId, slot) {
                       </div>
                       <span class="ref__label tiny">{{ s.label }}</span>
                       <div class="ref__acts">
+                        <button
+                          class="btn btn--sm btn--ai"
+                          type="button"
+                          :disabled="isBusy('gen:' + c.char_id + s.key) || isBusy('genall:' + c.char_id)"
+                          :title="c['ref_' + s.key] ? '重画这一张（同一个种子，还是那张脸）' : '照提示词画一张'"
+                          @click="genRef(c.char_id, s.key)"
+                        >
+                          {{ isBusy('gen:' + c.char_id + s.key) ? '画着…' : '画' }}
+                        </button>
                         <label class="btn btn--sm btn--ghost">
                           {{ c['ref_' + s.key] ? '换' : '传' }}
                           <input
@@ -356,6 +421,7 @@ async function clearRef(charId, slot) {
                   </div>
                   <span class="field__hint">
                     文字描述再细，模型每次也会重新想象一遍这张脸；给一张图，它照着画。
+                    画出来的和后面每一镜用的是同一段描述，所以是同一个人。
                   </span>
                 </div>
 

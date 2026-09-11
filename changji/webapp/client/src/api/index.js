@@ -157,10 +157,17 @@ export const api = {
   clearReference: (payload) => post('/api/character/reference/clear', payload),
   uploadReference: (form) =>
     request('/api/character/reference', { method: 'POST', body: form }),
+  // 照着设定里那段外观描述现画一张。**一次一张，同步，几十秒**——头一张
+  // 还要先把出图模型读进显存，那段时间一点动静都没有。调用处必须自己
+  // 摆一个"正在画"的状态，否则用户会连点。
+  generateReference: (payload) =>
+    post('/api/character/reference/generate', payload),
   saveLocation: (payload) => post('/api/location', payload),
   uploadLocationReference: (form) =>
     request('/api/location/reference', { method: 'POST', body: form }),
   clearLocationReference: (payload) => post('/api/location/reference/clear', payload),
+  generateLocationReference: (payload) =>
+    post('/api/location/reference/generate', payload),
   saveStyle: (payload) => post('/api/style', payload),
   voices: (path) => get('/api/voices', { path }),
   llmModels: () => get('/api/llm/models'),

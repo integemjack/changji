@@ -139,10 +139,13 @@ function changed(id) {
 }
 
 /**
- * 按这一集的剧本补场景。
+ * 照故事给这一集的地方定妆。
  *
- * 默认只补新的：库里已有的同名场景保住，手改过的描述和传过的空景图
- * 都还在。勾了覆盖才让新出的顶掉，那会把全剧镜头退回重跑。
+ * **这一步不创作新的地方**——地方是故事里定的，这里只是把故事里那份名单
+ * 翻成"长什么样"：空间结构、光线基调、色彩方案。
+ *
+ * 默认只补还没定过妆的：库里已有的同名场景保住，手改过的描述和传过的
+ * 空景图都还在。勾了覆盖才让新出的顶掉，那会把全剧镜头退回重跑。
  */
 async function generate(overwrite) {
   if (!session.episodeId) {
@@ -202,6 +205,30 @@ async function uploadEmpty(locationId, event) {
   await load()
 }
 
+/**
+ * 照着这个场景那段"拼出来的提示词"画一张空景图。
+ *
+ * **这是这一页上唯一真正在用 AI 的地方**：地方是故事里定的，这一页只把它
+ * 翻成"长什么样"，再照着画出来。
+ *
+ * 画出来的**里面没有人**——空景图是场景一致性的锚点，后面每一镜都拿它当
+ * 底子。里面站个人的话，那个人会被当成这个地方的一部分一路复制下去，而
+ * 那是个不属于任何角色、也没法改的人。
+ */
+async function genEmpty(locationId) {
+  const result = await run(
+    () =>
+      api.generateLocationReference({
+        project: session.projectPath,
+        location_id: locationId,
+      }),
+    { key: 'gen:' + locationId },
+  )
+  if (!result) return
+  ui.ok(`空景图画好了（${Math.round(result.seconds)} 秒）`)
+  await load()
+}
+
 async function clearEmpty(locationId) {
   const result = await run(
     () =>
@@ -222,7 +249,7 @@ async function clearEmpty(locationId) {
   <div class="stack stack--lg">
     <h2 class="asec">
       地点
-      <span class="asec__sub">同上：空景图是场景一致的锚点。</span>
+      <span class="asec__sub">同上：地方在故事里定，这一页只定妆。空景图是场景一致的锚点。</span>
     </h2>
 
     <StepHeader bare>
@@ -244,7 +271,7 @@ async function clearEmpty(locationId) {
           title="同名场景用新出的顶掉旧的，手改过的描述和空景图会丢"
           @click="generate(true)"
         >
-          全部重出
+          全部重新定妆
         </button>
         <button
           class="btn btn--ai"
@@ -253,7 +280,7 @@ async function clearEmpty(locationId) {
           @click="generate(false)"
         >
           <AppIcon name="sparkle" :size="15" />
-          {{ isBusy('bible') ? '正在读剧本…' : 'AI 出这一集的场景' }}
+          {{ isBusy('bible') ? '正在读故事…' : '照故事定妆' }}
         </button>
       </template>
       <template v-if="session.hasProject" #note>
@@ -297,7 +324,7 @@ async function clearEmpty(locationId) {
         <AppIcon name="warn" :size="15" />
         <span>
           分镜引用了 {{ missing.join('、') }}，但场景库里没有。这样跑到首帧那一步会
-          直接报「场景未注册」。点上面的「AI 出这一集的场景」补上。
+          直接报「场景未注册」。点上面的「照故事定妆」补上。
         </span>
       </p>
 
@@ -305,7 +332,7 @@ async function clearEmpty(locationId) {
         v-if="!loading && !locations.length"
         icon="scene"
         title="场景库还是空的"
-        hint="场景从剧本里提。先把这一集的剧本写好，再点上面的按钮，AI 会读剧本把地点列出来。"
+        hint="地方是故事里定的，这一页只给它定妆。先去把故事写出来，再回来点「照故事定妆」。"
       >
         <RouterLink to="/story" class="btn">回去写故事</RouterLink>
       </EmptyState>
@@ -341,6 +368,22 @@ async function clearEmpty(locationId) {
                 </div>
 
                 <div class="loc__overlay">
+                  <button
+                    class="btn btn--sm btn--ai"
+                    type="button"
+                    :disabled="isBusy('gen:' + l.location_id)"
+                    title="照下面那段拼出来的提示词画一张空景，里面不会有人"
+                    @click="genEmpty(l.location_id)"
+                  >
+                    <AppIcon name="sparkle" :size="13" />
+                    {{
+                      isBusy('gen:' + l.location_id)
+                        ? '画着…'
+                        : l.ref_empty
+                          ? '重画'
+                          : '画一张'
+                    }}
+                  </button>
                   <label class="btn btn--sm">
                     <AppIcon name="image" :size="13" />
                     {{ l.ref_empty ? '换一张' : '传空景图' }}

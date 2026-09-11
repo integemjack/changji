@@ -14,7 +14,7 @@
  * 以及「没选集」这一种情况。ShotsView 那 1200 行原样搬进 EpShots，
  * 内部一行没动——这一轮只动结构。
  */
-import { computed, ref, watch } from 'vue'
+import { computed, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
 import EmptyState from '@/components/EmptyState.vue'
