@@ -1,26 +1,30 @@
 <script setup>
 /**
- * 故事。原稿，也只有原稿。
+ * 故事。一个写稿子的编辑器。
  *
- * 用户 2026-09-11：**故事这个页面重点在创作，创作就应该更多的是人和 AI 的
- * 互动，人可以选中某一段让 AI 继续修改优化，也可以通过对话形式修改原稿。**
+ * 用户 2026-09-11 两次定方向：
  *
- * 所以这一页现在只有一件事：**看着自己的稿子，改它**。章节表、分集切线、
- * 每集时长、人物地点索引，全搬去「设定」那三格了——那些是在看创作出来的
- * 东西被切成什么样，是另一件事，摆在这儿只会跟写字抢注意力。
+ *   「故事这个页面重点在创作，人可以选中某一段让 AI 继续修改优化，
+ *     也可以通过对话形式修改原稿」
+ *   「故事页面应该像程序编辑一样，主要突出写作的过程，
+ *     **ai 生成也应该在编辑器里面流式插入**」
  *
- * **正文是一整篇连着读的**，不是一章一个折叠块。小说就是这么读的；折起来
- * 的话你永远看不到第三章接第四章那一下顺不顺，而那正是最该看的地方。
+ * 所以正文**一直是可编辑的**，不是"只读 + 一个手改开关"。看到一个错别字
+ * 还要打一句"把这里的'的'改成'地'"，那不叫创作工具。
  *
- * 选中 → 说一句 → 它改 → 你看 → 用不用。**改完不直接落库**，摆出来等你
- * 点；也不是每次都从头说起，之前那几轮来回都带着，所以"再短一点"才有
- * 意义。
+ * 而 AI 改出来的东西**直接落到编辑器里那一段的位置上**，不是摆在右边一个
+ * 框里等你抄过去。你看到的就是改完的稿子本身；不满意按「撤销」，整段退回
+ * 改之前。（还差最后一步：现在是一次性插进去，逐字流式插入要引擎那边先
+ * 能吐 token，见下一轮。）
  *
- * ⚠️ 位置一律换算成 **Unicode 码点**再送给引擎。浏览器给的是 UTF-16 单元，
- * 碰上代理对（生僻字、emoji）会差一个，而差一个的后果是替换的时候切在
- * 半个字上。`[...s].length` 才是码点数。
+ * **编辑器用 textarea，不是 contenteditable。** selectionStart/End 直接就是
+ * 偏移，不用在 DOM 里爬；而 contenteditable 里每一次输入都可能重排节点，
+ * 偏移随时失效——那正是"改到一半突然替换错地方"的来源。
+ *
+ * ⚠️ 偏移一律换算成 **Unicode 码点**再送给引擎。浏览器给的是 UTF-16 单元，
+ * 碰上代理对（生僻字、emoji）差一个，而差一个就切在半个字上。
  */
-import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 
 import AppIcon from '@/components/AppIcon.vue'
 import EmptyState from '@/components/EmptyState.vue'
@@ -47,8 +51,7 @@ const savedPremise = ref('')
 
 // **体量在这一页，每集时长在「设定 · 分集」。** 两个数看着像一对，其实是
 // 两件事：体量是"这个故事有多长"（创作，写大纲时就要定），每集时长是
-// "把它切成多长一段"（设定，什么时候改都行）。摆在一起的话，改一个会让
-// 人以为另一个也跟着变了。
+// "把它切成多长一段"（设定，什么时候改都行）。
 const SCALES = [
   { key: 'short', label: '短篇', hint: '四章左右，一口气讲完' },
   { key: 'medium', label: '中篇', hint: '八章左右' },
@@ -56,15 +59,25 @@ const SCALES = [
 ]
 const scale = ref('medium')
 
-// ---- 改稿 ----
-/** 选中的那一段：{chapter_id, from, to, text}。没选就是 null。 */
+// ---- 编辑器 ----
+/** chapter_id -> 编辑中的正文。落库的那份在 story 里，这份是手里的稿子。 */
+const buf = reactive({})
+/** chapter_id -> <textarea> 元素，插字和调高度要用。 */
+const boxes = reactive({})
+/** 选中的那一段：{chapter_id, from, to, text}，偏移是码点。 */
 const sel = ref(null)
 /** 这一段上聊过的来回。换一段就清空——"再短一点"是相对上一版说的。 */
 const chat = ref([])
-/** AI 改出来还没采用的那一版。 */
-const revision = ref(null)
 const instruction = ref('')
-const msRef = ref(null)
+/**
+ * AI 刚插进去、还没存的那一段。
+ *
+ * 留着改之前的**整章**正文，「撤销」就是把它放回去——比记住一段区间可靠：
+ * 插进去之后用户可能又手动改了两个字，按区间回退会退错地方。
+ */
+const pending = ref(null)
+/** setStory 之前记一下哪几章是脏的。存完那一章会从这里拿掉。 */
+const dirtySnapshot = new Set()
 
 const chapters = computed(() => story.value?.chapters ?? [])
 const hasStory = computed(() => chapters.value.length > 0)
@@ -74,7 +87,16 @@ const writtenCount = computed(
 )
 const unwritten = computed(() => chapters.value.length - writtenCount.value)
 const totalChars = computed(() =>
-  chapters.value.reduce((n, c) => n + [...(c.text ?? '')].length, 0),
+  chapters.value.reduce(
+    (n, c) => n + [...(buf[c.chapter_id] ?? c.text ?? '')].length,
+    0,
+  ),
+)
+/** 还没存回去的章。**页面走开之前要拦一下**，不然改的字就没了。 */
+const dirtyIds = computed(() =>
+  chapters.value
+    .filter((c) => (buf[c.chapter_id] ?? '') !== (c.text ?? ''))
+    .map((c) => c.chapter_id),
 )
 /** 有正文但一个人物都没提出来——粘进来的故事就是这样。 */
 const needsAnalysis = computed(
@@ -91,6 +113,13 @@ function setStory(payload) {
   premise.value = story.value?.premise ?? ''
   savedPremise.value = premise.value.trim()
   if (story.value?.scale) scale.value = story.value.scale
+  // **只刷新没改过的那几章。** 引擎重算分集表也会回一份完整故事，照单
+  // 全收的话，用户正在打字的那一章会被服务端那份盖掉。
+  for (const c of chapters.value) {
+    if (!dirtySnapshot.has(c.chapter_id)) buf[c.chapter_id] = c.text ?? ''
+  }
+  dirtySnapshot.clear()
+  nextTick(fitAll)
 }
 
 async function load() {
@@ -100,6 +129,8 @@ async function load() {
   }
   loading.value = true
   try {
+    for (const k of Object.keys(buf)) delete buf[k]
+    dirtySnapshot.clear()
     setStory(await api.getStory(session.projectPath))
   } catch (err) {
     ui.error(err.message)
@@ -108,14 +139,20 @@ async function load() {
   }
 }
 
+function beforeUnload(e) {
+  if (!dirtyIds.value.length) return
+  e.preventDefault()
+  e.returnValue = ''
+}
+
 onMounted(() => {
   load()
   writer.poll() // 可能是上次离开页面时还在跑的那一轮
-  document.addEventListener('selectionchange', onSelect)
+  window.addEventListener('beforeunload', beforeUnload)
 })
 onUnmounted(() => {
   writer.stop()
-  document.removeEventListener('selectionchange', onSelect)
+  window.removeEventListener('beforeunload', beforeUnload)
 })
 watch(() => session.projectPath, load)
 watch(
@@ -126,75 +163,96 @@ watch(
 )
 
 // ---------------------------------------------------------------------------
-// 选中一段
+// 编辑器本身
 // ---------------------------------------------------------------------------
 
-/** 这个节点属于哪一章。选中跨章时两头会不一样。 */
-function chapterOf(node) {
-  let el = node instanceof Element ? node : node?.parentElement
-  while (el && !el.dataset?.chapter) el = el.parentElement
-  return el?.dataset?.chapter ?? ''
+/** 高度跟着内容长。编辑器里不该有第二根滚动条。 */
+function fit(el) {
+  if (!el) return
+  el.style.height = 'auto'
+  el.style.height = el.scrollHeight + 'px'
+}
+function fitAll() {
+  for (const el of Object.values(boxes)) fit(el)
 }
 
-/**
- * 浏览器给的 UTF-16 偏移换算成**码点**偏移。
- *
- * 中文基本都在 BMP 里，两者相等；但生僻字和 emoji 是代理对，差一个。
- * 差一个的后果不是显示错位，是替换的时候切在半个字上——存进 story.json
- * 的就是一段非法 UTF-8，一路流到提示词和字幕。
- */
+function onInput(id, event) {
+  buf[id] = event.target.value
+  dirtySnapshot.add(id)
+  fit(event.target)
+  // 手一动就说明这一版是自己的了，AI 那条"撤销"没有意义了
+  pending.value = null
+}
+
+/** 浏览器给的 UTF-16 偏移换算成**码点**偏移。 */
 function codePoints(text, utf16Offset) {
   return [...text.slice(0, utf16Offset)].length
 }
+/** 码点偏移换回 UTF-16。插完字要用它把光标放回正确的位置。 */
+function utf16At(text, cp) {
+  return [...text].slice(0, cp).join('').length
+}
 
-function onSelect() {
-  const s = window.getSelection()
-  if (!s || s.isCollapsed || !msRef.value) {
-    // **不清掉已经选好的那一段。** 点进右边的输入框时浏览器会收掉选区，
-    // 收一次就把面板关掉的话，这个功能永远用不成。
+function onSelectionChange(id, event) {
+  const el = event.target
+  const full = el.value ?? ''
+  const from = codePoints(full, el.selectionStart)
+  const to = codePoints(full, el.selectionEnd)
+  if (to - from < 2) {
+    // 光标只是移动了一下。**不清掉已经选好的那一段**——不然点进右边的
+    // 输入框就把面板关了，这个功能永远用不成。
     return
   }
-  const a = chapterOf(s.anchorNode)
-  const b = chapterOf(s.focusNode)
-  if (!a || !b) return
-  if (a !== b) {
-    ui.warn('一次只能改一章里的一段')
+  if (sel.value?.chapter_id === id && sel.value.from === from && sel.value.to === to) {
     return
   }
-  const el = msRef.value.querySelector(`[data-chapter="${a}"]`)
-  if (!el || !el.contains(s.anchorNode)) return
-
-  const full = el.textContent ?? ''
-  const lo = Math.min(s.anchorOffset, s.focusOffset)
-  const hi = Math.max(s.anchorOffset, s.focusOffset)
-  // 两头都在同一个文本节点里才算数：正文是一整个文本节点渲染的，
-  // 跨节点说明选到了别的东西（标题、按钮），那不是正文。
-  if (s.anchorNode !== s.focusNode) return
-
-  const from = codePoints(full, lo)
-  const to = codePoints(full, hi)
-  if (to - from < 2) return // 手滑点一下不算选中
-
-  const picked = [...full].slice(from, to).join('')
-  if (sel.value?.chapter_id === a && sel.value?.from === from && sel.value?.to === to) {
-    return
-  }
-  sel.value = { chapter_id: a, from, to, text: picked }
+  sel.value = { chapter_id: id, from, to, text: [...full].slice(from, to).join('') }
   // 换了一段就从头聊：上一段的来回套在这一段上只会让它改错方向
   chat.value = []
-  revision.value = null
+  pending.value = null
 }
 
 function clearSelection() {
   sel.value = null
   chat.value = []
-  revision.value = null
   instruction.value = ''
-  window.getSelection()?.removeAllRanges()
+  pending.value = null
+}
+
+/** 存这一章。整章当成一个选区，走的就是 AI 改稿那条写回路径。 */
+async function saveChapter(id) {
+  const c = chapters.value.find((x) => x.chapter_id === id)
+  if (!c) return
+  const body = buf[id] ?? ''
+  if (body === (c.text ?? '')) return
+  if (!body.trim()) {
+    ui.warn('正文不能是空的。真要清掉这一章的话，去大纲那边重写')
+    return
+  }
+  const result = await run(
+    () =>
+      api.applyRevision({
+        project: session.projectPath,
+        chapter_id: id,
+        from_char: 0,
+        to_char: [...(c.text ?? '')].length,
+        text: body,
+      }),
+    { key: 'save:' + id },
+  )
+  if (!result) return
+  dirtySnapshot.delete(id)
+  setStory(result)
+  ui.ok(`存下了，这一章 ${result.chars} 字，分集重算过了`)
+  pending.value = null
+}
+
+async function saveAllDirty() {
+  for (const id of [...dirtyIds.value]) await saveChapter(id)
 }
 
 // ---------------------------------------------------------------------------
-// 让 AI 改
+// 让 AI 改：改完**直接落到编辑器里那一段的位置上**
 // ---------------------------------------------------------------------------
 
 async function revise() {
@@ -204,47 +262,58 @@ async function revise() {
     ui.warn('说一句要改成什么样，比如「这儿太赶了，铺一下情绪」')
     return
   }
+  const at = { ...sel.value }
   const result = await run(
     () =>
       api.reviseStory({
         project: session.projectPath,
-        chapter_id: sel.value.chapter_id,
-        from_char: sel.value.from,
-        to_char: sel.value.to,
+        chapter_id: at.chapter_id,
+        from_char: at.from,
+        to_char: at.to,
         instruction: want,
         history: chat.value,
       }),
     { key: 'revise' },
   )
   if (!result) return
+
+  // **插进去，不摆在旁边。** 你看到的就是改完的稿子本身。
+  const full = buf[at.chapter_id] ?? ''
+  const chars = [...full]
+  const head = chars.slice(0, at.from).join('')
+  const tail = chars.slice(at.to).join('')
+  pending.value = { chapter_id: at.chapter_id, prev: full, origin: at }
+  buf[at.chapter_id] = head + result.text + tail
+  dirtySnapshot.add(at.chapter_id)
+
   chat.value = [
     ...chat.value,
     { role: 'user', text: want },
     { role: 'assistant', text: result.note || '改完了' },
   ]
-  revision.value = result
   instruction.value = ''
+
+  // 选中刚插进去那一段：接着说"再短一点"时，说的还是这一段
+  const to = at.from + [...result.text].length
+  sel.value = { chapter_id: at.chapter_id, from: at.from, to, text: result.text }
+  await nextTick()
+  const el = boxes[at.chapter_id]
+  if (el) {
+    fit(el)
+    el.focus()
+    const now = buf[at.chapter_id]
+    el.setSelectionRange(utf16At(now, at.from), utf16At(now, to))
+  }
 }
 
-/** 用这一版。**到这一步才落库。** */
-async function applyRevision() {
-  if (!revision.value) return
-  const r = revision.value
-  const result = await run(
-    () =>
-      api.applyRevision({
-        project: session.projectPath,
-        chapter_id: r.chapter_id,
-        from_char: r.from_char,
-        to_char: r.to_char,
-        text: r.text,
-      }),
-    { key: 'apply' },
-  )
-  if (!result) return
-  setStory(result)
-  ui.ok(`改好了，这一章现在 ${result.chars} 字，分集重算过了`)
-  clearSelection()
+/** 不要这一版。整章退回改之前——比按区间回退可靠，见 pending 上的注释。 */
+function undoRevision() {
+  const p = pending.value
+  if (!p) return
+  buf[p.chapter_id] = p.prev
+  sel.value = { ...p.origin }
+  pending.value = null
+  nextTick(() => fit(boxes[p.chapter_id]))
 }
 
 // ---------------------------------------------------------------------------
@@ -254,7 +323,8 @@ async function applyRevision() {
 async function savePremise() {
   if (!premiseDirty.value || !session.projectPath) return
   const result = await run(
-    () => api.saveStory({ project: session.projectPath, premise: premise.value.trim() }),
+    () =>
+      api.saveStory({ project: session.projectPath, premise: premise.value.trim() }),
     { key: 'premise', success: '梗概已存下' },
   )
   if (result) setStory(result)
@@ -263,10 +333,8 @@ async function savePremise() {
 /**
  * 写故事。
  *
- * **梗概不是必填的。** 三个入口里只有「我自己有个想法」那条是从手写的
- * 一句话开始的；给几个关键词、或者什么都不给让它来一个，同样正当。
- * 选题本来就是整条流水线上最难从零开始的一步，把它做成硬门槛等于又把人
- * 摁回空白框前面发呆。
+ * **梗概不是必填的。** 选题本来就是整条流水线上最难从零开始的一步，把它
+ * 做成硬门槛等于又把人摁回空白框前面发呆。
  */
 async function writeStory() {
   const result = await run(
@@ -310,12 +378,7 @@ async function reverseFromEpisodes() {
   ui.ok(`反推出 ${result.chapters} 章。接着点「让 AI 读一遍」把人物提出来`)
 }
 
-/**
- * 让 AI 读一遍正文，把人物关系地点提出来。**正文一个字不动。**
- *
- * 粘进来和反推出来的故事都只有正文，不读一遍的话走到「设定」那一步资产库
- * 是空的，再往下分镜指不到任何角色。
- */
+/** 让 AI 读一遍正文，把人物关系地点提出来。**正文一个字不动。** */
 async function analyzeStory() {
   const result = await run(
     () => api.analyzeStory({ project: session.projectPath }),
@@ -336,6 +399,8 @@ async function adoptDraft() {
     { key: 'adopt', success: '采用了，写进项目了', refresh: true },
   )
   if (result) {
+    for (const k of Object.keys(buf)) delete buf[k]
+    dirtySnapshot.clear()
     setStory(result)
     draft.value = null
   }
@@ -345,20 +410,17 @@ async function adoptDraft() {
 // 展开正文
 // ---------------------------------------------------------------------------
 
-/** 展开一章的正文。**直接落库**：它只往一个空字段里填东西，没什么会被顶掉。 */
+/** 展开一章。**直接落库**：它只往一个空字段里填东西，没什么会被顶掉。 */
 async function writeChapter(chapterId) {
   const result = await run(
-    () =>
-      api.writeChapter({ project: session.projectPath, chapter_id: chapterId }),
+    () => api.writeChapter({ project: session.projectPath, chapter_id: chapterId }),
     { key: 'chapter:' + chapterId },
   )
   if (!result) return
   setStory(result)
   ui.ok(`${chapterId} 写了 ${result.chars} 字`)
   await nextTick()
-  msRef.value
-    ?.querySelector(`[data-chapter="${chapterId}"]`)
-    ?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  boxes[chapterId]?.scrollIntoView({ behavior: 'smooth', block: 'start' })
 }
 
 async function writeAllChapters() {
@@ -382,6 +444,14 @@ async function stopWriting() {
   <div class="stack stack--lg">
     <StepHeader>
       <template #actions>
+        <button
+          v-if="dirtyIds.length"
+          class="btn btn--primary"
+          type="button"
+          @click="saveAllDirty"
+        >
+          存下改的 {{ dirtyIds.length }} 章
+        </button>
         <button
           v-if="hasStory && unwritten && !writer.running"
           class="btn btn--ai"
@@ -449,9 +519,7 @@ async function stopWriting() {
           >
             采用这一份
           </button>
-          <button class="btn btn--ghost" type="button" @click="draft = null">
-            丢弃
-          </button>
+          <button class="btn btn--ghost" type="button" @click="draft = null">丢弃</button>
         </div>
       </section>
 
@@ -503,7 +571,11 @@ async function stopWriting() {
               :disabled="isBusy('reverse')"
               @click="reverseFromEpisodes"
             >
-              {{ isBusy('reverse') ? '正在反推…' : `从已有的 ${session.episodes.length} 集反推` }}
+              {{
+                isBusy('reverse')
+                  ? '正在反推…'
+                  : `从已有的 ${session.episodes.length} 集反推`
+              }}
             </button>
             <span class="spacer" />
             <span class="tiny dim">分几集在「设定 · 分集」那儿定</span>
@@ -535,25 +607,47 @@ async function stopWriting() {
 
       <div v-if="loading" class="tiny dim">读取中…</div>
 
-      <!-- ---- 原稿 ---- -->
+      <!-- ---- 编辑器 ---- -->
       <div v-else-if="hasStory" class="ms" :class="{ 'ms--picked': sel }">
-        <div ref="msRef" class="ms__paper">
+        <div class="ms__paper">
           <p class="ms__meta tiny dim">
-            {{ chapters.length }} 章 · {{ totalChars }} 字 ·
-            已展开 {{ writtenCount }} 章
-            <template v-if="unwritten">（还有 {{ unwritten }} 章只有梗概）</template>
-            · 选中一段就能让 AI 改它
+            {{ chapters.length }} 章 · {{ totalChars }} 字
+            <template v-if="unwritten">· 还有 {{ unwritten }} 章只有梗概</template>
+            · 直接改就行，选中一段能让 AI 改它 · Ctrl+S 存这一章
           </p>
 
           <article v-for="(c, i) in chapters" :key="c.chapter_id" class="ch">
             <h3 class="ch__title">
               <span class="ch__no numeric">{{ i + 1 }}</span>
               {{ c.title }}
+              <span
+                v-if="(buf[c.chapter_id] ?? '') !== (c.text ?? '')"
+                class="ch__dirty tiny"
+                >未存</span
+              >
+              <span class="spacer" />
+              <span class="tiny dim numeric">
+                {{ [...(buf[c.chapter_id] ?? '')].length }} 字
+              </span>
             </h3>
-            <!-- 正文渲染成**一个文本节点**：选区偏移直接就是这一章里的
-                 位置，不用在 DOM 里爬着累加。中间插任何标签都会让偏移
-                 算错，而算错的后果是替换时切在半句话上。 -->
-            <div v-if="c.text" class="ms__text" :data-chapter="c.chapter_id">{{ c.text }}</div>
+
+            <!-- textarea 而不是 contenteditable：selectionStart/End 直接就是
+                 偏移，不用在 DOM 里爬；contenteditable 每次输入都可能重排
+                 节点，偏移随时失效——那正是"替换错地方"的来源。 -->
+            <textarea
+              v-if="c.text || buf[c.chapter_id]"
+              :ref="(el) => (boxes[c.chapter_id] = el)"
+              class="ms__ed"
+              spellcheck="false"
+              :value="buf[c.chapter_id] ?? ''"
+              @input="onInput(c.chapter_id, $event)"
+              @select="onSelectionChange(c.chapter_id, $event)"
+              @mouseup="onSelectionChange(c.chapter_id, $event)"
+              @keyup="onSelectionChange(c.chapter_id, $event)"
+              @blur="saveChapter(c.chapter_id)"
+              @keydown.ctrl.s.prevent="saveChapter(c.chapter_id)"
+              @keydown.meta.s.prevent="saveChapter(c.chapter_id)"
+            />
             <div v-else class="ch__todo">
               <p class="small dim">{{ c.summary }}</p>
               <button
@@ -579,8 +673,7 @@ async function stopWriting() {
           </p>
         </div>
 
-        <!-- 选中之后才出现。常驻一条空的对话栏是在跟正文抢地方，
-             而这一页的正文才是主角。 -->
+        <!-- 选中之后才出现。常驻一条空的对话栏是在跟正文抢地方。 -->
         <aside v-if="sel" class="ai stack stack--sm">
           <div class="row row--between">
             <b class="ai__head">改这一段</b>
@@ -590,8 +683,8 @@ async function stopWriting() {
           </div>
           <blockquote class="ai__quote small">{{ sel.text }}</blockquote>
           <p class="tiny dim">
-            {{ sel.chapter_id }} 第 {{ sel.from }}–{{ sel.to }} 字，
-            共 {{ sel.to - sel.from }} 字。只改这一段，别的一个字不动。
+            {{ sel.chapter_id }} 第 {{ sel.from }}–{{ sel.to }} 字，共
+            {{ sel.to - sel.from }} 字。只改这一段，别的一个字不动。
           </p>
 
           <div v-for="(t, i) in chat" :key="i" class="turn" :class="'turn--' + t.role">
@@ -599,23 +692,23 @@ async function stopWriting() {
             <span class="small">{{ t.text }}</span>
           </div>
 
-          <section v-if="revision" class="ai__draft">
-            <div class="tiny dim">改完是这样（还没写进去）</div>
-            <div class="ai__new small">{{ revision.text }}</div>
+          <!-- 改完的东西已经在左边稿子里了，这里只留一个后悔的口子 -->
+          <div v-if="pending" class="ai__done">
+            <span class="tiny">已经插进稿子里了，还没存</span>
             <div class="row">
               <button
                 class="btn btn--primary btn--sm"
                 type="button"
-                :disabled="isBusy('apply')"
-                @click="applyRevision"
+                :disabled="isBusy('save:' + pending.chapter_id)"
+                @click="saveChapter(pending.chapter_id)"
               >
-                {{ isBusy('apply') ? '写着…' : '用这一版' }}
+                存下来
               </button>
-              <button class="btn btn--ghost btn--sm" type="button" @click="revision = null">
-                不要
+              <button class="btn btn--ghost btn--sm" type="button" @click="undoRevision">
+                撤销
               </button>
             </div>
-          </section>
+          </div>
 
           <textarea
             v-model="instruction"
@@ -647,8 +740,6 @@ async function stopWriting() {
 </template>
 
 <style scoped>
-/* 原稿占主位，改稿栏在右边。选中之前右边这一条不存在——常驻一条空栏
-   是在跟正文抢地方，而这一页的正文才是主角。 */
 .ms {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
@@ -664,8 +755,6 @@ async function stopWriting() {
   }
 }
 
-/* 一整篇连着读。行宽卡在 38 个中文字上下——再宽眼睛要回扫，
-   而这一页是拿来读的。 */
 .ms__paper {
   background: var(--surface);
   border: 1px solid var(--line);
@@ -677,24 +766,42 @@ async function stopWriting() {
 }
 .ch {
   margin: 0 0 var(--s5);
-  max-width: 38em;
+  max-width: 44em;
 }
 .ch__title {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
   font-size: var(--fs-lg);
   margin: 0 0 var(--s3);
 }
 .ch__no {
   color: var(--text-3);
-  margin-right: 8px;
 }
-.ms__text {
-  white-space: pre-wrap;
+.ch__dirty {
+  color: var(--accent);
+}
+
+/* 编辑器。**没有边框没有底色**——它就是稿纸本身，不是稿纸上放了个输入框。
+   行宽卡在 38 个中文字上下，再宽眼睛要回扫。高度跟着内容长，
+   编辑器里不该有第二根滚动条。 */
+.ms__ed {
+  display: block;
+  width: 100%;
+  max-width: 38em;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
   line-height: 1.85;
-  /* 选中是这一页的主要动作，给它一个明显的底色 */
-  cursor: text;
+  resize: none;
+  overflow: hidden;
 }
-.ms__text::selection,
-.ms__text ::selection {
+.ms__ed:focus {
+  outline: none;
+}
+.ms__ed::selection {
   background: var(--accent-soft);
 }
 .ch__todo {
@@ -733,17 +840,12 @@ async function stopWriting() {
   flex: none;
   min-width: 1.6em;
 }
-.ai__draft {
+.ai__done {
+  display: grid;
+  gap: var(--s2);
   border: 1px dashed var(--accent);
   border-radius: var(--r-sm);
   padding: var(--s3);
-  display: grid;
-  gap: var(--s2);
-}
-.ai__new {
-  white-space: pre-wrap;
-  max-height: 16em;
-  overflow: auto;
 }
 
 .dch {
