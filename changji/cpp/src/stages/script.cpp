@@ -324,7 +324,12 @@ const ordered& script_schema() {
         beat_props["text"] = {
             {"type", "string"},
             {"description",
-             "这一拍的内容。对白只写说出口的话，不要带引号也不要带名字前缀"}};
+             "这一拍的内容。\n"
+             "kind=dialogue：只写说出口的话，不带引号，不重复人名。\n"
+             "kind=action：写**画面上看得见的东西**——谁在哪、身体在做"
+             "什么、碰到什么物件。换了地方或时间就把光线一并交代。\n"
+             "不要写心里怎么想（「她很生气」画不出来），也不要一拍塞"
+             "三个动作（分镜只能挑一个画，剩下的就丢了）。"}};
 
         ordered items = ordered::object();
         items["type"] = "object";
