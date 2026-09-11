@@ -394,8 +394,21 @@ bool Scheduler::make_room(std::size_t need, Slot keep, std::size_t work) {
     // 被借用的一律不动——正在用的模型被抽走，表现是段错误，
     // 而不是一个能读的报错。宁可这次加载失败。
     std::vector<Entry*> cands;
+    // **谁因为正被借用而没能成为候选**，记下来。腾不出地方时这一条决定了
+    // 对用户说什么：「等它装完再点一次」和「这张卡太小，换个小模型」
+    // 是两件完全不同的事，而以前只笼统说一句"别的槽正被借用着，或者
+    // 这张卡确实太小"，用户没法判断该等还是该改配置。
+    //
+    // 这个窗口 2026-09-11 之后更容易撞上：起服务时会在后台装大模型
+    // （见 warm_llm_in_background），那几十秒里它是借着的。
+    // "起服务 → 立刻点出片"正好落在里面。
+    busy_.clear();
     for (Entry& e : entries_) {
-        if (!e.is_loaded || e.leases > 0 || e.spec.slot == keep) continue;
+        if (!e.is_loaded || e.spec.slot == keep) continue;
+        if (e.leases > 0) {
+            busy_.push_back(e.spec.slot);
+            continue;
+        }
         cands.push_back(&e);
     }
 
@@ -443,6 +456,22 @@ Lease Scheduler::acquire(Slot slot, std::size_t work) {
     }
 
     if (!make_room(e->spec.vram_estimate, slot, work)) {
+        // **先说是被谁挡住的。** 有槽正借着的时候，"再等等"往往就好了，
+        // 而通用那段会把人引去降画幅、换小模型——白折腾。
+        // 起服务后头几十秒最容易撞上：那时候大模型正在后台装。
+        std::string why;
+        for (const Slot b : busy_) {
+            why += std::string(why.empty() ? "" : "、") + to_string(b);
+        }
+        if (!why.empty()) {
+            throw std::runtime_error(
+                std::string("显存不够加载 ") + to_string(slot) + "：「" + why +
+                "」正用着，腾不动它。\n"
+                "多半是它还在装（起服务时大模型会在后台装上，要几十秒），"
+                "等一会儿再点一次就行。\n"
+                "要是一直这样，才是这张卡真的装不下——那时候看下面这些路：\n" +
+                out_of_vram_message(slot));
+        }
         throw std::runtime_error(out_of_vram_message(slot));
     }
 

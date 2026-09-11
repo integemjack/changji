@@ -305,6 +305,9 @@ private:
     std::vector<Entry> entries_;
     std::size_t budget_ = 0;
     FreeVramProbe free_vram_;
+    /// 最近一次 make_room 里**因为正被借用而没能驱逐**的那些槽。
+    /// 腾不出地方时拿它拼错误信息：见 make_room 里填它的那一段。
+    std::vector<Slot> busy_;
     /// 每个槽实测的占用。见 record_measured_vram。
     std::map<Slot, Measured> measured_;
     MeasuredSink measured_sink_;

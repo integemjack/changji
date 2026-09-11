@@ -1119,6 +1119,57 @@ TEST_CASE("最近一次腾地方的判断要留痕，界面上读得到") {
     }
 }
 
+TEST_CASE("腾不出地方时，先说清是被谁挡住的") {
+    // **"再等等"和"这张卡太小"是两件完全不同的事。** 以前腾不出地方
+    // 一律给同一段话（"别的槽正被借用着，或者这张卡确实太小"），用户
+    // 没法判断该等还是该去降画幅、换小模型——后者是白折腾。
+    //
+    // 这个窗口 2026-09-11 之后更容易撞上：起服务时会在后台装大模型，
+    // 那几十秒里它是借着的，"起服务 → 立刻点出片"正好落在里面。
+    Scheduler s;
+    const std::size_t budget = 10 * GB;
+    s.set_budget(budget);
+
+    SlotSpec llm;
+    llm.slot = Slot::LLM;
+    llm.vram_estimate = budget;   // 一个就占满，第二个一定要腾
+    llm.evict_priority = 1;
+    llm.load = [] {};
+    llm.unload = [] {};
+    s.register_slot(llm);
+
+    SlotSpec vid;
+    vid.slot = Slot::Video;
+    vid.vram_estimate = budget;
+    vid.evict_priority = 9;
+    vid.load = [] {};
+    vid.unload = [] {};
+    s.register_slot(vid);
+
+    SUBCASE("挡路的正被借着：点名它，并且说「等一会儿再点一次」") {
+        auto held = s.acquire(Slot::LLM);   // 租约一直拿着
+        try {
+            auto v = s.acquire(Slot::Video);
+            FAIL("装不下却没抛");
+        } catch (const std::exception& e) {
+            const std::string msg = e.what();
+            CAPTURE(msg);
+            CHECK(msg.find("LLM") != std::string::npos);
+            CHECK(msg.find("正用着") != std::string::npos);
+            CHECK(msg.find("等一会儿") != std::string::npos);
+            // 通用那几条出路还得在后面，一直这样才是真的装不下。
+            CHECK(msg.find("画面") != std::string::npos);
+        }
+    }
+    SUBCASE("没人借着、纯粹是卡小：给的还是原来那段") {
+        // 这里不留租约，LLM 装着但没被借——能驱逐，所以腾得出来。
+        { auto a = s.acquire(Slot::LLM); }
+        { auto v = s.acquire(Slot::Video); }   // 应该卸掉 LLM 之后成功
+        CHECK(s.loaded(Slot::Video));
+        CHECK_FALSE(s.loaded(Slot::LLM));
+    }
+}
+
 TEST_CASE("腾显存的结论要能一句话挂到进度条上") {
     // **用户点完出片盯的是进度条**，而"卸没卸大模型"以前只在设置页上。
     // 一镜一句，就在他眼前。见 Scheduler::room_note。
