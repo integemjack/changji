@@ -557,6 +557,7 @@ add_executable(changji
     src/http/webapp.cpp
     src/http/ws.cpp
     src/http/offload.cpp
+    src/http/job_stream.cpp
     src/pipeline/jobs.cpp
     src/pipeline/activity.cpp
     src/pipeline/episode.cpp
@@ -882,6 +883,7 @@ if(CHANGJI_BUILD_TESTS)
         # connection* 纯粹当键用，从不解引用——所以拿假指针就能测。
         src/http/ws.cpp
         src/http/offload.cpp
+        src/http/job_stream.cpp
         # 体检的"当前配置用得上哪些依赖"是纯判断，不碰网络，所以进得来。
         # doctor.cpp 本身仍然不进——它链 httplib。
         # 这两个都是可选依赖的门面，测试目标里编的是没链上游时那一支

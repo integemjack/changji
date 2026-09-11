@@ -12,6 +12,7 @@
 #include "stages/story_outline.hpp"
 #include "stages/story_plan.hpp"
 #include "stages/story_reverse.hpp"
+#include "http/job_stream.hpp"
 #include "http/offload.hpp"
 #include "http/ws.hpp"
 #include "pipeline/activity.hpp"
@@ -410,6 +411,9 @@ json write_one_chapter(ProjectStore& store, const Project& project, Story story,
         const stages::ChapterDraft d = stages::parse_chapter(raw, floor_chars);
         next = stages::apply_chapter(story, chapter_id, d);
     } catch (const stages::StoryError& e) {
+        // story_error 是给编辑器用的（把流了一半的字撤掉）。异步那条路上
+        // 还有个人在等最终结果，所以上一层会再播一条 job_error——见
+        // post_story_chapter 里那个 catch。
         if (!stream_id.empty()) {
             ws::hub().broadcast(stream_id, {{"type", "story_error"},
                                             {"job_id", stream_id},
@@ -481,21 +485,15 @@ ApiResult post_story_chapter(const json& body, llm::Client& client,
                 // **把整份结果带回去**，界面直接拿它换掉手上那份。让它自己
                 // 再拉一次也行，但那样"写完"和"看到"之间会多一个来回，
                 // 而这一步本来就是用户等得最久的一步。
-                ws::hub().broadcast(stream_id, {{"type", "story_done"},
-                                                {"job_id", stream_id},
-                                                {"result", std::move(out)}});
+                job_done(stream_id, std::move(out));
             } catch (const ApiError& e) {
-                // write_one_chapter 里那几条已经播过 story_error 了，这里
-                // 再播一条是为了兜住它前面那几步（项目读不出来、这一章不
-                // 在了）。**多播一条也比不播强**：界面那头在等着，不播的话
-                // 它会一直转圈。
-                ws::hub().broadcast(stream_id, {{"type", "story_error"},
-                                                {"job_id", stream_id},
-                                                {"message", e.what()}});
+                // write_one_chapter 里那几条播的是 story_error（给编辑器
+                // 用的），这里这条是兜它前面那几步（项目读不出来、这一章
+                // 不在了）。**多播一条也比不播强**：界面那头在等着，
+                // 不播的话它会一直转圈。
+                job_error(stream_id, e.what());
             } catch (const std::exception& e) {
-                ws::hub().broadcast(stream_id, {{"type", "story_error"},
-                                                {"job_id", stream_id},
-                                                {"message", e.what()}});
+                job_error(stream_id, e.what());
             }
         });
         // 202：收下了，还没干完。

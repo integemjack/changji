@@ -6,18 +6,28 @@
  * 全剧几十个镜头的提示词都跟着变——引擎会把已渲染的镜头退回重跑，
  * 界面必须把这件事说在前面，别让人改完才发现成片全没了。
  */
-import { computed, nextTick, ref, watch } from 'vue'
+import { computed, nextTick, reactive, ref, watch } from 'vue'
 
 import AppIcon from '@/components/AppIcon.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import { api, mediaUrl } from '@/api'
 import { useAction } from '@/composables/useAction'
+import { runAsyncJob } from '@/composables/useAsyncJob'
 import { useSession } from '@/stores/session'
 import { useUi } from '@/stores/ui'
 
 const session = useSession()
 const ui = useUi()
 const { run, isBusy } = useAction()
+
+/**
+ * 每一格画到百分之几。
+ *
+ * 出图现在是异步的：接口当场回"开始了"，采样进度从 WebSocket 一步一步
+ * 推回来（见 useAsyncJob）。**有了这个数，等待才不是一片空白**——一张
+ * 几十秒，而头十几秒还在把模型读进显存，那段时间一步都不会推。
+ */
+const genPct = reactive({})
 
 const assets = ref(null)
 const loading = ref(false)
@@ -189,9 +199,20 @@ async function upload(charId, slot, event) {
  */
 async function genRef(charId, slot) {
   const result = await run(
-    () => api.generateReference({ project: session.projectPath, char_id: charId, slot }),
+    () =>
+      runAsyncJob(
+        (extra) =>
+          api.generateReference({
+            project: session.projectPath,
+            char_id: charId,
+            slot,
+            ...extra,
+          }),
+        { prefix: 'ref', onProgress: (cur, total) => (genPct[charId + slot] = total > 0 ? Math.round((cur / total) * 100) : 0) },
+      ),
     { key: 'gen:' + charId + slot },
   )
+  delete genPct[charId + slot]
   if (!result) return
   ui.ok(`${SLOTS.find((s) => s.key === slot)?.label ?? slot}画好了（${Math.round(result.seconds)} 秒）`)
   await load()
@@ -202,7 +223,17 @@ async function genAllRefs(charId) {
   for (const s of SLOTS) {
     genStep.value = { charId, label: s.label }
     const ok = await run(
-      () => api.generateReference({ project: session.projectPath, char_id: charId, slot: s.key }),
+      () =>
+        runAsyncJob(
+          (extra) =>
+            api.generateReference({
+              project: session.projectPath,
+              char_id: charId,
+              slot: s.key,
+              ...extra,
+            }),
+          { prefix: 'ref', onProgress: (cur, total) => (genStep.value = { charId, label: s.label, pct: total > 0 ? Math.round((cur / total) * 100) : 0 }) },
+        ),
       { key: 'genall:' + charId },
     )
     // 中间某一张失败就停：后面两张多半也会栽在同一件事上（模型没配、
@@ -353,7 +384,7 @@ async function clearRef(charId, slot) {
                       <AppIcon name="sparkle" :size="13" />
                       {{
                         isBusy('genall:' + c.char_id)
-                          ? `正在画${genStep?.label ?? ''}…`
+                          ? `正在画${genStep?.label ?? ''}${genStep?.pct ? ' ' + genStep.pct + '%' : '…'}`
                           : '三张一起画'
                       }}
                     </button>
@@ -377,7 +408,17 @@ async function clearRef(charId, slot) {
                           :title="c['ref_' + s.key] ? '重画这一张（同一个种子，还是那张脸）' : '照提示词画一张'"
                           @click="genRef(c.char_id, s.key)"
                         >
-                          {{ isBusy('gen:' + c.char_id + s.key) ? '画着…' : '画' }}
+                          <!-- 画着的时候把百分比写出来。**一张几十秒**，
+                               一句不动的「画着…」分不清是在画还是卡住了；
+                               而头十几秒还在把模型读进显存，那段时间一步都
+                               不会推——所以没数的时候仍然显示「画着…」。 -->
+                          {{
+                            isBusy('gen:' + c.char_id + s.key)
+                              ? genPct[c.char_id + s.key]
+                                ? genPct[c.char_id + s.key] + '%'
+                                : '画着…'
+                              : '画'
+                          }}
                         </button>
                         <label class="btn btn--sm btn--ghost">
                           {{ c['ref_' + s.key] ? '换' : '传' }}

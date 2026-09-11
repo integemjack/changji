@@ -1068,11 +1068,15 @@ async function writeChapter(chapterId, overwrite = false) {
       streamId,
       async (msg) => {
         if (msg.job_id !== streamId) return
-        if (msg.type === 'story_done') {
+        // job_done / job_error 是"这件活完了"的通用信号（见 job_stream.hpp）。
+        // story_token 和 story_error 是这条路独有的：前者是正在长出来的
+        // 正文，后者是"把流了一半的字撤掉"——**撤字归撤字，完事归完事**，
+        // 砸了的时候两条都会来。
+        if (msg.type === 'job_done') {
           settle({ ok: true, result: msg.result })
           return
         }
-        if (msg.type === 'story_error') {
+        if (msg.type === 'job_error') {
           settle({ ok: false, message: msg.message })
           return
         }

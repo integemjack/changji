@@ -10,18 +10,22 @@
  * 那几个：出分镜之前，AI 按这一集的剧本补新场景；出了分镜之后，按镜头
  * 实际引用的 id 分成「本集用到」和「其他集的」两组。
  */
-import { computed, ref, watch } from 'vue'
+import { computed, reactive, ref, watch } from 'vue'
 
 import AppIcon from '@/components/AppIcon.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import { api, mediaUrl } from '@/api'
 import { useAction } from '@/composables/useAction'
+import { runAsyncJob } from '@/composables/useAsyncJob'
 import { useSession } from '@/stores/session'
 import { useUi } from '@/stores/ui'
 
 const session = useSession()
 const ui = useUi()
 const { run, isBusy } = useAction()
+
+/** 每个场景画到百分之几。见 AssetCharacters 里同名那个。 */
+const genPct = reactive({})
 
 const assets = ref(null)
 const shots = ref([])
@@ -217,12 +221,23 @@ async function uploadEmpty(locationId, event) {
 async function genEmpty(locationId) {
   const result = await run(
     () =>
-      api.generateLocationReference({
-        project: session.projectPath,
-        location_id: locationId,
-      }),
+      runAsyncJob(
+        (extra) =>
+          api.generateLocationReference({
+            project: session.projectPath,
+            location_id: locationId,
+            ...extra,
+          }),
+        {
+          prefix: 'ref',
+          onProgress: (cur, total) => {
+            genPct[locationId] = total > 0 ? Math.round((cur / total) * 100) : 0
+          },
+        },
+      ),
     { key: 'gen:' + locationId },
   )
+  delete genPct[locationId]
   if (!result) return
   ui.ok(`空景图画好了（${Math.round(result.seconds)} 秒）`)
   await load()
@@ -343,7 +358,9 @@ async function clearEmpty(locationId) {
                     <AppIcon name="sparkle" :size="13" />
                     {{
                       isBusy('gen:' + l.location_id)
-                        ? '画着…'
+                        ? genPct[l.location_id]
+                          ? genPct[l.location_id] + '%'
+                          : '画着…'
                         : l.ref_empty
                           ? '重画'
                           : '画一张'
