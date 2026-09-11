@@ -484,13 +484,59 @@ async function adoptDraft() {
 // 展开正文
 // ---------------------------------------------------------------------------
 
-/** 展开一章。**直接落库**：它只往一个空字段里填东西，没什么会被顶掉。 */
+/**
+ * 展开一章。**边写边长在编辑器里**，写完直接落库。
+ *
+ * 一章一两分钟。攒齐了再蹦出来的话那一两分钟界面上什么都没有——而这一步
+ * 是整条路上最长的一次等待。
+ *
+ * 引擎那边照旧要模型回 JSON（正文之外还要它标钩子，那些钩子是一集停在真
+ * 悬念上的全部依据），只在 token 流上把 text 那个字段解出来推过来，
+ * 所以这里收到的已经是干净的正文。
+ */
 async function writeChapter(chapterId) {
+  const streamId = 'chapter-' + Math.random().toString(36).slice(2, 10)
+  let acc = ''
+  let sock = null
+  let opened = false
+
+  await new Promise((resolve) => {
+    sock = openJobSocket(
+      streamId,
+      async (msg) => {
+        if (msg.job_id !== streamId || msg.type !== 'story_token') return
+        acc += msg.text ?? ''
+        buf[chapterId] = acc
+        streaming.value = { chapter_id: chapterId, from: 0 }
+        await nextTick()
+        fit(boxes[chapterId])
+      },
+      () => resolve(),
+      () => {
+        opened = true
+        resolve()
+      },
+    )
+    setTimeout(resolve, 2000)
+  })
+
   const result = await run(
-    () => api.writeChapter({ project: session.projectPath, chapter_id: chapterId }),
+    () =>
+      api.writeChapter({
+        project: session.projectPath,
+        chapter_id: chapterId,
+        ...(opened ? { stream: streamId } : {}),
+      }),
     { key: 'chapter:' + chapterId },
   )
-  if (!result) return
+  sock?.close()
+  streaming.value = null
+  if (!result) {
+    // 写砸了：把流出来那半截清掉，别在稿子里留一段没头没尾的东西
+    buf[chapterId] = ''
+    return
+  }
+  // 落库那份才是权威的（解析、守卫、钩子都在那边）
   setStory(result)
   ui.ok(`${chapterId} 写了 ${result.chars} 字`)
   await nextTick()
@@ -730,7 +776,7 @@ async function stopWriting() {
                 :disabled="isBusy('chapter:' + c.chapter_id)"
                 @click="writeChapter(c.chapter_id)"
               >
-                {{ isBusy('chapter:' + c.chapter_id) ? '写着…' : '展开这一章的正文' }}
+                {{ isBusy('chapter:' + c.chapter_id) ? '正在写…' : '展开这一章的正文' }}
               </button>
             </div>
           </article>

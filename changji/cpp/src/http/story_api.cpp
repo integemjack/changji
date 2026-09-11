@@ -13,6 +13,7 @@
 #include "stages/story_plan.hpp"
 #include "stages/story_reverse.hpp"
 #include "http/ws.hpp"
+#include "stages/json_stream.hpp"
 #include "stages/story_revise.hpp"
 #include "util/paths.hpp"
 #include "util/text.hpp"
@@ -346,7 +347,7 @@ ApiResult post_story_analyze(const json& body, llm::Client& client,
 
 ApiResult post_story_chapter(const json& body, llm::Client& client,
                              pipeline::CancelToken& tok) {
-    forbid_extra(body, {"project", "chapter_id", "overwrite"});
+    forbid_extra(body, {"project", "chapter_id", "overwrite", "stream"});
     ProjectStore store = open_project(body);
     const Project project = load_or_400(store);
     Story story = load_story_or_400(store);
@@ -364,16 +365,50 @@ ApiResult post_story_chapter(const json& body, llm::Client& client,
     req.schema = stages::chapter_schema();
     req.schema_name = "chapter";
 
+    // 给了 stream_id 就**边写边推**。写一章要一两分钟，攒齐了再蹦出来的话
+    // 那一两分钟界面上什么都没有——而那正是用户要看的"写作的过程"。
+    //
+    // **这一步不能像改稿那样退回大白话。** 除了正文还要模型标出这一章里
+    // 哪几个地方可以收一集（hooks），而那些钩子是一集停在真悬念上的全部
+    // 依据（实跑里把比例从 25% 抬到 56%）。为了能流式砍掉 hooks，等于拿
+    // 分集质量换一个动画。所以照旧约束成 JSON，只在 token 流上顺手把 text
+    // 那个字段解出来推给编辑器——见 stages/json_stream。
+    const std::string stream_id = text::strip_ws(opt_str(body, "stream"));
+
     Story next;
     try {
         const int floor_chars = static_cast<int>(
             stages::chapter_target_chars(story) * stages::kChapterMinRatio);
-        const stages::ChapterDraft d =
-            stages::parse_chapter(client.complete(req, tok), floor_chars);
+        std::string raw;
+        if (stream_id.empty()) {
+            raw = client.complete(req, tok);
+        } else {
+            stages::JsonFieldStreamer field("text");
+            int seq = 0;
+            raw = client.complete(req, tok, [&](const std::string& piece) {
+                const std::string fresh = field.feed(piece);
+                if (fresh.empty()) return;  // JSON 外壳和 hooks 那一串不推
+                ws::hub().broadcast(stream_id, {{"type", "story_token"},
+                                                {"job_id", stream_id},
+                                                {"seq", seq++},
+                                                {"text", fresh}});
+            });
+        }
+        const stages::ChapterDraft d = stages::parse_chapter(raw, floor_chars);
         next = stages::apply_chapter(story, chapter_id, d);
     } catch (const stages::StoryError& e) {
+        if (!stream_id.empty()) {
+            ws::hub().broadcast(stream_id, {{"type", "story_error"},
+                                            {"job_id", stream_id},
+                                            {"message", e.what()}});
+        }
         throw ApiError(502, std::string("大模型没写出能用的正文：") + e.what());
     } catch (const std::exception& e) {
+        if (!stream_id.empty()) {
+            ws::hub().broadcast(stream_id, {{"type", "story_error"},
+                                            {"job_id", stream_id},
+                                            {"message", e.what()}});
+        }
         throw ApiError(502, e.what());
     }
 
