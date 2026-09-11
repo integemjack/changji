@@ -99,15 +99,23 @@ const ordered& outline_schema() {
         //
         // 所以能定的都写进 required，再加 minItems。见
         // project-ai-chapter-quality 那条：这个体量的模型，只有 schema 管得住。
+        // ⚠️ **这两项刻意不写进 required，也不设 minItems。**
+        //
+        // 试过。加上之后出一份大纲从三十几秒变成 **278 秒，而且最后截断在
+        // 半截 JSON 上**（"大模型没有返回对象"）——语法一收紧，14B 就一路
+        // 写到 token 上限也收不了口。大纲这一步的产出本来就长（四章，每章
+        // 标题、梗概、钩子），再逼它给每章两份名单就过界了。
+        //
+        // 不加也不亏：每章谁在场、在哪儿，**「读故事」那一步是照着正文读
+        // 出来的，比大纲阶段凭空想的准**，而那份 schema 里它们是 required
+        // （见 story_analyze.cpp）。大纲这儿给了就收，没给也不拦。
         chapter_props["characters"] = {
             {"type", "array"},
             {"description", "这一章出场的人物名，照抄上面登记过的名字"},
-            {"minItems", 1},
             {"items", {{"type", "string"}}}};
         chapter_props["locations"] = {
             {"type", "array"},
             {"description", "这一章用到的地点名，照抄上面登记过的名字"},
-            {"minItems", 1},
             {"items", {{"type", "string"}}}};
 
         ordered props = ordered::object();
@@ -147,8 +155,7 @@ const ordered& outline_schema() {
             {"description", "按顺序的章节。最后一章要把主线了结"},
             {"items", {{"type", "object"},
                        {"properties", chapter_props},
-                       {"required", {"title", "summary", "hook", "characters",
-                                     "locations"}},
+                       {"required", {"title", "summary", "hook"}},
                        {"additionalProperties", false}}}};
 
         ordered s = ordered::object();

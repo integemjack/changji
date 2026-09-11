@@ -141,7 +141,7 @@ TEST_CASE("地点和出场人要写进 required，不然 14B 一个都不给") {
     // 缺了不是"少一点信息"：设定页的「场景」那一格永远是空的，空景图无从
     // 谈起；再往后排分镜时，不知道这一章在哪儿发生、谁在场——而那正是
     // 第二步全部的输入。
-    const auto check_one = [](const nlohmann::ordered_json& schema,
+    const auto top_level = [](const nlohmann::ordered_json& schema,
                               const char* who) {
         CAPTURE(who);
         bool top_locations = false;
@@ -156,21 +156,27 @@ TEST_CASE("地点和出场人要写进 required，不然 14B 一个都不给") {
         CHECK_MESSAGE(top_relations, who << " 的 relations 不在 required 里");
         // 空数组也是合法的数组，所以光 required 不够，还要有下限
         CHECK(schema.at("properties").at("locations").at("minItems") == 1);
-
-        const auto& chap = schema.at("properties").at("chapters").at("items");
-        bool ch_chars = false;
-        bool ch_locs = false;
-        for (const auto& r : chap.at("required")) {
-            if (r == "characters") ch_chars = true;
-            if (r == "locations") ch_locs = true;
-        }
-        CHECK_MESSAGE(ch_chars, who << " 的每章 characters 不在 required 里");
-        CHECK_MESSAGE(ch_locs, who << " 的每章 locations 不在 required 里");
-        CHECK(chap.at("properties").at("characters").at("minItems") == 1);
-        CHECK(chap.at("properties").at("locations").at("minItems") == 1);
     };
-    check_one(outline_schema(), "大纲");
-    check_one(changji::stages::analyze_schema(), "读故事");
+    top_level(outline_schema(), "大纲");
+    top_level(changji::stages::analyze_schema(), "读故事");
+
+    // 每章那两份名单**只要求「读故事」那一份**。
+    //
+    // 大纲那边加过，加完出一份大纲从三十几秒变成 278 秒，还截断在半截
+    // JSON 上——语法一收紧，14B 就一路写到 token 上限也收不了口。而这两项
+    // 本来就是照着正文读出来的准，大纲阶段凭空想的不准。
+    const auto& chap =
+        changji::stages::analyze_schema().at("properties").at("chapters").at("items");
+    bool ch_chars = false;
+    bool ch_locs = false;
+    for (const auto& r : chap.at("required")) {
+        if (r == "characters") ch_chars = true;
+        if (r == "locations") ch_locs = true;
+    }
+    CHECK_MESSAGE(ch_chars, "读故事的每章 characters 不在 required 里");
+    CHECK_MESSAGE(ch_locs, "读故事的每章 locations 不在 required 里");
+    CHECK(chap.at("properties").at("characters").at("minItems") == 1);
+    CHECK(chap.at("properties").at("locations").at("minItems") == 1);
 }
 
 TEST_CASE("提示词：章数跟着体量走，不跟集数走") {
