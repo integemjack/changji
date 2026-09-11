@@ -30,8 +30,35 @@ const { run, isBusy } = useAction()
  */
 const genPct = reactive({})
 
+/**
+ * 采样到一半那张小图，按「角色+位置」记。
+ *
+ * 用户 2026-09-12：「画图方式也要实时返回步数图」。一张几十秒，头十几秒
+ * 还在把模型读进显存，一个百分比撑不住这段等待——而这张图是潜空间线性
+ * 投影来的（不走 VAE，几乎不花时间），第五步就看得出构图对不对，不对
+ * 当场撤掉重来，不用等它画完。
+ *
+ * **画完就删**。真图上来之后再盖着一张糊的，比没有更糟。
+ */
+const preview = reactive({})
+
 /** 页头那个种子，和「一键出图」画完之后的那声招呼。 */
 const { stamp, seedPayload } = useRefGen()
+
+/** 这一格在不在画。三张里任意一张在画，整张牌子就算在跑。 */
+function cellBusy(charId) {
+  if (isBusy('genall:' + charId)) return true
+  return SLOTS.some((s) => isBusy('gen:' + charId + s.key))
+}
+
+/** 这一格画到百分之几。没数就回 null，界面画一条来回跑的条。 */
+function cellPct(charId) {
+  for (const s of SLOTS) {
+    const v = genPct[charId + s.key]
+    if (v) return v
+  }
+  return null
+}
 
 const assets = ref(null)
 const loading = ref(false)
@@ -216,11 +243,20 @@ async function genRef(charId, slot) {
             ...seedPayload(),
             ...extra,
           }),
-        { prefix: 'ref', onProgress: (cur, total) => (genPct[charId + slot] = total > 0 ? Math.round((cur / total) * 100) : 0) },
+        {
+          prefix: 'ref',
+          onProgress: (cur, total) => {
+            genPct[charId + slot] = total > 0 ? Math.round((cur / total) * 100) : 0
+          },
+          onPreview: (url) => {
+            preview[charId + slot] = url
+          },
+        },
       ),
     { key: 'gen:' + charId + slot },
   )
   delete genPct[charId + slot]
+  delete preview[charId + slot]
   if (!result) return
   ui.ok(`${SLOTS.find((s) => s.key === slot)?.label ?? slot}画好了（${Math.round(result.seconds)} 秒）`)
   await load()
@@ -241,10 +277,25 @@ async function genAllRefs(charId) {
               ...seedPayload(),
               ...extra,
             }),
-          { prefix: 'ref', onProgress: (cur, total) => (genStep.value = { charId, label: s.label, pct: total > 0 ? Math.round((cur / total) * 100) : 0 }) },
+          {
+            prefix: 'ref',
+            onProgress: (cur, total) => {
+              genStep.value = {
+                charId,
+                label: s.label,
+                pct: total > 0 ? Math.round((cur / total) * 100) : 0,
+              }
+              genPct[charId + s.key] = total > 0 ? Math.round((cur / total) * 100) : 0
+            },
+            onPreview: (url) => {
+              preview[charId + s.key] = url
+            },
+          },
         ),
       { key: 'genall:' + charId },
     )
+    delete genPct[charId + s.key]
+    delete preview[charId + s.key]
     // 中间某一张失败就停：后面两张多半也会栽在同一件事上（模型没配、
     // 显存不够），接着画只是让用户多等两分钟再看到同一句报错。
     if (!ok) break
@@ -316,42 +367,77 @@ async function clearRef(charId, slot) {
         <RouterLink to="/story" class="btn btn--sm">去写故事</RouterLink>
       </EmptyState>
 
-      <div v-else class="list">
+      <!-- **一人一张牌，和「这一集」那面镜头墙一个样子。**
+           用户 2026-09-12：「角色，场景的展示方式和这一集一样」。
+           以前是一行一个人、头像只有三十几个像素——而这一页的产出就是图，
+           把图做成一行里的小圆点，等于把要看的东西藏起来。 -->
+      <div v-else class="wall">
         <article
           v-for="c in characters"
           :key="c.char_id"
-          class="chr"
-          :class="{ 'chr--open': openId === c.char_id }"
+          class="cell"
+          :class="{ 'cell--live': cellBusy(c.char_id), 'cell--open': openId === c.char_id }"
           :data-char="c.char_id"
         >
-          <button class="chr__head" type="button" @click="toggle(c.char_id)">
-            <span class="chr__avatar">
+          <!-- 三张各占三分之一，鼠标放上去那张摊开成全图。
+               用户 2026-09-12：「角色3张图已1/3方式显示，鼠标放到上面展开
+               成全图」。三张是正面、四分之三侧面、背面——挨着看才比得出
+               是不是同一个人，而那正是参考图要回答的问题。 -->
+          <div class="trio" @click="toggle(c.char_id)">
+            <span
+              v-for="s in SLOTS"
+              :key="s.key"
+              class="trio__one"
+              :class="{ 'is-empty': !c['ref_' + s.key] }"
+              :title="s.label"
+            >
               <img
-                v-if="c.ref_front"
-                :src="mediaUrl(session.projectPath, c.ref_front)"
-                :alt="c.name"
+                v-if="c['ref_' + s.key]"
+                :src="mediaUrl(session.projectPath, c['ref_' + s.key])"
+                :alt="s.label"
+                loading="lazy"
               />
-              <AppIcon v-else name="user" :size="20" />
+              <AppIcon v-else name="image" :size="16" class="trio__blank" />
+
+              <!-- 采样中途那张小图，盖在这一格上。低分辨率放大本来就是糊的，
+                   随着步数推进内容逐渐成形；画完就没了（真图上来）。 -->
+              <img
+                v-if="preview[c.char_id + s.key]"
+                class="trio__preview"
+                :src="preview[c.char_id + s.key]"
+                alt=""
+              />
+              <span v-if="genPct[c.char_id + s.key]" class="trio__pct numeric">
+                {{ genPct[c.char_id + s.key] }}%
+              </span>
+              <span class="trio__label tiny">{{ s.label }}</span>
             </span>
-            <span class="chr__id">
-              <span class="chr__name">{{ c.name }}</span>
-              <span class="chr__meta tiny dim mono">{{ c.char_id }}</span>
-            </span>
-            <span class="chr__desc truncate muted small">{{ c.identity }}</span>
-            <span class="spacer" />
-            <span v-if="changed(c.char_id)" class="pill pill--warn">未保存</span>
-            <span class="pill" :class="c.voice_id ? 'pill--ok' : 'pill--neutral'">
-              {{ c.voice_id ? '已定音色' : '音色自动挑' }}
-            </span>
-            <span class="pill pill--neutral">
-              {{ SLOTS.filter((s) => c['ref_' + s.key]).length }} / 3 参考图
-            </span>
-            <AppIcon
-              class="chr__chev"
-              :name="openId === c.char_id ? 'arrowLeft' : 'arrowRight'"
-              :size="15"
+          </div>
+
+          <!-- 进度就是这一行的底色，和镜头墙一个规矩：铺成背景既不占地方，
+               也比一条细线看得清。 -->
+          <div class="cell__bottom">
+            <span
+              v-if="cellBusy(c.char_id)"
+              class="cell__fill"
+              :class="{ 'cell__fill--idle': cellPct(c.char_id) === null }"
+              :style="cellPct(c.char_id) !== null ? { width: cellPct(c.char_id) + '%' } : null"
             />
-          </button>
+            <button class="cell__name truncate" type="button" title="改这个人" @click="toggle(c.char_id)">
+              {{ c.name }}
+            </button>
+            <span class="spacer" />
+            <span v-if="changed(c.char_id)" class="pill pill--warn tiny">未保存</span>
+            <span class="pill tiny" :class="c.voice_id ? 'pill--ok' : 'pill--neutral'">
+              {{ c.voice_id ? '音色' : '自动' }}
+            </span>
+            <span
+              class="pill tiny"
+              :class="SLOTS.filter((s) => c['ref_' + s.key]).length === 3 ? 'pill--ok' : 'pill--neutral'"
+            >
+              {{ SLOTS.filter((s) => c['ref_' + s.key]).length }}/3
+            </span>
+          </div>
 
           <div v-if="openId === c.char_id" class="chr__body">
             <div class="chr__cols">
@@ -519,66 +605,144 @@ async function clearRef(charId, slot) {
   flex-direction: column;
   gap: var(--s2);
 }
-/* 一人一行，行之间一条细线。不是卡片。 */
-.list {
-  display: flex;
-  flex-direction: column;
-}
-.chr {
-  border-top: 1px solid var(--line);
-}
-.chr--open {
-  border-top-color: var(--accent-line);
-}
-.chr__head {
-  display: flex;
-  align-items: center;
+/* 一人一张牌，和「这一集」那面镜头墙一个样子。 */
+.wall {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
   gap: var(--s3);
+  align-items: start;
+}
+.cell {
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  overflow: hidden;
+  background: var(--surface);
+}
+.cell--live { border-color: var(--accent); }
+.cell--open {
+  outline: 2px solid var(--accent);
+  /* 展开的编辑器比一格宽得多，让它占满整行 */
+  grid-column: 1 / -1;
+}
+
+/* 三张各占三分之一，鼠标放上去那张摊开。 */
+.trio {
+  display: flex;
   width: 100%;
-  padding: var(--s2) 0;
-  background: none;
-  border: none;
+  aspect-ratio: 9 / 16;
+  background: var(--bg-sunken);
   cursor: pointer;
-  text-align: left;
 }
-.chr__head:hover {
-  background: var(--surface-2);
-}
-.chr__avatar {
-  flex: none;
+.trio__one {
+  position: relative;
+  flex: 1 1 0;
+  min-width: 0;
+  overflow: hidden;
   display: grid;
   place-items: center;
-  width: 38px;
-  height: 38px;
-  border-radius: 12px;
-  overflow: hidden;
-  background: var(--surface-3);
   color: var(--text-3);
+  border-right: 1px solid var(--bg);
+  /* **摊开要快。** 这是个探查动作：鼠标扫过三张看是不是同一个人，
+     慢吞吞地展开会把"扫一眼"变成"等一下"。 */
+  transition: flex-grow 0.18s ease;
 }
-.chr__avatar img {
+.trio__one:last-child { border-right: 0; }
+/* 鼠标放上去的那张摊开成整格，另外两张让位。
+   **用 :hover 不用 JS**：这一层没有状态，交给 CSS 比在组件里记一个
+   hoverId 省一整条更新链路。 */
+/* 让位的那两张留一条窄边，不是缩没：那条边是回去的路，
+   十几个像素点不着，等于摊开之后只能靠移出去才收回来。 */
+.trio:hover .trio__one { flex-grow: 0.55; }
+.trio__one:hover { flex-grow: 5; }
+.trio__one img {
   width: 100%;
   height: 100%;
   object-fit: cover;
 }
-.chr__id {
+.trio__one.is-empty {
+  background: repeating-linear-gradient(
+    45deg, transparent, transparent 6px,
+    color-mix(in srgb, var(--line) 40%, transparent) 6px,
+    color-mix(in srgb, var(--line) 40%, transparent) 12px);
+}
+.trio__preview {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  pointer-events: none;
+}
+.trio__pct {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--bg) 75%, transparent);
+  color: var(--accent);
+  font-size: var(--fs-xs);
+  pointer-events: none;
+}
+/* 位置名只在摊开的那张上写出来：三张挤着的时候写不下，
+   而摊开之后正需要知道现在看的是哪一面。 */
+.trio__label {
+  position: absolute;
+  left: 4px;
+  bottom: 4px;
+  padding: 0 4px;
+  border-radius: var(--r-sm);
+  background: color-mix(in srgb, var(--bg) 70%, transparent);
+  color: var(--text-2);
+  opacity: 0;
+  transition: opacity 0.18s ease;
+  pointer-events: none;
+  white-space: nowrap;
+}
+.trio__one:hover .trio__label { opacity: 1; }
+
+.cell__bottom {
+  position: relative;
   display: flex;
-  flex-direction: column;
-  line-height: 1.25;
-  flex: none;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 6px;
+  border-top: 1px solid var(--line);
 }
-.chr__name {
+/* 进度铺成这一行的底色。见镜头墙里同名那条。 */
+.cell__fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  background: var(--accent-soft);
+  pointer-events: none;
+}
+.cell__fill--idle {
+  right: 0;
+  animation: cell-sweep 1.4s ease-in-out infinite;
+}
+@keyframes cell-sweep {
+  0%, 100% { opacity: 0.25; }
+  50% { opacity: 0.7; }
+}
+.cell__name {
+  position: relative;
+  border: 0;
+  background: transparent;
+  color: var(--text-1);
+  font-size: var(--fs-sm);
   font-weight: 600;
-  font-size: var(--fs-md);
+  cursor: pointer;
+  padding: 0;
+  min-width: 0;
 }
-.chr__desc {
-  max-width: 34ch;
-}
-.chr__chev {
-  color: var(--text-3);
+.cell__bottom .pill {
+  position: relative;
 }
 
 .chr__body {
-  padding: var(--s3) 0 0;
+  padding: var(--s3);
+  border-top: 1px solid var(--line);
 }
 .chr__cols {
   display: grid;

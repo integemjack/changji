@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <cstring>
 #include <fstream>
+#include <map>
 #include <mutex>
 #include <random>
 #include <vector>
@@ -66,21 +67,29 @@ std::string sd_model_problem(const config::Settings& settings, ModelRole role) {
 
 namespace {
 
-/// 预览的落点。进程一个，跟 sd.cpp 的回调一样。
+/// 预览的落点。**可以同时有好几个**，见 add_preview_sink 上面那段。
 std::mutex& preview_mu() {
     static std::mutex m;
     return m;
 }
-PreviewSink& preview_sink_slot() {
-    static PreviewSink s;
-    return s;
+std::map<int, PreviewSink>& preview_sinks() {
+    static std::map<int, PreviewSink> m;
+    return m;
 }
 
 }  // namespace
 
-void set_preview_sink(PreviewSink sink) {
+int add_preview_sink(PreviewSink sink) {
+    static int next = 1;
     std::lock_guard lg(preview_mu());
-    preview_sink_slot() = std::move(sink);
+    const int token = next++;
+    preview_sinks()[token] = std::move(sink);
+    return token;
+}
+
+void remove_preview_sink(int token) {
+    std::lock_guard lg(preview_mu());
+    preview_sinks().erase(token);
 }
 
 // 这个也在 #ifdef 外面，理由同 sd_model_problem：纯算术，没它测不到。
@@ -239,12 +248,12 @@ void preview_trampoline(int step, int frame_count, sd_image_t* frames,
         std::lock_guard lg(active().mu);
         tag = active().tag;
     }
-    PreviewSink sink;
+    std::vector<PreviewSink> sinks;
     {
         std::lock_guard lg(preview_mu());
-        sink = preview_sink_slot();
+        for (const auto& [token, s] : preview_sinks()) sinks.push_back(s);
     }
-    if (!sink || tag.empty()) return;
+    if (sinks.empty() || tag.empty()) return;
 
     const sd_image_t& img = frames[0];
     std::vector<unsigned char> buf;
@@ -259,7 +268,9 @@ void preview_trampoline(int step, int frame_count, sd_image_t* frames,
                                   static_cast<int>(img.width * img.channel))) {
         return;
     }
-    sink(tag, step, "data:image/png;base64," + base64(buf));
+    // **编一次，发给所有人。** 编码是这条路上唯一花时间的一步。
+    const std::string url = "data:image/png;base64," + base64(buf);
+    for (const auto& sink : sinks) sink(tag, step, url);
 }
 
 void progress_trampoline(int step, int steps, float time, void* /*data*/) {

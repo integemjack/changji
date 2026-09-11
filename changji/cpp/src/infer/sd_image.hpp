@@ -85,9 +85,27 @@ using StepCallback =
 using PreviewSink =
     std::function<void(const std::string& tag, int step, std::string data_url)>;
 
-/// 装（或传空函数卸）预览的落点。**进程一个**，跟 sd.cpp 的回调一样。
-/// 没装或请求里没带 tag，就不编码也不推——一张不要的 PNG 也别编。
-void set_preview_sink(PreviewSink sink);
+/// 挂一个预览落点，回一个牌子；拿牌子摘掉。
+///
+/// ⚠️ **可以同时挂好几个，每个自己认 tag。** 原来这儿只有一个槽位，
+/// 谁装谁覆盖——出片那条在跑的时候，设定页点一张参考图就会把出片的预览
+/// 顶掉，而顶掉这件事没有任何提示，表现是镜头墙上的小图突然不动了。
+/// 挂多个之后各收各的：每个落点看 tag 是不是自己那件事，不是就不管。
+int add_preview_sink(PreviewSink sink);
+void remove_preview_sink(int token);
+
+/// 挂上、出作用域自动摘。
+class PreviewSinkHandle {
+public:
+    explicit PreviewSinkHandle(PreviewSink sink)
+        : token_(add_preview_sink(std::move(sink))) {}
+    ~PreviewSinkHandle() { remove_preview_sink(token_); }
+    PreviewSinkHandle(const PreviewSinkHandle&) = delete;
+    PreviewSinkHandle& operator=(const PreviewSinkHandle&) = delete;
+
+private:
+    int token_ = 0;
+};
 
 /// 一次出视频的参数。
 struct VideoRequest {

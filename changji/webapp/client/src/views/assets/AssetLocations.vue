@@ -28,6 +28,9 @@ const { run, isBusy } = useAction()
 /** 每个场景画到百分之几。见 AssetCharacters 里同名那个。 */
 const genPct = reactive({})
 
+/** 采样到一半那张小图。见 AssetCharacters 里同名那个。 */
+const preview = reactive({})
+
 /** 页头那个种子，和「一键出图」画完之后的那声招呼。 */
 const { stamp, seedPayload } = useRefGen()
 
@@ -239,11 +242,15 @@ async function genEmpty(locationId) {
           onProgress: (cur, total) => {
             genPct[locationId] = total > 0 ? Math.round((cur / total) * 100) : 0
           },
+          onPreview: (url) => {
+            preview[locationId] = url
+          },
         },
       ),
     { key: 'gen:' + locationId },
   )
   delete genPct[locationId]
+  delete preview[locationId]
   if (!result) return
   ui.ok(`空景图画好了（${Math.round(result.seconds)} 秒）`)
   await load()
@@ -352,6 +359,16 @@ async function clearEmpty(locationId) {
                   <AppIcon name="image" :size="20" />
                   <span class="tiny">没有空景图</span>
                 </div>
+
+                <!-- 采样中途那张小图，盖在这一格上。潜空间线性投影来的，
+                     放大自然是糊的，随着步数推进内容逐渐成形；画完就没了。
+                     用户 2026-09-12：「画图方式也要实时返回步数图」。 -->
+                <img
+                  v-if="preview[l.location_id]"
+                  class="loc__preview"
+                  :src="preview[l.location_id]"
+                  alt=""
+                />
 
                 <div class="loc__overlay">
                   <button
@@ -526,6 +543,17 @@ async function clearEmpty(locationId) {
 }
 .loc--dim {
   opacity: 0.72;
+}
+
+/* 采样中途那张预览，盖在空景图上。**pointer-events 关掉**：底下那排
+   按钮（重画、换一张、撤掉）要点得着。 */
+.loc__preview {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  pointer-events: none;
 }
 
 /* 空景图。16:9 是勘景照的常见比例，成片是竖屏，但这里给人看空间，

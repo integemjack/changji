@@ -117,7 +117,24 @@ Rendered render_ref(const ProjectStore& store, const std::string& stem,
     req.height = spec.height;
     req.steps = spec.steps;
     req.seed = seed;
-    // req.tag 留空：预览是往镜头墙上那一格推的，参考图没有格子。
+    // **打上 tag，采样中途那张小图才推得出来。**
+    //
+    // 用户 2026-09-12：「画图方式也要实时返回步数图」。一张几十秒，头
+    // 十几秒还在读权重，一个百分比数字撑不住这段等待——而那张小图是从
+    // 潜空间线性投影来的（不走 VAE，几乎不花时间），第五步就看得出构图
+    // 对不对，不对当场撤掉重来，不用等它画完。
+    //
+    // tag 就用 stream_id：这条路上它本来就是"这件活"的身份。没有 stream
+    // （同步那条）时留空，sd.cpp 那边就不编码也不推。
+    req.tag = stream_id;
+
+    // 只认自己那件活的预览。**同时可以有别人挂着**（出片那条就挂着一个），
+    // 不认 tag 的话镜头墙的小图会飘到参考图这边来。
+    infer::PreviewSinkHandle preview_sink(
+        [&stream_id](const std::string& tag, int step, std::string url) {
+            if (tag != stream_id) return;
+            job_preview(stream_id, step, std::move(url));
+        });
 
     const auto t0 = std::chrono::steady_clock::now();
     pipeline::CancelToken tok;

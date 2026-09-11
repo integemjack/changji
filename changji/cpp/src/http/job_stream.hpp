@@ -39,4 +39,10 @@ void job_error(const std::string& stream_id, const std::string& message);
 void job_progress(const std::string& stream_id, int current, int total,
                   const std::string& message = "");
 
+/// 采样到一半的那张小图（`data:image/png;base64,…`）。
+///
+/// **只广播，不留底。** 一张几十 KB，而这条通道两秒还要推一次系统表；
+/// 存起来或者补发都会把它变成主要流量。错过就错过——下一步马上又有一张。
+void job_preview(const std::string& stream_id, int step, std::string data_url);
+
 }  // namespace changji::http

@@ -10,6 +10,7 @@
  * 所以接口只回一句"开始了"，结果走这条 socket：
  *
  *     job_progress   干到哪儿了
+ *     job_preview    采样到一半的那张小图（出图才有）
  *     job_done       干完了，result 就是同步那条会回的那份 body
  *     job_error      砸了
  *
@@ -26,10 +27,13 @@ import { openJobSocket } from '@/composables/useJobSocket'
  * @param {object}   [opts]
  * @param {string}   [opts.prefix='job']  stream id 的前缀，只为了日志好认
  * @param {(cur:number,total:number,msg:string)=>void} [opts.onProgress]
+ * @param {(dataUrl:string, step:number)=>void} [opts.onPreview]
+ *        采样到一半那张小图。**一张几十 KB，别存**——下一步马上又有一张，
+ *        攒起来只会把这条通道变成主要流量。
  * @returns {Promise<any|null>} 干完的那份结果；砸了或者断了回 null
  * @throws 把 send 抛出来的东西原样抛出去（400/404 这些还是同步回的）
  */
-export async function runAsyncJob(send, { prefix = 'job', onProgress } = {}) {
+export async function runAsyncJob(send, { prefix = 'job', onProgress, onPreview } = {}) {
   const streamId = prefix + '-' + Math.random().toString(36).slice(2, 10)
 
   let settle = null
@@ -47,6 +51,8 @@ export async function runAsyncJob(send, { prefix = 'job', onProgress } = {}) {
         if (msg.job_id !== streamId) return
         if (msg.type === 'job_progress') {
           onProgress?.(msg.current ?? 0, msg.total ?? 0, msg.message ?? '')
+        } else if (msg.type === 'job_preview') {
+          onPreview?.(msg.image ?? '', msg.current ?? 0)
         } else if (msg.type === 'job_done') {
           settle({ ok: true, result: msg.result })
         } else if (msg.type === 'job_error') {
