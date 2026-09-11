@@ -375,7 +375,8 @@ json write_one_chapter(ProjectStore& store, const Project& project, Story story,
     llm::Request req;
     req.prompt =
         stages::build_chapter_prompt(story, chapter_id, project.style_line);
-    req.schema = stages::chapter_schema(stages::chapter_target_paras(story));
+    req.schema = stages::chapter_schema(stages::chapter_target_scenes(story),
+                                       stages::chapter_scene_paras(story));
     req.schema_name = "chapter";
 
     // 给了 stream_id 就**边写边推**。写一章要一两分钟，攒齐了再蹦出来的话
@@ -397,7 +398,7 @@ json write_one_chapter(ProjectStore& store, const Project& project, Story story,
             // **抠的是 paragraphs，不是 text。** c41821d 把章节正文从一个
             // 字符串改成了一段一项的数组，而这里没跟着改——于是流式一个字
             // 都抠不出来，界面上就是"AI 写作没有热更新"，后端不报任何错。
-            stages::JsonFieldStreamer field(stages::kChapterBodyField);
+            stages::JsonFieldStreamer field(stages::kChapterBodyField, true);
             int seq = 0;
             raw = client.complete(req, tok, [&](const std::string& piece) {
                 const std::string fresh = field.feed(piece);

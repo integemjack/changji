@@ -36,6 +36,24 @@ std::string episode_text(const models::Story& story,
 std::vector<std::string> episode_chapters(const models::Story& story,
                                           const models::EpisodePlan& plan);
 
+/// 这一集压着哪几场戏。
+///
+/// 分集是照着场的边界切的，所以正常情况下一集正好是一场；模型字数写飘了
+/// 或者人改过分集表时会跨两场。拿它给写剧本那一步交代**这一集在哪、
+/// 跟着谁走、他要什么、谁拦着**——正文里这些是化在叙述里的，单独列出来
+/// 模型才不会把地点写丢（一集的每一镜都要照着地点画）。
+std::vector<models::Scene> episode_scenes(const models::Story& story,
+                                          const models::EpisodePlan& plan);
+
+/// 这一集压着哪几场戏。
+///
+/// 分集是照着场的边界切的，所以正常情况下一集正好是一场；模型字数写飘了
+/// 或者人改过分集表时会跨两场。拿它给写剧本那一步交代**这一集在哪、
+/// 跟着谁走、他要什么、谁拦着**——正文里这些是化在叙述里的，单独列出来
+/// 模型才不会把地点写丢（一集的每一镜都要照着地点画）。
+std::vector<models::Scene> episode_scenes(const models::Story& story,
+                                          const models::EpisodePlan& plan);
+
 /// 渲染给模型看的那一段：底子、人物、关系、前情提要、这一集、停在哪。
 ///
 /// 单独拆出来是为了能测——拼提示词只是在它前后接常量，真正会错的是这里：

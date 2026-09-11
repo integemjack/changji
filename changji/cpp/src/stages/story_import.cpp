@@ -89,25 +89,6 @@ bool is_heading(const std::string& line, std::string& title_out) {
     return false;
 }
 
-/// 段落边界：空行之后那个位置（按字符计），以及每个自然段的末尾。
-///
-/// 没有空行的文本（很多网文一行一段）就用换行当段落边界，不然一整章
-/// 只有章界一个候选。
-std::vector<int> paragraph_breaks(const std::string& body) {
-    const std::vector<std::string> chars = text::utf8_chars(body);
-    std::vector<int> breaks;
-    for (std::size_t i = 0; i < chars.size(); ++i) {
-        if (chars[i] != "\n") continue;
-        // 连着的换行算一处，位置取最后一个换行之后
-        std::size_t j = i;
-        while (j + 1 < chars.size() && chars[j + 1] == "\n") ++j;
-        const int at = static_cast<int>(j + 1);
-        if (at > 0 && at < static_cast<int>(chars.size())) breaks.push_back(at);
-        i = j;
-    }
-    return breaks;
-}
-
 /// 候选切点太多就等距抽稀。相邻两个段落边界差不了几个字，抽掉无所谓。
 std::vector<int> thin_out(std::vector<int> v, std::size_t cap) {
     if (v.size() <= cap) return v;
@@ -139,6 +120,25 @@ std::string first_sentence(const std::string& body, std::size_t max_chars = 16) 
 }
 
 }  // namespace
+
+/// 段落边界：空行之后那个位置（按字符计），以及每个自然段的末尾。
+///
+/// 没有空行的文本（很多网文一行一段）就用换行当段落边界，不然一整章
+/// 只有章界一个候选。
+std::vector<int> paragraph_breaks(const std::string& body) {
+    const std::vector<std::string> chars = text::utf8_chars(body);
+    std::vector<int> breaks;
+    for (std::size_t i = 0; i < chars.size(); ++i) {
+        if (chars[i] != "\n") continue;
+        // 连着的换行算一处，位置取最后一个换行之后
+        std::size_t j = i;
+        while (j + 1 < chars.size() && chars[j + 1] == "\n") ++j;
+        const int at = static_cast<int>(j + 1);
+        if (at > 0 && at < static_cast<int>(chars.size())) breaks.push_back(at);
+        i = j;
+    }
+    return breaks;
+}
 
 std::vector<Hook> paragraph_hooks(const std::string& text) {
     const std::string body = changji::text::strip_ws(text);

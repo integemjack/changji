@@ -54,4 +54,13 @@ std::vector<models::Chapter> split_pasted(const std::string& text,
 /// 多到 kImportMaxHooks 就等距抽稀——相邻两个段落边界差不了几个字。
 std::vector<models::Hook> paragraph_hooks(const std::string& text);
 
+/// 每个段落边界在正文里的字符位置（第 i 个 = 第 i+1 段的起始字符）。
+///
+/// `paragraph_hooks` 抽稀之后的那一份不能拿来数段落——逐章展开要靠「第几段
+/// 结束就是第几场结束」把场的位置数出来，抽掉几个边界就全错位了。所以这里
+/// 把没抽稀的原始那份单独给出来。
+///
+/// 传进来的文本要先 strip_ws，和 `paragraph_hooks` 里那一步保持一致。
+std::vector<int> paragraph_breaks(const std::string& body);
+
 }  // namespace changji::stages

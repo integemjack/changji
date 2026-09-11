@@ -187,6 +187,27 @@ TEST_CASE("老形状还认：text 是一个字符串") {
 // 把两处字符串钉在一起
 // ---------------------------------------------------------------------------
 
+TEST_CASE("一个汉字被切在两个 token 中间，不能吐半个出去") {
+    // **2026-09-12 实跑掉了一整章就是因为这个。** 广播那一层是
+    // `json{{"text", fresh}}.dump()`，fresh 里有半个 UTF-8 字符时它当场抛
+    // `[json.exception.type_error.316] incomplete UTF-8 string`，异常一路
+    // 冒到写章节那条循环，那一章直接算失败。
+    //
+    // 改成 repeating 之后流过这一层的字多了三倍，撞上的概率也大了三倍。
+    const std::string raw = R"({"paragraphs":["雨夜"]})";
+    changji::stages::JsonFieldStreamer field("paragraphs");
+
+    std::string got;
+    for (std::size_t i = 0; i < raw.size(); ++i) {
+        const std::string one = field.feed(std::string(1, raw[i]));
+        // 每一次吐出来的都必须是合法 UTF-8——这正是广播那一层的要求
+        CHECK_NOTHROW(nlohmann::json{{"text", one}}.dump());
+        got += one;
+    }
+    CHECK(got == "雨夜");
+    CHECK(field.text() == "雨夜");
+}
+
 TEST_CASE("流式抠的那个字段，必须真的在 schema 里") {
     // **这一条是为了让 2026-09-11 那个 bug 不可能再发生。**
     //
@@ -194,21 +215,55 @@ TEST_CASE("流式抠的那个字段，必须真的在 schema 里") {
     // 于是它一个字都抠不出来：编辑器一两分钟一动不动，后端不报任何错
     // （正文照样解析、落库、重算分集），查起来毫无线索。
     //
-    // 现在两边共用 `kChapterBodyField`。这条用例守的是"它确实是 schema 里
-    // 的一个键"——以后谁再改 schema 而忘了改常量，这里当场红。
-    const auto& schema = changji::stages::chapter_schema(20);
+    // 2026-09-12 又挪了一层：正文改成一场一个数组（scenes[].paragraphs）。
+    // 所以这条现在守两件事——键还在 schema 里，而且它在**场**里面。
+    const auto& schema = changji::stages::chapter_schema(3, 20);
     REQUIRE(schema.contains("properties"));
-    CHECK(schema.at("properties").contains(changji::stages::kChapterBodyField));
+    REQUIRE(schema.at("properties").contains(changji::stages::kChapterScenesField));
+
+    const auto& scene = schema.at("properties")
+                            .at(changji::stages::kChapterScenesField)
+                            .at("items");
+    REQUIRE(scene.at("properties").contains(changji::stages::kChapterBodyField));
 
     // 而且它得是**一串字符串**：JsonFieldStreamer 的数组那条才用得上。
-    const auto& field = schema.at("properties").at(changji::stages::kChapterBodyField);
+    const auto& field = scene.at("properties").at(changji::stages::kChapterBodyField);
     CHECK(field.at("type") == "array");
     CHECK(field.at("items").at("type") == "string");
 
     // required 里也得有它，否则模型可以整个不写
     bool required = false;
-    for (const auto& r : schema.at("required")) {
+    for (const auto& r : scene.at("required")) {
         if (r == changji::stages::kChapterBodyField) required = true;
     }
     CHECK(required);
+}
+
+TEST_CASE("流式：一场一个 paragraphs，要一路收到底") {
+    // **不开 repeating 就只看得到第一场。** 正文 2026-09-12 改成
+    // scenes[].paragraphs 之后，一份 JSON 里这个键出现好几次；状态机
+    // 收完第一个 `]` 就 done() 的话，编辑器里只出现三分之一的正文，
+    // 而后端照样解析、落库、重算分集——又是一个不报错的故障。
+    const std::string raw =
+        R"({"scenes":[{"where":"深夜便利店","pov":"林晚","goal":"要回伞",)"
+        R"("obstacle":"他不认","turn":"伞柄上刻着别人的名字",)"
+        R"("paragraphs":["第一场第一段","第一场第二段"]},)"
+        R"({"where":"天台","pov":"林晚","goal":"问清楚","obstacle":"他不说",)"
+        R"("turn":"他把伞扔了下去","paragraphs":["第二场第一段","第二场第二段"]}]})";
+
+    changji::stages::JsonFieldStreamer field(changji::stages::kChapterBodyField,
+                                             true);
+    std::string got;
+    for (const char c : raw) got += field.feed(std::string(1, c));
+
+    CHECK(got == "第一场第一段\n第一场第二段\n第二场第一段\n第二场第二段");
+    // repeating 开着的时候永远不 done：还有没有下一场，这一层不知道。
+    CHECK_FALSE(field.done());
+
+    // 不开 repeating 的话只收得到第一场——这就是那个故障的样子。
+    changji::stages::JsonFieldStreamer once(changji::stages::kChapterBodyField);
+    std::string partial;
+    for (const char c : raw) partial += once.feed(std::string(1, c));
+    CHECK(partial == "第一场第一段\n第一场第二段");
+    CHECK(once.done());
 }

@@ -109,6 +109,15 @@ TEST_CASE("Story 往返序列化，中文原样进出") {
     Chapter ch = mk("ch01", "雨夜重逢", 12);
     ch.summary = "他推门进来";
     ch.hooks.push_back(hook(6, "她认出那把伞"));
+    Scene sc;
+    sc.from_char = 0;
+    sc.to_char = 12;
+    sc.where = "深夜，便利店，冷白顶光";
+    sc.pov = "林晚";
+    sc.goal = "把伞要回来";
+    sc.obstacle = "他不认这把伞";
+    sc.turn = "伞柄上刻着别人的名字";
+    ch.scenes.push_back(sc);
     ch.characters.push_back("林晚");
     ch.locations.push_back("便利店");
     s.chapters.push_back(ch);
@@ -133,6 +142,11 @@ TEST_CASE("Story 往返序列化，中文原样进出") {
     REQUIRE(back.chapters[0].hooks.size() == 1);
     CHECK(back.chapters[0].hooks[0].at_char == 6);
     CHECK(back.chapters[0].hooks[0].text == "她认出那把伞");
+    // 场次也要原样进出：分集照着它下刀，写剧本那一步要拿它的 pov 和 where
+    REQUIRE(back.chapters[0].scenes.size() == 1);
+    CHECK(back.chapters[0].scenes[0].to_char == 12);
+    CHECK(back.chapters[0].scenes[0].pov == "林晚");
+    CHECK(back.chapters[0].scenes[0].turn == "伞柄上刻着别人的名字");
 
     // 老版本写的文件里没有新字段，读的时候要能退到默认值而不是抛。
     json partial = json{{"premise", "只有梗概"}};
@@ -255,6 +269,57 @@ TEST_CASE("切点落在钩子上，不按字数硬切") {
     // 同一章切成两集，标题要分得开
     CHECK(plan[0].title == "雨夜重逢（上）");
     CHECK(plan[1].title == "雨夜重逢（下）");
+}
+
+TEST_CASE("切点优先落在一场戏演完的地方") {
+    // **一场戏是一个完整的戏剧单元**：谁想干什么、谁拦着、局面变成什么。
+    // 切在场中间等于把一集停在一件事的半当中，下一集开头接的是半场戏。
+    // 所以场边界让路的余地（kSceneSlack）比别的钩子大。
+    //
+    // 容量 900。场在 1200 收，另有一个普通钩子在 880——离理想位置近得多，
+    // 但它在这场戏的中间。
+    Story s;
+    Chapter c = mk("ch01", "雨夜重逢", 2600);
+    c.hooks.push_back(hook(880, "她攥紧了伞柄"));
+    Scene a;
+    a.from_char = 0;
+    a.to_char = 1200;
+    a.pov = "林晚";
+    a.turn = "伞柄上刻着别人的名字";
+    Scene b;
+    b.from_char = 1200;
+    b.to_char = 2600;
+    b.pov = "林晚";
+    b.turn = "他把伞从天台扔了下去";
+    c.scenes.push_back(a);
+    c.scenes.push_back(b);
+    s.chapters.push_back(c);
+
+    const auto plan = plan_episodes(s, 60.0);
+    REQUIRE(plan.size() == 2);
+    CHECK(plan[0].to_char == 1200);
+    CHECK(plan[0].hook == "伞柄上刻着别人的名字");
+    CHECK(plan[1].to_char == 2600);
+    CHECK(plan[1].hook == "他把伞从天台扔了下去");
+}
+
+TEST_CASE("场太远的时候不硬等，还是按钩子切") {
+    // 让路是有限度的：半个容量之外就不是这一集该停的地方了。
+    // 容量 900，场一直到 2400 才收，中间 900 处有个真钩子。
+    Story s;
+    Chapter c = mk("ch01", "雨夜重逢", 2400);
+    c.hooks.push_back(hook(900, "她认出那把伞"));
+    Scene a;
+    a.from_char = 0;
+    a.to_char = 2400;
+    a.turn = "他把伞扔了下去";
+    c.scenes.push_back(a);
+    s.chapters.push_back(c);
+
+    const auto plan = plan_episodes(s, 60.0);
+    REQUIRE(plan.size() == 2);
+    CHECK(plan[0].to_char == 900);
+    CHECK(plan[0].hook == "她认出那把伞");
 }
 
 TEST_CASE("尾巴不单切") {

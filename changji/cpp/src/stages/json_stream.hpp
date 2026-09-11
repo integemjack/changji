@@ -43,9 +43,23 @@ public:
     /// 不一致没人会想到去查流式这一层。
     static constexpr const char* kArraySeparator = "\n";
 
-    explicit JsonFieldStreamer(std::string field);
+    /// `repeating` = 这个键在一份 JSON 里**出现好几次**，每一次都要收。
+    ///
+    /// 章节正文 2026-09-12 改成了 `scenes[].paragraphs`——一场一个数组。
+    /// 不开这个开关的话，收完第一场那个 `]` 就 done() 了，编辑器里只看得到
+    /// 三分之一，而**后端不报任何错**（正文照样解析、落库、重算分集）。
+    /// 这和 c41821d 那次「流式一个字都抠不出来」是同一类故障，那次查了很久。
+    ///
+    /// 开着的时候 done() 永远是假：谁也不知道后面还有没有下一场，
+    /// 收到哪儿算完由调用方（生成结束）说了算。
+    explicit JsonFieldStreamer(std::string field, bool repeating = false);
 
     /// 喂一段原始文本，拿回新解出来的字符。
+    ///
+    /// **返回的永远是完整的 UTF-8**：一个汉字可能被切在两个 token 中间，
+    /// 那半个字符会被扣在这里，等下一段来了再一起吐。不扣的话广播那一层
+    /// `json{{"text", fresh}}.dump()` 当场抛 `incomplete UTF-8 string`，
+    /// 而那个异常会把整章写作打断——2026-09-12 实跑就这么掉了一章。
     std::string feed(const std::string& piece);
 
     /// 这个字段的值收完了没有。
@@ -75,6 +89,8 @@ private:
     std::uint16_t high_ = 0;  ///< 代理对的高位，等低位来配
     bool key_escape_ = false;  ///< 键名里的转义。键名一般没有，但不能崩
     bool array_ = false;       ///< 这个字段是一串字符串，不是一个字符串
+    bool repeating_ = false;   ///< 这个键会出现好几次，每一次都收
+    std::string tail_;         ///< 结尾那半个 UTF-8 字符，扣着等下一段
     bool wrote_any_ = false;   ///< 已经吐过至少一项（决定要不要先补分隔符）
 };
 

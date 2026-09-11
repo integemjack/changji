@@ -107,6 +107,34 @@ struct Hook {
     NLOHMANN_DEFINE_TYPE_INTRUSIVE_WITH_DEFAULT(Hook, at_char, text)
 };
 
+/// 一章里的一场戏。**正文的写作单位，也是分集的切割单位。**
+///
+/// 加这个之前，一章就是一堆段落。模型拿到「这一章发生 A、B、C」，只能把
+/// 三件事平摊成四十个一句话的段落——每段推进一整个事件，叙述时长远短于
+/// 故事时间，叙事学上这叫**概述**。小说读起来是小说，靠的是**场景**：
+/// 叙述时长约等于故事时间，一个动作一段、一句对白一段。实测那一章
+/// （1674 字写完重逢、决裂、离开、回来、和好五件事）就是全篇概述的样子，
+/// 用户的说法是「只能叫剧本不能叫小说」。
+///
+/// 有了场之后：一章挑两三件要紧的事，**一件一场**，实时地写；其余用一两句
+/// 过渡带过去。场与场之间天然是一集的收口——**分集不再靠模型抄原文定位**。
+struct Scene {
+    /// 在本章正文里的区间 [from_char, to_char)，按 UTF-8 字符。
+    int from_char = 0;
+    int to_char = 0;
+
+    std::string where;    ///< 在哪、什么时候、什么光
+    std::string pov;      ///< 这一场跟谁走。一场只进一个人的心里，不跳
+    std::string goal;     ///< 这一场里他想要什么
+    std::string obstacle; ///< 谁、什么拦着
+    /// 这一场结束时局面变成什么。**它就是这一集的钩子**，所以不能是
+    /// 「他们和好了」这种收束，要是一个悬着的新局面。
+    std::string turn;
+
+    NLOHMANN_DEFINE_TYPE_INTRUSIVE_WITH_DEFAULT(
+        Scene, from_char, to_char, where, pov, goal, obstacle, turn)
+};
+
 /// 一章。故事层的情节单元。
 ///
 /// **章不等于集**：章是故事的单位，集是时长的单位。做成一对一的话
@@ -117,11 +145,15 @@ struct Chapter {
     std::string summary;    ///< 三五句。大纲阶段就有，是压缩的全局记忆的一部分
     std::string text;       ///< 正文。逐章展开之后才有，没展开时是空串
     std::vector<Hook> hooks;
+    /// 这一章的场次。AI 展开正文之后才有；粘贴导入的故事没有（那边只能
+    /// 按段落边界切）。空着不影响分集，只是切点退回段落边界那一档。
+    std::vector<Scene> scenes;
     std::vector<std::string> characters; ///< 出场人物名
     std::vector<std::string> locations;  ///< 用到的地方名
 
     NLOHMANN_DEFINE_TYPE_INTRUSIVE_WITH_DEFAULT(
-        Chapter, chapter_id, title, summary, text, hooks, characters, locations)
+        Chapter, chapter_id, title, summary, text, hooks, scenes, characters,
+        locations)
 
     /// 正文的字符数（UTF-8 字符，不是字节）。
     int text_len() const;

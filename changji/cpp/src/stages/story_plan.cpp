@@ -85,6 +85,13 @@ std::vector<EpisodePlan> plan_episodes(const Story& story, double per_episode_s)
         // 有说法的那些单独再记一份。它们是读懂剧情之后标出来的真钩子，
         // 挑切点时优先用——而 cuts 里大多数是机械登记的段落边界。
         std::set<int> named;
+        // **场的末尾再单独记一份，优先级最高。**
+        //
+        // 一场戏是一个完整的戏剧单元：谁想干什么、谁拦着、局面变成什么。
+        // 切在场中间等于把一集停在一件事的半当中——短剧每集结尾是完播率的
+        // 命门，这一刀比"离理想字数近"重要得多。所以场边界让路的余地
+        // （kSceneSlack）比别的钩子大。
+        std::set<int> scene_ends;
         std::map<int, std::string> hook_at;
         for (const auto& p : run) {
             for (const auto& h : p.ch->hooks) {
@@ -95,6 +102,16 @@ std::vector<EpisodePlan> plan_episodes(const Story& story, double per_episode_s)
                 // 同一个位置有多个钩子时留第一个，不覆盖——覆盖的话结果
                 // 取决于 hooks 数组的顺序，而那是模型给的，不稳定。
                 hook_at.emplace(g, h.text);
+            }
+            for (const auto& s : p.ch->scenes) {
+                const int at = std::clamp(s.to_char, 0, p.len);
+                const int g = p.start + at;
+                cuts.insert(g);
+                if (!s.turn.empty()) {
+                    named.insert(g);
+                    hook_at.emplace(g, s.turn);
+                }
+                scene_ends.insert(g);
             }
             cuts.insert(p.start + p.len);
         }
@@ -130,6 +147,7 @@ std::vector<EpisodePlan> plan_episodes(const Story& story, double per_episode_s)
 
                 const auto any = nearest(cuts);
                 const auto tagged = nearest(named);
+                const auto scene = nearest(scene_ends);
                 int best = any.first;
                 // **有说法的钩子让一让也值得。** 每一集的结尾是完播率的
                 // 命门，切在一个读懂剧情标出来的悬念上，比切在一个说不出
@@ -138,6 +156,14 @@ std::vector<EpisodePlan> plan_episodes(const Story& story, double per_episode_s)
                     static_cast<double>(tagged.second) <=
                         static_cast<double>(cap) * kNamedHookSlack) {
                     best = tagged.first;
+                }
+                // **场边界再优先一档。** 一集停在一场戏演完的地方，
+                // 比停在一场戏中间的某个悬念上整齐——后者会把一件事
+                // 劈成两半，下一集开头接的是半场戏。
+                if (scene.first > pos &&
+                    static_cast<double>(scene.second) <=
+                        static_cast<double>(cap) * kSceneSlack) {
+                    best = scene.first;
                 }
                 if (best > pos) next = best;
             }

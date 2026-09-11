@@ -212,7 +212,8 @@ ApiResult post_story_chapters(const json& body,
                     p.set_done(++done);
                     continue;
                 }
-                req.schema = stages::chapter_schema(stages::chapter_target_paras(cur));
+                req.schema = stages::chapter_schema(stages::chapter_target_scenes(cur),
+                                                     stages::chapter_scene_paras(cur));
                 req.schema_name = "chapter";
 
                 // **砸了就再要一次。**
@@ -227,11 +228,18 @@ ApiResult post_story_chapters(const json& body,
                 // 中间掉两章的话，等他回来时故事里有两个空洞，而进度条上
                 // 写的是"写完了 16 章"。
                 //
-                // 就多要一次，不是要到成功为止：提示词真有毛病时，重试到底
+                // 就多要两次，不是要到成功为止：提示词真有毛病时，重试到底
                 // 只会把一次失败变成一小时失败。
+                //
+                // **最后一次把软闸关掉**（parse_chapter 的 strict=false）。
+                // 软闸拦的是「能用但不够好」——整章没对白、两场撞车、章尾
+                // 点题。一直硬拦的话 14B 连着写不对，那一章落成 **0 字**，
+                // 而 0 字比「写得一般」差得多：2026-09-12 三轮实跑里软闸
+                // 每轮清掉 1~3 章。最后一次收下它，软闸就只提分不清零。
                 Story next;
                 std::string last_error;
-                for (int attempt = 0; attempt < 2; ++attempt) {
+                constexpr int kAttempts = 3;
+                for (int attempt = 0; attempt < kAttempts; ++attempt) {
                     if (attempt > 0) {
                         p.set_message("重写 " + id + "（" + me->title +
                                       "）——上一次只写出几个字");
@@ -248,7 +256,7 @@ ApiResult post_story_chapters(const json& body,
                         // **抠的是 paragraphs，不是 text。** c41821d 把章节正文从一个字符串
             // 改成了一段一项的数组，而这里没跟着改——于是流式一个字都抠
             // 不出来，界面上就是"AI 写作没有热更新"，后端不报任何错。
-            stages::JsonFieldStreamer field(stages::kChapterBodyField);
+            stages::JsonFieldStreamer field(stages::kChapterBodyField, true);
                         int seq = 0;
                         const std::string raw = client->complete(
                             req, dummy, [&](const std::string& piece) {
@@ -262,7 +270,9 @@ ApiResult post_story_chapters(const json& body,
                                              {"text", fresh}});
                             });
                         next = stages::apply_chapter(
-                            cur, id, stages::parse_chapter(raw, floor_chars));
+                            cur, id,
+                            stages::parse_chapter(raw, floor_chars,
+                                                  attempt + 1 < kAttempts));
                         last_error.clear();
                         break;
                     } catch (const std::exception& e) {
@@ -273,7 +283,7 @@ ApiResult post_story_chapters(const json& body,
                 if (!last_error.empty()) {
                     // 一章写砸了不该让前面几章白写，记下来接着往下写。
                     p.add_episode(json{{"chapter_id", id},
-                                       {"error", last_error + "（重试过一次）"}});
+                                       {"error", last_error + "（重试过两次）"}});
                     p.set_done(++done);
                     continue;
                 }

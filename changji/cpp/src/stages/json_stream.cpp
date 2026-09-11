@@ -36,10 +36,33 @@ int hex_value(char c) {
 
 }  // namespace
 
-JsonFieldStreamer::JsonFieldStreamer(std::string field)
-    : field_(std::move(field)) {}
+JsonFieldStreamer::JsonFieldStreamer(std::string field, bool repeating)
+    : field_(std::move(field)), repeating_(repeating) {}
 
-std::string JsonFieldStreamer::feed(const std::string& piece) {
+/// 这一串末尾有没有一个没收完的 UTF-8 字符；有的话返回它起始那一位。
+///
+/// UTF-8 的首字节自带长度（110xxxxx 两字节、1110xxxx 三字节、11110xxx 四
+/// 字节），从末尾往回找最近的一个首字节，看后面够不够它要的长度就行。
+/// 往回最多看三位——再长的序列不存在。
+std::size_t incomplete_tail(const std::string& s) {
+    const std::size_t n = s.size();
+    for (std::size_t back = 1; back <= 3 && back <= n; ++back) {
+        const auto c = static_cast<unsigned char>(s[n - back]);
+        if ((c & 0xC0) == 0x80) continue;  // 续字节，接着往回找
+        std::size_t need = 0;
+        if ((c & 0xE0) == 0xC0) need = 2;
+        else if ((c & 0xF0) == 0xE0) need = 3;
+        else if ((c & 0xF8) == 0xF0) need = 4;
+        else return n;  // ASCII 或者非法字节：到这儿为止都是完整的
+        return back < need ? n - back : n;
+    }
+    return n;
+}
+
+std::string JsonFieldStreamer::feed(const std::string& raw_piece) {
+    // 上一次扣下来的半个字符补在前面。
+    const std::string piece = tail_.empty() ? raw_piece : tail_ + raw_piece;
+    tail_.clear();
     std::string fresh;
     for (const char c : piece) {
         switch (state_) {
@@ -109,7 +132,9 @@ std::string JsonFieldStreamer::feed(const std::string& piece) {
                     }
                     state_ = State::InValue;
                 } else if (c == ']') {
-                    state_ = State::Done;
+                    // 这个键还会再出现（scenes[].paragraphs 一场一个数组）
+                    // 就回去接着找下一个，别在第一场收完就收工。
+                    state_ = repeating_ ? State::SeekKey : State::Done;
                 }
                 // 逗号和空白跳过
                 break;
@@ -119,8 +144,10 @@ std::string JsonFieldStreamer::feed(const std::string& piece) {
                     state_ = State::Escape;
                 } else if (c == '"') {
                     wrote_any_ = true;
-                    // 数组里一项收完还有下一项；单个字符串收完就完了。
-                    state_ = array_ ? State::SeekItem : State::Done;
+                    // 数组里一项收完还有下一项；单个字符串收完就完了——
+                    // 除非这个键还会再出现，那就回去接着找。
+                    state_ = array_ ? State::SeekItem
+                                    : (repeating_ ? State::SeekKey : State::Done);
                 } else {
                     fresh.push_back(c);
                     out_.push_back(c);
@@ -190,6 +217,14 @@ std::string JsonFieldStreamer::feed(const std::string& piece) {
                 break;
             }
         }
+    }
+    // 末尾那半个字符扣下来，等下一段。**out_ 里也不能留**——收尾时调用方
+    // 会拿 text() 和权威那份对，留着半个字符两边就对不上。
+    const std::size_t cut = incomplete_tail(fresh);
+    if (cut < fresh.size()) {
+        tail_ = fresh.substr(cut);
+        out_.erase(out_.size() - tail_.size());
+        fresh.erase(cut);
     }
     return fresh;
 }

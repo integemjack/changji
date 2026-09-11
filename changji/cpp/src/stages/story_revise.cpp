@@ -266,6 +266,30 @@ Story apply_revision(const Story& story, const Span& span,
         // 而假的比没有更糟：分集会照着它把一集停在一个已经不存在的悬念上。
     }
 
+    // **场的边界也要跟着挪**，道理和钩子一样：它们是字符偏移，而分集是
+    // 照着场边界下刀的（kSceneSlack）。不管的话改完一段字，这一章的场
+    // 就全错位了——不报任何错，只在成片里表现成"这一集从半场戏开始"。
+    //
+    // 边界落在被改掉那一段里的，一律收到这次改动的末尾：场与场之间不能
+    // 留缝，也不能重叠。
+    const int new_end = b + delta;
+    int prev_end = 0;
+    std::vector<Scene> scenes;
+    for (Scene s : c->scenes) {
+        if (s.to_char > b) {
+            s.to_char += delta;
+        } else if (s.to_char > a) {
+            s.to_char = new_end;
+        }
+        s.from_char = prev_end;
+        if (s.to_char <= s.from_char) continue;  // 被改动整个吃掉的场不留
+        prev_end = s.to_char;
+        scenes.push_back(std::move(s));
+    }
+    // 末场一律顶到章尾：改完之后正文长度变了，最后一场不该停在正文中间。
+    if (!scenes.empty()) scenes.back().to_char = c->text_len();
+    c->scenes = std::move(scenes);
+
     std::set<int> taken;
     for (const Hook& h : kept) taken.insert(h.at_char);
     for (const Hook& h : paragraph_hooks(c->text)) {

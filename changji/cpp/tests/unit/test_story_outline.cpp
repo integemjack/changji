@@ -13,6 +13,7 @@
 
 #include <doctest/doctest.h>
 
+#include <algorithm>
 #include <chrono>
 #include <filesystem>
 #include <memory>
@@ -1175,23 +1176,52 @@ TEST_CASE("schema：人物那三块和大纲那份长一样") {
     CHECK(ch.at("hooks").at("items").at("properties").contains("after"));
 }
 
-TEST_CASE("schema：正文是段落数组，段数由语法卡住") {
+TEST_CASE("schema：正文一场一个数组，场数和段数都由语法卡住") {
     // 2026-09-11 实跑：正文只是一个 text 字符串时，14B 三章里两章把梗概原样
     // 抄进去就收工（一百来字），另一次写到 8192 token 都没收口。「写满三千
-    // 字」它不听，段数的上下限进 schema 变成语法约束它才没得选。
-    const auto s = changji::stages::chapter_schema(85);
+    // 字」它不听，进 schema 变成语法约束它才没得选。
+    //
+    // 2026-09-12 再改一层：**正文按场分组**。没有「场」这个单位的时候，
+    // 模型把整章梗概平摊成四十个一句话的段落，通篇是概述不是场景——
+    // 用户的判词是「只能叫剧本不能叫小说」。
+    const auto s = changji::stages::chapter_schema(3, 22);
     const auto& props = s.at("properties");
     CHECK_FALSE(props.contains("text"));
-    REQUIRE(props.contains("paragraphs"));
-    CHECK(props.at("paragraphs").at("type") == "array");
-    CHECK(props.at("paragraphs").at("minItems").get<int>() >= 50);
-    CHECK(props.at("paragraphs").at("maxItems").get<int>() <= 130);
-    CHECK(props.at("paragraphs").at("items").at("type") == "string");
-    REQUIRE(s.at("required").size() == 2);
-    CHECK(s.at("required")[0] == "paragraphs");
-    // 目标再小，下限也不会低到能一段交差
-    CHECK(changji::stages::chapter_schema(3)
-              .at("properties").at("paragraphs").at("minItems").get<int>() >= 10);
+    CHECK_FALSE(props.contains("paragraphs"));  // 正文不在顶层了
+    REQUIRE(props.contains("scenes"));
+    // **下限就是目标值。** 让它少写一场，那一场会长到一千八百字，分集只能
+    // 在场中间连切四刀，每刀都落在说不出为什么的地方（2026-09-12 实跑）。
+    CHECK(props.at("scenes").at("minItems").get<int>() == 3);
+    CHECK(props.at("scenes").at("maxItems").get<int>() == 4);
+
+    const auto& scene = props.at("scenes").at("items");
+    const auto& sp = scene.at("properties");
+    // **一场戏要素齐全**：在哪、跟谁走、要什么、谁拦着、局面变成什么。
+    for (const char* k : {"where", "pov", "goal", "obstacle", "turn"}) {
+        CHECK(sp.contains(k));
+    }
+    // **turn 排在正文前面**：先知道这一场停在哪，才写得到那儿去。
+    auto keys = std::vector<std::string>();
+    for (auto it = sp.begin(); it != sp.end(); ++it) keys.push_back(it.key());
+    const auto pos = [&](const std::string& k) {
+        return std::find(keys.begin(), keys.end(), k) - keys.begin();
+    };
+    CHECK(pos("where") < pos("paragraphs"));
+    CHECK(pos("turn") < pos("paragraphs"));
+
+    REQUIRE(sp.contains("paragraphs"));
+    CHECK(sp.at("paragraphs").at("type") == "array");
+    CHECK(sp.at("paragraphs").at("minItems").get<int>() >= 12);
+    CHECK(sp.at("paragraphs").at("maxItems").get<int>() <= 34);
+    CHECK(sp.at("paragraphs").at("items").at("type") == "string");
+    REQUIRE(s.at("required").size() == 1);
+    CHECK(s.at("required")[0] == "scenes");
+
+    // 目标再小，下限也不会低到能一段交差、一场交差
+    const auto tiny = changji::stages::chapter_schema(1, 2);
+    CHECK(tiny.at("properties").at("scenes").at("minItems").get<int>() >= 2);
+    CHECK(tiny.at("properties").at("scenes").at("items").at("properties")
+              .at("paragraphs").at("minItems").get<int>() >= 6);
 }
 
 TEST_CASE("并回去：每章那两份名单是重填，不是往上堆") {
@@ -1496,18 +1526,28 @@ TEST_CASE("提示词：只写这一章，带的是压缩的全局记忆") {
 
     // 分界线：只写这一章
     CHECK(p.find("只写这一章") != std::string::npos);
-    CHECK(p.find("结尾必须停在下面给的那个钩子上") != std::string::npos);
-    // 要小说体，不是剧本格式——后面另有一步把它变成拍子
-    CHECK(p.find("写**小说体**") != std::string::npos);
-    CHECK(p.find("不要描写长相") != std::string::npos);
-    // 2026-09-11 对着真实章节改的几条：接着上一章写、最后一段就是钩子、
-    // 短段落、不复读。段数跟着字数算（3000 字 / 35 字一段 ≈ 85 段）
-    CHECK(p.find("从上一章停下的地方接着往下写") != std::string::npos);
-    CHECK(p.find("最后一段就是钩子本身") != std::string::npos);
-    CHECK(p.find("按小说的段落写") != std::string::npos);
-    CHECK(p.find("一句话只说一次") != std::string::npos);
-    CHECK(p.find(std::to_string(changji::stages::chapter_target_paras(s)) +
-                 " 段上下") != std::string::npos);
+    // 2026-09-12：写作单位是「场」，不是一堆段落。没有这个单位的时候模型
+    // 把整章梗概平摊成一串镜头，写出来是概述不是场景。
+    CHECK(p.find("**一场戏是**") != std::string::npos);
+    CHECK(p.find("写场面，不写概述") != std::string::npos);
+    CHECK(p.find("一段推进的是**一两秒钟的事**") != std::string::npos);
+    CHECK(p.find(std::to_string(changji::stages::chapter_target_scenes(s)) +
+                 " 场戏") != std::string::npos);
+    CHECK(p.find(std::to_string(changji::stages::chapter_scene_chars(s)) +
+                 " 字上下") != std::string::npos);
+    // 每一场停在自己的 turn 上，那就是一集的收口
+    CHECK(p.find("每一场停在它的 turn 上") != std::string::npos);
+    CHECK(p.find("最后一场的 turn 要落到这件事上") != std::string::npos);
+    // 不许贴情绪标签，但要写内心：拆成身体和当下那句心里话
+    CHECK(p.find("神情复杂") != std::string::npos);
+    CHECK(p.find("一场只跟着一个人走") != std::string::npos);
+    // 长相归美术那一步，但**身体要在场上**——上一版这条被模型扩大成
+    // 「不要描写人」，人物在场景里没有身体
+    CHECK(p.find("不要写长相") != std::string::npos);
+    CHECK(p.find("身体要在场上") != std::string::npos);
+    // 五感里至少有一个不靠眼睛
+    CHECK(p.find("不靠眼睛") != std::string::npos);
+    CHECK(p.find("从上一章停下的地方接着走") != std::string::npos);
     CHECK(p.find("【这是第一章】") == std::string::npos);
 
     // 压缩的全局记忆：人物、关系在，前情是每章一句
@@ -1522,7 +1562,8 @@ TEST_CASE("提示词：只写这一章，带的是压缩的全局记忆") {
 
     // 这一章要写什么、停在哪
     CHECK(p.find("【这一章】五年前那把伞") != std::string::npos);
-    CHECK(p.find("【这一章要停在】他没有回头") != std::string::npos);
+    CHECK(p.find("【最后一场的 turn 要落到这件事上】他没有回头") !=
+          std::string::npos);
 
     // 第一章没有前情，也没有上一章
     const std::string first = changji::stages::build_chapter_prompt(
@@ -1531,6 +1572,157 @@ TEST_CASE("提示词：只写这一章，带的是压缩的全局记忆") {
     CHECK(first.find("【上一章是这么结束的】") == std::string::npos);
     // 第一章那个位置不能空着：实跑时 14B 两次都只写出一百来个字
     CHECK(first.find("【这是第一章】") != std::string::npos);
+}
+
+TEST_CASE("并回去：场的位置是数出来的，不是模型报的") {
+    // **上一版靠模型抄一句原文回来（hooks[].after），程序再去正文里查。**
+    // 抄错一个字那一集就落不下去，只能收在一个说不出为什么的段落边界上。
+    // 现在正文是一场一场写的，第几段结束就是第几场结束——程序自己数。
+    Story s = outline_only_story();
+
+    const std::string a1 = "他把伞立在门边，水顺着伞骨往下淌。";
+    const std::string a2 = "收银台那台关东煮机器在响，热气糊住了玻璃。";
+    const std::string b1 = "天台的风比楼下大，铁门在身后合上。";
+    const std::string b2 = "她没回头，手指扣着栏杆上那道缺口。";
+
+    const json draft = {
+        {"scenes",
+         {{{"where", "深夜，便利店，只有冷柜的白光"},
+           {"pov", "林晚"},
+           {"goal", "把伞要回来"},
+           {"obstacle", "他不认这把伞"},
+           {"turn", "伞柄上刻着的不是她的名字"},
+           {"paragraphs", {a1, a2}}},
+          {{"where", "凌晨，楼顶天台，天还没亮"},
+           {"pov", "林晚"},
+           {"goal", "问清楚那个名字"},
+           {"obstacle", "他一句话都不说"},
+           {"turn", "他把伞从天台扔了下去"},
+           {"paragraphs", {b1, b2}}}}}};
+
+    const auto d = changji::stages::parse_chapter(draft.dump());
+    REQUIRE(d.scenes.size() == 2);
+    s = changji::stages::apply_chapter(s, "ch01", d);
+
+    const Chapter* c = s.chapter_by_id("ch01");
+    REQUIRE(c != nullptr);
+    REQUIRE(c->scenes.size() == 2);
+
+    // 正文就是各场的段落顺次拼起来的，段间一个换行
+    CHECK(c->text == a1 + "\n" + a2 + "\n" + b1 + "\n" + b2);
+
+    // 第一场收在第二段之后那个位置；两场首尾相接，末场顶到章尾
+    const int first_end = static_cast<int>(
+        text::utf8_len(a1 + "\n" + a2 + "\n"));
+    CHECK(c->scenes[0].from_char == 0);
+    CHECK(c->scenes[0].to_char == first_end);
+    CHECK(c->scenes[1].from_char == first_end);
+    CHECK(c->scenes[1].to_char == c->text_len());
+
+    // 场的底子留着：写剧本那一步要知道这一集在哪、跟谁走
+    CHECK(c->scenes[0].pov == "林晚");
+    CHECK(c->scenes[0].where.find("便利店") != std::string::npos);
+
+    // **每一场的末尾都成了有说法的切点**，说法就是那一场的 turn
+    bool at_first = false, at_end = false;
+    for (const auto& h : c->hooks) {
+        if (h.at_char == first_end && h.text == "伞柄上刻着的不是她的名字") {
+            at_first = true;
+        }
+        if (h.at_char == c->text_len() && h.text == "他把伞从天台扔了下去") {
+            at_end = true;
+        }
+    }
+    CHECK(at_first);
+    CHECK(at_end);
+}
+
+TEST_CASE("并回去：老形状还认（顶层 paragraphs、顶层 text）") {
+    // 改 schema 之前存下来的草稿、粘贴导入那条路都走这儿。认不出来的话
+    // 那些故事一打开正文就是空的。
+    Story s = outline_only_story();
+    const json older = {{"paragraphs", {"他推门进来的时候，风也跟着进来了。",
+                                        "她没有抬头，手里的杯子还冒着热气。"}}};
+    s = changji::stages::apply_chapter(
+        s, "ch01", changji::stages::parse_chapter(older.dump()));
+    const Chapter* c = s.chapter_by_id("ch01");
+    REQUIRE(c != nullptr);
+    CHECK(c->text_len() > 20);
+    CHECK(c->scenes.empty());  // 没有场就是没有，分集退回按段落边界切
+}
+
+TEST_CASE("正文在贴情绪标签就打回") {
+    // 实跑那一章（chapter_check8 / ch02）1674 个字里，「神情复杂」
+    // 「眼中满是惊讶与疑问」「心中涌起难以言喻的情绪」这类说法出现了十几次。
+    // 它们把感受替读者做完了，是那份正文读起来像分镜表的主要原因之一。
+    json scenes = json::array();
+    json paras = json::array();
+    for (int i = 0; i < 12; ++i) {
+        paras.push_back("第" + std::to_string(i) +
+                        "段：她站在那里，神情复杂地看着他走远。");
+    }
+    scenes.push_back({{"where", "深夜，便利店"},
+                      {"pov", "林晚"},
+                      {"goal", "要回伞"},
+                      {"obstacle", "他不认"},
+                      {"turn", "伞柄上刻着别人的名字"},
+                      {"paragraphs", paras}});
+    CHECK_THROWS_AS(
+        changji::stages::parse_chapter(json{{"scenes", scenes}}.dump()),
+        changji::stages::StoryError);
+
+    // 偶尔冒一个不算：阈值是每千字三个，整章至少四个才判。
+    json ok_paras = json::array();
+    for (int i = 0; i < 12; ++i) {
+        ok_paras.push_back("第" + std::to_string(i) +
+                           "段：她把杯子放下，水在桌面上洇出一圈。");
+    }
+    ok_paras.push_back("他没说话，神情复杂地看了她一眼，然后推门出去了。");
+    // 每场都要有对白，否则先撞上另一道闸
+    ok_paras.push_back("她把抹布搭在台面上：“伞放那儿吧。”");
+    json one = json::array();
+    one.push_back({{"where", "深夜，便利店"},
+                   {"pov", "林晚"},
+                   {"goal", "要回伞"},
+                   {"obstacle", "他不认"},
+                   {"turn", "伞柄上刻着别人的名字"},
+                   {"paragraphs", ok_paras}});
+    CHECK_NOTHROW(changji::stages::parse_chapter(json{{"scenes", one}}.dump()));
+}
+
+TEST_CASE("整章一句对白都没有就打回") {
+    // 2026-09-12 实跑四章里有一章通篇零对白（65 段全是叙述）。下一步是把
+    // 这段正文改成剧本——正文里没人说话，那一集出来就是默片。和剧本那边
+    // 「整集一句台词都没有」是同一道闸。
+    const auto make = [](bool spoken) {
+        json paras = json::array();
+        for (int i = 0; i < 20; ++i) {
+            paras.push_back("第" + std::to_string(i) +
+                            "段：她把抹布拧干，水滴落在地板上，溅出细小的一圈。");
+        }
+        if (spoken) {
+            paras.push_back("他停下来，手扶着门框：“伞我带来了。”");
+            paras.push_back("她没抬头，抹布在台面上又抹了一遍：“放那儿吧。”");
+        }
+        json scenes = json::array();
+        scenes.push_back({{"where", "深夜，便利店，冷柜的白光"},
+                          {"pov", "林晚"},
+                          {"goal", "把伞要回来"},
+                          {"obstacle", "他不认这把伞"},
+                          {"turn", "伞柄上刻着别人的名字"},
+                          {"paragraphs", paras}});
+        return json{{"scenes", scenes}}.dump();
+    };
+    // 下限是两处：两千字里连两句话都没人说，那不是独角戏，是没写对白。
+    CHECK_THROWS_AS(changji::stages::parse_chapter(make(false)),
+                    changji::stages::StoryError);
+    CHECK_NOTHROW(changji::stages::parse_chapter(make(true)));
+
+    // **老形状不查。** 粘贴导入和改 schema 之前的草稿不是照着现在这份
+    // 提示词写的，拿现在的规矩卡它们只会把打得开的故事变成打不开的。
+    std::string plain;
+    for (int i = 0; i < 700; ++i) plain += "字";
+    CHECK_NOTHROW(changji::stages::parse_chapter(json{{"text", plain}}.dump()));
 }
 
 TEST_CASE("提示词：没有这一章就抛") {
@@ -1561,8 +1753,10 @@ TEST_CASE("提示词：正文是主要产出，不是顺带的") {
         s, "ch01", StyleLine::REALISTIC);
     // 钩子那句原来和"写正文"挤在开头同一句里抢注意力
     CHECK(p.find("**主要产出是正文**") != std::string::npos);
-    CHECK(p.find("正文要写满上面那个字数") != std::string::npos);
-    CHECK(p.find("把章名填进去当正文") != std::string::npos);
+    // 篇幅现在是按场给的：每一场多少字。整章那个数模型够不着，
+    // 一场一千字它写得到——而下限由 schema 的 minItems/minLength 兜着。
+    CHECK(p.find("每一场 ") != std::string::npos);
+    CHECK(p.find("不是梗概") != std::string::npos);
 }
 
 TEST_CASE("解析：没写出正文就报错，写太多就截断") {
@@ -1881,6 +2075,7 @@ TEST_CASE("POST /api/story/chapters：两次都砸了才算砸，别的照写") 
     auto client = std::make_shared<llm::ReplayClient>(std::vector<std::string>{
         "模型今天想聊点别的",    // 第一章头一次
         "还是想聊点别的",        // 第一章重试
+        "第三次也没写",          // 第一章最后一次（软闸关了，但这是硬闸）
         json{{"text", long_body("第二章写出来了。")}}.dump(),
     });
     http::post_story_chapters(json{{"project", p_str(root)}}, client);
@@ -1889,9 +2084,10 @@ TEST_CASE("POST /api/story/chapters：两次都砸了才算砸，别的照写") 
     const Story saved = store.load_story();
     CHECK(saved.chapters[0].text.empty());
     CHECK_FALSE(saved.chapters[1].text.empty());
-    // **就多要一次，不是要到成功为止。** 提示词真有毛病时，重试到底只会
-    // 把一次失败变成一小时失败。
-    CHECK(client->calls().size() == 3);
+    // **就多要两次，不是要到成功为止。** 提示词真有毛病时，重试到底只会
+    // 把一次失败变成一小时失败。第三次会把软闸关掉（能用但不够好的收下），
+    // 而这里三次都不是 JSON——硬闸，收不了。
+    CHECK(client->calls().size() == 4);
 
     std::error_code ec;
     fs::remove_all(root, ec);

@@ -64,6 +64,27 @@ std::vector<std::string> episode_chapters(const Story& story,
     return out;
 }
 
+std::vector<Scene> episode_scenes(const Story& story, const EpisodePlan& plan) {
+    std::vector<Scene> out;
+    const int a = index_of(story, plan.from_chapter);
+    if (a < 0) return out;
+    const int b0 = index_of(story, plan.to_chapter);
+    const int b = b0 < a ? a : b0;
+    for (int i = a; i <= b; ++i) {
+        const Chapter& c = story.chapters[i];
+        const int len = c.text_len();
+        const int from = (i == a) ? plan.from_char : 0;
+        const int to = (i == b) ? plan.to_char : len;
+        for (const Scene& s : c.scenes) {
+            // 真的压上了才算。**端点相碰不算**：上一集正好收在这一场开头
+            // 的时候，两集会同时把它列出来，而下一集才是真要拍它的那个。
+            if (s.to_char <= from || s.from_char >= to) continue;
+            out.push_back(s);
+        }
+    }
+    return out;
+}
+
 std::string episode_text(const Story& story, const EpisodePlan& plan) {
     const int a = index_of(story, plan.from_chapter);
     if (a < 0) return {};
@@ -163,6 +184,20 @@ std::string render_script_context(const Story& story, const EpisodePlan& plan,
         out += "\n【上一集是这么结束的】\n";
         out += text::truncate_utf8(tail, prompt::kStoryPrevTailMaxChars);
         out += "\n";
+    }
+
+    // **这一集在哪、跟着谁。** 正文里这些是化在叙述里的，模型顺着读容易
+    // 把地点写丢——而一集的每一镜都要照着地点画，丢了就镜镜不一样。
+    const std::vector<Scene> scenes = episode_scenes(story, plan);
+    if (!scenes.empty()) {
+        out += "\n【这一集的场】\n";
+        for (const Scene& s : scenes) {
+            if (!s.where.empty()) out += s.where;
+            if (!s.pov.empty()) out += "。跟着" + s.pov + "走";
+            if (!s.goal.empty()) out += "：他要" + s.goal;
+            if (!s.obstacle.empty()) out += "；拦着他的是" + s.obstacle;
+            out += "。\n";
+        }
     }
 
     // 这一集要拍的。有正文用正文，没展开正文就用章节梗概——大纲阶段就
