@@ -143,6 +143,9 @@ export const api = {
   importStory: (payload) => post('/api/story/import', payload),
   // 读一遍已经存下的正文，把人物关系地点和真钩子提出来。正文不动。
   analyzeStory: (payload) => post('/api/story/analyze', payload),
+  // 展开一章的正文。**这个是直接落库的**，不回草稿——它只往空字段里填
+  // 东西，而十六章走草稿-采用就是三十二次点击。
+  writeChapter: (payload) => post('/api/story/chapter', payload),
 
   // ---- 引擎：角色 / 场景 / 风格 ----
   assets: (path) => get('/api/assets', { path }),

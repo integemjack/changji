@@ -67,6 +67,18 @@ ApiResult post_story_import(const nlohmann::json& body);
 ApiResult post_story_analyze(const nlohmann::json& body, llm::Client& client,
                              pipeline::CancelToken& tok);
 
+/// POST /api/story/chapter —— 展开一章的正文。
+///
+/// **这一个是直接落库的，不回草稿。** 别的几个都遵守「AI 写完先摆出来，
+/// 点了采用才落库」，这里破例，理由是两条：一、它只往一个空字段里填东西，
+/// 没有什么会被顶掉；二、一部十六章的故事要逐章展开，走草稿-采用就是
+/// 三十二次点击。已经有正文的章要显式 overwrite，否则 409。
+///
+/// 正文落进去之后钩子要重建、分集表要重算——原来那些候选切点是对着空正文
+/// 算出来的。
+ApiResult post_story_chapter(const nlohmann::json& body, llm::Client& client,
+                             pipeline::CancelToken& tok);
+
 /// POST /api/story/episodes —— 把分集表落成真的剧集。
 ///
 /// 分集表是计划，剧集是流水线真正在跑的东西。分成两步而不是采用大纲时

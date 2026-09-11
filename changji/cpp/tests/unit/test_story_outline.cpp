@@ -25,6 +25,7 @@
 #include "models/story.hpp"
 #include "stages/bible.hpp"
 #include "stages/script_story.hpp"
+#include "stages/chapter_write.hpp"
 #include "stages/story_analyze.hpp"
 #include "stages/story_import.hpp"
 #include "stages/story_outline.hpp"
@@ -1215,4 +1216,248 @@ TEST_CASE("POST /api/story/analyze：没正文可读") {
 
     std::error_code ec;
     fs::remove_all(root, ec);
+}
+
+// ---- 逐章展开正文 ----
+
+namespace {
+
+json good_chapter(const std::string& body, const std::string& after) {
+    return json{{"text", body}, {"hook_after", after}};
+}
+
+/// 大纲写出来的故事：有梗概有钩子，没有正文。
+Story outline_only_story() {
+    return parse_outline(good_outline().dump(), "深夜便利店", StoryScale::MEDIUM);
+}
+
+}  // namespace
+
+TEST_CASE("一章该写多长：按它要撑起几集算") {
+    Story s = outline_only_story();
+    s.episode_duration_s = 60.0;  // 一集 900 字
+    s.plan = changji::stages::plan_episodes(s, 60.0);
+
+    // 大纲阶段一章一集
+    CHECK(changji::stages::chapter_target_chars(s, "ch01") == 900);
+
+    // 手工把 ch01 排成两集，篇幅就该翻倍
+    EpisodePlan extra = s.plan[0];
+    extra.episode_id = "ep99";
+    s.plan.push_back(extra);
+    CHECK(changji::stages::chapter_target_chars(s, "ch01") == 1800);
+
+    // 分集表里没有的章也给一集的量，别返回 0
+    CHECK(changji::stages::chapter_target_chars(s, "ch02") > 0);
+}
+
+TEST_CASE("提示词：只写这一章，带的是压缩的全局记忆") {
+    Story s = outline_only_story();
+    s.chapters[0].text = "第一章已经写好的正文。他推门进来。";
+
+    const std::string p = changji::stages::build_chapter_prompt(
+        s, "ch02", StyleLine::REALISTIC);
+
+    // 分界线：只写这一章
+    CHECK(p.find("只写这一章") != std::string::npos);
+    CHECK(p.find("结尾必须停在下面给的那个钩子上") != std::string::npos);
+    // 要小说体，不是剧本格式——后面另有一步把它变成拍子
+    CHECK(p.find("写**小说体**") != std::string::npos);
+    CHECK(p.find("不要描写长相") != std::string::npos);
+
+    // 压缩的全局记忆：人物、关系在，前情是每章一句
+    CHECK(p.find("林晚") != std::string::npos);
+    CHECK(p.find("前任") != std::string::npos);
+    CHECK(p.find("【前情提要】") != std::string::npos);
+    CHECK(p.find("他推门进来，伞还在手里") != std::string::npos);  // ch01 的梗概
+
+    // 上一章结尾接语气
+    CHECK(p.find("【上一章是这么结束的】") != std::string::npos);
+    CHECK(p.find("第一章已经写好的正文") != std::string::npos);
+
+    // 这一章要写什么、停在哪
+    CHECK(p.find("【这一章】五年前那把伞") != std::string::npos);
+    CHECK(p.find("【这一章要停在】他没有回头") != std::string::npos);
+
+    // 第一章没有前情，也没有上一章
+    const std::string first = changji::stages::build_chapter_prompt(
+        s, "ch01", StyleLine::REALISTIC);
+    CHECK(first.find("【前情提要】") == std::string::npos);
+    CHECK(first.find("【上一章是这么结束的】") == std::string::npos);
+}
+
+TEST_CASE("提示词：没有这一章就抛") {
+    const Story s = outline_only_story();
+    CHECK_THROWS_AS(
+        changji::stages::build_chapter_prompt(s, "ch99", StyleLine::REALISTIC),
+        stages::StoryError);
+}
+
+TEST_CASE("解析：没写出正文就报错，写太多就截断") {
+    CHECK_THROWS_AS(changji::stages::parse_chapter(json{{"text", "  "}}.dump()),
+                    stages::StoryError);
+    CHECK_THROWS_AS(changji::stages::parse_chapter("不是 JSON"),
+                    stages::StoryError);
+
+    std::string huge;
+    for (int i = 0; i < 30000; ++i) huge += "字";
+    const auto d = changji::stages::parse_chapter(
+        json{{"text", huge}, {"hook_after", "尾"}}.dump());
+    CHECK(changji::text::utf8_len(d.text) == 20000);
+}
+
+TEST_CASE("并回去：钩子全部重建，说法留着") {
+    Story s = outline_only_story();
+    // 大纲阶段的钩子挂在 0 上（那时正文是空的）
+    REQUIRE(s.chapters[0].hooks.size() == 1);
+    CHECK(s.chapters[0].hooks[0].at_char == 0);
+    const std::string hook_text = s.chapters[0].hooks[0].text;
+
+    const std::string body =
+        "他推门进来，伞还在手里。\n"
+        "林晚抬起头。\n"
+        "那把伞的骨架断了一根。\n"
+        "她认出来了。";
+    const Story got = changji::stages::apply_chapter(
+        s, "ch01", changji::stages::parse_chapter(
+                       good_chapter(body, "那把伞的骨架断了一根。").dump()));
+
+    const Chapter& c = got.chapters[0];
+    CHECK(c.text == body);
+
+    // **原来挂在 0 上那个不能留**：正文进来之后它就成了「切在章首」
+    for (const auto& h : c.hooks) {
+        CHECK(h.at_char > 0);
+    }
+
+    // 段落边界都登记成候选了
+    CHECK(c.hooks.size() >= 3);
+
+    // 大纲那个钩子的说法要留着，并且落在 hook_after 那句之后
+    bool found = false;
+    for (const auto& h : c.hooks) {
+        if (h.text != hook_text) continue;
+        found = true;
+        const auto chars = changji::text::utf8_chars(c.text);
+        REQUIRE(h.at_char > 0);
+        REQUIRE(h.at_char <= static_cast<int>(chars.size()));
+        CHECK(chars[static_cast<std::size_t>(h.at_char) - 1] == "。");
+    }
+    CHECK(found);
+    CHECK(got.validate().empty());
+
+    // 别的章一个字没动
+    CHECK(got.chapters[1].text.empty());
+    CHECK(got.chapters[1].summary == s.chapters[1].summary);
+}
+
+TEST_CASE("并回去：hook_after 查不到就挂章尾") {
+    Story s = outline_only_story();
+    const Story got = changji::stages::apply_chapter(
+        s, "ch01",
+        changji::stages::parse_chapter(
+            good_chapter("就这么一段。\n没有第二段。", "正文里没有这句").dump()));
+    const Chapter& c = got.chapters[0];
+    bool at_end = false;
+    for (const auto& h : c.hooks) {
+        if (!h.text.empty() && h.at_char == c.text_len()) at_end = true;
+    }
+    CHECK(at_end);
+    CHECK(got.validate().empty());
+}
+
+TEST_CASE("POST /api/story/chapter：写完落库，分集跟着重算") {
+    const fs::path root = fresh_project("展开一章");
+    ProjectStore store(root);
+    Story s = outline_only_story();
+    s.episode_duration_s = 60.0;
+    s.plan = changji::stages::plan_episodes(s, 60.0);
+    store.save_story(s);
+    const std::size_t before = s.plan.size();
+
+    // 三千字的一章，配 60 秒（一集 900 字）该切出好几集
+    std::string body;
+    for (int i = 0; i < 30; ++i) {
+        for (int k = 0; k < 100; ++k) body += "字";
+        body += "\n";
+    }
+    llm::ReplayClient client({good_chapter(body, "").dump()});
+    pipeline::CancelToken tok;
+
+    const auto r = http::post_story_chapter(
+        json{{"project", p_str(root)}, {"chapter_id", "ch01"}}, client, tok);
+    CHECK(r.status == 200);
+    CHECK(r.body.at("chars").get<int>() > 2000);
+    CHECK(r.body.at("target_chars").get<int>() == 900);
+
+    // **这一个是直接落库的**，不像别的几个回草稿
+    const Story saved = store.load_story();
+    CHECK(saved.written_chapters() == 1);
+    // 一章变长了，分集表跟着变多
+    CHECK(saved.plan.size() > before);
+    CHECK(saved.validate().empty());
+
+    SUBCASE("已经有正文了要显式 overwrite") {
+        llm::ReplayClient c2({good_chapter("重写的正文。", "").dump()});
+        pipeline::CancelToken t2;
+        CHECK_THROWS_AS(
+            http::post_story_chapter(
+                json{{"project", p_str(root)}, {"chapter_id", "ch01"}}, c2, t2),
+            http::ApiError);
+        CHECK(c2.calls().empty());
+
+        llm::ReplayClient c3({good_chapter("重写的正文。", "").dump()});
+        pipeline::CancelToken t3;
+        const auto again = http::post_story_chapter(
+            json{{"project", p_str(root)},
+                 {"chapter_id", "ch01"},
+                 {"overwrite", true}},
+            c3, t3);
+        CHECK(again.status == 200);
+        CHECK(store.load_story().chapters[0].text == "重写的正文。");
+    }
+
+    std::error_code ec;
+    fs::remove_all(root, ec);
+}
+
+TEST_CASE("POST /api/story/chapter：没有这一章") {
+    const fs::path root = fresh_project("没这章");
+    ProjectStore store(root);
+    store.save_story(outline_only_story());
+    llm::ReplayClient client({good_chapter("x", "").dump()});
+    pipeline::CancelToken tok;
+    try {
+        http::post_story_chapter(
+            json{{"project", p_str(root)}, {"chapter_id", "ch99"}}, client, tok);
+        FAIL("应该抛");
+    } catch (const http::ApiError& e) {
+        CHECK(e.status() == 404);
+    }
+    CHECK(client.calls().empty());
+    std::error_code ec;
+    fs::remove_all(root, ec);
+}
+
+TEST_CASE("展开正文之后，写剧本拿到的是真正文不是梗概") {
+    Story s = outline_only_story();
+    s.episode_duration_s = 60.0;
+    s.plan = changji::stages::plan_episodes(s, 60.0);
+
+    // 没展开正文时，episode_text 返回空，上下文里只能摆梗概
+    CHECK(changji::stages::episode_text(s, s.plan[0]).empty());
+    const std::string before =
+        changji::stages::render_script_context(s, s.plan[0], "");
+    CHECK(before.find("他推门进来，伞还在手里。") != std::string::npos);  // 梗概
+
+    std::string body;
+    for (int i = 0; i < 10; ++i) body += "这是真正的正文内容。\n";
+    s = changji::stages::apply_chapter(
+        s, "ch01", changji::stages::parse_chapter(good_chapter(body, "").dump()));
+    s.plan = changji::stages::plan_episodes(s, 60.0);
+
+    CHECK_FALSE(changji::stages::episode_text(s, s.plan[0]).empty());
+    const std::string after =
+        changji::stages::render_script_context(s, s.plan[0], "");
+    CHECK(after.find("这是真正的正文内容") != std::string::npos);
 }

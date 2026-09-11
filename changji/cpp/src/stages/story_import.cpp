@@ -138,6 +138,24 @@ std::string first_sentence(const std::string& body, std::size_t max_chars = 16) 
     return text::strip_ws(out);
 }
 
+}  // namespace
+
+std::vector<Hook> paragraph_hooks(const std::string& text) {
+    const std::string body = changji::text::strip_ws(text);
+    std::vector<Hook> out;
+    for (int at : thin_out(paragraph_breaks(body), kImportMaxHooks)) {
+        Hook h;
+        h.at_char = at;
+        // **text 留空是刻意的。** 段落边界不是真正的钩子——真钩子要读懂剧情
+        // 才找得出来。留空就等于说「这里可以切，但说不出为什么」，界面上
+        // 显示成「章尾」而不是编一句假的钩子出来。
+        out.push_back(std::move(h));
+    }
+    return out;
+}
+
+namespace {
+
 Chapter make_chapter(std::size_t index, const std::string& title,
                      const std::string& body) {
     Chapter c;
@@ -147,14 +165,7 @@ Chapter make_chapter(std::size_t index, const std::string& title,
     if (c.title.empty()) c.title = first_sentence(c.text);
     if (c.title.empty()) c.title = "第 " + std::to_string(index + 1) + " 章";
 
-    for (int at : thin_out(paragraph_breaks(c.text), kImportMaxHooks)) {
-        Hook h;
-        h.at_char = at;
-        // **text 留空是刻意的。** 段落边界不是真正的钩子——真钩子要读懂剧情
-        // 才找得出来。留空就等于说「这里可以切，但说不出为什么」，界面上
-        // 显示成「章尾」而不是编一句假的钩子出来。
-        c.hooks.push_back(std::move(h));
-    }
+    c.hooks = paragraph_hooks(c.text);
     return c;
 }
 

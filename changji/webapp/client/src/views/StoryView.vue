@@ -218,6 +218,33 @@ async function analyzeStory() {
   if (result) draft.value = result
 }
 
+/**
+ * 展开一章的正文。
+ *
+ * 大纲写出来的故事只有「这一章发生什么，三五句」，没有正文——写剧本时
+ * 展开的就是那三五句，按字符切分那套机器一直用不上。这一步把它补上。
+ *
+ * **直接落库，不走草稿。** 别的几个都是「先摆出来再采用」，这里破例：
+ * 它只往一个空字段里填东西，没有什么会被顶掉；而一部十六章的故事逐章
+ * 展开，走草稿-采用就是三十二次点击。
+ */
+async function writeChapter(chapterId, overwrite = false) {
+  const result = await run(
+    () =>
+      api.writeChapter({
+        project: session.projectPath,
+        chapter_id: chapterId,
+        overwrite,
+      }),
+    { key: 'chapter:' + chapterId },
+  )
+  if (result) {
+    setStory(result)
+    openChapter.value = chapterId
+    ui.ok(`${chapterId} 写了 ${result.chars} 字，分集重算过了`)
+  }
+}
+
 async function adoptDraft() {
   if (!draft.value) return
   const result = await run(
@@ -438,9 +465,9 @@ async function adoptDraft() {
             <template v-else>
               <div class="row row--between">
                 <span class="tiny dim">
-                  章节 {{ chapters.length }}
-                  <template v-if="writtenCount">
-                    · 已展开正文 {{ writtenCount }}
+                  章节 {{ chapters.length }} · 已展开正文 {{ writtenCount }}
+                  <template v-if="writtenCount < chapters.length">
+                    （没展开的那些，写剧本时用的是梗概不是正文）
                   </template>
                 </span>
                 <div class="row">
@@ -474,13 +501,22 @@ async function adoptDraft() {
                   <div class="chap__text">
                     <div class="chap__title">{{ c.title }}</div>
                     <div v-if="openChapter === c.chapter_id" class="chap__sum">
-                      {{ c.summary }}
+                      <p v-if="c.summary">{{ c.summary }}</p>
+                      <pre v-if="c.text" class="chap__text">{{ c.text }}</pre>
                     </div>
                   </div>
                   <span v-if="c.text" class="tiny dim numeric nowrap">
                     {{ [...c.text].length }} 字
                   </span>
-                  <span v-else class="pill pill--neutral tiny nowrap">只有大纲</span>
+                  <button
+                    v-else
+                    class="btn btn--ai btn--sm nowrap"
+                    type="button"
+                    :disabled="isBusy('chapter:' + c.chapter_id)"
+                    @click.stop="writeChapter(c.chapter_id)"
+                  >
+                    {{ isBusy('chapter:' + c.chapter_id) ? '写着…' : '展开正文' }}
+                  </button>
                 </div>
 
                 <div v-for="ep in cutsAfter(c.chapter_id)" :key="ep.episode_id" class="cut">
@@ -637,6 +673,17 @@ async function adoptDraft() {
   color: var(--text-2);
   font-size: var(--fs-sm);
   line-height: 1.6;
+}
+.chap__text {
+  margin-top: var(--s3);
+  padding-top: var(--s3);
+  border-top: 1px solid var(--line);
+  max-height: 24rem;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font: inherit;
+  color: var(--text);
 }
 
 /* 分集就是章节之间这条线。它是这一页的主角，所以给足对比度。 */

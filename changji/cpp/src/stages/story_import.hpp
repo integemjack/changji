@@ -45,4 +45,13 @@ inline constexpr std::size_t kImportMaxHooks = 400;
 std::vector<models::Chapter> split_pasted(const std::string& text,
                                           int target_chars = kImportTargetChars);
 
+/// 把一段正文里的段落边界登记成候选切点（Hook，text 留空）。
+///
+/// 粘贴导入和逐章展开都要用：只要一章有了正文，它的候选切点就该按段落
+/// 重算一遍。不登记的话分集算法在这一章里只有章界一个候选，一万字的章
+/// 会整章变成一集。
+///
+/// 多到 kImportMaxHooks 就等距抽稀——相邻两个段落边界差不了几个字。
+std::vector<models::Hook> paragraph_hooks(const std::string& text);
+
 }  // namespace changji::stages

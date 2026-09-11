@@ -6,6 +6,7 @@
 
 #include "models/project.hpp"
 #include "models/story.hpp"
+#include "stages/chapter_write.hpp"
 #include "stages/story_analyze.hpp"
 #include "stages/story_import.hpp"
 #include "stages/story_outline.hpp"
@@ -337,6 +338,50 @@ ApiResult post_story_analyze(const json& body, llm::Client& client,
     json out = story_response(draft);
     out["adopted"] = false;
     out["needs_analysis"] = draft.characters.empty();
+    return {200, out};
+}
+
+ApiResult post_story_chapter(const json& body, llm::Client& client,
+                             pipeline::CancelToken& tok) {
+    forbid_extra(body, {"project", "chapter_id", "overwrite"});
+    ProjectStore store = open_project(body);
+    const Project project = load_or_400(store);
+    Story story = load_story_or_400(store);
+
+    const std::string chapter_id = need_str(body, "chapter_id");
+    const Chapter* me = story.chapter_by_id(chapter_id);
+    if (me == nullptr) throw ApiError(404, "没有这一章：" + chapter_id);
+    if (!text::strip_ws(me->text).empty() && !opt_bool(body, "overwrite", false)) {
+        throw ApiError(409, "这一章已经有正文了。要重写就带上 overwrite");
+    }
+
+    llm::Request req;
+    req.prompt =
+        stages::build_chapter_prompt(story, chapter_id, project.style_line);
+    req.schema = stages::chapter_schema();
+    req.schema_name = "chapter";
+
+    Story next;
+    try {
+        const stages::ChapterDraft d =
+            stages::parse_chapter(client.complete(req, tok));
+        next = stages::apply_chapter(story, chapter_id, d);
+    } catch (const stages::StoryError& e) {
+        throw ApiError(502, std::string("大模型没写出能用的正文：") + e.what());
+    } catch (const std::exception& e) {
+        throw ApiError(502, e.what());
+    }
+
+    // 钩子换了，切点就换了。正文落进去之前那些候选是对着空正文算的。
+    next.plan = stages::plan_episodes(next, next.episode_duration_s);
+    validate_or_400(next);
+    store.save_story(next);
+
+    json out = story_response(next);
+    out["chapter_id"] = chapter_id;
+    const Chapter* done = next.chapter_by_id(chapter_id);
+    out["chars"] = done != nullptr ? done->text_len() : 0;
+    out["target_chars"] = stages::chapter_target_chars(story, chapter_id);
     return {200, out};
 }
 
