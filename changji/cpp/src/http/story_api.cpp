@@ -555,6 +555,11 @@ ApiResult post_story_revise(const json& body, llm::Client& client,
 
     const std::string before = stages::span_text(story, span);
     const int span_chars = static_cast<int>(text::utf8_len(before));
+    // 整章多长也要给：上限取"选中的六倍"和"整章的六成"里松的那条，而后者
+    // 才是"抄整章"的真判据。只看倍数的话，短选区上一个正当的「拉长」会被
+    // 打回——实跑撞过。
+    const Chapter* whole = story.chapter_by_id(span.chapter_id);
+    const int whole_chars = whole != nullptr ? whole->text_len() : 0;
 
     // 给了 stream_id 就**边生边推**：写一段话要十几秒，攒齐了再一次性蹦
     // 出来的话，中间那十几秒界面上什么都没有——而那正是用户要看的"写作的
@@ -588,9 +593,10 @@ ApiResult post_story_revise(const json& body, llm::Client& client,
                                          {"seq", seq++},
                                          {"text", piece}});
                 });
-            rev = stages::parse_plain_revision(raw, span_chars);
+            rev = stages::parse_plain_revision(raw, span_chars, whole_chars);
         } else {
-            rev = stages::parse_revision(client.complete(req, tok), span_chars);
+            rev = stages::parse_revision(client.complete(req, tok), span_chars,
+                                         whole_chars);
         }
     } catch (const std::exception& e) {
         if (streaming) {

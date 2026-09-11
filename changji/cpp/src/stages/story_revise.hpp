@@ -77,19 +77,27 @@ struct Revision {
 
 /// 解析模型回来的那一段。
 ///
-/// `span_chars` 是选中那段原文有多少字，用来拦**改着改着把整章吐回来**：
-/// 那样落盘之后整章内容会翻倍，而界面上只显示"改好了"。
-/// 传 0 表示不检查长度。
+/// `span_chars` 是选中那段原文有多少字，`whole_chars` 是这一章一共多少字。
+/// 两个一起用来拦**改着改着把整章吐回来**：那样落盘之后整章内容会翻倍，
+/// 而界面上只显示"改好了"。
+///
+/// 上限取两条里松的那条：选中的六倍，或者**整章的六成**。后一条才是"抄
+/// 整章"的真判据——只看倍数的话，短选区上一个正当的「拉长」也会被打回
+/// （实跑撞过：选中 40 字，写出 643 字，整章 1889 字，显然没抄整章）。
+///
+/// `span_chars` 传 0 表示不检查长度；`whole_chars` 传 0 表示不知道整章多长。
 ///
 /// 变短是合法的（"把这段压缩成一句"就该变短），所以只拦上限不拦下限。
-Revision parse_revision(const std::string& raw, int span_chars);
+Revision parse_revision(const std::string& raw, int span_chars,
+                        int whole_chars = 0);
 
 /// 同上，但收的是**大白话**（plain 那条路的产物）。
 ///
 /// 模型十次里有一两次会自作主张包一层 ``` 代码块、或者在前面加一句
 /// 「修改后：」。这些字会原样落进正文——而正文是后面写剧本的输入，
 /// 一句「修改后：」能一路活到分镜表里去。所以这里剥掉。
-Revision parse_plain_revision(const std::string& raw, int span_chars);
+Revision parse_plain_revision(const std::string& raw, int span_chars,
+                              int whole_chars = 0);
 
 /// 把新的一段接回故事里：替换正文、重算这一章的候选切点。
 ///

@@ -242,3 +242,50 @@ TEST_CASE("大白话解析：照样拦整章吐回来") {
     // 变短合法
     CHECK(parse_plain_revision("一句。", 700).text == "一句。");
 }
+
+TEST_CASE("长度上限：短选区上的「拉长」不该被误伤") {
+    // **2026-09-11 实跑撞到的。** 选中 40 字说"把这段拉长一点，多写点环境"，
+    // 模型写了 643 字，整章 1889 字——它显然没抄整章，却撞上
+    // `max(600, 40×6)` 那个 600 的地板被打回，报错还一口咬定"八成是把整章
+    // 抄回来了"。指向完全错的方向，用户只会以为模型抽风。
+    std::string got;
+    for (int i = 0; i < 643; ++i) got += "字";
+    // 整章 1889 字，六成 = 1133，643 在里面
+    CHECK(parse_plain_revision(got, 40, 1889).text.size() > 0);
+
+    // **真抄整章照样拦。** 1889 > 1133。
+    std::string whole;
+    for (int i = 0; i < 1889; ++i) whole += "字";
+    CHECK_THROWS(parse_plain_revision(whole, 40, 1889));
+}
+
+TEST_CASE("长度上限：不知道整章多长时，退回只看倍数") {
+    // whole 给 0 就是老规矩。粘贴导入那条路上拿不到整章长度。
+    std::string got;
+    for (int i = 0; i < 643; ++i) got += "字";
+    CHECK_THROWS(parse_plain_revision(got, 40, 0));
+    CHECK_THROWS(parse_plain_revision(got, 40));
+}
+
+TEST_CASE("长度上限：选区大的时候倍数那条说了算") {
+    // 选中 1000 字的一大段，扩写成两倍是正当的；这时候"整章六成"反而更紧，
+    // 所以取松的那条。
+    std::string got;
+    for (int i = 0; i < 2000; ++i) got += "字";
+    CHECK(parse_plain_revision(got, 1000, 1889).text.size() > 0);
+}
+
+TEST_CASE("长度上限：报错不猜原因，只说事实和下一步") {
+    std::string whole;
+    for (int i = 0; i < 5000; ++i) whole += "字";
+    try {
+        parse_plain_revision(whole, 40, 1889);
+        FAIL("该抛没抛");
+    } catch (const std::exception& e) {
+        const std::string why = e.what();
+        // 猜错的原因比不说更糟：它把人往错的方向支
+        CHECK(why.find("抄回来") == std::string::npos);
+        CHECK(why.find("上限") != std::string::npos);
+        CHECK(why.find("选大一点") != std::string::npos);
+    }
+}

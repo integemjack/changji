@@ -39,14 +39,32 @@ const Chapter* find(const Story& story, const std::string& chapter_id) {
 /// 那样落盘之后整章内容会翻倍，而界面上只显示"改好了"——多出来的那一份
 /// 要等写剧本时才发现，那时候已经隔了好几步。**只拦上限不拦下限**：
 /// "把这段压缩成一句"是正当要求。
-void guard_length(const std::string& text_in, int span_chars) {
+///
+/// 上限取**两条里松的那条**：
+///
+///   - 选中字数的六倍。改一小段扩写成六倍，已经远超"改"的范畴。
+///   - **整章的六成。** 这条才是"抄整章"的真判据——原来只有上面那条，
+///     而倍数在短选区上必然误伤：2026-09-11 实跑，选中 40 字说"把这段拉长
+///     一点，多写点环境"，模型写了 643 字（整章 1889 字，它显然没抄整章），
+///     却撞上 `max(600, 40×6)` 那个 600 的地板被打回，报错还一口咬定
+///     "八成是把整章抄回来了"——指向完全错的方向，用户只会以为模型抽风。
+///
+/// `whole_chars` 是这一章现在一共多少字，给 0 表示不知道（那就只剩倍数
+/// 那条，和以前一样）。
+void guard_length(const std::string& text_in, int span_chars, int whole_chars) {
     if (span_chars <= 0) return;
-    const int cap = std::max(600, span_chars * 6);
+    const int by_span = span_chars * 6;
+    const int by_whole = whole_chars > 0 ? whole_chars * 3 / 5 : 0;
+    const int cap = std::max(600, std::max(by_span, by_whole));
     const int got = static_cast<int>(text::utf8_len(text_in));
     if (got > cap) {
+        // **不再猜原因。** 只说事实和下一步该怎么做——猜错的原因比不说更
+        // 糟，它把人往错的方向支。
         throw std::runtime_error(
-            "改完有 " + std::to_string(got) + " 个字，而选中的只有 " +
-            std::to_string(span_chars) + " 个——八成是把整章抄回来了。再试一次");
+            "改完有 " + std::to_string(got) + " 个字，选中的只有 " +
+            std::to_string(span_chars) + " 个，超出这一段能改到的上限（" +
+            std::to_string(cap) + " 字）。要大改的话把范围选大一点，"
+            "或者用「改整章」");
     }
 }
 
@@ -173,7 +191,8 @@ std::string build_revise_prompt(const Story& story, const Span& span,
     return out;
 }
 
-Revision parse_revision(const std::string& raw, int span_chars) {
+Revision parse_revision(const std::string& raw, int span_chars,
+                        int whole_chars) {
     nlohmann::json j;
     try {
         j = nlohmann::json::parse(text::strip_ws(raw));
@@ -194,16 +213,17 @@ Revision parse_revision(const std::string& raw, int span_chars) {
     // **拦住"改着改着把整章吐回来"。** 那样落盘之后整章内容会翻倍，而界面
     // 上只显示"改好了"——多出来的那一份要等写剧本时才发现，那时候已经隔了
     // 好几步。变短是合法的（"把这段压缩成一句"就该变短），所以只拦上限。
-    guard_length(r.text, span_chars);
+    guard_length(r.text, span_chars, whole_chars);
     return r;
 }
 
 
-Revision parse_plain_revision(const std::string& raw, int span_chars) {
+Revision parse_plain_revision(const std::string& raw, int span_chars,
+                              int whole_chars) {
     Revision r;
     r.text = unwrap(raw);
     if (r.text.empty()) throw std::runtime_error("改完是空的，没法替换");
-    guard_length(r.text, span_chars);
+    guard_length(r.text, span_chars, whole_chars);
     return r;
 }
 
