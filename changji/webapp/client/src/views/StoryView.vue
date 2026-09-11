@@ -692,11 +692,15 @@ async function stopWriting() {
 
 <template>
   <div class="stack stack--lg">
-    <StepHeader>
+    <!-- **有故事的时候整个页头都不要。** 这一页就是个编辑器，不用自我
+         介绍「故事 / 原稿，选中一段就能让 AI 改它」；那几行吃掉的正是
+         "占满"差的那点高度。控件全并进下面那条章节栏，一行装下。
+         还没有故事时留着——那时候人是第一次进来，需要那句话。 -->
+    <StepHeader v-if="!hasStory">
       <template #actions>
         <button
-          v-if="dirtyIds.length"
-          class="btn btn--primary"
+          v-if="dirtyIds.length > 1"
+          class="btn btn--primary btn--sm"
           type="button"
           @click="saveAllDirty"
         >
@@ -704,12 +708,12 @@ async function stopWriting() {
         </button>
         <button
           v-if="hasStory && unwritten && !writer.running"
-          class="btn btn--ai"
+          class="btn btn--ai btn--sm"
           type="button"
           :disabled="isBusy('chapters')"
           @click="writeAllChapters"
         >
-          <AppIcon name="sparkle" :size="15" />
+          <AppIcon name="sparkle" :size="14" />
           展开全部 {{ unwritten }} 章
         </button>
         <template v-if="writer.running">
@@ -722,7 +726,7 @@ async function stopWriting() {
         </template>
         <button
           v-if="needsAnalysis"
-          class="btn btn--ai"
+          class="btn btn--ai btn--sm"
           type="button"
           :disabled="isBusy('analyze')"
           @click="analyzeStory"
@@ -869,19 +873,57 @@ async function stopWriting() {
               {{ streaming?.chapter_id === c.chapter_id ? ' ·正在写' : '' }}
             </option>
           </select>
-          <span v-if="currentDirty" class="pill pill--warn nowrap">未存</span>
           <span class="spacer" />
           <span class="tiny dim nowrap">
             全书 {{ chapters.length }} 章 · {{ totalChars }} 字
           </span>
+          <!-- 整本的那几件事并在这一行。它们不常用（写一次故事按一两次），
+               但**要找得到**——单独占一条页头只是为了这一两次。 -->
           <button
-            class="btn btn--sm"
-            :class="currentDirty ? 'btn--primary' : 'btn--ghost'"
+            v-if="dirtyIds.length > 1"
+            class="btn btn--primary btn--sm nowrap"
             type="button"
-            :disabled="!currentDirty || isBusy('save:' + current)"
+            @click="saveAllDirty"
+          >
+            存下改的 {{ dirtyIds.length }} 章
+          </button>
+          <button
+            v-if="unwritten && !writer.running"
+            class="btn btn--ai btn--sm nowrap"
+            type="button"
+            :disabled="isBusy('chapters')"
+            @click="writeAllChapters"
+          >
+            <AppIcon name="sparkle" :size="14" />
+            展开全部 {{ unwritten }} 章
+          </button>
+          <template v-if="writer.running">
+            <span class="pill pill--accent nowrap">
+              正在展开 {{ writer.state?.done ?? 0 }} / {{ writer.state?.total ?? 0 }}
+            </span>
+            <button class="btn btn--danger btn--sm" type="button" @click="stopWriting">
+              停
+            </button>
+          </template>
+          <button
+            v-if="needsAnalysis"
+            class="btn btn--ai btn--sm nowrap"
+            type="button"
+            :disabled="isBusy('analyze')"
+            @click="analyzeStory"
+          >
+            {{ isBusy('analyze') ? '正在读…' : '让 AI 读一遍，提人物' }}
+          </button>
+          <!-- **没改动就不显示这个按钮。** 一个常年灰着的按钮只是在占地方，
+               而"改了没存"这件事要显眼——它显眼靠的是它突然出现。 -->
+          <button
+            v-if="currentDirty"
+            class="btn btn--primary btn--sm nowrap"
+            type="button"
+            :disabled="isBusy('save:' + current)"
             @click="saveChapter(current)"
           >
-            {{ isBusy('save:' + current) ? '存着…' : '存（Ctrl+S）' }}
+            {{ isBusy('save:' + current) ? '存着…' : '存 · Ctrl+S' }}
           </button>
         </div>
 
@@ -1052,8 +1094,9 @@ async function stopWriting() {
   display: flex;
   flex-direction: column;
   gap: var(--s3);
-  /* 顶栏 + 页头 + 边距。留一点，别让编辑器顶到屏幕底下去 */
-  min-height: calc(100vh - 190px);
+  /* 只减顶栏和边距。页头在这一页整个是不要的（见模板里那一段），
+     所以能多吃几行——"占满"就差这几行。 */
+  min-height: calc(100vh - 96px);
 }
 .ed__bar {
   display: flex;
@@ -1065,17 +1108,19 @@ async function stopWriting() {
 }
 
 .ed__paper {
-  position: relative;   /* 右下角那排是绝对定位的 */
+  position: relative;
   flex: 1;
-  display: flex;
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: var(--r-md);
-  padding: var(--s5) var(--s5) var(--s6);
+  padding: var(--s5) var(--s5) 64px;
   overflow: auto;
 }
+/* **不是 flex 容器。** 是过：那时右下角那排按钮成了正文的兄弟 flex item，
+   把正文挤到左边去，右边空一大片——"占满"当场落空。按钮改成绝对定位挂在
+   右下角之后，正文才真的是这块版面的唯一内容。 */
 .ed__area {
-  flex: 1;
+  display: block;
   width: 100%;
   /* 行宽卡在 38 个中文字上下，再宽眼睛要回扫。**居中**：占满的是版面，
      不是行长——一行拉到一米二没人读得下去。 */
@@ -1105,12 +1150,12 @@ async function stopWriting() {
   max-width: 32em;
 }
 
-/* 右下角那排。浮在正文上，不占版面。 */
+/* 右下角那排。**钉在卡片的右下角**，不跟着正文走——正文短的时候它要是
+   浮在文字正下方，中间隔着一大片空地，看着像掉队了。 */
 .ed__acts {
-  position: sticky;
-  bottom: 0;
-  align-self: flex-end;
-  margin-left: auto;
+  position: absolute;
+  right: var(--s4);
+  bottom: var(--s4);
   display: grid;
   gap: var(--s2);
   justify-items: end;
