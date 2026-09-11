@@ -16,6 +16,7 @@ import { api } from '@/api'
 import { useAction } from '@/composables/useAction'
 import { useUi } from '@/stores/ui'
 import { describeRoomDecision } from '@/composables/room-decision'
+import { describeLlmState } from '@/composables/llm-state'
 
 const ui = useUi()
 const { run, isBusy } = useAction()
@@ -210,15 +211,7 @@ const effective = computed(() => overview.value?.effective ?? null)
  * 是页面打开那一刻的快照，刷新才更新——够用了：用户是在出片前后各看一眼
  * 来确认"到底清没清"。
  */
-const llmState = computed(() => {
-  const n = overview.value?.node ?? {}
-  const gb = typeof n.llmMeasuredVramGb === 'number'
-    ? `${n.llmMeasuredVramGb.toFixed(1)} GB`
-    : ''
-  // 没有这个字段（老引擎）时不硬猜，只说"不知道"。
-  if (typeof n.llmLoaded !== 'boolean') return { text: '不知道', measured: gb }
-  return { text: n.llmLoaded ? '装着' : '没装（要用时自动装）', measured: gb }
-})
+const llmState = computed(() => describeLlmState(overview.value?.node))
 
 // 程序算出来的权重放置。两个模型各一行；没有这一项（老引擎）就整块不显示。
 const placement = computed(() => effective.value?.placement ?? null)
