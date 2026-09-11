@@ -153,20 +153,58 @@ function beforeUnload(e) {
   e.returnValue = ''
 }
 
+/**
+ * 批量展开正文时，字也一个个长进来。
+ *
+ * 十六章要跑一个多小时，进度条上只有"正在写 ch07"的话，那一个多小时里
+ * 看不到一个字。引擎按**任务类别**广播（具体 job_id 从来不从接口暴露
+ * 出去），所以这里订的是 "write"。
+ *
+ * 常驻一条连接是刻意的：批量可能是上一次离开页面前起的，等 writer.running
+ * 变真再连的话，头几章的字已经过去了。
+ */
+let batchSock = null
+function watchBatch() {
+  if (batchSock) return
+  batchSock = openJobSocket(
+    'write',
+    async (msg) => {
+      if (msg.type !== 'story_token' || !msg.chapter_id) return
+      // **落到它自己那一章上。** 批量是一章一章顺着写的，但消息里带着
+      // chapter_id，不靠顺序猜——猜错的话字会长进隔壁那一章。
+      buf[msg.chapter_id] = (buf[msg.chapter_id] ?? '') + (msg.text ?? '')
+      streaming.value = { chapter_id: msg.chapter_id, from: 0 }
+      await nextTick()
+      fit(boxes[msg.chapter_id])
+    },
+    () => {
+      batchSock = null
+    },
+  )
+}
+
 onMounted(() => {
   load()
   writer.poll() // 可能是上次离开页面时还在跑的那一轮
+  watchBatch()
   window.addEventListener('beforeunload', beforeUnload)
 })
 onUnmounted(() => {
   writer.stop()
+  batchSock?.close()
+  batchSock = null
   window.removeEventListener('beforeunload', beforeUnload)
 })
 watch(() => session.projectPath, load)
 watch(
   () => writer.running,
   (now, before) => {
-    if (before && !now) load()
+    if (before && !now) {
+      // 流出来的是原始 token，落库那份解析过、过了守卫、算过钩子。
+      // 整个重读一遍，以它为准。
+      streaming.value = null
+      load()
+    }
   },
 )
 

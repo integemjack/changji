@@ -12,7 +12,9 @@
 #include "pipeline/jobs.hpp"
 #include "stages/bible.hpp"
 #include "models/story.hpp"
+#include "http/ws.hpp"
 #include "stages/chapter_write.hpp"
+#include "stages/json_stream.hpp"
 #include "stages/script.hpp"
 #include "stages/story_plan.hpp"
 #include "stages/storyboard.hpp"
@@ -182,6 +184,11 @@ ApiResult post_story_chapters(const json& body,
         pipeline::JobKind::Write, "",
         [store, client, todo, style](pipeline::JobProgress& p) {
             p.set_total(static_cast<int>(todo.size()));
+            // 推流式正文要用它。**按类订阅也收得到**：Hub 把 job_id 里第一个
+            // '-' 之前的部分当类名（"write-a3f…" → "write"），而客户端只订
+            // 得到类名——具体 id 从来不从任何接口暴露出去。
+            const std::string job_id =
+                pipeline::jobs().job_id(pipeline::JobKind::Write);
             int done = 0;
             for (const auto& id : todo) {
                 if (p.cancelled()) return;
@@ -234,10 +241,25 @@ ApiResult post_story_chapters(const json& body,
                         const int floor_chars = static_cast<int>(
                             stages::chapter_target_chars(cur) *
                             stages::kChapterMinRatio);
+                        // **批量这条也边写边推。** 十六章要跑一个多小时，
+                        // 进度条上只有"正在写 ch07"的话，那一个多小时里
+                        // 看不到一个字。推的是从 token 流里抠出来的正文，
+                        // JSON 外壳和后面那串 hooks 不推（见 json_stream）。
+                        stages::JsonFieldStreamer field("text");
+                        int seq = 0;
+                        const std::string raw = client->complete(
+                            req, dummy, [&](const std::string& piece) {
+                                const std::string fresh = field.feed(piece);
+                                if (fresh.empty()) return;
+                                ws::hub().broadcast(
+                                    job_id, {{"type", "story_token"},
+                                             {"job_id", job_id},
+                                             {"chapter_id", id},
+                                             {"seq", seq++},
+                                             {"text", fresh}});
+                            });
                         next = stages::apply_chapter(
-                            cur, id,
-                            stages::parse_chapter(client->complete(req, dummy),
-                                                  floor_chars));
+                            cur, id, stages::parse_chapter(raw, floor_chars));
                         last_error.clear();
                         break;
                     } catch (const std::exception& e) {
