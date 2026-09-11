@@ -1047,6 +1047,18 @@ async function writeChapter(chapterId, overwrite = false) {
   let sock = null
   let opened = false
 
+  // 那一头写完（或者写砸了）会从这条 socket 上说一声。
+  //
+  // **为什么不等 HTTP 那个响应了。** 引擎那边一条 I/O 线程管着一批连接，
+  // 请求在它上面占多久，落在同一条线程上的连接就干等多久——而写一章是
+  // 一两分钟。实测那期间别的请求会卡满二十多秒，顶栏那块表更是会直接冻住
+  // （它是长连接，认准了一条线程）。所以现在 POST 当场回一句"开始了"，
+  // 结果从这儿回来。
+  let settle = null
+  const finished = new Promise((r) => {
+    settle = r
+  })
+
   // 从这一刻起就锁章，不等第一个字到。**at 先给 0**：光标从头上开始，
   // 第一个字到之前也看得见"它准备从这儿写"。
   streaming.value = { chapter_id: chapterId, from: 0, at: 0 }
@@ -1055,7 +1067,16 @@ async function writeChapter(chapterId, overwrite = false) {
     sock = openJobSocket(
       streamId,
       async (msg) => {
-        if (msg.job_id !== streamId || msg.type !== 'story_token') return
+        if (msg.job_id !== streamId) return
+        if (msg.type === 'story_done') {
+          settle({ ok: true, result: msg.result })
+          return
+        }
+        if (msg.type === 'story_error') {
+          settle({ ok: false, message: msg.message })
+          return
+        }
+        if (msg.type !== 'story_token') return
         acc += msg.text ?? ''
         buf[chapterId] = acc
         streaming.value = { chapter_id: chapterId, from: 0, at: acc.length }
@@ -1063,7 +1084,12 @@ async function writeChapter(chapterId, overwrite = false) {
         fit(boxes[chapterId])
         keepEndVisible(chapterId)
       },
-      () => resolve(),
+      () => {
+        // 连接没了。**一定要把等的人放出来**，否则这一章会永远显示"写着…"，
+        // 而那比报个错难受得多。
+        settle({ ok: false, message: '和引擎的连接断了，这一章写没写完不好说' })
+        resolve()
+      },
       () => {
         opened = true
         resolve()
@@ -1072,16 +1098,27 @@ async function writeChapter(chapterId, overwrite = false) {
     setTimeout(resolve, 2000)
   })
 
-  const result = await run(
+  const started = await run(
     () =>
       api.writeChapter({
         project: session.projectPath,
         chapter_id: chapterId,
         overwrite,
-        ...(opened ? { stream: streamId } : {}),
+        // socket 没开就退回老路：让 HTTP 那个请求一直等到写完。慢，但至少
+        // 拿得到结果——没有 socket 的话异步那条根本没地方把结果送回来。
+        ...(opened ? { stream: streamId, async: true } : {}),
       }),
     { key: 'chapter:' + chapterId },
   )
+
+  let result = started
+  if (started && started.started) {
+    // 异步那条：HTTP 只说了"开始了"，真正的结果在 socket 上。
+    const fin = await finished
+    result = fin.ok ? fin.result : null
+    if (!fin.ok) ui.error(fin.message || '这一章没写成')
+  }
+
   sock?.close()
   streaming.value = null
   if (!result) {

@@ -12,6 +12,7 @@
 #include "stages/story_outline.hpp"
 #include "stages/story_plan.hpp"
 #include "stages/story_reverse.hpp"
+#include "http/offload.hpp"
 #include "http/ws.hpp"
 #include "pipeline/activity.hpp"
 #include "stages/json_stream.hpp"
@@ -352,22 +353,21 @@ ApiResult post_story_analyze(const json& body, llm::Client& client,
     return {200, out};
 }
 
-ApiResult post_story_chapter(const json& body, llm::Client& client,
-                             pipeline::CancelToken& tok) {
-    forbid_extra(body, {"project", "chapter_id", "overwrite", "stream"});
-    ProjectStore store = open_project(body);
-    const Project project = load_or_400(store);
-    Story story = load_story_or_400(store);
-
-    const std::string chapter_id = need_str(body, "chapter_id");
+/// 真正写这一章：借大模型、边写边推、解析、落库、重算分集。
+///
+/// **从接口里抽出来的，因为它有两条调用路**：同步那条（老客户端）直接在
+/// Crow 的线程上跑完；异步那条在后台线程上跑，接口早就回过"开始了"。
+/// 两条路跑的必须是同一段代码——抄一份的话，两边迟早只改一边，而不一致的
+/// 表现是"用新版界面写出来的和用 curl 写出来的不一样"。
+json write_one_chapter(ProjectStore& store, const Project& project, Story story,
+                       const std::string& chapter_id,
+                       const std::string& stream_id, llm::Client& client,
+                       pipeline::CancelToken& tok) {
     const Chapter* me = story.chapter_by_id(chapter_id);
     if (me == nullptr) throw ApiError(404, "没有这一章：" + chapter_id);
-    if (!text::strip_ws(me->text).empty() && !opt_bool(body, "overwrite", false)) {
-        throw ApiError(409, "这一章已经有正文了。要重写就带上 overwrite");
-    }
 
-    // 登记到顶栏那本账上。**同步接口没有任务表**，不登记的话这一两分钟里
-    // 引擎在界面上看着是闲着的——而它正占着大模型那一槽，别的活全得等。
+    // 登记到顶栏那本账上。不登记的话这一两分钟里引擎在界面上看着是闲着的
+    // ——而它正占着大模型那一槽，别的活全得等。
     pipeline::Activity act{"write_one", paths::to_utf8(store.root()), chapter_id,
                            "正在写 " + (me->title.empty() ? chapter_id : me->title)};
 
@@ -383,10 +383,8 @@ ApiResult post_story_chapter(const json& body, llm::Client& client,
     // **这一步不能像改稿那样退回大白话。** 除了正文还要模型标出这一章里
     // 哪几个地方可以收一集（hooks），而那些钩子是一集停在真悬念上的全部
     // 依据（实跑里把比例从 25% 抬到 56%）。为了能流式砍掉 hooks，等于拿
-    // 分集质量换一个动画。所以照旧约束成 JSON，只在 token 流上顺手把 text
+    // 分集质量换一个动画。所以照旧约束成 JSON，只在 token 流上顺手把正文
     // 那个字段解出来推给编辑器——见 stages/json_stream。
-    const std::string stream_id = text::strip_ws(opt_str(body, "stream"));
-
     Story next;
     try {
         const int floor_chars = static_cast<int>(
@@ -395,9 +393,9 @@ ApiResult post_story_chapter(const json& body, llm::Client& client,
         if (stream_id.empty()) {
             raw = client.complete(req, tok);
         } else {
-            // **抠的是 paragraphs，不是 text。** c41821d 把章节正文从一个字符串
-            // 改成了一段一项的数组，而这里没跟着改——于是流式一个字都抠
-            // 不出来，界面上就是"AI 写作没有热更新"，后端不报任何错。
+            // **抠的是 paragraphs，不是 text。** c41821d 把章节正文从一个
+            // 字符串改成了一段一项的数组，而这里没跟着改——于是流式一个字
+            // 都抠不出来，界面上就是"AI 写作没有热更新"，后端不报任何错。
             stages::JsonFieldStreamer field(stages::kChapterBodyField);
             int seq = 0;
             raw = client.complete(req, tok, [&](const std::string& piece) {
@@ -437,7 +435,75 @@ ApiResult post_story_chapter(const json& body, llm::Client& client,
     const Chapter* done = next.chapter_by_id(chapter_id);
     out["chars"] = done != nullptr ? done->text_len() : 0;
     out["target_chars"] = stages::chapter_target_chars(story);
-    return {200, out};
+    return out;
+}
+
+ApiResult post_story_chapter(const json& body, llm::Client& client,
+                             pipeline::CancelToken& tok) {
+    forbid_extra(body, {"project", "chapter_id", "overwrite", "stream", "async"});
+    ProjectStore store = open_project(body);
+    const Project project = load_or_400(store);
+    Story story = load_story_or_400(store);
+
+    const std::string chapter_id = need_str(body, "chapter_id");
+    const Chapter* me = story.chapter_by_id(chapter_id);
+    if (me == nullptr) throw ApiError(404, "没有这一章：" + chapter_id);
+    if (!text::strip_ws(me->text).empty() && !opt_bool(body, "overwrite", false)) {
+        throw ApiError(409, "这一章已经有正文了。要重写就带上 overwrite");
+    }
+
+    const std::string stream_id = text::strip_ws(opt_str(body, "stream"));
+
+    // **异步那条：当场回一句"开始了"，活在后台线程上干。**
+    //
+    // 理由是 Crow 的形状：一条 I/O 线程管着一批连接，handler 在它上面跑
+    // 多久，落在同一条线程上的连接就干等多久。写一章一两分钟，实测那期间
+    // 落到那条线程上的请求会卡满二十多秒——而顶栏、镜头墙、任务进度全在
+    // 那几个接口上；WebSocket 更惨，它是长连接，一旦落在那条上，顶栏那块
+    // 表会冻到这一章写完。
+    //
+    // **前提是有 stream**：结果和错误都从那条 WebSocket 回去，没有它的话
+    // 调用方拿不到任何东西。所以两个条件缺一就照旧同步跑——老客户端、
+    // curl、对拍脚本都走那条，一个字都没变。
+    if (opt_bool(body, "async", false) && !stream_id.empty()) {
+        const std::string project_path = paths::to_utf8(store.root());
+        Offload::instance().post([project_path, chapter_id, stream_id, &client] {
+            // **后台这条自己重开一遍。** 上面那些对象活在请求的栈上，
+            // 这会儿早没了；而重开一次就是读两个 json 文件，比起写一章
+            // 的一两分钟不值一提。
+            try {
+                ProjectStore st = open_project(project_path);
+                const Project pj = load_or_400(st);
+                Story sy = load_story_or_400(st);
+                pipeline::CancelToken own;
+                json out = write_one_chapter(st, pj, std::move(sy), chapter_id,
+                                             stream_id, client, own);
+                // **把整份结果带回去**，界面直接拿它换掉手上那份。让它自己
+                // 再拉一次也行，但那样"写完"和"看到"之间会多一个来回，
+                // 而这一步本来就是用户等得最久的一步。
+                ws::hub().broadcast(stream_id, {{"type", "story_done"},
+                                                {"job_id", stream_id},
+                                                {"result", std::move(out)}});
+            } catch (const ApiError& e) {
+                // write_one_chapter 里那几条已经播过 story_error 了，这里
+                // 再播一条是为了兜住它前面那几步（项目读不出来、这一章不
+                // 在了）。**多播一条也比不播强**：界面那头在等着，不播的话
+                // 它会一直转圈。
+                ws::hub().broadcast(stream_id, {{"type", "story_error"},
+                                                {"job_id", stream_id},
+                                                {"message", e.what()}});
+            } catch (const std::exception& e) {
+                ws::hub().broadcast(stream_id, {{"type", "story_error"},
+                                                {"job_id", stream_id},
+                                                {"message", e.what()}});
+            }
+        });
+        // 202：收下了，还没干完。
+        return {202, {{"started", true}, {"stream", stream_id}}};
+    }
+
+    return {200, write_one_chapter(store, project, std::move(story), chapter_id,
+                                   stream_id, client, tok)};
 }
 
 ApiResult post_story_episodes(const json& body) {
