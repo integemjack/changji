@@ -211,6 +211,28 @@ TEST_CASE("删项目：三道闸") {
     }
 }
 
+TEST_CASE("新建和删除对「只填名字」的理解必须一致") {
+    // **2026-09-11 实测撞到的。** 新建那边有条规则："只填名字（不带路径
+    // 分隔符）就落在项目库根目录下"——用户不知道项目库挂在哪，让他猜
+    // 绝对路径没道理。删除那边以前没有这条，相对路径直接交给
+    // weakly_canonical，那是按**进程的工作目录**解析的。
+    //
+    // 于是同一个 "要删的" 传给两个接口指的是两个地方：新建成功了，拿同样
+    // 的字符串去删就是 403「只能删项目库里面的」，而用户看不出自己哪里
+    // 错了——他填的就是新建时填的那个名字。
+    Workspace ws("同一条规则");
+    const fs::path proj = make_project(ws, "只填名字的");
+    REQUIRE(fs::is_directory(proj));
+
+    const auto r = http::guard([&] {
+        return http::post_delete_project(
+            json{{"path", "只填名字的"}, {"confirm_name", "只填名字的"}},
+            ws.settings);
+    });
+    CHECK(r.status == 200);
+    CHECK_FALSE(fs::exists(proj));
+}
+
 TEST_CASE("删项目会连素材和成片一起删") {
     // 这一条是在确认"不可逆"的范围有多大——文档里写了，测试里也要有，
     // 否则将来有人改成"只删 project.json"，测试照样绿。

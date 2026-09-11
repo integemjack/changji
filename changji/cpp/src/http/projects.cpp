@@ -60,6 +60,25 @@ bool strictly_inside(const fs::path& target, const fs::path& root) {
     return first != "..";
 }
 
+/// 把请求里那个 path 解析成真正的目录。
+///
+/// **只填名字（不带路径分隔符）就落在项目库根目录下。** 用户不知道项目库
+/// 挂在哪（容器里、用户数据目录里），让他猜绝对路径没道理。
+///
+/// 这条规则以前只写在新建那一支里，删除那边直接把原样的字符串交给
+/// weakly_canonical——而那是按**进程的工作目录**解析的。于是同一个
+/// "我的项目" 传给两个接口指的是两个地方：新建成功了，拿同样的字符串去
+/// 删就是 403「只能删项目库里面的」，用户看不出自己哪里错了。
+/// 2026-09-11 实测撞到。抽成一处，两边不会再分叉。
+fs::path resolve_project_path(const std::string& raw,
+                              const config::Settings& settings) {
+    fs::path path = paths::expand_user(raw);
+    if (!path.is_absolute() && std::distance(path.begin(), path.end()) == 1) {
+        return settings.workspace_path() / paths::from_utf8(raw);
+    }
+    return path;
+}
+
 }  // namespace
 
 ApiResult post_new_project(const json& body, const config::Settings& settings) {
@@ -73,12 +92,8 @@ ApiResult post_new_project(const json& body, const config::Settings& settings) {
     const std::string raw = text::strip_ws(need_str(body, "path"));
     if (raw.empty()) throw ApiError(400, "得给项目起个名字");
 
-    fs::path path = paths::expand_user(raw);
-    // 只填名字（不带路径分隔符）就落在项目库根目录下。
-    // 让用户去猜容器里的绝对路径是没道理的，他也不知道项目库挂在哪。
-    if (!path.is_absolute() && std::distance(path.begin(), path.end()) == 1) {
-        path = settings.workspace_path() / paths::from_utf8(raw);
-    }
+    // 只填名字就落在项目库根目录下。见 resolve_project_path。
+    const fs::path path = resolve_project_path(raw, settings);
 
     const std::string name = paths::to_utf8(path.filename());
     const std::string title = opt_str(body, "title", "");
@@ -115,7 +130,10 @@ ApiResult post_delete_project(const json& body,
     const fs::path root = fs::weakly_canonical(settings.workspace_path(), ec);
     if (ec) throw ApiError(400, "项目库路径不对：" + ec.message());
 
-    const fs::path target = paths::expand_user(raw);
+    // **和新建用同一条解析规则。** 以前这里是 expand_user 之后直接交给
+    // weakly_canonical，相对路径按进程的工作目录算——新建时填 "我的项目"
+    // 建在项目库里，删除时填同一个字符串却指到别处，报 403。
+    const fs::path target = resolve_project_path(raw, settings);
 
     // 闸一：只让删项目库里面的。别的路径可能是用户自己放在别处的项目，
     // 也可能是手滑填的系统目录，不该由这个接口负责。
