@@ -143,6 +143,13 @@ struct Scene {
 
     std::string where;    ///< 在哪、什么时候、什么光
     std::string pov;      ///< 这一场跟谁走。一场只进一个人的心里，不跳
+    /// 这一场谁在场。**至少两个人**——只有一个人的场写不出对白。
+    ///
+    /// 2026-09-12 加的：四章的对白比例一直在 17%~40% 之间大幅波动，低的
+    /// 那几章都是一个人在场里看和想。短剧那边管两个人的戏叫「对手戏」，
+    /// 一个人听到刺激源并作出反应（或者不反应）就构成标准冲突；一个人
+    /// 从头想到尾的场，切出来就是一集默片。
+    std::string who;
     std::string goal;     ///< 这一场里他想要什么
     std::string obstacle; ///< 谁、什么拦着
     /// 这一场收场时，局面比开场时更糟在哪儿。
@@ -161,7 +168,7 @@ struct Scene {
     std::string turn;
 
     NLOHMANN_DEFINE_TYPE_INTRUSIVE_WITH_DEFAULT(
-        Scene, from_char, to_char, where, pov, goal, obstacle, worse, turn)
+        Scene, from_char, to_char, where, pov, who, goal, obstacle, worse, turn)
 };
 
 /// 一章。故事层的情节单元。

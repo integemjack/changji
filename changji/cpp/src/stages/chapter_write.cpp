@@ -181,6 +181,13 @@ ordered chapter_schema(int target_scenes, int paras_per_scene) {
             {"type", "string"},
             {"description", "这一场跟着谁走。只有他心里想什么可以写"},
             {"minLength", 1}};
+        // **紧跟着 pov。** pov 是跟谁走，who 是场上有谁——两件事分开填，
+        // 模型才不会把「跟着林晚走」当成「场上只有林晚」。
+        scene_props["who"] = {
+            {"type", "string"},
+            {"description",
+             "这一场谁在场，**至少两个人**，写人物表里的名字。只有一个人的场是回忆不是戏，写出来一句对白都没有，切出来就是一集默片"},
+            {"minLength", 3}};
         scene_props["goal"] = {
             {"type", "string"},
             {"description", "他在这一场里想做成什么"},
@@ -264,8 +271,9 @@ ordered chapter_schema(int target_scenes, int paras_per_scene) {
             {"maxItems", max_scenes},
             {"items", {{"type", "object"},
                        {"properties", scene_props},
-                       {"required", {"where", "pov", "goal", "obstacle", "worse",
-                                     "turn", kChapterBodyField, "last_line"}},
+                       {"required", {"where", "pov", "who", "goal", "obstacle",
+                                     "worse", "turn", kChapterBodyField,
+                                     "last_line"}},
                        {"additionalProperties", false}}}};
 
         ordered s = ordered::object();
@@ -457,6 +465,30 @@ static std::string normalize_quotes(std::string s) {
     return s;
 }
 
+/// 一段里只有右引号、没有左引号时，把第一个补成左引号。
+///
+/// 2026-09-12 实跑：最后一集的钩子是 `苏妍点头微笑。”好的。”`——两个都是
+/// 右引号。normalize_quotes 只在**整章**没有 “ 时才动手，而这一章别处是
+/// 正常的，所以这一段漏过去了，原样落进正文、落进分集的钩子、落进字幕。
+///
+/// 只在这一段里左右数目不齐、而右引号是偶数个时才修：那就是「成对的，
+/// 只是左边那个写错了」。别的情况不碰——引号跨段的写法（一个人连说几段）
+/// 在中文小说里是正当的。
+static std::string fix_unpaired_quotes(const std::string& para) {
+    int left = 0;
+    int right = 0;
+    for (std::size_t i = 0; i + 2 < para.size() + 1;) {
+        if (para.compare(i, 3, "“") == 0) { ++left; i += 3; continue; }
+        if (para.compare(i, 3, "”") == 0) { ++right; i += 3; continue; }
+        ++i;
+    }
+    if (left > 0 || right < 2 || right % 2 != 0) return para;
+    std::string out = para;
+    const std::size_t at = out.find("”");
+    if (at != std::string::npos) out.replace(at, std::string("”").size(), "“");
+    return out;
+}
+
 /// 语法卡了每段的最短长度之后，模型想在下限之前收口时会用一串引号凑数
 /// （实跑：「……面对一切了。”'”””””」）。中文正文里不存在三个以上连着的
 /// 引号，整串删掉，一个两个的照旧。
@@ -496,6 +528,11 @@ ChapterDraft parse_chapter(const std::string& raw, int min_chars, bool strict) {
 
     // 一段落进正文。**分隔符必须和 JsonFieldStreamer::kArraySeparator 一致**，
     // 否则编辑器里边写边看的那一版和最后落库的段距对不上。
+    const auto push_text = [&d](const std::string& one) {
+        if (one.empty()) return;
+        if (!d.text.empty()) d.text += "\n";
+        d.text += one;
+    };
     const auto push_para = [&d](const json& p) {
         if (!p.is_string()) return;
         const std::string one = text::strip_ws(p.get<std::string>());
@@ -514,6 +551,7 @@ ChapterDraft parse_chapter(const std::string& raw, int min_chars, bool strict) {
             DraftScene sc;
             sc.where = text::clean_field(get_str(s, "where"));
             sc.pov = text::clean_field(get_str(s, "pov"));
+            sc.who = text::clean_field(get_str(s, "who"));
             sc.goal = text::clean_field(get_str(s, "goal"));
             sc.obstacle = text::clean_field(get_str(s, "obstacle"));
             sc.worse = text::clean_field(get_str(s, "worse"));
@@ -522,20 +560,22 @@ ChapterDraft parse_chapter(const std::string& raw, int min_chars, bool strict) {
                 ps != s.end() && ps->is_array()) {
                 for (const auto& p : *ps) {
                     if (!p.is_string()) continue;
-                    const std::string one = text::strip_ws(p.get<std::string>());
+                    const std::string one =
+                        fix_unpaired_quotes(text::strip_ws(p.get<std::string>()));
                     if (one.empty()) continue;
                     sc.paragraphs.push_back(one);
-                    push_para(p);
+                    push_text(one);
                 }
             }
             // 最后一句接在这一场的末尾，就是一个普通段落。落库之后没人
             // 分得出它当初是单独一栏——那一栏只为了**语法上不给总结留位置**。
             if (const auto last = s.find("last_line");
                 last != s.end() && last->is_string()) {
-                const std::string one = text::strip_ws(last->get<std::string>());
+                const std::string one = fix_unpaired_quotes(
+                    text::strip_ws(last->get<std::string>()));
                 if (!one.empty()) {
                     sc.paragraphs.push_back(one);
-                    push_para(*last);
+                    push_text(one);
                 }
             }
             // 一段都没写出来的场不留：留着的话它在场次表里占一个位置，
@@ -873,6 +913,7 @@ Story apply_chapter(const Story& story, const std::string& chapter_id,
             s.to_char = to;
             s.where = sc.where;
             s.pov = sc.pov;
+            s.who = sc.who;
             s.goal = sc.goal;
             s.obstacle = sc.obstacle;
             s.worse = sc.worse;

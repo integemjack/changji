@@ -1796,6 +1796,44 @@ TEST_CASE("正文在贴情绪标签就打回") {
     CHECK_NOTHROW(changji::stages::parse_chapter(json{{"scenes", one}}.dump()));
 }
 
+TEST_CASE("一段里只有右引号就补回左引号") {
+    // 2026-09-12 实跑：最后一集的钩子是「苏妍点头微笑。”好的。”」——两个
+    // 都是右引号。normalize_quotes 只在整章没有 “ 时才动手，而这一章别处
+    // 是正常的，所以这一段漏过去了，原样落进正文、落进分集的钩子、落进
+    // 字幕。
+    const auto body = [](const std::string& line) {
+        json paras = json::array();
+        for (int i = 0; i < 14; ++i) {
+            paras.push_back("第" + std::to_string(i) +
+                            "段：她把抹布拧干，水滴落在地板上，溅出细小的一圈。");
+        }
+        paras.push_back("他停在门口，手扶着门框：“伞我带来了。”");
+        paras.push_back("她没抬头，抹布又抹了一遍：“放那儿吧。”");
+        paras.push_back(line);
+        json scenes = json::array();
+        scenes.push_back({{"where", "深夜，便利店，冷柜的白光"},
+                          {"pov", "林晚"},
+                          {"who", "林晚、陈默"},
+                          {"goal", "把伞要回来"},
+                          {"obstacle", "他不认这把伞"},
+                          {"worse", "她发现伞根本不是他带来的"},
+                          {"turn", "伞柄上刻着别人的名字"},
+                          {"paragraphs", paras},
+                          {"last_line", "她把伞柄转过来，刻着的不是她的名字。"}});
+        return json{{"scenes", scenes}}.dump();
+    };
+
+    const auto fixed = changji::stages::parse_chapter(
+        body("苏妍点头微笑。”好的。”"));
+    CHECK(fixed.text.find("“好的。”") != std::string::npos);
+
+    // **引号跨段的写法不碰**：一个人连说几段，中间那几段只有右引号是正当的。
+    // 这里右引号是奇数个，不动。
+    const auto keep = changji::stages::parse_chapter(
+        body("她顿了顿，接着说下去。”这些年我一直在等。"));
+    CHECK(keep.text.find("”这些年我一直在等。") != std::string::npos);
+}
+
 TEST_CASE("每一场都要说清局面更糟在哪儿") {
     // **2026-09-12 加的，因为一章三场原地打转。** 实跑那一章三场都在同一个
     // 地方对着同一样东西，三个收尾是同一个手势的变奏（手指僵在半空 /

@@ -41,6 +41,7 @@ struct DraftHook {
 struct DraftScene {
     std::string where;
     std::string pov;
+    std::string who;               ///< 这一场谁在场，至少两个人
     std::string goal;
     std::string obstacle;
     std::string worse;             ///< 这一场收场时局面比开场时更糟在哪儿
