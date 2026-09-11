@@ -41,6 +41,8 @@
 #include "infer/sd_backend.hpp"
 #include "infer/sd_image.hpp"
 #include "models/hardware.hpp"
+#include "http/job_stream.hpp"
+#include "http/offload.hpp"
 #include "pipeline/activity.hpp"
 #include "pipeline/jobs.hpp"
 #include <atomic>
@@ -86,6 +88,61 @@ crow::response json_response(const json& body, int status = 200) {
     // 差异出现在每一个接口上，而前面那几层对拍只比 body 不比头，一直没看见。
     res.set_header("Content-Type", "application/json");
     return res;
+}
+
+/// 请求体里要不要走异步。**取出来就删掉**：下面那些处理函数各有各的
+/// `forbid_extra`，留着它等于每一个都要去加一条白名单。
+bool take_async(json& body) {
+    if (!body.is_object() || !body.contains("async")) return false;
+    const bool want = body.at("async").is_boolean() && body.at("async").get<bool>();
+    body.erase("async");
+    return want;
+}
+
+std::string stream_of(const json& body) {
+    if (!body.is_object() || !body.contains("stream") ||
+        !body.at("stream").is_string()) {
+        return {};
+    }
+    return body.at("stream").get<std::string>();
+}
+
+/// 把一件慢活挪到后台线程上干，接口当场回一句"开始了"。
+///
+/// **为什么非这么办**：Crow 一条 I/O 线程管着一批连接，请求在它上面占多久，
+/// 落在同一条线程上的连接就干等多久——写一章一两分钟，出一张图几十秒。
+/// 实测那期间别的请求会卡满二十多秒，顶栏那块表（长连接）更是会直接冻住。
+///
+/// ⚠️ **响应仍然由 Crow 自己那条线程发出**，只不过发的是"开始了"。
+/// 试过在后台线程上 `res.end()`，不行——详见 server.hpp 里 concurrency 那段。
+///
+/// 结果和错误都走那条 WebSocket（见 http/job_stream.hpp）。所以**没有
+/// stream 就不能异步**：那时结果没地方送回去，照旧同步跑到底。老客户端、
+/// curl、对拍脚本走的都是那条，一个字没变。
+template <typename Work>
+ApiResult start_async(const std::string& stream_id, Work work) {
+    Offload::instance().post([stream_id, work] {
+        try {
+            const ApiResult r = work();
+            // 处理函数自己回了个错状态码（不抛，直接回）也要算砸了，
+            // 否则界面会把一句报错当成结果显示出来。
+            if (r.status >= 400) {
+                const std::string msg =
+                    r.body.is_object() && r.body.contains("detail") &&
+                            r.body.at("detail").is_string()
+                        ? r.body.at("detail").get<std::string>()
+                        : std::string("没干成");
+                job_error(stream_id, msg);
+            } else {
+                job_done(stream_id, r.body);
+            }
+        } catch (const ApiError& e) {
+            job_error(stream_id, e.what());
+        } catch (const std::exception& e) {
+            job_error(stream_id, e.what());
+        }
+    });
+    return {202, {{"started", true}, {"stream", stream_id}}};
 }
 
 json to_json(const doctor::Report& report) {
@@ -484,7 +541,16 @@ void run(const config::Settings& settings, const Options& opts) {
     // 念一段字出来。编辑器右下角那个「朗读」。
     CROW_ROUTE(app, "/api/tts/say").methods("POST"_method)(
         [](const crow::request& req) {
-            auto r = guard([&] { return post_tts_say(parse_body(req.body)); });
+            auto r = guard([&]() -> ApiResult {
+                json body = parse_body(req.body);
+                const bool want_async = take_async(body);
+                const std::string stream_id = stream_of(body);
+                if (want_async && !stream_id.empty()) {
+                    return start_async(stream_id,
+                                       [body] { return post_tts_say(body); });
+                }
+                return post_tts_say(body);
+            });
             return json_response(r.body, r.status);
         });
 
@@ -523,15 +589,28 @@ void run(const config::Settings& settings, const Options& opts) {
     static std::shared_ptr<llm::Client> script_client =
         llm::make_client(llm::default_http_post());
 
+    // 这一族全是要大模型的：出梗概、写剧本、出大纲、读故事、写一章、
+    // 改一段稿。**一件一两分钟**，所以带上 async + stream 时挪到后台干，
+    // 接口当场回 202——见上面 start_async 那段。
     const auto script_route = [](auto handler) {
         return [handler](const crow::request& req) {
-            auto r = guard([&] {
+            auto r = guard([&]() -> ApiResult {
+                json body = parse_body(req.body);
+                const bool want_async = take_async(body);
+                const std::string stream_id = stream_of(body);
+                if (want_async && !stream_id.empty()) {
+                    return start_async(stream_id, [handler, body] {
+                        // **后台这条自己一个令牌。** 同步那条用的是
+                        // thread_local 的，而这儿换了条线程。
+                        pipeline::CancelToken own;
+                        return handler(body, *script_client, own);
+                    });
+                }
                 // 这几个接口没有自己的 job，取消令牌是个不会被触发的哑元。
                 // 等它们接进 job 表之后换成真的那个。
                 static thread_local pipeline::CancelToken tok;
                 tok.reset();
-                return handler(parse_body(req.body),
-                               *script_client, tok);
+                return handler(body, *script_client, tok);
             });
             return json_response(r.body, r.status);
         };

@@ -46,6 +46,7 @@ import AppIcon from '@/components/AppIcon.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import { api, mediaUrl } from '@/api'
 import { useAction } from '@/composables/useAction'
+import { runAsyncJob } from '@/composables/useAsyncJob'
 import { openJobSocket } from '@/composables/useJobSocket'
 import { useSession } from '@/stores/session'
 import { useUi } from '@/stores/ui'
@@ -749,6 +750,14 @@ async function revise() {
     streaming.value = null
   }
 
+  // 那一头改完（或者改砸了）会从这条 socket 上说一声。等它，不等 HTTP。
+  // 理由和写一章那条一样：请求占着引擎的 I/O 线程，一占就是十几秒，
+  // 而落在同一条线程上的连接全都跟着干等。
+  let settle = null
+  const finished = new Promise((r) => {
+    settle = r
+  })
+
   const post = () =>
     api.reviseStory({
       project: session.projectPath,
@@ -758,8 +767,9 @@ async function revise() {
       instruction: want,
       history: chat.value,
       // 订阅没发出去就别开流：头几个字推出来时没人听，而漏掉的那几个字
-      // 不会有任何提示，只是那段话缺了个开头。
-      ...(opened ? { stream: streamId } : {}),
+      // 不会有任何提示，只是那段话缺了个开头。**也别走异步**：结果没地方
+      // 送回来。
+      ...(opened ? { stream: streamId, async: true } : {}),
     })
 
   // 先把选中那段清掉，字就从那个位置长出来——这一下就是"开始写了"
@@ -777,10 +787,18 @@ async function revise() {
           // 改一段是插在中间的，所以是选区起点加上已经流出来的长度
           streaming.value = { chapter_id: id, from: at.from, at: at.from + acc.length }
           paint(acc)
+          return
         }
-        // done / error 不在这儿收尾：请求本身的返回才是权威的那一份
+        // job_done / job_error 才是权威的那一份（story_done 是老名字，
+        // 它带的是流完的那段字，不是整份结果）。
+        if (msg.type === 'job_done') settle({ ok: true, result: msg.result })
+        else if (msg.type === 'job_error') settle({ ok: false, message: msg.message })
       },
-      () => resolve(),
+      () => {
+        // 连接没了：把等的人放出来，否则这一段会永远显示"改着…"
+        settle?.({ ok: false, message: '和引擎的连接断了，这一段改没改完不好说' })
+        resolve()
+      },
       () => {
         opened = true
         resolve()
@@ -790,7 +808,13 @@ async function revise() {
     setTimeout(resolve, 2000)
   })
 
-  const result = await run(post, { key: 'revise' })
+  const started = await run(post, { key: 'revise' })
+  let result = started
+  if (started && started.started) {
+    const fin = await finished
+    result = fin.ok ? fin.result : null
+    if (!fin.ok) ui.error(fin.message || '这一段没改成')
+  }
   finish()
   if (!result) {
     // 改砸了，把清掉的那一段放回去
@@ -860,7 +884,11 @@ async function readAloud() {
   if (!picked.trim()) picked = full
 
   const result = await run(
-    () => api.say({ project: session.projectPath, text: picked }),
+    () =>
+      runAsyncJob(
+        (extra) => api.say({ project: session.projectPath, text: picked, ...extra }),
+        { prefix: 'say' },
+      ),
     { key: 'say' },
   )
   if (!result) return
@@ -902,12 +930,17 @@ async function savePremise() {
 async function writeStory() {
   const result = await run(
     () =>
-      api.writeOutline({
-        project: session.projectPath,
-        premise: premise.value.trim(),
-        scale: scale.value,
-        keywords: keywords.value.trim(),
-      }),
+      runAsyncJob(
+        (extra) =>
+          api.writeOutline({
+            project: session.projectPath,
+            premise: premise.value.trim(),
+            scale: scale.value,
+            keywords: keywords.value.trim(),
+            ...extra,
+          }),
+        { prefix: 'outline' },
+      ),
     { key: 'write' },
   )
   if (result) {
@@ -996,7 +1029,11 @@ async function reverseFromEpisodes() {
 /** 让 AI 读一遍正文，把人物关系地点提出来。**正文一个字不动。** */
 async function analyzeStory() {
   const result = await run(
-    () => api.analyzeStory({ project: session.projectPath }),
+    () =>
+      runAsyncJob(
+        (extra) => api.analyzeStory({ project: session.projectPath, ...extra }),
+        { prefix: 'analyze' },
+      ),
     { key: 'analyze' },
   )
   if (result) draft.value = result

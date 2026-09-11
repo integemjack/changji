@@ -12,8 +12,6 @@
 #include "stages/story_outline.hpp"
 #include "stages/story_plan.hpp"
 #include "stages/story_reverse.hpp"
-#include "http/job_stream.hpp"
-#include "http/offload.hpp"
 #include "http/ws.hpp"
 #include "pipeline/activity.hpp"
 #include "stages/json_stream.hpp"
@@ -194,7 +192,9 @@ ApiResult post_story(const json& body) {
 
 ApiResult post_story_outline(const json& body, llm::Client& client,
                              pipeline::CancelToken& tok) {
-    forbid_extra(body, {"project", "premise", "scale", "keywords"});
+    // "stream" 进白名单只是为了让异步那条路成立（见 server.cpp 的
+    // script_route）：这个接口本身不流式，拿到也不用。
+    forbid_extra(body, {"project", "premise", "scale", "keywords", "stream"});
     ProjectStore store = open_project(body);
     const Project project = load_or_400(store);
     const Story existing = load_story_or_400(store);
@@ -313,7 +313,7 @@ ApiResult post_story_import(const json& body) {
 
 ApiResult post_story_analyze(const json& body, llm::Client& client,
                              pipeline::CancelToken& tok) {
-    forbid_extra(body, {"project"});
+    forbid_extra(body, {"project", "stream"});   // stream 同上，只为异步外壳
     ProjectStore store = open_project(body);
     const Project project = load_or_400(store);
     const Story story = load_story_or_400(store);
@@ -412,8 +412,8 @@ json write_one_chapter(ProjectStore& store, const Project& project, Story story,
         next = stages::apply_chapter(story, chapter_id, d);
     } catch (const stages::StoryError& e) {
         // story_error 是给编辑器用的（把流了一半的字撤掉）。异步那条路上
-        // 还有个人在等最终结果，所以上一层会再播一条 job_error——见
-        // post_story_chapter 里那个 catch。
+        // 还有个人在等最终结果，那条 job_error 由 server.cpp 的 start_async
+        // 播——两条各管各的，别合并。
         if (!stream_id.empty()) {
             ws::hub().broadcast(stream_id, {{"type", "story_error"},
                                             {"job_id", stream_id},
@@ -444,7 +444,7 @@ json write_one_chapter(ProjectStore& store, const Project& project, Story story,
 
 ApiResult post_story_chapter(const json& body, llm::Client& client,
                              pipeline::CancelToken& tok) {
-    forbid_extra(body, {"project", "chapter_id", "overwrite", "stream", "async"});
+    forbid_extra(body, {"project", "chapter_id", "overwrite", "stream"});
     ProjectStore store = open_project(body);
     const Project project = load_or_400(store);
     Story story = load_story_or_400(store);
@@ -457,48 +457,6 @@ ApiResult post_story_chapter(const json& body, llm::Client& client,
     }
 
     const std::string stream_id = text::strip_ws(opt_str(body, "stream"));
-
-    // **异步那条：当场回一句"开始了"，活在后台线程上干。**
-    //
-    // 理由是 Crow 的形状：一条 I/O 线程管着一批连接，handler 在它上面跑
-    // 多久，落在同一条线程上的连接就干等多久。写一章一两分钟，实测那期间
-    // 落到那条线程上的请求会卡满二十多秒——而顶栏、镜头墙、任务进度全在
-    // 那几个接口上；WebSocket 更惨，它是长连接，一旦落在那条上，顶栏那块
-    // 表会冻到这一章写完。
-    //
-    // **前提是有 stream**：结果和错误都从那条 WebSocket 回去，没有它的话
-    // 调用方拿不到任何东西。所以两个条件缺一就照旧同步跑——老客户端、
-    // curl、对拍脚本都走那条，一个字都没变。
-    if (opt_bool(body, "async", false) && !stream_id.empty()) {
-        const std::string project_path = paths::to_utf8(store.root());
-        Offload::instance().post([project_path, chapter_id, stream_id, &client] {
-            // **后台这条自己重开一遍。** 上面那些对象活在请求的栈上，
-            // 这会儿早没了；而重开一次就是读两个 json 文件，比起写一章
-            // 的一两分钟不值一提。
-            try {
-                ProjectStore st = open_project(project_path);
-                const Project pj = load_or_400(st);
-                Story sy = load_story_or_400(st);
-                pipeline::CancelToken own;
-                json out = write_one_chapter(st, pj, std::move(sy), chapter_id,
-                                             stream_id, client, own);
-                // **把整份结果带回去**，界面直接拿它换掉手上那份。让它自己
-                // 再拉一次也行，但那样"写完"和"看到"之间会多一个来回，
-                // 而这一步本来就是用户等得最久的一步。
-                job_done(stream_id, std::move(out));
-            } catch (const ApiError& e) {
-                // write_one_chapter 里那几条播的是 story_error（给编辑器
-                // 用的），这里这条是兜它前面那几步（项目读不出来、这一章
-                // 不在了）。**多播一条也比不播强**：界面那头在等着，
-                // 不播的话它会一直转圈。
-                job_error(stream_id, e.what());
-            } catch (const std::exception& e) {
-                job_error(stream_id, e.what());
-            }
-        });
-        // 202：收下了，还没干完。
-        return {202, {{"started", true}, {"stream", stream_id}}};
-    }
 
     return {200, write_one_chapter(store, project, std::move(story), chapter_id,
                                    stream_id, client, tok)};

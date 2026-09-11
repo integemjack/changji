@@ -2,6 +2,7 @@
 
 #include <chrono>
 #include <condition_variable>
+#include <algorithm>
 #include <cstdio>
 #include <mutex>
 #include <string>
@@ -299,17 +300,49 @@ bool LlamaChat::complete(const std::string& prompt, const std::string& schema,
     llama_context* lctx = lease.get();
 
     llama_memory_clear(llama_get_memory(lctx), true);
-    llama_batch batch = llama_batch_get_one(toks.data(), n_prompt);
+
+    // **提示词要分批喂，不能一口气塞进去。**
+    //
+    // 2026-09-11 这条把整个服务干掉过一次：点「读故事」（提示词是整本正文，
+    // 一万多字），llama.cpp 里
+    //     llama-context.cpp:1722: GGML_ASSERT(n_tokens_all <= cparams.n_batch)
+    // 直接 abort()——**不是异常，兜不住**，在跑的活全没了。
+    //
+    // n_batch 是"一次 llama_decode 最多喂几个 token"，默认 2048，和上面那个
+    // n_ctx（16384）是两回事。所以长度那条守卫（n_prompt + max_tokens
+    // <= n_ctx）过得去，照样会炸在这儿——而且是提示词越长越必然，
+    // 正好是最想用大模型的那些活。
+    //
+    // 分批是 llama.cpp 自己例子里的做法：`llama_batch_get_one` 不带位置，
+    // 位置接着 KV cache 当前的走，所以顺序切开喂和一次喂完全等价。
+    // 最后一批的末尾就是提示词最后一个 token，采样拿的还是它的 logits。
+    const int n_batch = static_cast<int>(llama_n_batch(lctx));
+    for (int i = 0; i < n_prompt; i += n_batch) {
+        if (tok.cancelled()) return true;
+        const int n = std::min(n_batch, n_prompt - i);
+        llama_batch chunk = llama_batch_get_one(toks.data() + i, n);
+        if (llama_decode(lctx, chunk) != 0) {
+            why = "喂提示词时 llama_decode 失败（第 " + std::to_string(i) +
+                  " 个 token 起的那一批）";
+            return false;
+        }
+    }
+
+    // 提示词已经喂完了，从这儿开始每次只喂一个新 token。
+    llama_batch batch = llama_batch_get_one(nullptr, 0);
+    bool first = true;
 
     for (int produced = 0; produced < max_tokens; ++produced) {
         // 取消在**每个 token 之间**查一次。写一集剧本要几分钟，
         // 不查的话点了停止要等它自己写完。
         if (tok.cancelled()) return true;
 
-        if (llama_decode(lctx, batch) != 0) {
+        // 第一轮不用再解码：提示词那几批刚喂完，logits 已经在了。
+        if (!first && llama_decode(lctx, batch) != 0) {
             why = "llama_decode 失败（第 " + std::to_string(produced) + " 个 token）";
             return false;
         }
+        first = false;
         // **别再 accept 一次。** `llama_sampler_sample` 内部已经调过
         // `llama_sampler_accept`（llama-sampler.cpp 两条返回路径上都有）。
         // 再手动接一次的话语法状态被推进两遍，第一个 token 就炸：
