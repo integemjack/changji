@@ -147,8 +147,18 @@ void run(const config::Settings& settings, const Options& opts) {
     // 放后台，不挡起服务（一份 GGUF 几个 G，几十秒）；拿着这个 thread，
     // 等 app.run() 回来再 join——detach 的话进程退出时它可能还在碰
     // 已经析构的调度器。见 warm_llm_in_background。
-    std::thread warm_llm = llm::warm_llm_in_background(
-        [] { return config::runtime().snapshot(); });
+    //
+    // **必须 RAII 地 join，不能只在 run() 之后写一句。** 从这里到
+    // app.run() 之间隔着几百行路由注册，中间任何一处抛异常（或者 run()
+    // 自己抛），这个 thread 就会在 joinable 状态下析构——那是
+    // std::terminate，进程当场没，连栈都不打。
+    struct JoinAtExit {
+        std::thread t;
+        ~JoinAtExit() {
+            if (t.joinable()) t.join();
+        }
+    } warm_llm{llm::warm_llm_in_background(
+        [] { return config::runtime().snapshot(); })};
 
     // ---- REST ----
 
@@ -1285,10 +1295,10 @@ void run(const config::Settings& settings, const Options& opts) {
         .concurrency(opts.concurrency)
         .run();
 
-    // **一定要 join。** 预热线程碰的是调度器那个函数内静态量；不 join
-    // 就退出的话，它可能在静态量析构之后还在往里写。Ctrl+C 时如果正好
-    // 在装模型，这里会多等它装完——装到一半没法打断，等它是对的。
-    if (warm_llm.joinable()) warm_llm.join();
+    // 预热线程由上面那个 JoinAtExit 在这儿收掉。**一定要等它**：
+    // 它碰的是调度器那个函数内静态量，不 join 就退出的话，它可能在静态量
+    // 析构之后还在往里写。Ctrl+C 时如果正好在装模型，这里会多等它装完
+    // ——装到一半没法打断，等它是对的。
 }
 
 }  // namespace changji::http
