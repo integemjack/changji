@@ -1158,6 +1158,27 @@ TEST_CASE("提示词：读，不要改写") {
     CHECK(p.find("ch01") != std::string::npos);
 }
 
+TEST_CASE("人物表里要有「他说话什么样」") {
+    // **2026-09-12 加的，因为所有人说话都一个腔调。** 人物表里有身份、
+    // 欲望、弧光，唯独没有「怎么开口」，于是正文里每个人的台词都像同一个
+    // 人写的——而对白是短剧最主要的东西。
+    const auto& cs = outline_schema().at("properties").at("characters").at("items");
+    REQUIRE(cs.at("properties").contains("voice"));
+    bool required = false;
+    for (const auto& r : cs.at("required")) {
+        if (r == "voice") required = true;
+    }
+    CHECK(required);
+    // **required 只保证键在，不保证有内容。** 2026-09-12 实跑，加进
+    // required 的头一轮三个人物的 voice 全是空串——空字符串是合法的
+    // JSON 字符串，语法采样照样让它过，那一轮的改动一个字都没生效。
+    CHECK(cs.at("properties").at("voice").at("minLength").get<int>() >= 6);
+
+    // 读故事那一步用的是同一份人物块，两边不一致的话每个消费者都要分支
+    CHECK(changji::stages::analyze_schema().at("properties").at("characters") ==
+          outline_schema().at("properties").at("characters"));
+}
+
 TEST_CASE("schema：每一章都要说清抖出什么") {
     // **2026-09-12 加的，因为四章零反转。** 实跑的大纲是「前任回来 → 打
     // 电话 → 坦白 → 和解」：每章都在推进，但没有一章让人重新理解前面发生
@@ -1765,6 +1786,37 @@ TEST_CASE("最后一句是单独一栏，落库之后接在这一场末尾") {
           d.text.size() - std::string("她把伞柄转过来，刻着的不是她的名字。").size());
 }
 
+TEST_CASE("换个说法的同一件事，也算撞车") {
+    // **2026-09-12 实跑，这两场的 turn 切出来就是相邻两集的钩子**：
+    // 一个字都不连着一样，按字面比的守卫不响，而观众看到的是同一件事
+    // 演两遍——第二集的信息增量是零。
+    // **「换个说法的同一件事」抓不到，而且量过了：** 相邻两字的 Dice
+    // 系数，这一对是 0.30，而下面那对真的不同的事是 0.27——分不开。
+    // 那个信号在语义里，不在字面里。这一条钉住"我们知道它漏"。
+    CHECK_FALSE(changji::stages::scenes_repeat_beat(
+        "林悦认出男人是沈嘉诚，并意识到那把伞对她有特殊意义",
+        "林悦意识到这把伞对她意义非凡，而对方显然知道这一点"));
+
+    // 一字不差的、互相包含的，照旧要抓住
+    CHECK(changji::stages::scenes_repeat_beat("他把伞从天台扔了下去",
+                                              "他把伞从天台扔了下去"));
+    CHECK(changji::stages::scenes_repeat_beat(
+        "伞柄上刻着别人的名字", "她翻过伞柄，伞柄上刻着别人的名字，不是她的"));
+
+    // **真的不同的两件事不能误伤。** 软闸误伤的代价是一次生成变三次。
+    CHECK_FALSE(changji::stages::scenes_repeat_beat(
+        "林悦抓住沈嘉诚手腕，质问他的选择",
+        "陈阿姨递出一个信封，里面装着一张旧照片"));
+    CHECK_FALSE(changji::stages::scenes_repeat_beat(
+        "她把收银单据折成纸船放进水槽", "他在门口停下，没有回头"));
+    // 同一个人做的两件不同的事，也不能算撞
+    CHECK_FALSE(changji::stages::scenes_repeat_beat(
+        "林悦把伞递给他", "林悦把信收进抽屉锁好"));
+
+    // 太短的不判：一句话不到八个字，重合是巧合
+    CHECK_FALSE(changji::stages::scenes_repeat_beat("他走了", "他走了"));
+}
+
 TEST_CASE("整章一句对白都没有就打回") {
     // 2026-09-12 实跑四章里有一章通篇零对白（65 段全是叙述）。下一步是把
     // 这段正文改成剧本——正文里没人说话，那一集出来就是默片。和剧本那边
@@ -1798,6 +1850,21 @@ TEST_CASE("整章一句对白都没有就打回") {
     std::string plain;
     for (int i = 0; i < 700; ++i) plain += "字";
     CHECK_NOTHROW(changji::stages::parse_chapter(json{{"text", plain}}.dump()));
+}
+
+TEST_CASE("说话方式要一路带到正文那一步") {
+    Story s = outline_only_story();
+    s.characters[0].voice = "短句，从不把话说完，生气时反而更小声";
+
+    const std::string p = changji::stages::build_chapter_prompt(
+        s, "ch02", StyleLine::REALISTIC);
+    CHECK(p.find("说话：短句，从不把话说完") != std::string::npos);
+
+    // 没写的人不多这一段——粘贴导入的故事和老项目都没有这一栏
+    s.characters[0].voice.clear();
+    const std::string none = changji::stages::build_chapter_prompt(
+        s, "ch02", StyleLine::REALISTIC);
+    CHECK(none.find("说话：") == std::string::npos);
 }
 
 TEST_CASE("抖出什么要一路带到正文那一步") {

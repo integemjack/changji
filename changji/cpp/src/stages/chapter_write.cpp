@@ -90,10 +90,26 @@ bool same_beat(const std::string& a, const std::string& b) {
     }
     // 最长公共子串。turn 都是几十个字，平方级别的比法足够快。
     constexpr std::size_t kRun = 10;
-    if (x.size() < kRun || y.size() < kRun) return false;
-    for (std::size_t i = 0; i + kRun <= x.size(); ++i) {
-        if (sy.find(join(x, i, i + kRun)) != std::string::npos) return true;
+    if (x.size() >= kRun && y.size() >= kRun) {
+        for (std::size_t i = 0; i + kRun <= x.size(); ++i) {
+            if (sy.find(join(x, i, i + kRun)) != std::string::npos) return true;
+        }
     }
+
+    // **「用词重合度」那条试过，算不出来，撤了。**
+    //
+    // 要抓的是这种（2026-09-12 实跑，切出来就是相邻两集的钩子）：
+    //   「林悦认出男人是沈嘉诚，并意识到那把伞对她有特殊意义」
+    //   「林悦意识到这把伞对她意义非凡，而对方显然知道这一点」
+    // 一个字都不连着一样，上面两条都不响，而观众看到的是同一件事演两遍。
+    //
+    // 拿相邻两字的 Dice 系数量了一遍：这一对是 **0.30**，而真的不同的两
+    // 件事「林悦把伞递给他」和「林悦把信收进抽屉锁好」是 **0.27**——
+    // 两者分不开。门槛卡在中间只会两头都错。**让这两句算撞车的信号是
+    // 语义上的（都是「她意识到伞的意义」），不在字面里**，这一层量不出来。
+    //
+    // 留着上面两条：一字不差和大段照抄，它们抓得准。剩下的交给写的时候
+    // 别写重（提示词里那条规则），以及人眼。
     return false;
 }
 
@@ -252,6 +268,9 @@ std::string build_chapter_prompt(const Story& story,
         if (!c.identity.empty()) out += "：" + c.identity;
         out += "。";
         if (!c.want.empty()) out += "他要的是：" + c.want + "。";
+        // **说话方式要摆出来。** 不给的话正文里每个人的台词都是同一个人
+        // 写的——而对白是短剧最主要的东西，人物立不立得住基本就看这个。
+        if (!c.voice.empty()) out += "说话：" + c.voice + "。";
         out += "\n";
     }
     if (!story.relations.empty()) {

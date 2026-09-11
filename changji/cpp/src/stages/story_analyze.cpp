@@ -208,6 +208,7 @@ Story apply_analysis(const Story& story, const std::string& raw) {
             sc.identity = text::clean_field(get_str(c, "identity"));
             sc.want = text::clean_field(get_str(c, "want"));
             sc.arc = text::clean_field(get_str(c, "arc"));
+            sc.voice = text::clean_field(get_str(c, "voice"));
             out.characters.push_back(std::move(sc));
         }
     }

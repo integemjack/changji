@@ -63,6 +63,15 @@ const ordered& outline_schema() {
             {"description", "这个人物主动要的东西。写「希望生活变好」等于没写"}};
         character_props["arc"] = {
             {"type", "string"}, {"description", "从什么变成什么"}};
+        // **minLength 不能省。** 写进 required 只保证这个键在，不保证它有
+        // 内容——2026-09-12 实跑，三个人物的 voice 全是空串，这一栏等于
+        // 没加，而那一轮的「改进」实际上一个字都没生效。空字符串是合法的
+        // JSON 字符串，语法采样照样让它过。
+        character_props["voice"] = {
+            {"type", "string"},
+            {"description",
+             "他说话什么样：长句还是短句、认不认错、生气时是提高声音还是干脆不说话、有没有嘴上的习惯。写得出来才分得清谁在说话。不要写长相"},
+            {"minLength", 8}};
 
         ordered relation_props = ordered::object();
         relation_props["a"] = {{"type", "string"}, {"description", "人物名，必须在 characters 里"}};
@@ -140,7 +149,7 @@ const ordered& outline_schema() {
             {"description", "故事里的人。主要人物不超过三个"},
             {"items", {{"type", "object"},
                        {"properties", character_props},
-                       {"required", {"name", "identity", "want"}},
+                       {"required", {"name", "identity", "want", "voice"}},
                        {"additionalProperties", false}}}};
         props["relations"] = {
             {"type", "array"},
@@ -247,6 +256,7 @@ Story parse_outline(const std::string& raw, const std::string& premise,
             sc.identity = text::clean_field(get_str(c, "identity"));
             sc.want = text::clean_field(get_str(c, "want"));
             sc.arc = text::clean_field(get_str(c, "arc"));
+            sc.voice = text::clean_field(get_str(c, "voice"));
             story.characters.push_back(std::move(sc));
         }
     }

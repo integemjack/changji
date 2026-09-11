@@ -67,9 +67,17 @@ struct StoryCharacter {
     std::string identity; ///< 一句话身份
     std::string want;     ///< 他要什么。没有欲望的人物推不动情节
     std::string arc;      ///< 从什么变成什么
+    /// 他说话什么样：长句还是短句、认不认错、生气时是提高声音还是不说话。
+    ///
+    /// **2026-09-12 加的，因为所有人说话都一个腔调。** 人物表里有身份、
+    /// 欲望、弧光，唯独没有「怎么开口」——于是正文里每个人的台词都是同一
+    /// 个人写的。对白是短剧最主要的东西，人物立不立得住基本就看这个。
+    ///
+    /// 和 identity 一样**不写长相**：说话方式是听得见的，不是看得见的。
+    std::string voice;
 
     NLOHMANN_DEFINE_TYPE_INTRUSIVE_WITH_DEFAULT(
-        StoryCharacter, name, identity, want, arc)
+        StoryCharacter, name, identity, want, arc, voice)
 };
 
 /// 人物关系的一条边。
