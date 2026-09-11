@@ -689,6 +689,11 @@ void run(const config::Settings& settings, const Options& opts) {
                                // 实测 74 GB），拿它判出来的"够，不卸"随时
                                // 可能是 CUDA OOM 的前一步。界面上要分开说。
                                {"liveMeasured", d.live_measured},
+                               // 这一次压根没判（模型本来就装着、画幅也
+                               // 没超）。不标出来的话，界面会把"当时空闲
+                               // 是 0、不是问来的"显示成**问不到卡**，
+                               // 而那是让用户盯着报警的那一项。
+                               {"alreadyLoaded", d.already_loaded},
                                {"kept", d.kept},
                                {"evicted", d.evicted}};
                 }

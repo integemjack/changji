@@ -177,6 +177,9 @@ std::string Scheduler::room_note(Slot slot) const {
     // 判的不是这个槽就别说——上一条很可能是别的阶段留下的，
     // 挂在这一镜下面会让人以为刚刚为它卸过模型。
     if (!d.valid || d.slot != slot) return {};
+    // 压根没判过——槽本来就装着，画幅也没超过量过的。照实说，
+    // 别说成"显存够"（那会让人以为刚做过一次判断）。
+    if (d.already_loaded) return "模型本来就装着，没动别的";
     if (!d.kept) {
         return "腾显存：卸了 " + std::to_string(d.evicted) + " 个模型";
     }
@@ -471,6 +474,24 @@ Lease Scheduler::acquire(Slot slot, std::size_t work) {
         // 这样只会比以前多卸一个该卸的，不会把原来跑得通的变成报错。
         if (work > 0 && !measurement_covers(slot, work)) {
             (void)make_room(e->spec.vram_estimate, slot, work);
+        } else {
+            // **这一镜什么都没干，就不能让上一镜的结论继续挂在那儿。**
+            // 上一镜要是卸过模型，进度条上这一镜会凭空多出一句
+            // "腾显存：卸了 1 个模型"，用户看到的是每镜都在卸，
+            // 回头问"不是说够就不清理吗"。
+            const auto it = measured_.find(slot);
+            const std::size_t live =
+                it == measured_.end() ? 0 : it->second.bytes;
+            last_decision_ = RoomDecision{true,
+                                          slot,
+                                          e->spec.vram_estimate,
+                                          live,
+                                          0,
+                                          /*probed=*/false,
+                                          /*kept=*/true,
+                                          0,
+                                          /*live_measured=*/live > 0,
+                                          /*already_loaded=*/true};
         }
         ++e->leases;
         return Lease(this, slot);

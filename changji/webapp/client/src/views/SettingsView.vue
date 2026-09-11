@@ -255,8 +255,21 @@ const roomDecision = computed(() => {
   const d = placement.value?.lastRoomDecision
   if (!d) return null
   const gb = (v) => (typeof v === 'number' ? `${v.toFixed(1)} GB` : '不知道')
+  // **这一次压根没判**：模型本来就装着，画幅也没超过量过的，那就没有
+  // "要不要腾地方"这个问题。照实说，别把它当成一次判断——那条记录里
+  // 「当时空闲」是 0、「问来的」是假，显示出来就是「问不到卡」，
+  // 而那是让用户盯着报警的那一项，凭空来个假警报比不显示更糟。
+  if (d.alreadyLoaded) {
+    return {
+      slot: d.slot,
+      verdict: '模型本来就装着，没动别的',
+      ok: true,
+      skipped: true,
+    }
+  }
   return {
     slot: d.slot,
+    skipped: false,
     verdict: d.kept ? '够，没动别的模型' : `不够，卸了 ${d.evicted} 个`,
     ok: Boolean(d.kept),
     need: gb(d.liveGb),
@@ -505,7 +518,11 @@ function scrollTo(id) {
                  还没借过槽，摆一行"还没判过"只是噪音。 -->
             <div v-if="embedded && roomDecision" class="field">
               <span class="field__label">上次腾显存怎么判的</span>
-              <div class="mono tiny">
+              <div v-if="roomDecision.skipped" class="mono tiny">
+                借「{{ roomDecision.slot }}」时：{{ roomDecision.verdict }}——
+                它一直在显存里，这一镜的画幅也没超过量过的，所以没做判断。
+              </div>
+              <div v-else class="mono tiny">
                 借「{{ roomDecision.slot }}」时：需要 {{ roomDecision.need }}
                 （{{ roomDecision.needHow }}），
                 当时空闲 {{ roomDecision.free }}（{{ roomDecision.how }}）
@@ -519,7 +536,7 @@ function scrollTo(id) {
               </span>
               <!-- 判「够」却是拿估的判的：这正是 CUDA OOM 的前一步。
                    估算在 video 这一路算 14.6 GB、实测 74 GB，差五倍。 -->
-              <span v-if="roomDecision.ok && !roomDecision.needTrusted"
+              <span v-if="!roomDecision.skipped && roomDecision.ok && !roomDecision.needTrusted"
                     class="field__hint">
                 ⚠ 这次的「够」是拿<strong>估算</strong>判的，这个槽还没量过。
                 估算在出片这一路偏小很多（算 14.6 GB、实测 74 GB），

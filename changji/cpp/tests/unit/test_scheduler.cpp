@@ -1179,11 +1179,73 @@ TEST_CASE("从头到尾走一遍用户要的那条路") {
     CHECK(s.loaded(Slot::LLM));
     CHECK(s.room_note(Slot::Video) == "显存够，没动别的模型");
 
+    // 5b）**同一档再出一镜：这一镜什么都没干，就不能照抄上一镜的话。**
+    //     槽装着、画幅也罩得住，走的是快路（不重新腾地方）。以前
+    //     last_decision_ 停在上一镜，于是进度条上这一镜会抄上一镜的结论
+    //     ——上一镜要是卸过，这一镜就凭空多出一句"腾显存：卸了 1 个模型"。
+    { auto v = s.acquire(Slot::Video, small); }
+    CHECK(llm_unloads == 1);
+    CHECK(s.room_note(Slot::Video) == "模型本来就装着，没动别的");
+
     // 6）用户把画幅换成 2K：量过的活比这次小，那个数不算数 -> 回到保守。
     //    在标准档量到的 74 GB 拿去给 2K 判"够"，下一步就是显存爆掉。
     { auto v = s.acquire(Slot::Video, big); }
     CHECK(llm_unloads == 2);
     CHECK(s.room_note(Slot::Video) == "腾显存：卸了 1 个模型");
+}
+
+TEST_CASE("走快路的那一镜，不能照抄上一镜的结论") {
+    // **接着上面那条串起来的用例继续挖。**
+    //
+    // 槽装着、画幅也罩得住时走快路（不重新腾地方）。那时候 last_decision_
+    // 停在上一镜——上一镜要是卸过模型，这一镜的进度条上就会凭空多出一句
+    // "腾显存：卸了 1 个模型"，而它什么都没卸。
+    //
+    // 用户看到的是每镜都在卸模型，于是回来问"不是说够就不清理吗"。
+    const std::size_t budget = 86 * GB;
+    const std::size_t small = 544ull * 928 * 81;
+
+    int llm_unloads = 0;
+    Scheduler s;
+    s.set_budget(budget);
+    s.set_free_vram_probe([] { return std::optional<double>(81.0); });
+
+    SlotSpec llm;
+    llm.slot = Slot::LLM;
+    llm.vram_estimate = budget;
+    llm.evict_priority = 1;
+    llm.load = [] {};
+    llm.unload = [&llm_unloads] { ++llm_unloads; };
+    s.register_slot(std::move(llm));
+
+    SlotSpec vid;
+    vid.slot = Slot::Video;
+    vid.vram_estimate = budget;
+    vid.evict_priority = 9;
+    vid.load = [] {};
+    vid.unload = [] {};
+    s.register_slot(std::move(vid));
+
+    { auto a = s.acquire(Slot::LLM); }
+    // 第一镜：没量过 -> 保守，卸掉大模型。
+    { auto v = s.acquire(Slot::Video, small); }
+    REQUIRE(llm_unloads == 1);
+    REQUIRE(s.room_note(Slot::Video) == "腾显存：卸了 1 个模型");
+
+    // 这一镜跑完量到了。
+    s.record_measured_vram(Slot::Video, 74 * GB, small);
+
+    // 第二镜：槽还装着、画幅也罩得住 -> 走快路，什么都没干。
+    { auto v = s.acquire(Slot::Video, small); }
+    CHECK(llm_unloads == 1);
+    // **不能还是"卸了 1 个模型"**，也不该说成"显存够"——那会让人以为
+    // 刚做过一次判断。照实说：本来就装着。
+    CHECK(s.room_note(Slot::Video) == "模型本来就装着，没动别的");
+    const auto d = s.last_room_decision();
+    REQUIRE(d.valid);
+    CHECK(d.already_loaded);
+    CHECK(d.kept);
+    CHECK(d.evicted == 0);
 }
 
 TEST_CASE("腾不出地方时，先说清是被谁挡住的") {
