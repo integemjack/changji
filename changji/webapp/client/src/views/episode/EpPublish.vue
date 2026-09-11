@@ -16,6 +16,7 @@ import { humanAgo, humanTime, useAction } from '@/composables/useAction'
 import { useSession } from '@/stores/session'
 import { useUi } from '@/stores/ui'
 
+const emit = defineEmits(['go'])
 const session = useSession()
 const ui = useUi()
 const { run, isBusy } = useAction()
@@ -250,7 +251,7 @@ function retry(record) {
 
 <template>
   <div class="stack stack--lg">
-    <StepHeader>
+    <StepHeader bare>
       <template #actions>
         <button class="btn btn--ghost" type="button" @click="newTarget">
           <AppIcon name="plus" :size="15" />
@@ -284,7 +285,9 @@ function retry(record) {
       title="还没有能投的片"
       hint="投递的是装配好的整集。回第六步把制作跑完，第七步确认过再来。"
     >
-      <RouterLink to="/shots" class="btn btn--primary">去做镜头</RouterLink>
+      <button class="btn btn--primary" type="button" @click="emit('go', 'shots')">
+        去做镜头
+      </button>
     </EmptyState>
 
     <template v-else>

@@ -87,44 +87,28 @@ export const STEP_ROUTES = [
     icon: 'scene',
     component: () => import('@/views/ScenesView.vue'),
   },
-  // **分镜和制作合成一步「镜头」**（2026-09-10）。
+  // **镜头、成片、上传合成一步「这一集」**（2026-09-11）。
   //
-  // 原来是两页：一页排镜头（AI 出分镜、改台词、调顺序），一页跑镜头
-  // （出片、看进度、重出）。而人的动作是"看片子 → 改台词 → 重出"，
-  // 在同一镜上来回——换页就断了，还得记住自己刚才看的是第几镜。
+  // 2026-09-10 已经把分镜和制作合过一次，理由是「人的动作是看片子→改台词→
+  // 重出，在同一镜上来回，换页就断了」。这一次是同一条理由再往外一层：
+  // 人做的事是**对照着看**——对着这句台词看这一镜对不对，看完整集顺手发
+  // 出去。分成四页，来回换页才知道这一镜出自哪句话。
   //
-  // 合成一页之后侧边栏也只留一格：两格指向同一个地方只会让人以为点错了。
-  // `/bff/flow` 那边同步改成一个 `shots`，判据取原来「制作」那条
-  // （每镜都出到成片）——光有分镜表不算做完，那时候一帧画面都还没有。
+  // 剧本也搬了进来：全剧那半（梗概、分集、章节）在故事页，这里只剩
+  // 「这一集的剧本」，和它的镜头摆在同一页上。
+  //
+  // 侧边栏因此从八格变六格。`/bff/flow` 那边同步合成一个 `episode`，
+  // 判据取原来「成片」那条——装配出片子才算这一集做完了，发布是可选的
+  // 收尾动作，没发也不该让这一格一直不打勾。
   {
-    key: 'shots',
-    path: '/shots',
-    name: 'shots',
+    key: 'episode',
+    path: '/episode',
+    name: 'episode',
     phase: 'episode',
-    title: '镜头',
-    tagline: '拆镜头、改镜头、把它们拍出来',
+    title: '这一集',
+    tagline: '剧本、镜头、成片、发布，都在这一集上',
     icon: 'board',
-    component: () => import('@/views/ShotsView.vue'),
-  },
-  {
-    key: 'film',
-    path: '/film',
-    name: 'film',
-    phase: 'episode',
-    title: '成片',
-    tagline: '看装配好的这一集',
-    icon: 'film',
-    component: () => import('@/views/FilmView.vue'),
-  },
-  {
-    key: 'publish',
-    path: '/publish',
-    name: 'publish',
-    phase: 'episode',
-    title: '上传至平台',
-    tagline: '带上标题和话题投递出去',
-    icon: 'upload',
-    component: () => import('@/views/PublishView.vue'),
+    component: () => import('@/views/EpisodeView.vue'),
   },
 ]
 
@@ -157,8 +141,11 @@ const routes = [
     meta: { title: '初始化', chrome: false },
   },
   // 老路径。合并之前它们是两页，收藏夹里可能还留着。
-  { path: '/storyboard', redirect: '/shots' },
-  { path: '/production', redirect: '/shots' },
+  { path: '/storyboard', redirect: '/episode?view=shots' },
+  { path: '/production', redirect: '/episode?view=shots' },
+  { path: '/shots', redirect: '/episode?view=shots' },
+  { path: '/film', redirect: '/episode?view=film' },
+  { path: '/publish', redirect: '/episode?view=publish' },
   { path: '/:pathMatch(.*)*', redirect: '/project' },
 ]
 

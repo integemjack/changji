@@ -15,6 +15,7 @@ import { humanAgo } from '@/composables/useAction'
 import { useSession } from '@/stores/session'
 import { useUi } from '@/stores/ui'
 
+const emit = defineEmits(['go'])
 const session = useSession()
 const ui = useUi()
 
@@ -103,7 +104,7 @@ function onTimeUpdate(event) {
 
 <template>
   <div class="stack stack--lg">
-    <StepHeader>
+    <StepHeader bare>
       <template #actions>
         <button
           class="btn btn--ghost"
@@ -114,10 +115,15 @@ function onTimeUpdate(event) {
           <AppIcon name="refresh" :size="15" />
           刷新
         </button>
-        <RouterLink v-if="current" to="/publish" class="btn btn--primary">
+        <button
+          v-if="current"
+          class="btn btn--primary"
+          type="button"
+          @click="emit('go', 'publish')"
+        >
           <AppIcon name="upload" :size="15" />
           去上传
-        </RouterLink>
+        </button>
       </template>
     </StepHeader>
 
@@ -137,7 +143,9 @@ function onTimeUpdate(event) {
       title="还没有成片"
       hint="所有镜头跑完之后，流水线会把它们装配成一整集。回上一步把制作跑完。"
     >
-      <RouterLink to="/shots" class="btn btn--primary">去做镜头</RouterLink>
+      <button class="btn btn--primary" type="button" @click="emit('go', 'shots')">
+        去做镜头
+      </button>
     </EmptyState>
 
     <div v-else-if="files.length" class="film">

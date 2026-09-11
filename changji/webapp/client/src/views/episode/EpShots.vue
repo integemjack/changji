@@ -501,7 +501,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
 
 <template>
   <div class="stack stack--lg">
-    <StepHeader title="镜头" :tagline="tagline">
+    <StepHeader title="镜头" :tagline="tagline" bare>
       <template #actions>
         <button
           v-if="running"
@@ -603,18 +603,10 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
       </div>
     </section>
 
+    <!-- 「还没选到某一集」那个空状态挪到父页面了：进不到这一页就没有这一集，
+         每个子视图各判一遍是三份同样的话。 -->
     <EmptyState
-      v-if="!session.episodeId"
-      icon="script"
-      tone="warn"
-      title="还没选到某一集"
-      hint="镜头是针对某一集的。先在上面挑一集，没有的话回第二步写一集。"
-    >
-      <RouterLink to="/script" class="btn btn--primary">去写剧本</RouterLink>
-    </EmptyState>
-
-    <EmptyState
-      v-else-if="!loading && !shots.length"
+      v-if="!loading && !shots.length"
       icon="board"
       title="这一集还没有分镜"
       hint="分镜表决定后面每一个镜头怎么拍。让大模型从剧本拆一版出来，再手工调。"

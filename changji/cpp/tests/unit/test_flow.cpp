@@ -58,13 +58,16 @@ TEST_CASE("每一格都得有对应的判定，一个都不能少") {
     }
 }
 
-TEST_CASE("分镜和制作合成了一步「镜头」") {
-    // 两页合成一页之后，侧边栏留两格指向同一个地方只会让人以为点错了。
+TEST_CASE("镜头、成片、上传合成了一步「这一集」") {
+    // 几页合成一页之后，侧边栏留几格指向同一个地方只会让人以为点错了。
     const auto steps = keys_of(http::flow_steps());
-    CHECK(steps.count("shots") == 1);
+    CHECK(steps.count("episode") == 1);
     CHECK(steps.count("storyboard") == 0);
     CHECK(steps.count("production") == 0);
-    CHECK(http::flow_steps().size() == 8);
+    CHECK(steps.count("shots") == 0);
+    CHECK(steps.count("film") == 0);
+    CHECK(steps.count("publish") == 0);
+    CHECK(http::flow_steps().size() == 6);
 }
 
 TEST_CASE("「故事」这一格") {
@@ -98,27 +101,53 @@ TEST_CASE("「故事」这一格") {
     CHECK(got.at("counters").at("plannedEpisodes").get<int>() == 2);
 }
 
-TEST_CASE("「镜头」这一格：光有分镜表不算做完") {
-    // **判据取的是原来「制作」那条。** 光有分镜表就打勾的话，用户看到
-    // 侧边栏那一步过了，而实际上一帧画面都还没出。
+TEST_CASE("「这一集」这一格：判据是装配出片子了") {
+    const auto all_done = json::array(
+        {a_shot("a", "final_done"), a_shot("b", "locked")});
+
+    // 镜头全出完了，但还没装配——这一格不算完
+    CHECK_FALSE(http::flow_assess(a_project(), all_done, json::array(), "ep01")
+                    .at("done")
+                    .at("episode")
+                    .get<bool>());
+
+    // 产物里有这一集的片子才算
+    const auto outputs = json::array({json{{"name", "ep01.mp4"}}});
+    const auto got = http::flow_assess(a_project(), all_done, outputs, "ep01");
+    CHECK(got.at("done").at("episode").get<bool>());
+
+    // 镜头出没出完另外报一个数，进度条和「还差几镜」用它
+    CHECK(got.at("counters").at("shotsDone").get<bool>());
+    CHECK_FALSE(http::flow_assess(a_project(),
+                                  json::array({a_shot("a", "planned")}),
+                                  outputs, "ep01")
+                    .at("counters")
+                    .at("shotsDone")
+                    .get<bool>());
+}
+
+TEST_CASE("shotsDone：光有分镜表不算出完") {
+    // 这个数原来是「镜头」那一格的判定，三格合一之后降级成一个计数，
+    // 但那条规矩照旧：光有分镜表就算出完的话，界面上说这一集拍完了，
+    // 而实际上一帧画面都还没出。
     const auto only_planned = json::array({a_shot("a", "planned")});
     CHECK_FALSE(http::flow_assess(a_project(), only_planned, json::array(),
                                   "ep01")
-                    .at("done")
-                    .at("shots")
+                    .at("counters")
+                    .at("shotsDone")
                     .get<bool>());
 
     const auto all_done = json::array(
         {a_shot("a", "final_done"), a_shot("b", "locked")});
     CHECK(http::flow_assess(a_project(), all_done, json::array(), "ep01")
-              .at("done")
-              .at("shots")
+              .at("counters")
+              .at("shotsDone")
               .get<bool>());
 
     // 一个镜头都没有时 0 == 0 会让"全都做完了"意外成立，单独挡一下
     CHECK_FALSE(http::flow_assess(a_project(), json::array(), json::array(),
                                   "ep01")
-                    .at("done")
-                    .at("shots")
+                    .at("counters")
+                    .at("shotsDone")
                     .get<bool>());
 }

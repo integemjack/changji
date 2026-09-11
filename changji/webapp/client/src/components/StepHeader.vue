@@ -11,6 +11,10 @@ import { useSession } from '@/stores/session'
 defineProps({
   title: { type: String, default: '' },
   tagline: { type: String, default: '' },
+  // 摆在别的页面里当子视图的抬头时用：只留操作区，不要编号徽标和大标题。
+  // 「这一集」那一页自己有标题和三个视图切换，子视图再来一个大标题就是
+  // 同一件事写两遍。
+  bare: { type: Boolean, default: false },
 })
 
 const route = useRoute()
@@ -22,13 +26,17 @@ const isDone = computed(() => Boolean(step.value && session.done[step.value.key]
 </script>
 
 <template>
-  <header class="head">
+  <header class="head" :class="{ 'head--bare': bare }">
     <div class="head__row">
-      <span v-if="step" class="head__badge" :class="{ 'head__badge--done': isDone }">
+      <span
+        v-if="step && !bare"
+        class="head__badge"
+        :class="{ 'head__badge--done': isDone }"
+      >
         <AppIcon v-if="isDone" name="check" :size="14" />
         <template v-else>{{ index + 1 }}</template>
       </span>
-      <div class="head__text">
+      <div v-if="!bare" class="head__text">
         <h1 class="head__title">{{ title || step?.title }}</h1>
         <p class="head__tagline">{{ tagline || step?.tagline }}</p>
       </div>
@@ -45,6 +53,9 @@ const isDone = computed(() => Boolean(step.value && session.done[step.value.key]
 <style scoped>
 .head {
   margin-bottom: var(--s6);
+}
+.head--bare {
+  margin-bottom: var(--s4);
 }
 .head__row {
   display: flex;

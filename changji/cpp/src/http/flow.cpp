@@ -52,16 +52,14 @@ json flow_steps() {
              {"hint", "从剧本提人物，全剧同一批"}},
         json{{"key", "scenes"}, {"phase", "episode"}, {"title", "场景"},
              {"hint", "这一集在哪儿拍"}},
-        // **分镜和制作 2026-09-10 合成一步「镜头」。** 那两页读的是同一张
-        // 分镜表，一页排一页跑，而人的动作是"看片子→改台词→重出"，
-        // 在同一镜上来回。合成一个页面之后侧边栏也该只有一格：
-        // 两格指向同一个地方，只会让人以为点错了。
-        json{{"key", "shots"}, {"phase", "episode"}, {"title", "镜头"},
-             {"hint", "拆镜头、改镜头、把它们拍出来"}},
-        json{{"key", "film"}, {"phase", "episode"}, {"title", "成片"},
-             {"hint", "看装配好的这一集"}},
-        json{{"key", "publish"}, {"phase", "episode"}, {"title", "上传至平台"},
-             {"hint", "带上标题和话题投递出去"}},
+        // **镜头、成片、上传 2026-09-11 合成一步「这一集」。**
+        //
+        // 2026-09-10 已经把分镜和制作合过一次（同一张分镜表，一页排一页跑，
+        // 而人在同一镜上来回）。这次是同一条理由再往外一层：人做的事是
+        // **对照着看**——对着这句台词看这一镜对不对，看完整集顺手发出去。
+        // 分成几页，来回换页才知道这一镜出自哪句话。
+        json{{"key", "episode"}, {"phase", "episode"}, {"title", "这一集"},
+             {"hint", "剧本、镜头、成片、发布，都在这一集上"}},
     });
 }
 
@@ -147,8 +145,8 @@ json flow_assess(const json& project, const json& shots, const json& outputs,
             planned += s["duration_s"].get<double>();
         }
     }
-    done["shots"] = !shots.empty() &&
-                    produced == static_cast<int>(shots.size());
+    const bool shots_done =
+        !shots.empty() && produced == static_cast<int>(shots.size());
 
     // ---- 成片：产物里有这一集的 ----
     bool has_film = false;
@@ -159,14 +157,17 @@ json flow_assess(const json& project, const json& shots, const json& outputs,
             break;
         }
     }
-    done["film"] = has_film;
-
-    // ---- 投递 ----
+    // ---- 这一集 ----
     //
-    // **这一步引擎判不了。** 投递记录存在 Node 那个 BFF 自己的配置里，
-    // 引擎这边没有那份数据，投递本身也只有那一侧有。
-    // 恒为未完成——不是判定错了，是这条路上确实没做过这件事。
-    done["publish"] = false;
+    // **判据取原来「成片」那条**：装配出片子才算这一集做完了。
+    //
+    // 不取「镜头全出完」：那时候还没装配，拿不到片子。也不把投递算进来——
+    // 投递记录存在 Node 那个 BFF 自己的配置里，引擎这边没有那份数据，
+    // 而且发不发是可选的收尾动作，把它算进来会让这一格永远不打勾。
+    done["episode"] = has_film;
+    // 镜头有没有全出完另外报一个数。这一格的进度条和「还差几镜」都靠它，
+    // 而判定本身用的是上面那条。
+    counters["shotsDone"] = shots_done;
 
     counters["shots"] = static_cast<int>(shots.size());
     counters["produced"] = produced;
