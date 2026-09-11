@@ -220,6 +220,11 @@ async function clearEmpty(locationId) {
 
 <template>
   <div class="stack stack--lg">
+    <h2 class="asec">
+      地点
+      <span class="asec__sub">同上：空景图是场景一致的锚点。</span>
+    </h2>
+
     <StepHeader bare>
       <template #actions>
         <button
@@ -267,7 +272,10 @@ async function clearEmpty(locationId) {
          站在这一页上不需要先挑一集。出场景那个按钮仍然按当前集的剧本走，
          没选集时它自己是禁用的。 -->
 
-    <template>
+    <!-- **不要在这儿套一个光秃秃的 <template>**：Vue 只把带
+         v-if/v-for/v-slot 的 template 当片段，没有指令的会当成真的
+         HTML template 元素渲染出去——浏览器默认 display:none，
+         内容全在 DOM 里、一个字不报错，就是看不见。栽过一次。 -->
       <div v-if="unlinked" class="alert alert--warn">
         <AppIcon name="warn" :size="15" />
         <span>
@@ -433,11 +441,25 @@ async function clearEmpty(locationId) {
           </div>
         </section>
       </template>
-    </template>
   </div>
 </template>
 
 <style scoped>
+/* 两块合成一页之后，光有两排按钮分不清哪排管人、哪排管地方。 */
+.asec {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s3);
+  flex-wrap: wrap;
+  font-size: var(--fs-lg);
+  font-weight: 700;
+}
+.asec__sub {
+  font-size: var(--fs-sm);
+  font-weight: 400;
+  color: var(--text-3);
+}
+
 .section-title {
   font-size: var(--fs-lg);
   font-weight: 600;

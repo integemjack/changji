@@ -185,6 +185,11 @@ async function clearRef(charId, slot) {
 
 <template>
   <div class="stack stack--lg">
+    <h2 class="asec">
+      人物
+      <span class="asec__sub">全剧同一批。外观只存在这儿，分镜表里只有 id——这是跨镜头一致的唯一手段。</span>
+    </h2>
+
     <StepHeader bare>
       <template #actions>
         <button
@@ -226,7 +231,10 @@ async function clearRef(charId, slot) {
 
     <!-- 「还没选项目」归父页面判，每块各判一遍是同一句话写两遍 -->
 
-    <template>
+    <!-- **不要在这儿套一个光秃秃的 <template>**：Vue 只把带
+         v-if/v-for/v-slot 的 template 当片段，没有指令的会当成真的
+         HTML template 元素渲染出去——浏览器默认 display:none，
+         内容全在 DOM 里、一个字不报错，就是看不见。栽过一次。 -->
       <p v-if="refsUsed === false" class="notice">
         <AppIcon name="info" :size="15" />
         <span>{{ assets?.reference_hint }}</span>
@@ -414,11 +422,25 @@ async function clearRef(charId, slot) {
           </div>
         </article>
       </div>
-    </template>
   </div>
 </template>
 
 <style scoped>
+/* 两块合成一页之后，光有两排按钮分不清哪排管人、哪排管地方。 */
+.asec {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s3);
+  flex-wrap: wrap;
+  font-size: var(--fs-lg);
+  font-weight: 700;
+}
+.asec__sub {
+  font-size: var(--fs-sm);
+  font-weight: 400;
+  color: var(--text-3);
+}
+
 .notice {
   display: flex;
   align-items: flex-start;
