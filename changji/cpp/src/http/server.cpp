@@ -742,7 +742,29 @@ void run(const config::Settings& settings, const Options& opts) {
                 auto s = config::runtime().snapshot();
                 s.llm.backend = backend;
                 config::runtime().replace(s);
-                return ApiResult{200, {{"backend", backend}}};
+
+                // **改成外接就把显存里那份放掉。**
+                //
+                // 用户切这一项，多半就是为了腾显存——小卡上撞到"显存不够"
+                // 时，体检和报错都在劝他走这条路。可光改配置的话，那十几
+                // GB 还原封不动占着：要等到下一次出片腾地方才顺带被卸掉，
+                // 而设置页此刻还写着"现在：装着（实测占 15.4 GB）"。
+                // 他会以为这一项没生效。
+                //
+                // 正在写剧本时 evict 返回 false，不强卸——那会让正在跑的
+                // 那次生成段错误。**这一次先留着**，反正它已经不会再被借，
+                // 下一次腾地方时就走了。
+                //
+                // 先看它装着没有再动手：evict 的语义是"事后不装着就算成功"
+                // ——槽压根没装也返回 true。直接拿它当回答的话，这个字段
+                // 在"本来就没装"的时候会说成"卸掉了"。
+                bool unloaded = false;
+                if (backend == "remote" &&
+                    infer::scheduler().loaded(infer::Slot::LLM)) {
+                    unloaded = infer::scheduler().evict(infer::Slot::LLM);
+                }
+                return ApiResult{200,
+                                 {{"backend", backend}, {"unloaded", unloaded}}};
             });
             return json_response(r.body, r.status);
         });
