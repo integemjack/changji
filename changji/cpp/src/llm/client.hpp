@@ -61,6 +61,12 @@ using HttpPost = std::function<HttpResponse(
     const std::string& url, const std::string& body,
     const std::map<std::string, std::string>& headers, double timeout_s)>;
 
+/// 生成到一段文字时回调一次。给的是**增量**，不是累计。
+///
+/// 增量而不是累计：一段几千字的正文，回调几百次、每次带全文的话，
+/// 光是这些字符串拷贝就比生成本身还贵。
+using OnToken = std::function<void(const std::string& piece)>;
+
 /// 客户端接口。
 class Client {
 public:
@@ -72,6 +78,18 @@ public:
     /// httplib 的同步调用中途打不断；进程内后端可以在每个 token 上查。
     virtual std::string complete(const Request& req,
                                  pipeline::CancelToken& tok) = 0;
+
+    /// 同上，但**边生边给**。
+    ///
+    /// 用户 2026-09-11 要的"AI 生成在编辑器里流式插入"：写一段话要十几秒，
+    /// 攒齐了再一次性蹦出来，中间那十几秒界面上什么都没有——而那正是他要
+    /// 看的"写作的过程"。
+    ///
+    /// **默认实现就是跑一遍同步的然后整段回调一次。** 这不是敷衍：远端
+    /// 那条路要不要上 SSE 是另一笔账，而这里的约定只是"能拿到就早点给"。
+    /// 拿不到的后端照样能用，只是那一下是整段到的。
+    virtual std::string complete(const Request& req, pipeline::CancelToken& tok,
+                                 const OnToken& on_token);
 };
 
 /// 拼请求体。对应 Python 三个阶段里那份 payload。

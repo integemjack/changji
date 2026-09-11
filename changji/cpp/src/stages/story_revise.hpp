@@ -57,10 +57,14 @@ std::string span_text(const models::Story& story, const Span& span);
 /// `history` 是之前的来回，可以为空——空的就是"选中一段直接说一句"那条路，
 /// 非空就是对话形式。**两条路共用同一个提示词和同一条写回路径**：两套
 /// 机制都能改正文的话，迟早出现"对话改的和选中改的对同一段各有一份"。
+///
+/// `plain` 为真时要它**直接吐正文、不要 JSON**。逐字插进编辑器的那条路
+/// 必须这样：不然用户先看到的是 `{"text":"` 这几个字符。代价是没有 note。
 std::string build_revise_prompt(const models::Story& story, const Span& span,
                                 const std::string& instruction,
                                 const std::vector<ReviseTurn>& history,
-                                models::StyleLine style_line);
+                                models::StyleLine style_line,
+                                bool plain = false);
 
 /// JSON Schema：回一段替换用的正文，外加一句说明改了什么。
 const nlohmann::ordered_json& revise_schema();
@@ -79,6 +83,13 @@ struct Revision {
 ///
 /// 变短是合法的（"把这段压缩成一句"就该变短），所以只拦上限不拦下限。
 Revision parse_revision(const std::string& raw, int span_chars);
+
+/// 同上，但收的是**大白话**（plain 那条路的产物）。
+///
+/// 模型十次里有一两次会自作主张包一层 ``` 代码块、或者在前面加一句
+/// 「修改后：」。这些字会原样落进正文——而正文是后面写剧本的输入，
+/// 一句「修改后：」能一路活到分镜表里去。所以这里剥掉。
+Revision parse_plain_revision(const std::string& raw, int span_chars);
 
 /// 把新的一段接回故事里：替换正文、重算这一章的候选切点。
 ///

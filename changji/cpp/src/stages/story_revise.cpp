@@ -33,6 +33,58 @@ const Chapter* find(const Story& story, const std::string& chapter_id) {
     return story.chapter_by_id(chapter_id);
 }
 
+
+/// 拦"改着改着把整章吐回来"。两条路共用。
+///
+/// 那样落盘之后整章内容会翻倍，而界面上只显示"改好了"——多出来的那一份
+/// 要等写剧本时才发现，那时候已经隔了好几步。**只拦上限不拦下限**：
+/// "把这段压缩成一句"是正当要求。
+void guard_length(const std::string& text_in, int span_chars) {
+    if (span_chars <= 0) return;
+    const int cap = std::max(600, span_chars * 6);
+    const int got = static_cast<int>(text::utf8_len(text_in));
+    if (got > cap) {
+        throw std::runtime_error(
+            "改完有 " + std::to_string(got) + " 个字，而选中的只有 " +
+            std::to_string(span_chars) + " 个——八成是把整章抄回来了。再试一次");
+    }
+}
+
+/// 剥掉模型自作主张加的包装。
+///
+/// 十次里有一两次它会包一层 ``` 代码块、或者在前面写一句「修改后：」。
+/// 这些字会**原样落进正文**——而正文是后面写剧本的输入，一句「修改后：」
+/// 能一路活到分镜表里去。
+std::string unwrap(std::string body) {
+    body = text::strip_ws(body);
+
+    // 三个反引号开头的代码块，第一行可能带语言名。
+    if (body.rfind("```", 0) == 0) {
+        const std::size_t nl = body.find('\n');
+        const std::size_t close = body.rfind("```");
+        if (nl != std::string::npos && close != std::string::npos && close > nl) {
+            body = text::strip_ws(body.substr(nl + 1, close - nl - 1));
+        }
+    }
+
+    // 开头那句「修改后：」。只剥**第一行就是它**的情况——正文里真出现这
+    // 三个字的话（人物说了这句），那是内容，不能动。
+    static const char* kLeads[] = {"修改后", "改写后", "改完", "新的一段",
+                                   "以下是改完的一段", "以下是修改后的正文"};
+    for (const char* lead : kLeads) {
+        const std::string want = lead;
+        if (body.rfind(want, 0) != 0) continue;
+        std::string rest = body.substr(want.size());
+        const std::string colon = rest.rfind("：", 0) == 0   ? "："
+                                  : rest.rfind(":", 0) == 0 ? ":"
+                                                            : "";
+        if (colon.empty()) continue;
+        body = text::strip_ws(rest.substr(colon.size()));
+        break;
+    }
+    return body;
+}
+
 }  // namespace
 
 std::string span_text(const Story& story, const Span& span) {
@@ -64,7 +116,7 @@ const ordered& revise_schema() {
 std::string build_revise_prompt(const Story& story, const Span& span,
                                 const std::string& instruction,
                                 const std::vector<ReviseTurn>& history,
-                                StyleLine style_line) {
+                                StyleLine style_line, bool plain) {
     const Chapter* c = find(story, span.chapter_id);
     if (c == nullptr) throw std::runtime_error("没有这一章：" + span.chapter_id);
 
@@ -117,7 +169,7 @@ std::string build_revise_prompt(const Story& story, const Span& span,
 
     out += prompt::kReviseTaskHead;
     out += text::strip_ws(instruction);
-    out += prompt::kReviseTail;
+    out += plain ? prompt::kRevisePlainTail : prompt::kReviseTail;
     return out;
 }
 
@@ -142,16 +194,16 @@ Revision parse_revision(const std::string& raw, int span_chars) {
     // **拦住"改着改着把整章吐回来"。** 那样落盘之后整章内容会翻倍，而界面
     // 上只显示"改好了"——多出来的那一份要等写剧本时才发现，那时候已经隔了
     // 好几步。变短是合法的（"把这段压缩成一句"就该变短），所以只拦上限。
-    if (span_chars > 0) {
-        const int cap = std::max(600, span_chars * 6);
-        const int got = static_cast<int>(text::utf8_len(r.text));
-        if (got > cap) {
-            throw std::runtime_error(
-                "改完有 " + std::to_string(got) + " 个字，而选中的只有 " +
-                std::to_string(span_chars) +
-                " 个——八成是把整章抄回来了。再试一次");
-        }
-    }
+    guard_length(r.text, span_chars);
+    return r;
+}
+
+
+Revision parse_plain_revision(const std::string& raw, int span_chars) {
+    Revision r;
+    r.text = unwrap(raw);
+    if (r.text.empty()) throw std::runtime_error("改完是空的，没法替换");
+    guard_length(r.text, span_chars);
     return r;
 }
 

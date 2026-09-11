@@ -21,6 +21,9 @@ public:
     LocalClient() = default;
     std::string complete(const Request& req,
                          pipeline::CancelToken& tok) override;
+    /// 边生边给。进程内这条路能逐 token 拿到，所以真流式的就是它。
+    std::string complete(const Request& req, pipeline::CancelToken& tok,
+                         const OnToken& on_token) override;
 };
 
 /// 进程内那条现在是什么状态。设置页的引擎卡读它。

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <filesystem>
+#include <functional>
 #include <memory>
 #include <string>
 
@@ -46,9 +47,13 @@ public:
     /// `schema` 是 JSON Schema 的文本（空表示不约束）。
     /// `tok` 被取消时提前收工，返回已经生成的部分并把 `cancelled` 置位。
     /// 失败返回 false 并填 `why`。
+    ///
+    /// `on_piece` 非空时**每吐一段就回调一次**（给的是增量），给"边生边写"
+    /// 那条路用。回调里别做慢活：它跑在生成循环里，每个 token 一次。
     bool complete(const std::string& prompt, const std::string& schema,
                   double temperature, int max_tokens, pipeline::CancelToken& tok,
-                  std::string& out, std::string& why);
+                  std::string& out, std::string& why,
+                  const std::function<void(const std::string&)>& on_piece = {});
 
     /// 这个模型的上下文长度。提示词超了要先知道，别等它自己截断。
     int context_tokens() const;

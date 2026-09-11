@@ -36,6 +36,11 @@ LocalLlmStatus local_llm_status() {
 
 std::string LocalClient::complete(const Request& req,
                                   pipeline::CancelToken& tok) {
+    return complete(req, tok, {});
+}
+
+std::string LocalClient::complete(const Request& req, pipeline::CancelToken& tok,
+                                  const OnToken& on_token) {
     if (tok.cancelled()) throw LlmError("已取消");
 
     // **并发在 LlamaChat 里管**：同一份权重上开了几个上下文，几路就能同时
@@ -64,7 +69,7 @@ std::string LocalClient::complete(const Request& req,
     // LlamaChat 里会先查提示词加这个数超没超。
     constexpr int kMaxTokens = 8192;
     if (!chat->complete(req.prompt, schema, req.temperature, kMaxTokens, tok,
-                        out, why)) {
+                        out, why, on_token)) {
         throw LlmError("进程内大模型失败：" + why);
     }
     if (tok.cancelled()) throw LlmError("已取消");

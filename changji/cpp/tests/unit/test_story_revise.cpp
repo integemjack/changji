@@ -197,3 +197,48 @@ TEST_CASE("写回去：整章换掉也行，故事照样校验得过") {
     // 钩子全在被换掉的范围里，所以有说法的一个都不剩，只有新算的段落边界
     for (const auto& h : next.chapters[0].hooks) CHECK(h.text.empty());
 }
+
+// ---------------------------------------------------------------------------
+// 流式那条路：不要 JSON，直接吐正文
+// ---------------------------------------------------------------------------
+
+TEST_CASE("plain 提示词明说不要 JSON") {
+    const std::string p = build_revise_prompt(a_story(), mid_span(), "铺一下", {},
+                                              StyleLine::REALISTIC, true);
+    // 逐字插进编辑器的话，用户先看到的会是 {"text":" 这几个字符
+    CHECK(p.find("不要 JSON") != std::string::npos);
+    CHECK(p.find("放进 text") == std::string::npos);
+
+    // 非 plain 那条照旧要 JSON
+    const std::string q = build_revise_prompt(a_story(), mid_span(), "铺一下", {},
+                                              StyleLine::REALISTIC, false);
+    CHECK(q.find("放进 text") != std::string::npos);
+}
+
+TEST_CASE("大白话解析：整段就是正文") {
+    CHECK(parse_plain_revision("改完的一段。", 7).text == "改完的一段。");
+    CHECK(parse_plain_revision("  改完的一段。  ", 7).text == "改完的一段。");
+    CHECK_THROWS(parse_plain_revision("   ", 7));
+}
+
+TEST_CASE("大白话解析：剥掉模型自作主张加的包装") {
+    // 这些字会**原样落进正文**，而正文是后面写剧本的输入——一句「修改后：」
+    // 能一路活到分镜表里去。
+    CHECK(parse_plain_revision("修改后：改完的一段。", 7).text == "改完的一段。");
+    CHECK(parse_plain_revision("改写后:改完的一段。", 7).text == "改完的一段。");
+    CHECK(parse_plain_revision("```\n改完的一段。\n```", 7).text == "改完的一段。");
+    CHECK(parse_plain_revision("```text\n改完的一段。\n```", 7).text == "改完的一段。");
+
+    // **正文里真出现这几个字不能动。** 人物说了「修改后果自负」的话，
+    // 那是内容——只剥"开头就是它、后面紧跟冒号"的情况。
+    CHECK(parse_plain_revision("修改后果自负，他说。", 7).text ==
+          "修改后果自负，他说。");
+}
+
+TEST_CASE("大白话解析：照样拦整章吐回来") {
+    std::string huge;
+    for (int i = 0; i < 400; ++i) huge += "很长的一段话。";
+    CHECK_THROWS(parse_plain_revision(huge, 7));
+    // 变短合法
+    CHECK(parse_plain_revision("一句。", 700).text == "一句。");
+}

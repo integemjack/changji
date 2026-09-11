@@ -53,6 +53,18 @@ inline constexpr const char* kReviseTaskHead =
 【这次要你做什么】
 )CJ";
 
+/// 流式那条路的结尾。**不要 JSON。**
+///
+/// 逐字插进编辑器的话，用户先看到的会是 `{"text":"` 这几个字符，然后正文，
+/// 然后 `","note":"…"}`。JSON 那层包装在这条路上不是约束，是垃圾。
+/// 代价是没有 note——那本来也只是一句锦上添花的说明。
+inline constexpr const char* kRevisePlainTail =
+    R"CJ(
+
+直接输出改完的那一段正文。**不要 JSON，不要解释，不要加引号，不要重复
+原文，也不要写「修改后：」这类字样。** 从正文第一个字开始写。
+)CJ";
+
 inline constexpr const char* kReviseTail =
     R"CJ(
 

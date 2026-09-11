@@ -26,9 +26,10 @@ export function jobSocketUrl() {
  * @param {string} kind      "run" 或 "write"
  * @param {(msg: object) => void} onMessage 收到一条消息（已经解析成对象）
  * @param {() => void} [onDrop] 断开时叫一声，调用方据此退回轮询
+ * @param {() => void} [onOpen] 订阅**已经发出去**之后叫一声
  * @returns {{ close: () => void }} 关掉它；重复关是安全的
  */
-export function openJobSocket(kind, onMessage, onDrop) {
+export function openJobSocket(kind, onMessage, onDrop, onOpen) {
   let sock
   try {
     sock = new WebSocket(jobSocketUrl())
@@ -40,6 +41,10 @@ export function openJobSocket(kind, onMessage, onDrop) {
 
   sock.onopen = () => {
     sock.send(JSON.stringify({ type: 'subscribe', job_id: kind }))
+    // **订完再开工。** 流式那条路上，请求要等订阅发出去才能发——反过来的
+    // 话头几个字推出来时还没人听，而漏掉的那几个字不会有任何提示，只是
+    // 编辑器里那段话缺了个开头。
+    onOpen?.()
   }
   sock.onmessage = (ev) => {
     let msg

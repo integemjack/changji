@@ -12,10 +12,15 @@
  * 所以正文**一直是可编辑的**，不是"只读 + 一个手改开关"。看到一个错别字
  * 还要打一句"把这里的'的'改成'地'"，那不叫创作工具。
  *
- * 而 AI 改出来的东西**直接落到编辑器里那一段的位置上**，不是摆在右边一个
- * 框里等你抄过去。你看到的就是改完的稿子本身；不满意按「撤销」，整段退回
- * 改之前。（还差最后一步：现在是一次性插进去，逐字流式插入要引擎那边先
- * 能吐 token，见下一轮。）
+ * 而 AI 改出来的东西**一个字一个字长在编辑器里那一段的位置上**，不是摆在
+ * 右边一个框里等你抄过去。你看到的就是改完的稿子本身，而且看得见它在写；
+ * 不满意按「撤销」，整段退回改之前。
+ *
+ * 字走 WebSocket（`/api/story/revise` 带上 `stream`），请求本身照样在最后
+ * 回完整的一份——**那一份才是权威的**：它剥过模型自作主张加的包装
+ * （``` 代码块、「修改后：」），而流出来的是原始 token。收尾时拿它覆盖
+ * 一次，不然编辑器里会留下一行 ``` 。WebSocket 连不上就退回一次性返回，
+ * 少的只是"看着它写"这件事。
  *
  * **编辑器用 textarea，不是 contenteditable。** selectionStart/End 直接就是
  * 偏移，不用在 DOM 里爬；而 contenteditable 里每一次输入都可能重排节点，
@@ -31,6 +36,7 @@ import EmptyState from '@/components/EmptyState.vue'
 import StepHeader from '@/components/StepHeader.vue'
 import { api } from '@/api'
 import { useAction } from '@/composables/useAction'
+import { openJobSocket } from '@/composables/useJobSocket'
 import { useSession } from '@/stores/session'
 import { useUi } from '@/stores/ui'
 import { useWriter } from '@/stores/run'
@@ -76,6 +82,8 @@ const instruction = ref('')
  * 插进去之后用户可能又手动改了两个字，按区间回退会退错地方。
  */
 const pending = ref(null)
+/** 正在流式写入的那一段，非空时编辑器里那几个字正一个个冒出来。 */
+const streaming = ref(null)
 /** setStory 之前记一下哪几章是脏的。存完那一章会从这里拿掉。 */
 const dirtySnapshot = new Set()
 
@@ -255,6 +263,15 @@ async function saveAllDirty() {
 // 让 AI 改：改完**直接落到编辑器里那一段的位置上**
 // ---------------------------------------------------------------------------
 
+/**
+ * 让 AI 改选中那一段。**边生边写进编辑器**。
+ *
+ * 字走 WebSocket 一个个推过来，请求本身照样在最后回完整的一份——那一份
+ * 是剥过包装（``` 代码块、「修改后：」）的，所以收尾时拿它把流出来的那段
+ * 覆盖一次，两边才一致。
+ *
+ * WebSocket 连不上就退回一次性返回：少了"看着它写"这件事，但功能还在。
+ */
 async function revise() {
   const want = instruction.value.trim()
   if (!sel.value) return
@@ -263,28 +280,85 @@ async function revise() {
     return
   }
   const at = { ...sel.value }
-  const result = await run(
-    () =>
-      api.reviseStory({
-        project: session.projectPath,
-        chapter_id: at.chapter_id,
-        from_char: at.from,
-        to_char: at.to,
-        instruction: want,
-        history: chat.value,
-      }),
-    { key: 'revise' },
-  )
-  if (!result) return
+  const id = at.chapter_id
 
-  // **插进去，不摆在旁边。** 你看到的就是改完的稿子本身。
-  const full = buf[at.chapter_id] ?? ''
-  const chars = [...full]
+  // 改之前那一章的整份，撤销和流式拼接都拿它当底
+  const prev = buf[id] ?? ''
+  const chars = [...prev]
   const head = chars.slice(0, at.from).join('')
   const tail = chars.slice(at.to).join('')
-  pending.value = { chapter_id: at.chapter_id, prev: full, origin: at }
-  buf[at.chapter_id] = head + result.text + tail
-  dirtySnapshot.add(at.chapter_id)
+
+  const streamId = 'story-' + Math.random().toString(36).slice(2, 10)
+  let acc = ''
+  let sock = null
+  let opened = false
+
+  const paint = async (text) => {
+    buf[id] = head + text + tail
+    dirtySnapshot.add(id)
+    await nextTick()
+    fit(boxes[id])
+  }
+
+  const finish = () => {
+    sock?.close()
+    sock = null
+    streaming.value = null
+  }
+
+  const post = () =>
+    api.reviseStory({
+      project: session.projectPath,
+      chapter_id: id,
+      from_char: at.from,
+      to_char: at.to,
+      instruction: want,
+      history: chat.value,
+      // 订阅没发出去就别开流：头几个字推出来时没人听，而漏掉的那几个字
+      // 不会有任何提示，只是那段话缺了个开头。
+      ...(opened ? { stream: streamId } : {}),
+    })
+
+  // 先把选中那段清掉，字就从那个位置长出来——这一下就是"开始写了"
+  streaming.value = { chapter_id: id, from: at.from }
+  pending.value = { chapter_id: id, prev, origin: at }
+  await paint('')
+
+  await new Promise((resolve) => {
+    sock = openJobSocket(
+      streamId,
+      (msg) => {
+        if (msg.job_id !== streamId) return
+        if (msg.type === 'story_token') {
+          acc += msg.text ?? ''
+          paint(acc)
+        }
+        // done / error 不在这儿收尾：请求本身的返回才是权威的那一份
+      },
+      () => resolve(),
+      () => {
+        opened = true
+        resolve()
+      },
+    )
+    // 连不上也别卡着。两秒够本机的 WebSocket 握完手了。
+    setTimeout(resolve, 2000)
+  })
+
+  const result = await run(post, { key: 'revise' })
+  finish()
+  if (!result) {
+    // 改砸了，把清掉的那一段放回去
+    buf[id] = prev
+    pending.value = null
+    await nextTick()
+    fit(boxes[id])
+    return
+  }
+
+  // **拿返回那一份收尾。** 流出来的是原始 token，返回那份剥过包装，
+  // 两者可能差几个字符；不覆盖的话编辑器里会留下一行 ``` 。
+  await paint(result.text)
 
   chat.value = [
     ...chat.value,
@@ -293,15 +367,15 @@ async function revise() {
   ]
   instruction.value = ''
 
-  // 选中刚插进去那一段：接着说"再短一点"时，说的还是这一段
+  // 选中刚写好那一段：接着说"再短一点"时，说的还是这一段
   const to = at.from + [...result.text].length
-  sel.value = { chapter_id: at.chapter_id, from: at.from, to, text: result.text }
+  sel.value = { chapter_id: id, from: at.from, to, text: result.text }
   await nextTick()
-  const el = boxes[at.chapter_id]
+  const el = boxes[id]
   if (el) {
     fit(el)
     el.focus()
-    const now = buf[at.chapter_id]
+    const now = buf[id]
     el.setSelectionRange(utf16At(now, at.from), utf16At(now, to))
   }
 }
@@ -729,7 +803,15 @@ async function stopWriting() {
               @click="revise"
             >
               <AppIcon name="sparkle" :size="14" />
-              {{ isBusy('revise') ? '改着…' : chat.length ? '再改一版' : '改' }}
+              {{
+                streaming
+                  ? '正在写…'
+                  : isBusy('revise')
+                    ? '改着…'
+                    : chat.length
+                      ? '再改一版'
+                      : '改'
+              }}
             </button>
             <span class="tiny dim">Ctrl+Enter</span>
           </div>

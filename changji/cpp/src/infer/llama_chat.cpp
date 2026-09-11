@@ -204,7 +204,8 @@ int LlamaChat::slots() const { return static_cast<int>(impl_->ctxs.size()); }
 bool LlamaChat::complete(const std::string& prompt, const std::string& schema,
                          double temperature, int max_tokens,
                          pipeline::CancelToken& tok, std::string& out,
-                         std::string& why) {
+                         std::string& why,
+                         const std::function<void(const std::string&)>& on_piece) {
     out.clear();
     Impl& im = *impl_;
     const llama_vocab* vocab = llama_model_get_vocab(im.model);
@@ -315,6 +316,9 @@ bool LlamaChat::complete(const std::string& prompt, const std::string& schema,
             return false;
         }
         out.append(buf, static_cast<std::size_t>(n));
+        // **回调在 append 之后、解码下一个之前。** 放在循环别处的话，
+        // 取消时已经吐出去的和 out 里攒的会对不上——而调用方两边都在用。
+        if (on_piece) on_piece(std::string(buf, static_cast<std::size_t>(n)));
         batch = llama_batch_get_one(&id, 1);
     }
     return true;
@@ -338,7 +342,8 @@ int LlamaChat::context_tokens() const { return 0; }
 int LlamaChat::slots() const { return 0; }
 bool LlamaChat::complete(const std::string&, const std::string&, double, int,
                          pipeline::CancelToken&, std::string&,
-                         std::string& why) {
+                         std::string& why,
+                         const std::function<void(const std::string&)>&) {
     why = "这个二进制没编进程内大模型";
     return false;
 }

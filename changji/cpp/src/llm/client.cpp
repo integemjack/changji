@@ -152,6 +152,16 @@ RemoteClient::RemoteClient(ConfigProvider cfg, HttpPost post)
 RemoteClient::RemoteClient(config::LLMConfig cfg, HttpPost post)
     : cfg_([cfg] { return cfg; }), post_(std::move(post)) {}
 
+std::string Client::complete(const Request& req, pipeline::CancelToken& tok,
+                             const OnToken& on_token) {
+    // 拿不到逐字的后端就整段给一次。**不是不回调**——调用方按"回调拼出来
+    // 的就是全文"写，少这一下的话流式那条路上什么都收不到，而它不会报错，
+    // 只是编辑器里一直空着。
+    std::string out = complete(req, tok);
+    if (on_token && !out.empty()) on_token(out);
+    return out;
+}
+
 std::string RemoteClient::complete(const Request& req,
                                    pipeline::CancelToken& tok) {
     if (tok.cancelled()) throw LlmError("已取消");

@@ -12,6 +12,7 @@
 #include "stages/story_outline.hpp"
 #include "stages/story_plan.hpp"
 #include "stages/story_reverse.hpp"
+#include "http/ws.hpp"
 #include "stages/story_revise.hpp"
 #include "util/paths.hpp"
 #include "util/text.hpp"
@@ -501,7 +502,7 @@ std::vector<stages::ReviseTurn> read_history(const json& body) {
 ApiResult post_story_revise(const json& body, llm::Client& client,
                             pipeline::CancelToken& tok) {
     forbid_extra(body, {"project", "chapter_id", "from_char", "to_char",
-                        "instruction", "history"});
+                        "instruction", "history", "stream"});
     ProjectStore store = open_project(body);
     const Project project = load_or_400(store);
     const Story story = load_story_or_400(store);
@@ -515,20 +516,57 @@ ApiResult post_story_revise(const json& body, llm::Client& client,
     }
 
     const std::string before = stages::span_text(story, span);
+    const int span_chars = static_cast<int>(text::utf8_len(before));
+
+    // 给了 stream_id 就**边生边推**：写一段话要十几秒，攒齐了再一次性蹦
+    // 出来的话，中间那十几秒界面上什么都没有——而那正是用户要看的"写作的
+    // 过程"。字走 WebSocket，这个请求照样在最后回完整的一份（前端拿它对
+    // 一遍，也让丢包的连接有个兜底）。
+    const std::string stream_id = text::strip_ws(opt_str(body, "stream"));
+    const bool streaming = !stream_id.empty();
 
     llm::Request req;
+    // **流式那条不要 JSON。** 逐字插进编辑器的话，用户先看到的会是
+    // `{"text":"` 这几个字符。代价是没有 note，那本来也只是锦上添花。
     req.prompt = stages::build_revise_prompt(story, span, instruction, history,
-                                             project.style_line);
-    req.schema = stages::revise_schema();
-    req.schema_name = "story_revision";
+                                             project.style_line, streaming);
+    if (!streaming) {
+        req.schema = stages::revise_schema();
+        req.schema_name = "story_revision";
+    }
 
     stages::Revision rev;
     try {
-        rev = stages::parse_revision(
-            client.complete(req, tok),
-            static_cast<int>(text::utf8_len(before)));
+        if (streaming) {
+            int seq = 0;
+            const std::string raw = client.complete(
+                req, tok, [&](const std::string& piece) {
+                    // **不节流。** 逐字推正是这件事的全部意义；而 Hub 的
+                    // 节流是按 (job, type) 分桶的，type 用 progress 的话
+                    // 会被 200ms 一桶压掉九成。
+                    ws::hub().broadcast(stream_id,
+                                        {{"type", "story_token"},
+                                         {"job_id", stream_id},
+                                         {"seq", seq++},
+                                         {"text", piece}});
+                });
+            rev = stages::parse_plain_revision(raw, span_chars);
+        } else {
+            rev = stages::parse_revision(client.complete(req, tok), span_chars);
+        }
     } catch (const std::exception& e) {
+        if (streaming) {
+            // 报错也要推一条：前端那边正等着字，不推的话它一直显示"改着…"
+            ws::hub().broadcast(stream_id, {{"type", "story_error"},
+                                            {"job_id", stream_id},
+                                            {"message", e.what()}});
+        }
         throw ApiError(502, std::string("改稿没改出能用的东西：") + e.what());
+    }
+    if (streaming) {
+        ws::hub().broadcast(stream_id, {{"type", "story_done"},
+                                        {"job_id", stream_id},
+                                        {"text", rev.text}});
     }
 
     // **只回草稿，不落库。** 和写大纲同一条规矩，而且这里更要紧：大纲落错了
