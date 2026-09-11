@@ -67,6 +67,16 @@ inline constexpr int kEpisodesPerChapter = 3;
 /// 四集。
 int chapter_target_chars(const models::Story& story);
 
+/// 一段大约多少字。
+///
+/// 2026-09-11 量过起点主流长篇（《诡秘之主》第 2~6 章）：段长中位 33 字，
+/// 八成以上的段只有一句话。不给这个数，模型会写成百字长段、一章二三十段，
+/// 而分集是按段落边界切的，段少刀就没地方下。
+inline constexpr int kCharsPerParagraph = 35;
+
+/// 这一章该写多少段。从字数算，塞进提示词给模型一个形状。
+int chapter_target_paras(const models::Story& story);
+
 /// 这一章要标几个钩子。
 ///
 /// **按它会被切成几集算**：每一集的结尾都该落在一个真钩子上。写死一个
@@ -74,7 +84,13 @@ int chapter_target_chars(const models::Story& story);
 int chapter_hook_count(const models::Story& story);
 
 /// 请求里带的 JSON Schema。
-const nlohmann::ordered_json& chapter_schema();
+///
+/// **正文是 paragraphs 数组，段数由 schema 卡住**（minItems / maxItems）。本地
+/// 后端把 schema 转成 GBNF 硬约束，远端靠 response_format。2026-09-11 实跑：
+/// 正文只是一个 text 字符串时，14B 三章里两章把梗概原样抄进去就收工（一百
+/// 来字），另一次写到 8192 token 都没收口——「写满三千字」这句它根本不听。
+/// 段数进了语法就是下限和上限：它没法只写一段，也没法写个没完。
+nlohmann::ordered_json chapter_schema(int target_paras);
 
 /// 拼提示词。chapter_id 不存在时抛。
 std::string build_chapter_prompt(const models::Story& story,

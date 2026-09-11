@@ -269,6 +269,12 @@ bool LlamaChat::complete(const std::string& prompt, const std::string& schema,
         }
         llama_sampler_chain_add(chain, g);
     }
+    // 重复惩罚。写正文时模型会卡在复读里（同一句「陈默站在门口，看着他。」
+    // 连写六遍），语法只管形状管不了这个。最近 512 个 token 里出现过的轻微
+    // 压一下——结构 token 反正被语法钉死，压了也无所谓。
+    llama_sampler_chain_add(
+        chain, llama_sampler_init_penalties(llama_vocab_n_tokens(vocab), 512,
+                                            1.10f, 0.0f, 0.3f));
     llama_sampler_chain_add(chain, llama_sampler_init_top_k(40));
     llama_sampler_chain_add(chain, llama_sampler_init_top_p(0.95f, 1));
     llama_sampler_chain_add(

@@ -54,6 +54,10 @@ int chapter_target_chars(const Story& story) {
     return std::max(kChapterTargetChars, cap * kEpisodesPerChapter);
 }
 
+int chapter_target_paras(const Story& story) {
+    return std::max(10, chapter_target_chars(story) / kCharsPerParagraph);
+}
+
 int chapter_hook_count(const Story& story) {
     const int cap = prose_budget_chars(story.episode_duration_s);
     if (cap <= 0) return kEpisodesPerChapter;
@@ -62,8 +66,12 @@ int chapter_hook_count(const Story& story) {
     return std::max(2, n);
 }
 
-const ordered& chapter_schema() {
-    static const ordered schema = [] {
+ordered chapter_schema(int target_paras) {
+    // 段数的上下限：目标的三分之二到一倍半。下限让它没法一两段交差，上限让它
+    // 没法写个没完（85 段目标 → 56~127 段，撑死四五千 token，离 8192 远）。
+    const int min_items = std::max(10, target_paras * 2 / 3);
+    const int max_items = std::max(min_items + 10, target_paras * 3 / 2);
+    const ordered schema = [&] {
         ordered hook_props = ordered::object();
         hook_props["text"] = {
             {"type", "string"},
@@ -74,10 +82,20 @@ const ordered& chapter_schema() {
              "这个位置前面那句的原文，照抄十到二十个字。程序靠它定位切点"}};
 
         ordered props = ordered::object();
-        props["text"] = {
-            {"type", "string"},
+        props["paragraphs"] = {
+            {"type", "array"},
             {"description",
-             "这一章的**完整正文**，几千字连贯的叙述，小说体。不是标题、不是梗概、不是提纲，也不要剧本格式的标记"}};
+             "这一章的**完整正文**，一段一项：一段一两句话、三四十个字，动作一段、对白一段，整章几千字。小说体。不是标题、不是梗概、不是提纲，也不要剧本格式的标记"},
+            {"minItems", min_items},
+            {"maxItems", max_items},
+            // 每段至少 16 字：只卡段数时模型写 80 段十几个字的短句凑数，
+            // 一章才一千三。真实网文段长中位 33，这是字数的杠杆——实测
+            // 12 出 1500~1900 字，20 出 2000~2700 字。但 20 时最后一段想
+            // 15 字收口，语法不让，它就拿「”'”””””」凑数；strip_quote_runs
+            // 兜底，源头也别逼太紧，取中间。
+            // 每段最长 300 字：真实网文最长的段也就三百来字。实跑时模型把
+            // 一千多字的自言自语塞进了一段（见 parse_chapter 里那道闸）。
+            {"items", {{"type", "string"}, {"minLength", 16}, {"maxLength", 300}}}};
         props["hooks"] = {
             {"type", "array"},
             {"description",
@@ -90,7 +108,7 @@ const ordered& chapter_schema() {
         ordered s = ordered::object();
         s["type"] = "object";
         s["properties"] = props;
-        s["required"] = {"text", "hooks"};
+        s["required"] = {"paragraphs", "hooks"};
         s["additionalProperties"] = false;
         return s;
     }();
@@ -110,6 +128,8 @@ std::string build_chapter_prompt(const Story& story,
                                           : prompt::kChapterHintRealistic;
     out += prompt::kChapterSeg1;
     out += std::to_string(chapter_target_chars(story));
+    out += prompt::kChapterSeg1b;
+    out += std::to_string(chapter_target_paras(story));
     out += prompt::kChapterSeg2;
     out += std::to_string(chapter_hook_count(story));
     out += prompt::kChapterSeg3;
@@ -182,6 +202,8 @@ std::string build_chapter_prompt(const Story& story,
         }
     }
 
+    if (idx == 0) out += prompt::kChapterFirstHead;
+
     // ---- 这一章要写的 ----
     out += "\n【这一章】" + me.title + "\n";
     if (!me.summary.empty()) out += me.summary + "\n";
@@ -190,6 +212,50 @@ std::string build_chapter_prompt(const Story& story,
     }
 
     out += prompt::kChapterTail;
+    return out;
+}
+
+/// 模型在 JSON 字符串里不敢写 “”（以为要转义），整章对白全用 ‘’ 顶替。
+/// 中文小说的对白是 “”，‘’ 只在引号套引号时出现。整章一个 “” 都没有而
+/// 出现了 ‘’，就是这种情况，换回来；有 “” 的说明它分得清，不动。
+static std::string normalize_quotes(std::string s) {
+    if (s.find("“") != std::string::npos || s.find("”") != std::string::npos) return s;
+    if (s.find("‘") == std::string::npos) return s;
+    const auto swap = [&s](const std::string& from, const std::string& to) {
+        std::string::size_type i = 0;
+        while ((i = s.find(from, i)) != std::string::npos) {
+            s.replace(i, from.size(), to);
+            i += to.size();
+        }
+    };
+    swap("‘", "“");
+    swap("’", "”");
+    return s;
+}
+
+/// 语法卡了每段的最短长度之后，模型想在下限之前收口时会用一串引号凑数
+/// （实跑：「……面对一切了。”'”””””」）。中文正文里不存在三个以上连着的
+/// 引号，整串删掉，一个两个的照旧。
+static std::string strip_quote_runs(const std::string& s) {
+    const auto is_quote = [](const std::string& ch) {
+        return ch == "“" || ch == "”" || ch == "‘" || ch == "’" || ch == "\"" ||
+               ch == "'";
+    };
+    const std::vector<std::string> chars = text::utf8_chars(s);
+    std::string out;
+    std::size_t i = 0;
+    while (i < chars.size()) {
+        if (!is_quote(chars[i])) {
+            out += chars[i++];
+            continue;
+        }
+        std::size_t j = i;
+        while (j < chars.size() && is_quote(chars[j])) ++j;
+        if (j - i < 3) {
+            for (std::size_t k = i; k < j; ++k) out += chars[k];
+        }
+        i = j;
+    }
     return out;
 }
 
@@ -203,7 +269,20 @@ ChapterDraft parse_chapter(const std::string& raw, int min_chars) {
     if (!data.is_object()) throw StoryError("大模型没有返回对象");
 
     ChapterDraft d;
-    d.text = text::strip_ws(get_str(data, "text"));
+    // 新形状：paragraphs 一段一项，拼回一段一行的正文。老形状（text 一个
+    // 字符串）照样认——粘贴导入和改 schema 之前存的草稿走这条。
+    if (const auto ps = data.find("paragraphs"); ps != data.end() && ps->is_array()) {
+        for (const auto& p : *ps) {
+            if (!p.is_string()) continue;
+            const std::string one = text::strip_ws(p.get<std::string>());
+            if (one.empty()) continue;
+            if (!d.text.empty()) d.text += "\n";
+            d.text += one;
+        }
+    } else {
+        d.text = text::strip_ws(get_str(data, "text"));
+    }
+    d.text = normalize_quotes(strip_quote_runs(d.text));
     if (d.text.empty()) throw StoryError("大模型没写出正文");
     // 失控往下写个没完的时候截住。这段正文会整份存进 story.json，
     // 而且后面每一集的提示词都要读它。
@@ -216,6 +295,17 @@ ChapterDraft parse_chapter(const std::string& raw, int min_chars) {
     if (min_chars > 0 && got < min_chars) {
         throw StoryError("正文只写出 " + std::to_string(got) + " 个字，至少要 " +
                          std::to_string(min_chars) + " 个。八成是模型没听懂，重试一次");
+    }
+
+    // **模型的自言自语不收。** 语法把它关在 JSON 字符串里，它想解释、想
+    // 纠正自己的时候，那些话就落进某一段正文——实跑原样：一段 1164 字的
+    // 「不符合用户要求的“只输出 JSON”，请忽略此部分内容……」。字数守卫、
+    // 复读守卫都抓不到它。小说正文里不会出现这些词。
+    for (const char* bad : {"JSON", "json", "请忽略", "用户要求", "输出应"}) {
+        if (d.text.find(bad) != std::string::npos) {
+            throw StoryError(std::string("正文里混进了模型的解释（出现「") + bad +
+                             "」）。重试一次");
+        }
     }
 
     // **复读不收。** 字数守卫抓不住它：实跑那次写了 1124 字、稳稳过了 600

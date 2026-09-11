@@ -212,7 +212,7 @@ ApiResult post_story_chapters(const json& body,
                     p.set_done(++done);
                     continue;
                 }
-                req.schema = stages::chapter_schema();
+                req.schema = stages::chapter_schema(stages::chapter_target_paras(cur));
                 req.schema_name = "chapter";
 
                 // **砸了就再要一次。**

@@ -1,9 +1,14 @@
 #include "llm/local_client.hpp"
 
 #include "config/runtime.hpp"
+#include <atomic>
+#include <chrono>
 #include <cstdio>
+#include <cstdlib>
 #include <filesystem>
+#include <fstream>
 #include <mutex>
+#include <system_error>
 #include <thread>
 
 #include "infer/llama_chat.hpp"
@@ -20,6 +25,28 @@ std::shared_ptr<infer::LlamaChat> g_chat;
 std::shared_ptr<infer::LlamaChat> current() {
     std::lock_guard lg(g_mu);
     return g_chat;
+}
+
+/// 调提示词时的眼睛：环境变量 CHANGJI_LLM_DUMP 指向一个目录时，每次调用
+/// 把提示词和模型的原始输出落成一个文件。没有它，模型写砸了只能看到
+/// 「找不到合法 JSON」这一句，猜不出它到底吐了什么。平时不设，零开销。
+void dump_exchange(const std::string& prompt, const std::string& out,
+                   const std::string& status) {
+    const char* dir = std::getenv("CHANGJI_LLM_DUMP");
+    if (dir == nullptr || *dir == 0) return;
+    static std::atomic<int> seq{0};
+    std::error_code ec;
+    std::filesystem::create_directories(dir, ec);
+    const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                        std::chrono::system_clock::now().time_since_epoch())
+                        .count();
+    const std::filesystem::path p =
+        std::filesystem::path(dir) /
+        (std::to_string(ms) + "_" + std::to_string(seq++) + ".txt");
+    std::ofstream f(p);
+    f << "=== PROMPT ===" << std::endl << prompt << std::endl
+      << "=== OUTPUT (" << status << ", " << out.size() << " bytes) ===" << std::endl
+      << out << std::endl;
 }
 
 }  // namespace
@@ -68,10 +95,10 @@ std::string LocalClient::complete(const Request& req, pipeline::CancelToken& tok
     // 上限给得宽：写一集剧本本来就长。真正的护栏是上下文长度，
     // LlamaChat 里会先查提示词加这个数超没超。
     constexpr int kMaxTokens = 8192;
-    if (!chat->complete(req.prompt, schema, req.temperature, kMaxTokens, tok,
-                        out, why, on_token)) {
-        throw LlmError("进程内大模型失败：" + why);
-    }
+    const bool ok = chat->complete(req.prompt, schema, req.temperature,
+                                   kMaxTokens, tok, out, why, on_token);
+    dump_exchange(req.prompt, out, ok ? "ok" : why);
+    if (!ok) throw LlmError("进程内大模型失败：" + why);
     if (tok.cancelled()) throw LlmError("已取消");
     return out;
 }

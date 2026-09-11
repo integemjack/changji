@@ -85,7 +85,10 @@ json extract_json(const std::string& raw) {
 
     // 截 400 字符，和 Python 一致。全贴出来的话，一段几万字的模型输出
     // 会把日志和界面的错误框都撑爆。
-    throw std::runtime_error("大模型输出里找不到合法 JSON：\n" + raw.substr(0, 400));
+    // **按字符截，不是按字节。** 这条消息会进任务快照再序列化成 JSON，
+    // 字节截断落在半个汉字上时整个 /api/script/series 都回 500，进度就
+    // 看不见了——2026-09-11 实跑撞上的就是这个。
+    throw std::runtime_error("大模型输出里找不到合法 JSON：\n" + text::truncate_utf8(raw, 400));
 }
 
 }  // namespace changji::stages

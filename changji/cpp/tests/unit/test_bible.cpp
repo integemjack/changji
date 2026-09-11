@@ -118,6 +118,24 @@ TEST_CASE("从模型输出里抠 JSON") {
     }
 }
 
+TEST_CASE("抠不出 JSON 时的错误消息按字符截，不按字节") {
+    // 2026-09-11 实跑：模型吐了一大段中文没收口，错误消息里 raw.substr(0, 400)
+    // 截在半个汉字上，进了任务快照之后 /api/script/series 序列化 JSON 直接 500，
+    // 批量写正文的进度就再也看不见了。
+    std::string raw;
+    for (int i = 0; i < 300; ++i) raw += "这是一段没有大括号的中文，";
+    try {
+        stages::extract_json(raw);
+        FAIL("应该抛");
+    } catch (const std::exception& e) {
+        const std::string msg = e.what();
+        CHECK(msg.find("找不到合法 JSON") != std::string::npos);
+        // 能装进 JSON 再 dump 出来，就说明没截在字节中间
+        CHECK_NOTHROW(json(msg).dump());
+        CHECK(text::utf8_len(msg) < 450);
+    }
+}
+
 TEST_CASE("默认负向提示词") {
     for (const auto& c : golden().at("negatives")) {
         const std::string style = c.at("style_line").get<std::string>();

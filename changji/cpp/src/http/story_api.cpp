@@ -362,7 +362,7 @@ ApiResult post_story_chapter(const json& body, llm::Client& client,
     llm::Request req;
     req.prompt =
         stages::build_chapter_prompt(story, chapter_id, project.style_line);
-    req.schema = stages::chapter_schema();
+    req.schema = stages::chapter_schema(stages::chapter_target_paras(story));
     req.schema_name = "chapter";
 
     // 给了 stream_id 就**边写边推**。写一章要一两分钟，攒齐了再蹦出来的话

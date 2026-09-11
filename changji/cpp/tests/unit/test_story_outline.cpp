@@ -149,6 +149,9 @@ TEST_CASE("提示词：章数跟着体量走，不跟集数走") {
     CHECK(m.find("不要写任何长相") != std::string::npos);
     // 完整故事要有结尾，这是和「无限续写」的分界
     CHECK(m.find("有结尾的完整故事") != std::string::npos);
+    // 实跑时四章写的是同一个场面（便利店、门铃、她拿着伞进来）换三个角度，
+    // 根子在大纲：每章必须把故事往前挪
+    CHECK(m.find("每一章都要把故事往前挪一步") != std::string::npos);
 }
 
 TEST_CASE("提示词：画风和关键词") {
@@ -1124,6 +1127,25 @@ TEST_CASE("schema：人物那三块和大纲那份长一样") {
     CHECK(ch.at("hooks").at("items").at("properties").contains("after"));
 }
 
+TEST_CASE("schema：正文是段落数组，段数由语法卡住") {
+    // 2026-09-11 实跑：正文只是一个 text 字符串时，14B 三章里两章把梗概原样
+    // 抄进去就收工（一百来字），另一次写到 8192 token 都没收口。「写满三千
+    // 字」它不听，段数的上下限进 schema 变成语法约束它才没得选。
+    const auto s = changji::stages::chapter_schema(85);
+    const auto& props = s.at("properties");
+    CHECK_FALSE(props.contains("text"));
+    REQUIRE(props.contains("paragraphs"));
+    CHECK(props.at("paragraphs").at("type") == "array");
+    CHECK(props.at("paragraphs").at("minItems").get<int>() >= 50);
+    CHECK(props.at("paragraphs").at("maxItems").get<int>() <= 130);
+    CHECK(props.at("paragraphs").at("items").at("type") == "string");
+    REQUIRE(s.at("required").size() == 2);
+    CHECK(s.at("required")[0] == "paragraphs");
+    // 目标再小，下限也不会低到能一段交差
+    CHECK(changji::stages::chapter_schema(3)
+              .at("properties").at("paragraphs").at("minItems").get<int>() >= 10);
+}
+
 TEST_CASE("并回去：正文一个字不动，钩子落在那句话后面") {
     const Story s = pasted_story();
     const std::string before = s.chapters[0].text;
@@ -1383,6 +1405,15 @@ TEST_CASE("提示词：只写这一章，带的是压缩的全局记忆") {
     // 要小说体，不是剧本格式——后面另有一步把它变成拍子
     CHECK(p.find("写**小说体**") != std::string::npos);
     CHECK(p.find("不要描写长相") != std::string::npos);
+    // 2026-09-11 对着真实章节改的几条：接着上一章写、最后一段就是钩子、
+    // 短段落、不复读。段数跟着字数算（3000 字 / 35 字一段 ≈ 85 段）
+    CHECK(p.find("从上一章停下的地方接着往下写") != std::string::npos);
+    CHECK(p.find("最后一段就是钩子本身") != std::string::npos);
+    CHECK(p.find("按小说的段落写") != std::string::npos);
+    CHECK(p.find("一句话只说一次") != std::string::npos);
+    CHECK(p.find(std::to_string(changji::stages::chapter_target_paras(s)) +
+                 " 段上下") != std::string::npos);
+    CHECK(p.find("【这是第一章】") == std::string::npos);
 
     // 压缩的全局记忆：人物、关系在，前情是每章一句
     CHECK(p.find("林晚") != std::string::npos);
@@ -1403,6 +1434,8 @@ TEST_CASE("提示词：只写这一章，带的是压缩的全局记忆") {
         s, "ch01", StyleLine::REALISTIC);
     CHECK(first.find("【前情提要】") == std::string::npos);
     CHECK(first.find("【上一章是这么结束的】") == std::string::npos);
+    // 第一章那个位置不能空着：实跑时 14B 两次都只写出一百来个字
+    CHECK(first.find("【这是第一章】") != std::string::npos);
 }
 
 TEST_CASE("提示词：没有这一章就抛") {
@@ -1448,6 +1481,50 @@ TEST_CASE("解析：没写出正文就报错，写太多就截断") {
     const auto d = changji::stages::parse_chapter(
         json{{"text", huge}, {"hook_after", "尾"}}.dump());
     CHECK(changji::text::utf8_len(d.text) == 20000);
+}
+
+TEST_CASE("解析：正文里混进模型的解释就打回") {
+    // 实跑原样：语法把模型关在 JSON 字符串里，它想纠正自己时那些话落进了
+    // 一段 1164 字的正文，字数和复读两道守卫都放过了它
+    std::string body;
+    for (int i = 0; i < 60; ++i) body += "他推开门，雨声灌了进来。";
+    body += "以上内容不符合用户要求的“只输出 JSON”，请忽略此部分内容。";
+    CHECK_THROWS_AS(changji::stages::parse_chapter(json{{"text", body}}.dump(), 600),
+                    stages::StoryError);
+}
+
+TEST_CASE("解析：paragraphs 数组拼成正文，一段一行") {
+    const auto d = changji::stages::parse_chapter(
+        json{{"paragraphs", json::array({"门铃响了。", "  ", "他抬起头。"})},
+             {"hooks", json::array()}}
+            .dump(),
+        0);
+    CHECK(d.text == "门铃响了。\n他抬起头。");
+    // 老形状（text 字符串）照样认——粘贴导入和旧草稿走这条
+    CHECK(changji::stages::parse_chapter(json{{"text", "伞"}}.dump(), 0).text == "伞");
+
+    // 模型在 JSON 里不敢写 “”，整章对白全用 ‘’：换回中文对白该用的 “”
+    const auto q = changji::stages::parse_chapter(
+        json{{"paragraphs", json::array({"‘你来了。’她说。", "他没有回答。"})},
+             {"hooks", json::array()}}
+            .dump(),
+        0);
+    CHECK(q.text.find("“你来了。”她说。") != std::string::npos);
+    // 已经有 “” 的不动——那里的 ‘’ 是套在里面的引号
+    CHECK(changji::stages::parse_chapter(json{{"text", "“他说‘走’。”"}}.dump(), 0).text ==
+          "“他说‘走’。”");
+
+    // 语法卡了每段最短长度，模型凑数用的引号串（实跑原样）整串删掉；
+    // 正常的一对引号不动
+    const auto r = changji::stages::parse_chapter(
+        json{{"paragraphs", json::array({"她终于决定，是时候面对一切了。”'”””””",
+                                         "“走吧。”她说。"})},
+             {"hooks", json::array()}}
+            .dump(),
+        0);
+    CHECK(r.text.find("她终于决定，是时候面对一切了。") != std::string::npos);
+    CHECK(r.text.find("””") == std::string::npos);
+    CHECK(r.text.find("“走吧。”她说。") != std::string::npos);
 }
 
 TEST_CASE("并回去：钩子全部重建，说法留着") {
