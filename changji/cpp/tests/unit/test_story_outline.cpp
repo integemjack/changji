@@ -1708,18 +1708,19 @@ TEST_CASE("并回去：场的位置是数出来的，不是模型报的") {
     CHECK(c->scenes[0].pov == "林晚");
     CHECK(c->scenes[0].where.find("便利店") != std::string::npos);
 
-    // **每一场的末尾都成了有说法的切点**，说法就是那一场的 turn
+    // **每一场的末尾都成了有说法的切点**，而说法是**那一场的收尾那一句**，
+    // 不是 turn。turn 老写成在脑子里发生的事（「他意识到当年误解了真相」），
+    // 而且一章里两场常常是同一件事换个说法；收尾那一句被 last_line 那一栏
+    // 约束成「turn 发生的那一刻」，必然是动作或台词，而且场场不同。
     bool at_first = false, at_end = false;
     for (const auto& h : c->hooks) {
-        if (h.at_char == first_end && h.text == "伞柄上刻着的不是她的名字") {
-            at_first = true;
-        }
-        if (h.at_char == c->text_len() && h.text == "他把伞从天台扔了下去") {
-            at_end = true;
-        }
+        if (h.at_char == first_end && h.text == a2) at_first = true;
+        if (h.at_char == c->text_len() && h.text == b2) at_end = true;
     }
     CHECK(at_first);
     CHECK(at_end);
+    // turn 照旧存在场次表里：写剧本那一步拿得到
+    CHECK(c->scenes[0].turn == "伞柄上刻着的不是她的名字");
 }
 
 TEST_CASE("并回去：老形状还认（顶层 paragraphs、顶层 text）") {

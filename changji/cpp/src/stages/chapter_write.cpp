@@ -754,6 +754,8 @@ Story apply_chapter(const Story& story, const std::string& chapter_id,
     // 上一版靠模型抄一句原文回来（DraftHook::after），程序再去正文里查，
     // 抄错一个字那一集就落不下去，只能收在一个说不出为什么的段落边界上。
     me->scenes.clear();
+    // 每一场的收尾那一句，和 me->scenes 一一对应。下面拿它当钩子的说法。
+    std::vector<std::string> scene_closing;
     if (!draft.scenes.empty()) {
         const std::vector<int> breaks = paragraph_breaks(text::strip_ws(me->text));
         int para = 0;
@@ -779,6 +781,7 @@ Story apply_chapter(const Story& story, const std::string& chapter_id,
             s.obstacle = sc.obstacle;
             s.turn = sc.turn;
             me->scenes.push_back(std::move(s));
+            scene_closing.push_back(sc.paragraphs.back());
             from = to;
         }
     }
@@ -801,9 +804,28 @@ Story apply_chapter(const Story& story, const std::string& chapter_id,
         me->hooks.push_back(std::move(h));
     };
 
-    // **每一场的末尾就是一个有说法的切点**，说法是那一场的 turn。
-    // 这是现在钩子的主要来源：位置程序数得出来，说法模型本来就要填。
-    for (const auto& s : me->scenes) put(s.to_char, s.turn);
+    // **每一场的末尾就是一个有说法的切点**，而说法用的是**那一场的收尾
+    // 那一句**，不是 turn。
+    //
+    // 两栏都在，选收尾那一句是因为它可靠得多。同一场实跑出来的两者：
+    //   turn：「他意识到自己当年可能误解了事情的真相」
+    //   收尾：「我以为你是走了，我才……」
+    // turn 老是写成在脑子里发生的事——schema 的描述里要求过「要拍得出
+    // 来」，管一阵子又退回去，而且一章里两场的 turn 常常是同一件事换个
+    // 说法（ep01 和 ep03 的钩子几乎一模一样）。收尾那一句没有这个毛病：
+    // 它被 last_line 那一栏约束成「turn 发生的那一刻」，必然是一个动作
+    // 或者一句说出口的话，而且每一场各不相同。
+    //
+    // 行业上分集大纲的钩子习惯写成一句概括（「男主发现真相」），好给后面
+    // 的编剧留空间。**这条流水线是反的**：正文已经写完了，钩子的用处是
+    // 告诉写剧本那一步「这一集停在哪」，以及给人看——那句实际的收尾比
+    // 概括准。turn 照旧存在场次表里，写剧本那一步拿得到。
+    for (std::size_t i = 0; i < me->scenes.size(); ++i) {
+        const std::string& closing =
+            i < scene_closing.size() ? scene_closing[i] : std::string();
+        put(me->scenes[i].to_char,
+            closing.empty() ? me->scenes[i].turn : closing);
+    }
 
     for (const auto& dh : draft.hooks) {
         // 查不到就不放：一章有好几个钩子，查不到的那个要是都堆到章尾，
