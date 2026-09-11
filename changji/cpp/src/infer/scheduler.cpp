@@ -409,9 +409,8 @@ bool Scheduler::make_room(std::size_t need, Slot keep, std::size_t work) {
     // 是两件完全不同的事，而以前只笼统说一句"别的槽正被借用着，或者
     // 这张卡确实太小"，用户没法判断该等还是该改配置。
     //
-    // 这个窗口 2026-09-11 之后更容易撞上：起服务时会在后台装大模型
-    // （见 warm_llm_in_background），那几十秒里它是借着的。
-    // "起服务 → 立刻点出片"正好落在里面。
+    // 会撞上的典型场景：一边在写字（大模型借着），一边点出片。等它写完
+    // 那一章就腾得出来了，所以那句话是"等一会儿再点一次"。
     busy_.clear();
     for (Entry& e : entries_) {
         if (!e.is_loaded || e.spec.slot == keep) continue;

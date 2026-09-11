@@ -44,6 +44,17 @@ inline constexpr int kRepeatMaxSame = 3;
 /// 那一段读起来已经明显在原地打转了。
 inline constexpr double kRepeatMinUniqueRatio = 0.7;
 
+/// 连着多少句都在别处出现过，就算"整块重来一遍"。
+///
+/// **这是第三种形状，前两条都抓不住它。** 2026-09-11 实跑：改稿时说"把这段
+/// 拉长一点"，模型把**后面那场戏又讲了一遍**——十二句连着一字不差地重复。
+/// 每句只出现两次，够不着 kRepeatMaxSame 的三次；去重比也还在 0.7 以上。
+/// 于是一整场戏被悄悄写进稿子，而后面写剧本那一步会把它当成两场来拍。
+///
+/// 五句：零星撞车（"他没有回答""雨还在下"）到不了五句连着；而真复制一段
+/// 情节，起步就是十几句。
+inline constexpr int kRepeatMaxRun = 5;
+
 /// 一段正文的复读体检结果。
 struct RepetitionReport {
     bool ok = true;
@@ -56,6 +67,8 @@ struct RepetitionReport {
     int worst_count = 0;
     /// 去重之后剩下的字数占原文的比例。
     double unique_ratio = 1.0;
+    /// 最长的一段"连着都在别处出现过"的句子有多少句。
+    int worst_run = 0;
 };
 
 /// 按句号、问号、感叹号、换行切句。

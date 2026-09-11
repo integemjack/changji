@@ -18,14 +18,34 @@ import { openJobSocket } from '@/composables/useJobSocket'
 const stat = ref(null)
 let sock = null
 let retry = null
+let watchdog = null
+let lastAt = 0
 let gone = false
+
+/**
+ * 多久没收到就当它死了。
+ *
+ * **不能只靠 onclose。** 2026-09-11 用户报"GPU 一直 0、显存一直 22.1，
+ * 有任务也不动"——查出来是这条：服务重启（或者隧道断一下）之后，浏览器
+ * 这头常常收不到 FIN，socket 在 readyState 上还是 OPEN，`onclose` 一辈子
+ * 不触发。于是 `stat` 停在最后一条消息上，顶栏挂着三个冻住的数——而这正是
+ * 这个组件开头那句"一个不动的数比没有更误导"要防的事，只是当时只防了
+ * 能被发现的那种断线。
+ *
+ * 服务端两秒一推，八秒还没动静就是不对了（丢三条）。留够余量是因为标签页
+ * 切到后台时浏览器会压计时器，压得太紧会来回重连。
+ */
+const kStaleMs = 8000
 
 function connect() {
   if (gone) return
+  lastAt = Date.now()
   sock = openJobSocket(
     'system',
     (msg) => {
-      if (msg.type === 'system') stat.value = msg
+      if (msg.type !== 'system') return
+      lastAt = Date.now()
+      stat.value = msg
     },
     () => {
       sock = null
@@ -36,9 +56,26 @@ function connect() {
   )
 }
 
-onMounted(connect)
+/** 半开的连接自己不会说话，所以由这头来问。 */
+function sweep() {
+  if (gone || !sock) return
+  if (Date.now() - lastAt < kStaleMs) return
+  // **先把数清掉再重连。** 留着旧数等重连成功的话，那几秒里顶栏还在
+  // 说谎；而清掉之后那一块直接不显示，一眼看得出"现在没数据"。
+  stat.value = null
+  const dead = sock
+  sock = null
+  dead.close()
+  connect()
+}
+
+onMounted(() => {
+  connect()
+  watchdog = setInterval(sweep, 3000)
+})
 onUnmounted(() => {
   gone = true
+  clearInterval(watchdog)
   clearTimeout(retry)
   sock?.close()
 })

@@ -143,7 +143,8 @@ LlamaChat::LlamaChat() : impl_(std::make_unique<Impl>()) {}
 LlamaChat::~LlamaChat() = default;
 
 std::unique_ptr<LlamaChat> LlamaChat::load(const fs::path& model, bool use_gpu,
-                                           std::string& why, int parallel) {
+                                           std::string& why, int parallel,
+                                           int n_ctx) {
     if (model.empty()) {
         why = "[models].llm 没填。进程内跑大模型要一份 GGUF 权重";
         return nullptr;
@@ -172,7 +173,11 @@ std::unique_ptr<LlamaChat> LlamaChat::load(const fs::path& model, bool use_gpu,
     // **n_ctx = 0 表示"用模型训练时的长度"**，而默认值是 512。
     // 写剧本的提示词轻松过千 token，512 会被静默截断——症状是模型
     // 答非所问，指不到"上下文开小了"。配音那边栽过同一条，见 llama_tts.cpp。
-    cp.n_ctx = 0;
+    //
+    // 但"训练时的长度"也不是白拿的：Qwen3-14B 是 40960，一路 KV cache
+    // 就是 6.4 GB，两路比权重本身还大。所以调用方给多少就开多少，
+    // 给 0 才退回训练长度。见 config::LLMConfig::context_tokens。
+    cp.n_ctx = static_cast<std::uint32_t>(n_ctx < 0 ? 0 : n_ctx);
 
     const int want = parallel < 1 ? 1 : parallel;
     for (int i = 0; i < want; ++i) {
@@ -339,7 +344,7 @@ LlamaChat::LlamaChat() : impl_(std::make_unique<Impl>()) {}
 LlamaChat::~LlamaChat() = default;
 
 std::unique_ptr<LlamaChat> LlamaChat::load(const fs::path&, bool,
-                                           std::string& why, int) {
+                                           std::string& why, int, int) {
     why = "这个二进制没编进程内大模型（构建时 CHANGJI_LLAMA=OFF）。"
           "用 [llm].base_url 指向一个兼容 OpenAI 接口的服务";
     return nullptr;

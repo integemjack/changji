@@ -48,29 +48,11 @@ LocalLlmStatus local_llm_status();
 /// 时才被驱逐。驱逐优先级设得比出图出片低，腾地方时先卸它——写剧本一集
 /// 只跑一次，而出图出片每镜都要。
 ///
-/// **注册不等于加载。** 想让它一起服务就装上，用 warm_llm_in_background。
+/// **注册不等于加载。** 调度器是借出时才装的——用户定的
+/// 「用的时候才加载，不做启动预载」。
 void register_llm_slot(std::function<config::Settings()> provider,
                        const models::HardwareProfile& profile);
 
-/// 起服务时就把大模型装上——用户要的"默认加载 llm"。
-///
-/// **为什么要单独有这一步。** 调度器是借出时才加载的，所以光注册的话，
-/// 大模型要等到第一次写剧本才装。用户说的是"默认加载 llm，点击出片清理
-/// 掉大模型"，前半句描述的是一个**已经装着**的状态。
-///
-/// **为什么放后台线程。** 一份 GGUF 几个 G，装起来几十秒；在主线程装的话
-/// 只想看看分镜表的人也要干等——和出图出片两个槽不在起服务时加载是同一个
-/// 理由（见 server.cpp 里注册那一段）。
-///
-/// **返回 thread 而不是 detach。** detach 的线程会在进程退出、调度器那个
-/// 函数内静态量已经析构之后还在碰它。调用方拿着它，在 app.run() 返回之后
-/// join，生命周期就是清楚的。
-///
-/// 这几种情况返回一个空 thread（joinable() == false），什么都不做：
-/// `[llm].backend` 不是 local；`[models].llm` 没配或者文件不在。
-/// 后者是全新安装的正常状态，体检那一项已经在提示了，不该再吓一跳。
-std::thread warm_llm_in_background(
-    const std::function<config::Settings()>& provider);
 
 /// 按 `[llm].backend` 造一个客户端。
 ///

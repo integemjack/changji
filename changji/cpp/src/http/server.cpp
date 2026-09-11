@@ -147,31 +147,23 @@ void run(const config::Settings& settings, const Options& opts) {
     // 没有本地权重，注册一个装不上的槽只会在借它时抛没意义的错。
     llm::register_llm_slot([] { return config::runtime().snapshot(); },
                            config::runtime().profile());
-    // **默认把大模型装上**——用户要的"默认加载 llm"。注册不等于加载，
-    // 调度器是借出时才装的，光注册的话要等到第一次写剧本。
+    // **不在这儿预装大模型。** 注册不等于加载，调度器是**借出时**才装的
+    // ——用户 2026-09-11 重申："用的时候才加载是对的，不做启动预载"。
     //
-    // 放后台，不挡起服务（一份 GGUF 几个 G，几十秒）；拿着这个 thread，
-    // 等 app.run() 回来再 join——detach 的话进程退出时它可能还在碰
-    // 已经析构的调度器。见 warm_llm_in_background。
+    // 这一行原来是 `warm_llm_in_background(...)`，起服务就把权重推进显存。
+    // 代价是：一台什么都没干的机器，显存上来就少一大块（这台 5090 上是
+    // 22 GB，见 config::LLMConfig::context_tokens 那段账），而用户看着
+    // 顶栏"没有任何任务，显存也占着"，第一反应是表坏了。
     //
-    // **必须 RAII 地 join，不能只在 run() 之后写一句。** 从这里到
-    // app.run() 之间隔着几百行路由注册，中间任何一处抛异常（或者 run()
-    // 自己抛），这个 thread 就会在 joinable 状态下析构——那是
-    // std::terminate，进程当场没，连栈都不打。
-    struct JoinAtExit {
-        std::thread t;
-        ~JoinAtExit() {
-            if (t.joinable()) t.join();
-        }
-    } warm_llm{llm::warm_llm_in_background(
-        [] { return config::runtime().snapshot(); })};
+    // 换来的只是第一次写字省下一次加载。那一次等待是看得见、也说得清的
+    // （界面上会说"正在装大模型"）；而显存被莫名占着是看不懂的。
 
     // 顶栏那三个小表：CPU、内存、每张卡。**推，不轮询**（用户 2026-09-11：
     // 「使用 ws 方式」）。有人订了 "system" 才采样、才发；没人听的时候这条
     // 线程只是每两秒看一眼订阅数。采样本身是进程内的（NVML、/proc），
     // 微秒级，唯一会 fork 的那条退路在 sysstat 里限了五秒一次。
     //
-    // 停的方式和 warm_llm 一样：run() 回来后析构，析构里先立旗再 join。
+    // 停的方式：run() 回来后析构，析构里先立旗再 join。
     // 睡眠切成 100ms 一段，Ctrl+C 之后最多再等零点一秒。
     std::atomic<bool> stop_pump{false};
     struct PumpAtExit {

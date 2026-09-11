@@ -394,30 +394,11 @@ TEST_CASE("[llm].backend 选哪条后端") {
     CHECK_FALSE(infer::llama_chat_available());
 }
 
-// ---- 起服务时预热大模型 ----
-
-TEST_CASE("预热：这几种情况一个线程都不该起") {
-    // 需求原话是"默认加载 llm"，所以起服务时会去装一次。但**装不成的那些
-    // 情况必须安静地跳过**：全新安装时 [models].llm 本来就是空的，
-    // 那时候在 stderr 上吓一跳（或者起一个注定失败的线程）毫无意义，
-    // 体检里"大模型"那一项已经在说了。
-    //
-    // 返回空 thread（joinable() == false）就是"什么都没做"。
-    config::Settings s;
-
-    SUBCASE("外接 API：本机没有权重，没什么可预热的") {
-        s.llm.backend = "remote";
-        CHECK_FALSE(llm::warm_llm_in_background([s] { return s; }).joinable());
-    }
-    SUBCASE("backend = local 但没配模型") {
-        s.llm.backend = "local";
-        s.models.llm = "";
-        CHECK_FALSE(llm::warm_llm_in_background([s] { return s; }).joinable());
-    }
-    SUBCASE("配了但文件不在") {
-        // 换了机器、删了模型目录之后最常见的一种。
-        s.llm.backend = "local";
-        s.models.llm = "根本没有这个文件-9f3a.gguf";
-        CHECK_FALSE(llm::warm_llm_in_background([s] { return s; }).joinable());
-    }
-}
+// ---- 起服务时不预热 ----
+//
+// 这里原来有一组"预热：这几种情况一个线程都不该起"。**整个预热都去掉了**
+// ——用户 2026-09-11 定的："用的时候才加载是对的，不做启动预载"。
+//
+// 留这段话是因为它反过来说明了现在的规矩：`register_llm_slot` 只登记，
+// **装是借出时才发生的**。起服务之后显存上应该看不到大模型；看到了就是
+// 哪儿又偷偷预装了。

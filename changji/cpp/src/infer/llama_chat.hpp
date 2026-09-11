@@ -34,9 +34,12 @@ public:
     /// 一份，每个上下文自己一份 KV cache——花的是那几份的显存。
     /// **开不出来就少开一个**：第一个就开不出来才算失败，后面的开不出来
     /// 只是并发度低一档。所以显存决定实际并发度，这个参数只是上限。
+    /// `n_ctx` 是开多长的上下文（token），**0 = 用模型训练时的长度**。
+    /// 这一项是显存账上最大的一笔：一路 KV cache 的大小和它成正比，而
+    /// `parallel` 路就是这个数乘以路数。见 config::LLMConfig::context_tokens。
     static std::unique_ptr<LlamaChat> load(const std::filesystem::path& model,
                                            bool use_gpu, std::string& why,
-                                           int parallel = 1);
+                                           int parallel = 1, int n_ctx = 0);
 
     ~LlamaChat();
     LlamaChat(const LlamaChat&) = delete;

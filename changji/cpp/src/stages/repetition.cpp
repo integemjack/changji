@@ -102,10 +102,31 @@ RepetitionReport check_repetition(const std::string& text) {
                          : static_cast<double>(unique_chars) /
                                static_cast<double>(total_chars);
 
+    // **整块重来一遍。** 前两条都抓不住它：每句只出现两次，够不着三次那条；
+    // 十几句重复在一两千字里也拉不低去重比。判据是"连着几句都在别处出现
+    // 过"——零星撞车到不了五句连着，而真复制一段情节起步就是十几句。
+    int run = 0;
+    for (const std::string& sentence : sentences) {
+        const std::string key = normalize(sentence);
+        if (text::utf8_len(key) < kRepeatMinSentenceChars) continue;
+        if (seen[key] > 1) {
+            ++run;
+            if (run > r.worst_run) r.worst_run = run;
+        } else {
+            run = 0;
+        }
+    }
+
     if (r.worst_count >= kRepeatMaxSame) {
         r.ok = false;
         r.detail = "这一句出现了 " + std::to_string(r.worst_count) + " 次：「" +
                    text::truncate_utf8(r.worst, 30) + "」。模型卡在复读里了";
+        return r;
+    }
+    if (r.worst_run >= kRepeatMaxRun) {
+        r.ok = false;
+        r.detail = "有 " + std::to_string(r.worst_run) +
+                   " 句连着和别处一模一样，整块重来了一遍";
         return r;
     }
     if (r.unique_ratio < kRepeatMinUniqueRatio) {

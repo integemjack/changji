@@ -129,8 +129,8 @@ void register_llm_slot(std::function<config::Settings()> provider,
     //
     // **注意 Cached 不等于"启动就装"**：调度器是借出时才加载的
     // （见 Scheduler::acquire）。用户要的"默认加载 llm"靠的是
-    // warm_llm_in_background，不是这一行。这条注释以前写成
-    // "常驻：用户要的默认加载 llm"，把两件事混成一件了。
+    // 它只管"装上之后留着"，不管"什么时候装"——装是借出时才发生的。
+    // 这条注释以前写成"常驻：用户要的默认加载 llm"，把两件事混成一件了。
     spec.residency = infer::Residency::Cached;
     // 估值按整份预算算，和出图出片一致——"同时只装得下一个"是保守但安全的
     // 假设。真装得下的时候由下面那个老实数救回来（不会白卸）。
@@ -178,7 +178,8 @@ void register_llm_slot(std::function<config::Settings()> provider,
         const auto before = models::free_vram_gb();
         std::string why;
         auto chat = std::shared_ptr<infer::LlamaChat>(
-            infer::LlamaChat::load(path, /*use_gpu=*/true, why, s.llm.parallel));
+            infer::LlamaChat::load(path, /*use_gpu=*/true, why, s.llm.parallel,
+                                       s.llm.context_tokens));
         if (!chat) {
             // **上不了 GPU 就退回 CPU，别整个失败。**
             //
@@ -197,7 +198,8 @@ void register_llm_slot(std::function<config::Settings()> provider,
                          why.c_str());
             std::string why_cpu;
             chat = std::shared_ptr<infer::LlamaChat>(
-                infer::LlamaChat::load(path, /*use_gpu=*/false, why_cpu, s.llm.parallel));
+                infer::LlamaChat::load(path, /*use_gpu=*/false, why_cpu,
+                                       s.llm.parallel, s.llm.context_tokens));
             if (!chat) {
                 throw std::runtime_error("大模型载不起来：显存那次是「" + why +
                                          "」，内存那次是「" + why_cpu + "」");
@@ -221,37 +223,6 @@ void register_llm_slot(std::function<config::Settings()> provider,
         g_chat.reset();
     };
     infer::scheduler().register_slot(std::move(spec));
-}
-
-std::thread warm_llm_in_background(
-    const std::function<config::Settings()>& provider) {
-    const config::Settings s = provider();
-    // 外接 API 那条没有本地权重，没什么可预热的。
-    if (s.llm.backend != "local") return {};
-    // 没配模型就别装了：装不上会在 stderr 上留一条吓人的错，而"还没配模型"
-    // 是全新安装的正常状态，体检那一项已经在说了。
-    const auto path = s.models.resolve(s.models.llm, s.workspace_path());
-    std::error_code ec;
-    if (path.empty() || !std::filesystem::is_regular_file(path, ec)) return {};
-
-    return std::thread([] {
-        try {
-            // 借一下就放。Residency::Cached 会让它留在显存里。
-            auto lease = infer::scheduler().acquire(infer::Slot::LLM);
-        } catch (const std::exception& e) {
-            // **预热失败不该影响起服务。** 用户可能只是想看看分镜表，
-            // 而大模型装不上的原因（文件坏了、显存不够）体检里都能查到。
-            //
-            // 没编进 llama 的构建上这一条**注定**失败，而 make_client 起来
-            // 时已经说过一次"这个二进制没编进程内大模型"了。再来一句措辞
-            // 不同的错，只会让人以为是两个毛病。
-            if (infer::llama_chat_available()) {
-                std::fprintf(stderr, "[llm] 预热没成功：%s\n", e.what());
-            }
-        } catch (...) {
-            std::fputs("[llm] 预热没成功（未知异常）\n", stderr);
-        }
-    });
 }
 
 }  // namespace changji::llm
