@@ -1,5 +1,7 @@
 #include "stages/chapter_write.hpp"
 
+#include "stages/repetition.hpp"
+
 #include <algorithm>
 #include <string>
 #include <vector>
@@ -214,6 +216,15 @@ ChapterDraft parse_chapter(const std::string& raw, int min_chars) {
     if (min_chars > 0 && got < min_chars) {
         throw StoryError("正文只写出 " + std::to_string(got) + " 个字，至少要 " +
                          std::to_string(min_chars) + " 个。八成是模型没听懂，重试一次");
+    }
+
+    // **复读不收。** 字数守卫抓不住它：实跑那次写了 1124 字、稳稳过了 600
+    // 的下限，而「你早就走了，我只是还在等。」一字不差出现了八次。
+    // 只量长度不看内容的话，这段东西会一路存进 story.json，再被切成集、
+    // 写成剧本、排成分镜、配成音、渲成片——一整条流水线为一段复读机跑了
+    // 一个多小时。和 reject_silent_audio 是同一类事。
+    if (const auto rep = check_repetition(d.text); !rep.ok) {
+        throw StoryError("正文在复读：" + rep.detail + "。重试一次");
     }
 
     const auto hooks = data.find("hooks");

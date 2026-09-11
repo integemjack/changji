@@ -23,6 +23,24 @@ export const useUi = defineStore('ui', () => {
   )
   watch(railSide, (value) => localStorage.setItem('changji.railSide', value))
 
+  /**
+   * 专注模式：把顶栏和项目库收起来，稿纸铺满整个窗口。
+   *
+   * **这一条是抄来的，不是想出来的。** 写作类编辑器的共识是"文档占据整个
+   * 视野，工具召之即来"——Sudowrite 把 AI 收在侧栏里，"鼓励你专注在写本身，
+   * 把 AI 当成外科手术式的介入，而不是一直杵在那儿"；更狠的那些干脆让界面
+   * 整个消失，鼠标移到屏幕边缘才浮出一条最小的菜单。
+   *
+   * 对我们这一页来说，最大的干扰**不在编辑器里，在编辑器外面**：右边那条
+   * 项目库列着另外四部剧——你正在写第一章，旁边摆着"你还可以去干的别的
+   * 事"。顶栏同理。
+   *
+   * **记在这台机器上**：喜欢专注写的人每次打开都该直接是专注的，而"每次
+   * 都要先按一下"本身就是那句"你花在调工具上的时间，工具就成了干扰"。
+   */
+  const focusMode = ref(localStorage.getItem('changji.focusMode') === '1')
+  watch(focusMode, (v) => localStorage.setItem('changji.focusMode', v ? '1' : '0'))
+
   function applyTheme(value) {
     const root = document.documentElement
     if (value === 'system') root.removeAttribute('data-theme')
@@ -52,5 +70,8 @@ export const useUi = defineStore('ui', () => {
     if (at >= 0) toasts.value.splice(at, 1)
   }
 
-  return { toasts, theme, railSide, push, ok, info, warn, error, dismiss }
+  return {
+    toasts, theme, railSide, focusMode,
+    push, ok, info, warn, error, dismiss,
+  }
 })

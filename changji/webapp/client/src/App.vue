@@ -13,7 +13,7 @@
  * 集号只在分集那一步出现。全剧那几步摆一个「当前集」，会让人以为角色和
  * 场景也要每集重做一遍——这条是从原来的 ContextBar 继承下来的判断。
  */
-import { computed, onMounted, watch } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
 import AppIcon from '@/components/AppIcon.vue'
@@ -36,6 +36,36 @@ const isSettings = computed(() => route.name === 'settings')
 // 初始化页要整块屏幕。顶栏这时候一个都点不动（还没有项目，引擎也还没
 // 模型），摆在那儿只会让人以为哪里没加载出来。
 const bare = computed(() => route.meta?.chrome === false)
+
+/**
+ * 专注模式：只在**写故事**那一页生效。
+ *
+ * 别的页收起顶栏就等于没有导航了——那不是专注，是走不出去。故事页不一样：
+ * 它整页就是一个编辑器，而顶栏和项目库在那儿唯一的作用是提醒你"还有别的
+ * 事可以干"。
+ *
+ * 鼠标贴到窗口最上面那几个像素，顶栏浮回来；Esc 退出。
+ */
+const canFocus = computed(() => stepKey.value === 'story')
+const focused = computed(() => canFocus.value && ui.focusMode)
+const peeking = ref(false)
+const chromeOff = computed(() => bare.value || (focused.value && !peeking.value))
+
+function onEdgePeek(e) {
+  if (!focused.value) return
+  peeking.value = e.clientY <= 4
+}
+function onEsc(e) {
+  if (e.key === 'Escape' && focused.value) ui.focusMode = false
+}
+onMounted(() => {
+  window.addEventListener('mousemove', onEdgePeek)
+  window.addEventListener('keydown', onEsc)
+})
+onUnmounted(() => {
+  window.removeEventListener('mousemove', onEdgePeek)
+  window.removeEventListener('keydown', onEsc)
+})
 
 const perEpisode = computed(() => current.value?.phase === 'episode')
 const projectName = computed(
@@ -68,7 +98,7 @@ function cycleTheme() {
 
 <template>
   <div class="shell">
-    <header v-if="!bare" class="topbar">
+    <header v-if="!chromeOff" class="topbar">
       <RouterLink to="/project" class="brand" title="场记">
         <span class="brand__mark">场</span>
       </RouterLink>
@@ -141,7 +171,10 @@ function cycleTheme() {
     <div class="body">
       <main class="main">
         <div class="main__scroll">
-        <div class="main__inner" :class="{ 'main__inner--bare': bare }">
+        <div
+          class="main__inner"
+          :class="{ 'main__inner--bare': bare, 'main__inner--focus': focused }"
+        >
           <!-- 页面崩了要说出来，而不是白屏。见 ErrorBoundary 里的说明。 -->
           <ErrorBoundary>
             <RouterView v-slot="{ Component }">
@@ -156,7 +189,7 @@ function cycleTheme() {
 
       <!-- 项目库常驻在右边。换项目原来要走到第一步那一页，挑完再走回来，
            而当前这一页的状态就丢了。常驻之后点一下就换，人还停在原来那页。 -->
-      <ProjectRail v-if="!bare" />
+      <ProjectRail v-if="!chromeOff" />
     </div>
 
     <ToastStack />
@@ -328,6 +361,13 @@ function cycleTheme() {
 }
 /* 初始化页自己排版。**必须排在上面那条后面**——同样的特指度，
    靠源码顺序覆盖，写在前面的话内边距根本不会被去掉。 */
+/* 专注模式：稿纸铺满，两边不留边距。顶栏和项目库都收了，
+   这一屏上除了字什么都没有。 */
+.main__inner--focus {
+  max-width: none;
+  padding: 0;
+}
+
 .main__inner--bare {
   max-width: none;
   padding: 0;

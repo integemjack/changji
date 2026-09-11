@@ -1279,9 +1279,28 @@ namespace {
 /// 走 /api/story/chapter 那几条要过 kChapterMinRatio 的闸门（目标三千字的
 /// 五分之一 = 600 字），十几个字的夹具会被当成"模型没写"顶回来——那正是
 /// 闸门该干的事，所以夹具要写够长，不是把闸门调松。
+/// 一段够长、而且**不重复**的正文。
+///
+/// 原来是 `mark + 700 个"字"`。复读守卫上线之后那份语料一律判废——而它
+/// 判得对：700 个一模一样的字本来就是复读机。这是第二次栽在同一件事上，
+/// 上一次是字数下限。**守卫抓到的是语料，那就改语料**：把合成的正文做成
+/// 真的不重样，否则用例证明的只是"我们能绕过自己的守卫"。
 std::string long_body(const std::string& mark) {
+    static const char* kWho[] = {"林然", "沈悠", "陈默", "老板娘"};
+    static const char* kDo[] = {"推开玻璃门", "把伞收起来", "看了一眼钟",
+                                "拿起柜台上的杯子", "转身走向货架",
+                                "停在雨里没有动"};
+    static const char* kHow[] = {"雨声压过了店里的音乐", "灯管闪了一下",
+                                 "他没有回头", "空气里有泡面的味道",
+                                 "外面的车灯扫过墙面", "谁也没有先开口"};
     std::string s = mark;
-    for (int i = 0; i < 700; ++i) s += "字";
+    for (int i = 0; s.size() < 2400; ++i) {
+        s += kWho[i % 4];
+        s += kDo[(i * 3 + 1) % 6];
+        s += "，";
+        s += kHow[(i * 5 + 2) % 6];
+        s += "，第" + std::to_string(i) + "次。\n\n";
+    }
     return s;
 }
 
@@ -1331,9 +1350,12 @@ TEST_CASE("写满一章的量，就该切出好几集") {
     s.episode_duration_s = 30.0;
 
     // 一章写到基准篇幅（段落边界当候选切点）
+    // **每一行都要不一样。** 三十行一模一样的一百个「字」是复读机，
+    // 复读守卫判得对；这里要的只是"够长、段落边界够多"。
     std::string body;
     for (int i = 0; i < 30; ++i) {
-        for (int k = 0; k < 100; ++k) body += "字";
+        body += "第" + std::to_string(i) + "段：";
+        for (int k = 0; k < 96; ++k) body += "字";
         body += "\n";
     }
     s = changji::stages::apply_chapter(
@@ -1499,10 +1521,12 @@ TEST_CASE("POST /api/story/chapter：写完落库，分集跟着重算") {
     store.save_story(s);
     const std::size_t before = s.plan.size();
 
-    // 三千字的一章，配 60 秒（一集 900 字）该切出好几集
+    // 三千字的一章，配 60 秒（一集 900 字）该切出好几集。
+    // 每段都要不一样，理由同上面那处：一模一样的三十段是复读机。
     std::string body;
     for (int i = 0; i < 30; ++i) {
-        for (int k = 0; k < 100; ++k) body += "字";
+        body += "第" + std::to_string(i) + "段：";
+        for (int k = 0; k < 96; ++k) body += "字";
         body += "\n";
     }
     llm::ReplayClient client({good_chapter(body).dump()});
@@ -1576,8 +1600,9 @@ TEST_CASE("展开正文之后，写剧本拿到的是真正文不是梗概") {
         changji::stages::render_script_context(s, s.plan[0], "");
     CHECK(before.find("他推门进来，伞还在手里。") != std::string::npos);  // 梗概
 
-    std::string body;
-    for (int i = 0; i < 10; ++i) body += "这是真正的正文内容。\n";
+    // 同 long_body 那段注释：合成的正文要真的不重样，否则复读守卫判废，
+    // 而它判得对。
+    const std::string body = long_body("这是真正的正文内容。");
     s = changji::stages::apply_chapter(
         s, "ch01", changji::stages::parse_chapter(good_chapter(body).dump()));
     s.plan = changji::stages::plan_episodes(s, 60.0);

@@ -862,7 +862,7 @@ async function stopWriting() {
       <div v-if="loading" class="tiny dim">读取中…</div>
 
       <!-- ---- 编辑器 ---- -->
-      <div v-else-if="hasStory" class="ed">
+      <div v-else-if="hasStory" class="ed" :class="{ 'ed--focus': ui.focusMode }">
         <!-- 一条窄头：挑哪一章、这一章多少字、存没存 -->
         <div class="ed__bar">
           <select v-model="current" class="select ed__pick">
@@ -913,6 +913,18 @@ async function stopWriting() {
             @click="analyzeStory"
           >
             {{ isBusy('analyze') ? '正在读…' : '让 AI 读一遍，提人物' }}
+          </button>
+          <!-- 专注：把顶栏和项目库都收起来。**最大的干扰不在编辑器里，
+               在编辑器外面**——右边那条项目库列着另外几部剧，而你正在写
+               第一章。鼠标贴到窗口顶边顶栏会浮回来，Esc 退出。 -->
+          <button
+            class="btn btn--sm nowrap"
+            :class="ui.focusMode ? 'btn--ai' : 'btn--ghost'"
+            type="button"
+            :title="ui.focusMode ? '退出专注（Esc）' : '专注：收起顶栏和项目库'"
+            @click="ui.focusMode = !ui.focusMode"
+          >
+            {{ ui.focusMode ? '退出专注' : '专注' }}
           </button>
           <!-- **没改动就不显示这个按钮。** 一个常年灰着的按钮只是在占地方，
                而"改了没存"这件事要显眼——它显眼靠的是它突然出现。 -->
@@ -1097,11 +1109,24 @@ async function stopWriting() {
   /* 只减顶栏和边距。页头在这一页整个是不要的（见模板里那一段），
      所以能多吃几行——"占满"就差这几行。 */
   min-height: calc(100vh - 96px);
+  padding: var(--s3);
 }
 .ed__bar {
   display: flex;
   align-items: center;
   gap: var(--s3);
+}
+/* 专注时整块吃满窗口，卡片的圆角和边框都不要了——那一圈线本身就是
+   "这是页面里的一个控件"的提示，而这时候它就是整个页面。 */
+.ed--focus {
+  min-height: 100vh;
+  padding: var(--s3) var(--s3) 0;
+}
+.ed--focus .ed__paper {
+  border-radius: 0;
+  border-left: 0;
+  border-right: 0;
+  border-bottom: 0;
 }
 .ed__pick {
   max-width: 26em;
