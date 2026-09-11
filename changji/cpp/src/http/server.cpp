@@ -38,6 +38,7 @@
 #include "infer/sd_image.hpp"
 #include "models/hardware.hpp"
 #include "pipeline/jobs.hpp"
+#include <thread>
 
 namespace changji::http {
 
@@ -140,6 +141,14 @@ void run(const config::Settings& settings, const Options& opts) {
     // 没有本地权重，注册一个装不上的槽只会在借它时抛没意义的错。
     llm::register_llm_slot([] { return config::runtime().snapshot(); },
                            config::runtime().profile());
+    // **默认把大模型装上**——用户要的"默认加载 llm"。注册不等于加载，
+    // 调度器是借出时才装的，光注册的话要等到第一次写剧本。
+    //
+    // 放后台，不挡起服务（一份 GGUF 几个 G，几十秒）；拿着这个 thread，
+    // 等 app.run() 回来再 join——detach 的话进程退出时它可能还在碰
+    // 已经析构的调度器。见 warm_llm_in_background。
+    std::thread warm_llm = llm::warm_llm_in_background(
+        [] { return config::runtime().snapshot(); });
 
     // ---- REST ----
 
@@ -1262,6 +1271,11 @@ void run(const config::Settings& settings, const Options& opts) {
         .port(static_cast<std::uint16_t>(opts.port))
         .concurrency(opts.concurrency)
         .run();
+
+    // **一定要 join。** 预热线程碰的是调度器那个函数内静态量；不 join
+    // 就退出的话，它可能在静态量析构之后还在往里写。Ctrl+C 时如果正好
+    // 在装模型，这里会多等它装完——装到一半没法打断，等它是对的。
+    if (warm_llm.joinable()) warm_llm.join();
 }
 
 }  // namespace changji::http
