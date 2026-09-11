@@ -1649,14 +1649,41 @@ TEST_CASE("POST /api/story/chapters：一口气展开，每写完一章就落库
     fs::remove_all(root, ec);
 }
 
-TEST_CASE("POST /api/story/chapters：一章写砸了，别的照写") {
+TEST_CASE("POST /api/story/chapters：砸了再要一次，第二次成了就当没事") {
+    // 实跑里最常见的砸法是模型把章节标题填进了正文字段，于是正文只有十几
+    // 个字。采样带随机种子，再要一次通常就对了——2026-09-11 实跑四章砸了
+    // 两章，而这两章的失败彼此无关。
+    const fs::path root = fresh_project("砸了重来");
+    ProjectStore store(root);
+    Story s = parse_outline(good_outline().dump(), "梗概", StoryScale::MEDIUM);
+    store.save_story(s);
+
+    auto client = std::make_shared<llm::ReplayClient>(std::vector<std::string>{
+        "模型今天想聊点别的",  // 第一章头一次：不是 JSON
+        json{{"text", long_body("第一章第二次写出来了。")}}.dump(),
+        json{{"text", long_body("第二章写出来了。")}}.dump(),
+    });
+    http::post_story_chapters(json{{"project", p_str(root)}}, client);
+    wait_writer_done();
+
+    const Story saved = store.load_story();
+    CHECK(saved.chapters[0].text.find("第一章第二次") != std::string::npos);
+    CHECK(saved.chapters[1].text.find("第二章") != std::string::npos);
+    CHECK(client->calls().size() == 3);
+
+    std::error_code ec;
+    fs::remove_all(root, ec);
+}
+
+TEST_CASE("POST /api/story/chapters：两次都砸了才算砸，别的照写") {
     const fs::path root = fresh_project("写砸一章");
     ProjectStore store(root);
     Story s = parse_outline(good_outline().dump(), "梗概", StoryScale::MEDIUM);
     store.save_story(s);
 
     auto client = std::make_shared<llm::ReplayClient>(std::vector<std::string>{
-        "模型今天想聊点别的",  // 第一章：不是 JSON
+        "模型今天想聊点别的",    // 第一章头一次
+        "还是想聊点别的",        // 第一章重试
         json{{"text", long_body("第二章写出来了。")}}.dump(),
     });
     http::post_story_chapters(json{{"project", p_str(root)}}, client);
@@ -1665,6 +1692,9 @@ TEST_CASE("POST /api/story/chapters：一章写砸了，别的照写") {
     const Story saved = store.load_story();
     CHECK(saved.chapters[0].text.empty());
     CHECK_FALSE(saved.chapters[1].text.empty());
+    // **就多要一次，不是要到成功为止。** 提示词真有毛病时，重试到底只会
+    // 把一次失败变成一小时失败。
+    CHECK(client->calls().size() == 3);
 
     std::error_code ec;
     fs::remove_all(root, ec);

@@ -11,6 +11,7 @@
 #include "stages/story_import.hpp"
 #include "stages/story_outline.hpp"
 #include "stages/story_plan.hpp"
+#include "stages/story_reverse.hpp"
 #include "util/paths.hpp"
 #include "util/text.hpp"
 
@@ -450,6 +451,46 @@ ApiResult post_story_episodes(const json& body) {
     json out = story_response(story);
     out["created"] = created;
     out["updated"] = updated;
+    return {200, out};
+}
+
+ApiResult post_story_from_episodes(const json& body) {
+    forbid_extra(body, {"project", "overwrite"});
+    ProjectStore store = open_project(body);
+    const Project project = load_or_400(store);
+    const Story existing = load_story_or_400(store);
+
+    // 已经有故事了还反推，反推出来的那份会把它整份顶掉——而那一份里可能
+    // 有人工改过的人物关系和分集切线。和采用大纲同一条规矩。
+    if (!existing.empty() && !opt_bool(body, "overwrite", false)) {
+        throw ApiError(409,
+                       "这个项目已经有故事了，反推会把它整份顶掉。"
+                       "确认要换的话带上 overwrite。");
+    }
+
+    Story story = stages::story_from_episodes(project);
+    if (story.chapters.empty()) {
+        throw ApiError(400,
+                       "这个项目里一集剧本都没有，反推不出东西来。"
+                       "先写一集，或者直接在故事那一页写大纲");
+    }
+
+    validate_or_400(story);
+    store.save_story(story);
+
+    // **顺手把集和章接上。** 不接的话故事在这儿、剧集在那儿，两边看着都
+    // 齐全，只有写下一集时才发现它拿不到前情——而那时候没有任何报错。
+    Project linked = project;
+    for (const auto& p : story.plan) {
+        Episode* ep = linked.episode_by_id(p.episode_id);
+        if (ep != nullptr) ep->chapter_refs = {p.from_chapter};
+    }
+    store.save_project(linked);
+
+    json out = story_response(story);
+    // 反推是机械的，人物关系一个都没有——这里说清楚下一步该点哪儿，
+    // 不然用户会以为反推完就齐了，而故事页上人物那一栏是空的。
+    out["next"] = "读现成正文提结构";
     return {200, out};
 }
 

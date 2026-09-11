@@ -208,19 +208,47 @@ ApiResult post_story_chapters(const json& body,
                 req.schema = stages::chapter_schema();
                 req.schema_name = "chapter";
 
+                // **砸了就再要一次。**
+                //
+                // 最常见的砸法是模型把章节标题填进了正文字段，于是正文只有
+                // 十几个字（守卫按目标篇幅的两成拦下来）。采样带随机种子，
+                // 再要一次通常就对了——2026-09-11 实跑四章砸了两章，而这
+                // 两章的失败彼此无关。
+                //
+                // **只有批量这条路重试。** 单章那个接口前面站着一个人，他
+                // 看见报错自己会再按一下；批量这条是十六章无人看管地跑，
+                // 中间掉两章的话，等他回来时故事里有两个空洞，而进度条上
+                // 写的是"写完了 16 章"。
+                //
+                // 就多要一次，不是要到成功为止：提示词真有毛病时，重试到底
+                // 只会把一次失败变成一小时失败。
                 Story next;
-                try {
-                    pipeline::CancelToken dummy;
-                    const int floor_chars = static_cast<int>(
-                        stages::chapter_target_chars(cur) *
-                        stages::kChapterMinRatio);
-                    next = stages::apply_chapter(
-                        cur, id,
-                        stages::parse_chapter(client->complete(req, dummy),
-                                              floor_chars));
-                } catch (const std::exception& e) {
+                std::string last_error;
+                for (int attempt = 0; attempt < 2; ++attempt) {
+                    if (attempt > 0) {
+                        p.set_message("重写 " + id + "（" + me->title +
+                                      "）——上一次只写出几个字");
+                    }
+                    try {
+                        pipeline::CancelToken dummy;
+                        const int floor_chars = static_cast<int>(
+                            stages::chapter_target_chars(cur) *
+                            stages::kChapterMinRatio);
+                        next = stages::apply_chapter(
+                            cur, id,
+                            stages::parse_chapter(client->complete(req, dummy),
+                                                  floor_chars));
+                        last_error.clear();
+                        break;
+                    } catch (const std::exception& e) {
+                        last_error = e.what();
+                    }
+                    if (p.cancelled()) break;
+                }
+                if (!last_error.empty()) {
                     // 一章写砸了不该让前面几章白写，记下来接着往下写。
-                    p.add_episode(json{{"chapter_id", id}, {"error", e.what()}});
+                    p.add_episode(json{{"chapter_id", id},
+                                       {"error", last_error + "（重试过一次）"}});
                     p.set_done(++done);
                     continue;
                 }

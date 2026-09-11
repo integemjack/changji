@@ -48,6 +48,19 @@ ApiResult post_story_adopt(const nlohmann::json& body);
 /// POST /api/story/plan —— 按每集时长重算分集表。
 ApiResult post_story_plan(const nlohmann::json& body);
 
+/// POST /api/story/from_episodes —— 从已有剧集反推一份故事骨架。
+///
+/// 给**老项目**用：它们手里只有一集集写好的剧本，没有 story.json，于是
+/// 人物关系、全局记忆这些新做的东西一样都用不上。
+///
+/// **不碰大模型**，也**不重新分集**：一集一章、整章，老项目那几集的边界
+/// 一个字都不动——边界一挪，已经排好的分镜和出过的片就对不上它该在的那
+/// 一段了。反推完顺手把每一集的 chapter_refs 接到对应的章上。
+///
+/// 回来的故事里人物、关系、地点都是空的，接着点「读现成正文提结构」
+/// （/api/story/analyze）才有——那一步要模型读一遍内容。
+ApiResult post_story_from_episodes(const nlohmann::json& body);
+
 /// POST /api/story/import —— 把粘进来的一段文本切成章节。
 ///
 /// 三个入口里的第二条：手里已经有小说/剧本，不必让模型再编一遍。
