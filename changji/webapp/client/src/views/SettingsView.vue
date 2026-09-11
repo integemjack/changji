@@ -15,6 +15,7 @@ import StepHeader from '@/components/StepHeader.vue'
 import { api } from '@/api'
 import { useAction } from '@/composables/useAction'
 import { useUi } from '@/stores/ui'
+import { describeRoomDecision } from '@/composables/room-decision'
 
 const ui = useUi()
 const { run, isBusy } = useAction()
@@ -251,39 +252,9 @@ const placementRows = computed(() => {
  * 或者"该卸的时候没卸"（显存爆掉，整个服务没了）。以前只能登上机器看
  * stderr——服务器连不上的时候这条线索就断了。摆在这儿，谁都看得见。
  */
-const roomDecision = computed(() => {
-  const d = placement.value?.lastRoomDecision
-  if (!d) return null
-  const gb = (v) => (typeof v === 'number' ? `${v.toFixed(1)} GB` : '不知道')
-  // **这一次压根没判**：模型本来就装着，画幅也没超过量过的，那就没有
-  // "要不要腾地方"这个问题。照实说，别把它当成一次判断——那条记录里
-  // 「当时空闲」是 0、「问来的」是假，显示出来就是「问不到卡」，
-  // 而那是让用户盯着报警的那一项，凭空来个假警报比不显示更糟。
-  if (d.alreadyLoaded) {
-    return {
-      slot: d.slot,
-      verdict: '模型本来就装着，没动别的',
-      ok: true,
-      skipped: true,
-    }
-  }
-  return {
-    slot: d.slot,
-    skipped: false,
-    verdict: d.kept ? '够，没动别的模型' : `不够，卸了 ${d.evicted} 个`,
-    ok: Boolean(d.kept),
-    need: gb(d.liveGb),
-    // **要多少这个数本身是量出来的还是估出来的。** 估的那条在 video
-    // 这一路错得离谱（算 14.6 GB、实测 74 GB），拿它判出来的"够，不卸"
-    // 随时可能是 CUDA OOM 的前一步——而 OOM 直接 abort，整个服务没了。
-    needHow: d.liveMeasured ? '量出来的' : '估的，这个槽还没量过',
-    needTrusted: Boolean(d.liveMeasured),
-    free: gb(d.freeSeenGb),
-    // **这一位最要紧**：空闲是问显卡问来的，还是拿量到的数推算的。
-    // 一直显示"推算"就说明问卡那条路没通，那本身就是个要查的问题。
-    how: d.probed ? '问显卡问来的' : '问不到卡，按量到/估到的推算',
-  }
-})
+const roomDecision = computed(() =>
+  describeRoomDecision(placement.value?.lastRoomDecision),
+)
 
 async function load() {
   loading.value = true
