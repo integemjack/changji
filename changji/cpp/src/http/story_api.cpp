@@ -6,6 +6,7 @@
 
 #include "models/project.hpp"
 #include "models/story.hpp"
+#include "stages/story_import.hpp"
 #include "stages/story_outline.hpp"
 #include "stages/story_plan.hpp"
 #include "util/paths.hpp"
@@ -266,6 +267,35 @@ ApiResult post_story_adopt(const json& body) {
 
     json out = story_response(story);
     out["adopted"] = true;
+    return {200, out};
+}
+
+ApiResult post_story_import(const json& body) {
+    forbid_extra(body, {"project", "text", "scale", "title"});
+    ProjectStore store = open_project(body);
+    load_or_400(store);
+    const Story existing = load_story_or_400(store);
+
+    const std::string raw = need_str(body, "text");
+    if (text::strip_ws(raw).empty()) throw ApiError(400, "粘进来的是空的");
+
+    Story draft;
+    draft.source = StorySource::PASTED;
+    draft.scale = opt_scale(body, "scale", existing.scale);
+    draft.premise = existing.premise;
+    draft.logline = text::clean_field(opt_str(body, "title", ""));
+    draft.chapters = stages::split_pasted(raw);
+    if (draft.chapters.empty()) throw ApiError(400, "这段文本切不出章节来");
+
+    draft.episode_duration_s = existing.episode_duration_s;
+    draft.plan = stages::plan_episodes(draft, draft.episode_duration_s);
+
+    json out = story_response(draft);
+    out["adopted"] = false;
+    // 人物、关系、地点都还是空的——那些要读懂内容才提得出来。前端靠这个
+    // 数提醒人「下一步让 AI 读一遍」，不然采用之后会一路走到分镜才发现
+    // 资产库是空的。
+    out["needs_analysis"] = draft.characters.empty();
     return {200, out};
 }
 

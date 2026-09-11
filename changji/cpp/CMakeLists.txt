@@ -523,6 +523,7 @@ add_executable(changji
     src/stages/story_plan.cpp
     src/stages/story_outline.cpp
     src/stages/script_story.cpp
+    src/stages/story_import.cpp
     src/stages/prompt_compose.cpp
     src/stages/frames.cpp
     src/stages/render.cpp
@@ -837,6 +838,7 @@ if(CHANGJI_BUILD_TESTS)
         src/stages/story_plan.cpp
         src/stages/story_outline.cpp
         src/stages/script_story.cpp
+        src/stages/story_import.cpp
         src/stages/prompt_compose.cpp
         src/stages/frames.cpp
         src/stages/render.cpp

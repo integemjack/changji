@@ -139,6 +139,8 @@ export const api = {
   // 分集表是计划，这一步才把它变成流水线真正在跑的剧集。
   // 已有的同号剧集只补元数据，写好的剧本和出过的片一个字不动。
   makeEpisodes: (payload) => post('/api/story/episodes', payload),
+  // 粘进来的文本切成章节。不碰大模型，切章节是机械活。
+  importStory: (payload) => post('/api/story/import', payload),
 
   // ---- 引擎：角色 / 场景 / 风格 ----
   assets: (path) => get('/api/assets', { path }),

@@ -25,9 +25,11 @@
 #include "models/story.hpp"
 #include "stages/bible.hpp"
 #include "stages/script_story.hpp"
+#include "stages/story_import.hpp"
 #include "stages/story_outline.hpp"
 #include "stages/story_plan.hpp"
 #include "util/paths.hpp"
+#include "util/text.hpp"
 
 using namespace changji;
 using namespace changji::models;
@@ -840,6 +842,149 @@ TEST_CASE("POST /api/story/episodes：把分集表落成真的剧集") {
 TEST_CASE("POST /api/story/episodes：还没有分集表") {
     const fs::path root = fresh_project("没分集表");
     CHECK_THROWS_AS(http::post_story_episodes(json{{"project", p_str(root)}}),
+                    http::ApiError);
+    std::error_code ec;
+    fs::remove_all(root, ec);
+}
+
+// ---- 粘贴导入：三种来源里的第二条 ----
+
+TEST_CASE("认出作者自己分的章") {
+    const std::string novel =
+        "第一章 雨夜重逢\n"
+        "他推门进来，伞还在手里。\n"
+        "林晚认出了那把伞。\n"
+        "第二章 五年前那把伞\n"
+        "回到五年前的那个雨夜。\n"
+        "第三章 便利店打烊\n"
+        "卷帘门落下来。";
+
+    const auto chs = changji::stages::split_pasted(novel);
+    REQUIRE(chs.size() == 3);
+    CHECK(chs[0].chapter_id == "ch01");
+    CHECK(chs[0].title == "第一章 雨夜重逢");
+    CHECK(chs[1].title == "第二章 五年前那把伞");
+    // 标题行本身不进正文
+    CHECK(chs[0].text.find("第一章") == std::string::npos);
+    CHECK(chs[0].text.find("他推门进来") != std::string::npos);
+    // 段落边界登记成候选切点，不然一整章只有章界一个候选
+    CHECK_FALSE(chs[0].hooks.empty());
+    // 钩子文本留空：段落边界不是真钩子，不编一句假的出来
+    CHECK(chs[0].hooks[0].text.empty());
+}
+
+TEST_CASE("认标题：宁可漏认不要错认") {
+    std::string t;
+    CHECK(changji::stages::split_pasted("## 楔子\n正文一\n## 第一章\n正文二").size() == 2);
+
+    // 正文里提到「第三章」的长句子不该被当成标题——错认会让那一章从
+    // 半句话开始，而且章名是一整句废话
+    const std::string tricky =
+        "第一章\n"
+        "他翻开那本书，第三章的页脚被人折过，折痕很深，像是反复读过很多遍。\n"
+        "第二章\n"
+        "她没有回答。";
+    const auto chs = changji::stages::split_pasted(tricky);
+    REQUIRE(chs.size() == 2);
+    CHECK(chs[0].text.find("折痕很深") != std::string::npos);
+}
+
+TEST_CASE("一个标题都没有：按字数在段落边界上切") {
+    // 六十段，每段约 100 字
+    std::string novel;
+    for (int i = 0; i < 60; ++i) {
+        for (int k = 0; k < 100; ++k) novel += "字";
+        novel += "\n";
+    }
+
+    const auto chs = changji::stages::split_pasted(novel, 1000);
+    CHECK(chs.size() >= 4);
+
+    for (const auto& c : chs) {
+        // 切出来必须是完整的汉字
+        CHECK(c.text.size() % 3 == 0);
+        CHECK_FALSE(c.title.empty());
+        CHECK_FALSE(c.text.empty());
+    }
+
+    // 一个字都不能丢。数「字」本身，不数换行——换行在章界上会被
+    // strip_ws 削掉，算进来只会让这条断言变成在量空白。
+    std::size_t kept = 0;
+    for (const auto& c : chs) {
+        for (const auto& ch : changji::text::utf8_chars(c.text)) {
+            if (ch == "字") ++kept;
+        }
+    }
+    CHECK(kept == 60 * 100);
+}
+
+TEST_CASE("切出来的章能直接拿去分集，而且切点落在段落上") {
+    std::string novel;
+    for (int i = 0; i < 40; ++i) {
+        for (int k = 0; k < 100; ++k) novel += "字";
+        novel += "\n";
+    }
+    Story s;
+    s.chapters = changji::stages::split_pasted(novel, 2000);
+    s.episode_duration_s = 60.0;  // 容量 900 字
+    s.plan = changji::stages::plan_episodes(s, 60.0);
+
+    CHECK(s.plan.size() >= 3);
+    CHECK(s.validate().empty());
+
+    // **每一刀要么落在章尾，要么紧跟在一个换行后面。**
+    // 这是「不切在半句话中间」那条底线的可检查版本。
+    //
+    // 别写成 to_char % 100 == 0：每段是 100 字**加一个换行**，边界在 101
+    // 的倍数上，而且章首被 strip_ws 削过之后偏移还会挪——用整除去凑，
+    // 测的是算术不是那条性质。
+    for (const auto& p : s.plan) {
+        const Chapter* c = s.chapter_by_id(p.to_chapter);
+        REQUIRE(c != nullptr);
+        const auto chars = changji::text::utf8_chars(c->text);
+        CAPTURE(p.episode_id);
+        CAPTURE(p.to_char);
+        const bool at_end = p.to_char == static_cast<int>(chars.size());
+        const bool after_newline =
+            p.to_char > 0 && p.to_char <= static_cast<int>(chars.size()) &&
+            chars[static_cast<std::size_t>(p.to_char) - 1] == "\n";
+        CHECK((at_end || after_newline));
+    }
+}
+
+TEST_CASE("空的和切不出来的") {
+    CHECK(changji::stages::split_pasted("").empty());
+    CHECK(changji::stages::split_pasted("   \n  \n ").empty());
+    // 一行字也算一章
+    CHECK(changji::stages::split_pasted("就这一句。").size() == 1);
+}
+
+TEST_CASE("POST /api/story/import：只回草稿，不落库") {
+    const fs::path root = fresh_project("粘贴");
+    const std::string novel =
+        "第一章 雨夜重逢\n他推门进来。\n第二章 五年前\n回到五年前。";
+
+    const auto r = http::post_story_import(
+        json{{"project", p_str(root)}, {"text", novel}});
+    CHECK(r.status == 200);
+    CHECK_FALSE(r.body.at("adopted").get<bool>());
+    CHECK(r.body.at("chapters").get<int>() == 2);
+    CHECK(r.body.at("written").get<int>() == 2);  // 粘进来的就是有正文的
+    CHECK(r.body.at("story").at("source").get<std::string>() == "pasted");
+    // 人物还提不出来，前端要靠这个数提醒人下一步
+    CHECK(r.body.at("needs_analysis").get<bool>());
+
+    ProjectStore store(root);
+    CHECK(store.load_story().empty());
+
+    std::error_code ec;
+    fs::remove_all(root, ec);
+}
+
+TEST_CASE("POST /api/story/import：空文本") {
+    const fs::path root = fresh_project("粘空的");
+    CHECK_THROWS_AS(http::post_story_import(
+                        json{{"project", p_str(root)}, {"text", "   "}}),
                     http::ApiError);
     std::error_code ec;
     fs::remove_all(root, ec);

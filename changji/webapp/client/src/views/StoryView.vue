@@ -33,6 +33,8 @@ const loading = ref(false)
 const draft = ref(null) // AI 写完、还没采用的那一份
 const keywords = ref('')
 const openChapter = ref('')
+const pasting = ref(false)
+const pasted = ref('')
 
 const premise = ref('')
 const savedPremise = ref('')
@@ -171,6 +173,30 @@ async function makeEpisodes() {
   }
 }
 
+/**
+ * 粘一段现成的东西进来。
+ *
+ * 三个入口里的第二条。切章节不走大模型——那是机械活，靠标题行和段落边界
+ * 就能做，而且比模型稳：同一段文本让模型切两次，结果会不一样。
+ *
+ * 切出来的章节自带正文，所以后面写剧本时展开的是真正文，不是梗概。
+ */
+async function importPasted() {
+  if (!pasted.value.trim()) {
+    ui.warn('先把文本粘进来')
+    return
+  }
+  const result = await run(
+    () => api.importStory({ project: session.projectPath, text: pasted.value }),
+    { key: 'import' },
+  )
+  if (result) {
+    draft.value = result
+    pasting.value = false
+    pasted.value = ''
+  }
+}
+
 async function adoptDraft() {
   if (!draft.value) return
   const result = await run(
@@ -244,6 +270,12 @@ async function adoptDraft() {
           <span class="pill pill--accent nowrap">
             {{ draft.chapters }} 章 · 分 {{ draft.episodes }} 集
           </span>
+        </div>
+        <div v-if="draft.needs_analysis" class="card__body">
+          <p class="tiny dim">
+            粘进来的只有正文，人物和地点还没提出来——那要读懂内容才做得到，
+            是下一步的事。先采用，章节和分集已经能看了。
+          </p>
         </div>
         <div class="card__body stack stack--sm">
           <ol class="draftlist">
@@ -331,12 +363,56 @@ async function adoptDraft() {
           <section class="stack stack--sm">
             <div v-if="loading" class="tiny dim">读取中…</div>
 
+            <section v-if="pasting" class="card">
+              <div class="card__head">
+                <div>
+                  <div class="card__title">粘一段现成的进来</div>
+                  <div class="card__sub">
+                    小说、剧本、大纲都行。认得出「第三章」「## 标题」就照它分章，
+                    认不出就按字数在段落边界上切。版权自负。
+                  </div>
+                </div>
+                <button
+                  class="btn btn--ghost btn--sm"
+                  type="button"
+                  @click="pasting = false"
+                >
+                  收起
+                </button>
+              </div>
+              <div class="card__body stack stack--sm">
+                <textarea
+                  v-model="pasted"
+                  class="textarea"
+                  rows="10"
+                  placeholder="把正文粘在这里…"
+                />
+                <div class="row row--between">
+                  <span class="tiny dim numeric">
+                    {{ [...pasted].length }} 字
+                  </span>
+                  <button
+                    class="btn btn--primary"
+                    type="button"
+                    :disabled="isBusy('import')"
+                    @click="importPasted"
+                  >
+                    {{ isBusy('import') ? '切分中…' : '切成章节' }}
+                  </button>
+                </div>
+              </div>
+            </section>
+
             <EmptyState
               v-else-if="!hasStory"
               icon="script"
               title="还没有故事"
-              hint="选个体量，点右上角。梗概和方向都可以空着——空着就让它自己定选题。把已有的小说粘进来那条路还没做。"
-            />
+              hint="选个体量，点右上角让它写。梗概和方向都可以空着——空着就让它自己定选题。"
+            >
+              <button class="btn" type="button" @click="pasting = true">
+                我有现成的，粘进来
+              </button>
+            </EmptyState>
 
             <template v-else>
               <div class="row row--between">
@@ -346,7 +422,16 @@ async function adoptDraft() {
                     · 已展开正文 {{ writtenCount }}
                   </template>
                 </span>
-                <span class="tiny dim">横线就是分集，切在钩子上</span>
+                <div class="row">
+                  <button
+                    class="btn btn--ghost btn--sm"
+                    type="button"
+                    @click="pasting = !pasting"
+                  >
+                    粘一段进来
+                  </button>
+                  <span class="tiny dim">横线就是分集，切在钩子上</span>
+                </div>
               </div>
 
               <template v-for="(c, i) in chapters" :key="c.chapter_id">

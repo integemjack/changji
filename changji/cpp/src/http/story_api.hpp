@@ -48,6 +48,15 @@ ApiResult post_story_adopt(const nlohmann::json& body);
 /// POST /api/story/plan —— 按每集时长重算分集表。
 ApiResult post_story_plan(const nlohmann::json& body);
 
+/// POST /api/story/import —— 把粘进来的一段文本切成章节。
+///
+/// 三个入口里的第二条：手里已经有小说/剧本，不必让模型再编一遍。
+/// **不碰大模型**，切章节是机械活。和 /outline 一样**只回草稿不落库**。
+///
+/// 回来的故事只有章节和正文，人物、关系、地点都是空的——那些要读懂内容
+/// 才提得出来，是下一步的事。
+ApiResult post_story_import(const nlohmann::json& body);
+
 /// POST /api/story/episodes —— 把分集表落成真的剧集。
 ///
 /// 分集表是计划，剧集是流水线真正在跑的东西。分成两步而不是采用大纲时
