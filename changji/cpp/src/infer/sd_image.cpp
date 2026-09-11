@@ -6,6 +6,7 @@
 #include <cstring>
 #include <fstream>
 #include <mutex>
+#include <random>
 #include <vector>
 
 #include <nlohmann/json.hpp>
@@ -1054,11 +1055,41 @@ void register_sd_slots(SettingsProvider raw_provider,
         }
         scheduler().set_measured_sink([store](Slot, std::size_t) {
             // 整份重写，不是追加——就四个槽，文件几十字节。
+            //
+            // **先写临时文件再改名，不要原地 truncate。**
+            // 原地写有两种撕裂法，两种都真实存在：
+            //   1. 多卡时一张卡一个工作进程，**八个进程写同一个文件**
+            //      （这个路径按用户数据目录算，和卡无关）。两个进程的
+            //      truncate + write 交错，读回来就是半截 JSON。
+            //   2. 写到一半被 Ctrl+C 或者 OOM 的 abort() 打断。出片那一步
+            //      正是最容易 abort 的时候，而这次写入往往就跟在它后面。
+            // 撕裂的后果不是崩——parse 会当成"没量过"而返回空——但那等于
+            // 把攒下来的实测值全丢了，下一次出片又要白卸一遍模型。
+            // rename 是同目录内的原子替换，读的人要么看到旧的要么看到新的。
             std::error_code e;
             fs::create_directories(store.parent_path(), e);
-            std::ofstream out(store, std::ios::binary | std::ios::trunc);
-            if (!out) return;   // 写不了就算了，下次重新量，不该因此影响出图
-            out << serialize_measured_vram(scheduler().all_measured());
+            // 临时名带进程号：八个进程各写各的，不会互相覆盖到一半。
+            // 一个进程一个后缀。**不用进程号**：那要平台分支
+            // （getpid / _getpid），而这里只要"别撞车"，随机数就够。
+            static const std::string kTag = [] {
+                std::random_device rd;
+                return std::to_string(rd()) + "-" + std::to_string(rd());
+            }();
+            const fs::path tmp =
+                store.parent_path() /
+                (store.filename().string() + ".tmp." + kTag);
+            {
+                std::ofstream out(tmp, std::ios::binary | std::ios::trunc);
+                if (!out) return;   // 写不了就算了，下次重新量
+                out << serialize_measured_vram(scheduler().all_measured());
+                if (!out) {         // 磁盘满之类
+                    out.close();
+                    fs::remove(tmp, e);
+                    return;
+                }
+            }
+            fs::rename(tmp, store, e);
+            if (e) fs::remove(tmp, e);   // 改不过去就别留一地临时文件
         });
     }
 
