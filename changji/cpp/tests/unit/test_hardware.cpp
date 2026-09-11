@@ -259,6 +259,31 @@ TEST_CASE("总量和空闲要一次问出来，而且互相说得通") {
     // 拿不到也是合法答案（Mac、没装驱动的机器），调用方会退回老路。
 }
 
+TEST_CASE("绑到一张不存在的卡：说问不到，而不是退回报 0 号卡的数") {
+    // **这条测的是安全方向。** 多卡时工作进程靠 CUDA_VISIBLE_DEVICES 绑卡，
+    // 而 NVML 和 nvidia-smi 都不认这个变量——所以要按它换算下标。
+    // 换算出来的下标越界时（配错了、或者卡被拔了），**必须说"问不到"**：
+    // 退回去报 0 号卡的空闲，就是拿别人卡上的数去判"够，不卸"，下一步 OOM。
+    //
+    // 这台机器只有一张卡，所以下标 9 一定越界，这条在本机就能真跑。
+    const auto before = free_vram_gb();
+    changji::paths::set_env("CUDA_VISIBLE_DEVICES", "9");
+    const auto bound = free_vram_gb();
+    const auto bound_totals = vram_totals_gb();
+    changji::paths::set_env("CUDA_VISIBLE_DEVICES", "");
+
+    const HardwareProfile p = HardwareProfile::detect();
+    const int cards = p.gpu.has_value() ? p.gpu->count : 0;
+    if (cards > 0 && cards <= 9) {
+        // 下标越界 -> 一个数都不该给出来
+        CHECK_FALSE(bound.has_value());
+        CHECK_FALSE(bound_totals.has_value());
+    }
+    // 环境变量清掉之后要恢复原样，别把状态留给后面的用例
+    const auto after = free_vram_gb();
+    CHECK(before.has_value() == after.has_value());
+}
+
 TEST_CASE("CHANGJI_NO_NVML 能把新路关掉，退回老路") {
     // 新加一个原生库依赖，得留一个一键关掉的口子。关掉之后仍然要么
     // 给数、要么给空——不能因为关掉就崩，也不能给个荒唐的数。
