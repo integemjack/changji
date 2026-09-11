@@ -682,7 +682,14 @@ async function clearRef(charId, slot) {
 /* 让位的那两张留一条窄边，不是缩没：那条边是回去的路，
    十几个像素点不着，等于摊开之后只能靠移出去才收回来。 */
 .trio:hover .trio__one { flex-grow: 0.55; }
-.trio__one:hover { flex-grow: 5; }
+/* ⚠️ **摊开那条要写成后代选择器，不能只写 `.trio__one:hover`。**
+   scoped 样式会把 `[data-v-xxx]` 加在**最后一段**上：
+       .trio:hover .trio__one  →  .trio:hover .trio__one[data-v]   （0,4,0）
+       .trio__one:hover        →  .trio__one:hover[data-v]         （0,3,0）
+   于是让位那条反而更具体，三张一起变成 0.55——还是均分，看着就是
+   "鼠标放上去什么都没发生"。不加 scoped 的话两条同权重、靠先后顺序，
+   写法看起来没毛病，所以这个坑只在真页面上才露出来。 */
+.trio:hover .trio__one:hover { flex-grow: 5; }
 .trio__one img {
   width: 100%;
   height: 100%;

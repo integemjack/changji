@@ -10,7 +10,7 @@
  * 那几个：出分镜之前，AI 按这一集的剧本补新场景；出了分镜之后，按镜头
  * 实际引用的 id 分成「本集用到」和「其他集的」两组。
  */
-import { computed, reactive, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 
 import AppIcon from '@/components/AppIcon.vue'
 import EmptyState from '@/components/EmptyState.vue'
@@ -30,6 +30,21 @@ const genPct = reactive({})
 
 /** 采样到一半那张小图。见 AssetCharacters 里同名那个。 */
 const preview = reactive({})
+
+/** 抽屉里改的是哪一处。墙用来挑，抽屉用来改——和角色那边同一套。 */
+const openId = ref('')
+const openLoc = computed(
+  () => mine.value.find((l) => l.location_id === openId.value) ?? null,
+)
+
+function toggle(id) {
+  openId.value = openId.value === id ? '' : id
+}
+
+function onEsc(e) {
+  // 抽屉盖着半个屏幕，而鼠标多半正停在里面——Esc 是唯一不用先瞄准的出口。
+  if (e.key === 'Escape' && openId.value) openId.value = ''
+}
 
 /** 页头那个种子，和「一键出图」画完之后的那声招呼。 */
 const { stamp, seedPayload } = useRefGen()
@@ -136,6 +151,9 @@ async function loadShots() {
     shots.value = []
   }
 }
+
+onMounted(() => document.addEventListener('keydown', onEsc))
+onUnmounted(() => document.removeEventListener('keydown', onEsc))
 
 watch(() => [session.projectPath, session.episodeId], load, { immediate: true })
 watch(stamp, load)   // 见 AssetCharacters 里同一行
@@ -345,10 +363,21 @@ async function clearEmpty(locationId) {
       <template v-else>
         <!-- 本集场景 -->
         <section>
-          <div class="grid grid--locs">
-            <article v-for="l in mine" :key="l.location_id" class="loc">
-              <!-- 空景图 -->
-              <div class="loc__shot">
+          <!-- 一处一张牌，和角色那面墙、和「这一集」那面镜头墙一个样子。
+               以前每张牌里都摊着名字输入框和三段描述——十来个场景就是三十
+               多个输入框铺在一屏上，而这一页十次有九次只是来看一眼空景图
+               对不对。改的时候点开抽屉。 -->
+          <div class="wall">
+            <article
+              v-for="l in mine"
+              :key="l.location_id"
+              class="cell"
+              :class="{
+                'cell--live': isBusy('gen:' + l.location_id),
+                'cell--open': openId === l.location_id,
+              }"
+            >
+              <div class="cell__frame" @click="toggle(l.location_id)">
                 <img
                   v-if="l.ref_empty"
                   :src="mediaUrl(session.projectPath, l.ref_empty)"
@@ -360,105 +389,153 @@ async function clearEmpty(locationId) {
                   <span class="tiny">没有空景图</span>
                 </div>
 
-                <!-- 采样中途那张小图，盖在这一格上。潜空间线性投影来的，
-                     放大自然是糊的，随着步数推进内容逐渐成形；画完就没了。
-                     用户 2026-09-12：「画图方式也要实时返回步数图」。 -->
+                <!-- 采样中途那张小图。见 AssetCharacters 里同一段。 -->
                 <img
                   v-if="preview[l.location_id]"
                   class="loc__preview"
                   :src="preview[l.location_id]"
                   alt=""
                 />
+                <span v-if="genPct[l.location_id]" class="cell__pct numeric">
+                  {{ genPct[l.location_id] }}%
+                </span>
+                <span v-if="usage.get(l.location_id)" class="loc__count pill pill--neutral">
+                  本集 {{ usage.get(l.location_id) }} 镜
+                </span>
+              </div>
 
+              <div class="cell__bottom">
+                <span
+                  v-if="isBusy('gen:' + l.location_id)"
+                  class="cell__fill"
+                  :class="{ 'cell__fill--idle': !genPct[l.location_id] }"
+                  :style="genPct[l.location_id] ? { width: genPct[l.location_id] + '%' } : null"
+                />
+                <button class="cell__name truncate" type="button" title="改这个场景" @click="toggle(l.location_id)">
+                  {{ l.name }}
+                </button>
+                <span class="spacer" />
+                <span v-if="changed(l.location_id)" class="pill pill--warn tiny">未保存</span>
+                <span class="pill tiny" :class="l.ref_empty ? 'pill--ok' : 'pill--neutral'">
+                  {{ l.ref_empty ? '有空景图' : '缺图' }}
+                </span>
+              </div>
+            </article>
+          </div>
+        </section>
+
+        <!-- 点开一处场景，从右边滑出来改。和角色那边同一套。 -->
+        <div v-if="openLoc" class="drawer" @click.self="openId = ''">
+          <aside class="drawer__panel">
+            <header class="drawer__head">
+              <b>{{ openLoc.name }}</b>
+              <span class="tiny dim mono">{{ openLoc.location_id }}</span>
+              <span v-if="changed(openLoc.location_id)" class="pill pill--warn tiny">未保存</span>
+              <span class="spacer" />
+              <button class="iconbtn" type="button" title="收起（Esc）" @click="openId = ''">✕</button>
+            </header>
+
+            <div class="drawer__body stack">
+              <!-- 空景图排在最上面：这一页的活是"看看这地方对不对"。 -->
+              <div class="loc__shot">
+                <img
+                  v-if="openLoc.ref_empty"
+                  :src="mediaUrl(session.projectPath, openLoc.ref_empty)"
+                  :alt="`${openLoc.name} 空景图`"
+                />
+                <div v-else class="loc__blank">
+                  <AppIcon name="image" :size="20" />
+                  <span class="tiny">没有空景图</span>
+                </div>
+                <img
+                  v-if="preview[openLoc.location_id]"
+                  class="loc__preview"
+                  :src="preview[openLoc.location_id]"
+                  alt=""
+                />
                 <div class="loc__overlay">
                   <button
                     class="btn btn--sm btn--ai"
                     type="button"
-                    :disabled="isBusy('gen:' + l.location_id)"
+                    :disabled="isBusy('gen:' + openLoc.location_id)"
                     title="照下面那段拼出来的提示词画一张空景，里面不会有人"
-                    @click="genEmpty(l.location_id)"
+                    @click="genEmpty(openLoc.location_id)"
                   >
                     <AppIcon name="sparkle" :size="13" />
                     {{
-                      isBusy('gen:' + l.location_id)
-                        ? genPct[l.location_id]
-                          ? genPct[l.location_id] + '%'
+                      isBusy('gen:' + openLoc.location_id)
+                        ? genPct[openLoc.location_id]
+                          ? genPct[openLoc.location_id] + '%'
                           : '画着…'
-                        : l.ref_empty
+                        : openLoc.ref_empty
                           ? '重画'
                           : '画一张'
                     }}
                   </button>
                   <label class="btn btn--sm">
                     <AppIcon name="image" :size="13" />
-                    {{ l.ref_empty ? '换一张' : '传空景图' }}
+                    {{ openLoc.ref_empty ? '换一张' : '传空景图' }}
                     <input
                       type="file"
                       accept="image/png,image/jpeg,image/webp"
                       hidden
-                      @change="uploadEmpty(l.location_id, $event)"
+                      @change="uploadEmpty(openLoc.location_id, $event)"
                     />
                   </label>
                   <button
-                    v-if="l.ref_empty"
+                    v-if="openLoc.ref_empty"
                     class="btn btn--sm btn--ghost"
                     type="button"
-                    @click="clearEmpty(l.location_id)"
+                    @click="clearEmpty(openLoc.location_id)"
                   >
                     撤掉
                   </button>
                 </div>
-
-                <span v-if="usage.get(l.location_id)" class="loc__count pill pill--neutral">
-                  本集 {{ usage.get(l.location_id) }} 镜
-                </span>
               </div>
 
-              <div class="loc__head">
-                <input v-model="edits[l.location_id].name" class="loc__name" />
-                <span class="tiny dim mono nowrap">{{ l.location_id }}</span>
-              </div>
+              <label class="field">
+                <span class="field__label">名字</span>
+                <input v-model="edits[openLoc.location_id].name" class="input" />
+              </label>
 
-              <div class="loc__body stack stack--sm">
-                <label v-for="f in FIELDS" :key="f.key" class="field" :title="f.hint">
-                  <span class="field__label">{{ f.label }}</span>
-                  <textarea
-                    v-model="edits[l.location_id][f.key]"
-                    class="textarea textarea--tight"
-                    :rows="f.rows"
-                    :placeholder="f.hint"
-                  />
-                </label>
-                <div class="field" title="每个镜头拿到的都是这一串">
-                  <span class="field__label">拼出来的提示词</span>
-                  <p class="rendered mono">{{ l.rendered }}</p>
-                </div>
-              </div>
+              <label v-for="f in FIELDS" :key="f.key" class="field" :title="f.hint">
+                <span class="field__label">{{ f.label }}</span>
+                <textarea
+                  v-model="edits[openLoc.location_id][f.key]"
+                  class="textarea textarea--tight"
+                  :rows="f.rows"
+                  :placeholder="f.hint"
+                />
+              </label>
 
-              <div class="loc__foot">
-                <button
-                  class="btn btn--primary btn--sm"
-                  type="button"
-                  :disabled="!changed(l.location_id) || isBusy('save:' + l.location_id)"
-                  title="改了描述，已渲染的镜头会退回重跑"
-                  @click="save(l.location_id)"
-                >
-                  保存
-                </button>
-                <button
-                  class="btn btn--ghost btn--sm"
-                  type="button"
-                  :disabled="!changed(l.location_id)"
-                  @click="edits[l.location_id] = { ...l }"
-                >
-                  撤销
-                </button>
-                <span class="spacer" />
-                <span v-if="changed(l.location_id)" class="pill pill--warn">未保存</span>
+              <div class="field" title="每个镜头拿到的都是这一串">
+                <span class="field__label">拼出来的提示词</span>
+                <p class="rendered mono">{{ openLoc.rendered }}</p>
               </div>
-            </article>
-          </div>
-        </section>
+            </div>
+
+            <div class="drawer__foot">
+              <button
+                class="btn btn--primary btn--sm"
+                type="button"
+                :disabled="!changed(openLoc.location_id) || isBusy('save:' + openLoc.location_id)"
+                title="改了描述，已渲染的镜头会退回重跑"
+                @click="save(openLoc.location_id)"
+              >
+                保存
+              </button>
+              <button
+                class="btn btn--ghost btn--sm"
+                type="button"
+                :disabled="!changed(openLoc.location_id)"
+                @click="edits[openLoc.location_id] = { ...openLoc }"
+              >
+                撤销
+              </button>
+            </div>
+          </aside>
+        </div>
+
 
         <!-- 其他集的场景 -->
         <section v-if="others.length" class="stack stack--sm">
@@ -528,18 +605,127 @@ async function clearEmpty(locationId) {
   align-items: start;
 }
 
+/* 一处一张牌。和角色那面墙、和「这一集」那面镜头墙同一套——三处的尺寸
+   和类名刻意长一样，改一处就该想到另外两处。 */
+.wall {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: var(--s3);
+  align-items: start;
+}
+.cell {
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  overflow: hidden;
+  background: var(--surface);
+}
+.cell--live { border-color: var(--accent); }
+.cell--open { outline: 2px solid var(--accent); }
+/* 空景图给人看的是空间，宽一点看得清家具位置——所以是 16:9，
+   不跟角色那边的 9:16。成片是竖屏，但这一格不是成片。 */
+.cell__frame {
+  position: relative;
+  display: block;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  background: var(--bg-sunken);
+  color: var(--text-3);
+  cursor: pointer;
+}
+.cell__frame img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.cell__pct {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--bg) 75%, transparent);
+  color: var(--accent);
+  font-size: var(--fs-xs);
+  pointer-events: none;
+}
+.cell__bottom {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 6px;
+  border-top: 1px solid var(--line);
+}
+.cell__fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  background: var(--accent-soft);
+  pointer-events: none;
+}
+.cell__fill--idle {
+  right: 0;
+  animation: cell-sweep 1.4s ease-in-out infinite;
+}
+@keyframes cell-sweep {
+  0%, 100% { opacity: 0.25; }
+  50% { opacity: 0.7; }
+}
+.cell__name {
+  position: relative;
+  border: 0;
+  background: transparent;
+  color: var(--text-1);
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  cursor: pointer;
+  padding: 0;
+  min-width: 0;
+}
+.cell__bottom .pill { position: relative; }
+
+/* 抽屉。和角色那边同一套尺寸。 */
+.drawer {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  background: color-mix(in srgb, black 45%, transparent);
+  display: flex;
+  justify-content: flex-end;
+}
+.drawer__panel {
+  display: flex;
+  flex-direction: column;
+  width: min(96vw, 720px);
+  height: 100%;
+  background: var(--surface);
+  border-left: 1px solid var(--line);
+}
+.drawer__head,
+.drawer__foot {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  padding: var(--s3);
+}
+.drawer__head { border-bottom: 1px solid var(--line); }
+.drawer__foot { border-top: 1px solid var(--line); }
+.drawer__body {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--s3);
+}
+/* **flex: none，否则那张图会被压成一条。** drawer__body 是 flex 竖排，
+   而 `aspect-ratio` 不给 flex 定基准尺寸——默认 `flex-shrink: 1` 一收，
+   16:9 的空景图在这儿实测只剩 40px 高（该是 390）。而这一格恰恰是
+   打开抽屉最先要看的东西。 */
+.drawer .loc__shot { flex: none; }
+
 /* 一格一个场景。图在上，格子要有边，不然图和图连成一片。 */
 .loc {
   overflow: hidden;
   border: 1px solid var(--line);
   border-radius: var(--r);
-}
-.loc__foot {
-  display: flex;
-  align-items: center;
-  gap: var(--s2);
-  padding: var(--s2) var(--s3);
-  border-top: 1px solid var(--line);
 }
 .loc--dim {
   opacity: 0.72;
@@ -597,6 +783,11 @@ async function clearEmpty(locationId) {
 .loc:focus-within .loc__overlay {
   opacity: 1;
 }
+/* **抽屉里那一排一直显示。** 它是靠 `.loc:hover` 露出来的，而抽屉里的图
+   外面没有 `.loc` 这层壳——不写这一条的话「画一张 / 换一张 / 撤掉」永远
+   是透明的，点得着但看不见，等于没有。
+   而且抽屉本来就是"进来改东西"的地方，不用再藏一道。 */
+.drawer .loc__overlay { opacity: 1; }
 .loc__count {
   position: absolute;
   top: var(--s2);
@@ -612,24 +803,6 @@ async function clearEmpty(locationId) {
   gap: var(--s2);
   padding: var(--s3) var(--s4);
   border-bottom: 1px solid var(--line);
-}
-.loc__name {
-  flex: 1;
-  min-width: 0;
-  padding: 2px var(--s2);
-  border: 1px solid transparent;
-  border-radius: var(--r-sm);
-  background: transparent;
-  font-size: var(--fs-md);
-  font-weight: 600;
-}
-.loc__name:hover {
-  border-color: var(--line);
-}
-.loc__name:focus {
-  outline: none;
-  border-color: var(--accent);
-  background: var(--bg-sunken);
 }
 .loc__body {
   padding: var(--s4);
