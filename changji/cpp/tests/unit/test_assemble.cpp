@@ -222,6 +222,38 @@ TEST_CASE("统一规格：先按比例缩到框内再补边") {
     }
 }
 
+TEST_CASE("项目名里带撇号也要拼得出来") {
+    // 清单写的是 file '<路径>'，而 concat 解析器在单引号内再遇到
+    // 单引号就结束引用。项目叫 "don't" 的话，这一行断在半截，后面那截
+    // 被当成别的记号。
+    //
+    // **代价不对称**：表现是最后装配那一步报一句 ffmpeg 的解析错，指的位置
+    // 离真正的原因（项目叫什么名）十万八千里，而且是在整集都跑完之后才炸。
+    const fs::path work = paths::from_utf8("C:\\库\\don't\\output");
+    const std::vector<fs::path> clips = {work / "norm_0000.mp4"};
+    const std::string listing = media::concat_listing(clips);
+    CAPTURE(listing);
+
+    // 规矩是 ' -> '\\''：收引用、转义的单引号、再开引用。
+    CHECK(listing.find("don'\\''t") != std::string::npos);
+    // 整行仍然是 file '...' 的形状，末尾带换行
+    CHECK(listing.rfind("file '", 0) == 0);
+    CHECK(listing.back() == '\n');
+
+    // **引用必须闭合。** 只数**没被反斜杠转义**的那些单引号——
+    // 转义掉的那个不参与开合。断在半截的话这个数是奇数。
+    //
+    // 第一版我直接数了所有单引号、要求偶数，结果被这条用例当场证伪：
+    // '\'' 里有三个引号，其中一个是转义的，总数是奇数而引用是闭合的。
+    int open_close = 0;
+    for (std::size_t i = 0; i < listing.size(); ++i) {
+        if (listing[i] != '\'') continue;
+        if (i > 0 && listing[i - 1] == '\\') continue;   // 被转义的，不算
+        ++open_close;
+    }
+    CHECK(open_close % 2 == 0);
+}
+
 TEST_CASE("拼接清单用正斜杠，拼接本身零重编码") {
     // **路径要用反斜杠拼出来。** 原来这里给的是正斜杠字面量，于是
     // "清单里没有反斜杠"那条断言**永远为真**——输入里本来就没有，

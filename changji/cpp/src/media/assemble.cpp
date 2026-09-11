@@ -127,10 +127,34 @@ std::vector<std::string> normalize_args(const fs::path& src, int target_w,
     };
 }
 
+/// 清单里那条路径要按 ffmpeg concat 解析器的规矩转义。
+///
+/// **单引号是硬伤。** 我们写的是 `file '<路径>'`，而在 concat 解析器里
+/// 单引号内再遇到 ' 就结束引用——项目名里带一个撇号（don't、
+/// Rock'n'Roll），这一行就断在半截，后面那截被当成别的记号。
+///
+/// 表现是最后装配那一步报一句 ffmpeg 的解析错，而它指的位置离真正的原因
+/// （项目叫什么名）十万八千里——**而且是在整集都跑完之后才炸**。
+///
+/// 规矩：收掉引用、贴一个转义的单引号、再开回引用。反斜杠不用管，
+/// fwd() 已经把它全换成正斜杠了。
+std::string concat_quote(const std::string& path) {
+    std::string out;
+    out.reserve(path.size() + 8);
+    for (const char c : path) {
+        if (c == '\'') {
+            out += "'\\''";
+        } else {
+            out += c;
+        }
+    }
+    return out;
+}
+
 std::string concat_listing(const std::vector<fs::path>& clips) {
     std::string out;
     for (const auto& p : clips) {
-        out += "file '" + fwd(p) + "'\n";
+        out += "file '" + concat_quote(fwd(p)) + "'\n";
     }
     return out;
 }
