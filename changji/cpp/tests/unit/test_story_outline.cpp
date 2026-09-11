@@ -24,7 +24,9 @@
 #include "models/project.hpp"
 #include "models/story.hpp"
 #include "stages/bible.hpp"
+#include "stages/script_story.hpp"
 #include "stages/story_outline.hpp"
+#include "stages/story_plan.hpp"
 #include "util/paths.hpp"
 
 using namespace changji;
@@ -679,6 +681,166 @@ TEST_CASE("POST /api/story/outline：一个字都没有也照写") {
     REQUIRE(client.calls().size() == 1);
     CHECK(client.calls()[0].prompt.find("由你定") != std::string::npos);
 
+    std::error_code ec;
+    fs::remove_all(root, ec);
+}
+
+// ---- 期 4：从故事写一集 ----
+
+namespace {
+
+/// 一份展开过正文的故事：两章各 1000 字，各带一个钩子。
+Story written_story() {
+    Story s = sample_story();
+    for (int i = 0; i < 2; ++i) {
+        Chapter& c = s.chapters[i];
+        c.text.clear();
+        for (int k = 0; k < 1000; ++k) c.text += (i == 0 ? "甲" : "乙");
+        c.hooks.clear();
+        Hook h;
+        h.at_char = 500;
+        h.text = i == 0 ? "她认出那把伞" : "他没有回头";
+        c.hooks.push_back(h);
+    }
+    s.plan = changji::stages::plan_episodes(s, 30.0);
+    return s;
+}
+
+}  // namespace
+
+TEST_CASE("取一集覆盖的那段正文：按字符切，不按字节") {
+    const Story s = written_story();
+    REQUIRE(s.plan.size() >= 2);
+
+    for (const auto& p : s.plan) {
+        const std::string t = changji::stages::episode_text(s, p);
+        // 切出来必须是完整的汉字。劈成半个的话字符数会对不上
+        CHECK(t.size() % 3 == 0);
+        CHECK_FALSE(t.empty());
+    }
+
+    // 第一集从头开始
+    CHECK(s.plan[0].from_char == 0);
+    // 相邻两集首尾相接，不重不漏
+    for (std::size_t i = 1; i < s.plan.size(); ++i) {
+        if (s.plan[i].from_chapter == s.plan[i - 1].to_chapter) {
+            CHECK(s.plan[i].from_char == s.plan[i - 1].to_char);
+        }
+    }
+}
+
+TEST_CASE("上下文：前情是压缩过的，而且只到这一集之前") {
+    Story s = written_story();
+    // 手工造一条落在第二章的分集，好让前情里有东西
+    EpisodePlan p;
+    p.episode_id = "ep09";
+    p.target_duration_s = 60.0;
+    p.from_chapter = "ch02";
+    p.from_char = 0;
+    p.to_chapter = "ch02";
+    p.to_char = 1000;
+    p.hook = "他没有回头";
+
+    const std::string ctx = changji::stages::render_script_context(s, p, "");
+
+    // 前情提要在，而且是**每章一句的梗概**，不是正文原文
+    CHECK(ctx.find("【前情提要】") != std::string::npos);
+    CHECK(ctx.find("他推门进来") != std::string::npos);
+    // 第一章的正文（一千个「甲」）不该整段搬进来
+    CHECK(ctx.find("甲甲甲甲甲甲甲甲甲甲") == std::string::npos);
+
+    // 这一集的正文在
+    CHECK(ctx.find("【这一集】") != std::string::npos);
+    CHECK(ctx.find("乙乙乙") != std::string::npos);
+
+    // **停在哪**——这一条老路线完全没有
+    CHECK(ctx.find("【这一集要停在】他没有回头") != std::string::npos);
+
+    // 人物和关系是压缩的全局记忆
+    CHECK(ctx.find("林晚") != std::string::npos);
+    CHECK(ctx.find("前任") != std::string::npos);
+}
+
+TEST_CASE("第一集没有前情") {
+    const Story s = written_story();
+    const std::string ctx =
+        changji::stages::render_script_context(s, s.plan[0], "");
+    CHECK(ctx.find("【前情提要】") == std::string::npos);
+}
+
+TEST_CASE("上一集的结尾接得上，而且不从半行中间起") {
+    const Story s = written_story();
+    const std::string prev = "林晚：你还留着它。\n陈默把伞放在柜台上，没有说话。";
+    const std::string ctx =
+        changji::stages::render_script_context(s, s.plan[0], prev);
+    CHECK(ctx.find("【上一集是这么结束的】") != std::string::npos);
+    CHECK(ctx.find("陈默把伞放在柜台上") != std::string::npos);
+
+    // 很长的剧本只取尾巴，而且从行首起
+    std::string longer;
+    for (int i = 0; i < 60; ++i) longer += "林晚：这是第 x 句台词。\n";
+    longer += "陈默：最后一句。";
+    const std::string tail = changji::stages::script_tail(longer);
+    CHECK(tail.find("陈默：最后一句。") != std::string::npos);
+    CHECK(tail.rfind("林晚：", 0) == 0);
+}
+
+TEST_CASE("提示词：这一集要发生什么已经定好了") {
+    const Story s = written_story();
+    const std::string p = changji::stages::build_script_prompt_from_story(
+        s, s.plan[0], StyleLine::REALISTIC, {"林晚", "陈默"});
+
+    // 和老路线的分水岭：不是让它构思剧情
+    CHECK(p.find("已经定好了") != std::string::npos);
+    CHECK(p.find("不要把前情再演一遍") != std::string::npos);
+    CHECK(p.find("结尾必须停在给定的那个钩子上") != std::string::npos);
+    // 时长按分集表来，字数预算跟着算
+    CHECK(p.find("总时长约 30 秒") != std::string::npos);
+    CHECK(p.find("必须沿用这些已有角色，名字一字不改：林晚、陈默") !=
+          std::string::npos);
+    // 动作要拍得出来那几条留着
+    CHECK(p.find("写角色**身体在做什么**") != std::string::npos);
+}
+
+TEST_CASE("POST /api/story/episodes：把分集表落成真的剧集") {
+    const fs::path root = fresh_project("落成剧集");
+    ProjectStore store(root);
+    const Story s = written_story();
+    store.save_story(s);
+
+    const auto r = http::post_story_episodes(json{{"project", p_str(root)}});
+    CHECK(r.status == 200);
+    CHECK(r.body.at("created").size() == s.plan.size());
+
+    Project project = store.load_project();
+    REQUIRE(project.episodes.size() == s.plan.size());
+    const Episode& first = project.episodes[0];
+    CHECK(first.episode_id == s.plan[0].episode_id);
+    CHECK(first.target_duration_s == doctest::Approx(s.plan[0].target_duration_s));
+    CHECK_FALSE(first.chapter_refs.empty());
+    CHECK(first.chapter_refs[0] == "ch01");
+
+    SUBCASE("再来一次：只补元数据，写好的剧本一个字不动") {
+        Project p2 = store.load_project();
+        p2.episodes[0].script = "林晚：这是已经写好的剧本。";
+        store.save_project(p2);
+
+        const auto again =
+            http::post_story_episodes(json{{"project", p_str(root)}});
+        CHECK(again.body.at("created").empty());
+        CHECK(again.body.at("updated").size() == s.plan.size());
+        CHECK(store.load_project().episodes[0].script ==
+              "林晚：这是已经写好的剧本。");
+    }
+
+    std::error_code ec;
+    fs::remove_all(root, ec);
+}
+
+TEST_CASE("POST /api/story/episodes：还没有分集表") {
+    const fs::path root = fresh_project("没分集表");
+    CHECK_THROWS_AS(http::post_story_episodes(json{{"project", p_str(root)}}),
+                    http::ApiError);
     std::error_code ec;
     fs::remove_all(root, ec);
 }

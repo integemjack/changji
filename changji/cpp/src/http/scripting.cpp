@@ -6,7 +6,9 @@
 #include <vector>
 
 #include "models/project.hpp"
+#include "models/story.hpp"
 #include "stages/script.hpp"
+#include "stages/script_story.hpp"
 #include "util/paths.hpp"
 #include "util/text.hpp"
 
@@ -228,8 +230,28 @@ ApiResult post_script_write(const json& body, llm::Client& client,
     Project project = load_or_400(store);
     const AssetLibrary assets = load_assets_or_400(store);
 
+    // 这一集在分集表里有对应的一条吗？有就走故事那条：这一集要发生什么
+    // 已经定好了，模型只负责把那一段变成拍子。**失忆是在那条路上治好的**——
+    // 带的上下文是压缩的全局记忆（大纲、人物、关系、前情提要每章一句），
+    // 不是下面那个「最近三集原文截 4000 字符」。
+    Story story;
+    const EpisodePlan* plan = nullptr;
+    if (!episode_id.empty()) {
+        try {
+            story = store.load_story();
+        } catch (const std::exception&) {
+            // 读不了就当没有，退回老路径。老项目本来就没有这个文件。
+        }
+        for (const auto& p : story.plan) {
+            if (p.episode_id == episode_id) {
+                plan = &p;
+                break;
+            }
+        }
+    }
+
     std::string previous;
-    if (continue_prev) {
+    if (continue_prev && plan == nullptr) {
         // 只取这一集**之前**的几集。把后面的也塞进去，模型会把还没发生的
         // 事当成已经发生的写。
         std::vector<std::string> earlier;
@@ -253,8 +275,29 @@ ApiResult post_script_write(const json& body, llm::Client& client,
     const std::vector<std::string> names =
         reuse_chars ? character_names(assets) : std::vector<std::string>{};
 
-    const std::string prompt = stages::build_script_prompt(
-        premise, duration_s, project.style_line, previous, names);
+    std::string prompt;
+    const char* source = "premise";
+    if (plan != nullptr) {
+        // 上一集的结尾拿来接语气。**按分集表的顺序取上一条**，不是按
+        // project.episodes 的顺序——后者可能被手动加过集、插过预告片。
+        std::string prev_tail;
+        for (std::size_t i = 0; i < story.plan.size(); ++i) {
+            if (story.plan[i].episode_id != episode_id) continue;
+            if (i == 0) break;
+            const Episode* prev_ep =
+                project.episode_by_id(story.plan[i - 1].episode_id);
+            if (prev_ep != nullptr) {
+                prev_tail = stages::script_tail(prev_ep->script);
+            }
+            break;
+        }
+        prompt = stages::build_script_prompt_from_story(
+            story, *plan, project.style_line, names, prev_tail);
+        source = "story";
+    } else {
+        prompt = stages::build_script_prompt(premise, duration_s,
+                                             project.style_line, previous, names);
+    }
 
     llm::Request req;
     req.prompt = prompt;
@@ -272,15 +315,26 @@ ApiResult post_script_write(const json& body, llm::Client& client,
         store.save_project(project);
     }
 
-    const int budget = stages::budget_chars(duration_s);
+    // 走故事那条时时长以分集表为准：那份表是按每集时长算出来的，
+    // 请求里带的那个可能是页面上的旧值，用它算预算会和实际排的镜头对不上。
+    const double used_duration =
+        plan != nullptr ? plan->target_duration_s : duration_s;
+    const int budget = stages::budget_chars(used_duration);
     const auto chars = static_cast<double>(draft.dialogue_chars());
-    json out = draft_common(draft, duration_s);
+    json out = draft_common(draft, used_duration);
     // 写长了后面配音会把镜头撑爆，写短了成片不够时长，都得说出来
     out["fit"] = chars > budget * 1.35   ? "偏长"
                  : chars < budget * 0.6  ? "偏短"
                                          : "合适";
     out["continued_from"] = !previous.empty();
     out["reused_characters"] = names;
+    // 这一集是照着故事写的还是照着一句梗概续的。前端靠它说清
+    // 「这一集为什么是这些内容」，也让人一眼看出有没有走上新路子。
+    out["source"] = source;
+    if (plan != nullptr) {
+        out["chapters"] = stages::episode_chapters(story, *plan);
+        out["hook"] = plan->hook;
+    }
     return {200, out};
 }
 

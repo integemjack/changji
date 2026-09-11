@@ -269,6 +269,72 @@ ApiResult post_story_adopt(const json& body) {
     return {200, out};
 }
 
+ApiResult post_story_episodes(const json& body) {
+    forbid_extra(body, {"project"});
+    ProjectStore store = open_project(body);
+    Project project = load_or_400(store);
+    const Story story = load_story_or_400(store);
+
+    if (story.plan.empty()) {
+        throw ApiError(400, "还没有分集表。先写一份大纲，或者改一下每集时长重算一次");
+    }
+
+    std::vector<std::string> created;
+    std::vector<std::string> updated;
+    for (const auto& p : story.plan) {
+        if (p.episode_id.empty()) continue;
+
+        // 覆盖了哪几章。存 id 不存区间——区间在 story.plan 里，
+        // 存两份迟早对不上。
+        std::vector<std::string> refs;
+        bool inside = false;
+        for (const auto& c : story.chapters) {
+            if (c.chapter_id == p.from_chapter) inside = true;
+            if (inside) refs.push_back(c.chapter_id);
+            if (c.chapter_id == p.to_chapter) break;
+        }
+
+        // 一句话梗概：优先用首章的 summary（说这一集讲什么），
+        // 没有才退回钩子（说这一集停在哪）。
+        std::string synopsis;
+        if (!refs.empty()) {
+            const Chapter* c = story.chapter_by_id(refs.front());
+            if (c != nullptr) {
+                synopsis = text::truncate_utf8(text::collapse_ws(c->summary), 120);
+            }
+        }
+        if (synopsis.empty()) synopsis = p.hook;
+
+        Episode* existing = project.episode_by_id(p.episode_id);
+        if (existing != nullptr) {
+            // **只补元数据。** script 和 shots 一个字不动——改一次每集时长
+            // 就把写好的剧本和出过的片冲掉，那是没法接受的。
+            if (!p.title.empty()) existing->title = p.title;
+            existing->target_duration_s = p.target_duration_s;
+            existing->chapter_refs = refs;
+            if (existing->synopsis.empty()) existing->synopsis = synopsis;
+            updated.push_back(p.episode_id);
+            continue;
+        }
+
+        Episode ep;
+        ep.episode_id = p.episode_id;
+        ep.title = p.title;
+        ep.synopsis = synopsis;
+        ep.target_duration_s = p.target_duration_s;
+        ep.chapter_refs = refs;
+        project.episodes.push_back(std::move(ep));
+        created.push_back(p.episode_id);
+    }
+
+    store.save_project(project);
+
+    json out = story_response(story);
+    out["created"] = created;
+    out["updated"] = updated;
+    return {200, out};
+}
+
 ApiResult post_story_plan(const json& body) {
     forbid_extra(body, {"project", "duration_s"});
     ProjectStore store = open_project(body);

@@ -1,5 +1,5 @@
 {
- "note": "原本由 cpp/tests/export_planning_golden.py 生成。那个生成器随 Python 引擎一起删了（2026-09-10），这份语料从此是回归夹具而不是对拍语料——接口**有意**改了形状时，照着改这里，并在提交信息里说清改了哪一项、为什么。2026-09-11：/api/bible 的回包加了 source（名单是从故事出的还是从某一集剧本出的），这几条 200 的响应因此都补上了 source=script。",
+ "note": "原本由 cpp/tests/export_planning_golden.py 生成。那个生成器随 Python 引擎一起删了（2026-09-10），这份语料从此是回归夹具而不是对拍语料——接口**有意**改了形状时，照着改这里，并在提交信息里说清改了哪一项、为什么。2026-09-11：/api/bible 的回包加了 source（名单是从故事出的还是从某一集剧本出的），这几条 200 的响应因此都补上了 source=script。 2026-09-11：Episode 加了 chapter_refs。**只给真的会重写 project.json 的用例补**（/api/plan，以及 overwrite 触发了 reset_shots 的 /api/bible）；别的用例里那份 project.json 是原样的输入文件，没经过 C++ 的序列化。",
  "cases": [
   {
    "name": "圣经：只补新的",
@@ -657,7 +657,8 @@
         "video_path": null,
         "gate_notes": []
        }
-      ]
+      ],
+      "chapter_refs": []
      },
      {
       "episode_id": "ep02",
@@ -665,7 +666,8 @@
       "synopsis": "三年后，同一个天台。",
       "target_duration_s": 200.0,
       "script": "",
-      "shots": []
+      "shots": [],
+      "chapter_refs": []
      }
     ]
    }
@@ -1990,7 +1992,8 @@
         "video_path": null,
         "gate_notes": []
        }
-      ]
+      ],
+      "chapter_refs": []
      },
      {
       "episode_id": "ep02",
@@ -1998,7 +2001,8 @@
       "synopsis": "三年后，同一个天台。",
       "target_duration_s": 200.0,
       "script": "",
-      "shots": []
+      "shots": [],
+      "chapter_refs": []
      }
     ]
    }
@@ -2281,7 +2285,8 @@
         "video_path": null,
         "gate_notes": []
        }
-      ]
+      ],
+      "chapter_refs": []
      },
      {
       "episode_id": "ep02",
@@ -2289,7 +2294,8 @@
       "synopsis": "三年后，同一个天台。",
       "target_duration_s": 200.0,
       "script": "",
-      "shots": []
+      "shots": [],
+      "chapter_refs": []
      }
     ]
    }
@@ -2573,7 +2579,8 @@
         "video_path": null,
         "gate_notes": []
        }
-      ]
+      ],
+      "chapter_refs": []
      },
      {
       "episode_id": "ep02",
@@ -2581,7 +2588,8 @@
       "synopsis": "三年后，同一个天台。",
       "target_duration_s": 200.0,
       "script": "",
-      "shots": []
+      "shots": [],
+      "chapter_refs": []
      }
     ]
    }
@@ -2829,7 +2837,8 @@
         "video_path": null,
         "gate_notes": []
        }
-      ]
+      ],
+      "chapter_refs": []
      },
      {
       "episode_id": "ep02",
@@ -2837,7 +2846,8 @@
       "synopsis": "三年后，同一个天台。",
       "target_duration_s": 200.0,
       "script": "",
-      "shots": []
+      "shots": [],
+      "chapter_refs": []
      },
      {
       "episode_id": "ep09",
@@ -2995,7 +3005,8 @@
         "video_path": null,
         "gate_notes": []
        }
-      ]
+      ],
+      "chapter_refs": []
      }
     ]
    }
@@ -3279,7 +3290,8 @@
         "video_path": null,
         "gate_notes": []
        }
-      ]
+      ],
+      "chapter_refs": []
      },
      {
       "episode_id": "ep02",
@@ -3287,7 +3299,8 @@
       "synopsis": "三年后，同一个天台。",
       "target_duration_s": 200.0,
       "script": "",
-      "shots": []
+      "shots": [],
+      "chapter_refs": []
      }
     ]
    }
@@ -3627,7 +3640,8 @@
         "video_path": null,
         "gate_notes": []
        }
-      ]
+      ],
+      "chapter_refs": []
      },
      {
       "episode_id": "ep02",
@@ -3635,7 +3649,8 @@
       "synopsis": "三年后，同一个天台。",
       "target_duration_s": 200.0,
       "script": "",
-      "shots": []
+      "shots": [],
+      "chapter_refs": []
      }
     ]
    }

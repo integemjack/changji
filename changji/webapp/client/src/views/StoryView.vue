@@ -152,6 +152,25 @@ async function writeStory() {
   if (result) draft.value = result
 }
 
+/**
+ * 把分集表落成真的剧集。
+ *
+ * 和「采用大纲」分开，是因为改每集时长是个随手的动作（当场重算分集表），
+ * 而建剧集会动到已经写好剧本、已经出过片的那几集。后端对已存在的同号
+ * 剧集只补元数据，script 和 shots 一个字不碰。
+ */
+async function makeEpisodes() {
+  const result = await run(
+    () => api.makeEpisodes({ project: session.projectPath }),
+    { key: 'episodes', refresh: true },
+  )
+  if (result) {
+    setStory(result)
+    const n = result.created?.length ?? 0
+    ui.ok(n ? `建了 ${n} 集，后面几步可以对着它们干活了` : '剧集都在，元数据对齐了一遍')
+  }
+}
+
 async function adoptDraft() {
   if (!draft.value) return
   const result = await run(
@@ -359,9 +378,19 @@ async function adoptDraft() {
                 </div>
               </template>
 
-              <p class="tiny dim">
-                分集表现在还只是计划。把它落成真的剧集、再逐集写剧本，是下一步的事。
-              </p>
+              <div class="row row--between">
+                <span class="tiny dim">
+                  分集表是计划。落成剧集之后，后面几步才有东西可对。
+                </span>
+                <button
+                  class="btn btn--primary btn--sm"
+                  type="button"
+                  :disabled="isBusy('episodes')"
+                  @click="makeEpisodes"
+                >
+                  {{ isBusy('episodes') ? '正在建…' : '落成剧集' }}
+                </button>
+              </div>
             </template>
           </section>
         </div>

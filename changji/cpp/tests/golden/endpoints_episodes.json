@@ -1,5 +1,5 @@
 {
- "note": "由 cpp/tests/export_episodes_golden.py 生成，不要手改",
+ "note": "由 cpp/tests/export_episodes_golden.py 生成，不要手改 2026-09-11：Episode 加了 chapter_refs（这一集是从故事的哪几章切出来的），/api/script/write 的回包加了 source（照着故事写的还是照着一句梗概续的）。生成器随 Python 引擎一起删了，这份语料现在是回归夹具——接口有意改形状时照着改。",
  "cases": [
   {
    "name": "读剧本：ep01",
@@ -246,7 +246,8 @@
         "video_path": null,
         "gate_notes": []
        }
-      ]
+      ],
+      "chapter_refs": []
      },
      {
       "episode_id": "ep02",
@@ -254,7 +255,8 @@
       "synopsis": "三年后，同一个天台。",
       "target_duration_s": 200.0,
       "script": "",
-      "shots": []
+      "shots": [],
+      "chapter_refs": []
      }
     ]
    }
@@ -407,7 +409,8 @@
         "video_path": null,
         "gate_notes": []
        }
-      ]
+      ],
+      "chapter_refs": []
      },
      {
       "episode_id": "ep02",
@@ -415,7 +418,8 @@
       "synopsis": "三年后，同一个天台。",
       "target_duration_s": 200.0,
       "script": "",
-      "shots": []
+      "shots": [],
+      "chapter_refs": []
      }
     ]
    }
@@ -568,7 +572,8 @@
         "video_path": null,
         "gate_notes": []
        }
-      ]
+      ],
+      "chapter_refs": []
      },
      {
       "episode_id": "ep02",
@@ -576,7 +581,8 @@
       "synopsis": "三年后，同一个天台。",
       "target_duration_s": 200.0,
       "script": "",
-      "shots": []
+      "shots": [],
+      "chapter_refs": []
      }
     ]
    }
@@ -777,7 +783,8 @@
         "video_path": null,
         "gate_notes": []
        }
-      ]
+      ],
+      "chapter_refs": []
      },
      {
       "episode_id": "ep02",
@@ -785,7 +792,8 @@
       "synopsis": "三年后，同一个天台。",
       "target_duration_s": 200.0,
       "script": "",
-      "shots": []
+      "shots": [],
+      "chapter_refs": []
      }
     ]
    }
@@ -936,7 +944,8 @@
         "video_path": null,
         "gate_notes": []
        }
-      ]
+      ],
+      "chapter_refs": []
      },
      {
       "episode_id": "ep02",
@@ -944,7 +953,8 @@
       "synopsis": "三年后，同一个天台。",
       "target_duration_s": 200.0,
       "script": "",
-      "shots": []
+      "shots": [],
+      "chapter_refs": []
      },
      {
       "episode_id": "ep03",
@@ -952,7 +962,8 @@
       "synopsis": "",
       "target_duration_s": 60.0,
       "script": "",
-      "shots": []
+      "shots": [],
+      "chapter_refs": []
      }
     ]
    }
@@ -1104,7 +1115,8 @@
         "video_path": null,
         "gate_notes": []
        }
-      ]
+      ],
+      "chapter_refs": []
      },
      {
       "episode_id": "ep02",
@@ -1112,7 +1124,8 @@
       "synopsis": "三年后，同一个天台。",
       "target_duration_s": 200.0,
       "script": "",
-      "shots": []
+      "shots": [],
+      "chapter_refs": []
      },
      {
       "episode_id": "special",
@@ -1120,7 +1133,8 @@
       "synopsis": "",
       "target_duration_s": 60.0,
       "script": "",
-      "shots": []
+      "shots": [],
+      "chapter_refs": []
      }
     ]
    }
@@ -1305,7 +1319,8 @@
         "video_path": null,
         "gate_notes": []
        }
-      ]
+      ],
+      "chapter_refs": []
      },
      {
       "episode_id": "ep02",
@@ -1313,7 +1328,8 @@
       "synopsis": "三年后，同一个天台。",
       "target_duration_s": 200.0,
       "script": "",
-      "shots": []
+      "shots": [],
+      "chapter_refs": []
      },
      {
       "episode_id": "ep03",
@@ -1321,7 +1337,8 @@
       "synopsis": "",
       "target_duration_s": 120.0,
       "script": "",
-      "shots": []
+      "shots": [],
+      "chapter_refs": []
      }
     ]
    }
@@ -1471,7 +1488,8 @@
         "video_path": null,
         "gate_notes": []
        }
-      ]
+      ],
+      "chapter_refs": []
      },
      {
       "episode_id": "ep02",
@@ -1479,7 +1497,8 @@
       "synopsis": "三年后，同一个天台。",
       "target_duration_s": 200.0,
       "script": "",
-      "shots": []
+      "shots": [],
+      "chapter_refs": []
      },
      {
       "episode_id": "trailer",
@@ -1487,7 +1506,8 @@
       "synopsis": "",
       "target_duration_s": 20.0,
       "script": "",
-      "shots": []
+      "shots": [],
+      "chapter_refs": []
      },
      {
       "episode_id": "ep03",
@@ -1495,7 +1515,8 @@
       "synopsis": "",
       "target_duration_s": 60.0,
       "script": "",
-      "shots": []
+      "shots": [],
+      "chapter_refs": []
      }
     ]
    }
@@ -1646,7 +1667,8 @@
         "video_path": null,
         "gate_notes": []
        }
-      ]
+      ],
+      "chapter_refs": []
      }
     ]
    }
@@ -1799,7 +1821,8 @@
         "video_path": null,
         "gate_notes": []
        }
-      ]
+      ],
+      "chapter_refs": []
      },
      {
       "episode_id": "ep02",
@@ -1807,7 +1830,8 @@
       "synopsis": "三年后，同一个天台。",
       "target_duration_s": 200.0,
       "script": "",
-      "shots": []
+      "shots": [],
+      "chapter_refs": []
      }
     ]
    }
@@ -1959,7 +1983,8 @@
         "video_path": null,
         "gate_notes": []
        }
-      ]
+      ],
+      "chapter_refs": []
      },
      {
       "episode_id": "ep02",
@@ -1967,7 +1992,8 @@
       "synopsis": "三年后，同一个天台。",
       "target_duration_s": 200.0,
       "script": "",
-      "shots": []
+      "shots": [],
+      "chapter_refs": []
      }
     ]
    }
@@ -2119,7 +2145,8 @@
         "video_path": null,
         "gate_notes": []
        }
-      ]
+      ],
+      "chapter_refs": []
      },
      {
       "episode_id": "ep02",
@@ -2127,7 +2154,8 @@
       "synopsis": "三年后，同一个天台。",
       "target_duration_s": 200.0,
       "script": "",
-      "shots": []
+      "shots": [],
+      "chapter_refs": []
      },
      {
       "episode_id": "ep03",
@@ -2248,7 +2276,8 @@
         "video_path": null,
         "gate_notes": []
        }
-      ]
+      ],
+      "chapter_refs": []
      }
     ]
    }
@@ -2400,7 +2429,8 @@
         "video_path": null,
         "gate_notes": []
        }
-      ]
+      ],
+      "chapter_refs": []
      },
      {
       "episode_id": "ep02",
@@ -2408,7 +2438,8 @@
       "synopsis": "三年后，同一个天台。",
       "target_duration_s": 200.0,
       "script": "",
-      "shots": []
+      "shots": [],
+      "chapter_refs": []
      },
      {
       "episode_id": "trailer",
@@ -2416,7 +2447,8 @@
       "synopsis": "",
       "target_duration_s": 20.0,
       "script": "",
-      "shots": []
+      "shots": [],
+      "chapter_refs": []
      },
      {
       "episode_id": "ep04",
@@ -2537,7 +2569,8 @@
         "video_path": null,
         "gate_notes": []
        }
-      ]
+      ],
+      "chapter_refs": []
      }
     ]
    }

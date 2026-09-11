@@ -1,5 +1,5 @@
 {
- "note": "由 cpp/tests/export_scripting_golden.py 生成，不要手改",
+ "note": "由 cpp/tests/export_scripting_golden.py 生成，不要手改 2026-09-11：Episode 加了 chapter_refs（这一集是从故事的哪几章切出来的），/api/script/write 的回包加了 source（照着故事写的还是照着一句梗概续的）。生成器随 Python 引擎一起删了，这份语料现在是回归夹具——接口有意改形状时照着改。",
  "cases": [
   {
    "name": "选题：默认",
@@ -211,7 +211,8 @@
     "continued_from": true,
     "reused_characters": [
      "林渊"
-    ]
+    ],
+    "source": "premise"
    }
   },
   {
@@ -245,7 +246,8 @@
     "continued_from": false,
     "reused_characters": [
      "林渊"
-    ]
+    ],
+    "source": "premise"
    }
   },
   {
@@ -277,7 +279,8 @@
     "beats": 5,
     "fit": "偏短",
     "continued_from": true,
-    "reused_characters": []
+    "reused_characters": [],
+    "source": "premise"
    }
   },
   {
@@ -311,7 +314,8 @@
     "continued_from": true,
     "reused_characters": [
      "林渊"
-    ]
+    ],
+    "source": "premise"
    }
   },
   {
@@ -345,7 +349,8 @@
     "continued_from": true,
     "reused_characters": [
      "林渊"
-    ]
+    ],
+    "source": "premise"
    }
   },
   {

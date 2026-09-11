@@ -48,4 +48,14 @@ ApiResult post_story_adopt(const nlohmann::json& body);
 /// POST /api/story/plan —— 按每集时长重算分集表。
 ApiResult post_story_plan(const nlohmann::json& body);
 
+/// POST /api/story/episodes —— 把分集表落成真的剧集。
+///
+/// 分集表是计划，剧集是流水线真正在跑的东西。分成两步而不是采用大纲时
+/// 顺手建出来，是因为重算分集（改每集时长）是个随手的动作，而建剧集会
+/// 动到已经写好剧本、已经出过片的那些集。
+///
+/// 已经存在的同号剧集**只补元数据，绝不碰 script 和 shots**：改一次每集
+/// 时长就把写好的剧本冲掉，那是没法接受的。分集表里没有的老剧集一律留着。
+ApiResult post_story_episodes(const nlohmann::json& body);
+
 }  // namespace changji::http

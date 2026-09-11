@@ -56,8 +56,17 @@ struct Episode {
     std::string script;               ///< 剧本原文
     std::vector<Shot> shots;
 
+    /// 这一集是从故事的哪几章切出来的（story.json 里的 chapter_id）。
+    ///
+    /// 空表示这一集不是从故事切出来的——老项目、手动加的一集、预告片都是
+    /// 这样，它们照常走老路径。**确切的字符区间不存在这里**，在
+    /// story.plan 里按 episode_id 查；存两份迟早对不上，而对不上的表现是
+    /// 剧本写了隔壁章的内容。
+    std::vector<std::string> chapter_refs;
+
     NLOHMANN_DEFINE_TYPE_INTRUSIVE_WITH_DEFAULT(
-        Episode, episode_id, title, synopsis, target_duration_s, script, shots)
+        Episode, episode_id, title, synopsis, target_duration_s, script, shots,
+        chapter_refs)
 
     /// 按 order 排序后的镜头。
     ///

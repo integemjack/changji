@@ -136,6 +136,9 @@ export const api = {
   writeOutline: (payload) => post('/api/story/outline', payload),
   adoptStory: (payload) => post('/api/story/adopt', payload),
   planEpisodes: (payload) => post('/api/story/plan', payload),
+  // 分集表是计划，这一步才把它变成流水线真正在跑的剧集。
+  // 已有的同号剧集只补元数据，写好的剧本和出过的片一个字不动。
+  makeEpisodes: (payload) => post('/api/story/episodes', payload),
 
   // ---- 引擎：角色 / 场景 / 风格 ----
   assets: (path) => get('/api/assets', { path }),
