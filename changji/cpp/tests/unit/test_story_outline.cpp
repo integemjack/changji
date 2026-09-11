@@ -1237,22 +1237,50 @@ Story outline_only_story() {
 
 }  // namespace
 
-TEST_CASE("一章该写多长：按它要撑起几集算") {
+TEST_CASE("一章该写多长：章是故事单元，不是一集") {
     Story s = outline_only_story();
-    s.episode_duration_s = 60.0;  // 一集 900 字
+
+    // **一章至少要切得出好几集**，否则分集算法就没活干了。
+    // 这条是端到端实跑时用户指出来的：早先按「它要撑起几集 × 每集容量」
+    // 算，而大纲阶段一章一集，于是每章正好写一集的量，四章切出来正好四集。
+    for (double d : {30.0, 60.0, 90.0, 180.0}) {
+        s.episode_duration_s = d;
+        s.plan = changji::stages::plan_episodes(s, d);
+        const int target = changji::stages::chapter_target_chars(s);
+        const int cap = changji::stages::prose_budget_chars(d);
+        CAPTURE(d);
+        CHECK(target >= cap * changji::stages::kEpisodesPerChapter);
+        CHECK(target >= changji::stages::kChapterTargetChars);
+    }
+
+    // 分集表里排了几集不影响章的篇幅——章的长短是故事的事，不是时长的事
+    s.episode_duration_s = 60.0;
+    s.plan.clear();
+    const int no_plan = changji::stages::chapter_target_chars(s);
     s.plan = changji::stages::plan_episodes(s, 60.0);
+    CHECK(changji::stages::chapter_target_chars(s) == no_plan);
+}
 
-    // 大纲阶段一章一集
-    CHECK(changji::stages::chapter_target_chars(s, "ch01") == 900);
+TEST_CASE("写满一章的量，就该切出好几集") {
+    Story s = outline_only_story();
+    s.episode_duration_s = 30.0;
 
-    // 手工把 ch01 排成两集，篇幅就该翻倍
-    EpisodePlan extra = s.plan[0];
-    extra.episode_id = "ep99";
-    s.plan.push_back(extra);
-    CHECK(changji::stages::chapter_target_chars(s, "ch01") == 1800);
+    // 一章写到基准篇幅（段落边界当候选切点）
+    std::string body;
+    for (int i = 0; i < 30; ++i) {
+        for (int k = 0; k < 100; ++k) body += "字";
+        body += "\n";
+    }
+    s = changji::stages::apply_chapter(
+        s, "ch01",
+        changji::stages::parse_chapter(json{{"text", body}}.dump()));
+    s.plan = changji::stages::plan_episodes(s, 30.0);
 
-    // 分集表里没有的章也给一集的量，别返回 0
-    CHECK(changji::stages::chapter_target_chars(s, "ch02") > 0);
+    int from_ch01 = 0;
+    for (const auto& p : s.plan) {
+        if (p.from_chapter == "ch01") ++from_ch01;
+    }
+    CHECK(from_ch01 >= 3);
 }
 
 TEST_CASE("提示词：只写这一章，带的是压缩的全局记忆") {
@@ -1392,7 +1420,9 @@ TEST_CASE("POST /api/story/chapter：写完落库，分集跟着重算") {
         json{{"project", p_str(root)}, {"chapter_id", "ch01"}}, client, tok);
     CHECK(r.status == 200);
     CHECK(r.body.at("chars").get<int>() > 2000);
-    CHECK(r.body.at("target_chars").get<int>() == 900);
+    // 一集 900 字，但一章的目标是三千——章是故事单元，一章要切出好几集
+    CHECK(r.body.at("target_chars").get<int>() ==
+          changji::stages::kChapterTargetChars);
 
     // **这一个是直接落库的**，不像别的几个回草稿
     const Story saved = store.load_story();

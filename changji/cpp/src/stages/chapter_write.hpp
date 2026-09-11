@@ -30,13 +30,27 @@ struct ChapterDraft {
     std::string hook_after;
 };
 
+/// 一章的基准篇幅。
+///
+/// **一章是一个完整的故事单元，不是一集。** 三千字是网文一章的常见体量，
+/// 也和粘贴导入那边按字数切章用的 kImportTargetChars 对齐——AI 写的章和
+/// 人粘进来的章该是同一个数量级，不然同一部剧里两种来源的章长得不一样。
+inline constexpr int kChapterTargetChars = 3000;
+
+/// 一章至少要切得出这么多集。
+///
+/// 光有上面那个基准不够：每集选 180 秒时一集能吃 2700 字，三千字的章又变成
+/// 一章一集了。两个取大的，保证**在任何每集时长下，一章都跨好几集**。
+inline constexpr int kEpisodesPerChapter = 3;
+
 /// 这一章该写多长。
 ///
-/// **按它要撑起几集算**：分集表里从这一章起头的集数 × 每集的原文容量。
-/// 大纲阶段一章一集，所以就是一集的量。写少了那一集撑不满时长，写多了
-/// 切出来的集比计划的多——而用户是按「每集多长」来定的这部剧。
-int chapter_target_chars(const models::Story& story,
-                         const std::string& chapter_id);
+/// **章的篇幅由故事本身定，和每集多长无关**——每集多长只决定这一章切成
+/// 几集。早先这里是反过来的：按「它要撑起几集 × 每集容量」算，而大纲阶段
+/// 一章一集，算出来永远是一集的量，于是分集算法的活（把章切成集）等于
+/// 没做。端到端实跑时露的馅：四章写出来 340/621/399/371 字，切出来正好
+/// 四集。
+int chapter_target_chars(const models::Story& story);
 
 /// 请求里带的 JSON Schema。
 const nlohmann::ordered_json& chapter_schema();

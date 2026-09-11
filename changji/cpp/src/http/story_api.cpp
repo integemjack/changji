@@ -381,7 +381,7 @@ ApiResult post_story_chapter(const json& body, llm::Client& client,
     out["chapter_id"] = chapter_id;
     const Chapter* done = next.chapter_by_id(chapter_id);
     out["chars"] = done != nullptr ? done->text_len() : 0;
-    out["target_chars"] = stages::chapter_target_chars(story, chapter_id);
+    out["target_chars"] = stages::chapter_target_chars(story);
     return {200, out};
 }
 

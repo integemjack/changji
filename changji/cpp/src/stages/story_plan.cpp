@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
+#include <utility>
 #include <cstdio>
 #include <map>
 #include <set>
@@ -81,12 +82,16 @@ std::vector<EpisodePlan> plan_episodes(const Story& story, double per_episode_s)
         // 候选切点，以及落在那个位置的钩子说明。
         // 章界永远是候选：它天然是一个情节单元的结束。
         std::set<int> cuts;
+        // 有说法的那些单独再记一份。它们是读懂剧情之后标出来的真钩子，
+        // 挑切点时优先用——而 cuts 里大多数是机械登记的段落边界。
+        std::set<int> named;
         std::map<int, std::string> hook_at;
         for (const auto& p : run) {
             for (const auto& h : p.ch->hooks) {
                 const int at = std::clamp(h.at_char, 0, p.len);
                 const int g = p.start + at;
                 cuts.insert(g);
+                if (!h.text.empty()) named.insert(g);
                 // 同一个位置有多个钩子时留第一个，不覆盖——覆盖的话结果
                 // 取决于 hooks 数组的顺序，而那是模型给的，不稳定。
                 hook_at.emplace(g, h.text);
@@ -106,18 +111,33 @@ std::vector<EpisodePlan> plan_episodes(const Story& story, double per_episode_s)
             int next = total;
             if (total - pos > static_cast<double>(cap) * kTailMergeRatio) {
                 const int ideal = pos + cap;
-                int best = -1;
-                long best_d = 0;
-                // cuts 是有序的，从第一个大于 pos 的开始找离 ideal 最近的。
-                for (auto it = cuts.upper_bound(pos); it != cuts.end(); ++it) {
-                    const long d = std::labs(static_cast<long>(*it) - ideal);
-                    if (best < 0 || d < best_d) {
-                        best = *it;
-                        best_d = d;
-                    } else {
-                        // 有序序列里距离是先减后增，开始变大就不会再变小了。
-                        break;
+                // 有序集合里找离 ideal 最近的那个。距离先减后增，
+                // 开始变大就不会再变小了，所以看到回升就停。
+                const auto nearest = [&](const std::set<int>& from) {
+                    int best = -1;
+                    long best_d = 0;
+                    for (auto it = from.upper_bound(pos); it != from.end(); ++it) {
+                        const long d = std::labs(static_cast<long>(*it) - ideal);
+                        if (best < 0 || d < best_d) {
+                            best = *it;
+                            best_d = d;
+                        } else {
+                            break;
+                        }
                     }
+                    return std::pair<int, long>{best, best_d};
+                };
+
+                const auto any = nearest(cuts);
+                const auto tagged = nearest(named);
+                int best = any.first;
+                // **有说法的钩子让一让也值得。** 每一集的结尾是完播率的
+                // 命门，切在一个读懂剧情标出来的悬念上，比切在一个说不出
+                // 为什么的段落边界上强——只要别偏得太离谱。
+                if (tagged.first > pos &&
+                    static_cast<double>(tagged.second) <=
+                        static_cast<double>(cap) * kNamedHookSlack) {
+                    best = tagged.first;
                 }
                 if (best > pos) next = best;
             }

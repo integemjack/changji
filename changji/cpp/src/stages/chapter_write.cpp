@@ -47,14 +47,9 @@ int find_after(const std::string& body, const std::string& needle) {
 
 }  // namespace
 
-int chapter_target_chars(const Story& story, const std::string& chapter_id) {
+int chapter_target_chars(const Story& story) {
     const int cap = prose_budget_chars(story.episode_duration_s);
-    int episodes = 0;
-    for (const auto& p : story.plan) {
-        if (p.from_chapter == chapter_id) ++episodes;
-    }
-    if (episodes < 1) episodes = 1;
-    return cap * episodes;
+    return std::max(kChapterTargetChars, cap * kEpisodesPerChapter);
 }
 
 const ordered& chapter_schema() {
@@ -90,7 +85,7 @@ std::string build_chapter_prompt(const Story& story,
     out += style_line == StyleLine::ANIME ? prompt::kChapterHintAnime
                                           : prompt::kChapterHintRealistic;
     out += prompt::kChapterSeg1;
-    out += std::to_string(chapter_target_chars(story, chapter_id));
+    out += std::to_string(chapter_target_chars(story));
     out += prompt::kChapterSeg2;
     out += prompt::kChapterRules;
     out += prompt::kChapterContextHead;
