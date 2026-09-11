@@ -21,6 +21,7 @@ import ErrorBoundary from '@/components/ErrorBoundary.vue'
 import ToastStack from '@/components/ToastStack.vue'
 import EngineLamp from '@/components/EngineLamp.vue'
 import ProjectRail from '@/components/ProjectRail.vue'
+import SysMeter from '@/components/SysMeter.vue'
 import { STEP_ROUTES } from '@/router'
 import { useSession } from '@/stores/session'
 import { useUi } from '@/stores/ui'
@@ -148,6 +149,9 @@ function cycleTheme() {
       </label>
 
       <span class="spacer" />
+
+      <!-- GPU / CPU / 内存三个小表，引擎走 WebSocket 推过来 -->
+      <SysMeter />
 
       <EngineLamp />
 

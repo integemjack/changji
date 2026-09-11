@@ -34,6 +34,7 @@
 #include "llm/local_client.hpp"
 #include "http/flow.hpp"
 #include "util/paths.hpp"
+#include "util/sysstat.hpp"
 #include "http/webapp.hpp"
 #include "http/ws.hpp"
 #include "infer/scheduler.hpp"
@@ -41,6 +42,8 @@
 #include "infer/sd_image.hpp"
 #include "models/hardware.hpp"
 #include "pipeline/jobs.hpp"
+#include <atomic>
+#include <chrono>
 #include <thread>
 
 namespace changji::http {
@@ -163,6 +166,35 @@ void run(const config::Settings& settings, const Options& opts) {
     } warm_llm{llm::warm_llm_in_background(
         [] { return config::runtime().snapshot(); })};
 
+    // 顶栏那三个小表：CPU、内存、每张卡。**推，不轮询**（用户 2026-09-11：
+    // 「使用 ws 方式」）。有人订了 "system" 才采样、才发；没人听的时候这条
+    // 线程只是每两秒看一眼订阅数。采样本身是进程内的（NVML、/proc），
+    // 微秒级，唯一会 fork 的那条退路在 sysstat 里限了五秒一次。
+    //
+    // 停的方式和 warm_llm 一样：run() 回来后析构，析构里先立旗再 join。
+    // 睡眠切成 100ms 一段，Ctrl+C 之后最多再等零点一秒。
+    std::atomic<bool> stop_pump{false};
+    struct PumpAtExit {
+        std::atomic<bool>& stop;
+        std::thread t;
+        ~PumpAtExit() {
+            stop = true;
+            if (t.joinable()) t.join();
+        }
+    } sys_pump{stop_pump, std::thread([&stop_pump] {
+        while (!stop_pump) {
+            if (ws::hub().subscriber_count("system") > 0) {
+                json msg = sysstat::to_json(sysstat::sample());
+                msg["type"] = "system";
+                msg["job_id"] = "system";
+                ws::hub().broadcast("system", msg);
+            }
+            for (int i = 0; i < 20 && !stop_pump; ++i) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            }
+        }
+    })};
+
     // ---- REST ----
 
     CROW_ROUTE(app, "/api/health")([] {
@@ -189,6 +221,15 @@ void run(const config::Settings& settings, const Options& opts) {
         auto r = guard([] {
             return get_hardware(config::runtime().snapshot(),
                                 config::runtime().profile());
+        });
+        return json_response(r.body, r.status);
+    });
+
+    // 此刻的负载，一次性的。顶栏走的是 WebSocket 那条（订 "system"），
+    // 这个留给 curl 看一眼和排查用。
+    CROW_ROUTE(app, "/api/system")([] {
+        auto r = guard([]() -> ApiResult {
+            return {200, sysstat::to_json(sysstat::sample())};
         });
         return json_response(r.body, r.status);
     });

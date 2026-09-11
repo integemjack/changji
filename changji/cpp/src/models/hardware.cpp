@@ -7,6 +7,8 @@
 #include <cmath>
 #include <cstdio>
 #include <sstream>
+#include <utility>
+#include <vector>
 
 #include "util/paths.hpp"
 #include "util/proc.hpp"
@@ -370,6 +372,12 @@ struct NvmlMemory {
     unsigned long long used;
 };
 
+/// nvmlUtilization_t。同上，自己声明，字段顺序是 ABI。
+struct NvmlUtilization {
+    unsigned int gpu;      ///< 过去一段采样窗口里有内核在跑的时间占比
+    unsigned int memory;   ///< 显存读写占比
+};
+
 /// 直接问驱动要显存，**不 fork**。
 ///
 /// 原来只有一条路：fork + exec 去跑 nvidia-smi。两个毛病：
@@ -396,7 +404,7 @@ public:
         // 第一次问过之后再设就没用了——而"出了岔子一键关掉"要的正是
         // 随时能关。getenv 比 dlopen 便宜得多，放在这条路上不心疼。
         if (!paths::env("CHANGJI_NO_NVML").empty()) return std::nullopt;
-        static Nvml one;   // C++11 起，局部静态的初始化是线程安全的
+        const Nvml& one = instance();
         if (!one.ok_) return std::nullopt;
         void* dev = nullptr;
         if (one.handle_(idx, &dev) != 0 || dev == nullptr) return std::nullopt;
@@ -410,10 +418,54 @@ public:
                           static_cast<double>(mem.free) / kGb};
     }
 
+    /// 每张卡此刻的负载。顶栏那三个小表两秒问一次，所以这条也得是
+    /// 进程内、微秒级的。哪一项问不到就留空（利用率 -1、名字空串），
+    /// 整个库加载不上就回空。**不按 CUDA_VISIBLE_DEVICES 换算**：
+    /// 这是给人看整台机器的，不是给调度器判某一张卡的。
+    static std::vector<GpuLive> live() {
+        std::vector<GpuLive> out;
+        if (!paths::env("CHANGJI_NO_NVML").empty()) return out;
+        const Nvml& one = instance();
+        if (!one.ok_ || !one.count_) return out;
+        unsigned int n = 0;
+        if (one.count_(&n) != 0) return out;
+        if (n > 16) n = 16;   // 不像是卡数，别当真
+        for (unsigned int i = 0; i < n; ++i) {
+            void* dev = nullptr;
+            if (one.handle_(i, &dev) != 0 || dev == nullptr) continue;
+            GpuLive g;
+            g.index = i;
+            if (one.name_) {
+                char buf[96] = {};   // NVML_DEVICE_NAME_V2_BUFFER_SIZE
+                if (one.name_(dev, buf, sizeof(buf)) == 0) g.name = buf;
+            }
+            if (one.util_) {
+                NvmlUtilization u{};
+                if (one.util_(dev, &u) == 0) g.util_percent = static_cast<int>(u.gpu);
+            }
+            NvmlMemory mem{};
+            if (one.mem_(dev, &mem) == 0 && mem.total > 0) {
+                constexpr double kGb = 1024.0 * 1024 * 1024;
+                g.vram_total_gb = static_cast<double>(mem.total) / kGb;
+                g.vram_used_gb = static_cast<double>(mem.used) / kGb;
+            }
+            out.push_back(std::move(g));
+        }
+        return out;
+    }
+
 private:
+    static const Nvml& instance() {
+        static Nvml one;   // C++11 起，局部静态的初始化是线程安全的
+        return one;
+    }
+
     using InitFn = int (*)();
     using HandleFn = int (*)(unsigned int, void**);
     using MemFn = int (*)(void*, NvmlMemory*);
+    using CountFn = int (*)(unsigned int*);
+    using UtilFn = int (*)(void*, NvmlUtilization*);
+    using NameFn = int (*)(void*, char*, unsigned int);
 
 #if defined(_WIN32)
     using LibHandle = HMODULE;
@@ -452,6 +504,12 @@ private:
         handle_ = sym<HandleFn>("nvmlDeviceGetHandleByIndex_v2");
         if (!handle_) handle_ = sym<HandleFn>("nvmlDeviceGetHandleByIndex");
         mem_ = sym<MemFn>("nvmlDeviceGetMemoryInfo");
+        // 下面三个是给顶栏的小表用的，**缺了不算加载失败**：老驱动上
+        // 没有也照样能问显存。
+        count_ = sym<CountFn>("nvmlDeviceGetCount_v2");
+        if (!count_) count_ = sym<CountFn>("nvmlDeviceGetCount");
+        util_ = sym<UtilFn>("nvmlDeviceGetUtilizationRates");
+        name_ = sym<NameFn>("nvmlDeviceGetName");
         if (!init || !handle_ || !mem_) return;
         // **不配 nvmlShutdown。** 这个对象活到进程结束；中途关掉的话
         // 下次问又要重新初始化（几十毫秒），而它在借槽的关键路径上。
@@ -461,11 +519,22 @@ private:
     LibHandle lib_ = nullptr;
     HandleFn handle_ = nullptr;
     MemFn mem_ = nullptr;
+    CountFn count_ = nullptr;
+    UtilFn util_ = nullptr;
+    NameFn name_ = nullptr;
     bool ok_ = false;
 };
 
 #endif  // !__APPLE__
 }  // namespace
+
+std::vector<GpuLive> gpu_live() {
+#if defined(__APPLE__)
+    return {};
+#else
+    return Nvml::live();
+#endif
+}
 
 std::optional<unsigned int> parse_visible_devices(const std::string& raw) {
     // 没设 = 全部可见，进程里的 0 号就是物理 0 号。

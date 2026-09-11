@@ -155,6 +155,21 @@ struct VramTotals {
 };
 std::optional<VramTotals> vram_totals_gb();
 
+/// 每张卡此刻的负载：利用率和显存用量。顶栏那三个小表用。
+///
+/// **NVML 进程内问，不 fork。** 两秒一问的东西不能走 nvidia-smi 那条：
+/// 一次一百毫秒，而且这个进程映射着几十 GB 的 CUDA 内存，fork 是 NVIDIA
+/// 明确不支持的。问不到（没驱动、Mac、CHANGJI_NO_NVML）回空，调用方
+/// 自己决定要不要退回 nvidia-smi（见 util/sysstat.cpp，那边限了频率）。
+struct GpuLive {
+    unsigned int index = 0;
+    std::string name;
+    int util_percent = -1;      ///< -1 = 这个驱动问不到
+    double vram_used_gb = 0.0;
+    double vram_total_gb = 0.0;
+};
+std::vector<GpuLive> gpu_live();
+
 /// 从 `nvidia-smi --query-gpu=memory.free` 的输出里解析空闲显存。
 /// 单独拆出来是为了能测——测试里不该真去跑 nvidia-smi。
 std::optional<double> parse_free_vram(const std::string& out);

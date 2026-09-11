@@ -200,6 +200,9 @@ export const api = {
   stopRun: () => post('/api/stop', {}),
   outputs: (path) => get('/api/outputs', { path }),
   hardware: () => get('/api/hardware'),
+  // 此刻的负载，一次性的。顶栏那三个小表走 WebSocket（订 "system"），
+  // 这个留给排查用。
+  system: () => get('/api/system'),
   doctor: () => get('/api/doctor'),
   connections: () => get('/api/connections'),
   saveConnections: (payload) => post('/api/connections', payload),

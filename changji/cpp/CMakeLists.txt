@@ -503,6 +503,7 @@ add_executable(changji
     src/main.cpp
     src/util/paths.cpp
     src/util/proc.cpp
+    src/util/sysstat.cpp
     src/net/ws_client.cpp
     src/config/settings.cpp
     src/config/writeback.cpp
@@ -826,6 +827,7 @@ if(CHANGJI_BUILD_TESTS)
         tests/unit/test_json_stream.cpp
         tests/unit/test_repetition.cpp
         tests/unit/test_ref_images.cpp
+        tests/unit/test_sysstat.cpp
 
         # 被测的源码。刻意不包含 doctor.cpp、http/server.cpp、
         # llm/client_http.cpp、comfy/client_http.cpp、http/run_deps.cpp
@@ -842,6 +844,7 @@ if(CHANGJI_BUILD_TESTS)
         src/models/hardware.cpp
         src/util/paths.cpp
         src/util/proc.cpp
+        src/util/sysstat.cpp
         src/net/ws_client.cpp
         src/util/text.cpp
         src/util/human_time.cpp

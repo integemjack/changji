@@ -13,7 +13,9 @@ export default defineConfig({
     port: 5173,
     host: true, // 手机连同一个局域网就能打开，调竖屏布局用得上
     proxy: {
-      '/api': { target: 'http://127.0.0.1:5174', changeOrigin: true },
+      // ws: true——/api/ws 那条 WebSocket 也要经过代理，不然开发时顶栏的
+      // 负载表和编辑器的流式写入都连不上，只能退回一次性返回。
+      '/api': { target: 'http://127.0.0.1:5174', changeOrigin: true, ws: true },
       '/bff': { target: 'http://127.0.0.1:5174', changeOrigin: true },
     },
   },
