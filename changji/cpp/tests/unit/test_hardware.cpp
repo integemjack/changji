@@ -266,6 +266,12 @@ TEST_CASE("绑到一张不存在的卡：说问不到，而不是退回报 0 号
     // 退回去报 0 号卡的空闲，就是拿别人卡上的数去判"够，不卸"，下一步 OOM。
     //
     // 这台机器只有一张卡，所以下标 9 一定越界，这条在本机就能真跑。
+    //
+    // **Mac 上整条不成立，直接跳过。** 那边是统一内存，free_vram_gb 走的是
+    // vm_stat，压根不看 CUDA_VISIBLE_DEVICES——绑到哪张"卡"都照样有数。
+    // 同一个文件里「空闲不能比整卡多」那条也是为这个原因关掉的，
+    // 我这次又忘了，CI 的 macOS 格子当场红。
+#if !defined(__APPLE__)
     const auto before = free_vram_gb();
     changji::paths::set_env("CUDA_VISIBLE_DEVICES", "9");
     const auto bound = free_vram_gb();
@@ -282,6 +288,7 @@ TEST_CASE("绑到一张不存在的卡：说问不到，而不是退回报 0 号
     // 环境变量清掉之后要恢复原样，别把状态留给后面的用例
     const auto after = free_vram_gb();
     CHECK(before.has_value() == after.has_value());
+#endif
 }
 
 TEST_CASE("CHANGJI_NO_NVML 能把新路关掉，退回老路") {
