@@ -2,7 +2,7 @@
 # 场记一键安装（不使用 Docker）。
 #
 # 用法：
-#   curl -fsSL https://raw.githubusercontent.com/Ireoo/changji/main/changji/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/integemjack/changji/main/changji/install.sh | bash
 # 装某一版而不是最新版：
 #   CHANGJI_VERSION=v1.2.0 bash install.sh
 # 装每次推分支都会刷新的滚动预发布：
@@ -23,7 +23,11 @@
 set -euo pipefail
 
 PREFIX="${CHANGJI_PREFIX:-$HOME/.changji}"
-REPO="${CHANGJI_REPO:-Ireoo/changji}"
+# 项目 2026-09-10 搬到 integemjack/changji，CI 和 release 都在那边。
+# 旧仓库 Ireoo/changji 只停在 v1.1，连 beta 都没有——指着它的话这个
+# 脚本会去一个没有产物的地方找包，报的是"下载失败"，而用户看不出是
+# 仓库指错了。要装别处的传 CHANGJI_REPO。
+REPO="${CHANGJI_REPO:-integemjack/changji}"
 VERSION="${CHANGJI_VERSION:-latest}"
 
 info()  { printf '\033[36m==>\033[0m %s\n' "$*"; }

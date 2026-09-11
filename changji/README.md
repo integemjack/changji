@@ -60,10 +60,10 @@ arm64 那几个包（树莓派、Apple Silicon、Windows on ARM）没有这个�
 下一个二进制就能用，没有运行时依赖（除了 ffmpeg，装配和字幕烧录要它）。
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Ireoo/changji/main/changji/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/integemjack/changji/main/changji/install.sh | bash
 ```
 
-或者去 [Releases](https://github.com/Ireoo/changji/releases) 直接下对应平台的包。
+或者去 [Releases](https://github.com/integemjack/changji/releases) 直接下对应平台的包。
 Windows / macOS / Linux，x64 和 arm64 都有，包名形如
 `changji-linux-arm64.tar.gz`。
 
