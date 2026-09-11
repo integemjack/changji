@@ -470,6 +470,58 @@ static std::string normalize_quotes(std::string s) {
     return s;
 }
 
+/// 摘掉分镜的话。
+///
+/// 「镜头拉远」「画面渐暗」「镜头定格在上面那行字」——这是分镜的语言，
+/// 不是小说的语言，而后面另有一步专门把正文变成拍子。提示词里第 18 条
+/// 写了不要这么写，但 2026-09-12 量方差那两跑里，一跑干净、另一跑又冒
+/// 出来了：**规则不是没写，是在方差里时有时无。**
+///
+/// 按小句摘，不摘整段：「纸条落在收银台的一角，镜头定格在上面那行字」
+/// 这样的段落里，前半句是正经正文，整段丢掉就把内容一起丢了。
+///
+/// **词表只收连着的词组，不收单字。** 「画面」「镜头」单独出现常常是正当
+/// 的——照片的画面、摄影机的镜头都是实物。
+static std::string strip_camera_talk(const std::string& para) {
+    static const char* kCamera[] = {
+        "镜头拉远", "镜头拉近", "镜头定格", "镜头切", "镜头对准", "镜头扫过",
+        "画面切到", "画面切换", "画面渐暗", "画面定格", "画面淡出",
+        "特写镜头", "闪回画面", "切入画面",
+    };
+    const auto dirty = [&](const std::string& s) {
+        for (const char* w : kCamera) {
+            if (s.find(w) != std::string::npos) return true;
+        }
+        return false;
+    };
+    if (!dirty(para)) return para;
+
+    // 按逗号和句号切小句，逐句筛，再拼回去。
+    std::vector<std::string> parts;
+    std::string cur;
+    for (std::size_t i = 0; i < para.size();) {
+        if (para.compare(i, 3, "，") == 0 || para.compare(i, 3, "。") == 0) {
+            cur += para.substr(i, 3);
+            parts.push_back(cur);
+            cur.clear();
+            i += 3;
+            continue;
+        }
+        cur += para[i];
+        ++i;
+    }
+    if (!cur.empty()) parts.push_back(cur);
+
+    std::string out;
+    for (const std::string& one : parts) {
+        if (dirty(one)) continue;
+        out += one;
+    }
+    out = text::strip_ws(out);
+    // 摘完剩不下什么就还回原样：宁可留一句分镜话，也别把一段摘成半截。
+    return text::utf8_len(out) >= 8 ? out : para;
+}
+
 /// 一段里只有右引号、没有左引号时，把第一个补成左引号。
 ///
 /// 2026-09-12 实跑：最后一集的钩子是 `苏妍点头微笑。”好的。”`——两个都是
@@ -565,8 +617,8 @@ ChapterDraft parse_chapter(const std::string& raw, int min_chars, bool strict) {
                 ps != s.end() && ps->is_array()) {
                 for (const auto& p : *ps) {
                     if (!p.is_string()) continue;
-                    const std::string one =
-                        fix_unpaired_quotes(text::strip_ws(p.get<std::string>()));
+                    const std::string one = strip_camera_talk(
+                        fix_unpaired_quotes(text::strip_ws(p.get<std::string>())));
                     if (one.empty()) continue;
                     sc.paragraphs.push_back(one);
                     push_text(one);
@@ -576,8 +628,8 @@ ChapterDraft parse_chapter(const std::string& raw, int min_chars, bool strict) {
             // 分得出它当初是单独一栏——那一栏只为了**语法上不给总结留位置**。
             if (const auto last = s.find("last_line");
                 last != s.end() && last->is_string()) {
-                const std::string one = fix_unpaired_quotes(
-                    text::strip_ws(last->get<std::string>()));
+                const std::string one = strip_camera_talk(fix_unpaired_quotes(
+                    text::strip_ws(last->get<std::string>())));
                 if (!one.empty()) {
                     sc.paragraphs.push_back(one);
                     push_text(one);

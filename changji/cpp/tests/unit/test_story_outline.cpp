@@ -1796,6 +1796,49 @@ TEST_CASE("正文在贴情绪标签就打回") {
     CHECK_NOTHROW(changji::stages::parse_chapter(json{{"scenes", one}}.dump()));
 }
 
+TEST_CASE("分镜的话按小句摘掉，不摘整段") {
+    // 「镜头拉远」「画面渐暗」是分镜的语言不是小说的语言，而后面另有一步
+    // 专门把正文变成拍子。提示词里写了不要这么写，但 2026-09-12 量方差
+    // 那两跑里一跑干净、另一跑又冒出来——规则不是没写，是在方差里时有
+    // 时无。
+    const auto body = [](const std::string& line) {
+        json paras = json::array();
+        for (int i = 0; i < 14; ++i) {
+            paras.push_back("第" + std::to_string(i) +
+                            "段：她把抹布拧干，水滴落在地板上，溅出细小的一圈。");
+        }
+        paras.push_back("他停在门口，手扶着门框：“伞我带来了。”");
+        paras.push_back("她没抬头，抹布又抹了一遍：“放那儿吧。”");
+        paras.push_back(line);
+        json scenes = json::array();
+        scenes.push_back({{"where", "深夜，便利店，冷柜的白光"},
+                          {"pov", "林晚"},
+                          {"who", "林晚、陈默"},
+                          {"goal", "把伞要回来"},
+                          {"obstacle", "他不认这把伞"},
+                          {"worse", "她发现伞根本不是他带来的"},
+                          {"turn", "伞柄上刻着别人的名字"},
+                          {"paragraphs", paras},
+                          {"last_line", "她把伞柄转过来，刻着的不是她的名字。"}});
+        return json{{"scenes", scenes}}.dump();
+    };
+
+    // 前半句是正经正文，整段丢掉就把内容一起丢了
+    const auto d = changji::stages::parse_chapter(
+        body("纸条落在收银台的一角，镜头定格在上面那行字。"));
+    CHECK(d.text.find("纸条落在收银台的一角") != std::string::npos);
+    CHECK(d.text.find("镜头定格") == std::string::npos);
+
+    // **单字不收。** 照片的画面、摄影机的镜头都是实物，不能误伤
+    const auto keep = changji::stages::parse_chapter(
+        body("照片的画面已经褪色，边角卷起一块，她用指甲压平。"));
+    CHECK(keep.text.find("照片的画面已经褪色") != std::string::npos);
+
+    // 摘完剩不下什么就还回原样：宁可留一句分镜话，也别把一段摘成半截
+    const auto whole = changji::stages::parse_chapter(body("画面渐暗。"));
+    CHECK(whole.text.find("画面渐暗") != std::string::npos);
+}
+
 TEST_CASE("一段里只有右引号就补回左引号") {
     // 2026-09-12 实跑：最后一集的钩子是「苏妍点头微笑。”好的。”」——两个
     // 都是右引号。normalize_quotes 只在整章没有 “ 时才动手，而这一章别处
