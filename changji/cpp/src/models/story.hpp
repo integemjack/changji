@@ -143,6 +143,15 @@ struct Chapter {
     std::string chapter_id; ///< ^ch[0-9]+$
     std::string title;
     std::string summary;    ///< 三五句。大纲阶段就有，是压缩的全局记忆的一部分
+    /// 这一章抖出来的那件新事——它推翻了前面谁的什么认知。
+    ///
+    /// **2026-09-12 加的，因为四章零反转。** 实跑出来的大纲是「前任回来 →
+    /// 打电话 → 坦白 → 和解」：每章都在推进，但没有一章让人重新理解前面
+    /// 发生过的事。爆款短剧的做法是每几集一个身份/关系/事实/动机的反转，
+    /// 网文那边叫「信息差」——读者或人物知道了一件之前不知道的事。
+    ///
+    /// 空着不算错（粘贴导入的故事、老项目都没有），只是那一章少了个劲。
+    std::string reveal;
     std::string text;       ///< 正文。逐章展开之后才有，没展开时是空串
     std::vector<Hook> hooks;
     /// 这一章的场次。AI 展开正文之后才有；粘贴导入的故事没有（那边只能
@@ -152,8 +161,8 @@ struct Chapter {
     std::vector<std::string> locations;  ///< 用到的地方名
 
     NLOHMANN_DEFINE_TYPE_INTRUSIVE_WITH_DEFAULT(
-        Chapter, chapter_id, title, summary, text, hooks, scenes, characters,
-        locations)
+        Chapter, chapter_id, title, summary, reveal, text, hooks, scenes,
+        characters, locations)
 
     /// 正文的字符数（UTF-8 字符，不是字节）。
     int text_len() const;

@@ -300,6 +300,13 @@ std::string build_chapter_prompt(const Story& story,
     // ---- 这一章要写的 ----
     out += "\n【这一章】" + me.title + "\n";
     if (!me.summary.empty()) out += me.summary + "\n";
+    // **这一章抖出来的那件事。** 单拎一行，因为它是这一章存在的理由：
+    // 没有它，一章就只是「又见了一面」——2026-09-12 实跑的四章零反转。
+    if (!me.reveal.empty()) {
+        out += "**这一章要抖出来的是：" + me.reveal +
+               "。它得在某一场里真的发生——让人看见、听见，"
+               "不是谁总结一句。**\n";
+    }
     if (!me.hooks.empty() && !me.hooks.back().text.empty()) {
         // **这是最后一场的 turn 该是什么的说法，不是一句正文。** 上一版
         // 写「这一章要停在」，14B 把那行字原样抄成了章尾（见 2026-09-11
@@ -316,7 +323,6 @@ std::string build_chapter_prompt(const Story& story,
 /// 出现了 ‘’，就是这种情况，换回来；有 “” 的说明它分得清，不动。
 static std::string normalize_quotes(std::string s) {
     if (s.find("“") != std::string::npos || s.find("”") != std::string::npos) return s;
-    if (s.find("‘") == std::string::npos) return s;
     const auto swap = [&s](const std::string& from, const std::string& to) {
         std::string::size_type i = 0;
         while ((i = s.find(from, i)) != std::string::npos) {
@@ -324,8 +330,42 @@ static std::string normalize_quotes(std::string s) {
             i += to.size();
         }
     };
-    swap("‘", "“");
-    swap("’", "”");
+    if (s.find("‘") != std::string::npos) {
+        swap("‘", "“");
+        swap("’", "”");
+        return s;
+    }
+    // **ASCII 的单引号也算。** 2026-09-12 实跑：整章对白写成 '这一次，
+    // 我们不走回头路了。'，上面只认弯引号，于是这一章在守卫眼里是
+    // 「一句对白都没有」——被打回两次，第三次宽松放行，而宽松那次连
+    // 「两场不能撞同一件事」也一并跳过了，切出来两集的钩子一字不差。
+    // **一个引号的写法吃掉了两道闸。**
+    //
+    // 成对才换：单个撇号是英文缩写和所有格（don't、Lin's），换了就成了
+    // 半个引号挂在句子中间。
+    const auto pair_up = [&](char q) {
+        std::string out;
+        bool open = true;
+        int left = 0;
+        for (const char c : s) left += (c == q) ? 1 : 0;
+        if (left < 2) return;
+        for (const char c : s) {
+            if (c != q) {
+                out += c;
+                continue;
+            }
+            if (open && left < 2) {  // 落单的那个原样留着
+                out += c;
+                continue;
+            }
+            out += open ? "“" : "”";
+            open = !open;
+            --left;
+        }
+        s = out;
+    };
+    pair_up('\'');
+    pair_up('"');
     return s;
 }
 

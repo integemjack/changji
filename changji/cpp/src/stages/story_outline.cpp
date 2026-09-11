@@ -81,6 +81,13 @@ const ordered& outline_schema() {
 
         ordered chapter_props = ordered::object();
         chapter_props["title"] = {{"type", "string"}, {"description", "章标题，十个字以内"}};
+        // **排在 summary 前面。** 模型顺着往下生成：先定这一章抖出什么，
+        // 后面那几句梗概才会围着它写。反过来的话它先把梗概写完，再回头
+        // 凑一个「反转」，凑出来的多半是梗概里那件事换个说法。
+        chapter_props["reveal"] = {
+            {"type", "string"},
+            {"description",
+             "这一章抖出来的那件新事，要推翻前面的认知：谁其实是谁（身份）、两人其实是什么关系、当年那件事其实不是那样（事实）、他这么做其实为了什么（动机）。四选一。不是「又见了一面」「又谈了一次」"}};
         chapter_props["summary"] = {
             {"type", "string"}, {"description", "这一章发生什么，三五句"}};
         chapter_props["hook"] = {
@@ -155,7 +162,7 @@ const ordered& outline_schema() {
             {"description", "按顺序的章节。最后一章要把主线了结"},
             {"items", {{"type", "object"},
                        {"properties", chapter_props},
-                       {"required", {"title", "summary", "hook"}},
+                       {"required", {"title", "reveal", "summary", "hook"}},
                        {"additionalProperties", false}}}};
 
         ordered s = ordered::object();
@@ -282,6 +289,7 @@ Story parse_outline(const std::string& raw, const std::string& premise,
         ch.chapter_id = chapter_id(story.chapters.size());
         ch.title = text::clean_field(get_str(c, "title"));
         ch.summary = text::strip_ws(get_str(c, "summary"));
+        ch.reveal = text::clean_field(get_str(c, "reveal"));
         if (ch.title.empty() && ch.summary.empty()) continue;
 
         // 大纲阶段没有正文，所以钩子的位置只能是 0——而正文为空时

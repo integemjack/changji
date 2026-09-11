@@ -1158,6 +1158,31 @@ TEST_CASE("提示词：读，不要改写") {
     CHECK(p.find("ch01") != std::string::npos);
 }
 
+TEST_CASE("schema：每一章都要说清抖出什么") {
+    // **2026-09-12 加的，因为四章零反转。** 实跑的大纲是「前任回来 → 打
+    // 电话 → 坦白 → 和解」：每章都在推进，但没有一章让人重新理解前面发生
+    // 过的事。爆款短剧每几集一个身份/关系/事实/动机的反转，网文那边叫
+    // 「信息差」。措辞 14B 不一定听，进 required 它才没得选。
+    const auto& ch = outline_schema().at("properties").at("chapters").at("items");
+    REQUIRE(ch.at("properties").contains("reveal"));
+
+    bool required = false;
+    for (const auto& r : ch.at("required")) {
+        if (r == "reveal") required = true;
+    }
+    CHECK(required);
+
+    // **排在 summary 前面。** 先定抖什么，那几句梗概才会围着它写；反过来
+    // 它会先把梗概写完，再回头凑一个「反转」，凑出来的是同一件事换个说法。
+    std::vector<std::string> keys;
+    const auto& props = ch.at("properties");
+    for (auto it = props.begin(); it != props.end(); ++it) keys.push_back(it.key());
+    const auto at = [&](const std::string& k) {
+        return std::find(keys.begin(), keys.end(), k) - keys.begin();
+    };
+    CHECK(at("reveal") < at("summary"));
+}
+
 TEST_CASE("schema：人物那三块和大纲那份长一样") {
     const auto& a = changji::stages::analyze_schema().at("properties");
     const auto& o = outline_schema().at("properties");
@@ -1723,6 +1748,59 @@ TEST_CASE("整章一句对白都没有就打回") {
     std::string plain;
     for (int i = 0; i < 700; ++i) plain += "字";
     CHECK_NOTHROW(changji::stages::parse_chapter(json{{"text", plain}}.dump()));
+}
+
+TEST_CASE("抖出什么要一路带到正文那一步") {
+    // 大纲里定了反转，正文那一步不知道的话，那一章照样写成「又见了一面」。
+    Story s = outline_only_story();
+    s.chapters[1].reveal = "那把伞不是他拿走的，是她母亲塞给他的";
+
+    const std::string p = changji::stages::build_chapter_prompt(
+        s, "ch02", StyleLine::REALISTIC);
+    CHECK(p.find("这一章要抖出来的是：那把伞不是他拿走的") != std::string::npos);
+    // 要它演出来，不是让谁总结一句
+    CHECK(p.find("让人看见、听见") != std::string::npos);
+
+    // 没定反转的章不多这一行——粘贴导入的故事和老项目都没有这一栏
+    s.chapters[1].reveal.clear();
+    const std::string none = changji::stages::build_chapter_prompt(
+        s, "ch02", StyleLine::REALISTIC);
+    CHECK(none.find("这一章要抖出来的是") == std::string::npos);
+}
+
+TEST_CASE("对白用 ASCII 单引号写的，也换成中文双引号") {
+    // **2026-09-12 实跑：一个引号的写法吃掉了两道闸。** 整章对白写成
+    // '这一次，我们不走回头路了。'，守卫只认弯引号，于是这一章算「一句
+    // 对白都没有」，被打回两次；第三次宽松放行，而宽松那次连「两场不能
+    // 撞同一件事」也一并跳过——切出来两集的钩子一字不差。
+    const auto body = [](const std::string& line) {
+        json paras = json::array();
+        for (int i = 0; i < 14; ++i) {
+            paras.push_back("第" + std::to_string(i) +
+                            "段：她把抹布拧干，水滴落在地板上，溅出细小的一圈。");
+        }
+        paras.push_back(line);
+        json scenes = json::array();
+        scenes.push_back({{"where", "深夜，便利店，冷柜的白光"},
+                          {"pov", "林晚"},
+                          {"goal", "把伞要回来"},
+                          {"obstacle", "他不认这把伞"},
+                          {"turn", "伞柄上刻着别人的名字"},
+                          {"paragraphs", paras}});
+        return json{{"scenes", scenes}}.dump();
+    };
+
+    const auto d = changji::stages::parse_chapter(
+        body("他停在门口：'伞我带来了。'她没抬头：'放那儿吧。'"));
+    CHECK(d.text.find("“伞我带来了。”") != std::string::npos);
+    CHECK(d.text.find("'") == std::string::npos);
+
+    // **落单的撇号不动。** don't、Lin's 里那个不是引号，换了就成了半个
+    // 引号挂在句子中间。
+    // strict 关掉：这一段本来就没对白，这里要验的只是撇号
+    const auto keep = changji::stages::parse_chapter(
+        body("他低声说了句什么，听着像 don't。"), 0, false);
+    CHECK(keep.text.find("don't") != std::string::npos);
 }
 
 TEST_CASE("提示词：没有这一章就抛") {
