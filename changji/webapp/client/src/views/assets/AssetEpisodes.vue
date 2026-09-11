@@ -16,7 +16,7 @@ import { computed, ref, watch } from 'vue'
 
 import AppIcon from '@/components/AppIcon.vue'
 import EmptyState from '@/components/EmptyState.vue'
-import { api } from '@/api'
+import { api, mediaUrl } from '@/api'
 import { useAction } from '@/composables/useAction'
 import { useSession } from '@/stores/session'
 import { useUi } from '@/stores/ui'
@@ -26,6 +26,7 @@ const ui = useUi()
 const { run, isBusy } = useAction()
 
 const story = ref(null)
+const assets = ref(null)
 const loading = ref(false)
 const openChapter = ref('')
 
@@ -48,6 +49,111 @@ function cutsAfter(chapterId) {
   return plan.value.filter((p) => p.to_chapter === chapterId)
 }
 
+// ---------------------------------------------------------------------------
+// 每一集用到的人和地方
+// ---------------------------------------------------------------------------
+//
+// 用户 2026-09-12：「分集里每集用到的角色和场景图应该显示出来，容易区分」。
+//
+// **分集表最难的就是分不清。** 十来行「第 N 集 · 60s · 某某悬念」，字都
+// 差不多长、颜色都一样，要找"陈默在医院那一集"只能一行行读过去。而这几集
+// 之间真正的差别是**谁在场、在哪儿**——那正好是图。
+//
+// 名单从章节来（`chapter.characters` / `chapter.locations`，是「读故事」
+// 那一步照着正文读出来的），图从资产库来。两边靠**名字**对上：章节里存的
+// 就是名字，不是 id。
+
+/** 名字 → 角色。资产库里存的是 char_id，而章节里记的是名字。 */
+const charByName = computed(() => {
+  const m = new Map()
+  for (const c of assets.value?.characters ?? []) m.set(c.name, c)
+  return m
+})
+const locByName = computed(() => {
+  const m = new Map()
+  for (const l of assets.value?.locations ?? []) m.set(l.name, l)
+  return m
+})
+
+/** 这一集覆盖的那几章。分集表里存的是首尾章号，中间的按顺序取。 */
+function chaptersOf(ep) {
+  const from = chapters.value.findIndex((c) => c.chapter_id === ep.from_chapter)
+  const to = chapters.value.findIndex((c) => c.chapter_id === ep.to_chapter)
+  if (from < 0 || to < 0) return []
+  return chapters.value.slice(from, to + 1)
+}
+
+/**
+ * 这一集自己那段正文。
+ *
+ * **一集常常只是一章的一截**：一章三千字切成三集，三集共用一份章级名单的
+ * 话，那三行看着一模一样——而这一栏存在的全部理由就是让人分得清。
+ *
+ * `from_char` / `to_char` 是**各自那一章里**的偏移（首章从 from_char 到尾，
+ * 末章从头到 to_char，中间整章）。它们是码点偏移，而 JS 的 slice 按 UTF-16
+ * 数——中文都在基本平面上，两者一致；真混进 emoji 也只是偏几个字，
+ * 对"名字在不在这一段里"没有影响。
+ */
+function sliceOf(ep) {
+  const list = chaptersOf(ep)
+  if (!list.length) return ''
+  let out = ''
+  list.forEach((c, i) => {
+    const text = c.text ?? ''
+    const a = i === 0 ? (ep.from_char ?? 0) : 0
+    const b = i === list.length - 1 ? (ep.to_char ?? text.length) : text.length
+    out += text.slice(a, b)
+  })
+  return out
+}
+
+/**
+ * 这一集有谁、在哪儿。
+ *
+ * 两步：**名单从章节来，在不在场看这一集自己那段正文**。
+ *
+ *   * 候选名单是 `chapter.characters` / `chapter.locations`——「读故事」那一步
+ *     照着正文读出来的，是权威的那一份。
+ *   * **老项目里这两项是空的**：2026-09-12 之前 schema 没把它们写进
+ *     required，14B 就一个都不给（见 story_outline.cpp 里那段）。那时候候选
+ *     退成资产库里登记过的全部名字。
+ *   * 然后拿这一集的正文过一遍：出现过的才算在场。人名在正文里是实打实
+ *     写出来的，扫得准；地名多半扫不到（正文里很少原样写"高架桥下的咖啡
+ *     馆"），扫不到就空着，不猜。
+ *
+ * 正文还没写的章走不到第二步（没得扫），那就直接用章级名单——那时候它是
+ * 计划，显示计划是对的。
+ */
+function castOf(ep, key, listKey, lookup, refKey) {
+  const covered = chaptersOf(ep)
+  const listed = []
+  for (const c of covered) {
+    for (const n of c[listKey] ?? []) if (!listed.includes(n)) listed.push(n)
+  }
+  const candidates = listed.length ? listed : [...lookup.keys()]
+
+  const text = sliceOf(ep)
+  let names = text ? candidates.filter((n) => n && text.includes(n)) : []
+  // 扫不出来（正文没写，或者名字确实没在这一段里出现）就退回章级名单。
+  // **空着比错着好，但全空就等于这一栏不存在**——所以只在完全扫不到时退。
+  if (!names.length) names = listed
+
+  return names.map((name) => {
+    const hit = lookup.get(name)
+    return {
+      name,
+      // 没有图就只给名字，界面上退成一个字的小牌子——**比不显示强**：
+      // 这一栏存在的理由就是让人一眼分清哪一集是哪一集，而名字也分得清。
+      url: hit?.[refKey] ? mediaUrl(session.projectPath, hit[refKey]) : '',
+    }
+  })
+}
+
+const facesOf = (ep) =>
+  castOf(ep, 'who', 'characters', charByName.value, 'ref_front')
+const scenesOf = (ep) =>
+  castOf(ep, 'where', 'locations', locByName.value, 'ref_empty')
+
 async function load() {
   if (!session.projectPath) {
     story.value = null
@@ -55,7 +161,15 @@ async function load() {
   }
   loading.value = true
   try {
-    story.value = (await api.getStory(session.projectPath)).story ?? null
+    // 两份一起拉：分集线上要显示的人脸和空景图在资产库里，
+    // 而一集是哪几个人在哪几个地方，在故事里。
+    const [got, lib] = await Promise.all([
+      api.getStory(session.projectPath),
+      // 资产库拉不动不该把整页挡住——那时候分集线退成只有名字。
+      api.assets(session.projectPath).catch(() => null),
+    ])
+    story.value = got.story ?? null
+    assets.value = lib
   } catch (err) {
     ui.error(err.message)
   } finally {
@@ -231,6 +345,30 @@ defineExpose({ load })
         <div v-for="ep in cutsAfter(c.chapter_id)" :key="ep.episode_id" class="cut">
           <span class="cut__id numeric">{{ ep.episode_id }}</span>
           <span class="cut__dur numeric">{{ ep.target_duration_s }}s</span>
+
+          <!-- 这一集里谁在场、在哪儿。**人是圆的，地方是方的**——形状不一样，
+               扫一眼就分得开，不用去读底下那行字。 -->
+          <span class="cast">
+            <span
+              v-for="f in facesOf(ep)"
+              :key="'c' + f.name"
+              class="cast__one cast__one--who"
+              :title="f.name"
+            >
+              <img v-if="f.url" :src="f.url" :alt="f.name" loading="lazy" />
+              <i v-else>{{ [...f.name][0] }}</i>
+            </span>
+            <span
+              v-for="l in scenesOf(ep)"
+              :key="'l' + l.name"
+              class="cast__one cast__one--where"
+              :title="l.name"
+            >
+              <img v-if="l.url" :src="l.url" :alt="l.name" loading="lazy" />
+              <i v-else>{{ [...l.name][0] }}</i>
+            </span>
+          </span>
+
           <span v-if="ep.hook" class="cut__hook truncate">{{ ep.hook }}</span>
           <span v-else class="cut__hook dim">章尾</span>
         </div>
@@ -376,6 +514,46 @@ defineExpose({ load })
 .cut__hook {
   flex: 1;
   min-width: 0;
+}
+
+/* 这一集用到的人和地方。**挤在分集线上，不另起一行**——它是用来区分
+   相邻几集的，离开那条线就失去了参照。 */
+.cast {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  flex: none;
+}
+.cast__one {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  overflow: hidden;
+  background: var(--surface-3);
+  color: var(--text-3);
+  font-size: 10px;
+  font-style: normal;
+  line-height: 1;
+}
+.cast__one img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+/* 人是圆的。头像裁成圆的时候脸在正中间，而参考图是正面全身——
+   所以取上面那一截。 */
+.cast__one--who {
+  border-radius: 50%;
+}
+.cast__one--who img {
+  object-position: top center;
+}
+/* 地方是方的（带一点圆角），而且宽一些：空景图是 16:9，裁成正方形
+   基本只剩中间一堵墙。 */
+.cast__one--where {
+  width: 34px;
+  border-radius: var(--r-sm);
 }
 
 .fold {
