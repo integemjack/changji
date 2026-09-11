@@ -292,7 +292,9 @@ ApiResult post_story_chapters(const json& body,
             }
             p.set_message("写完了 " + std::to_string(done) + " 章");
         },
-        "已手动停止。已经写好的几章留着。");
+        "已手动停止。已经写好的几章留着。",
+        // 顶栏那块"AI 作业中"要靠它说清是哪部剧、点了往哪儿跳。
+        paths::to_utf8(store.root()));
 
     if (!started) throw ApiError(409, "已经在写了");
     return {200, {{"started", true}, {"chapters", todo.size()}}};
@@ -382,7 +384,8 @@ ApiResult post_script_series(const json& body,
             }
             p.set_message("写完了 " + std::to_string(done) + " 集");
         },
-        "已手动停止。已经写好的几集留着。");
+        "已手动停止。已经写好的几集留着。",
+        paths::to_utf8(store.root()));
 
     if (!started) throw ApiError(409, "已经在写了");
     return {200, {{"started", true}, {"total", episodes}}};
@@ -476,7 +479,8 @@ ApiResult post_plan_all(const json& body, std::shared_ptr<llm::Client> client) {
             }
             p.set_message("出完了 " + std::to_string(done) + " 集的分镜");
         },
-        "已手动停止。已经出好的分镜留着。");
+        "已手动停止。已经出好的分镜留着。",
+        paths::to_utf8(store.root()));
 
     if (!started) throw ApiError(409, "剧本那边还在忙");
     return {200, {{"started", true}, {"episodes", todo}}};

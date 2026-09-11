@@ -78,7 +78,8 @@ const JobTable::Slot& JobTable::slot(JobKind k) const {
 }
 
 bool JobTable::start(JobKind kind, const std::string& episode_id, Body body,
-                     const std::string& stop_message) {
+                     const std::string& stop_message,
+                     const std::string& project) {
     std::unique_lock lk(mu_);
     Slot& s = slot(kind);
     if (s.state.running) return false;
@@ -103,6 +104,7 @@ bool JobTable::start(JobKind kind, const std::string& episode_id, Body body,
     s.state.running = true;
     s.state.job_id = new_job_id(kind);
     if (!episode_id.empty()) s.state.episode_id = episode_id;
+    s.state.project = project;
     s.state.started_at = std::chrono::steady_clock::now();
     s.state.stop_message = stop_message;
     s.active = true;
@@ -290,6 +292,29 @@ void JobTable::record(JobKind kind, Event ev) {
 std::vector<std::string> JobTable::pending(JobKind kind) const {
     std::lock_guard lg(mu_);
     return slot(kind).state.pending;
+}
+
+json JobTable::running_jobs() const {
+    std::lock_guard lg(mu_);
+    json out = json::array();
+    for (const JobKind k : {JobKind::Run, JobKind::Write}) {
+        const JobState& s = slot(k).state;
+        if (!s.running) continue;
+        // **只带顶栏画得下的那几样。** 这条消息每两秒推给每个连着的浏览器，
+        // 塞事件流进来的话，一个跑着的任务就能把这条通道变成主要流量。
+        out.push_back({
+            {"kind", to_string(k)},
+            {"project", s.project},
+            {"episode_id", s.episode_id.value_or("")},
+            {"stage", s.stage},
+            // Run 用 current/total（第几镜），Write 用 done/total（第几章）。
+            // 两套字段在这儿抹平成一套，界面不用分情况画进度。
+            {"current", k == JobKind::Run ? s.current : s.done},
+            {"total", s.total},
+            {"message", s.message},
+        });
+    }
+    return out;
 }
 
 json JobTable::snapshot(JobKind kind) const {

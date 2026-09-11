@@ -104,6 +104,12 @@ struct JobState {
     bool running = false;
     std::string job_id;                    ///< 每次启动生成一个，WebSocket 按它订阅
     std::optional<std::string> episode_id;
+    /// 这一轮在跑哪个项目（目录的绝对路径）。
+    ///
+    /// **加它是为了顶栏那块"AI 作业中"能点过去。** 任务表是进程一份的，
+    /// 而一个进程可以轮流跑好几个项目——只报 episode_id 的话，界面上说
+    /// "ep01 正在出片"，用户点过去可能是另一部剧的 ep01。
+    std::string project;
     std::chrono::steady_clock::time_point started_at{};
 
     // 进度
@@ -240,14 +246,25 @@ public:
     /// 要能按任务指定，是因为同一个槽上跑的两件事说法不一样：
     /// 写整季停了是"已经写好的几集留着"，批量出分镜停了是
     /// "已经出好的分镜留着"。用同一句必然有一半场合是错的。
+    ///
+    /// `project` 是这一轮跑的项目目录，留空表示不知道（顶栏那块就只显示
+    /// 名字、不给跳转）。
     bool start(JobKind kind, const std::string& episode_id, Body body,
-               const std::string& stop_message = "");
+               const std::string& stop_message = "",
+               const std::string& project = "");
 
     /// 请求取消。没在跑返回 false，对应 Python 的 {"stopped": false}。
     bool cancel(JobKind kind);
 
     /// 快照。形状与 Python 侧对应的 State.snapshot() 一致。
     nlohmann::json snapshot(JobKind kind) const;
+
+    /// 此刻在跑的那些，一行一个，给顶栏那块"AI 作业中"用。
+    ///
+    /// **和 snapshot 分开**：那个是一整屏的详情（事件流、产物、每镜状态），
+    /// 而这个每两秒往所有连着的浏览器推一次，只能带最少的东西。
+    /// 没在跑就是空数组——顶栏那块跟着整个不显示。
+    nlohmann::json running_jobs() const;
 
     bool running(JobKind kind) const;
     /// 这一轮还没落定的镜头。见 JobState::pending。

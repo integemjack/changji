@@ -1312,7 +1312,7 @@ TEST_CASE("腾不出地方时，先说清是被谁挡住的") {
     vid.unload = [] {};
     s.register_slot(vid);
 
-    SUBCASE("挡路的正被借着：点名它，并且说「等一会儿再点一次」") {
+    SUBCASE("挡路的正被借着：点名它，并且说等它干完再点一次") {
         auto held = s.acquire(Slot::LLM);   // 租约一直拿着
         try {
             auto v = s.acquire(Slot::Video);
@@ -1322,7 +1322,10 @@ TEST_CASE("腾不出地方时，先说清是被谁挡住的") {
             CAPTURE(msg);
             CHECK(msg.find("LLM") != std::string::npos);
             CHECK(msg.find("正用着") != std::string::npos);
-            CHECK(msg.find("等一会儿") != std::string::npos);
+            // 钉的是"让人等"这个意思，不是某一句话的措辞。原来那句写的是
+            // "多半是它还在装（起服务时大模型会在后台装上）"——预装那条路
+            // 后来整个去掉了（用的时候才装），那句话就成了往错方向支人。
+            CHECK(msg.find("再点一次") != std::string::npos);
             // 通用那几条出路还得在后面，一直这样才是真的装不下。
             CHECK(msg.find("画面") != std::string::npos);
         }

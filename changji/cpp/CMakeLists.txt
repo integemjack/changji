@@ -557,6 +557,7 @@ add_executable(changji
     src/http/webapp.cpp
     src/http/ws.cpp
     src/pipeline/jobs.cpp
+    src/pipeline/activity.cpp
     src/pipeline/episode.cpp
     src/media/ffmpeg.cpp
     src/media/subtitles.cpp
@@ -825,6 +826,7 @@ if(CHANGJI_BUILD_TESTS)
         tests/unit/test_story_reverse.cpp
         tests/unit/test_story_revise.cpp
         tests/unit/test_json_stream.cpp
+        tests/unit/test_activity.cpp
         tests/unit/test_repetition.cpp
         tests/unit/test_ref_images.cpp
         tests/unit/test_sysstat.cpp
@@ -890,6 +892,7 @@ if(CHANGJI_BUILD_TESTS)
         src/infer/sd_video.cpp
         src/infer/sd_upscale.cpp
         src/pipeline/jobs.cpp
+        src/pipeline/activity.cpp
         src/pipeline/episode.cpp
         src/media/ffmpeg.cpp
         src/media/subtitles.cpp

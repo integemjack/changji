@@ -10,6 +10,7 @@
 #include "models/project.hpp"
 #include "stages/audio.hpp"
 #include "stages/tts_backends.hpp"
+#include "pipeline/activity.hpp"
 #include "util/paths.hpp"
 #include "util/text.hpp"
 
@@ -86,6 +87,10 @@ ApiResult post_tts_say(const json& body) {
     const fs::path dir = store.paths().audio();
     fs::create_directories(dir, ec);
     const fs::path out = dir / "say.wav";
+
+    // 念一段几秒钟，但它要借配音那一槽——而那一槽和大模型抢同一张卡。
+    // 顶栏那本账上要看得见，否则别的活被它挡住时没人知道是谁挡的。
+    pipeline::Activity act{"say", paths::to_utf8(store.root()), "", "正在朗读"};
 
     stages::SynthesisResult res;
     try {

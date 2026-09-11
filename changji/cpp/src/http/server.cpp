@@ -41,6 +41,7 @@
 #include "infer/sd_backend.hpp"
 #include "infer/sd_image.hpp"
 #include "models/hardware.hpp"
+#include "pipeline/activity.hpp"
 #include "pipeline/jobs.hpp"
 #include <atomic>
 #include <chrono>
@@ -177,6 +178,10 @@ void run(const config::Settings& settings, const Options& opts) {
         while (!stop_pump) {
             if (ws::hub().subscriber_count("system") > 0) {
                 json msg = sysstat::to_json(sysstat::sample());
+                // **搭这趟车，不另开一条。** 顶栏那块"AI 作业中"要的就是
+                // 两秒一次的心跳，而这条通道已经在跑了；另开一个轮询等于
+                // 为同一个节奏做两遍功。
+                msg["jobs"] = pipeline::running_work();
                 msg["type"] = "system";
                 msg["job_id"] = "system";
                 ws::hub().broadcast("system", msg);
@@ -221,7 +226,11 @@ void run(const config::Settings& settings, const Options& opts) {
     // 这个留给 curl 看一眼和排查用。
     CROW_ROUTE(app, "/api/system")([] {
         auto r = guard([]() -> ApiResult {
-            return {200, sysstat::to_json(sysstat::sample())};
+            auto body = sysstat::to_json(sysstat::sample());
+            // **和推过去的那份一样**，而且是同一个函数拼的——见
+            // pipeline::running_work()。两边各拼一次的话迟早只改一边。
+            body["jobs"] = pipeline::running_work();
+            return {200, std::move(body)};
         });
         return json_response(r.body, r.status);
     });

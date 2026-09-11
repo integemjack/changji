@@ -13,6 +13,7 @@
 #include "stages/story_plan.hpp"
 #include "stages/story_reverse.hpp"
 #include "http/ws.hpp"
+#include "pipeline/activity.hpp"
 #include "stages/json_stream.hpp"
 #include "stages/story_revise.hpp"
 #include "util/paths.hpp"
@@ -206,6 +207,9 @@ ApiResult post_story_outline(const json& body, llm::Client& client,
 
     const StoryScale scale = opt_scale(body, "scale", existing.scale);
 
+    pipeline::Activity act{"outline", paths::to_utf8(store.root()), "",
+                           "正在出大纲"};
+
     llm::Request req;
     req.prompt = stages::build_outline_prompt(premise, scale, project.style_line,
                                               opt_str(body, "keywords", ""));
@@ -321,6 +325,9 @@ ApiResult post_story_analyze(const json& body, llm::Client& client,
                        "大纲写出来的故事本来就带人物表，不用走这一步");
     }
 
+    pipeline::Activity act{"analyze", paths::to_utf8(store.root()), "",
+                           "正在读这个故事"};
+
     llm::Request req;
     req.prompt = stages::build_analyze_prompt(story, project.style_line);
     req.schema = stages::analyze_schema();
@@ -358,6 +365,11 @@ ApiResult post_story_chapter(const json& body, llm::Client& client,
     if (!text::strip_ws(me->text).empty() && !opt_bool(body, "overwrite", false)) {
         throw ApiError(409, "这一章已经有正文了。要重写就带上 overwrite");
     }
+
+    // 登记到顶栏那本账上。**同步接口没有任务表**，不登记的话这一两分钟里
+    // 引擎在界面上看着是闲着的——而它正占着大模型那一槽，别的活全得等。
+    pipeline::Activity act{"write_one", paths::to_utf8(store.root()), chapter_id,
+                           "正在写 " + (me->title.empty() ? chapter_id : me->title)};
 
     llm::Request req;
     req.prompt =
@@ -567,6 +579,9 @@ ApiResult post_story_revise(const json& body, llm::Client& client,
     // 一遍，也让丢包的连接有个兜底）。
     const std::string stream_id = text::strip_ws(opt_str(body, "stream"));
     const bool streaming = !stream_id.empty();
+
+    pipeline::Activity act{"revise", paths::to_utf8(store.root()),
+                           span.chapter_id, "正在改这一段"};
 
     llm::Request req;
     // **流式那条不要 JSON。** 逐字插进编辑器的话，用户先看到的会是

@@ -13,6 +13,7 @@
 #include "infer/sd_image.hpp"
 #include "models/project.hpp"
 #include "pipeline/episode.hpp"  // frame_spec
+#include "pipeline/activity.hpp"
 #include "pipeline/jobs.hpp"
 #include "stages/ref_images.hpp"
 #include "util/paths.hpp"
@@ -70,9 +71,18 @@ Rendered render_ref(const ProjectStore& store, const std::string& stem,
 
     const fs::path dest = claim_ref_path(store, stem, ".png");
 
-    // 借图像槽。**借之前不报任何进度**——这个接口是同步的，界面上就是一个
-    // 转圈。头一张要先把出图模型读进显存（十几秒到一分钟），这段时间
-    // sd.cpp 的回调一次都不会触发，看着像卡住了，实际是在读权重。
+    // **登记到"在干的活"里去，登记在借槽之前。** 这个接口是同步的，
+    // 没有任务表那一套，所以它以前在界面上整个不可见——2026-09-11 撞上过：
+    // 用户这边正出着参考图（占着图像槽），另一头的批量写作四章全挂在
+    // 「显存不够加载 LLM：「图像」正用着」，而顶栏一片安静、GPU 占用 0%，
+    // 挡路的那件事只能登服务器翻日志才查得到。
+    //
+    // 登记在 acquire 之前，是因为**等显存也是在忙**：头一张要先把出图模型
+    // 读进显存（十几秒到一分钟），这段时间 sd.cpp 的回调一次都不触发，
+    // 界面上就是一个不动的转圈——那正是最需要顶栏说句话的时候。
+    pipeline::Activity act{"image", paths::to_utf8(store.root()), "",
+                           "正在画参考图"};
+
     auto lease = infer::scheduler().acquire(
         infer::Slot::Image,
         static_cast<std::size_t>(spec.width) * spec.height);
@@ -91,7 +101,14 @@ Rendered render_ref(const ProjectStore& store, const std::string& stem,
     const auto t0 = std::chrono::steady_clock::now();
     pipeline::CancelToken tok;
     try {
-        ctx->generate(req, dest, tok, [](int, int, double, bool) {});
+        ctx->generate(req, dest, tok,
+                      [&act](int step, int steps, double, bool loading) {
+                          // 读权重和采样不是一个量级（1927 个张量 vs 8 步），
+                          // 画在同一条进度条上会像"跑到头又倒回去了"。
+                          // 顶栏只有一行，就只画采样那一段。
+                          if (loading) return;
+                          act.set_progress(step, steps);
+                      });
     } catch (const infer::SdError& e) {
         throw ApiError(500, std::string("出图失败：") + e.what());
     }
