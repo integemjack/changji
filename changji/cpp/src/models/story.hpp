@@ -66,6 +66,16 @@ struct StoryCharacter {
     std::string name;     ///< 剧本里的称呼，全剧一字不改
     std::string identity; ///< 一句话身份
     std::string want;     ///< 他要什么。没有欲望的人物推不动情节
+    /// 他怕什么——怕被谁看见什么、怕失去什么、怕自己其实是什么样的人。
+    ///
+    /// **2026-09-12 加的。** 人物表原来只有「他要什么」，而短剧那边的说法
+    /// 是「爆款人设的核心驱动力不是欲望而是恐惧」，90% 的人设翻车死于
+    /// 「全能感」——完美但无味。一个人怕什么，决定了他在场上躲什么、
+    /// 哪句话不肯说、被戳到时为什么突然变脸，对白的潜台词全从这儿来。
+    ///
+    /// 光写进人物表不够：写正文那一步也要拿到它，否则就是「小传里有、
+    /// 正文里没有」，人物行为看着突兀。
+    std::string fear;
     std::string arc;      ///< 从什么变成什么
     /// 他说话什么样：长句还是短句、认不认错、生气时是提高声音还是不说话。
     ///
@@ -77,7 +87,7 @@ struct StoryCharacter {
     std::string voice;
 
     NLOHMANN_DEFINE_TYPE_INTRUSIVE_WITH_DEFAULT(
-        StoryCharacter, name, identity, want, arc, voice)
+        StoryCharacter, name, identity, want, fear, arc, voice)
 };
 
 /// 人物关系的一条边。

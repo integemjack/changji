@@ -61,6 +61,13 @@ const ordered& outline_schema() {
         character_props["want"] = {
             {"type", "string"},
             {"description", "这个人物主动要的东西。写「希望生活变好」等于没写"}};
+        // 紧跟着 want：**要什么和怕什么是一对**，挨着填模型才会让它们互相
+        // 顶着（他想要的那样东西，正好要他做最怕的那件事）。
+        character_props["fear"] = {
+            {"type", "string"},
+            {"description",
+             "他怕什么：怕被谁看见什么、怕失去什么、怕自己其实是什么样的人。不是「怕黑」这种毛病，是会让他在关键时刻躲开、说谎、突然翻脸的那件事"},
+            {"minLength", 8}};
         character_props["arc"] = {
             {"type", "string"}, {"description", "从什么变成什么"}};
         // **minLength 不能省。** 写进 required 只保证这个键在，不保证它有
@@ -149,7 +156,7 @@ const ordered& outline_schema() {
             {"description", "故事里的人。主要人物不超过三个"},
             {"items", {{"type", "object"},
                        {"properties", character_props},
-                       {"required", {"name", "identity", "want", "voice"}},
+                       {"required", {"name", "identity", "want", "fear", "voice"}},
                        {"additionalProperties", false}}}};
         props["relations"] = {
             {"type", "array"},
@@ -255,6 +262,7 @@ Story parse_outline(const std::string& raw, const std::string& premise,
             if (sc.name.empty() || !names.insert(sc.name).second) continue;
             sc.identity = text::clean_field(get_str(c, "identity"));
             sc.want = text::clean_field(get_str(c, "want"));
+            sc.fear = text::clean_field(get_str(c, "fear"));
             sc.arc = text::clean_field(get_str(c, "arc"));
             sc.voice = text::clean_field(get_str(c, "voice"));
             story.characters.push_back(std::move(sc));

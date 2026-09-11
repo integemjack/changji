@@ -1174,6 +1174,26 @@ TEST_CASE("人物表里要有「他说话什么样」") {
     // JSON 字符串，语法采样照样让它过，那一轮的改动一个字都没生效。
     CHECK(cs.at("properties").at("voice").at("minLength").get<int>() >= 6);
 
+    // **「他怕什么」和「他要什么」是一对。** 短剧那边的说法是「爆款人设的
+    // 核心驱动力不是欲望而是恐惧」，90% 的人设翻车死于「全能感」。
+    REQUIRE(cs.at("properties").contains("fear"));
+    CHECK(cs.at("properties").at("fear").at("minLength").get<int>() >= 6);
+    bool fear_required = false;
+    for (const auto& r : cs.at("required")) {
+        if (r == "fear") fear_required = true;
+    }
+    CHECK(fear_required);
+    // 挨着 want 填，模型才会让它们互相顶着
+    std::vector<std::string> ck;
+    for (auto it = cs.at("properties").begin(); it != cs.at("properties").end();
+         ++it) {
+        ck.push_back(it.key());
+    }
+    const auto pos = [&](const std::string& k) {
+        return std::find(ck.begin(), ck.end(), k) - ck.begin();
+    };
+    CHECK(pos("fear") == pos("want") + 1);
+
     // 读故事那一步用的是同一份人物块，两边不一致的话每个消费者都要分支
     CHECK(changji::stages::analyze_schema().at("properties").at("characters") ==
           outline_schema().at("properties").at("characters"));
@@ -1932,6 +1952,13 @@ TEST_CASE("说话方式要一路带到正文那一步") {
     const std::string p = changji::stages::build_chapter_prompt(
         s, "ch02", StyleLine::REALISTIC);
     CHECK(p.find("说话：短句，从不把话说完") != std::string::npos);
+
+    // 怕什么也要一路带到正文：只写进人物表的话，就是「小传里有、戏里
+    // 没有」，人物行为看着突兀
+    s.characters[0].fear = "怕被人看见她根本没打算走";
+    const std::string q = changji::stages::build_chapter_prompt(
+        s, "ch02", StyleLine::REALISTIC);
+    CHECK(q.find("他怕的是：怕被人看见她根本没打算走") != std::string::npos);
 
     // 没写的人不多这一段——粘贴导入的故事和老项目都没有这一栏
     s.characters[0].voice.clear();
