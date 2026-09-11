@@ -125,16 +125,26 @@ int chapter_target_chars(const Story& story) {
 }
 
 int chapter_target_scenes(const Story& story) {
-    // **按这一章有多少字算，不按它会被切成几集。**
+    // 一章多少字 ÷ 一场多少字。而一场多少字跟着每集时长走
+    // （`scene_target_chars`），所以**一场大致对着一集**——那一集的结尾
+    // 正好是这场戏演完的地方。
     //
-    // 第一版是按集数算的（一场一集，切点最整齐）。2026-09-12 实跑当场露馅：
-    // 每集 30 秒时一章要 4 场，而一章的梗概只撑得起一两件事——模型就从
-    // 全局地点表里抓了下一章的地方来凑，四章都在同一个楼顶演同一件事。
+    // 这个数改过两回，两回都是实跑逼的：
+    // ① 最早直接按集数算，每集 30 秒时一章要 4 场，而当时一章只写得出
+    //    1500 字，每场分不到 400 字——模型就从全局地点表里抓了下一章的
+    //    地方来凑，四章都在同一个楼顶演同一件事。于是改成按字数算、
+    //    一场写死一千字。
+    // ② 写死一千字之后，每集 30 秒那一档里一场横跨快两集，分集只能在场
+    //    中间下刀，停在场尾从 86% 掉到 63%。所以又改回跟着时长走——只是
+    //    这回一场有 600 字的下限兜着，不会再被压回概述。
     //
-    // 场是**故事的单位**，一场要有一千字上下才铺得开（谁想干什么、谁拦着、
-    // 局面变成什么）。一场装不下一集就让分集在场里面再切一刀——切点还是
-    // 优先往场尾靠（kSceneSlack），只是不再强求一场一集。
-    return std::clamp(chapter_target_chars(story) / kSceneTargetChars, 2, 4);
+    // 上限 5：每集时长选得短时，一章要多切几场才跟得上。
+    return std::clamp(chapter_target_chars(story) / scene_target_chars(story), 2, 5);
+}
+
+int scene_target_chars(const Story& story) {
+    const int cap = prose_budget_chars(story.episode_duration_s);
+    return std::clamp(cap > 0 ? cap : kSceneMinChars, kSceneMinChars, kSceneMaxChars);
 }
 
 int chapter_scene_chars(const Story& story) {
@@ -186,7 +196,7 @@ ordered chapter_schema(int target_scenes, int paras_per_scene) {
         scene_props[kChapterBodyField] = {
             {"type", "array"},
             {"description",
-             "这一场的正文，一段一项。一段推进一两秒钟的事：一个动作、一句话、一次看见。小说体，不是梗概也不是分镜。长短要错落，别段段一样长。写到上面那个 turn 发生的那一刻就停，不要再加一段点题或者总结"},
+             "这一场的正文，一段一项。一段推进一两秒钟的事：一个动作、一句话、一次看见。小说体，不是梗概也不是分镜。长短要错落，别段段一样长。**对白和动作要交替**：连着三段没有人开口，画面就停住了——这一场里的人要一来一往地说话。写到上面那个 turn 发生的那一刻就停，不要再加一段点题或者总结"},
             {"minItems", min_items},
             {"maxItems", max_items},
             // **每段至少 20 字，这是字数唯一管用的杠杆。** 2026-09-11 量过：

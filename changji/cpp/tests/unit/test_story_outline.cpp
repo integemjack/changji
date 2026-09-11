@@ -1514,6 +1514,40 @@ Story outline_only_story() {
 
 }  // namespace
 
+TEST_CASE("一场的篇幅跟着每集时长走") {
+    // **一场大致对着一集**，那一集的结尾正好是这场戏演完的地方。
+    // 写死一千字的时候，每集 30 秒那一档里一场横跨快两集，分集只能在场
+    // 中间下刀——2026-09-12 实跑，停在场尾从 86% 掉到 63%。
+    Story s = outline_only_story();
+
+    for (double d : {30.0, 60.0, 120.0, 300.0}) {
+        s.episode_duration_s = d;
+        CAPTURE(d);
+        const int per_ep = changji::stages::prose_budget_chars(d);
+        const int per_scene = changji::stages::scene_target_chars(s);
+
+        // 夹在 600 和 1500 之间：短了写不成一场戏，长了一场横跨好几集
+        CHECK(per_scene >= changji::stages::kSceneMinChars);
+        CHECK(per_scene <= changji::stages::kSceneMaxChars);
+        // 落在那个区间里的时长，一场就是一集
+        if (per_ep >= changji::stages::kSceneMinChars &&
+            per_ep <= changji::stages::kSceneMaxChars) {
+            CHECK(per_scene == per_ep);
+        }
+
+        // 一章的场数是「一章多少字 ÷ 一场多少字」，夹在 2~5
+        const int n = changji::stages::chapter_target_scenes(s);
+        CHECK(n >= 2);
+        CHECK(n <= 5);
+    }
+
+    // 每集短的时候要多切几场才跟得上；每集长的时候场数回落
+    s.episode_duration_s = 30.0;
+    const int many = changji::stages::chapter_target_scenes(s);
+    s.episode_duration_s = 120.0;
+    CHECK(changji::stages::chapter_target_scenes(s) <= many);
+}
+
 TEST_CASE("一章该写多长：章是故事单元，不是一集") {
     Story s = outline_only_story();
 
