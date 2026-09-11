@@ -1715,6 +1715,56 @@ TEST_CASE("正文在贴情绪标签就打回") {
     CHECK_NOTHROW(changji::stages::parse_chapter(json{{"scenes", one}}.dump()));
 }
 
+TEST_CASE("最后一句是单独一栏，落库之后接在这一场末尾") {
+    // **禁令拦不住就别再加第四道。** 「写完 turn 就停，别再加一段点题」
+    // 在提示词、schema 描述、解析守卫里各说了一遍，三道都没拦住——实跑里
+    // 一半的章还是在 turn 后面补一段「那一刻，她终于可以告诉自己……」，
+    // 而那一段正好落在分集的切线上。把最后一句抬成一个字段，语法里就没有
+    // 位置再写下一段了。
+    const auto s = changji::stages::chapter_schema(3, 22);
+    const auto& scene = s.at("properties").at("scenes").at("items");
+    const auto& sp = scene.at("properties");
+    REQUIRE(sp.contains("last_line"));
+    CHECK(sp.at("last_line").at("maxLength").get<int>() <= 120);  // 一句话的量
+
+    bool required = false;
+    for (const auto& r : scene.at("required")) {
+        if (r == "last_line") required = true;
+    }
+    CHECK(required);
+
+    // **排在 paragraphs 后面**：它是收尾，不是开头。
+    std::vector<std::string> keys;
+    for (auto it = sp.begin(); it != sp.end(); ++it) keys.push_back(it.key());
+    const auto at = [&](const std::string& k) {
+        return std::find(keys.begin(), keys.end(), k) - keys.begin();
+    };
+    CHECK(at("paragraphs") < at("last_line"));
+
+    // 落库之后它就是这一场的最后一段，没人分得出它当初是单独一栏
+    json paras = json::array();
+    for (int i = 0; i < 14; ++i) {
+        paras.push_back("第" + std::to_string(i) +
+                        "段：她把抹布拧干，水滴落在地板上，溅出细小的一圈。");
+    }
+    paras.push_back("他停在门口，手扶着门框：“伞我带来了。”");
+    paras.push_back("她没抬头，抹布在台面上又抹了一遍：“放那儿吧。”");
+    json scenes = json::array();
+    scenes.push_back({{"where", "深夜，便利店，冷柜的白光"},
+                      {"pov", "林晚"},
+                      {"goal", "把伞要回来"},
+                      {"obstacle", "他不认这把伞"},
+                      {"turn", "伞柄上刻着别人的名字"},
+                      {"paragraphs", paras},
+                      {"last_line", "她把伞柄转过来，刻着的不是她的名字。"}});
+    const auto d = changji::stages::parse_chapter(json{{"scenes", scenes}}.dump());
+    REQUIRE(d.scenes.size() == 1);
+    CHECK(d.scenes[0].paragraphs.back() == "她把伞柄转过来，刻着的不是她的名字。");
+    CHECK(d.text.size() >= 20);
+    CHECK(d.text.rfind("她把伞柄转过来，刻着的不是她的名字。") ==
+          d.text.size() - std::string("她把伞柄转过来，刻着的不是她的名字。").size());
+}
+
 TEST_CASE("整章一句对白都没有就打回") {
     // 2026-09-12 实跑四章里有一章通篇零对白（65 段全是叙述）。下一步是把
     // 这段正文改成剧本——正文里没人说话，那一集出来就是默片。和剧本那边

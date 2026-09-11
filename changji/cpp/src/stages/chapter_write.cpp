@@ -138,7 +138,8 @@ ordered chapter_schema(int target_scenes, int paras_per_scene) {
 
     // 段数的上下限：目标的三分之二到一倍半。下限让它没法一两段交差，上限让它
     // 没法写个没完。
-    const int min_items = std::max(6, paras_per_scene * 2 / 3);
+    // 减一：最后一句现在是单独一栏，从 paragraphs 里挪出去了。
+    const int min_items = std::max(6, paras_per_scene * 2 / 3 - 1);
     const int max_items = std::max(min_items + 6, paras_per_scene * 3 / 2);
 
     const ordered schema = [&] {
@@ -181,6 +182,24 @@ ordered chapter_schema(int target_scenes, int paras_per_scene) {
             // 每段最长 300 字：真实网文最长的段也就三百来字。实跑时模型把
             // 一千多字的自言自语塞进了一段（见 parse_chapter 里那道闸）。
             {"items", {{"type", "string"}, {"minLength", 20}, {"maxLength", 300}}}};
+        // **最后一句单独成一栏，排在 paragraphs 后面。**
+        //
+        // 「写完 turn 就停，别再加一段点题」这句话说了三遍——提示词里一条、
+        // schema 描述里一句、解析时一道软闸——三道都没拦住：实跑里一半的
+        // 章还是在 turn 后面补一段「那一刻，她终于可以告诉自己……」，
+        // 而那一段正好落在分集的切线上，悬念当场被填平。
+        //
+        // 禁令拦不住就别再加第四道。**把最后一句抬成一个字段，语法里就
+        // 没有位置再写下一段了**——和「一章分几场」是同一个办法：管得住
+        // 14B 的从来不是措辞，是它没得选。
+        //
+        // 短：网文的章末钩子占最后一两百字，一句话的量。
+        scene_props["last_line"] = {
+            {"type", "string"},
+            {"description",
+             "这一场的最后一句：上面那个 turn 发生的**那一刻**。一个动作，或者一句说出口的话。写完它这一场就结束了——不要写「那一刻她终于明白」这种回头总结的句子"},
+            {"minLength", 12},
+            {"maxLength", 120}};
 
         ordered props = ordered::object();
         props[kChapterScenesField] = {
@@ -192,7 +211,7 @@ ordered chapter_schema(int target_scenes, int paras_per_scene) {
             {"items", {{"type", "object"},
                        {"properties", scene_props},
                        {"required", {"where", "pov", "goal", "obstacle", "turn",
-                                     kChapterBodyField}},
+                                     kChapterBodyField, "last_line"}},
                        {"additionalProperties", false}}}};
 
         ordered s = ordered::object();
@@ -444,6 +463,16 @@ ChapterDraft parse_chapter(const std::string& raw, int min_chars, bool strict) {
                     if (one.empty()) continue;
                     sc.paragraphs.push_back(one);
                     push_para(p);
+                }
+            }
+            // 最后一句接在这一场的末尾，就是一个普通段落。落库之后没人
+            // 分得出它当初是单独一栏——那一栏只为了**语法上不给总结留位置**。
+            if (const auto last = s.find("last_line");
+                last != s.end() && last->is_string()) {
+                const std::string one = text::strip_ws(last->get<std::string>());
+                if (!one.empty()) {
+                    sc.paragraphs.push_back(one);
+                    push_para(*last);
                 }
             }
             // 一段都没写出来的场不留：留着的话它在场次表里占一个位置，
