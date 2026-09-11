@@ -117,42 +117,38 @@ AssetLibrary generate_bible(const std::string& script, StyleLine style_line,
     });
 }
 
-/// 对应 Python 的 round(x, 1)：**银行家舍入**。
-double round1(double x) { return std::nearbyint(x * 10.0) / 10.0; }
+/// 从故事出圣经。名单已经在故事里了，这一步只定妆。
+///
+/// 和上面那个的区别见 stages/bible.hpp：老的那条是"读一集剧本找出角色"，
+/// 于是全剧共用的资产库其实是从第一集推出来的。
+AssetLibrary generate_bible_from_story(const Story& story, StyleLine style_line,
+                                       llm::Client& client,
+                                       pipeline::CancelToken& tok) {
+    llm::Request req;
+    req.prompt = stages::build_bible_prompt_from_story(story, style_line);
+    req.schema = stages::bible_schema();
+    req.schema_name = "bible";
+    return stage_guard([&] {
+        return stages::parse_bible(client.complete(req, tok), style_line);
+    });
+}
 
-}  // namespace
-
-ApiResult post_bible(const json& body, llm::Client& client,
-                     pipeline::CancelToken& tok) {
-    forbid_extra(body, {"project", "episode_id", "script", "overwrite"});
-    const std::string episode_id = opt_str(body, "episode_id", "");
-    const bool overwrite = opt_bool(body, "overwrite", false);
-
-    ProjectStore store = open_project(body);
-    const Project project = load_or_400(store);
-    AssetLibrary assets = load_assets_or_400(store);
-
-    std::string script = text::strip_ws(opt_str(body, "script", ""));
-    if (script.empty() && !episode_id.empty()) {
-        const Episode* ep = project.episode_by_id(episode_id);
-        script = ep ? text::strip_ws(ep->script) : std::string();
+Story load_story_or_400(const ProjectStore& store) {
+    try {
+        return store.load_story();
+    } catch (const std::exception& e) {
+        throw ApiError(400, e.what());
     }
-    if (script.empty()) {
-        // 没指定就用第一集有内容的剧本。角色设定是全剧共用的，
-        // 拿哪一集出都行，但总得有一集写好了。
-        for (const auto& ep : project.episodes) {
-            const std::string s = text::strip_ws(ep.script);
-            if (!s.empty()) {
-                script = s;
-                break;
-            }
-        }
-    }
-    if (script.empty()) throw ApiError(400, "还没有剧本，先去写一集");
+}
 
-    const AssetLibrary fresh =
-        generate_bible(script, project.style_line, client, tok);
-
+/// 把新出的设定合进资产库，并拼出回包。
+///
+/// 从故事出和从剧本出两条路走到这里是一样的，所以提出来：合并规则、
+/// 重跑镜头的判断、回包形状都只该有一份。source 只是告诉前端这次的名单
+/// 是从哪来的——「为什么这次多出来三个人」全靠它解释。
+ApiResult merge_bible(const ProjectStore& store, AssetLibrary assets,
+                      const AssetLibrary& fresh, bool overwrite,
+                      const char* source) {
     // 合并，不是替换。同名的默认保留旧的：手改过的设定、传过的参考图
     // 都挂在旧的那一份上。勾了覆盖才让新的顶掉。
     std::vector<std::string> added_c, added_l;
@@ -215,7 +211,68 @@ ApiResult post_bible(const json& body, llm::Client& client,
         {"characters", chars},
         {"locations", locs},
         {"reset_shots", reset},
+        {"source", source},
     }};
+}
+
+
+/// 对应 Python 的 round(x, 1)：**银行家舍入**。
+double round1(double x) { return std::nearbyint(x * 10.0) / 10.0; }
+
+}  // namespace
+
+ApiResult post_bible(const json& body, llm::Client& client,
+                     pipeline::CancelToken& tok) {
+    forbid_extra(body, {"project", "episode_id", "script", "overwrite", "source"});
+    const std::string episode_id = opt_str(body, "episode_id", "");
+    const bool overwrite = opt_bool(body, "overwrite", false);
+
+    ProjectStore store = open_project(body);
+    const Project project = load_or_400(store);
+    AssetLibrary assets = load_assets_or_400(store);
+
+    // 名单从哪来。默认看项目里有没有故事——有就从故事出，那份名单是全剧
+    // 完整的；没有就退回老路径从一集剧本里找，老项目还得能用。
+    const std::string source = opt_str(body, "source", "auto");
+    if (source != "auto" && source != "story" && source != "script") {
+        throw unprocessable_top("source",
+                                "Input should be 'auto', 'story' or 'script'",
+                                body.at("source"), "enum");
+    }
+    const Story story = load_story_or_400(store);
+    if (source == "story" && story.chapters.empty()) {
+        throw ApiError(400, "这个项目还没有故事，先去写一份大纲");
+    }
+    if (source != "script" && !story.chapters.empty()) {
+        const AssetLibrary from_story =
+            generate_bible_from_story(story, project.style_line, client, tok);
+        return merge_bible(store, std::move(assets), from_story, overwrite,
+                           "story");
+    }
+
+    std::string script = text::strip_ws(opt_str(body, "script", ""));
+    if (script.empty() && !episode_id.empty()) {
+        const Episode* ep = project.episode_by_id(episode_id);
+        script = ep ? text::strip_ws(ep->script) : std::string();
+    }
+    if (script.empty()) {
+        // 没指定就用第一集有内容的剧本。角色设定是全剧共用的，
+        // 拿哪一集出都行，但总得有一集写好了。
+        for (const auto& ep : project.episodes) {
+            const std::string s = text::strip_ws(ep.script);
+            if (!s.empty()) {
+                script = s;
+                break;
+            }
+        }
+    }
+    if (script.empty()) throw ApiError(400, "还没有剧本，先去写一集");
+
+    const AssetLibrary fresh =
+        generate_bible(script, project.style_line, client, tok);
+
+    return merge_bible(store, std::move(assets), fresh, overwrite,
+                       "script");
 }
 
 ApiResult post_plan(const json& body, llm::Client& client,
@@ -236,7 +293,12 @@ ApiResult post_plan(const json& body, llm::Client& client,
 
     // 角色设定。已有就不重做，避免覆盖用户改过的设定。
     if (regenerate || assets.characters.empty()) {
-        assets = generate_bible(script, project.style_line, client, tok);
+        // 有故事就从故事出——名单是全剧完整的，不是从这一集里找出来的。
+        const Story story = load_story_or_400(store);
+        assets = story.chapters.empty()
+                     ? generate_bible(script, project.style_line, client, tok)
+                     : generate_bible_from_story(story, project.style_line,
+                                                 client, tok);
         store.save_assets(assets);
     }
 

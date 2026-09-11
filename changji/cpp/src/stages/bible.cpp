@@ -4,6 +4,7 @@
 #include <vector>
 
 #include "stages/bible_prompt.inc.hpp"
+#include "stages/bible_story_prompt.inc.hpp"
 #include "stages/json_extract.hpp"
 #include "util/text.hpp"
 
@@ -93,6 +94,80 @@ std::string build_bible_prompt(const std::string& script, StyleLine style_line) 
     out += prompt::kBibleMiddle;
     out += script;
     out += prompt::kBibleTail;
+    return out;
+}
+
+std::string render_story_for_bible(const Story& story) {
+    std::string out;
+
+    // 调子先写。美术看这几行定色温和质感，后面每个人每个地方都在这个
+    // 调子下面。放在名单后面的话，模型已经把人写完了才读到"荒诞"。
+    if (!story.logline.empty()) out += "【这个故事】" + story.logline + "\n";
+    if (!story.genre.empty()) out += "【题材】" + story.genre + "\n";
+    if (!story.tone.empty()) out += "【调子】" + story.tone + "\n";
+    if (!out.empty()) out += "\n";
+
+    out += "【人物】\n";
+    for (const auto& c : story.characters) {
+        out += c.name;
+        if (!c.identity.empty()) out += "：" + c.identity;
+        out += "。";
+        // 欲望和弧线给进去是为了让美术判断气质（想复仇的人和想赎罪的人
+        // 眼神不一样）。提示词里另外写死了"不要把它们写进外观"。
+        if (!c.want.empty()) out += "他要的是：" + c.want + "。";
+        if (!c.arc.empty()) out += "他会从" + c.arc + "。";
+        out += "\n";
+    }
+
+    if (!story.relations.empty()) {
+        out += "\n【关系】\n";
+        for (const auto& r : story.relations) {
+            out += r.a + " — " + r.b;
+            if (!r.kind.empty()) out += "：" + r.kind;
+            out += "。";
+            if (!r.tension.empty()) out += r.tension + "。";
+            out += "\n";
+        }
+    }
+
+    out += "\n【地点】\n";
+    for (const auto& l : story.locations) {
+        out += l.name;
+        if (!l.what.empty()) out += "：" + l.what;
+        out += "。";
+        if (!l.when.empty()) out += l.when + "。";
+        out += "\n";
+    }
+
+    // 分章只给调子用，所以可以截。人物表和地点表不截——它们是名单，
+    // 截掉一半等于漏掉几个人，而漏掉的那个后面分镜里指不到。
+    std::string chapters;
+    for (std::size_t i = 0; i < story.chapters.size(); ++i) {
+        const auto& c = story.chapters[i];
+        chapters += std::to_string(i + 1) + " " + c.title;
+        if (!c.summary.empty()) {
+            chapters += "：" + text::collapse_ws(c.summary);
+        }
+        chapters += "\n";
+    }
+    if (!chapters.empty()) {
+        out += "\n【分章】\n";
+        out += text::truncate_utf8(chapters, prompt::kBibleChaptersMaxChars);
+    }
+
+    return out;
+}
+
+std::string build_bible_prompt_from_story(const Story& story,
+                                          StyleLine style_line) {
+    const char* hint = style_line == StyleLine::ANIME ? prompt::kBibleHintAnime
+                                                      : prompt::kBibleHintRealistic;
+    std::string out;
+    out += prompt::kBibleStoryPrefix;
+    out += hint;
+    out += prompt::kBibleStoryMiddle;
+    out += render_story_for_bible(story);
+    out += prompt::kBibleStoryTail;
     return out;
 }
 

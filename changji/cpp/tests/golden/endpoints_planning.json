@@ -1,5 +1,5 @@
 {
- "note": "由 cpp/tests/export_planning_golden.py 生成，不要手改",
+ "note": "原本由 cpp/tests/export_planning_golden.py 生成。那个生成器随 Python 引擎一起删了（2026-09-10），这份语料从此是回归夹具而不是对拍语料——接口**有意**改了形状时，照着改这里，并在提交信息里说清改了哪一项、为什么。2026-09-11：/api/bible 的回包加了 source（名单是从故事出的还是从某一集剧本出的），这几条 200 的响应因此都补上了 source=script。",
  "cases": [
   {
    "name": "圣经：只补新的",
@@ -76,7 +76,8 @@
       "is_new": true
      }
     ],
-    "reset_shots": 0
+    "reset_shots": 0,
+    "source": "script"
    },
    "compare": "full",
    "cpp_status": 200,
@@ -411,7 +412,8 @@
       "is_new": true
      }
     ],
-    "reset_shots": 1
+    "reset_shots": 1,
+    "source": "script"
    },
    "compare": "full",
    "cpp_status": 200,
@@ -742,7 +744,8 @@
       "is_new": true
      }
     ],
-    "reset_shots": 0
+    "reset_shots": 0,
+    "source": "script"
    },
    "compare": "full",
    "cpp_status": 200,
@@ -1076,7 +1079,8 @@
       "is_new": true
      }
     ],
-    "reset_shots": 0
+    "reset_shots": 0,
+    "source": "script"
    },
    "compare": "full",
    "cpp_status": 200,
@@ -1410,7 +1414,8 @@
       "is_new": true
      }
     ],
-    "reset_shots": 0
+    "reset_shots": 0,
+    "source": "script"
    },
    "compare": "full",
    "cpp_status": 200,

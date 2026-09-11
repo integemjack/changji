@@ -22,6 +22,7 @@
 #include <nlohmann/json.hpp>
 
 #include "models/character.hpp"
+#include "models/story.hpp"
 
 namespace changji::stages {
 
@@ -38,8 +39,26 @@ public:
 const nlohmann::ordered_json& bible_schema();
 
 /// 拼提示词。**输出必须和 Python 的 build_prompt 逐字节一致。**
+///
+/// 这是**从一集剧本**出圣经的老路径。故事层立起来之后它只留给没有
+/// story.json 的老项目——见下面 build_bible_prompt_from_story 的说明。
 std::string build_bible_prompt(const std::string& script,
                                models::StyleLine style_line);
+
+/// 把故事渲染成给美术看的那一段：调子、人物表、关系、地点表、分章。
+///
+/// 单独拆出来是为了能测：拼提示词那一步只是在它前后各接一段常量，
+/// 真正会出错的是这里——漏掉一个人、把欲望写进外观段、分章截断截在
+/// 半个字上。
+std::string render_story_for_bible(const models::Story& story);
+
+/// 拼提示词。**从故事出**，这是故事层立起来之后的默认路径。
+///
+/// 和上面那个的区别不是措辞：老的那条是"读一集剧本，找出里面有哪些
+/// 角色和场景"，于是全剧共用的资产库其实是从第一集推出来的，后面几集
+/// 新冒出来的人只能一个个补登记。名单从故事来之后，它一次就是全的。
+std::string build_bible_prompt_from_story(const models::Story& story,
+                                          models::StyleLine style_line);
 
 /// 解析模型返回，产出资产库。
 ///

@@ -18,10 +18,12 @@
 
 #include <nlohmann/json.hpp>
 
+#include "http/planning.hpp"
 #include "http/story_api.hpp"
 #include "llm/client.hpp"
 #include "models/project.hpp"
 #include "models/story.hpp"
+#include "stages/bible.hpp"
 #include "stages/story_outline.hpp"
 #include "util/paths.hpp"
 
@@ -415,6 +417,197 @@ TEST_CASE("多余字段一律 422") {
         // 「我要写 N 集」这个入参没有了，传上来要被顶回去
         CHECK(e.status() == 422);
     }
+    std::error_code ec;
+    fs::remove_all(root, ec);
+}
+
+// ---- 期 3：圣经的名单从故事来，不再从第一集剧本里找 ----
+
+namespace {
+
+/// 美术那一步的模型返回。
+json good_bible() {
+    return json{
+        {"characters",
+         json::array({
+             json{{"key", "lin_wan"},
+                  {"name", "林晚"},
+                  {"identity", "二十七八岁女性，克制"},
+                  {"body", "偏瘦，肩背挺"},
+                  {"face", "齐肩黑直发，圆眼，单眼皮"},
+                  {"attire", "便利店藏青制服外套"}},
+             json{{"key", "chen_mo"},
+                  {"name", "陈默"},
+                  {"identity", "三十出头男性，沉静"},
+                  {"body", "中等身量"},
+                  {"face", "短寸黑发，方脸，浓眉"},
+                  {"attire", "深灰风衣"}},
+         })},
+        {"locations",
+         json::array({
+             json{{"key", "store_night"},
+                  {"name", "便利店"},
+                  {"space", "临街玻璃门，两排货架"},
+                  {"lighting", "夜间冷白顶光，玻璃上有雨痕"},
+                  {"palette", "冷青加一点暖黄"}},
+         })},
+        {"global_style", "夜戏，低饱和，轻微颗粒"},
+    };
+}
+
+Story sample_story() {
+    return parse_outline(good_outline().dump(), "深夜便利店", StoryScale::MEDIUM);
+}
+
+}  // namespace
+
+TEST_CASE("渲染给美术看的那一段：名单一个都不能少") {
+    const std::string t = stages::render_story_for_bible(sample_story());
+
+    // 名单是这一段的全部意义。漏一个人，后面分镜里就指不到它。
+    CHECK(t.find("林晚") != std::string::npos);
+    CHECK(t.find("陈默") != std::string::npos);
+    CHECK(t.find("便利店") != std::string::npos);
+
+    // 调子要在名单前面——放后面的话模型把人都写完了才读到"克制"
+    CHECK(t.find("克制") < t.find("林晚"));
+
+    // 关系给进去了。这是老路径完全没有的东西
+    CHECK(t.find("前任") != std::string::npos);
+    CHECK(t.find("谁都欠对方一句没说出口的道歉") != std::string::npos);
+
+    // 欲望进去是让美术判断气质用的
+    CHECK(t.find("他要的是") != std::string::npos);
+
+    // 地点的时间和光要带上，lighting 要照着它写
+    CHECK(t.find("深夜，冷白顶光") != std::string::npos);
+
+    // 分章只当调子参考
+    CHECK(t.find("雨夜重逢") != std::string::npos);
+}
+
+TEST_CASE("从故事出的圣经提示词：名单给定，只定妆") {
+    const Story story = sample_story();
+    const std::string p =
+        stages::build_bible_prompt_from_story(story, StyleLine::REALISTIC);
+
+    // 这条是新老两条路的分界：老的是"找出角色"，新的是"给这份名单定妆"
+    CHECK(p.find("一个不许多，一个不许少") != std::string::npos);
+    // 名字必须照抄，后面每一镜按名字找角色
+    CHECK(p.find("逐字一样") != std::string::npos);
+    // 剧作信息不许写进外观
+    CHECK(p.find("不要把它们写进外观") != std::string::npos);
+    // 画风和 face 那条老规矩要留着
+    CHECK(p.find("真人写实") != std::string::npos);
+    CHECK(p.find("face") != std::string::npos);
+    // 故事那一段确实拼进去了
+    CHECK(p.find(stages::render_story_for_bible(story)) != std::string::npos);
+
+    const std::string anime =
+        stages::build_bible_prompt_from_story(story, StyleLine::ANIME);
+    CHECK(anime.find("二次元动漫") != std::string::npos);
+}
+
+TEST_CASE("POST /api/bible：项目里有故事就从故事出") {
+    const fs::path root = fresh_project("圣经故事");
+    ProjectStore store(root);
+    Story story = sample_story();
+    store.save_story(story);
+
+    llm::ReplayClient client({good_bible().dump()});
+    pipeline::CancelToken tok;
+    const auto r = http::post_bible(json{{"project", p_str(root)}}, client, tok);
+
+    CHECK(r.status == 200);
+    // 回包要说清这次名单是从哪来的——「为什么这次多出来三个人」靠它解释
+    CHECK(r.body.at("source").get<std::string>() == "story");
+    CHECK(r.body.at("added_characters").size() == 2);
+
+    // 发出去的提示词走的是故事那条
+    REQUIRE(client.calls().size() == 1);
+    CHECK(client.calls()[0].prompt.find("一个不许多，一个不许少") !=
+          std::string::npos);
+    // 而且**没有**去读任何一集剧本
+    CHECK(client.calls()[0].prompt.find("读下面的剧本") == std::string::npos);
+
+    CHECK(store.load_assets().characters.size() == 2);
+
+    std::error_code ec;
+    fs::remove_all(root, ec);
+}
+
+TEST_CASE("POST /api/bible：没有故事的老项目照旧走剧本那条") {
+    const fs::path root = fresh_project("圣经剧本");
+    ProjectStore store(root);
+    Project project = store.load_project();
+    Episode ep;
+    ep.episode_id = "ep01";
+    ep.title = "雨夜重逢";
+    ep.script = "林晚：你还留着它。\n陈默把伞放在柜台上。";
+    project.episodes.push_back(ep);
+    store.save_project(project);
+
+    llm::ReplayClient client({good_bible().dump()});
+    pipeline::CancelToken tok;
+    const auto r = http::post_bible(json{{"project", p_str(root)}}, client, tok);
+
+    CHECK(r.status == 200);
+    CHECK(r.body.at("source").get<std::string>() == "script");
+    REQUIRE(client.calls().size() == 1);
+    CHECK(client.calls()[0].prompt.find("读下面的剧本") != std::string::npos);
+
+    std::error_code ec;
+    fs::remove_all(root, ec);
+}
+
+TEST_CASE("POST /api/bible：source 能强制走哪条") {
+    const fs::path root = fresh_project("圣经强制");
+    ProjectStore store(root);
+    store.save_story(sample_story());
+    Project project = store.load_project();
+    Episode ep;
+    ep.episode_id = "ep01";
+    ep.script = "林晚：你还留着它。";
+    project.episodes.push_back(ep);
+    store.save_project(project);
+
+    SUBCASE("有故事也能按剧本出") {
+        llm::ReplayClient client({good_bible().dump()});
+        pipeline::CancelToken tok;
+        const auto r = http::post_bible(
+            json{{"project", p_str(root)}, {"source", "script"}}, client, tok);
+        CHECK(r.body.at("source").get<std::string>() == "script");
+    }
+
+    SUBCASE("source 只认三个值") {
+        llm::ReplayClient client({good_bible().dump()});
+        pipeline::CancelToken tok;
+        try {
+            http::post_bible(
+                json{{"project", p_str(root)}, {"source", "novel"}}, client, tok);
+            FAIL("应该抛");
+        } catch (const http::ApiError& e) {
+            CHECK(e.status() == 422);
+        }
+    }
+
+    std::error_code ec;
+    fs::remove_all(root, ec);
+}
+
+TEST_CASE("POST /api/bible：点名要故事但项目里没有") {
+    const fs::path root = fresh_project("圣经没故事");
+    llm::ReplayClient client({good_bible().dump()});
+    pipeline::CancelToken tok;
+    try {
+        http::post_bible(json{{"project", p_str(root)}, {"source", "story"}},
+                         client, tok);
+        FAIL("应该抛");
+    } catch (const http::ApiError& e) {
+        CHECK(e.status() == 400);
+    }
+    // 一次模型都不该调
+    CHECK(client.calls().empty());
     std::error_code ec;
     fs::remove_all(root, ec);
 }
