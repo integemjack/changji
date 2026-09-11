@@ -23,7 +23,6 @@ import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 
 import AppIcon from '@/components/AppIcon.vue'
 import EmptyState from '@/components/EmptyState.vue'
-import StepHeader from '@/components/StepHeader.vue'
 import { api, mediaUrl } from '@/api'
 import {
   CAMERA_ANGLES,
@@ -56,6 +55,9 @@ const doctor = ref(null)
 const video = ref(null)
 
 const blocked = computed(() => doctor.value && doctor.value.can_run === false)
+const failedChecks = computed(() =>
+  (doctor.value?.checks ?? []).filter((x) => x.level === 'fail' || x.level === 'error'),
+)
 const openShot = computed(
   () => shots.value.find((s) => s.shot_id === openId.value) ?? null,
 )
@@ -106,7 +108,7 @@ const missingAssets = computed(() => {
   return gaps
 })
 
-/** 副标题里直说这一集会出多大的画面——按下去之前该知道。 */
+/** 工具行左边那行读数：几镜、多长、多大的画面——按下去之前该知道。 */
 const tagline = computed(() => {
   const v = video.value
   const size = v
@@ -114,7 +116,7 @@ const tagline = computed(() => {
         v.quality === '2k' ? '2K' : '标准'
       } · ${v.width}×${v.height}`
     : ''
-  if (!shots.value.length) return size || '把这一集拆成一个个镜头，然后拍出来'
+  if (!shots.value.length) return size
   return `${shots.value.length} 镜 · ${humanTime(totalDuration.value)}${size ? ' · ' + size : ''}`
 })
 
@@ -501,101 +503,94 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
 
 <template>
   <div class="stack stack--lg">
-    <StepHeader title="镜头" :tagline="tagline" bare>
-      <template #actions>
+    <div class="toolbar">
+      <span v-if="tagline" class="tiny dim nowrap">{{ tagline }}</span>
+      <span class="spacer" />
+      <button
+        v-if="running"
+        class="btn btn--ghost btn--sm"
+        type="button"
+        @click="stop"
+      >
+        <AppIcon name="pause" :size="14" />
+        停下
+      </button>
+      <template v-else>
         <button
-          v-if="running"
-          class="btn btn--ghost"
+          class="btn btn--ghost btn--sm"
           type="button"
-          @click="stop"
+          :disabled="!session.hasProject"
+          @click="planAll"
         >
-          <AppIcon name="pause" :size="15" />
-          停下
+          批量补分镜
         </button>
-        <template v-else>
-          <button
-            class="btn btn--ghost"
-            type="button"
-            :disabled="!session.hasProject"
-            @click="planAll"
-          >
-            批量补分镜
-          </button>
-          <button
-            class="btn btn--ai"
-            type="button"
-            :disabled="!session.episodeId || isBusy('plan')"
-            @click="generate"
-          >
-            <AppIcon name="sparkle" :size="15" />
-            {{ isBusy('plan') ? '正在拆镜头…' : shots.length ? 'AI 重出分镜' : 'AI 从剧本出分镜' }}
-          </button>
-          <!-- **先出首帧，看一眼再决定要不要花那两分钟出视频。**
-               构图不对的话视频跑得再好也是白跑，而首帧只要它的三分之一。 -->
-          <button
-            v-if="shots.length"
-            class="btn btn--ghost"
-            type="button"
-            :title="pendingFrames
-              ? '先把缺的首帧铺开，不出视频'
-              : '每一镜都有首帧了；点了会全部重出（视频不动）'"
-            :disabled="blocked || isBusy('start')"
-            @click="startFrames"
-          >
-            <AppIcon name="image" :size="15" />
-            {{ pendingFrames ? `只出首帧（还差 ${pendingFrames} 镜）` : '重出所有首帧' }}
-          </button>
-          <!-- 都出完了的时候这个按钮是「全部重出」，那就**必须带 force**：
-               不带的话每一镜都已经是终态，引擎一个都挑不到，跑完什么都没变
-               而且不报错——按钮点了像是没反应。 -->
-          <button
-            v-if="shots.length"
-            class="btn btn--primary"
-            type="button"
-            :disabled="blocked || isBusy('start')"
-            @click="startAll"
-          >
-            <AppIcon name="film" :size="15" />
-            {{ pending ? `出片（还差 ${pending} 镜）` : '全部重出' }}
-          </button>
-        </template>
+        <button
+          class="btn btn--ai"
+          type="button"
+          :disabled="!session.episodeId || isBusy('plan')"
+          @click="generate"
+        >
+          <AppIcon name="sparkle" :size="15" />
+          {{ isBusy('plan') ? '拆镜头中…' : shots.length ? 'AI 重出分镜' : 'AI 出分镜' }}
+        </button>
+        <!-- 先出首帧，看一眼构图再决定要不要花那两分钟出视频。 -->
+        <button
+          v-if="shots.length"
+          class="btn btn--ghost btn--sm"
+          type="button"
+          :title="pendingFrames
+            ? '先把缺的首帧铺开，不出视频'
+            : '每一镜都有首帧了；点了会全部重出（视频不动）'"
+          :disabled="blocked || isBusy('start')"
+          @click="startFrames"
+        >
+          <AppIcon name="image" :size="14" />
+          {{ pendingFrames ? `只出首帧（差 ${pendingFrames}）` : '重出首帧' }}
+        </button>
+        <!-- 都出完了的时候这个按钮是「全部重出」，那就**必须带 force**：
+             不带的话每一镜都已经是终态，引擎一个都挑不到，跑完什么都没变
+             而且不报错——按钮点了像是没反应。 -->
+        <button
+          v-if="shots.length"
+          class="btn btn--primary"
+          type="button"
+          :disabled="blocked || isBusy('start')"
+          @click="startAll"
+        >
+          <AppIcon name="film" :size="15" />
+          {{ pending ? `出片（差 ${pending}）` : '全部重出' }}
+        </button>
       </template>
-      <template v-if="session.hasProject && missingAssets.length" #note>
-        <p class="alert alert--warn">
-          <AppIcon name="warn" :size="15" />
-          <span>
-            还没有{{ missingAssets.join('和') }}。分镜表里只能填已注册的 id，
-            库是空的话大模型编不出来，这一步会直接报「引用了未注册的资产」。
-          </span>
-          <RouterLink
-            :to="missingAssets[0] === '角色' ? '/characters' : '/scenes'"
-            class="btn btn--sm"
-          >
-            先去出{{ missingAssets[0] }}
-          </RouterLink>
-        </p>
-      </template>
-    </StepHeader>
+    </div>
+
+    <p v-if="session.hasProject && missingAssets.length" class="alert alert--warn">
+      <AppIcon name="warn" :size="15" />
+      <span>还没有{{ missingAssets.join('和') }}</span>
+      <span class="spacer" />
+      <RouterLink
+        :to="missingAssets[0] === '角色' ? '/characters' : '/scenes'"
+        class="btn btn--ghost btn--sm"
+      >
+        先去出{{ missingAssets[0] }}
+      </RouterLink>
+    </p>
 
     <!-- **只在拦路时出现。** 全绿的时候一行都不占——
          体检的细节在设置页，这里只管"能不能开工"。 -->
-    <section v-if="blocked && shots.length" class="card card--bad">
-      <div class="card__head">
-        <div>
-          <div class="card__title">还不能开工</div>
-          <div class="card__sub">下面这些先解决，否则跑起来也是白跑。</div>
+    <section v-if="blocked && shots.length" class="sec">
+      <div class="sec__head">
+        <h2 class="sec__t">还不能开工</h2>
+        <span class="spacer" />
+        <div class="sec__acts">
+          <button class="btn btn--ghost btn--sm" type="button" @click="loadDoctor">
+            <AppIcon name="refresh" :size="14" />
+            重新体检
+          </button>
         </div>
-        <button class="btn btn--ghost btn--sm" type="button" @click="loadDoctor">
-          <AppIcon name="refresh" :size="14" />
-          重新体检
-        </button>
       </div>
-      <div class="card__body stack stack--sm">
-        <p
-          v-for="c in doctor.checks.filter((x) => x.level === 'fail' || x.level === 'error')"
-          :key="c.name"
-          class="alert alert--bad"
-        >
+      <div class="stack stack--sm">
+        <p v-for="c in failedChecks" :key="c.name" class="alert alert--bad">
+          <AppIcon name="warn" :size="14" />
           <strong>{{ c.name }}</strong>
           <span>{{ c.detail }}</span>
           <span v-if="c.fix" class="tiny dim">{{ c.fix }}</span>
@@ -605,48 +600,45 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
 
     <!-- 「还没选到某一集」那个空状态挪到父页面了：进不到这一页就没有这一集，
          每个子视图各判一遍是三份同样的话。 -->
-    <EmptyState
-      v-if="!loading && !shots.length"
-      icon="board"
-      title="这一集还没有分镜"
-      hint="分镜表决定后面每一个镜头怎么拍。让大模型从剧本拆一版出来，再手工调。"
-    >
-      <button class="btn btn--ai" type="button" :disabled="isBusy('plan')" @click="generate">
-        <AppIcon name="sparkle" :size="15" />
-        AI 从剧本出分镜
+    <EmptyState v-if="!loading && !shots.length" icon="board" title="还没有分镜">
+      <button
+        class="btn btn--ghost btn--sm"
+        type="button"
+        :disabled="isBusy('plan')"
+        @click="generate"
+      >
+        <AppIcon name="sparkle" :size="14" />
+        AI 出分镜
       </button>
     </EmptyState>
 
     <template v-else>
       <!-- 时间轴：一集里哪几镜特别长、哪一段全是特写，扫一眼就知道，
            而在一面等大的墙上是看不出来的。 -->
-      <section class="card">
-        <div class="card__body stack stack--sm">
-          <div class="timeline">
-            <button
-              v-for="s in shots"
-              :key="s.shot_id"
-              class="tl"
-              :class="[`tl--${shotTone(s)}`, { 'tl--on': openId === s.shot_id }]"
-              type="button"
-              :style="{ width: Math.max(2, ((s.duration_s || 0) / (totalDuration || 1)) * 100) + '%' }"
-              :title="`${s.order + 1}. ${sizeLabel(s.shot_size)} ${s.duration_s}s`"
-              @click="toggle(s)"
-            >
-              <span class="tl__n">{{ s.order + 1 }}</span>
-            </button>
-          </div>
-          <div class="row row--wrap tiny dim">
-            <span><i class="swatch swatch--neutral" /> 未开工</span>
-            <span><i class="swatch swatch--info" /> 进行中</span>
-            <span><i class="swatch swatch--warn" /> 未过闸 / 降级</span>
-            <span><i class="swatch swatch--ok" /> 已完成</span>
-            <span class="spacer" />
-            <span v-if="lipsyncCount">{{ lipsyncCount }} 镜要口型</span>
-            <span v-if="problemCount" class="warn-text">{{ problemCount }} 镜有闸门备注</span>
-          </div>
+      <div class="timeline">
+        <div class="timeline__bars">
+          <button
+            v-for="s in shots"
+            :key="s.shot_id"
+            class="tl"
+            :class="[`tl--${shotTone(s)}`, { 'tl--on': openId === s.shot_id }]"
+            type="button"
+            :style="{ width: Math.max(2, ((s.duration_s || 0) / (totalDuration || 1)) * 100) + '%' }"
+            :title="`${s.order + 1}. ${sizeLabel(s.shot_size)} ${s.duration_s}s`"
+            @click="toggle(s)"
+          >
+            <span class="tl__n">{{ s.order + 1 }}</span>
+          </button>
         </div>
-      </section>
+        <div class="timeline__legend tiny dim">
+          <span><i class="swatch swatch--neutral" />未开工</span>
+          <span><i class="swatch swatch--info" />进行中</span>
+          <span><i class="swatch swatch--warn" />未过闸</span>
+          <span><i class="swatch swatch--ok" />已完成</span>
+          <span v-if="lipsyncCount">{{ lipsyncCount }} 镜要口型</span>
+          <span v-if="problemCount" class="warn-text">{{ problemCount }} 镜有备注</span>
+        </div>
+      </div>
 
       <!-- 筛选与批量 -->
       <div class="toolbar">
@@ -657,14 +649,12 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
             class="chip"
             :class="{ 'chip--on': filter === f.key }"
             type="button"
+            :title="f.key === 'all' ? '' : '筛选时不能拖动排序'"
             @click="filter = f.key"
           >
             {{ f.label }}
           </button>
         </div>
-        <span v-if="filter !== 'all' && shots.length > 1" class="tiny dim nowrap">
-          筛选状态下不能调顺序，切回「全部」
-        </span>
         <span class="spacer" />
         <button class="btn btn--ghost btn--sm" type="button" @click="selectAllShown">
           {{ selected.size === shown.length && shown.length ? '取消全选' : '全选' }}
@@ -815,7 +805,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
     <div v-if="draft && openShot" class="drawer" @click.self="close">
       <aside class="drawer__panel">
         <header class="drawer__head">
-          <b class="numeric">{{ openShot.order + 1 }}</b>
+          <b class="numeric" title="↑ ↓ 换镜头">{{ openShot.order + 1 }}</b>
           <span class="pill nowrap" :class="`pill--${shotTone(openShot)}`">
             {{ shotState(openShot) }}
           </span>
@@ -840,7 +830,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
           >
             ▼
           </button>
-          <button class="iconbtn" type="button" title="收起" @click="close">
+          <button class="iconbtn" type="button" title="收起（Esc）" @click="close">
             <AppIcon name="close" :size="15" />
           </button>
         </header>
@@ -865,15 +855,17 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
 
           <p class="group">画面</p>
           <label class="field">
-            <span class="field__label">画面描述（给人看）</span>
+            <span class="field__label">画面描述</span>
             <textarea v-model="draft.visual_desc" class="textarea textarea--tight" rows="2" />
           </label>
           <label class="field">
             <span class="field__label">首帧提示词</span>
-            <textarea v-model="draft.first_frame_prompt" class="textarea textarea--tight mono" rows="4" />
-            <span class="field__hint">
-              角色和场景的外观由程序拼进去，这里只写本镜特有的部分。
-            </span>
+            <textarea
+              v-model="draft.first_frame_prompt"
+              class="textarea textarea--tight mono"
+              rows="4"
+              title="角色和场景的外观由程序拼进去，这里只写本镜特有的"
+            />
           </label>
           <label class="field">
             <span class="field__label">运动提示词</span>
@@ -920,7 +912,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
               />
             </label>
             <label class="field">
-              <span class="field__label">入场转场</span>
+              <span class="field__label">转场</span>
               <select v-model="draft.transition_in" class="select">
                 <option v-for="o in TRANSITIONS" :key="o.value" :value="o.value">{{ o.label }}</option>
               </select>
@@ -935,8 +927,8 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
                 min="0"
                 max="2"
                 :disabled="draft.transition_in === 'cut'"
+                :title="draft.transition_in === 'cut' ? '硬切固定为 0' : ''"
               />
-              <span v-if="draft.transition_in === 'cut'" class="field__hint">硬切必须是 0。</span>
             </label>
           </div>
 
@@ -954,19 +946,16 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
                 </span>
               </div>
             </div>
-            <p v-else class="field__hint">这一镜没有台词。</p>
+            <p v-else class="tiny dim">无台词</p>
           </div>
           <label class="field">
             <span class="field__label">字幕</span>
             <input v-model="draft.subtitle_text" class="input" />
           </label>
-          <div class="row">
-            <label class="switch">
-              <input v-model="draft.needs_lipsync" type="checkbox" />
-              <span>做口型</span>
-            </label>
-            <span class="tiny dim">规则按景别、机位和面朝方向自动推的，一般不用改。</span>
-          </div>
+          <label class="switch" title="按景别、机位和面朝方向自动推的，一般不用改">
+            <input v-model="draft.needs_lipsync" type="checkbox" />
+            <span>做口型</span>
+          </label>
         </div>
 
         <footer class="drawer__foot">
@@ -976,13 +965,13 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
             :disabled="!draftDirty || isBusy('save')"
             @click="saveShot"
           >
-            {{ isBusy('save') ? '保存中…' : '保存这一镜' }}
+            {{ isBusy('save') ? '保存中…' : '保存' }}
           </button>
           <!-- 改完提示词紧接着就想重出，别让人再去墙上找那一格 -->
           <button
             v-for="step in STEPS"
             :key="step.id"
-            class="btn btn--ghost"
+            class="btn btn--ghost btn--sm"
             type="button"
             :title="stepBtn(openShot, step).title"
             @click="shotAction(openShot, step.id)"
@@ -990,10 +979,6 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
             <AppIcon :name="stepBtn(openShot, step).icon" :size="14" />
             重出{{ step.label }}
           </button>
-          <span class="spacer" />
-          <span class="tiny dim nowrap kbd-hint">
-            <kbd>↑</kbd><kbd>↓</kbd> 换镜头 <kbd>Esc</kbd> 收起
-          </span>
         </footer>
       </aside>
     </div>
@@ -1001,11 +986,46 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
 </template>
 
 <style scoped>
+/* ---- 提醒行（只在坏状态下出现） ---- */
+.alert {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  margin: 0;
+  padding: var(--s2) var(--s3);
+  border-radius: var(--r);
+  font-size: var(--fs-sm);
+  line-height: 1.5;
+}
+.alert--warn {
+  background: var(--warn-soft);
+  color: var(--warn);
+}
+.alert--bad {
+  background: var(--danger-soft, var(--warn-soft));
+  color: var(--danger);
+}
+.alert :deep(svg) { flex: none; }
+
 /* ---- 时间轴 ---- */
 .timeline {
   display: flex;
+  align-items: center;
+  gap: var(--s3);
+  flex-wrap: wrap;
+}
+.timeline__bars {
+  flex: 1 1 320px;
+  min-width: 0;
+  display: flex;
   gap: 2px;
   height: 26px;
+}
+.timeline__legend {
+  display: flex;
+  gap: var(--s3);
+  flex: none;
+  white-space: nowrap;
 }
 .tl {
   border: none;
@@ -1035,12 +1055,25 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
 .swatch--ok   { background: color-mix(in srgb, var(--ok) 45%, transparent); }
 .warn-text { color: var(--warn); }
 
-/* ---- 工具条 ---- */
-.toolbar {
+/* ---- 筛选片 ---- */
+.chips {
   display: flex;
-  align-items: center;
-  gap: var(--s2);
-  flex-wrap: wrap;
+  gap: 6px;
+}
+.chip {
+  padding: 3px var(--s3);
+  border-radius: var(--r-pill);
+  border: 1px solid var(--line);
+  background: var(--surface-2);
+  color: var(--text-2);
+  font-size: var(--fs-sm);
+  cursor: pointer;
+}
+.chip--on {
+  background: var(--accent-soft);
+  border-color: var(--accent-line);
+  color: var(--accent);
+  font-weight: 600;
 }
 
 /* ---- 镜头墙 ---- */
@@ -1204,10 +1237,4 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
   gap: var(--s2);
 }
 .dialogue__who { width: 5.5em; }
-.kbd-hint kbd {
-  border: 1px solid var(--line);
-  border-radius: 3px;
-  padding: 0 3px;
-  margin-right: 2px;
-}
 </style>

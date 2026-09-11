@@ -9,7 +9,6 @@ import { computed, ref, watch } from 'vue'
 
 import AppIcon from '@/components/AppIcon.vue'
 import EmptyState from '@/components/EmptyState.vue'
-import StepHeader from '@/components/StepHeader.vue'
 import { api, mediaUrl } from '@/api'
 import { humanAgo } from '@/composables/useAction'
 import { useSession } from '@/stores/session'
@@ -104,45 +103,34 @@ function onTimeUpdate(event) {
 
 <template>
   <div class="stack stack--lg">
-    <StepHeader bare>
-      <template #actions>
-        <button
-          class="btn btn--ghost"
-          type="button"
-          :disabled="loading || !session.hasProject"
-          @click="load"
-        >
-          <AppIcon name="refresh" :size="15" />
-          刷新
-        </button>
-        <button
-          v-if="current"
-          class="btn btn--primary"
-          type="button"
-          @click="emit('go', 'publish')"
-        >
-          <AppIcon name="upload" :size="15" />
-          去上传
-        </button>
-      </template>
-    </StepHeader>
+    <div class="toolbar">
+      <span v-if="current" class="tiny dim truncate">{{ current.name }}</span>
+      <span class="spacer" />
+      <button
+        class="btn btn--ghost btn--sm"
+        type="button"
+        :disabled="loading || !session.hasProject"
+        @click="load"
+      >
+        <AppIcon name="refresh" :size="14" />
+        刷新
+      </button>
+      <button
+        v-if="current"
+        class="btn btn--primary"
+        type="button"
+        @click="emit('go', 'publish')"
+      >
+        <AppIcon name="upload" :size="15" />
+        去上传
+      </button>
+    </div>
 
-    <EmptyState
-      v-if="!session.hasProject"
-      icon="folder"
-      tone="warn"
-      title="还没选项目"
-      hint="成片在项目目录的 output 里。先回第一步选一个项目。"
-    >
+    <EmptyState v-if="!session.hasProject" icon="folder" tone="warn" title="还没选项目">
       <RouterLink to="/project" class="btn btn--primary">去第一步</RouterLink>
     </EmptyState>
 
-    <EmptyState
-      v-else-if="!loading && !files.length"
-      icon="film"
-      title="还没有成片"
-      hint="所有镜头跑完之后，流水线会把它们装配成一整集。回上一步把制作跑完。"
-    >
+    <EmptyState v-else-if="!loading && !files.length" icon="film" title="还没有成片" hint="先把制作跑完">
       <button class="btn btn--primary" type="button" @click="emit('go', 'shots')">
         去做镜头
       </button>
@@ -150,64 +138,62 @@ function onTimeUpdate(event) {
 
     <div v-else-if="files.length" class="film">
       <!-- 播放器 -->
-      <section class="card player">
-        <div class="player__stage">
-          <video
-            v-if="current"
-            :key="current.rel"
-            ref="videoEl"
-            class="player__video"
-            :src="mediaUrl(session.projectPath, current.rel)"
-            controls
-            preload="metadata"
-            playsinline
-            @timeupdate="onTimeUpdate"
-          />
+      <section class="player">
+        <div class="player__box">
+          <div class="player__stage">
+            <video
+              v-if="current"
+              :key="current.rel"
+              ref="videoEl"
+              class="player__video"
+              :src="mediaUrl(session.projectPath, current.rel)"
+              controls
+              preload="metadata"
+              playsinline
+              @timeupdate="onTimeUpdate"
+            />
+          </div>
+
+          <!-- 分镜跳转条 -->
+          <div v-if="chapters.length" class="strip">
+            <button
+              v-for="c in chapters"
+              :key="c.shot_id"
+              class="strip__cell"
+              :class="{ 'strip__cell--on': c.shot_id === activeShotId }"
+              type="button"
+              :title="`第 ${c.order + 1} 镜 · ${Math.round(c.start)}s 起`"
+              @click="seekTo(c)"
+            >
+              <img
+                v-if="c.frame_path"
+                :src="mediaUrl(session.projectPath, c.frame_path)"
+                :alt="`第 ${c.order + 1} 镜`"
+                loading="lazy"
+              />
+              <span v-else class="strip__num numeric">{{ c.order + 1 }}</span>
+              <span class="strip__t tiny numeric">{{ Math.round(c.start) }}s</span>
+            </button>
+          </div>
         </div>
 
-        <!-- 分镜跳转条 -->
-        <div v-if="chapters.length" class="strip">
-          <button
-            v-for="c in chapters"
-            :key="c.shot_id"
-            class="strip__cell"
-            :class="{ 'strip__cell--on': c.shot_id === activeShotId }"
-            type="button"
-            :title="`第 ${c.order + 1} 镜 · ${Math.round(c.start)}s 起`"
-            @click="seekTo(c)"
-          >
-            <img
-              v-if="c.frame_path"
-              :src="mediaUrl(session.projectPath, c.frame_path)"
-              :alt="`第 ${c.order + 1} 镜`"
-              loading="lazy"
-            />
-            <span v-else class="strip__num numeric">{{ c.order + 1 }}</span>
-            <span class="strip__t tiny numeric">{{ Math.round(c.start) }}s</span>
-          </button>
-        </div>
-        <div v-if="current" class="player__meta">
-          <div class="stack stack--sm">
-            <h2 class="player__name truncate">{{ current.name }}</h2>
-            <div class="row row--wrap tiny dim">
-              <span class="numeric">{{ current.size_mb }} MB</span>
-              <span>{{ humanAgo(current.mtime) }}</span>
-              <span class="mono truncate">{{ current.rel }}</span>
-            </div>
-          </div>
+        <div v-if="current" class="player__meta row row--wrap tiny dim">
+          <span class="numeric">{{ current.size_mb }} MB</span>
+          <span>{{ humanAgo(current.mtime) }}</span>
+          <span class="mono truncate">{{ current.rel }}</span>
           <span class="spacer" />
-          <RouterLink to="/publish" class="btn btn--primary">
-            <AppIcon name="upload" :size="15" />
+          <RouterLink to="/publish" class="btn btn--ghost btn--sm">
+            <AppIcon name="upload" :size="14" />
             投递这一条
           </RouterLink>
         </div>
       </section>
 
       <!-- 片单 -->
-      <section class="card reel">
-        <div class="card__head">
-          <div class="card__title">已出的片</div>
-          <span class="pill pill--neutral">{{ files.length }} 条</span>
+      <section class="sec reel">
+        <div class="sec__head">
+          <h2 class="sec__t">已出的片</h2>
+          <span class="tiny dim">{{ files.length }} 条</span>
         </div>
         <div class="reel__list">
           <button
@@ -263,8 +249,9 @@ function onTimeUpdate(event) {
   align-items: start;
 }
 
-.player {
+.player__box {
   overflow: hidden;
+  border-radius: var(--r);
 }
 .player__stage {
   background: #000;
@@ -281,10 +268,9 @@ function onTimeUpdate(event) {
 .strip {
   display: flex;
   gap: 4px;
-  padding: var(--s3);
+  padding: var(--s2);
   overflow-x: auto;
   background: var(--bg-sunken);
-  border-top: 1px solid var(--line);
   scrollbar-width: thin;
 }
 .strip__cell {
@@ -333,17 +319,13 @@ function onTimeUpdate(event) {
 }
 
 .player__meta {
-  display: flex;
-  align-items: center;
-  gap: var(--s3);
-  padding: var(--s4);
-  border-top: 1px solid var(--line);
-}
-.player__name {
-  font-size: var(--fs-lg);
-  font-weight: 600;
+  padding: var(--s2) 0;
 }
 
+.reel {
+  padding-top: 0;
+  border-top: 0;
+}
 .reel__list {
   display: flex;
   flex-direction: column;
@@ -354,16 +336,13 @@ function onTimeUpdate(event) {
   display: flex;
   align-items: center;
   gap: var(--s3);
-  padding: var(--s3) var(--s4);
+  padding: var(--s2);
   background: none;
   border: none;
-  border-bottom: 1px solid var(--line);
+  border-radius: var(--r);
   cursor: pointer;
   text-align: left;
   color: var(--text-2);
-}
-.reelrow:last-child {
-  border-bottom: none;
 }
 .reelrow:hover {
   background: var(--surface-2);
@@ -421,8 +400,9 @@ function onTimeUpdate(event) {
   .player__video {
     max-height: 52vh;
   }
-  .player__meta {
-    flex-wrap: wrap;
+  .reel {
+    padding-top: var(--s4);
+    border-top: 1px solid var(--line);
   }
 }
 </style>

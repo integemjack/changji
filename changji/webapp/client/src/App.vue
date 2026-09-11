@@ -361,7 +361,8 @@ function cycleTheme() {
 /* **不居中、不卡宽。** 用户 2026-09-11：「不要居中显示，撑满屏幕，不要浪费
    空间，所有页面都是一样」。原来卡在 1180px 居中，宽屏上两边各空一大块。 */
 .main__inner {
-  padding: var(--s6) var(--s6) var(--s12);
+  /* 12px，和故事页一样：一个标点的宽度，字不压边线就行。 */
+  padding: var(--s3) var(--s3) var(--s8);
   padding-left: max(var(--s6), env(safe-area-inset-left));
   padding-right: max(var(--s6), env(safe-area-inset-right));
 }

@@ -2,14 +2,11 @@
 /**
  * 首次运行：把模型准备好。
  *
- * **为什么要有这一页。** 装好程序打开界面，用户看到的是一个能点的项目页；
- * 点到「出片」才发现什么都跑不了，报的是"本地模型一个都没配"。那时候他
- * 手上只有一句提示和一个配置文件路径，要自己去翻部署手册、找镜像地址、
- * 挑量化档、算显存装不装得下。这一页把那段路变成三件事：看一眼推荐、
- * 点下载、等。
+ * 装好程序打开界面，点到「出片」才发现什么都跑不了，报的是"本地模型一个
+ * 都没配"。这一页把那段路变成三件事：看一眼推荐、点下载、等。
  *
  * **挑和下那一大块在 ModelPicker 里**，设置页用的是同一个组件。
- * 这一页只多两样东西：一个抬头，和「先跳过 / 进入首页」这两个跳转。
+ * 这一页只多一行标题和「先跳过 / 进入首页」两个跳转。
  */
 import { computed, ref } from 'vue'
 import { useRouter } from 'vue-router'
@@ -37,27 +34,21 @@ function skip() {
 
 <template>
   <section class="setup">
-    <header class="head">
-      <span class="head__mark">场</span>
-      <div class="head__text">
-        <h1 class="head__title">先把模型准备好</h1>
-        <p class="head__sub">
-          这台机器上还缺出片要用的模型。下面每一组都已经按你的显卡选好了一项，
-          直接点下载就行；想换成别的档位也可以。
-        </p>
-      </div>
-    </header>
+    <div class="toolbar">
+      <span class="brand">场</span>
+      <h1 class="setup__t">先把模型准备好</h1>
+    </div>
 
     <ModelPicker ref="picker">
       <template #actions>
-        <button class="btn btn--ghost" type="button" :disabled="busy" @click="skip">
+        <button class="btn btn--ghost btn--sm" type="button" :disabled="busy" @click="skip">
           先跳过
         </button>
       </template>
       <template #done="{ state }">
         <button
           v-if="state === 'done'"
-          class="btn btn--primary btn--lg"
+          class="btn btn--primary"
           type="button"
           @click="enter"
         >
@@ -70,52 +61,27 @@ function skip() {
 </template>
 
 <style scoped>
-/* 不居中、不卡宽——所有页面一样，见 App.vue 里 .main__inner 那条。 */
+/* 不居中、不卡宽——所有页面一样。 */
 .setup {
-  padding: var(--s8) var(--s6) var(--s12);
+  padding: var(--s3) var(--s3) var(--s8);
   display: flex;
   flex-direction: column;
-  gap: var(--s5);
+  gap: var(--s3);
 }
-
-.head {
-  display: flex;
-  align-items: flex-start;
-  gap: var(--s4);
-}
-.head__mark {
-  flex: none;
+.brand {
   display: grid;
   place-items: center;
-  width: 40px;
-  height: 40px;
-  border-radius: 12px;
-  background: linear-gradient(
-    135deg,
-    var(--accent),
-    color-mix(in srgb, var(--accent) 60%, #d9534f)
-  );
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  background: var(--accent);
   color: var(--accent-text);
   font-weight: 700;
-  font-size: 18px;
-  box-shadow: var(--shadow-1);
+  font-size: 14px;
 }
-.head__title {
-  font-size: var(--fs-2xl);
-  font-weight: 700;
-  letter-spacing: -0.01em;
-}
-.head__sub {
-  margin-top: 4px;
-  color: var(--text-2);
-  font-size: var(--fs-base);
-  line-height: 1.7;
-  max-width: 58ch;
-}
-
-@media (max-width: 640px) {
-  .setup {
-    padding: var(--s5) var(--s4) var(--s10);
-  }
+.setup__t {
+  margin: 0;
+  font-size: var(--fs-md);
+  font-weight: 600;
 }
 </style>

@@ -10,7 +10,6 @@ import { computed, nextTick, ref, watch } from 'vue'
 
 import AppIcon from '@/components/AppIcon.vue'
 import EmptyState from '@/components/EmptyState.vue'
-import StepHeader from '@/components/StepHeader.vue'
 import { api, mediaUrl } from '@/api'
 import { useAction } from '@/composables/useAction'
 import { useSession } from '@/stores/session'
@@ -227,77 +226,61 @@ async function clearRef(charId, slot) {
 </script>
 
 <template>
-  <div class="stack stack--lg">
-    <h2 class="asec">
-      人物
-      <span class="asec__sub">
-        人是故事里定的，这一页只给他们定妆：把故事里的人翻成"长什么样"，再照着画出参考图。
-        外观只存在这儿，分镜表里只有 id——这是跨镜头一致的唯一手段。
-      </span>
-    </h2>
-
-    <StepHeader bare>
-      <template #actions>
-        <button
-          class="btn btn--ghost"
-          type="button"
-          :disabled="loading || !session.hasProject"
-          @click="load"
-        >
-          <AppIcon name="refresh" :size="15" />
-          刷新
-        </button>
-        <button
-          v-if="characters.length"
-          class="btn btn--ghost"
-          type="button"
-          :disabled="isBusy('bible')"
-          title="同名角色用新出的顶掉旧的，手改过的设定和参考图会丢"
-          @click="generate(true)"
-        >
-          全部重新定妆
-        </button>
-        <button
-          class="btn btn--ai"
-          type="button"
-          :disabled="!session.hasProject || isBusy('bible')"
-          @click="generate(false)"
-        >
-          <AppIcon name="sparkle" :size="15" />
-          {{ isBusy('bible') ? '正在读故事…' : '照故事定妆' }}
-        </button>
-      </template>
-    </StepHeader>
-
-    <!-- 「还没选项目」归父页面判，每块各判一遍是同一句话写两遍 -->
+  <div class="chars">
+    <!-- 人是故事里定的，这一页只给他们定妆。工具行：刷新、重定、照故事定。 -->
+    <div class="toolbar">
+      <span class="tiny dim">{{ characters.length }} 人</span>
+      <span class="spacer" />
+      <button
+        class="btn btn--ghost btn--sm"
+        type="button"
+        :disabled="loading || !session.hasProject"
+        title="刷新"
+        @click="load"
+      >
+        <AppIcon name="refresh" :size="14" />
+      </button>
+      <button
+        v-if="characters.length"
+        class="btn btn--ghost btn--sm"
+        type="button"
+        :disabled="isBusy('bible')"
+        title="同名角色用新出的顶掉旧的，手改过的设定和参考图会丢"
+        @click="generate(true)"
+      >
+        全部重新定妆
+      </button>
+      <button
+        class="btn btn--ai btn--sm"
+        type="button"
+        :disabled="!session.hasProject || isBusy('bible')"
+        @click="generate(false)"
+      >
+        <AppIcon name="sparkle" :size="14" />
+        {{ isBusy('bible') ? '正在读故事…' : '照故事定妆' }}
+      </button>
+    </div>
 
     <!-- **不要在这儿套一个光秃秃的 <template>**：Vue 只把带
          v-if/v-for/v-slot 的 template 当片段，没有指令的会当成真的
          HTML template 元素渲染出去——浏览器默认 display:none，
          内容全在 DOM 里、一个字不报错，就是看不见。栽过一次。 -->
-      <p v-if="refsUsed === false" class="notice">
-        <AppIcon name="info" :size="15" />
-        <span>{{ assets?.reference_hint }}</span>
-      </p>
+      <p v-if="refsUsed === false" class="tiny warn-text">{{ assets?.reference_hint }}</p>
 
       <EmptyState
         v-if="!loading && !characters.length"
         icon="user"
         title="还没有角色"
-        hint="人是故事里定的，这一页只给他们定妆。先去把故事写出来，再回来点「照故事定妆」。"
+        hint="先写故事，再点「照故事定妆」"
       >
-        <RouterLink to="/story" class="btn">回去写故事</RouterLink>
-        <button class="btn btn--ai" type="button" @click="generate(false)">
-          <AppIcon name="sparkle" :size="15" />
-          现在就定妆
-        </button>
+        <RouterLink to="/story" class="btn btn--sm">去写故事</RouterLink>
       </EmptyState>
 
-      <div v-else class="stack">
+      <div v-else class="list">
         <article
           v-for="c in characters"
           :key="c.char_id"
-          class="chr card"
+          class="chr"
           :class="{ 'chr--open': openId === c.char_id }"
           :data-char="c.char_id"
         >
@@ -339,22 +322,19 @@ async function clearRef(charId, slot) {
                   <input v-model="edits[c.char_id].name" class="input" />
                 </label>
 
-                <label v-for="f in FIELDS" :key="f.key" class="field">
+                <label v-for="f in FIELDS" :key="f.key" class="field" :title="f.hint">
                   <span class="field__label">{{ f.label }}</span>
                   <textarea
                     v-model="edits[c.char_id][f.key]"
                     class="textarea textarea--tight"
                     :rows="f.rows"
+                    :placeholder="f.hint"
                   />
-                  <span class="field__hint">{{ f.hint }}</span>
                 </label>
 
-                <div class="field">
+                <div class="field" title="每个镜头拿到的都是这一串，逐字节相同">
                   <span class="field__label">拼出来的提示词</span>
                   <p class="rendered mono">{{ c.rendered }}</p>
-                  <span class="field__hint">
-                    每个镜头拿到的都是这一串，逐字节相同。一致性就是这么来的。
-                  </span>
                 </div>
               </div>
 
@@ -419,10 +399,6 @@ async function clearRef(charId, slot) {
                       </div>
                     </div>
                   </div>
-                  <span class="field__hint">
-                    文字描述再细，模型每次也会重新想象一遍这张脸；给一张图，它照着画。
-                    画出来的和后面每一镜用的是同一段描述，所以是同一个人。
-                  </span>
                 </div>
 
                 <label class="field">
@@ -446,11 +422,8 @@ async function clearRef(charId, slot) {
                   <datalist v-if="voices.length" :id="'voices-' + c.char_id">
                     <option v-for="v in voices" :key="v" :value="v" />
                   </datalist>
-                  <span v-if="voicesLoading" class="field__hint">
-                    正在问有哪些音色…
-                  </span>
-                  <span v-else class="field__hint">
-                    {{ voicesError || '留空也能跑，配音时按性别和中文样本挑。' }}
+                  <span v-if="!voicesLoading && voicesError" class="tiny warn-text">
+                    {{ voicesError }}
                   </span>
                 </label>
 
@@ -467,23 +440,22 @@ async function clearRef(charId, slot) {
 
             <div class="chr__foot">
               <button
-                class="btn btn--primary"
+                class="btn btn--primary btn--sm"
                 type="button"
                 :disabled="!changed(c.char_id) || isBusy('save:' + c.char_id)"
+                title="改了外观，已渲染的镜头会退回重跑"
                 @click="save(c.char_id)"
               >
-                {{ isBusy('save:' + c.char_id) ? '保存中…' : '保存这个角色' }}
+                {{ isBusy('save:' + c.char_id) ? '存着…' : '保存' }}
               </button>
               <button
-                class="btn btn--ghost"
+                class="btn btn--ghost btn--sm"
                 type="button"
                 :disabled="!changed(c.char_id)"
                 @click="edits[c.char_id] = { ...c }"
               >
                 撤销
               </button>
-              <span class="spacer" />
-              <span class="tiny dim">改了外观，已渲染的镜头会退回重跑</span>
             </div>
           </div>
         </article>
@@ -492,50 +464,28 @@ async function clearRef(charId, slot) {
 </template>
 
 <style scoped>
-/* 两块合成一页之后，光有两排按钮分不清哪排管人、哪排管地方。 */
-.asec {
+.chars {
   display: flex;
-  align-items: baseline;
-  gap: var(--s3);
-  flex-wrap: wrap;
-  font-size: var(--fs-lg);
-  font-weight: 700;
-}
-.asec__sub {
-  font-size: var(--fs-sm);
-  font-weight: 400;
-  color: var(--text-3);
-}
-
-.notice {
-  display: flex;
-  align-items: flex-start;
+  flex-direction: column;
   gap: var(--s2);
-  padding: var(--s3) var(--s4);
-  border-radius: var(--r);
-  background: var(--info-soft);
-  border: 1px solid color-mix(in srgb, var(--info) 30%, transparent);
-  color: var(--text-2);
-  font-size: var(--fs-base);
-  line-height: 1.6;
 }
-.notice :deep(svg) {
-  color: var(--info);
-  margin-top: 3px;
+/* 一人一行，行之间一条细线。不是卡片。 */
+.list {
+  display: flex;
+  flex-direction: column;
 }
-
 .chr {
-  overflow: hidden;
+  border-top: 1px solid var(--line);
 }
 .chr--open {
-  border-color: var(--accent-line);
+  border-top-color: var(--accent-line);
 }
 .chr__head {
   display: flex;
   align-items: center;
   gap: var(--s3);
   width: 100%;
-  padding: var(--s3) var(--s4);
+  padding: var(--s2) 0;
   background: none;
   border: none;
   cursor: pointer;
@@ -578,9 +528,7 @@ async function clearRef(charId, slot) {
 }
 
 .chr__body {
-  border-top: 1px solid var(--line);
-  padding: var(--s5);
-  background: var(--surface-2);
+  padding: var(--s3) 0 0;
 }
 .chr__cols {
   display: grid;
@@ -597,10 +545,10 @@ async function clearRef(charId, slot) {
   align-items: center;
   gap: var(--s2);
   flex-wrap: wrap;
-  margin: var(--s5) calc(var(--s5) * -1) calc(var(--s5) * -1);
-  padding: var(--s3) var(--s5);
+  margin-top: var(--s4);
+  padding: var(--s2) 0;
   border-top: 1px solid var(--line);
-  background: color-mix(in srgb, var(--surface-2) 94%, transparent);
+  background: color-mix(in srgb, var(--surface) 94%, transparent);
   backdrop-filter: blur(8px);
 }
 
@@ -666,9 +614,6 @@ async function clearRef(charId, slot) {
 @media (max-width: 640px) {
   .chr__head .pill {
     display: none;
-  }
-  .chr__body {
-    padding: var(--s4);
   }
 }
 </style>

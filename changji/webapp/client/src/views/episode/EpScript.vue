@@ -2,14 +2,12 @@
 /**
  * 这一集的剧本。
  *
- * 原来这块在 ScriptView 里——那一页同时是全剧梗概编辑器、整季批量写、
- * 草稿审阅、预告片、剧集列表和单集编辑器，六件事挤在一页，所以没有重点。
- * 全剧那半搬去了故事页，这里只剩「这一集」。
- *
  * 写这一集走的是 /api/script/write。这一集在分集表里有对应的一条时，引擎
  * 自动走故事那条路：内容照着故事的那一段展开，结尾停在给定的钩子上。
- * 回包里的 source 说的就是走了哪条，摆出来给人看——「这一集为什么是这些
+ * 回包里的 source 说的就是走了哪条，一行小字摆出来——「这一集为什么是这些
  * 内容」全靠它解释。
+ *
+ * 2026-09-11 起照故事页的样子：顶上一条工具行，剩下全是剧本。
  */
 import { computed, ref, watch } from 'vue'
 
@@ -104,92 +102,71 @@ async function save() {
 </script>
 
 <template>
-  <div class="stack">
-    <div class="row row--between">
-      <span class="tiny dim numeric">
-        {{ wordCount }} 字 · 目标 {{ durationS }} 秒
-        <span v-if="dirty" class="pill pill--warn">未保存</span>
-      </span>
-      <div class="row">
-        <button
-          v-if="script.trim()"
-          class="btn btn--ghost btn--sm"
-          type="button"
-          @click="mode = mode === 'read' ? 'edit' : 'read'"
-        >
-          {{ mode === 'read' ? '改' : '读' }}
-        </button>
-        <button
-          v-if="dirty"
-          class="btn btn--primary btn--sm"
-          type="button"
-          :disabled="isBusy('save')"
-          @click="save"
-        >
-          保存
-        </button>
-        <button
-          class="btn btn--ai btn--sm"
-          type="button"
-          :disabled="isBusy('write')"
-          @click="write"
-        >
-          <AppIcon name="sparkle" :size="15" />
-          {{ isBusy('write') ? '写着…' : script.trim() ? 'AI 重写' : 'AI 写这一集' }}
-        </button>
-      </div>
+  <div class="scr">
+    <div class="toolbar">
+      <span class="tiny dim numeric">{{ wordCount }} 字 · 目标 {{ durationS }} 秒</span>
+      <span v-if="dirty" class="pill pill--warn">未存</span>
+      <span class="spacer" />
+      <button
+        v-if="script.trim()"
+        class="btn btn--ghost btn--sm"
+        type="button"
+        @click="mode = mode === 'read' ? 'edit' : 'read'"
+      >
+        {{ mode === 'read' ? '改' : '读' }}
+      </button>
+      <button
+        v-if="dirty"
+        class="btn btn--primary btn--sm"
+        type="button"
+        :disabled="isBusy('save')"
+        @click="save"
+      >
+        保存
+      </button>
+      <button
+        class="btn btn--ai btn--sm"
+        type="button"
+        :disabled="isBusy('write')"
+        @click="write"
+      >
+        <AppIcon name="sparkle" :size="14" />
+        {{ isBusy('write') ? '写着…' : script.trim() ? 'AI 重写' : 'AI 写这一集' }}
+      </button>
     </div>
 
     <!-- 草稿：写完先摆出来，点采用才落库 -->
-    <section v-if="draft" class="card card--draft">
-      <div class="card__head">
-        <div>
-          <div class="card__title">
-            <AppIcon name="sparkle" :size="15" class="inline-icon" />
-            写好了，还没存
-          </div>
-          <div class="card__sub">{{ draft.logline }}</div>
-        </div>
+    <section v-if="draft" class="sec draft">
+      <div class="sec__head">
+        <h2 class="sec__t">写好了，还没存</h2>
         <span class="pill nowrap" :class="draft.fit === '合适' ? 'pill--ok' : 'pill--warn'">
           {{ draft.fit }}
         </span>
+        <span class="tiny dim truncate">{{ draft.logline }}</span>
+        <span class="spacer" />
+        <button
+          class="btn btn--primary btn--sm"
+          type="button"
+          :disabled="isBusy('adopt')"
+          @click="adopt"
+        >
+          采用
+        </button>
+        <button class="btn btn--ghost btn--sm" type="button" @click="draft = null">丢弃</button>
       </div>
-      <div class="card__body stack stack--sm">
-        <!-- 走的哪条路。「这一集为什么是这些内容」靠它解释 -->
-        <p class="tiny dim">
-          <template v-if="draft.source === 'story'">
-            照着故事的
-            <b>{{ (draft.chapters ?? []).join('、') }}</b> 展开的<template
-              v-if="draft.hook"
-            >，结尾停在「{{ draft.hook }}」</template>
-          </template>
-          <template v-else>
-            照着一句梗概续写的——这一集还没挂在故事的分集表上。
-          </template>
-        </p>
-        <ScriptReader :text="draft.script" />
-        <div class="row">
-          <button
-            class="btn btn--primary"
-            type="button"
-            :disabled="isBusy('adopt')"
-            @click="adopt"
-          >
-            采用
-          </button>
-          <button class="btn btn--ghost" type="button" @click="draft = null">丢弃</button>
-        </div>
-      </div>
+      <!-- 走的哪条路。「这一集为什么是这些内容」靠它解释 -->
+      <p class="tiny dim">
+        <template v-if="draft.source === 'story'">
+          照 {{ (draft.chapters ?? []).join('、') }} 展开<template v-if="draft.hook">，停在「{{ draft.hook }}」</template>
+        </template>
+        <template v-else>照梗概续写，这一集不在分集表上</template>
+      </p>
+      <ScriptReader :text="draft.script" />
     </section>
 
     <div v-if="loading" class="tiny dim">读取中…</div>
 
-    <EmptyState
-      v-else-if="!script.trim() && !draft"
-      icon="script"
-      title="这一集还没有剧本"
-      hint="有故事的话，AI 会照着分集表里这一集对应的那一段展开，结尾停在给定的钩子上。"
-    />
+    <EmptyState v-else-if="!script.trim() && !draft" icon="script" title="这一集还没有剧本" />
 
     <ScriptReader v-else-if="mode === 'read'" :text="script" />
 
@@ -197,15 +174,25 @@ async function save() {
       v-else
       v-model="script"
       class="textarea textarea--script"
-      rows="24"
-      placeholder="对白一行一句，写成「名字：台词」；动作单独成行。"
+      placeholder="名字：台词。动作单独成行"
     />
   </div>
 </template>
 
 <style scoped>
+.scr {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s3);
+}
+.draft {
+  border: 1px dashed var(--accent-line);
+  border-radius: var(--r);
+  padding: var(--s3);
+}
 .textarea--script {
-  min-height: 28rem;
+  min-height: 60vh;
+  font-size: 15px;
   line-height: 1.9;
 }
 </style>

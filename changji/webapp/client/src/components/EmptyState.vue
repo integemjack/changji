@@ -1,9 +1,9 @@
 <script setup>
 /**
- * 空状态。
+ * 空状态。一行：什么是空的，下一步点哪儿。
  *
- * 空页面必须说三件事：现在是空的、为什么是空的、下一步点哪儿。
- * 只画一个灰色的框会让人以为是加载失败。
+ * 以前是一个虚线框、一个大图标、两段字。2026-09-11 起所有页面都照故事页
+ * 的样子：不解释，只说缺什么、去哪儿。
  */
 import AppIcon from '@/components/AppIcon.vue'
 
@@ -17,62 +17,42 @@ defineProps({
 
 <template>
   <div class="empty" :class="`empty--${tone}`">
-    <span class="empty__icon">
-      <AppIcon :name="icon" :size="22" />
-    </span>
-    <p class="empty__title">{{ title }}</p>
-    <p v-if="hint" class="empty__hint">{{ hint }}</p>
-    <div v-if="$slots.default" class="empty__actions">
+    <AppIcon :name="icon" :size="15" class="empty__icon" />
+    <span class="empty__title">{{ title }}</span>
+    <span v-if="hint" class="empty__hint">{{ hint }}</span>
+    <span v-if="$slots.default" class="empty__actions">
       <slot />
-    </div>
+    </span>
   </div>
 </template>
 
 <style scoped>
 .empty {
   display: flex;
-  flex-direction: column;
   align-items: center;
-  text-align: center;
-  gap: var(--s2);
-  padding: var(--s10) var(--s6);
-  border: 1px dashed var(--line-strong);
-  border-radius: var(--r-lg);
-  background: var(--surface);
+  flex-wrap: wrap;
+  gap: var(--s3);
+  padding: var(--s2) 0;
+  font-size: var(--fs-sm);
+  color: var(--text-2);
 }
 .empty__icon {
-  display: grid;
-  place-items: center;
-  width: 44px;
-  height: 44px;
-  margin-bottom: var(--s2);
-  border-radius: 14px;
-  background: var(--surface-3);
+  flex: none;
   color: var(--text-3);
 }
-.empty--warn {
-  border-color: color-mix(in srgb, var(--warn) 40%, transparent);
-  background: color-mix(in srgb, var(--warn) 6%, var(--surface));
-}
-.empty--warn .empty__icon {
-  background: var(--warn-soft);
+.empty--warn .empty__icon,
+.empty--warn .empty__title {
   color: var(--warn);
 }
 .empty__title {
-  font-size: var(--fs-lg);
   font-weight: 600;
+  color: var(--text);
 }
 .empty__hint {
-  max-width: 46ch;
-  color: var(--text-2);
-  font-size: var(--fs-base);
-  line-height: 1.7;
+  color: var(--text-3);
 }
 .empty__actions {
-  display: flex;
+  display: inline-flex;
   gap: var(--s2);
-  flex-wrap: wrap;
-  justify-content: center;
-  margin-top: var(--s3);
 }
 </style>

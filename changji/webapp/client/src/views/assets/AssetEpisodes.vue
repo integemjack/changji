@@ -165,70 +165,48 @@ defineExpose({ load })
 </script>
 
 <template>
-  <div class="stack stack--lg">
-    <h2 class="asec">
-      分集
-      <span class="asec__sub">
-        同一个故事，每集 30 秒切出来十几集，每集 3 分钟切出来三四集。
-        集数是算出来的，不用填。
-      </span>
-    </h2>
-
-    <section class="card">
-      <div class="card__body row row--wrap">
-        <label class="field field--inline">
-          <span class="field__label">每集</span>
-          <select
-            class="select select--slim"
-            :value="durationS"
-            :disabled="isBusy('duration')"
-            @change="pickDuration"
-          >
-            <option v-for="d in DURATIONS" :key="d" :value="d">{{ d }} 秒</option>
-          </select>
-        </label>
-
-        <span v-if="hasStory" class="pill pill--accent nowrap">
-          {{ chapters.length }} 章 → {{ plan.length }} 集
-        </span>
-        <span v-if="hasStory && plan.length" class="tiny dim nowrap">
-          {{ hooked }} 集停在真悬念上
-        </span>
-        <span class="spacer" />
-        <button
-          v-if="hasStory"
-          class="btn btn--primary btn--sm"
-          type="button"
-          :disabled="isBusy('episodes')"
-          @click="makeEpisodes"
+  <div class="eps">
+    <!-- 同一个故事，每集多长决定切成几集。集数是算出来的。改时长就是重新分集。 -->
+    <div class="toolbar">
+      <label class="dur">
+        <span class="tiny dim">每集</span>
+        <select
+          class="select dur__pick"
+          :value="durationS"
+          :disabled="isBusy('duration')"
+          title="改时长就是重新分集"
+          @change="pickDuration"
         >
-          {{ isBusy('episodes') ? '正在建…' : '落成剧集' }}
-        </button>
-      </div>
-    </section>
+          <option v-for="d in DURATIONS" :key="d" :value="d">{{ d }} 秒</option>
+        </select>
+      </label>
+      <span v-if="hasStory" class="tiny dim nowrap">
+        {{ chapters.length }} 章 → {{ plan.length }} 集<template v-if="plan.length">
+          · {{ hooked }} 集停在悬念上</template>
+        <template v-if="writtenCount < chapters.length">
+          · {{ chapters.length - writtenCount }} 章还没正文</template>
+      </span>
+      <span class="spacer" />
+      <button
+        v-if="hasStory"
+        class="btn btn--primary btn--sm"
+        type="button"
+        :disabled="isBusy('episodes')"
+        title="分集表是计划，落成剧集之后后面几步才有东西可对"
+        @click="makeEpisodes"
+      >
+        {{ isBusy('episodes') ? '正在建…' : '落成剧集' }}
+      </button>
+    </div>
 
     <div v-if="loading" class="tiny dim">读取中…</div>
 
-    <EmptyState
-      v-else-if="!hasStory"
-      icon="book"
-      title="还没有故事"
-      hint="先去「故事」那一页写出来，这里才有东西可切。"
-    >
-      <RouterLink to="/story" class="btn">去写故事</RouterLink>
+    <EmptyState v-else-if="!hasStory" icon="book" title="还没有故事">
+      <RouterLink to="/story" class="btn btn--sm">去写故事</RouterLink>
     </EmptyState>
 
+    <!-- 章节一行，分集线画在两行之间。线在哪一眼就看得见。 -->
     <section v-else class="stack stack--sm">
-      <div class="row row--between">
-        <span class="tiny dim">
-          章节 {{ chapters.length }} · 已展开正文 {{ writtenCount }}
-          <template v-if="writtenCount < chapters.length">
-            （没展开的那些，写剧本时用的是梗概不是正文）
-          </template>
-        </span>
-        <span class="tiny dim">横线就是分集，切在钩子上</span>
-      </div>
-
       <template v-for="(c, i) in chapters" :key="c.chapter_id">
         <div
           class="chap"
@@ -253,37 +231,25 @@ defineExpose({ load })
         <div v-for="ep in cutsAfter(c.chapter_id)" :key="ep.episode_id" class="cut">
           <span class="cut__id numeric">{{ ep.episode_id }}</span>
           <span class="cut__dur numeric">{{ ep.target_duration_s }}s</span>
-          <span v-if="ep.hook" class="cut__hook truncate">钩子：{{ ep.hook }}</span>
+          <span v-if="ep.hook" class="cut__hook truncate">{{ ep.hook }}</span>
           <span v-else class="cut__hook dim">章尾</span>
         </div>
       </template>
-
-      <p class="tiny dim">
-        分集表是计划。落成剧集之后，后面几步才有东西可对。
-        <AppIcon name="info" :size="13" />
-      </p>
     </section>
 
-    <!-- 支线。整部剧只用一两次的东西常驻在页面上，是在跟主线抢注意力 -->
+    <!-- 支线。整部剧只用一两次的东西，收在折叠区里 -->
     <section class="stack stack--sm">
       <button class="fold" type="button" @click="extras = !extras">
         <AppIcon :name="extras ? 'arrowLeft' : 'arrowRight'" :size="14" />
-        <span class="strong">预告片 · 手动加一集</span>
-        <span class="tiny dim">整部剧只用一两次</span>
+        <span>预告片 · 手动加一集</span>
       </button>
 
       <div v-if="extras" class="stack stack--sm">
-        <section v-if="trailerDraft" class="card card--draft">
-          <div class="card__head">
-            <div>
-              <div class="card__title">{{ trailerDraft.title }}</div>
-              <div class="card__sub">{{ trailerDraft.logline }}</div>
-            </div>
-          </div>
-          <div class="card__body">
-            <pre class="mono small trailer__script">{{ trailerDraft.script }}</pre>
-          </div>
-          <div class="card__foot">
+        <section v-if="trailerDraft" class="draft">
+          <div class="sec__head">
+            <h2 class="sec__t">{{ trailerDraft.title }}</h2>
+            <span class="tiny dim truncate">{{ trailerDraft.logline }}</span>
+            <span class="spacer" />
             <button
               class="btn btn--primary btn--sm"
               type="button"
@@ -300,12 +266,13 @@ defineExpose({ load })
               丢弃
             </button>
           </div>
+          <pre class="mono small trailer__script">{{ trailerDraft.script }}</pre>
         </section>
 
         <div class="row row--wrap">
-          <label class="field field--inline">
-            <span class="field__label">预告片</span>
-            <select v-model.number="trailerDurationS" class="select select--slim">
+          <label class="dur">
+            <span class="tiny dim">预告片</span>
+            <select v-model.number="trailerDurationS" class="select dur__pick">
               <option :value="15">15 秒</option>
               <option :value="20">20 秒</option>
               <option :value="30">30 秒</option>
@@ -324,11 +291,11 @@ defineExpose({ load })
             class="btn btn--ghost btn--sm"
             type="button"
             :disabled="isBusy('addEp')"
+            title="加出来的那集不在分集表里，走老路径"
             @click="addEpisode"
           >
             手动加一集
           </button>
-          <span class="tiny dim">加出来的那集不在分集表里，走老路径</span>
         </div>
       </div>
     </section>
@@ -336,16 +303,25 @@ defineExpose({ load })
 </template>
 
 <style scoped>
-.asec {
-  font-size: var(--fs-lg);
-  margin: 0;
+.eps {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s3);
 }
-.asec__sub {
-  display: block;
-  font-size: var(--fs-sm);
-  font-weight: 400;
-  color: var(--text-3);
-  margin-top: 2px;
+.dur {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s2);
+}
+.dur__pick {
+  width: auto;
+  height: 27px;
+  padding: 0 var(--s2);
+}
+.draft {
+  border: 1px dashed var(--accent-line);
+  border-radius: var(--r);
+  padding: var(--s3);
 }
 
 /* 章节一行，分集线画在两行之间——线在哪一眼就看得见，

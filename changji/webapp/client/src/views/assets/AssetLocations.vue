@@ -14,7 +14,6 @@ import { computed, ref, watch } from 'vue'
 
 import AppIcon from '@/components/AppIcon.vue'
 import EmptyState from '@/components/EmptyState.vue'
-import StepHeader from '@/components/StepHeader.vue'
 import { api, mediaUrl } from '@/api'
 import { useAction } from '@/composables/useAction'
 import { useSession } from '@/stores/session'
@@ -31,9 +30,9 @@ const edits = ref({})
 const showOthers = ref(false)
 
 const FIELDS = [
-  { key: 'space', label: '空间结构', hint: '房间大小、家具布置、镜头能看到什么。', rows: 3 },
-  { key: 'lighting', label: '光线基调', hint: '如：冷调顶光、暖调侧逆光。同场景的镜头靠它统一。', rows: 2 },
-  { key: 'palette', label: '色彩方案', hint: '主色和点缀色。可留空。', rows: 2 },
+  { key: 'space', label: '空间', hint: '房间大小、家具布置、镜头能看到什么', rows: 3 },
+  { key: 'lighting', label: '光线', hint: '冷调顶光、暖调侧逆光', rows: 2 },
+  { key: 'palette', label: '色彩', hint: '主色和点缀色，可留空', rows: 2 },
 ]
 
 const locations = computed(() => assets.value?.locations ?? [])
@@ -246,69 +245,50 @@ async function clearEmpty(locationId) {
 </script>
 
 <template>
-  <div class="stack stack--lg">
-    <h2 class="asec">
-      地点
-      <span class="asec__sub">同上：地方在故事里定，这一页只定妆。空景图是场景一致的锚点。</span>
-    </h2>
-
-    <StepHeader bare>
-      <template #actions>
-        <button
-          class="btn btn--ghost"
-          type="button"
-          :disabled="loading || !session.hasProject"
-          @click="load"
-        >
-          <AppIcon name="refresh" :size="15" />
-          刷新
-        </button>
-        <button
-          v-if="locations.length"
-          class="btn btn--ghost"
-          type="button"
-          :disabled="!session.episodeId || isBusy('bible')"
-          title="同名场景用新出的顶掉旧的，手改过的描述和空景图会丢"
-          @click="generate(true)"
-        >
-          全部重新定妆
-        </button>
-        <button
-          class="btn btn--ai"
-          type="button"
-          :disabled="!session.episodeId || isBusy('bible')"
-          @click="generate(false)"
-        >
-          <AppIcon name="sparkle" :size="15" />
-          {{ isBusy('bible') ? '正在读故事…' : '照故事定妆' }}
-        </button>
-      </template>
-      <template v-if="session.hasProject" #note>
-        <p class="notice">
-          <AppIcon name="info" :size="15" />
-          <span>
-            场景库是全剧共用的一份，分镜表里只存 id、描述由程序拼接——同一个地点在
-            哪一集出现都长一样，靠的就是这个。这一页只是把它按「本集用到的」分了组。
-          </span>
-        </p>
-      </template>
-    </StepHeader>
-
-    <!-- 「还没选项目」归父页面判，每块各判一遍是同一句话写两遍。
-         「还没选到某一集」那条也去掉了：**场景库是全剧共用的**，
-         站在这一页上不需要先挑一集。出场景那个按钮仍然按当前集的剧本走，
-         没选集时它自己是禁用的。 -->
+  <div class="locs">
+    <!-- 场景库是全剧共用的一份，分镜表里只存 id。这一页按「本集用到的」分组。
+         工具行：刷新、重定、照故事定。 -->
+    <div class="toolbar">
+      <span class="tiny dim">{{ hasShots ? '本集用到' : '场景库' }} {{ mine.length }} 个</span>
+      <span class="spacer" />
+      <button
+        class="btn btn--ghost btn--sm"
+        type="button"
+        :disabled="loading || !session.hasProject"
+        title="刷新"
+        @click="load"
+      >
+        <AppIcon name="refresh" :size="14" />
+      </button>
+      <button
+        v-if="locations.length"
+        class="btn btn--ghost btn--sm"
+        type="button"
+        :disabled="!session.episodeId || isBusy('bible')"
+        title="同名场景用新出的顶掉旧的，手改过的描述和空景图会丢"
+        @click="generate(true)"
+      >
+        全部重新定妆
+      </button>
+      <button
+        class="btn btn--ai btn--sm"
+        type="button"
+        :disabled="!session.episodeId || isBusy('bible')"
+        @click="generate(false)"
+      >
+        <AppIcon name="sparkle" :size="14" />
+        {{ isBusy('bible') ? '正在读故事…' : '照故事定妆' }}
+      </button>
+    </div>
 
     <!-- **不要在这儿套一个光秃秃的 <template>**：Vue 只把带
          v-if/v-for/v-slot 的 template 当片段，没有指令的会当成真的
          HTML template 元素渲染出去——浏览器默认 display:none，
          内容全在 DOM 里、一个字不报错，就是看不见。栽过一次。 -->
       <div v-if="unlinked" class="alert alert--warn">
-        <AppIcon name="warn" :size="15" />
-        <span>
-          这一集有 <b class="numeric">{{ unlinked }}</b> 个镜头只填了 scene_id，
-          没接到场景上。这种镜头渲染时拿不到空间和光线的描述——不会报错，
-          但同一个房间在每个镜头里都会长得不一样。
+        <AppIcon name="warn" :size="14" />
+        <span title="只填了 scene_id 没接到场景的镜头，渲染时拿不到空间和光线">
+          <b class="numeric">{{ unlinked }}</b> 个镜头没接到场景
         </span>
         <button
           class="btn btn--sm"
@@ -321,39 +301,24 @@ async function clearEmpty(locationId) {
       </div>
 
       <p v-if="missing.length" class="alert alert--bad">
-        <AppIcon name="warn" :size="15" />
-        <span>
-          分镜引用了 {{ missing.join('、') }}，但场景库里没有。这样跑到首帧那一步会
-          直接报「场景未注册」。点上面的「照故事定妆」补上。
-        </span>
+        <AppIcon name="warn" :size="14" />
+        <span>分镜引用了 {{ missing.join('、') }}，场景库里没有</span>
       </p>
 
       <EmptyState
         v-if="!loading && !locations.length"
         icon="scene"
         title="场景库还是空的"
-        hint="地方是故事里定的，这一页只给它定妆。先去把故事写出来，再回来点「照故事定妆」。"
+        hint="先写故事，再点「照故事定妆」"
       >
-        <RouterLink to="/story" class="btn">回去写故事</RouterLink>
+        <RouterLink to="/story" class="btn btn--sm">去写故事</RouterLink>
       </EmptyState>
 
       <template v-else>
         <!-- 本集场景 -->
-        <section class="stack">
-          <div class="row row--between">
-            <div class="row">
-              <h2 class="section-title">
-                {{ hasShots ? '本集用到的场景' : '场景库' }}
-              </h2>
-              <span class="pill pill--accent">{{ mine.length }} 个</span>
-              <span v-if="!hasShots" class="tiny dim">
-                这一集还没出分镜，先把库里的都列出来
-              </span>
-            </div>
-          </div>
-
+        <section>
           <div class="grid grid--locs">
-            <article v-for="l in mine" :key="l.location_id" class="loc card">
+            <article v-for="l in mine" :key="l.location_id" class="loc">
               <!-- 空景图 -->
               <div class="loc__shot">
                 <img
@@ -415,25 +380,27 @@ async function clearEmpty(locationId) {
               </div>
 
               <div class="loc__body stack stack--sm">
-                <label v-for="f in FIELDS" :key="f.key" class="field">
+                <label v-for="f in FIELDS" :key="f.key" class="field" :title="f.hint">
                   <span class="field__label">{{ f.label }}</span>
                   <textarea
                     v-model="edits[l.location_id][f.key]"
                     class="textarea textarea--tight"
                     :rows="f.rows"
+                    :placeholder="f.hint"
                   />
                 </label>
-                <div class="field">
+                <div class="field" title="每个镜头拿到的都是这一串">
                   <span class="field__label">拼出来的提示词</span>
                   <p class="rendered mono">{{ l.rendered }}</p>
                 </div>
               </div>
 
-              <div class="card__foot">
+              <div class="loc__foot">
                 <button
                   class="btn btn--primary btn--sm"
                   type="button"
                   :disabled="!changed(l.location_id) || isBusy('save:' + l.location_id)"
+                  title="改了描述，已渲染的镜头会退回重跑"
                   @click="save(l.location_id)"
                 >
                   保存
@@ -454,16 +421,20 @@ async function clearEmpty(locationId) {
         </section>
 
         <!-- 其他集的场景 -->
-        <section v-if="others.length" class="stack">
-          <button class="fold" type="button" @click="showOthers = !showOthers">
+        <section v-if="others.length" class="stack stack--sm">
+          <button
+            class="fold"
+            type="button"
+            title="同一个库，这一集没用到"
+            @click="showOthers = !showOthers"
+          >
             <AppIcon :name="showOthers ? 'arrowLeft' : 'arrowRight'" :size="14" />
-            <span class="strong">其他集的场景</span>
-            <span class="pill pill--neutral">{{ others.length }} 个</span>
-            <span class="tiny dim">同一个库，这一集没用到。改了会影响用到它的那几集</span>
+            <span>其他集的场景</span>
+            <span class="tab__n">{{ others.length }}</span>
           </button>
 
           <div v-if="showOthers" class="grid grid--locs">
-            <article v-for="l in others" :key="l.location_id" class="loc loc--dim card">
+            <article v-for="l in others" :key="l.location_id" class="loc loc--dim">
               <div class="loc__shot loc__shot--slim">
                 <img
                   v-if="l.ref_empty"
@@ -488,64 +459,25 @@ async function clearEmpty(locationId) {
 </template>
 
 <style scoped>
-/* 两块合成一页之后，光有两排按钮分不清哪排管人、哪排管地方。 */
-.asec {
+.locs {
   display: flex;
-  align-items: baseline;
+  flex-direction: column;
   gap: var(--s3);
-  flex-wrap: wrap;
-  font-size: var(--fs-lg);
-  font-weight: 700;
-}
-.asec__sub {
-  font-size: var(--fs-sm);
-  font-weight: 400;
-  color: var(--text-3);
 }
 
-.section-title {
-  font-size: var(--fs-lg);
-  font-weight: 600;
-}
-
-.notice {
-  display: flex;
-  align-items: flex-start;
-  gap: var(--s2);
-  padding: var(--s3) var(--s4);
-  border-radius: var(--r);
-  background: var(--info-soft);
-  border: 1px solid color-mix(in srgb, var(--info) 28%, transparent);
-  color: var(--text-2);
-  font-size: var(--fs-base);
-  line-height: 1.6;
-}
-.notice :deep(svg) {
-  color: var(--info);
-  margin-top: 3px;
-}
-
+/* 出了问题才有的一行。 */
 .alert {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   gap: var(--s2);
-  padding: var(--s3) var(--s4);
-  border-radius: var(--r);
-  font-size: var(--fs-base);
-  line-height: 1.6;
+  margin: 0;
+  font-size: var(--fs-sm);
 }
 .alert--bad {
-  background: var(--danger-soft);
   color: var(--danger);
 }
 .alert--warn {
-  align-items: center;
-  background: var(--warn-soft);
   color: var(--warn);
-  border: 1px solid color-mix(in srgb, var(--warn) 32%, transparent);
-}
-.alert--warn span {
-  flex: 1;
 }
 .alert--warn b {
   font-weight: 700;
@@ -556,8 +488,18 @@ async function clearEmpty(locationId) {
   align-items: start;
 }
 
+/* 一格一个场景。图在上，格子要有边，不然图和图连成一片。 */
 .loc {
   overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+}
+.loc__foot {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  padding: var(--s2) var(--s3);
+  border-top: 1px solid var(--line);
 }
 .loc--dim {
   opacity: 0.72;
@@ -660,18 +602,15 @@ async function clearEmpty(locationId) {
   display: flex;
   align-items: center;
   gap: var(--s2);
-  width: 100%;
-  padding: var(--s3) var(--s4);
-  border: 1px solid var(--line);
-  border-radius: var(--r);
-  background: var(--surface);
+  padding: 6px 0;
+  border: 0;
+  background: transparent;
   color: var(--text-2);
-  font-size: var(--fs-base);
+  font-size: var(--fs-sm);
   cursor: pointer;
   text-align: left;
 }
 .fold:hover {
-  border-color: var(--line-strong);
   color: var(--text);
 }
 </style>

@@ -5,13 +5,12 @@
  * 所有环境和参数都收在这一页，别的地方一个配置项都不放。
  * 分三层，按「改了会影响什么」排：
  *   连接——换机器；画质与装配——换成片规格；闸门——换废片判定。
- * 每一项都写清楚改了之后会发生什么，不然用户只敢照默认值跑。
+ * 页面上只放控件和读数。一个控件要是非得解释才会用，解释进它的 title。
  */
 import { computed, onMounted, ref, watch } from 'vue'
 
 import AppIcon from '@/components/AppIcon.vue'
 import ModelPicker from '@/components/ModelPicker.vue'
-import StepHeader from '@/components/StepHeader.vue'
 import { api } from '@/api'
 import { useAction } from '@/composables/useAction'
 import { useUi } from '@/stores/ui'
@@ -32,15 +31,15 @@ const persist = ref(true)
 const apiKeyInput = ref('')
 
 const SECTIONS = [
-  { id: 'engine', title: '引擎', icon: 'link' },
-  { id: 'llm', title: '大模型', icon: 'sparkle' },
-  { id: 'models', title: '模型', icon: 'wand' },
-  { id: 'render', title: '出图出片', icon: 'image' },
-  { id: 'tts', title: '配音', icon: 'info' },
-  { id: 'assembly', title: '成片装配', icon: 'board' },
-  { id: 'gates', title: '质量闸门', icon: 'check' },
-  { id: 'doctor', title: '体检', icon: 'warn' },
-  { id: 'look', title: '外观', icon: 'moon' },
+  { id: 'engine', title: '引擎' },
+  { id: 'llm', title: '大模型' },
+  { id: 'models', title: '模型' },
+  { id: 'render', title: '出图出片' },
+  { id: 'tts', title: '配音' },
+  { id: 'assembly', title: '装配' },
+  { id: 'gates', title: '闸门' },
+  { id: 'doctor', title: '体检' },
+  { id: 'look', title: '外观' },
 ]
 
 const engineOnline = computed(() => Boolean(overview.value?.engine?.online))
@@ -335,14 +334,13 @@ function scrollTo(id) {
 
 <template>
   <div class="stack stack--lg">
-    <StepHeader title="设置" tagline="环境、地址和参数全在这一页。别处不放配置项。">
-      <template #actions>
-        <button class="btn btn--ghost" type="button" :disabled="loading" @click="load">
-          <AppIcon name="refresh" :size="15" :class="{ spin: loading }" />
-          重新读取
-        </button>
-      </template>
-    </StepHeader>
+    <div class="toolbar">
+      <span class="spacer" />
+      <button class="btn btn--ghost btn--sm" type="button" :disabled="loading" @click="load">
+        <AppIcon name="refresh" :size="14" :class="{ spin: loading }" />
+        重新读取
+      </button>
+    </div>
 
     <div class="set">
       <!-- 小节导航 -->
@@ -354,10 +352,12 @@ function scrollTo(id) {
           type="button"
           @click="scrollTo(s.id)"
         >
-          <AppIcon :name="s.icon" :size="14" />
           {{ s.title }}
         </button>
-        <label class="secnav__persist">
+        <label
+          class="secnav__persist"
+          title="勾上：改动写回配置文件，重启还在。不勾：只对本次进程生效，重启就没了"
+        >
           <input v-model="persist" type="checkbox" />
           <span>写回配置文件</span>
         </label>
@@ -365,24 +365,28 @@ function scrollTo(id) {
 
       <div class="stack stack--lg set__body">
         <!-- 引擎 -->
-        <section id="sec-engine" class="card">
-          <div class="card__head">
-            <div>
-              <div class="card__title">引擎</div>
-              <div class="card__sub">
-                {{ embedded
-                  ? '这个页面就是引擎自己发的，同一个进程，没有别的服务要配。'
-                  : '真正干活的服务。可以在本机，也可以在局域网另一台机器上。' }}
-              </div>
-            </div>
+        <section id="sec-engine" class="sec">
+          <div class="sec__head">
+            <h2 class="sec__t">引擎</h2>
             <span class="pill" :class="engineOnline ? 'pill--ok' : 'pill--danger'">
               {{ engineOnline ? `已连接 ${overview?.engine?.latencyMs}ms` : '连不上' }}
             </span>
+            <span class="spacer" />
+            <div v-if="!embedded" class="sec__acts">
+              <button
+                class="btn btn--primary btn--sm"
+                type="button"
+                :disabled="isBusy('node')"
+                @click="saveNode"
+              >
+                保存
+              </button>
+            </div>
           </div>
-          <div class="card__body stack">
+          <div class="stack">
             <p v-if="!engineOnline" class="alert alert--bad">
               <AppIcon name="warn" :size="15" />
-              {{ overview?.engine?.error || '引擎离线，下面的设置读不到也存不了。' }}
+              {{ overview?.engine?.error || '引擎离线' }}
             </p>
 
             <div v-if="!embedded" class="grid grid--2">
@@ -393,24 +397,26 @@ function scrollTo(id) {
                     被 {{ nodeLocked.engineBaseUrl }} 顶着
                   </span>
                 </span>
-                <input v-model="node.engineBaseUrl" class="input mono" placeholder="http://127.0.0.1:8000" />
-                <span class="field__hint">changji web 跑起来之后监听的地址。</span>
+                <input
+                  v-model="node.engineBaseUrl"
+                  class="input mono"
+                  placeholder="http://127.0.0.1:8000"
+                  title="changji web 跑起来之后监听的地址"
+                />
               </label>
               <label class="field">
-                <span class="field__label">请求超时（毫秒）</span>
-                <input v-model.number="node.engineTimeoutMs" class="input numeric" type="number" step="1000" />
-                <span class="field__hint">出分镜这类活儿要几分钟，别调太小。</span>
+                <span class="field__label">超时（毫秒）</span>
+                <input
+                  v-model.number="node.engineTimeoutMs"
+                  class="input numeric"
+                  type="number"
+                  step="1000"
+                  title="出分镜要几分钟，别调太小"
+                />
               </label>
             </div>
-            <!-- 自带引擎时，把这张卡片换成有用的东西：跑在什么机器上、
-                 配置从哪读的。地址和超时那两栏在这种情况下是空的。 -->
-            <!-- **成片步数不在这儿显示。** 下面「出图出片」那张卡上有同一个
-                 数、同一句说明；一字不差地重复两遍只是让这一页更长。
-                 这里只留跟"跑在哪台机器上"有关的：显卡，和配置文件路径。 -->
-            <!-- **显存显示的是探到的那个数，不是配置里顶着的。**
-                 /api/hardware 的 vram_gb 在有 vram_gb_override 时回的是 override，
-                 这里以前照着显示，于是写着 "5090 · 12 GB"——用户报的
-                 "硬件 GPU 显存有获取不准的 bug"。真实显存从 effective 拿。 -->
+            <!-- 自带引擎时，地址和超时那两栏是空的，换成跑在什么机器上。
+                 显存显示探到的那个数（effective），不是配置里顶着的。 -->
             <div v-if="embedded" class="field">
               <span class="field__label">显卡</span>
               <span class="mono">
@@ -419,29 +425,19 @@ function scrollTo(id) {
                   · {{ Number(effective.physicalVramGb).toFixed(1) }} GB
                 </template>
               </span>
-              <span v-if="effective?.vramOverride" class="field__hint warn-text">
-                配置里 vram_gb_override = {{ effective.vramOverride }} 顶着这张卡，
-                档位表按它推。程序会自己算，把这一行从配置文件里删掉。
+              <span v-if="effective?.vramOverride" class="tiny warn-text">
+                配置里 vram_gb_override = {{ effective.vramOverride }} 顶着这张卡，把那一行删掉
               </span>
             </div>
-            <!-- **程序给两个模型算出来的权重放置。**
-                 weights 不让人在这儿填（"都应该让程序自己算"），但算完了
-                 不给看是另一个极端：出图慢到底是卡不行、还是权重在内存里
-                 每步搬一趟，用户没有线索。排查 GPU 利用率 18% 那次，
-                 答案就是这一项，当时得连上机器看日志才知道。 -->
-            <!-- **能同时跑几路。** 配的和实际开出来的要分开摆：
-                 [llm].parallel 是上限，真开几个由显存说了算。只显示配置的话，
-                 配了 4 的人会以为就是 4 路，而实际可能只有 1 路——那时候
-                 「同时编两个项目会互相等」就成了没法解释的怪事。 -->
+            <!-- 配的上限和实际开出来的要分开摆：真开几个由显存说了算。 -->
             <div
               v-if="embedded && llmRuntime && llmRuntime.backend === 'local'"
               class="field"
             >
-              <span class="field__label">大模型能同时跑几路</span>
+              <span class="field__label">大模型并行</span>
               <div class="mono tiny">
                 <template v-if="!llmRuntime.loaded">
-                  还没装上（用到的时候才装）。配的上限是
-                  {{ llmRuntime.parallelWanted }} 路。
+                  还没装上 · 上限 {{ llmRuntime.parallelWanted }} 路
                 </template>
                 <template v-else>
                   <span
@@ -451,348 +447,267 @@ function scrollTo(id) {
                         ? 'pill--ok'
                         : 'pill--warn'
                     "
+                    :title="
+                      llmRuntime.slots < llmRuntime.parallelWanted
+                        ? '显存只够开这么多'
+                        : ''
+                    "
                   >
                     {{ llmRuntime.slots }} 路
                   </span>
-                  配的上限 {{ llmRuntime.parallelWanted }} 路，每路上下文
+                  上限 {{ llmRuntime.parallelWanted }} 路 · 每路
                   {{ llmRuntime.contextTokens }} token
-                  <template v-if="llmRuntime.slots < llmRuntime.parallelWanted">
-                    —— <strong>显存只够开这么多</strong>
-                  </template>
                 </template>
               </div>
-              <span class="field__hint">
-                一路就是一个上下文。**权重只载一份，每路自己一份 KV cache**，
-                所以多一路就多吃一份显存——它跟出图出片抢同一张卡。
-                池满了之后新的请求**排队等**，不会失败。
-              </span>
             </div>
 
+            <!-- 程序给两个模型算出来的权重放置。「够就不清理」判的是实测那个数。 -->
             <div v-if="embedded && placement" class="field">
-              <span class="field__label">权重放哪（程序自己算的）</span>
-              <div class="stack">
+              <span class="field__label">权重放哪</span>
+              <div class="stack stack--sm">
                 <div v-for="row in placementRows" :key="row.key" class="mono tiny">
                   {{ row.label }}：
                   <span :class="row.resident ? 'pill pill--ok tiny' : 'pill pill--warn tiny'">
-                    {{ row.resident ? '常驻显存' : '权重放内存' }}
+                    {{ row.resident ? '常驻显存' : '放内存' }}
                   </span>
                   <template v-if="row.modelGb > 0">
-                    模型 {{ row.modelGb.toFixed(1) }} GB，估计占
-                    {{ row.liveVramGb.toFixed(1) }} GB<template v-if="row.measured !== null">，
-                    <strong>实测 {{ row.measured.toFixed(1) }} GB</strong><template
+                    模型 {{ row.modelGb.toFixed(1) }} GB · 估 {{ row.liveVramGb.toFixed(1) }} GB<template
+                      v-if="row.measured !== null"
+                    > · <strong>实测 {{ row.measured.toFixed(1) }} GB</strong><template
                       v-if="row.measuredWorkMp !== null"
-                    >（在 {{ row.measuredWorkMp }} MP·帧 那么大的活上量的）</template></template>
+                    >（{{ row.measuredWorkMp }} MP·帧）</template></template>
                   </template>
-                  <template v-else>（模型没配或读不到文件）</template>
+                  <template v-else>（模型没配或读不到）</template>
                 </div>
               </div>
-              <span class="field__hint">
-                按这张卡的显存和模型文件大小算出来的。
-                <strong>权重放内存不等于出了问题</strong>——装不下时放内存反而更快，
-                显卡腾出来的地方全给了计算。
-                <strong>「够就不清理」判的是实测那个数。</strong>
-                出片那一行的估算<strong>只作参考、不参与判断</strong>——它被实测推翻过两次
-                （估 14.6 GB、实测 74 GB），所以还没量过时宁可先卸掉大模型；
-                出首帧那一行的估算和实测对得上，没量过时可以顶一下。
-                「MP·帧」是画幅乘帧数——换更大的画幅要重新量，在小画幅量到的数
-                不会拿去给大画幅背书。
-              </span>
             </div>
-            <!-- 最近一次腾地方的判断。没发生过就不显示——刚起服务时
-                 还没借过槽，摆一行"还没判过"只是噪音。 -->
+            <!-- 最近一次腾地方的判断。没发生过就不显示。 -->
             <div v-if="embedded && roomDecision" class="field">
-              <span class="field__label">上次腾显存怎么判的</span>
+              <span class="field__label">上次腾显存</span>
               <div v-if="roomDecision.skipped" class="mono tiny">
-                借「{{ roomDecision.slot }}」时：{{ roomDecision.verdict }}——
-                它一直在显存里，这一镜的画幅也没超过量过的，所以没做判断。
+                借「{{ roomDecision.slot }}」：{{ roomDecision.verdict }}
               </div>
               <div v-else class="mono tiny">
-                借「{{ roomDecision.slot }}」时：需要 {{ roomDecision.need }}
-                （{{ roomDecision.needHow }}），
-                当时空闲 {{ roomDecision.free }}（{{ roomDecision.how }}）
+                借「{{ roomDecision.slot }}」：需要 {{ roomDecision.need }}（{{ roomDecision.needHow }}）·
+                空闲 {{ roomDecision.free }}（{{ roomDecision.how }}）
                 <span :class="roomDecision.ok ? 'pill pill--ok tiny' : 'pill pill--warn tiny'">
                   {{ roomDecision.verdict }}
                 </span>
               </div>
-              <span class="field__hint">
-                「够就不清理」靠的就是这一步。要是这里长期显示
-                <strong>问不到卡</strong>，说明显存探测没走通，该查。
-              </span>
-              <!-- 判「够」却是拿估的判的：这正是 CUDA OOM 的前一步。
-                   估算在 video 这一路算 14.6 GB、实测 74 GB，差五倍。 -->
-              <span v-if="!roomDecision.skipped && roomDecision.ok && !roomDecision.needTrusted"
-                    class="field__hint">
-                ⚠ 这次的「够」是拿<strong>估算</strong>判的，这个槽还没量过。
-                估算在出片这一路偏小很多（算 14.6 GB、实测 74 GB），
-                真跑起来可能不够——显存爆掉是直接把服务带走的那种。
-                跑完一次出片量到真实占用后，这里会变成「量出来的」。
+              <!-- 判「够」却是拿估的判的：这正是 CUDA OOM 的前一步。 -->
+              <span
+                v-if="!roomDecision.skipped && roomDecision.ok && !roomDecision.needTrusted"
+                class="tiny warn-text"
+              >
+                这次的「够」是估算判的，这个槽还没量过，真跑可能不够
               </span>
             </div>
             <p class="tiny dim mono">配置文件：{{ node.configFile }}</p>
-          </div>
-          <div v-if="!embedded" class="card__foot">
-            <button class="btn btn--primary" type="button" :disabled="isBusy('node')" @click="saveNode">
-              保存引擎地址
-            </button>
           </div>
         </section>
 
         <template v-if="engineOnline && conn.llm_base_url !== undefined">
           <!-- 大模型 -->
-          <section id="sec-llm" class="card">
-            <div class="card__head">
-              <div>
-                <div class="card__title">大模型</div>
-                <div class="card__sub">
-                  {{ llmLocal
-                    ? '写剧本和出分镜用它。当前是进程内跑，不用另起服务——权重在配置文件的 [models].llm。'
-                    : '写剧本和出分镜用它。任何兼容 OpenAI 接口的服务都行。' }}
-                </div>
-              </div>
+          <section id="sec-llm" class="sec">
+            <div class="sec__head">
+              <h2 class="sec__t">大模型</h2>
+              <!-- 「出片时自动让开」是句空话，除非能看到让没让开。 -->
+              <span v-if="llmLocal" class="pill pill--neutral tiny mono">
+                {{ llmState.text }}<template v-if="llmState.measured">
+                  · 实测 {{ llmState.measured }}</template>
+              </span>
             </div>
-            <div class="card__body">
-              <label class="field">
+            <div class="stack">
+              <label class="field field--narrow">
                 <span class="field__label">跑在哪</span>
                 <select
                   class="select"
                   :value="node?.llmBackend || 'local'"
                   :disabled="isBusy('llmBackend')"
+                  title="内置：这个进程里跑，权重在配置文件的 [models].llm。外接：任何兼容 OpenAI 接口的服务"
                   @change="switchLlm"
                 >
-                  <option value="local">内置（这个进程里跑，不用装别的）</option>
-                  <option value="remote">外接 API（任何兼容 OpenAI 接口的服务）</option>
+                  <option value="local">内置</option>
+                  <option value="remote">外接 API</option>
                 </select>
-                <span class="field__hint">
-                  {{ llmLocal
-                    ? '权重在配置文件的 [models].llm。出片要显存时它会自动让开。'
-                    : '下面填那个服务的地址和模型名。' }}
-                </span>
-                <!-- **"它会自动让开"是句空话，除非能看到让没让开。**
-                     "默认加载 llm、点击出片清理掉大模型"说的都是这个状态，
-                     而界面上一直看不到它。 -->
-                <span v-if="llmLocal" class="field__hint mono tiny">
-                  现在：
-                  <strong>{{ llmState.text }}</strong>
-                  <template v-if="llmState.measured">（实测占 {{ llmState.measured }}）</template>
-                </span>
               </label>
-            </div>
-            <!-- 走内置时这一整排都不读，直接不显示。压暗过一版，
-                 但"看得见却不生效"仍然要人自己判断，不如不给。 -->
-            <div v-if="!llmLocal" class="card__body grid grid--2">
-              <label class="field field--wide">
-                <span class="field__label">平台</span>
-                <select
-                  class="select"
-                  :value="providerId"
-                  :disabled="isBusy('provider')"
-                  @change="pickProvider"
-                >
-                  <option value="">自定义 / 已填的地址</option>
-                  <optgroup label="本机跑的">
-                    <option
-                      v-for="p in providers.filter((x) => x.local)"
-                      :key="p.id"
-                      :value="p.id"
-                    >
-                      {{ p.name }}
-                    </option>
-                  </optgroup>
-                  <optgroup label="云服务（要密钥）">
-                    <option
-                      v-for="p in providers.filter((x) => !x.local)"
-                      :key="p.id"
-                      :value="p.id"
-                    >
-                      {{ p.name }}
-                    </option>
-                  </optgroup>
-                </select>
-                <span v-if="currentProvider" class="field__hint">
-                  {{ currentProvider.note }}
-                </span>
-                <span v-else class="field__hint">
-                  这些平台都是 OpenAI 兼容接口，选一个会自动填地址并挑好模型；
-                  也可以直接在下面手填。
-                </span>
-              </label>
-
-              <label class="field">
-                <span class="field__label">
-                  API 地址
-                  <span v-if="envLocked.llm_base_url" class="pill pill--warn tiny">
-                    被 {{ envLocked.llm_base_url }} 顶着
-                  </span>
-                </span>
-                <input v-model="conn.llm_base_url" class="input mono" placeholder="http://127.0.0.1:11434/v1" />
-                <span class="field__hint">要带 /v1。云服务填它的兼容地址即可。</span>
-              </label>
-              <label class="field">
-                <span class="field__label">
-                  模型名
-                  <button
-                    class="linkbtn tiny"
-                    type="button"
-                    :disabled="modelsLoading"
-                    @click.prevent="loadModels"
+              <!-- 走内置时这一整排都不读，直接不显示。 -->
+              <div v-if="!llmLocal" class="grid grid--2">
+                <label class="field field--wide">
+                  <span class="field__label">平台</span>
+                  <select
+                    class="select"
+                    :value="providerId"
+                    :disabled="isBusy('provider')"
+                    :title="currentProvider?.note || '选一个会自动填地址并挑好模型，也可以在下面手填'"
+                    @change="pickProvider"
                   >
-                    {{ modelsLoading ? '正在问…' : '重新拉列表' }}
-                  </button>
-                </span>
-                <input
-                  v-model="conn.llm_model"
-                  class="input mono"
-                  list="llm-models"
-                  placeholder="qwen3:14b"
-                />
-                <datalist id="llm-models">
-                  <option v-for="m in models" :key="m" :value="m" />
-                </datalist>
-                <span v-if="modelMissing" class="field__error">
-                  这台服务上没有 {{ conn.llm_model }}。它有的是：{{ models.join('、') }}。
-                  写剧本那一步会直接失败，换一个或者先把它拉下来。
-                </span>
-                <span v-else-if="modelsError" class="field__hint">
-                  列不出有哪些模型（{{ modelsError }}），手打也行。
-                </span>
-                <span v-else-if="models.length" class="field__hint">
-                  这台服务上有 {{ models.length }} 个模型，点输入框能选。
-                </span>
-              </label>
-              <label class="field">
-                <span class="field__label">
-                  API Key
-                  <span class="pill pill--neutral tiny">
-                    {{ conn.llm_api_key_set ? conn.llm_api_key_hint : '未设置' }}
+                    <option value="">自定义</option>
+                    <optgroup label="本机">
+                      <option
+                        v-for="p in providers.filter((x) => x.local)"
+                        :key="p.id"
+                        :value="p.id"
+                      >
+                        {{ p.name }}
+                      </option>
+                    </optgroup>
+                    <optgroup label="云服务">
+                      <option
+                        v-for="p in providers.filter((x) => !x.local)"
+                        :key="p.id"
+                        :value="p.id"
+                      >
+                        {{ p.name }}
+                      </option>
+                    </optgroup>
+                  </select>
+                </label>
+
+                <label class="field">
+                  <span class="field__label">
+                    API 地址
+                    <span v-if="envLocked.llm_base_url" class="pill pill--warn tiny">
+                      被 {{ envLocked.llm_base_url }} 顶着
+                    </span>
                   </span>
-                </span>
-                <input
-                  v-model="apiKeyInput"
-                  class="input mono"
-                  type="password"
-                  placeholder="留空表示不改"
-                  autocomplete="off"
-                />
-                <span class="field__hint">本地服务通常不校验，填什么都行。</span>
-              </label>
-              <label class="field">
-                <span class="field__label">温度</span>
-                <input
-                  v-model.number="conn.llm_temperature"
-                  class="input numeric"
-                  type="number"
-                  step="0.1"
-                  min="0"
-                  max="2"
-                />
-                <span class="field__hint">高了更敢编，低了更听话。写剧本 0.7 上下。</span>
-              </label>
+                  <input
+                    v-model="conn.llm_base_url"
+                    class="input mono"
+                    placeholder="http://127.0.0.1:11434/v1"
+                    title="要带 /v1"
+                  />
+                </label>
+                <label class="field">
+                  <span class="field__label">
+                    模型名
+                    <button
+                      class="linkbtn tiny"
+                      type="button"
+                      :disabled="modelsLoading"
+                      @click.prevent="loadModels"
+                    >
+                      {{ modelsLoading ? '正在问…' : '重新拉列表' }}
+                    </button>
+                  </span>
+                  <input
+                    v-model="conn.llm_model"
+                    class="input mono"
+                    list="llm-models"
+                    placeholder="qwen3:14b"
+                  />
+                  <datalist id="llm-models">
+                    <option v-for="m in models" :key="m" :value="m" />
+                  </datalist>
+                  <span v-if="modelMissing" class="field__error">
+                    这台服务上没有 {{ conn.llm_model }}，有的是：{{ models.join('、') }}
+                  </span>
+                  <span v-else-if="modelsError" class="tiny warn-text">
+                    列不出模型：{{ modelsError }}
+                  </span>
+                </label>
+                <label class="field">
+                  <span class="field__label">
+                    API Key
+                    <span class="pill pill--neutral tiny">
+                      {{ conn.llm_api_key_set ? conn.llm_api_key_hint : '未设置' }}
+                    </span>
+                  </span>
+                  <input
+                    v-model="apiKeyInput"
+                    class="input mono"
+                    type="password"
+                    placeholder="留空表示不改"
+                    autocomplete="off"
+                    title="本地服务通常不校验"
+                  />
+                </label>
+                <label class="field">
+                  <span class="field__label">温度</span>
+                  <input
+                    v-model.number="conn.llm_temperature"
+                    class="input numeric"
+                    type="number"
+                    step="0.1"
+                    min="0"
+                    max="2"
+                    title="高了更敢编，低了更听话。写剧本 0.7 上下"
+                  />
+                </label>
+              </div>
             </div>
           </section>
 
-          <!-- 模型 -->
-          <!--
-            **和初始化页是同一个组件**（ModelPicker）。分两份写的话，量化档的
-            说明、显存门槛、"换家族要清空上一家的键"这些迟早只改一边，
-            而分家的表现是两页各写一套，用户不知道该信哪个。
-
-            这一节做两件事：把缺的模型下下来，和**在已经下过的几档之间切换**。
-            后一件以前只能改配置文件——而配置里那十来个键（video / video_llm /
-            video_vae / video_audio_vae / video_lora…）必须整组配套换，
-            漏一个不报错，只是出一段和提示词没关系的片。
-          -->
-          <section id="sec-models" class="card">
-            <div class="card__head">
-              <div>
-                <div class="card__title">模型</div>
-                <div class="card__sub">
-                  下新模型，或者在已经下过的几档之间换。换完立刻写进配置，
-                  下一次出片就用新的。
-                </div>
-              </div>
+          <!-- 模型：和初始化页是同一个组件（ModelPicker）。 -->
+          <section id="sec-models" class="sec">
+            <div class="sec__head">
+              <h2 class="sec__t">模型</h2>
             </div>
-            <div class="card__body">
-              <ModelPicker dense @applied="load" />
-            </div>
+            <ModelPicker dense @applied="load" />
           </section>
 
           <!-- 出图出片 -->
-          <section id="sec-render" class="card">
-            <div class="card__head">
-              <div>
-                <div class="card__title">出图出片</div>
-                <div class="card__sub">
-                  首帧和视频都在这个进程里跑，没有外部服务要配。
-                  模型文件在配置文件的 [models] 一节。
-                </div>
+          <!-- 显示的是真正会用的数（effective），不是档位表推的：
+               画幅来自项目的 [video]，步数在挂了 Turbo 时压到 6。 -->
+          <section id="sec-render" class="sec">
+            <div class="sec__head">
+              <h2 class="sec__t">出图出片</h2>
+              <span class="spacer" />
+              <div class="sec__acts">
+                <button class="btn btn--ghost btn--sm" type="button" @click="scrollTo('models')">
+                  换模型
+                </button>
               </div>
-              <!-- 模型本身在上面那一节挑。这儿只放个指路的，
-                   免得看完步数和画幅之后还要满页找在哪儿换模型。 -->
-              <button class="btn btn--sm" type="button" @click="scrollTo('models')">
-                <AppIcon name="wand" :size="14" />
-                换模型 / 下模型
-              </button>
             </div>
-            <div class="card__body grid grid--2">
-              <!-- **「显存覆盖」那个输入框删了（2026-09-10）。**
-                   它做的事是让档位表按一个假的显存数推，而这个假数还会被
-                   /api/hardware 当成探测结果回出去——设置页上写着
-                   "5090 · 12 GB"。画幅早就是项目自己的了，步数由 Turbo 定，
-                   它剩下的用途只有制造误会。用户的原话："都应该让程序自己算。"
-                   配置文件里还认这个键（老配置不报错），但界面上不再给。 -->
-              <!-- **显示的是真正会用的数，不是档位表推的。**
-                   档位表那份（宽高和步数）出片时会被两件事盖掉：画幅来自
-                   项目的 [video]，步数在挂了 Turbo 时压到 6。照着档位表显示
-                   的话，这儿写"成片步数 28"而每一镜实际跑 6 步——
-                   用户看了会问"怎么没用 turbo"。真发生过（2026-09-10）。
-                   引擎那边和 run.cpp 算的是同一个函数，见 effective。 -->
+            <div class="grid grid--2">
               <div class="field">
                 <span class="field__label">步数</span>
                 <span class="mono">
                   出片 {{ effective?.finalSteps ?? '—' }}
-                  <span v-if="effective?.turbo" class="pill pill--ok tiny">Turbo</span>
+                  <span
+                    v-if="effective?.turbo"
+                    class="pill pill--ok tiny"
+                    :title="`挂着 Turbo LoRA，出视频按 6 步走（档位表推的是 ${effective?.tableSteps} 步）`"
+                  >Turbo</span>
                   <span v-else-if="effective?.stepsPinned" class="pill pill--neutral tiny">
                     配置里写死
                   </span>
                   · 首帧 {{ effective?.frameSteps ?? '—' }}
                 </span>
-                <span v-if="effective?.turbo" class="field__hint">
-                  挂着 Turbo LoRA，出视频按 6 步走（档位表推的是
-                  {{ effective?.tableSteps }} 步）。首帧不跟着变——那个 LoRA
-                  只挂在视频模型上，出图那一步没有它，跟着降到 6 步会让首帧糊，
-                  而首帧是后面每一镜的锚点。
-                </span>
-                <span v-else class="field__hint">
-                  档位表按显存推的。想提速就在 [models].video_lora 填一个
-                  蒸馏 LoRA，出视频会自动按 6 步走。
-                </span>
               </div>
               <div class="field">
-                <span class="field__label">成片画幅</span>
-                <span class="mono">
+                <span class="field__label">画幅</span>
+                <span class="mono" title="每部剧自己的，在项目页上选">
                   {{ effective ? `${effective.width}×${effective.height}` : '—' }}
-                </span>
-                <span class="field__hint">
-                  每部剧自己的，在项目页上选。
                 </span>
               </div>
             </div>
           </section>
 
           <!-- 配音 -->
-          <section id="sec-tts" class="card">
-            <div class="card__head">
-              <div>
-                <div class="card__title">配音</div>
-                <div class="card__sub">先跑配音拿到真实时长，再反推锁定镜头时长。音画从源头对齐。</div>
+          <section id="sec-tts" class="sec">
+            <div class="sec__head">
+              <h2 class="sec__t">配音</h2>
+              <span class="spacer" />
+              <div class="sec__acts">
+                <!-- 大模型走内置时上面一个大模型字段都没显示，那时只保存配音。 -->
+                <button
+                  class="btn btn--primary btn--sm"
+                  type="button"
+                  :disabled="isBusy('conn')"
+                  :title="llmLocal ? '保存配音后端，保存完重新体检' : '大模型和配音一起保存，保存完重新体检'"
+                  @click="saveConnections"
+                >
+                  {{ isBusy('conn') ? '保存中…' : '保存' }}
+                </button>
               </div>
             </div>
-            <div class="card__body grid grid--2">
+            <div class="grid grid--2">
               <label class="field">
                 <span class="field__label">后端</span>
                 <select v-model="conn.tts_backend" class="select">
-                  <option value="local">进程内跑（不用装别的东西）</option>
-                  <option value="http">独立 HTTP 服务</option>
+                  <option value="local">内置</option>
+                  <option value="http">HTTP 服务</option>
                 </select>
               </label>
               <label class="field">
@@ -801,15 +716,10 @@ function scrollTo(id) {
                   v-model="conn.tts_base_url"
                   class="input mono"
                   :disabled="conn.tts_backend !== 'http'"
-                  placeholder="后端选 http 时必填"
+                  placeholder="后端选 HTTP 时必填"
                 />
               </label>
-              <!-- **[tts].engine 那一项没了。** 它是 ComfyUI 时代的字段
-                   （选哪个 TTS 节点），而两条现存后端都不读它：进程内跑的是
-                   [models].tts 指的那份权重，HTTP 后端发出去的请求体里根本
-                   没有这个字段（Python 那版也一样，两边一致）。
-                   配置和接口里保留是为了不破契约，提交时原样带回去；
-                   界面上摆着只会让人调了没反应——那比没有这一项更糟。 -->
+              <!-- [tts].engine 不在界面上：两条后端都不读它，提交时原样带回去。 -->
               <label class="field">
                 <span class="field__label">时长容差（秒）</span>
                 <input
@@ -818,64 +728,42 @@ function scrollTo(id) {
                   type="number"
                   step="0.05"
                   min="0"
+                  title="台词和镜头时长的允许偏差，超出靠尾帧冻结或变速吸收"
                 />
-                <span class="field__hint">台词和镜头时长的允许偏差，超出靠尾帧冻结或变速吸收。</span>
               </label>
-            </div>
-            <div class="card__foot">
-              <button
-                class="btn btn--primary"
-                type="button"
-                :disabled="isBusy('conn')"
-                @click="saveConnections"
-              >
-                {{ isBusy('conn') ? '保存中…' : '保存连接设置并重新体检' }}
-              </button>
-              <!-- 大模型走内置时上面一个大模型字段都没显示，
-                   还说"大模型和配音后端一起保存"就是在说一件没发生的事。 -->
-              <span class="tiny dim">
-                {{ llmLocal ? '保存配音后端。' : '大模型和配音后端一起保存。' }}
-              </span>
             </div>
           </section>
 
-          <!-- **「画质档位」那一节删了（2026-09-10）。**
-
-               画幅和清晰度搬到项目上了（项目页），
-               因为一台机器上可以同时有竖屏短剧和横屏片子。
-               搬完之后这里改宽高**不再生效**——出片时项目的 [video]
-               会盖掉它，而界面照旧显示"已应用"。
-
-               步数还有意义（[tiers].final_steps，0 = 挂了 Turbo 就按
-               6 走），但那是专家旋钮，留在配置文件里。 -->
-
           <!-- 装配 -->
-          <section id="sec-assembly" class="card">
-            <div class="card__head">
-              <div>
-                <div class="card__title">成片装配</div>
-                <div class="card__sub">拼接环节最容易踩的坑是各镜头规格不齐，这里统一规格。</div>
-              </div>
+          <section id="sec-assembly" class="sec">
+            <div class="sec__head">
+              <h2 class="sec__t">装配</h2>
             </div>
-            <div class="card__body grid grid--3">
+            <div class="grid grid--3">
               <label class="field">
                 <span class="field__label">帧率</span>
                 <input v-model.number="params.fps" class="input numeric" type="number" />
               </label>
               <label class="field">
                 <span class="field__label">CRF</span>
-                <input v-model.number="params.crf" class="input numeric" type="number" min="0" max="51" />
-                <span class="field__hint">数字越小画质越好、文件越大。18 是常用值。</span>
+                <input
+                  v-model.number="params.crf"
+                  class="input numeric"
+                  type="number"
+                  min="0"
+                  max="51"
+                  title="越小画质越好、文件越大。18 是常用值"
+                />
               </label>
               <label class="field">
-                <span class="field__label">场景转场（秒）</span>
+                <span class="field__label">转场（秒）</span>
                 <input
                   v-model.number="params.scene_transition_s"
                   class="input numeric"
                   type="number"
                   step="0.1"
+                  title="只在换场景处溶解，同场景内一律硬切"
                 />
-                <span class="field__hint">只在换场景处溶解，同场景内一律硬切。</span>
               </label>
               <label class="field">
                 <span class="field__label">字幕字体</span>
@@ -897,107 +785,102 @@ function scrollTo(id) {
           </section>
 
           <!-- 闸门 -->
-          <section id="sec-gates" class="card">
-            <div class="card__head">
-              <div>
-                <div class="card__title">质量闸门</div>
-                <div class="card__sub">
-                  无人值守量产时，这几个数字决定废片能不能被拦住。
-                </div>
-              </div>
+          <section id="sec-gates" class="sec">
+            <div class="sec__head">
+              <h2 class="sec__t">闸门</h2>
               <label class="switch">
                 <input v-model="params.enabled" type="checkbox" />
                 <span>开启</span>
               </label>
+              <span class="spacer" />
+              <div class="sec__acts">
+                <button
+                  class="btn btn--primary btn--sm"
+                  type="button"
+                  :disabled="isBusy('params')"
+                  title="装配和闸门一起保存"
+                  @click="saveParams"
+                >
+                  {{ isBusy('params') ? '保存中…' : '保存' }}
+                </button>
+              </div>
             </div>
-            <div class="card__body grid grid--3">
-              <label class="field">
-                <span class="field__label">每镜最多重试</span>
-                <input
-                  v-model.number="params.max_attempts_per_shot"
-                  class="input numeric"
-                  type="number"
-                  min="1"
-                />
-              </label>
-              <label class="field">
-                <span class="field__label">画面标准差下限</span>
-                <input v-model.number="params.min_pixel_std" class="input numeric" type="number" step="0.5" />
-                <span class="field__hint">拦纯色和噪点。调高会误杀暗场。</span>
-              </label>
-              <label class="field">
-                <span class="field__label">与首帧相似度下限</span>
-                <input
-                  v-model.number="params.min_frame_similarity"
-                  class="input numeric"
-                  type="number"
-                  step="0.05"
-                  min="0"
-                  max="1"
-                />
-                <span class="field__hint">拦画面跑飞。运动大的片子要调低。</span>
-              </label>
-              <label class="field">
-                <span class="field__label">台词落点偏差上限（秒）</span>
-                <input
-                  v-model.number="params.max_audio_drift_s"
-                  class="input numeric"
-                  type="number"
-                  step="0.05"
-                />
-              </label>
-              <label class="field">
-                <span class="field__label">响度目标（LUFS）</span>
-                <input v-model.number="params.target_lufs" class="input numeric" type="number" step="0.5" />
-                <span class="field__hint">短视频平台一般收 -16 到 -14。</span>
-              </label>
-              <label class="field">
-                <span class="field__label">音频变速安全区</span>
-                <input
-                  v-model.number="params.tts_max_tempo_shift"
-                  class="input numeric"
-                  type="number"
-                  step="0.01"
-                  min="0"
-                  max="0.2"
-                />
-                <span class="field__hint">有口型的镜头收得更紧，超了会听出来。</span>
-              </label>
-            </div>
-            <div class="card__body" style="padding-top: 0">
-              <label class="switch">
+            <div class="stack">
+              <div class="grid grid--3">
+                <label class="field">
+                  <span class="field__label">每镜重试</span>
+                  <input
+                    v-model.number="params.max_attempts_per_shot"
+                    class="input numeric"
+                    type="number"
+                    min="1"
+                  />
+                </label>
+                <label class="field">
+                  <span class="field__label">标准差下限</span>
+                  <input
+                    v-model.number="params.min_pixel_std"
+                    class="input numeric"
+                    type="number"
+                    step="0.5"
+                    title="拦纯色和噪点。调高会误杀暗场"
+                  />
+                </label>
+                <label class="field">
+                  <span class="field__label">首帧相似度下限</span>
+                  <input
+                    v-model.number="params.min_frame_similarity"
+                    class="input numeric"
+                    type="number"
+                    step="0.05"
+                    min="0"
+                    max="1"
+                    title="拦画面跑飞。运动大的片子要调低"
+                  />
+                </label>
+                <label class="field">
+                  <span class="field__label">台词偏差上限（秒）</span>
+                  <input
+                    v-model.number="params.max_audio_drift_s"
+                    class="input numeric"
+                    type="number"
+                    step="0.05"
+                  />
+                </label>
+                <label class="field">
+                  <span class="field__label">响度（LUFS）</span>
+                  <input
+                    v-model.number="params.target_lufs"
+                    class="input numeric"
+                    type="number"
+                    step="0.5"
+                    title="短视频平台一般收 -16 到 -14"
+                  />
+                </label>
+                <label class="field">
+                  <span class="field__label">变速安全区</span>
+                  <input
+                    v-model.number="params.tts_max_tempo_shift"
+                    class="input numeric"
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    max="0.2"
+                    title="有口型的镜头收得更紧，超了会听出来"
+                  />
+                </label>
+              </div>
+              <label class="switch" title="保证整集能出片，而不是卡在某一镜上">
                 <input v-model="params.fallback_on_exhausted" type="checkbox" />
-                <span>重试超限时降级为静帧加运镜</span>
-                <span class="field__hint">保证整集能出片，而不是卡在某一镜上。</span>
+                <span>重试超限降级为静帧加运镜</span>
               </label>
-            </div>
-            <div class="card__foot">
-              <button
-                class="btn btn--primary"
-                type="button"
-                :disabled="isBusy('params')"
-                @click="saveParams"
-              >
-                {{ isBusy('params') ? '保存中…' : '保存装配与闸门参数' }}
-              </button>
-              <span class="tiny dim">
-                {{ persist ? '会写回配置文件，重启还在。' : '只对本次进程生效，重启就没了。' }}
-              </span>
             </div>
           </section>
 
-          <!-- 体检 -->
-          <section id="sec-doctor" class="card">
-            <div class="card__head">
-              <div>
-                <div class="card__title">体检</div>
-                <!-- 别再写"三样缺一不可"：大模型现在是黄字不是红字——
-                     出片那条路不用它，分镜表也可以手写。说成必需的，
-                     用户会为了一条不挡出片的警告卡在这儿。 -->
-                <div class="card__sub">
-                  红的必须先解决，黄的是"这一块还用不了"，其余照跑。
-                </div>
-              </div>
+          <!-- 体检。大模型是黄字不是红字：出片那条路不用它。 -->
+          <section id="sec-doctor" class="sec">
+            <div class="sec__head">
+              <h2 class="sec__t">体检</h2>
               <span
                 v-if="overview?.doctor"
                 class="pill"
@@ -1006,7 +889,7 @@ function scrollTo(id) {
                 {{ overview.doctor.can_run ? '可以开工' : '还不能跑' }}
               </span>
             </div>
-            <div v-if="overview?.doctor" class="card__body stack stack--sm">
+            <div v-if="overview?.doctor" class="stack stack--sm">
               <div
                 v-for="c in overview.doctor.checks"
                 :key="c.name"
@@ -1023,30 +906,25 @@ function scrollTo(id) {
         </template>
 
         <!-- 外观 -->
-        <section id="sec-look" class="card">
-          <div class="card__head">
-            <div>
-              <div class="card__title">外观</div>
-              <div class="card__sub">深色是默认。白天在办公室改分镜可以切浅色。</div>
-            </div>
+        <section id="sec-look" class="sec">
+          <div class="sec__head">
+            <h2 class="sec__t">外观</h2>
           </div>
-          <div class="card__body">
-            <div class="chips">
-              <button
-                v-for="t in [
-                  { v: 'system', l: '跟随系统' },
-                  { v: 'dark', l: '深色' },
-                  { v: 'light', l: '浅色' },
-                ]"
-                :key="t.v"
-                class="chip"
-                :class="{ 'chip--on': ui.theme === t.v }"
-                type="button"
-                @click="ui.theme = t.v"
-              >
-                {{ t.l }}
-              </button>
-            </div>
+          <div class="row">
+            <button
+              v-for="t in [
+                { v: 'system', l: '跟随系统' },
+                { v: 'dark', l: '深色' },
+                { v: 'light', l: '浅色' },
+              ]"
+              :key="t.v"
+              class="btn btn--ghost btn--sm"
+              :class="{ 'is-on': ui.theme === t.v }"
+              type="button"
+              @click="ui.theme = t.v"
+            >
+              {{ t.l }}
+            </button>
           </div>
         </section>
       </div>
@@ -1062,6 +940,7 @@ function scrollTo(id) {
   align-items: start;
 }
 
+/* 小节导航：一列安静的字，不做成按钮。 */
 .secnav {
   position: sticky;
   top: var(--s4);
@@ -1070,20 +949,15 @@ function scrollTo(id) {
   gap: 2px;
 }
 .secnav__item {
-  display: flex;
-  align-items: center;
-  gap: var(--s2);
-  padding: var(--s2) var(--s3);
+  padding: 3px 0;
   border: none;
-  border-radius: var(--r);
   background: none;
-  color: var(--text-2);
-  font-size: var(--fs-base);
+  color: var(--text-3);
+  font-size: var(--fs-sm);
   cursor: pointer;
   text-align: left;
 }
 .secnav__item:hover {
-  background: var(--surface-2);
   color: var(--text);
 }
 .secnav__persist {
@@ -1091,34 +965,32 @@ function scrollTo(id) {
   align-items: center;
   gap: var(--s2);
   margin-top: var(--s3);
-  padding: var(--s3);
-  border-radius: var(--r);
-  border: 1px solid var(--line);
-  font-size: var(--fs-sm);
-  color: var(--text-2);
+  font-size: var(--fs-xs);
+  color: var(--text-3);
   cursor: pointer;
 }
 .secnav__persist input {
   accent-color: var(--accent);
-  width: 15px;
-  height: 15px;
+  width: 14px;
+  height: 14px;
 }
 
 .grid--2 {
   grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
 }
-/* 平台选择器独占一行。它是这一节的入口——选完地址和模型都跟着变，
-   跟旁边那些手填的框挤在一起就看不出先后。 */
+/* 平台选择器独占一行：选完地址和模型都跟着变。 */
 .field--wide {
   grid-column: 1 / -1;
   max-width: 420px;
+}
+.field--narrow {
+  max-width: 230px;
 }
 .grid--3 {
   grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
 }
 
-/* 标签栏里那种「重新拉一次」的小动作。做成按钮但长得像链接，
-   免得和字段旁边真正的操作按钮混在一起。 */
+/* 标签栏里那种「重新拉一次」的小动作。做成按钮但长得像链接。 */
 .linkbtn {
   border: none;
   background: none;
@@ -1133,19 +1005,6 @@ function scrollTo(id) {
 .linkbtn:disabled {
   color: var(--text-3);
   cursor: default;
-}
-
-.tierbox {
-  padding: var(--s4);
-  border-radius: var(--r);
-  border: 1px solid var(--line);
-  background: var(--bg-sunken);
-}
-.tierbox__head {
-  font-size: var(--fs-sm);
-  font-weight: 700;
-  color: var(--accent);
-  margin-bottom: var(--s3);
 }
 
 .alert {
@@ -1202,8 +1061,7 @@ function scrollTo(id) {
 }
 
 .switch {
-  display: inline-grid;
-  grid-template-columns: auto 1fr;
+  display: inline-flex;
   align-items: center;
   gap: var(--s2);
   cursor: pointer;
@@ -1214,30 +1072,11 @@ function scrollTo(id) {
   height: 16px;
   accent-color: var(--accent);
 }
-.switch .field__hint {
-  grid-column: 2;
-  margin-top: -4px;
-}
 
-.chips {
-  display: flex;
-  gap: 6px;
-  flex-wrap: wrap;
-}
-.chip {
-  padding: 4px var(--s3);
-  border-radius: var(--r-pill);
-  border: 1px solid var(--line);
-  background: var(--surface-2);
-  color: var(--text-2);
-  font-size: var(--fs-sm);
-  cursor: pointer;
-}
-.chip--on {
-  background: var(--accent-soft);
-  border-color: var(--accent-line);
+/* 外观那三个：选中的那个点亮。 */
+.is-on {
   color: var(--accent);
-  font-weight: 600;
+  background: var(--accent-soft);
 }
 
 .spin {
@@ -1258,7 +1097,7 @@ function scrollTo(id) {
     flex-direction: row;
     flex-wrap: nowrap;
     overflow-x: auto;
-    gap: var(--s2);
+    gap: var(--s3);
     padding-bottom: var(--s2);
     scrollbar-width: none;
   }
@@ -1267,20 +1106,14 @@ function scrollTo(id) {
   }
   .secnav__item {
     white-space: nowrap;
-    border: 1px solid var(--line);
   }
   .secnav__persist {
     margin-top: 0;
     white-space: nowrap;
   }
 }
-/* 配置里有 vram_gb_override 顶着真实显存时那句提醒 */
+/* 配置里有 vram_gb_override 顶着真实显存、估算判「够」那类提醒 */
 .warn-text {
   color: var(--warn);
-}
-
-/* 「上传」那个图标转过来当下载用。为一个箭头再画一个图标不值当。 */
-.down {
-  transform: rotate(180deg);
 }
 </style>

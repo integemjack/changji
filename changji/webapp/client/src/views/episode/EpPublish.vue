@@ -10,7 +10,6 @@ import { computed, onMounted, ref, watch } from 'vue'
 
 import AppIcon from '@/components/AppIcon.vue'
 import EmptyState from '@/components/EmptyState.vue'
-import StepHeader from '@/components/StepHeader.vue'
 import { api, mediaUrl } from '@/api'
 import { humanAgo, humanTime, useAction } from '@/composables/useAction'
 import { useSession } from '@/stores/session'
@@ -69,13 +68,13 @@ const warnings = computed(() => {
   if (!p) return out
   const ratio = assets.value?.style?.aspect_ratio
   if (p.ratio && ratio && p.ratio !== ratio) {
-    out.push(`这个平台要 ${p.ratio}，项目现在是 ${ratio}。发上去会被裁或者加黑边。`)
+    out.push(`平台要 ${p.ratio}，项目是 ${ratio}`)
   }
   const planned = session.counters.plannedDurationS
   if (p.maxDurationS && planned && planned > p.maxDurationS) {
-    out.push(`这一集约 ${humanTime(planned)}，超过了平台的 ${humanTime(p.maxDurationS)} 上限。`)
+    out.push(`约 ${humanTime(planned)}，超过上限 ${humanTime(p.maxDurationS)}`)
   }
-  if (!form.value.title.trim()) out.push('标题是空的。没有标题的片子基本不会被推。')
+  if (!form.value.title.trim()) out.push('标题为空')
   return out
 })
 
@@ -251,40 +250,34 @@ function retry(record) {
 
 <template>
   <div class="stack stack--lg">
-    <StepHeader bare>
-      <template #actions>
-        <button class="btn btn--ghost" type="button" @click="newTarget">
-          <AppIcon name="plus" :size="15" />
-          加投递目标
+    <div class="toolbar">
+      <div v-if="session.hasProject && files.length" class="chips">
+        <button
+          v-for="m in [
+            { v: 'one', l: '单条' },
+            { v: 'batch', l: '批量' },
+          ]"
+          :key="m.v"
+          class="chip"
+          :class="{ 'chip--on': mode === m.v }"
+          type="button"
+          @click="mode = m.v"
+        >
+          {{ m.l }}
         </button>
-      </template>
-      <template #note>
-        <p class="notice">
-          <AppIcon name="info" :size="15" />
-          <span>
-            这里不替你登录平台。投递做的是：把成片和填好的标题、简介、话题放进目标目录，
-            或者 POST 给你自己配的 webhook，由那边的脚本或第三方工具接手上传。
-          </span>
-        </p>
-      </template>
-    </StepHeader>
+      </div>
+      <span class="spacer" />
+      <button class="btn btn--ghost btn--sm" type="button" @click="newTarget">
+        <AppIcon name="plus" :size="14" />
+        加目标
+      </button>
+    </div>
 
-    <EmptyState
-      v-if="!session.hasProject"
-      icon="folder"
-      tone="warn"
-      title="还没选项目"
-      hint="先回第一步选一个项目。"
-    >
+    <EmptyState v-if="!session.hasProject" icon="folder" tone="warn" title="还没选项目">
       <RouterLink to="/project" class="btn btn--primary">去第一步</RouterLink>
     </EmptyState>
 
-    <EmptyState
-      v-else-if="!files.length"
-      icon="film"
-      title="还没有能投的片"
-      hint="投递的是装配好的整集。回第六步把制作跑完，第七步确认过再来。"
-    >
+    <EmptyState v-else-if="!files.length" icon="film" title="还没有能投的片" hint="先把制作跑完">
       <button class="btn btn--primary" type="button" @click="emit('go', 'shots')">
         去做镜头
       </button>
@@ -293,127 +286,90 @@ function retry(record) {
     <template v-else>
       <div class="pub">
         <!-- 投递表单 -->
-        <section class="card">
-          <div class="card__head">
-            <div>
-              <div class="card__title">{{ mode === 'one' ? '投递一条' : '一次投一批' }}</div>
-              <div class="card__sub">元数据会和视频一起投出去，接手的脚本直接读。</div>
-            </div>
-            <div class="chips">
-              <button
-                v-for="m in [
-                  { v: 'one', l: '单条' },
-                  { v: 'batch', l: '批量' },
-                ]"
-                :key="m.v"
-                class="chip"
-                :class="{ 'chip--on': mode === m.v }"
-                type="button"
-                @click="mode = m.v"
-              >
-                {{ m.l }}
+        <section class="sec stack">
+          <label v-if="mode === 'one'" class="field">
+            <span class="field__label">成片</span>
+            <select v-model="form.rel" class="select">
+              <option v-for="f in files" :key="f.rel" :value="f.rel">
+                {{ f.name }}（{{ f.size_mb }} MB）
+              </option>
+            </select>
+          </label>
+
+          <div v-else class="field">
+            <span class="field__label">
+              成片
+              <button class="linkbtn tiny" type="button" @click="toggleBatchAll">
+                {{ batchRels.size === files.length ? '全不选' : '全选' }}
               </button>
+            </span>
+            <div class="picklist">
+              <label v-for="f in files" :key="f.rel" class="pick">
+                <input
+                  type="checkbox"
+                  :checked="batchRels.has(f.rel)"
+                  @change="toggleBatch(f.rel)"
+                />
+                <span class="truncate">{{ f.name }}</span>
+                <span class="tiny dim numeric nowrap">{{ f.size_mb }} MB</span>
+              </label>
             </div>
           </div>
-          <div class="card__body stack">
-            <label v-if="mode === 'one'" class="field">
-              <span class="field__label">投哪一条</span>
-              <select v-model="form.rel" class="select">
-                <option v-for="f in files" :key="f.rel" :value="f.rel">
-                  {{ f.name }}（{{ f.size_mb }} MB）
-                </option>
-              </select>
-            </label>
 
-            <div v-else class="field">
-              <span class="field__label">
-                投哪几条
-                <button class="linkbtn tiny" type="button" @click="toggleBatchAll">
-                  {{ batchRels.size === files.length ? '全不选' : '全选' }}
-                </button>
-              </span>
-              <div class="picklist">
-                <label v-for="f in files" :key="f.rel" class="pick">
-                  <input
-                    type="checkbox"
-                    :checked="batchRels.has(f.rel)"
-                    @change="toggleBatch(f.rel)"
-                  />
-                  <span class="truncate">{{ f.name }}</span>
-                  <span class="tiny dim numeric nowrap">{{ f.size_mb }} MB</span>
-                </label>
-              </div>
-              <span class="field__hint">
-                勾了 {{ batchRels.size }} 条。标题和简介默认用每一集自己的集名和梗概，不用逐条打。
-              </span>
-            </div>
+          <label class="field">
+            <span class="field__label">目标</span>
+            <select
+              v-model="form.targetId"
+              class="select"
+              :title="currentTarget ? currentTarget.exportDir || currentTarget.webhookUrl : ''"
+            >
+              <option v-if="!targets.length" value="">还没有投递目标</option>
+              <option v-for="t in targets" :key="t.id" :value="t.id">
+                {{ t.name }} · {{ platformName(t.platform) }}
+              </option>
+            </select>
+          </label>
 
-            <label class="field">
-              <span class="field__label">投到哪儿</span>
-              <select v-model="form.targetId" class="select">
-                <option v-if="!targets.length" value="">还没有投递目标</option>
-                <option v-for="t in targets" :key="t.id" :value="t.id">
-                  {{ t.name }} · {{ platformName(t.platform) }}
-                </option>
-              </select>
-              <span v-if="currentTarget" class="field__hint">
-                {{
-                  currentTarget.exportDir
-                    ? `文件会落到 ${currentTarget.exportDir}`
-                    : 'webhook 投递'
-                }}
-              </span>
-            </label>
+          <label v-if="mode === 'one'" class="field">
+            <span class="field__label">标题</span>
+            <input v-model="form.title" class="input" maxlength="120" />
+          </label>
 
-            <label v-if="mode === 'one'" class="field">
-              <span class="field__label">标题</span>
-              <input v-model="form.title" class="input" maxlength="120" />
-            </label>
+          <label v-else class="field">
+            <span class="field__label">标题模板</span>
+            <input
+              v-model="titleTemplate"
+              class="input"
+              placeholder="留空用集名；可用 {title} 集名 {episode} 集号 {index} 序号"
+            />
+          </label>
 
-            <label v-else class="field">
-              <span class="field__label">标题模板</span>
-              <input
-                v-model="titleTemplate"
-                class="input"
-                placeholder="留空就用每一集自己的集名"
-              />
-              <span class="field__hint">
-                想统一格式就填，<code class="mono">{title}</code> 是集名、
-                <code class="mono">{episode}</code> 是集号、
-                <code class="mono">{index}</code> 是第几条。
-                例如：<code class="mono">雪夜 第{index}集 | {title}</code>
-              </span>
-            </label>
+          <label v-if="mode === 'one'" class="field">
+            <span class="field__label">简介</span>
+            <textarea v-model="form.description" class="textarea" rows="4" maxlength="2000" />
+          </label>
 
-            <label v-if="mode === 'one'" class="field">
-              <span class="field__label">简介</span>
-              <textarea v-model="form.description" class="textarea" rows="4" maxlength="2000" />
-            </label>
+          <label class="field">
+            <span class="field__label">话题</span>
+            <input v-model="form.tagsText" class="input" placeholder="空格或逗号分隔" />
+            <span v-if="tags.length" class="row row--wrap" style="margin-top: 6px">
+              <span v-for="t in tags" :key="t" class="pill pill--neutral">#{{ t }}</span>
+            </span>
+          </label>
 
-            <label class="field">
-              <span class="field__label">话题</span>
-              <input
-                v-model="form.tagsText"
-                class="input"
-                placeholder="空格或逗号分隔，例如：都市 反转 短剧"
-              />
-              <span v-if="tags.length" class="row row--wrap" style="margin-top: 6px">
-                <span v-for="t in tags" :key="t" class="pill pill--neutral">#{{ t }}</span>
-              </span>
-            </label>
-
-            <div v-if="mode === 'one' && warnings.length" class="warns">
-              <p v-for="(w, i) in warnings" :key="i" class="warns__row">
-                <AppIcon name="warn" :size="14" />
-                <span>{{ w }}</span>
-              </p>
-            </div>
+          <div v-if="mode === 'one' && warnings.length" class="warns">
+            <p v-for="(w, i) in warnings" :key="i" class="warns__row">
+              <AppIcon name="warn" :size="14" />
+              <span>{{ w }}</span>
+            </p>
           </div>
-          <div class="card__foot">
+
+          <div class="row">
             <button
               v-if="mode === 'one'"
               class="btn btn--primary"
               type="button"
+              title="放进目标目录或 POST 给 webhook，不替你登录平台"
               :disabled="!targets.length || isBusy('deliver')"
               @click="deliver"
             >
@@ -424,47 +380,42 @@ function retry(record) {
               v-else
               class="btn btn--primary"
               type="button"
+              title="放进目标目录或 POST 给 webhook，不替你登录平台；逐条投，一条失败不影响其余"
               :disabled="!targets.length || !batchRels.size || isBusy('batch')"
               @click="deliverBatch"
             >
               <AppIcon name="upload" :size="15" />
-              {{ isBusy('batch') ? `正在投 ${batchRels.size} 条…` : `投递这 ${batchRels.size} 条` }}
+              {{ isBusy('batch') ? `投 ${batchRels.size} 条中…` : `投递 ${batchRels.size} 条` }}
             </button>
             <span class="spacer" />
             <span v-if="mode === 'one' && currentFile" class="tiny dim numeric">
               {{ currentFile.size_mb }} MB
-            </span>
-            <span v-else-if="mode === 'batch'" class="tiny dim">
-              一条一条来，中间某条失败不影响其余的
             </span>
           </div>
         </section>
 
         <!-- 侧栏：预览 + 目标 -->
         <div class="stack">
-          <section v-if="currentFile" class="card">
-            <div class="card__head"><div class="card__title">预览</div></div>
-            <video
-              class="pub__video"
-              :src="mediaUrl(session.projectPath, currentFile.rel)"
-              controls
-              preload="metadata"
-              playsinline
-            />
-          </section>
+          <video
+            v-if="currentFile"
+            class="pub__video"
+            :src="mediaUrl(session.projectPath, currentFile.rel)"
+            controls
+            preload="metadata"
+            playsinline
+          />
 
-          <section class="card">
-            <div class="card__head">
-              <div class="card__title">投递目标</div>
-              <button class="btn btn--ghost btn--sm" type="button" @click="newTarget">
-                <AppIcon name="plus" :size="14" />
-              </button>
+          <section class="sec">
+            <div class="sec__head">
+              <h2 class="sec__t">投递目标</h2>
+              <span class="spacer" />
+              <div class="sec__acts">
+                <button class="btn btn--ghost btn--sm" type="button" @click="newTarget">
+                  <AppIcon name="plus" :size="14" />
+                </button>
+              </div>
             </div>
-            <div v-if="!targets.length" class="card__body">
-              <p class="small muted">
-                还没配过。加一个：选平台，填一个投递目录（或者 webhook 地址）就行。
-              </p>
-            </div>
+            <p v-if="!targets.length" class="tiny dim">还没有目标</p>
             <div v-else class="tgt__list">
               <div v-for="t in targets" :key="t.id" class="tgt">
                 <span class="tgt__text">
@@ -491,10 +442,10 @@ function retry(record) {
       </div>
 
       <!-- 投递记录 -->
-      <section v-if="records.length" class="card">
-        <div class="card__head">
-          <div class="card__title">投递记录</div>
-          <span class="pill pill--neutral">{{ records.length }} 条</span>
+      <section v-if="records.length" class="sec">
+        <div class="sec__head">
+          <h2 class="sec__t">投递记录</h2>
+          <span class="tiny dim">{{ records.length }} 条</span>
         </div>
         <div class="rec__list">
           <div v-for="r in records" :key="r.id" class="rec">
@@ -551,19 +502,17 @@ function retry(record) {
               v-model="editing.exportDir"
               class="input mono"
               placeholder="D:\待发布\抖音"
+              title="视频和同名 json 元数据一起放进去"
             />
-            <span class="field__hint">视频和一份同名的 json 元数据会一起放进去。</span>
           </label>
           <label class="field">
-            <span class="field__label">webhook（可选）</span>
+            <span class="field__label">webhook</span>
             <input
               v-model="editing.webhookUrl"
               class="input mono"
-              placeholder="https://…"
+              placeholder="https://…（可选）"
+              title="投递时把元数据 POST 到这个地址"
             />
-            <span class="field__hint">
-              投递时会把元数据 POST 过去。填了地址就等于同意往那台服务器发数据。
-            </span>
           </label>
           <label class="field">
             <span class="field__label">备注</span>
@@ -579,7 +528,7 @@ function retry(record) {
           >
             保存
           </button>
-          <button class="btn btn--ghost" type="button" @click="editing = null">取消</button>
+          <button class="btn btn--ghost btn--sm" type="button" @click="editing = null">取消</button>
         </div>
       </div>
     </div>
@@ -587,23 +536,6 @@ function retry(record) {
 </template>
 
 <style scoped>
-.notice {
-  display: flex;
-  align-items: flex-start;
-  gap: var(--s2);
-  padding: var(--s3) var(--s4);
-  border-radius: var(--r);
-  background: var(--info-soft);
-  border: 1px solid color-mix(in srgb, var(--info) 28%, transparent);
-  color: var(--text-2);
-  font-size: var(--fs-base);
-  line-height: 1.6;
-}
-.notice :deep(svg) {
-  color: var(--info);
-  margin-top: 3px;
-}
-
 .pub {
   display: grid;
   grid-template-columns: minmax(0, 1.15fr) minmax(0, 0.85fr);
@@ -615,6 +547,7 @@ function retry(record) {
   display: block;
   width: 100%;
   max-height: 340px;
+  border-radius: var(--r);
   background: #000;
 }
 
@@ -688,18 +621,19 @@ function retry(record) {
 .warns {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  padding: var(--s3);
+  gap: 4px;
+  padding: var(--s2) var(--s3);
   border-radius: var(--r);
   background: var(--warn-soft);
 }
 .warns__row {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   gap: var(--s2);
+  margin: 0;
   color: var(--warn);
   font-size: var(--fs-sm);
-  line-height: 1.6;
+  line-height: 1.5;
 }
 
 .tgt__list,
@@ -712,7 +646,7 @@ function retry(record) {
   display: flex;
   align-items: center;
   gap: var(--s2);
-  padding: var(--s3) var(--s4);
+  padding: var(--s2) 0;
   border-bottom: 1px solid var(--line);
 }
 .tgt:last-child,

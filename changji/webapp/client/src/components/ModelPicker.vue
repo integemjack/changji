@@ -8,7 +8,7 @@
  * 设置页写着一套、初始化页写着另一套，用户不知道该信哪个。
  *
  * 两处唯一的差别在外面那圈：初始化页是一整页带「先跳过 / 进入首页」，
- * 设置页是一张卡。所以那两个按钮走插槽，组件自己不管跳转。
+ * 设置页是一节。所以那两个按钮走插槽，组件自己不管跳转。
  *
  * ---
  *
@@ -333,13 +333,13 @@ onUnmounted(stopPolling)
 
 <template>
   <div class="picker" :class="{ 'picker--dense': dense }">
-    <p v-if="loading" class="muted">正在读模型清单…</p>
+    <p v-if="loading" class="tiny dim">正在读模型清单…</p>
 
     <div v-else-if="loadError" class="card card--bad">
-      <div class="card__body stack">
+      <div class="card__body stack stack--sm">
         <p class="strong">读不到模型清单</p>
         <p class="small dim">{{ loadError }}</p>
-        <div><button class="btn" type="button" @click="load">重试</button></div>
+        <div><button class="btn btn--sm" type="button" @click="load">重试</button></div>
       </div>
     </div>
 
@@ -349,49 +349,44 @@ onUnmounted(stopPolling)
         <div class="fact">
           <span class="fact__k tiny dim">显卡</span>
           <span class="fact__v">
-            {{ state.gpu ? state.gpu.name : '没探测到显卡' }}
+            {{ state.gpu ? state.gpu.name : '没探测到' }}
             <span v-if="state.gpu" class="numeric dim">
               · {{ state.gpu.vramGb.toFixed(1) }} GB
               <template v-if="state.gpu.count > 1">× {{ state.gpu.count }}</template>
             </span>
           </span>
           <span v-if="!state.detected" class="tiny warnish">
-            探测不到就按 {{ state.vramGb.toFixed(0) }} GB 估，推荐可能偏保守
+            探不到，按 {{ state.vramGb.toFixed(0) }} GB 估
           </span>
         </div>
         <div class="fact">
-          <span class="fact__k tiny dim">模型放在</span>
+          <span class="fact__k tiny dim">模型目录</span>
           <input
             v-model="dir"
             class="input input--path mono"
             :disabled="running"
             spellcheck="false"
+            title="改成别的盘也行，写进配置的就是这个目录"
           />
-          <span class="tiny dim">
-            改成别的盘也行，写进配置的就是这个目录。
-          </span>
         </div>
         <div class="fact">
-          <span class="fact__k tiny dim">这个盘还剩</span>
+          <span class="fact__k tiny dim">盘剩余</span>
           <span class="fact__v numeric">
             {{ state.diskFreeBytes ? humanBytes(state.diskFreeBytes) : '看不出来' }}
           </span>
         </div>
         <div class="fact">
-          <span class="fact__k tiny dim">从哪儿下</span>
+          <span class="fact__k tiny dim">下载源</span>
           <select v-model="source" class="select select--src" :disabled="running">
             <option v-for="src in state.sources" :key="src.id" :value="src.id">
               {{ src.label }}{{ src.probe ? ` · ${src.probe}` : '' }}
             </option>
           </select>
-          <span class="tiny dim">
-            <template v-if="state.sourceHow === 'probed'">
-              探过了：{{ state.sources.filter((x) => x.probe).map((x) => `${x.label} ${x.probe}`).join(' · ') }}
-            </template>
-            <template v-else-if="state.sourceHow === 'env'">
-              被环境变量 CHANGJI_MODEL_SOURCE 顶着
-            </template>
-            <template v-else>没探成（这台机器上没有 curl），用的默认值</template>
+          <span v-if="state.sourceHow === 'env'" class="tiny dim">
+            被环境变量 CHANGJI_MODEL_SOURCE 顶着
+          </span>
+          <span v-else-if="state.sourceHow !== 'probed'" class="tiny dim">
+            没探成（没有 curl），用的默认值
           </span>
         </div>
         <div class="fact">
@@ -401,11 +396,11 @@ onUnmounted(stopPolling)
             <template v-else-if="state.tool">{{ state.tool }} · 单连接</template>
             <template v-else>没找到</template>
           </span>
-          <span v-if="state.tool === 'curl'" class="tiny warnish">
-            装上 aria2 会快很多：镜像单连接只有 1～2 MB/s
+          <span v-if="state.tool === 'curl'" class="tiny warnish mono">
+            单连接慢，装 aria2：apt-get install -y aria2 / winget install aria2.aria2
           </span>
-          <span v-else-if="!state.tool" class="tiny warnish">
-            装一个再回来：apt-get install -y aria2，或 winget install aria2.aria2
+          <span v-else-if="!state.tool" class="tiny warnish mono">
+            装一个再回来：apt-get install -y aria2 / winget install aria2.aria2
           </span>
         </div>
       </div>
@@ -430,14 +425,14 @@ onUnmounted(stopPolling)
                 : progress.state === 'done'
                   ? '全部就绪'
                   : progress.state === 'canceled'
-                    ? '已停下，下好的都留着'
+                    ? '已停下'
                     : '有文件没下下来'
             "
             :detail="`${humanBytes(progress.downloaded)} / ${humanBytes(progress.total)}`"
           />
           <div class="row row--between tiny dim">
             <span class="numeric">
-              <template v-if="progress.source">从 {{ progress.source }} 下 · </template>
+              <template v-if="progress.source">{{ progress.source }} · </template>
               <template v-if="running && progress.speedBps > 0">
                 {{ humanRate(progress.speedBps) }}
                 <template v-if="progress.etaSeconds > 0">
@@ -480,19 +475,20 @@ onUnmounted(stopPolling)
           <p v-if="progress.error" class="small warnish">{{ progress.error }}</p>
 
           <div class="row">
-            <button v-if="running" class="btn btn--danger" type="button" @click="stop">
-              <AppIcon name="stop" :size="15" />
+            <button v-if="running" class="btn btn--danger btn--sm" type="button" @click="stop">
+              <AppIcon name="stop" :size="14" />
               停下
             </button>
             <template v-else>
               <button
                 v-if="failedItems.length || progress.state === 'canceled'"
-                class="btn"
+                class="btn btn--sm"
                 type="button"
+                title="从断点续"
                 @click="start"
               >
-                <AppIcon name="refresh" :size="15" />
-                接着下（从断点续）
+                <AppIcon name="refresh" :size="14" />
+                接着下
               </button>
               <!-- 初始化页在这儿放「进入首页」；设置页什么都不放。 -->
               <slot name="done" :state="progress.state" />
@@ -502,21 +498,18 @@ onUnmounted(stopPolling)
       </div>
 
       <!-- ---------- 选版本 ---------- -->
-      <div v-for="g in groups" :key="g.key" class="card group">
-        <div class="card__head">
-          <div>
-            <p class="card__title">
-              {{ g.title }}
-              <span v-if="!g.required" class="pill pill--neutral tiny">可选</span>
-              <span v-if="g.satisfied" class="pill pill--ok tiny">已就绪</span>
-            </p>
-            <p class="card__sub">{{ g.purpose }}</p>
-          </div>
+      <!-- 两个下拉框对上用户要做的两步判断：先挑哪个模型，再挑哪一档精度。
+           家族那段话不摆出来，只留选中那一档自己的一句。 -->
+      <section v-for="g in groups" :key="g.key" class="sec group">
+        <div class="sec__head">
+          <h3 class="sec__t" :title="g.purpose">{{ g.title }}</h3>
+          <span v-if="!g.required" class="pill pill--neutral tiny">可选</span>
+          <span v-if="g.satisfied" class="pill pill--ok tiny">已就绪</span>
         </div>
-        <div class="card__body">
+        <div class="stack stack--sm">
           <div class="pick">
             <label class="pick__field">
-              <span class="field__label">用哪个模型</span>
+              <span class="field__label">模型</span>
               <select
                 class="select"
                 :disabled="running"
@@ -534,9 +527,7 @@ onUnmounted(stopPolling)
             >
               <span class="field__label">
                 精度
-                <span class="tiny dim">
-                  （共 {{ currentFamilyChoice(g).options.length }} 档）
-                </span>
+                <span class="tiny dim">{{ currentFamilyChoice(g).options.length }} 档</span>
               </span>
               <select v-model="picks[g.key]" class="select" :disabled="running">
                 <option
@@ -550,8 +541,6 @@ onUnmounted(stopPolling)
             </label>
           </div>
 
-          <p class="pick__note small dim">{{ currentFamilyChoice(g)?.note }}</p>
-
           <div v-if="pickedOption(g)" class="pick__row">
             <span v-if="state.selected[g.key] === pickedOption(g).id" class="pill pill--info tiny">
               正在用
@@ -559,88 +548,75 @@ onUnmounted(stopPolling)
             <span
               v-if="state.recommended[g.key] === pickedOption(g).id"
               class="pill pill--accent tiny"
-            >按你的显卡推荐</span>
+            >推荐</span>
             <span v-if="pickedOption(g).complete" class="pill pill--ok tiny">盘上已有</span>
-            <!-- **显存门槛说的是"权重能常驻"，不是"跑不起来的下限"。**
-                 低于它照样出得来东西，只是权重放内存、每一步等 PCIe，
-                 慢几倍。所以够不着时是提醒，不是禁止。 -->
+            <!-- 显存门槛说的是"权重能常驻"，不是"跑不起来"。够不着是提醒，不是禁止。 -->
             <span
               v-if="pickedOption(g).minVramGb"
               class="pill tiny"
               :class="pickedOption(g).fits ? 'pill--ok' : 'pill--warn'"
             >
               {{ vramLabel(pickedOption(g)) }}
-              {{ pickedOption(g).fits ? '权重可常驻显存' : '这张卡放不下权重，会放内存跑，慢几倍' }}
+              {{ pickedOption(g).fits ? '常驻显存' : '放内存，慢' }}
             </span>
             <span class="spacer" />
             <span v-if="pickedOption(g).totalBytes" class="tiny dim numeric nowrap">
-              这一套 {{ humanBytes(pickedOption(g).totalBytes) }}
+              {{ humanBytes(pickedOption(g).totalBytes) }}
             </span>
           </div>
 
-          <p v-if="pickedOption(g)?.note" class="pick__note small dim">
+          <!-- 选中那一档自己的一句。这是挑档的唯一依据，留着。 -->
+          <p v-if="pickedOption(g)?.note" class="tiny dim">
             {{ pickedOption(g).note }}
           </p>
 
-          <!-- **展开条件要带上"这一档有文件"。** 只看 expanded 的话，
-               展开之后再选「不下载」会留下一个空的灰盒子——那玩意儿看着
-               像是内容没加载出来。 -->
+          <!-- 展开条件要带上"这一档有文件"，不然选「不下载」会留个空盒子。 -->
           <button
             v-if="pickedFiles(g).length > 0"
             class="btn btn--ghost btn--sm files__toggle"
             type="button"
             @click="expanded[g.key] = !expanded[g.key]"
           >
-            {{ expanded[g.key] ? '收起' : '看这一档包含哪几个文件' }}
+            {{ expanded[g.key] ? '收起' : '文件明细' }}
           </button>
           <ul v-if="expanded[g.key] && pickedFiles(g).length > 0" class="files">
             <li v-for="f in pickedFiles(g)" :key="f.name" class="file">
-              <span class="file__name mono truncate">{{ f.name }}</span>
+              <span class="file__name mono truncate" :title="f.note">{{ f.name }}</span>
               <span class="file__size numeric tiny dim nowrap">{{ humanBytes(f.bytes) }}</span>
               <span v-if="f.present" class="pill pill--ok tiny">已有</span>
-              <p class="file__note tiny dim">{{ f.note }}</p>
             </li>
           </ul>
         </div>
-      </div>
+      </section>
 
       <!-- ---------- 底下那条 ---------- -->
       <div class="foot">
         <div class="foot__sum">
-          <p class="strong numeric">
+          <span class="strong numeric">
             一共 {{ humanBytes(plan.total) }}
             <template v-if="plan.have > 0">
               <span class="dim">· 盘上已有 {{ humanBytes(plan.have) }}</span>
             </template>
-          </p>
-          <p class="tiny dim">
+          </span>
+          <span class="tiny dim numeric">
             <template v-if="plan.need > 0">
-              这次要下 {{ humanBytes(plan.need) }}。按 10 MB/s 算大约
-              {{ humanTime(plan.need / 10e6) }}，中途可以停，下次接着下。
+              要下 {{ humanBytes(plan.need) }} · 约 {{ humanTime(plan.need / 10e6) }}，中途可停
             </template>
-            <template v-else-if="unchanged">
-              选的就是现在用的这一套，盘上都齐了。点一下会把这一套的
-              十来个配置项重写一遍——配置手改坏了的时候用得上。
-            </template>
-            <template v-else>
-              选中的这几档都已经在盘上了，点一下就切过去，一个字节都不用下。
-            </template>
-          </p>
-          <p v-if="diskShort" class="tiny bad">
-            这个盘只剩 {{ humanBytes(state.diskFreeBytes) }}，装不下。
-            换个目录，或者挑小一档的模型。
-          </p>
+            <template v-else-if="unchanged">和现在用的一套一样</template>
+            <template v-else>都在盘上，直接切</template>
+          </span>
+          <span v-if="diskShort" class="tiny bad">
+            盘只剩 {{ humanBytes(state.diskFreeBytes) }}，装不下：换目录或挑小一档
+          </span>
         </div>
         <div class="foot__act">
           <slot name="actions" :running="running" />
-          <!-- **没改动时不禁用，只改文案。** 禁掉的话配置一旦漂了就没法从
-               界面修：2026-09-10 就撞上过——上一版把 [tiers].final_steps 写死
-               成 6，改好代码之后想重写一遍配置，而按钮因为"选的和在用的一样"
-               是灰的，只能去改配置文件。重写一遍是幂等的，拦着没有好处。 -->
+          <!-- 没改动时不禁用，只改文案：重写一遍配置是幂等的，配置漂了时靠它修。 -->
           <button
-            class="btn btn--primary btn--lg"
+            class="btn btn--primary"
             type="button"
             :disabled="running || starting || !state.tool"
+            :title="unchanged && plan.need === 0 ? '把这一套的配置项重写一遍，配置手改坏了时用' : ''"
             @click="start"
           >
             <AppIcon
@@ -654,17 +630,14 @@ onUnmounted(stopPolling)
                 : plan.need > 0
                   ? '下载并使用'
                   : unchanged
-                    ? '重新写一遍配置'
+                    ? '重写配置'
                     : '换成这一套'
             }}
           </button>
         </div>
       </div>
 
-      <p v-if="!dense" class="tiny dim center">
-        配置写在 <span class="mono">{{ state.configFile }}</span>。
-        之后想换模型，去设置页的「模型」那一节，或者直接改这个文件。
-      </p>
+      <p v-if="!dense" class="tiny dim mono center">配置文件：{{ state.configFile }}</p>
     </template>
   </div>
 </template>
@@ -685,14 +658,6 @@ onUnmounted(stopPolling)
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
   gap: var(--s4);
-  padding: var(--s4);
-  border: 1px solid var(--line);
-  border-radius: var(--r-lg);
-  background: var(--surface);
-}
-.picker--dense .facts {
-  background: var(--surface-3);
-  border-color: transparent;
 }
 .fact {
   display: flex;
@@ -721,11 +686,6 @@ onUnmounted(stopPolling)
 
 /* ---------- 选项 ---------- */
 
-.group .card__body {
-  display: flex;
-  flex-direction: column;
-  gap: var(--s2);
-}
 .select--src {
   height: 30px;
   padding: 0 8px;
@@ -744,9 +704,6 @@ onUnmounted(stopPolling)
   flex-direction: column;
   gap: 4px;
   min-width: 0;
-}
-.pick__note {
-  line-height: 1.7;
 }
 .pick__row {
   display: flex;
@@ -777,10 +734,6 @@ onUnmounted(stopPolling)
   grid-template-columns: 1fr auto auto;
   gap: var(--s2);
   align-items: center;
-}
-.file__note {
-  grid-column: 1 / -1;
-  line-height: 1.6;
 }
 
 /* ---------- 下载进度 ---------- */
@@ -843,6 +796,7 @@ onUnmounted(stopPolling)
 
 /* ---------- 底栏 ---------- */
 
+/* 初始化页上它粘在底下，是真正浮着的东西，所以带底和边。 */
 .foot {
   position: sticky;
   bottom: 0;
@@ -857,11 +811,13 @@ onUnmounted(stopPolling)
   backdrop-filter: blur(12px);
   box-shadow: var(--shadow-1);
 }
-/* 设置页那张卡自己会滚，粘在底下的话会盖住下面几节。 */
+/* 设置页里不粘、不装盒：就是一行字和一个按钮。 */
 .picker--dense .foot {
   position: static;
-  background: var(--surface-3);
-  border-color: transparent;
+  padding: 0;
+  border: none;
+  background: none;
+  backdrop-filter: none;
   box-shadow: none;
 }
 .foot__sum {
@@ -876,7 +832,7 @@ onUnmounted(stopPolling)
   gap: var(--s2);
   align-items: center;
 }
-/* 「上传」那个图标转过来当下载用。为一个箭头再画一个图标不值当。 */
+/* 「上传」那个图标转过来当下载用。 */
 .down {
   transform: rotate(180deg);
 }
