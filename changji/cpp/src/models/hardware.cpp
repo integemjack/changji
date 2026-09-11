@@ -467,7 +467,11 @@ std::optional<double> free_vram_gb() {
         if (auto gb = parse_vm_stat(r.out); gb.has_value()) return gb;
     }
     return std::nullopt;
-#endif
+// **这里必须是 #else，不能是 #endif。** Apple 那一支已经 return 了，
+// 看着后面的代码"跑不到"，但它照样要**编译**——而 Nvml 那个类整个
+// 在 !__APPLE__ 里，Mac 上根本不存在。2026-09-11 就是这么挂的：
+// Windows 和 Linux 全绿，macOS 单元测试编不过（undeclared identifier）。
+#else
     // **先问 NVML**（进程内、不 fork、微秒级），问不到再走老路。
     // 理由写在 Nvml 上面。
     if (auto t = Nvml::totals(); t.has_value()) return t->free_gb;
@@ -479,6 +483,7 @@ std::optional<double> free_vram_gb() {
         {"--query-gpu=memory.free", "--format=csv,noheader,nounits"}, 5000);
     if (!r.launched || r.exit_code != 0) return std::nullopt;
     return parse_free_vram(r.out);
+#endif
 }
 
 std::optional<VramTotals> vram_totals_gb() {

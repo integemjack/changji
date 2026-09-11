@@ -174,12 +174,19 @@ TEST_CASE("问实时空闲显存：有卡就问得到，没卡就老老实实说
     if (gb.has_value()) {
         CHECK(*gb >= 0.0);
         CHECK(*gb < 4096.0);   // 2026 年还没有 4 TB 显存的卡
+#if !defined(__APPLE__)
+        // 空闲不可能比整卡还多。**这一条最要紧**：调度器拿它和
+        // "这一路要占多少"直接比，虚报一点点就是一次 OOM。
+        //
+        // **Mac 上不比。** 那边是统一内存：free_vram_gb 报的是 vm_stat
+        // 算出来的"还能用多少系统内存"，而 gpu->vram_gb() 是
+        // hw.memsize × iogpu.wired_limit_pct（默认七成半）。两个数出自
+        // 两套口径，空闲大过那个七成半是正常的，不是错。
         const HardwareProfile p = HardwareProfile::detect();
         if (p.gpu.has_value()) {
-            // 空闲不可能比整卡还多。**这一条最要紧**：调度器拿它和
-            // "这一路要占多少"直接比，虚报一点点就是一次 OOM。
             CHECK(*gb <= p.gpu->vram_gb() + 1.0);
         }
+#endif
     }
     // 没值也是合法答案（没装 NVIDIA 驱动的机器），不该因此判失败。
 }
