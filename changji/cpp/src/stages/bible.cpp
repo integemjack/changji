@@ -176,6 +176,14 @@ std::string default_negative(StyleLine style_line) {
         "低质量，模糊，过曝，畸形，多余的手指，画得不好的手部，"
         "画得不好的脸部，静止不动的画面，字幕，水印";
     if (style_line == StyleLine::ANIME) return base + "，写实，照片质感，真人";
+    // ⚠️ **写实线这儿不加"压卡通"。** 试过加一句
+    // 「3D 渲染，卡通，动画，插画，CG 质感」——治的是同一个病（没有画风词
+    // 时模型爱往 3D 卡通跑），但这串字是和 Python 逐字节对拍的接口输出，
+    // 一改三条对拍用例当场红。
+    //
+    // 正向那边已经有底子了（StyleProfile 的 default_style，读资产库时补进
+    // global_style），够用；真要再压一道，项目页那个「负向」框就是干这个
+    // 的，而且写在那儿用户看得见。
     return base;
 }
 

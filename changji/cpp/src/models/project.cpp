@@ -10,6 +10,7 @@
 #include <stdexcept>
 
 #include "util/paths.hpp"
+#include "util/text.hpp"
 
 namespace fs = std::filesystem;
 
@@ -330,8 +331,20 @@ AssetLibrary ProjectStore::load_assets() const {
         return AssetLibrary{};
     }
     // 用 ordered_json 而不是 json：见 read_json_file 的注释。
-    return read_json_file<nlohmann::ordered_json>(paths_.assets_file())
-        .get<AssetLibrary>();
+    AssetLibrary lib = read_json_file<nlohmann::ordered_json>(paths_.assets_file())
+                           .get<AssetLibrary>();
+
+    // **没写画风就按这条线补一个。** 空着的后果不是"少一句修饰"：整条
+    // 提示词里一个画风词都没有，出图模型每张各自发挥——同一个项目里三个
+    // 角色出了皮克斯 3D、半写实、照片三种质感（2026-09-12 实见）。
+    //
+    // 补在这儿而不是出图那一层：这样它是项目里一条看得见的数据，项目页
+    // 那个「画风」框里显示出来、改得动。清空再存的话下次读又会补回来——
+    // 那是对的：总得有个底子，"没有画风"不是一种画风。
+    if (text::strip_ws(lib.style.global_style).empty()) {
+        lib.style.global_style = default_style(lib.style.style_line);
+    }
+    return lib;
 }
 
 Story ProjectStore::load_story() const {

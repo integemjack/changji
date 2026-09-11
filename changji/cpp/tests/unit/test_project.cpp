@@ -12,6 +12,7 @@
 
 #include <doctest/doctest.h>
 
+#include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <ctime>
@@ -80,6 +81,61 @@ TEST_CASE("读 Python 写的项目：中文目录名、中文内容") {
         CHECK(lib.locations.size() == 2);
         CHECK(lib.validate().empty());
     }
+}
+
+TEST_CASE("没写画风的项目，读出来要有这条线的底子") {
+    // **2026-09-12 用户报的那件事就是它空着。** 同一个项目里三个角色出了
+    // 皮克斯 3D、半写实、照片三种质感，空景图也是一会 CG 一会实拍——
+    // 因为整条提示词里一个画风词都没有：`style_line` 只管拼接用的逗号，
+    // 而唯一的画风字段 `global_style` 默认是空的。
+    //
+    // 补在读这一步，不在出图那一层：这样它是项目里一条看得见的数据，
+    // 项目页那个「画风」框显示得出来、改得动。
+    const fs::path root =
+        fs::temp_directory_path() /
+        ("changji_style_" + std::to_string(
+            std::chrono::steady_clock::now().time_since_epoch().count()));
+    fs::create_directories(root);
+
+    const auto write_assets = [&](const char* line, const char* style) {
+        std::ofstream out(root / "assets.json", std::ios::binary);
+        out << R"({"characters":{},"locations":{},"style":{)"
+            << R"("style_line":")" << line << R"(",)"
+            << R"("global_style":")" << style << R"(",)"
+            << R"("negative_prompt":"","aspect_ratio":"9:16"}})";
+    };
+
+    const ProjectStore store(root);
+
+    SUBCASE("写实线：空的补成实拍那句") {
+        write_assets("realistic", "");
+        const AssetLibrary lib = store.load_assets();
+        CHECK(lib.style.global_style == default_style(StyleLine::REALISTIC));
+        CHECK(lib.style.global_style.find("实拍") != std::string::npos);
+    }
+
+    SUBCASE("动漫线补的是另一句") {
+        write_assets("anime", "");
+        const AssetLibrary lib = store.load_assets();
+        CHECK(lib.style.global_style == default_style(StyleLine::ANIME));
+        // 两条线不能补成同一句，否则选了等于没选
+        CHECK(default_style(StyleLine::ANIME) !=
+              default_style(StyleLine::REALISTIC));
+    }
+
+    SUBCASE("用户自己写了就一个字都不动") {
+        write_assets("realistic", "电影感冷调，胶片颗粒");
+        CHECK(store.load_assets().style.global_style == "电影感冷调，胶片颗粒");
+    }
+
+    SUBCASE("只有空格也算没写") {
+        write_assets("realistic", "   ");
+        CHECK(store.load_assets().style.global_style ==
+              default_style(StyleLine::REALISTIC));
+    }
+
+    std::error_code ec;
+    fs::remove_all(root, ec);
 }
 
 TEST_CASE("Episode 的查询方法与 Python 一致") {

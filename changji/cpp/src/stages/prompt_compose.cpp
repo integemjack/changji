@@ -127,6 +127,12 @@ PromptBundle PromptComposer::compose(const Shot& shot) const {
     }
 
     // ---- 风格层 ----
+    //
+    // **这里不给默认值，补默认是读资产库那一步的事**（见
+    // ProjectStore::load_assets）。在这儿补的话，同一份 assets.json 走
+    // 出图和走界面显示会得到两种画风，而用户在项目页的「画风」框里看到的
+    // 是空的——他改不了一个看不见的东西。
+    // 这一段还和 Python 逐字节对拍，见本文件开头。
     if (!assets_.style.global_style.empty()) {
         layers.push_back(assets_.style.global_style);
     }

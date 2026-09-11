@@ -91,6 +91,13 @@ const char* to_string(StyleLine v) {
     return v == StyleLine::ANIME ? "anime" : "realistic";
 }
 
+std::string default_style(StyleLine style_line) {
+    if (style_line == StyleLine::ANIME) {
+        return "日系二维动画，赛璐璐上色，干净线条，平涂阴影";
+    }
+    return "实拍摄影，真实人像，皮肤有自然纹理，柔和自然光，浅景深";
+}
+
 // ── AppearanceBlock ────────────────────────────────────────────────────
 
 std::string AppearanceBlock::render(StyleLine style_line) const {
