@@ -1,9 +1,11 @@
 #include "http/readonly.hpp"
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <filesystem>
 
+#include "config/settings.hpp"
 #include "models/hardware.hpp"
 #include "models/project.hpp"
 #include "util/fs_time.hpp"
@@ -229,12 +231,27 @@ ApiResult get_assets(const std::string& path) {
         throw ApiError(400, e.what());
     }
 
-    // 参考图只有图像工作流那条路会用。默认装机没有 image.json，
-    // 首帧走视频模型，而那条路直接忽略参考图。
-    // 不说清楚的话，用户传了图、镜头也退回重跑了，画面却一点没变。
-    std::error_code ec;
-    const bool has_image_wf =
-        fs::is_regular_file(store.root() / "workflows" / "image.json", ec);
+    // 参考图一定会**原样交给出图模型**（见 sd_image.cpp 里的 ref_images）。
+    // 但只有**图像编辑类**模型真的照着画——纯文生图的收下之后一声不吭地
+    // 忽略，画面一点不变。不说清楚的话，用户传了图、镜头也退回重跑了，
+    // 画面却一模一样，而且没有任何报错。
+    //
+    // 判据是模型文件名：Qwen-Image-Edit、Flux Kontext 这一类名字里都带
+    // edit 或 kontext。认错了**宁可往"多提醒一句"那边错**——说"不看"而其实
+    // 在看，用户至多多读一行字；反过来那一半才是前面说的那种查不出来的
+    // 白跑。
+    //
+    // （这一段原来判的是项目里有没有 workflows/image.json。那是 ComfyUI
+    // 时代的东西，这个二进制里一行都不剩了，于是它永远为假——页面上那句
+    // "把工作流存成 workflows/image.json" 指向一个不存在的做法。）
+    const config::Settings img_settings = config::load_settings(store.root());
+    std::string image_model =
+        fs::path(paths::from_utf8(img_settings.models.image)).filename().string();
+    for (char& ch : image_model) {
+        ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+    }
+    const bool refs_honored = image_model.find("edit") != std::string::npos ||
+                              image_model.find("kontext") != std::string::npos;
 
     const StyleLine line = assets.style.style_line;
 
@@ -278,11 +295,11 @@ ApiResult get_assets(const std::string& path) {
     }
 
     return {200, {
-        {"reference_images_used", has_image_wf},
-        {"reference_hint", has_image_wf ? "" :
-            "当前用视频模型出首帧，这条路不看参考图。"
-            "要让参考图生效，把一个图像工作流存成项目里的 "
-            "workflows/image.json。"},
+        {"reference_images_used", refs_honored},
+        {"reference_hint", refs_honored ? "" :
+            "参考图会传给出图模型，但当前这个是纯文生图的，它不会照着画——"
+            "画面靠的是下面那段拼出来的提示词。要让参考图真生效，"
+            "去设置页换一个图像编辑模型（Qwen-Image-Edit、Flux Kontext 这类）。"},
         {"characters", characters},
         {"locations", locations},
         {"style", {

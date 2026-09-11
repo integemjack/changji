@@ -273,7 +273,7 @@
             "space": "两侧是斑驳砖墙的窄巷"
           }
         ],
-        "reference_hint": "当前用视频模型出首帧，这条路不看参考图。要让参考图生效，把一个图像工作流存成项目里的 workflows/image.json。",
+        "reference_hint": "参考图会传给出图模型，但当前这个是纯文生图的，它不会照着画——画面靠的是下面那段拼出来的提示词。要让参考图真生效，去设置页换一个图像编辑模型（Qwen-Image-Edit、Flux Kontext 这类）。",
         "reference_images_used": false,
         "style": {
           "aspect_ratio": "9:16",
