@@ -7,7 +7,6 @@ let seq = 0
 
 export const useUi = defineStore('ui', () => {
   const toasts = ref([])
-  const railOpen = ref(false) // 手机上的抽屉
   const theme = ref(localStorage.getItem('changji.theme') || 'system')
 
   function applyTheme(value) {
@@ -39,5 +38,5 @@ export const useUi = defineStore('ui', () => {
     if (at >= 0) toasts.value.splice(at, 1)
   }
 
-  return { toasts, railOpen, theme, push, ok, info, warn, error, dismiss }
+  return { toasts, theme, push, ok, info, warn, error, dismiss }
 })

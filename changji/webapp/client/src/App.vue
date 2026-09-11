@@ -1,31 +1,53 @@
 <script setup>
+/**
+ * 外壳。**只有一条。**
+ *
+ * 原来是六层叠在一起：顶栏、左侧 StepRail、ContextBar（项目名 + 集号）、
+ * 每页的 StepHeader、页面内容、底部 stepbar（上一步/下一步）。其中三层
+ * 在说同一件事——rail 上有对勾、StepHeader 有编号徽标、stepbar 写着
+ * 「第 3 / 8 步」。加起来约 190px 垂直空间，而内容区反而是最小的那块。
+ *
+ * 现在一条顶栏装下全部：品牌、项目、五步导航（带对勾）、集号、引擎灯、
+ * 主题、设置。**导航只画一遍**。
+ *
+ * 集号只在分集那一步出现。全剧那几步摆一个「当前集」，会让人以为角色和
+ * 场景也要每集重做一遍——这条是从原来的 ContextBar 继承下来的判断。
+ */
 import { computed, onMounted, watch } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 
 import AppIcon from '@/components/AppIcon.vue'
 import ErrorBoundary from '@/components/ErrorBoundary.vue'
-import StepRail from '@/components/StepRail.vue'
 import ToastStack from '@/components/ToastStack.vue'
 import EngineLamp from '@/components/EngineLamp.vue'
-import ContextBar from '@/components/ContextBar.vue'
 import { STEP_ROUTES } from '@/router'
 import { useSession } from '@/stores/session'
 import { useUi } from '@/stores/ui'
 
 const route = useRoute()
+const router = useRouter()
 const session = useSession()
 const ui = useUi()
 
-const stepIndex = computed(() =>
-  STEP_ROUTES.findIndex((s) => s.key === route.meta?.step),
-)
-const current = computed(() => STEP_ROUTES[stepIndex.value] ?? null)
+const stepKey = computed(() => route.meta?.step ?? '')
+const current = computed(() => STEP_ROUTES.find((s) => s.key === stepKey.value) ?? null)
 const isSettings = computed(() => route.name === 'settings')
-// 初始化页要整块屏幕。顶栏、侧边栏、集号条这时候一个都点不动
-// （还没有项目，引擎也还没有模型），摆在那儿只会让人以为哪里没加载出来。
+// 初始化页要整块屏幕。顶栏这时候一个都点不动（还没有项目，引擎也还没
+// 模型），摆在那儿只会让人以为哪里没加载出来。
 const bare = computed(() => route.meta?.chrome === false)
 
-// 换项目、换集都要重新算一遍进度，否则侧边栏的对勾会停在上一个项目上
+const perEpisode = computed(() => current.value?.phase === 'episode')
+const projectName = computed(
+  () => session.project?.title || session.project?.project_id || '未命名项目',
+)
+
+/** 第一个还没做完的那一步。导航上给它一个点，代替原来那条 stepbar。 */
+const nextKey = computed(() => {
+  const step = STEP_ROUTES.find((s) => !session.done[s.key])
+  return step ? step.key : ''
+})
+
+// 换项目、换集都要重新算一遍进度，否则导航上的对勾会停在上一个项目上
 watch(
   () => [session.projectPath, session.episodeId],
   () => session.refresh(),
@@ -33,13 +55,9 @@ watch(
 
 onMounted(() => session.refresh())
 
-// 手机上点完一步就该把抽屉收起来，否则挡住内容
-watch(
-  () => route.fullPath,
-  () => {
-    ui.railOpen = false
-  },
-)
+function onPickEpisode(event) {
+  session.selectEpisode(event.target.value)
+}
 
 function cycleTheme() {
   const order = ['system', 'dark', 'light']
@@ -50,24 +68,53 @@ function cycleTheme() {
 <template>
   <div class="shell">
     <header v-if="!bare" class="topbar">
-      <button
-        class="topbar__menu btn btn--ghost"
-        type="button"
-        aria-label="打开步骤导航"
-        @click="ui.railOpen = !ui.railOpen"
-      >
-        <AppIcon :name="ui.railOpen ? 'close' : 'menu'" :size="18" />
-      </button>
-
-      <RouterLink to="/project" class="brand">
+      <RouterLink to="/project" class="brand" title="场记">
         <span class="brand__mark">场</span>
-        <span class="brand__text">
-          <span class="brand__name">场记</span>
-          <span class="brand__sub">AI 短剧生产平台</span>
-        </span>
       </RouterLink>
 
-      <div class="spacer" />
+      <button
+        v-if="session.hasProject"
+        class="proj"
+        type="button"
+        title="换个项目"
+        @click="router.push('/project')"
+      >
+        <AppIcon name="folder" :size="14" />
+        <span class="proj__name truncate">{{ projectName }}</span>
+      </button>
+
+      <nav class="nav">
+        <RouterLink
+          v-for="s in STEP_ROUTES"
+          :key="s.key"
+          :to="s.path"
+          class="nav__item"
+          :class="{
+            'is-on': stepKey === s.key,
+            'is-done': session.done[s.key],
+            'is-next': nextKey === s.key,
+          }"
+        >
+          <AppIcon v-if="session.done[s.key]" name="check" :size="12" />
+          <span>{{ s.title }}</span>
+        </RouterLink>
+      </nav>
+
+      <label v-if="perEpisode && session.hasProject" class="ep">
+        <select
+          class="select select--slim"
+          :value="session.episodeId"
+          :disabled="!session.episodes.length"
+          @change="onPickEpisode"
+        >
+          <option v-if="!session.episodes.length" value="">还没有剧集</option>
+          <option v-for="ep in session.episodes" :key="ep.episode_id" :value="ep.episode_id">
+            {{ ep.episode_id }} · {{ ep.title || '未命名' }}（{{ ep.shots }} 镜）
+          </option>
+        </select>
+      </label>
+
+      <span class="spacer" />
 
       <EngineLamp />
 
@@ -90,58 +137,20 @@ function cycleTheme() {
       </RouterLink>
     </header>
 
-    <div class="body">
-      <StepRail v-if="!bare" :class="{ 'is-open': ui.railOpen }" />
-      <div
-        v-if="ui.railOpen && !bare"
-        class="scrim"
-        aria-hidden="true"
-        @click="ui.railOpen = false"
-      />
-
-      <main class="main">
-        <ContextBar v-if="!isSettings && !bare" />
-
-        <div class="main__scroll">
-          <div class="main__inner" :class="{ 'main__inner--bare': bare }">
-            <!-- 页面崩了要说出来，而不是白屏。见 ErrorBoundary 里的说明。 -->
-            <ErrorBoundary>
-              <RouterView v-slot="{ Component }">
-                <Transition name="fade" mode="out-in">
-                  <component :is="Component" />
-                </Transition>
-              </RouterView>
-            </ErrorBoundary>
-          </div>
+    <main class="main">
+      <div class="main__scroll">
+        <div class="main__inner" :class="{ 'main__inner--bare': bare }">
+          <!-- 页面崩了要说出来，而不是白屏。见 ErrorBoundary 里的说明。 -->
+          <ErrorBoundary>
+            <RouterView v-slot="{ Component }">
+              <Transition name="fade" mode="out-in">
+                <component :is="Component" />
+              </Transition>
+            </RouterView>
+          </ErrorBoundary>
         </div>
-
-        <nav v-if="current && !bare" class="stepbar">
-          <RouterLink
-            v-if="stepIndex > 0"
-            class="btn btn--ghost"
-            :to="STEP_ROUTES[stepIndex - 1].path"
-          >
-            <AppIcon name="arrowLeft" :size="15" />
-            <span class="stepbar__label">{{ STEP_ROUTES[stepIndex - 1].title }}</span>
-          </RouterLink>
-          <span v-else class="stepbar__pad" />
-
-          <span class="stepbar__pos numeric tiny dim">
-            第 {{ stepIndex + 1 }} / {{ STEP_ROUTES.length }} 步
-          </span>
-
-          <RouterLink
-            v-if="stepIndex < STEP_ROUTES.length - 1"
-            class="btn btn--primary"
-            :to="STEP_ROUTES[stepIndex + 1].path"
-          >
-            <span class="stepbar__label">{{ STEP_ROUTES[stepIndex + 1].title }}</span>
-            <AppIcon name="arrowRight" :size="15" />
-          </RouterLink>
-          <span v-else class="stepbar__pad" />
-        </nav>
-      </main>
-    </div>
+      </div>
+    </main>
 
     <ToastStack />
   </div>
@@ -155,7 +164,7 @@ function cycleTheme() {
   background: var(--bg);
 }
 
-/* ---------- 顶栏 ---------- */
+/* ---------- 唯一的那条顶栏 ---------- */
 
 .topbar {
   display: flex;
@@ -171,14 +180,10 @@ function cycleTheme() {
   flex: none;
   z-index: 30;
 }
-.topbar__menu {
-  display: none;
-  width: 34px;
-  padding: 0;
-}
 .topbar__icon {
   width: 34px;
   padding: 0;
+  flex: none;
 }
 .topbar__icon.is-on {
   color: var(--accent);
@@ -186,9 +191,7 @@ function cycleTheme() {
 }
 
 .brand {
-  display: flex;
-  align-items: center;
-  gap: var(--s3);
+  flex: none;
   color: var(--text);
   text-decoration: none;
 }
@@ -211,31 +214,91 @@ function cycleTheme() {
   font-size: 15px;
   box-shadow: var(--shadow-1);
 }
-.brand__text {
+
+.proj {
   display: flex;
-  flex-direction: column;
-  line-height: 1.15;
+  align-items: center;
+  gap: 6px;
+  max-width: 11rem;
+  flex: none;
+  padding: 5px 10px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--surface-2);
+  color: var(--text-2);
+  font-size: var(--fs-sm);
+  cursor: pointer;
 }
-.brand__name {
-  font-size: var(--fs-md);
-  font-weight: 700;
-  letter-spacing: 0.04em;
+.proj:hover {
+  color: var(--text);
+  border-color: var(--accent-line);
 }
-.brand__sub {
-  font-size: var(--fs-xs);
-  color: var(--text-3);
+.proj__name {
+  min-width: 0;
+}
+
+/* 导航。**这是唯一的一张地图**——rail、编号徽标、stepbar 三处重复的
+   「我在第几步」现在只剩这一处。 */
+.nav {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.nav::-webkit-scrollbar {
+  display: none;
+}
+.nav__item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: none;
+  padding: 6px 12px;
+  border-radius: 9px;
+  color: var(--text-2);
+  text-decoration: none;
+  font-size: var(--fs-sm);
+  white-space: nowrap;
+}
+.nav__item:hover {
+  color: var(--text);
+  background: var(--surface-2);
+  text-decoration: none;
+}
+.nav__item.is-done {
+  color: var(--ok);
+}
+.nav__item.is-on {
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-weight: 600;
+}
+/* 第一个还没做完的那一步。原来底下那条 stepbar 就是干这个的，
+   一整条 44px 只为说一句「下一步去哪」。 */
+.nav__item.is-next::after {
+  content: '';
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+.ep {
+  flex: none;
+  max-width: 14rem;
+}
+.ep .select {
+  max-width: 100%;
 }
 
 /* ---------- 主体 ---------- */
 
-.body {
-  display: flex;
-  flex: 1;
-  min-height: 0;
-}
 .main {
   flex: 1;
   min-width: 0;
+  min-height: 0;
   display: flex;
   flex-direction: column;
 }
@@ -260,43 +323,6 @@ function cycleTheme() {
   padding-right: env(safe-area-inset-right);
 }
 
-.scrim {
-  position: fixed;
-  inset: var(--topbar-h) 0 0;
-  background: rgba(0, 0, 0, 0.5);
-  z-index: 24;
-  display: none;
-}
-
-/* ---------- 上一步 / 下一步 ---------- */
-
-.stepbar {
-  flex: none;
-  display: flex;
-  align-items: center;
-  gap: var(--s3);
-  padding: var(--s3) var(--s6);
-  padding-bottom: max(var(--s3), env(safe-area-inset-bottom));
-  border-top: 1px solid var(--line);
-  background: color-mix(in srgb, var(--surface) 92%, transparent);
-  backdrop-filter: blur(10px);
-}
-.stepbar__pad {
-  flex: 1;
-}
-.stepbar__pos {
-  flex: 1;
-  text-align: center;
-}
-.stepbar > .btn:first-child {
-  flex: 1;
-  justify-content: flex-start;
-}
-.stepbar > .btn:last-child {
-  flex: 1;
-  justify-content: flex-end;
-}
-
 .fade-enter-active,
 .fade-leave-active {
   transition: opacity 0.16s var(--ease), transform 0.16s var(--ease);
@@ -309,34 +335,22 @@ function cycleTheme() {
   opacity: 0;
 }
 
-/* ---------- 手机 ---------- */
+/* ---------- 窄屏 ---------- */
 
 @media (max-width: 860px) {
-  .topbar__menu {
-    display: inline-flex;
-  }
-  .brand__sub {
+  /* 项目名和集号让位给导航——导航是一直要用的，那两个是偶尔换一次。
+     它们仍然点得到：项目在第一步那一页，集号在「这一集」页里也有。 */
+  .proj {
     display: none;
   }
-  .scrim {
-    display: block;
+  .ep {
+    max-width: 8rem;
   }
   .main__inner {
     padding: var(--s4) var(--s4) var(--s10);
   }
-  /* 手机上这条媒体查询排在后面，不再写一遍的话会把上面那条盖掉。 */
   .main__inner--bare {
     padding: 0;
-  }
-  .stepbar {
-    padding: var(--s2) var(--s3);
-    padding-bottom: max(var(--s2), env(safe-area-inset-bottom));
-  }
-  .stepbar__label {
-    max-width: 5.5em;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
   }
 }
 </style>
