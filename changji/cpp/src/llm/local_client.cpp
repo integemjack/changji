@@ -105,7 +105,21 @@ void register_llm_slot(std::function<config::Settings()> provider,
         const auto path = s.models.resolve(s.models.llm, s.workspace_path());
         // **装之前先记一眼显存。** 装完再记一次，差值就是这份权重实际
         // 占了多少——比"总量减空闲"准得多，那个会把别的槽的账也算进来。
-        // 加载这一步本来就要几秒，多问一次 nvidia-smi 无所谓。
+        // 加载这一步本来就要几秒，多问一次无所谓（NVML 那条其实是微秒级）。
+        //
+        // **只在没有别的槽同时在装的时候才认这个差值。**
+        // acquire 是标完 is_loaded 就放锁、再去调 load 的，所以两个槽
+        // 完全可能同时在装（出首帧是几镜并发的，配音也可能同时起）。
+        // 那时候这段窗口里的显存变化里混着别人的账，差值会偏大——
+        // 而它是只往上记的高水位，记错一次就一直错下去，此后每次判
+        // "还剩多少空闲"都把大模型算得比实际大，白卸别的模型。
+        //
+        // 开机默认装大模型那次通常正好是独占（别的都还没装），够用了。
+        const auto alone_now = [] {
+            const auto v = infer::scheduler().loaded_slots();
+            return v.size() == 1 && v.front() == infer::Slot::LLM;
+        };
+        const bool alone_before = alone_now();
         const auto before = models::free_vram_gb();
         std::string why;
         auto chat = std::shared_ptr<infer::LlamaChat>(
@@ -113,7 +127,8 @@ void register_llm_slot(std::function<config::Settings()> provider,
         if (!chat) throw std::runtime_error("大模型载不起来：" + why);
         {
             const auto after = models::free_vram_gb();
-            if (before.has_value() && after.has_value() && *before > *after) {
+            if (alone_before && alone_now() && before.has_value() &&
+                after.has_value() && *before > *after) {
                 const double used_gb = *before - *after;
                 infer::scheduler().record_measured_vram(
                     infer::Slot::LLM,
