@@ -41,6 +41,11 @@ json flow_steps() {
     return json::array({
         json{{"key", "project"}, {"phase", "series"}, {"title", "项目"},
              {"hint", "选一个项目，或者新建一个"}},
+        // **故事在剧本前面。** 原来第二步就是「剧本大纲」，而那一页是
+        // 拿一句梗概逐集续写——集数人填、上下文只带前三集。故事这一步
+        // 先把完整故事和分集定下来，剧本才有得可写。
+        json{{"key", "story"}, {"phase", "series"}, {"title", "故事"},
+             {"hint", "讲什么、分几章、按每集时长切成几集"}},
         json{{"key", "script"}, {"phase", "series"}, {"title", "剧本大纲"},
              {"hint", "全剧讲什么、分几集、每集写什么"}},
         json{{"key", "characters"}, {"phase", "series"}, {"title", "角色"},
@@ -61,12 +66,21 @@ json flow_steps() {
 }
 
 json flow_assess(const json& project, const json& shots, const json& outputs,
-                 const std::string& episode_id) {
+                 const std::string& episode_id, const json& story) {
     json done = json::object();
     json counters = json::object();
 
     // ---- 项目 ----
     done["project"] = !str_of(project, "project_id").empty();
+
+    // ---- 故事：有章节就算有 ----
+    //
+    // 判据不看梗概：梗概是写故事的输入，光有梗概什么都还没发生。
+    // 有章节就说明大纲写出来并且被采用过了。
+    const auto& story_chapters = arr_of(story, "chapters");
+    done["story"] = !story_chapters.empty();
+    counters["chapters"] = story_chapters.size();
+    counters["plannedEpisodes"] = arr_of(story, "plan").size();
 
     // ---- 剧本大纲：有梗概，而且至少有一集写过东西 ----
     const auto& episodes = arr_of(project, "episodes");

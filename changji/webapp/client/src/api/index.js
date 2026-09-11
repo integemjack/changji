@@ -127,6 +127,16 @@ export const api = {
     get('/api/script', { path, episode_id: episodeId }),
   saveScript: (payload) => post('/api/script', payload),
 
+  // ---- 引擎：故事 ----
+  //
+  // 写和采用是两个接口：/outline 只回草稿不落库，人点了采用才走 /adopt。
+  // 源头没人审过就往下跑，后面几十分钟的渲染全是白跑。
+  getStory: (path) => get('/api/story', { path }),
+  saveStory: (payload) => post('/api/story', payload),
+  writeOutline: (payload) => post('/api/story/outline', payload),
+  adoptStory: (payload) => post('/api/story/adopt', payload),
+  planEpisodes: (payload) => post('/api/story/plan', payload),
+
   // ---- 引擎：角色 / 场景 / 风格 ----
   assets: (path) => get('/api/assets', { path }),
   makeBible: (payload) => post('/api/bible', payload),

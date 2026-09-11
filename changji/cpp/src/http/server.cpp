@@ -1022,7 +1022,19 @@ void run(const config::Settings& settings, const Options& opts) {
             }
         }
 
-        const json assessed = flow_assess(project, shots, outputs, episode_id);
+        // 故事读不到就当空的——老项目没有 story.json，不该因此让整条
+        // 判定挂掉，跟上面分镜和产物是一个处理。
+        json story = json::object();
+        {
+            auto r = guard([&] { return get_story(path); });
+            if (r.status == 200 && r.body.contains("story") &&
+                r.body["story"].is_object()) {
+                story = r.body["story"];
+            }
+        }
+
+        const json assessed =
+            flow_assess(project, shots, outputs, episode_id, story);
         body["done"] = assessed["done"];
         body["counters"] = assessed["counters"];
         body["project"] = project;

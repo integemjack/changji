@@ -64,7 +64,38 @@ TEST_CASE("分镜和制作合成了一步「镜头」") {
     CHECK(steps.count("shots") == 1);
     CHECK(steps.count("storyboard") == 0);
     CHECK(steps.count("production") == 0);
-    CHECK(http::flow_steps().size() == 7);
+    CHECK(http::flow_steps().size() == 8);
+}
+
+TEST_CASE("「故事」这一格") {
+    const auto steps = keys_of(http::flow_steps());
+    CHECK(steps.count("story") == 1);
+
+    // 老项目没有 story.json，不给 story 也得判得出来，而且别的格子不受影响
+    const auto none = http::flow_assess(a_project(), json::array(),
+                                        json::array(), "ep01")
+                          .at("done");
+    CHECK_FALSE(none.at("story").get<bool>());
+    CHECK(none.at("project").get<bool>());
+
+    // 判据不看梗概：梗概是写故事的输入，光有梗概什么都还没发生
+    const json only_premise = json{{"premise", "深夜便利店"},
+                                   {"chapters", json::array()}};
+    CHECK_FALSE(http::flow_assess(a_project(), json::array(), json::array(),
+                                  "ep01", only_premise)
+                    .at("done")
+                    .at("story")
+                    .get<bool>());
+
+    const json with_chapters = json{
+        {"chapters", json::array({json{{"chapter_id", "ch01"}}})},
+        {"plan", json::array({json{{"episode_id", "ep01"}},
+                              json{{"episode_id", "ep02"}}})}};
+    const auto got = http::flow_assess(a_project(), json::array(),
+                                       json::array(), "ep01", with_chapters);
+    CHECK(got.at("done").at("story").get<bool>());
+    CHECK(got.at("counters").at("chapters").get<int>() == 1);
+    CHECK(got.at("counters").at("plannedEpisodes").get<int>() == 2);
 }
 
 TEST_CASE("「镜头」这一格：光有分镜表不算做完") {

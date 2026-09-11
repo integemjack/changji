@@ -21,6 +21,7 @@ export const flowRouter = Router()
  */
 export const STEPS = [
   { key: 'project', phase: 'series', title: '项目', hint: '选一个项目，或者新建一个' },
+  { key: 'story', phase: 'series', title: '故事', hint: '讲什么、分几章、按每集时长切成几集' },
   { key: 'script', phase: 'series', title: '剧本大纲', hint: '全剧讲什么、分几集、每集写什么' },
   { key: 'characters', phase: 'series', title: '角色', hint: '从剧本提人物，全剧同一批' },
   { key: 'scenes', phase: 'episode', title: '场景', hint: '这一集在哪儿拍' },

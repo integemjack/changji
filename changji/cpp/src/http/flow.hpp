@@ -37,9 +37,13 @@ nlohmann::json flow_steps();
 ///
 /// `episode_id` 为空表示还没选集——这时按全剧那三步判定，
 /// 按集的四步一律未完成。
+/// `story` 是 `/api/story` 回的那个 story 对象。**给了默认值**是因为
+/// 老项目根本没有 story.json，而判定不该因为少一个文件就挂掉；
+/// 默认空对象时「故事」那一格判未完成，别的格子不受影响。
 nlohmann::json flow_assess(const nlohmann::json& project,
                            const nlohmann::json& shots,
                            const nlohmann::json& outputs,
-                           const std::string& episode_id);
+                           const std::string& episode_id,
+                           const nlohmann::json& story = nlohmann::json::object());
 
 }  // namespace changji::http

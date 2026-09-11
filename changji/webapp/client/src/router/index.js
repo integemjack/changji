@@ -44,6 +44,19 @@ export const STEP_ROUTES = [
     icon: 'folder',
     component: () => import('@/views/ProjectView.vue'),
   },
+  // **故事在剧本前面。** 原来第二步就是「剧本大纲」，而那一页是拿一句
+  // 梗概逐集续写：集数人填、上下文只带前三集，于是没有全局结构、写到
+  // 第五集开始失忆、故事也没有终点。故事这一步先把完整故事和分集定下来。
+  {
+    key: 'story',
+    path: '/story',
+    name: 'story',
+    phase: 'series',
+    title: '故事',
+    tagline: '讲什么、分几章、按每集时长切成几集',
+    icon: 'script',
+    component: () => import('@/views/StoryView.vue'),
+  },
   {
     key: 'script',
     path: '/script',
