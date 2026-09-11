@@ -3,6 +3,7 @@
 #include "stages/repetition.hpp"
 
 #include <algorithm>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -223,7 +224,7 @@ ordered chapter_schema(int target_scenes, int paras_per_scene) {
         scene_props["last_line"] = {
             {"type", "string"},
             {"description",
-             "这一场的最后一句：上面那个 turn 发生的**那一刻**。一个动作，或者一句说出口的话。写完它这一场就结束了——不要写「那一刻她终于明白」这种回头总结的句子"},
+             "这一场的最后一句：上面那个 turn 发生的**那一刻**。一个动作，或者一句说出口的话。这一刻要是有人开口，就把那句话**原样写出来、带引号**——不要写成「谁说完了什么」这种转述，读者要听见的是那句话本身。写完它这一场就结束了：不要回头总结，也不要解释这一句是什么意思，悬念靠留白不靠解释"},
             {"minLength", 12},
             {"maxLength", 120}};
 
@@ -645,6 +646,23 @@ ChapterDraft parse_chapter(const std::string& raw, int min_chars, bool strict) {
     // 它上面，生成时间从 375 秒涨到 785 秒，而最后一次宽松放行，turn 照样
     // 是「林遥开始怀疑」——闸在烧时间，不改结果。**模型满足不了的软闸
     // 只是把一次生成变成三次生成。**
+
+    // **整段原样重复不收（软闸）。** 复读守卫要一句出现三次才响，而实跑
+    // 里常见的是同一段二十几个字的话在一章里出现**两次**——够不着那道
+    // 闸，却已经是读者能看出来的原地打转。
+    if (strict) {
+        std::set<std::string> seen;
+        for (const DraftScene& sc : d.scenes) {
+            for (const std::string& p : sc.paragraphs) {
+                const std::string key = bare(p);
+                if (text::utf8_len(key) < 20) continue;  // 短句重复是正常的
+                if (seen.insert(key).second) continue;
+                throw StoryError("有一段原样写了两遍（「" +
+                                 text::truncate_utf8(p, 24) +
+                                 "…」）：一章里同一段话不该出现第二次。重试一次");
+            }
+        }
+    }
 
     // **章尾点题不收（软闸）。** 每一场的最后一段应该就是那个 turn，
     // 写到它发生那一刻就停。实跑里模型有一半的章会在 turn 后面再加一段

@@ -1857,6 +1857,39 @@ TEST_CASE("换个说法的同一件事，也算撞车") {
     CHECK_FALSE(changji::stages::scenes_repeat_beat("他走了", "他走了"));
 }
 
+TEST_CASE("一段话写两遍就打回") {
+    // 复读守卫要一句出现三次才响，而实跑里常见的是同一段二十几个字的话
+    // 在一章里出现**两次**——够不着那道闸，却已经是读者能看出来的原地
+    // 打转（上一轮 ch03、ch04 各有两段）。
+    const auto make = [](bool dup) {
+        json paras = json::array();
+        for (int i = 0; i < 14; ++i) {
+            paras.push_back("第" + std::to_string(i) +
+                            "段：她把抹布拧干，水滴落在地板上，溅出细小的一圈。");
+        }
+        paras.push_back("他停在门口，手扶着门框：“伞我带来了。”");
+        paras.push_back("她没抬头，抹布在台面上又抹了一遍：“放那儿吧。”");
+        if (dup) {
+            paras.push_back("第3段：她把抹布拧干，水滴落在地板上，溅出细小的一圈。");
+        }
+        json scenes = json::array();
+        scenes.push_back({{"where", "深夜，便利店，冷柜的白光"},
+                          {"pov", "林晚"},
+                          {"goal", "把伞要回来"},
+                          {"obstacle", "他不认这把伞"},
+                          {"turn", "伞柄上刻着别人的名字"},
+                          {"paragraphs", paras},
+                          {"last_line", "她把伞柄转过来，刻着的不是她的名字。"}});
+        return json{{"scenes", scenes}}.dump();
+    };
+    CHECK_THROWS_AS(changji::stages::parse_chapter(make(true)),
+                    changji::stages::StoryError);
+    CHECK_NOTHROW(changji::stages::parse_chapter(make(false)));
+
+    // 软闸：最后一次尝试照收，0 字比「写得一般」差得多
+    CHECK_NOTHROW(changji::stages::parse_chapter(make(true), 0, false));
+}
+
 TEST_CASE("整章一句对白都没有就打回") {
     // 2026-09-12 实跑四章里有一章通篇零对白（65 段全是叙述）。下一步是把
     // 这段正文改成剧本——正文里没人说话，那一集出来就是默片。和剧本那边
