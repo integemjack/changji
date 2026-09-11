@@ -25,6 +25,7 @@
 #include "http/run.hpp"
 #include "http/voices.hpp"
 #include "http/scripting.hpp"
+#include "http/story_api.hpp"
 #include "http/setup_api.hpp"
 #include "llm/client.hpp"
 #include "infer/llama_chat.hpp"
@@ -447,6 +448,40 @@ void run(const config::Settings& settings, const Options& opts) {
         script_route(&post_bible));
     CROW_ROUTE(app, "/api/plan").methods("POST"_method)(
         script_route(&post_plan));
+
+    // ---- 故事层 ----
+    //
+    // 整条流水线的新源头：先有完整故事，人物关系和场景从故事里提，
+    // 再按每集时长把故事切成集。见 docs/故事优先重构方案.md。
+    //
+    // 写和采用分成两个接口，照的是剧本那边已经立住的规矩：源头没人审过
+    // 就往下跑，后面几十分钟的渲染全是白跑。/outline 只回草稿不落库。
+
+    CROW_ROUTE(app, "/api/story")([](const crow::request& req) {
+        auto r = guard([&] { return get_story(required_query(req, "path")); });
+        return json_response(r.body, r.status);
+    });
+
+    CROW_ROUTE(app, "/api/story").methods("POST"_method)(
+        [](const crow::request& req) {
+            auto r = guard([&] { return post_story(parse_body(req.body)); });
+            return json_response(r.body, r.status);
+        });
+
+    CROW_ROUTE(app, "/api/story/outline").methods("POST"_method)(
+        script_route(&post_story_outline));
+
+    CROW_ROUTE(app, "/api/story/adopt").methods("POST"_method)(
+        [](const crow::request& req) {
+            auto r = guard([&] { return post_story_adopt(parse_body(req.body)); });
+            return json_response(r.body, r.status);
+        });
+
+    CROW_ROUTE(app, "/api/story/plan").methods("POST"_method)(
+        [](const crow::request& req) {
+            auto r = guard([&] { return post_story_plan(parse_body(req.body)); });
+            return json_response(r.body, r.status);
+        });
 
     // ---- 连接设置与运行参数 ----
     //

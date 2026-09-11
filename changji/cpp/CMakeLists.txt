@@ -521,6 +521,7 @@ add_executable(changji
     src/stages/storyboard.cpp
     src/stages/script.cpp
     src/stages/story_plan.cpp
+    src/stages/story_outline.cpp
     src/stages/prompt_compose.cpp
     src/stages/frames.cpp
     src/stages/render.cpp
@@ -558,6 +559,7 @@ add_executable(changji
     src/http/media.cpp
     src/http/upload.cpp
     src/http/scripting.cpp
+    src/http/story_api.cpp
     src/http/planning.cpp
     src/http/batch.cpp
     src/http/episodes.cpp
@@ -806,6 +808,7 @@ if(CHANGJI_BUILD_TESTS)
         tests/unit/test_tts_backends.cpp
         tests/unit/test_setup.cpp
         tests/unit/test_story.cpp
+        tests/unit/test_story_outline.cpp
 
         # 被测的源码。刻意不包含 doctor.cpp、http/server.cpp、
         # llm/client_http.cpp、comfy/client_http.cpp 和 http/run_deps.cpp ——
@@ -831,6 +834,7 @@ if(CHANGJI_BUILD_TESTS)
         src/stages/storyboard.cpp
         src/stages/script.cpp
         src/stages/story_plan.cpp
+        src/stages/story_outline.cpp
         src/stages/prompt_compose.cpp
         src/stages/frames.cpp
         src/stages/render.cpp
@@ -874,6 +878,7 @@ if(CHANGJI_BUILD_TESTS)
         src/http/media.cpp
         src/http/upload.cpp
         src/http/scripting.cpp
+        src/http/story_api.cpp
         src/http/planning.cpp
         src/http/batch.cpp
         src/http/episodes.cpp
