@@ -5,7 +5,7 @@
  * 进来第一眼要看到「我有哪些项目」，而不是一个让人填绝对路径的输入框。
  * 容器里项目库挂在哪，用户根本不知道，问引擎要列表才是对的。
  */
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 
 import AppIcon from '@/components/AppIcon.vue'
@@ -39,14 +39,6 @@ const openPath = ref('')
 const removing = ref(null) // 待删项目
 const confirmName = ref('')
 
-// 全剧风格。所有镜头共用的一层，属于项目的创作常量，
-// 跟「选哪个项目」放在同一页——开工时定一次，后面基本不动。
-const style = ref({ global_style: '', negative_prompt: '', aspect_ratio: '9:16' })
-const savedStyle = ref('')
-const styleLine = ref('')
-const resetOnStyle = ref(false)
-const styleDirty = computed(() => JSON.stringify(style.value) !== savedStyle.value)
-
 const shown = computed(() => {
   const kw = keyword.value.trim().toLowerCase()
   if (!kw) return projects.value
@@ -70,98 +62,7 @@ async function load() {
   }
 }
 
-/**
- * 这部剧的画面规格。**存在项目目录里**，不是全局设置——一台机器上可以
- * 同时有竖屏短剧和横屏片子。
- *
- * `saved` 存的是刚读回来那一份的快照，用来判断有没有改动：直接比对象
- * 会因为引用相同而永远相等。
- */
-const video = ref(null)
-const savedVideo = ref('')
-const videoDirty = computed(
-  () => video.value && JSON.stringify(video.value) !== savedVideo.value,
-)
-const sizeText = computed(() =>
-  video.value ? `${video.value.width}×${video.value.height}` : '—',
-)
-
-async function loadVideo() {
-  if (!session.projectPath) {
-    video.value = null
-    return
-  }
-  try {
-    const d = await api.projectVideo(session.projectPath)
-    video.value = { ...d }
-    savedVideo.value = JSON.stringify(video.value)
-  } catch (err) {
-    // 读不到不该让整页红——项目可能是老的，还没有这一节。
-    // 那时候按默认值显示，用户存一次就写进去了。
-    video.value = { orientation: 'portrait', quality: '720p', width: 544, height: 928 }
-    savedVideo.value = ''
-    ui.warn(`读不到画面设置，按默认显示：${err.message}`)
-  }
-}
-
-async function saveVideo() {
-  const d = await run(
-    () =>
-      api.saveProjectVideo({
-        path: session.projectPath,
-        orientation: video.value.orientation,
-        quality: video.value.quality,
-      }),
-    { key: 'video', success: '画面设置已保存' },
-  )
-  if (!d) return
-  // **拿服务端算出来的宽高回填。** 前端不该自己算——那样两处规则会漂，
-  // 而 32 对齐这种事错了要到出图那一步才发现。
-  video.value = { ...d }
-  savedVideo.value = JSON.stringify(video.value)
-}
-
-async function loadStyle() {
-  if (!session.projectPath) return
-  try {
-    const data = await api.assets(session.projectPath)
-    styleLine.value = data.style?.style_line ?? ''
-    style.value = {
-      global_style: data.style?.global_style ?? '',
-      negative_prompt: data.style?.negative_prompt ?? '',
-      aspect_ratio: data.style?.aspect_ratio ?? '9:16',
-    }
-    savedStyle.value = JSON.stringify(style.value)
-  } catch {
-    // 项目坏了或者刚建好还没有资产库，这一张卡不显示就是了
-    savedStyle.value = ''
-  }
-}
-
-async function saveStyle() {
-  const result = await run(
-    () =>
-      api.saveStyle({
-        project: session.projectPath,
-        patch: style.value,
-        reset_shots: resetOnStyle.value,
-      }),
-    { key: 'style', refresh: true },
-  )
-  if (!result) return
-  savedStyle.value = JSON.stringify(style.value)
-  ui.ok(result.reset_shots ? `风格已改，${result.reset_shots} 个镜头退回重跑` : '已保存')
-}
-
 onMounted(load)
-watch(
-  () => session.projectPath,
-  () => {
-    loadStyle()
-    loadVideo()
-  },
-  { immediate: true },
-)
 
 function open(project) {
   if (project.broken) {
@@ -333,148 +234,6 @@ function stageOf(p) {
       </section>
     </Transition>
 
-    <!-- 画面规格。和风格一样，是这部剧的属性，不是这台机器的 -->
-    <section v-if="session.hasProject && video" class="card">
-      <div class="card__head">
-        <div>
-          <div class="card__title">
-            画面
-            <span class="pill pill--neutral">
-              {{ video.orientation === 'landscape' ? '横屏' : '竖屏' }}
-              · {{ video.quality === '2k' ? '2K' : '标准' }}
-            </span>
-          </div>
-          <div class="card__sub">
-            出多大的画面。宽高由这两项算出来，不用自己填数字。
-          </div>
-        </div>
-        <span v-if="videoDirty" class="pill pill--warn">未保存</span>
-      </div>
-      <div class="card__body stack">
-        <div class="grid grid--form">
-          <label class="field">
-            <span class="field__label">画幅</span>
-            <select v-model="video.orientation" class="select">
-              <option value="portrait">竖屏（短剧、手机）</option>
-              <option value="landscape">横屏</option>
-            </select>
-          </label>
-          <label class="field">
-            <span class="field__label">清晰度</span>
-            <select v-model="video.quality" class="select">
-              <!-- **取值仍然是 "720p"**：那是存在每个项目 changji.toml 里的
-                   字符串，改了名老项目就读不出来。显示的是真实尺寸——
-                   2026-09-10 把它从 704×1280 改成 544×928 之后，
-                   再叫 "720p" 就是假的（720p 是 720 行）。 -->
-              <option value="720p">标准（544×928）· 快</option>
-              <option value="hd">高清（704×1280）· 推荐</option>
-              <option value="2k">2K（2560×1440）· 很吃显存</option>
-            </select>
-            <span class="field__hint">
-              出来是 {{ sizeText }}。
-              <template v-if="video.quality === '720p'">
-                像素只有高清档的一半多一点，出得快，但细节和人脸容易糊。
-              </template>
-              <template v-else-if="video.quality === 'hd'">
-                <strong>画质和速度的平衡点</strong>，多数情况选它。
-              </template>
-              <template v-if="video.quality === '2k'">
-                <strong>2K 很吃显存</strong>，一张 32 GB 的卡跑不动——
-                那时候要么换大卡，要么出标准档再单独走一次超分。
-              </template>
-            </span>
-          </label>
-        </div>
-      </div>
-      <div class="card__foot">
-        <button
-          class="btn btn--primary"
-          type="button"
-          :disabled="!videoDirty || isBusy('video')"
-          @click="saveVideo"
-        >
-          保存画面设置
-        </button>
-        <span class="spacer" />
-        <span class="tiny dim">改它只影响以后出的镜头，已经出好的不动</span>
-      </div>
-    </section>
-
-    <!-- 全剧风格。选中项目之后才有意义 -->
-    <section v-if="session.hasProject && savedStyle" class="card">
-      <div class="card__head">
-        <div>
-          <div class="card__title">
-            全剧风格
-            <span class="pill pill--neutral">
-              {{ styleLine === 'anime' ? '动漫线' : '写实线' }}
-            </span>
-          </div>
-          <div class="card__sub">
-            所有镜头共用的一层，开工时定一次。改它等于整部剧换调性。
-          </div>
-        </div>
-        <span v-if="styleDirty" class="pill pill--warn">未保存</span>
-      </div>
-      <div class="card__body stack">
-        <div class="grid grid--form">
-          <label class="field">
-            <span class="field__label">画风与质感</span>
-            <textarea
-              v-model="style.global_style"
-              class="textarea textarea--tight"
-              rows="3"
-              placeholder="例如：电影感冷调，浅景深，胶片颗粒"
-            />
-          </label>
-          <label class="field">
-            <span class="field__label">负向提示词</span>
-            <textarea
-              v-model="style.negative_prompt"
-              class="textarea textarea--tight"
-              rows="3"
-              placeholder="例如：多手多脚，文字水印，糊脸"
-            />
-          </label>
-        </div>
-
-        <div class="field">
-          <span class="field__label">画幅</span>
-          <div class="chips">
-            <button
-              v-for="r in ['9:16', '16:9', '1:1', '4:5']"
-              :key="r"
-              class="chip"
-              :class="{ 'chip--on': style.aspect_ratio === r }"
-              type="button"
-              @click="style.aspect_ratio = r"
-            >
-              {{ r }}{{ r === '9:16' ? ' 竖屏' : r === '16:9' ? ' 横屏' : '' }}
-            </button>
-          </div>
-          <span class="field__hint">短剧平台基本都吃 9:16。改画幅要重跑所有镜头。</span>
-        </div>
-
-        <label class="switch">
-          <input v-model="resetOnStyle" type="checkbox" />
-          <span>顺便把已渲染的镜头退回重跑</span>
-          <span class="field__hint">
-            不勾的话新风格只对之后才跑的镜头生效，一集里前后会不一致。
-          </span>
-        </label>
-      </div>
-      <div class="card__foot">
-        <button
-          class="btn btn--primary"
-          type="button"
-          :disabled="!styleDirty || isBusy('style')"
-          @click="saveStyle"
-        >
-          {{ isBusy('style') ? '保存中…' : '保存风格' }}
-        </button>
-      </div>
-    </section>
-
     <!-- 列表 -->
     <section class="stack">
       <div class="row row--between">
@@ -533,9 +292,6 @@ function stageOf(p) {
           @keyup.enter="open(p)"
         >
           <div class="proj__top">
-            <span class="proj__badge" :class="`proj__badge--${p.style_line || 'realistic'}`">
-              {{ p.style_line === 'anime' ? '动漫' : '写实' }}
-            </span>
             <span v-if="p.path === session.projectPath" class="pill pill--accent">
               当前
             </span>
@@ -707,18 +463,6 @@ function stageOf(p) {
   align-items: center;
   gap: var(--s2);
   margin-bottom: var(--s3);
-}
-.proj__badge {
-  padding: 1px 7px;
-  border-radius: var(--r-sm);
-  font-size: var(--fs-xs);
-  font-weight: 600;
-  background: var(--surface-3);
-  color: var(--text-2);
-}
-.proj__badge--anime {
-  background: var(--info-soft);
-  color: var(--info);
 }
 .proj__del {
   width: 26px;
