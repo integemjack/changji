@@ -74,6 +74,61 @@ std::string first_diff(const std::string& got, const std::string& want) {
 
 }  // namespace
 
+TEST_CASE("台词里的花括号会被 ASS 当成特效码吞掉") {
+    // ASS 里 `{` 开始一个特效覆盖块、到 `}` 为止整段被吞掉。台词里出现
+    // 一个 `{`，那几个字在成片里就没了——**而且不报错**，要盯着片子看
+    // 才发现。剧本是大模型写的，它偶尔会吐出 ASCII 花括号。
+    std::vector<media::SubtitleCue> cues;
+    media::SubtitleCue c;
+    c.start_s = 0.0;
+    c.end_s = 2.0;
+    c.text = "他说{这里有鬼}然后跑了";
+    c.style = "dialogue";
+    cues.push_back(c);
+
+    const std::string ass = media::build_ass(cues);
+    CAPTURE(ass);
+    // 转义成字面的大括号，libass 认这种写法。
+    // **不逐字比整句**：文本可能被自动折行插进 \\N，那样比法太脆。
+    CHECK(ass.find("\\{") != std::string::npos);
+    CHECK(ass.find("\\}") != std::string::npos);
+    // **字一个都不能少**
+    CHECK(ass.find("这里有鬼") != std::string::npos);
+    CHECK(ass.find("然后跑了") != std::string::npos);
+    // Dialogue 那几行里不许再有没转义的花括号——有就会被当成特效码。
+    const std::size_t d = ass.find("Dialogue:");
+    REQUIRE(d != std::string::npos);
+    for (std::size_t i = d; i < ass.size(); ++i) {
+        if (ass[i] != '{' && ass[i] != '}') continue;
+        CHECK(i > 0);
+        CHECK(ass[i - 1] == '\\');
+    }
+}
+
+TEST_CASE("台词里混进裸换行不能把 Dialogue 行拆断") {
+    // Dialogue 是一行一条记录。文本里混进 CR/LF 之后半条记录变成下一行，
+    // 渲染器多半直接忽略——又是一处静默丢字。
+    std::vector<media::SubtitleCue> cues;
+    media::SubtitleCue c;
+    c.start_s = 0.0;
+    c.end_s = 2.0;
+    c.text = "上半句\n下半句";
+    c.style = "dialogue";
+    cues.push_back(c);
+
+    const std::string ass = media::build_ass(cues);
+    CAPTURE(ass);
+    // 只能有一条 Dialogue，而且两半都还在
+    std::size_t n = 0, pos = 0;
+    while ((pos = ass.find("Dialogue:", pos)) != std::string::npos) {
+        ++n;
+        pos += 9;
+    }
+    CHECK(n == 1);
+    CHECK(ass.find("上半句") != std::string::npos);
+    CHECK(ass.find("下半句") != std::string::npos);
+}
+
 TEST_CASE("显示宽度：全角算一，半角算半") {
     const json corpus = load_corpus();
     for (const auto& c : corpus.at("width")) {

@@ -197,6 +197,35 @@ std::vector<std::string> wrap_chinese(const std::string& text, double max_width,
     return out;
 }
 
+/// 台词里的字进 Dialogue 行之前要过一遍。
+///
+/// **花括号是硬伤。** ASS 里 `{` 开始一个特效覆盖块、到 `}` 为止整段被
+/// 吞掉。台词里出现一个 `{`，那几个字在成片里就没了——**而且不报错**，
+/// 要盯着片子看才发现。剧本是大模型写的，它偶尔会吐出 ASCII 花括号。
+/// libass 认 `\\{` 这种写法，渲染成一个字面的大括号。
+///
+/// **裸换行会把这一行拆断。** Dialogue 是一行一条记录，文本里混进 CR/LF
+/// 之后半条记录变成下一行，渲染器多半直接忽略——又是一处静默丢字。
+/// 换成空格：真要换行，上面 wrap 出来的那几段之间已经有 \\N 了。
+///
+/// 反斜杠不动：ASS 没有通用的反斜杠转义，而中文台词里出现裸反斜杠
+/// 比出现花括号少得多，动它反而可能改坏本来对的输出。
+std::string ass_escape(const std::string& text) {
+    std::string out;
+    out.reserve(text.size());
+    for (const char c : text) {
+        if (c == '{' || c == '}') {
+            out += '\\';
+            out += c;
+        } else if (c == '\n' || c == '\r') {
+            out += ' ';
+        } else {
+            out += c;
+        }
+    }
+    return out;
+}
+
 std::string ass_time(double seconds) {
     seconds = std::max(0.0, seconds);
     const int h = static_cast<int>(seconds / 3600.0);
@@ -250,7 +279,8 @@ std::string build_ass(const std::vector<SubtitleCue>& cues,
         std::string body;
         for (std::size_t i = 0; i < wrapped.size(); ++i) {
             if (i) body += "\\N";   // ASS 的硬换行
-            body += wrapped[i];
+            // **先转义再拼。** 反过来的话会把我们自己刚写的 \\N 也转掉。
+            body += ass_escape(wrapped[i]);
         }
         const std::string style =
             (cue.style == "dialogue" || cue.style == "narration" ||
