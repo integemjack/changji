@@ -70,9 +70,8 @@ function skip() {
 </template>
 
 <style scoped>
+/* 不居中、不卡宽——所有页面一样，见 App.vue 里 .main__inner 那条。 */
 .setup {
-  max-width: 860px;
-  margin: 0 auto;
   padding: var(--s8) var(--s6) var(--s12);
   display: flex;
   flex-direction: column;

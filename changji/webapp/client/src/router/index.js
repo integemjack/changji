@@ -56,6 +56,9 @@ export const STEP_ROUTES = [
     title: '故事',
     tagline: '原稿。选中一段就能让 AI 改它',
     icon: 'script',
+    // **宽页**：页面本身不滚，滚的是编辑器那一格；外壳不加最大宽度和内边距。
+    // 这一页自己排三栏（章节、正文、对话），边距是它自己的事。
+    wide: true,
     component: () => import('@/views/StoryView.vue'),
   },
   // **角色和场景合成一步「设定」**（2026-09-11）。
@@ -107,7 +110,7 @@ const routes = [
     path: s.path,
     name: s.name,
     component: s.component,
-    meta: { step: s.key, title: s.title },
+    meta: { step: s.key, title: s.title, wide: s.wide === true },
   })),
   {
     path: '/settings',

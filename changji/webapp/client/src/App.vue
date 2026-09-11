@@ -36,6 +36,8 @@ const isSettings = computed(() => route.name === 'settings')
 // 初始化页要整块屏幕。顶栏这时候一个都点不动（还没有项目，引擎也还没
 // 模型），摆在那儿只会让人以为哪里没加载出来。
 const bare = computed(() => route.meta?.chrome === false)
+// 宽页（故事）：页面不滚，滚的是页面里那一格。见 router 里那条注释。
+const wide = computed(() => route.meta?.wide === true)
 
 /**
  * 专注模式：只在**写故事**那一页生效。
@@ -170,10 +172,14 @@ function cycleTheme() {
 
     <div class="body">
       <main class="main">
-        <div class="main__scroll">
+        <div class="main__scroll" :class="{ 'main__scroll--wide': wide }">
         <div
           class="main__inner"
-          :class="{ 'main__inner--bare': bare, 'main__inner--focus': focused }"
+          :class="{
+            'main__inner--bare': bare,
+            'main__inner--focus': focused,
+            'main__inner--wide': wide,
+          }"
         >
           <!-- 页面崩了要说出来，而不是白屏。见 ErrorBoundary 里的说明。 -->
           <ErrorBoundary>
@@ -352,9 +358,9 @@ function cycleTheme() {
   overflow-y: auto;
   overscroll-behavior: contain;
 }
+/* **不居中、不卡宽。** 用户 2026-09-11：「不要居中显示，撑满屏幕，不要浪费
+   空间，所有页面都是一样」。原来卡在 1180px 居中，宽屏上两边各空一大块。 */
 .main__inner {
-  max-width: var(--content-max);
-  margin: 0 auto;
   padding: var(--s6) var(--s6) var(--s12);
   padding-left: max(var(--s6), env(safe-area-inset-left));
   padding-right: max(var(--s6), env(safe-area-inset-right));
@@ -373,6 +379,23 @@ function cycleTheme() {
   padding: 0;
   padding-left: env(safe-area-inset-left);
   padding-right: env(safe-area-inset-right);
+}
+/* 宽页：**页面不滚**。外层 overflow 关掉、整条高度交给页面，页面里
+   哪一格该滚由它自己定。故事页靠这个让正文那一格独占滚动——
+   之前页面和稿纸各有一根滚动条，高度算错一次整页就垮。 */
+.main__scroll--wide {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.main__inner--wide {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  max-width: none;
+  padding: 0;
 }
 
 .fade-enter-active,
@@ -401,7 +424,8 @@ function cycleTheme() {
   .main__inner {
     padding: var(--s4) var(--s4) var(--s10);
   }
-  .main__inner--bare {
+  .main__inner--bare,
+  .main__inner--wide {
     padding: 0;
   }
 }

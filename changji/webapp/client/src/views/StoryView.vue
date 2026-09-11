@@ -1,48 +1,49 @@
 <script setup>
 /**
- * 故事。一整块编辑器，一次一章。
+ * 故事。一个编辑器，照代码编辑器的骨架排。
  *
- * 用户 2026-09-11 两次定方向：
+ * 用户 2026-09-11 几次定方向，最后一次是：
  *
- *   「故事这个页面重点在创作，人可以选中某一段让 AI 继续修改优化，
- *     也可以通过对话形式修改原稿」
- *   「故事页面应该像程序编辑一样，主要突出写作的过程，
- *     **ai 生成也应该在编辑器里面流式插入**」
+ *   「重新理解故事页面，重点是写作窗口，其他都是辅助功能」
  *
- * 所以正文**一直是可编辑的**，不是"只读 + 一个手改开关"。看到一个错别字
- * 还要打一句"把这里的'的'改成'地'"，那不叫创作工具。
+ * 落成三栏加一行：
  *
- * 而 AI 改出来的东西**一个字一个字长在编辑器里那一段的位置上**，不是摆在
- * 右边一个框里等你抄过去。你看到的就是改完的稿子本身，而且看得见它在写；
- * 不满意按「撤销」，整段退回改之前。
+ *   章节（左，可收） │ 正文（独占滚动） │ 对话（右，默认收起）
+ *   状态栏：字数 · 存没存 · AI 在干什么
  *
- * 字走 WebSocket（`/api/story/revise` 带上 `stream`），请求本身照样在最后
- * 回完整的一份——**那一份才是权威的**：它剥过模型自作主张加的包装
- * （``` 代码块、「修改后：」），而流出来的是原始 token。收尾时拿它覆盖
- * 一次，不然编辑器里会留下一行 ``` 。WebSocket 连不上就退回一次性返回，
- * 少的只是"看着它写"这件事。
+ * **正文那一格是唯一的滚动容器。** 页面本身不滚（外壳按 `wide` 关掉了
+ * 滚动）。之前是页面在滚、稿纸在滚、textarea 又靠 JS 撑高，三层抢同一个
+ * 高度——fit() 在版面没排好时量了一次，一章 343 字被算成 8803px，右下角
+ * 那排按钮在第一屏往下 8000px 的地方。现在高度由 flex 定，textarea 还是
+ * 跟内容长，但只在这一格里长，而且宽度一变就重量（ResizeObserver）。
  *
- * 2026-09-11 又定细了一层：**章节用下拉框选，编辑器占满，右下角一排按钮
- * （自动生成、对话修改、朗读）。** 于是正文不再是"一整篇连着往下滚"，而是
- * 一次一章——一次一章才谈得上"占满"，十六章连着的话滚动条本身就是干扰。
- * 代价是看不到第三章接第四章那一下顺不顺，换来的是写这一章时眼前没有别的
- * 东西。下拉框里带着每章字数和"未存"，跳过去是一下的事。
+ * **没有东西浮在字上面。** 对话原来是右下角弹出的 320px 面板，正好压住
+ * 正文列的右半。它要装引用、来回、撤销、输入框，本来就是侧栏的体量，
+ * 现在停靠在右边，打开时正文让位。选中一段才浮出来的那两个小按钮是唯一
+ * 的例外，它们贴在这一格底边中间，不在字上。
  *
- * 右下角那排按钮**浮在正文上**，不占版面：这一页大多数时候是在读和写，
- * 按钮常驻一条的话，稿子就被挤窄了一截。
+ * **存是自动的。** 停笔 1.5 秒、换章、失焦、离开都存，状态栏写「存着…／
+ * 已存」。之前五个地方在管存（失焦、Ctrl+S、脏了冒出的按钮、存下改的 N 章、
+ * AI 面板里的存下来），写东西的人不该管持久化。Ctrl+S 留着，无声。
  *
- * **编辑器用 textarea，不是 contenteditable。** selectionStart/End 直接就是
- * 偏移，不用在 DOM 里爬；而 contenteditable 里每一次输入都可能重排节点，
- * 偏移随时失效——那正是"改到一半突然替换错地方"的来源。
+ * **AI 往这一章写字的时候锁章。** 之前人还能打字，下一个 token 一到 buf
+ * 就被覆盖，人打的字直接没了。
  *
- * ⚠️ 偏移一律换算成 **Unicode 码点**再送给引擎。浏览器给的是 UTF-16 单元，
- * 碰上代理对（生僻字、emoji）差一个，而差一个就切在半个字上。
+ * 保留的几条判断：
+ *
+ * - **编辑器用 textarea，不是 contenteditable。** selectionStart/End 直接
+ *   就是偏移；contenteditable 每次输入都可能重排节点，偏移随时失效——那正是
+ *   "改到一半突然替换错地方"的来源。
+ * - **偏移一律换算成 Unicode 码点再送给引擎。** 浏览器给的是 UTF-16 单元，
+ *   碰上代理对差一个，而差一个就切在半个字上。
+ * - **请求的返回才是权威的那一份。** 流出来的是原始 token，返回那份剥过
+ *   包装（``` 代码块、「修改后：」），收尾时拿它覆盖一次。
+ * - **一次一章。** 十六章连着的话滚动条本身就是干扰。书的形状在左栏。
  */
 import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 
 import AppIcon from '@/components/AppIcon.vue'
 import EmptyState from '@/components/EmptyState.vue'
-import StepHeader from '@/components/StepHeader.vue'
 import { api, mediaUrl } from '@/api'
 import { useAction } from '@/composables/useAction'
 import { openJobSocket } from '@/composables/useJobSocket'
@@ -54,6 +55,9 @@ const session = useSession()
 const ui = useUi()
 const writer = useWriter()
 const { run, isBusy } = useAction()
+// **存稿走自己的一条线。** useAction 一次只跑一件事，而改一段要跑一分钟——
+// 存稿排在它后面的话，这一分钟里敲的字一个都存不下去。
+const saver = useAction()
 
 const story = ref(null)
 const loading = ref(false)
@@ -81,14 +85,17 @@ const buf = reactive({})
 const boxes = reactive({})
 /** 选中的那一段：{chapter_id, from, to, text}，偏移是码点。 */
 const sel = ref(null)
+/** 输入框里**此刻**是不是真有一段选着。那两个小按钮只在这时候浮出来。 */
+const liveSel = ref(false)
 /** 这一段上聊过的来回。换一段就清空——"再短一点"是相对上一版说的。 */
 const chat = ref([])
 const instruction = ref('')
 /**
- * AI 刚插进去、还没存的那一段。
+ * AI 刚插进去的那一段。
  *
  * 留着改之前的**整章**正文，「撤销」就是把它放回去——比记住一段区间可靠：
  * 插进去之后用户可能又手动改了两个字，按区间回退会退错地方。
+ * `after` 是插完那一刻的整章，Ctrl+Z 只在稿子还是这一份时才当"撤销改写"。
  */
 const pending = ref(null)
 /** 正在流式写入的那一段，非空时编辑器里那几个字正一个个冒出来。 */
@@ -97,12 +104,62 @@ const streaming = ref(null)
 const current = ref('')
 /** 光标落在正文的第几个 UTF-16 位置。打字机模式靠它决定哪一段是"现在"。 */
 const caret = ref(0)
-/** 右下角那排按钮展开的是哪一个面板：'' | 'ai' */
-const panel = ref('')
 /** 朗读出来的那段音频。 */
 const audio = ref(null)
-/** setStory 之前记一下哪几章是脏的。存完那一章会从这里拿掉。 */
+/**
+ * 哪几章手里那份和落库那份不一样。setStory 只刷新不在这里面的章。
+ * 存完一章、且存的时候没再敲字，才从这里拿掉。
+ */
 const dirtySnapshot = new Set()
+/** 最后一次敲字是什么时候。批量写作"跟着翻"要看它：正在打字就别翻走。 */
+let lastTyped = 0
+
+// ---- 版面 ----
+function remembered(key, fallback) {
+  const v = localStorage.getItem(key)
+  return v === null ? fallback : v === '1'
+}
+function remember(key, v) {
+  localStorage.setItem(key, v ? '1' : '0')
+}
+/** 左栏章节列表开没开。记在这台机器上。 */
+const listOpen = ref(remembered('changji.story.list', true))
+watch(listOpen, (v) => remember('changji.story.list', v))
+/** 右栏对话开没开。默认收起：大多数时候是在读和写。 */
+const panelOpen = ref(remembered('changji.story.panel', false))
+watch(panelOpen, (v) => remember('changji.story.panel', v))
+/** 章头下面那行大纲折没折。 */
+const summaryOpen = ref(remembered('changji.story.summary', true))
+watch(summaryOpen, (v) => remember('changji.story.summary', v))
+/** 章头右边那个「…」菜单。 */
+const menuOpen = ref(false)
+/** 左栏顶上「这本书」点开：正文位置换成梗概、体量、重出大纲。 */
+const bookOpen = ref(false)
+/** 批量写作时编辑器跟不跟着翻到正在写的那一章。点了别的章就不跟了。 */
+const follow = ref(true)
+/** 窄屏：左栏让位，章节切换退化成章头上的下拉框；右栏变成盖上来的抽屉。 */
+const narrowQuery = window.matchMedia('(max-width: 1100px)')
+const narrow = ref(narrowQuery.matches)
+const onNarrow = (e) => {
+  narrow.value = e.matches
+}
+const listShown = computed(() => listOpen.value && !narrow.value && !ui.focusMode)
+/** 正文那一格（滚动容器）。 */
+const scroller = ref(null)
+/** 右栏那个输入框。 */
+const askBox = ref(null)
+/** 镜像层。行号靠它量每一行折成了几行。 */
+const mirror = ref(null)
+/**
+ * 每一个逻辑行（按 \n 分）在版面上占的高度。行号列照它排。
+ *
+ * **行号标的是逻辑行，不是折行。** 一段话折成三行只有一个号，和代码编辑器
+ * 一样。textarea 说不出一行折成了几行，所以在它后面垫的那层镜像改成一行
+ * 一块、常驻，量每块的 offsetHeight 就是答案。
+ */
+const lineHeights = ref([])
+/** 镜像里空行放的那个零宽空格：空块没有高度，行号就会少一格。 */
+const ZW = String.fromCharCode(0x200b)
 
 const chapters = computed(() => story.value?.chapters ?? [])
 const hasStory = computed(() => chapters.value.length > 0)
@@ -136,11 +193,67 @@ const canReverse = computed(() => !hasStory.value && session.episodes.length > 0
 const chapter = computed(
   () => chapters.value.find((c) => c.chapter_id === current.value) ?? null,
 )
+const index = computed(() => chapters.value.findIndex((c) => c.chapter_id === current.value))
 /** 当前这一章在编辑器里的那一份。 */
 const body = computed(() => buf[current.value] ?? '')
+const chars = computed(() => [...body.value].length)
 const currentDirty = computed(
   () => chapter.value != null && body.value !== (chapter.value.text ?? ''),
 )
+/** 光标在第几行（逻辑行）。状态栏上那个数。 */
+const caretLine = computed(() => body.value.slice(0, caret.value).split('\n').length)
+/** AI 正往这一章写字。这时候输入框只读，改稿那条也不接活。 */
+const locked = computed(() => streaming.value?.chapter_id === current.value)
+/** 选中的那一段，且是这一章的。不是这一章的选区套上来会改错地方。 */
+const target = computed(() => (sel.value?.chapter_id === current.value ? sel.value : null))
+/** 左栏列的是哪一份：有草稿时先把草稿的章节灰着列出来。 */
+const listChapters = computed(() =>
+  draft.value ? (draft.value.story?.chapters ?? []) : chapters.value,
+)
+
+const saveState = computed(() => {
+  if (locked.value) return 'writing'
+  if (saver.isBusy('save:' + current.value)) return 'saving'
+  if (currentDirty.value) return 'dirty'
+  return 'saved'
+})
+const SAVE_LABEL = {
+  writing: 'AI 写着…',
+  saving: '存着…',
+  dirty: '改了，马上存',
+  saved: '已存',
+}
+
+/** 「第 3 章 · 雨中告别」。标题本身已经是「第三章」的话就不再套一层。 */
+function chapterLabel(c, i) {
+  const t = (c?.title ?? '').trim()
+  if (/^第.+章/.test(t)) return t
+  return `第 ${i + 1} 章${t ? ' · ' + t : ''}`
+}
+function countOf(id) {
+  return [...(buf[id] ?? '')].length
+}
+function isDirty(id) {
+  const c = chapters.value.find((x) => x.chapter_id === id)
+  return c != null && (buf[id] ?? '') !== (c.text ?? '')
+}
+function failedText(id) {
+  return writer.state?.episodes?.find((w) => w.chapter_id === id && w.error)?.error ?? ''
+}
+/** 左栏每一章后面那个小字：写着 / 砸了 / 改了 / 字数 / 还没写。按手里这份算。 */
+function stateText(id) {
+  if (streaming.value?.chapter_id === id) return '写着…'
+  if (failedText(id)) return '砸了'
+  if (isDirty(id)) return '●'
+  const n = countOf(id)
+  return n ? String(n) : '—'
+}
+function stateClass(id) {
+  if (streaming.value?.chapter_id === id) return 'is-live'
+  if (failedText(id)) return 'is-bad'
+  if (isDirty(id)) return 'is-dirty'
+  return ''
+}
 
 function setStory(payload) {
   story.value = payload?.story ?? null
@@ -149,10 +262,14 @@ function setStory(payload) {
   if (story.value?.scale) scale.value = story.value.scale
   // **只刷新没改过的那几章。** 引擎重算分集表也会回一份完整故事，照单
   // 全收的话，用户正在打字的那一章会被服务端那份盖掉。
+  //
+  // 脏的那几章里，手里那份已经和服务端一样的才摘掉——不能整个清空：
+  // 存的那一会儿又敲了字的章仍然是脏的，下一次刷新还得护着它。
   for (const c of chapters.value) {
-    if (!dirtySnapshot.has(c.chapter_id)) buf[c.chapter_id] = c.text ?? ''
+    const id = c.chapter_id
+    if (!dirtySnapshot.has(id)) buf[id] = c.text ?? ''
+    else if ((buf[id] ?? '') === (c.text ?? '')) dirtySnapshot.delete(id)
   }
-  dirtySnapshot.clear()
   // 进来先挑一章。**优先挑还没写正文的第一章**：那一章是接下来要干的活，
   // 而已经写好的几章翻一下就能看到。
   if (!chapters.value.some((c) => c.chapter_id === current.value)) {
@@ -215,17 +332,18 @@ function watchBatch() {
       // **跟着它翻页。** 一次只看一章，不跟的话批量跑一个多小时，眼前
       // 这一章一个字都不动——"看着它写"就落空了。
       //
-      // **手上有没存的改动就不跟**：翻走了那几个字还在 buf 里没丢，但人
-      // 会以为自己刚打的东西没了。宁可这一章不跟，也别让人以为丢了稿子。
-      //
-      // 判据用 dirtySnapshot（人真敲过字）而不是"buf 和落库那份不一样"——
-      // 后者在**刚流完上一章**时也成立（那一章 buf 里有字、故事里还没落），
-      // 于是跟到第二章就停了。
-      if (current.value !== msg.chapter_id && !dirtySnapshot.has(current.value)) {
+      // 两种情况不翻：人关了「跟着翻」（点了别的章就等于关了），或者
+      // 五秒内还在敲字——正打到一半把人翻走，比看不到 AI 写字糟得多。
+      if (
+        current.value !== msg.chapter_id &&
+        follow.value &&
+        Date.now() - lastTyped > 5000
+      ) {
         current.value = msg.chapter_id
       }
       await nextTick()
       fit(boxes[msg.chapter_id])
+      keepEndVisible(msg.chapter_id)
     },
     () => {
       batchSock = null
@@ -233,17 +351,68 @@ function watchBatch() {
   )
 }
 
+/** Ctrl+K：打开对话，光标进输入框。代码编辑器的肌肉记忆。 */
+function onKey(e) {
+  if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'k') {
+    e.preventDefault()
+    openDialog()
+  }
+}
+
+/** 版面一变（开关左右栏、拉窗口）就把输入框高度和行高重量一次。 */
+let sizer = null
+watch(scroller, (el) => {
+  sizer?.disconnect()
+  sizer = null
+  if (!el) return
+  sizer = new ResizeObserver(() => {
+    fitAll()
+    measureLines()
+  })
+  sizer.observe(el)
+})
+
+/** 量镜像里每一行的高度。flush: 'post'——要等镜像按新正文排完再量。 */
+function measureLines() {
+  const m = mirror.value
+  if (!m) {
+    lineHeights.value = []
+    return
+  }
+  // **要小数。** 一行是 28.8px，offsetHeight 取整成 29，十四行下来行号就
+  // 比正文低了 3px，越往下越歪。
+  lineHeights.value = [...m.children].map((el) => el.getBoundingClientRect().height)
+}
+
+/** 点行号：光标落到那一行开头。 */
+function goLine(i) {
+  const el = boxes[current.value]
+  if (!el) return
+  const lines = body.value.split('\n')
+  let pos = 0
+  for (let k = 0; k < i && k < lines.length; k++) pos += lines[k].length + 1
+  el.focus()
+  el.setSelectionRange(pos, pos)
+  caret.value = pos
+}
+
 onMounted(() => {
   load()
   writer.poll() // 可能是上次离开页面时还在跑的那一轮
   watchBatch()
   window.addEventListener('beforeunload', beforeUnload)
+  window.addEventListener('keydown', onKey)
+  narrowQuery.addEventListener('change', onNarrow)
 })
 onUnmounted(() => {
   writer.stop()
   batchSock?.close()
   batchSock = null
+  sizer?.disconnect()
+  for (const t of Object.values(timers)) clearTimeout(t)
   window.removeEventListener('beforeunload', beforeUnload)
+  window.removeEventListener('keydown', onKey)
+  narrowQuery.removeEventListener('change', onNarrow)
 })
 watch(() => session.projectPath, load)
 watch(
@@ -262,9 +431,14 @@ watch(
 // 编辑器本身
 // ---------------------------------------------------------------------------
 
-/** 高度跟着内容长。编辑器里不该有第二根滚动条。 */
+/**
+ * 高度跟着内容长。这一格里不该有第二根滚动条。
+ *
+ * **还没排出来就不量。** 宽度为 0 的时候量出来的 scrollHeight 是废数，
+ * 而且会一直留着——上一版一章 343 字被算成 8803px 就是这么来的。
+ */
 function fit(el) {
-  if (!el) return
+  if (!el || !el.clientWidth) return
   el.style.height = 'auto'
   el.style.height = el.scrollHeight + 'px'
 }
@@ -272,13 +446,64 @@ function fitAll() {
   for (const el of Object.values(boxes)) fit(el)
 }
 
+/** AI 往眼前这一章写字时，把正在长的那一头一直留在视野里。 */
+function keepEndVisible(id) {
+  if (id !== current.value || !scroller.value) return
+  scroller.value.scrollTop = scroller.value.scrollHeight
+}
+
 function onInput(id, event) {
   buf[id] = event.target.value
   caret.value = event.target.selectionStart
   dirtySnapshot.add(id)
+  lastTyped = Date.now()
   fit(event.target)
   // 手一动就说明这一版是自己的了，AI 那条"撤销"没有意义了
   pending.value = null
+  scheduleSave(id)
+}
+
+/** 输入框里的快捷键：Ctrl+S 立刻存（无声），Ctrl+Z 在稿子还是 AI 刚写的那份时撤销改写。 */
+function onAreaKey(e) {
+  if (!(e.ctrlKey || e.metaKey)) return
+  const k = e.key.toLowerCase()
+  if (k === 's') {
+    e.preventDefault()
+    flushSave(current.value)
+  } else if (
+    k === 'z' &&
+    !e.shiftKey &&
+    pending.value &&
+    pending.value.chapter_id === current.value &&
+    buf[current.value] === pending.value.after
+  ) {
+    e.preventDefault()
+    undoRevision()
+  }
+}
+
+/**
+ * 点在稿子外面的空白处，光标也落到正文末尾。**整块都是纸。**
+ *
+ * 用户 2026-09-11：「点故事页面的下面光标为什么消失了，不是应该整个页面
+ * 都是编辑区域吗」。短章的输入框只有半屏高，再往下是滚动容器的留白，点上去
+ * 输入框就失焦。现在输入框本身撑到底（见 .doc--chapter），剩下的边角靠这个：
+ * mousedown 拦住不让它失焦，再把光标放到末尾。按钮、下拉、章头那一行照旧。
+ */
+function onPaperDown(e) {
+  const el = boxes[current.value]
+  if (!el || !chapter.value || bookOpen.value || draft.value) return
+  const t = e.target
+  if (t === el) return
+  // 章头那一行的空当也算纸；按钮、下拉、大纲那句（点它是折叠）、行号列不算
+  if (t.closest('button, select, textarea, input, a, .doc__sum, .ed__mini, .ed__gutter')) return
+  // 点的是滚动条本身
+  if (scroller.value && e.offsetX >= scroller.value.clientWidth && t === scroller.value) return
+  e.preventDefault()
+  el.focus()
+  const end = el.value.length
+  el.setSelectionRange(end, end)
+  caret.value = end
 }
 
 /** 浏览器给的 UTF-16 偏移换算成**码点**偏移。 */
@@ -286,14 +511,14 @@ function codePoints(text, utf16Offset) {
   return [...text.slice(0, utf16Offset)].length
 }
 /**
- * 把正文切成"段"，标出光标在哪一段。给打字机模式画高亮用。
+ * 把正文切成"行"，标出光标在哪一段。行号列和打字机模式的高亮都用它。
  *
  * **一行一块，空行断段。** 中文小说就是这么排的：段之间空一行。按句切的话
  * 高亮会在一段里跳来跳去，比不高亮还乱。
  *
- * 每一块**带着自己那个换行符**，拼起来必须和原文一字不差——镜像层和输入框
- * 是两层叠在一起的，差一个字符两边就错位，而错位之后光标和它下面的字对不上，
- * 那比没有高亮糟得多。
+ * 镜像里每一行是一个 block，块的折行和 textarea 里那一行的折行一样——
+ * 字体、字号、行高、宽度、white-space、overflow-wrap 全部相同（见样式里
+ * 那组共用声明）。差一项两边就错位，而错位之后行号和光标都对不上。
  */
 function paragraphs(text, at) {
   const lines = text.split('\n')
@@ -302,7 +527,7 @@ function paragraphs(text, at) {
   let pos = 0
   for (let i = 0; i < lines.length; i++) {
     const withNl = i < lines.length - 1 ? lines[i] + '\n' : lines[i]
-    spans.push({ text: withNl, from: pos, to: pos + withNl.length, blank: !lines[i].trim() })
+    spans.push({ text: lines[i], from: pos, to: pos + withNl.length, blank: !lines[i].trim() })
     pos += withNl.length
   }
   // 光标在哪一行
@@ -319,6 +544,8 @@ function paragraphs(text, at) {
 }
 
 const blocks = computed(() => paragraphs(body.value, caret.value))
+// 正文一变，等镜像排完再量行高（flush: 'post'）
+watch(blocks, measureLines, { flush: 'post' })
 
 /** 码点偏移换回 UTF-16。插完字要用它把光标放回正确的位置。 */
 function utf16At(text, cp) {
@@ -331,9 +558,9 @@ function onSelectionChange(id, event) {
   caret.value = el.selectionStart
   const from = codePoints(full, el.selectionStart)
   const to = codePoints(full, el.selectionEnd)
+  liveSel.value = to - from >= 2
   if (to - from < 2) {
-    // 光标只是移动了一下。**不清掉已经选好的那一段**——不然点进右边的
-    // 输入框就把面板关了，这个功能永远用不成。
+    // 光标只是移动了一下。**不清掉已经选好的那一段**——右栏还对着它说话。
     return
   }
   if (sel.value?.chapter_id === id && sel.value.from === from && sel.value.to === to) {
@@ -348,51 +575,99 @@ function onSelectionChange(id, event) {
 /** 换一章就把改稿那摊清掉：偏移是按章算的，套到别的章上会改错地方。 */
 function clearSelection() {
   sel.value = null
+  liveSel.value = false
   chat.value = []
   instruction.value = ''
   pending.value = null
   audio.value = null
 }
-watch(current, clearSelection)
+watch(current, (now, before) => {
+  clearSelection()
+  menuOpen.value = false
+  // 走之前把上一章存了。自动存有 1.5 秒的等待，换章不该等。
+  if (before) flushSave(before)
+  nextTick(() => {
+    fit(boxes[now])
+    if (scroller.value) scroller.value.scrollTop = 0
+  })
+})
 
-/** 存这一章。整章当成一个选区，走的就是 AI 改稿那条写回路径。 */
+function pickChapter(id) {
+  // 批量写作时人主动点了一章，就是"我要看这一章"，别再把人翻走
+  if (writer.running) follow.value = false
+  current.value = id
+}
+function toggleFollow() {
+  follow.value = !follow.value
+  if (follow.value && streaming.value?.chapter_id) current.value = streaming.value.chapter_id
+}
+
+// ---- 自动存 ----
+const timers = {}
+function scheduleSave(id, delay = 1500) {
+  clearTimeout(timers[id])
+  timers[id] = setTimeout(() => saveChapter(id), delay)
+}
+function flushSave(id) {
+  if (!id) return
+  clearTimeout(timers[id])
+  delete timers[id]
+  return saveChapter(id)
+}
+
+/**
+ * 存这一章。整章当成一个选区，走的就是 AI 改稿那条写回路径。
+ *
+ * 存的那一会儿又敲了字的话，这一章仍算脏、再排一次；不然 setStory 会拿
+ * 服务端那份（旧的）把刚敲的字盖掉。
+ */
 async function saveChapter(id) {
   const c = chapters.value.find((x) => x.chapter_id === id)
   if (!c) return
-  const body = buf[id] ?? ''
-  if (body === (c.text ?? '')) return
-  if (!body.trim()) {
-    ui.warn('正文不能是空的。真要清掉这一章的话，去大纲那边重写')
+  const sent = buf[id] ?? ''
+  if (sent === (c.text ?? '')) return
+  // AI 正往这一章写：写完那份由引擎落库，这里存的是半截
+  if (streaming.value?.chapter_id === id) return
+  // 引擎不收空章。清空了就先不存，敲下一个字再说
+  if (!sent.trim()) return
+  // 上一章还在存，排在后面
+  if (saver.busy.value) {
+    scheduleSave(id, 400)
     return
   }
-  const result = await run(
+  const result = await saver.run(
     () =>
       api.applyRevision({
         project: session.projectPath,
         chapter_id: id,
         from_char: 0,
         to_char: [...(c.text ?? '')].length,
-        text: body,
+        text: sent,
       }),
     { key: 'save:' + id },
   )
   if (!result) return
-  dirtySnapshot.delete(id)
+  if ((buf[id] ?? '') !== sent) scheduleSave(id)
+  else dirtySnapshot.delete(id)
   setStory(result)
-  ui.ok(`存下了，这一章 ${result.chars} 字，分集重算过了`)
-  pending.value = null
-}
-
-async function saveAllDirty() {
-  for (const id of [...dirtyIds.value]) await saveChapter(id)
 }
 
 // ---------------------------------------------------------------------------
 // 让 AI 改：改完**直接落到编辑器里那一段的位置上**
 // ---------------------------------------------------------------------------
 
+function openDialog() {
+  panelOpen.value = true
+  liveSel.value = false
+  nextTick(() => askBox.value?.focus())
+}
+function togglePanel() {
+  if (panelOpen.value) panelOpen.value = false
+  else openDialog()
+}
+
 /**
- * 让 AI 改选中那一段。**边生边写进编辑器**。
+ * 让 AI 改。**选中了就只改那一段，没选就改整章。** 边生边写进编辑器。
  *
  * 字走 WebSocket 一个个推过来，请求本身照样在最后回完整的一份——那一份
  * 是剥过包装（``` 代码块、「修改后：」）的，所以收尾时拿它把流出来的那段
@@ -402,19 +677,25 @@ async function saveAllDirty() {
  */
 async function revise() {
   const want = instruction.value.trim()
-  if (!sel.value) return
+  if (!chapter.value || locked.value) return
   if (!want) {
     ui.warn('说一句要改成什么样，比如「这儿太赶了，铺一下情绪」')
     return
   }
-  const at = { ...sel.value }
+  const at = target.value
+    ? { ...target.value }
+    : { chapter_id: current.value, from: 0, to: chars.value, text: body.value }
+  if (!at.text.trim()) {
+    ui.warn('这一章还是空的。先写几句，或者点上面那个按钮让 AI 照大纲写')
+    return
+  }
   const id = at.chapter_id
 
   // 改之前那一章的整份，撤销和流式拼接都拿它当底
   const prev = buf[id] ?? ''
-  const chars = [...prev]
-  const head = chars.slice(0, at.from).join('')
-  const tail = chars.slice(at.to).join('')
+  const allChars = [...prev]
+  const head = allChars.slice(0, at.from).join('')
+  const tail = allChars.slice(at.to).join('')
 
   const streamId = 'story-' + Math.random().toString(36).slice(2, 10)
   let acc = ''
@@ -449,7 +730,7 @@ async function revise() {
 
   // 先把选中那段清掉，字就从那个位置长出来——这一下就是"开始写了"
   streaming.value = { chapter_id: id, from: at.from }
-  pending.value = { chapter_id: id, prev, origin: at }
+  pending.value = { chapter_id: id, prev, origin: at, after: null }
   await paint('')
 
   await new Promise((resolve) => {
@@ -487,6 +768,8 @@ async function revise() {
   // **拿返回那一份收尾。** 流出来的是原始 token，返回那份剥过包装，
   // 两者可能差几个字符；不覆盖的话编辑器里会留下一行 ``` 。
   await paint(result.text)
+  pending.value = { chapter_id: id, prev, origin: at, after: buf[id] }
+  scheduleSave(id, 800)
 
   chat.value = [
     ...chat.value,
@@ -505,6 +788,7 @@ async function revise() {
     el.focus()
     const now = buf[id]
     el.setSelectionRange(utf16At(now, at.from), utf16At(now, to))
+    liveSel.value = false
   }
 }
 
@@ -513,8 +797,10 @@ function undoRevision() {
   const p = pending.value
   if (!p) return
   buf[p.chapter_id] = p.prev
+  dirtySnapshot.add(p.chapter_id)
   sel.value = { ...p.origin }
   pending.value = null
+  scheduleSave(p.chapter_id, 800)
   nextTick(() => fit(boxes[p.chapter_id]))
 }
 
@@ -556,7 +842,7 @@ async function readAloud() {
 }
 
 // ---------------------------------------------------------------------------
-// 从无到有的三条路
+// 从无到有的几条路，和「这本书」
 // ---------------------------------------------------------------------------
 
 async function savePremise() {
@@ -570,10 +856,12 @@ async function savePremise() {
 }
 
 /**
- * 写故事。
+ * 写大纲。
  *
  * **梗概不是必填的。** 选题本来就是整条流水线上最难从零开始的一步，把它
  * 做成硬门槛等于又把人摁回空白框前面发呆。
+ *
+ * 已经有故事时也能重出：出来的先是草稿，采用了才换掉现在这几章。
  */
 async function writeStory() {
   const result = await run(
@@ -586,7 +874,10 @@ async function writeStory() {
       }),
     { key: 'write' },
   )
-  if (result) draft.value = result
+  if (result) {
+    draft.value = result
+    bookOpen.value = false
+  }
 }
 
 /** 粘一段现成的进来。切章节不走大模型——那是机械活，而且比模型稳。 */
@@ -603,18 +894,15 @@ async function importPasted() {
     draft.value = result
     pasting.value = false
     pasted.value = ''
+    bookOpen.value = false
   }
 }
 
 /**
  * 直接开写：不写梗概、不挑体量、不等 AI，建一章空的就进编辑器。
  *
- * **这一条是"开始写之前不需要配置任何东西"。** 查到的那句原话是"你花在调
- * 工具上的时间，工具本身就成了干扰"——而这一页在有故事之前，摆着梗概框、
- * 关键词框、体量三选一和三个按钮，等于开写前先填一张表。
- *
- * 结构可以后补：写完点「让 AI 读一遍，提人物」，人物关系地点就出来了。
- * 先写后理，本来就是很多人写东西的顺序。
+ * **这一条是"开始写之前不需要配置任何东西"。** 结构可以后补：写完点
+ * 「提人物」，人物关系地点就出来了。先写后理，本来就是很多人写东西的顺序。
  */
 async function startBlank() {
   const result = await run(
@@ -666,7 +954,7 @@ async function reverseFromEpisodes() {
   )
   if (!result) return
   setStory(result)
-  ui.ok(`反推出 ${result.chapters} 章。接着点「让 AI 读一遍」把人物提出来`)
+  ui.ok(`反推出 ${result.chapters} 章。接着点左边「提人物」把人物提出来`)
 }
 
 /** 让 AI 读一遍正文，把人物关系地点提出来。**正文一个字不动。** */
@@ -680,6 +968,11 @@ async function analyzeStory() {
 
 async function adoptDraft() {
   if (!draft.value) return
+  // 重出的大纲会把现在这几章整份换掉。提人物那种草稿正文不变，不用问。
+  const replacing =
+    hasStory.value &&
+    draft.value.story?.chapters?.some((c, i) => c.text !== chapters.value[i]?.text)
+  if (replacing && !confirm(`采用会把现在这 ${chapters.value.length} 章整份换掉。确定？`)) return
   const result = await run(
     () =>
       api.adoptStory({
@@ -718,6 +1011,9 @@ async function writeChapter(chapterId, overwrite = false) {
   let sock = null
   let opened = false
 
+  // 从这一刻起就锁章，不等第一个字到
+  streaming.value = { chapter_id: chapterId, from: 0 }
+
   await new Promise((resolve) => {
     sock = openJobSocket(
       streamId,
@@ -728,6 +1024,7 @@ async function writeChapter(chapterId, overwrite = false) {
         streaming.value = { chapter_id: chapterId, from: 0 }
         await nextTick()
         fit(boxes[chapterId])
+        keepEndVisible(chapterId)
       },
       () => resolve(),
       () => {
@@ -755,13 +1052,15 @@ async function writeChapter(chapterId, overwrite = false) {
     // **重写失败要放回原来那份**，不是清空——原来那一章是好好的。
     const was = chapters.value.find((c) => c.chapter_id === chapterId)
     buf[chapterId] = was?.text ?? ''
+    await nextTick()
+    fit(boxes[chapterId])
     return
   }
   // 落库那份才是权威的（解析、守卫、钩子都在那边）
   setStory(result)
   ui.ok(`${chapterId} 写了 ${result.chars} 字`)
   await nextTick()
-  boxes[chapterId]?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  if (scroller.value && chapterId === current.value) scroller.value.scrollTop = 0
 }
 
 async function writeAllChapters() {
@@ -771,6 +1070,7 @@ async function writeAllChapters() {
   )
   if (started) {
     ui.ok(`开始展开 ${started.chapters} 章`)
+    follow.value = true
     writer.start()
   }
 }
@@ -782,494 +1082,845 @@ async function stopWriting() {
 </script>
 
 <template>
-  <div class="stack stack--lg">
-    <!-- **有故事的时候整个页头都不要。** 这一页就是个编辑器，不用自我
-         介绍「故事 / 原稿，选中一段就能让 AI 改它」；那几行吃掉的正是
-         "占满"差的那点高度。控件全并进下面那条章节栏，一行装下。
-         还没有故事时留着——那时候人是第一次进来，需要那句话。 -->
-    <StepHeader v-if="!hasStory">
-      <template #actions>
-        <button
-          v-if="dirtyIds.length > 1"
-          class="btn btn--primary btn--sm"
-          type="button"
-          @click="saveAllDirty"
-        >
-          存下改的 {{ dirtyIds.length }} 章
-        </button>
-        <button
-          v-if="hasStory && unwritten && !writer.running"
-          class="btn btn--ai btn--sm"
-          type="button"
-          :disabled="isBusy('chapters')"
-          @click="writeAllChapters"
-        >
-          <AppIcon name="sparkle" :size="14" />
-          展开全部 {{ unwritten }} 章
-        </button>
-        <template v-if="writer.running">
-          <span class="pill pill--accent nowrap">
-            正在展开 {{ writer.state?.done ?? 0 }} / {{ writer.state?.total ?? 0 }}
-          </span>
-          <button class="btn btn--danger btn--sm" type="button" @click="stopWriting">
-            停
-          </button>
-        </template>
-        <button
-          v-if="needsAnalysis"
-          class="btn btn--ai btn--sm"
-          type="button"
-          :disabled="isBusy('analyze')"
-          @click="analyzeStory"
-        >
-          {{ isBusy('analyze') ? '正在读…' : '让 AI 读一遍，提人物' }}
-        </button>
-      </template>
-    </StepHeader>
-
+  <div class="ed" :class="{ 'ed--focus': ui.focusMode }">
     <EmptyState
       v-if="!session.hasProject"
+      class="ed__center"
       icon="folder"
       tone="warn"
       title="还没选项目"
       hint="故事挂在项目上。在项目库那条栏里点一个。"
     />
+    <div v-else-if="loading && !hasStory" class="ed__center tiny dim">读取中…</div>
 
     <template v-else>
-      <!-- 草稿。AI 写完先摆出来给人看，点了采用才落库 -->
-      <section v-if="draft" class="card card--draft">
-        <div class="card__head">
-          <div>
-            <div class="card__title">{{ draft.story?.logline || '一份新的故事' }}</div>
-            <div class="card__sub">
-              {{ draft.chapters }} 章 ·
-              {{ draft.story?.characters?.length ?? 0 }} 个人 ·
-              {{ draft.story?.locations?.length ?? 0 }} 个地方。
-              采用之前原来那份一个字不动。
-            </div>
-          </div>
-        </div>
-        <div class="card__body stack stack--sm">
-          <div v-for="c in draft.story?.chapters ?? []" :key="c.chapter_id" class="dch">
-            <b>{{ c.title }}</b>
-            <span class="small dim">{{ c.summary }}</span>
-          </div>
-        </div>
-        <div class="card__foot">
+      <!-- ================= 左：章节 ================= -->
+      <!-- 书的形状要一直看得见，尤其批量跑一个多小时的时候：这一栏同时
+           就是进度条。它占的是 38em 两边本来就空着的边距，不占高度。 -->
+      <aside v-if="listShown && (hasStory || draft)" class="ed__list">
+        <div class="list__head">
           <button
-            class="btn btn--primary"
+            class="book"
+            :class="{ 'is-on': bookOpen }"
             type="button"
-            :disabled="isBusy('adopt')"
-            @click="adoptDraft"
+            :disabled="!!draft"
+            title="梗概、体量，或者让 AI 重出一份大纲"
+            @click="bookOpen = !bookOpen"
           >
-            采用这一份
-          </button>
-          <button class="btn btn--ghost" type="button" @click="draft = null">丢弃</button>
-        </div>
-      </section>
-
-      <!-- 还没有故事：三条入口 -->
-      <section v-if="!hasStory && !loading" class="card">
-        <div class="card__body stack">
-          <textarea
-            v-model="premise"
-            class="textarea"
-            rows="3"
-            placeholder="想好了就写一句，比如：深夜便利店，前任推门进来，手里拿着五年前她送的那把伞。&#10;没想好就空着，直接点下面那个按钮让它来一个。"
-            @blur="savePremise"
-          />
-          <input
-            v-model="keywords"
-            class="input"
-            placeholder="想往哪个方向？热点词、题材都行，可留空（比如：重生复仇、破镜重圆）"
-          />
-          <div class="row row--wrap">
-            <div class="scales">
-              <button
-                v-for="sc in SCALES"
-                :key="sc.key"
-                class="scale"
-                :class="{ 'is-on': scale === sc.key }"
-                type="button"
-                :title="sc.hint"
-                @click="scale = sc.key"
-              >
-                {{ sc.label }}
-              </button>
-            </div>
-            <!-- **摆在最前面。** 查到的那句是"开始写之前不需要配置任何
-                 东西"，而这一页在它之前摆着梗概、关键词、体量和三个按钮。
-                 想自己写的人应该一眼看见"从这儿进去"。 -->
-            <button
-              class="btn btn--primary"
-              type="button"
-              :disabled="isBusy('blank')"
-              @click="startBlank"
-            >
-              直接开写
-            </button>
-            <button
-              class="btn btn--ai"
-              type="button"
-              :disabled="isBusy('write')"
-              @click="writeStory"
-            >
-              <AppIcon name="sparkle" :size="15" />
-              {{ isBusy('write') ? '正在写…' : '让 AI 写一份' }}
-            </button>
-            <button class="btn" type="button" @click="pasting = !pasting">
-              我有现成的，粘进来
-            </button>
-            <button
-              v-if="canReverse"
-              class="btn btn--ghost"
-              type="button"
-              :disabled="isBusy('reverse')"
-              @click="reverseFromEpisodes"
-            >
-              {{
-                isBusy('reverse')
-                  ? '正在反推…'
-                  : `从已有的 ${session.episodes.length} 集反推`
-              }}
-            </button>
-            <span class="spacer" />
-            <span class="tiny dim">分几集在「设定 · 分集」那儿定</span>
-          </div>
-
-          <div v-if="pasting" class="stack stack--sm">
-            <textarea
-              v-model="pasted"
-              class="textarea mono"
-              rows="10"
-              placeholder="小说、剧本、大纲都行。认得出「第三章」「## 标题」就照它分章，认不出就按字数在段落边界上切。版权自负。"
-            />
-            <div class="row">
-              <button
-                class="btn btn--primary"
-                type="button"
-                :disabled="isBusy('import')"
-                @click="importPasted"
-              >
-                {{ isBusy('import') ? '切着…' : '切成章节' }}
-              </button>
-              <button class="btn btn--ghost" type="button" @click="pasting = false">
-                取消
-              </button>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      <div v-if="loading" class="tiny dim">读取中…</div>
-
-      <!-- ---- 编辑器 ---- -->
-      <div v-else-if="hasStory" class="ed" :class="{ 'ed--focus': ui.focusMode }">
-        <!-- 一条窄头：挑哪一章、这一章多少字、存没存 -->
-        <div class="ed__bar">
-          <select v-model="current" class="select ed__pick">
-            <option v-for="(c, i) in chapters" :key="c.chapter_id" :value="c.chapter_id">
-              第 {{ i + 1 }} 章 · {{ c.title }}
-              <!-- 字数和"写没写"都按**手里这份**算，不按落库那份：刚打的
-                   几个字还没存，下拉框里却写着"还没写"，看着像白打了。 -->
-              {{ (buf[c.chapter_id] ?? '').trim()
-                   ? `（${[...(buf[c.chapter_id] ?? '')].length} 字）`
-                   : '（还没写）' }}
-              {{ (buf[c.chapter_id] ?? '') !== (c.text ?? '') ? ' ·未存' : '' }}
-              {{ streaming?.chapter_id === c.chapter_id ? ' ·正在写' : '' }}
-            </option>
-          </select>
-          <span class="spacer" />
-          <span class="tiny dim nowrap">
-            全书 {{ chapters.length }} 章 · {{ totalChars }} 字
-          </span>
-          <!-- 整本的那几件事并在这一行。它们不常用（写一次故事按一两次），
-               但**要找得到**——单独占一条页头只是为了这一两次。 -->
-          <button
-            v-if="dirtyIds.length > 1"
-            class="btn btn--primary btn--sm nowrap"
-            type="button"
-            @click="saveAllDirty"
-          >
-            存下改的 {{ dirtyIds.length }} 章
+            <span class="book__t truncate">
+              {{ draft ? '草稿' : story?.logline || premise || '这本书' }}
+            </span>
+            <span class="book__s tiny dim">
+              {{ listChapters.length }} 章<template v-if="!draft"> · {{ totalChars }} 字</template>
+            </span>
           </button>
           <button
-            v-if="unwritten && !writer.running"
-            class="btn btn--ai btn--sm nowrap"
+            class="btn btn--ghost btn--sm list__fold"
             type="button"
-            :disabled="isBusy('chapters')"
-            @click="writeAllChapters"
+            title="收起章节列表"
+            @click="listOpen = false"
           >
-            <AppIcon name="sparkle" :size="14" />
-            展开全部 {{ unwritten }} 章
+            <AppIcon name="arrowLeft" :size="14" />
           </button>
+        </div>
+
+        <div class="list__rows">
+          <button
+            v-for="(c, i) in listChapters"
+            :key="c.chapter_id"
+            class="ch"
+            :class="{ 'is-on': !draft && c.chapter_id === current, 'is-ghost': !!draft }"
+            type="button"
+            :disabled="!!draft"
+            :title="failedText(c.chapter_id) ? '写砸了：' + failedText(c.chapter_id) : c.summary || ''"
+            @click="pickChapter(c.chapter_id)"
+          >
+            <span class="ch__n">{{ i + 1 }}</span>
+            <span class="ch__t truncate">{{ c.title || '未命名' }}</span>
+            <span v-if="!draft" class="ch__s" :class="stateClass(c.chapter_id)">
+              {{ stateText(c.chapter_id) }}
+            </span>
+          </button>
+        </div>
+
+        <!-- 整本书的那几件事。不常用，但要找得到。 -->
+        <div v-if="!draft" class="list__foot">
           <template v-if="writer.running">
-            <span class="pill pill--accent nowrap">
-              正在展开 {{ writer.state?.done ?? 0 }} / {{ writer.state?.total ?? 0 }}
+            <span class="list__run tiny">
+              <span class="dot" />
+              展开中 {{ writer.state?.done ?? 0 }} / {{ writer.state?.total ?? 0 }}
             </span>
             <button class="btn btn--danger btn--sm" type="button" @click="stopWriting">
               停
             </button>
           </template>
           <button
-            v-if="needsAnalysis"
-            class="btn btn--ai btn--sm nowrap"
+            v-else-if="unwritten"
+            class="btn btn--ai btn--sm"
             type="button"
-            :disabled="isBusy('analyze')"
-            @click="analyzeStory"
+            :disabled="isBusy('chapters')"
+            @click="writeAllChapters"
           >
-            {{ isBusy('analyze') ? '正在读…' : '让 AI 读一遍，提人物' }}
+            <AppIcon name="sparkle" :size="13" />
+            展开剩下 {{ unwritten }} 章
           </button>
           <button
-            class="btn btn--ghost btn--sm nowrap"
+            v-if="needsAnalysis"
+            class="btn btn--ghost btn--sm"
+            type="button"
+            :disabled="isBusy('analyze')"
+            title="让 AI 读一遍正文，把人物、关系、地点提出来。正文一个字不动"
+            @click="analyzeStory"
+          >
+            {{ isBusy('analyze') ? '正在读…' : '提人物' }}
+          </button>
+          <button
+            class="btn btn--ghost btn--sm"
             type="button"
             :disabled="isBusy('addch')"
             title="加一章空的，接着写"
             @click="addChapter"
           >
+            <AppIcon name="plus" :size="13" />
             加一章
           </button>
-          <!-- 专注：把顶栏和项目库都收起来。**最大的干扰不在编辑器里，
-               在编辑器外面**——右边那条项目库列着另外几部剧，而你正在写
-               第一章。鼠标贴到窗口顶边顶栏会浮回来，Esc 退出。 -->
-          <button
-            class="btn btn--sm nowrap"
-            :class="ui.focusMode ? 'btn--ai' : 'btn--ghost'"
-            type="button"
-            :title="ui.focusMode ? '退出专注（Esc）' : '专注：收起顶栏和项目库'"
-            @click="ui.focusMode = !ui.focusMode"
-          >
-            {{ ui.focusMode ? '退出专注' : '专注' }}
-          </button>
-          <!-- **没改动就不显示这个按钮。** 一个常年灰着的按钮只是在占地方，
-               而"改了没存"这件事要显眼——它显眼靠的是它突然出现。 -->
-          <button
-            v-if="currentDirty"
-            class="btn btn--primary btn--sm nowrap"
-            type="button"
-            :disabled="isBusy('save:' + current)"
-            @click="saveChapter(current)"
-          >
-            {{ isBusy('save:' + current) ? '存着…' : '存 · Ctrl+S' }}
-          </button>
         </div>
+      </aside>
 
-        <!-- 正文占满。textarea 而不是 contenteditable：selectionStart/End
-             直接就是偏移，不用在 DOM 里爬。 -->
-        <div class="ed__paper">
-          <!-- 打字机模式：正在写的那一段亮，其余压暗。
-               **textarea 没法给单独一段上色**，所以在它后面垫一层排版
-               一模一样的镜像，由镜像画高亮，输入框本身文字透明、只留光标。
-               这是给 textarea 做语法高亮的老办法，好处是保住了
-               "偏移即 selectionStart"——上次改错地方的根因就是偏移。 -->
-          <!-- **永远是个编辑器。** 以前没正文时这儿摆的是"摘要 + 自动生成"
-               一块，于是想自己写的人无处下笔。摘要改成占位文字，光标点进去
-               就能写；「自动生成」本来就常驻在右下角那一排。 -->
-          <div
-            v-if="chapter"
-            class="ed__stack"
-            :class="{ 'ed__stack--dim': ui.focusMode }"
-          >
-            <div v-if="ui.focusMode" class="ed__mirror" aria-hidden="true"><span
-              v-for="(b, i) in blocks"
-              :key="i"
-              :class="{ 'is-now': b.now }"
-            >{{ b.text }}</span><span>&#8203;</span></div>
-            <textarea
-              :ref="(el) => (boxes[current] = el)"
-              class="ed__area"
-              spellcheck="false"
-              :placeholder="
-                chapter.summary
-                  ? '这一章要写的是：' + chapter.summary + '\n\n从这儿开始写，或者点右下角「自动生成」让 AI 先来一版。'
-                  : '从这儿开始写。写完点上面「让 AI 读一遍，提人物」，人物关系和地点就出来了。'
-              "
-              :value="body"
-              @input="onInput(current, $event)"
-              @select="onSelectionChange(current, $event)"
-              @mouseup="onSelectionChange(current, $event)"
-              @keyup="onSelectionChange(current, $event)"
-              @blur="saveChapter(current)"
-              @keydown.ctrl.s.prevent="saveChapter(current)"
-              @keydown.meta.s.prevent="saveChapter(current)"
-            />
+      <!-- ================= 中：正文 ================= -->
+      <section class="ed__main">
+        <div ref="scroller" class="ed__scroll" @mousedown="onPaperDown">
+          <!-- 草稿。AI 写完先摆出来给人看，点了采用才落库 -->
+          <div v-if="draft" class="doc draft">
+            <div class="doc__head">
+              <h1 class="doc__title">{{ draft.story?.logline || '一份新的故事' }}</h1>
+            </div>
+            <p class="doc__sum">
+              {{ draft.chapters }} 章 ·
+              {{ draft.story?.characters?.length ?? 0 }} 个人 ·
+              {{ draft.story?.locations?.length ?? 0 }} 个地方。
+              采用之前原来那份一个字不动。
+            </p>
+            <div class="draft__list">
+              <div v-for="c in draft.story?.chapters ?? []" :key="c.chapter_id" class="dch">
+                <b>{{ c.title }}</b>
+                <span class="small dim">{{ c.summary }}</span>
+              </div>
+            </div>
+            <div class="row">
+              <button
+                class="btn btn--primary"
+                type="button"
+                :disabled="isBusy('adopt')"
+                @click="adoptDraft"
+              >
+                采用这一份
+              </button>
+              <button class="btn btn--ghost" type="button" @click="draft = null">丢弃</button>
+            </div>
           </div>
 
-          <!-- 右下角那排。**浮在正文上**，不占版面——这一页大多数时候是在
-               读和写，按钮常驻一条的话稿子就被挤窄了一截。 -->
-          <div class="ed__acts">
-            <div v-if="panel === 'ai'" class="ed__panel stack stack--sm">
-              <div class="row row--between">
-                <b class="ai__head">{{ sel ? '改选中的这一段' : '先选中一段再说' }}</b>
-                <button class="btn btn--ghost btn--sm" type="button" @click="panel = ''">
-                  收起
+          <!-- 还没有故事：从这儿开始。有故事时点开「这本书」也是这一块。
+               同一个框架，页面形状不变，只是往里长东西。 -->
+          <div v-else-if="!hasStory || bookOpen" class="doc start">
+            <div class="doc__head">
+              <h1 class="doc__title">{{ hasStory ? '这本书' : '从这儿开始' }}</h1>
+              <span class="spacer" />
+              <button
+                v-if="hasStory"
+                class="btn btn--ghost btn--sm"
+                type="button"
+                @click="bookOpen = false"
+              >
+                回到正文
+              </button>
+            </div>
+            <textarea
+              v-model="premise"
+              class="textarea start__premise"
+              rows="4"
+              placeholder="这部剧讲什么？想好了就写一句，比如：深夜便利店，前任推门进来，手里拿着五年前她送的那把伞。&#10;没想好就空着，让 AI 来一个。"
+              @blur="savePremise"
+            />
+            <input
+              v-model="keywords"
+              class="input"
+              placeholder="往哪个方向？热点词、题材都行，可留空（比如：重生复仇、破镜重圆）"
+            />
+            <div class="row row--wrap">
+              <div class="scales">
+                <button
+                  v-for="sc in SCALES"
+                  :key="sc.key"
+                  class="scale"
+                  :class="{ 'is-on': scale === sc.key }"
+                  type="button"
+                  :title="sc.hint"
+                  @click="scale = sc.key"
+                >
+                  {{ sc.label }}
                 </button>
               </div>
-              <template v-if="sel">
-                <blockquote class="ai__quote small">{{ sel.text }}</blockquote>
-                <p class="tiny dim">
-                  第 {{ sel.from }}–{{ sel.to }} 字，共 {{ sel.to - sel.from }} 字。
-                  只改这一段，别的一个字不动。
-                </p>
-                <div v-for="(t, i) in chat" :key="i" class="turn">
-                  <span class="turn__who tiny">{{ t.role === 'user' ? '你' : 'AI' }}</span>
-                  <span class="small">{{ t.text }}</span>
-                </div>
-                <div v-if="pending" class="ai__done">
-                  <span class="tiny">已经插进稿子里了，还没存</span>
-                  <div class="row">
-                    <button
-                      class="btn btn--primary btn--sm"
-                      type="button"
-                      :disabled="isBusy('save:' + pending.chapter_id)"
-                      @click="saveChapter(pending.chapter_id)"
-                    >
-                      存下来
-                    </button>
-                    <button class="btn btn--ghost btn--sm" type="button" @click="undoRevision">
-                      撤销
-                    </button>
-                  </div>
-                </div>
-                <textarea
-                  v-model="instruction"
-                  class="textarea textarea--tight"
-                  rows="3"
-                  :placeholder="
-                    chat.length
-                      ? '接着说，比如「再短一点」「语气冷一些」'
-                      : '要改成什么样？比如「这儿太赶了，铺一下情绪」'
-                  "
-                  @keydown.ctrl.enter="revise"
-                />
-                <div class="row">
-                  <button
-                    class="btn btn--ai btn--sm"
-                    type="button"
-                    :disabled="isBusy('revise')"
-                    @click="revise"
-                  >
-                    <AppIcon name="sparkle" :size="14" />
-                    {{
-                      streaming
-                        ? '正在写…'
-                        : isBusy('revise')
-                          ? '改着…'
-                          : chat.length
-                            ? '再改一版'
-                            : '改'
-                    }}
-                  </button>
-                  <span class="tiny dim">Ctrl+Enter</span>
-                </div>
+              <span class="tiny dim">分几集在「设定 · 分集」那儿定</span>
+            </div>
+            <div class="row row--wrap">
+              <template v-if="!hasStory">
+                <!-- **摆在最前面。** 开始写之前不需要配置任何东西；
+                     想自己写的人应该一眼看见"从这儿进去"。 -->
+                <button
+                  class="btn btn--primary"
+                  type="button"
+                  :disabled="isBusy('blank')"
+                  @click="startBlank"
+                >
+                  直接开写
+                </button>
+                <button
+                  class="btn btn--ai"
+                  type="button"
+                  :disabled="isBusy('write')"
+                  @click="writeStory"
+                >
+                  <AppIcon name="sparkle" :size="15" />
+                  {{ isBusy('write') ? '正在写…' : '让 AI 写一份大纲' }}
+                </button>
+                <button class="btn btn--ghost" type="button" @click="pasting = !pasting">
+                  粘一份现成的
+                </button>
+                <button
+                  v-if="canReverse"
+                  class="btn btn--ghost"
+                  type="button"
+                  :disabled="isBusy('reverse')"
+                  @click="reverseFromEpisodes"
+                >
+                  {{
+                    isBusy('reverse')
+                      ? '正在反推…'
+                      : `从已有的 ${session.episodes.length} 集反推`
+                  }}
+                </button>
               </template>
-              <p v-else class="tiny dim">
-                在正文里拖选一段，这里就能对着它说话。
-              </p>
+              <template v-else>
+                <button
+                  class="btn btn--ai"
+                  type="button"
+                  :disabled="isBusy('write')"
+                  @click="writeStory"
+                >
+                  <AppIcon name="sparkle" :size="15" />
+                  {{ isBusy('write') ? '正在写…' : '让 AI 重出一份大纲' }}
+                </button>
+                <span class="tiny dim">出来先是草稿，采用了才会换掉现在这 {{ chapters.length }} 章</span>
+              </template>
             </div>
 
-            <audio v-if="audio" :src="audio" class="say" controls />
+            <div v-if="pasting" class="stack stack--sm">
+              <textarea
+                v-model="pasted"
+                class="textarea mono"
+                rows="10"
+                placeholder="小说、剧本、大纲都行。认得出「第三章」「## 标题」就照它分章，认不出就按字数在段落边界上切。版权自负。"
+              />
+              <div class="row">
+                <button
+                  class="btn btn--primary"
+                  type="button"
+                  :disabled="isBusy('import')"
+                  @click="importPasted"
+                >
+                  {{ isBusy('import') ? '切着…' : '切成章节' }}
+                </button>
+                <button class="btn btn--ghost" type="button" @click="pasting = false">
+                  取消
+                </button>
+              </div>
+            </div>
+          </div>
 
-            <div class="ed__row">
-              <!-- **常驻，不看这一章写没写。** 写过的那一章点它是重写，
-                   会先问一句——三个按钮固定在那儿，找按钮不用先想"现在是
-                   哪种状态"。 -->
+          <!-- 一章 -->
+          <div v-else-if="chapter" class="doc doc--chapter">
+            <!-- 章头在正文里，随正文滚。左栏收起时它就是切换章节的地方。 -->
+            <div class="doc__head">
               <button
+                v-if="!listShown && !ui.focusMode"
+                class="btn btn--ghost btn--sm"
+                type="button"
+                title="章节列表"
+                @click="listOpen = true"
+              >
+                <AppIcon name="menu" :size="15" />
+              </button>
+              <select v-if="!listShown" v-model="current" class="select doc__pick">
+                <option v-for="(c, i) in chapters" :key="c.chapter_id" :value="c.chapter_id">
+                  {{ chapterLabel(c, i) }} · {{ stateText(c.chapter_id) }}
+                </option>
+              </select>
+              <h1 v-else class="doc__title">{{ chapterLabel(chapter, index) }}</h1>
+              <span class="spacer" />
+
+              <span v-if="locked" class="doc__live"><span class="dot" /> AI 正在写</span>
+              <button
+                v-if="locked && writer.running"
+                class="btn btn--danger btn--sm"
+                type="button"
+                @click="stopWriting"
+              >
+                停
+              </button>
+              <!-- 空章唯一的 AI 入口就在这儿。写过的章要重写，在「…」里，
+                   破坏性又少用的事不配常驻按钮。 -->
+              <button
+                v-else-if="!locked && !body.trim()"
                 class="btn btn--ai btn--sm"
                 type="button"
-                :disabled="!chapter || isBusy('chapter:' + current)"
-                :title="body.trim() ? '这一章重写一遍（会先问一句）' : '照大纲把这一章写出来'"
-                @click="writeChapter(current, !!body.trim())"
+                :disabled="isBusy('chapter:' + current)"
+                @click="writeChapter(current)"
               >
-                <AppIcon name="sparkle" :size="14" />
+                <AppIcon name="sparkle" :size="13" />
                 {{
                   isBusy('chapter:' + current)
                     ? '正在写…'
-                    : body.trim()
-                      ? '重写整章'
-                      : '自动生成'
+                    : chapter.summary
+                      ? '照大纲写这一章'
+                      : '让 AI 写这一章'
                 }}
               </button>
-              <button
-                class="btn btn--sm"
-                :class="panel === 'ai' ? 'btn--ai' : 'btn--ghost'"
-                type="button"
-                @click="panel = panel === 'ai' ? '' : 'ai'"
-              >
-                对话修改
-              </button>
-              <button
-                class="btn btn--ghost btn--sm"
-                type="button"
-                :disabled="isBusy('say') || !body.trim()"
-                :title="'念选中的那一段；没选就从光标往下念'"
-                @click="readAloud"
-              >
-                {{ isBusy('say') ? '念着…' : '朗读' }}
-              </button>
+
+              <div class="menu">
+                <button
+                  class="btn btn--ghost btn--sm menu__btn"
+                  type="button"
+                  title="这一章的其他事"
+                  @click="menuOpen = !menuOpen"
+                >
+                  …
+                </button>
+                <template v-if="menuOpen">
+                  <div class="menu__veil" @click="menuOpen = false" />
+                  <div class="menu__pop">
+                    <button
+                      class="menu__item"
+                      type="button"
+                      :disabled="locked || !body.trim() || isBusy('chapter:' + current)"
+                      @click="menuOpen = false; writeChapter(current, true)"
+                    >
+                      重写整章
+                    </button>
+                    <button
+                      class="menu__item"
+                      type="button"
+                      :disabled="!body.trim() || isBusy('say')"
+                      @click="menuOpen = false; readAloud()"
+                    >
+                      从光标处朗读
+                    </button>
+                    <button
+                      v-if="chapter.summary"
+                      class="menu__item"
+                      type="button"
+                      @click="menuOpen = false; summaryOpen = !summaryOpen"
+                    >
+                      {{ summaryOpen ? '折起大纲' : '展开大纲' }}
+                    </button>
+                  </div>
+                </template>
+              </div>
+            </div>
+            <!-- 大纲那一句一直在。AI 批量写正是照着它写的，写的人不该看不到。 -->
+            <p
+              v-if="chapter.summary && summaryOpen"
+              class="doc__sum"
+              title="点一下折起来"
+              @click="summaryOpen = false"
+            >
+              {{ chapter.summary }}
+            </p>
+            <button
+              v-else-if="chapter.summary"
+              class="doc__sumfold tiny dim"
+              type="button"
+              @click="summaryOpen = true"
+            >
+              大纲 ▸
+            </button>
+
+            <!-- 打字机模式：正在写的那一段亮，其余压暗。
+                 **textarea 没法给单独一段上色**，所以在它后面垫一层排版
+                 一模一样的镜像，由镜像画高亮，输入框本身文字透明、只留光标。
+                 这是给 textarea 做语法高亮的老办法，好处是保住了
+                 "偏移即 selectionStart"——上次改错地方的根因就是偏移。 -->
+            <div class="ed__stack" :class="{ 'ed__stack--dim': ui.focusMode }">
+              <!-- 行号。高度照镜像量出来的走，一段折三行只占一个号。
+                   点一下光标落到那一行开头。 -->
+              <div class="ed__gutter" aria-hidden="true">
+                <div
+                  v-for="(h, i) in lineHeights"
+                  :key="i"
+                  class="ed__ln"
+                  :class="{ 'is-now': blocks[i]?.now }"
+                  :style="{ height: h + 'px' }"
+                  @mousedown.prevent
+                  @click="goLine(i)"
+                >
+                  {{ i + 1 }}
+                </div>
+              </div>
+              <div class="ed__page">
+                <!-- 镜像常驻：不在专注模式时字是透明的，只为量行高。
+                     写在一行上——块之间多一个空白文本节点，pre-wrap 会把它
+                     排成一行，行号就全错一格。 -->
+                <div ref="mirror" class="ed__mirror" aria-hidden="true"><div v-for="(b, i) in blocks" :key="i" class="ed__mline" :class="{ 'is-now': b.now }">{{ b.text || ZW }}</div></div>
+              <textarea
+                :key="current"
+                :ref="(el) => (boxes[current] = el)"
+                class="ed__area"
+                spellcheck="false"
+                :readonly="locked"
+                :placeholder="
+                  chapter.summary
+                    ? '这一章要写的是：' + chapter.summary + '\n\n从这儿开始写，或者点上面「照大纲写这一章」让 AI 先来一版。'
+                    : '从这儿开始写。写完在左边点「提人物」，人物关系和地点就出来了。'
+                "
+                :value="body"
+                @input="onInput(current, $event)"
+                @select="onSelectionChange(current, $event)"
+                @mouseup="onSelectionChange(current, $event)"
+                @keyup="onSelectionChange(current, $event)"
+                @keydown="onAreaKey"
+                @blur="flushSave(current)"
+              />
+              </div>
             </div>
           </div>
         </div>
 
-        <p v-if="writer.state?.message" class="tiny dim">{{ writer.state.message }}</p>
-        <p
-          v-for="(w, i) in writer.state?.episodes ?? []"
-          :key="i"
-          class="tiny"
-          :class="w.error ? 'warn-text' : 'dim'"
-        >
-          {{ w.chapter_id }}
-          {{ w.error ? '写砸了：' + w.error : w.title + ' · ' + w.chars + ' 字' }}
-        </p>
-      </div>
+        <!-- 选中一段才浮出来的那两个按钮。贴在这一格底边中间，不在字上。
+             mousedown 拦掉，不然一点按钮输入框就失焦、选区就散了。 -->
+        <div v-if="liveSel && target && !locked && !bookOpen" class="ed__mini">
+          <button
+            class="btn btn--ai btn--sm"
+            type="button"
+            @mousedown.prevent
+            @click="openDialog"
+          >
+            <AppIcon name="sparkle" :size="13" />
+            改这 {{ target.to - target.from }} 字
+          </button>
+          <button
+            class="btn btn--ghost btn--sm"
+            type="button"
+            :disabled="isBusy('say')"
+            @mousedown.prevent
+            @click="readAloud"
+          >
+            {{ isBusy('say') ? '念着…' : '朗读' }}
+          </button>
+        </div>
+
+        <!-- 状态栏。一行，永远在。 -->
+        <footer v-if="hasStory && !draft" class="ed__status">
+          <span class="status__item">{{ chars }} 字</span>
+          <span class="status__item">第 {{ caretLine }} 行</span>
+          <span class="status__item" :class="'is-' + saveState">{{ SAVE_LABEL[saveState] }}</span>
+          <template v-if="audio">
+            <audio :src="audio" class="say" controls />
+            <button class="status__btn" type="button" title="关掉" @click="audio = null">×</button>
+          </template>
+          <span class="spacer" />
+          <template v-if="writer.running">
+            <span class="status__item status__ai">
+              <span class="dot" />
+              AI 展开中 {{ writer.state?.done ?? 0 }}/{{ writer.state?.total ?? 0 }}
+              <template v-if="writer.state?.message"> · {{ writer.state.message }}</template>
+            </span>
+            <button class="status__btn" type="button" @click="stopWriting">停</button>
+            <button
+              class="status__btn"
+              :class="{ 'is-on': follow }"
+              type="button"
+              title="AI 写到哪一章，编辑器就翻到哪一章"
+              @click="toggleFollow"
+            >
+              跟着翻
+            </button>
+          </template>
+          <button
+            class="status__btn"
+            :class="{ 'is-on': panelOpen }"
+            type="button"
+            title="对着稿子说话（Ctrl+K）"
+            @click="togglePanel"
+          >
+            对话
+          </button>
+          <button
+            class="status__btn"
+            :class="{ 'is-on': ui.focusMode }"
+            type="button"
+            :title="ui.focusMode ? '退出专注（Esc）' : '专注：只留稿纸'"
+            @click="ui.focusMode = !ui.focusMode"
+          >
+            专注
+          </button>
+        </footer>
+      </section>
+
+      <!-- ================= 右：对话 ================= -->
+      <!-- 停靠，不盖字。装四样：正在改的那段、来回、后悔的口子、输入框。 -->
+      <aside v-if="panelOpen && hasStory && !draft" class="ed__side">
+        <div class="side__head">
+          <b>对话</b>
+          <span class="spacer" />
+          <button
+            class="btn btn--ghost btn--sm"
+            type="button"
+            title="收起"
+            @click="panelOpen = false"
+          >
+            <AppIcon name="close" :size="14" />
+          </button>
+        </div>
+        <div class="side__body">
+          <div class="side__target tiny dim">
+            <template v-if="target">
+              改选中的 {{ target.to - target.from }} 字，别的一个字不动。
+              <button type="button" @click="sel = null">改整章</button>
+            </template>
+            <template v-else>
+              改整章，{{ chars }} 字。在正文里拖选一段就只改那一段。
+            </template>
+          </div>
+          <blockquote v-if="target" class="ai__quote small">{{ target.text }}</blockquote>
+          <div v-for="(t, i) in chat" :key="i" class="turn">
+            <span class="turn__who tiny">{{ t.role === 'user' ? '你' : 'AI' }}</span>
+            <span class="small">{{ t.text }}</span>
+          </div>
+          <div v-if="pending" class="ai__done">
+            <span class="tiny">已经落进稿子里了</span>
+            <div class="row">
+              <button class="btn btn--primary btn--sm" type="button" @click="pending = null">
+                就这样
+              </button>
+              <button class="btn btn--ghost btn--sm" type="button" @click="undoRevision">
+                撤销 · Ctrl+Z
+              </button>
+            </div>
+          </div>
+        </div>
+        <div class="side__foot">
+          <textarea
+            ref="askBox"
+            v-model="instruction"
+            class="textarea side__ask"
+            rows="3"
+            :placeholder="
+              chat.length
+                ? '接着说，比如「再短一点」「语气冷一些」'
+                : '要改成什么样？比如「这儿太赶了，铺一下情绪」'
+            "
+            @keydown.ctrl.enter.prevent="revise"
+            @keydown.meta.enter.prevent="revise"
+          />
+          <div class="row">
+            <button
+              class="btn btn--ai btn--sm"
+              type="button"
+              :disabled="isBusy('revise') || locked"
+              @click="revise"
+            >
+              <AppIcon name="sparkle" :size="14" />
+              {{
+                streaming
+                  ? '正在写…'
+                  : isBusy('revise')
+                    ? '改着…'
+                    : chat.length
+                      ? '再改一版'
+                      : '改'
+              }}
+            </button>
+            <span class="tiny dim">Ctrl+Enter</span>
+          </div>
+        </div>
+      </aside>
     </template>
   </div>
 </template>
 
 <style scoped>
-/* 编辑器占满剩下的高度。**一整块**，不是稿纸上放了个输入框。 */
+/* 整块就是纸。三栏之间只有细线，没有卡片、没有圆角——那一圈线本身就是
+   "这是页面里的一个控件"的提示，而这一页它就是整个页面。 */
 .ed {
+  flex: 1;
+  min-height: 0;
   display: flex;
-  flex-direction: column;
-  gap: var(--s3);
-  /* 只减顶栏和边距。页头在这一页整个是不要的（见模板里那一段），
-     所以能多吃几行——"占满"就差这几行。 */
-  min-height: calc(100vh - 96px);
-  padding: var(--s3);
+  position: relative;
+  background: var(--surface);
 }
-.ed__bar {
-  display: flex;
-  align-items: center;
-  gap: var(--s3);
-}
-/* 专注时整块吃满窗口，卡片的圆角和边框都不要了——那一圈线本身就是
-   "这是页面里的一个控件"的提示，而这时候它就是整个页面。 */
-.ed--focus {
-  min-height: 100vh;
-  padding: var(--s3) var(--s3) 0;
-}
-.ed--focus .ed__paper {
-  border-radius: 0;
-  border-left: 0;
-  border-right: 0;
-  border-bottom: 0;
-}
-.ed__pick {
-  max-width: 26em;
+.ed__center {
+  margin: auto;
 }
 
-.ed__paper {
-  position: relative;
-  flex: 1;
-  background: var(--surface);
-  border: 1px solid var(--line);
-  border-radius: var(--r-md);
-  padding: var(--s5) var(--s5) 64px;
-  overflow: auto;
+/* ---------- 左：章节 ---------- */
+.ed__list {
+  flex: none;
+  width: 220px;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-right: 1px solid var(--line);
+  background: color-mix(in srgb, var(--surface) 70%, var(--bg));
 }
-/* **不是 flex 容器。** 是过：那时右下角那排按钮成了正文的兄弟 flex item，
-   把正文挤到左边去，右边空一大片——"占满"当场落空。按钮改成绝对定位挂在
-   右下角之后，正文才真的是这块版面的唯一内容。 */
+.list__head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--s1);
+  padding: var(--s2) var(--s2) var(--s2) var(--s3);
+  border-bottom: 1px solid var(--line);
+}
+.book {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  gap: 1px;
+  padding: var(--s1) var(--s2);
+  border: 0;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+.book:hover:not(:disabled),
+.book.is-on {
+  background: var(--surface-2);
+}
+.book:disabled {
+  cursor: default;
+}
+.book__t {
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  color: var(--text-2);
+}
+.list__fold {
+  width: 26px;
+  padding: 0;
+  flex: none;
+}
+.list__rows {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--s2);
+  display: grid;
+  gap: 1px;
+  align-content: start;
+}
+.ch {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  width: 100%;
+  padding: 5px var(--s2);
+  border: 0;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--text-2);
+  font-size: var(--fs-sm);
+  text-align: left;
+  cursor: pointer;
+}
+.ch:hover:not(:disabled) {
+  background: var(--surface-2);
+  color: var(--text);
+}
+.ch.is-on {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.ch.is-ghost {
+  opacity: 0.55;
+  cursor: default;
+}
+.ch__n {
+  flex: none;
+  width: 1.6em;
+  text-align: right;
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+.ch.is-on .ch__n {
+  color: var(--accent);
+}
+.ch__t {
+  flex: 1;
+  min-width: 0;
+}
+.ch__s {
+  flex: none;
+  font-size: var(--fs-xs);
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+.ch__s.is-live {
+  color: var(--accent);
+}
+.ch__s.is-dirty {
+  color: var(--warn);
+}
+.ch__s.is-bad {
+  color: var(--danger);
+}
+.list__foot {
+  flex: none;
+  display: grid;
+  gap: var(--s1);
+  padding: var(--s2);
+  border-top: 1px solid var(--line);
+}
+.list__foot .btn {
+  justify-content: flex-start;
+}
+.list__run {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px var(--s2);
+  color: var(--accent);
+}
+
+/* ---------- 中：正文 ---------- */
+.ed__main {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+}
+/* **唯一的滚动容器。** 用户 2026-09-11：「要留白干什么玩意」——四边只剩
+   12px，刚好一个标点的宽度，第一个字不压在边线上；底下不留，余量在输入框
+   自己的内边距里。flex 列是为了让下面那一章把剩下的高度全占掉。 */
+.ed__scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--s3) var(--s3) 0;
+  display: flex;
+  flex-direction: column;
+}
+/* **铺到边。** 用户 2026-09-11：「不能到边显示吗」。之前卡在一行 38 个字
+   居中，两边各空出三分之一的屏幕，看着像摆设。一行长了眼睛要多扫一段，
+   但那是读的事；写的人要的是眼前这块地全是自己的稿子。 */
+.doc {
+  width: 100%;
+}
+/* **整块都是纸。** 短章的输入框也撑到底：点哪儿都在写，光标不会因为点到
+   正文下面的空地就没了。fit() 定的是"至少装下内容"，flex 再把它拉到底。 */
+.doc--chapter {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+.doc__head {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  min-height: 32px;
+}
+.doc__title {
+  margin: 0;
+  font-size: var(--fs-xl);
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+.doc__pick {
+  width: auto;
+  max-width: 22em;
+}
+.doc__sum {
+  margin: var(--s2) 0 0;
+  color: var(--text-3);
+  font-size: var(--fs-base);
+  line-height: 1.6;
+  cursor: pointer;
+}
+.doc__sumfold {
+  display: block;
+  margin-top: var(--s1);
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+}
+.doc__live {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--accent);
+  font-size: var(--fs-sm);
+}
+.doc__live .dot,
+.status__ai .dot,
+.list__run .dot {
+  animation: pulse 0.9s infinite alternate;
+}
+@keyframes pulse {
+  from {
+    opacity: 0.25;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.menu {
+  position: relative;
+}
+.menu__btn {
+  width: 28px;
+  padding: 0;
+}
+.menu__veil {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+}
+.menu__pop {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 4px);
+  z-index: 21;
+  min-width: 11em;
+  display: grid;
+  padding: 4px;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  box-shadow: var(--shadow-2);
+}
+.menu__item {
+  padding: 6px 10px;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--text);
+  font-size: var(--fs-sm);
+  text-align: left;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.menu__item:hover:not(:disabled) {
+  background: var(--surface-3);
+}
+.menu__item:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
 /* 镜像和输入框叠在一起。**每一项影响排版的属性都要一模一样**——
    字体、字号、行高、字距、宽度、padding、white-space、word-break。
    差一项两层就错位，而错位之后光标和它下面的字对不上，那比没有高亮糟得多。
@@ -1277,35 +1928,67 @@ async function stopWriting() {
 .ed__stack {
   position: relative;
   width: 100%;
-  max-width: 38em;
-  margin: 0 auto;
-  min-height: 55vh;
+  margin-top: var(--s3);
+  flex: 1;
+  display: flex;
+  align-items: stretch;
+}
+/* 行号列。数字小一号，但每一行的行高和正文一样，不然对不齐。 */
+.ed__gutter {
+  flex: none;
+  min-width: 2.4em;
+  padding-right: var(--s3);
+  text-align: right;
+  color: var(--text-3);
+  font-size: 13px;
+  line-height: calc(16px * 1.8);
+  font-variant-numeric: tabular-nums;
+  user-select: none;
+  cursor: pointer;
+}
+.ed__ln.is-now {
+  color: var(--text-2);
+}
+.ed__page {
+  flex: 1;
+  min-width: 0;
+  position: relative;
+  display: flex;
+  flex-direction: column;
 }
 .ed__mirror,
 .ed__area {
   font: inherit;
-  line-height: 1.9;
+  /* 正文字号。界面是 13、14，正文要 16——这是稿纸不是表单。 */
+  font-size: 16px;
+  line-height: 1.8;
   letter-spacing: inherit;
   white-space: pre-wrap;
   overflow-wrap: break-word;
-  padding: 0;
+  /* 底下 40vh 的余量放在输入框**自己**的内边距里：最后一行能滚到眼睛的
+     高度，而且点在那片空白上光标落到末尾——它是输入框的一部分，不是页面的。 */
+  padding: 0 0 40vh;
   border: 0;
   margin: 0;
   width: 100%;
 }
+/* 镜像常驻只为量行高，平时字是透明的；专注时它来显字，输入框的字透明。 */
 .ed__mirror {
   position: absolute;
   inset: 0;
-  color: var(--text-1);
+  color: transparent;
   pointer-events: none;
+}
+.ed__stack--dim .ed__mirror {
+  color: var(--text);
 }
 /* 不是"现在"那一段压暗。**压暗不是变灰**——用透明度，字还在那儿，
    扫一眼看得见上下文，只是不抢眼。 */
-.ed__stack--dim .ed__mirror span {
+.ed__stack--dim .ed__mline {
   opacity: 0.28;
   transition: opacity 0.18s;
 }
-.ed__stack--dim .ed__mirror span.is-now {
+.ed__stack--dim .ed__mline.is-now {
   opacity: 1;
 }
 /* 有镜像时输入框的字透明，只留光标和选中背景 */
@@ -1313,19 +1996,12 @@ async function stopWriting() {
   color: transparent;
   caret-color: var(--accent);
 }
-
 .ed__area {
   display: block;
   position: relative;
-  width: 100%;
-  /* **空章也要有地方下笔。** 高度是跟着内容长的（见 fit），空章算出来
-     只有一行——一整屏空白，唯一能点的是顶上一条看不见的细缝，鼠标点哪儿
-     都进不去。给个下限，整块都是可写区。 */
-  min-height: 55vh;
+  flex: 1;
   background: transparent;
   color: inherit;
-  font: inherit;
-  line-height: 1.9;
   resize: none;
   overflow: hidden;
 }
@@ -1335,55 +2011,127 @@ async function stopWriting() {
 .ed__area::selection {
   background: var(--accent-soft);
 }
-.ed__todo {
-  margin: auto;
-  display: grid;
-  gap: var(--s3);
-  justify-items: center;
-  text-align: center;
-  max-width: 32em;
+.ed__area::placeholder {
+  color: var(--text-3);
+}
+/* AI 写着的时候锁章：光标藏起来，字照常显示 */
+.ed__area[readonly] {
+  caret-color: transparent;
 }
 
-/* 右下角那排。**钉在卡片的右下角**，不跟着正文走——正文短的时候它要是
-   浮在文字正下方，中间隔着一大片空地，看着像掉队了。 */
-.ed__acts {
+/* 选中才出现的那两个按钮 */
+.ed__mini {
   position: absolute;
-  right: var(--s4);
-  bottom: var(--s4);
-  display: grid;
-  gap: var(--s2);
-  justify-items: end;
-  pointer-events: none;   /* 空白处不挡正文的选中 */
-}
-.ed__acts > * {
-  pointer-events: auto;
-}
-.ed__row {
+  left: 50%;
+  bottom: 44px;
+  transform: translateX(-50%);
+  z-index: 5;
   display: flex;
-  gap: var(--s2);
-  background: var(--surface);
+  gap: var(--s1);
+  padding: 4px;
+  background: var(--surface-2);
   border: 1px solid var(--line);
-  border-radius: var(--r-md);
-  padding: 6px;
-  box-shadow: 0 2px 12px rgb(0 0 0 / 0.25);
+  border-radius: var(--r);
+  box-shadow: var(--shadow-2);
 }
-.ed__panel {
-  width: 320px;
-  max-height: 60vh;
-  overflow: auto;
-  background: var(--surface);
-  border: 1px solid var(--accent);
-  border-radius: var(--r-md);
-  padding: var(--s4);
-  box-shadow: 0 2px 12px rgb(0 0 0 / 0.25);
+
+/* 状态栏 */
+.ed__status {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
+  height: 28px;
+  padding: 0 var(--s3);
+  border-top: 1px solid var(--line);
+  font-size: var(--fs-xs);
+  color: var(--text-3);
+  white-space: nowrap;
+}
+.status__item.is-dirty {
+  color: var(--warn);
+}
+.status__item.is-writing,
+.status__ai {
+  color: var(--accent);
+}
+.status__ai {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.status__btn {
+  padding: 2px 6px;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--text-3);
+  font-size: var(--fs-xs);
+  cursor: pointer;
+}
+.status__btn:hover {
+  color: var(--text);
+  background: var(--surface-2);
+}
+.status__btn.is-on {
+  color: var(--accent);
 }
 .say {
-  width: 320px;
-  height: 36px;
+  height: 22px;
+  width: 200px;
 }
 
-.ai__head {
+/* ---------- 右：对话 ---------- */
+.ed__side {
+  flex: none;
+  width: 340px;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-left: 1px solid var(--line);
+  background: color-mix(in srgb, var(--surface) 70%, var(--bg));
+}
+.side__head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  padding: var(--s2) var(--s2) var(--s2) var(--s4);
+  border-bottom: 1px solid var(--line);
+  font-size: var(--fs-sm);
+}
+.side__body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--s3) var(--s4);
+  display: grid;
+  gap: var(--s3);
+  align-content: start;
+}
+.side__target {
+  line-height: 1.6;
+}
+.side__target button {
+  padding: 0;
+  border: 0;
+  background: transparent;
   color: var(--accent);
+  font: inherit;
+  cursor: pointer;
+}
+.side__foot {
+  flex: none;
+  display: grid;
+  gap: var(--s2);
+  padding: var(--s3) var(--s4);
+  border-top: 1px solid var(--line);
+}
+.side__ask {
+  min-height: 72px;
 }
 .ai__quote {
   margin: 0;
@@ -1413,12 +2161,28 @@ async function stopWriting() {
   padding: var(--s3);
 }
 
+/* ---------- 从这儿开始 / 草稿 ---------- */
+.start {
+  display: grid;
+  gap: var(--s3);
+}
+.start__premise {
+  min-height: 7em;
+  font-size: var(--fs-md);
+}
+.draft {
+  display: grid;
+  gap: var(--s3);
+}
+.draft__list {
+  display: grid;
+  gap: var(--s2);
+}
 .dch {
   display: flex;
   gap: var(--s3);
   align-items: baseline;
 }
-
 .scales {
   display: inline-flex;
   border: 1px solid var(--line);
@@ -1436,5 +2200,23 @@ async function stopWriting() {
 .scale.is-on {
   background: var(--accent-soft);
   color: var(--accent);
+}
+
+/* ---------- 专注 ---------- */
+.ed--focus .ed__list {
+  display: none;
+}
+
+/* ---------- 窄屏 ---------- */
+@media (max-width: 1100px) {
+  /* 右栏盖上来，不再挤正文——正文已经没得挤了 */
+  .ed__side {
+    position: absolute;
+    right: 0;
+    top: 0;
+    bottom: 28px;
+    z-index: 10;
+    box-shadow: var(--shadow-3);
+  }
 }
 </style>

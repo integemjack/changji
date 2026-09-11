@@ -10,6 +10,7 @@
  * 那些是「这一部剧的详情」，归项目页；这条栏只回答「切到哪一部」。
  */
 import { computed, onMounted, ref, watch } from 'vue'
+import { useRoute } from 'vue-router'
 
 import AppIcon from '@/components/AppIcon.vue'
 import AddProjectDialog from '@/components/AddProjectDialog.vue'
@@ -22,9 +23,31 @@ const store = useProjects()
 const session = useSession()
 const ui = useUi()
 
+const route = useRoute()
 const keyword = ref('')
 const adding = ref(false)
-const collapsed = ref(false)
+
+/**
+ * 收没收起，**故事页和别处各记各的**。
+ *
+ * 故事页默认收起：那一页是个编辑器，而这条栏列着另外几部剧——你正在写
+ * 第一章，旁边摆着"你还可以去干的别的事"。别的页默认展开，换项目本来就是
+ * 在那些页上干的事。两边分开记，在故事页展开过一次不会让别处也跟着变。
+ */
+const onStory = computed(() => route.meta?.step === 'story')
+const foldKey = computed(() => (onStory.value ? 'changji.rail.story' : 'changji.rail'))
+const foldTick = ref(0)
+const collapsed = computed({
+  get() {
+    foldTick.value // 写 localStorage 之后靠它重算
+    const v = localStorage.getItem(foldKey.value)
+    return v === null ? onStory.value : v === '1'
+  },
+  set(v) {
+    localStorage.setItem(foldKey.value, v ? '1' : '0')
+    foldTick.value++
+  },
+})
 
 /**
  * 拖着栏头把整条挪到另一边。
