@@ -194,16 +194,25 @@ ordered chapter_schema(int target_scenes, int paras_per_scene) {
             {"description",
              "这一场结束时局面变成什么，而且要悬着。这一场就是一集，它就是那一集的钩子——**要拍得出来**：一个动作、一句说出口的话、一样刚被看见的东西。「谁意识到了什么」「谁明白了什么」这种在脑子里发生的事不算，镜头拍不到。把事情了结掉的也不算"},
             {"minLength", 6}};
-        // ⚠️ **一处描述只承载一件事，而且要紧的排在最前面。**
+        // ⚠️ **给一个字段规定形状，会把整段生成都推向那个形状。**
         //
-        // 2026-09-12 实跑量出来的：连着两轮往 last_line 的描述里加料
-        // （先是「有人开口就带引号」，再是「三种形状轮着来」），那一栏
-        // 越写越长，而**挂在 paragraphs 描述中段的「对白和动作要交替」
-        // 跟着失效**——四章的对白段比例连着三轮下行，44/50/22/25 →
-        // 18/29/22/23 → 17/11/17/30。两栏的描述是一起进语法的，长的那条
-        // 会把短的那条挤掉。
+        // 这是 2026-09-12 连着四轮量出来的，四轮的数摆在一起才看得见：
         //
-        // 所以：交替那条提到最前面，last_line 那条压回一句话。
+        //   轮次  last_line 的描述        四章对白段         钩子形态
+        //    8    只说「动作或台词」      44/50/22/25       动作台词混合
+        //    9    ＋「是台词就带引号」    18/29/22/23       6 台词 1 动作
+        //   10    ＋「三种形状轮着来」    17/11/17/30       5 动作 4 台词
+        //   11    压缩＋对白那条提前      19/24/21/37       7 动作 1 台词
+        //   12    退回第 8 轮那版          46/26/38/11       5 台词 4 动作
+        //
+        // 第九轮起 last_line 一带上形状指令，**整章跟着往那个形状偏**：
+        // 要求带引号就通篇往台词走、给三种形状就通篇往动作描写走，而对白
+        // 比例被这个偏向带着掉了一半。第十一轮先按「长描述挤掉短描述」去
+        // 修（把对白那条提到最前、给出具体的量），只回收了一部分；第十二轮
+        // 把形状指令整个撤掉，两项当场都回来了——**所以不是挤占，是外溢**。
+        //
+        // **这一栏的描述别再加料。** 要管整场戏的形状就去管 paragraphs
+        // 那条，那才是它该待的地方。
         scene_props[kChapterBodyField] = {
             {"type", "array"},
             {"description",
@@ -234,7 +243,7 @@ ordered chapter_schema(int target_scenes, int paras_per_scene) {
         scene_props["last_line"] = {
             {"type", "string"},
             {"description",
-             "这一场的最后一句，就是 turn 发生的那一刻。三种形状挑一种，一章里几场别都用同一种：动作停在半当中、一句话被打断或没人接、一样东西刚被看见。是台词就**原样写出来带引号**，不要写成「谁说完了什么」。写完就停，不总结不解释"},
+             "这一场的最后一句：局面变成那样的**那一刻**。一个动作，或者一句说出口的话。写完它这一场就结束了——不要写回头总结的句子。这里要的是正文，不是说明"},
             {"minLength", 12},
             {"maxLength", 120}};
 
@@ -695,20 +704,65 @@ ChapterDraft parse_chapter(const std::string& raw, int min_chars, bool strict) {
         }
     }
 
-    // **占位符不收。** 2026-09-12 实跑：schema 里写了「最后一段就是上面那个
-    // turn」，模型把它当成元指令，最后一段吐出来的是
+    // **占位符摘掉，不废整章。**
+    //
+    // 2026-09-12 实跑：schema 里写了「最后一段就是上面那个 turn」，模型
+    // 把它当成元指令，最后一段吐出来的是
     // `turn_sentence_from_above_repeated_but_in_correct_place`——一串下划线
-    // 连着的英文，原样落进正文、落进分集、落进字幕。中文正文里不会出现
-    // 这种东西，见着就打回。
+    // 连着的英文，原样落进正文、落进分集、落进字幕。
+    //
+    // 第一版是见着就打回。**那是错的**：它是硬闸，三次尝试全撞上去就落成
+    // 0 字——同一天实跑，一轮里 ch03、ch04 两章都这么没的。而这种垃圾是
+    // **认得出、摘得掉**的：中文正文里不会出现十六个连着的英文字母或
+    // 下划线。摘掉那一段，剩下的照收；真摘到不够长了，下面的字数闸会拦。
+    //
+    // 分寸和 strip_quote_runs 一样：能就地修好的别打回，打回的代价是整章。
     {
-        int run = 0;
-        for (const char c : d.text) {
-            const bool wordish = (c >= 'a' && c <= 'z') ||
-                                 (c >= 'A' && c <= 'Z') || c == '_';
-            run = wordish ? run + 1 : 0;
-            if (run >= 16) {
-                throw StoryError("正文里混进了占位符（一长串英文下划线）。重试一次");
+        const auto has_placeholder = [](const std::string& s) {
+            int run = 0;
+            for (const char c : s) {
+                const bool wordish = (c >= 'a' && c <= 'z') ||
+                                     (c >= 'A' && c <= 'Z') || c == '_';
+                run = wordish ? run + 1 : 0;
+                if (run >= 16) return true;
             }
+            return false;
+        };
+        if (has_placeholder(d.text)) {
+            // 场次表里先摘，正文按剩下的段落重拼——**两边必须一起摘**，
+            // 只摘正文的话场的段落数就对不上了，而场的位置正是按段落数
+            // 数出来的（见 apply_chapter）。
+            for (DraftScene& sc : d.scenes) {
+                std::vector<std::string> kept;
+                for (std::string& p : sc.paragraphs) {
+                    if (!has_placeholder(p)) kept.push_back(std::move(p));
+                }
+                sc.paragraphs = std::move(kept);
+            }
+            std::string cleaned;
+            const auto keep_line = [&](const std::string& line) {
+                if (line.empty() || has_placeholder(line)) return;
+                if (!cleaned.empty()) cleaned += "\n";
+                cleaned += line;
+            };
+            if (!d.scenes.empty()) {
+                for (const DraftScene& sc : d.scenes) {
+                    for (const std::string& p : sc.paragraphs) keep_line(p);
+                }
+            } else {
+                // 老形状（没有 scenes）：按行摘。
+                std::string line;
+                for (const char c : d.text) {
+                    if (c != '\n') {
+                        line += c;
+                        continue;
+                    }
+                    keep_line(line);
+                    line.clear();
+                }
+                keep_line(line);
+            }
+            d.text = cleaned;
         }
     }
 
