@@ -20,17 +20,97 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
+import AppIcon from '@/components/AppIcon.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import AssetCharacters from '@/views/assets/AssetCharacters.vue'
 import AssetEpisodes from '@/views/assets/AssetEpisodes.vue'
 import AssetLocations from '@/views/assets/AssetLocations.vue'
 import { api } from '@/api'
+import { useAction } from '@/composables/useAction'
+import { runAsyncJob } from '@/composables/useAsyncJob'
+import { useRefGen } from '@/composables/useRefGen'
 import { useSession } from '@/stores/session'
+import { useUi } from '@/stores/ui'
 
 const session = useSession()
 const route = useRoute()
 const router = useRouter()
+const ui = useUi()
+const { run, isBusy } = useAction()
+const { seed, seedPayload, rollSeed, clearSeed, touch } = useRefGen()
 const story = ref(null)
+
+/** 一键出图跑到第几张。空 = 没在跑。 */
+const bulk = ref(null)
+
+/**
+ * 把还缺的参考图一次画完。
+ *
+ * **只补缺的，不重画已有的。** 已经画好的那些多半是挑过的——有的还是手
+ * 传上去的真人照片。一键把它们全顶掉，等于一次点击毁掉半小时的挑选，
+ * 而这种事没有撤销。要重画某一张，那一格自己有「重画」。
+ *
+ * **一张一张来。** 显存只够一张，并发只会在引擎那边排队（现在是真排队
+ * 了），而排着的看不出进度。
+ */
+async function genMissing() {
+  const data = await api.assets(session.projectPath)
+  const jobs = []
+  for (const c of data.characters ?? []) {
+    for (const slot of ['front', 'three_quarter', 'back']) {
+      if (!c['ref_' + slot]) {
+        jobs.push({ kind: 'char', id: c.char_id, slot, name: c.name || c.char_id })
+      }
+    }
+  }
+  for (const l of data.locations ?? []) {
+    if (!l.ref_empty) jobs.push({ kind: 'loc', id: l.location_id, name: l.name || l.location_id })
+  }
+  if (!jobs.length) {
+    ui.ok('参考图都齐了。要换某一张，在那一格点「重画」')
+    return
+  }
+
+  let made = 0
+  for (let i = 0; i < jobs.length; i += 1) {
+    const j = jobs[i]
+    bulk.value = { at: i + 1, total: jobs.length, name: j.name, pct: 0 }
+    const ok = await run(
+      () =>
+        runAsyncJob(
+          (extra) =>
+            j.kind === 'char'
+              ? api.generateReference({
+                  project: session.projectPath,
+                  char_id: j.id,
+                  slot: j.slot,
+                  ...seedPayload(),
+                  ...extra,
+                })
+              : api.generateLocationReference({
+                  project: session.projectPath,
+                  location_id: j.id,
+                  ...seedPayload(),
+                  ...extra,
+                }),
+          {
+            prefix: 'ref',
+            onProgress: (cur, total) => {
+              if (bulk.value) bulk.value.pct = total > 0 ? Math.round((cur / total) * 100) : 0
+            },
+          },
+        ),
+      { key: 'genmissing' },
+    )
+    // 中间砸了就停：后面那些多半栽在同一件事上（模型没配、显存不够），
+    // 接着画只是让人多等十几分钟再看到同一句报错。
+    if (!ok) break
+    made += 1
+    touch()
+  }
+  bulk.value = null
+  if (made) ui.ok(`画好了 ${made} 张`)
+}
 
 const TABS = [
   { key: 'characters', label: '角色' },
@@ -98,6 +178,42 @@ watch(() => session.projectPath, loadStory)
           {{ t.label }}
           <span v-if="countOf(t.key)" class="tab__n">{{ countOf(t.key) }}</span>
         </button>
+
+        <!-- 出图的两个总开关。摆在这一行右边，因为它们管的是整页，
+             不属于某一格。 -->
+        <span class="tabs__gap" />
+
+        <label class="seed" title="留空 = 按名字算一个固定值，同一个人永远同一张脸。填个数就换一张；填回原来那个数能换回去">
+          <span class="seed__k tiny">种子</span>
+          <input
+            v-model="seed"
+            class="seed__in numeric"
+            type="text"
+            inputmode="numeric"
+            placeholder="自动"
+          />
+          <button class="seed__b" type="button" title="换一个" @click="rollSeed">
+            <AppIcon name="sparkle" :size="12" />
+          </button>
+          <button v-if="seed" class="seed__b" type="button" title="回到自动" @click="clearSeed">
+            ×
+          </button>
+        </label>
+
+        <button
+          class="btn btn--sm btn--ai"
+          type="button"
+          :disabled="isBusy('genmissing')"
+          title="把还缺的参考图一次画完。已经有的不动——那些多半是挑过的"
+          @click="genMissing"
+        >
+          <AppIcon name="sparkle" :size="13" />
+          <template v-if="bulk">
+            {{ bulk.at }}/{{ bulk.total }} {{ bulk.name }}
+            <span v-if="bulk.pct" class="numeric">{{ bulk.pct }}%</span>
+          </template>
+          <template v-else>一键出图</template>
+        </button>
       </nav>
 
       <!-- KeepAlive：切回来时还停在原来展开的那个角色上。三格各自都有
@@ -135,6 +251,37 @@ watch(() => session.projectPath, loadStory)
   display: flex;
   flex-direction: column;
   gap: var(--s3);
+}
+.tabs__gap {
+  flex: 1 1 auto;
+}
+.seed {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 6px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  color: var(--text-3);
+}
+.seed__in {
+  width: 88px;
+  border: 0;
+  background: transparent;
+  color: var(--text-1);
+  font-size: var(--fs-xs);
+  outline: none;
+}
+.seed__b {
+  border: 0;
+  background: transparent;
+  color: var(--text-3);
+  cursor: pointer;
+  padding: 0 2px;
+  line-height: 1;
+}
+.seed__b:hover {
+  color: var(--accent);
 }
 .rels {
   display: grid;

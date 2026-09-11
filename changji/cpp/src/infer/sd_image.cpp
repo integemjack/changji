@@ -455,6 +455,25 @@ std::string vram_arg(double gb) {
 
 struct SdContext::Impl {
     sd_ctx_t* ctx = nullptr;
+
+    /// **一个 sd_ctx 同时只许一件活在跑。**
+    ///
+    /// 2026-09-11 这条把服务干掉过一次：设定页上连点三个「重画」，三条线程
+    /// 同时进 sd.cpp，撞在
+    ///     conditioning/conditioner.hpp:1980: GGML_ASSERT(!hidden_states.empty())
+    /// 上——abort()，**不是异常，兜不住**，在跑的活全没了。
+    ///
+    /// sd_ctx 里面那一堆（conditioner 的中间缓冲、ggml 的计算图和分配器）
+    /// 是按"一次一件"写的，两条线程进去就是互相踩。
+    ///
+    /// **调度器挡不住这个。** 它管的是"哪个模型在显存里"，同一个槽是可以
+    /// 被借好几次的（多个租约共用一份已加载的权重，大模型那边正是靠这个
+    /// 并行跑好几路）。所以"一次一件"这件事只能由用它的人自己管——而这个
+    /// 上下文是共享的，那就该它自己管，谁调都不会漏。
+    ///
+    /// 代价是第二件活在这儿干等（出一张图几十秒）。那是对的：它本来也
+    /// 抢不到卡，等在这儿至少界面上那个百分比停在 0，而不是整个服务没了。
+    std::mutex run_mu;
     // 路径要活到 sd_ctx 建完：sd_ctx_params_t 存的是 const char*，
     // 不拷贝。传临时 string 的 c_str() 的话，new_sd_ctx 读到的是野指针。
     std::string diffusion, vae, text_encoder, max_vram, params_backend;
@@ -641,6 +660,11 @@ SdContext::~SdContext() = default;
 void SdContext::generate(const ImageRequest& req, const fs::path& dest,
                          pipeline::CancelToken& tok,
                          const StepCallback& on_step) {
+    // 见 Impl::run_mu。**锁在最外面**：中间那些 sd.cpp 调用没有一处是
+    // 可重入的，只锁一段等于没锁。
+    std::lock_guard<std::mutex> only_one(impl_->run_mu);
+    // 取消要在拿到锁之后再查一次：排在前面那件跑了几十秒，这期间用户
+    // 完全可能已经点了停止。
     if (tok.cancelled()) throw SdError("已取消");
 
     std::vector<sd_image_t> refs;
@@ -735,6 +759,7 @@ void SdContext::generate(const ImageRequest& req, const fs::path& dest,
 void SdContext::generate_video(const VideoRequest& req, const fs::path& raw_dest,
                                pipeline::CancelToken& tok,
                                const StepCallback& on_step) {
+    std::lock_guard<std::mutex> only_one(impl_->run_mu);   // 见 Impl::run_mu
     if (tok.cancelled()) throw SdError("已取消");
     if (!::sd_ctx_supports_video_generation(impl_->ctx)) {
         throw SdError("这个模型不支持出视频。[models].video 要填一个视频模型"

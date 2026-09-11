@@ -13,6 +13,7 @@ import EmptyState from '@/components/EmptyState.vue'
 import { api, mediaUrl } from '@/api'
 import { useAction } from '@/composables/useAction'
 import { runAsyncJob } from '@/composables/useAsyncJob'
+import { useRefGen } from '@/composables/useRefGen'
 import { useSession } from '@/stores/session'
 import { useUi } from '@/stores/ui'
 
@@ -28,6 +29,9 @@ const { run, isBusy } = useAction()
  * 几十秒，而头十几秒还在把模型读进显存，那段时间一步都不会推。
  */
 const genPct = reactive({})
+
+/** 页头那个种子，和「一键出图」画完之后的那声招呼。 */
+const { stamp, seedPayload } = useRefGen()
 
 const assets = ref(null)
 const loading = ref(false)
@@ -73,6 +77,9 @@ async function load() {
 }
 
 watch(() => session.projectPath, load, { immediate: true })
+// 页头的「一键出图」画完一张就招呼一声，这儿跟着重拉——不然图已经在
+// 磁盘上了，界面还是一片空。
+watch(stamp, load)
 
 /**
  * 问服务端有哪些参考音色。
@@ -206,6 +213,7 @@ async function genRef(charId, slot) {
             project: session.projectPath,
             char_id: charId,
             slot,
+            ...seedPayload(),
             ...extra,
           }),
         { prefix: 'ref', onProgress: (cur, total) => (genPct[charId + slot] = total > 0 ? Math.round((cur / total) * 100) : 0) },
@@ -230,6 +238,7 @@ async function genAllRefs(charId) {
               project: session.projectPath,
               char_id: charId,
               slot: s.key,
+              ...seedPayload(),
               ...extra,
             }),
           { prefix: 'ref', onProgress: (cur, total) => (genStep.value = { charId, label: s.label, pct: total > 0 ? Math.round((cur / total) * 100) : 0 }) },

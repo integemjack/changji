@@ -5,14 +5,34 @@
  * 收在这里，页面里只剩一句 run(...)。
  */
 
-import { ref } from 'vue'
+import { computed, reactive, ref } from 'vue'
 import { useSession } from '@/stores/session'
 import { useUi } from '@/stores/ui'
 
 export function useAction() {
   const ui = useUi()
   const session = useSession()
-  const busy = ref(false)
+  /**
+   * 正在跑的那些动作，按 key 记。
+   *
+   * ⚠️ **以前这儿是一个 `busy` 布尔，而且 run() 开头一句
+   * `if (busy.value) return undefined`——于是整页同时只能干一件事。**
+   *
+   * 2026-09-11 用户报的就是它：设定页上点了一个「画」，再点另一个位置的
+   * 「画」，**什么都不会发生**——没反应、不报错、按钮也不变灰，看着就像
+   * 界面坏了。而 AssetCharacters 里那段注释还写着"画着的那张只停自己那一
+   * 格，另外两格照样能点"，因为 `isBusy(key)` 确实是按 key 分的——分的只是
+   * "哪个按钮显示成忙"，真正拦人的那一句不认 key。
+   *
+   * 以前不明显，是因为出图是同步的：那几十秒里整页本来就动不了。改成
+   * 异步之后界面是活的，这一下就暴露成"点了没用"。
+   *
+   * 现在按 key 各跑各的；同一个 key 再点还是拦（防手抖连点）。
+   * 不给 key 的那些共用空串这一个格子，行为和以前一样。
+   */
+  const running = reactive(new Set())
+  const busy = computed(() => running.size > 0)
+  /** 最近一次开工的那个 key。留着是为了不改调用方，新代码别依赖它。 */
   const busyKey = ref('')
   const error = ref('')
 
@@ -22,8 +42,8 @@ export function useAction() {
    *                     refresh 跑完是否重算流程进度
    */
   async function run(fn, { key = '', success = '', refresh = false, quiet = false } = {}) {
-    if (busy.value) return undefined
-    busy.value = true
+    if (running.has(key)) return undefined
+    running.add(key)
     busyKey.value = key
     error.value = ''
     try {
@@ -36,12 +56,13 @@ export function useAction() {
       if (!quiet) ui.error(error.value)
       return undefined
     } finally {
-      busy.value = false
-      busyKey.value = ''
+      running.delete(key)
+      if (busyKey.value === key) busyKey.value = ''
     }
   }
 
-  const isBusy = (key) => busy.value && (!key || busyKey.value === key)
+  /** 这个 key 在跑吗。不给 key 就是"有没有任何东西在跑"。 */
+  const isBusy = (key) => (key ? running.has(key) : running.size > 0)
 
   return { busy, busyKey, error, run, isBusy }
 }

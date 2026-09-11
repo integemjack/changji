@@ -1,6 +1,7 @@
 #include "infer/llama_tts.hpp"
 
 #include <memory>
+#include <mutex>
 
 #ifdef CHANGJI_HAVE_LLAMA
 #include <fstream>
@@ -59,6 +60,15 @@ struct LlamaTts::Impl {
     mtmd_context* mctx = nullptr;
     llama_sampler* smpl = nullptr;
     int sample_rate = 0;
+
+    /// **一次只许念一句。** 和 sd_image.cpp 里那把 run_mu 是同一件事：
+    /// 上下文、解码器、采样器都只有一份，而 synthesize() 每句都要把采样器
+    /// free 掉重建——两条线程进来就是一个正在用、另一个给 free 了。
+    ///
+    /// 调度器挡不住：同一个槽可以被借好几次（多个租约共用一份已加载的
+    /// 权重）。"一次一件"只能由用它的人自己管，而这个对象是共享的，
+    /// 那就该它自己管，谁调都不会漏。
+    std::mutex run_mu;
 
     ~Impl() {
         if (smpl != nullptr) llama_sampler_free(smpl);
@@ -159,6 +169,7 @@ std::unique_ptr<LlamaTts> LlamaTts::load(const std::filesystem::path& backbone,
 bool LlamaTts::synthesize(const LlamaTtsRequest& req, double& out_duration_s,
                           std::string& why) {
     Impl& im = *impl_;
+    std::lock_guard<std::mutex> only_one(im.run_mu);   // 见 Impl::run_mu
     if (req.text.empty()) {
         why = "台词是空的";
         return false;

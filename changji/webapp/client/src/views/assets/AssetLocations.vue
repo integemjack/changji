@@ -17,6 +17,7 @@ import EmptyState from '@/components/EmptyState.vue'
 import { api, mediaUrl } from '@/api'
 import { useAction } from '@/composables/useAction'
 import { runAsyncJob } from '@/composables/useAsyncJob'
+import { useRefGen } from '@/composables/useRefGen'
 import { useSession } from '@/stores/session'
 import { useUi } from '@/stores/ui'
 
@@ -26,6 +27,9 @@ const { run, isBusy } = useAction()
 
 /** 每个场景画到百分之几。见 AssetCharacters 里同名那个。 */
 const genPct = reactive({})
+
+/** 页头那个种子，和「一键出图」画完之后的那声招呼。 */
+const { stamp, seedPayload } = useRefGen()
 
 const assets = ref(null)
 const shots = ref([])
@@ -131,6 +135,7 @@ async function loadShots() {
 }
 
 watch(() => [session.projectPath, session.episodeId], load, { immediate: true })
+watch(stamp, load)   // 见 AssetCharacters 里同一行
 
 function changed(id) {
   const now = edits.value[id]
@@ -226,6 +231,7 @@ async function genEmpty(locationId) {
           api.generateLocationReference({
             project: session.projectPath,
             location_id: locationId,
+            ...seedPayload(),
             ...extra,
           }),
         {
