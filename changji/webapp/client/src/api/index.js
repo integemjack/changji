@@ -141,6 +141,8 @@ export const api = {
   makeEpisodes: (payload) => post('/api/story/episodes', payload),
   // 粘进来的文本切成章节。不碰大模型，切章节是机械活。
   importStory: (payload) => post('/api/story/import', payload),
+  // 读一遍已经存下的正文，把人物关系地点和真钩子提出来。正文不动。
+  analyzeStory: (payload) => post('/api/story/analyze', payload),
 
   // ---- 引擎：角色 / 场景 / 风格 ----
   assets: (path) => get('/api/assets', { path }),

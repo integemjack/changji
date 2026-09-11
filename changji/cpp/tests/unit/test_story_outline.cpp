@@ -25,6 +25,7 @@
 #include "models/story.hpp"
 #include "stages/bible.hpp"
 #include "stages/script_story.hpp"
+#include "stages/story_analyze.hpp"
 #include "stages/story_import.hpp"
 #include "stages/story_outline.hpp"
 #include "stages/story_plan.hpp"
@@ -986,6 +987,232 @@ TEST_CASE("POST /api/story/import：空文本") {
     CHECK_THROWS_AS(http::post_story_import(
                         json{{"project", p_str(root)}, {"text", "   "}}),
                     http::ApiError);
+    std::error_code ec;
+    fs::remove_all(root, ec);
+}
+
+// ---- 读一遍现成的正文，把结构提出来 ----
+
+namespace {
+
+/// 一份粘进来、已经切好章的故事。
+Story pasted_story() {
+    Story s;
+    s.source = StorySource::PASTED;
+    const std::string novel =
+        "第一章 雨夜重逢\n"
+        "他推门进来，伞还在手里。\n"
+        "林晚认出了那把伞。\n"
+        "第二章 五年前那把伞\n"
+        "回到五年前的那个雨夜。\n"
+        "他没有回头。";
+    s.chapters = changji::stages::split_pasted(novel);
+    return s;
+}
+
+json good_analysis() {
+    return json{
+        {"logline", "一把伞牵出五年前的事"},
+        {"genre", "都市情感"},
+        {"tone", "克制"},
+        {"characters",
+         json::array({json{{"name", "林晚"},
+                           {"identity", "便利店夜班店员"},
+                           {"want", "把伞还回去"},
+                           {"arc", "从躲到面对"}}})},
+        {"relations", json::array()},
+        {"locations",
+         json::array({json{{"name", "便利店"}, {"what", "临街那家"}, {"when", "深夜"}}})},
+        {"chapters",
+         json::array({
+             json{{"chapter_id", "ch01"},
+                  {"summary", "他带着伞回来了。"},
+                  {"hook", "她认出那把伞"},
+                  {"hook_after", "他推门进来，伞还在手里。"},
+                  {"characters", json::array({"林晚"})},
+                  {"locations", json::array({"便利店"})}},
+             json{{"chapter_id", "ch02"},
+                  {"summary", "回到五年前。"},
+                  {"hook", "他没有回头"},
+                  {"hook_after", "回到五年前的那个雨夜。"}},
+         })},
+    };
+}
+
+}  // namespace
+
+TEST_CASE("节选：每章都在，中间省略要标出来") {
+    Story s;
+    for (int i = 0; i < 3; ++i) {
+        Chapter c;
+        c.chapter_id = "ch0" + std::to_string(i + 1);
+        c.title = "第 " + std::to_string(i + 1) + " 章";
+        c.text = "开头这一句。";
+        for (int k = 0; k < 8000; ++k) c.text += "中";
+        c.text += "结尾这一句。";
+        s.chapters.push_back(c);
+    }
+
+    const std::string t = changji::stages::render_chapters_for_analysis(s);
+    // 三章一章都不能少——漏掉一整章比每章少几百字糟糕得多
+    for (int i = 1; i <= 3; ++i) {
+        CHECK(t.find("ch0" + std::to_string(i)) != std::string::npos);
+    }
+    // 头尾都要，中间省略
+    CHECK(t.find("开头这一句") != std::string::npos);
+    CHECK(t.find("结尾这一句") != std::string::npos);
+    CHECK(t.find("（中间略）") != std::string::npos);
+    // 总量受控，不会把整本书塞进去
+    CHECK(changji::text::utf8_len(t) < 20000);
+
+    // 短章整章给，不省略
+    Story small;
+    Chapter c;
+    c.chapter_id = "ch01";
+    c.title = "短的";
+    c.text = "就这么几个字。";
+    small.chapters.push_back(c);
+    const std::string t2 = changji::stages::render_chapters_for_analysis(small);
+    CHECK(t2.find("（中间略）") == std::string::npos);
+}
+
+TEST_CASE("提示词：读，不要改写") {
+    const Story s = pasted_story();
+    const std::string p =
+        changji::stages::build_analyze_prompt(s, StyleLine::REALISTIC);
+    CHECK(p.find("不要改写正文") != std::string::npos);
+    CHECK(p.find("只提文本里真实出现的东西") != std::string::npos);
+    CHECK(p.find("不要写长相") != std::string::npos);
+    CHECK(p.find("chapter_id 照抄") != std::string::npos);
+    CHECK(p.find("ch01") != std::string::npos);
+}
+
+TEST_CASE("schema：人物那三块和大纲那份长一样") {
+    const auto& a = changji::stages::analyze_schema().at("properties");
+    const auto& o = outline_schema().at("properties");
+    // 下游认的是同一个形状，两边不一致的话每个消费者都要分支
+    CHECK(a.at("characters") == o.at("characters"));
+    CHECK(a.at("relations") == o.at("relations"));
+    CHECK(a.at("locations") == o.at("locations"));
+    // 章名不给模型改——那是作者自己写的
+    CHECK_FALSE(a.at("chapters").at("items").at("properties").contains("title"));
+    CHECK(a.at("chapters").at("items").at("properties").contains("hook_after"));
+}
+
+TEST_CASE("并回去：正文一个字不动，钩子落在那句话后面") {
+    const Story s = pasted_story();
+    const std::string before = s.chapters[0].text;
+
+    const Story got =
+        changji::stages::apply_analysis(s, good_analysis().dump());
+
+    // 正文、章名、章号照旧
+    CHECK(got.chapters[0].text == before);
+    CHECK(got.chapters[0].title == s.chapters[0].title);
+    CHECK(got.chapters[0].chapter_id == "ch01");
+
+    // 结构补上了
+    CHECK(got.logline == "一把伞牵出五年前的事");
+    REQUIRE(got.characters.size() == 1);
+    CHECK(got.characters[0].name == "林晚");
+    CHECK(got.chapters[0].summary == "他带着伞回来了。");
+
+    // 钩子定位：落在 hook_after 那句话**之后**
+    bool found = false;
+    for (const auto& h : got.chapters[0].hooks) {
+        if (h.text != "她认出那把伞") continue;
+        found = true;
+        const auto chars = changji::text::utf8_chars(got.chapters[0].text);
+        REQUIRE(h.at_char > 0);
+        REQUIRE(h.at_char <= static_cast<int>(chars.size()));
+        CHECK(chars[static_cast<std::size_t>(h.at_char) - 1] == "。");
+    }
+    CHECK(found);
+
+    CHECK(got.validate().empty());
+}
+
+TEST_CASE("并回去：模型糊弄时的几种情况") {
+    const Story s = pasted_story();
+
+    SUBCASE("hook_after 查不到——挂章尾，别把钩子丢了") {
+        json j = good_analysis();
+        j["chapters"][0]["hook_after"] = "正文里根本没有这句话";
+        const Story got = changji::stages::apply_analysis(s, j.dump());
+        bool found = false;
+        for (const auto& h : got.chapters[0].hooks) {
+            if (h.text == "她认出那把伞") {
+                found = true;
+                CHECK(h.at_char == got.chapters[0].text_len());
+            }
+        }
+        CHECK(found);
+        CHECK(got.validate().empty());
+    }
+
+    SUBCASE("编了个不存在的章号——跳过，别把它当新章") {
+        json j = good_analysis();
+        j["chapters"].push_back(json{{"chapter_id", "ch99"},
+                                     {"summary", "查无此章"},
+                                     {"hook", "无"}});
+        const Story got = changji::stages::apply_analysis(s, j.dump());
+        CHECK(got.chapters.size() == s.chapters.size());
+        CHECK(got.validate().empty());
+    }
+
+    SUBCASE("章节里冒出没登记的人——过滤掉") {
+        json j = good_analysis();
+        j["chapters"][0]["characters"].push_back("查无此人");
+        const Story got = changji::stages::apply_analysis(s, j.dump());
+        for (const auto& n : got.chapters[0].characters) {
+            CHECK(n == "林晚");
+        }
+    }
+
+    SUBCASE("一个人都没读出来——报错，不要产出一份没人的故事") {
+        json j = good_analysis();
+        j["characters"] = json::array();
+        CHECK_THROWS_AS(changji::stages::apply_analysis(s, j.dump()),
+                        stages::StoryError);
+    }
+}
+
+TEST_CASE("POST /api/story/analyze：只回草稿，而且重算了分集") {
+    const fs::path root = fresh_project("读一遍");
+    ProjectStore store(root);
+    Story s = pasted_story();
+    s.plan = changji::stages::plan_episodes(s, 60.0);
+    store.save_story(s);
+
+    llm::ReplayClient client({good_analysis().dump()});
+    pipeline::CancelToken tok;
+    const auto r =
+        http::post_story_analyze(json{{"project", p_str(root)}}, client, tok);
+
+    CHECK(r.status == 200);
+    CHECK_FALSE(r.body.at("adopted").get<bool>());
+    CHECK_FALSE(r.body.at("needs_analysis").get<bool>());
+    CHECK(r.body.at("story").at("characters").size() == 1);
+    // 盘上还是原来那份
+    CHECK(store.load_story().characters.empty());
+
+    std::error_code ec;
+    fs::remove_all(root, ec);
+}
+
+TEST_CASE("POST /api/story/analyze：没正文可读") {
+    const fs::path root = fresh_project("没正文");
+    ProjectStore store(root);
+    // 大纲写出来的故事本来就带人物表，不用走这一步
+    store.save_story(parse_outline(good_outline().dump(), "梗概", StoryScale::MEDIUM));
+
+    llm::ReplayClient client({good_analysis().dump()});
+    pipeline::CancelToken tok;
+    CHECK_THROWS_AS(
+        http::post_story_analyze(json{{"project", p_str(root)}}, client, tok),
+        http::ApiError);
+    CHECK(client.calls().empty());
+
     std::error_code ec;
     fs::remove_all(root, ec);
 }

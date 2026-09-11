@@ -57,6 +57,16 @@ ApiResult post_story_plan(const nlohmann::json& body);
 /// 才提得出来，是下一步的事。
 ApiResult post_story_import(const nlohmann::json& body);
 
+/// POST /api/story/analyze —— 让大模型读一遍已经存下的正文，把结构提出来。
+///
+/// 粘贴导入只切章节，切完人物关系地点全是空的，走到「设定」那一步资产库
+/// 还是空的。这一步补那个洞。
+///
+/// **正文一个字不动**，只补 summary、hook 和全剧的人物/关系/地点。
+/// 和别的几个一样**只回草稿不落库**。
+ApiResult post_story_analyze(const nlohmann::json& body, llm::Client& client,
+                             pipeline::CancelToken& tok);
+
 /// POST /api/story/episodes —— 把分集表落成真的剧集。
 ///
 /// 分集表是计划，剧集是流水线真正在跑的东西。分成两步而不是采用大纲时

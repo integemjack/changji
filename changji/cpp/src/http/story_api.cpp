@@ -6,6 +6,7 @@
 
 #include "models/project.hpp"
 #include "models/story.hpp"
+#include "stages/story_analyze.hpp"
 #include "stages/story_import.hpp"
 #include "stages/story_outline.hpp"
 #include "stages/story_plan.hpp"
@@ -295,6 +296,46 @@ ApiResult post_story_import(const json& body) {
     // 人物、关系、地点都还是空的——那些要读懂内容才提得出来。前端靠这个
     // 数提醒人「下一步让 AI 读一遍」，不然采用之后会一路走到分镜才发现
     // 资产库是空的。
+    out["needs_analysis"] = draft.characters.empty();
+    return {200, out};
+}
+
+ApiResult post_story_analyze(const json& body, llm::Client& client,
+                             pipeline::CancelToken& tok) {
+    forbid_extra(body, {"project"});
+    ProjectStore store = open_project(body);
+    const Project project = load_or_400(store);
+    const Story story = load_story_or_400(store);
+
+    if (story.chapters.empty()) {
+        throw ApiError(400, "还没有故事。先写一份大纲，或者粘一段进来");
+    }
+    if (story.written_chapters() == 0) {
+        throw ApiError(400,
+                       "章节都还没有正文，没什么可读的。"
+                       "大纲写出来的故事本来就带人物表，不用走这一步");
+    }
+
+    llm::Request req;
+    req.prompt = stages::build_analyze_prompt(story, project.style_line);
+    req.schema = stages::analyze_schema();
+    req.schema_name = "story_analysis";
+
+    Story draft;
+    try {
+        draft = stages::apply_analysis(story, client.complete(req, tok));
+    } catch (const stages::StoryError& e) {
+        throw ApiError(502, std::string("大模型没读出能用的结构：") + e.what());
+    } catch (const std::exception& e) {
+        throw ApiError(502, e.what());
+    }
+
+    // 钩子变了，切点就变了——重算一遍分集表。这正是这一步的价值：
+    // 机械切点只保证不切在半句话中间，现在能切在真正的悬念上了。
+    draft.plan = stages::plan_episodes(draft, draft.episode_duration_s);
+
+    json out = story_response(draft);
+    out["adopted"] = false;
     out["needs_analysis"] = draft.characters.empty();
     return {200, out};
 }

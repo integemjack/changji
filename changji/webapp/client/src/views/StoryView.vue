@@ -55,6 +55,10 @@ const scale = computed(() => story.value?.scale ?? 'medium')
 const durationS = computed(() => story.value?.episode_duration_s ?? 60)
 const hasStory = computed(() => chapters.value.length > 0)
 const premiseDirty = computed(() => premise.value.trim() !== savedPremise.value)
+/** 有正文但一个人物都没提出来——粘进来的故事就是这样。 */
+const needsAnalysis = computed(
+  () => hasStory.value && !characters.value.length && writtenCount.value > 0,
+)
 const writtenCount = computed(
   () => chapters.value.filter((c) => (c.text ?? '').trim()).length,
 )
@@ -195,6 +199,23 @@ async function importPasted() {
     pasting.value = false
     pasted.value = ''
   }
+}
+
+/**
+ * 让 AI 读一遍正文。
+ *
+ * 粘进来的故事只有正文，人物关系地点全是空的——走到「设定」那一步资产库
+ * 还是空的，再往下分镜指不到任何角色。这一步补那个洞，**正文一个字不动**。
+ *
+ * 顺带把机械切点换成真钩子：粘贴时登记的段落边界只保证不切在半句话中间，
+ * 读过之后能切在真正的悬念上，所以分集表会跟着重算。
+ */
+async function analyzeStory() {
+  const result = await run(
+    () => api.analyzeStory({ project: session.projectPath }),
+    { key: 'analyze' },
+  )
+  if (result) draft.value = result
 }
 
 async function adoptDraft() {
@@ -424,6 +445,15 @@ async function adoptDraft() {
                 </span>
                 <div class="row">
                   <button
+                    v-if="needsAnalysis"
+                    class="btn btn--ai btn--sm"
+                    type="button"
+                    :disabled="isBusy('analyze')"
+                    @click="analyzeStory"
+                  >
+                    {{ isBusy('analyze') ? '正在读…' : '让 AI 读一遍，提人物' }}
+                  </button>
+                  <button
                     class="btn btn--ghost btn--sm"
                     type="button"
                     @click="pasting = !pasting"
@@ -482,6 +512,14 @@ async function adoptDraft() {
 
         <!-- 右栏：索引，不是画廊。点开去角色页改外观 -->
         <aside v-if="hasStory" class="story__side stack stack--sm">
+          <div v-if="needsAnalysis" class="side__group side__group--warn">
+            <div class="side__head">还没提人物</div>
+            <p class="side__hint tiny">
+              粘进来的只有正文。让 AI 读一遍才能把人和地方提出来，
+              不然走到「设定」那一步资产库是空的。
+            </p>
+          </div>
+
           <div class="side__group">
             <div class="side__head">人 {{ characters.length }}</div>
             <RouterLink
@@ -659,6 +697,14 @@ async function adoptDraft() {
 }
 .side__name {
   min-width: 0;
+}
+.side__group--warn {
+  border-color: color-mix(in srgb, var(--warn) 40%, transparent);
+}
+.side__hint {
+  padding: var(--s2) var(--s3);
+  color: var(--text-2);
+  line-height: 1.6;
 }
 .side__rel {
   display: flex;
