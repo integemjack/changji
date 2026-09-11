@@ -193,9 +193,9 @@ ApiResult post_story_outline(const json& body, llm::Client& client,
     std::string premise = text::strip_ws(opt_str(body, "premise", ""));
     if (premise.empty()) premise = existing.premise;
     if (premise.empty()) premise = text::strip_ws(project.premise);
-    if (premise.empty()) {
-        throw ApiError(400, "先写一句梗概，比如「深夜便利店，前任突然推门进来」");
-    }
+    // **一个字都没有也照写。** 选题是整条流水线上最难从零开始的一步，
+    // 把它做成必填门槛就是把人摁在空白框前面发呆；这时候让模型连选题带
+    // 大纲一起出，人再挑。给了关键词的话它会往那个方向想。
 
     const StoryScale scale = opt_scale(body, "scale", existing.scale);
 

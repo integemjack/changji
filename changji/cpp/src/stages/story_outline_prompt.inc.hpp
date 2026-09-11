@@ -67,6 +67,19 @@ inline constexpr const char* kOutlineTailHead =
 
 )CJ";
 
+// 没给梗概时走这一段。
+//
+// **梗概不是必填的。** 三个入口里只有「我自己有个想法」那条是从手写的
+// 一句话开始的；「给几个关键词」和「什么都没有，你来一个」同样正当，
+// 而把梗概做成硬门槛等于又把人摁回空白框前面发呆。选题本来就是最难
+// 从零开始的一步。
+inline constexpr const char* kOutlineNoPremise =
+    R"CJ(这部剧讲什么**由你定**。先自己想一个选题，再照着它写大纲。
+选题要具体到人物和处境，一句话里就得有冲突——「都市复仇爽剧」那种是
+题材标签不是选题。把它写进 premise 那一项。
+
+)CJ";
+
 inline constexpr const char* kOutlineTailEnd =
     R"CJ(
 

@@ -130,11 +130,15 @@ async function pickDuration(event) {
   if (result) setStory(result)
 }
 
+/**
+ * 写故事。
+ *
+ * **梗概不是必填的。** 三个入口里只有「我自己有个想法」那条是从手写的
+ * 一句话开始的；给几个关键词、或者什么都不给让它来一个，同样正当。
+ * 选题本来就是整条流水线上最难从零开始的一步，把它做成硬门槛等于又把人
+ * 摁回空白框前面发呆。空着写出来的那一句会回填到梗概框里。
+ */
 async function writeStory() {
-  if (!premise.value.trim()) {
-    ui.warn('先写一句梗概，比如「深夜便利店，前任突然推门进来」')
-    return
-  }
   const result = await run(
     () =>
       api.writeOutline({
@@ -178,7 +182,15 @@ async function adoptDraft() {
           @click="writeStory"
         >
           <AppIcon name="sparkle" :size="15" />
-          {{ isBusy('write') ? '大模型正在写…' : hasStory ? '重写故事' : 'AI 写故事' }}
+          {{
+            isBusy('write')
+              ? '大模型正在写…'
+              : hasStory
+                ? '重写故事'
+                : premise.trim() || keywords.trim()
+                  ? 'AI 写故事'
+                  : 'AI 来一个'
+          }}
         </button>
       </template>
     </StepHeader>
@@ -203,6 +215,12 @@ async function adoptDraft() {
               大模型写了一份，还没存
             </div>
             <div class="card__sub">{{ draft.story?.logline }}</div>
+            <div
+              v-if="draft.story?.premise && draft.story.premise !== savedPremise"
+              class="tiny dim"
+            >
+              选题：{{ draft.story.premise }}
+            </div>
           </div>
           <span class="pill pill--accent nowrap">
             {{ draft.chapters }} 章 · 分 {{ draft.episodes }} 集
@@ -240,7 +258,7 @@ async function adoptDraft() {
                 v-model="premise"
                 class="textarea"
                 rows="3"
-                placeholder="例如：深夜便利店，前任推门进来，手里拿着五年前她送的那把伞。"
+                placeholder="想好了就写一句，比如：深夜便利店，前任推门进来，手里拿着五年前她送的那把伞。&#10;没想好就空着，直接点右上角让它来一个。"
                 @blur="savePremise"
               />
 
@@ -285,7 +303,7 @@ async function adoptDraft() {
               <input
                 v-model="keywords"
                 class="input"
-                placeholder="想往哪个方向写？（可留空，比如：重生复仇、破镜重圆）"
+                placeholder="想往哪个方向？热点词、题材都行，可留空（比如：重生复仇、破镜重圆）"
               />
             </div>
           </section>
@@ -298,7 +316,7 @@ async function adoptDraft() {
               v-else-if="!hasStory"
               icon="script"
               title="还没有故事"
-              hint="先写一句梗概，选个体量，让大模型写一份完整的故事出来。也可以直接把已有的小说粘进来——那条路还没做。"
+              hint="选个体量，点右上角。梗概和方向都可以空着——空着就让它自己定选题。把已有的小说粘进来那条路还没做。"
             />
 
             <template v-else>

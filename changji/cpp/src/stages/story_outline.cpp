@@ -96,6 +96,12 @@ const ordered& outline_schema() {
             {"items", {{"type", "string"}}}};
 
         ordered props = ordered::object();
+        // 用户没给梗概时，模型自己定的那个选题写在这里。给了梗概时这一项
+        // 会被忽略——不让它改写用户写的那句话。
+        props["premise"] = {
+            {"type", "string"},
+            {"description",
+             "这部剧讲什么，一句话，具体到人物和处境。用户已经给了梗概时照抄"}};
         props["logline"] = {{"type", "string"}, {"description", "一句话说清这个故事"}};
         props["genre"] = {{"type", "string"}, {"description", "题材，如 都市情感"}};
         props["tone"] = {{"type", "string"}, {"description", "调子，如 克制、荒诞"}};
@@ -159,9 +165,15 @@ std::string build_outline_prompt(const std::string& premise, StoryScale scale,
         out += prompt::kOutlineKeywordsPost;
     }
 
-    out += prompt::kOutlineTailHead;
-    out += text::truncate_utf8(text::strip_ws(premise),
-                               prompt::kOutlinePremiseMaxChars);
+    // 梗概可空：空着就让模型自己定选题。三个入口里只有「我自己有个想法」
+    // 那条是从手写的一句话开始的，把它做成硬门槛等于又把人摁回空白框前面。
+    const std::string p = text::strip_ws(premise);
+    if (p.empty()) {
+        out += prompt::kOutlineNoPremise;
+    } else {
+        out += prompt::kOutlineTailHead;
+        out += text::truncate_utf8(p, prompt::kOutlinePremiseMaxChars);
+    }
     out += prompt::kOutlineTailEnd;
     return out;
 }
@@ -177,7 +189,13 @@ Story parse_outline(const std::string& raw, const std::string& premise,
     if (!data.is_object()) throw StoryError("大模型没有返回对象");
 
     Story story;
-    story.premise = text::truncate_utf8(text::strip_ws(premise), 2000);
+    // 用户给了就用用户的，一个字不动；没给才收模型自己定的那个选题。
+    // 反过来（总是用模型回的）会让它悄悄改写用户写的那句话。
+    std::string used_premise = text::strip_ws(premise);
+    if (used_premise.empty()) {
+        used_premise = text::strip_ws(get_str(data, "premise"));
+    }
+    story.premise = text::truncate_utf8(used_premise, 2000);
     story.scale = scale;
     story.source = StorySource::AI;
     story.logline = text::clean_field(get_str(data, "logline"));

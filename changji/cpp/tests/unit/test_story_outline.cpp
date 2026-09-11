@@ -611,3 +611,74 @@ TEST_CASE("POST /api/bible：点名要故事但项目里没有") {
     std::error_code ec;
     fs::remove_all(root, ec);
 }
+
+// ---- 梗概不是必填的 ----
+//
+// 三个入口里只有「我自己有个想法」那条是从手写的一句话开始的；
+// 给几个关键词、或者什么都不给让它来一个，同样正当。把梗概做成硬门槛
+// 等于又把人摁回空白框前面发呆，而选题本来就是最难从零开始的一步。
+
+TEST_CASE("没给梗概：提示词让模型自己定选题") {
+    const std::string none =
+        build_outline_prompt("", StoryScale::MEDIUM, StyleLine::REALISTIC);
+    CHECK(none.find("这部剧讲什么**由你定**") != std::string::npos);
+    // 「这部剧讲的是：」后面本来要跟梗概，没梗概时整段都不该出现
+    CHECK(none.find("这部剧讲的是") == std::string::npos);
+
+    const std::string with =
+        build_outline_prompt("深夜便利店", StoryScale::MEDIUM, StyleLine::REALISTIC);
+    CHECK(with.find("这部剧讲的是") != std::string::npos);
+    CHECK(with.find("由你定") == std::string::npos);
+
+    // 只给关键词也算「没给梗概」，方向照样带进去
+    const std::string kw = build_outline_prompt("", StoryScale::MEDIUM,
+                                                StyleLine::REALISTIC, "重生复仇");
+    CHECK(kw.find("往这个方向想：重生复仇") != std::string::npos);
+    CHECK(kw.find("由你定") != std::string::npos);
+}
+
+TEST_CASE("schema 里有 premise，给模型一个地方写它定的选题") {
+    CHECK(outline_schema().at("properties").contains("premise"));
+}
+
+TEST_CASE("梗概谁说了算") {
+    json j = good_outline();
+    j["premise"] = "模型自己想的那个选题";
+
+    SUBCASE("用户没给：收模型的") {
+        const Story s = parse_outline(j.dump(), "", StoryScale::MEDIUM);
+        CHECK(s.premise == "模型自己想的那个选题");
+    }
+
+    SUBCASE("用户给了：一个字不动，不让它改写") {
+        const Story s = parse_outline(j.dump(), "用户写的那一句", StoryScale::MEDIUM);
+        CHECK(s.premise == "用户写的那一句");
+    }
+
+    SUBCASE("两边都没有：空着，但别的照样解析得出来") {
+        json empty = good_outline();
+        const Story s = parse_outline(empty.dump(), "", StoryScale::MEDIUM);
+        CHECK(s.premise.empty());
+        CHECK(s.chapters.size() == 2);
+    }
+}
+
+TEST_CASE("POST /api/story/outline：一个字都没有也照写") {
+    const fs::path root = fresh_project("空梗概");
+    json reply = good_outline();
+    reply["premise"] = "模型自己想的那个选题";
+    llm::ReplayClient client({reply.dump()});
+    pipeline::CancelToken tok;
+
+    // premise 不传、项目上也没有——原来这里是 400
+    const auto r =
+        http::post_story_outline(json{{"project", p_str(root)}}, client, tok);
+    CHECK(r.status == 200);
+    CHECK(r.body.at("story").at("premise").get<std::string>() ==
+          "模型自己想的那个选题");
+    REQUIRE(client.calls().size() == 1);
+    CHECK(client.calls()[0].prompt.find("由你定") != std::string::npos);
+
+    std::error_code ec;
+    fs::remove_all(root, ec);
+}
