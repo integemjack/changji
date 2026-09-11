@@ -48,6 +48,32 @@ ApiResult post_story_adopt(const nlohmann::json& body);
 /// POST /api/story/plan —— 按每集时长重算分集表。
 ApiResult post_story_plan(const nlohmann::json& body);
 
+/// POST /api/story/revise —— 改原稿的某一段。**只回草稿，不落库。**
+///
+/// body: {project, chapter_id, from_char, to_char, instruction, history?}
+///
+/// 故事那一页的重点是创作，而创作不是"按一次按钮生成一整章"——是选中一段
+/// 觉得不对的字，说一句"这儿太赶了，铺一下"，看它改完，再决定要不要。
+///
+/// `history` 是之前的来回（{role, text} 的数组），给对话那条路用。空的就是
+/// "选中一段直接说一句"。**两条路共用同一个提示词和同一条写回路径**：两套
+/// 机制都能改正文的话，迟早出现"对话改的和选中改的对同一段各有一份"。
+///
+/// 不落库比大纲那边更要紧：大纲落错了重写一份就是，改稿落错了盖掉的是
+/// 作者自己写的字。
+ApiResult post_story_revise(const nlohmann::json& body, llm::Client& client,
+                            pipeline::CancelToken& tok);
+
+/// POST /api/story/revise/apply —— 把改好的那一段写回去。
+///
+/// body: {project, chapter_id, from_char, to_char, text}
+///
+/// **不碰大模型**：这一步是机械的字符串替换 + 重算候选切点 + 重算分集表。
+/// 分出来是因为它必须能单独测——写回去写错位置的话，盖掉的是作者的原文。
+///
+/// 有说法的钩子会跟着挪位置保住，落在被替换那一段里面的丢掉。
+ApiResult post_story_revise_apply(const nlohmann::json& body);
+
 /// POST /api/story/from_episodes —— 从已有剧集反推一份故事骨架。
 ///
 /// 给**老项目**用：它们手里只有一集集写好的剧本，没有 story.json，于是

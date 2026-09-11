@@ -522,6 +522,7 @@ add_executable(changji
     src/stages/script.cpp
     src/stages/story_plan.cpp
     src/stages/story_reverse.cpp
+    src/stages/story_revise.cpp
     src/stages/story_outline.cpp
     src/stages/script_story.cpp
     src/stages/story_import.cpp
@@ -818,6 +819,7 @@ if(CHANGJI_BUILD_TESTS)
         tests/unit/test_story.cpp
         tests/unit/test_story_outline.cpp
         tests/unit/test_story_reverse.cpp
+        tests/unit/test_story_revise.cpp
         tests/unit/test_ref_images.cpp
 
         # 被测的源码。刻意不包含 doctor.cpp、http/server.cpp、
@@ -845,6 +847,7 @@ if(CHANGJI_BUILD_TESTS)
         src/stages/script.cpp
         src/stages/story_plan.cpp
     src/stages/story_reverse.cpp
+    src/stages/story_revise.cpp
         src/stages/story_outline.cpp
         src/stages/script_story.cpp
         src/stages/story_import.cpp

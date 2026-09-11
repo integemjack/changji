@@ -516,6 +516,18 @@ void run(const config::Settings& settings, const Options& opts) {
             return json_response(r.body, r.status);
         });
 
+    // 改原稿的某一段。先出草稿（要大模型），人点了才落（不要大模型）。
+    CROW_ROUTE(app, "/api/story/revise").methods("POST"_method)(
+        script_route(&post_story_revise));
+
+    CROW_ROUTE(app, "/api/story/revise/apply").methods("POST"_method)(
+        [](const crow::request& req) {
+            auto r = guard([&] {
+                return post_story_revise_apply(parse_body(req.body));
+            });
+            return json_response(r.body, r.status);
+        });
+
     // 老项目接回新流程的那一步。不碰大模型，也不重新分集。
     CROW_ROUTE(app, "/api/story/from_episodes").methods("POST"_method)(
         [](const crow::request& req) {

@@ -12,6 +12,7 @@
 #include "stages/story_outline.hpp"
 #include "stages/story_plan.hpp"
 #include "stages/story_reverse.hpp"
+#include "stages/story_revise.hpp"
 #include "util/paths.hpp"
 #include "util/text.hpp"
 
@@ -451,6 +452,120 @@ ApiResult post_story_episodes(const json& body) {
     json out = story_response(story);
     out["created"] = created;
     out["updated"] = updated;
+    return {200, out};
+}
+
+namespace {
+
+/// 从请求体里取出"选中的哪一段"，顺手校验。
+stages::Span need_span(const json& body, const Story& story) {
+    stages::Span span;
+    span.chapter_id = need_str(body, "chapter_id");
+    const Chapter* c = story.chapter_by_id(span.chapter_id);
+    if (c == nullptr) throw ApiError(404, "没有这一章：" + span.chapter_id);
+
+    const int len = c->text_len();
+    span.from_char = static_cast<int>(
+        num_in_range(body, "from_char", 0.0, -1.0, 1e9));
+    span.to_char = static_cast<int>(
+        num_in_range(body, "to_char", static_cast<double>(len), -1.0, 1e9));
+    if (span.from_char < 0 || span.to_char > len || span.from_char >= span.to_char) {
+        // **位置对不上就拒**，别夹到合法范围里硬改。夹过之后改的是另一段
+        // 字，而用户看到的是"改好了"——他得自己一段段核对才发现改错了地方。
+        throw ApiError(400, "选中的范围不对：这一章有 " + std::to_string(len) +
+                                " 个字，而选的是 [" +
+                                std::to_string(span.from_char) + ", " +
+                                std::to_string(span.to_char) + ")");
+    }
+    return span;
+}
+
+std::vector<stages::ReviseTurn> read_history(const json& body) {
+    std::vector<stages::ReviseTurn> out;
+    const auto it = body.find("history");
+    if (it == body.end() || !it->is_array()) return out;
+    for (const auto& v : *it) {
+        if (!v.is_object()) continue;
+        stages::ReviseTurn t;
+        t.role = v.value("role", std::string("user"));
+        t.text = text::strip_ws(v.value("text", std::string()));
+        if (t.text.empty()) continue;
+        if (t.role != "assistant") t.role = "user";
+        out.push_back(std::move(t));
+    }
+    return out;
+}
+
+}  // namespace
+
+ApiResult post_story_revise(const json& body, llm::Client& client,
+                            pipeline::CancelToken& tok) {
+    forbid_extra(body, {"project", "chapter_id", "from_char", "to_char",
+                        "instruction", "history"});
+    ProjectStore store = open_project(body);
+    const Project project = load_or_400(store);
+    const Story story = load_story_or_400(store);
+
+    const stages::Span span = need_span(body, story);
+    const std::string instruction = text::strip_ws(opt_str(body, "instruction"));
+    const auto history = read_history(body);
+    if (instruction.empty() && history.empty()) {
+        throw ApiError(400, "没说要改成什么样。选中一段之后说一句，比如"
+                            "「这儿太赶了，铺一下情绪」");
+    }
+
+    const std::string before = stages::span_text(story, span);
+
+    llm::Request req;
+    req.prompt = stages::build_revise_prompt(story, span, instruction, history,
+                                             project.style_line);
+    req.schema = stages::revise_schema();
+    req.schema_name = "story_revision";
+
+    stages::Revision rev;
+    try {
+        rev = stages::parse_revision(
+            client.complete(req, tok),
+            static_cast<int>(text::utf8_len(before)));
+    } catch (const std::exception& e) {
+        throw ApiError(502, std::string("改稿没改出能用的东西：") + e.what());
+    }
+
+    // **只回草稿，不落库。** 和写大纲同一条规矩，而且这里更要紧：大纲落错了
+    // 重写一份就是，改稿落错了盖掉的是作者自己写的字。
+    return {200, {
+        {"chapter_id", span.chapter_id},
+        {"from_char", span.from_char},
+        {"to_char", span.to_char},
+        {"before", before},
+        {"text", rev.text},
+        {"note", rev.note},
+    }};
+}
+
+ApiResult post_story_revise_apply(const json& body) {
+    forbid_extra(body, {"project", "chapter_id", "from_char", "to_char", "text"});
+    ProjectStore store = open_project(body);
+    load_or_400(store);
+    const Story story = load_story_or_400(store);
+
+    const stages::Span span = need_span(body, story);
+    const std::string text_in = text::strip_ws(need_str(body, "text"));
+    if (text_in.empty()) throw ApiError(400, "要写回去的那一段是空的");
+
+    Story next = stages::apply_revision(story, span, text_in);
+    // **分集表跟着重算。** 正文长度变了，后面每一条的字符区间都错位了；
+    // 不重算的话切线会落在句子中间，而这件事不报错，只在成片里表现成
+    // "这一集从半句话开始"。
+    next.plan = stages::plan_episodes(next, next.episode_duration_s);
+
+    validate_or_400(next);
+    store.save_story(next);
+
+    json out = story_response(next);
+    const Chapter* c = next.chapter_by_id(span.chapter_id);
+    out["chapter_id"] = span.chapter_id;
+    out["chars"] = c != nullptr ? c->text_len() : 0;
     return {200, out};
 }
 
