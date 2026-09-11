@@ -17,7 +17,6 @@ import EmptyState from '@/components/EmptyState.vue'
 import { api, mediaUrl } from '@/api'
 import { useAction } from '@/composables/useAction'
 import { runAsyncJob } from '@/composables/useAsyncJob'
-import { useRefGen } from '@/composables/useRefGen'
 import { useRefStream } from '@/composables/useRefStream'
 import { useSession } from '@/stores/session'
 import { useUi } from '@/stores/ui'
@@ -47,8 +46,6 @@ function onEsc(e) {
   if (e.key === 'Escape' && openId.value) openId.value = ''
 }
 
-/** 页头那个种子，和「一键出图」画完之后的那声招呼。 */
-const { stamp, seedPayload } = useRefGen()
 
 const assets = ref(null)
 const shots = ref([])
@@ -157,7 +154,6 @@ onMounted(() => document.addEventListener('keydown', onEsc))
 onUnmounted(() => document.removeEventListener('keydown', onEsc))
 
 watch(() => [session.projectPath, session.episodeId], load, { immediate: true })
-watch(stamp, load)   // 见 AssetCharacters 里同一行
 watch(finished, load)   // 画完一张就重拉，刷新过页面的人只剩这条路
 
 function changed(id) {
@@ -254,7 +250,6 @@ async function genEmpty(locationId) {
           api.generateLocationReference({
             project: session.projectPath,
             location_id: locationId,
-            ...seedPayload(),
             ...extra,
           }),
         // 进度和预览都从固定频道来（useRefStream），这儿不用再接一遍。

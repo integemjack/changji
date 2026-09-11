@@ -13,7 +13,6 @@ import EmptyState from '@/components/EmptyState.vue'
 import { api, mediaUrl } from '@/api'
 import { useAction } from '@/composables/useAction'
 import { runAsyncJob } from '@/composables/useAsyncJob'
-import { useRefGen } from '@/composables/useRefGen'
 import { useRefStream } from '@/composables/useRefStream'
 import { useSession } from '@/stores/session'
 import { useUi } from '@/stores/ui'
@@ -43,8 +42,6 @@ const { pct: genPct, preview, live, finished } = useRefStream()
 /** 引擎那边怎么叫这一格。改这里就得改 ref_gen.cpp 里拼 stem 那一行。 */
 const targetOf = (charId, slot) => `${charId}_${slot}`
 
-/** 页头那个种子，和「一键出图」画完之后的那声招呼。 */
-const { stamp, seedPayload } = useRefGen()
 
 /** 抽屉里改的是哪一个。 */
 const openChar = computed(
@@ -125,9 +122,6 @@ onMounted(() => document.addEventListener('keydown', onEsc))
 onUnmounted(() => document.removeEventListener('keydown', onEsc))
 
 watch(() => session.projectPath, load, { immediate: true })
-// 页头的「一键出图」画完一张就招呼一声，这儿跟着重拉——不然图已经在
-// 磁盘上了，界面还是一片空。
-watch(stamp, load)
 // 频道上说哪一张画完了就重拉——**刷新过页面的人只剩这条路**：
 // 发起那次请求的 promise 早随着旧页面一起没了。
 watch(finished, load)
@@ -277,7 +271,6 @@ async function genRef(charId, slot) {
             project: session.projectPath,
             char_id: charId,
             slot,
-            ...seedPayload(),
             ...extra,
           }),
         // 进度和预览都从那条固定频道来（useRefStream），这儿不用再接一遍
@@ -303,7 +296,6 @@ async function genAllRefs(charId) {
               project: session.projectPath,
               char_id: charId,
               slot: s.key,
-              ...seedPayload(),
               ...extra,
             }),
           {

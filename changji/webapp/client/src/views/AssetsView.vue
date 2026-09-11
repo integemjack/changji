@@ -28,7 +28,6 @@ import AssetLocations from '@/views/assets/AssetLocations.vue'
 import { api } from '@/api'
 import { useAction } from '@/composables/useAction'
 import { runAsyncJob } from '@/composables/useAsyncJob'
-import { useRefGen } from '@/composables/useRefGen'
 import { useSession } from '@/stores/session'
 import { useUi } from '@/stores/ui'
 
@@ -37,7 +36,6 @@ const route = useRoute()
 const router = useRouter()
 const ui = useUi()
 const { run, isBusy } = useAction()
-const { seed, seedPayload, rollSeed, clearSeed, touch } = useRefGen()
 const story = ref(null)
 
 /** 一键出图跑到第几张。空 = 没在跑。 */
@@ -100,13 +98,11 @@ async function genAll(force = false) {
                   project: session.projectPath,
                   char_id: j.id,
                   slot: j.slot,
-                  ...seedPayload(),
                   ...extra,
                 })
               : api.generateLocationReference({
                   project: session.projectPath,
                   location_id: j.id,
-                  ...seedPayload(),
                   ...extra,
                 }),
           {
@@ -122,7 +118,8 @@ async function genAll(force = false) {
     // 接着画只是让人多等十几分钟再看到同一句报错。
     if (!ok) break
     made += 1
-    touch()
+    // 不用在这儿招呼两格重拉：引擎画完每一张都会往 refs 频道播一条
+    // ref_done，那两格订着它。见 useRefStream。
   }
   bulk.value = null
   if (made) ui.ok(`画好了 ${made} 张`)
@@ -196,25 +193,12 @@ watch(() => session.projectPath, loadStory)
         </button>
 
         <!-- 出图的两个总开关。摆在这一行右边，因为它们管的是整页，
-             不属于某一格。 -->
+             不属于某一格。
+             ⚠️ **这儿不要再放"种子"。** 放过一次，用户 2026-09-12 说不用：
+             种子是"这一张不满意，换一张脸"，是一张图的事；而这一行上的
+             东西一按就是十几张，给它们定同一个种子既没意义也没人想要。
+             要换某一张，那一格自己有「重画」。 -->
         <span class="tabs__gap" />
-
-        <label class="seed" title="留空 = 按名字算一个固定值，同一个人永远同一张脸。填个数就换一张；填回原来那个数能换回去">
-          <span class="seed__k tiny">种子</span>
-          <input
-            v-model="seed"
-            class="seed__in numeric"
-            type="text"
-            inputmode="numeric"
-            placeholder="自动"
-          />
-          <button class="seed__b" type="button" title="换一个" @click="rollSeed">
-            <AppIcon name="sparkle" :size="12" />
-          </button>
-          <button v-if="seed" class="seed__b" type="button" title="回到自动" @click="clearSeed">
-            ×
-          </button>
-        </label>
 
         <button
           class="btn btn--sm btn--ai"
@@ -284,34 +268,6 @@ watch(() => session.projectPath, loadStory)
 }
 .tabs__gap {
   flex: 1 1 auto;
-}
-.seed {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 2px 6px;
-  border: 1px solid var(--line);
-  border-radius: var(--r-sm);
-  color: var(--text-3);
-}
-.seed__in {
-  width: 88px;
-  border: 0;
-  background: transparent;
-  color: var(--text-1);
-  font-size: var(--fs-xs);
-  outline: none;
-}
-.seed__b {
-  border: 0;
-  background: transparent;
-  color: var(--text-3);
-  cursor: pointer;
-  padding: 0 2px;
-  line-height: 1;
-}
-.seed__b:hover {
-  color: var(--accent);
 }
 .rels {
   display: grid;
