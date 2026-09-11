@@ -324,12 +324,31 @@ void progress_trampoline(int step, int steps, float time, void* /*data*/) {
             const auto loaded = scheduler().loaded_slots();
             const bool alone = loaded.size() == 1 && loaded.front() == slot;
             if (alone) {
-                const auto free_gb = models::free_vram_gb();
-                const auto prof = models::HardwareProfile::detect(std::nullopt);
-                const double total_gb =
-                    prof.gpu.has_value() ? prof.gpu->vram_gb() : 0.0;
-                if (free_gb.has_value() && total_gb > 0.0) {
-                    const double used_gb = total_gb - *free_gb;
+                // **总量和空闲要一次问出来。**
+                //
+                // 以前是分两次：空闲走 free_vram_gb，总量走
+                // HardwareProfile::detect。两个数来自两个时刻，而我们要的
+                // 是它们的差——中间只要有别的动静，差值就不是这个槽占的，
+                // 却会被当成实测值记下来，之后每一镜都拿它判要不要卸模型。
+                //
+                // detect 还会跑一遍完整硬件探测（fork nvidia-smi、查 PATH、
+                // 读 CPU 信息），而这里是 sd.cpp 的采样回调——这个进程
+                // CUDA 映射最满、最不该 fork 的时候。NVML 那条路一次调用
+                // 两个数都有，连 fork 都不用。
+                //
+                // 拿不到就退回老路（Mac 上就没有 NVML 这条）。
+                double free_now = 0.0;
+                double total_gb = 0.0;
+                if (const auto t = models::vram_totals_gb(); t.has_value()) {
+                    total_gb = t->total_gb;
+                    free_now = t->free_gb;
+                } else if (const auto f = models::free_vram_gb(); f.has_value()) {
+                    const auto prof = models::HardwareProfile::detect(std::nullopt);
+                    total_gb = prof.gpu.has_value() ? prof.gpu->vram_gb() : 0.0;
+                    free_now = *f;
+                }
+                if (total_gb > 0.0) {
+                    const double used_gb = total_gb - free_now;
                     if (used_gb > 0.0) {
                         scheduler().record_measured_vram(
                             slot,

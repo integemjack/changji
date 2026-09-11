@@ -184,6 +184,30 @@ TEST_CASE("问实时空闲显存：有卡就问得到，没卡就老老实实说
     // 没值也是合法答案（没装 NVIDIA 驱动的机器），不该因此判失败。
 }
 
+TEST_CASE("总量和空闲要一次问出来，而且互相说得通") {
+    // 算"这个槽实际占了多少"用的是 总量 − 空闲。分两次问的话两个数来自
+    // 两个时刻、两条不同的路，差值就不是这个槽占的——而那个差值会被当成
+    // 实测值记下来，之后每一镜都拿它判要不要卸模型。
+    const auto t = vram_totals_gb();
+    if (t.has_value()) {
+        CHECK(t->total_gb > 0.0);
+        CHECK(t->free_gb >= 0.0);
+        // **空闲不可能比总量还多。** 反过来的话 用掉的 = 总量 − 空闲
+        // 会是负数，实测值就记不下来，"够就不清理"永远起不来。
+        CHECK(t->free_gb <= t->total_gb);
+        // 和单独问空闲那条对得上（两次调用之间会变，放宽到 4 GB）。
+        if (const auto f = free_vram_gb(); f.has_value()) {
+            CHECK(std::abs(*f - t->free_gb) < 4.0);
+        }
+        // 和硬件探测报的整卡容量对得上。
+        const HardwareProfile p = HardwareProfile::detect();
+        if (p.gpu.has_value()) {
+            CHECK(std::abs(p.gpu->vram_gb() - t->total_gb) < 1.0);
+        }
+    }
+    // 拿不到也是合法答案（Mac、没装驱动的机器），调用方会退回老路。
+}
+
 TEST_CASE("CHANGJI_NO_NVML 能把新路关掉，退回老路") {
     // 新加一个原生库依赖，得留一个一键关掉的口子。关掉之后仍然要么
     // 给数、要么给空——不能因为关掉就崩，也不能给个荒唐的数。

@@ -379,8 +379,9 @@ struct NvmlMemory {
 /// ——这里只是**加了一条更快更稳的路，没有拆掉任何东西**。
 class Nvml {
 public:
-    /// 加载不上、初始化失败、拿不到卡，一律 nullopt。
-    static std::optional<double> free_gb() {
+    /// 总量和空闲，**一次问出来的**。加载不上、初始化失败、拿不到卡，
+    /// 一律 nullopt。
+    static std::optional<VramTotals> totals() {
         // **每次都看一眼那个开关，不是只在构造时看。** 只在构造时看的话，
         // 第一次问过之后再设就没用了——而"出了岔子一键关掉"要的正是
         // 随时能关。getenv 比 dlopen 便宜得多，放在这条路上不心疼。
@@ -394,7 +395,9 @@ public:
         // total == 0 说明这结构没被填上，别拿它当"空闲 0 字节"用——
         // 那会让调度器以为卡满了，每次都去卸模型。
         if (mem.total == 0) return std::nullopt;
-        return static_cast<double>(mem.free) / (1024.0 * 1024 * 1024);
+        constexpr double kGb = 1024.0 * 1024 * 1024;
+        return VramTotals{static_cast<double>(mem.total) / kGb,
+                          static_cast<double>(mem.free) / kGb};
     }
 
 private:
@@ -467,7 +470,7 @@ std::optional<double> free_vram_gb() {
 #endif
     // **先问 NVML**（进程内、不 fork、微秒级），问不到再走老路。
     // 理由写在 Nvml 上面。
-    if (auto gb = Nvml::free_gb(); gb.has_value()) return gb;
+    if (auto t = Nvml::totals(); t.has_value()) return t->free_gb;
     if (!proc::which("nvidia-smi")) return std::nullopt;
     // **超时要短。** 这个函数在每次借槽的路径上，卡住比问不到更糟；
     // 问不到只是退回静态估算。
@@ -476,6 +479,33 @@ std::optional<double> free_vram_gb() {
         {"--query-gpu=memory.free", "--format=csv,noheader,nounits"}, 5000);
     if (!r.launched || r.exit_code != 0) return std::nullopt;
     return parse_free_vram(r.out);
+}
+
+std::optional<VramTotals> vram_totals_gb() {
+#if defined(__APPLE__)
+    // 统一内存这边没有"整卡多大"这个说法对得上 NVML 的语义，
+    // 就不硬凑一个。调用方拿不到就走原来那条两次问的老路。
+    return std::nullopt;
+#else
+    if (auto t = Nvml::totals(); t.has_value()) return t;
+    // 退路：一次 nvidia-smi 同时要两个数。**一次，不是两次**——
+    // 分两次问的话两个数来自两个时刻，差值就不是这个槽占的。
+    if (!proc::which("nvidia-smi")) return std::nullopt;
+    auto r = proc::run("nvidia-smi",
+                       {"--query-gpu=memory.total,memory.free",
+                        "--format=csv,noheader,nounits"},
+                       5000);
+    if (!r.launched || r.exit_code != 0) return std::nullopt;
+    const std::string first = r.out.substr(0, r.out.find('\n'));
+    const std::size_t comma = first.find(',');
+    if (comma == std::string::npos) return std::nullopt;
+    const auto total = parse_free_vram(first.substr(0, comma));
+    const auto free = parse_free_vram(first.substr(comma + 1));
+    if (!total.has_value() || !free.has_value() || *total <= 0.0) {
+        return std::nullopt;
+    }
+    return VramTotals{*total, *free};
+#endif
 }
 
 std::optional<GPUInfo> parse_gpu_query(const std::string& out) {

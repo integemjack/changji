@@ -107,6 +107,23 @@ std::optional<GPUInfo> detect_gpu();
 /// 调用方退回原来的静态估算。**不要把"问不到"当成"没有空间"**。
 std::optional<double> free_vram_gb();
 
+/// 这张卡的总量和空闲量，**同一时刻、同一次问出来的**。
+///
+/// 为什么要有这个而不是分两次问：算"这个槽实际占了多少"用的是
+/// 总量 − 空闲。分两次问的话，两个数来自两个时刻、两条不同的路
+/// （总量走 HardwareProfile::detect，空闲走 free_vram_gb），中间模型
+/// 可能已经装进去了——差值就不是这个槽占的，而是两次采样之间的变化。
+/// 而那个差值会被当成实测值记下来，之后每一镜都拿它判要不要卸模型。
+///
+/// 顺带把采样那条路上的 fork 去掉：detect 会跑一遍完整硬件探测
+/// （fork nvidia-smi、查 PATH、读 CPU 信息），而它是在 sd.cpp 的采样
+/// 回调里调的——那正是这个进程 CUDA 映射最满、最不该 fork 的时候。
+struct VramTotals {
+    double total_gb = 0.0;
+    double free_gb = 0.0;
+};
+std::optional<VramTotals> vram_totals_gb();
+
 /// 从 `nvidia-smi --query-gpu=memory.free` 的输出里解析空闲显存。
 /// 单独拆出来是为了能测——测试里不该真去跑 nvidia-smi。
 std::optional<double> parse_free_vram(const std::string& out);
