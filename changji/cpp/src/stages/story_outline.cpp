@@ -86,13 +86,28 @@ const ordered& outline_schema() {
         chapter_props["hook"] = {
             {"type", "string"},
             {"description", "这一章结束时悬着的那件事：悬念、反转，或明确的情绪落点"}};
+        // ⚠️ **没写进 required 的字段，14B 一律不写。**
+        //
+        // 2026-09-11 实跑：出一份大纲 + 读一遍正文，两边都是
+        // `locations: []`、每一章的 `characters` 和 `locations` 也都是空的
+        // ——而人物那一项（在 required 里）给了三个、关系给了三条。不是模型
+        // 读不懂，是语法采样里那些字段可以合法地不出现，它就不出现。
+        //
+        // 后果不是"少一点信息"：设定页的「场景」那一格永远是空的，空景图
+        // 无从谈起；再往后排分镜时，不知道这一章在哪儿发生、谁在场——
+        // 而那正是第二步全部的输入。
+        //
+        // 所以能定的都写进 required，再加 minItems。见
+        // project-ai-chapter-quality 那条：这个体量的模型，只有 schema 管得住。
         chapter_props["characters"] = {
             {"type", "array"},
-            {"description", "这一章出场的人物名"},
+            {"description", "这一章出场的人物名，照抄上面登记过的名字"},
+            {"minItems", 1},
             {"items", {{"type", "string"}}}};
         chapter_props["locations"] = {
             {"type", "array"},
-            {"description", "这一章用到的地点名"},
+            {"description", "这一章用到的地点名，照抄上面登记过的名字"},
+            {"minItems", 1},
             {"items", {{"type", "string"}}}};
 
         ordered props = ordered::object();
@@ -121,7 +136,8 @@ const ordered& outline_schema() {
                        {"additionalProperties", false}}}};
         props["locations"] = {
             {"type", "array"},
-            {"description", "故事里的地方"},
+            {"description", "故事里的地方。每个都要有人在那儿演戏，别列背景板"},
+            {"minItems", 1},
             {"items", {{"type", "object"},
                        {"properties", location_props},
                        {"required", {"name", "what"}},
@@ -131,13 +147,15 @@ const ordered& outline_schema() {
             {"description", "按顺序的章节。最后一章要把主线了结"},
             {"items", {{"type", "object"},
                        {"properties", chapter_props},
-                       {"required", {"title", "summary", "hook"}},
+                       {"required", {"title", "summary", "hook", "characters",
+                                     "locations"}},
                        {"additionalProperties", false}}}};
 
         ordered s = ordered::object();
         s["type"] = "object";
         s["properties"] = props;
-        s["required"] = {"logline", "characters", "chapters"};
+        s["required"] = {"logline", "characters", "chapters", "locations",
+                         "relations"};
         s["additionalProperties"] = false;
         return s;
     }();

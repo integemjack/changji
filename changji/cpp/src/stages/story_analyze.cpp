@@ -130,13 +130,17 @@ const ordered& analyze_schema() {
                        {"properties", hook_props},
                        {"required", {"text", "after"}},
                        {"additionalProperties", false}}}};
+        // 同上：没写进 required 的，14B 一律不写。见 story_outline.cpp
+        // 里那段——两份 schema 是一起栽的，也要一起改。
         chapter_props["characters"] = {
             {"type", "array"},
-            {"description", "这一章出场的人物名"},
+            {"description", "这一章出场的人物名，照抄上面登记过的名字"},
+            {"minItems", 1},
             {"items", {{"type", "string"}}}};
         chapter_props["locations"] = {
             {"type", "array"},
-            {"description", "这一章用到的地点名"},
+            {"description", "这一章用到的地点名，照抄上面登记过的名字"},
+            {"minItems", 1},
             {"items", {{"type", "string"}}}};
 
         props["chapters"] = {
@@ -144,13 +148,18 @@ const ordered& analyze_schema() {
             {"description", "每一章一条，chapter_id 照抄，不要漏章"},
             {"items", {{"type", "object"},
                        {"properties", chapter_props},
-                       {"required", {"chapter_id", "summary", "hooks"}},
+                       {"required", {"chapter_id", "summary", "hooks",
+                                     "characters", "locations"}},
                        {"additionalProperties", false}}}};
 
         ordered s = ordered::object();
         s["type"] = "object";
         s["properties"] = props;
-        s["required"] = {"characters", "chapters"};
+        // relations 也在里面：不写进去的话模型给空数组，而**采用那一步会用
+        // 它盖掉大纲里已经有的那几条**。2026-09-11 实跑：出大纲给了 3 条
+        // 关系，读一遍正文之后变成 0 条——看着像"这个故事没有关系"，其实是
+        // 模型压根没写这一项。
+        s["required"] = {"characters", "chapters", "locations", "relations"};
         s["additionalProperties"] = false;
         return s;
     }();
@@ -246,11 +255,29 @@ Story apply_analysis(const Story& story, const std::string& raw) {
         const std::string summary = text::strip_ws(get_str(c, "summary"));
         if (!summary.empty()) target->summary = summary;
 
+        // **先清空再填，而且要去重。**
+        //
+        // 2026-09-11 实跑出来的样子：`['陈默','林景明','陈默','林景明','苏婉']`，
+        // 地点那份还混着同一个地方的两种叫法（"高架桥下那家通宵咖啡馆" 和
+        // "高架桥下的咖啡馆"）。原因是两条：一是这儿只 push 不 clear，而
+        // 大纲那一步已经往里写过一份了；二是模型自己也会把同一个名字写两遍。
+        //
+        // 读一遍正文这件事**是重读，不是补充**——正文改过之后，上一次读出来
+        // 的名单本来就该整份作废。留着只会让分镜提示词里同一个人名出现两次、
+        // 同一个地方指向两条不同的设定。
+        target->characters.clear();
+        std::set<std::string> seen_chars;
         for (const auto& n : get_str_array(c, "characters")) {
-            if (names.count(n)) target->characters.push_back(n);
+            if (names.count(n) && seen_chars.insert(n).second) {
+                target->characters.push_back(n);
+            }
         }
+        target->locations.clear();
+        std::set<std::string> seen_locs;
         for (const auto& n : get_str_array(c, "locations")) {
-            if (loc_names.count(n)) target->locations.push_back(n);
+            if (loc_names.count(n) && seen_locs.insert(n).second) {
+                target->locations.push_back(n);
+            }
         }
 
         // 钩子落在哪：拿模型抄的那句原文去正文里查。**查不到就丢掉那一条**

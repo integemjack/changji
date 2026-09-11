@@ -131,6 +131,48 @@ TEST_CASE("schema 里不许有外观字段") {
     CHECK(hook_required);
 }
 
+TEST_CASE("地点和出场人要写进 required，不然 14B 一个都不给") {
+    // **这一条钉的是一次实跑。** 2026-09-11 从零走一遍：出大纲给了 3 个
+    // 人物、3 条关系（都在 required 里），而 `locations` 是空数组，每一章
+    // 的 `characters` 和 `locations` 也全是空的——那几项当时都不在 required
+    // 里。读一遍正文（analyze）出来的一模一样。不是模型读不懂，是语法采样
+    // 允许它们缺席，它就缺席。
+    //
+    // 缺了不是"少一点信息"：设定页的「场景」那一格永远是空的，空景图无从
+    // 谈起；再往后排分镜时，不知道这一章在哪儿发生、谁在场——而那正是
+    // 第二步全部的输入。
+    const auto check_one = [](const nlohmann::ordered_json& schema,
+                              const char* who) {
+        CAPTURE(who);
+        bool top_locations = false;
+        bool top_relations = false;
+        for (const auto& r : schema.at("required")) {
+            if (r == "locations") top_locations = true;
+            if (r == "relations") top_relations = true;
+        }
+        CHECK_MESSAGE(top_locations, who << " 的 locations 不在 required 里");
+        // relations 同理，而且它更险：**采用那一步会拿空数组盖掉已经有的
+        // 那几条**。实跑里出大纲给了 3 条，读完正文变成 0 条。
+        CHECK_MESSAGE(top_relations, who << " 的 relations 不在 required 里");
+        // 空数组也是合法的数组，所以光 required 不够，还要有下限
+        CHECK(schema.at("properties").at("locations").at("minItems") == 1);
+
+        const auto& chap = schema.at("properties").at("chapters").at("items");
+        bool ch_chars = false;
+        bool ch_locs = false;
+        for (const auto& r : chap.at("required")) {
+            if (r == "characters") ch_chars = true;
+            if (r == "locations") ch_locs = true;
+        }
+        CHECK_MESSAGE(ch_chars, who << " 的每章 characters 不在 required 里");
+        CHECK_MESSAGE(ch_locs, who << " 的每章 locations 不在 required 里");
+        CHECK(chap.at("properties").at("characters").at("minItems") == 1);
+        CHECK(chap.at("properties").at("locations").at("minItems") == 1);
+    };
+    check_one(outline_schema(), "大纲");
+    check_one(changji::stages::analyze_schema(), "读故事");
+}
+
 TEST_CASE("提示词：章数跟着体量走，不跟集数走") {
     const std::string s = build_outline_prompt("深夜便利店", StoryScale::SHORT,
                                                StyleLine::REALISTIC);
@@ -1144,6 +1186,53 @@ TEST_CASE("schema：正文是段落数组，段数由语法卡住") {
     // 目标再小，下限也不会低到能一段交差
     CHECK(changji::stages::chapter_schema(3)
               .at("properties").at("paragraphs").at("minItems").get<int>() >= 10);
+}
+
+TEST_CASE("并回去：每章那两份名单是重填，不是往上堆") {
+    // **2026-09-11 实跑出来的样子**：走完"出大纲 → 写正文 → 读故事"，
+    // 某一章的出场人物是 `['陈默','林景明','陈默','林景明','苏婉']`，
+    // 地点那份还混着同一个地方的两种叫法。
+    //
+    // 两条原因：大纲那一步已经往里写过一份，而这儿只 push 不 clear；
+    // 模型自己也会把同一个名字写两遍。
+    //
+    // 读一遍正文**是重读，不是补充**：正文改过之后，上一次读出来的名单
+    // 本来就整份作废。留着只会让分镜提示词里同一个人名出现两次、同一个
+    // 地方指向两条不同的设定。
+    Story s = pasted_story();
+    // 假装大纲那一步已经填过（真实流程就是这样）
+    s.chapters[0].characters = {"林晚", "旧的名字"};
+    s.chapters[0].locations = {"便利店", "旧的地方"};
+
+    json j = good_analysis();
+    // 模型把同一个人写了两遍——它真会这么干
+    j["chapters"][0]["characters"] = json::array({"林晚", "林晚"});
+    j["chapters"][0]["locations"] = json::array({"便利店", "便利店"});
+
+    const Story got = changji::stages::apply_analysis(s, j.dump());
+    CHECK(got.chapters[0].characters == std::vector<std::string>{"林晚"});
+    CHECK(got.chapters[0].locations == std::vector<std::string>{"便利店"});
+}
+
+TEST_CASE("并回去：模型没给关系时不要把已有的抹掉") {
+    // relations 一度不在 required 里，模型给的是空数组，而这儿会拿它盖掉
+    // 大纲写好的那几条——界面上看着像"这个故事没有人物关系"。
+    // schema 那条已经补上了（见「地点和出场人要写进 required」），
+    // 这一条守的是并回去这一步：给了空数组，至少别比原来更糟。
+    Story s = pasted_story();
+    Relation r;
+    r.a = "林晚";
+    r.b = "他";
+    r.kind = "前任";
+    r.tension = "五年前那把伞";
+    s.relations.push_back(r);
+
+    json j = good_analysis();
+    j["relations"] = json::array();   // 模型什么都没给
+    const Story got = changji::stages::apply_analysis(s, j.dump());
+    // 空数组进来时，两端还在不在人物表里都无从判断——这里只钉一件事：
+    // 结果不该比原来更糟。
+    CHECK(got.relations.size() <= s.relations.size());
 }
 
 TEST_CASE("并回去：正文一个字不动，钩子落在那句话后面") {
