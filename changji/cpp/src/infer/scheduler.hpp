@@ -240,6 +240,18 @@ public:
         bool live_measured = false;
     };
     RoomDecision last_room_decision() const;
+
+    /// 上一次给这个槽腾地方的结论，一句话；没有（或者上一次判的是别的槽）
+    /// 就返回空串。
+    ///
+    /// **给进度条用的。** "点击出片清理掉大模型，够就不清理"是用户点下
+    /// 出片之后最关心的一件事，可他盯着的是进度条，而结论只在设置页上。
+    /// 一镜一句，就在他眼前。
+    ///
+    /// 判"够"却是按估算判的时候要说出来：那个估算在出片这一路被实测
+    /// 推翻过两次，都是往小了错。见 RoomDecision::live_measured。
+    std::string room_note(Slot slot) const;
+
     std::size_t budget() const;
 
     /// 注册一个槽。同一个槽重复注册会覆盖，但**只在它没加载时**——

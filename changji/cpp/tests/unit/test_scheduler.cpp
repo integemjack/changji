@@ -1119,6 +1119,73 @@ TEST_CASE("最近一次腾地方的判断要留痕，界面上读得到") {
     }
 }
 
+TEST_CASE("腾显存的结论要能一句话挂到进度条上") {
+    // **用户点完出片盯的是进度条**，而"卸没卸大模型"以前只在设置页上。
+    // 一镜一句，就在他眼前。见 Scheduler::room_note。
+    Scheduler s;
+    const std::size_t budget = 86 * GB;
+    s.set_budget(budget);
+
+    SlotSpec llm;
+    llm.slot = Slot::LLM;
+    llm.vram_estimate = budget;
+    llm.evict_priority = 1;
+    llm.load = [] {};
+    llm.unload = [] {};
+    s.register_slot(llm);
+
+    SlotSpec vid;
+    vid.slot = Slot::Video;
+    vid.vram_estimate = budget;
+    vid.evict_priority = 9;
+    vid.load = [] {};
+    vid.unload = [] {};
+    s.register_slot(vid);
+
+    SUBCASE("还没判过：什么都不说，别硬凑一句") {
+        CHECK(s.room_note(Slot::Video).empty());
+    }
+    SUBCASE("卸了：说卸了几个") {
+        s.record_measured_vram(Slot::Video, 90 * GB, 1);
+        s.set_free_vram_probe([] { return std::optional<double>(80.0); });
+        { auto a = s.acquire(Slot::LLM); }
+        { auto b = s.acquire(Slot::Video, 1); }
+        CHECK(s.room_note(Slot::Video) == "腾显存：卸了 1 个模型");
+    }
+    SUBCASE("够、而且是量出来的：直说没动") {
+        s.record_measured_vram(Slot::Video, 74 * GB, 1);
+        s.set_free_vram_probe([] { return std::optional<double>(80.0); });
+        { auto a = s.acquire(Slot::LLM); }
+        { auto b = s.acquire(Slot::Video, 1); }
+        CHECK(s.room_note(Slot::Video) == "显存够，没动别的模型");
+    }
+    SUBCASE("够、但是按估算判的：**必须说出来**") {
+        // 出片这一路的估算被实测推翻过两次，都是往小了错五倍，
+        // 而判错的后果是 CUDA OOM 把整个服务带走。用户看到这句就知道
+        // 这一镜是在没量过的情况下赌了一把。
+        Scheduler s2;
+        s2.set_budget(budget);
+        s2.set_free_vram_probe([] { return std::optional<double>(80.0); });
+        SlotSpec a2 = llm;
+        s2.register_slot(a2);
+        SlotSpec v2 = vid;
+        v2.live_vram = [] { return 14ull << 30; };
+        s2.register_slot(v2);
+        { auto a = s2.acquire(Slot::LLM); }
+        { auto b = s2.acquire(Slot::Video); }
+        CHECK(s2.room_note(Slot::Video) == "显存够（按估算判的），没动别的模型");
+    }
+    SUBCASE("判的是别的槽：这个槽这儿不说话") {
+        // 挂错地方会让人以为刚刚为这一镜卸过模型。
+        s.record_measured_vram(Slot::Video, 74 * GB, 1);
+        s.set_free_vram_probe([] { return std::optional<double>(80.0); });
+        { auto a = s.acquire(Slot::LLM); }
+        { auto b = s.acquire(Slot::Video, 1); }
+        CHECK(s.room_note(Slot::Image).empty());
+        CHECK(s.room_note(Slot::LLM).empty());
+    }
+}
+
 TEST_CASE("显存宽裕时也要留痕，别让界面显示上一次的旧结论") {
     // 不记的话，界面上显示的还是更早那次——而那次很可能是"卸了"。
     // 用户看着以为刚才又卸了一回，实际这次根本没压力。

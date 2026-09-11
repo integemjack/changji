@@ -168,6 +168,25 @@ Scheduler::RoomDecision Scheduler::last_room_decision() const {
     return last_decision_;
 }
 
+std::string Scheduler::room_note(Slot slot) const {
+    RoomDecision d;
+    {
+        std::lock_guard lg(mu_);
+        d = last_decision_;
+    }
+    // 判的不是这个槽就别说——上一条很可能是别的阶段留下的，
+    // 挂在这一镜下面会让人以为刚刚为它卸过模型。
+    if (!d.valid || d.slot != slot) return {};
+    if (!d.kept) {
+        return "腾显存：卸了 " + std::to_string(d.evicted) + " 个模型";
+    }
+    // **"够"是按估算判的时候必须说出来。** 出片这一路的估算被实测推翻过
+    // 两次，都是往小了错五倍，而判错的后果是 CUDA OOM 把整个服务带走。
+    // 用户看到这句就知道：这一镜是在没量过的情况下赌了一把。
+    return d.live_measured ? "显存够，没动别的模型"
+                           : "显存够（按估算判的），没动别的模型";
+}
+
 std::size_t Scheduler::measured_vram(Slot slot) const {
     std::lock_guard lg(mu_);
     const auto it = measured_.find(slot);

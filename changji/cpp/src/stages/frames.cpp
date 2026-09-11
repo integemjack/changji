@@ -15,6 +15,15 @@
 namespace fs = std::filesystem;
 
 namespace changji::stages {
+namespace {
+/// 把腾显存的结论包成"（……）"挂在进度文案后面；没有结论就什么都不加。
+std::string room_note_suffix(infer::Slot slot) {
+    const std::string note = infer::scheduler().room_note(slot);
+    return note.empty() ? std::string{} : "（" + note + "）";
+}
+}  // namespace
+
+
 
 using namespace changji::models;
 
@@ -200,7 +209,19 @@ std::vector<FrameOutcome> run_frames(std::vector<Shot*>& shots,
                                       std::to_string(steps) + "）"
                                 : "出首帧 " + shot->shot_id + "（第 " +
                                       std::to_string(step) + "/" +
-                                      std::to_string(steps) + " 步）";
+                                      std::to_string(steps) + " 步）" +
+                                      // **第一步上把腾显存的结论带出来。**
+                                      // 用户点完出片盯的是进度条，而"卸没卸
+                                      // 大模型"的结论只在设置页上。挂在第一
+                                      // 步是因为那时候刚借完槽，结论是新的；
+                                      // 每一步都挂只是重复刷屏。
+                                      //
+                                      // 几镜并发时这条可能是同一个槽上兄弟镜
+                                      // 头留下的判断——同一个槽、同一时刻的
+                                      // 状态，内容一样，不会说错。
+                                      (step == 1 ? room_note_suffix(
+                                                       infer::Slot::Image)
+                                                 : std::string{});
                     progress.report(e);
                 };
 

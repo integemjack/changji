@@ -11,10 +11,22 @@
 #include "util/human_time.hpp"
 #include "util/paths.hpp"
 #include "util/text.hpp"
+#include "infer/scheduler.hpp"
 
 namespace fs = std::filesystem;
 
 namespace changji::stages {
+namespace {
+/// 同 frames.cpp：把腾显存的结论包成"（……）"挂在进度文案后面。
+/// 两处各写一份是因为它们各自在匿名命名空间里，抽到公共头去只为这三行
+/// 不划算；措辞那一份在 Scheduler::room_note，不会分叉。
+std::string room_note_suffix(infer::Slot slot) {
+    const std::string note = infer::scheduler().room_note(slot);
+    return note.empty() ? std::string{} : "（" + note + "）";
+}
+}  // namespace
+
+
 
 using namespace changji::models;
 
@@ -237,7 +249,14 @@ std::vector<RenderOutcome> render_batch(std::vector<Shot*>& shots,
                                           std::to_string(steps) + "）"
                                     : "出视频 " + local.shot_id + "（第 " +
                                           std::to_string(step) + "/" +
-                                          std::to_string(steps) + " 步）",
+                                          std::to_string(steps) + " 步）" +
+                                          // 见 frames.cpp 里同样这一处：
+                                          // 第一步上把"卸没卸大模型"带出来，
+                                          // 那是用户点完出片最想知道的一件事，
+                                          // 而它以前只在设置页上。
+                                          (step == 1 ? room_note_suffix(
+                                                           infer::Slot::Video)
+                                                     : std::string{}),
                             step, steps, loading);
                     };
 
