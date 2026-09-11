@@ -363,8 +363,10 @@ ApiResult post_story_chapter(const json& body, llm::Client& client,
 
     Story next;
     try {
+        const int floor_chars = static_cast<int>(
+            stages::chapter_target_chars(story) * stages::kChapterMinRatio);
         const stages::ChapterDraft d =
-            stages::parse_chapter(client.complete(req, tok));
+            stages::parse_chapter(client.complete(req, tok), floor_chars);
         next = stages::apply_chapter(story, chapter_id, d);
     } catch (const stages::StoryError& e) {
         throw ApiError(502, std::string("大模型没写出能用的正文：") + e.what());

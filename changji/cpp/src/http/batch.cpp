@@ -211,9 +211,13 @@ ApiResult post_story_chapters(const json& body,
                 Story next;
                 try {
                     pipeline::CancelToken dummy;
+                    const int floor_chars = static_cast<int>(
+                        stages::chapter_target_chars(cur) *
+                        stages::kChapterMinRatio);
                     next = stages::apply_chapter(
                         cur, id,
-                        stages::parse_chapter(client->complete(req, dummy)));
+                        stages::parse_chapter(client->complete(req, dummy),
+                                              floor_chars));
                 } catch (const std::exception& e) {
                     // 一章写砸了不该让前面几章白写，记下来接着往下写。
                     p.add_episode(json{{"chapter_id", id}, {"error", e.what()}});

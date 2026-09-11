@@ -81,7 +81,19 @@ std::string build_chapter_prompt(const models::Story& story,
                                  const std::string& chapter_id,
                                  models::StyleLine style_line);
 
-ChapterDraft parse_chapter(const std::string& raw);
+/// 正文至少要有目标篇幅的这么多，否则算模型没写。
+///
+/// 五分之一给得很松——**要拦的是"根本没写"，不是"写短了"**。
+/// 2026-09-11 实跑时模型把章标题填进了正文字段，四章各写出 1~2 个字，
+/// 而这些**被静默存了下来**：故事看着有四章，分集只切出一集，
+/// 到写剧本那一步才会发现无米下锅。和剧本那边「整集一句台词都没有」
+/// 是同一类闸门——宁可报错重来，不要留一份看着正常的空壳。
+inline constexpr double kChapterMinRatio = 0.2;
+
+/// 解析模型返回。
+///
+/// `min_chars` 给 0 表示不查长度（拼提示词的单测用得着）。
+ChapterDraft parse_chapter(const std::string& raw, int min_chars = 0);
 
 /// 把写好的一章并回故事里。
 ///

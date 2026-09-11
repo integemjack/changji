@@ -1274,6 +1274,17 @@ TEST_CASE("POST /api/story/analyze：没正文可读") {
 
 namespace {
 
+/// 一段够长的正文，开头带个记号好认。
+///
+/// 走 /api/story/chapter 那几条要过 kChapterMinRatio 的闸门（目标三千字的
+/// 五分之一 = 600 字），十几个字的夹具会被当成"模型没写"顶回来——那正是
+/// 闸门该干的事，所以夹具要写够长，不是把闸门调松。
+std::string long_body(const std::string& mark) {
+    std::string s = mark;
+    for (int i = 0; i < 700; ++i) s += "字";
+    return s;
+}
+
 /// 模型写回来的一章：正文 + 几个可以收一集的地方。
 json good_chapter(const std::string& body,
                   const std::vector<std::pair<std::string, std::string>>& hooks = {}) {
@@ -1377,6 +1388,31 @@ TEST_CASE("提示词：没有这一章就抛") {
     CHECK_THROWS_AS(
         changji::stages::build_chapter_prompt(s, "ch99", StyleLine::REALISTIC),
         stages::StoryError);
+}
+
+TEST_CASE("解析：正文短得离谱的不收") {
+    // **实跑时真撞上了**：模型把章标题填进正文字段，四章各写出 1~2 个字，
+    // 而这些被静默存了下来——故事看着有四章，分集只切出一集，到写剧本
+    // 那一步才发现无米下锅。和剧本那边「整集一句台词都没有」一个道理。
+    const std::string tiny = json{{"text", "伞"}}.dump();
+    CHECK_THROWS_AS(changji::stages::parse_chapter(tiny, 600), stages::StoryError);
+    // 下限给 0 表示不查——拼提示词的单测用得着
+    CHECK(changji::stages::parse_chapter(tiny, 0).text == "伞");
+
+    std::string ok;
+    for (int i = 0; i < 700; ++i) ok += "字";
+    CHECK(changji::text::utf8_len(
+              changji::stages::parse_chapter(json{{"text", ok}}.dump(), 600).text) == 700);
+}
+
+TEST_CASE("提示词：正文是主要产出，不是顺带的") {
+    Story s = outline_only_story();
+    const std::string p = changji::stages::build_chapter_prompt(
+        s, "ch01", StyleLine::REALISTIC);
+    // 钩子那句原来和"写正文"挤在开头同一句里抢注意力
+    CHECK(p.find("**主要产出是正文**") != std::string::npos);
+    CHECK(p.find("正文要写满上面那个字数") != std::string::npos);
+    CHECK(p.find("把章名填进去当正文") != std::string::npos);
 }
 
 TEST_CASE("解析：没写出正文就报错，写太多就截断") {
@@ -1488,7 +1524,7 @@ TEST_CASE("POST /api/story/chapter：写完落库，分集跟着重算") {
     CHECK(saved.validate().empty());
 
     SUBCASE("已经有正文了要显式 overwrite") {
-        llm::ReplayClient c2({good_chapter("重写的正文。").dump()});
+        llm::ReplayClient c2({good_chapter(long_body("重写的正文。")).dump()});
         pipeline::CancelToken t2;
         CHECK_THROWS_AS(
             http::post_story_chapter(
@@ -1496,7 +1532,7 @@ TEST_CASE("POST /api/story/chapter：写完落库，分集跟着重算") {
             http::ApiError);
         CHECK(c2.calls().empty());
 
-        llm::ReplayClient c3({good_chapter("重写的正文。").dump()});
+        llm::ReplayClient c3({good_chapter(long_body("重写的正文。")).dump()});
         pipeline::CancelToken t3;
         const auto again = http::post_story_chapter(
             json{{"project", p_str(root)},
@@ -1504,7 +1540,7 @@ TEST_CASE("POST /api/story/chapter：写完落库，分集跟着重算") {
                  {"overwrite", true}},
             c3, t3);
         CHECK(again.status == 200);
-        CHECK(store.load_story().chapters[0].text == "重写的正文。");
+        CHECK(store.load_story().chapters[0].text.rfind("重写的正文。", 0) == 0);
     }
 
     std::error_code ec;
@@ -1515,7 +1551,7 @@ TEST_CASE("POST /api/story/chapter：没有这一章") {
     const fs::path root = fresh_project("没这章");
     ProjectStore store(root);
     store.save_story(outline_only_story());
-    llm::ReplayClient client({good_chapter("x").dump()});
+    llm::ReplayClient client({good_chapter(long_body("x")).dump()});
     pipeline::CancelToken tok;
     try {
         http::post_story_chapter(
@@ -1579,10 +1615,10 @@ TEST_CASE("POST /api/story/chapters：一口气展开，每写完一章就落库
     REQUIRE(s.chapters.size() == 2);
 
     auto client = std::make_shared<llm::ReplayClient>(std::vector<std::string>{
-        good_chapter("第一章的正文。\n他推门进来。",
+        good_chapter(long_body("第一章的正文。\n他推门进来。\n"),
                      {{"他终于来了", "他推门进来。"}})
             .dump(),
-        good_chapter("第二章的正文。\n她终于开口。",
+        good_chapter(long_body("第二章的正文。\n她终于开口。\n"),
                      {{"她开口了", "她终于开口。"}})
             .dump(),
     });
@@ -1621,7 +1657,7 @@ TEST_CASE("POST /api/story/chapters：一章写砸了，别的照写") {
 
     auto client = std::make_shared<llm::ReplayClient>(std::vector<std::string>{
         "模型今天想聊点别的",  // 第一章：不是 JSON
-        json{{"text", "第二章写出来了。"}}.dump(),
+        json{{"text", long_body("第二章写出来了。")}}.dump(),
     });
     http::post_story_chapters(json{{"project", p_str(root)}}, client);
     wait_writer_done();

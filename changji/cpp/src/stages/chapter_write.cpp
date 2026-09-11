@@ -74,7 +74,8 @@ const ordered& chapter_schema() {
         ordered props = ordered::object();
         props["text"] = {
             {"type", "string"},
-            {"description", "这一章的正文，小说体，不要剧本格式的标记"}};
+            {"description",
+             "这一章的**完整正文**，几千字连贯的叙述，小说体。不是标题、不是梗概、不是提纲，也不要剧本格式的标记"}};
         props["hooks"] = {
             {"type", "array"},
             {"description",
@@ -190,7 +191,7 @@ std::string build_chapter_prompt(const Story& story,
     return out;
 }
 
-ChapterDraft parse_chapter(const std::string& raw) {
+ChapterDraft parse_chapter(const std::string& raw, int min_chars) {
     json data;
     try {
         data = extract_json(raw);
@@ -205,6 +206,15 @@ ChapterDraft parse_chapter(const std::string& raw) {
     // 失控往下写个没完的时候截住。这段正文会整份存进 story.json，
     // 而且后面每一集的提示词都要读它。
     d.text = text::truncate_utf8(d.text, prompt::kChapterMaxChars);
+
+    // **短得离谱的不收。** 见 kChapterMinRatio：模型会把章标题填进正文
+    // 字段，一两个字也是合法 JSON，静默存下去的话故事看着有几章、
+    // 实际全是空壳，到写剧本那一步才发现无米下锅。
+    const int got = static_cast<int>(text::utf8_len(d.text));
+    if (min_chars > 0 && got < min_chars) {
+        throw StoryError("正文只写出 " + std::to_string(got) + " 个字，至少要 " +
+                         std::to_string(min_chars) + " 个。八成是模型没听懂，重试一次");
+    }
 
     const auto hooks = data.find("hooks");
     if (hooks != data.end() && hooks->is_array()) {
