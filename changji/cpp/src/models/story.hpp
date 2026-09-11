@@ -1,0 +1,193 @@
+#pragma once
+
+// 故事层。整条流水线的新源头。
+//
+// 原来的源头是「一句梗概 + 逐集续写」，每一集只带前三集原文当上下文，
+// 于是没有全局结构、写到第五集开始失忆、故事没有终点、角色库是增量拼的。
+// 详见 docs/故事优先重构方案.md 第一节。
+//
+// 现在是：先有完整故事（分章），人物关系和场景从故事里提，再按每集时长
+// 把故事切成集。**集数是算出来的，不是填的。**
+//
+// 这个文件只有数据和校验，不碰网络也不碰大模型。切分算法在
+// stages/story_plan.hpp，那里也是纯函数。这么切是因为两者的验证方式不同：
+// 数据结构靠往返序列化钉住，切分靠构造语料算出预期切点。
+//
+// ⚠️ 章节正文里的位置一律按 **UTF-8 字符**计，不是字节。中文一个字三字节，
+// 按字节存切点的话，切线会落在一个汉字的中间，截出来的那段是非法 UTF-8——
+// 它会一路流到提示词和字幕，最后表现成「整轨字幕不显示」这种离得很远的故障。
+
+#include <string>
+#include <vector>
+
+#include <nlohmann/json.hpp>
+
+#include "models/json_compat.hpp"
+
+namespace changji::models {
+
+inline constexpr const char* kStoryFile = "story.json";
+
+/// 故事体量。用户给这个，不给集数。
+///
+/// 什么都不给的话模型写出来的故事长度是随机的：同一句梗概可能给一个三章就完的
+/// 段子，也可能铺开二十章。所以体量这个决定躲不掉，只是不该用「我要写 N 集」
+/// 来表达——那正是原来那套的毛病。
+enum class StoryScale { SHORT, MEDIUM, LONG };
+
+NLOHMANN_JSON_SERIALIZE_ENUM(StoryScale, {
+    {StoryScale::SHORT, "short"},
+    {StoryScale::MEDIUM, "medium"},
+    {StoryScale::LONG, "long"},
+})
+
+const char* to_string(StoryScale v);
+
+/// 这个体量建议写多少章。给大纲提示词用。
+int suggested_chapters(StoryScale scale);
+
+/// 故事从哪来。三个入口，产物都是同一个 Story。
+enum class StorySource { AI, PASTED, KEYWORDS };
+
+NLOHMANN_JSON_SERIALIZE_ENUM(StorySource, {
+    {StorySource::AI, "ai"},
+    {StorySource::PASTED, "pasted"},
+    {StorySource::KEYWORDS, "keywords"},
+})
+
+const char* to_string(StorySource v);
+
+/// 故事里的一个人。
+///
+/// **这里没有任何描述长相的字段**，和分镜表是同一个道理：外观只存在于
+/// 资产库（models/character.hpp），由程序机械拼接。这里只有剧作信息——
+/// 他是谁、他要什么、他怎么变。给大纲和剧本用，不给出图用。
+struct StoryCharacter {
+    std::string name;     ///< 剧本里的称呼，全剧一字不改
+    std::string identity; ///< 一句话身份
+    std::string want;     ///< 他要什么。没有欲望的人物推不动情节
+    std::string arc;      ///< 从什么变成什么
+
+    NLOHMANN_DEFINE_TYPE_INTRUSIVE_WITH_DEFAULT(
+        StoryCharacter, name, identity, want, arc)
+};
+
+/// 人物关系的一条边。
+///
+/// 原来整套系统里**没有这个东西**——角色是一个个孤立的外观块，谁和谁什么关系
+/// 只存在于剧本正文里，模型每集重新理解一遍，于是关系会漂。
+struct Relation {
+    std::string a;       ///< 人物名，对应 StoryCharacter::name
+    std::string b;
+    std::string kind;    ///< 前任、母女、上下级
+    std::string tension; ///< 这段关系里绷着的是什么
+
+    NLOHMANN_DEFINE_TYPE_INTRUSIVE_WITH_DEFAULT(Relation, a, b, kind, tension)
+};
+
+/// 故事里的一个地方。同样不含画面细节——空间、光、色板在资产库那边。
+struct StoryLocation {
+    std::string name;
+    std::string what; ///< 什么地方
+    std::string when; ///< 什么时间、什么光
+
+    NLOHMANN_DEFINE_TYPE_INTRUSIVE_WITH_DEFAULT(StoryLocation, name, what, when)
+};
+
+/// 章节里的一个候选切点。
+///
+/// **分集的切线只能落在钩子上。** 短剧每集结尾必须是悬念、反转或者情绪落点，
+/// 按字数硬切会把一集停在半句话上，完播率直接没了。
+struct Hook {
+    /// 落在本章正文的第几个字符（UTF-8 字符数，不是字节）。
+    /// 语义是「切在这个位置之前」，所以 0 表示章首、正文长度表示章尾。
+    int at_char = 0;
+    std::string text; ///< 这个钩子是什么，会成为那一集的钩子说明
+
+    NLOHMANN_DEFINE_TYPE_INTRUSIVE_WITH_DEFAULT(Hook, at_char, text)
+};
+
+/// 一章。故事层的情节单元。
+///
+/// **章不等于集**：章是故事的单位，集是时长的单位。做成一对一的话
+/// 「按每集时长拆分」这个诉求当场落空——章节长度本来就不齐。
+struct Chapter {
+    std::string chapter_id; ///< ^ch[0-9]+$
+    std::string title;
+    std::string summary;    ///< 三五句。大纲阶段就有，是压缩的全局记忆的一部分
+    std::string text;       ///< 正文。逐章展开之后才有，没展开时是空串
+    std::vector<Hook> hooks;
+    std::vector<std::string> characters; ///< 出场人物名
+    std::vector<std::string> locations;  ///< 用到的地方名
+
+    NLOHMANN_DEFINE_TYPE_INTRUSIVE_WITH_DEFAULT(
+        Chapter, chapter_id, title, summary, text, hooks, characters, locations)
+
+    /// 正文的字符数（UTF-8 字符，不是字节）。
+    int text_len() const;
+};
+
+/// 分集表的一条。一集覆盖故事的哪一段。
+///
+/// 区间是 [from, to)：`to_char` **不含**。这一条要写在注释里而不是靠人记，
+/// 因为相邻两集的边界就是同一个数，含不含差一个字的话，切点两边会各丢/各重
+/// 一个字，而那个字很可能是句号——下一集就从半句话开始。
+struct EpisodePlan {
+    std::string episode_id;
+    std::string title;
+    std::string hook;                 ///< 这一集停在哪。切点不在钩子上时是空串
+    double target_duration_s = 60.0;
+
+    std::string from_chapter; ///< 起始章 id
+    int from_char = 0;        ///< 起始章内的起始字符，含
+    std::string to_chapter;   ///< 末章 id（这一集**触及**的最后一章）
+    int to_char = 0;          ///< 末章内的结束字符，不含
+
+    NLOHMANN_DEFINE_TYPE_INTRUSIVE_WITH_DEFAULT(
+        EpisodePlan, episode_id, title, hook, target_duration_s,
+        from_chapter, from_char, to_chapter, to_char)
+};
+
+/// 一部剧的故事。存在项目目录下的 story.json，和 project.json 平级。
+///
+/// 单独一个文件而不是塞进 project.json：正文全文可能十几万字，而
+/// project.json 是每次改分镜状态都要原子重写一遍的——把十几万字绑在那条
+/// 写路径上，每出一镜就多写一次全文。
+struct Story {
+    std::string premise; ///< 一两句。≤2000 字，和 Project::premise 同源
+    StoryScale scale = StoryScale::MEDIUM;
+    StorySource source = StorySource::AI;
+
+    std::string logline;
+    std::string genre;
+    std::string tone;
+
+    std::vector<StoryCharacter> characters;
+    std::vector<Relation> relations;
+    std::vector<StoryLocation> locations;
+    std::vector<Chapter> chapters;
+
+    /// 分集用的每集时长。算出来的分集表跟着它走，改了要重算。
+    double episode_duration_s = 60.0;
+    /// 分集表。plan_episodes() 的产物，人可以改。
+    std::vector<EpisodePlan> plan;
+
+    NLOHMANN_DEFINE_TYPE_INTRUSIVE_WITH_DEFAULT(
+        Story, premise, scale, source, logline, genre, tone,
+        characters, relations, locations, chapters,
+        episode_duration_s, plan)
+
+    /// 有没有东西。story.json 不存在时读出来的是个空 Story，
+    /// 调用方靠这个判断「这个项目还没走新流程」，走老路径。
+    bool empty() const;
+
+    const Chapter* chapter_by_id(const std::string& chapter_id) const;
+    Chapter* chapter_by_id(const std::string& chapter_id);
+
+    /// 展开了正文的章节数。大纲写完是 0，逐章展开时往上涨。
+    int written_chapters() const;
+
+    std::vector<std::string> validate() const;
+};
+
+}  // namespace changji::models

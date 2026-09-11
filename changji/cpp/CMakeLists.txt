@@ -511,6 +511,7 @@ add_executable(changji
     src/models/shot.cpp
     src/models/character.cpp
     src/models/project.cpp
+    src/models/story.cpp
     src/models/hardware.cpp
     src/util/text.cpp
     src/util/human_time.cpp
@@ -519,6 +520,7 @@ add_executable(changji
     src/stages/bible.cpp
     src/stages/storyboard.cpp
     src/stages/script.cpp
+    src/stages/story_plan.cpp
     src/stages/prompt_compose.cpp
     src/stages/frames.cpp
     src/stages/render.cpp
@@ -803,6 +805,7 @@ if(CHANGJI_BUILD_TESTS)
         tests/unit/test_audio.cpp
         tests/unit/test_tts_backends.cpp
         tests/unit/test_setup.cpp
+        tests/unit/test_story.cpp
 
         # 被测的源码。刻意不包含 doctor.cpp、http/server.cpp、
         # llm/client_http.cpp、comfy/client_http.cpp 和 http/run_deps.cpp ——
@@ -815,6 +818,7 @@ if(CHANGJI_BUILD_TESTS)
         src/models/shot.cpp
         src/models/character.cpp
         src/models/project.cpp
+        src/models/story.cpp
         src/models/hardware.cpp
         src/util/paths.cpp
         src/util/proc.cpp
@@ -826,6 +830,7 @@ if(CHANGJI_BUILD_TESTS)
         src/stages/bible.cpp
         src/stages/storyboard.cpp
         src/stages/script.cpp
+        src/stages/story_plan.cpp
         src/stages/prompt_compose.cpp
         src/stages/frames.cpp
         src/stages/render.cpp

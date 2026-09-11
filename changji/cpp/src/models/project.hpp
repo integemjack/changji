@@ -36,6 +36,7 @@
 #include "models/character.hpp"
 #include "models/json_compat.hpp"
 #include "models/shot.hpp"
+#include "models/story.hpp"
 
 namespace changji::models {
 
@@ -122,6 +123,7 @@ public:
 
     std::filesystem::path project_file() const;
     std::filesystem::path assets_file() const;
+    std::filesystem::path story_file() const;
     std::filesystem::path refs() const;
     std::filesystem::path audio() const;
     std::filesystem::path frames() const;
@@ -162,8 +164,16 @@ public:
     Project load_project() const;
     AssetLibrary load_assets() const;
 
+    /// 读故事。**文件不存在时返回空 Story，不抛。**
+    ///
+    /// 老项目没有这个文件，而它们要照样打得开、跑得动。调用方用
+    /// Story::empty() 判断是不是该走老路径，别用「文件在不在」——
+    /// 那会让每个调用点都去拼一次路径。
+    Story load_story() const;
+
     void save_project(Project& project) const;
     void save_assets(const AssetLibrary& assets) const;
+    void save_story(const Story& story) const;
 
     /// 把外部文件复制进项目，返回相对路径。
     ///

@@ -236,6 +236,7 @@ void ProjectPaths::ensure() const {
 
 fs::path ProjectPaths::project_file() const { return root_ / kProjectFile; }
 fs::path ProjectPaths::assets_file() const { return root_ / kAssetsFile; }
+fs::path ProjectPaths::story_file() const { return root_ / kStoryFile; }
 fs::path ProjectPaths::refs() const { return root_ / "refs"; }
 fs::path ProjectPaths::audio() const { return root_ / "audio"; }
 fs::path ProjectPaths::frames() const { return root_ / "frames"; }
@@ -333,6 +334,14 @@ AssetLibrary ProjectStore::load_assets() const {
         .get<AssetLibrary>();
 }
 
+Story ProjectStore::load_story() const {
+    std::error_code ec;
+    if (!fs::is_regular_file(paths_.story_file(), ec)) {
+        return Story{};
+    }
+    return read_json_file<json>(paths_.story_file()).get<Story>();
+}
+
 void ProjectStore::save_project(Project& project) const {
     project.touch();
     write_json_atomic(paths_.project_file(), json(project));
@@ -340,6 +349,10 @@ void ProjectStore::save_project(Project& project) const {
 
 void ProjectStore::save_assets(const AssetLibrary& assets) const {
     write_json_atomic(paths_.assets_file(), json(assets));
+}
+
+void ProjectStore::save_story(const Story& story) const {
+    write_json_atomic(paths_.story_file(), json(story));
 }
 
 std::string ProjectStore::copy_into(const fs::path& src,
