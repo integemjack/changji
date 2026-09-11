@@ -169,7 +169,13 @@ std::thread warm_llm_in_background(
         } catch (const std::exception& e) {
             // **预热失败不该影响起服务。** 用户可能只是想看看分镜表，
             // 而大模型装不上的原因（文件坏了、显存不够）体检里都能查到。
-            std::fprintf(stderr, "[llm] 预热没成功：%s\n", e.what());
+            //
+            // 没编进 llama 的构建上这一条**注定**失败，而 make_client 起来
+            // 时已经说过一次"这个二进制没编进程内大模型"了。再来一句措辞
+            // 不同的错，只会让人以为是两个毛病。
+            if (infer::llama_chat_available()) {
+                std::fprintf(stderr, "[llm] 预热没成功：%s\n", e.what());
+            }
         } catch (...) {
             std::fputs("[llm] 预热没成功（未知异常）\n", stderr);
         }
