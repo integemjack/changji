@@ -26,8 +26,6 @@ std::string room_note_suffix(infer::Slot slot) {
 }
 }  // namespace
 
-
-
 using namespace changji::models;
 
 namespace {
