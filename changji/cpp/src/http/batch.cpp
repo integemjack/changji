@@ -11,7 +11,10 @@
 #include "models/project.hpp"
 #include "pipeline/jobs.hpp"
 #include "stages/bible.hpp"
+#include "models/story.hpp"
+#include "stages/chapter_write.hpp"
 #include "stages/script.hpp"
+#include "stages/story_plan.hpp"
 #include "stages/storyboard.hpp"
 #include "util/paths.hpp"
 #include "util/text.hpp"
@@ -142,6 +145,101 @@ std::string previous_context(const Project& project) {
 double round1(double x) { return std::nearbyint(x * 10.0) / 10.0; }
 
 }  // namespace
+
+ApiResult post_story_chapters(const json& body,
+                              std::shared_ptr<llm::Client> client) {
+    forbid_extra(body, {"project", "overwrite"});
+    const bool overwrite = opt_bool(body, "overwrite", false);
+
+    // 409 在建 store 之前判，和 post_script_series 一个顺序：
+    // 两个都错时回哪一个是可观测的。
+    if (pipeline::jobs().running(pipeline::JobKind::Write)) {
+        throw ApiError(409, "已经在写了");
+    }
+    ProjectStore store = open_project(body);
+    const Project project = load_or_400(store);
+
+    Story story;
+    try {
+        story = store.load_story();
+    } catch (const std::exception& e) {
+        throw ApiError(400, e.what());
+    }
+    if (story.chapters.empty()) {
+        throw ApiError(400, "还没有故事。先写一份大纲，或者粘一段进来");
+    }
+
+    std::vector<std::string> todo;
+    for (const auto& c : story.chapters) {
+        if (overwrite || text::strip_ws(c.text).empty()) {
+            todo.push_back(c.chapter_id);
+        }
+    }
+    if (todo.empty()) throw ApiError(400, "每一章都有正文了");
+
+    const models::StyleLine style = project.style_line;
+    const bool started = pipeline::jobs().start(
+        pipeline::JobKind::Write, "",
+        [store, client, todo, style](pipeline::JobProgress& p) {
+            p.set_total(static_cast<int>(todo.size()));
+            int done = 0;
+            for (const auto& id : todo) {
+                if (p.cancelled()) return;
+
+                // **每一轮重读。** 上一章写完已经落库了，这一章的提示词里
+                // 「上一章是这么结束的」要拿到刚写的那一份。用循环外那个
+                // 快照的话，每一章都以为自己接的是空的上一章。
+                Story cur = store.load_story();
+                const Chapter* me = cur.chapter_by_id(id);
+                if (me == nullptr) {
+                    p.set_done(++done);
+                    continue;
+                }
+                p.set_message("正在写 " + id + "（" + me->title + "）");
+
+                llm::Request req;
+                try {
+                    req.prompt = stages::build_chapter_prompt(cur, id, style);
+                } catch (const std::exception& e) {
+                    p.add_episode(json{{"chapter_id", id}, {"error", e.what()}});
+                    p.set_done(++done);
+                    continue;
+                }
+                req.schema = stages::chapter_schema();
+                req.schema_name = "chapter";
+
+                Story next;
+                try {
+                    pipeline::CancelToken dummy;
+                    next = stages::apply_chapter(
+                        cur, id,
+                        stages::parse_chapter(client->complete(req, dummy)));
+                } catch (const std::exception& e) {
+                    // 一章写砸了不该让前面几章白写，记下来接着往下写。
+                    p.add_episode(json{{"chapter_id", id}, {"error", e.what()}});
+                    p.set_done(++done);
+                    continue;
+                }
+
+                next.plan = stages::plan_episodes(next, next.episode_duration_s);
+                store.save_story(next);
+
+                const Chapter* written = next.chapter_by_id(id);
+                p.add_episode(json{
+                    {"chapter_id", id},
+                    {"title", written != nullptr ? written->title : std::string()},
+                    {"chars", written != nullptr ? written->text_len() : 0},
+                    {"episodes", next.plan.size()},
+                });
+                p.set_done(++done);
+            }
+            p.set_message("写完了 " + std::to_string(done) + " 章");
+        },
+        "已手动停止。已经写好的几章留着。");
+
+    if (!started) throw ApiError(409, "已经在写了");
+    return {200, {{"started", true}, {"chapters", todo.size()}}};
+}
 
 ApiResult post_script_series(const json& body,
                              std::shared_ptr<llm::Client> client) {

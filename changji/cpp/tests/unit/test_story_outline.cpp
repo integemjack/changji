@@ -13,11 +13,15 @@
 
 #include <doctest/doctest.h>
 
+#include <chrono>
 #include <filesystem>
+#include <memory>
 #include <string>
+#include <thread>
 
 #include <nlohmann/json.hpp>
 
+#include "http/batch.hpp"
 #include "http/planning.hpp"
 #include "http/story_api.hpp"
 #include "llm/client.hpp"
@@ -1460,4 +1464,115 @@ TEST_CASE("展开正文之后，写剧本拿到的是真正文不是梗概") {
     const std::string after =
         changji::stages::render_script_context(s, s.plan[0], "");
     CHECK(after.find("这是真正的正文内容") != std::string::npos);
+}
+
+// ---- 批量展开正文 ----
+
+namespace {
+
+/// 等这一轮长跑作业跑完。跑在工作线程上，测试里得等它。
+void wait_writer_done() {
+    for (int i = 0; i < 600; ++i) {
+        if (!changji::pipeline::jobs().running(changji::pipeline::JobKind::Write)) {
+            return;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
+    FAIL("批量展开跑了十几秒还没结束");
+}
+
+}  // namespace
+
+TEST_CASE("POST /api/story/chapters：一口气展开，每写完一章就落库") {
+    const fs::path root = fresh_project("批量展开");
+    ProjectStore store(root);
+    Story s = parse_outline(good_outline().dump(), "深夜便利店", StoryScale::MEDIUM);
+    s.episode_duration_s = 60.0;
+    s.plan = changji::stages::plan_episodes(s, 60.0);
+    store.save_story(s);
+    REQUIRE(s.chapters.size() == 2);
+
+    auto client = std::make_shared<llm::ReplayClient>(std::vector<std::string>{
+        json{{"text", "第一章的正文。\n他推门进来。"}, {"hook_after", "他推门进来。"}}.dump(),
+        json{{"text", "第二章的正文。\n她终于开口。"}, {"hook_after", "她终于开口。"}}.dump(),
+    });
+
+    const auto r = http::post_story_chapters(json{{"project", p_str(root)}}, client);
+    CHECK(r.status == 200);
+    CHECK(r.body.at("started").get<bool>());
+    CHECK(r.body.at("chapters").get<int>() == 2);
+
+    wait_writer_done();
+
+    const Story saved = store.load_story();
+    CHECK(saved.written_chapters() == 2);
+    CHECK(saved.chapters[0].text.find("第一章的正文") != std::string::npos);
+    CHECK(saved.chapters[1].text.find("第二章的正文") != std::string::npos);
+    CHECK(saved.validate().empty());
+
+    // **第二章的提示词里要带着第一章的结尾。** 每一轮重读盘上的故事就是
+    // 为了这个——不重读的话每一章都以为自己接的是空的上一章。
+    REQUIRE(client->calls().size() == 2);
+    CHECK(client->calls()[0].prompt.find("【上一章是这么结束的】") ==
+          std::string::npos);
+    CHECK(client->calls()[1].prompt.find("【上一章是这么结束的】") !=
+          std::string::npos);
+    CHECK(client->calls()[1].prompt.find("他推门进来") != std::string::npos);
+
+    std::error_code ec;
+    fs::remove_all(root, ec);
+}
+
+TEST_CASE("POST /api/story/chapters：一章写砸了，别的照写") {
+    const fs::path root = fresh_project("写砸一章");
+    ProjectStore store(root);
+    Story s = parse_outline(good_outline().dump(), "梗概", StoryScale::MEDIUM);
+    store.save_story(s);
+
+    auto client = std::make_shared<llm::ReplayClient>(std::vector<std::string>{
+        "模型今天想聊点别的",  // 第一章：不是 JSON
+        json{{"text", "第二章写出来了。"}}.dump(),
+    });
+    http::post_story_chapters(json{{"project", p_str(root)}}, client);
+    wait_writer_done();
+
+    const Story saved = store.load_story();
+    CHECK(saved.chapters[0].text.empty());
+    CHECK_FALSE(saved.chapters[1].text.empty());
+
+    std::error_code ec;
+    fs::remove_all(root, ec);
+}
+
+TEST_CASE("POST /api/story/chapters：拦住的几种情况") {
+    const fs::path root = fresh_project("批量拦住");
+    ProjectStore store(root);
+    auto client = std::make_shared<llm::ReplayClient>(
+        std::vector<std::string>{json{{"text", "x"}}.dump()});
+
+    SUBCASE("还没有故事") {
+        CHECK_THROWS_AS(
+            http::post_story_chapters(json{{"project", p_str(root)}}, client),
+            http::ApiError);
+    }
+
+    SUBCASE("每一章都有正文了") {
+        Story s;
+        Chapter c;
+        c.chapter_id = "ch01";
+        c.title = "写过的";
+        c.text = "已经有正文了。";
+        s.chapters.push_back(c);
+        store.save_story(s);
+        try {
+            http::post_story_chapters(json{{"project", p_str(root)}}, client);
+            FAIL("应该抛");
+        } catch (const http::ApiError& e) {
+            CHECK(e.status() == 400);
+        }
+        CHECK(client->calls().empty());
+    }
+
+    std::error_code ec;
+    fs::remove_all(root, ec);
 }

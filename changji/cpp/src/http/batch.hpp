@@ -30,6 +30,18 @@ namespace changji::http {
 ApiResult post_script_series(const nlohmann::json& body,
                              std::shared_ptr<llm::Client> client);
 
+/// POST /api/story/chapters —— 把还没正文的章一口气全展开。
+///
+/// 十六章的故事逐章点十六次不像话，而每章要跑十几秒，加起来是分钟级的，
+/// 所以和上面两个一样走 job 表。**共用同一个任务槽**，也就是说写整季、
+/// 批量分镜、批量展开三件事同时只能做一件——它们都在跟同一个大模型排队。
+///
+/// **每写完一章就落库并重读**：下一章的提示词里「上一章是这么结束的」
+/// 拿到的才是刚写完那一章。全写完再一次性存的话，中途停掉就全白干了，
+/// 而且每一章都以为自己接的是空的上一章。
+ApiResult post_story_chapters(const nlohmann::json& body,
+                              std::shared_ptr<llm::Client> client);
+
 /// POST /api/plan/all —— 把还没分镜的剧集一次补齐。
 ///
 /// 连着写了五集之后，每一集都还得单独点一次「重出分镜」。

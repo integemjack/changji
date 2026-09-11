@@ -1273,6 +1273,10 @@ void run(const config::Settings& settings, const Options& opts) {
         batch_route(&post_script_series));
     CROW_ROUTE(app, "/api/plan/all").methods("POST"_method)(
         batch_route(&post_plan_all));
+    // 和上面两个共用 JobKind::Write 那个槽，所以进度也走
+    // GET /api/script/series，前端那个 writer store 直接能用。
+    CROW_ROUTE(app, "/api/story/chapters").methods("POST"_method)(
+        batch_route(&post_story_chapters));
 
     // ---- 任务状态与开跑 ----
 

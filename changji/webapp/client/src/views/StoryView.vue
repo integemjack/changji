@@ -14,7 +14,7 @@
  * 就是从故事里提的，摆在故事旁边才看得出这层关系。往右栏里塞可编辑的
  * 字段，这一页就会长回 ScriptView 今天的样子。
  */
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 
 import AppIcon from '@/components/AppIcon.vue'
 import EmptyState from '@/components/EmptyState.vue'
@@ -23,9 +23,11 @@ import { api } from '@/api'
 import { useAction } from '@/composables/useAction'
 import { useSession } from '@/stores/session'
 import { useUi } from '@/stores/ui'
+import { useWriter } from '@/stores/run'
 
 const session = useSession()
 const ui = useUi()
+const writer = useWriter()
 const { run, isBusy } = useAction()
 
 const story = ref(null)
@@ -59,6 +61,8 @@ const premiseDirty = computed(() => premise.value.trim() !== savedPremise.value)
 const needsAnalysis = computed(
   () => hasStory.value && !characters.value.length && writtenCount.value > 0,
 )
+/** 还没展开正文的章数。 */
+const unwritten = computed(() => chapters.value.length - writtenCount.value)
 const writtenCount = computed(
   () => chapters.value.filter((c) => (c.text ?? '').trim()).length,
 )
@@ -93,8 +97,21 @@ async function load() {
   }
 }
 
-onMounted(load)
+onMounted(() => {
+  load()
+  // 可能是上次离开页面时还在跑的那一轮
+  writer.poll()
+})
+onUnmounted(() => writer.stop())
 watch(() => session.projectPath, load)
+
+// 批量展开跑完了把故事重新读一遍——正文是在引擎那边一章一章落库的
+watch(
+  () => writer.running,
+  (now, before) => {
+    if (before && !now) load()
+  },
+)
 
 async function savePremise() {
   if (!premiseDirty.value || !session.projectPath) return
@@ -243,6 +260,23 @@ async function writeChapter(chapterId, overwrite = false) {
     openChapter.value = chapterId
     ui.ok(`${chapterId} 写了 ${result.chars} 字，分集重算过了`)
   }
+}
+
+/** 一口气展开所有还没正文的章。 */
+async function writeAllChapters() {
+  const started = await run(
+    () => api.writeChapters({ project: session.projectPath }),
+    { key: 'chapters' },
+  )
+  if (started) {
+    ui.ok(`开始展开 ${started.chapters} 章`)
+    writer.start()
+  }
+}
+
+async function stopWriting() {
+  await run(() => api.stopSeries(), { key: 'stopWrite', success: '已停' })
+  writer.poll()
 }
 
 async function adoptDraft() {
@@ -472,6 +506,24 @@ async function adoptDraft() {
                 </span>
                 <div class="row">
                   <button
+                    v-if="!writer.running && unwritten"
+                    class="btn btn--ai btn--sm"
+                    type="button"
+                    :disabled="isBusy('chapters')"
+                    @click="writeAllChapters"
+                  >
+                    展开全部 {{ unwritten }} 章
+                  </button>
+                  <template v-if="writer.running">
+                    <span class="pill pill--accent nowrap">
+                      正在展开 {{ writer.state?.done ?? 0 }} /
+                      {{ writer.state?.total ?? 0 }}
+                    </span>
+                    <button class="btn btn--danger btn--sm" type="button" @click="stopWriting">
+                      停
+                    </button>
+                  </template>
+                  <button
                     v-if="needsAnalysis"
                     class="btn btn--ai btn--sm"
                     type="button"
@@ -490,6 +542,19 @@ async function adoptDraft() {
                   <span class="tiny dim">横线就是分集，切在钩子上</span>
                 </div>
               </div>
+
+              <p v-if="writer.state?.message" class="tiny dim">
+                {{ writer.state.message }}
+              </p>
+              <p
+                v-for="(w, i) in writer.state?.episodes ?? []"
+                :key="i"
+                class="tiny"
+                :class="w.error ? 'warn-text' : 'dim'"
+              >
+                {{ w.chapter_id }}
+                {{ w.error ? '写砸了：' + w.error : w.title + ' · ' + w.chars + ' 字' }}
+              </p>
 
               <template v-for="(c, i) in chapters" :key="c.chapter_id">
                 <div
