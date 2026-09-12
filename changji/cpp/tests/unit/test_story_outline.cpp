@@ -2212,6 +2212,59 @@ TEST_CASE("对白用 ASCII 单引号写的，也换成中文双引号") {
     CHECK(keep.text.find("don't") != std::string::npos);
 }
 
+TEST_CASE("整段复读先摘掉，摘不干净才打回") {
+    // 复读守卫原来是硬闸，三次都撞上去那一章就空了——2026-09-12 把温度降到
+    // 0.5 之后实跑，ch03 的「我只是怕你会后悔。」出现四次，三次尝试全被拦，
+    // 那一章落成 0 字。降温度本来就更容易走进复读循环，两件事撞一块了。
+    const auto build = [](int repeats) {
+        json paras = json::array();
+        for (int i = 0; i < 16; ++i) {
+            paras.push_back("第" + std::to_string(i) +
+                            "段：她把抹布拧干，水滴落在地板上，溅出细小的一圈。");
+        }
+        paras.push_back("他停在门口：“伞我带来了。”");
+        paras.push_back("她没抬头：“放那儿吧。”");
+        paras.push_back("他又说了一句：“那我走了。”");
+        for (int i = 0; i < repeats; ++i) {
+            paras.push_back("他低声说：“我只是怕你会后悔。”");
+        }
+        json scenes = json::array();
+        scenes.push_back({{"where", "深夜，便利店"},
+                          {"pov", "林晚"},
+                          {"who", json::array({"林晚", "陈默"})},
+                          {"goal", "把伞要回来"},
+                          {"obstacle", "他不认这把伞"},
+                          {"worse", "她发现伞根本不是他带来的"},
+                          {"turn", "伞柄上刻着别人的名字"},
+                          {"paragraphs", paras},
+                          {"last_line", "她把伞柄转过来，刻着的不是她的名字。"}});
+        return json{{"scenes", scenes}}.dump();
+    };
+
+    // 同一段出现四次：摘成一次，其余的照收，不废整章
+    const auto d = changji::stages::parse_chapter(build(4));
+    CHECK(d.text.find("我只是怕你会后悔") != std::string::npos);
+    std::size_t at = 0;
+    int times = 0;
+    while ((at = d.text.find("我只是怕你会后悔", at)) != std::string::npos) {
+        ++times;
+        at += 3;
+    }
+    CHECK(times == 1);
+    // 正文没被摘残
+    CHECK(d.text.find("伞我带来了") != std::string::npos);
+    CHECK(changji::text::utf8_len(d.text) > 300);
+}
+
+TEST_CASE("写正文用的温度比默认低") {
+    // **默认 0.7 太散。** 2026-09-12 把同一份代码连跑两组三遍，四章里对白
+    // 最低那一章，一组是 21%（19~27），另一组是 1%（0~32）——同样的提示词、
+    // 同样的 schema，一章能写成 35% 也能写成 0%。0% 的章切出来就是一集
+    // 默片，对成片是坏掉的交付物。
+    CHECK(changji::stages::kChapterTemperature < 0.7);
+    CHECK(changji::stages::kChapterTemperature >= 0.3);  // 太低会写成说明书
+}
+
 TEST_CASE("前面埋下的东西要单拎给后面的章") {
     // 混在前情提要里模型看不见——前情是「已经发生过的，不要重写」，而埋下
     // 的东西恰恰是还没兑现、等着后面某一章去收的。不单列的话每一章的反转

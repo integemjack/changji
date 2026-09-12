@@ -215,6 +215,7 @@ ApiResult post_story_chapters(const json& body,
                 req.schema = stages::chapter_schema(stages::chapter_target_scenes(cur),
                                                      stages::chapter_scene_paras(cur));
                 req.schema_name = "chapter";
+                req.temperature = stages::kChapterTemperature;
 
                 // **砸了就再要一次。**
                 //

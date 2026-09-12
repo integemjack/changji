@@ -712,11 +712,43 @@ ChapterDraft parse_chapter(const std::string& raw, int min_chars, bool strict) {
         }
     }
 
-    // **复读不收。** 字数守卫抓不住它：实跑那次写了 1124 字、稳稳过了 600
-    // 的下限，而「你早就走了，我只是还在等。」一字不差出现了八次。
-    // 只量长度不看内容的话，这段东西会一路存进 story.json，再被切成集、
-    // 写成剧本、排成分镜、配成音、渲成片——一整条流水线为一段复读机跑了
-    // 一个多小时。和 reject_silent_audio 是同一类事。
+    // **复读先摘、摘不干净再打回。**
+    //
+    // 字数守卫抓不住复读：实跑那次写了 1124 字、稳稳过了 600 的下限，而
+    // 「你早就走了，我只是还在等。」一字不差出现了八次。只量长度不看内容
+    // 的话，这段东西会一路存进 story.json，再被切成集、写成剧本、排成
+    // 分镜、配成音、渲成片——一整条流水线为一段复读机跑了一个多小时。
+    //
+    // 但**直接打回是硬闸，三次都撞上去那一章就空了**：2026-09-12 把温度
+    // 降到 0.5 之后实跑，ch03 的「我只是怕你会后悔。」出现四次，三次尝试
+    // 全被这道闸拦下，那一章落成 0 字。降温度本来就更容易走进复读循环，
+    // 两件事撞一块了。
+    //
+    // 所以先摘：同一段原样出现第二次以后的那些直接删掉，剩下的照收。
+    // 摘完还判复读（说明是句级的循环，不是整段重复），才打回。
+    // 和占位符、引号、分镜话一个路子——能就地修好的别废掉整章。
+    if (!check_repetition(d.text).ok) {
+        std::set<std::string> seen_para;
+        std::string kept;
+        std::string line;
+        const auto take = [&](const std::string& one) {
+            if (one.empty()) return;
+            if (!seen_para.insert(bare(one)).second) return;  // 见过了，丢掉
+            if (!kept.empty()) kept += "\n";
+            kept += one;
+        };
+        for (const char c : d.text) {
+            if (c != '\n') {
+                line += c;
+                continue;
+            }
+            take(line);
+            line.clear();
+        }
+        take(line);
+        if (text::utf8_len(kept) >= text::utf8_len(d.text) / 2) d.text = kept;
+    }
+
     if (const auto rep = check_repetition(d.text); !rep.ok) {
         throw StoryError("正文在复读：" + rep.detail + "。重试一次");
     }

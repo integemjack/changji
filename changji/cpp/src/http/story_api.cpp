@@ -378,6 +378,7 @@ json write_one_chapter(ProjectStore& store, const Project& project, Story story,
     req.schema = stages::chapter_schema(stages::chapter_target_scenes(story),
                                        stages::chapter_scene_paras(story));
     req.schema_name = "chapter";
+    req.temperature = stages::kChapterTemperature;
 
     // 给了 stream_id 就**边写边推**。写一章要一两分钟，攒齐了再蹦出来的话
     // 那一两分钟界面上什么都没有——而那正是用户要看的"写作的过程"。

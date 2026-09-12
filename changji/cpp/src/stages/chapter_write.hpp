@@ -150,6 +150,18 @@ int chapter_scene_chars(const models::Story& story);
 /// 一场戏写多少段。从每场字数算，进 schema 卡住。
 int chapter_scene_paras(const models::Story& story);
 
+/// 写正文用多低的温度。
+///
+/// **默认 0.7 太散。** 2026-09-12 把同一份代码连跑两组三遍，四章里对白
+/// 最低那一章的比例，一组是 21%（19~27），另一组是 1%（0~32）——同样的
+/// 提示词、同样的 schema，一章能写成 35% 也能写成 0%。生成时间也在
+/// 290~795 秒之间摆。那种 0% 的章切出来就是一集默片，对成片是坏掉的
+/// 交付物，不是「这一版没那么灵」。
+///
+/// 0.5 是拿稳定性换一点发挥。这一步的产出是**给下一步用的原料**（分集、
+/// 剧本、分镜都照着它走），原料的下限比它的上限要紧。
+inline constexpr double kChapterTemperature = 0.5;
+
 /// 请求里带的 JSON Schema。
 ///
 /// **形状是 scenes[]，每一场自己带 paragraphs**。本地后端把 schema 转成
