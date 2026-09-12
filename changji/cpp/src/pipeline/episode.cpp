@@ -391,24 +391,27 @@ RunReport run_episode(const ProjectStore& store,
                 stages::rebalance_durations(ep->shots, ep->target_duration_s,
                                             3.0, fps);
                 const double after_s = stages::real_total_s(ep->shots, fps);
+                // human_time 在一分钟以上只留整分钟，三个数会全都显示成
+                // 「1 分钟」——对比句必须用带零头的那个。量纲按三个里最小的
+                // 定，否则 57.6 和 60.0 跨在一分钟两边，一句话里两种单位。
+                const double scale =
+                    std::min({before_s, after_s, ep->target_duration_s});
+                const auto say = [scale](double v) {
+                    return util::human_time_precise_as(v, scale);
+                };
                 if (std::abs(after_s - before_s) > 0.01) {
-                    // human_time 在一分钟以上只留整分钟，三个数会全都显示成
-                    // 「1 分钟」——对比句必须用带零头的那个。
                     emit(progress, "audio", "info",
-                         "按配音重排了镜头时长：" +
-                             util::human_time_precise(before_s) + " → " +
-                             util::human_time_precise(after_s) + "（目标 " +
-                             util::human_time_precise(ep->target_duration_s) +
-                             "）");
+                         "按配音重排了镜头时长：" + say(before_s) + " → " +
+                             say(after_s) + "（目标 " +
+                             say(ep->target_duration_s) + "）");
                 }
                 // **压不到目标就要说出来。** 有台词的镜头动不了（动了会截断
                 // 声音），过渡镜也有最短的那一档，所以并不是总能压回去。
                 // 不吭声的话，人看到的是「配音完成」，而成片比要的长三分之一。
                 if (after_s - ep->target_duration_s > 3.0) {
                     emit(progress, "audio", "warn",
-                         "这一集排下来 " + util::human_time_precise(after_s) +
-                             "，比目标 " +
-                             util::human_time_precise(ep->target_duration_s) +
+                         "这一集排下来 " + say(after_s) + "，比目标 " +
+                             say(ep->target_duration_s) +
                              " 长。台词镜的时长由配音定、动不了，过渡镜也压到"
                              "头了——要短就得回剧本删戏或者减台词。");
                 }

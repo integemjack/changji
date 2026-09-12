@@ -28,4 +28,16 @@ std::string human_time(double seconds);
 /// 零头对"该不该去睡"没有意义，多一位反而更吵。
 std::string human_time_precise(double seconds);
 
+/// 同上，但量纲由 `scale_ref` 定，而不是由 `seconds` 自己定。
+///
+/// **一句话里并排比较的几个数，必须用同一个单位。** 各自决定的话，
+/// 57.58 和 60.0 正好跨在一分钟这条线两边：
+///
+///     51.9 秒 → 57.6 秒（目标 1 分）
+///
+/// 三个数两种单位，读的人要先换算才能比大小。**把组里最小的那个传进来**
+/// 当 scale_ref：需要最细单位的是它，按它定所有人都写得下。
+///（按最大的定会得到「0 分 51.9 秒」，更糟。）
+std::string human_time_precise_as(double seconds, double scale_ref);
+
 }  // namespace changji::util

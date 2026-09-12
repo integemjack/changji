@@ -213,3 +213,27 @@ TEST_CASE("human_time_precise：对比两个时长时零头不能丢") {
     // 一分钟以内的零头对"该不该去睡"没有意义。
     CHECK(util::human_time(1847.0) == "31 分钟");
 }
+
+TEST_CASE("human_time_precise_as：并排比较的几个数用同一个量纲") {
+    // 各自决定量纲的话，57.58 和 60.0 正好跨在一分钟两边，一句话里两种单位：
+    //     51.9 秒 → 57.6 秒（目标 1 分）
+    CHECK(util::human_time_precise(57.58) == "57.6 秒");
+    CHECK(util::human_time_precise(60.0) == "1 分");   // 病根：单位跳了
+
+    // 按组里**最小**的那个定：需要最细单位的是它，按它定所有人都写得下。
+    const double scale = 51.9;   // = min(51.9, 57.58, 60.0)
+    CHECK(util::human_time_precise_as(51.9, scale) == "51.9 秒");
+    CHECK(util::human_time_precise_as(57.58, scale) == "57.6 秒");
+    CHECK(util::human_time_precise_as(60.0, scale) == "60.0 秒");
+
+    // 按最大的定会得到「0 分 51.9 秒」，更糟——这条钉住方向别反。
+    CHECK(util::human_time_precise_as(51.9, 60.0) == "0 分 51.9 秒");
+
+    // 整集本来就上分钟的，三个数照样一致。
+    const double big = 175.0;    // min(175, 181.2, 180)
+    CHECK(util::human_time_precise_as(175.0, big) == "2 分 55.0 秒");
+    CHECK(util::human_time_precise_as(180.0, big) == "3 分");
+
+    // 不传 scale_ref 就是拿自己当参照，和 human_time_precise 等价。
+    CHECK(util::human_time_precise_as(64.0, 64.0) == util::human_time_precise(64.0));
+}
