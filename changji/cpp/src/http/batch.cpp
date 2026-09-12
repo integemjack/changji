@@ -1,6 +1,7 @@
 #include "http/batch.hpp"
 
 #include <cmath>
+#include <cstdint>
 #include <cstdio>
 #include <set>
 #include <string>
@@ -368,18 +369,40 @@ ApiResult post_script_series(const json& body,
 
                 p.set_message("正在写第 " + std::to_string(i + 1) + " 集");
 
+                // **四段的 schema，和单集那条走同一份。**
+                //
+                // 这儿原来用的是 `script_schema()`——**平的那份**，只有
+                // minItems 4 的地板，没有时间结构。那正是 2026-09-12 之前
+                // 的行为，也正是「60 秒的集写出 13 秒的剧本」的来源：
+                // 提示词里说"要凑够"模型不听，minItems 写 4 它就写 4 拍。
+                //
+                // 2026-09-13 实跑这条路（三集，每集目标 60 秒）：
+                //     ep01   7 行 /  3 句台词 / 293 字
+                //     ep02  19 行 /  8 句台词 / 477 字
+                //     ep03   3 行 /  1 句台词 / 122 字
+                // 而同一天走单集那条出的是 17 拍 / 对白 171 字 /「合适」。
+                // **当初改四段时漏了这一条路。**
+                //
+                // 形状每集重摇一个（random_shape，ComfyUI 的 randomize 那个
+                // 意思）：写死比例的话整季每集都是同一个模子，连着看就露馅。
+                // 解析也要带上同一个 variation，否则段头上的秒数和 schema
+                // 里那份对不上。
+                const std::uint32_t variation = stages::random_shape();
+
                 llm::Request req;
                 req.prompt = stages::build_script_prompt(
                     premise, duration_s, project.style_line,
                     previous_context(project), names);
-                req.schema = stages::script_schema();
+                req.schema =
+                    stages::script_schema(duration_s, names, variation);
                 req.schema_name = "script";
 
                 stages::ScriptDraft draft;
                 try {
                     // 令牌给这个任务真正的那一个，理由同上面写章节那处：
                     // 给 dummy 的话，"停"要等这一集写完才生效。
-                    draft = stages::parse_script(client->complete(req, p.token()));
+                    draft = stages::parse_script(client->complete(req, p.token()),
+                                                 duration_s, variation);
                 } catch (const std::exception& e) {
                     // 一集写砸了不该让前面几集白写，记下来接着往下写。
                     // episode_id 留空——这一集根本没建出来。

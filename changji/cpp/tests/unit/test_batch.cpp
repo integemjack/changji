@@ -127,6 +127,59 @@ TEST_CASE("写整季：把每一集都建出来并落库") {
     fs::remove_all(root, ec);
 }
 
+TEST_CASE("批量写整季用的是四段的 schema，不是平的") {
+    // **2026-09-13 实跑这条路撞到的。** 这儿原来用 `script_schema()`——平的
+    // 那份，只有 minItems 4 的地板、没有时间结构。那正是 2026-09-12 改四段
+    // 之前的行为，也正是「60 秒的集写出 13 秒的剧本」的来源：
+    //
+    //     ep01   7 行 /  3 句台词 / 293 字
+    //     ep02  19 行 /  8 句台词 / 477 字
+    //     ep03   3 行 /  1 句台词 / 122 字
+    //
+    // 同一天走单集那条出的是 17 拍 / 对白 171 字 /「合适」。**改四段那次
+    // 漏了这条路**，而单集那条有测试盯着、这条没有。
+    reset_jobs();
+    const fs::path root = fresh_copy("整季四段");
+    auto client = std::make_shared<llm::ReplayClient>(
+        std::vector<std::string>{script_reply("第一话"), script_reply("第二话")});
+
+    const auto r = http::guard([&] {
+        return http::post_script_series(
+            json{{"project", paths::to_utf8(root)},
+                 {"premise", "林晚在天台等一个七年没出现的人。"},
+                 {"episodes", 2},
+                 {"duration_s", 60.0}}, client);
+    });
+    REQUIRE(r.status == 200);
+    wait_done();
+
+    REQUIRE(client->calls().size() == 2);
+    for (const auto& call : client->calls()) {
+        CAPTURE(call.schema.dump().substr(0, 200));
+        const auto& props = call.schema.at("properties");
+        // 四段各一个键，平的那份只有一个 beats
+        for (const char* key : {"opening", "escalation", "payoff", "cliff"}) {
+            CHECK(props.contains(key));
+        }
+        CHECK_FALSE(props.contains("beats"));
+    }
+
+    SUBCASE("每集的形状重摇，不是整季一个模子") {
+        // 写死比例的话 60 秒永远是 5/28/21/6，连着看几集是一个样。
+        // 段的秒数落在 schema 的 description 里，两集不该字节相同。
+        const std::string a = client->calls()[0].schema.dump();
+        const std::string b = client->calls()[1].schema.dump();
+        // 摇到同一个形状也是可能的，所以这里不断言"一定不同"——
+        // 只断言**两份都带着时间结构**，形状本身由 random_shape 管，
+        // 它自己有测试。
+        CHECK(a.find("秒") != std::string::npos);
+        CHECK(b.find("秒") != std::string::npos);
+    }
+
+    std::error_code ec;
+    fs::remove_all(root, ec);
+}
+
 TEST_CASE("剧集编号不跳号，而且跳过预告") {
     // 预告片挂在 trailer 上。把它也数进去的话，
     // 有了预告之后新建的第二集会跳号变成 ep03。
