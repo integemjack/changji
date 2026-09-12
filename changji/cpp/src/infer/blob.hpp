@@ -56,6 +56,36 @@ bool blob_present(const std::filesystem::path& cache_root,
 std::string blob_store(const std::filesystem::path& cache_root,
                        const std::string& id, const std::string& bytes);
 
+/// 任务里的输入路径可以写成 `blob:<40 位指纹>`。
+///
+/// **为什么用前缀而不是加一组新字段。** 输入现在是一串路径
+/// （`reference_images` 是数组、`start_image` 是可选项），给每一个都配一个
+/// 平行的 blob 字段，两边就得一一对齐——而对不齐的表现是"这一镜用错了
+/// 参考图"，不报错、看不出来。一个前缀把两种记法收在同一个字段里，
+/// 对不齐这件事从根上没有了。
+///
+/// 认出来回指纹，不是这种记法回空串。
+std::string blob_ref_id(const std::string& s);
+
+/// 把任务里的一个输入解析成真实路径。
+///
+/// `blob:<id>` 去仓库里找，找不到抛——**这是对的**：派活方本该在派活
+/// 之前把它传过来，没传就是链路错了，拿个空路径接着跑只会在深处炸。
+/// 不是 `blob:` 记法的原样当路径用（同机那条路，一个字节都不用搬）。
+std::filesystem::path resolve_input(const std::filesystem::path& cache_root,
+                                    const std::string& spec);
+
+/// blob 仓库和沙箱的根：`<项目库>/cache`。
+std::filesystem::path cache_root_of(const std::filesystem::path& workspace);
+
+/// 跑外来任务的沙箱：`<cache>/tasks/<task_id>`。
+///
+/// **外来任务绝不能写进项目目录**。理由不是防人（都是自己的机器），
+/// 是防串项目：那台机器上有它自己的项目，而派活方给的 dest 是**它那边**
+/// 的路径，照着写下去就是把别人的产物写进自己的项目里。
+std::filesystem::path task_sandbox(const std::filesystem::path& cache_root,
+                                   const std::string& task_id);
+
 /// 把一个已有的文件塞进 blob 仓库，回它的指纹。
 ///
 /// 派活那一头用它：算出指纹、问对面有没有、没有才传。

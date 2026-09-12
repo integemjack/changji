@@ -48,6 +48,7 @@ json to_json(const Task& t) {
         {"tier", t.tier},
         {"dest", t.dest},
         {"seed", t.seed},
+        {"return_artifact", t.return_artifact},
     };
     if (t.start_image) j["start_image"] = *t.start_image;
     return j;
@@ -82,11 +83,17 @@ Task task_from_json(const json& j) {
     // **种子必须带**。让工作进程自己算的话它不知道 attempts，
     // 算出来的图和串行跑的不一样——那样并行就不是"更快"，是"结果变了"。
     t.seed = need(j, "seed").get<std::int64_t>();
+    // **默认假**：老版本的派活方不带这个字段，那时候它要的就是老行为
+    // （直接写 dest，两头共享文件系统）。
+    t.return_artifact = j.value("return_artifact", false);
     return t;
 }
 
 json to_json(const TaskResult& r) {
-    return json{{"ok", r.ok}, {"error", r.error}, {"dest", r.dest}};
+    return json{{"ok", r.ok},
+                {"error", r.error},
+                {"dest", r.dest},
+                {"artifact_id", r.artifact_id}};
 }
 
 TaskResult task_result_from_json(const json& j) {
@@ -94,6 +101,7 @@ TaskResult task_result_from_json(const json& j) {
     r.ok = j.value("ok", false);
     r.error = j.value("error", std::string());
     r.dest = j.value("dest", std::string());
+    r.artifact_id = j.value("artifact_id", std::string());
     return r;
 }
 

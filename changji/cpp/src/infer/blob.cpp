@@ -96,6 +96,45 @@ std::string blob_store(const fs::path& cache_root, const std::string& id,
     return {};
 }
 
+std::string blob_ref_id(const std::string& s) {
+    static const std::string kPrefix = "blob:";
+    if (s.rfind(kPrefix, 0) != 0) return {};
+    const std::string id = s.substr(kPrefix.size());
+    return blob_id_ok(id) ? id : std::string();
+}
+
+fs::path resolve_input(const fs::path& cache_root, const std::string& spec) {
+    const std::string id = blob_ref_id(spec);
+    if (id.empty()) {
+        // 不是 blob: 记法，那就是一个路径——同机那条路，直接用。
+        return paths::from_utf8(spec);
+    }
+    const auto p = blob_path(cache_root, id);
+    std::error_code ec;
+    if (p.empty() || !fs::is_regular_file(p, ec)) {
+        throw std::runtime_error(
+            "要的这份输入不在这台机器上：" + spec +
+            "。派活那头该先把它传过来（POST /blob/<id>）");
+    }
+    return p;
+}
+
+fs::path cache_root_of(const fs::path& workspace) {
+    return workspace / "cache";
+}
+
+fs::path task_sandbox(const fs::path& cache_root, const std::string& task_id) {
+    // task_id 是对面给的，会被拼进路径——**按最坏的算**，只留安全字符。
+    std::string safe;
+    for (const char c : task_id) {
+        const bool ok = (c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') ||
+                        (c >= 'A' && c <= 'Z') || c == '-' || c == '_';
+        safe += ok ? c : '_';
+    }
+    if (safe.empty()) safe = "unnamed";
+    return cache_root / "tasks" / safe;
+}
+
 std::string blob_adopt(const fs::path& cache_root, const fs::path& file) {
     const std::string bytes = read_all(file);
     const std::string id = text::sha1_hex(bytes);

@@ -2,7 +2,9 @@
 
 #include <atomic>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
+#include <sstream>
 #include <optional>
 #include <map>
 #include <chrono>
@@ -15,6 +17,7 @@
 
 #include <crow.h>
 
+#include "infer/blob.hpp"
 #include "infer/node_status.hpp"
 #include "infer/peer_auth.hpp"
 #include "infer/task_run.hpp"
@@ -128,6 +131,49 @@ bool run_worker(const config::Settings& settings, const WorkerOptions& opts) {
                          {"busy", state->current != nullptr}});
     });
 
+    // ---- blob：跨机时输入和产物都走这三条 ----
+    //
+    // **为什么不把文件塞进任务的 JSON 里。** 一张参考图几 MB，base64 之后
+    // 还要涨三分之一，而一集里那几张图是同一批文件——塞进去就是同一张脸
+    // 传二十二遍。分开之后，第二镜起 probe 一问就跳过了。
+    const auto cache = infer::cache_root_of(settings.workspace_path());
+
+    CROW_ROUTE(app, "/blob/<string>/probe")(
+        [gate, cache](const crow::request& req, const std::string& id) {
+        if (auto deny = gate(req)) return std::move(*deny);
+        // 派活那头靠这一句决定传不传。**不合法的指纹回 have:false 就够**
+        // ——它本来也不可能存在，而当成错误会让派活方以为链路坏了。
+        return json_res({{"have", blob_present(cache, id)}});
+    });
+
+    CROW_ROUTE(app, "/blob/<string>").methods(crow::HTTPMethod::POST)(
+        [gate, cache](const crow::request& req, const std::string& id) {
+        if (auto deny = gate(req)) return std::move(*deny);
+        // 先核指纹再落地，对不上不写——截断的那份是最阴的故障，
+        // 见 blob.hpp。
+        if (const auto why = blob_store(cache, id, req.body); !why.empty()) {
+            return json_res({{"detail", why}}, 400);
+        }
+        return json_res({{"ok", true}});
+    });
+
+    CROW_ROUTE(app, "/blob/<string>")(
+        [gate, cache](const crow::request& req, const std::string& id) {
+        if (auto deny = gate(req)) return std::move(*deny);
+        const auto p = blob_path(cache, id);
+        std::error_code ec;
+        if (p.empty() || !std::filesystem::is_regular_file(p, ec)) {
+            return json_res({{"detail", "没有这个 blob：" + id}}, 404);
+        }
+        std::ifstream in(p, std::ios::binary);
+        if (!in) return json_res({{"detail", "读不了：" + id}}, 500);
+        std::ostringstream ss;
+        ss << in.rdbuf();
+        crow::response res(200, ss.str());
+        res.set_header("Content-Type", "application/octet-stream");
+        return res;
+    });
+
     CROW_ROUTE(app, "/task").methods(crow::HTTPMethod::POST)(
         [state, settings, gate](const crow::request& req) {
             if (auto deny = gate(req)) return std::move(*deny);
@@ -158,7 +204,8 @@ bool run_worker(const config::Settings& settings, const WorkerOptions& opts) {
 
             // **建完就 detach**，见 Live 的注释。live 是 shared_ptr，
             // 被 lambda 捕获一份，线程跑多久它就活多久。
-            std::thread([state, live, task, settings] {
+            // id 也捕一份：跨机时沙箱按它起名（<cache>/tasks/<id>）。
+            std::thread([state, live, task, settings, id] {
                 const auto on_step = [state, live](int step, int steps,
                                                   double, bool loading) {
                     std::lock_guard lg(state->mu);
@@ -171,7 +218,7 @@ bool run_worker(const config::Settings& settings, const WorkerOptions& opts) {
                 // 拉起来的（见 worker_farm.hpp），它们干的就是本机的活。
                 // 别的机器派来的活走对等互联那条路，那边传 Peer。
                 const TaskResult result = run_task_locally(
-                    task, settings, Origin::Local, on_step, live->tok);
+                    task, settings, Origin::Local, id, on_step, live->tok);
                 std::lock_guard lg(state->mu);
                 live->progress.state = result.ok ? "done" : "failed";
                 live->progress.result = result;

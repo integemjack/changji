@@ -56,7 +56,16 @@ struct Task {
     /// 首帧图。出片时可能有（图生视频），出图时没有。
     std::optional<std::string> start_image;
     /// 产物落在哪。**绝对路径**——工作进程可能在别的工作目录里跑。
+    ///
+    /// `return_artifact` 为真时这一项**没有意义**：那时候对面写的是自己的
+    /// 沙箱，产物由派活方拉回来落到自己这边。
     std::string dest;
+
+    /// 产物别写 dest，写你自己的沙箱，然后把内容指纹回给我。
+    ///
+    /// **跨机时必须为真**：dest 是派活方的路径，对面根本没有那个目录。
+    /// 同机（本机多卡）留假——同一个文件系统，让它直接写省一次搬运。
+    bool return_artifact = false;
     /// 随机种子。协调者算好传下来，**不能让工作进程自己算**：
     /// 它不知道 attempts，算出来的图和串行跑的会不一样。
     std::int64_t seed = 0;
@@ -72,7 +81,15 @@ struct TaskResult {
     /// 失败时的原因。**要能直接给用户看**——它会变成事件流里那条 warn。
     std::string error;
     /// 产物的绝对路径。成功时才有意义。
+    ///
+    /// **跨机时这是对面沙箱里的路径**，对派活方没用，看 `artifact_id`。
     std::string dest;
+
+    /// 产物的内容指纹。`Task::return_artifact` 为真时才有。
+    ///
+    /// 派活方拿它去 `GET /blob/<id>` 把产物取回来。**产物和输入走的是
+    /// 同一个 blob 仓库**——重跑一镜出来字节相同的话，第二次连传都不用传。
+    std::string artifact_id;
 };
 
 nlohmann::json to_json(const TaskResult& r);

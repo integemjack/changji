@@ -37,8 +37,11 @@ std::string cannot_do(const Task& t, const config::Settings& s);
 ///
 /// `origin` 决定它在本机的执行位上排在哪一档（见 `exec_queue.hpp`）：
 /// 本机自己拉起的工作进程传 `Local`，别的机器派来的传 `Peer`。
+/// `task_id` 只用来给沙箱起名（`<cache>/tasks/<id>`），
+/// `Task::return_artifact` 为假时用不上。
 TaskResult run_task_locally(const Task& t, const config::Settings& s,
-                            Origin origin, const StepCallback& on_step,
+                            Origin origin, const std::string& task_id,
+                            const StepCallback& on_step,
                             pipeline::CancelToken& tok);
 
 }  // namespace changji::infer
