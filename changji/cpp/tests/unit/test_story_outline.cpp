@@ -1646,7 +1646,9 @@ TEST_CASE("提示词：只写这一章，带的是压缩的全局记忆") {
     CHECK(p.find("不要写长相") != std::string::npos);
     CHECK(p.find("身体要在场上") != std::string::npos);
     // 五感里至少有一个不靠眼睛
-    CHECK(p.find("不靠眼睛") != std::string::npos);
+    // 下限从「至少一个」提到「三四处，散在不同段落里」：实测每场已经有
+    // 八九处，原来那个下限根本没在约束——这一条是拿来测这个指标可不可控的
+    CHECK(p.find("不靠眼睛的细节，一场里要有三四处") != std::string::npos);
     CHECK(p.find("从上一章停下的地方接着走") != std::string::npos);
     CHECK(p.find("【这是第一章】") == std::string::npos);
 
