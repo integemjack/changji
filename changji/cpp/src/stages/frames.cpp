@@ -53,8 +53,9 @@ std::int64_t frame_seed(const std::string& shot_id, int attempts) {
 namespace {
 
 /// 出图那一段的公共实现。`seed_override` 有值就用它，没有就按镜头算。
-FrameRenderer make_sd_renderer(std::optional<std::int64_t> seed_override) {
-    return [seed_override](const Shot& shot, const PromptBundle& prompts,
+FrameRenderer make_sd_renderer(std::optional<std::int64_t> seed_override,
+                               infer::Origin origin) {
+    return [seed_override, origin](const Shot& shot, const PromptBundle& prompts,
               const TierSpec& spec, const fs::path& dest,
               pipeline::CancelToken& tok, const infer::StepCallback& on_step) {
         // **先拿本机的执行位，再向调度器借显存槽。** 反过来的话会撞上
@@ -63,8 +64,8 @@ FrameRenderer make_sd_renderer(std::optional<std::int64_t> seed_override) {
         // origin 现在一律是 Local：派给别的机器算的活走的是工作进程池
         // 那条路，根本不经过这儿。接上对等互联之后，外来的活在工作进程
         // 那一侧标 Peer，本机自己的一集就排在它前面。
-        auto hold = infer::local_exec().enter(infer::Origin::Local,
-                                              pipeline::note_queued, &tok);
+        auto hold = infer::local_exec().enter(origin, pipeline::note_queued,
+                                              &tok);
         // 每次借一下。**不在外面借一次拿着不放**——那样跑首帧期间
         // 别的槽（比如视频模型）永远腾不出地方，
         // 而按阶段分批的整个意义就是让它们轮流占显存。
@@ -109,10 +110,12 @@ FrameRenderer make_sd_renderer(std::optional<std::int64_t> seed_override) {
 
 }  // namespace
 
-FrameRenderer sd_renderer() { return make_sd_renderer(std::nullopt); }
+FrameRenderer sd_renderer() {
+    return make_sd_renderer(std::nullopt, infer::Origin::Local);
+}
 
-FrameRenderer sd_renderer_with_seed(std::int64_t seed) {
-    return make_sd_renderer(seed);
+FrameRenderer sd_renderer_with_seed(std::int64_t seed, infer::Origin origin) {
+    return make_sd_renderer(seed, origin);
 }
 
 std::vector<FrameOutcome> run_frames(std::vector<Shot*>& shots,

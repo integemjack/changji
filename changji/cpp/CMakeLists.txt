@@ -706,6 +706,7 @@ add_executable(changji
     src/llm/local_client.cpp
     src/llm/client_http.cpp
     src/infer/local_exec.cpp
+    src/infer/task_run.cpp
     src/infer/worker_pool.cpp
     src/infer/worker_farm.cpp
     src/infer/worker_server.cpp

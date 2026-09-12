@@ -94,10 +94,10 @@ namespace {
 /// 出片那一段的公共实现。`seed_override` 有值就用它。
 stages::VideoRenderer make_video_renderer(
     const config::Settings& settings,
-    std::optional<std::int64_t> seed_override) {
+    std::optional<std::int64_t> seed_override, Origin origin) {
     const config::AssemblyConfig assembly = settings.assembly;
     const std::string lora_tiers = settings.models.video_lora_tiers;
-    return [assembly, seed_override, lora_tiers](
+    return [assembly, seed_override, lora_tiers, origin](
                const models::Shot& shot, const stages::RenderPlan& plan,
                       const std::optional<fs::path>& start_image,
                       const fs::path& dest, pipeline::CancelToken& tok,
@@ -105,8 +105,7 @@ stages::VideoRenderer make_video_renderer(
         // 先拿执行位再借显存槽，同 frames.cpp。**出图和出片是两个
         // SdContext、两把各自的 run_mu，互相挡不住**，而 sd.cpp 的进度
         // 回调是全局的——真同时跑起来，两边的步数会串到一起。
-        auto hold = local_exec().enter(Origin::Local,
-                                       pipeline::note_queued, &tok);
+        auto hold = local_exec().enter(origin, pipeline::note_queued, &tok);
         // 每一镜借一次视频槽。跨阶段的显存回收由调度器决定。
         // 同 frames.cpp：借之前先说一句。视频模型更大，卸大模型 + 读盘
         // 这一段更长，而 sd.cpp 的进度回调要等它跑起来才有。
@@ -160,12 +159,12 @@ stages::VideoRenderer make_video_renderer(
 }  // namespace
 
 stages::VideoRenderer sd_video_renderer(const config::Settings& settings) {
-    return make_video_renderer(settings, std::nullopt);
+    return make_video_renderer(settings, std::nullopt, Origin::Local);
 }
 
 stages::VideoRenderer sd_video_renderer_with_seed(
-    const config::Settings& settings, std::int64_t seed) {
-    return make_video_renderer(settings, seed);
+    const config::Settings& settings, std::int64_t seed, Origin origin) {
+    return make_video_renderer(settings, seed, origin);
 }
 
 }  // namespace changji::infer

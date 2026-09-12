@@ -13,15 +13,12 @@
 
 #include <crow.h>
 
+#include "infer/task_run.hpp"
 #include "infer/scheduler.hpp"
 #include "infer/sd_backend.hpp"
 #include "infer/sd_image.hpp"
-#include "infer/sd_video.hpp"
 #include "infer/worker_proto.hpp"
-#include "media/ffmpeg.hpp"
 #include "pipeline/jobs.hpp"
-#include "stages/frames.hpp"
-#include "stages/render.hpp"
 #include "util/paths.hpp"
 
 namespace changji::infer {
@@ -51,63 +48,6 @@ struct State {
     std::string current_id;
     std::atomic<std::uint64_t> next_id{1};
 };
-
-/// 接任务之前先看这活干不干得成。干不成就当场说，别跑到一半才发现。
-///
-/// **这条是实机烧出来的**：第一次跑出片，扩散 8 步全跑完，到最后编码那一步
-/// 才报"找不到 ffmpeg"。本机上 doctor 会在起跑前拦，但直接给 worker 派任务
-/// 绕过了那道检查。在 8 卡机器上，"跑几十秒再失败"乘以八就是几分钟白烧。
-///
-/// 回空串表示能干。
-std::string cannot_do(const Task& t, const config::Settings& s) {
-    const auto ws = s.workspace_path();
-
-    // 出图出片都要扩散模型和它的文本编码器
-    const std::string& which = t.kind == TaskKind::Video ? s.models.video
-                                                        : s.models.image;
-    if (which.empty()) {
-        return std::string(t.kind == TaskKind::Video ? "[models].video"
-                                                     : "[models].image") +
-               " 没配，这个 worker 干不了" +
-               (t.kind == TaskKind::Video ? "出片" : "出图");
-    }
-    for (const auto& [key, name] : std::vector<std::pair<const char*, std::string>>{
-             {"扩散模型", which},
-             {"VAE", t.kind == TaskKind::Video
-                         ? s.models.video_vae
-                         : (s.models.image_vae.empty() ? s.models.video_vae
-                                                       : s.models.image_vae)},
-         }) {
-        if (name.empty()) continue;
-        std::error_code ec;
-        const auto p = s.models.resolve(name, ws);
-        if (!std::filesystem::is_regular_file(p, ec)) {
-            return std::string(key) + " 找不到：" + paths::to_utf8(p);
-        }
-    }
-
-    // **出片要 ffmpeg 把帧编成 mp4。** 就是这一条烧过一次。
-    if (t.kind == TaskKind::Video) {
-        // check() 是 void，缺了就抛。这里把异常翻成一句话回给调用方。
-        try {
-            const media::FFmpeg ff(s.assembly.ffmpeg_path,
-                                   s.assembly.ffprobe_path,
-                                   media::default_runner());
-            ff.check();
-        } catch (const std::exception& e) {
-            return e.what();
-        }
-    }
-
-    // 产物目录得写得进去
-    std::error_code ec;
-    const auto dir = std::filesystem::path(paths::from_utf8(t.dest)).parent_path();
-    if (!dir.empty()) {
-        std::filesystem::create_directories(dir, ec);
-        if (ec) return "产物目录建不出来：" + paths::to_utf8(dir);
-    }
-    return {};
-}
 
 crow::response json_res(const json& body, int code = 200) {
     crow::response res(code, body.dump());
@@ -158,6 +98,7 @@ void run_worker(const config::Settings& settings, const WorkerOptions& opts) {
             }
 
             // **先自检再排队。** 干不成就当场说——这一条是烧过一次换来的。
+            // 判据在 task_run.cpp，两条路（工作进程、对等互联）共用一份。
             if (const auto why = cannot_do(task, settings); !why.empty()) {
                 return json_res({{"detail", why}, {"shot_id", task.shot_id}}, 400);
             }
@@ -183,42 +124,12 @@ void run_worker(const config::Settings& settings, const WorkerOptions& opts) {
                     live->progress.steps = steps;
                     live->progress.loading = loading;
                 };
-                TaskResult result;
-                try {
-                    const std::filesystem::path dest =
-                        paths::from_utf8(task.dest);
-                    if (task.kind == TaskKind::Frame) {
-                        models::Shot shot;
-                        shot.shot_id = task.shot_id;
-                        stages::sd_renderer_with_seed(task.seed)(
-                            shot, task.prompts, task.spec, dest, live->tok,
-                            on_step);
-                    } else {
-                        models::Shot shot;
-                        shot.shot_id = task.shot_id;
-                        stages::RenderPlan plan;
-                        plan.shot_id = task.shot_id;
-                        plan.tier = task.tier;
-                        plan.spec = task.spec;
-                        plan.frames = task.frames;
-                        plan.prompts = task.prompts;
-                        plan.motion = task.motion;
-                        plan.style_line = task.style_line;
-                        std::optional<std::filesystem::path> start;
-                        if (task.start_image) {
-                            start = paths::from_utf8(*task.start_image);
-                        }
-                        sd_video_renderer_with_seed(settings, task.seed)(
-                            shot, plan, start, dest, live->tok, on_step);
-                    }
-                    result.ok = true;
-                    result.dest = task.dest;
-                } catch (const std::exception& e) {
-                    result.ok = false;
-                    // 这句会一路变成协调者事件流里的那条 warn，
-                    // 所以要能直接给用户看。
-                    result.error = e.what();
-                }
+                // 怎么跑在 task_run.cpp 里，那一层不碰网络。
+                // **origin 是 Local**：这些工作进程是本机自己按显卡数
+                // 拉起来的（见 worker_farm.hpp），它们干的就是本机的活。
+                // 别的机器派来的活走对等互联那条路，那边传 Peer。
+                const TaskResult result = run_task_locally(
+                    task, settings, Origin::Local, on_step, live->tok);
                 std::lock_guard lg(state->mu);
                 live->progress.state = result.ok ? "done" : "failed";
                 live->progress.result = result;

@@ -18,6 +18,7 @@
 #include <string>
 
 #include "config/settings.hpp"
+#include "infer/exec_queue.hpp"
 #include "infer/sd_image.hpp"
 #include "models/shot.hpp"
 #include "pipeline/jobs.hpp"
@@ -35,7 +36,8 @@ stages::VideoRenderer sd_video_renderer(const config::Settings& settings);
 /// 同上，但**种子由外面给**。工作进程用这个——它拿不到 `attempts`，
 /// 自己算的种子和串行跑的不一样，而且不会有任何报错。
 stages::VideoRenderer sd_video_renderer_with_seed(
-    const config::Settings& settings, std::int64_t seed);
+    const config::Settings& settings, std::int64_t seed,
+    Origin origin = Origin::Local);
 
 /// 把裸 RGB 帧编码成 mp4。
 ///
