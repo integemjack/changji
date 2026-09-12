@@ -354,6 +354,38 @@ TEST_CASE("概览只列前五个紧的镜头") {
     SUBCASE("一个都没有时也有话说") {
         CHECK(stages::summarize({}) == "没有需要配音的镜头");
     }
+
+    SUBCASE("报的秒数必须是 rebalance 之后还成立的那个") {
+        // **这句话是在 rebalance 之后才显示出去的。** 原来它报的是 plans
+        // 里所有镜头的和，而 rebalance 恰恰会改其中没台词的那些——于是
+        // 实测 walk_c ep01 出现过：同一屏上一行说整集重排到 61.8 秒，
+        // 这行说这 18 个镜头共 71.0 秒。同样的 18 镜，两个数。
+        //
+        // 现在只报有台词那几镜：rebalance 明确不动它们，跑完还是对的。
+        std::vector<stages::ShotAudioPlan> mixed;
+        stages::ShotAudioPlan talk;
+        talk.shot_id = "sh001";
+        talk.speech_duration_s = 3.0;
+        talk.locked_duration_s = 4.0;
+        talk.slack_s = 1.0;
+        talk.lines = 1;
+        mixed.push_back(talk);
+
+        stages::ShotAudioPlan gap;      // 过渡镜：rebalance 随时会改它
+        gap.shot_id = "sh002";
+        gap.locked_duration_s = 5.0;
+        gap.slack_s = 5.0;
+        gap.lines = 0;
+        mixed.push_back(gap);
+
+        const std::string m = stages::summarize(mixed);
+        CAPTURE(m);
+        CHECK(m.find("台词把 1 个镜头钉死在 4.0 秒") != std::string::npos);
+        // 4.0 + 5.0 = 9.0 那个和不能出现：它下一秒就被 rebalance 作废了。
+        CHECK(m.find("9.0") == std::string::npos);
+        // 覆盖数照旧说的是全部 plans，那个没变。
+        CHECK(m.find("覆盖 2 个镜头") != std::string::npos);
+    }
 }
 
 TEST_CASE("拆句不能留下只有标点的碎片") {

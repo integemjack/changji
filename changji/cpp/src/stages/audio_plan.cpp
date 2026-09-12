@@ -301,32 +301,42 @@ std::string summarize(const std::vector<ShotAudioPlan>& plans) {
     if (plans.empty()) return "没有需要配音的镜头";
 
     double total_speech = 0.0;
-    double total_locked = 0.0;
+    // **只数有台词的那几镜。** 见下面为什么。
+    double locked_by_lines = 0.0;
+    int shots_with_lines = 0;
     int total_lines = 0;
     std::vector<std::string> tight;
     for (const auto& p : plans) {
         total_speech += p.speech_duration_s;
-        total_locked += p.locked_duration_s;
         total_lines += p.lines;
+        if (p.lines) {
+            locked_by_lines += p.locked_duration_s;
+            ++shots_with_lines;
+        }
         // 没有台词的镜头留白当然充足，不该出现在"留白不足"的名单里。
         if (p.is_tight() && p.lines) tight.push_back(p.shot_id);
     }
 
-    // **"这 N 个镜头"，不是"这一集"。** 原来这句写的是「锁定后镜头总长
-    // X 秒」，听上去是整集的长度，其实只是 plans 里这几镜的和——没台词的
-    // 过渡镜不在 plans 里。实测 walk_c ep01：18 个镜头里有 14 个进了
-    // plans，这句报 60.0 秒，整集其实是 64.0 秒，而同一屏上的警告说
-    // 「比目标 1 分钟长」——两句话自相矛盾，人只能当其中一句是错的。
+    // **这句话必须在 rebalance 之后依然成立。**
     //
-    // 而且这个数还是**配音刚锁完**那一刻的，rebalance 在它之后才跑，
-    // 跑完整集的时长就变了。整集多长由 pipeline/episode.cpp 在 rebalance
-    // 之后单独报，这里只说自己真正知道的事。
+    // 原来写的是「锁定后镜头总长 X 秒」，是 plans 里所有镜头的和。两处错：
+    //
+    //   * 听上去像整集，其实不是（没台词的过渡镜不一定在 plans 里）；
+    //   * 它是**配音刚锁完那一刻**的值，而 rebalance 在它之后才跑。
+    //
+    // 实测 walk_c ep01：这句报 71.0 秒，而同一屏上一行刚说整集重排到了
+    // 61.8 秒——同样是这 18 个镜头，两个数，人只能当其中一个是错的。
+    //
+    // 现在只报**有台词那几镜**的时长：rebalance 明确不动它们
+    // （storyboard.cpp 里只挑 `dialogue.empty() && !duration_locked`），
+    // 所以这个数跑完之后还是对的。而且它正好解释了这一集为什么压不更短。
+    // 整集多长由 pipeline/episode.cpp 在 rebalance 之后单独报。
     std::string out =
         "配音完成 " + std::to_string(total_lines) + " 句，覆盖 " +
         std::to_string(plans.size()) + " 个镜头\n语音总长 " +
-        fmt("%.1f", total_speech) + " 秒，这 " +
-        std::to_string(plans.size()) + " 个镜头锁定后共 " +
-        fmt("%.1f", total_locked) + " 秒";
+        fmt("%.1f", total_speech) + " 秒，台词把 " +
+        std::to_string(shots_with_lines) + " 个镜头钉死在 " +
+        fmt("%.1f", locked_by_lines) + " 秒，这部分压不动";
 
     if (!tight.empty()) {
         out += "\n其中 " + std::to_string(tight.size()) +
