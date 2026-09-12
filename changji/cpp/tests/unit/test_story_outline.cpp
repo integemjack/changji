@@ -2256,6 +2256,46 @@ TEST_CASE("整段复读先摘掉，摘不干净才打回") {
     CHECK(changji::text::utf8_len(d.text) > 300);
 }
 
+TEST_CASE("收尾只说「说了一句」、不给内容，就打回") {
+    // 2026-09-12 实跑的两个钩子：「他低声说了一句，没人回答。」「他又低声
+    // 说了一句，语气比刚才更坚定。」——都没说他说了什么。收尾那一句是整集
+    // 的钩子，观众听不见那句话，这一集就等于没有结尾。
+    const auto make = [](const std::string& last) {
+        json paras = json::array();
+        for (int i = 0; i < 16; ++i) {
+            paras.push_back("第" + std::to_string(i) +
+                            "段：她把抹布拧干，水滴落在地板上，溅出细小的一圈。");
+        }
+        paras.push_back("他停在门口：“伞我带来了。”");
+        paras.push_back("她没抬头：“放那儿吧。”");
+        paras.push_back("他把伞靠在柜台边：“那我走了。”");
+        json scenes = json::array();
+        scenes.push_back({{"where", "深夜，便利店"},
+                          {"pov", "林晚"},
+                          {"who", json::array({"林晚", "陈默"})},
+                          {"goal", "把伞要回来"},
+                          {"obstacle", "他不认这把伞"},
+                          {"worse", "她发现伞根本不是他带来的"},
+                          {"turn", "伞柄上刻着别人的名字"},
+                          {"paragraphs", paras},
+                          {"last_line", last}});
+        return json{{"scenes", scenes}}.dump();
+    };
+
+    CHECK_THROWS_AS(changji::stages::parse_chapter(
+                        make("他低声说了一句，没人回答。")),
+                    changji::stages::StoryError);
+    // 把话写出来就过
+    CHECK_NOTHROW(changji::stages::parse_chapter(
+        make("他低声说：“这伞不是我的。”")));
+    // 不涉及说话的收尾照旧不管
+    CHECK_NOTHROW(changji::stages::parse_chapter(
+        make("她把伞柄转过来，刻着的不是她的名字。")));
+    // 软闸：最后一次尝试照收
+    CHECK_NOTHROW(changji::stages::parse_chapter(
+        make("他低声说了一句，没人回答。"), 0, false));
+}
+
 TEST_CASE("模型的自言自语摘掉那一段，不废整章") {
     // 语法把模型关在 JSON 字符串里，它想解释自己的时候那些话就落进某一段
     // 正文（实跑原样：一段 1164 字的「不符合用户要求的“只输出 JSON”，

@@ -961,6 +961,36 @@ ChapterDraft parse_chapter(const std::string& raw, int min_chars, bool strict) {
         }
     }
 
+    // **收尾写成转述不收（软闸）。**
+    //
+    // 2026-09-12 实跑出来的两个钩子：「他低声说了一句，没人回答。」和
+    // 「他又低声说了一句，语气比刚才更坚定。」——**都没说他说了什么**。
+    // 收尾那一句是整集的钩子，观众听不见那句话，这一集就等于没有结尾；
+    // 行业里管这叫水台词：重复、拖沓、无信息量。
+    //
+    // **这一道是守卫不是描述。** 第九到十二轮量过：往 last_line 的描述里
+    // 加形状指令（「是台词就带引号」）会外溢，把整章都推向台词、对白比例
+    // 反而塌掉。守卫只在写完之后判，不参与生成，没有那个副作用。
+    //
+    // 词表只收**明说了「说了一句话」却不给内容**的那几种写法，模型改起来
+    // 很容易（把那句话写出来就行）——不是它满足不了的那种闸。
+    if (strict) {
+        static const char* kHearsay[] = {"说了一句", "说了什么", "说了些什么",
+                                         "问了一句", "回了一句", "应了一句",
+                                         "开口说了", "低声说了"};
+        for (const DraftScene& sc : d.scenes) {
+            if (sc.paragraphs.empty()) continue;
+            const std::string& last = sc.paragraphs.back();
+            if (last.find("“") != std::string::npos) continue;  // 话写出来了
+            for (const char* w : kHearsay) {
+                if (last.find(w) == std::string::npos) continue;
+                throw StoryError(std::string("有一场的收尾只说了「") + w +
+                                 "」，没说那句话是什么：这是整集的钩子，"
+                                 "观众得听见那句话。重试一次");
+            }
+        }
+    }
+
     // **章尾点题不收（软闸）。** 每一场的最后一段应该就是那个 turn，
     // 写到它发生那一刻就停。实跑里模型有一半的章会在 turn 后面再加一段
     // 总结——「那一刻，林夏知道……」「窗外的雨还在下，却再也无法打湿
