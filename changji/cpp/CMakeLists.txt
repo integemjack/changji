@@ -1046,6 +1046,8 @@ if(CHANGJI_BUILD_TESTS)
         # 逻辑部分都已经拆到不依赖网络库的文件里了。
         src/infer/worker_proto.cpp
         src/infer/worker_farm.cpp
+        # 执行位：frames / sd_video / ref_gen 三个都用它，而它们都在这个目标里
+        src/infer/local_exec.cpp
         src/http/flow.cpp
         src/http/webapp.cpp
         src/models/shot.cpp
