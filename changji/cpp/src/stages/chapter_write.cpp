@@ -315,6 +315,18 @@ std::string build_chapter_prompt(const Story& story,
     // ---- 压缩的全局记忆 ----
     if (!story.logline.empty()) out += "【这个故事】" + story.logline + "\n";
     if (!story.tone.empty()) out += "【调子】" + story.tone + "\n";
+    // **题材原来根本没渲染进来。** 2026-09-12 实跑：大纲把规则怪谈写对了
+    // （规则、命案、顶罪、监控录像，伏笔前后咬合），而正文出来是都市情感
+    // 的腔调——这一步既没拿到 genre（压根没渲染），又拿不到 tone（大纲
+    // 交了空串）。下面那几十条写作规矩是照都市情感调出来的，没有题材顶着，
+    // 模型就按那几条的默认口味写。
+    if (!story.genre.empty()) {
+        out += "【题材】";
+        out += story.genre;
+        out += "。**下面那些写作规矩，照这个题材的路数用**——悬疑里「拦着他的」";
+        out += "是线索断了或者有人瞒着，「局面更糟」是又少一条退路；";
+        out += "不是每种故事都在谈感情。\n";
+    }
     out += "\n【人物】\n";
     for (const auto& c : story.characters) {
         out += c.name;

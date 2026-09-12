@@ -155,8 +155,23 @@ const ordered& outline_schema() {
             {"description",
              "这部剧讲什么，一句话，具体到人物和处境。用户已经给了梗概时照抄"}};
         props["logline"] = {{"type", "string"}, {"description", "一句话说清这个故事"}};
-        props["genre"] = {{"type", "string"}, {"description", "题材，如 都市情感"}};
-        props["tone"] = {{"type", "string"}, {"description", "调子，如 克制、荒诞"}};
+        // **必填，而且要有内容。** 2026-09-12 拿一句规则怪谈的梗概实跑，
+        // 大纲把规则、命案、顶罪、监控录像全写对了，伏笔也前后咬合，而
+        // 正文写出来是都市情感的腔调——查下来根子在这两栏是**空的**：
+        // 它们没进 required，模型就不填，而写正文那一步渲染它们时看到空
+        // 就跳过，于是**那一步根本不知道这是个悬疑故事**。
+        //
+        // minLength 不能省：进 required 只保证键在，不保证有内容——
+        // voice 那一栏栽过同样的跟头（写进 required 之后三个人物全是空串）。
+        props["genre"] = {
+            {"type", "string"},
+            {"description",
+             "题材：都市情感、悬疑、规则怪谈、年代、女性成长……写具体一点，后面每一章的正文都照着它的路数写"},
+            {"minLength", 2}};
+        props["tone"] = {
+            {"type", "string"},
+            {"description", "调子：克制、荒诞、冷硬、温吞……一个词到一句话"},
+            {"minLength", 2}};
         props["characters"] = {
             {"type", "array"},
             {"description", "故事里的人。主要人物不超过三个"},
@@ -190,8 +205,8 @@ const ordered& outline_schema() {
         ordered s = ordered::object();
         s["type"] = "object";
         s["properties"] = props;
-        s["required"] = {"logline", "characters", "chapters", "locations",
-                         "relations"};
+        s["required"] = {"logline", "genre", "tone", "characters", "chapters",
+                         "locations", "relations"};
         s["additionalProperties"] = false;
         return s;
     }();

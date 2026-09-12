@@ -2339,6 +2339,37 @@ TEST_CASE("写正文用的温度比默认低") {
     CHECK(changji::stages::kChapterTemperature >= 0.3);  // 太低会写成说明书
 }
 
+TEST_CASE("题材和调子要必填，而且要一路带到正文") {
+    // **2026-09-12 实跑逮到的**：拿一句规则怪谈的梗概跑，大纲把规则、命案、
+    // 顶罪、监控录像全写对了，伏笔也前后咬合，而正文出来是都市情感的腔调。
+    // 查下来根子是 genre / tone 两栏**空着**——没进 required 模型就不填，
+    // 而写正文那一步既没渲染 genre、又拿不到 tone，**根本不知道这是个
+    // 悬疑故事**，只好按那几十条（照都市情感调出来的）写作规矩的默认口味写。
+    const auto& props = outline_schema().at("properties");
+    for (const char* k : {"genre", "tone"}) {
+        CAPTURE(k);
+        REQUIRE(props.contains(k));
+        // minLength 不能省：进 required 只保证键在，不保证有内容（voice
+        // 那一栏栽过同样的跟头）
+        CHECK(props.at(k).at("minLength").get<int>() >= 2);
+        bool required = false;
+        for (const auto& r : outline_schema().at("required")) {
+            if (r == k) required = true;
+        }
+        CHECK(required);
+    }
+
+    Story s = outline_only_story();
+    s.genre = "规则怪谈";
+    s.tone = "冷硬";
+    const std::string p = changji::stages::build_chapter_prompt(
+        s, "ch02", StyleLine::REALISTIC);
+    CHECK(p.find("【题材】规则怪谈") != std::string::npos);
+    CHECK(p.find("【调子】冷硬") != std::string::npos);
+    // 光报出题材不够，还要说清那几条规矩在这个题材里怎么用
+    CHECK(p.find("照这个题材的路数用") != std::string::npos);
+}
+
 TEST_CASE("前面埋下的东西要单拎给后面的章") {
     // 混在前情提要里模型看不见——前情是「已经发生过的，不要重写」，而埋下
     // 的东西恰恰是还没兑现、等着后面某一章去收的。不单列的话每一章的反转
