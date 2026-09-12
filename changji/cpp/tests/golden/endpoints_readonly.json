@@ -131,6 +131,7 @@
     },
     {
       "body": {
+        "duration_s": 10.1,
         "shots": [
           {
             "attempts": 0,
@@ -152,6 +153,7 @@
             "needs_lipsync": false,
             "negative_prompt": "",
             "order": 0,
+            "real_duration_s": 5.0,
             "scene_id": "ep01_s01",
             "shot_id": "ep01_s01_sh001",
             "shot_size": "MS",
@@ -200,6 +202,7 @@
             "needs_lipsync": false,
             "negative_prompt": "模糊, 低质量, 多余的手指",
             "order": 6,
+            "real_duration_s": 5.0,
             "scene_id": "ep01_s03",
             "shot_id": "ep01_s03_sh007",
             "shot_size": "MCU",
@@ -222,6 +225,7 @@
     },
     {
       "body": {
+        "duration_s": 0,
         "shots": []
       },
       "name": "shots_ep02_empty",

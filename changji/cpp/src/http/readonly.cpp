@@ -228,9 +228,21 @@ ApiResult get_shots(const std::string& path, const std::string& episode_id) {
             {"video_path", opt(s.video_path)},
             {"audio_paths", audio_paths},
             {"beat", s.beat},
+            // **这一镜真正会出多长。** `duration_s` 是名义值（档位表里挑的
+            // 整数，编辑器改的也是它），而模型只能按格子出帧——名义 4 秒
+            // 出来是 107 帧 = 4.458 秒。
+            //
+            // 界面上凡是给人看的时长都该用这个。前端原来是自己 reduce 累加
+            // `duration_s`，于是标题写「18 镜 · 58 秒」而片子是 61.8 秒
+            // （ffprobe 量的）——**格子规则不能在前端复刻一份**，那是第三份
+            // 副本，模型一换就全错。
+            {"real_duration_s", round1(stages::video_limits().real_duration_s(
+                                    s.duration_s))},
         });
     }
-    return {200, {{"shots", shots}}};
+    // 整集多长。前端别自己加：单镜是四舍五入过的，逐镜加会带累积误差。
+    return {200, {{"shots", shots},
+                  {"duration_s", round1(stages::real_total_s(ep->shots))}}};
 }
 
 ApiResult get_assets(const std::string& path) {

@@ -42,7 +42,8 @@ const { run, isBusy, error } = useAction()
 
 // 镜头表、每镜进度、重出队列，全在这儿。见 useShots。
 const {
-  shots, loading, load, bust, previewOf,
+  shots,
+  episodeDuration, loading, load, bust, previewOf,
   pct, shotState, busy, shotRunning,
   start, stop, shotAction, stepBtn, shotTone, running,
 } = useShots()
@@ -64,8 +65,23 @@ const openShot = computed(
 
 // ---- 概览 ----
 
+/**
+ * 这一集真正会出多长。
+ *
+ * **别自己加 `duration_s`。** 那是名义值——从档位表里挑的整数，编辑器里改的
+ * 也是它——而模型只能按格子出帧（Wan 4n+1、MiniMax-H3 17k+5），名义 4 秒
+ * 出来是 107 帧 = 4.458 秒。这里原来是 `reduce((a, s) => a + s.duration_s)`，
+ * 于是标题写「18 镜 · 58 秒」，而 ffprobe 量磁盘上的成片是 61.8 秒。
+ *
+ * 格子规则只有服务端知道（`stages::VideoLimits`，跟着模型和显存变），
+ * 在前端复刻一份就是第三份副本，换模型就全错。用 `/api/shots` 回的那个数。
+ *
+ * 兜底才回退到累加：老版本的服务端不回这个字段，宁可显示个偏小的数，
+ * 也别显示 0。
+ */
 const totalDuration = computed(() =>
-  shots.value.reduce((a, s) => a + (s.duration_s || 0), 0),
+  episodeDuration.value ??
+  shots.value.reduce((a, s) => a + (s.real_duration_s ?? s.duration_s ?? 0), 0),
 )
 const lipsyncCount = computed(() => shots.value.filter((s) => s.needs_lipsync).length)
 const problemCount = computed(
@@ -645,8 +661,8 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
             class="tl"
             :class="[`tl--${shotTone(s)}`, { 'tl--on': openId === s.shot_id }]"
             type="button"
-            :style="{ width: Math.max(2, ((s.duration_s || 0) / (totalDuration || 1)) * 100) + '%' }"
-            :title="`${s.order + 1}. ${sizeLabel(s.shot_size)} ${s.duration_s}s`"
+            :style="{ width: Math.max(2, ((s.real_duration_s ?? s.duration_s ?? 0) / (totalDuration || 1)) * 100) + '%' }"
+            :title="`${s.order + 1}. ${sizeLabel(s.shot_size)} ${(s.real_duration_s ?? s.duration_s)}s`"
             @click="toggle(s)"
           >
             <span class="tl__n">{{ s.order + 1 }}</span>

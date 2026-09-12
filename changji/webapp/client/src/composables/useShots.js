@@ -69,21 +69,35 @@ export function useShots() {
   const runStore = useRun()
 
   const shots = ref([])
+  /**
+   * 这一集真正会出多长（秒），由引擎给。
+   *
+   * **不要在前端把每镜的 `duration_s` 加起来。** 那是名义值，而模型只能按
+   * 格子出帧（Wan 4n+1、MiniMax-H3 17k+5），名义 4 秒出来是 4.458 秒。
+   * 格子规则跟着模型和显存变，只有引擎知道（`stages::VideoLimits`），
+   * 在这儿复刻一份就是第三份副本，换模型就全错。
+   *
+   * null = 引擎没回这个字段（老版本），由调用方决定怎么兜底。
+   */
+  const episodeDuration = ref(null)
   const loading = ref(false)
 
   async function load() {
     if (!session.projectPath || !session.episodeId) {
       shots.value = []
+      episodeDuration.value = null
       return
     }
     loading.value = true
     try {
       const data = await api.shots(session.projectPath, session.episodeId)
       shots.value = data.shots ?? []
+      episodeDuration.value = data.duration_s ?? null
     } catch (err) {
       // 还没出分镜时引擎会 404。这不是错，是流程还没走到。
       if (err.status !== 404) ui.error(err.message)
       shots.value = []
+      episodeDuration.value = null
     } finally {
       loading.value = false
     }
@@ -508,7 +522,7 @@ export function useShots() {
   const previewOf = (shotId) => runStore.previewOf(shotId)
 
   return {
-    shots, loading, load, bust, previewOf,
+    shots, episodeDuration, loading, load, bust, previewOf,
     inflightBy, pct, shotState, busy, shotRunning, isWaiting,
     start, stop, shotAction, stepBtn, shotTone,
     running: computed(() => runStore.running),

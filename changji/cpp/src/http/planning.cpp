@@ -353,10 +353,13 @@ ApiResult post_plan(const json& body, llm::Client& client,
     ep->shots = shots;
     store.save_project(project);
 
-    double total = 0.0;
+    // **按成片长度报，不按分镜表那串名义值加。** 模型只能按格子出帧，
+    // 名义 4 秒出来是 4.458 秒（见 stages::real_total_s）。这个数不只是
+    // 显示：前端拿它判「只排到 X，分镜太少」（`< target * 0.8`），
+    // 名义值偏小会把排够了的一集误判成不够。
+    const double total = stages::real_total_s(shots);
     int lipsync = 0;
     for (const Shot& s : shots) {
-        total += s.duration_s;
         if (s.needs_lipsync) ++lipsync;
     }
 

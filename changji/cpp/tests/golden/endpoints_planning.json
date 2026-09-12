@@ -1798,7 +1798,7 @@
    "response": {
     "episode_id": "ep01",
     "shots": 2,
-    "duration_s": 8.0,
+    "duration_s": 8.1,
     "missing_lines": [],
     "placed_lines": 0,
     "lipsync": 1,
@@ -2043,7 +2043,7 @@
    "response": {
     "episode_id": "ep01",
     "shots": 3,
-    "duration_s": 12.0,
+    "duration_s": 12.1,
     "missing_lines": [],
     "placed_lines": 0,
     "lipsync": 2,
@@ -2339,7 +2339,7 @@
    "response": {
     "episode_id": "ep01",
     "shots": 3,
-    "duration_s": 12.0,
+    "duration_s": 12.1,
     "missing_lines": [],
     "placed_lines": 0,
     "lipsync": 2,
@@ -2634,7 +2634,7 @@
    "response": {
     "episode_id": "ep09",
     "shots": 3,
-    "duration_s": 12.0,
+    "duration_s": 12.1,
     "missing_lines": [],
     "placed_lines": 0,
     "lipsync": 2,
@@ -3054,7 +3054,7 @@
    "response": {
     "episode_id": "ep01",
     "shots": 3,
-    "duration_s": 12.0,
+    "duration_s": 12.1,
     "missing_lines": [],
     "placed_lines": 0,
     "lipsync": 2,
@@ -3406,7 +3406,7 @@
    "response": {
     "episode_id": "ep01",
     "shots": 3,
-    "duration_s": 12.0,
+    "duration_s": 12.1,
     "missing_lines": [],
     "placed_lines": 0,
     "lipsync": 2,
