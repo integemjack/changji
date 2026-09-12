@@ -367,6 +367,18 @@ std::string build_chapter_prompt(const Story& story,
         if (!c.summary.empty()) recap += "：" + text::collapse_ws(c.summary);
         recap += "\n";
     }
+    // **前面几章埋下的东西，单拎一份出来。**
+    //
+    // 混在前情提要里模型看不见——前情是「已经发生过的，不要重写」，而埋下
+    // 的东西恰恰是**还没兑现、等着这一章或后面某一章去收**的。不单列的话
+    // 每一章的反转都是当场冒出来的，观众没有「原来如此」那一下。
+    std::string planted;
+    for (int i = 0; i < idx; ++i) {
+        const Chapter& c = story.chapters[static_cast<std::size_t>(i)];
+        if (c.plant.empty()) continue;
+        planted += "· " + c.plant + "（第 " + std::to_string(i + 1) + " 章埋的）\n";
+    }
+
     if (!recap.empty()) {
         out += "\n【前情提要】（已经发生过的，不要重写）\n";
         out += text::truncate_utf8(recap, prompt::kChapterRecapMaxChars);
@@ -405,6 +417,17 @@ std::string build_chapter_prompt(const Story& story,
     if (!me.summary.empty()) out += me.summary + "\n";
     // **这一章抖出来的那件事。** 单拎一行，因为它是这一章存在的理由：
     // 没有它，一章就只是「又见了一面」——2026-09-12 实跑的四章零反转。
+    if (!planted.empty()) {
+        out += "\n【前面埋下、还没收的】\n";
+        out += planted;
+        out += "写到用得上的时候就收一样回来——别解释它当初为什么在那儿，";
+        out += "让它自己撞上现在这件事。\n";
+    }
+    if (!me.plant.empty()) {
+        out += "\n**这一章要埋下：";
+        out += me.plant;
+        out += "。放进某一场里，当时不解释、不点破——后面的章会来收它。**\n";
+    }
     if (!me.reveal.empty()) {
         out += "**这一章要抖出来的是：" + me.reveal +
                "。它得在某一场里真的发生——让人看见、听见，"

@@ -2212,6 +2212,26 @@ TEST_CASE("对白用 ASCII 单引号写的，也换成中文双引号") {
     CHECK(keep.text.find("don't") != std::string::npos);
 }
 
+TEST_CASE("前面埋下的东西要单拎给后面的章") {
+    // 混在前情提要里模型看不见——前情是「已经发生过的，不要重写」，而埋下
+    // 的东西恰恰是还没兑现、等着后面某一章去收的。不单列的话每一章的反转
+    // 都是当场冒出来的，观众没有「原来如此」那一下。
+    Story s = outline_only_story();
+    s.chapters[0].plant = "柜台下那只锁着的铁盒";
+    s.chapters[1].plant = "他袖口那道没解释的疤";
+
+    const std::string p = changji::stages::build_chapter_prompt(
+        s, "ch02", StyleLine::REALISTIC);
+    CHECK(p.find("【前面埋下、还没收的】") != std::string::npos);
+    CHECK(p.find("柜台下那只锁着的铁盒") != std::string::npos);
+    CHECK(p.find("这一章要埋下：他袖口那道没解释的疤") != std::string::npos);
+
+    // 第一章前面没有东西可收，就不出现那一段
+    const std::string first = changji::stages::build_chapter_prompt(
+        s, "ch01", StyleLine::REALISTIC);
+    CHECK(first.find("【前面埋下、还没收的】") == std::string::npos);
+}
+
 TEST_CASE("提示词：没有这一章就抛") {
     const Story s = outline_only_story();
     CHECK_THROWS_AS(

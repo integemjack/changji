@@ -188,6 +188,17 @@ struct Chapter {
     ///
     /// 空着不算错（粘贴导入的故事、老项目都没有），只是那一章少了个劲。
     std::string reveal;
+    /// 这一章埋下的、后面才回收的那样东西。
+    ///
+    /// **2026-09-12 加的，因为这条线从来没建模过。** 有 reveal（每章抖出
+    /// 一件新事），但没有任何东西被**埋**下去——于是每一章的反转都是当场
+    /// 冒出来的，观众没有「原来如此」那一下。短剧的成法是「结尾三集回收
+    /// 所有伏笔」「延迟回收，隔得越久炸得越响」，网文那边叫细节伏笔：
+    /// 第一章那条项链，后面才揭示它是什么。
+    ///
+    /// 埋的是看得见的东西：一个物件、一句没头没尾的话、一个当时说不通的
+    /// 细节。不是「暗示他有秘密」那种说明。
+    std::string plant;
     std::string text;       ///< 正文。逐章展开之后才有，没展开时是空串
     std::vector<Hook> hooks;
     /// 这一章的场次。AI 展开正文之后才有；粘贴导入的故事没有（那边只能
@@ -197,7 +208,7 @@ struct Chapter {
     std::vector<std::string> locations;  ///< 用到的地方名
 
     NLOHMANN_DEFINE_TYPE_INTRUSIVE_WITH_DEFAULT(
-        Chapter, chapter_id, title, summary, reveal, text, hooks, scenes,
+        Chapter, chapter_id, title, summary, reveal, plant, text, hooks, scenes,
         characters, locations)
 
     /// 正文的字符数（UTF-8 字符，不是字节）。

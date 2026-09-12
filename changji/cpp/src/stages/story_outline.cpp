@@ -104,6 +104,12 @@ const ordered& outline_schema() {
             {"type", "string"},
             {"description",
              "这一章抖出来的那件新事，要推翻前面的认知：谁其实是谁（身份）、两人其实是什么关系、当年那件事其实不是那样（事实）、他这么做其实为了什么（动机）。四选一。不是「又见了一面」「又谈了一次」"}};
+        // 跟在 reveal 后面：这一章抖出什么、埋下什么，是一对。
+        chapter_props["plant"] = {
+            {"type", "string"},
+            {"description",
+             "这一章埋下的、后面几章才回收的那样东西：一个物件、一句没头没尾的话、一个当时说不通的细节。埋的时候不解释，读者当时看不出它要紧。**最后一章的 reveal 要回收前面埋的某一样**，不要凭空冒出来"},
+            {"minLength", 6}};
         chapter_props["summary"] = {
             {"type", "string"}, {"description", "这一章发生什么，三五句"}};
         chapter_props["hook"] = {
@@ -178,7 +184,7 @@ const ordered& outline_schema() {
             {"description", "按顺序的章节。最后一章要把主线了结"},
             {"items", {{"type", "object"},
                        {"properties", chapter_props},
-                       {"required", {"title", "reveal", "summary", "hook"}},
+                       {"required", {"title", "reveal", "plant", "summary", "hook"}},
                        {"additionalProperties", false}}}};
 
         ordered s = ordered::object();
@@ -308,6 +314,7 @@ Story parse_outline(const std::string& raw, const std::string& premise,
         ch.title = text::clean_field(get_str(c, "title"));
         ch.summary = text::strip_ws(get_str(c, "summary"));
         ch.reveal = text::clean_field(get_str(c, "reveal"));
+        ch.plant = text::clean_field(get_str(c, "plant"));
         if (ch.title.empty() && ch.summary.empty()) continue;
 
         // 大纲阶段没有正文，所以钩子的位置只能是 0——而正文为空时
