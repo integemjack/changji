@@ -892,6 +892,20 @@ async function savePremise() {
 }
 
 /**
+ * 正在长出来的那份大纲。null = 没在写。
+ *
+ * 那一头每隔 200 毫秒推一帧「到此为止解出来的全份」（见引擎里的
+ * write_outline 和 stages/json_partial）。这块板子只是把它摆出来——
+ * 出一份大纲三四十秒，不摆的话那几十秒界面上一个字都没有，
+ * 而"它在想什么"正是这一步最该看见的东西。
+ */
+const outlineLive = ref(null)
+
+function emptyOutlineLive() {
+  return { premise: '', logline: '', genre: '', tone: '', characters: [], chapters: [] }
+}
+
+/**
  * 写大纲。
  *
  * **梗概不是必填的。** 选题本来就是整条流水线上最难从零开始的一步，把它
@@ -900,16 +914,75 @@ async function savePremise() {
  * 已经有故事时也能重出：出来的先是草稿，采用了才换掉现在这几章。
  */
 async function writeStory() {
-  const result = await run(
+  const streamId = 'outline-' + Math.random().toString(36).slice(2, 10)
+  let sock = null
+  let opened = false
+
+  // 那一头写完（或者写砸了）从这条 socket 上说一声。理由同 writeChapter：
+  // 出一份大纲三四十秒，HTTP 请求占着 Crow 的一条 I/O 线程那么久，落在
+  // 同一条线程上的连接会跟着冻住。所以 POST 当场回一句"开始了"。
+  let settle = null
+  const finished = new Promise((r) => {
+    settle = r
+  })
+
+  // 从这一刻起就摆出那块"正在写"的板子，不等第一帧到。
+  outlineLive.value = emptyOutlineLive()
+
+  await new Promise((resolve) => {
+    sock = openJobSocket(
+      streamId,
+      (msg) => {
+        if (msg.job_id !== streamId) return
+        // 正在长出来的那份大纲。**整份换掉，不是往上累加**——那一头推的
+        // 是"到此为止解出来的全份"，累加会把每一帧的前缀叠成一团。
+        if (msg.type === 'outline_progress') {
+          outlineLive.value = msg
+          return
+        }
+        if (msg.type === 'job_done') {
+          settle({ ok: true, result: msg.result })
+          return
+        }
+        if (msg.type === 'job_error') {
+          settle({ ok: false, message: msg.message })
+        }
+      },
+      () => {
+        // 连接没了也一定要把等的人放出来，否则这一页会一直显示"正在写…"。
+        settle({ ok: false, message: '和引擎的连接断了，这份大纲写没写完不好说' })
+        resolve()
+      },
+      () => {
+        opened = true
+        resolve()
+      },
+    )
+    setTimeout(resolve, 2000)
+  })
+
+  const started = await run(
     () =>
       api.writeOutline({
         project: session.projectPath,
         premise: premise.value.trim(),
         scale: scale.value,
         keywords: keywords.value.trim(),
+        // socket 没开就退回老路：HTTP 一直等到写完。慢，但至少拿得到结果。
+        ...(opened ? { stream: streamId, async: true } : {}),
       }),
     { key: 'write' },
   )
+
+  let result = started
+  if (started && started.started) {
+    const fin = await finished
+    result = fin.ok ? fin.result : null
+    if (!fin.ok) ui.error(fin.message || '这份大纲没写成')
+  }
+
+  sock?.close()
+  outlineLive.value = null
   if (result) {
     draft.value = result
     bookOpen.value = false
@@ -1353,14 +1426,18 @@ async function stopWriting() {
                 >
                   直接开写
                 </button>
+                <!-- **outlineLive 也要算在忙里。** 异步那条 run() 一拿到
+                     202 就结束了，光看 isBusy('write') 的话按钮立刻变回
+                     "让 AI 写一份大纲"——再点一下就是第二份在跑，而两份
+                     写完会互相顶掉。 -->
                 <button
                   class="btn btn--ai"
                   type="button"
-                  :disabled="isBusy('write')"
+                  :disabled="isBusy('write') || !!outlineLive"
                   @click="writeStory"
                 >
                   <AppIcon name="sparkle" :size="15" />
-                  {{ isBusy('write') ? '正在写…' : '让 AI 写一份大纲' }}
+                  {{ isBusy('write') || outlineLive ? '正在写…' : '让 AI 写一份大纲' }}
                 </button>
                 <button class="btn btn--ghost" type="button" @click="pasting = !pasting">
                   粘一份现成的
@@ -1383,14 +1460,48 @@ async function stopWriting() {
                 <button
                   class="btn btn--ai"
                   type="button"
-                  :disabled="isBusy('write')"
+                  :disabled="isBusy('write') || !!outlineLive"
                   @click="writeStory"
                 >
                   <AppIcon name="sparkle" :size="15" />
-                  {{ isBusy('write') ? '正在写…' : '让 AI 重出一份大纲' }}
+                  {{ isBusy('write') || outlineLive ? '正在写…' : '让 AI 重出一份大纲' }}
                 </button>
                 <span class="tiny dim">出来先是草稿，采用了才会换掉现在这 {{ chapters.length }} 章</span>
               </template>
+            </div>
+
+            <!-- 正在长出来的那份大纲。**边写边看**，见 outlineLive。
+                 只摆已经有字的那几项：一上来全是空框的话，看着像坏了。 -->
+            <div v-if="outlineLive" class="live stack stack--sm">
+              <div class="row tiny dim">
+                <span class="live__dot" />
+                正在写…（先出选题和人物，再一章一章往下列）
+              </div>
+              <p v-if="outlineLive.logline" class="live__line">
+                {{ outlineLive.logline }}
+              </p>
+              <p v-else-if="outlineLive.premise" class="live__line">
+                {{ outlineLive.premise }}
+              </p>
+              <p v-if="outlineLive.genre || outlineLive.tone" class="tiny dim">
+                {{ [outlineLive.genre, outlineLive.tone].filter(Boolean).join(' · ') }}
+              </p>
+              <p v-if="outlineLive.characters?.length" class="tiny dim">
+                {{
+                  outlineLive.characters
+                    .filter((c) => c.name)
+                    .map((c) => c.name + (c.identity ? `（${c.identity}）` : ''))
+                    .join('、')
+                }}
+              </p>
+              <ol v-if="outlineLive.chapters?.length" class="live__chapters">
+                <li v-for="(c, i) in outlineLive.chapters" :key="i">
+                  <b>{{ c.title || '…' }}</b>
+                  <!-- 中间那个点不能省：HTML 会把标签之间的空白折掉，
+                       写成「双面人生林雨报警未果」连成一句读不出断在哪。 -->
+                  <span v-if="c.summary" class="dim">&nbsp;·&nbsp;{{ c.summary }}</span>
+                </li>
+              </ol>
             </div>
 
             <div v-if="pasting" class="stack stack--sm">
@@ -1731,6 +1842,42 @@ async function stopWriting() {
 </template>
 
 <style scoped>
+/* 「正在写」那块板子。刻意做得轻：它是过程，不是结果——
+   一会儿就被真正的草稿顶掉，做重了反而让人以为已经写完了。 */
+.live {
+  border: 1px dashed var(--line);
+  border-radius: var(--r);
+  padding: 0.75rem 0.9rem;
+  background: var(--bg-soft);
+}
+.live__dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--ai, #7c5cff);
+  margin-right: 0.4rem;
+  animation: live-pulse 1.1s ease-in-out infinite;
+}
+@keyframes live-pulse {
+  0%, 100% { opacity: 0.25; }
+  50% { opacity: 1; }
+}
+/* 动效关掉的系统上就别闪了 */
+@media (prefers-reduced-motion: reduce) {
+  .live__dot { animation: none; opacity: 0.7; }
+}
+.live__line {
+  margin: 0;
+  line-height: 1.6;
+}
+.live__chapters {
+  margin: 0;
+  padding-left: 1.2rem;
+  line-height: 1.7;
+}
+.live__chapters li + li {
+  margin-top: 0.2rem;
+}
 /* 整块就是纸。三栏之间只有细线，没有卡片、没有圆角——那一圈线本身就是
    "这是页面里的一个控件"的提示，而这一页它就是整个页面。 */
 .ed {

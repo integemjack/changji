@@ -678,6 +678,7 @@ add_executable(changji
     src/stages/story_plan.cpp
     src/stages/story_reverse.cpp
     src/stages/json_stream.cpp
+    src/stages/json_partial.cpp
     src/stages/repetition.cpp
     src/stages/story_revise.cpp
     src/stages/story_outline.cpp
@@ -1026,6 +1027,7 @@ if(CHANGJI_BUILD_TESTS)
         tests/unit/test_story_reverse.cpp
         tests/unit/test_story_revise.cpp
         tests/unit/test_json_stream.cpp
+        tests/unit/test_json_partial.cpp
         tests/unit/test_activity.cpp
         tests/unit/test_scheduler_queue.cpp
         tests/unit/test_offload.cpp
@@ -1061,6 +1063,7 @@ if(CHANGJI_BUILD_TESTS)
         src/stages/story_plan.cpp
     src/stages/story_reverse.cpp
     src/stages/json_stream.cpp
+    src/stages/json_partial.cpp
     src/stages/repetition.cpp
     src/stages/story_revise.cpp
         src/stages/story_outline.cpp
