@@ -38,6 +38,8 @@
 #include "http/webapp.hpp"
 #include "http/ws.hpp"
 #include "infer/node_prefs.hpp"
+#include "infer/worker_pool.hpp"
+#include "infer/node_proxy.hpp"
 #include "infer/node_registry.hpp"
 #include "infer/scheduler.hpp"
 #include "infer/sd_backend.hpp"
@@ -1155,6 +1157,103 @@ void run(const config::Settings& settings, const Options& opts) {
         .methods("POST"_method)([](const crow::request&) {
             auto r = guard([&] { return post_setup_cancel(); });
             return json_response(r.body, r.status);
+        });
+
+    // ---- 任意一台机器的装模型：本机走本地那份，别的机器转发过去 ----
+    //
+    // **界面只跟本机的引擎说话。** 浏览器连不上那几台（地址可能只有引擎
+    // 这边通，口令也在配置里、不该发到前端去），所以引擎替它跑一趟。
+    // `local` 不转发，直接调本地实现——转一圈回到自己身上是白多一次
+    // HTTP，而且要求本机对自己可达（它未必）。
+    //
+    // 这四条和 /bff/setup/* 用的是同一份实现。**这台自己点下载，和别的
+    // 机器指挥它下载，必须走同一条路**——两份的话"下完了没有"的判据
+    // 迟早只改一边，而那一边会把半截文件当成下好了。
+    const auto node_target = [](const crow::request& req) {
+        const char* v = req.url_params.get("url");
+        return std::string(v == nullptr ? "" : v);
+    };
+    const auto proxy_status = [](int status) {
+        // 0 = 压根没连上。**翻成 502**：那是"我这一头到那一头断了"，
+        // 和对面自己回的错要分得开。
+        return status == 0 ? 502 : status;
+    };
+
+    CROW_ROUTE(app, "/api/nodes/setup")(
+        [node_target, proxy_status](const crow::request& req) {
+            const std::string url = node_target(req);
+            if (url.empty()) {
+                return json_response({{"detail", "要 url（local 或节点地址）"}},
+                                     422);
+            }
+            const auto s = config::runtime().snapshot();
+            if (url == infer::kLocalEndpoint) {
+                auto r = guard([&] {
+                    return get_setup_state(s, config::runtime().profile());
+                });
+                return json_response(r.body, r.status);
+            }
+            // 扫一遍模型目录要点时间，给宽一些
+            const auto r = infer::node_get(s, url, "/setup/state", 20);
+            return json_response(r.body, proxy_status(r.status));
+        });
+
+    CROW_ROUTE(app, "/api/nodes/setup/download")
+        .methods("POST"_method)([proxy_status](const crow::request& req) {
+            const auto body = nlohmann::json::parse(req.body, nullptr, false);
+            if (body.is_discarded() || !body.is_object()) {
+                return json_response({{"detail", "请求体不是一个 JSON 对象"}},
+                                     400);
+            }
+            const std::string url = body.value("url", std::string());
+            if (url.empty()) {
+                return json_response({{"detail", "要 url"}}, 422);
+            }
+            // url 是给我们自己看的，别跟着发出去
+            nlohmann::json payload = body;
+            payload.erase("url");
+
+            const auto s = config::runtime().snapshot();
+            if (url == infer::kLocalEndpoint) {
+                auto r = guard([&] { return post_setup_download(s, payload); });
+                return json_response(r.body, r.status);
+            }
+            const auto r =
+                infer::node_post(s, url, "/setup/download", payload, 20);
+            return json_response(r.body, proxy_status(r.status));
+        });
+
+    CROW_ROUTE(app, "/api/nodes/setup/progress")(
+        [node_target, proxy_status](const crow::request& req) {
+            const std::string url = node_target(req);
+            if (url.empty()) {
+                return json_response({{"detail", "要 url"}}, 422);
+            }
+            const auto s = config::runtime().snapshot();
+            if (url == infer::kLocalEndpoint) {
+                auto r = guard([&] { return get_setup_progress(); });
+                return json_response(r.body, r.status);
+            }
+            const auto r = infer::node_get(s, url, "/setup/progress", 10);
+            return json_response(r.body, proxy_status(r.status));
+        });
+
+    CROW_ROUTE(app, "/api/nodes/setup/cancel")
+        .methods("POST"_method)([proxy_status](const crow::request& req) {
+            const auto body = nlohmann::json::parse(req.body, nullptr, false);
+            const std::string url =
+                body.is_object() ? body.value("url", std::string()) : "";
+            if (url.empty()) {
+                return json_response({{"detail", "要 url"}}, 422);
+            }
+            const auto s = config::runtime().snapshot();
+            if (url == infer::kLocalEndpoint) {
+                auto r = guard([&] { return post_setup_cancel(); });
+                return json_response(r.body, r.status);
+            }
+            const auto r = infer::node_post(s, url, "/setup/cancel",
+                                            nlohmann::json::object(), 10);
+            return json_response(r.body, proxy_status(r.status));
         });
 
     CROW_ROUTE(app, "/bff/project/video")([](const crow::request& req) {

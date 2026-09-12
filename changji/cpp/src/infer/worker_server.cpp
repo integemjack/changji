@@ -17,6 +17,7 @@
 
 #include <crow.h>
 
+#include "http/setup_api.hpp"
 #include "infer/blob.hpp"
 #include "infer/node_status.hpp"
 #include "infer/peer_auth.hpp"
@@ -129,6 +130,48 @@ bool run_worker(const config::Settings& settings, const WorkerOptions& opts) {
         return json_res({{"ok", true},
                          {"gpu", opts.gpu},
                          {"busy", state->current != nullptr}});
+    });
+
+    // ---- 装模型：让派活那头能指挥这台去补齐 ----
+    //
+    // **转调初始化页那套**（http/setup_api），不另写一份：清单、推荐档、
+    // aria2/curl、断点续传、按真实字节数判完成，全在那儿了。这台机器
+    // 自己打开界面点下载，和别的机器指挥它下载，走的必须是同一条路——
+    // 两份的话，"下完了没有"的判据迟早只改一边。
+    const auto api_res = [](const http::ApiResult& r) {
+        return json_res(r.body, r.status);
+    };
+
+    CROW_ROUTE(app, "/setup/state")(
+        [gate, settings, profile, api_res](const crow::request& req) {
+        if (auto deny = gate(req)) return std::move(*deny);
+        return api_res(http::get_setup_state(settings, profile));
+    });
+
+    CROW_ROUTE(app, "/setup/download").methods(crow::HTTPMethod::POST)(
+        [gate, settings, api_res](const crow::request& req) {
+        if (auto deny = gate(req)) return std::move(*deny);
+        const auto body = json::parse(req.body, nullptr, false);
+        if (body.is_discarded()) {
+            return json_res({{"detail", "请求体不是 JSON"}}, 400);
+        }
+        try {
+            return api_res(http::post_setup_download(settings, body));
+        } catch (const http::ApiError& e) {
+            return json_res({{"detail", e.detail()}}, e.status());
+        }
+    });
+
+    CROW_ROUTE(app, "/setup/progress")(
+        [gate, api_res](const crow::request& req) {
+        if (auto deny = gate(req)) return std::move(*deny);
+        return api_res(http::get_setup_progress());
+    });
+
+    CROW_ROUTE(app, "/setup/cancel").methods(crow::HTTPMethod::POST)(
+        [gate, api_res](const crow::request& req) {
+        if (auto deny = gate(req)) return std::move(*deny);
+        return api_res(http::post_setup_cancel());
     });
 
     // ---- blob：跨机时输入和产物都走这三条 ----
