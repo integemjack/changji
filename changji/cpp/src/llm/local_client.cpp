@@ -96,17 +96,19 @@ std::string LocalClient::complete(const Request& req, pipeline::CancelToken& tok
 
     std::string out;
     std::string why;
-    // 上限给得宽：写一集剧本本来就长。真正的护栏是上下文长度，
-    // LlamaChat 里会先查提示词加这个数超没超。
+    // **0 = 上下文里剩多少就写多少**（LlamaChat::complete 里换算）。
     //
-    // 8192 → 12288（2026-09-12）：章节正文那一步的 schema 一路长起来了
-    // ——一章三到五场，每场八个必填字段加几十段正文。实跑撞上了：一章
-    // 三次尝试全报「找不到合法 JSON」，因为输出在半截 JSON 上被截断，
-    // 那一章落成 0 字。**截断的表现不是「写短了」而是「解析失败」**，
-    // 看报错很难想到是上限。
-    constexpr int kMaxTokens = 12288;
+    // 这里原来写死一个数，8192 → 12288（2026-09-12）→ 又不够。而那个数
+    // 和 schema 要的输出量是两条各自在变的线：一章从"一堆段落"改成
+    // "几场戏"之后每场八个必填字段加几十段正文，段数下限又提过一次，
+    // 输出量一路涨，追不上。两次撞上的表现**都不是「写短了」而是
+    // 「解析失败」**——输出停在半截 JSON 上，报「找不到合法 JSON」，
+    // 那一章落成 0 字，看报错根本想不到是上限。
+    //
+    // 上下文本来就是真正的护栏（LlamaChat 会先查提示词加输出超没超），
+    // 那就直接以它为准，别再维护第二个会过期的数。
     const bool ok = chat->complete(req.prompt, schema, req.temperature,
-                                   kMaxTokens, tok, out, why, on_token);
+                                   /*max_tokens=*/0, tok, out, why, on_token);
     dump_exchange(req.prompt, out, ok ? "ok" : why);
     if (!ok) throw LlmError("进程内大模型失败：" + why);
     if (tok.cancelled()) throw LlmError("已取消");
