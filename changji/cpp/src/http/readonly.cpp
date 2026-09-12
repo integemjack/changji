@@ -8,6 +8,7 @@
 #include "config/settings.hpp"
 #include "models/hardware.hpp"
 #include "models/project.hpp"
+#include "stages/storyboard.hpp"
 #include "util/fs_time.hpp"
 #include "util/paths.hpp"
 #include "util/text.hpp"
@@ -138,7 +139,17 @@ ApiResult get_project(const std::string& path) {
             {"title", e.title},
             {"synopsis", e.synopsis},
             {"shots", static_cast<int>(e.shots.size())},
-            {"duration_s", round1(e.planned_duration_s())},
+            // **界面上这个数标着"时长"，那它就得是成片的长度。**
+            //
+            // 不是 planned_duration_s()——那是分镜表里那串名义值的和，而
+            // 模型只能按格子出帧（见 stages::real_total_s）。两者能差
+            // 10%：walk_c ep01 名义 58.0 秒，片子 61.8 秒。
+            //
+            // 副作用是这个数**跟着这台机器变**：卡小的时候 VideoLimits 被
+            // 夹低，同一个项目报出来的时长会短一些。那是实话——在这台机器
+            // 上渲出来就是那么长——但别拿它当项目的固有属性。要看人当初
+            // 要的是多长，看 target_duration_s。
+            {"duration_s", round1(stages::real_total_s(e.shots))},
             {"status", status},
         });
     }
