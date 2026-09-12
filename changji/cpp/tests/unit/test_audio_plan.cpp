@@ -365,11 +365,20 @@ TEST_CASE("拆句不能留下只有标点的碎片") {
     // 零点几秒，所以它一路过了所有检查，直到听成片才会发现。
     const double cap = stages::max_line_seconds(24);
 
+    // 每一段都得有能念出声的字。**不能用 text::rstrip_punct 判**——那个表只有
+    // 八个字符（。．；；，，、和空格），不含 ！？… 之类，第一版就是栽在这儿：
+    // 修完之后实跑照样切出「！」和「…」两种独立片段。
     auto no_punct_only = [](const std::vector<std::string>& parts) {
+        static const std::string marks =
+            "。，、；：！？…—～「」『』“”‘’（）《》【】·"
+            ".,;:!?-~\"'()[]{}<>/\|*_+= \t\n\r";
         for (const auto& p : parts) {
             CAPTURE(p);
-            // 每一段去掉标点之后都得还剩字
-            CHECK_FALSE(text::strip_ws(text::rstrip_punct(p)).empty());
+            bool speakable = false;
+            for (const auto& ch : text::utf8_chars(p)) {
+                if (marks.find(ch) == std::string::npos) { speakable = true; break; }
+            }
+            CHECK(speakable);
         }
     };
 
@@ -378,6 +387,14 @@ TEST_CASE("拆句不能留下只有标点的碎片") {
         const auto parts = stages::split_long_text(line, cap);
         REQUIRE(parts.size() >= 1);
         no_punct_only(parts);
+        // 实跑里还切出过单独的「…」和「！」，两种都要盯住
+        for (const char* tail : {"！", "…", "？", "。"}) {
+            const auto p2 = stages::split_long_text(
+                "他慢慢地把伞收起来放在门口然后回头看了她一眼" + std::string(tail),
+                cap);
+            CAPTURE(tail);
+            no_punct_only(p2);
+        }
         // 标点并回前一段，不是丢掉——它是前一句的语气
         std::string joined;
         for (const auto& p : parts) joined += p;

@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cstdio>
 #include <map>
+#include <set>
 
 #include "stages/render.hpp"
 #include "util/text.hpp"
@@ -91,6 +92,34 @@ double max_line_seconds(int fps) {
     return max_shot_duration_s(fps) - kTailS;
 }
 
+namespace {
+
+/// 这一段除了标点和空白，还有没有能念出声的字。
+///
+/// **不能用 text::rstrip_punct 代替。** 那个表只有八个字符
+/// （。．；；，，、和空格），是给"清理句尾"用的，不含 ！？…—
+/// 之类——实测就是栽在这儿：修完之后「！」和「…」照旧被切成独立片段。
+///
+/// 这里要判的是另一件事：**这一段送给 TTS 会不会念出东西来**。所以列的是
+/// 中英文常见的标点和引号括号，宁可多列几个：漏掉一个的代价是一段纯标点
+/// 进了合成器，而那东西配出来多长完全不可预期（实测一个「！」出过 41 秒）。
+bool has_speakable(const std::string& s) {
+    static const std::set<std::string> kMarks = {
+        "。", "，", "、", "；", "：", "！", "？", "…", "—", "－", "～",
+        "「", "」", "『", "』", "“", "”", "‘", "’", "（", "）", "《", "》",
+        "〈", "〉", "【", "】", "·", "‥", "﹏", "　",
+        ".", ",", ";", ":", "!", "?", "-", "~", "\"", "'", "(", ")",
+        "[", "]", "{", "}", "<", ">", "/", "\\", "|", "*", "_", "+", "=",
+        " ", "\t", "\n", "\r",
+    };
+    for (const auto& ch : text::utf8_chars(s)) {
+        if (kMarks.count(ch) == 0) return true;
+    }
+    return false;
+}
+
+}  // namespace
+
 std::vector<std::string> split_long_text(const std::string& text_in,
                                          double max_seconds) {
     if (estimate_speech_duration(text_in) <= max_seconds) return {text_in};
@@ -165,7 +194,7 @@ std::vector<std::string> split_long_text(const std::string& text_in,
         // 那句话的停顿和情绪都变了。前面没有段可并（整句就是个标点）时
         // 原样留着——那种输入本来就不该出现，真出现了让它显出来，
         // 比悄悄吞掉强。
-        if (text::strip_ws(text::rstrip_punct(t)).empty() && !out.empty()) {
+        if (!has_speakable(t) && !out.empty()) {
             out.back() += t;
             continue;
         }
