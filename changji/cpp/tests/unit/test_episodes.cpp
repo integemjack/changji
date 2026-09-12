@@ -19,6 +19,7 @@
 
 #include "http/episodes.hpp"
 #include "llm/client.hpp"
+#include "stages/script.hpp"
 #include "models/project.hpp"
 #include "pipeline/jobs.hpp"
 #include "util/paths.hpp"
@@ -400,6 +401,32 @@ TEST_CASE("剧集 id 的合法性") {
     CHECK(try_id("第三集") == 400);
     CHECK(try_id("ep 03") == 400);
     CHECK(try_id("ep03") == 200);
+
+    std::error_code ec;
+    fs::remove_all(root, ec);
+}
+
+TEST_CASE("GET /api/script/context：不在分集表上的集也有答案") {
+    // 语料项目没有 story.json：老项目就是这样。场和原文是空的，
+    // 但时长、预算、四段的排法都在——剧本页靠它们画预算条和段头。
+    const fs::path root = fresh_copy("context", json());
+    const http::ApiResult r = http::guard([&] {
+        return http::get_script_context(paths::to_utf8(root), "ep01");
+    });
+    REQUIRE_MESSAGE(r.status == 200, r.body.dump());
+    CHECK(r.body.at("source") == "premise");
+    CHECK(r.body.at("target_duration_s") == 180.0);
+    CHECK(r.body.at("budget_chars") == stages::budget_chars(180.0));
+    CHECK(r.body.at("acts").size() == 4);
+    CHECK(r.body.at("acts")[3].at("to_s") == 180);
+    CHECK(r.body.at("text") == "");
+    CHECK(r.body.at("scenes").empty());
+    CHECK(r.body.at("chapters").empty());
+
+    const http::ApiResult missing = http::guard([&] {
+        return http::get_script_context(paths::to_utf8(root), "ep99");
+    });
+    CHECK(missing.status == 404);
 
     std::error_code ec;
     fs::remove_all(root, ec);

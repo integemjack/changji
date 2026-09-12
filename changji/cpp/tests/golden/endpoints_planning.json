@@ -1787,7 +1787,7 @@
    },
    "clear_assets": false,
    "llm_bible": "{\"characters\": [{\"key\": \"lin_wan\", \"name\": \"林晚\", \"identity\": \"二十七岁女性，外表冷静，内里执拗。\", \"body\": \"偏瘦，中等身高\", \"face\": \"黑色长直发，鹅蛋脸，杏眼，眼尾微垂，薄唇。\", \"attire\": \"白色衬衫，深色西装裤\"}, {\"key\": \"chen_mo\", \"name\": \"陈默\", \"identity\": \"三十出头男性，沉默寡言\", \"body\": \"高瘦\", \"face\": \"短寸黑发，方脸，浓眉，单眼皮\", \"attire\": \"黑色风衣\"}], \"locations\": [{\"key\": \"rooftop_night\", \"name\": \"夜间天台\", \"space\": \"水泥地面，锈蚀的护栏\", \"lighting\": \"夜间冷调顶光。\", \"palette\": \"冷蓝为主\"}], \"global_style\": \"电影感，浅景深，冷色调。\"}",
-   "llm_storyboard": "{\"shots\": [{\"shot_id\": \"ep01_sh001\", \"scene_id\": \"loc_rooftop\", \"order\": 0, \"first_frame_prompt\": \"夜间天台，雨中\", \"shot_size\": \"MS\", \"camera_angle\": \"eye_level\", \"duration_s\": 5.0, \"characters\": [{\"char_id\": \"c_lin_yuan\", \"expression\": \"落寞\", \"action\": \"扶着护栏\", \"face_pose\": \"back\"}], \"dialogue\": [], \"transition_in\": \"cut\"}, {\"shot_id\": \"ep01_sh002\", \"scene_id\": \"loc_rooftop\", \"order\": 1, \"first_frame_prompt\": \"近景，转身\", \"shot_size\": \"CU\", \"camera_angle\": \"eye_level\", \"duration_s\": 3.0, \"characters\": [{\"char_id\": \"c_lin_yuan\", \"expression\": \"克制\", \"action\": \"转身\", \"face_pose\": \"front\"}], \"dialogue\": [{\"char_id\": \"c_lin_yuan\", \"text\": \"你说过会来的\"}], \"transition_in\": \"cut\"}]}",
+   "llm_storyboard": "{\"shots\": [{\"shot_id\": \"ep01_sh001\", \"scene_id\": \"loc_rooftop\", \"order\": 0, \"first_frame_prompt\": \"夜间天台，雨中\", \"shot_size\": \"MS\", \"camera_angle\": \"eye_level\", \"duration_s\": 5.0, \"characters\": [{\"char_id\": \"c_lin_yuan\", \"expression\": \"落寞\", \"action\": \"扶着护栏\", \"face_pose\": \"back\"}], \"dialogue\": [], \"transition_in\": \"cut\"}, {\"shot_id\": \"ep01_sh002\", \"scene_id\": \"loc_rooftop\", \"order\": 1, \"first_frame_prompt\": \"近景，转身\", \"shot_size\": \"CU\", \"camera_angle\": \"eye_level\", \"duration_s\": 3.0, \"characters\": [{\"char_id\": \"c_lin_yuan\", \"expression\": \"克制\", \"action\": \"转身\", \"face_pose\": \"front\"}], \"dialogue\": [{\"char_id\": \"c_lin_yuan\", \"text\": \"你说过会来的\"}, {\"char_id\": \"c_lin_yuan\", \"text\": \"我来了。晚了七年。\", \"emotion\": \"neutral\", \"emotion_intensity\": 0.5}], \"transition_in\": \"cut\"}]}",
    "prompts": [
     {
      "stage": "storyboard",
@@ -1970,6 +1970,15 @@
          {
           "char_id": "c_lin_yuan",
           "text": "你说过会来的",
+          "emotion": "neutral",
+          "emotion_intensity": 0.5,
+          "voice_id": null,
+          "audio_path": null,
+          "actual_duration_s": null
+         },
+         {
+          "char_id": "c_lin_yuan",
+          "text": "我来了。晚了七年。",
           "emotion": "neutral",
           "emotion_intensity": 0.5,
           "voice_id": null,
@@ -2857,7 +2866,7 @@
       "script": "林晚站在天台边缘，雨水打湿了她的白衬衫。\n林晚：你说过会来的。\n陈默从阴影里走出来。\n陈默：我来了。晚了七年。",
       "shots": [
        {
-        "shot_id": "ep01_sh001",
+        "shot_id": "ep09_sh001",
         "scene_id": "loc_rooftop_night",
         "order": 0,
         "visual_desc": "",
@@ -2900,7 +2909,7 @@
         "gate_notes": []
        },
        {
-        "shot_id": "ep01_sh002",
+        "shot_id": "ep09_sh002",
         "scene_id": "loc_rooftop_night",
         "order": 1,
         "visual_desc": "",
@@ -2953,7 +2962,7 @@
         "gate_notes": []
        },
        {
-        "shot_id": "ep01_sh003",
+        "shot_id": "ep09_sh003",
         "scene_id": "loc_rooftop_night",
         "order": 2,
         "visual_desc": "",

@@ -1450,6 +1450,16 @@ void run(const config::Settings& settings, const Options& opts) {
         return json_response(r.body, r.status);
     });
 
+    // 这一集的原料：场、原文、钩子、四段按秒的排法。和 AI 改编时拿到的
+    // 是同一份，只是给人看。
+    CROW_ROUTE(app, "/api/script/context")([](const crow::request& req) {
+        auto r = guard([&] {
+            return get_script_context(required_query(req, "path"),
+                                      required_query(req, "episode_id"));
+        });
+        return json_response(r.body, r.status);
+    });
+
     CROW_ROUTE(app, "/api/script").methods("POST"_method)(
         script_route(&post_script));
 

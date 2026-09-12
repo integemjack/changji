@@ -12,6 +12,7 @@
 namespace changji::stages::prompt {
 
 // 正片：Seg0 + 时长 + Seg1 + 画风 + Seg2 + 字数 + Rules
+//       + 四段（ActBlockHead + 每段一行 + ActBlockTail，见 render_act_brief）
 //       + [CharsPre + 角色名 + CharsPost]
 //       + [PrevPre + 前情 + PrevPost]
 //       + TailHead + 梗概 + TailEnd
@@ -60,6 +61,32 @@ inline constexpr const char* kScriptRules =
 10. 提到的东西要具体到看得见：不说「一件信物」，说「一枚缺了角的铜钱」。
     后面每一镜都要拿它当道具，含糊的东西每镜长得都不一样。
 11. 每一拍只写一件事。一拍里塞三个动作，分镜只能挑一个画，剩下的就丢了。
+
+)CJ";
+
+// ---- 四段 ----
+//
+// 一集按秒排成四段，正片和从故事写的那条路共用。**这一段必须进提示词**，
+// 光写在 schema 的 description 里模型看不见（GBNF 只有结构）。
+// 每段那一行由 render_act_brief 拼：「  开场钩子（0–5 秒）：<brief>。至少 N 拍。」
+
+inline constexpr const char* kActKeys[4] = {"opening", "escalation", "payoff",
+                                             "cliff"};
+inline constexpr const char* kActLabels[4] = {
+    R"CJ(开场钩子)CJ", R"CJ(冲突推进)CJ", R"CJ(情绪回报)CJ", R"CJ(集尾留扣)CJ"};
+inline constexpr const char* kActBriefs[4] = {
+    R"CJ(一句冲突台词或一个反常画面，三秒内有事发生，不铺垫)CJ",
+    R"CJ(对立方步步紧逼，一步比一步紧，中途给一次小回报再压回去)CJ",
+    R"CJ(反击、打脸或真相——观众等的那一下)CJ",
+    R"CJ(在情绪最高或最意外处切断，最后一拍就是钩子)CJ",
+};
+
+inline constexpr const char* kActBlockHead =
+    R"CJ(这一集分四段，按秒排。JSON 里 opening、escalation、payoff、cliff 四项就是它们，顺序不能换：
+)CJ";
+
+inline constexpr const char* kActBlockTail =
+    R"CJ(一拍是一个动作或一句台词。四段加起来要撑满整集，每段的拍数照上面的下限往上写——写少了这一集就只有十几秒。
 
 )CJ";
 
@@ -193,6 +220,24 @@ inline constexpr const char* kTrailerTailEnd =
     R"CJ(
 
 只输出 JSON，不要任何解释文字。)CJ";
+
+// 机位标签里的景别词。动作行开头挂一个「镜头特写：」时靠它认出来。
+//
+// **不进提示词，只在解析时用。** 提示词里列一串「不要写镜头/特写/近景」，
+// 模型会把这些词原样抄进正文——2026-09-11 在章节那边栽过一次
+// （反例句被逐字抄走）。形式是我们定的，削掉就完了。
+inline constexpr const char* kCameraWords[] = {
+    R"CJ(镜头)CJ",
+    R"CJ(特写)CJ",
+    R"CJ(近景)CJ",
+    R"CJ(中景)CJ",
+    R"CJ(远景)CJ",
+    R"CJ(全景)CJ",
+    R"CJ(空镜)CJ",
+    R"CJ(画面)CJ",
+    R"CJ(闪回)CJ",
+    R"CJ(插入)CJ",
+};
 
 // 说话人为空的各种写法。模型经常无视 schema 填 none、旁白 这类词，
 // 原样当名字用的话，成片字幕上会出现「none：寂静」。

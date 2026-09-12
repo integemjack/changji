@@ -334,3 +334,143 @@ TEST_CASE("两个 schema 和 Python 一致") {
     CHECK(json(stages::script_schema()) == golden().at("script_schema"));
     CHECK(json(stages::premise_schema()) == golden().at("premise_schema"));
 }
+
+// ---- 四段 ----
+//
+// 2026-09-12 加的。60 秒的集写出 13 秒的剧本，根子是剧本这一层没有承载
+// 时长的形状：一个平的 beats 数组，地板写死 4。行业里一集是四拍按秒排的，
+// 时长是剧本自己长出来的——所以 schema 长成四段，每段自己的拍数地板。
+
+TEST_CASE("一集按秒切成四段，四段拼起来是整集") {
+    const auto acts = stages::act_plan(60.0);
+    REQUIRE(acts.size() == 4);
+    CHECK(acts[0].key == "opening");
+    CHECK(acts[3].key == "cliff");
+    CHECK(acts[0].from_s == 0);
+    CHECK(acts[3].to_s == 60);
+    int sum = 0;
+    for (std::size_t i = 0; i < acts.size(); ++i) {
+        CAPTURE(acts[i].key);
+        CHECK(acts[i].to_s > acts[i].from_s);
+        if (i) CHECK(acts[i].from_s == acts[i - 1].to_s);
+        CHECK(acts[i].min_beats >= 2);
+        CHECK(acts[i].max_beats > acts[i].min_beats);
+        sum += acts[i].to_s - acts[i].from_s;
+    }
+    CHECK(sum == 60);
+    // 60 秒：开场 5、推进 28、回报 21、留扣 6
+    CHECK(acts[0].to_s == 5);
+    CHECK(acts[1].to_s == 33);
+    CHECK(acts[2].to_s == 54);
+    // 开场不超过 8 秒、留扣不超过 10 秒——三分钟的集也一样，钩子不能拖
+    const auto longer = stages::act_plan(180.0);
+    CHECK(longer[0].to_s == 8);
+    CHECK(longer[3].to_s - longer[3].from_s == 10);
+    // 时长小到没法分也不能崩：银行家舍入那几条用例会传 0.5
+    const auto tiny = stages::act_plan(0.5);
+    REQUIRE(tiny.size() == 4);
+    for (const auto& a : tiny) CHECK(a.to_s > a.from_s);
+}
+
+TEST_CASE("四段的 schema：四个键按顺序，各自带拍数的地板") {
+    const json s = json(stages::script_schema(60.0));
+    const auto required = s.at("required").get<std::vector<std::string>>();
+    CHECK(required == std::vector<std::string>{"title", "logline", "opening",
+                                               "escalation", "payoff", "cliff"});
+    const json& esc = s.at("properties").at("escalation").at("properties").at("beats");
+    CHECK(esc.at("minItems").get<int>() == stages::act_plan(60.0)[1].min_beats);
+    CHECK(esc.at("minItems").get<int>() >= 6);
+    CHECK(esc.contains("maxItems"));
+    // 每一拍的字数也有地板，空拍凑数在语法层就过不去
+    CHECK(esc.at("items").at("properties").at("text").at("minLength").get<int>() >= 2);
+    // 平的那份不动：预告片还在用
+    CHECK_FALSE(json(stages::script_schema()).at("properties").contains("opening"));
+}
+
+TEST_CASE("四段的回包拼成一份平的拍子，渲染时带段头") {
+    const std::string raw = R"({"title":"雨","logline":"她等到了",
+      "opening":{"beats":[{"kind":"action","speaker":"","text":"天台，雨。"},
+                          {"kind":"dialogue","speaker":"林晚","text":"你来了。"}]},
+      "escalation":{"beats":[{"kind":"dialogue","speaker":"陈默","text":"我不该来。"}]},
+      "payoff":{"beats":[{"kind":"action","speaker":"","text":"她把伞递过去。"}]},
+      "cliff":{"beats":[{"kind":"dialogue","speaker":"陈默","text":"伞不是我的。"}]}})";
+    const stages::ScriptDraft d = stages::parse_script(raw, 60.0);
+    REQUIRE(d.acts.size() == 4);
+    CHECK(d.beats.size() == 5);
+    CHECK(d.acts[0].beats.size() == 2);
+    CHECK(d.acts[0].from_s == 0);
+    CHECK(d.acts[0].to_s == 5);
+    CHECK(d.beats[1].speaker == "林晚");
+    CHECK(d.beats[4].text == "伞不是我的。");
+    const std::string text = d.render();
+    CHECK(text.rfind("【开场钩子 0–5 秒】\n天台，雨。\n林晚：你来了。\n【冲突推进 5–33 秒】", 0) == 0);
+    CHECK(stages::is_act_header("【开场钩子 0–5 秒】"));
+    // 段头去掉之后就是原来那份
+    CHECK(stages::strip_act_headers(text) ==
+          "天台，雨。\n林晚：你来了。\n陈默：我不该来。\n她把伞递过去。\n陈默：伞不是我的。");
+    // 不带时长解析：段头没有秒数，但段还在
+    const stages::ScriptDraft d0 = stages::parse_script(raw);
+    CHECK(d0.acts.size() == 4);
+    CHECK(d0.render().rfind("【开场钩子】\n", 0) == 0);
+}
+
+TEST_CASE("平的回包照旧，没有段头") {
+    const std::string raw =
+        R"({"title":"雨","logline":"x","beats":[{"kind":"dialogue","speaker":"林晚","text":"你来了。"}]})";
+    const stages::ScriptDraft d = stages::parse_script(raw, 60.0);
+    CHECK(d.acts.empty());
+    CHECK(d.render() == "林晚：你来了。");
+}
+
+TEST_CASE("段头识别不误伤正常的拍子") {
+    CHECK(stages::is_act_header("【集尾留扣 54–60 秒】"));
+    CHECK(stages::is_act_header("【情绪回报】"));
+    std::string label;
+    int from = -1, to = -1;
+    CHECK(stages::parse_act_header("【冲突推进 5-33 秒】", &label, &from, &to));
+    CHECK(label == "冲突推进");
+    CHECK(from == 5);
+    CHECK(to == 33);
+    CHECK_FALSE(stages::is_act_header("【字幕】三年后"));
+    CHECK_FALSE(stages::is_act_header("【倒计时 10 秒】"));
+    CHECK_FALSE(stages::is_act_header("【三年后的一天】"));
+    CHECK_FALSE(stages::is_act_header("林晚：走。"));
+}
+
+TEST_CASE("提示词里写明四段各占几秒、至少几拍") {
+    const std::string p =
+        stages::build_script_prompt("梗概", 60.0, models::StyleLine::REALISTIC);
+    CHECK(p.find("开场钩子（0–5 秒）") != std::string::npos);
+    CHECK(p.find("集尾留扣（54–60 秒）") != std::string::npos);
+    const auto acts = stages::act_plan(60.0);
+    CHECK(p.find("至少 " + std::to_string(acts[1].min_beats) + " 拍") !=
+          std::string::npos);
+}
+
+TEST_CASE("动作行开头的机位标签削掉") {
+    // 实跑里模型写的那一行。不削的话渲染出来和一句台词一模一样，
+    // 下游会当成一个叫「镜头特写」的角色在说话。
+    CHECK(stages::strip_camera_prefix("镜头特写：病历单上的日期是三年前。") ==
+          "病历单上的日期是三年前。");
+    CHECK(stages::strip_camera_prefix("特写:她的手") == "她的手");
+    CHECK(stages::strip_camera_prefix("全景：雨中的街道") == "雨中的街道");
+
+    // 正文里本来就有的冒号不动
+    CHECK(stages::strip_camera_prefix("牌子上写着：营业中") == "牌子上写着：营业中");
+    CHECK(stages::strip_camera_prefix("林浩把箱子放下。") == "林浩把箱子放下。");
+    // 冒号前太长的不是标签
+    CHECK(stages::strip_camera_prefix("他盯着那块画面很久才说：走吧") ==
+          "他盯着那块画面很久才说：走吧");
+    // 只有标签没内容时留着，削成空串这一拍会被丢掉
+    CHECK(stages::strip_camera_prefix("特写：") == "特写：");
+
+    SUBCASE("只削动作行，台词不动") {
+        const std::string raw =
+            R"({"title":"x","logline":"y","beats":[
+                {"kind":"action","speaker":"","text":"镜头特写：那张纸"},
+                {"kind":"dialogue","speaker":"林浩","text":"你听我说：别走"}]})";
+        const stages::ScriptDraft d = stages::parse_script(raw);
+        CHECK(d.beats[0].text == "那张纸");
+        CHECK(d.beats[1].text == "你听我说：别走");
+    }
+}

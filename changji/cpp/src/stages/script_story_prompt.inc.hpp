@@ -12,6 +12,7 @@
 // 新写的，没有 Python 对应物，**不受逐字节约束**。
 //
 // 拼接顺序：Seg0 + 时长 + Seg1 + 画风 + Seg2 + 字数 + Rules
+//           + 四段（和正片共用 script_prompt.inc.hpp 里的 kActBlock*）
 //           + [CharsPre + 角色名 + CharsPost]
 //           + ContextHead + 渲染出来的上下文 + Tail
 

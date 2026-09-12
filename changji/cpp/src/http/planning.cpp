@@ -302,11 +302,14 @@ ApiResult post_plan(const json& body, llm::Client& client,
         store.save_assets(assets);
     }
 
+    const stages::DurationQuota quota = stages::DurationQuota::for_duration(duration_s);
     llm::Request req;
-    req.prompt = stages::build_storyboard_prompt(
-        script, assets, stages::DurationQuota::for_duration(duration_s),
-        episode_id);
-    req.schema = stages::llm_shot_schema(assets);
+    req.prompt = stages::build_storyboard_prompt(script, assets, quota, episode_id);
+    // 镜头数写进 schema。配额那句话模型不一定听——实测 60 秒的集出过
+    // 两镜六秒，提示词里"合计 16 个镜头"一个字没少。
+    req.schema = stages::llm_shot_schema(
+        assets, stages::shot_count_bounds(quota, duration_s,
+                                          stages::count_beats(script)));
     req.schema_name = "storyboard";
 
     std::vector<Shot> shots = stage_guard([&] {
@@ -323,6 +326,11 @@ ApiResult post_plan(const json& body, llm::Client& client,
             throw stages::StoryboardError(msg);
         }
         apply_lipsync_rules(s);
+        // 编号和顺序按引擎的来。模型编出来的 id 有错集号、没补零、打错字的。
+        stages::renumber_shots(s, episode_id);
+        // 总时长拉回目标。只动没台词的镜头，有台词的由配音定。
+        // 这个函数写好之后一直没人调，分镜排多短都原样存下去。
+        stages::rebalance_durations(s, duration_s);
         return s;
     });
 

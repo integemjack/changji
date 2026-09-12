@@ -382,3 +382,119 @@ TEST_CASE("再平衡只动没台词的镜头") {
     }
     CHECK(dialogue_before == dialogue_after);
 }
+
+// ---- 镜头数 ----
+//
+// 2026-09-12 加的。60 秒的集出过两镜六秒：配额那句话提示词里一个字没少，
+// 但 shots 数组没有 minItems，两镜在语法上挑不出毛病。
+
+TEST_CASE("分镜数的地板从目标时长和剧本的拍数推") {
+    const auto q = stages::DurationQuota::for_duration(60.0);
+    // 单镜最长 5 秒，60 秒至少 12 镜——这是物理下限，少于它总时长凑不够
+    const auto b = stages::shot_count_bounds(q, 60.0, 24);
+    CHECK(b.min_items == 12);
+    CHECK(b.max_items == 48);
+    // 剧本只有五行，硬要 12 镜出来的是空镜；地板退到拍数
+    CHECK(stages::shot_count_bounds(q, 60.0, 5).min_items == 5);
+    // 数不出拍数就按物理下限
+    CHECK(stages::shot_count_bounds(q, 60.0, 0).min_items == 12);
+}
+
+TEST_CASE("schema 里带上镜头数的上下限，默认不带") {
+    const models::AssetLibrary a = test_assets();
+    const json with =
+        json(stages::llm_shot_schema(a, stages::ShotCountBounds{12, 48}));
+    CHECK(with.at("properties").at("shots").at("minItems") == 12);
+    CHECK(with.at("properties").at("shots").at("maxItems") == 48);
+    const json without = json(stages::llm_shot_schema(a));
+    CHECK_FALSE(without.at("properties").at("shots").contains("minItems"));
+}
+
+TEST_CASE("数拍子时跳过段头和空行") {
+    CHECK(stages::count_beats("【开场钩子 0–5 秒】\n天台，雨。\n\n林晚：你来了。\n"
+                              "【冲突推进 5–33 秒】\n陈默：我不该来。") == 3);
+    CHECK(stages::count_beats("") == 0);
+}
+
+// ---- 编号和覆盖 ----
+//
+// 2026-09-12 服务器实跑撞出来的两件事，都属于「模型写歪了但没人报」。
+
+TEST_CASE("镜头编号和顺序由引擎重排") {
+    std::vector<models::Shot> shots(4);
+    // 实跑里模型给出来的那几种坏写法：错集号、没补零、打错字
+    shots[0].shot_id = "ep61_sh002"; shots[0].order = 1;
+    shots[1].shot_id = "ep01_sh001"; shots[1].order = 0;
+    shots[2].shot_id = "ep01_s1h11"; shots[2].order = 3;
+    shots[3].shot_id = "ep01_sh6";   shots[3].order = 3;  // order 重复
+
+    stages::renumber_shots(shots, "ep01");
+
+    // 按 order 排过之后编号是连号的，而且都带着对的集号
+    std::vector<std::pair<std::string, int>> got;
+    for (const auto& s : shots) got.push_back({s.shot_id, s.order});
+    CHECK(got[1] == std::pair<std::string, int>{"ep01_sh001", 0});  // 原 order 0
+    CHECK(got[0] == std::pair<std::string, int>{"ep01_sh002", 1});  // 原 order 1
+    // order 重复的两个：stable，原来靠前的还是靠前
+    CHECK(got[2] == std::pair<std::string, int>{"ep01_sh003", 2});
+    CHECK(got[3] == std::pair<std::string, int>{"ep01_sh004", 3});
+
+    std::set<std::string> ids;
+    for (const auto& s : shots) ids.insert(s.shot_id);
+    CHECK(ids.size() == shots.size());  // 不重名
+}
+
+TEST_CASE("剧本里的台词漏掉了要报出来") {
+    const std::string script =
+        "【开场钩子 0–5 秒】\n"
+        "暴雨深夜，街头。\n"
+        "林浩：这单要是超时，我这月房租就泡汤了。\n"
+        "【集尾留扣 54–60 秒】\n"
+        "苏婉：怎么了？脸色这么难看？\n"
+        "林浩：你到底还瞒着我什么？";
+
+    models::Shot s;
+    s.shot_id = "ep01_sh001";
+    s.scene_id = "sc01";
+    models::CharacterInShot c;
+    c.char_id = "c_lin_hao";
+    s.characters.push_back(c);
+    models::DialogueLine l;
+    l.char_id = "c_lin_hao";
+    l.text = "这单要是超时，我这月房租就泡汤了。";
+    s.dialogue.push_back(l);
+
+    // 只排了开场那一句，集尾留扣整段没进分镜——这一集丢的正是它的钩子
+    const auto problems = stages::check_coverage(script, {s});
+    REQUIRE(problems.size() == 1);
+    CHECK(problems[0].find("2 句台词没落到任何镜头上") != std::string::npos);
+    CHECK(problems[0].find("怎么了") != std::string::npos);
+
+    SUBCASE("都排上了就不报") {
+        models::Shot t = s;
+        t.shot_id = "ep01_sh002";
+        t.dialogue.clear();
+        models::DialogueLine a, b;
+        a.char_id = "c_su_wan";
+        a.text = "怎么了？脸色这么难看？";
+        b.char_id = "c_lin_hao";
+        b.text = "你到底还瞒着我什么？";
+        t.dialogue.push_back(a);
+        t.dialogue.push_back(b);
+        CHECK(stages::check_coverage(script, {s, t}).empty());
+    }
+
+    SUBCASE("一句都没写时只报那一条，不重复说同一个毛病") {
+        models::Shot mute = s;
+        mute.dialogue.clear();
+        const auto p = stages::check_coverage(script, {mute});
+        REQUIRE(p.size() == 1);
+        CHECK(p[0].find("一句台词都没有") != std::string::npos);
+    }
+
+    SUBCASE("段头不算台词") {
+        // 「【开场钩子 0–5 秒】」里没有冒号，但万一有别的带冒号的段头，
+        // 也不该被当成一句要覆盖的台词
+        CHECK(stages::check_coverage("【情绪回报 33–54 秒】", {s}).empty());
+    }
+}

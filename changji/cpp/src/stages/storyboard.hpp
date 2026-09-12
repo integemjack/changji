@@ -58,6 +58,29 @@ double snap_duration(double seconds);
 /// 向上吸附。配音时长反推镜头时长时用，宁长勿短。
 double ceil_duration(double seconds);
 
+/// 分镜数的地板和天花板。0 表示不限。
+///
+/// **2026-09-12 加的，因为 60 秒的集出过两镜六秒。** 配额那句话
+/// （"合计 16 个镜头，总时长 60 秒，必须严格按配额"）提示词里一个字没少，
+/// 模型照样只出两镜——schema 里 shots 数组没有 minItems，两镜在语法上
+/// 挑不出毛病。和剧本那边一样：数量只有写进 schema 才管用。
+struct ShotCountBounds {
+    int min_items = 0;
+    int max_items = 0;
+};
+
+/// 数剧本里有几拍：非空行数，段头（「【开场钩子 0–5 秒】」）不算。
+int count_beats(const std::string& script);
+
+/// 从目标时长和剧本的拍数推分镜数的上下限。
+///
+/// 地板是**物理下限**：单镜最长 5 秒，60 秒至少 12 镜，少于它总时长凑不够。
+/// 但不能高过剧本的拍数——五行的剧本硬要 12 镜出来的是空镜（chapter_write
+/// 那边的教训：模型没话说的时候，多给它几个格子只会得到几格垃圾）。
+/// 天花板给得宽（配额和拍数里大的那个的两倍），只防写个没完。
+ShotCountBounds shot_count_bounds(const DurationQuota& quota, double target_s,
+                                  int beats);
+
 /// 生成给大模型的 JSON Schema。
 ///
 /// 从 pydantic 导出的 Shot schema 出发（见 shot_schema.inc.hpp），
@@ -65,7 +88,10 @@ double ceil_duration(double seconds);
 /// 去掉 needs_lipsync（那个由规则算）。
 ///
 /// 收紧成枚举是防止模型凭空造角色最硬的手段。
-nlohmann::ordered_json llm_shot_schema(const models::AssetLibrary& assets);
+///
+/// bounds 给了就把镜头数写进 shots 的 minItems / maxItems。
+nlohmann::ordered_json llm_shot_schema(const models::AssetLibrary& assets,
+                                       ShotCountBounds bounds = {});
 
 /// 拼提示词。**输出必须和 Python 的 build_prompt 逐字节一致。**
 ///
@@ -95,10 +121,34 @@ void add_missing_speakers(nlohmann::json& item,
 std::vector<models::Shot> parse_storyboard(const std::string& raw,
                                            const models::AssetLibrary& assets);
 
+/// 把镜头编号和顺序重排成规整的一套。
+///
+/// **2026-09-12 加的，因为模型编出来的 id 是坏的。** 一次实跑里出了
+/// `ep61_sh002`（集号都错了）、`ep01_sh6`（没补零）、`ep01_s1h11`（打错字）。
+/// 提示词里写着「三位数字，按顺序递增」，schema 的 `^[a-z0-9_]+$` 也全放行
+/// ——**三种写法都合法，所以一句都不报**。而首帧、配音、成片的文件名都是
+/// 从 shot_id 拼的：集号错的那一镜会写到别的集的目录里去。
+///
+/// 按 order 稳定排序，然后 order 重排成 0..n-1、id 重排成
+/// `<episode_id>_shNNN`。顺便治了 order 重复——重复时镜头次序是不定的，
+/// 而那个次序就是成片的次序。
+///
+/// **只在分镜刚出来时调。** 配音那一步会拆镜（`free_shot_id` 发 `_b` 后缀），
+/// 那之后再重排就会和已经落盘的音频文件名对不上。
+void renumber_shots(std::vector<models::Shot>& shots,
+                    const std::string& episode_id);
+
 /// 检查分镜有没有漏掉剧本里的东西。
 ///
 /// 大模型很容易只写画面不写台词，产出一部哑剧。这类问题在生成阶段就能检出，
 /// 不该等到配音阶段发现一句话都没有。
+///
+/// 三条：一句台词都没有、一个角色都没有、**剧本里某几句台词没落到任何镜头上**。
+///
+/// 第三条是 2026-09-12 加的。原来只数「有没有至少一句」，于是一集 17 拍
+/// 出 12 镜、**整个集尾留扣那一段（连同这一集的钩子）没进分镜**，照样算通过，
+/// 存下去，到成片才看得出这一集结尾不对。短剧每集结尾就是完播率的命门，
+/// 丢的恰恰是最要紧的那一段。
 std::vector<std::string> check_coverage(const std::string& script,
                                         const std::vector<models::Shot>& shots);
 

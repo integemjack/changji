@@ -241,6 +241,8 @@ std::string build_script_prompt_from_story(
     out += prompt::kStoryScriptSeg2;
     out += std::to_string(budget_chars(plan.target_duration_s));
     out += prompt::kStoryScriptRules;
+    // 四段按秒排。时长按分集表的，和字数预算同源。
+    out += render_act_brief(act_plan(plan.target_duration_s));
 
     if (!characters.empty()) {
         out += prompt::kStoryScriptCharsPre;

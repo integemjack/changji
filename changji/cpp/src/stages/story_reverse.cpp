@@ -1,5 +1,7 @@
 #include "stages/story_reverse.hpp"
 
+#include "stages/script.hpp"
+
 #include <cstdio>
 
 #include "stages/story_import.hpp"
@@ -50,7 +52,8 @@ Story story_from_episodes(const Project& project) {
         ch.chapter_id = chapter_id(story.chapters.size());
         ch.title = ep.title.empty() ? ep.episode_id : ep.title;
         ch.summary = ep.synopsis;
-        ch.text = script;
+        // 段头（「【开场钩子 0–5 秒】」）是剧本的东西，进了"小说正文"是噪音
+        ch.text = stages::strip_act_headers(script);
         // 段落边界登记成候选切点。不登记的话这一章里只有章界一个候选，
         // 以后改每集时长重切时整章只能变成一集。
         ch.hooks = paragraph_hooks(ch.text);

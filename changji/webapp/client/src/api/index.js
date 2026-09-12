@@ -125,6 +125,10 @@ export const api = {
   stopSeries: () => post('/api/script/series/stop', {}),
   getScript: (path, episodeId) =>
     get('/api/script', { path, episode_id: episodeId }),
+  // 这一集的原料：分集表压着的场、原文切片、钩子、四段按秒的排法、对白预算。
+  // 和 AI 改编时拿到的是同一份，只是给人看。
+  getScriptContext: (path, episodeId) =>
+    get('/api/script/context', { path, episode_id: episodeId }),
   saveScript: (payload) => post('/api/script', payload),
 
   // ---- 引擎：故事 ----

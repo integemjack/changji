@@ -9,7 +9,11 @@
 #include <string>
 #include <vector>
 
+#include <cstring>
+
 #include "stages/json_extract.hpp"
+// 段头识别（count_beats 要跳过「【开场钩子 0–5 秒】」那一行）
+#include "stages/script.hpp"
 #include "stages/shot_schema.inc.hpp"
 #include "stages/storyboard_prompt.inc.hpp"
 #include "util/text.hpp"
@@ -215,7 +219,32 @@ double ceil_duration(double seconds) {
     return duration_slots().back();
 }
 
-ordered llm_shot_schema(const AssetLibrary& assets) {
+int count_beats(const std::string& script) {
+    int n = 0;
+    std::size_t start = 0;
+    while (start <= script.size()) {
+        std::size_t end = script.find('\n', start);
+        if (end == std::string::npos) end = script.size();
+        const std::string line = text::strip_ws(script.substr(start, end - start));
+        if (!line.empty() && !is_act_header(line)) ++n;
+        if (end == script.size()) break;
+        start = end + 1;
+    }
+    return n;
+}
+
+ShotCountBounds shot_count_bounds(const DurationQuota& quota, double target_s,
+                                  int beats) {
+    const double longest = duration_slots().back();
+    const int physical = std::max(
+        1, static_cast<int>(std::ceil(target_s / longest - 1e-9)));
+    ShotCountBounds b;
+    b.min_items = beats > 0 ? std::max(1, std::min(physical, beats)) : physical;
+    b.max_items = std::max(b.min_items, 2 * std::max(quota.shot_count(), beats));
+    return b;
+}
+
+ordered llm_shot_schema(const AssetLibrary& assets, ShotCountBounds bounds) {
     ordered full = shot_schema_base();
     ordered props = full.contains("properties") ? full["properties"]
                                                 : ordered::object();
@@ -286,6 +315,8 @@ ordered llm_shot_schema(const AssetLibrary& assets) {
     ordered shots = ordered::object();
     shots["type"] = "array";
     shots["items"] = shots_item;
+    if (bounds.min_items > 0) shots["minItems"] = bounds.min_items;
+    if (bounds.max_items > 0) shots["maxItems"] = bounds.max_items;
 
     ordered out_props = ordered::object();
     out_props["shots"] = shots;
@@ -469,6 +500,90 @@ std::vector<Shot> parse_storyboard(const std::string& raw,
     return shots;
 }
 
+void renumber_shots(std::vector<Shot>& shots, const std::string& episode_id) {
+    std::vector<Shot*> by_order;
+    by_order.reserve(shots.size());
+    for (Shot& s : shots) by_order.push_back(&s);
+    // stable_sort：order 相同的保持原有先后，和 Episode::sorted_shots 一致。
+    std::stable_sort(by_order.begin(), by_order.end(),
+                     [](const Shot* a, const Shot* b) { return a->order < b->order; });
+    for (std::size_t i = 0; i < by_order.size(); ++i) {
+        char buf[16];
+        std::snprintf(buf, sizeof(buf), "_sh%03d", static_cast<int>(i) + 1);
+        by_order[i]->shot_id = episode_id + buf;
+        by_order[i]->order = static_cast<int>(i);
+    }
+}
+
+namespace {
+
+/// 剧本里的台词，一行一句，只留冒号后面那半截。
+///
+/// 段头（「【开场钩子 0–5 秒】」）跳过。判「这一行是台词」的办法和
+/// ScriptReader 一样：冒号前是个短名字。
+std::vector<std::string> script_dialogue_lines(const std::string& script) {
+    std::vector<std::string> out;
+    std::size_t start = 0;
+    while (start <= script.size()) {
+        std::size_t end = script.find('\n', start);
+        if (end == std::string::npos) end = script.size();
+        const std::string line = text::strip_ws(script.substr(start, end - start));
+        if (end == script.size()) start = script.size() + 1;
+        else start = end + 1;
+        if (line.empty() || is_act_header(line)) continue;
+
+        std::size_t at = line.find("：");
+        std::size_t sep = 3;
+        if (at == std::string::npos) {
+            at = line.find(':');
+            sep = 1;
+        }
+        if (at == std::string::npos || at == 0) continue;
+        const std::string name = line.substr(0, at);
+        if (text::utf8_len(name) > 12) continue;
+        const std::string said = text::strip_ws(line.substr(at + sep));
+        if (!said.empty()) out.push_back(said);
+    }
+    return out;
+}
+
+/// 比对用的写法：空白和标点都去掉。
+///
+/// **标点不能算数。** 模型把「我来了。晚了七年。」拆成两镜、或者把句号换成
+/// 逗号，都是同一句台词落地了；按标点较真的话，这一条会在模型只是换了个
+/// 停顿的时候把整集打回去。真丢了的那种是**整句话都不在**，那个照样查得出来。
+std::string squash(const std::string& s) {
+    static const char* kDrop[] = {
+        "，", "。", "！", "？", "、", "；", "：", "…", "—", "～",
+        "「", "」", "“", "”", "‘", "’", "（", "）", "《", "》",
+    };
+    std::string out;
+    std::size_t i = 0;
+    while (i < s.size()) {
+        const std::size_t len = text::utf8_char_len(static_cast<unsigned char>(s[i]));
+        const std::string ch = s.substr(i, len);
+        i += len;
+        if (len == 1) {
+            const unsigned char u = static_cast<unsigned char>(ch[0]);
+            // ASCII 的空白和标点一并丢
+            if (u <= ' ' || std::strchr(",.!?;:\"'()-", u) != nullptr) continue;
+        } else {
+            bool drop = false;
+            for (const char* p : kDrop) {
+                if (ch == p) {
+                    drop = true;
+                    break;
+                }
+            }
+            if (drop) continue;
+        }
+        out += ch;
+    }
+    return out;
+}
+
+}  // namespace
+
 std::vector<std::string> check_coverage(const std::string& script,
                                         const std::vector<Shot>& shots) {
     // 对应 re.search(r"[：:]\s*\S", script)：找一个冒号，后面跳过空白，
@@ -510,6 +625,40 @@ std::vector<std::string> check_coverage(const std::string& script,
         problems.push_back(
             "所有镜头的 characters 都是空的，没有任何角色出镜。"
             "模型多半漏填了 characters 字段");
+    }
+
+    // 剧本里的每一句台词都要落到某个镜头上。
+    //
+    // 只在分镜确实写了台词的时候查：一句都没写是上面那条管的事，
+    // 两条一起报等于把同一个毛病说两遍。
+    if (shot_lines > 0) {
+        std::vector<std::string> said;
+        for (const Shot& s : shots) {
+            for (const auto& line : s.dialogue) said.push_back(squash(line.text));
+        }
+        std::vector<std::string> missing;
+        for (const std::string& want : script_dialogue_lines(script)) {
+            const std::string key = squash(want);
+            if (key.empty()) continue;
+            // 两头都认：模型有时把一句拆成两镜，有时把两句并成一条。
+            const bool found = std::any_of(
+                said.begin(), said.end(), [&](const std::string& got) {
+                    return got.find(key) != std::string::npos ||
+                           (!got.empty() && key.find(got) != std::string::npos);
+                });
+            if (!found) missing.push_back(want);
+        }
+        if (!missing.empty()) {
+            // 全列出来会刷屏，报个数加前三句——够定位是哪一段丢了。
+            std::string msg = "剧本里有 " + std::to_string(missing.size()) +
+                              " 句台词没落到任何镜头上";
+            const std::size_t show = std::min<std::size_t>(missing.size(), 3);
+            for (std::size_t i = 0; i < show; ++i) {
+                msg += "\n  · " + text::truncate_utf8(missing[i], 40);
+            }
+            if (missing.size() > show) msg += "\n  · …";
+            problems.push_back(msg);
+        }
     }
     return problems;
 }

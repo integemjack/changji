@@ -299,13 +299,21 @@ ApiResult post_script_write(const json& body, llm::Client& client,
                                              project.style_line, previous, names);
     }
 
+    // 走故事那条时时长以分集表为准：那份表是按每集时长算出来的，
+    // 请求里带的那个可能是页面上的旧值，用它算预算会和实际排的镜头对不上。
+    const double used_duration =
+        plan != nullptr ? plan->target_duration_s : duration_s;
+
     llm::Request req;
     req.prompt = prompt;
-    req.schema = stages::script_schema();
+    // 四段的 schema，每段的拍数地板按这一集的时长算。**地板是这一步唯一
+    // 管用的东西**：提示词里"要凑够"模型不听，minItems 4 它就写 4 拍——
+    // 实测 60 秒的集写出 13 秒的剧本，就是从这儿来的。
+    req.schema = stages::script_schema(used_duration);
     req.schema_name = "script";
 
     const stages::ScriptDraft draft = llm_guard([&] {
-        return stages::parse_script(client.complete(req, tok));
+        return stages::parse_script(client.complete(req, tok), used_duration);
     });
 
     // 梗概存到项目上。下次写新一集时直接回填，不用凭记忆重打。
@@ -315,10 +323,6 @@ ApiResult post_script_write(const json& body, llm::Client& client,
         store.save_project(project);
     }
 
-    // 走故事那条时时长以分集表为准：那份表是按每集时长算出来的，
-    // 请求里带的那个可能是页面上的旧值，用它算预算会和实际排的镜头对不上。
-    const double used_duration =
-        plan != nullptr ? plan->target_duration_s : duration_s;
     const int budget = stages::budget_chars(used_duration);
     const auto chars = static_cast<double>(draft.dialogue_chars());
     json out = draft_common(draft, used_duration);
@@ -384,7 +388,7 @@ ApiResult post_script_trailer(const json& body, llm::Client& client,
 
     llm::Request req;
     req.prompt = prompt;
-    req.schema = stages::script_schema();  // 和正片共用
+    req.schema = stages::script_schema();  // 平的那份：预告片是蒙太奇，不分四段
     req.schema_name = "trailer";
 
     const stages::ScriptDraft draft = llm_guard([&] {

@@ -467,12 +467,16 @@ ApiResult post_plan_all(const json& body, std::shared_ptr<llm::Client> client) {
                         store.save_assets(assets);
                     }
 
+                    const stages::DurationQuota quota =
+                        stages::DurationQuota::for_duration(ep->target_duration_s);
                     llm::Request sreq;
                     sreq.prompt = stages::build_storyboard_prompt(
-                        ep->script, assets,
-                        stages::DurationQuota::for_duration(ep->target_duration_s),
-                        episode_id);
-                    sreq.schema = stages::llm_shot_schema(assets);
+                        ep->script, assets, quota, episode_id);
+                    // 镜头数写进 schema，和 post_plan 那边一样。
+                    sreq.schema = stages::llm_shot_schema(
+                        assets, stages::shot_count_bounds(
+                                    quota, ep->target_duration_s,
+                                    stages::count_beats(ep->script)));
                     sreq.schema_name = "storyboard";
 
                     std::vector<Shot> shots = stages::parse_storyboard(
@@ -485,6 +489,8 @@ ApiResult post_plan_all(const json& body, std::shared_ptr<llm::Client> client) {
                         throw stages::StoryboardError(msg);
                     }
                     apply_lipsync_rules(shots);
+                    stages::renumber_shots(shots, episode_id);
+                    stages::rebalance_durations(shots, ep->target_duration_s);
                     ep->shots = std::move(shots);
                     store.save_project(project);
                 } catch (const std::exception& e) {

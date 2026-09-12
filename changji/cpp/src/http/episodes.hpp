@@ -28,6 +28,18 @@ std::string next_episode_id(const models::Project& project);
 /// GET /api/script —— 读某一集的剧本。
 ApiResult get_script(const std::string& path, const std::string& episode_id);
 
+/// GET /api/script/context —— 这一集的原料，给人看的那份。
+///
+/// 和 AI 改编时拿到的是同一批东西：分集表压着的场（在哪、跟着谁、要什么、
+/// 谁拦着）、原文切片、停在什么钩子上、上一集的结尾、四段按秒的排法、
+/// 对白字数预算。以前这些只进提示词，剧本页上一样都看不到——一集在设定里
+/// 切好了 900 字正文，到剧本页看到的是「还没有剧本」。
+///
+/// 不在分集表上的集（老项目、手动加的、预告片）也有答案，只是场和原文
+/// 是空的，source 是 premise。
+ApiResult get_script_context(const std::string& path,
+                             const std::string& episode_id);
+
 /// POST /api/script —— 改剧本，可以顺便重出分镜。
 ///
 /// 重出会**覆盖整张分镜表**，人工改过的镜头会丢，所以要显式勾 regenerate。

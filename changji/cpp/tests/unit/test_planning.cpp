@@ -218,9 +218,11 @@ TEST_CASE("写盘要刷新 updated_at") {
     const auto r = http::guard([&] {
         return http::post_plan(
             json{{"project", paths::to_utf8(root)},
-                 {"script", "林晚：一句台词"}, {"episode_id", "ep01"}}, cl, tok);
+                 // 台词要和桩回的分镜对得上：分镜漏掉剧本里的台词现在会被
+                 // 拦下来（check_coverage），而这条用例测的是别的事。
+                 {"script", "林晚：你说过会来的"}, {"episode_id", "ep01"}}, cl, tok);
     });
-    REQUIRE(r.status == 200);
+    REQUIRE_MESSAGE(r.status == 200, r.body.dump());
 
     const json after = read_json(root / "project.json");
     CHECK(after.at("updated_at") != before.at("updated_at"));
@@ -408,10 +410,11 @@ TEST_CASE("plan 只在资产库为空或强制时才重出圣经") {
         const auto r = http::guard([&] {
             return http::post_plan(
                 json{{"project", paths::to_utf8(root)},
-                     {"script", "林晚：一句台词"}, {"episode_id", "ep01"}},
+                     // 同上：台词要和桩回的分镜对得上
+                     {"script", "林晚：你说过会来的"}, {"episode_id", "ep01"}},
                 cl, tok);
         });
-        REQUIRE(r.status == 200);
+        REQUIRE_MESSAGE(r.status == 200, r.body.dump());
         CHECK(cl.calls().size() == 1);   // 只有分镜
 
         std::error_code ec;
@@ -426,10 +429,11 @@ TEST_CASE("plan 只在资产库为空或强制时才重出圣经") {
         const auto r = http::guard([&] {
             return http::post_plan(
                 json{{"project", paths::to_utf8(root)},
-                     {"script", "林晚：一句台词"}, {"episode_id", "ep01"}},
+                     // 同上：台词要和桩回的分镜对得上
+                     {"script", "林晚：你说过会来的"}, {"episode_id", "ep01"}},
                 cl, tok);
         });
-        REQUIRE(r.status == 200);
+        REQUIRE_MESSAGE(r.status == 200, r.body.dump());
         CHECK(cl.calls().size() == 2);
 
         std::error_code ec;

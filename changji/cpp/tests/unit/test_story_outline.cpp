@@ -861,6 +861,10 @@ TEST_CASE("提示词：这一集要发生什么已经定好了") {
           std::string::npos);
     // 动作要拍得出来那几条留着
     CHECK(p.find("写角色**身体在做什么**") != std::string::npos);
+    // 四段按秒排，跟着 30 秒的集算
+    CHECK(p.find("开场钩子（0–") != std::string::npos);
+    CHECK(p.find("集尾留扣（") != std::string::npos);
+    CHECK(p.find("至少 ") != std::string::npos);
 }
 
 TEST_CASE("POST /api/story/episodes：把分集表落成真的剧集") {

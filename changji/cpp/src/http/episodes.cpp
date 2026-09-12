@@ -6,6 +6,9 @@
 #include <string>
 #include <vector>
 
+#include "models/story.hpp"
+#include "stages/script.hpp"
+#include "stages/script_story.hpp"
 #include "stages/storyboard.hpp"
 #include "util/paths.hpp"
 #include "util/text.hpp"
@@ -112,6 +115,78 @@ ApiResult get_script(const std::string& path, const std::string& episode_id) {
     }};
 }
 
+ApiResult get_script_context(const std::string& path,
+                             const std::string& episode_id) {
+    ProjectStore store = open_project(path);
+    const Project project = load_or_400(store);
+    const Episode* ep = project.episode_by_id(episode_id);
+    if (ep == nullptr) throw ApiError(404, "没有剧集 " + episode_id);
+
+    // 读不了就当没有：老项目本来就没有 story.json，这一集照样有答案，只是短一些。
+    Story story;
+    try {
+        story = store.load_story();
+    } catch (const std::exception&) {
+    }
+    const EpisodePlan* plan = nullptr;
+    std::size_t plan_index = 0;
+    for (std::size_t i = 0; i < story.plan.size(); ++i) {
+        if (story.plan[i].episode_id == episode_id) {
+            plan = &story.plan[i];
+            plan_index = i;
+            break;
+        }
+    }
+    // 时长和写剧本那一步同源：有分集表按分集表，没有按这一集自己的。
+    const double duration =
+        plan != nullptr ? plan->target_duration_s : ep->target_duration_s;
+
+    json acts = json::array();
+    for (const auto& a : stages::act_plan(duration)) {
+        acts.push_back({{"key", a.key},
+                        {"label", a.label},
+                        {"from_s", a.from_s},
+                        {"to_s", a.to_s},
+                        {"min_beats", a.min_beats},
+                        {"max_beats", a.max_beats}});
+    }
+
+    json out = {
+        {"episode_id", episode_id},
+        {"title", ep->title},
+        {"source", plan != nullptr ? "story" : "premise"},
+        {"target_duration_s", duration},
+        {"budget_chars", stages::budget_chars(duration)},
+        {"acts", acts},
+        {"chapters", json::array()},
+        {"scenes", json::array()},
+        {"text", ""},
+        {"hook", ""},
+        {"previous_tail", ""},
+    };
+    if (plan != nullptr) {
+        json chapters = json::array();
+        for (const auto& id : stages::episode_chapters(story, *plan)) {
+            const Chapter* c = story.chapter_by_id(id);
+            chapters.push_back({{"chapter_id", id},
+                                {"title", c != nullptr ? c->title : ""}});
+        }
+        out["chapters"] = chapters;
+        out["scenes"] = json(stages::episode_scenes(story, *plan));
+        out["text"] = stages::episode_text(story, *plan);
+        out["hook"] = plan->hook;
+        // 上一集的结尾。按分集表的顺序取上一条，和写剧本那一步一样。
+        if (plan_index > 0) {
+            const Episode* prev =
+                project.episode_by_id(story.plan[plan_index - 1].episode_id);
+            if (prev != nullptr) {
+                out["previous_tail"] = stages::script_tail(prev->script);
+            }
+        }
+    }
+    return {200, out};
+}
+
 ApiResult post_script(const json& body, llm::Client& client,
                       pipeline::CancelToken& tok) {
     // 没有 extra="forbid"：Python 的 ScriptUpdateRequest 没写 model_config，
@@ -148,12 +223,15 @@ ApiResult post_script(const json& body, llm::Client& client,
     json out = {{"saved", true}, {"regenerated", false}};
     if (regenerate) {
         const AssetLibrary assets = store.load_assets();
+        const stages::DurationQuota quota =
+            stages::DurationQuota::for_duration(ep->target_duration_s);
         llm::Request req;
-        req.prompt = stages::build_storyboard_prompt(
-            script, assets,
-            stages::DurationQuota::for_duration(ep->target_duration_s),
-            episode_id);
-        req.schema = stages::llm_shot_schema(assets);
+        req.prompt = stages::build_storyboard_prompt(script, assets, quota,
+                                                     episode_id);
+        // 镜头数写进 schema，和 post_plan 那边一样：配额那句话模型不一定听。
+        req.schema = stages::llm_shot_schema(
+            assets, stages::shot_count_bounds(quota, ep->target_duration_s,
+                                              stages::count_beats(script)));
         req.schema_name = "storyboard";
 
         try {
@@ -167,6 +245,8 @@ ApiResult post_script(const json& body, llm::Client& client,
                 throw stages::StoryboardError(msg);
             }
             apply_lipsync_rules(shots);
+            stages::renumber_shots(shots, episode_id);
+            stages::rebalance_durations(shots, ep->target_duration_s);
             ep->shots = std::move(shots);
         } catch (const stages::StoryboardError& e) {
             throw ApiError(400, e.what());

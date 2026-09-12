@@ -257,7 +257,16 @@ async function generate() {
     { key: 'plan', refresh: true },
   )
   if (result) {
-    ui.ok(`出了 ${result.shots} 个镜头，共 ${humanTime(result.duration_s)}`)
+    const target = scriptData.target_duration_s || 60
+    // 出短了要说出来。60 秒的集出过两镜六秒——提示词里"合计 16 个镜头"
+    // 一个字没少，模型照样只出两镜，然后静静地存下去，到成片才发现。
+    if (result.duration_s < target * 0.8) {
+      ui.warn(
+        `只排到 ${humanTime(result.duration_s)}，目标 ${humanTime(target)}。分镜太少，重出一次，或者回剧本把内容写足`,
+      )
+    } else {
+      ui.ok(`出了 ${result.shots} 个镜头，共 ${humanTime(result.duration_s)}`)
+    }
     await load()
   }
 }
