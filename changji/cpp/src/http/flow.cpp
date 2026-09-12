@@ -150,8 +150,14 @@ json flow_assess(const json& project, const json& shots, const json& outputs,
     for (const auto& s : shots) {
         if (kFinal.count(str_of(s, "status"))) ++produced;
         if (s.is_object() && s.value("needs_lipsync", false)) ++lipsync;
-        if (s.is_object() && s.contains("duration_s") &&
-            s["duration_s"].is_number()) {
+        // **优先 real_duration_s。** `duration_s` 是名义值，模型按格子出帧，
+        // 名义 2 秒实际出 2.333 秒——这个数报给界面当「这一集排了多长」，
+        // 名义值会偏小。老响应没有这个字段时才退回去。
+        if (s.is_object() && s.contains("real_duration_s") &&
+            s["real_duration_s"].is_number()) {
+            planned += s["real_duration_s"].get<double>();
+        } else if (s.is_object() && s.contains("duration_s") &&
+                   s["duration_s"].is_number()) {
             planned += s["duration_s"].get<double>();
         }
     }

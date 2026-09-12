@@ -31,12 +31,18 @@ const playhead = ref(0)
  * 装配是按分镜顺序首尾相接拼的，所以累加时长就是每一镜的入点。
  * 有了它，审片时点缩略图就能跳到那一镜，而不是拖进度条来回找。
  * 转场会让实际入点差零点几秒，审片够用了，不拿它做剪辑依据。
+ *
+ * **累加的必须是 `real_duration_s`。** `duration_s` 是名义值，而模型只能
+ * 按格子出帧（名义 2 秒实际出 56 帧 = 2.333 秒），**差值逐镜累积**：
+ * walk_c ep01 实测，到第 18 镜时名义累加是 56 秒、真实是 59 秒，
+ * 点那个刻度会跳进上一镜里去。装配那边（media/assemble.cpp 的
+ * build_timeline）一直是按真值排的，这儿跟上它。
  */
 const chapters = computed(() => {
   let at = 0
   return shots.value.map((s) => {
     const start = at
-    at += s.duration_s || 0
+    at += s.real_duration_s ?? s.duration_s ?? 0
     return { ...s, start, end: at }
   })
 })

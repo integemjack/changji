@@ -504,8 +504,8 @@ ApiResult post_plan_all(const json& body, std::shared_ptr<llm::Client> client) {
                     continue;
                 }
 
-                double total = 0.0;
-                for (const Shot& s : ep->shots) total += s.duration_s;
+                // 按成片长度报，不按名义值加——见 stages::real_total_s。
+                const double total = stages::real_total_s(ep->shots);
                 p.add_episode(json{{"episode_id", episode_id},
                                    {"title", ep->title},
                                    {"shots", ep->shots.size()},
