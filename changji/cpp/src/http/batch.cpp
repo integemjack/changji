@@ -232,12 +232,14 @@ ApiResult post_story_chapters(const json& body,
                 Story next;
                 std::string last_error;
                 for (int attempt = 0; attempt < 2; ++attempt) {
+                    // 点了停就别再来一次了——重试的那一次一样会当场被取消，
+                    // 白跑一趟提示词。
+                    if (p.cancelled()) break;
                     if (attempt > 0) {
                         p.set_message("重写 " + id + "（" + me->title +
                                       "）——上一次只写出几个字");
                     }
                     try {
-                        pipeline::CancelToken dummy;
                         const int floor_chars = static_cast<int>(
                             stages::chapter_target_chars(cur) *
                             stages::kChapterMinRatio);
@@ -250,8 +252,19 @@ ApiResult post_story_chapters(const json& body,
             // 不出来，界面上就是"AI 写作没有热更新"，后端不报任何错。
             stages::JsonFieldStreamer field(stages::kChapterBodyField);
                         int seq = 0;
+                        // ⚠️ **令牌要给这个任务真正的那一个（p.token()）。**
+                        //
+                        // 这里原来是一个当场新建的 `CancelToken dummy`——
+                        // 它永远不会被点亮，于是"停"这个按钮只在**章与章
+                        // 之间**那一下才生效（循环头上那句 p.cancelled()）。
+                        // 表现就是用户点了停，AI 还在哗哗地写，要等这一章
+                        // 写完才停——32B 上那是好几分钟。
+                        //
+                        // JobProgress::token() 上面那段注释早就写清楚了：
+                        // "sd.cpp 的采样、llama.cpp 的生成、ffmpeg 子进程
+                        // 都要拿到令牌本身才能被打断"。批量这条漏了。
                         const std::string raw = client->complete(
-                            req, dummy, [&](const std::string& piece) {
+                            req, p.token(), [&](const std::string& piece) {
                                 const std::string fresh = field.feed(piece);
                                 if (fresh.empty()) return;
                                 ws::hub().broadcast(
@@ -353,8 +366,9 @@ ApiResult post_script_series(const json& body,
 
                 stages::ScriptDraft draft;
                 try {
-                    pipeline::CancelToken dummy;
-                    draft = stages::parse_script(client->complete(req, dummy));
+                    // 令牌给这个任务真正的那一个，理由同上面写章节那处：
+                    // 给 dummy 的话，"停"要等这一集写完才生效。
+                    draft = stages::parse_script(client->complete(req, p.token()));
                 } catch (const std::exception& e) {
                     // 一集写砸了不该让前面几集白写，记下来接着往下写。
                     // episode_id 留空——这一集根本没建出来。
@@ -426,7 +440,9 @@ ApiResult post_plan_all(const json& body, std::shared_ptr<llm::Client> client) {
                 if (ep == nullptr) continue;
 
                 try {
-                    pipeline::CancelToken dummy;
+                    // 令牌同上：新建一个永远不会点亮的话，点了停要等这一集
+                    // 的设定整套出完才有反应。
+                    pipeline::CancelToken& tok = p.token();
                     // 角色设定全剧共用，第一次缺的时候补一次就够。
                     // 每集都重出的话，同一个角色前后长得不一样。
                     if (assets.characters.empty()) {
@@ -435,7 +451,7 @@ ApiResult post_plan_all(const json& body, std::shared_ptr<llm::Client> client) {
                             ep->script, project.style_line);
                         breq.schema = stages::bible_schema();
                         breq.schema_name = "bible";
-                        assets = stages::parse_bible(client->complete(breq, dummy),
+                        assets = stages::parse_bible(client->complete(breq, tok),
                                                      project.style_line);
                         store.save_assets(assets);
                     }
@@ -449,7 +465,7 @@ ApiResult post_plan_all(const json& body, std::shared_ptr<llm::Client> client) {
                     sreq.schema_name = "storyboard";
 
                     std::vector<Shot> shots = stages::parse_storyboard(
-                        client->complete(sreq, dummy), assets);
+                        client->complete(sreq, tok), assets);
                     const auto gaps = stages::check_coverage(ep->script, shots);
                     if (!gaps.empty()) {
                         std::string msg = "分镜表不完整：";
