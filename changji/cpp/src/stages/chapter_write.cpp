@@ -763,6 +763,13 @@ ChapterDraft parse_chapter(const std::string& raw, int min_chars, bool strict) {
         // 一成是很低的门槛，真实网文是 13%~42%。
         int paras = 1;
         for (const char c : d.text) paras += (c == '\n') ? 1 : 0;
+        // **门槛 10%，试过 8%，退回来了。**
+        //
+        // 降到 8% 的本意是少烧一次重试（10% 那版生成时间涨了 34%）。
+        // 2026-09-12 三跑实测：**没省下，反而更慢**（中位 685 → 825 秒），
+        // 而且最低那章的范围从 9~20 松回 0~23——有一跑里两章对白直接 0%，
+        // 正是这道闸本来要拦的东西。门槛低一点，模型就在线下方多待一会儿，
+        // 重试反而更多。
         const bool too_few = spoken * 10 < paras;
         if (strict && (spoken < 2 || too_few) && text::utf8_len(d.text) > 400) {
             throw StoryError("整章几乎没有对白（" + std::to_string(paras) +

@@ -1856,10 +1856,11 @@ TEST_CASE("整章几乎没对白就打回") {
                           {"last_line", "她把伞柄转过来，刻着的不是她的名字。"}});
         return json{{"scenes", scenes}}.dump();
     };
-    // 32 段里两处对白 = 6%，过了老闸，过不了新闸
+    // 32 段里两处对白 = 6%，过了老闸（整章两处），过不了新闸（10%）
     CHECK_THROWS_AS(changji::stages::parse_chapter(make(2)),
                     changji::stages::StoryError);
-    // 一成够了
+    // 34 段里四处 = 12%，够了。**门槛试过 8%，更慢也更散，退回 10%**：
+    // 三跑实测生成时间 685 → 825 秒，最低那章从 9~20 松回 0~23。
     CHECK_NOTHROW(changji::stages::parse_chapter(make(4)));
     // 软闸：最后一次尝试照收
     CHECK_NOTHROW(changji::stages::parse_chapter(make(2), 0, false));
