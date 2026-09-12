@@ -156,34 +156,32 @@ RunDeps default_run_deps() {
         b.ffmpeg = media::FFmpeg(s.assembly.ffmpeg_path, s.assembly.ffprobe_path,
                                  media::default_runner());
 
-        // 配音后端按 [tts].backend 选。
+        // 配音后端。**搭法只有一份**（infer::make_tts_backend），因为别的
+        // 机器派配音任务过来时走的也是它——两份的话，"这台配音到底走哪条
+        // 路"迟早在两边不一样，表现是同一集里前半段有声、后半段静音。
         //
-        // **任何一条路搭不起来都退回估算后端，不抛。** 配音只是五个阶段
-        // 之一，为它整条流水线跑不起来不值得——而且估算后端会写出等长
-        // 静音，画面那几步照样能验。真出不了声这件事在配音阶段的
+        // 任何一条路搭不起来都退回估算后端（留空即是），不抛：配音只是
+        // 五个阶段之一，为它整条流水线跑不起来不值当，而估算后端会写出
+        // 等长静音，画面那几步照样能验。真出不了声这件事在配音阶段的
         // start 事件里说清楚了，不会跑完一整集才发现。
-        b.tts.reset();
-        if (s.tts.backend == "http" && s.tts.base_url.has_value() &&
-            !s.tts.base_url->empty()) {
-            b.tts = stages::http_tts_backend(*s.tts.base_url, 300.0,
-                                             llm::default_http_post(), b.ffmpeg);
-        } else if (s.tts.backend == "local") {
-            // 进程内配音。模型路径在 [models] 里——那一节本来就是
-            // C++ 侧独有的，C++ 独有的键集中在一处。
-            std::string why;
-            const auto ws = s.workspace_path();
-            auto local = stages::local_tts_backend(
-                s.models.resolve(s.models.tts, ws),
-                s.models.resolve(s.models.tts_decoder, ws),
-                /*use_gpu=*/true, b.ffmpeg, why);
-            if (local.has_value()) b.tts = std::move(*local);
-            // 载不起来就退回估算后端，和另外两条路一样。
-            //
-            // **不在这里往哪儿写一行日志**：这个文件没有日志设施，
-            // 为一条错误现造一个不合适。用户看得见的地方有两处，
-            // 都已经覆盖：配音阶段的 start 事件里会报后端名字
-            // （退回了就是 estimate），以及 /api/doctor 的"进程内配音"
-            // 那一项——它查的就是这两个模型路径。
+        b.tts = infer::make_tts_backend(s, b.ffmpeg);
+
+        // 配音也能派给别的机器：那张表上它是一列，能勾就得能派。
+        //
+        // **本机自己配得了就不派**：配一句才十几秒，为它跨机搬一趟音频
+        // 不划算。本机配不了（没模型、或者这份二进制没编 llama.cpp）时
+        // 才去找别人——而那正是以前只能改配置指到一个固定地址的情况。
+        if (!b.tts.has_value()) {
+            std::vector<std::string> remote_tts;
+            for (const auto& u : eps_for(infer::Capability::Tts)) {
+                if (u != infer::kLocalEndpoint) remote_tts.push_back(u);
+            }
+            if (auto tts_pool = infer::make_worker_pool(
+                    remote_tts, s.peer.token, local_runner)) {
+                b.tts = stages::TTSBackend{"peer", tts_pool->tts_synthesizer(),
+                                           {}};
+                b.keepalive.push_back(tts_pool);
+            }
         }
         return b;
     };

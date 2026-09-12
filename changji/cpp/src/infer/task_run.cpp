@@ -7,7 +7,11 @@
 #include <vector>
 
 #include "infer/blob.hpp"
+#include "infer/capability.hpp"
+#include "infer/node_status.hpp"
 #include "infer/sd_video.hpp"
+#include "llm/client.hpp"
+#include "stages/tts_backends.hpp"
 #include "media/ffmpeg.hpp"
 #include "models/shot.hpp"
 #include "stages/frames.hpp"
@@ -16,46 +20,40 @@
 
 namespace changji::infer {
 
+std::optional<stages::TTSBackend> make_tts_backend(
+    const config::Settings& s, const std::optional<media::FFmpeg>& ff) {
+    if (s.tts.backend == "http" && s.tts.base_url.has_value() &&
+        !s.tts.base_url->empty()) {
+        return stages::http_tts_backend(*s.tts.base_url, 300.0,
+                                        llm::default_http_post(), ff);
+    }
+    if (s.tts.backend == "local") {
+        // 模型路径在 [models] 里——那一节本来就是 C++ 侧独有的。
+        std::string why;
+        const auto ws = s.workspace_path();
+        auto local = stages::local_tts_backend(
+            s.models.resolve(s.models.tts, ws),
+            s.models.resolve(s.models.tts_decoder, ws),
+            /*use_gpu=*/true, ff, why);
+        if (local.has_value()) return local;
+        // 载不起来就退回估算后端。**这儿不写日志**：这个文件没有日志
+        // 设施，而用户看得见的地方有两处已经覆盖（配音阶段的 start 事件
+        // 会报后端名字，/api/doctor 的「进程内配音」那一项查的就是这两个
+        // 模型路径）。
+    }
+    return std::nullopt;
+}
+
 std::string cannot_do(const Task& t, const config::Settings& s) {
-    const auto ws = s.workspace_path();
-
-    // 出图出片都要扩散模型和它的 VAE
-    const std::string& which =
-        t.kind == TaskKind::Video ? s.models.video : s.models.image;
-    if (which.empty()) {
-        return std::string(t.kind == TaskKind::Video ? "[models].video"
-                                                     : "[models].image") +
-               " 没配，这台干不了" +
-               (t.kind == TaskKind::Video ? "出片" : "出图");
-    }
-    for (const auto& [key, name] :
-         std::vector<std::pair<const char*, std::string>>{
-             {"扩散模型", which},
-             {"VAE", t.kind == TaskKind::Video
-                         ? s.models.video_vae
-                         : (s.models.image_vae.empty() ? s.models.video_vae
-                                                       : s.models.image_vae)},
-         }) {
-        if (name.empty()) continue;
-        std::error_code ec;
-        const auto p = s.models.resolve(name, ws);
-        if (!std::filesystem::is_regular_file(p, ec)) {
-            return std::string(key) + " 找不到：" + paths::to_utf8(p);
-        }
-    }
-
-    // **出片要 ffmpeg 把帧编成 mp4。** 就是这一条烧过一次，见头文件。
-    if (t.kind == TaskKind::Video) {
-        // check() 是 void，缺了就抛。这里把异常翻成一句话回给调用方。
-        try {
-            const media::FFmpeg ff(s.assembly.ffmpeg_path,
-                                   s.assembly.ffprobe_path,
-                                   media::default_runner());
-            ff.check();
-        } catch (const std::exception& e) {
-            return e.what();
-        }
-    }
+    // **判据和那张「机器 × 能力」的表共用一份**（infer/capability.hpp）。
+    // 两处各写一份的话，迟早出现"表上说能干，派过去却被拒"——而那时候
+    // 用户看到的是一镜失败，他会先去查网络和模型，最后才想到是两份规则
+    // 走散了。
+    const NodeFacts facts = probe_facts(s);
+    const Capability cap = t.kind == TaskKind::Video  ? Capability::Video
+                           : t.kind == TaskKind::Tts  ? Capability::Tts
+                                                      : Capability::Frame;
+    if (const auto why = missing_for(cap, facts); !why.empty()) return why;
 
     // 产物目录得写得进去。
     //
@@ -102,7 +100,26 @@ TaskResult run_task_locally(const Task& t, const config::Settings& s,
         models::Shot shot;
         shot.shot_id = t.shot_id;
 
-        if (t.kind == TaskKind::Frame) {
+        if (t.kind == TaskKind::Tts) {
+            const media::FFmpeg ff(s.assembly.ffmpeg_path,
+                                   s.assembly.ffprobe_path,
+                                   media::default_runner());
+            auto backend = make_tts_backend(s, ff);
+            if (!backend) {
+                // **这儿不退回估算后端。** 派活方要的是真声音，
+                // 给它一段静音而且说"成功了"，是这条链路上最阴的故障——
+                // 整集配完才发现没声音。让它换一台。
+                throw std::runtime_error(
+                    "这台的配音后端搭不起来（[tts].backend = " +
+                    s.tts.backend + "）");
+            }
+            const auto r = backend->synthesize(
+                t.text, dest,
+                t.voice_id.empty() ? std::optional<std::string>()
+                                   : std::optional<std::string>(t.voice_id),
+                t.emotion, t.intensity);
+            result.duration_s = r.duration_s;
+        } else if (t.kind == TaskKind::Frame) {
             // 参考图可能是 blob: 记法（跨机）也可能是路径（同机），
             // resolve_input 认两种。
             stages::PromptBundle prompts = t.prompts;

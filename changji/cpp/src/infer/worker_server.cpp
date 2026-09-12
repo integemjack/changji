@@ -28,6 +28,7 @@
 #include "infer/worker_proto.hpp"
 #include "pipeline/jobs.hpp"
 #include "util/paths.hpp"
+#include "util/text.hpp"
 
 namespace changji::infer {
 
@@ -220,11 +221,25 @@ bool run_worker(const config::Settings& settings, const WorkerOptions& opts) {
     CROW_ROUTE(app, "/task").methods(crow::HTTPMethod::POST)(
         [state, settings, gate](const crow::request& req) {
             if (auto deny = gate(req)) return std::move(*deny);
+            // **先看这串字节是不是合法 UTF-8。** 不是的话下面每一条
+            // 路都会炸在同一个地方：nlohmann 解析时照单全收，而把出错
+            // 位置附近的原始字节拼进 {"detail": …} 再 dump，就在报错的
+            // 路上又抛一次——第二次没人接，派活方拿到一个空白的 500。
+            // 2026-09-12 实撞，日志里只有一行 invalid UTF-8 byte。
+            if (!text::is_valid_utf8(req.body)) {
+                return json_res(
+                    {{"detail",
+                      "请求体不是合法的 UTF-8。派活那头多半没按 UTF-8 编码"
+                      "（Windows 上直接发 GBK 的中文就会这样）"}},
+                    400);
+            }
             Task task;
             try {
                 task = task_from_json(json::parse(req.body));
             } catch (const std::exception& e) {
-                return json_res({{"detail", std::string("任务读不懂：") + e.what()}},
+                // e.what() 里可能带着原始字节，洗一遍再放进 JSON
+                return json_res({{"detail", std::string("任务读不懂：") +
+                                                text::sanitize_utf8(e.what())}},
                                 400);
             }
 

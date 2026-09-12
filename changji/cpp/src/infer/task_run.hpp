@@ -13,15 +13,31 @@
 // 档位算完了、种子给了、产物落哪儿定了），输出是一个结果结构。
 // 谁把它接到 HTTP 上、谁把产物传回去，是上面那层的事。
 
+#include <optional>
 #include <string>
 
 #include "config/settings.hpp"
+#include "media/ffmpeg.hpp"
+#include "stages/audio.hpp"
 #include "infer/exec_queue.hpp"
 #include "infer/sd_image.hpp"  // StepCallback
 #include "infer/worker_proto.hpp"
 #include "pipeline/jobs.hpp"
 
 namespace changji::infer {
+
+/// 按配置搭本机的配音后端。搭不起来回 nullopt。
+///
+/// **两个调用方**：跑一集时装进 `Backends`，以及别的机器派配音任务过来时。
+/// 一份实现——两份的话，"这台配音到底走哪条路"迟早在两边不一样，
+/// 而那种不一样的表现是同一集里前半段有声、后半段静音。
+///
+/// 三条路按 `[tts].backend` 选：`http`（外接服务）／`local`（进程内
+/// llama.cpp）／别的都退回估算后端。**任何一条搭不起来都退回估算，不抛**：
+/// 配音只是五个阶段之一，为它整条流水线跑不起来不值当，而估算后端会写出
+/// 等长静音，画面那几步照样能验。
+std::optional<stages::TTSBackend> make_tts_backend(
+    const config::Settings& s, const std::optional<media::FFmpeg>& ff);
 
 /// 接任务之前先看这活干不干得成。**干得成回空串。**
 ///

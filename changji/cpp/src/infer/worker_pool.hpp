@@ -21,6 +21,7 @@
 #include <functional>
 
 #include "infer/worker_proto.hpp"
+#include "stages/audio.hpp"
 #include "stages/frames.hpp"
 #include "stages/render.hpp"
 
@@ -74,6 +75,12 @@ public:
 
     /// 出片。同上。
     stages::VideoRenderer video_renderer();
+
+    /// 配音。签名和 `stages::TTSBackend::synthesize` 那个一样，直接顶替。
+    ///
+    /// **只在本机自己配不了的时候才该用它**：配一句才十几秒，为它跨机
+    /// 搬一趟音频不划算。装配的那一层不知道这些，所以由 run_deps 决定。
+    stages::Synthesizer tts_synthesizer();
 
 private:
     struct Impl;

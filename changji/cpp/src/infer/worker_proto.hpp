@@ -32,7 +32,10 @@
 namespace changji::infer {
 
 /// 一次任务要干的活。
-enum class TaskKind { Frame, Video };
+///
+/// **配音也在里头**，虽然它不吃显卡那么狠：那张「机器 × 能力」的表上
+/// 配音是一列，能勾就得能派，否则界面在说一件做不到的事。
+enum class TaskKind { Frame, Video, Tts };
 
 const char* to_string(TaskKind k);
 std::optional<TaskKind> task_kind_from(const std::string& s);
@@ -69,6 +72,16 @@ struct Task {
     /// 随机种子。协调者算好传下来，**不能让工作进程自己算**：
     /// 它不知道 attempts，算出来的图和串行跑的会不一样。
     std::int64_t seed = 0;
+
+    // ---- 配音专用。别的 kind 忽略 ----
+
+    /// 要念的那句话。
+    std::string text;
+    /// 用哪个音色。空 = 让那台自己挑。
+    std::string voice_id;
+    /// 情绪标签和强度，照 `Synthesizer` 的签名传下去。
+    std::string emotion;
+    double intensity = 0.0;
 };
 
 nlohmann::json to_json(const Task& t);
@@ -84,6 +97,13 @@ struct TaskResult {
     ///
     /// **跨机时这是对面沙箱里的路径**，对派活方没用，看 `artifact_id`。
     std::string dest;
+
+    /// 配音出来多长（秒）。**只有配音任务有意义。**
+    ///
+    /// 为什么要回这个数而不是让派活方自己去量：配音先行那条线靠它反推
+    /// 镜头时长，而量一次要么读 wav 头要么起 ffprobe——活是在那台跑的，
+    /// 它顺手就知道，没道理让派活方再算一遍。
+    double duration_s = 0.0;
 
     /// 产物的内容指纹。`Task::return_artifact` 为真时才有。
     ///

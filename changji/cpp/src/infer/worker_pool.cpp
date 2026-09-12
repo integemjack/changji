@@ -175,8 +175,11 @@ struct WorkerPool::Impl {
         if (!f) throw std::runtime_error("产物写坏了：" + dest);
     }
 
-    void run_on(std::size_t idx, const Task& task, pipeline::CancelToken& tok,
-                const StepCallback& on_step) {
+    /// 跑完回结果。**要这个返回值是为了配音**：出来多长（秒）只有跑活
+    /// 那台知道（它顺手就量了），而配音先行那条线靠它反推镜头时长。
+    TaskResult run_on(std::size_t idx, const Task& task,
+                      pipeline::CancelToken& tok,
+                      const StepCallback& on_step) {
         // 本机那个槽：进程内跑，不发 HTTP，也不搬文件（同一个文件系统）。
         // 排队由执行位管（见 exec_queue.hpp），这儿不用再判忙不忙。
         if (workers[idx].ep.url == kLocalEndpoint) {
@@ -185,7 +188,7 @@ struct WorkerPool::Impl {
             }
             const TaskResult r = local_runner(task, on_step, tok);
             if (!r.ok) throw std::runtime_error(r.error);
-            return;
+            return r;
         }
 
         const auto [origin, prefix] = split_url(workers[idx].ep.url);
@@ -279,7 +282,7 @@ struct WorkerPool::Impl {
                     pull_artifact(cli, prefix, workers[idx].ep.url,
                                   p.result->artifact_id, task.dest);
                 }
-                return;
+                return *p.result;
             }
         }
     }
@@ -291,8 +294,8 @@ struct WorkerPool::Impl {
     /// 8×L20 上真发生过：一个工作进程 OOM 崩了、systemd 正在重启它，
     /// 十一个镜头连着挑中它，每个 attempts 加到 3 直接降级成静帧——
     /// 而池子里另外七个好好的，一个都没被试过。
-    void run_task(const Task& task, pipeline::CancelToken& tok,
-                  const StepCallback& on_step) {
+    TaskResult run_task(const Task& task, pipeline::CancelToken& tok,
+                        const StepCallback& on_step) {
         std::set<std::size_t> tried;
         std::string last_error;
         for (;;) {
@@ -310,9 +313,9 @@ struct WorkerPool::Impl {
             } release{this, idx};
 
             try {
-                run_on(idx, task, tok, on_step);
+                const TaskResult r = run_on(idx, task, tok, on_step);
                 mark_ok(idx);
-                return;
+                return r;
             } catch (const Unreachable& e) {
                 mark_bad(idx);
                 tried.insert(idx);
@@ -395,6 +398,36 @@ stages::VideoRenderer WorkerPool::video_renderer() {
         // 池和进程内比就不同，差别就在这一行。
         t.seed = stages::render_seed(shot.shot_id, shot.attempts);
         impl->run_task(t, tok, on_step);
+    };
+}
+
+stages::Synthesizer WorkerPool::tts_synthesizer() {
+    Impl* impl = impl_.get();
+    return [impl](const std::string& text, const std::filesystem::path& dest,
+                  const std::optional<std::string>& voice_id,
+                  const std::string& emotion, double intensity) {
+        Task t;
+        t.kind = TaskKind::Tts;
+        // shot_id 在配音这条路上没有意义，但沙箱和日志都靠它认人，
+        // 给一个固定的比空着强。
+        t.shot_id = "tts";
+        t.text = text;
+        t.voice_id = voice_id.value_or("");
+        t.emotion = emotion;
+        t.intensity = intensity;
+        t.dest = paths::to_utf8(dest);
+
+        // **配音这条路上没有取消令牌。** Synthesizer 的签名里就没有——
+        // 一句话十几秒，点了停止最多多等这么久，不值得为它把整条
+        // 配音链路的签名都改一遍。
+        pipeline::CancelToken tok;
+        const TaskResult r = impl->run_task(t, tok, {});
+
+        stages::SynthesisResult out;
+        out.duration_s = r.duration_s;
+        // 产物已经落到 dest 了（同机直接写，跨机拉回来）。
+        out.audio_path = dest;
+        return out;
     };
 }
 

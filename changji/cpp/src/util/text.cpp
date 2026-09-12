@@ -107,6 +107,67 @@ std::size_t utf8_len(const std::string& s) {
     return n;
 }
 
+bool is_valid_utf8(const std::string& s) {
+    std::size_t i = 0;
+    while (i < s.size()) {
+        const auto c = static_cast<unsigned char>(s[i]);
+        std::size_t need = 0;
+        char32_t cp = 0;
+        if (c < 0x80) {
+            ++i;
+            continue;
+        } else if ((c & 0xE0) == 0xC0) {
+            need = 1;
+            cp = c & 0x1Fu;
+        } else if ((c & 0xF0) == 0xE0) {
+            need = 2;
+            cp = c & 0x0Fu;
+        } else if ((c & 0xF8) == 0xF0) {
+            need = 3;
+            cp = c & 0x07u;
+        } else {
+            return false;   // 0x80~0xBF 开头，或者 5 字节以上的旧式编码
+        }
+        // 续接字节要够：i+1 .. i+need 都得在范围里
+        if (i + need >= s.size()) return false;
+        for (std::size_t k = 1; k <= need; ++k) {
+            const auto cc = static_cast<unsigned char>(s[i + k]);
+            if ((cc & 0xC0) != 0x80) return false;
+            cp = (cp << 6) | (cc & 0x3Fu);
+        }
+        // **过长编码要拒**：同一个字符用更多字节写出来是合法字节序列却
+        // 非法 UTF-8，nlohmann 也拒，所以这里判掉才对得上。
+        if (need == 1 && cp < 0x80) return false;
+        if (need == 2 && cp < 0x800) return false;
+        if (need == 3 && cp < 0x10000) return false;
+        // 代理区（U+D800~U+DFFF）和超出 U+10FFFF 的都不是合法字符
+        if (cp >= 0xD800 && cp <= 0xDFFF) return false;
+        if (cp > 0x10FFFF) return false;
+        i += need + 1;
+    }
+    return true;
+}
+
+std::string sanitize_utf8(const std::string& s) {
+    if (is_valid_utf8(s)) return s;
+    // 逐字符走：合法的原样留，剩下的一个字节换一个 '?'。
+    std::string out;
+    out.reserve(s.size());
+    std::size_t i = 0;
+    while (i < s.size()) {
+        const auto c = static_cast<unsigned char>(s[i]);
+        const std::size_t n = c < 0x80 ? 1 : utf8_char_len(c);
+        if (n > 0 && i + n <= s.size() && is_valid_utf8(s.substr(i, n))) {
+            out.append(s, i, n);
+            i += n;
+        } else {
+            out.push_back('?');
+            ++i;
+        }
+    }
+    return out;
+}
+
 std::size_t utf8_char_len(unsigned char lead) {
     if ((lead & 0xE0) == 0xC0) return 2;
     if ((lead & 0xF0) == 0xE0) return 3;
