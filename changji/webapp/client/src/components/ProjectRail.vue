@@ -62,9 +62,29 @@ const collapsed = computed({
 const dragging = ref(false)
 const hintSide = ref('')
 
+/**
+ * 这一下是不是落在栏头里的控件上。
+ *
+ * ⚠️ **不判这个的话，栏头上那两个按钮全都点不动。**（收起、加号，
+ * 2026-09-12 修。）
+ *
+ * 原因是 setPointerCapture：在 pointerdown 上无条件捕获之后，后面的
+ * pointerup 会**改派给捕获的那个元素**（也就是栏头），而 click 是按
+ * pointerdown 和 pointerup 两个目标的最近公共祖先派发的——实测派到了
+ * `<html>` 上。按钮上写着 `@click.stop` 没用：那个 click 根本没经过它。
+ *
+ * 症状是"按钮按下去没反应"，而拖拽本身是好的，从现象完全看不出是捕获
+ * 把 click 吃掉了。
+ */
+function fromControl(event) {
+  return Boolean(event.target?.closest?.('button, input, a, select, textarea'))
+}
+
 function onGrab(event) {
   // 只认主键。右键拖出来的是浏览器菜单，中键是自动滚动。
   if (event.button !== undefined && event.button !== 0) return
+  // 点按钮就是点按钮，不是要拖这条栏。见 fromControl。
+  if (fromControl(event)) return
   dragging.value = true
   hintSide.value = ui.railSide
   event.currentTarget.setPointerCapture?.(event.pointerId)
@@ -86,8 +106,15 @@ function onDrop(event) {
   ui.ok(side === 'left' ? '项目库挪到左边了' : '项目库挪到右边了')
 }
 
-/** 键盘也得能换边——拖拽这种操作光有鼠标那条路是不行的。 */
-function flip() {
+/**
+ * 键盘也得能换边——拖拽这种操作光有鼠标那条路是不行的。
+ *
+ * 栏头上双击也走这儿，所以同样要挡住落在按钮上的那一下：`@click.stop`
+ * 拦的是 click，dblclick 是另一条事件，照样冒泡到栏头。不挡的话，
+ * 快点两下加号，项目库会莫名其妙换到另一边去。
+ */
+function flip(event) {
+  if (event && fromControl(event)) return
   ui.railSide = ui.railSide === 'left' ? 'right' : 'left'
 }
 
