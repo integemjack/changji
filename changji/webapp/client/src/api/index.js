@@ -206,6 +206,14 @@ export const api = {
   // 关掉／打开某台的某个能力。**正在跑的时候会被拒（409）**：
   // 半集换机器会让前后画风对不上。
   setNodeOff: (url, cap, off) => post('/api/nodes/off', { url, cap, off }),
+  // 任意一台机器的模型：本机走本地那份，别的机器由引擎转发过去。
+  // **浏览器连不上那几台**（地址可能只有引擎这边通，口令也不该发到前端），
+  // 所以这几条都带一个 url 参数走引擎。
+  nodeSetup: (url) => get('/api/nodes/setup', { url }),
+  nodeSetupDownload: (url, selections) =>
+    post('/api/nodes/setup/download', { url, selections }),
+  nodeSetupProgress: (url) => get('/api/nodes/setup/progress', { url }),
+  nodeSetupCancel: (url) => post('/api/nodes/setup/cancel', { url }),
   // 此刻的负载，一次性的。顶栏那三个小表走 WebSocket（订 "system"），
   // 这个留给排查用。
   system: () => get('/api/system'),
