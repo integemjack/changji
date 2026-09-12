@@ -267,6 +267,10 @@ function setStory(payload) {
   // 存的那一会儿又敲了字的章仍然是脏的，下一次刷新还得护着它。
   for (const c of chapters.value) {
     const id = c.chapter_id
+    // **AI 正往这一章写：一个字都别动。** 手里那份是正在长出来的，
+    // 而服务端那份要等它写完才落库——盖上去就是"写着写着整章空了"。
+    // 批量跑着的时候中途重读（见 refreshStory）就会撞上这一条。
+    if (streaming.value?.chapter_id === id) continue
     if (!dirtySnapshot.has(id)) buf[id] = c.text ?? ''
     else if ((buf[id] ?? '') === (c.text ?? '')) dirtySnapshot.delete(id)
   }
@@ -277,6 +281,26 @@ function setStory(payload) {
     current.value = (todo ?? chapters.value[0])?.chapter_id ?? ''
   }
   nextTick(fitAll)
+}
+
+/**
+ * 只把服务端那份重读一遍，**不清编辑器里的缓冲**。
+ *
+ * 和 load() 的区别就在这儿：load 会把 buf 和 dirtySnapshot 整个清掉，
+ * 那在批量跑着的时候是灾难——正在长出来的那一章会当场空掉，别的章没存的
+ * 改动也没了。这个只更新"服务端那份"（c.text），编辑器手里那份由
+ * setStory 按脏不脏、流没流决定要不要跟。
+ *
+ * **读不到就算了。** 它是顺手刷新，不是关键路径；批量跑着的时候引擎正忙，
+ * 为这个弹个红框只会让人以为批量挂了。
+ */
+async function refreshStory() {
+  if (!session.projectPath) return
+  try {
+    setStory(await api.getStory(session.projectPath))
+  } catch {
+    /* 下一次换章再说 */
+  }
 }
 
 async function load() {
@@ -326,6 +350,21 @@ function watchBatch() {
       // 第一次就用上了），而重试是从头生成的——照旧往后接的话，编辑器里
       // 会是"写砸的那半截 + 重写的全文"接在一起。跑完 load() 会把它冲掉，
       // 但那之前这一章看着就是坏的。
+      // **AI 换章了：把服务端那份重读一遍。**
+      //
+      // 上一章这会儿刚落库，而这一页手里那份还是空的。不重读的话：
+      //   - 左边那栏上一章一直显示「—」，而它明明写完了
+      //   - 那一章在 dirtyIds 里挂着（buf 有字、c.text 是空）
+      //   - **用户在那一章里敲一个字，存的时候就报「选中的范围不对」**
+      //     ——saveChapter 拿 c.text 的长度当 to_char，而那是 0，
+      //     引擎那边已经有六百字了。整段的账见 saveChapter。
+      //   - 批量跑着的时候翻回上一章，编辑器里是空的，刷新页面才出来
+      //     （token 是往 buf 里灌的，没听见的那几章就没有）
+      //
+      // 十六章一个多小时，中间十五次重读，一次就是一个 GET。
+      const wrote = streaming.value?.chapter_id
+      if (wrote && wrote !== msg.chapter_id) refreshStory()
+
       buf[msg.chapter_id] =
         msg.seq === 0 ? (msg.text ?? '') : (buf[msg.chapter_id] ?? '') + (msg.text ?? '')
       // at：AI 写到哪个字了。批量是从头往下写，所以就是当前长度。
@@ -669,17 +708,31 @@ async function saveChapter(id) {
     scheduleSave(id, 400)
     return
   }
-  const result = await saver.run(
-    () =>
-      api.applyRevision({
-        project: session.projectPath,
-        chapter_id: id,
-        from_char: 0,
-        to_char: [...(c.text ?? '')].length,
-        text: sent,
-      }),
-    { key: 'save:' + id },
-  )
+  // **存的是一个区间：[0, 服务端那份有多长)。** 所以"服务端那份有多长"
+  // 必须是新的——旧了的话引擎会拒：「选中的范围不对：这一章有 601 个字，
+  // 而选的是 [0, 0)」。
+  //
+  // 什么时候会旧：批量正一章章往下写，上一章刚落库而这一页还没重读
+  // （见 watchBatch 里那段）。那一条现在在换章时就重读了，但**竞态还在**
+  // ——引擎可能正好在这次存的前一刻写完这一章。所以这里再兜一层：
+  // 第一次失败不弹框（quiet），重读一次拿到真正的长度，再存一次。
+  const save = (len) =>
+    api.applyRevision({
+      project: session.projectPath,
+      chapter_id: id,
+      from_char: 0,
+      to_char: len,
+      text: sent,
+    })
+
+  let result = await saver.run(() => save([...(c.text ?? '')].length),
+                               { key: 'save:' + id, quiet: true })
+  if (!result) {
+    await refreshStory()
+    const fresh = chapters.value.find((x) => x.chapter_id === id)
+    result = await saver.run(() => save([...(fresh?.text ?? '')].length),
+                             { key: 'save:' + id })
+  }
   if (!result) return
   if ((buf[id] ?? '') !== sent) scheduleSave(id)
   else dirtySnapshot.delete(id)
