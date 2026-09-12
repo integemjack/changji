@@ -207,6 +207,44 @@ TEST_CASE("已经在跑时回 409，而且说清在跑哪一集") {
     CHECK(fakes.frames.empty());   // 第二次请求一个镜头都没碰
 }
 
+TEST_CASE("不认识的键照收，但要列回去") {
+    // **不 forbid 是有意的**：前端和引擎的版本不一定同步升，多一个键就 422
+    // 会让整个功能挂掉。但默不作声的代价是真的——2026-09-13 我把 shot_ids
+    // 写成 only_shots，引擎当成"没指定镜头"，于是「重出这一镜」变成整集
+    // 重渲 18 镜、跑了二十分钟，而我一直以为它只渲了一镜。
+    quiesce();
+    Fakes fakes;
+    const auto store = make_store("未知字段", {{"ep01", 2}});
+
+    const auto r = run_and_wait(
+        json{{"project", project_arg(store)},
+             {"episode_id", "ep01"},
+             {"stages", json::array({"audio"})},
+             {"only_shots", json::array({"ep01_sh001"})}},   // 写错的那个
+        fakes);
+
+    CHECK(r.status == 200);
+    CHECK(r.body.at("started") == true);
+    REQUIRE(r.body.contains("ignored_fields"));
+    const auto ig = r.body.at("ignored_fields").get<std::vector<std::string>>();
+    REQUIRE(ig.size() == 1);
+    CHECK(ig[0] == "only_shots");
+
+    SUBCASE("全是认识的键就不带这一项——正常用法下必须是静默的") {
+        quiesce();
+        Fakes f2;
+        const auto ok = run_and_wait(
+            json{{"project", project_arg(store)},
+                 {"episode_id", "ep01"},
+                 {"force", true},
+                 {"shot_ids", json::array({"ep01_sh001"})},
+                 {"stages", json::array({"audio"})}},
+            f2);
+        CHECK(ok.status == 200);
+        CHECK_FALSE(ok.body.contains("ignored_fields"));
+    }
+}
+
 TEST_CASE("必填字段缺了是 422，不是 400") {
     // pydantic 的校验错误是 422，而且 detail 是数组不是字符串。
     // 回成 400 加一句话的话，前端拿到的形状不对，错误提示会是空的。

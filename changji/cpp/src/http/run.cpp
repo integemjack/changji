@@ -163,6 +163,28 @@ ApiResult post_run(const json& body, const RunDeps& deps) {
         throw ApiError(400, "order 只能是 episode 或 stage");
     }
 
+    // **不认识的键要说一声。**
+    //
+    // 上面那段解释了为什么不 forbid：前端和引擎的版本不一定同步升，
+    // 多一个键就 422 会让整个功能挂掉。那个取舍现在还成立，但**默不作声
+    // 的代价是真的**：2026-09-13 我自己把 shot_ids 写成 only_shots，
+    // 引擎一声不吭地当成"没指定镜头"，于是「重出这一镜」变成了整集重渲
+    // 18 镜、跑了二十分钟——而且是在我以为它只渲了一镜的前提下，
+    // 连着几轮拿它当证据。
+    //
+    // 所以：照收不误（兼容性不变），但把不认识的键列回去。真发过来多余键
+    // 的调用方看得见，写错字段名的当场就知道。
+    //
+    // 核过这一版前端发的就是这五个键，没有多余的，所以这条在正常用法下
+    // 是静默的（webapp/client/src/composables/useShots.js 那个 api.run）。
+    static const std::set<std::string> kKnown = {
+        "project", "episode_id", "skip_final", "skip_draft", "shot_ids",
+        "force",   "all_episodes", "stages",   "order"};
+    std::vector<std::string> unknown;
+    for (const auto& [key, _] : body.items()) {
+        if (kKnown.count(key) == 0) unknown.push_back(key);
+    }
+
     // 409 在读项目之前判。两个都错时回哪一个是可观测的，照抄 Python 的顺序。
     if (pipeline::jobs().running(pipeline::JobKind::Run)) {
         throw ApiError(409, "已经在跑 " + running_episode() + " 了");
@@ -322,7 +344,13 @@ ApiResult post_run(const json& body, const RunDeps& deps) {
     if (!started) {
         throw ApiError(409, "已经在跑 " + running_episode() + " 了");
     }
-    return {200, {{"started", true}, {"queue", queue}}};
+    json out = {{"started", true}, {"queue", queue}};
+    if (!unknown.empty()) {
+        // **列回去，不拦。** 见上面收集它的地方：写错字段名的当场看得见，
+        // 而版本不同步时多出来的键照旧被忽略、功能不挂。
+        out["ignored_fields"] = unknown;
+    }
+    return {200, out};
 }
 
 
