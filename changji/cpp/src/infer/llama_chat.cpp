@@ -298,6 +298,31 @@ bool LlamaChat::complete(const std::string& prompt, const std::string& schema,
     llama_sampler_chain_add(
         chain, llama_sampler_init_penalties(llama_vocab_n_tokens(vocab), 512,
                                             1.10f, 0.0f, 0.3f));
+
+    // **整场戏级别的复读要靠 DRY，上面那道够不着。**
+    //
+    // 2026-09-12 从落盘的原始输出里逮到：一章的输出里，靠后那一段和开头
+    // 第 ~500 个 token 处的段落几乎逐字相同，只多了半句「留下一道白色的
+    // 印记」。模型就这么把同一场戏反复重写，直到 12818 字节把 token 烧光、
+    // JSON 没收尾——报出来是「大模型输出里找不到合法 JSON」，那一章落成
+    // 0 字，然后重试，再走一遍同样的路。用户先看出来的，判词是
+    // 「总是重写的问题，好多明显是凑字数的字符」——两句说的是同一件事。
+    //
+    // 上面那道 penalties 的窗口是 **512** 个 token，而一章要写一万多个：
+    // 重复的那一段早就滑出窗口了。注释里说的「同一句连写六遍」是句子级的
+    // 近距离复读，512 够用；整场戏级别的复读，距离差一个数量级。
+    //
+    // 而单纯把窗口开大不行——那道是**按 token** 压的，开到几千之后
+    // 「的」「了」「他」这些字全被压一遍，中文会写坏。
+    //
+    // DRY 压的是**重复的词串**：只有当模型开始重走一条走过的路时才加罚，
+    // 而且越走越重，常用字不受影响。参数用上游的默认（0.8 / 1.75），
+    // allowed_length 给 6——中文里四五个字重复是正常的（「他没有回答」），
+    // 六个以上就不正常了。**不给 seq_breakers**：断点会让它没法跨段匹配，
+    // 而要抓的正是跨段重复。
+    llama_sampler_chain_add(chain,
+                            llama_sampler_init_dry(vocab, 0.8f, 1.75f, 6,
+                                                   im.n_ctx, nullptr, 0));
     llama_sampler_chain_add(chain, llama_sampler_init_top_k(40));
     llama_sampler_chain_add(chain, llama_sampler_init_top_p(0.95f, 1));
     llama_sampler_chain_add(
