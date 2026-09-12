@@ -991,10 +991,19 @@ std::vector<std::string> missing_dialogue_lines(const std::string& script,
     return missing;
 }
 
+double real_total_s(const std::vector<Shot>& shots, int fps) {
+    const VideoLimits& limits = video_limits();
+    double total = 0.0;
+    for (const Shot& s : shots) total += limits.real_duration_s(s.duration_s, fps);
+    return total;
+}
+
 std::vector<Shot>& rebalance_durations(std::vector<Shot>& shots, double target_s,
-                                       double tolerance_s) {
-    double current = 0.0;
-    for (const Shot& s : shots) current += s.duration_s;
+                                       double tolerance_s, int fps) {
+    const VideoLimits& limits = video_limits();
+    // **量的是成片长度，不是分镜表上那串名义值。** 见 real_total_s 的注释：
+    // 按名义值精算到 57.00 秒，片子出来是 62.54 秒，压错了对象。
+    double current = real_total_s(shots, fps);
     if (std::fabs(current - target_s) <= tolerance_s) return shots;
 
     std::vector<Shot*> adjustable;
@@ -1018,10 +1027,14 @@ std::vector<Shot>& rebalance_durations(std::vector<Shot>& shots, double target_s
             const long idx = static_cast<long>(std::distance(slots.begin(), it));
             const long new_idx = idx + step;
             if (new_idx < 0 || new_idx >= static_cast<long>(slots.size())) continue;
-            const double delta = slots[static_cast<std::size_t>(new_idx)] -
-                                 shot->duration_s;
+            const double cand = slots[static_cast<std::size_t>(new_idx)];
+            // 换档换掉的也是**成片**那几秒。名义上 4→5 是 +1 秒，在 H3 的
+            // 格子上是 4.458→5.167，只有 +0.709；按名义值记账会把 diff 记
+            // 少了，循环提前收手，剩下的偏差全留给成片。
+            const double delta = limits.real_duration_s(cand, fps) -
+                                 limits.real_duration_s(shot->duration_s, fps);
             if (std::fabs(diff - delta) < std::fabs(diff)) {
-                shot->duration_s = slots[static_cast<std::size_t>(new_idx)];
+                shot->duration_s = cand;
                 diff -= delta;
                 moved = true;
                 if (std::fabs(diff) <= tolerance_s) break;

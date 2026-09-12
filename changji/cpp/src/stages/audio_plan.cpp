@@ -312,10 +312,20 @@ std::string summarize(const std::vector<ShotAudioPlan>& plans) {
         if (p.is_tight() && p.lines) tight.push_back(p.shot_id);
     }
 
+    // **"这 N 个镜头"，不是"这一集"。** 原来这句写的是「锁定后镜头总长
+    // X 秒」，听上去是整集的长度，其实只是 plans 里这几镜的和——没台词的
+    // 过渡镜不在 plans 里。实测 walk_c ep01：18 个镜头里有 14 个进了
+    // plans，这句报 60.0 秒，整集其实是 64.0 秒，而同一屏上的警告说
+    // 「比目标 1 分钟长」——两句话自相矛盾，人只能当其中一句是错的。
+    //
+    // 而且这个数还是**配音刚锁完**那一刻的，rebalance 在它之后才跑，
+    // 跑完整集的时长就变了。整集多长由 pipeline/episode.cpp 在 rebalance
+    // 之后单独报，这里只说自己真正知道的事。
     std::string out =
         "配音完成 " + std::to_string(total_lines) + " 句，覆盖 " +
         std::to_string(plans.size()) + " 个镜头\n语音总长 " +
-        fmt("%.1f", total_speech) + " 秒，锁定后镜头总长 " +
+        fmt("%.1f", total_speech) + " 秒，这 " +
+        std::to_string(plans.size()) + " 个镜头锁定后共 " +
         fmt("%.1f", total_locked) + " 秒";
 
     if (!tight.empty()) {

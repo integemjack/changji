@@ -380,22 +380,35 @@ RunReport run_episode(const ProjectStore& store,
                 // 把有台词的十镜从语音 30.6 秒撑到 48 秒——每一镜都要向上
                 // 吸附到视频模型能生成的档位，光量化就多出 17.4 秒——整集
                 // 变成 80 秒。超出的部分只能摊到那十个无台词的过渡镜上。
-                const double before_s = ep->planned_duration_s();
-                stages::rebalance_durations(ep->shots, ep->target_duration_s);
-                const double after_s = ep->planned_duration_s();
+                //
+                // **量的是成片长度，不是 planned_duration_s()。** 后者是
+                // 分镜表上那串名义值的和；模型按格子出帧，名义 4 秒出来是
+                // 4.458 秒。上一版这里用的就是名义值，于是 rebalance 报
+                // 「已经压到 57 秒」而片子是 62.5 秒——压错了对象，见
+                // stages::real_total_s。
+                const int fps = settings.assembly.fps;
+                const double before_s = stages::real_total_s(ep->shots, fps);
+                stages::rebalance_durations(ep->shots, ep->target_duration_s,
+                                            3.0, fps);
+                const double after_s = stages::real_total_s(ep->shots, fps);
                 if (std::abs(after_s - before_s) > 0.01) {
+                    // human_time 在一分钟以上只留整分钟，三个数会全都显示成
+                    // 「1 分钟」——对比句必须用带零头的那个。
                     emit(progress, "audio", "info",
-                         "按配音重排了镜头时长：" + util::human_time(before_s) +
-                             " → " + util::human_time(after_s) + "（目标 " +
-                             util::human_time(ep->target_duration_s) + "）");
+                         "按配音重排了镜头时长：" +
+                             util::human_time_precise(before_s) + " → " +
+                             util::human_time_precise(after_s) + "（目标 " +
+                             util::human_time_precise(ep->target_duration_s) +
+                             "）");
                 }
                 // **压不到目标就要说出来。** 有台词的镜头动不了（动了会截断
                 // 声音），过渡镜也有最短的那一档，所以并不是总能压回去。
                 // 不吭声的话，人看到的是「配音完成」，而成片比要的长三分之一。
                 if (after_s - ep->target_duration_s > 3.0) {
                     emit(progress, "audio", "warn",
-                         "这一集排下来 " + util::human_time(after_s) +
-                             "，比目标 " + util::human_time(ep->target_duration_s) +
+                         "这一集排下来 " + util::human_time_precise(after_s) +
+                             "，比目标 " +
+                             util::human_time_precise(ep->target_duration_s) +
                              " 长。台词镜的时长由配音定、动不了，过渡镜也压到"
                              "头了——要短就得回剧本删戏或者减台词。");
                 }

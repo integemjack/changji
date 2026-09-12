@@ -823,3 +823,97 @@ TEST_CASE("视频限制按模型自己认，不用人记着填") {
         CHECK(unknown.frame_step == 4);
     }
 }
+
+// ---- 名义秒 vs 成片秒 ----
+
+TEST_CASE("再平衡压的是成片长度，不是分镜表上那串名义值") {
+    // **同一集两套秒。** 分镜表里的 duration_s 是从档位表 {2,3,4,5,…} 里挑
+    // 的整数，而模型只能按格子出帧（H3 是 17k+5），名义 5 秒出来是 124 帧
+    // = 5.167 秒。装配那边一直按真值排时间轴（media/assemble.cpp），规划
+    // 这边却一直按名义值加——rebalance 精算到"60 秒"，片子是 62 秒。
+    //
+    // Wan 那会儿每镜只差 0.042 秒（1%），藏得住；换 H3 之后单镜最多差
+    // 0.583 秒，就露出来了。**测试必须用 H3 的格子，用默认那份测不出来。**
+    const stages::VideoLimits saved = stages::video_limits();
+
+    stages::VideoLimits h3;
+    h3.max_frames = 124;   // 五秒那一档，档位表 = {2,3,4,5}
+    h3.frame_step = 17;
+    h3.frame_base = 5;
+    stages::set_video_limits(h3);
+    REQUIRE(stages::duration_slots() == std::vector<double>{2.0, 3.0, 4.0, 5.0});
+
+    const auto make = [](const std::string& id, double dur, bool talks) {
+        models::Shot s;
+        s.shot_id = id;
+        s.duration_s = dur;
+        if (talks) {
+            models::DialogueLine line;
+            line.text = "台词";
+            s.dialogue.push_back(line);
+        }
+        return s;
+    };
+
+    // 4 个台词镜（配音锁死、动不了）+ 8 个过渡镜，全是名义 5 秒。
+    std::vector<models::Shot> shots;
+    for (int i = 0; i < 4; ++i) {
+        shots.push_back(make("talk" + std::to_string(i), 5.0, true));
+    }
+    for (int i = 0; i < 8; ++i) {
+        shots.push_back(make("gap" + std::to_string(i), 5.0, false));
+    }
+
+    // 名义上正好 60 秒——按名义值记账的话这一集"已经达标了"。
+    double nominal = 0.0;
+    for (const auto& s : shots) nominal += s.duration_s;
+    REQUIRE(nominal == doctest::Approx(60.0));
+    // 而它真正会出 12 × 5.167 = 62.0 秒。**这 2 秒就是旧版看不见的那部分。**
+    REQUIRE(stages::real_total_s(shots, 24) == doctest::Approx(12 * 124.0 / 24.0));
+    REQUIRE(stages::real_total_s(shots, 24) > 61.9);
+
+    stages::rebalance_durations(shots, 60.0, 0.5, 24);
+
+    // 修好之后：成片长度回到 60 秒附近。
+    CHECK(stages::real_total_s(shots, 24) == doctest::Approx(60.0).epsilon(0.01));
+
+    // 而名义总长**不再是 60**——正是这一条把两种记账方式区分开。
+    // 旧版（按名义值算）在这里会一动不动地返回，名义和成片都停在原处。
+    double after_nominal = 0.0;
+    for (const auto& s : shots) after_nominal += s.duration_s;
+    CHECK(after_nominal < 59.0);
+
+    // 台词镜一帧没动：它们的时长是配音定的，动了就对不上口型。
+    for (const auto& s : shots) {
+        if (!s.dialogue.empty()) CHECK(s.duration_s == doctest::Approx(5.0));
+    }
+
+    stages::set_video_limits(saved);
+}
+
+TEST_CASE("real_total_s 数的是帧，不是分镜表") {
+    const stages::VideoLimits saved = stages::video_limits();
+
+    stages::VideoLimits h3;
+    h3.max_frames = 360;
+    h3.frame_step = 17;
+    h3.frame_base = 5;
+    stages::set_video_limits(h3);
+
+    models::Shot a;
+    a.duration_s = 4.0;   // 96 帧 → 向上对齐到 107 = 4.458 秒
+    models::Shot b;
+    b.duration_s = 2.0;   // 48 帧 → 56 = 2.333 秒
+    const std::vector<models::Shot> shots{a, b};
+
+    CHECK(stages::real_total_s(shots, 24) ==
+          doctest::Approx((107.0 + 56.0) / 24.0));
+    // 名义 6 秒，实际 6.79 秒——每一镜都只多一点，十几镜就是好几秒。
+    CHECK(stages::real_total_s(shots, 24) > 6.7);
+
+    SUBCASE("空的一集是 0，不是 NaN") {
+        CHECK(stages::real_total_s({}, 24) == doctest::Approx(0.0));
+    }
+
+    stages::set_video_limits(saved);
+}

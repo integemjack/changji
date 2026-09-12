@@ -26,4 +26,20 @@ std::string human_time(double seconds) {
     return fmt("%.1f", minutes / 60.0) + " 小时";
 }
 
+std::string human_time_precise(double seconds) {
+    seconds = std::max(0.0, seconds);
+    if (seconds < 60.0) return fmt("%.1f", seconds) + " 秒";
+    if (seconds < 3600.0) {
+        const int mins = static_cast<int>(seconds / 60.0);
+        const double rest = seconds - mins * 60.0;
+        // 整分钟就别拖个 " 0.0 秒" 的尾巴。
+        if (rest < 0.05) return std::to_string(mins) + " 分";
+        return std::to_string(mins) + " 分 " + fmt("%.1f", rest) + " 秒";
+    }
+    const int hours = static_cast<int>(seconds / 3600.0);
+    const int mins = static_cast<int>((seconds - hours * 3600.0) / 60.0);
+    if (mins == 0) return std::to_string(hours) + " 小时";
+    return std::to_string(hours) + " 小时 " + std::to_string(mins) + " 分";
+}
+
 }  // namespace changji::util

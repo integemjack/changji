@@ -200,12 +200,36 @@ int place_missing_dialogue(std::vector<models::Shot>& shots,
 std::vector<std::string> missing_dialogue_lines(
     const std::string& script, const std::vector<models::Shot>& shots);
 
+/// 这一串镜头**真正会出多长**。
+///
+/// **不是 `sum(duration_s)`。** 分镜表里那个秒数是名义值——从档位表
+/// {2,3,4,5,6,8,10,12,15} 里挑的整数——而模型只能按格子出帧（Wan 4n+1、
+/// MiniMax-H3 17k+5），所以名义 4 秒的镜头实际出 107 帧 = 4.458 秒。
+///
+/// 装配那边一直是对的（media/assemble.cpp 的 build_timeline 按
+/// `real_duration_s` 排时间轴，注释里写着"按名义值排的话误差会逐镜累积"），
+/// **规划这边却一直在按名义值加**——同一集两套秒。
+///
+/// 实测（walk_c ep01，目标 60 秒）：rebalance 把名义总长精算到 57.00 秒，
+/// 成片是 62.54 秒。**它压的那个数根本不是成片长度。** Wan 那会儿每镜只
+/// 差 0.042 秒（1%），藏得住；换 H3 之后单镜最多差 0.583 秒，就露出来了。
+double real_total_s(const std::vector<models::Shot>& shots, int fps = 24);
+
 /// 把总时长拉回目标值。
 ///
 /// 偏差优先摊到无对白的过渡镜上，有台词的镜头不动，
 /// 因为它们的时长是由配音定的。原地改，同时返回引用方便串联。
+///
+/// **按成片长度算，不按名义值算**（见 real_total_s）：target_s 和
+/// tolerance_s 说的都是片子真正有多长。
+///
+/// fps 默认 24：分镜那三个入口（planning / episodes / batch）手边没有
+/// AssemblyConfig，而 MiniMax-H3 本来就只跑 24fps（"another requested value
+/// is overridden"，sd.cpp docs/minimax_h3.md），所以那里用默认值是对的。
+/// 配音之后那次重排在 pipeline/episode.cpp，那儿有真的 fps，照传。
 std::vector<models::Shot>& rebalance_durations(std::vector<models::Shot>& shots,
                                                double target_s,
-                                               double tolerance_s = 3.0);
+                                               double tolerance_s = 3.0,
+                                               int fps = 24);
 
 }  // namespace changji::stages

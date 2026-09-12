@@ -187,3 +187,29 @@ TEST_CASE("indent_rest：第一行不动，后面每行缩进") {
     // 结尾的换行也要照顾到：多缩一个空行比少缩一行好看得多。
     CHECK(text::indent_rest("a\n", "  ") == "a\n  ");
 }
+
+TEST_CASE("human_time_precise：对比两个时长时零头不能丢") {
+    // **踩过的那一条**：配音重排之后报
+    //     [info] 按配音重排了镜头时长：1 分钟 → 1 分钟（目标 1 分钟）
+    // 三个数分别是 80.0 / 64.0 / 60.0 秒，human_time 在一分钟以上只留整
+    // 分钟（80/60 = 1.33，%.0f 也是「1」），全压成了「1 分钟」——这句话
+    // 等于什么也没说，而且同一屏上的警告还说「比目标 1 分钟长」，
+    // 看上去自相矛盾。
+    CHECK(util::human_time(80.0) == util::human_time(64.0));      // 病根
+    CHECK(util::human_time(64.0) == util::human_time(60.0));
+    CHECK(util::human_time_precise(80.0) != util::human_time_precise(64.0));
+    CHECK(util::human_time_precise(64.0) != util::human_time_precise(60.0));
+
+    CHECK(util::human_time_precise(57.0) == "57.0 秒");
+    CHECK(util::human_time_precise(80.0) == "1 分 20.0 秒");
+    CHECK(util::human_time_precise(64.0) == "1 分 4.0 秒");
+    CHECK(util::human_time_precise(60.0) == "1 分");     // 整分钟不拖尾巴
+    CHECK(util::human_time_precise(0.0) == "0.0 秒");
+    CHECK(util::human_time_precise(-5.0) == "0.0 秒");   // 负数按 0 算
+    CHECK(util::human_time_precise(3600.0) == "1 小时");
+    CHECK(util::human_time_precise(3780.0) == "1 小时 3 分");
+
+    // 进度条那边照旧用 human_time：那里要的是"还得等多久"，
+    // 一分钟以内的零头对"该不该去睡"没有意义。
+    CHECK(util::human_time(1847.0) == "31 分钟");
+}
