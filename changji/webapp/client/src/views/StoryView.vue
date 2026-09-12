@@ -490,9 +490,30 @@ function fitAll() {
   for (const el of Object.values(boxes)) fit(el)
 }
 
-/** AI 往眼前这一章写字时，把正在长的那一头一直留在视野里。 */
+/**
+ * 跟不跟着 AI 写的那一头走。
+ *
+ * **用户往上滚就松手，滚回底部就重新贴上。** 原来是每来一个 token 就
+ * 无条件 `scrollTop = scrollHeight`——想往回看一眼刚写的那几段，手一松
+ * 就被拽回底部，一个多小时的批量里翻不了任何东西。
+ *
+ * 判据是"离底部还有多远"，留 40 像素的余量：滚动位置在缩放、亚像素和
+ * 输入框重排之后常常差那么一两个像素，卡死成 `=== 0` 的话，明明在底部
+ * 却再也贴不回去了。
+ */
+const stuck = ref(true)
+const kStickSlack = 40
+
+function onScroll() {
+  const el = scroller.value
+  if (!el) return
+  stuck.value = el.scrollHeight - el.scrollTop - el.clientHeight <= kStickSlack
+}
+
+/** AI 往眼前这一章写字时，把正在长的那一头留在视野里——**除非人滚走了**。 */
 function keepEndVisible(id) {
   if (id !== current.value || !scroller.value) return
+  if (!stuck.value) return
   scroller.value.scrollTop = scroller.value.scrollHeight
 }
 
@@ -662,6 +683,12 @@ watch(current, (now, before) => {
   nextTick(() => {
     fit(boxes[now])
     if (scroller.value) scroller.value.scrollTop = 0
+    // 换了一章就是另一件事了：上一章滚到哪儿、跟没跟，都不带过来。
+    // **要在滚到顶之后设**，不然那次 scrollTop = 0 触发的 onScroll
+    // 会立刻把它判成"不在底部"。
+    nextTick(() => {
+      stuck.value = true
+    })
   })
 })
 
@@ -817,6 +844,7 @@ async function revise() {
 
   // 先把选中那段清掉，字就从那个位置长出来——这一下就是"开始写了"
   streaming.value = { chapter_id: id, from: at.from }
+  stuck.value = true   // 理由同 writeChapter
   pending.value = { chapter_id: id, prev, origin: at, after: null }
   await paint('')
 
@@ -1188,6 +1216,8 @@ async function writeChapter(chapterId, overwrite = false) {
   // 从这一刻起就锁章，不等第一个字到。**at 先给 0**：光标从头上开始，
   // 第一个字到之前也看得见"它准备从这儿写"。
   streaming.value = { chapter_id: chapterId, from: 0, at: 0 }
+  // 新起一轮就重新跟上：上一轮里人滚上去看过，不该影响这一轮。
+  stuck.value = true
 
   await new Promise((resolve) => {
     sock = openJobSocket(
@@ -1393,7 +1423,12 @@ async function stopWriting() {
 
       <!-- ================= 中：正文 ================= -->
       <section class="ed__main">
-        <div ref="scroller" class="ed__scroll" @mousedown="onPaperDown">
+        <div
+          ref="scroller"
+          class="ed__scroll"
+          @mousedown="onPaperDown"
+          @scroll.passive="onScroll"
+        >
           <!-- 草稿。AI 写完先摆出来给人看，点了采用才落库 -->
           <div v-if="draft" class="doc draft">
             <div class="doc__head">
