@@ -1278,18 +1278,17 @@ TEST_CASE("schema：正文一场一个数组，场数和段数都由语法卡住
 
     REQUIRE(sp.contains("paragraphs"));
     CHECK(sp.at("paragraphs").at("type") == "array");
-    // 下限是目标的一半（2026-09-12 从三分之二降下来的）。**下限的活儿是
-    // "别拿一两段交差"，不是"写够长"**——它顺着目标字数一起涨的时候，
-    // 有时候会高过这一场真有的内容，而 minItems 是 GBNF 硬约束，模型只能
-    // 接着吐：吐出来的是 `last_line": ...` 这种字段名当正文。见
-    // chapter_write.cpp 里 min_items 那段注释。
-    CHECK(sp.at("paragraphs").at("minItems").get<int>() >= 8);
-    CHECK(sp.at("paragraphs").at("minItems").get<int>() <= 12);
+    // 下限是目标段数的四分之三。**这个数管的是段长，不是篇幅**：一章
+    // 三千五百字的料，四十段是每段八十七字，八十段是每段四十四字，字还是
+    // 那些字。真顶到头时模型会把字段名当正文吐出来，那条由 strip_json_echo
+    // 兜底。整个来回见 chapter_write.cpp 里 min_items 那段注释。
+    CHECK(sp.at("paragraphs").at("minItems").get<int>() >= 14);
+    CHECK(sp.at("paragraphs").at("minItems").get<int>() <= 20);
     CHECK(sp.at("paragraphs").at("maxItems").get<int>() <= 34);
-    // **段长的上限就是这里唯一管得住段长的东西。** 量过的真实网文段长
-    // 中位是 33 字、传统小说 60，我们算段数用的是 45；上限放到 300 的时候
-    // 实跑出来的中位是 99。描述里写"一段推进一两秒钟的事"不管用。
-    CHECK(sp.at("paragraphs").at("items").at("maxLength").get<int>() <= 150);
+    // 段长的上下限。**maxLength 不是段长的旋钮**——2026-09-12 把它从 300
+    // 压到 150 试过，段长中位纹丝不动（78 → 83），只削掉长尾，而且真卡住
+    // 时会把句子从中间切断。它的活儿是拦住病态的千字长段。塑形靠段数。
+    CHECK(sp.at("paragraphs").at("items").at("maxLength").get<int>() >= 300);
     CHECK(sp.at("paragraphs").at("items").at("minLength").get<int>() >= 12);
     CHECK(sp.at("paragraphs").at("items").at("type") == "string");
     REQUIRE(s.at("required").size() == 1);
