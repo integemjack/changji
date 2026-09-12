@@ -474,3 +474,29 @@ TEST_CASE("动作行开头的机位标签削掉") {
         CHECK(d.beats[1].text == "你听我说：别走");
     }
 }
+
+TEST_CASE("给了角色名，speaker 就收成枚举") {
+    // 实跑里三个角色写出了四种名字：林浩、Lin Hao、LinHao、Su Wan。
+    // 下一步分镜按名字找 char_id，找不到那句就变成旁白——不配音色、
+    // 不做口型，字幕上还挂着 Su Wan。
+    const json s = json(stages::script_schema(60.0, {"林浩", "苏婉"}));
+    const json& sp = s.at("properties").at("opening").at("properties")
+                      .at("beats").at("items").at("properties").at("speaker");
+    REQUIRE(sp.contains("enum"));
+    const auto names = sp.at("enum").get<std::vector<std::string>>();
+    // 空串留给动作行
+    CHECK(names == std::vector<std::string>{"林浩", "苏婉", ""});
+
+    SUBCASE("没有角色名时不收，老项目和第一集照常") {
+        const json bare = json(stages::script_schema(60.0));
+        CHECK_FALSE(bare.at("properties").at("opening").at("properties")
+                        .at("beats").at("items").at("properties")
+                        .at("speaker").contains("enum"));
+    }
+
+    SUBCASE("平的那份不动，预告片还在用") {
+        CHECK_FALSE(json(stages::script_schema()).at("properties").at("beats")
+                        .at("items").at("properties").at("speaker")
+                        .contains("enum"));
+    }
+}

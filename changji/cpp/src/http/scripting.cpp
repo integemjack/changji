@@ -309,7 +309,10 @@ ApiResult post_script_write(const json& body, llm::Client& client,
     // 四段的 schema，每段的拍数地板按这一集的时长算。**地板是这一步唯一
     // 管用的东西**：提示词里"要凑够"模型不听，minItems 4 它就写 4 拍——
     // 实测 60 秒的集写出 13 秒的剧本，就是从这儿来的。
-    req.schema = stages::script_schema(used_duration);
+    //
+    // 名字同理：提示词里说了「一字不改」，实跑还是写出了林浩 / Lin Hao /
+    // LinHao / Su Wan 四种。收成枚举，和分镜那边收 char_id 是一个道理。
+    req.schema = stages::script_schema(used_duration, names);
     req.schema_name = "script";
 
     const stages::ScriptDraft draft = llm_guard([&] {

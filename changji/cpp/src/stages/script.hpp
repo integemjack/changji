@@ -191,7 +191,18 @@ const nlohmann::ordered_json& script_schema();
 ///
 /// 用四个命名字段而不是一个数组：GBNF 按 properties 的顺序生成，四段就一定
 /// 按顺序、一段不少地出来；数组的话每一项的地板没法各不相同。
-nlohmann::ordered_json script_schema(double duration_s);
+///
+/// characters 非空时，**speaker 收紧成枚举**（这几个名字，外加空串给动作行）。
+///
+/// **2026-09-12 加的。** 提示词里写着「人物名必须和上面给的一模一样」，实跑
+/// 出来的一集里三个角色写出了四种名字：林浩、Lin Hao、LinHao、Su Wan。后果不是
+/// 报错——下一步分镜按名字找 char_id，找不到的那句 char_id 就是空，于是它变成
+/// 旁白：不分配音色、不做口型，字幕上还挂着「Su Wan」。
+///
+/// 分镜那边早就是这么干的（llm_shot_schema 把 char_id 收成枚举），注释里写的是
+/// 「收紧成枚举是防止模型凭空造角色最硬的手段」。剧本这一层一直没收。
+nlohmann::ordered_json script_schema(
+    double duration_s, const std::vector<std::string>& characters = {});
 /// 选题的 JSON Schema。
 const nlohmann::ordered_json& premise_schema();
 

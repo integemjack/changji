@@ -489,7 +489,11 @@ std::string build_trailer_prompt(const std::string& premise, double duration_s,
 namespace {
 
 /// 一拍的 schema。四段的和平的共用；四段那份给 text 加个字数地板。
-ordered beat_item_schema(bool with_floor) {
+///
+/// characters 非空时把 speaker 收紧成枚举——名字必须一字不差，
+/// 空串留给动作行。
+ordered beat_item_schema(bool with_floor,
+                         const std::vector<std::string>& characters = {}) {
     ordered beat_props = ordered::object();
     beat_props["kind"] = {
         {"type", "string"},
@@ -498,6 +502,12 @@ ordered beat_item_schema(bool with_floor) {
     beat_props["speaker"] = {
         {"type", "string"},
         {"description", "说话的人。kind 是 action 时填空字符串"}};
+    if (!characters.empty()) {
+        ordered names = ordered::array();
+        for (const std::string& n : characters) names.push_back(n);
+        names.push_back("");   // 动作行
+        beat_props["speaker"]["enum"] = names;
+    }
     beat_props["text"] = {
         {"type", "string"},
         {"description",
@@ -548,7 +558,8 @@ const ordered& script_schema() {
     return s;
 }
 
-ordered script_schema(double duration_s) {
+ordered script_schema(double duration_s,
+                      const std::vector<std::string>& characters) {
     const std::vector<ActSpec> specs = act_plan(duration_s);
 
     ordered props = ordered::object();
@@ -563,7 +574,7 @@ ordered script_schema(double duration_s) {
         beats["description"] = s.label + "，" + std::to_string(s.from_s) + "–" +
                                std::to_string(s.to_s) + " 秒。" +
                                prompt::kActBriefs[i];
-        beats["items"] = beat_item_schema(true);
+        beats["items"] = beat_item_schema(true, characters);
 
         ordered act = ordered::object();
         act["type"] = "object";
