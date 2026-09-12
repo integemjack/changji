@@ -21,6 +21,8 @@ const ui = useUi()
 const { run, isBusy } = useAction()
 
 const platforms = ref([])
+/** 引擎说投递这一套不可用时的原话。空串 = 可用。 */
+const unavailable = ref('')
 const targets = ref([])
 const records = ref([])
 const files = ref([])
@@ -83,6 +85,15 @@ async function loadAll() {
     const [ps, ts] = await Promise.all([api.platforms(), api.publishTargets()])
     platforms.value = ps.platforms ?? []
     targets.value = ts.targets ?? []
+    // **引擎说这一套没搬进来时，要照原话说出去。**
+    //
+    // 这两个接口在自带 webapp 的二进制上回的是
+    // `{"targets": [], "error": "投递功能要起 webapp 那层 Node 服务…"}`
+    // ——空数组加一句说明（回 404 的话前端 Promise.all 一挂整页红框）。
+    // 原来这儿只取 targets、把 error 丢了，于是界面显示「还没有投递目标」：
+    // 那是在叫人去加一个，而「加目标」保存时引擎回 501。人会当成 bug，
+    // 而不是"这个二进制没带这一套"。
+    unavailable.value = ps.error || ts.error || ''
     if (!form.value.targetId && targets.value.length) {
       form.value.targetId = targets.value[0].id
     }
@@ -267,11 +278,24 @@ function retry(record) {
         </button>
       </div>
       <span class="spacer" />
-      <button class="btn btn--ghost btn--sm" type="button" @click="newTarget">
+      <button
+        class="btn btn--ghost btn--sm"
+        type="button"
+        :disabled="!!unavailable"
+        :title="unavailable"
+        @click="newTarget"
+      >
         <AppIcon name="plus" :size="14" />
         加目标
       </button>
     </div>
+
+    <!-- **不可用就明说。** 页面摆着能点的按钮、显示「还没有投递目标」，
+         人会照着去加一个，然后撞上 501。 -->
+    <p v-if="unavailable" class="alert alert--warn">
+      <AppIcon name="warn" :size="15" />
+      <span>{{ unavailable }}</span>
+    </p>
 
     <EmptyState v-if="!session.hasProject" icon="folder" tone="warn" title="还没选项目">
       <RouterLink to="/project" class="btn btn--primary">去第一步</RouterLink>
@@ -323,7 +347,9 @@ function retry(record) {
               class="select"
               :title="currentTarget ? currentTarget.exportDir || currentTarget.webhookUrl : ''"
             >
-              <option v-if="!targets.length" value="">还没有投递目标</option>
+              <option v-if="!targets.length" value="">
+                {{ unavailable ? '这个二进制没带投递' : '还没有投递目标' }}
+              </option>
               <option v-for="t in targets" :key="t.id" :value="t.id">
                 {{ t.name }} · {{ platformName(t.platform) }}
               </option>
