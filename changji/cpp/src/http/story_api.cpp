@@ -13,6 +13,8 @@
 #include "stages/story_outline.hpp"
 #include "stages/story_plan.hpp"
 #include "stages/story_reverse.hpp"
+#include "http/job_stream.hpp"
+#include "http/offload.hpp"
 #include "http/ws.hpp"
 #include "pipeline/activity.hpp"
 #include "stages/json_partial.hpp"
