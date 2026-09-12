@@ -2241,7 +2241,7 @@ TEST_CASE("整段复读先摘掉，摘不干净才打回") {
         return json{{"scenes", scenes}}.dump();
     };
 
-    // 同一段出现四次：摘成一次，其余的照收，不废整章
+    // 同一句出现四次：摘成一次，其余的照收，不废整章
     const auto d = changji::stages::parse_chapter(build(4));
     CHECK(d.text.find("我只是怕你会后悔") != std::string::npos);
     std::size_t at = 0;
@@ -2254,6 +2254,47 @@ TEST_CASE("整段复读先摘掉，摘不干净才打回") {
     // 正文没被摘残
     CHECK(d.text.find("伞我带来了") != std::string::npos);
     CHECK(changji::text::utf8_len(d.text) > 300);
+}
+
+TEST_CASE("复读摘的是句，不是段") {
+    // **第一版摘的是整段重复，挡不住。** 2026-09-12 实跑里复读的是一句话
+    // ——「你知道我最恨什么吗？」在三个不同的段落里各出现一次，段级去重
+    // 一句都抓不到，守卫照样判，三次撞完那一章还是空的。摘的粒度必须和
+    // 守卫量的粒度一样（repetition.hpp 的 kRepeatMaxSame 数的是句）。
+    json paras = json::array();
+    for (int i = 0; i < 16; ++i) {
+        paras.push_back("第" + std::to_string(i) +
+                        "段：她把抹布拧干，水滴落在地板上，溅出细小的一圈。");
+    }
+    paras.push_back("他停在门口：“伞我带来了。”");
+    paras.push_back("她没抬头：“放那儿吧。”");
+    paras.push_back("他把伞靠在柜台边：“那我走了。”");
+    // 同一句话散在三个不同的段落里——段级去重抓不到这种
+    paras.push_back("他看着她的背影。你知道我最恨什么吗？他没说出口。");
+    paras.push_back("她转过身来。你知道我最恨什么吗？这句话卡在他喉咙里。");
+    paras.push_back("门开了又合上。你知道我最恨什么吗？他终究没问。");
+    json scenes = json::array();
+    scenes.push_back({{"where", "深夜，便利店"},
+                      {"pov", "林晚"},
+                      {"who", json::array({"林晚", "陈默"})},
+                      {"goal", "把伞要回来"},
+                      {"obstacle", "他不认这把伞"},
+                      {"worse", "她发现伞根本不是他带来的"},
+                      {"turn", "伞柄上刻着别人的名字"},
+                      {"paragraphs", paras},
+                      {"last_line", "她把伞柄转过来，刻着的不是她的名字。"}});
+
+    const auto d = changji::stages::parse_chapter(json{{"scenes", scenes}}.dump());
+    std::size_t at = 0;
+    int times = 0;
+    while ((at = d.text.find("你知道我最恨什么吗", at)) != std::string::npos) {
+        ++times;
+        at += 3;
+    }
+    CHECK(times == 1);
+    // 那几段里别的话留着，不是整段丢掉
+    CHECK(d.text.find("他看着她的背影") != std::string::npos);
+    CHECK(d.text.find("门开了又合上") != std::string::npos);
 }
 
 TEST_CASE("写正文用的温度比默认低") {

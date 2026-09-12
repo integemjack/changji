@@ -3,6 +3,7 @@
 #include "stages/repetition.hpp"
 
 #include <algorithm>
+#include <map>
 #include <set>
 #include <string>
 #include <vector>
@@ -728,24 +729,40 @@ ChapterDraft parse_chapter(const std::string& raw, int min_chars, bool strict) {
     // 摘完还判复读（说明是句级的循环，不是整段重复），才打回。
     // 和占位符、引号、分镜话一个路子——能就地修好的别废掉整章。
     if (!check_repetition(d.text).ok) {
-        std::set<std::string> seen_para;
+        // **按句摘，不是按段摘。** 第一版摘的是整段重复，而 2026-09-12
+        // 实跑里复读的是**一句话**——「你知道我最恨什么吗？」在三个不同的
+        // 段落里各出现一次，段级去重一句都抓不到，守卫照样判，三次撞完
+        // 那一章还是空的。摘的粒度必须和守卫量的粒度一样（见 repetition.hpp
+        // 的 kRepeatMaxSame，它数的是句）。
+        std::map<std::string, int> seen;
         std::string kept;
         std::string line;
-        const auto take = [&](const std::string& one) {
-            if (one.empty()) return;
-            if (!seen_para.insert(bare(one)).second) return;  // 见过了，丢掉
+        const auto take_line = [&](const std::string& one) {
+            if (text::strip_ws(one).empty()) return;
+            std::string keep_para;
+            for (const std::string& sent : split_sentences(one)) {
+                const std::string key = bare(sent);
+                // 短句重复是正常的（「我知道。」「为什么？」），不动。
+                if (text::utf8_len(key) >= kRepeatMinSentenceChars &&
+                    ++seen[key] > 1) {
+                    continue;
+                }
+                keep_para += sent;
+            }
+            if (text::strip_ws(keep_para).empty()) return;
             if (!kept.empty()) kept += "\n";
-            kept += one;
+            kept += text::strip_ws(keep_para);
         };
         for (const char c : d.text) {
             if (c != '\n') {
                 line += c;
                 continue;
             }
-            take(line);
+            take_line(line);
             line.clear();
         }
-        take(line);
+        take_line(line);
+        // 摘到只剩一半以下就别要了——那说明整章就是一段复读，留着也没用。
         if (text::utf8_len(kept) >= text::utf8_len(d.text) / 2) d.text = kept;
     }
 
