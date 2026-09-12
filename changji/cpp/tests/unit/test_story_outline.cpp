@@ -1638,6 +1638,56 @@ TEST_CASE("写满一章的量，就该切出好几集") {
     CHECK(from_ch01 >= 3);
 }
 
+TEST_CASE("模型的草稿纸摘掉：引用块和强调标记") {
+    // **2026-09-13 用全新项目跑批量写正文时撞到的。** ch02 四十八段里十五段
+    // 是 markdown 引用块，内容是模型在跟自己讨论提示词：
+    //     > 注意：根据规则20，每一场都要有人说话……
+    //     > 重新审视规则：「不要冒出没在人物表里的人」。
+    // 原有的自言自语过滤靠词表（JSON / 请忽略 / 用户要求），一条都没命中。
+    const std::string good1 = "林浅推开停尸间的门，冷气扑面而来，她按住了胸口。";
+    const std::string good2 = "走廊尽头的灯忽明忽暗，她听见身后有脚步声跟上来。";
+    const std::string good3 = "她攥紧手里那张纸，指节发白，转身迎向那道影子。";
+    const std::string aside =
+        "> 注意：根据规则20，每一场都要有人说话。此场景若只有林浅一人，"
+        "必须让另一个人进来或改为有人的地方。";
+
+    const json draft = {
+        {"scenes",
+         {{{"where", "停尸间"},
+           {"turn", "她发现尸体还在呼吸"},
+           {"paragraphs", {good1, aside, good2, good3}}}}}};
+    const auto d = changji::stages::parse_chapter(draft.dump());
+
+    REQUIRE(d.scenes.size() == 1);
+    // 引用块那一段整段摘掉——它不是小说
+    CHECK(d.text.find("根据规则20") == std::string::npos);
+    CHECK(d.text.find(">") == std::string::npos);
+    // 正常段落一个不少
+    CHECK(d.text.find(good1) != std::string::npos);
+    CHECK(d.text.find(good2) != std::string::npos);
+    CHECK(d.text.find(good3) != std::string::npos);
+    // **场次表和正文要一起摘**：场的位置是按段落数数出来的，
+    // 只摘正文的话两边就对不上了。
+    CHECK(d.scenes[0].paragraphs.size() == 3);
+
+    SUBCASE("强调标记只去符号、不摘段") {
+        // 它出现在**正常段落**里，摘段会把内容一起摘掉。
+        const std::string withMark =
+            "内容只有四个字：**“别多管闲事。”**她盯着屏幕，手指僵在半空。";
+        const json d2 = {
+            {"scenes",
+             {{{"where", "办公室"},
+               {"turn", "她收到威胁短信"},
+               {"paragraphs", {withMark, good2, good3}}}}}};
+        const auto got = changji::stages::parse_chapter(d2.dump());
+        REQUIRE(got.scenes.size() == 1);
+        CHECK(got.scenes[0].paragraphs.size() == 3);   // 一段都没少
+        CHECK(got.text.find("**") == std::string::npos);
+        CHECK(got.text.find("别多管闲事") != std::string::npos);
+        CHECK(got.text.find("手指僵在半空") != std::string::npos);
+    }
+}
+
 TEST_CASE("提示词：只写这一章，带的是压缩的全局记忆") {
     Story s = outline_only_story();
     s.chapters[0].text = "第一章已经写好的正文。他推门进来。";

@@ -609,6 +609,43 @@ static std::string normalize_quotes(std::string s) {
 ///
 /// **词表只收连着的词组，不收单字。** 「画面」「镜头」单独出现常常是正当
 /// 的——照片的画面、摄影机的镜头都是实物。
+/// 摘掉 markdown 的强调标记，**只去标记，留文字**。
+///
+/// 2026-09-13 实跑：`内容只有四个字：**“别多管闲事。”**`。标记本身会原样
+/// 落进正文、分集的钩子和字幕。
+///
+/// 和引用块那条的分寸不一样：引用块**整段都不是小说**，直接摘段；强调标记
+/// 出现在**正常段落**里，摘段会把内容一起摘掉，所以只去符号。
+///
+/// **成对才去**：落单的那个多半是内容里本来就有的（`3*4`），去掉是改字。
+static std::string strip_emphasis(const std::string& para) {
+    static const char* kMarks[] = {"**", "__"};
+    std::string out = para;
+    for (const char* m : kMarks) {
+        const std::string mark = m;
+        std::size_t n = 0;
+        for (std::size_t i = 0; (i = out.find(mark, i)) != std::string::npos;
+             i += mark.size()) {
+            ++n;
+        }
+        if (n < 2) continue;
+        const std::size_t drop = n - (n % 2);   // 多出来的落单那个留着
+        std::string cleaned;
+        std::size_t at = 0, done = 0;
+        while (at < out.size()) {
+            if (done < drop && out.compare(at, mark.size(), mark) == 0) {
+                at += mark.size();
+                ++done;
+                continue;
+            }
+            cleaned += out[at];
+            ++at;
+        }
+        out = std::move(cleaned);
+    }
+    return out;
+}
+
 static std::string strip_camera_talk(const std::string& para) {
     static const char* kCamera[] = {
         "镜头拉远", "镜头拉近", "镜头定格", "镜头切", "镜头对准", "镜头扫过",
@@ -805,8 +842,9 @@ ChapterDraft parse_chapter(const std::string& raw, int min_chars, bool strict) {
                 ps != s.end() && ps->is_array()) {
                 for (const auto& p : *ps) {
                     if (!p.is_string()) continue;
-                    const std::string one = strip_camera_talk(fix_unpaired_quotes(
-                        strip_json_echo(text::strip_ws(p.get<std::string>()))));
+                    const std::string one =
+                        strip_emphasis(strip_camera_talk(fix_unpaired_quotes(
+                            strip_json_echo(text::strip_ws(p.get<std::string>())))));
                     if (one.empty()) continue;
                     sc.paragraphs.push_back(one);
                     push_text(one);
@@ -816,8 +854,9 @@ ChapterDraft parse_chapter(const std::string& raw, int min_chars, bool strict) {
             // 分得出它当初是单独一栏——那一栏只为了**语法上不给总结留位置**。
             if (const auto last = s.find("last_line");
                 last != s.end() && last->is_string()) {
-                const std::string one = strip_camera_talk(fix_unpaired_quotes(
-                    strip_json_echo(text::strip_ws(last->get<std::string>()))));
+                const std::string one =
+                    strip_emphasis(strip_camera_talk(fix_unpaired_quotes(
+                        strip_json_echo(text::strip_ws(last->get<std::string>())))));
                 if (!one.empty()) {
                     sc.paragraphs.push_back(one);
                     push_text(one);
@@ -861,9 +900,46 @@ ChapterDraft parse_chapter(const std::string& raw, int min_chars, bool strict) {
     {
         static const char* kSelfTalk[] = {"JSON", "json", "请忽略", "用户要求",
                                           "输出应"};
+        constexpr char kNewline = '\n';
         const auto is_self_talk = [&](const std::string& s) {
             for (const char* w : kSelfTalk) {
                 if (s.find(w) != std::string::npos) return true;
+            }
+            // **词表认不全，再加一条结构上的。**
+            //
+            // 2026-09-13 用全新项目跑批量写正文时撞到的：ch02 四十八段里
+            // **十五段是 markdown 引用块**，内容是模型在跟自己讨论提示词——
+            //
+            //   > 注意：根据规则20，每一场都要有人说话。此场景若只有林浅
+            //     一人，必须让另一个人进来……
+            //   > 重新审视规则：「不要冒出没在人物表里的人」。那么谁可以在场？
+            //   > 唯一的办法是：**回忆不是戏**，但**录音**可以是戏的一部分吗？
+            //
+            // 上面那张词表一个都没命中（没有 JSON、没有"请忽略"），于是
+            // 一章五千字里有近三分之一不是小说，还会参与分集切点、当原料
+            // 喂给剧本改编。
+            //
+            // 判据取**行首的 markdown 引用符**：中文小说正文里不会用 `>`
+            // 开头（引语用「」或引号），这个信号是干净的；而"根据规则N"
+            // 那种措辞是开放集合，往词表里补永远补不全。markdown 标题
+            // （`## 第三场`）同理。
+            //
+            // **要逐行看，不能只看开头。** 这个谓词有两个用法：外面拿整章
+            // 问一次当闸门，里面再逐段问。锚在字符串开头的话，整章那一次
+            // 问到的是第一段正文，闸门永远不开——上面那几个关键词能中，
+            // 只是因为 find 是在全文里搜的。
+            std::size_t at = 0;
+            while (at <= s.size()) {
+                std::size_t end = s.find(kNewline, at);
+                if (end == std::string::npos) end = s.size();
+                const std::string head = text::strip_ws(s.substr(at, end - at));
+                if (!head.empty() && head[0] == '>') return true;
+                if (head.size() >= 2 && head[0] == '#' &&
+                    (head[1] == '#' || head[1] == ' ')) {
+                    return true;
+                }
+                if (end == s.size()) break;
+                at = end + 1;
             }
             return false;
         };
