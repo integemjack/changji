@@ -809,7 +809,11 @@ void run(const config::Settings& settings, const Options& opts) {
             {
                 const double card_gb = prof.gpu.has_value() ? prof.gpu->vram_gb()
                                                             : prof.vram_gb;
-                const auto ex = config::expand_placement(s, card_gb);
+                // unified 也要传：界面显示的必须和引擎真正用的是同一个
+                // 展开结果，漏了这个参数就又分叉了（而这一处存在的理由
+                // 正是"不分叉"）。
+                const auto ex = config::expand_placement(
+                    s, card_gb, prof.gpu.has_value() && prof.gpu->unified());
                 const auto pack = [](const config::PlacementInfo& p) {
                     return json{{"weights", p.weights},
                                 {"modelGb", p.model_gb},

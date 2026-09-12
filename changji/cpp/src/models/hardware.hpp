@@ -11,6 +11,7 @@
 //
 // 移植自 src/changji/hardware.py。
 
+#include <cstdint>
 #include <map>
 #include <optional>
 #include <string>
@@ -61,6 +62,28 @@ struct TierSpec {
     TierSpec scaled_to(const std::string& aspect_ratio) const;
 };
 
+/// Metal 报的内存。**只有 macOS 上有这个东西。**
+///
+/// 两个字段都是字节。`max_working_set` 是 `recommendedMaxWorkingSetSize`：
+/// Metal 肯让 GPU 一次性占住多少。**它不是整机内存**——128 GB 的 M3 Max 上
+/// 它是 107.5 GB（84%），剩下的系统留着自己用。超过这条线不会当场失败，
+/// 但系统开始压缩换页，那比少用几 GB 惨得多。
+///
+/// `allocated` 是 `currentAllocatedSize`：此刻已经占了多少。**包含 ggml
+/// 那边占的**（同一个 MTLDevice 对象，实测验过），所以
+/// `max_working_set - allocated` 就是"还能拿多少"。
+struct MetalMemory {
+    std::string name;
+    std::uint64_t max_working_set = 0;
+    std::uint64_t allocated = 0;
+    bool unified = false;
+};
+
+#if defined(__APPLE__)
+/// 实现在 hardware_metal.mm。问不到（没有 Metal 设备）返回空。
+std::optional<MetalMemory> metal_memory();
+#endif
+
 struct GPUInfo {
     std::string name;
     int vram_mb = 0;
@@ -74,8 +97,24 @@ struct GPUInfo {
     /// 会算出一张卡根本跑不动的分辨率。
     int count = 1;
 
+    /// 统一内存机器上，**整机物理内存**（MB）。0 = 不是统一内存，或者问不到。
+    ///
+    /// **和 vram_mb 不是一回事，界面上两个都要显示。** 128 GB 的 Mac 上
+    /// vram_mb 是 Metal 肯给的那 107.5 GB，这一项才是 128 GB。只显示前者，
+    /// 用户看到的是"我明明买的 128"；只显示后者，预算又会按 128 算，
+    /// 而超过 107.5 系统就开始换页。
+    int unified_mb = 0;
+
+    /// 这块「显存」是不是和系统内存同一块。
+    ///
+    /// **影响的不只是显示。** 独显上"权重放内存"是拿速度换显存（每步走
+    /// 一次 PCIe）；统一内存上根本没有那次搬运，也没有另一个内存池——
+    /// 放内存既不省地方也不会更快，只是把计算赶去了 CPU。
+    /// 见 ModelsConfig::weights_for。
+    bool unified() const { return unified_mb > 0; }
+
     NLOHMANN_DEFINE_TYPE_INTRUSIVE_WITH_DEFAULT(GPUInfo, name, vram_mb, driver,
-                                                count)
+                                                count, unified_mb)
 
     double vram_gb() const { return static_cast<double>(vram_mb) / 1024.0; }
 };

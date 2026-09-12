@@ -622,6 +622,36 @@ endif()
 
 # ---- 本体 ----
 
+# hardware.cpp 在 macOS 上要的那一个 .mm。两个目标（changji 和
+# changji_tests）都编 hardware.cpp，所以两边都要带上它，否则是
+# "undefined symbol: metal_memory"——而那条报错看不出和 Metal 有关系。
+#
+# ⚠️ **不要用 `enable_language(OBJCXX)`。**
+#
+# 那是第一版的写法，结果是 llama.cpp 整个编不过：
+#
+#     ggml-metal-context.m:102: error: cannot initialize a variable of type
+#     'ggml_metal_t' with an rvalue of type 'void *'
+#
+# 因为 CMake 的 `CMAKE_OBJCXX_SOURCE_FILE_EXTENSIONS` 里**带着 `m`**：
+# 一开 OBJCXX，ggml 那一堆 `.m`（Objective-C，C 的规矩，void* 隐式转换）
+# 就全都按 Objective-C++ 编了，而 C++ 不许那么转。**为了自己一个文件，
+# 把上游几十个文件的语言改掉了**，而报错指向的是上游的源码。
+#
+# 所以只给这一个文件指定语言和方言：按 C++ 编，加一句 `-x objective-c++`。
+# 全局的语言映射一个字都不动。
+#
+# ARC 只开在这一个文件上：MTLCreateSystemDefaultDevice 是 Create 系的，
+# 手动管引用计数就要记得 release，而开了 ARC 那件事不用想。
+if(APPLE)
+    set(CHANGJI_METAL_SOURCES src/models/hardware_metal.mm)
+    set_source_files_properties(src/models/hardware_metal.mm PROPERTIES
+                                LANGUAGE CXX
+                                COMPILE_OPTIONS "-x;objective-c++;-fobjc-arc")
+else()
+    set(CHANGJI_METAL_SOURCES "")
+endif()
+
 add_executable(changji
     src/main.cpp
     src/util/paths.cpp
@@ -637,6 +667,7 @@ add_executable(changji
     src/models/project.cpp
     src/models/story.cpp
     src/models/hardware.cpp
+    ${CHANGJI_METAL_SOURCES}
     src/util/text.cpp
     src/util/human_time.cpp
     src/util/fs_time.cpp
@@ -765,6 +796,13 @@ if(CHANGJI_SSL)
         # 认，clang-cl 也认，MinGW 不认，所以这里显式再链一次。
         target_link_libraries(changji PRIVATE crypt32)
     endif()
+endif()
+
+# hardware_metal.mm 要的两个框架。**不能指望 ggml 把它们带进来**：
+# CHANGJI_SD 和 CHANGJI_LLAMA 都关掉时（单元测试那一档就是）根本没有 ggml，
+# 而 hardware.cpp 照样要问 Metal。
+if(APPLE)
+    target_link_libraries(changji PRIVATE "-framework Metal" "-framework Foundation")
 endif()
 
 if(CHANGJI_LLAMA)
@@ -1008,6 +1046,7 @@ if(CHANGJI_BUILD_TESTS)
         src/models/project.cpp
         src/models/story.cpp
         src/models/hardware.cpp
+        ${CHANGJI_METAL_SOURCES}
         src/util/paths.cpp
         src/util/proc.cpp
         src/util/sysstat.cpp
@@ -1111,6 +1150,11 @@ if(CHANGJI_BUILD_TESTS)
     endif()
     if(WIN32)
         target_link_libraries(changji_tests PRIVATE shell32)
+    endif()
+    if(APPLE)
+        # 理由同 changji 那边：测试目标也编 hardware.cpp。
+        target_link_libraries(changji_tests PRIVATE
+                              "-framework Metal" "-framework Foundation")
     endif()
     target_include_directories(changji_tests PRIVATE "${doctest_SOURCE_DIR}")
 

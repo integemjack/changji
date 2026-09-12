@@ -274,7 +274,8 @@ constexpr double kLlmWeightFactor = 1.25;
 constexpr double kLlmOverhead = 4.0;
 }  // namespace
 
-std::string ModelsConfig::weights_for(double vram_gb, double model_gb) const {
+std::string ModelsConfig::weights_for(double vram_gb, double model_gb,
+                                     bool unified) const {
     if (weights != "smart") return weights;
     // **文本编码器永远放内存。** 它每镜只跑一次（H3 的 Qwen3-VL-32B 实测
     // 8 到 9 秒），而它是这一套里最大的一块（18.9 GB）。放显存换来的那几秒
@@ -284,14 +285,35 @@ std::string ModelsConfig::weights_for(double vram_gb, double model_gb) const {
     if (model_gb <= 0.0) return "cpu";
     // 缓冲用 kVideoBuffer，那个数是怎么来的写在它头上。
     if (model_gb + kVideoBuffer > vram_gb) return "cpu";   // 权重都常驻不下
+
+    // ---- 统一内存（苹果芯片）：装得下就一个都别往内存放 ----
+    //
+    // ⚠️ **上面那句"文本编码器永远放内存"是独显的算法，在这种机器上是纯亏。**
+    //
+    // 独显上"放内存"换的是显存：权重待在系统内存里，用到才走一趟 PCIe
+    // 搬进去。统一内存上这笔交易的两头都不成立——
+    //   - 没有"另一块内存"：CPU 和 GPU 指的是同一片物理内存，把权重挪到
+    //     "内存"里并不会让 GPU 多出哪怕一个字节；
+    //   - 没有那趟搬运：也就没有"省显存换一点慢"这回事，只剩下把计算
+    //     赶去 CPU 跑（UMT5-XXL 在 CPU 上 8 到 9 秒，在 GPU 上一两秒）。
+    //
+    // 所以顺序反过来：**默认全常驻**，只有真的超过 Metal 那条线
+    // （recommendedMaxWorkingSetSize，见 models/hardware.cpp）才开始退让。
+    // 退让仍然有意义——ggml 的 CPU 缓冲不算进那条线里，超了系统会开始
+    // 压缩换页，那比把编码器放 CPU 慢得多。
+    if (unified) {
+        const bool all_fits = model_gb + kVideoBuffer + kVideoVae <= vram_gb;
+        return all_fits ? "gpu" : "te=cpu";
+    }
+
     // VAE 也常驻要再加 5.5 GB（放内存每镜解码多花 63 秒）。既要真装得下，
     // 也要过 vae_vram_min_gb 那道门槛。
     const bool vae_fits = model_gb + kVideoBuffer + kVideoVae <= vram_gb;
     return (vram_gb >= vae_vram_min_gb && vae_fits) ? "te=cpu" : "te=cpu,vae=cpu";
 }
 
-std::string ModelsConfig::image_weights_for(double vram_gb,
-                                            double model_gb) const {
+std::string ModelsConfig::image_weights_for(double vram_gb, double model_gb,
+                                           bool unified) const {
     if (image_weights != "smart") return image_weights;
     // 常驻要放得下：权重本身 + 1280×704 解码缓冲 6.6 GB（实测）+ 采样缓冲和
     // 别的上下文的残留（视频上下文卸掉之后 CUDA 还占 1.4 GB）约 4 GB。
@@ -299,6 +321,9 @@ std::string ModelsConfig::image_weights_for(double vram_gb,
     // 猜错的代价是六镜首帧全废，而放内存只是慢。
     const double need = model_gb + kImageDecode + kImageSlack;
     if (model_gb <= 0.0) return "cpu";
+    // 统一内存上理由同 weights_for：装得下就全常驻，把编码器和 VAE 赶去
+    // CPU 换不来任何地方。装不下才退回原来那条阶梯。
+    if (unified) return vram_gb * 0.9 >= need ? "gpu" : "te=cpu,vae=cpu";
     return vram_gb * 0.9 >= need ? "te=cpu,vae=cpu" : "cpu";
 }
 
@@ -689,10 +714,11 @@ double model_size_gb(const Settings& s, const std::string& entry) {
 
 }  // namespace
 
-Settings expand_placement(Settings s, double card_gb) {
-    s.models.weights = s.models.weights_for(card_gb, model_size_gb(s, s.models.video));
-    s.models.image_weights =
-        s.models.image_weights_for(card_gb, model_size_gb(s, s.models.image));
+Settings expand_placement(Settings s, double card_gb, bool unified) {
+    s.models.weights =
+        s.models.weights_for(card_gb, model_size_gb(s, s.models.video), unified);
+    s.models.image_weights = s.models.image_weights_for(
+        card_gb, model_size_gb(s, s.models.image), unified);
     return s;
 }
 
@@ -920,6 +946,8 @@ subtitle_font = "Source Han Sans SC"
 # 装得下的常驻显存——大卡（≥ 24 GB）上用这个，实测出片阶段利用率从 35% 起飞。
 # **默认 smart：按视频模型文件多大和这张卡多大算，换卡不用改。**
 # 别写死。写死 cpu 的后果：换了 48 GB 的卡还在每一步搬权重，而且没有任何提示。
+# 苹果芯片上 smart 会展开成 gpu（一个组件都不往内存放）：那种机器上
+# CPU 和 GPU 是同一块内存，"放内存"省不出地方，只是把计算赶去了 CPU。
 # weights = "smart"
 #
 # 图像模型单独一项。**别跟着 weights 一起改成 cpu**：那是给 18 GB 的视频

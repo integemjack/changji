@@ -187,12 +187,19 @@ constexpr const char* kVmStat = "/usr/bin/vm_stat";
 /// "显存够就不用清理"全部按 12 GB 算——而这**不报错**，只是什么都跑不大。
 ///
 /// 苹果芯片是统一内存：CPU 和 GPU 共用同一块，没有独立显存这回事。
-/// GPU 能用多少由 `iogpu.wired_limit_pct` 决定，默认不是全部——
-/// 系统自己要留一份。读得到就用它，读不到按 75% 算（苹果文档里
-/// recommendedMaxWorkingSetSize 在这一档附近）。
+/// GPU 能一次占住多少由 Metal 说了算（`recommendedMaxWorkingSetSize`），
+/// **所以直接问它**，见 hardware_metal.mm。
+///
+/// ⚠️ **原来这里是拿 sysctl 算的，而那个算法从头到尾没生效过。**
+/// 它查 `iogpu.wired_limit_pct`，而那个 OID 在 macOS 26 上已经不存在
+/// （现在叫 `iogpu.wired_limit_mb`）——sysctl 报 unknown oid，代码静默
+/// 退回写死的 75%。这台 128 GB 的 M3 Max 上：算出 96 GB，Metal 说 107.5 GB。
+/// 少认 11.5 GB，没有任何报错。**兜底比例永远是这样：它不会响，只会错。**
 ///
 /// **Intel Mac 不走这条**：那些机器要么是独显（另说），要么核显性能
-/// 根本跑不动这套东西，按统一内存算会得出一个大得离谱的数。
+/// 根本跑不动这套东西。所以先卡 brand_string 那道门，再问 Metal——
+/// 顺序不能反：Intel Mac 上 Metal 照样答得出一个数，只是那个数
+/// 和这套东西能不能跑没关系。
 std::optional<GPUInfo> detect_apple_gpu() {
     const bool dbg = !paths::env("CHANGJI_DEBUG_HW").empty();
     const auto sysctl_num = [dbg](const char* key) -> std::optional<std::uint64_t> {
@@ -236,23 +243,70 @@ std::optional<GPUInfo> detect_apple_gpu() {
         return std::nullopt;
     }
 
+    // 整机物理内存。这一项是**给人看的**："我买的是 128 GB"。
+    // 预算不按它算，按下面 Metal 给的那条线。
     const auto total = sysctl_num("hw.memsize");
     if (!total.has_value() || *total == 0) return std::nullopt;
 
-    // GPU 能用的那一份。iogpu.wired_limit_pct 是百分数，0 表示"系统自己定"。
-    double pct = 75.0;
-    if (const auto p = sysctl_num("iogpu.wired_limit_pct");
-        p.has_value() && *p > 0 && *p <= 100) {
-        pct = static_cast<double>(*p);
+    GPUInfo g;
+    g.count = 1;
+    g.unified_mb = static_cast<int>(*total / (1024ull * 1024ull));
+
+    // **先问 Metal。** 它答得出就到此为止，一个兜底比例都不用猜。
+    if (const auto m = metal_memory(); m.has_value()) {
+        if (!m->name.empty()) name = m->name;
+        g.name = name + "（统一内存）";
+        g.vram_mb = static_cast<int>(m->max_working_set / (1024ull * 1024ull));
+        // 万一是独显（Intel Mac 上的 AMD 卡），那就不是统一内存，
+        // 整机内存这一项对它没意义，清掉免得界面上显示一个误导的数。
+        if (!m->unified) g.unified_mb = 0;
+        if (dbg) {
+            std::fprintf(stderr,
+                         "[hw] metal: working_set=%llu allocated=%llu unified=%d\n",
+                         static_cast<unsigned long long>(m->max_working_set),
+                         static_cast<unsigned long long>(m->allocated),
+                         static_cast<int>(m->unified));
+        }
+        return g;
     }
 
-    GPUInfo g;
+    // 退路：连 Metal 设备都没有的机器（10.11 以后基本不存在，但探测这一层
+    // 不该因为"基本不存在"就没有下限）。
+    //
+    // **OID 是 `iogpu.wired_limit_mb`，不是 `..._pct`。** 后者是老系统的
+    // 名字，在 macOS 26 上查它只会得到 unknown oid。0 表示"系统自己定"。
+    // 都读不到就按 84% —— 这个数是本机 M3 Max 上从 Metal 读回来反推的
+    // （107.5 / 128），**不是苹果承诺的比例**，所以只配当兜底。
+    double usable_bytes = static_cast<double>(*total) * 0.84;
+    if (const auto mb = sysctl_num("iogpu.wired_limit_mb");
+        mb.has_value() && *mb > 0) {
+        usable_bytes = static_cast<double>(*mb) * 1024.0 * 1024.0;
+    }
     g.name = name + "（统一内存）";
-    const double usable_bytes = static_cast<double>(*total) * pct / 100.0;
     g.vram_mb = static_cast<int>(usable_bytes / (1024.0 * 1024.0));
-    g.count = 1;
     return g;
 }
+
+/// 这台机器的 GPU 最多能占多少（GB）。**算一次存着。**
+///
+/// 只有一个用处：给 free_vram_gb 里那条 vm_stat 退路当上限。所以可以缓存
+/// ——Metal 那条线在一次运行里不会变，而这个函数的调用点在借槽的路径上。
+std::optional<double> apple_working_set_gb() {
+    static const std::optional<double> cached = []() -> std::optional<double> {
+        if (const auto m = metal_memory(); m.has_value()) {
+            return static_cast<double>(m->max_working_set) /
+                   (1024.0 * 1024.0 * 1024.0);
+        }
+        if (const auto g = detect_apple_gpu(); g.has_value()) return g->vram_gb();
+        return std::nullopt;
+    }();
+    return cached;
+}
+#endif
+
+#if !defined(__APPLE__)
+/// 定义在下面 Nvml 那个类后面（它要用到那个类，而这里比它早）。
+std::optional<GPUInfo> detect_gpu_nvml();
 #endif
 
 std::optional<GPUInfo> detect_gpu() {
@@ -261,6 +315,23 @@ std::optional<GPUInfo> detect_gpu() {
     // 装过 nvidia 的工具链，那时候 nvidia-smi 在但没有 N 卡，
     // 探出来的是空的，反而把统一内存那条盖掉。
     if (auto apple = detect_apple_gpu(); apple.has_value()) return apple;
+#else
+    // **先问 NVML，问不到再 fork nvidia-smi。**
+    //
+    // 这条和 Mac 那条是同一个毛病的两面：**总量和空闲来自两个不同的源。**
+    // 空闲那条（free_vram_gb / vram_totals_gb）早就走 NVML 了，只有这条
+    // "整卡多大"还在 fork nvidia-smi。于是：
+    //
+    //   - **nvidia-smi 不在 PATH 上就等于没有显卡。** 装了驱动没装 toolkit、
+    //     容器里只挂了 /dev/nvidia*、Windows 上 PATH 没带那个 bin 目录——
+    //     都会静默退回"按 12 GB 估算"。一张 96 GB 的卡被当成 12 GB 用，
+    //     而这**不报错**，只是什么都跑不大（Mac 上那个 75% 一模一样）。
+    //   - 两个数来自两套接口，口径对不上时没人发现。
+    //   - fork 一次一百毫秒上下，而这个进程 CUDA 映射最满的时候 fork
+    //     是 NVIDIA 明确不支持的做法（理由写在 Nvml 那个类上面）。
+    //
+    // NVML 拿不到才走老路——**没拆任何东西，只是把更稳的那条放在前面**。
+    if (auto g = detect_gpu_nvml(); g.has_value()) return g;
 #endif
     if (!proc::which("nvidia-smi")) return std::nullopt;
 
@@ -525,6 +596,29 @@ private:
     bool ok_ = false;
 };
 
+/// 用 NVML 答出 detect_gpu 要的那三件事：名字、卡 0 的总显存、有几张卡。
+///
+/// `live()` 一次就把这三样都给了（它本来是给顶栏那三个小表用的），
+/// 所以这里不用再写一遍 dlopen。驱动版本它给不了，留空——
+/// 界面上没有谁在显示驱动版本，为它单独再加载一个符号不值当。
+std::optional<GPUInfo> detect_gpu_nvml() {
+    const auto cards = Nvml::live();
+    if (cards.empty()) return std::nullopt;
+    // **看的是这个进程绑的那张卡**，不是第一张。理由同 free_vram_gb：
+    // 多卡机器上拿错卡的容量，下游一路算下去都是错的。
+    // 认不出编号（CUDA_VISIBLE_DEVICES 写的是 UUID）就退回 0 号——
+    // 这一条只影响"这台机器多大"，不像空闲那条会直接导致 OOM。
+    const unsigned int idx = visible_device_index().value_or(0u);
+    const auto& card = idx < cards.size() ? cards[idx] : cards.front();
+    if (card.vram_total_gb <= 0.0) return std::nullopt;
+
+    GPUInfo g;
+    g.name = card.name.empty() ? "NVIDIA GPU" : card.name;
+    g.vram_mb = static_cast<int>(card.vram_total_gb * 1024.0);
+    g.count = static_cast<int>(cards.size());
+    return g;
+}
+
 #endif  // !__APPLE__
 }  // namespace
 
@@ -583,12 +677,39 @@ std::string nth_gpu_line(const std::string& out, unsigned int idx) {
 
 std::optional<double> free_vram_gb() {
 #if defined(__APPLE__)
-    // 统一内存：能用的系统内存就是能用的"显存"。
-    // nvidia-smi 在这台机器上不存在，不走这条的话调度器永远拿不到实时
-    // 空闲量，只能按保守估算办事——也就是每次切阶段都卸一个模型。
+    // **先问 Metal：`能占的上限 - 已经占了的`。**
+    //
+    // 这条比底下那条 vm_stat 强在两处：一是不 fork（这个函数在每次借槽
+    // 的路径上），二是**口径和总量同源**——两个数来自同一个 MTLDevice，
+    // 不会出现"空闲比总量还大"。
+    //
+    // 那种事真发生过：总量走 sysctl 的 75% 兜底算出 96 GB，空闲走 vm_stat
+    // 算出 106 GB，于是 sd_image.cpp 里 `used = total - free` 是 -10，
+    // 卡在 `if (used_gb > 0.0)` 上——**Mac 上显存实测标定一次都没记下过**，
+    // 而且没有任何日志说它被跳过了。
+    if (const auto m = metal_memory(); m.has_value()) {
+        // **和 GPUInfo::vram_mb 一样按 MB 取整，而且往小了取。**
+        // 那边是 `字节 / 1MiB` 直接截断，这边要是按原始字节算，空闲会比
+        // 报出去的总量大那么一丁点（实测 20 KB，全是取整造成的），
+        // 于是 `free <= total` 这条不变量在小数点后第五位上破掉——
+        // 而下游拿它们相减（见 sd_image.cpp 的 record_measured_vram）。
+        // 总量向下取、已占用向上取，差值永远落在总量里面。
+        constexpr double kMb = 1024.0 * 1024.0;
+        const double total_mb = std::floor(static_cast<double>(m->max_working_set) / kMb);
+        const double used_mb = std::ceil(static_cast<double>(m->allocated) / kMb);
+        return total_mb > used_mb ? (total_mb - used_mb) / 1024.0 : 0.0;
+    }
+
+    // 退路：vm_stat。**它的口径不是"显存"**——free + inactive + speculative
+    // 是"系统还能腾出多少内存给 CPU 用"，比 Metal 肯 wire 给 GPU 的那条线
+    // 大得多。所以**必须夹住**，宁可报小：报小只是多卸一次模型，
+    // 报大是拿不存在的空间去判"够，不卸"，下一步就是换页。
     if (auto r = proc::run(kVmStat, {}, 5000);
         r.launched && r.exit_code == 0) {
-        if (auto gb = parse_vm_stat(r.out); gb.has_value()) return gb;
+        if (auto gb = parse_vm_stat(r.out); gb.has_value()) {
+            const auto cap = apple_working_set_gb();
+            return cap.has_value() ? std::min(*gb, *cap) : *gb;
+        }
     }
     return std::nullopt;
 // **这里必须是 #else，不能是 #endif。** Apple 那一支已经 return 了，

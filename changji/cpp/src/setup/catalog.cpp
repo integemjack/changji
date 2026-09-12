@@ -23,6 +23,12 @@ double gb(std::uint64_t bytes) { return static_cast<double>(bytes) / 1e9; }
 ///
 /// 反推的办法是扫：从 4 GB 往上按 0.5 GB 一档试，找它从 "cpu"
 /// （＝权重全放内存）翻成组件规格的那一点。整张表就扫这么几十次，一次性的。
+///
+/// ⚠️ **这里问的是"要多大的卡"，所以不传 unified，将来也别传。**
+/// 这张表是给人看的静态门槛（"这个模型要 24 GB 才常驻得下"），和跑它的
+/// 是哪台机器无关。而且统一内存那一支里 `image_weights_for` 装不下时
+/// 返回的是 "te=cpu,vae=cpu" 而不是 "cpu"——扫描的终止条件是"不等于 cpu"，
+/// 传了 unified 的话第一档 4 GB 就命中，整张表的门槛全变成 4 GB。
 double resident_vram(bool image, double model_gb) {
     config::ModelsConfig m;  // weights / image_weights 默认都是 "smart"
     for (double v = 4.0; v <= 200.0; v += 0.5) {

@@ -237,6 +237,14 @@ Check check_gpu(const config::Settings& s) {
         os.setf(std::ios::fixed);
         os.precision(1);
         os << gpu->vram_gb() << " GB";
+        // **统一内存上这两个数都要写出来。**
+        // 只写"107.5 GB"，用户看到的是"我买的明明是 128"；只写 128，
+        // 预算又会按 128 算，而超过 Metal 那条线系统就开始压缩换页。
+        // 说清楚哪个是哪个，比选一个显示省事得多。
+        if (gpu->unified()) {
+            os << "（整机 " << static_cast<double>(gpu->unified_mb) / 1024.0
+               << " GB，其余留给系统）";
+        }
         if (gpu->count > 1) {
             os << "（共 " << gpu->count << " 张，显存是单卡的）";
         }
@@ -457,9 +465,13 @@ Check check_weights(const config::Settings& s) {
         off.push_back(std::string(label) + "：配置写的是 \"" + set +
                       "\"，按这张卡和这个模型算出来该是 \"" + want + "\"");
     };
-    one("出片", s.models.weights, s.models.weights_for(card, size_gb(s.models.video)));
+    // unified 要传下去，不然这一项在苹果机器上会一直报"对不上"——
+    // 它算的是独显那套，而引擎跑的是统一内存那套。
+    const bool unified = profile.gpu.has_value() && profile.gpu->unified();
+    one("出片", s.models.weights,
+        s.models.weights_for(card, size_gb(s.models.video), unified));
     one("出首帧", s.models.image_weights,
-        s.models.image_weights_for(card, size_gb(s.models.image)));
+        s.models.image_weights_for(card, size_gb(s.models.image), unified));
 
     if (off.empty()) {
         return {"权重放哪", Level::OK, "配置和这台机器算出来的一致", ""};
