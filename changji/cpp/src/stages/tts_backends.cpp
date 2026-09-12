@@ -240,7 +240,14 @@ std::optional<TTSBackend> local_tts_backend(const fs::path& backbone,
         infer::SlotSpec spec;
         spec.slot = infer::Slot::TTS;
         spec.residency = infer::Residency::Cached;
-        // 1.5 GB 的权重加上它自己的缓冲，按 3 GB 记。四个槽里最小的一个。
+        // 1.5 GB 的权重 + KV cache 224 MB（上下文 2048，见
+        // infer/llama_tts.hpp 的 kTtsContextTokens）+ 计算缓冲，按 3 GB 记。
+        // 四个槽里最小的一个。
+        //
+        // **这个数必须和真正要的对得上。** 2026-09-13 之前上下文是按模型
+        // 训练长度（32768）开的，KV cache 一家就 3.5 GB，真实占用 5.5 GB；
+        // 调度器按这里的 3 GB 腾地方，腾够了照样 OOM——而 OOM 之后配音
+        // 静默退回 estimate 后端，成片无声。
         spec.vram_estimate = static_cast<std::size_t>(3) * 1024 * 1024 * 1024;
         // 小到不用跟着模型走：配音那两份权重加起来就 1.5 GB 上下，
         // 换一份也还在同一个量级。给个定值就够。

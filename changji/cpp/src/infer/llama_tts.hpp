@@ -58,6 +58,37 @@ struct LlamaTtsProbe {
 /// "Linking CXX static library mtmd.lib"。**"编出来了"不等于"在二进制里"。**
 LlamaTtsProbe probe_llama_tts();
 
+/// 一次生成最多多少帧。12.5 Hz 的码率下 512 帧约 41 秒，
+/// 比单句台词的上限（见 stages/limits.hpp 的 max_line_seconds）宽得多。
+inline constexpr int kTtsMaxFrames = 512;
+
+/// 提示词那头要留多少 token。
+///
+/// 单句台词最长 200 字（models::DialogueLine 的 maxLength），中文大约
+/// 一个字 1~1.5 个 token，300 封顶。这里给到五倍，再算上特殊 token 和
+/// 音色条件，绰绰有余。
+inline constexpr int kTtsPromptHeadroom = 1536;
+
+/// 上下文开多大。**这个数直接决定 KV cache 占多少显存。**
+///
+/// 2026-09-13 实跑撞上的：这里原来是 `n_ctx = 0`，llama.cpp 的语义是
+/// 「用模型训练时的长度」，而 Qwen3-TTS 的 `context_length` 是 **32768**。
+/// KV cache 按整个窗口**预分配**（28 层 × 8 个 KV 头 × (128+128) × 2 字节
+/// = 112 KiB/token，× 32768 = **3584 MiB**），于是：
+///
+///     allocating 3584.00 MiB on device 0: cudaMalloc failed: out of memory
+///     failed to initialize the context: failed to allocate buffer for kv cache
+///
+/// 而调度器给配音槽估的是 3 GB（tts_backends.cpp），腾地方按 3 GB 腾，
+/// 真装要 5.5 GB——**腾够了也装不上**。装不上就静默退回 estimate 后端，
+/// 表现是「成片会是静音」，而根因在日志几千行之外。
+///
+/// 真正要用的是「提示词 + 最多 512 帧」，2048 就够，KV 降到 224 MiB，
+/// 3 GB 那个估算也跟着变准了。**不能回头写 0**，也不能用
+/// llama_context_default_params() 的 512——那个太小，一句长台词就撑爆，
+/// 症状是生成中途失败、指不到上下文上。
+inline constexpr int kTtsContextTokens = kTtsMaxFrames + kTtsPromptHeadroom;
+
 /// 一次合成要的东西。
 struct LlamaTtsRequest {
     std::string text;
@@ -76,9 +107,11 @@ struct LlamaTtsRequest {
     /// UINT32_MAX 表示随机。**默认给一个定值**：配音重跑一次就换一个
     /// 声音的话，用户没法靠重跑修一句坏台词，只能整集重配。
     unsigned int seed = 1234;
-    /// 一帧一帧生成的上限。12.5 Hz 的码率下 512 帧约 41 秒，
-    /// 比单句台词的上限（见 stages/limits.hpp）宽得多。
-    int max_frames = 512;
+    /// 一帧一帧生成的上限。见 kTtsMaxFrames。
+    ///
+    /// **调大它必须同时调大 kTtsContextTokens**，否则帧还没生成完上下文
+    /// 就满了——所以生成那边会按 kTtsMaxFrames 夹一道。
+    int max_frames = kTtsMaxFrames;
 };
 
 /// 加载好的模型。**加载很贵（1.5 GB 权重），要跨多句台词复用。**

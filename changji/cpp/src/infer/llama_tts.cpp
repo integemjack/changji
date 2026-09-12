@@ -1,5 +1,6 @@
 #include "infer/llama_tts.hpp"
 
+#include <algorithm>
 #include <memory>
 #include <mutex>
 
@@ -118,18 +119,22 @@ std::unique_ptr<LlamaTts> LlamaTts::load(const std::filesystem::path& backbone,
     // 关着的话 llama_get_embeddings_ith 返回空，症状是第一帧就失败。
     cp.embeddings = true;
 
-    // **n_ctx 必须自己设成 0。**
+    // **n_ctx 按这一步真正要用多少定，两个默认值都不能用。**
     //
-    // `llama_context_default_params()` 给的是 **512**，而参考实现
-    // （`tools/tts/tts.cpp` 走 common）用的 `common_params.n_ctx` 默认是
-    // **0**，注释写着 "0 == context the model was trained with"。
-    // llama.cpp 里 0 表示"用模型训练时的长度"（llama-context.cpp 那句
-    // `params.n_ctx == 0 ? hparams.n_ctx_train : params.n_ctx`）。
+    // `llama_context_default_params()` 给的是 **512**——太小：骨干是自回归
+    // 跑的，提示词的 token 加上最多 512 帧都要占位置，一句长台词就撑爆，
+    // 症状是生成中途失败、指不到"上下文开小了"。
     //
-    // 512 是不够的：骨干是自回归跑的，提示词的 token 加上最多 512 帧
-    // 都要占位置。一句长一点的台词就会撑爆，而症状是生成中途失败，
-    // 指不到"上下文开小了"。
-    cp.n_ctx = 0;
+    // 参考实现（`tools/tts/tts.cpp` 走 common）用的是 **0**，llama.cpp 里
+    // 0 表示"用模型训练时的长度"（`params.n_ctx == 0 ? hparams.n_ctx_train
+    // : params.n_ctx`）。这里原来照抄了 0——**而 Qwen3-TTS 的训练长度是
+    // 32768，KV cache 按整个窗口预分配，一次要 3584 MiB**，在这张卡上直接
+    // OOM，然后静默退回 estimate 后端，成片无声。算账和现场都记在
+    // kTtsContextTokens 头上。
+    //
+    // 参考实现敢用 0，是因为它是个命令行工具、独占整张卡；这条流水线上
+    // 配音要和大模型、出图、出片抢显存，多要的每一 GB 都是从别人那儿抢的。
+    cp.n_ctx = kTtsContextTokens;
 
     // **要逐 token 的隐状态，所以不能池化。**
     //
@@ -263,7 +268,10 @@ bool LlamaTts::synthesize(const LlamaTtsRequest& req, double& out_duration_s,
 
     int frames = 0;
     bool stop = false;
-    while (!stop && frames < req.max_frames) {
+    // 上下文是按 kTtsMaxFrames 开的，调用方把 max_frames 设大了也不能超——
+    // 超了是 llama 那边报错，指不到这儿。
+    const int frame_cap = std::min(req.max_frames, kTtsMaxFrames);
+    while (!stop && frames < frame_cap) {
         const float* h_next = nullptr;
         if (gen.step_gen(sampled, h_state, &h_next, &stop) != 0) {
             why = "第 " + std::to_string(frames) + " 帧生成失败";
