@@ -367,6 +367,38 @@ RunReport run_episode(const ProjectStore& store,
                              " 处台词一镜装不下，已拆成新的镜头。这一集现在是 " +
                              std::to_string(ep->shots.size()) + " 个镜头");
                 }
+
+                // **配音把时长定下来之后，再平衡一次。**
+                //
+                // rebalance_durations 的注释写着「有台词的镜头不动，因为
+                // 它们的时长是由配音定的」——那句话的前提就是配音已经跑过。
+                // 而它原来只在分镜那一步调（planning / episodes / batch 三处），
+                // 那时候还没配音，有台词的镜头时长还没锁定，那句话是空的。
+                // **它被调在了错的时机。**
+                //
+                // 实测（walk_c ep01，目标 60 秒）：分镜排出来是 60 秒，配音
+                // 把有台词的十镜从语音 30.6 秒撑到 48 秒——每一镜都要向上
+                // 吸附到视频模型能生成的档位，光量化就多出 17.4 秒——整集
+                // 变成 80 秒。超出的部分只能摊到那十个无台词的过渡镜上。
+                const double before_s = ep->planned_duration_s();
+                stages::rebalance_durations(ep->shots, ep->target_duration_s);
+                const double after_s = ep->planned_duration_s();
+                if (std::abs(after_s - before_s) > 0.01) {
+                    emit(progress, "audio", "info",
+                         "按配音重排了镜头时长：" + util::human_time(before_s) +
+                             " → " + util::human_time(after_s) + "（目标 " +
+                             util::human_time(ep->target_duration_s) + "）");
+                }
+                // **压不到目标就要说出来。** 有台词的镜头动不了（动了会截断
+                // 声音），过渡镜也有最短的那一档，所以并不是总能压回去。
+                // 不吭声的话，人看到的是「配音完成」，而成片比要的长三分之一。
+                if (after_s - ep->target_duration_s > 3.0) {
+                    emit(progress, "audio", "warn",
+                         "这一集排下来 " + util::human_time(after_s) +
+                             "，比目标 " + util::human_time(ep->target_duration_s) +
+                             " 长。台词镜的时长由配音定、动不了，过渡镜也压到"
+                             "头了——要短就得回剧本删戏或者减台词。");
+                }
                 save();
 
                 emit(progress, "audio", "done", stages::summarize(report.audio),
