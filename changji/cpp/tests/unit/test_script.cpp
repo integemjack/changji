@@ -564,6 +564,20 @@ TEST_CASE("开头漏出来的 markdown 列表符号削掉") {
         CHECK(stages::strip_list_marker("你走吧-") == "你走吧-");
     }
 
+    SUBCASE("后面紧跟数字的减号是符号，不是列表符号") {
+        // **2026-09-13 扫一份新项目的设定时发现的**：场景名是
+        // 「-1层停尸间 B区 3号冷柜」——负一层。台词里同理。
+        // 这是上一版 strip_list_marker 的漏洞，削了正好把意思弄反。
+        CHECK(stages::strip_list_marker("-3度，冻得我手都伸不直") ==
+              "-3度，冻得我手都伸不直");
+        CHECK(stages::strip_list_marker("-1层停尸间") == "-1层停尸间");
+        CHECK(stages::strip_list_marker("+2 分") == "+2 分");
+        // 减号后面跟空格的仍然是列表符号
+        CHECK(stages::strip_list_marker("- 3号出口在左边") == "3号出口在左边");
+        // 跟汉字的也是
+        CHECK(stages::strip_list_marker("-为什么是我？") == "为什么是我？");
+    }
+
     SUBCASE("削成空串就不削") {
         // 「-」自己就是这一拍的全部内容时，留着比丢掉强：
         // 削空之后 parse_beats_into 会把整拍丢掉。

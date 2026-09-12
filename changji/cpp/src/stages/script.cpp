@@ -266,6 +266,18 @@ std::string strip_list_marker(const std::string& text_in) {
             // 削成空串就不削——「-」自己就是那一拍的全部内容时，
             // 留着比丢掉强（丢掉这一拍会整个消失）。
             if (rest.empty()) return out;
+            // **后面紧跟数字的那个减号是符号，不是列表符号。**
+            //
+            // 2026-09-13 扫一份新项目的设定时看见的场景名：
+            // 「-1层停尸间 B区 3号冷柜」——负一层。台词里同理，
+            // 「-3度，冻得我手都伸不直」削了就成了「3度」，正好反过来。
+            //
+            // 注意要看**削空白之前**紧挨着的那个字符：「- 3号出口」是
+            // 列表符号后面跟了空格，那个该削。
+            const std::string raw_rest = out.substr(mark.size());
+            if (!raw_rest.empty() && raw_rest[0] >= '0' && raw_rest[0] <= '9') {
+                continue;
+            }
             out = rest;
             hit = true;
             break;
