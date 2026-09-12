@@ -13,6 +13,7 @@
 
 #include <crow.h>
 
+#include "infer/node_status.hpp"
 #include "infer/task_run.hpp"
 #include "infer/scheduler.hpp"
 #include "infer/sd_backend.hpp"
@@ -73,12 +74,22 @@ void run_worker(const config::Settings& settings, const WorkerOptions& opts) {
     // 独立进程，它的 stderr 就是排查出图问题唯一的地方。
     sd_log_to_stderr();
 
-    register_sd_slots(settings, models::HardwareProfile::detect(
-                                    settings.vram_gb_override));
+    // **只探一次。** detect 会跑 nvidia-smi，一百毫秒上下；
+    // /status 每次重探的话，别的机器轮询一下就是白白拖慢这台。
+    const auto profile =
+        models::HardwareProfile::detect(settings.vram_gb_override);
+    register_sd_slots(settings, profile);
 
     auto state = std::make_shared<State>();
     crow::SimpleApp app;
     app.loglevel(crow::LogLevel::Warning);
+
+    // **这台的自我介绍。** 别的机器靠它决定派不派活过来：能力齐不齐、
+    // 卡多大、模型目录还剩多少。拼的地方只有一处（node_status.cpp），
+    // 界面上那张表和 --doctor 末尾那句用的是同一份。
+    CROW_ROUTE(app, "/status")([settings, profile] {
+        return json_res(node_status_json(settings, profile));
+    });
 
     CROW_ROUTE(app, "/health")([opts, state] {
         std::lock_guard lg(state->mu);
