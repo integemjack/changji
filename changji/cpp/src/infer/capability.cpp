@@ -23,6 +23,13 @@ const char* to_string(Capability c) {
     return "unknown";
 }
 
+std::optional<Capability> capability_from(const std::string& s) {
+    for (const Capability c : all_capabilities()) {
+        if (s == to_string(c)) return c;
+    }
+    return std::nullopt;
+}
+
 const char* label_of(Capability c) {
     switch (c) {
         case Capability::Llm: return "写文";

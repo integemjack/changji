@@ -37,6 +37,7 @@
 #include "util/sysstat.hpp"
 #include "http/webapp.hpp"
 #include "http/ws.hpp"
+#include "infer/node_registry.hpp"
 #include "infer/scheduler.hpp"
 #include "infer/sd_backend.hpp"
 #include "infer/sd_image.hpp"
@@ -283,6 +284,15 @@ void run(const config::Settings& settings, const Options& opts) {
 
     CROW_ROUTE(app, "/api/health")([] {
         return json_response({{"ok", true}, {"service", "changji"}});
+    });
+
+    // 那张「机器 × 能力」的表。本机也是一行，不是特例——
+    // 「本地 vs 远程」是同一张表上的两个格子，不是两条代码路径。
+    //
+    // **答得慢是正常的**：它要挨个问对面的 /status（每台最多 3 秒）。
+    // 五秒缓存兜着，连着刷不会把对面问烦。
+    CROW_ROUTE(app, "/api/nodes")([] {
+        return json_response(infer::nodes_json(config::runtime().snapshot()));
     });
 
     // 下面这些从 runtime 取而不是用 run() 收到的那份 settings：

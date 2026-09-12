@@ -21,6 +21,7 @@
 // 而真去摸文件系统的那半截没法在单元测试里反复撞。
 
 #include <map>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -39,6 +40,10 @@ enum class Capability {
 };
 
 const char* to_string(Capability c);
+
+/// 反过来。认不出回 nullopt——**配置里写错一个能力名不能当没看见**：
+/// 那会变成"我明明关了出片它还是派过去了"。
+std::optional<Capability> capability_from(const std::string& s);
 /// 界面上显示的名字。认不出来回空串。
 const char* label_of(Capability c);
 

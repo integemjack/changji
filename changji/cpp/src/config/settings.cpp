@@ -544,6 +544,26 @@ void apply_table(const toml::table& doc, Settings& s) {
     }
     if (auto t = doc["peer"].as_table()) {
         take(t, "token", s.peer.token);
+        if (auto arr = (*t)["nodes"].as_array()) {
+            s.peer.nodes.clear();
+            for (const auto& item : *arr) {
+                const auto* nt = item.as_table();
+                if (nt == nullptr) continue;
+                PeerNodeConfig n;
+                if (auto v = (*nt)["url"].value<std::string>()) n.url = *v;
+                if (auto v = (*nt)["token"].value<std::string>()) n.token = *v;
+                if (auto off = (*nt)["off"].as_array()) {
+                    for (const auto& o : *off) {
+                        if (auto sv = o.value<std::string>()) {
+                            n.off.push_back(*sv);
+                        }
+                    }
+                }
+                // url 空的条目直接丢——留着的话它会在那张表上显示成一台
+                // 永远连不上的机器，而用户根本不知道那是哪来的。
+                if (!n.url.empty()) s.peer.nodes.push_back(std::move(n));
+            }
+        }
     }
     if (auto t = doc["tts"].as_table()) {
         take(t, "backend", s.tts.backend);
@@ -873,6 +893,17 @@ constexpr const char* kDefaultToml = R"(# 场记配置文件
 # 没设口令却要对外监听的话，服务会当场拒绝启动并说清楚——谁都能派活
 # 过来烧这张卡、读走这台有哪些模型，那不该是默认值。
 # token = ""
+
+# 别的机器，一台一段。跨机会自动传文件（参考图、首帧过去，产物回来），
+# 同机那条路（[workers].endpoints）不受影响、一个字节都不搬。
+#
+# off 是"不许它干的那几样"：llm / tts / frame / video / assemble。
+# **只能关不能开**——能不能干是那台自己量出来的，这儿只做减法。
+#
+# [[peer.nodes]]
+# url = "http://gpu-box:9001"
+# token = ""            # 留空就用上面那个
+# off = ["llm"]         # 这台的卡留着出片，写文别派给它
 
 [llm]
 # 剧本和分镜用的大模型。backend 两个值：

@@ -708,6 +708,7 @@ add_executable(changji
     src/infer/capability.cpp
     src/infer/blob.cpp
     src/infer/node_pick.cpp
+    src/infer/node_registry.cpp
     src/infer/peer_auth.cpp
     src/infer/node_status.cpp
     src/infer/local_exec.cpp
