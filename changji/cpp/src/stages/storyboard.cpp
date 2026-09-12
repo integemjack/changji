@@ -189,6 +189,7 @@ VideoLimits guess_video_limits(const std::string& video_model_file,
     h3.max_frames = 360;
     h3.frame_step = 17;
     h3.frame_base = 5;
+    h3.max_pixels = 1032192;  // 1344 × 768，官方 canvas_max_pixels
 
     if (has("minimax") || has("hailuo") || has("h3")) return h3;
     if (has("wan")) return wan;

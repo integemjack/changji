@@ -57,6 +57,18 @@ struct VideoLimits {
     /// 向上对齐，而对齐到哪儿它不告诉你，表现是成片比分镜表长一点点。
     int frame_step = 4;
     int frame_base = 1;
+    /// 画布的像素上限（宽 × 高）。0 = 不限。
+    ///
+    /// **超出去不是慢一点，是画面坏掉。** MiniMax-H3 的开源权重把画布钉在
+    /// `canvas_max_pixels = 1032192`（= 1344 × 768，官方 diffusers 的
+    /// MiniMaxH3Blocks 配置），短边 768；商业 API 那边主打的 2K（1440 短边）
+    /// 靠的是一个叫 H3-Regenerate-2K 的模块，**不在开源发布里**。拿开源权重
+    /// 直接出 2K 等于让它在训练分布之外跑，出来是伪影。
+    ///
+    /// 只用来**报警**，不用来悄悄降档：人选了 2K 却拿到标准档而且不吭声，
+    /// 比出一条烂片更糟（config/settings.cpp 的 VideoConfig::size 注释里
+    /// 特意写过这一条）。
+    int max_pixels = 0;
 
     /// 这个秒数实际会生成多少帧：向上对齐到格子，再夹进上限。
     int frames_for(double duration_s, int fps = 24) const;

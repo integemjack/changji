@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstdio>
 #include <filesystem>
 #include <fstream>
 #include <optional>
@@ -17,6 +18,8 @@
 
 #include "infer/ggml_abi.hpp"
 #include "infer/llama_tts.hpp"
+// 画布上限跟着模型走
+#include "stages/limits.hpp"
 #include "models/hardware.hpp"
 #include "infer/sd_backend.hpp"
 #include "util/paths.hpp"
@@ -516,6 +519,41 @@ Check guarded(const char* name, F&& fn) {
 
 }  // namespace
 
+/// 出片的画布有没有超出这个模型能画的范围。
+///
+/// **超出去不是慢一点，是画面坏掉。** MiniMax-H3 的开源权重把画布钉在
+/// canvas_max_pixels = 1032192（1344 × 768，官方 diffusers 的
+/// MiniMaxH3Blocks 配置），短边 768；商业 API 主打的 2K（1440 短边）靠的是
+/// 一个叫 H3-Regenerate-2K 的模块，**不在开源发布里**。我们的 2k 档
+/// （1440 × 2560 = 368 万像素）是它的 3.57 倍，等于让模型在训练分布之外跑。
+///
+/// **只报警，不悄悄降档。** 人选了 2K 却拿到标准档而且没有提示，比出一条
+/// 烂片更糟——config/settings.cpp 的 VideoConfig::size 注释里写过这一条，
+/// 这里守着它。
+Check check_canvas(const config::Settings& s) {
+    const auto& limits = stages::video_limits();
+    const auto [w, h] = s.video.size();
+    const long px = static_cast<long>(w) * h;
+    const std::string got = std::to_string(w) + "×" + std::to_string(h);
+
+    if (limits.max_pixels <= 0) {
+        return {"出片画布", Level::OK, got + "（这个模型没给画布上限）", ""};
+    }
+    if (px <= limits.max_pixels) {
+        return {"出片画布", Level::OK, got, ""};
+    }
+    const double times = static_cast<double>(px) /
+                         static_cast<double>(limits.max_pixels);
+    char ratio[32];
+    std::snprintf(ratio, sizeof(ratio), "%.2f", times);
+    return {"出片画布", Level::WARN,
+            got + " 超出这个模型的画布上限 " +
+                std::to_string(limits.max_pixels) + " 像素（" + ratio + " 倍）",
+            "模型在训练分布之外跑，出来多半是伪影，不是糊一点。\n"
+            "把 [video].quality 调回 hd（704×1280），要 2K 就出完再跑 "
+            "changji --upscale。"};
+}
+
 Report run_checks(const config::Settings& settings) {
     Report r;
     r.checks.push_back(guarded("运行时", [&] { return check_runtime(); }));
@@ -532,6 +570,7 @@ Report run_checks(const config::Settings& settings) {
     r.checks.push_back(guarded("本地模型", [&] { return check_models(settings); }));
     r.checks.push_back(guarded("显卡", [&] { return check_gpu(settings); }));
     r.checks.push_back(guarded("权重放哪", [&] { return check_weights(settings); }));
+    r.checks.push_back(guarded("出片画布", [&] { return check_canvas(settings); }));
     r.checks.push_back(guarded("项目目录", [&] { return check_workspace(settings); }));
     return r;
 }
