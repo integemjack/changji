@@ -90,6 +90,10 @@ struct WorkerPool::Impl {
                 const StepCallback& on_step) {
         const auto [origin, prefix] = split_url(workers[idx].ep.url);
         httplib::Client cli(origin);
+        // 跨机那头要口令，本机那些听回环的不查——带上都不碍事。
+        if (!workers[idx].ep.token.empty()) {
+            cli.set_bearer_token_auth(workers[idx].ep.token);
+        }
         cli.set_connection_timeout(10, 0);
         cli.set_read_timeout(600, 0);
 
@@ -215,6 +219,7 @@ std::size_t WorkerPool::alive() const {
     for (const auto& w : impl_->workers) {
         const auto [origin, prefix] = split_url(w.ep.url);
         httplib::Client cli(origin);
+        if (!w.ep.token.empty()) cli.set_bearer_token_auth(w.ep.token);
         cli.set_connection_timeout(3, 0);
         auto res = cli.Get(prefix + "/health");
         if (res && res->status == 200) ++n;
@@ -268,11 +273,11 @@ stages::VideoRenderer WorkerPool::video_renderer() {
 }
 
 std::shared_ptr<WorkerPool> make_worker_pool(
-    const std::vector<std::string>& endpoints) {
+    const std::vector<std::string>& endpoints, const std::string& token) {
     if (endpoints.empty()) return nullptr;
     std::vector<WorkerEndpoint> eps;
     eps.reserve(endpoints.size());
-    for (const auto& u : endpoints) eps.push_back(WorkerEndpoint{u});
+    for (const auto& u : endpoints) eps.push_back(WorkerEndpoint{u, token});
     return std::make_shared<WorkerPool>(std::move(eps));
 }
 

@@ -27,6 +27,11 @@ namespace changji::infer {
 struct WorkerEndpoint {
     /// `http://127.0.0.1:9001` 这样。
     std::string url;
+    /// 派活时带的口令，对应那台的 `[peer].token`。
+    ///
+    /// **本机自己拉起的那些不用填**：它们听回环，那边根本不查
+    /// （见 `infer/peer_auth.hpp`）。跨机才要。
+    std::string token;
 };
 
 /// 池。**线程安全**：阶段那一层会从多个线程同时借。
@@ -58,7 +63,10 @@ private:
 
 /// 从配置里那几个地址造一个池。地址为空回 nullptr——
 /// **调用方看到 nullptr 就走进程内那条路**，行为和以前一模一样。
+///
+/// `token` 会带给每一个地址。**一个口令走遍自己这几台**是刻意的：
+/// 都是自己的机器，每台配一个不同的口令只是给自己添麻烦。
 std::shared_ptr<WorkerPool> make_worker_pool(
-    const std::vector<std::string>& endpoints);
+    const std::vector<std::string>& endpoints, const std::string& token = {});
 
 }  // namespace changji::infer

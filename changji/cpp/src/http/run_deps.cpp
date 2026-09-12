@@ -66,7 +66,8 @@ RunDeps default_run_deps() {
 
         // **配了工作进程就派出去算。** 空的话上面那两行原样生效——
         // 行为和以前一模一样，这是这一步能安全落地的前提。
-        if (auto pool = infer::make_worker_pool(endpoints)) {
+        // 口令带上：本机自己拉起的那些听回环、不查，跨机那头要。
+        if (auto pool = infer::make_worker_pool(endpoints, s.peer.token)) {
             b.frame = pool->frame_renderer();
             b.video = pool->video_renderer();
             b.frame_backend_name =
