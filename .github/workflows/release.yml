@@ -164,12 +164,16 @@ jobs:
             brew install ninja
           fi
 
+      # CHANGJI_SSL=OFF：测试目标**不链 httplib**，所以也不需要 OpenSSL。
+      # 开着的话这一档得等下面 openssl 那个 job，一档"几分钟出结论"的
+      # 单元测试就没了意义。
       - name: 配置
         run: |
           cmake -S changji/cpp -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
             -DCHANGJI_SD=OFF \
             -DCHANGJI_LLAMA=OFF \
+            -DCHANGJI_SSL=OFF \
             -DCHANGJI_BUILD_TESTS=ON
 
       - name: 编
@@ -178,10 +182,115 @@ jobs:
       - name: 跑
         run: ctest --test-dir build --output-on-failure
 
+  # ---- OpenSSL（静态库） ----
+  #
+  # **为什么要自己编一份，而不是用 runner 上现成的。**
+  #
+  # runner 上是有 OpenSSL 的，链上去也能编过——编出来的包在 runner 上跑得
+  # 好好的，到用户机器上就是
+  #
+  #     dyld: Library not loaded: /opt/homebrew/opt/openssl@3/lib/libssl.3.dylib
+  #
+  # 因为那是 Homebrew 的路径，只有构建机上有。brotli 那条一模一样，那两个
+  # 已经改成拉源码静态编（见 cpp/CMakeLists.txt），只有 OpenSSL 不行——
+  # 它不是 CMake 工程（perl Configure + make/nmake 那一套），塞不进
+  # FetchContent。所以在这儿单独编一份静态库，编完了传给下面所有构建格子。
+  #
+  # **版本钉死 + 校验 sha256。** 这份库要进发出去的二进制，下载到一个被
+  # 改过的包意味着我们亲手发了个带后门的东西。
+  #
+  # **有缓存。** 编一次 Unix 上三五分钟、Windows 上 nmake 是单线程，
+  # 二十分钟起。命中缓存时这一档十几秒就过。只有换版本号才会重编。
+  openssl:
+    name: OpenSSL 静态库 (${{ matrix.key }})
+    runs-on: ${{ matrix.runner }}
+    env:
+      OPENSSL_VER: '3.5.8'
+      OPENSSL_SHA256: 'a8f84a39918ec6415ce765d9b429d313ba97b8143169c172e734b9514464f5b2'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { key: linux-x64,     runner: ubuntu-22.04,     target: linux-x86_64 }
+          - { key: linux-arm64,   runner: ubuntu-22.04-arm, target: linux-aarch64 }
+          - { key: macos-arm64,   runner: macos-15,         target: darwin64-arm64-cc }
+          - { key: macos-x64,     runner: macos-15-intel,   target: darwin64-x86_64-cc }
+          - { key: windows-x64,   runner: windows-2022,     target: VC-WIN64A,    vcarch: x64 }
+          - { key: windows-arm64, runner: windows-11-arm,   target: VC-WIN64-ARM, vcarch: arm64 }
+    steps:
+      # 缓存键里带版本号：换版本自然是另一个键，不用手动清。
+      - name: 缓存
+        id: cache
+        uses: actions/cache@v4
+        with:
+          path: openssl-prefix
+          key: openssl-${{ matrix.key }}-${{ env.OPENSSL_VER }}-1
+
+      # no-apps / no-docs / no-tests：我们只要 libssl.a 和 libcrypto.a，
+      # 那三样占了大半的构建时间。
+      # --openssldir=/etc/ssl：静态库自己不带根证书，得告诉它去哪儿找系统
+      # 那份（Linux 是 /etc/ssl/certs，macOS 是 /etc/ssl/cert.pem）。
+      - name: 编（Unix）
+        if: runner.os != 'Windows' && steps.cache.outputs.cache-hit != 'true'
+        run: |
+          curl -fL --retry 3 -o openssl.tar.gz \
+            "https://github.com/openssl/openssl/releases/download/openssl-$OPENSSL_VER/openssl-$OPENSSL_VER.tar.gz"
+          echo "$OPENSSL_SHA256  openssl.tar.gz" | shasum -a 256 -c -
+          tar xzf openssl.tar.gz
+          cd "openssl-$OPENSSL_VER"
+          # macOS 上钉的部署目标要和主工程一致（13.3），不然链接时一片
+          # "built for newer macOS version than being linked"。
+          EXTRA=""
+          if [ "$RUNNER_OS" = "macOS" ]; then EXTRA="-mmacosx-version-min=13.3"; fi
+          ./Configure "${{ matrix.target }}" \
+            no-shared no-tests no-docs no-apps no-legacy \
+            --prefix="$GITHUB_WORKSPACE/openssl-prefix" \
+            --libdir=lib \
+            --openssldir=/etc/ssl \
+            $EXTRA
+          make -j"$(getconf _NPROCESSORS_ONLN)"
+          make install_sw
+
+      # **Windows 上要先 call vcvarsall.bat**：这个 job 不像下面那两档能靠
+      # VS 生成器自己找工具链，nmake 和 cl 得在 PATH 上。环境只活在那个
+      # cmd 进程里，所以配置、编译、安装写在同一条 cmd /c 里一次跑完。
+      #
+      # no-asm：x64 那边汇编要 NASM、arm64 那边要 armasm64，runner 上不一定
+      # 有，装了也多一个会烂的下载地址。纯 C 的 OpenSSL 慢一些，而我们只是
+      # 偶尔发几个 https 请求，差别在噪声里。
+      - name: 编（Windows）
+        if: runner.os == 'Windows' && steps.cache.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: |
+          curl.exe -fL --retry 3 -o openssl.tar.gz `
+            "https://github.com/openssl/openssl/releases/download/openssl-$env:OPENSSL_VER/openssl-$env:OPENSSL_VER.tar.gz"
+          if ($LASTEXITCODE -ne 0) { throw "OpenSSL 源码下载失败" }
+          $got = (Get-FileHash openssl.tar.gz -Algorithm SHA256).Hash.ToLower()
+          if ($got -ne $env:OPENSSL_SHA256) { throw "sha256 对不上：$got" }
+          tar xzf openssl.tar.gz
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $vs = & $vswhere -latest -products * -property installationPath
+          $vcvars = Join-Path $vs "VC\Auxiliary\Build\vcvarsall.bat"
+          if (-not (Test-Path $vcvars)) { throw "找不到 vcvarsall.bat：$vcvars" }
+          $prefix = "$env:GITHUB_WORKSPACE\openssl-prefix"
+          $src = "openssl-$env:OPENSSL_VER"
+          cmd /c "`"$vcvars`" ${{ matrix.vcarch }} && cd $src && perl Configure ${{ matrix.target }} no-shared no-tests no-docs no-apps no-legacy no-asm --prefix=`"$prefix`" --openssldir=`"$prefix\ssl`" && nmake && nmake install_sw"
+          if ($LASTEXITCODE -ne 0) { throw "OpenSSL 没编出来（退出码 $LASTEXITCODE）" }
+
+      # 编完了看一眼：只要静态库，一个 .dylib/.so/.dll 都不该有。
+      - name: 看一眼产物
+        shell: bash
+        run: ls -la openssl-prefix/lib
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: openssl-${{ matrix.key }}
+          path: openssl-prefix
+
   # ---- 六个平台 ----
   build:
     name: 编 ${{ matrix.target }}
-    needs: [meta, webapp, test]
+    needs: [meta, webapp, test, openssl]
     runs-on: ${{ matrix.runner }}
     env:
       # 写进二进制，`changji --version` 打印它——报故障时第一句话就是这个。
@@ -227,6 +336,13 @@ jobs:
           name: bundled-webapp
           path: changji/cpp/src/http/
 
+      # 上面 openssl 那个 job 编好的静态库。六个平台的包名就是这六个
+      # matrix.target，一一对应。
+      - uses: actions/download-artifact@v4
+        with:
+          name: openssl-${{ matrix.target }}
+          path: openssl
+
       - name: 装 ninja（Unix）
         if: runner.os != 'Windows'
         run: |
@@ -262,6 +378,7 @@ jobs:
             -DCHANGJI_LLAMA=ON \
             -DCHANGJI_BUILD_TESTS=OFF \
             -DGGML_NATIVE=OFF \
+            -DOPENSSL_ROOT_DIR="$PWD/openssl" \
             $EXTRA
 
       # **Windows 上用 Visual Studio 生成器，不是 Ninja。**
@@ -274,12 +391,14 @@ jobs:
         run: |
           $tset = "${{ matrix.toolset }}"
           $targs = if ($tset) { @("-T", $tset) } else { @() }
+          $ssl = ((Get-Location).Path -replace '\\','/') + "/openssl"
           cmake -S changji/cpp -B build -G "Visual Studio 17 2022" -A ${{ matrix.arch }} @targs `
             -DCHANGJI_VERSION="$env:CHANGJI_VERSION" `
             -DCHANGJI_SD=ON `
             -DCHANGJI_LLAMA=ON `
             -DCHANGJI_BUILD_TESTS=OFF `
-            -DGGML_NATIVE=OFF
+            -DGGML_NATIVE=OFF `
+            -DOPENSSL_ROOT_DIR="$ssl"
 
       # 只编 changji 这一个目标。测试目标已经在上面那一档跑过了，
       # 这里再编一遍是白等几十分钟。
@@ -294,6 +413,27 @@ jobs:
         run: |
           ./build/changji --version
           test "$(./build/changji --version)" = "$CHANGJI_VERSION"
+
+      # **在构建机上跑起来了不算数。**
+      #
+      # 上一步在 runner 上跑 `--version` 是绿的，用户解开压缩包却是
+      # `dyld: Library not loaded: /opt/homebrew/opt/brotli/...`——因为
+      # runner 上装着 Homebrew，那些库真的在那个路径上。这一类"链到了
+      # 构建机独有的库"的故障，只能靠查产物的依赖表发现，跑一遍是发现不了的。
+      #
+      # 规矩：除了 /usr/lib 和 /System 下的系统库，一个外部路径都不许有。
+      # @rpath/@loader_path 同样不许——我们发的是单文件，旁边没有 lib 目录。
+      - name: 不许链到构建机上的库（macOS）
+        if: runner.os == 'macOS'
+        run: |
+          otool -L build/changji
+          bad=$(otool -L build/changji | tail -n +2 | awk '{print $1}' \
+                | grep -Ev '^(/usr/lib/|/System/)' || true)
+          if [ -n "$bad" ]; then
+            echo "::error::产物依赖了只有构建机上才有的库，用户机器上没有这些路径："
+            echo "$bad"
+            exit 1
+          fi
 
       - name: 验一下它能起来（Windows）
         if: runner.os == 'Windows'
@@ -360,7 +500,7 @@ jobs:
   #                   并把怎么拿这个地址打在日志里。
   build-gpu:
     name: 编 ${{ matrix.target }}
-    needs: [meta, webapp, test]
+    needs: [meta, webapp, test, openssl]
     if: needs.meta.outputs.gpu == 'true'
     runs-on: ${{ matrix.runner }}
     # 360 就是 GitHub 的上限，而且真会用满。超时了就减下面两个架构列表。
@@ -430,6 +570,12 @@ jobs:
         with:
           name: bundled-webapp
           path: changji/cpp/src/http/
+
+      # 八个 GPU 格子全是 x64，所以只要 linux-x64 / windows-x64 那两份。
+      - uses: actions/download-artifact@v4
+        with:
+          name: openssl-${{ runner.os == 'Linux' && 'linux-x64' || 'windows-x64' }}
+          path: openssl
 
       - name: 装 ninja（Linux）
         if: runner.os == 'Linux'
@@ -658,6 +804,7 @@ jobs:
             -DGGML_NATIVE=OFF \
             -DCMAKE_RUNTIME_OUTPUT_DIRECTORY="$PWD/out" \
             -DCMAKE_RUNTIME_OUTPUT_DIRECTORY_RELEASE="$PWD/out" \
+            -DOPENSSL_ROOT_DIR="$PWD/openssl" \
             '-DCMAKE_BUILD_RPATH=$ORIGIN' \
             "${EXTRA[@]}"
           cmake --build build --target changji --parallel
@@ -669,6 +816,7 @@ jobs:
         shell: pwsh
         run: |
           $out = ((Get-Location).Path -replace '\\','/') + "/out"
+          $ssl = ((Get-Location).Path -replace '\\','/') + "/openssl"
           $extra = if ("${{ matrix.gpu }}" -eq "cuda") {
             @("-DCHANGJI_SD_CUDA=ON", "-DCHANGJI_CUDA_ARCH=$env:CUDA_ARCH")
           } else {
@@ -682,6 +830,7 @@ jobs:
             -DGGML_NATIVE=OFF `
             -DCMAKE_RUNTIME_OUTPUT_DIRECTORY="$out" `
             -DCMAKE_RUNTIME_OUTPUT_DIRECTORY_RELEASE="$out" `
+            -DOPENSSL_ROOT_DIR="$ssl" `
             @extra
           if ($LASTEXITCODE -ne 0) { throw "配置失败" }
           cmake --build build --config Release --target changji --parallel
@@ -698,6 +847,7 @@ jobs:
         run: |
           $hip = $env:HIP_PATH -replace '\\','/'
           $out = ((Get-Location).Path -replace '\\','/') + "/out"
+          $ssl = ((Get-Location).Path -replace '\\','/') + "/openssl"
           cmake -S changji/cpp -B build -G Ninja `
             -DCMAKE_BUILD_TYPE=Release `
             -DCMAKE_C_COMPILER="$hip/bin/clang.exe" `
@@ -710,7 +860,8 @@ jobs:
             -DCHANGJI_SD_HIP=ON `
             -DCHANGJI_HIP_ARCH="$env:HIP_ARCH" `
             -DCMAKE_RUNTIME_OUTPUT_DIRECTORY="$out" `
-            -DCMAKE_RUNTIME_OUTPUT_DIRECTORY_RELEASE="$out"
+            -DCMAKE_RUNTIME_OUTPUT_DIRECTORY_RELEASE="$out" `
+            -DOPENSSL_ROOT_DIR="$ssl"
           if ($LASTEXITCODE -ne 0) { throw "配置失败" }
           cmake --build build --target changji --parallel
           if ($LASTEXITCODE -ne 0) { throw "编译失败" }
@@ -728,6 +879,7 @@ jobs:
           # here-string 的结束标记要顶行首，而 YAML 块标量不许。
           $cv = $env:CHANGJI_VERSION
           $out = ((Get-Location).Path -replace '\\','/') + "/out"
+          $ssl = ((Get-Location).Path -replace '\\','/') + "/openssl"
           $bat = @(
             '@echo off',
             'call "C:\Program Files (x86)\Intel\oneAPI\setvars.bat" intel64 --force',
@@ -739,7 +891,8 @@ jobs:
             '  -DCHANGJI_SD=ON -DCHANGJI_LLAMA=ON -DCHANGJI_BUILD_TESTS=OFF ^',
             '  -DGGML_NATIVE=OFF -DCHANGJI_SD_SYCL=ON ^',
             "  -DCMAKE_RUNTIME_OUTPUT_DIRECTORY=$out ^",
-            "  -DCMAKE_RUNTIME_OUTPUT_DIRECTORY_RELEASE=$out",
+            "  -DCMAKE_RUNTIME_OUTPUT_DIRECTORY_RELEASE=$out ^",
+            "  -DOPENSSL_ROOT_DIR=$ssl",
             'if errorlevel 1 exit /b 1',
             'cmake --build build --target changji --parallel',
             'if errorlevel 1 exit /b 1'

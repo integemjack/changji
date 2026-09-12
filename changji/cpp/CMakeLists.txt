@@ -69,6 +69,47 @@ FetchContent_Declare(httplib
     GIT_TAG v0.15.3
     GIT_SHALLOW ON)
 
+# ⚠️ **httplib 那三个"有就用"的开关必须显式关掉，然后我们自己把库编进去。**
+#
+# cpp-httplib 的 CMakeLists 里 HTTPLIB_USE_{OPENSSL,ZLIB,BROTLI}_IF_AVAILABLE
+# 默认都是 ON：它 find_package 一遍，**构建机上装了谁就动态链谁**。
+#
+# 后果是"编出来的二进制依赖哪几个 .dylib，取决于那台构建机上装了什么"。
+# macOS runner 上装着 Homebrew，发出去的包就带上了
+#
+#     /opt/homebrew/opt/brotli/lib/libbrotlicommon.1.dylib
+#     /opt/homebrew/opt/openssl@3/lib/libssl.3.dylib
+#
+# 这种绝对路径。构建机上跑得好好的（库就在那儿），CI 那步"验一下它能起来"
+# 也照样绿，用户解开压缩包一跑是
+#
+#     dyld: Library not loaded: /opt/homebrew/opt/brotli/lib/libbrotlicommon.1.dylib
+#
+# 没装 Homebrew 的人一辈子不会有那个路径——而这行报错看着像"包坏了"。
+#
+# **关掉不等于不要这三个功能。** 下面按这个项目一贯的办法：拉源码、钉版本、
+# 静态编进二进制。用户机器上不用装任何东西，六个平台编出来的是同一套东西。
+set(HTTPLIB_USE_OPENSSL_IF_AVAILABLE OFF CACHE BOOL "" FORCE)
+set(HTTPLIB_USE_ZLIB_IF_AVAILABLE    OFF CACHE BOOL "" FORCE)
+set(HTTPLIB_USE_BROTLI_IF_AVAILABLE  OFF CACHE BOOL "" FORCE)
+
+# ⚠️ **这一行必须排在 brotli 前面。**
+#
+# brotli 的 CMakeLists 里是 `option(BUILD_SHARED_LIBS "..." ON)`——
+# 缓存里没这一项的话它**自己建一项，而且是 ON**，缓存又是全局的：
+# 之后拉进来的 llama.cpp / sd.cpp / ggml 会跟着编成动态库。
+# 先钉成 OFF，option() 就不会去动一个已经存在的缓存项了。
+set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+
+# brotli：httplib 的 `Accept-Encoding: br` 走它。
+# BUNDLED_MODE 关掉它自己的 install 规则——我们只要那三个静态库。
+set(BROTLI_DISABLE_TESTS ON CACHE BOOL "" FORCE)
+set(BROTLI_BUNDLED_MODE  ON CACHE BOOL "" FORCE)
+FetchContent_Declare(brotli
+    GIT_REPOSITORY https://github.com/google/brotli.git
+    GIT_TAG v1.1.0
+    GIT_SHALLOW ON)
+
 # Crow 依赖 asio。用 standalone 版而不是 boost 版，
 # 少拉一个巨大的依赖，交叉编译也简单得多。
 FetchContent_Declare(asio
@@ -85,7 +126,89 @@ FetchContent_Declare(Crow
     GIT_TAG v1.2.0
     GIT_SHALLOW ON)
 
-FetchContent_MakeAvailable(json tomlplusplus httplib Crow)
+FetchContent_MakeAvailable(json tomlplusplus httplib Crow brotli)
+
+# ---- zlib：**只下源码，它的 CMakeLists 不要** ----
+#
+# zlib 1.3.1 的 CMakeLists 第一行是 `cmake_minimum_required(VERSION 2.4.4...)`，
+# 而 CMake 4 把"兼容 3.5 以下"整个删掉了——windows-11-arm 那台 runner 上
+# 装的正是 CMake 4.x，add_subdirectory 进去是当场配置错误。它还会顺手编一个
+# 动态库和一堆示例程序，我们一个都不要。
+#
+# 所以走 doctest 那个办法：SOURCE_SUBDIR 指一个不存在的目录，FetchContent
+# 就只下载不 add_subdirectory，源码自己列。
+#
+# 列的是核心那十个文件，**gz*.c 一个没要**：httplib 用的是 deflate/inflate
+# 流，gz 那几个是文件接口，而它们要 unistd.h、大文件宏那一套平台判断——
+# 正是在 Windows 和交叉编译上最容易出事的部分，而我们一行都用不到。
+FetchContent_Declare(zlib
+    GIT_REPOSITORY https://github.com/madler/zlib.git
+    GIT_TAG v1.3.1
+    GIT_SHALLOW ON
+    SOURCE_SUBDIR 这个目录不存在-所以只下载不构建)
+FetchContent_MakeAvailable(zlib)
+
+add_library(changji_z STATIC
+    "${zlib_SOURCE_DIR}/adler32.c"
+    "${zlib_SOURCE_DIR}/compress.c"
+    "${zlib_SOURCE_DIR}/crc32.c"
+    "${zlib_SOURCE_DIR}/deflate.c"
+    "${zlib_SOURCE_DIR}/inffast.c"
+    "${zlib_SOURCE_DIR}/inflate.c"
+    "${zlib_SOURCE_DIR}/inftrees.c"
+    "${zlib_SOURCE_DIR}/trees.c"
+    "${zlib_SOURCE_DIR}/uncompr.c"
+    "${zlib_SOURCE_DIR}/zutil.c")
+target_include_directories(changji_z SYSTEM PUBLIC "${zlib_SOURCE_DIR}")
+if(MSVC)
+    # zlib 是 C89 写的，/W4 下几十条 C4996 会淹掉真正的警告。
+    target_compile_definitions(changji_z PRIVATE _CRT_SECURE_NO_WARNINGS)
+else()
+    target_compile_options(changji_z PRIVATE -w)
+endif()
+
+# ---- OpenSSL ----
+#
+# **这一个不走 FetchContent：OpenSSL 不拿 CMake 构建**（是 perl Configure +
+# make/nmake 那一套）。所以这里改成"必须有人给我一份静态库"：CI 里由
+# .github/workflows/release.yml 里的 openssl 那个 job 现编一份（版本钉死、
+# 带缓存），再用 -DOPENSSL_ROOT_DIR 指过来。
+#
+# **只认静态库**，找不到就当场停。悄悄退回动态链接的话，我们就又回到了
+# 上面那个 dyld 报错——而且是在没人注意的时候回去的。
+# 本机想快编一版又不关心 https：-DCHANGJI_SSL=OFF。
+option(CHANGJI_SSL "编进 OpenSSL（静态），httplib 才发得了 https" ON)
+if(CHANGJI_SSL)
+    set(OPENSSL_USE_STATIC_LIBS ON)
+    # 不用 REQUIRED：它印的是 CMake 那句"try to set OPENSSL_ROOT_DIR"，
+    # 看的人还得自己想"那我该装什么"。自己报，把三条路一次说清。
+    find_package(OpenSSL 3.0.0 QUIET)
+    if(NOT OpenSSL_FOUND)
+        message(FATAL_ERROR
+            "找不到 OpenSSL ≥ 3.0（httplib 发 https 要它）。三条路：\n"
+            "  Linux  apt install libssl-dev\n"
+            "  macOS  brew install openssl@3，再加 "
+            "-DOPENSSL_ROOT_DIR=$(brew --prefix openssl@3)\n"
+            "  这一版不要 https：-DCHANGJI_SSL=OFF\n"
+            "发布用的那份由 CI 自己编（见 .github/workflows/release.yml "
+            "里的 openssl 那个 job），不靠构建机上装了什么。")
+    endif()
+    # find_package 找不到静态库时会**退回动态库**，不报错。自己核一遍。
+    # （Windows 上这条弱一些：动态库的导入库也是 .lib。那边的兜底是 CI 里
+    # 编的本来就是 no-shared，装出来的目录里根本没有 dll。）
+    foreach(_lib "${OPENSSL_SSL_LIBRARY}" "${OPENSSL_CRYPTO_LIBRARY}")
+        get_filename_component(_ext "${_lib}" LAST_EXT)
+        if(NOT _ext STREQUAL "${CMAKE_STATIC_LIBRARY_SUFFIX}")
+            message(FATAL_ERROR
+                "OpenSSL 找到的是动态库：${_lib}\n"
+                "发出去的包必须自带 OpenSSL——链到构建机上那份 .dylib/.so，"
+                "换台机器就是 Library not loaded。\n"
+                "给一份静态的：-DOPENSSL_ROOT_DIR=<装好的前缀>；"
+                "或者这一版不要 https：-DCHANGJI_SSL=OFF")
+        endif()
+    endforeach()
+    message(STATUS "OpenSSL（静态）${OPENSSL_VERSION}：${OPENSSL_SSL_LIBRARY}")
+endif()
 
 # Crow 1.2.0 的状态码表里没有 422，会把它改写成 500。
 # 所有 pydantic 风格的校验错误都受影响，而单元测试看不见——
@@ -609,14 +732,40 @@ target_link_libraries(changji PRIVATE
     tomlplusplus::tomlplusplus
     httplib::httplib
     Crow::Crow
+    # 上面那段拉的三个静态库。httplib 的 CMakeLists 不再去构建机上找它们了，
+    # 开关（CPPHTTPLIB_*_SUPPORT）也就得由我们自己给，见下面。
+    changji_z
+    brotlienc
+    brotlidec
+    brotlicommon
 )
 
 target_compile_definitions(changji PRIVATE
     ASIO_STANDALONE
-    # cpp-httplib 默认要 OpenSSL 才能发 https。阶段 0 只连本机 http 服务，
-    # 先不引 OpenSSL。等真要连云端 LLM 时再打开 CPPHTTPLIB_OPENSSL_SUPPORT。
+    CPPHTTPLIB_ZLIB_SUPPORT
+    CPPHTTPLIB_BROTLI_SUPPORT
     CHANGJI_VERSION="${CHANGJI_VERSION}"
 )
+
+if(CHANGJI_SSL)
+    target_link_libraries(changji PRIVATE OpenSSL::SSL OpenSSL::Crypto)
+    target_compile_definitions(changji PRIVATE CPPHTTPLIB_OPENSSL_SUPPORT)
+    if(APPLE)
+        # **静态 OpenSSL 自己不带根证书。**
+        # 系统上那份（/etc/ssl/cert.pem）在 macOS 上是给命令行工具用的，
+        # 用户装的企业根证书在钥匙串里。httplib 有现成的那一支：打开这个宏，
+        # 它走 Security.framework 把钥匙串里的根证书灌进 X509_STORE。
+        target_compile_definitions(changji PRIVATE
+                                   CPPHTTPLIB_USE_CERTS_FROM_MACOSX_KEYCHAIN)
+        target_link_libraries(changji PRIVATE
+            "-framework CoreFoundation" "-framework Security")
+    elseif(WIN32)
+        # Windows 那一支 httplib 用 CertOpenSystemStoreW 读系统证书库，
+        # 它自己 `#pragma comment(lib, "crypt32")`——那条 pragma 只有 MSVC
+        # 认，clang-cl 也认，MinGW 不认，所以这里显式再链一次。
+        target_link_libraries(changji PRIVATE crypt32)
+    endif()
+endif()
 
 if(CHANGJI_LLAMA)
     # mtmd 而不只是 llama：Qwen3-TTS 的实现在 mtmd 里。
@@ -707,9 +856,20 @@ option(CHANGJI_STATIC_RUNTIME "静态链接 libstdc++/libgcc" ON)
 # 一半 /MT 一半 /MD 链接时会报 RuntimeLibrary 不匹配。
 # 这里放在文件末尾只是为了和上面那段放一起读——CMake 的
 # CMAKE_MSVC_RUNTIME_LIBRARY 是在生成阶段读的，位置不影响。
+#
+# **自己拉源码编的那几个静态库要跟着一起改。** /MT 的 changji 链 /MD 的
+# 静态库，MSVC 报的是 LNK2038 RuntimeLibrary 不匹配，而那行报错完全看不出
+# 是"哪个库编错了运行时"。brotli 那个命令行工具（我们用不到，但
+# `cmake --build build` 不带 --target 时会编）也一并改，否则轮到它链接时挂。
+# CI 里 openssl 那个 job 编的静态库本来就是 /MT（OpenSSL 的 no-shared
+# 默认就走静态 CRT），和这里对得上。
 if(CHANGJI_STATIC_RUNTIME AND MSVC)
-    set_property(TARGET changji PROPERTY
-                 MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+    foreach(_t changji changji_z brotlicommon brotlienc brotlidec brotli)
+        if(TARGET ${_t})
+            set_property(TARGET ${_t} PROPERTY
+                         MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+        endif()
+    endforeach()
 endif()
 
 if(CHANGJI_STATIC_RUNTIME AND NOT MSVC)

@@ -31,9 +31,15 @@ RUN if [ -n "$APT_MIRROR" ]; then \
 # python3 是 CHANGJI_LLAMA=ON 要的：llama.cpp 拉下来要就地打 leejet 的
 # 扩展补丁（patches/apply_to_llamacpp.py），CMakeLists 里
 # find_package(Python3 REQUIRED) 找不到解释器会在配置期就停下。
+#
+# libssl-dev 是 CHANGJI_SSL=ON 要的：httplib 发 https 靠它，而 CMakeLists
+# **只认静态库**（.a）——发出去的二进制不能链构建机上的 libssl.so。
+# Debian 的 libssl-dev 里带 libssl.a / libcrypto.a，装上就够，
+# 不用像 CI 那样自己编一份。
 RUN apt-get update && apt-get install -y --no-install-recommends \
         -o Acquire::Retries=5 \
         build-essential cmake ninja-build git ca-certificates python3 \
+        libssl-dev \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /src

@@ -19,8 +19,9 @@ constexpr const char* kProbePath = "split_files/vae/qwen_image_vae.safetensors";
 
 /// 一次 HEAD，返回耗时（秒）。连不上返回 -1。
 ///
-/// 走 curl 而不是进程内的 httplib：**这个二进制没编 OpenSSL**
-/// （见 CMakeLists 里那段注释），httplib 发不了 https。
+/// 走 curl 而不是进程内的 httplib。https 现在发得了（OpenSSL 静态编进来了，
+/// 见 CMakeLists 里那段），但测速和真实下载走同一条路才有意义——
+/// 下载是 aria2c/curl 干的（要多连接和断点续传，见 downloader.hpp）。
 double head_seconds(const std::string& url) {
 #ifdef _WIN32
     constexpr const char* kNull = "NUL";

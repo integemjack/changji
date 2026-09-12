@@ -19,6 +19,21 @@ git 就能编；发布用的六个平台由
 打 leejet 的扩展补丁，配置期找不到解释器会当场停。这是构建期依赖，
 跑的时候不需要。
 
+**`CHANGJI_SSL`（默认 ON）要一份 OpenSSL ≥ 3.0，而且只认静态库。**
+httplib 发 https 靠它。不认动态库是有来历的：链上构建机那份
+`libssl.3.dylib` 的包，在构建机上跑得好好的，别人解开压缩包是
+`dyld: Library not loaded: /opt/homebrew/opt/openssl@3/...`。
+
+- Linux：`apt install libssl-dev`（里面带 `libssl.a`）
+- macOS：`brew install openssl@3`，然后
+  `-DOPENSSL_ROOT_DIR=$(brew --prefix openssl@3)`
+- 找不到静态库就**当场停**，不会悄悄退回动态链接
+- 本机只想快编一版、不关心 https：`-DCHANGJI_SSL=OFF`
+
+发布的六个平台不靠任何一台机器上装了什么：release.yml 里 `openssl` 那个
+job 自己编一份钉死版本的静态库（带缓存），再 `-DOPENSSL_ROOT_DIR` 指过去。
+同一段里 brotli 和 zlib 走的是 FetchContent 拉源码静态编，什么都不用装。
+
 Windows 上是 **MSVC 2022 Build Tools + Ninja**。先进 MSVC 的环境：
 
 ```powershell
@@ -46,6 +61,7 @@ cmake --build build
 | `CHANGJI_CUDA_ARCH` | `89` | 编给哪些 N 卡架构，分号隔开。发布包用的那一串在 release.yml 里 |
 | `CHANGJI_HIP_ARCH` | `gfx1030;gfx1100;gfx1101;gfx1102` | 编给哪些 A 卡架构。**列表外的卡直接跑不了**——HIP 没有 CUDA 那种 PTX 兜底 |
 | `CHANGJI_LLAMA` | OFF | 链 llama.cpp + mtmd，**进程内配音**（阶段 9）。开着会让干净构建多编一份 llama.cpp 和一份打过补丁的 ggml |
+| `CHANGJI_SSL` | ON | 静态编进 OpenSSL，httplib 才发得了 https。**只认静态库**，见上面那段 |
 | `CHANGJI_BUILD_TESTS` | ON | 编 `changji_tests.exe` |
 | `CHANGJI_STATIC_RUNTIME` | ON | 静态链运行时。"零运行时依赖"是这个后端存在的理由之一。**macOS 上自动忽略**——Apple 的工具链没有静态 libc++ |
 | `CHANGJI_VERSION` | `dev` | 写进二进制的版本号，`--version` 打印它。发布时由 CI 填 git tag |
