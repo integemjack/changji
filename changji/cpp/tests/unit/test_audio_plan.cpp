@@ -355,3 +355,48 @@ TEST_CASE("概览只列前五个紧的镜头") {
         CHECK(stages::summarize({}) == "没有需要配音的镜头");
     }
 }
+
+TEST_CASE("拆句不能留下只有标点的碎片") {
+    // **实测撞上的，而且很严重。** 一句「…我得赔光这个月的房租！」被硬切之后
+    // 最后剩了一个「！」单独成段，TTS 拿到孤零零一个标点，**配出来 40.96 秒**
+    // ——而那一镜只有 5 秒，声音盖住后面好几镜。
+    //
+    // 估算这一侧完全看不出来：标点不发音，estimate_speech_duration 给的是
+    // 零点几秒，所以它一路过了所有检查，直到听成片才会发现。
+    const double cap = stages::max_line_seconds(24);
+
+    auto no_punct_only = [](const std::vector<std::string>& parts) {
+        for (const auto& p : parts) {
+            CAPTURE(p);
+            // 每一段去掉标点之后都得还剩字
+            CHECK_FALSE(text::strip_ws(text::rstrip_punct(p)).empty());
+        }
+    };
+
+    SUBCASE("那句真的台词") {
+        const std::string line = "该死，这单要是超时了我得赔光这个月的房租！";
+        const auto parts = stages::split_long_text(line, cap);
+        REQUIRE(parts.size() >= 1);
+        no_punct_only(parts);
+        // 标点并回前一段，不是丢掉——它是前一句的语气
+        std::string joined;
+        for (const auto& p : parts) joined += p;
+        CHECK(joined.find("！") != std::string::npos);
+    }
+
+    SUBCASE("一长串会被硬切的句子") {
+        std::string longer;
+        for (int i = 0; i < 12; ++i) longer += "他慢慢地把伞收起来放在门口";
+        longer += "。";
+        const auto parts = stages::split_long_text(longer, cap);
+        REQUIRE(parts.size() > 1);
+        no_punct_only(parts);
+    }
+
+    SUBCASE("整句就是个标点时原样留着，不吞掉") {
+        // 这种输入本来就不该出现，真出现了让它显出来比悄悄吞掉强
+        const auto parts = stages::split_long_text("！", cap);
+        REQUIRE(parts.size() == 1);
+        CHECK(parts[0] == "！");
+    }
+}

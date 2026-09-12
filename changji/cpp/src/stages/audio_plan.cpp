@@ -150,7 +150,26 @@ std::vector<std::string> split_long_text(const std::string& text_in,
     std::vector<std::string> out;
     for (const auto& p : final_pieces) {
         const std::string t = text::strip_ws(p);
-        if (!t.empty()) out.push_back(t);
+        if (t.empty()) continue;
+
+        // **不能留下只有标点的碎片。**
+        //
+        // 硬切是按字数切的，最后很容易剩一个「！」之类的尾巴。而 TTS 拿到
+        // 孤零零一个标点，合成出来的东西不可预期——实测出过一句
+        // 「…我得赔光这个月的房租！」被切成三段，最后那段就是一个「！」，
+        // **配出来 40.96 秒**，而那一镜只有 5 秒，声音盖住后面好几镜。
+        // 估算那边完全看不出来：标点不发音，estimate_speech_duration 给的
+        // 是零点几秒，所以它一路过了所有检查。
+        //
+        // 标点要**并回前一段**，不是丢掉：它是前一句的语气，去掉之后
+        // 那句话的停顿和情绪都变了。前面没有段可并（整句就是个标点）时
+        // 原样留着——那种输入本来就不该出现，真出现了让它显出来，
+        // 比悄悄吞掉强。
+        if (text::strip_ws(text::rstrip_punct(t)).empty() && !out.empty()) {
+            out.back() += t;
+            continue;
+        }
+        out.push_back(t);
     }
     return out;
 }
