@@ -765,8 +765,8 @@ EffectiveSpec effective_spec(const Settings& s, int table_final_steps) {
     out.width = w;
     out.height = h;
 
-    // 档位表里的步数假设的是**不带蒸馏 LoRA** 的模型（28 步左右）。
-    // 挂着 Turbo 还跑 28 步不只是慢：资料和实测都说超过 8 步开始过锐，
+    // 档位表里的步数假设的是**不带蒸馏 LoRA** 的模型（MiniMax-H3 走 20）。
+    // 挂着 Turbo 还跑 20 步不只是慢：资料和实测都说超过 8 步开始过锐，
     // 画面反而变差。
     std::error_code ec;
     const auto lora = s.models.resolve(s.models.video_lora, s.workspace_path());

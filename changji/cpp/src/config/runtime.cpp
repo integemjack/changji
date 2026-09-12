@@ -100,6 +100,34 @@ models::HardwareProfile Runtime::profile() const {
         it->second.height = kv.second.height;
         it->second.steps = kv.second.steps;
     }
+
+    // **最后把成片档的步数换成真正会跑的那个。**
+    //
+    // 档位表里的步数假设的是不挂蒸馏 LoRA 的模型；挂着 Turbo 时
+    // effective_spec 会把它改成 6，而**那一步在出片的路上，不在这儿**。
+    // 于是同一台机器有两个说法：这个 profile 说 30 步、908 秒，实跑 6 步、
+    // 210 秒。而 profile 正是 /api/hardware 和 /api/run/preview 的唯一来源
+    // ——界面上的规格和"要等多久"两个数都是错的，人还按它安排时间。
+    //
+    // 耗时按步数等比缩：采样的每一步开销基本一样，而 measured_seconds 就是
+    // 按档位表那个步数标定出来的。
+    Settings snap;
+    {
+        std::lock_guard lg(mu_);
+        snap = settings_;
+    }
+    const auto fin = p.tiers.find(models::Tier::FINAL);
+    if (fin != p.tiers.end() && fin->second.steps > 0) {
+        const int table_steps = fin->second.steps;
+        const auto eff = effective_spec(snap, table_steps);
+        if (eff.final_steps > 0 && eff.final_steps != table_steps) {
+            if (fin->second.measured_seconds.has_value()) {
+                *fin->second.measured_seconds *=
+                    static_cast<double>(eff.final_steps) / table_steps;
+            }
+            fin->second.steps = eff.final_steps;
+        }
+    }
     return p;
 }
 

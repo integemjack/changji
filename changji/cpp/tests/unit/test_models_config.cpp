@@ -17,7 +17,9 @@
 #include <system_error>
 
 #include "scoped_env.hpp"
+#include "config/runtime.hpp"
 #include "config/settings.hpp"
+#include "models/hardware.hpp"
 #include "util/paths.hpp"
 
 using namespace changji;
@@ -1103,4 +1105,61 @@ TEST_CASE("清晰度只认这三个值") {
     CHECK(errs[0].find("hd") != std::string::npos);
     CHECK(errs[0].find("720p") != std::string::npos);
     CHECK(errs[0].find("2k") != std::string::npos);
+}
+
+TEST_CASE("profile 报的步数是真正会跑的那个，不是档位表里的") {
+    // 实跑撞上的：/api/hardware 说成片档 30 步、908.7 秒，而日志里是
+    // 「第 3/6 步」、整镜 210 秒。档位表的步数假设不挂蒸馏 LoRA，挂了 Turbo
+    // 之后 effective_spec 会改成 6——但那一步在出片的路上，不在 profile 里。
+    // profile 又是 /api/hardware 和 /api/run/preview 的唯一来源，于是界面上
+    // 的规格和「要等多久」两个数都是错的，而人按它安排时间。
+    // 中文目录名要过 paths::from_utf8，直接用窄字符串在中文 locale 的
+    // Windows 上会抛「No mapping for the Unicode character」。
+    const auto dir = std::filesystem::temp_directory_path() /
+                     paths::from_utf8("changji_步数一致");
+    std::error_code ec;
+    std::filesystem::remove_all(dir, ec);
+    std::filesystem::create_directories(dir / "loras", ec);
+    // 挂一个真实存在的 LoRA 文件，effective_spec 才认它
+    { std::ofstream f(dir / "loras" / "turbo.safetensors"); f << "x"; }
+
+    config::Settings s;
+    s.models.dir = paths::to_utf8(dir);
+    s.models.video_lora = "loras/turbo.safetensors";
+    s.tiers.final_steps = 0;          // 没人钉死步数，让 Turbo 说了算
+
+    config::runtime().replace(s);
+    const auto p = config::runtime().profile();
+    const auto fin = p.tiers.find(models::Tier::FINAL);
+    REQUIRE(fin != p.tiers.end());
+    CHECK(fin->second.steps == 6);    // 不是档位表里那个 28/30
+
+    SUBCASE("耗时跟着步数一起缩，不能还报按 30 步标定的那个数") {
+        if (fin->second.measured_seconds.has_value()) {
+            CHECK(*fin->second.measured_seconds > 0.0);
+            // 6 步的活不可能比 28 步还久
+            config::Settings bare = s;
+            bare.models.video_lora = "";
+            config::runtime().replace(bare);
+            const auto p2 = config::runtime().profile();
+            const auto fin2 = p2.tiers.find(models::Tier::FINAL);
+            REQUIRE(fin2 != p2.tiers.end());
+            CHECK(fin2->second.steps > 6);
+            if (fin2->second.measured_seconds.has_value()) {
+                CHECK(*fin->second.measured_seconds <
+                      *fin2->second.measured_seconds);
+            }
+        }
+    }
+
+    SUBCASE("人显式钉了步数就别替他改") {
+        config::Settings pinned = s;
+        pinned.tiers.final_steps = 28;
+        config::runtime().replace(pinned);
+        const auto p3 = config::runtime().profile();
+        CHECK(p3.tiers.at(models::Tier::FINAL).steps == 28);
+    }
+
+    config::runtime().replace(config::Settings{});
+    std::filesystem::remove_all(dir, ec);
 }
