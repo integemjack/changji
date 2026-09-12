@@ -310,6 +310,47 @@ TEST_CASE("实测显存：写出去再读回来，要一模一样") {
     CHECK(back.find(infer::Slot::LLM) == back.end());
 }
 
+TEST_CASE("实测显存：换了预算或画布，攒下的峰值就作废") {
+    // **2026-09-13 撞到的。** 给出片的预算补上计算缓冲的余量之后，一镜的
+    // 实际峰值从 32143 MiB 降到 24563 MiB（省了 7.4 GB），而记录下来的还是
+    // 31.39 GB——record_measured_vram 是「只往上记，不往下调」。
+    //
+    // 那条规则本身对：同一套配置下不同镜头有出入，取最大值才安全。错的是
+    // **换了配置之后它也降不回来**。后果两条：设置页上那个「实测」比实际
+    // 高 28%；调度器每次借视频槽都按 31.39 GB 腾地方，而整卡才 31.84 GB，
+    // 「够就不清理」那条优化永远不触发，每次换阶段白卸一遍模型。
+    std::map<infer::Slot, M> m;
+    m[infer::Slot::Video] = M{31ull << 30, 504832ull * 124};
+    const std::string text =
+        infer::serialize_measured_vram(m, "v28.66/i26.27/544x928");
+
+    SUBCASE("指纹一样：照收") {
+        const auto back =
+            infer::parse_measured_vram(text, "v28.66/i26.27/544x928");
+        REQUIRE(back.size() == 1);
+        CHECK(back.at(infer::Slot::Video).bytes == (31ull << 30));
+    }
+
+    SUBCASE("预算改了：整份作废") {
+        CHECK(infer::parse_measured_vram(text, "v23.26/i26.27/544x928").empty());
+    }
+
+    SUBCASE("画布改了：整份作废") {
+        CHECK(infer::parse_measured_vram(text, "v28.66/i26.27/1440x2560").empty());
+    }
+
+    SUBCASE("不给指纹就不查——老调用点行为不变") {
+        CHECK(infer::parse_measured_vram(text).size() == 1);
+    }
+
+    SUBCASE("老文件里没有指纹，不作废") {
+        // 那和"指纹对不上"不是一回事：老格式归 work == 0 那条管，
+        // 一刀切作废等于把升级前攒的全扔了。
+        const std::string old = R"({"视频":{"bytes":123,"work":456}})";
+        CHECK(infer::parse_measured_vram(old, "v23.26/i26.27/544x928").size() == 1);
+    }
+}
+
 TEST_CASE("实测显存：老文件里那个光秃秃的数还认，但当成不知道多大的活") {
     // 升级之前存下来的是 {"视频": 字节数}，没有 work。丢掉太浪费，
     // 但也不能当成"什么活都罩得住"——读回来 work = 0，调度器见到 0

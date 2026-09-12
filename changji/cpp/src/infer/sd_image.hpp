@@ -225,12 +225,28 @@ CropBox center_crop_box(int src_w, int src_h, int dst_w, int dst_h);
 /// 但"字段名对不对、坏数据会不会让程序崩"是能测也必须测的——
 /// 这个文件在两次运行之间保存的是**决定要不要卸模型的依据**，
 /// 解析出错的代价是要么白卸（慢），要么不该不卸（OOM）。
-std::string serialize_measured_vram(
-    const std::map<Slot, Scheduler::Measured>& m);
+/// `fingerprint` 是量这些数时的那套配置（预算、画幅……）。见 parse。
+std::string serialize_measured_vram(const std::map<Slot, Scheduler::Measured>& m,
+                                    const std::string& fingerprint = "");
 
 /// 坏行、缺字段、负数、不认得的槽名，一律**跳过那一条**，不影响别的。
 /// 整个文件解不开就返回空——那等于"没量过"，回到保守那条，安全。
-std::map<Slot, Scheduler::Measured> parse_measured_vram(const std::string& text);
+///
+/// `want` 非空时还要**对一下配置指纹**：实测值是"在那套配置下见过的峰值"，
+/// 换了配置就不作数了。
+///
+/// **2026-09-13 撞到的**：给出片的预算补上计算缓冲的余量之后，一镜的实际
+/// 峰值从 32143 MiB 降到 24563 MiB（省了 7.4 GB），而记录下来的还是
+/// 31.39 GB——因为 record_measured_vram 是「只往上记，不往下调」。
+/// 那条规则对：同一套配置下不同镜头有出入，取最大值才安全。错的是
+/// **换了配置之后它也不肯降**。于是设置页上一直显示 31.39 GB（比实际高
+/// 28%），而调度器每次借视频槽都按 31.39 GB 腾地方——整卡才 31.84 GB，
+/// 「够就不清理」那条优化永远不触发，每次换阶段白卸一遍模型。
+///
+/// 指纹对不上就整份当"没量过"。这和上面那条"解不开就返回空"是同一个
+/// 取舍：跑一镜自己就补回来，代价只是那一镜先腾一次显存。
+std::map<Slot, Scheduler::Measured> parse_measured_vram(
+    const std::string& text, const std::string& want = "");
 
 /// sd.cpp 的上下文。**贵**：建一次要解析模型文件、建张量图、分配运行时缓冲。
 ///

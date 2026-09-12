@@ -124,9 +124,12 @@ CropBox center_crop_box(int src_w, int src_h, int dst_w, int dst_h) {
 
 // 这两个在 #ifdef 外面，理由同 center_crop_box：纯转换，写在里面就测不到。
 
-std::string serialize_measured_vram(
-    const std::map<Slot, Scheduler::Measured>& m) {
+std::string serialize_measured_vram(const std::map<Slot, Scheduler::Measured>& m,
+                                    const std::string& fingerprint) {
     nlohmann::json j = nlohmann::json::object();
+    // 量这些数时的那套配置。键名带下划线，和槽名（LLM/图像/视频/配音）
+    // 不会撞——解析那边也是按槽名逐个找的，多一个键不影响老逻辑。
+    if (!fingerprint.empty()) j["_config"] = fingerprint;
     for (const auto& [slot, v] : m) {
         if (v.bytes == 0) continue;
         // **形状换了：数 -> 对象。** 光记字节数不够——那个数只在"活不比
@@ -138,7 +141,7 @@ std::string serialize_measured_vram(
 }
 
 std::map<Slot, Scheduler::Measured> parse_measured_vram(
-    const std::string& text) {
+    const std::string& text, const std::string& want) {
     std::map<Slot, Scheduler::Measured> out;
     if (text.empty()) return out;
     nlohmann::json j;
@@ -150,6 +153,19 @@ std::map<Slot, Scheduler::Measured> parse_measured_vram(
         return out;
     }
     if (!j.is_object()) return out;
+    // **配置指纹对不上就整份作废。** 见头文件：实测值是"在那套配置下见过的
+    // 峰值"，换了预算或画幅它就不再是上限，而 record_measured_vram 只升不降，
+    // 自己降不回来。
+    //
+    // 老文件里没有这个键。那种情况**不作废**：它和"指纹不同"不是一回事，
+    // 而且 work 那条已经在管老格式了（见下面）。
+    if (!want.empty()) {
+        const auto cfg = j.find("_config");
+        if (cfg != j.end() && cfg->is_string() &&
+            cfg->get<std::string>() != want) {
+            return out;
+        }
+    }
     const Slot kAll[] = {Slot::LLM, Slot::Image, Slot::Video, Slot::TTS};
     for (const Slot s : kAll) {
         const auto it = j.find(to_string(s));
@@ -1111,13 +1127,34 @@ void register_sd_slots(SettingsProvider raw_provider,
     {
         const fs::path store =
             paths::user_data_dir("changji") / "vram_measured.json";
+        // **这套实测值属于哪一套配置。** 只收真正会改变占用的那几项：
+        // 两条路各自的预算（预算决定 sd.cpp 能在显存里囤多少权重）和画布
+        // （缓冲随它涨）。模型换了的话文件大小会让预算那一项跟着变，
+        // 不必单列。
+        const std::string fingerprint = [&] {
+            const config::Settings s0 = provider();
+            const auto [cw, ch] = s0.video.size();
+            char buf[128];
+            std::snprintf(buf, sizeof(buf), "v%.2f/i%.2f/%dx%d",
+                          budget_for(s0, ModelRole::Video),
+                          budget_for(s0, ModelRole::Image), cw, ch);
+            return std::string(buf);
+        }();
         std::error_code ec;
         std::ifstream in(store, std::ios::binary);
         if (in) {
             const std::string text((std::istreambuf_iterator<char>(in)),
                                    std::istreambuf_iterator<char>());
             int no_work = 0;
-            for (const auto& [slot, v] : parse_measured_vram(text)) {
+            const auto loaded = parse_measured_vram(text, fingerprint);
+            if (loaded.empty() && text.find("\"bytes\"") != std::string::npos) {
+                // **说一声为什么攒下的数不作数了。** 不说的话用户看到的是
+                // "设置页上那个实测值怎么没了"，以及第一镜又卸了一次模型。
+                std::fprintf(stderr,
+                             "[vram] 出片/出图的预算或画布改过了，上次量到的"
+                             "峰值不再是上限，整份作废。第一镜会重新量一次。\n");
+            }
+            for (const auto& [slot, v] : loaded) {
                 scheduler().record_measured_vram(slot, v.bytes, v.work);
                 if (v.work == 0) ++no_work;
             }
@@ -1134,7 +1171,7 @@ void register_sd_slots(SettingsProvider raw_provider,
                              no_work);
             }
         }
-        scheduler().set_measured_sink([store](Slot, std::size_t) {
+        scheduler().set_measured_sink([store, fingerprint](Slot, std::size_t) {
             // 整份重写，不是追加——就四个槽，文件几十字节。
             //
             // **先写临时文件再改名，不要原地 truncate。**
@@ -1162,7 +1199,8 @@ void register_sd_slots(SettingsProvider raw_provider,
             {
                 std::ofstream out(tmp, std::ios::binary | std::ios::trunc);
                 if (!out) return;   // 写不了就算了，下次重新量
-                out << serialize_measured_vram(scheduler().all_measured());
+                out << serialize_measured_vram(scheduler().all_measured(),
+                                               fingerprint);
                 if (!out) {         // 磁盘满之类
                     out.close();
                     fs::remove(tmp, e);
@@ -1174,9 +1212,18 @@ void register_sd_slots(SettingsProvider raw_provider,
         });
     }
 
+    // **和 sd.cpp 那边拿的是同一个数。**
+    //
+    // 这儿原来自己又判了一次 `weights == "auto" ? physical : budget`，
+    // 和上面 budget_for 的三分支并行维护——2026-09-13 给 "cpu" 那条补上
+    // 计算缓冲的余量时，只改了 budget_for，这里就对不上了：sd.cpp 按
+    // 23.3 GB 的预算收着权重，而调度器以为预算是 28.7 GB，于是
+    // "够不够、要不要卸" 那条按一个不存在的上限在算。
+    //
+    // 直接调 budget_for，一处定义。视频那一路才是占大头的，按它取。
     scheduler().set_budget(
         static_cast<std::size_t>(
-            (provider().models.weights == "auto" ? physical : budget) * 1024) *
+            budget_for(provider(), ModelRole::Video) * 1024) *
         1024 * 1024);
 
     // 两个槽的估值都按整个预算算，也就是**同时只装得下一个**。
