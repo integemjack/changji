@@ -482,11 +482,20 @@ std::vector<Shot> parse_storyboard(const std::string& raw,
         }
         item["duration_s"] = snap_duration(dur);
 
-        // 模型常忘了硬切必须零时长，这里兜一下而不是报错退出
+        // 模型常忘了硬切必须零时长，这里兜一下而不是报错退出。
+        //
+        // **越界的也要兜。** 原来只管「没填或者填了 0」，填了 -0.4 就原样
+        // 留着——然后 validate 说「要在 0 到 2 秒之间」，**整张分镜表连同
+        // 另外十二个好镜头一起作废**。实跑撞上过一次，84 秒的显卡时间没了。
+        // 这一栏本来就不值得为它丢掉一整集：转场时长是个装饰。
         if (str_or(item, "transition_in", "cut") == "cut") {
             item["transition_dur_s"] = 0.0;
-        } else if (!truthy(item, "transition_dur_s")) {
-            item["transition_dur_s"] = 0.4;
+        } else {
+            const auto it = item.find("transition_dur_s");
+            const double v = (it != item.end() && it->is_number())
+                                 ? it->get<double>()
+                                 : 0.0;
+            item["transition_dur_s"] = (v > 0.0 && v <= 2.0) ? v : 0.4;
         }
 
         // **先删占位台词再补说话人。** 反过来的话，「（无台词）」那一句

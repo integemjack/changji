@@ -554,3 +554,29 @@ TEST_CASE("台词栏里的占位符要删掉，别让配音念出来") {
         CHECK(shots[1].characters.size() == 1);
     }
 }
+
+TEST_CASE("越界的转场时长兜住，别为一栏装饰丢掉一整集") {
+    // 实跑撞上的：模型给了 transition_dur_s = -0.4，validate 说「要在 0 到 2
+    // 秒之间」，于是整张表连同另外十二个好镜头一起作废，84 秒的显卡时间没了。
+    const models::AssetLibrary a = test_assets();
+    auto one = [&](const char* trans, double dur) {
+        const json raw = {
+            {"shots", json::array({
+                {{"shot_id", "ep01_sh001"}, {"scene_id", "sc01"}, {"order", 0},
+                 {"duration_s", 5.0}, {"shot_size", "MS"},
+                 {"first_frame_prompt", "雨夜"},
+                 {"transition_in", trans}, {"transition_dur_s", dur},
+                 {"characters", json::array({{{"char_id", "c_lin_wan"}}})},
+                 {"dialogue", json::array({
+                     {{"char_id", "c_lin_wan"}, {"text", "你说过会来的"}}})}}})}};
+        const auto shots = stages::parse_storyboard(raw.dump(), a);
+        REQUIRE(shots.size() == 1);
+        return shots[0].transition_dur_s;
+    };
+
+    CHECK(one("dissolve", -0.4) == doctest::Approx(0.4));   // 负的
+    CHECK(one("dissolve", 9.0) == doctest::Approx(0.4));    // 超过 2 秒
+    CHECK(one("dissolve", 0.0) == doctest::Approx(0.4));    // 没填
+    CHECK(one("dissolve", 0.8) == doctest::Approx(0.8));    // 合法的不动
+    CHECK(one("cut", 1.5) == doctest::Approx(0.0));         // 硬切一律零
+}
