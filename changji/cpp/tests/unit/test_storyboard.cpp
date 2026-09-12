@@ -18,6 +18,8 @@
 
 #include "models/character.hpp"
 #include "models/shot.hpp"
+// 落位那几条要估台词念多久
+#include "stages/audio_plan.hpp"
 #include "stages/storyboard.hpp"
 
 using namespace changji;
@@ -656,5 +658,43 @@ TEST_CASE("剧本里漏掉的台词由引擎照顺序补进镜头") {
     SUBCASE("没有镜头时什么也不做，不崩") {
         std::vector<models::Shot> none;
         CHECK(stages::place_missing_dialogue(none, script, a) == 0);
+    }
+
+    SUBCASE("不往一镜里堆到串音") {
+        // 实跑撞上的：尾巴上几句没有后锚点，全挤进最后一镜——四句话配出来
+        // 十几秒，而单镜上限五秒，后面的声音会盖到下一镜上。
+        std::string many = "【开场钩子 0–5 秒】\n雨夜天台。\n";
+        for (int i = 0; i < 8; ++i) {
+            many += "林晚：这是第" + std::to_string(i) +
+                    "句相当长的台词，长到一镜装不下两句。\n";
+        }
+        std::vector<models::Shot> shots;
+        for (int i = 0; i < 8; ++i) shots.push_back(blank("x", i));
+        // 先给最后一镜安一个锚点，逼出「后面没地方了」那种局面
+        models::DialogueLine anchor;
+        anchor.char_id = "c_lin_wan";
+        anchor.text = "这是第0句相当长的台词，长到一镜装不下两句。";
+        shots.back().dialogue.push_back(anchor);
+
+        stages::place_missing_dialogue(shots, many, a);
+        CHECK(stages::missing_dialogue_lines(many, shots).empty());
+
+        const double cap = stages::max_line_seconds();
+        for (const auto& s : shots) {
+            double t = 0.0;
+            for (const auto& d : s.dialogue) {
+                t += stages::estimate_speech_duration(d.text);
+            }
+            CAPTURE(s.shot_id);
+            CAPTURE(s.dialogue.size());
+            // **单句本身就超上限是另一回事**：那种由配音那一步按标点拆开
+            // （split_long_lines），落位管不了。这里要钉的是「不因为往一镜里
+            // 堆了好几句而超」——四句挤在最后一镜那种。
+            CHECK((s.dialogue.size() <= 1 || t <= cap));
+        }
+        // 八句没有全堆在一处
+        std::size_t most = 0;
+        for (const auto& s : shots) most = std::max(most, s.dialogue.size());
+        CHECK(most <= 2);
     }
 }

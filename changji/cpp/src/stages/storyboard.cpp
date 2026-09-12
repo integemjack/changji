@@ -11,6 +11,8 @@
 
 #include <cstring>
 
+// 落位时要估台词念多久，免得一镜塞到串音
+#include "stages/audio_plan.hpp"
 #include "stages/json_extract.hpp"
 // 段头识别（count_beats 要跳过「【开场钩子 0–5 秒】」那一行）
 #include "stages/script.hpp"
@@ -712,11 +714,24 @@ int place_missing_dialogue(std::vector<Shot>& shots, const std::string& script,
         }
     }
 
+    // 这一镜的台词加起来要念多久。
+    //
+    // **一镜装不下几句话。** 单镜时长有硬上限（视频模型的帧数上限，5 秒），
+    // 而配音那一步是按「这一镜台词的总时长」向上吸附着锁时长的
+    // （audio.cpp 的 lock_duration）——塞四句进去，配出来十几秒，镜头还是
+    // 5 秒，**后面的声音就盖到下一镜上**。audio_plan.hpp 开头警告的就是它。
+    const auto spoken = [](const Shot& s) {
+        double t = 0.0;
+        for (const auto& d : s.dialogue) t += estimate_speech_duration(d.text);
+        return t;
+    };
+    const double cap = max_line_seconds();
+
     int placed = 0;
     for (int i = 0; i < n; ++i) {
         if (at[static_cast<std::size_t>(i)] >= 0) continue;
 
-        // 前后最近的锚点。夹在中间就放中间那一镜，保住先后次序。
+        // 前后最近的锚点。这一句应该落在它们之间，先后次序才不乱。
         int prev = -1, next = -1;
         for (int k = i - 1; k >= 0; --k) {
             if (at[static_cast<std::size_t>(k)] >= 0) { prev = at[static_cast<std::size_t>(k)]; break; }
@@ -724,19 +739,49 @@ int place_missing_dialogue(std::vector<Shot>& shots, const std::string& script,
         for (int k = i + 1; k < n; ++k) {
             if (at[static_cast<std::size_t>(k)] >= 0) { next = at[static_cast<std::size_t>(k)]; break; }
         }
-        int target;
-        if (prev >= 0 && next >= 0) {
-            target = prev + (next - prev) / 2;
-        } else if (prev >= 0) {
-            target = prev + 1;
-        } else if (next >= 0) {
-            target = next - 1;
-        } else {
-            // 一个锚点都没有：按它在剧本里的位置摊到各镜
-            target = static_cast<int>((static_cast<double>(i) + 0.5) /
-                                      static_cast<double>(n) * m);
+
+        const double need =
+            estimate_speech_duration(want[static_cast<std::size_t>(i)].second);
+        int lo = prev >= 0 ? prev + 1 : 0;
+        int hi = next >= 0 ? next - 1 : m - 1;
+        if (lo > hi) {
+            // 锚点把区间挤没了（比如前一句已经落在最后一镜）。
+            lo = hi = std::clamp(prev >= 0 ? prev : next, 0, m - 1);
         }
-        target = std::clamp(target, 0, m - 1);
+        lo = std::clamp(lo, 0, m - 1);
+        hi = std::clamp(hi, lo, m - 1);
+
+        // 先在该在的区间里找装得下的。
+        int target = -1;
+        for (int s = lo; s <= hi; ++s) {
+            if (spoken(shots[static_cast<std::size_t>(s)]) + need <= cap) {
+                target = s;
+                break;
+            }
+        }
+        // 区间里都塞满了就往整集找——**次序略有出入，也比串音强**：
+        // 台词的先后人一眼看得出来、拖一下就能改，声音叠在一起是听不清的。
+        if (target < 0) {
+            for (int off = 0; off < m && target < 0; ++off) {
+                for (const int s : {lo - off, hi + off}) {
+                    if (s < 0 || s >= m) continue;
+                    if (spoken(shots[static_cast<std::size_t>(s)]) + need <= cap) {
+                        target = s;
+                        break;
+                    }
+                }
+            }
+        }
+        // 整集都装不下（台词比镜头多得多）：挑最空的那一镜，至少别都堆一处。
+        if (target < 0) {
+            target = lo;
+            for (int s = 0; s < m; ++s) {
+                if (spoken(shots[static_cast<std::size_t>(s)]) <
+                    spoken(shots[static_cast<std::size_t>(target)])) {
+                    target = s;
+                }
+            }
+        }
 
         Shot& shot = shots[static_cast<std::size_t>(target)];
         models::DialogueLine line;
