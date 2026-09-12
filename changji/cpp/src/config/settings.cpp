@@ -787,6 +787,22 @@ EffectiveSpec effective_spec(const Settings& s, int table_final_steps) {
     return out;
 }
 
+double workload_scale(int table_width, int table_height, int table_steps,
+                      const EffectiveSpec& eff) {
+    // 解码那段占的比例，见头文件里为什么不是纯步数比。
+    constexpr double kFixedShare = 0.2;
+
+    const double table_px = static_cast<double>(table_width) * table_height;
+    if (table_px <= 0.0 || table_steps <= 0) return 1.0;
+    if (eff.width <= 0 || eff.height <= 0 || eff.final_steps <= 0) return 1.0;
+
+    const double px_ratio =
+        static_cast<double>(eff.width) * eff.height / table_px;
+    const double step_ratio =
+        static_cast<double>(eff.final_steps) / table_steps;
+    return px_ratio * (kFixedShare + (1.0 - kFixedShare) * step_ratio);
+}
+
 std::vector<std::string> migrate_legacy(Settings& s) {
     std::vector<std::string> notes;
     // **拆掉一条路之后，老配置不能让程序起不来。**

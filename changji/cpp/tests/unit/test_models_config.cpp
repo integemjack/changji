@@ -1160,6 +1160,54 @@ TEST_CASE("profile 报的步数是真正会跑的那个，不是档位表里的"
         CHECK(p3.tiers.at(models::Tier::FINAL).steps == 28);
     }
 
+    SUBCASE("画幅也要换成真正会跑的那个，不能只换步数") {
+        // **上一版就只换了步数。** 于是 /api/hardware 报 1920×1088，而磁盘上
+        // 的成片是 544×928（ffprobe 量出来的）——同一个函数里同一个毛病，
+        // 修了一半，而画幅那一项差 4.13 倍像素，比步数还大。
+        const auto [want_w, want_h] = s.video.size();
+        CHECK(fin->second.width == want_w);
+        CHECK(fin->second.height == want_h);
+        // 竖屏短剧：高一定大于宽。档位表里推出来的是横的（1920×1088），
+        // 没换的话这一条就挂了。
+        CHECK(fin->second.height > fin->second.width);
+    }
+
     config::runtime().replace(config::Settings{});
     std::filesystem::remove_all(dir, ec);
+}
+
+TEST_CASE("workload_scale：档位表的耗时换算到真跑那一档") {
+    // 一镜的时间分两段：采样跟步数走，解码不跟（VAE 跑的是最后那一次潜空间）。
+    // 全按步数比缩会明显偏小——实测报 9 分钟、实际 14 分钟。
+    config::EffectiveSpec eff;
+    eff.width = 544;
+    eff.height = 928;
+    eff.final_steps = 6;
+
+    // 表里 1920×1088 / 20 步 → 真跑 544×928 / 6 步
+    const double got = config::workload_scale(1920, 1088, 20, eff);
+    const double px = 544.0 * 928.0 / (1920.0 * 1088.0);          // 0.242
+    CHECK(got == doctest::Approx(px * (0.2 + 0.8 * 6.0 / 20.0)));
+
+    // **一定比纯步数比大**：解码那段没跟着降，报小了比没有预演更糟。
+    CHECK(got > px * (6.0 / 20.0));
+    // 也一定比"只缩像素不缩步数"小，否则等于没算步数。
+    CHECK(got < px);
+
+    SUBCASE("规格没变就是 1.0，别把标定值改坏") {
+        config::EffectiveSpec same;
+        same.width = 1920;
+        same.height = 1088;
+        same.final_steps = 20;
+        CHECK(config::workload_scale(1920, 1088, 20, same) ==
+              doctest::Approx(1.0));
+    }
+
+    SUBCASE("表里的数不合法时返回 1.0，不拿 0 去除") {
+        CHECK(config::workload_scale(0, 1088, 20, eff) == doctest::Approx(1.0));
+        CHECK(config::workload_scale(1920, 1088, 0, eff) == doctest::Approx(1.0));
+        config::EffectiveSpec empty;
+        CHECK(config::workload_scale(1920, 1088, 20, empty) ==
+              doctest::Approx(1.0));
+    }
 }
