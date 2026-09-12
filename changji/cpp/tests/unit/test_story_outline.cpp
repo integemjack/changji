@@ -1289,7 +1289,13 @@ TEST_CASE("schema：正文一场一个数组，场数和段数都由语法卡住
     // 压到 150 试过，段长中位纹丝不动（78 → 83），只削掉长尾，而且真卡住
     // 时会把句子从中间切断。它的活儿是拦住病态的千字长段。塑形靠段数。
     CHECK(sp.at("paragraphs").at("items").at("maxLength").get<int>() >= 300);
-    CHECK(sp.at("paragraphs").at("items").at("minLength").get<int>() >= 12);
+    // **下限要低到放得进一句短对白。** 2026-09-12 晚之前是 20，而
+    // 「"别碰。"」只有 5 个字——语法不让它收引号，模型只能挂个动作或体感
+    // 上去凑长度。实测 319 段里不到 20 字的只有 1.6%，20~29 字那一档 52 段，
+    // 20 处是一堵墙；而真实网文段长中位 33、大量是短对白。
+    // 别再为了"拧字数"把它提上去：字数不是质量信号。
+    CHECK(sp.at("paragraphs").at("items").at("minLength").get<int>() <= 6);
+    CHECK(sp.at("paragraphs").at("items").at("minLength").get<int>() >= 2);
     CHECK(sp.at("paragraphs").at("items").at("type") == "string");
     REQUIRE(s.at("required").size() == 1);
     CHECK(s.at("required")[0] == "scenes");
