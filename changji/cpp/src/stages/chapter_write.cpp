@@ -183,11 +183,17 @@ ordered chapter_schema(int target_scenes, int paras_per_scene) {
             {"minLength", 1}};
         // **紧跟着 pov。** pov 是跟谁走，who 是场上有谁——两件事分开填，
         // 模型才不会把「跟着林晚走」当成「场上只有林晚」。
+        // **数组，minItems 2。** 上一版是一个字符串加 minLength——模型填了
+        // 「林夏, 无他人」就绕过去了（2026-09-12 实跑，那一章对白 4%）。
+        // 措辞拦不住的用语法拦：数组的 minItems 进 GBNF 是硬的，它没法只
+        // 写一项。这和第一轮把正文从 text 改成 paragraphs 是同一招。
         scene_props["who"] = {
-            {"type", "string"},
+            {"type", "array"},
             {"description",
-             "这一场谁在场，**至少两个人**，写人物表里的名字。只有一个人的场是回忆不是戏，写出来一句对白都没有，切出来就是一集默片"},
-            {"minLength", 3}};
+             "这一场在场的人，一人一项，写人物表里的名字。**至少两个真的在场的人**——只有一个人的场是回忆不是戏，写出来一句对白都没有，切出来就是一集默片"},
+            {"minItems", 2},
+            {"maxItems", 4},
+            {"items", {{"type", "string"}, {"minLength", 1}}}};
         scene_props["goal"] = {
             {"type", "string"},
             {"description", "他在这一场里想做成什么"},
@@ -608,7 +614,18 @@ ChapterDraft parse_chapter(const std::string& raw, int min_chars, bool strict) {
             DraftScene sc;
             sc.where = text::clean_field(get_str(s, "where"));
             sc.pov = text::clean_field(get_str(s, "pov"));
-            sc.who = text::clean_field(get_str(s, "who"));
+            if (const auto w = s.find("who"); w != s.end() && w->is_array()) {
+                for (const auto& n : *w) {
+                    if (!n.is_string()) continue;
+                    const std::string one = text::clean_field(n.get<std::string>());
+                    if (one.empty()) continue;
+                    if (!sc.who.empty()) sc.who += "、";
+                    sc.who += one;
+                }
+            } else {
+                // 老形状：一个字符串。改 schema 之前存的草稿走这条。
+                sc.who = text::clean_field(get_str(s, "who"));
+            }
             sc.goal = text::clean_field(get_str(s, "goal"));
             sc.obstacle = text::clean_field(get_str(s, "obstacle"));
             sc.worse = text::clean_field(get_str(s, "worse"));
@@ -737,8 +754,20 @@ ChapterDraft parse_chapter(const std::string& raw, int min_chars, bool strict) {
             ++spoken;
             q += std::string("“").size();
         }
-        if (strict && spoken < 2 && text::utf8_len(d.text) > 400) {
-            throw StoryError("整章一句对白都没有：正文里没人说话，改成剧本就是默片。重试一次");
+        // **门槛从「整章两处」提到「至少一成的段落有人说话」。**
+        //
+        // 两处那个下限太松：2026-09-12 三跑的基线里，每一跑都有一章掉到
+        // 个位数（4%、1%、25%），而它们都过了两处这道闸。那种章不是没人
+        // 在场——`who` 填着两三个名字、梗概本身就是一场对话——是模型**把
+        // 对话整段转述掉了**（「他向她解释这些年…」），一句引号都没有。
+        // 一成是很低的门槛，真实网文是 13%~42%。
+        int paras = 1;
+        for (const char c : d.text) paras += (c == '\n') ? 1 : 0;
+        const bool too_few = spoken * 10 < paras;
+        if (strict && (spoken < 2 || too_few) && text::utf8_len(d.text) > 400) {
+            throw StoryError("整章几乎没有对白（" + std::to_string(paras) +
+                             " 段里只有 " + std::to_string(spoken) +
+                             " 处）：对话被整段转述掉了，要把话原样写出来。重试一次");
         }
     }
 

@@ -1796,6 +1796,75 @@ TEST_CASE("正文在贴情绪标签就打回") {
     CHECK_NOTHROW(changji::stages::parse_chapter(json{{"scenes", one}}.dump()));
 }
 
+TEST_CASE("在场的人是数组，语法上就不能只写一个") {
+    // 上一版是一个字符串加 minLength，模型填了「林夏, 无他人」就绕过去了
+    // ——2026-09-12 实跑，那一章对白只有 4%。措辞拦不住的用语法拦：数组的
+    // minItems 进 GBNF 是硬的。这和第一轮把正文从 text 改成 paragraphs
+    // 是同一招。
+    const auto s = changji::stages::chapter_schema(3, 22);
+    const auto& sp = s.at("properties").at("scenes").at("items").at("properties");
+    REQUIRE(sp.contains("who"));
+    CHECK(sp.at("who").at("type") == "array");
+    CHECK(sp.at("who").at("minItems").get<int>() >= 2);
+
+    // 落库之后是一行顿号分隔的名字
+    json paras = json::array();
+    for (int i = 0; i < 14; ++i) {
+        paras.push_back("第" + std::to_string(i) +
+                        "段：她把抹布拧干，水滴落在地板上，溅出细小的一圈。");
+    }
+    paras.push_back("他停在门口：“伞我带来了。”");
+    paras.push_back("她没抬头：“放那儿吧。”");
+    json scenes = json::array();
+    scenes.push_back({{"where", "深夜，便利店"},
+                      {"pov", "林晚"},
+                      {"who", json::array({"林晚", "陈默"})},
+                      {"goal", "把伞要回来"},
+                      {"obstacle", "他不认这把伞"},
+                      {"worse", "她发现伞根本不是他带来的"},
+                      {"turn", "伞柄上刻着别人的名字"},
+                      {"paragraphs", paras},
+                      {"last_line", "她把伞柄转过来，刻着的不是她的名字。"}});
+    const auto d = changji::stages::parse_chapter(json{{"scenes", scenes}}.dump());
+    REQUIRE(d.scenes.size() == 1);
+    CHECK(d.scenes[0].who == "林晚、陈默");
+}
+
+TEST_CASE("整章几乎没对白就打回") {
+    // 门槛从「整章两处」提到「至少一成的段落有人说话」：两处那个下限太松，
+    // 三跑基线里每一跑都有一章掉到个位数（4%、1%、25%），而它们都过了
+    // 两处那道闸。那种章不是没人在场，是模型把对话整段转述掉了。
+    const auto make = [](int spoken) {
+        json paras = json::array();
+        for (int i = 0; i < 30; ++i) {
+            paras.push_back("第" + std::to_string(i) +
+                            "段：她把抹布拧干，水滴落在地板上，溅出细小的一圈。");
+        }
+        for (int i = 0; i < spoken; ++i) {
+            paras.push_back("他停在门口，手扶着门框：“伞我带来了" +
+                            std::to_string(i) + "。”");
+        }
+        json scenes = json::array();
+        scenes.push_back({{"where", "深夜，便利店"},
+                          {"pov", "林晚"},
+                          {"who", json::array({"林晚", "陈默"})},
+                          {"goal", "把伞要回来"},
+                          {"obstacle", "他不认这把伞"},
+                          {"worse", "她发现伞根本不是他带来的"},
+                          {"turn", "伞柄上刻着别人的名字"},
+                          {"paragraphs", paras},
+                          {"last_line", "她把伞柄转过来，刻着的不是她的名字。"}});
+        return json{{"scenes", scenes}}.dump();
+    };
+    // 32 段里两处对白 = 6%，过了老闸，过不了新闸
+    CHECK_THROWS_AS(changji::stages::parse_chapter(make(2)),
+                    changji::stages::StoryError);
+    // 一成够了
+    CHECK_NOTHROW(changji::stages::parse_chapter(make(4)));
+    // 软闸：最后一次尝试照收
+    CHECK_NOTHROW(changji::stages::parse_chapter(make(2), 0, false));
+}
+
 TEST_CASE("分镜的话按小句摘掉，不摘整段") {
     // 「镜头拉远」「画面渐暗」是分镜的语言不是小说的语言，而后面另有一步
     // 专门把正文变成拍子。提示词里写了不要这么写，但 2026-09-12 量方差
@@ -1813,7 +1882,7 @@ TEST_CASE("分镜的话按小句摘掉，不摘整段") {
         json scenes = json::array();
         scenes.push_back({{"where", "深夜，便利店，冷柜的白光"},
                           {"pov", "林晚"},
-                          {"who", "林晚、陈默"},
+                          {"who", json::array({"林晚", "陈默"})},
                           {"goal", "把伞要回来"},
                           {"obstacle", "他不认这把伞"},
                           {"worse", "她发现伞根本不是他带来的"},
@@ -1856,7 +1925,7 @@ TEST_CASE("一段里只有右引号就补回左引号") {
         json scenes = json::array();
         scenes.push_back({{"where", "深夜，便利店，冷柜的白光"},
                           {"pov", "林晚"},
-                          {"who", "林晚、陈默"},
+                          {"who", json::array({"林晚", "陈默"})},
                           {"goal", "把伞要回来"},
                           {"obstacle", "他不认这把伞"},
                           {"worse", "她发现伞根本不是他带来的"},
@@ -2033,8 +2102,10 @@ TEST_CASE("整章一句对白都没有就打回") {
                             "段：她把抹布拧干，水滴落在地板上，溅出细小的一圈。");
         }
         if (spoken) {
+            // 门槛已经从「整章两处」提到「至少一成的段落」，22 段要三处
             paras.push_back("他停下来，手扶着门框：“伞我带来了。”");
             paras.push_back("她没抬头，抹布在台面上又抹了一遍：“放那儿吧。”");
+            paras.push_back("他把伞靠在柜台边上：“那我走了。”");
         }
         json scenes = json::array();
         scenes.push_back({{"where", "深夜，便利店，冷柜的白光"},
@@ -2045,7 +2116,8 @@ TEST_CASE("整章一句对白都没有就打回") {
                           {"paragraphs", paras}});
         return json{{"scenes", scenes}}.dump();
     };
-    // 下限是两处：两千字里连两句话都没人说，那不是独角戏，是没写对白。
+    // 下限是「至少一成的段落有人说话」：两千字里连几句话都没人说，
+    // 那不是独角戏，是对话被整段转述掉了。
     CHECK_THROWS_AS(changji::stages::parse_chapter(make(false)),
                     changji::stages::StoryError);
     CHECK_NOTHROW(changji::stages::parse_chapter(make(true)));
