@@ -35,8 +35,19 @@ ApiResult get_story(const std::string& path);
 ApiResult post_story(const nlohmann::json& body);
 
 /// POST /api/story/outline —— 大模型写大纲，只回草稿。
+///
+/// 带上 `stream`（WebSocket 的 job id）就**边写边推**：每 200 毫秒推一条
+/// `outline_progress`，里面是"到此为止它写出来的那份"。再带上 `async`
+/// 就当场回 202，结果走 job_done——理由和写一章一样，见 job_stream.hpp。
 ApiResult post_story_outline(const nlohmann::json& body, llm::Client& client,
                              pipeline::CancelToken& tok);
+
+/// 从**补齐过的半份大纲**里挑界面要显示的那几样（见 stages/json_partial）。
+///
+/// **导出只为了能测。** 这一层的错法很安静：半份 JSON 里任何字段都可能是
+/// null（`"logline":` 刚写完还没开始写值），拿 `value(..., "")` 去取会在
+/// null 上抛 type_error——而那会把整条生成搞挂，就为了推一帧进度。
+nlohmann::json outline_progress_payload(const nlohmann::json& partial);
 
 /// POST /api/story/adopt —— 采用一份大纲。
 ///

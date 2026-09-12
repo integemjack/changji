@@ -1,5 +1,6 @@
 #include "http/story_api.hpp"
 
+#include <chrono>
 #include <set>
 #include <string>
 #include <vector>
@@ -14,6 +15,7 @@
 #include "stages/story_reverse.hpp"
 #include "http/ws.hpp"
 #include "pipeline/activity.hpp"
+#include "stages/json_partial.hpp"
 #include "stages/json_stream.hpp"
 #include "stages/story_revise.hpp"
 #include "util/paths.hpp"
@@ -190,37 +192,102 @@ ApiResult post_story(const json& body) {
     return {200, story_response(story)};
 }
 
-ApiResult post_story_outline(const json& body, llm::Client& client,
-                             pipeline::CancelToken& tok) {
-    // "stream" 进白名单只是为了让异步那条路成立（见 server.cpp 的
-    // script_route）：这个接口本身不流式，拿到也不用。
-    forbid_extra(body, {"project", "premise", "scale", "keywords", "stream"});
-    ProjectStore store = open_project(body);
-    const Project project = load_or_400(store);
-    const Story existing = load_story_or_400(store);
+// 这个函数在头文件里声明了（导出只为了能测），所以不能放进匿名 namespace。
+/// 从**补齐过的半份大纲**里挑界面要显示的那几样。
+///
+/// ⚠️ **每一项都要先问类型。** 这份 JSON 是半路截下来补出来的，任何一个
+/// 字段都可能是 null（比如刚写到 `"logline":` 还没开始写值）。拿
+/// `value("logline", "")` 去取的话，nlohmann 在 null 上转字符串抛的是
+/// type_error——而那会把整条生成搞挂，就为了推一帧进度。
+json outline_progress_payload(const json& snap) {
+    const auto str_of = [](const json& j, const char* key) -> std::string {
+        const auto it = j.find(key);
+        return (it != j.end() && it->is_string()) ? it->get<std::string>()
+                                                  : std::string();
+    };
 
-    // 梗概没给就用存着的那份。隔天回来接着写大纲时不用重打一遍。
-    std::string premise = text::strip_ws(opt_str(body, "premise", ""));
-    if (premise.empty()) premise = existing.premise;
-    if (premise.empty()) premise = text::strip_ws(project.premise);
-    // **一个字都没有也照写。** 选题是整条流水线上最难从零开始的一步，
-    // 把它做成必填门槛就是把人摁在空白框前面发呆；这时候让模型连选题带
-    // 大纲一起出，人再挑。给了关键词的话它会往那个方向想。
+    json chapters = json::array();
+    if (const auto it = snap.find("chapters");
+        it != snap.end() && it->is_array()) {
+        for (const auto& c : *it) {
+            if (!c.is_object()) continue;
+            chapters.push_back({{"title", str_of(c, "title")},
+                                {"summary", str_of(c, "summary")},
+                                {"hook", str_of(c, "hook")}});
+        }
+    }
+    json people = json::array();
+    if (const auto it = snap.find("characters");
+        it != snap.end() && it->is_array()) {
+        for (const auto& c : *it) {
+            if (!c.is_object()) continue;
+            people.push_back({{"name", str_of(c, "name")},
+                              {"identity", str_of(c, "identity")}});
+        }
+    }
+    return {{"premise", str_of(snap, "premise")},
+            {"logline", str_of(snap, "logline")},
+            {"genre", str_of(snap, "genre")},
+            {"tone", str_of(snap, "tone")},
+            {"characters", people},
+            {"chapters", chapters}};
+}
 
-    const StoryScale scale = opt_scale(body, "scale", existing.scale);
-
+/// 写大纲。**同步和异步两条路跑的是这同一段**，理由同 write_one_chapter。
+json write_outline(ProjectStore& store, const Project& project,
+                   const Story& existing, std::string premise, StoryScale scale,
+                   const std::string& keywords, const std::string& stream_id,
+                   llm::Client& client, pipeline::CancelToken& tok) {
     pipeline::Activity act{"outline", paths::to_utf8(store.root()), "",
                            "正在出大纲"};
 
     llm::Request req;
-    req.prompt = stages::build_outline_prompt(premise, scale, project.style_line,
-                                              opt_str(body, "keywords", ""));
+    req.prompt =
+        stages::build_outline_prompt(premise, scale, project.style_line, keywords);
     req.schema = stages::outline_schema();
     req.schema_name = "story_outline";
 
     Story draft;
     try {
-        draft = stages::parse_outline(client.complete(req, tok), premise, scale);
+        std::string raw;
+        if (stream_id.empty()) {
+            raw = client.complete(req, tok);
+        } else {
+            // **边写边推。** 出一份大纲三四十秒，攒齐了再蹦出来的话那几十秒
+            // 界面上一个字都没有——而"它在想什么"正是这一步用户要看的东西。
+            //
+            // 章节正文那条抠的是一个字段（JsonFieldStreamer），这儿不行：
+            // 大纲是一整个对象，章节还是一串对象。所以走"补齐再解析"，
+            // 每一帧把能解出来的那一份挑几样推过去，见 stages/json_partial。
+            stages::PartialJson partial;
+            int seq = 0;
+            // 节流。一帧要把前缀整个解一遍，而 token 是几十毫秒一个；
+            // 不节流的话这条回调自己就成了负载，而人眼也看不出区别。
+            //
+            // ⚠️ **起点要往前推一个节流窗口**，不然第一帧会被自己吞掉——
+            // 而有的后端是**整段一次回调**（Client::complete 的默认实现就是
+            // 这样，回放后端走的正是它），那种情况下"第一帧"也是唯一一帧，
+            // 吞掉就等于一帧都没推。
+            auto last = std::chrono::steady_clock::now() -
+                        std::chrono::milliseconds(200);
+            std::size_t last_size = 0;
+            raw = client.complete(req, tok, [&](const std::string& piece) {
+                partial.feed(piece);
+                const auto now = std::chrono::steady_clock::now();
+                if (now - last < std::chrono::milliseconds(200)) return;
+                if (partial.size() == last_size) return;   // 没长就别重解
+                last = now;
+                last_size = partial.size();
+                const json snap = partial.snapshot();
+                if (!snap.is_object()) return;   // 这一帧补不出来，跳过
+                json msg = outline_progress_payload(snap);
+                msg["type"] = "outline_progress";
+                msg["job_id"] = stream_id;
+                msg["seq"] = seq++;
+                ws::hub().broadcast(stream_id, std::move(msg));
+            });
+        }
+        draft = stages::parse_outline(raw, premise, scale);
     } catch (const stages::StoryError& e) {
         throw ApiError(502, std::string("大模型没写出能用的大纲：") + e.what());
     } catch (const std::exception& e) {
@@ -234,7 +301,55 @@ ApiResult post_story_outline(const json& body, llm::Client& client,
     json out = story_response(draft);
     // **草稿，没落库。** 前端要拿这一份去 /api/story/adopt 才算数。
     out["adopted"] = false;
-    return {200, out};
+    return out;
+}
+
+ApiResult post_story_outline(const json& body, llm::Client& client,
+                             pipeline::CancelToken& tok) {
+    forbid_extra(body,
+                 {"project", "premise", "scale", "keywords", "stream", "async"});
+    ProjectStore store = open_project(body);
+    const Project project = load_or_400(store);
+    const Story existing = load_story_or_400(store);
+
+    // 梗概没给就用存着的那份。隔天回来接着写大纲时不用重打一遍。
+    std::string premise = text::strip_ws(opt_str(body, "premise", ""));
+    if (premise.empty()) premise = existing.premise;
+    if (premise.empty()) premise = text::strip_ws(project.premise);
+    // **一个字都没有也照写。** 选题是整条流水线上最难从零开始的一步，
+    // 把它做成必填门槛就是把人摁在空白框前面发呆；这时候让模型连选题带
+    // 大纲一起出，人再挑。给了关键词的话它会往那个方向想。
+
+    const StoryScale scale = opt_scale(body, "scale", existing.scale);
+    const std::string keywords = opt_str(body, "keywords", "");
+    const std::string stream_id = text::strip_ws(opt_str(body, "stream"));
+
+    // 异步那条，理由和写一章一模一样（见 post_story_chapter 里那段）：
+    // 这个 handler 占着 Crow 的一条 I/O 线程，而出一份大纲要三四十秒，
+    // 落在同一条线程上的连接会跟着冻住——顶栏那块表首当其冲。
+    if (opt_bool(body, "async", false) && !stream_id.empty()) {
+        const std::string project_path = paths::to_utf8(store.root());
+        Offload::instance().post([project_path, premise, scale, keywords,
+                                  stream_id, &client] {
+            try {
+                ProjectStore st = open_project(project_path);
+                const Project pj = load_or_400(st);
+                const Story ex = load_story_or_400(st);
+                pipeline::CancelToken own;
+                job_done(stream_id, write_outline(st, pj, ex, premise, scale,
+                                                  keywords, stream_id, client,
+                                                  own));
+            } catch (const ApiError& e) {
+                job_error(stream_id, e.what());
+            } catch (const std::exception& e) {
+                job_error(stream_id, e.what());
+            }
+        });
+        return {202, {{"started", true}, {"stream", stream_id}}};
+    }
+
+    return {200, write_outline(store, project, existing, premise, scale,
+                               keywords, stream_id, client, tok)};
 }
 
 ApiResult post_story_adopt(const json& body) {

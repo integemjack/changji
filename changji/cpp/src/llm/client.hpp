@@ -61,6 +61,21 @@ using HttpPost = std::function<HttpResponse(
     const std::string& url, const std::string& body,
     const std::map<std::string, std::string>& headers, double timeout_s)>;
 
+/// 响应体到了一段。返回 false = 别发了（取消），传输层会断开连接。
+using OnChunk = std::function<bool(const char* data, std::size_t len)>;
+
+/// 发一次 POST，**响应边到边给**。同样由调用方注入。
+///
+/// 和 HttpPost 分成两个而不是加个参数：整段那条有一堆地方在用（TTS、
+/// 模型列表、doctor），给它们全加一个用不上的参数不值当。
+///
+/// 回来的 HttpResponse 里 body 只在**出错时**有东西（状态码 >= 400 的
+/// 那份错误体，要拿它翻译成人话）；正常那条的内容已经从 on_chunk 走了。
+using HttpPostStream = std::function<HttpResponse(
+    const std::string& url, const std::string& body,
+    const std::map<std::string, std::string>& headers, double timeout_s,
+    const OnChunk& on_chunk)>;
+
 /// 生成到一段文字时回调一次。给的是**增量**，不是累计。
 ///
 /// 增量而不是累计：一段几千字的正文，回调几百次、每次带全文的话，
@@ -124,15 +139,27 @@ using ConfigProvider = std::function<config::LLMConfig()>;
 /// 远端 OpenAI 兼容服务。
 class RemoteClient : public Client {
 public:
-    explicit RemoteClient(ConfigProvider cfg, HttpPost post);
+    /// `stream_post` 给了就走 SSE（边生边回调）；不给就只有整段那条。
+    /// **做成可选的**：TTS 那边和一堆测试拿 RemoteClient 当普通客户端用，
+    /// 它们不需要流式，也不该被迫再注入一个函数。
+    explicit RemoteClient(ConfigProvider cfg, HttpPost post,
+                          HttpPostStream stream_post = {});
     /// 配置固定不变的版本。测试用，生产代码应该传 provider。
-    RemoteClient(config::LLMConfig cfg, HttpPost post);
+    RemoteClient(config::LLMConfig cfg, HttpPost post,
+                 HttpPostStream stream_post = {});
 
     std::string complete(const Request& req, pipeline::CancelToken& tok) override;
+
+    /// 走 SSE。**三条退路，一条都不能少**（见实现里那段注释）：
+    /// 服务不认 json_schema → 不带 schema 再来一次；还是不行 / 压根不认
+    /// stream → 退回整段那条。所以"接了 SSE"不会让任何一种服务变得更糟。
+    std::string complete(const Request& req, pipeline::CancelToken& tok,
+                         const OnToken& on_token) override;
 
 private:
     ConfigProvider cfg_;
     HttpPost post_;
+    HttpPostStream stream_post_;
 };
 
 /// 回放。按调用顺序吐出预先录好的返回。
@@ -155,5 +182,8 @@ private:
 
 /// 用 cpp-httplib 发请求。定义在 client_http.cpp 里，那个文件才 include httplib。
 HttpPost default_http_post();
+
+/// 同上，但响应边到边给。SSE 那条走它。
+HttpPostStream default_http_post_stream();
 
 }  // namespace changji::llm

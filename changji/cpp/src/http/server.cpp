@@ -587,7 +587,8 @@ void run(const config::Settings& settings, const Options& opts) {
     // 每个请求选一次的话，local 那条每次都要重新借槽——借槽本身不贵，
     // 但把"选哪条"散到各个路由里，将来加第三条后端就要改三处。
     static std::shared_ptr<llm::Client> script_client =
-        llm::make_client(llm::default_http_post());
+        llm::make_client(llm::default_http_post(),
+                         llm::default_http_post_stream());
 
     // 这一族全是要大模型的：出梗概、写剧本、出大纲、读故事、写一章、
     // 改一段稿。**一件一两分钟**，所以带上 async + stream 时挪到后台干，
@@ -888,7 +889,11 @@ void run(const config::Settings& settings, const Options& opts) {
             {
                 const double card_gb = prof.gpu.has_value() ? prof.gpu->vram_gb()
                                                             : prof.vram_gb;
-                const auto ex = config::expand_placement(s, card_gb);
+                // unified 也要传：界面显示的必须和引擎真正用的是同一个
+                // 展开结果，漏了这个参数就又分叉了（而这一处存在的理由
+                // 正是"不分叉"）。
+                const auto ex = config::expand_placement(
+                    s, card_gb, prof.gpu.has_value() && prof.gpu->unified());
                 const auto pack = [](const config::PlacementInfo& p) {
                     return json{{"weights", p.weights},
                                 {"modelGb", p.model_gb},
@@ -1473,7 +1478,8 @@ void run(const config::Settings& settings, const Options& opts) {
     // 上面那个 static 引用在这里不够安全——将来换成按项目建的客户端时，
     // 引用会在任务还跑着的时候失效。
     static std::shared_ptr<llm::Client> batch_client =
-        llm::make_client(llm::default_http_post());
+        llm::make_client(llm::default_http_post(),
+                         llm::default_http_post_stream());
 
     const auto batch_route = [](auto handler) {
         return [handler](const crow::request& req) {

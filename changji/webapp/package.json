@@ -2,22 +2,15 @@
   "name": "changji-webapp",
   "private": true,
   "version": "0.1.0",
-  "description": "场记 Web 平台：Node BFF + Vue 3 前端",
+  "description": "场记 Web 界面：Vue 3 前端，打包后嵌进引擎二进制",
   "workspaces": [
-    "server",
     "client"
   ],
   "scripts": {
-    "dev": "concurrently -n server,client -c cyan,magenta \"npm:dev:server\" \"npm:dev:client\"",
-    "dev:server": "npm --workspace server run dev",
-    "dev:client": "npm --workspace client run dev",
+    "dev": "npm --workspace client run dev",
     "build": "npm --workspace client run build",
-    "start": "npm --workspace server run start",
     "lint": "npm --workspace client run lint",
-    "test": "npm --workspace server run test && npm --workspace client run test"
-  },
-  "devDependencies": {
-    "concurrently": "^9.1.0"
+    "test": "npm --workspace client run test"
   },
   "engines": {
     "node": ">=22.12.0"

@@ -22,6 +22,8 @@
 #endif
 #include <windows.h>
 #elif defined(__APPLE__)
+#include <mach/mach.h>
+#include <mach/mach_host.h>
 #include <sys/sysctl.h>
 #endif
 
@@ -64,6 +66,25 @@ std::optional<CpuTicks> read_cpu_ticks() {
     return c;
 #elif defined(__linux__)
     return parse_proc_stat(read_file("/proc/stat"));
+#elif defined(__APPLE__)
+    // Mac 上原来落在下面那个 `return std::nullopt` 里，顶栏 CPU 那块表
+    // 永远是"—"。和内存那一项一样，是当初"手上没有 Mac"留下的空缺。
+    //
+    // host_statistics 的 HOST_CPU_LOAD_INFO 给的是开机以来四档的累计
+    // 滴答（user / system / idle / nice），和 /proc/stat 是一回事，
+    // 所以上面那个差值算法一个字都不用改。
+    host_cpu_load_info_data_t info{};
+    mach_msg_type_number_t count = HOST_CPU_LOAD_INFO_COUNT;
+    if (::host_statistics(mach_host_self(), HOST_CPU_LOAD_INFO,
+                          reinterpret_cast<host_info_t>(&info),
+                          &count) != KERN_SUCCESS) {
+        return std::nullopt;
+    }
+    CpuTicks c;
+    c.idle = info.cpu_ticks[CPU_STATE_IDLE];
+    c.total = 0;
+    for (int i = 0; i < CPU_STATE_MAX; ++i) c.total += info.cpu_ticks[i];
+    return c;
 #else
     return std::nullopt;
 #endif
@@ -137,8 +158,37 @@ void read_memory(Load& out) {
     if (::sysctlbyname("hw.memsize", &total, &len, nullptr, 0) == 0) {
         out.mem_total_gb = static_cast<double>(total) / kGb;
     }
-    // 用量这一项 Mac 上没接（要走 host_statistics64）。手上没有 Mac 验不了，
-    // 宁可显示 0 也别显示一个算错的数。
+    // 用量这一项原来是空着的（注释写的是"手上没有 Mac 验不了"）。表现是
+    // 顶栏上内存那块表永远是 `0 / 128 GB`——**而那比不显示更糟**：
+    // 一个一直是 0 的数看着像"内存没被用"，不像"这一项没接"。
+    // 2026-09-12 在 M3 Max 上补上，下面每个数都和活动监视器对过。
+    //
+    // **口径跟活动监视器的「已使用内存」走**，因为用户就是拿它对的：
+    //
+    //     已用 = 应用内存 + 联动内存 + 已压缩
+    //          = (internal - purgeable) + wire + compressor
+    //
+    // ⚠️ **不能用 `total - free`**：macOS 上 free 常年只有几百 MB（空闲内存
+    // 都被拿去当缓存了），那样算出来永远是 99%，而机器一点都不紧张。
+    // 也不能照搬 hardware.cpp 里 parse_vm_stat 那个式子——那个算的是
+    // "还能腾出多少给 GPU"，把 inactive 和 speculative 全当可用，
+    // 是另一个问题的答案。
+    vm_statistics64_data_t vm{};
+    mach_msg_type_number_t count = HOST_VM_INFO64_COUNT;
+    vm_size_t page = 0;
+    if (::host_page_size(mach_host_self(), &page) == KERN_SUCCESS &&
+        ::host_statistics64(mach_host_self(), HOST_VM_INFO64,
+                            reinterpret_cast<host_info64_t>(&vm),
+                            &count) == KERN_SUCCESS) {
+        const double used_pages =
+            static_cast<double>(vm.internal_page_count) -
+            static_cast<double>(vm.purgeable_count) +
+            static_cast<double>(vm.wire_count) +
+            static_cast<double>(vm.compressor_page_count);
+        if (used_pages > 0) {
+            out.mem_used_gb = used_pages * static_cast<double>(page) / kGb;
+        }
+    }
 #endif
 }
 

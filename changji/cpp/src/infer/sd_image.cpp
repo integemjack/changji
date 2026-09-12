@@ -618,7 +618,11 @@ std::shared_ptr<SdContext> SdContext::create(const config::Settings& settings,
     // ModelsConfig::image_weights 上面那组数字。
     const std::string& w = is_video ? m.weights : m.image_weights;
     const bool auto_fit = w == "auto";
-    impl.params_backend = auto_fit ? "" : w;
+    // gpu：一个组件都不指定后端，全在默认后端（也就是显卡）上跑。
+    // 传给 sd.cpp 的同样是空串，但 **auto_fit 是假**——它只在
+    // `auto_fit && 两个 spec 都空` 时才启用，所以这两条不会打架。
+    // 这个取值是给统一内存的机器准备的，见 ModelsConfig::weights_for。
+    impl.params_backend = (auto_fit || w == "gpu") ? "" : w;
 
     sd_ctx_params_t p{};
     ::sd_ctx_params_init(&p);
@@ -972,7 +976,10 @@ void register_sd_slots(SettingsProvider raw_provider,
     // 包括 budget_for 和 set_budget，它们都按 weights 的取值分支。
     const double card_gb = profile.gpu.has_value() ? profile.gpu->vram_gb()
                                                    : profile.vram_gb;
-    const SettingsProvider provider = [raw_provider, card_gb] {
+    // 统一内存的机器上 smart 展开成另一套（"放内存"在那里省不出地方）。
+    // 见 ModelsConfig::weights_for。
+    const bool unified = profile.gpu.has_value() && profile.gpu->unified();
+    const SettingsProvider provider = [raw_provider, card_gb, unified] {
         // 两个模型放哪都按文件大小算。视频那份 smart 以前只看卡，
         // 换了卡还要人去改 cpu——用户的原话："都应该让程序自己算。"
         // 图像那份还要看它**有多大**：fp8 的 Qwen-Image 20 GB、Q6_K 16 GB、
@@ -980,7 +987,7 @@ void register_sd_slots(SettingsProvider raw_provider,
         //
         // **展开逻辑不写在这儿**：设置页也要拿同一份结果显示给用户看，
         // 各写一遍就会分叉。见 config::expand_placement。
-        return config::expand_placement(raw_provider(), card_gb);
+        return config::expand_placement(raw_provider(), card_gb, unified);
     };
     // 预算取探测到的显存，留一成给驱动上下文和别的程序。
     //

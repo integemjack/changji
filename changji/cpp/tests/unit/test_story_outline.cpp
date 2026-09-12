@@ -33,6 +33,7 @@
 #include "stages/chapter_write.hpp"
 #include "stages/story_analyze.hpp"
 #include "stages/story_import.hpp"
+#include "stages/json_partial.hpp"
 #include "stages/story_outline.hpp"
 #include "stages/story_plan.hpp"
 #include "util/paths.hpp"
@@ -2867,6 +2868,87 @@ TEST_CASE("POST /api/story/chapters：拦住的几种情况") {
         }
         CHECK(client->calls().empty());
     }
+
+    std::error_code ec;
+    fs::remove_all(root, ec);
+}
+
+TEST_CASE("大纲流式：半份 JSON 里挑得出东西，而且不许抛") {
+    // 写大纲要三四十秒，攒齐了再蹦出来的话那几十秒界面上一个字都没有。
+    // 所以边写边推——推的就是这个函数从半份 JSON 里挑出来的几样。
+    //
+    // ⚠️ **半份 JSON 里任何字段都可能是 null。** `"logline":` 刚写完还没
+    // 开始写值的那一帧就是。拿 value(..., "") 去取的话 nlohmann 在 null 上
+    // 抛 type_error——一条生成会为了推一帧进度整个挂掉。
+    using changji::stages::PartialJson;
+
+    const std::string full =
+        R"({"premise":"她回到老家","logline":"葬礼上遇见前任","genre":"都市",)"
+        R"("tone":"克制","characters":[{"name":"林岚","identity":"记者"}],)"
+        R"("chapters":[{"title":"回家","summary":"她下了车。","hook":"门没锁"},)"
+        R"({"title":"葬礼","summary":"雨很大。"}]})";
+
+    // 一个字一个字喂，每一帧都要挑得出东西且不抛
+    PartialJson p;
+    for (std::size_t i = 0; i < full.size(); ++i) {
+        p.feed(full.substr(i, 1));
+        const auto snap = p.snapshot();
+        if (!snap.is_object()) continue;
+        json msg;
+        CHECK_NOTHROW(msg = http::outline_progress_payload(snap));
+        // 形状永远是全的，字段可以是空串——界面按"有没有字"决定摆不摆，
+        // 缺字段的话那边要写一堆 ?. 才不炸。
+        CHECK(msg.contains("logline"));
+        CHECK(msg.at("chapters").is_array());
+    }
+
+    // 最后一帧：该有的都有
+    const auto done = http::outline_progress_payload(p.snapshot());
+    CHECK(done.at("premise") == "她回到老家");
+    CHECK(done.at("logline") == "葬礼上遇见前任");
+    CHECK(done.at("genre") == "都市");
+    CHECK(done.at("characters").size() == 1);
+    CHECK(done.at("characters")[0].at("name") == "林岚");
+    REQUIRE(done.at("chapters").size() == 2);
+    CHECK(done.at("chapters")[0].at("title") == "回家");
+    CHECK(done.at("chapters")[0].at("hook") == "门没锁");
+    // 没写到的字段是空串，不是 null——界面直接往模板里塞
+    CHECK(done.at("chapters")[1].at("hook") == "");
+
+    // null 和缺字段都要当空串，一个都不许抛
+    const json weird = {{"logline", nullptr},
+                        {"chapters", {{{"title", nullptr}}, 42, "不是对象"}}};
+    json msg;
+    CHECK_NOTHROW(msg = http::outline_progress_payload(weird));
+    CHECK(msg.at("logline") == "");
+    // 不是对象的那两项直接跳过，不要在列表里留个空壳
+    CHECK(msg.at("chapters").size() == 1);
+    CHECK(msg.at("chapters")[0].at("title") == "");
+}
+
+TEST_CASE("POST /api/story/outline：带 stream 也照样回那份草稿") {
+    // 流式是**加的一条路**，不是换一条：不带 stream 的老客户端、curl、
+    // 对拍脚本走的还是原来那条，一个字没变；带了 stream 也只是多推几帧，
+    // 最后那份 body 必须一模一样。
+    const fs::path root = fresh_project("流式大纲");
+    pipeline::CancelToken tok;
+
+    llm::ReplayClient plain({good_outline().dump()});
+    const auto a = http::post_story_outline(
+        json{{"project", p_str(root)}, {"premise", "深夜便利店"}}, plain, tok);
+
+    llm::ReplayClient streamed({good_outline().dump()});
+    const auto b = http::post_story_outline(
+        json{{"project", p_str(root)}, {"premise", "深夜便利店"},
+             {"stream", "outline-test"}},
+        streamed, tok);
+
+    CHECK(a.status == 200);
+    CHECK(b.status == 200);
+    CHECK(a.body == b.body);
+    // 提示词也不该因为流式而变
+    REQUIRE(streamed.calls().size() == 1);
+    CHECK(streamed.calls()[0].prompt == plain.calls()[0].prompt);
 
     std::error_code ec;
     fs::remove_all(root, ec);

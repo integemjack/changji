@@ -7,6 +7,7 @@
 #include <cstdlib>
 #include <fstream>
 #include <system_error>
+#include <vector>
 
 #include "util/paths.hpp"
 #include "util/proc.hpp"
@@ -26,6 +27,7 @@ constexpr int kPollMs = 400;
 /// 一个文件最多重来几次。网络抖一下是常态，每次都从断点续，
 /// 所以重试很便宜；真正下不动的（地址没了、盘满了）三次也救不回来。
 constexpr int kMaxAttempts = 3;
+
 
 std::uint64_t file_size_or_zero(const fs::path& p) {
     std::error_code ec;
@@ -84,6 +86,38 @@ std::string last_lines(const std::string& text, int count) {
 }
 
 }  // namespace
+
+/// 同时下几个。
+///
+/// **原来是一个一个下的**，理由写在 downloader.hpp 上：瓶颈是带宽不是并发。
+/// 那句话对一半——对的是"带宽跑满之后并发没用"，不对的是**单连接常常
+/// 跑不满带宽**：hf-mirror 一条连接 1～2 MB/s，而这台机器的出口远不止。
+/// 用户 2026-09-12：「将模型改成同时下载而不是一个一个下」。
+///
+/// 分两档，因为两个下载器的并发是两回事：
+///   curl    单连接。并发几个就是快几倍，这一档给 4。
+///   aria2c  自己已经开了 8 条连接（`-x 8`），再乘上去就是 32 条——
+///           源站那边多半开始限速甚至掐连接，所以只给 2。
+///
+/// **代价要说清楚**：同时下的时候，「现在在下什么」不再是一个文件，
+/// 单个文件的进度也不再是单调推进的（谁快谁慢看源站脸色）。界面上
+/// 每一项各自有自己的进度条，总进度仍然是所有项的和。
+///
+/// 压回一个一个下：`CHANGJI_DOWNLOAD_PARALLEL=1`。上限 8——再多就只是
+/// 给源站添乱，而且断点续传的文件句柄也多得没必要。
+std::size_t parallel_lanes(std::size_t item_count, const std::string& tool) {
+    std::size_t lanes = tool == "aria2c" ? 2 : 4;
+    const std::string env = paths::env("CHANGJI_DOWNLOAD_PARALLEL");
+    if (!env.empty()) {
+        try {
+            const long v = std::stol(env);
+            if (v >= 1) lanes = static_cast<std::size_t>(std::min<long>(v, 8));
+        } catch (const std::exception&) {
+            // 写错了就按默认来。这地方不值得让整轮下载停下。
+        }
+    }
+    return std::max<std::size_t>(1, std::min(lanes, item_count));
+}
 
 const char* to_string(ItemState v) {
     switch (v) {
@@ -281,16 +315,45 @@ void Downloader::run(std::vector<Item> items, fs::path dir,
     }
 
     if (fatal.empty()) {
-        for (std::size_t i = 0; i < items.size(); ++i) {
-            if (cancel_) { canceled = true; break; }
-            const fs::path dest = dir / paths::from_utf8(items[i].file.name);
-            if (!fetch_one(items[i], dest, i)) {
-                std::lock_guard<std::mutex> lock(mu_);
-                if (snap_.items[i].state == ItemState::Canceled) canceled = true;
-                continue;  // 一个失败不拦住别的：能下多少是多少
+        // **几路一起下。** 几路怎么定的见 parallel_lanes。
+        //
+        // 派活走一个原子下标，不是按线程切片：文件大小差着两个数量级
+        // （605 MB 到 66 GB），切片会让某一路早早空转，而另一路还在啃
+        // 那个最大的。谁先空出来谁拿下一个。
+        const std::size_t lanes = parallel_lanes(items.size(), pick_tool());
+        std::atomic<std::size_t> next{0};
+        std::atomic<bool> any_canceled{false};
+        // **on_item_done 要串起来。** 它做的是把这一项写回用户配置
+        // （逐行编辑同一个 TOML），两路同时写会把文件写花——而那种坏
+        // 表现是"下完之后配置里少了一项"，谁也想不到是并发写的。
+        std::mutex done_mu;
+
+        const auto lane = [&] {
+            for (;;) {
+                const std::size_t i = next.fetch_add(1);
+                if (i >= items.size()) return;
+                if (cancel_) { any_canceled = true; return; }
+                const fs::path dest = dir / paths::from_utf8(items[i].file.name);
+                if (!fetch_one(items[i], dest, i)) {
+                    std::lock_guard<std::mutex> lock(mu_);
+                    if (snap_.items[i].state == ItemState::Canceled) {
+                        any_canceled = true;
+                    }
+                    continue;  // 一个失败不拦住别的：能下多少是多少
+                }
+                if (on_item_done) {
+                    std::lock_guard<std::mutex> lock(done_mu);
+                    on_item_done(items[i]);
+                }
             }
-            if (on_item_done) on_item_done(items[i]);
-        }
+        };
+
+        std::vector<std::thread> pool;
+        pool.reserve(lanes - 1);
+        for (std::size_t t = 1; t < lanes; ++t) pool.emplace_back(lane);
+        lane();   // 这个线程自己也算一路，别光站着看
+        for (auto& th : pool) th.join();
+        canceled = any_canceled;
     }
 
     std::lock_guard<std::mutex> lock(mu_);
@@ -349,7 +412,14 @@ bool Downloader::fetch_one(const Item& item, const fs::path& dest, std::size_t i
     }
 
     const std::string tool = pick_tool();
-    const fs::path log = dest.parent_path() / ".changji-download.log";
+    // ⚠️ **日志必须一个文件一份。**
+    //
+    // 原来是整个目录共用一个 `.changji-download.log`——一个一个下的时候
+    // 没问题，几路一起下就成了几个进程往同一个文件里交替写，而
+    // parse_aria2_progress 读的是末尾那几 KB：**A 文件的进度条会跳成
+    // B 文件的进度**，而下载本身是好的，从现象完全看不出是日志串了。
+    const fs::path log =
+        dest.parent_path() / ("." + paths::to_utf8(dest.filename()) + ".log");
 
     for (int attempt = 1; attempt <= kMaxAttempts; ++attempt) {
         if (cancel_) {
@@ -439,10 +509,18 @@ bool Downloader::fetch_one(const Item& item, const fs::path& dest, std::size_t i
             });
             {
                 std::lock_guard<std::mutex> lock(mu_);
-                snap_.speed_bps = shown;
+                // **总速度是在跑的那几路之和**，不是这一路的。
+                // 写成这一路的话，四路一起下时界面上显示的是其中随便
+                // 一路的速度，而剩下的时间按它算——报出来的数比实际慢
+                // 三四倍，用户会以为并发没生效。
+                double sum = 0.0;
+                for (const auto& it : snap_.items) {
+                    if (it.state == ItemState::Running) sum += it.speed_bps;
+                }
+                snap_.speed_bps = sum;
                 snap_.eta_seconds =
-                    shown > 1.0 && snap_.total > snap_.downloaded
-                        ? static_cast<double>(snap_.total - snap_.downloaded) / shown
+                    sum > 1.0 && snap_.total > snap_.downloaded
+                        ? static_cast<double>(snap_.total - snap_.downloaded) / sum
                         : -1.0;
             }
 

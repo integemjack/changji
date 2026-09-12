@@ -1,9 +1,11 @@
 #include "llm/client.hpp"
 
 #include <algorithm>
+#include <optional>
 #include <string>
 #include <utility>
 
+#include "llm/sse.hpp"
 #include "util/text.hpp"
 
 using json = nlohmann::json;
@@ -146,11 +148,110 @@ std::string explain_status(const config::LLMConfig& cfg, int status,
 
 // ---- RemoteClient ----
 
-RemoteClient::RemoteClient(ConfigProvider cfg, HttpPost post)
-    : cfg_(std::move(cfg)), post_(std::move(post)) {}
+RemoteClient::RemoteClient(ConfigProvider cfg, HttpPost post,
+                           HttpPostStream stream_post)
+    : cfg_(std::move(cfg)),
+      post_(std::move(post)),
+      stream_post_(std::move(stream_post)) {}
 
-RemoteClient::RemoteClient(config::LLMConfig cfg, HttpPost post)
-    : cfg_([cfg] { return cfg; }), post_(std::move(post)) {}
+RemoteClient::RemoteClient(config::LLMConfig cfg, HttpPost post,
+                           HttpPostStream stream_post)
+    : cfg_([cfg] { return cfg; }),
+      post_(std::move(post)),
+      stream_post_(std::move(stream_post)) {}
+
+std::string RemoteClient::complete(const Request& req,
+                                   pipeline::CancelToken& tok,
+                                   const OnToken& on_token) {
+    // 没人要逐字、或者没注入流式发送函数，就走整段那条。
+    // 基类那个默认实现会把整段回调一次，形状是一样的。
+    if (!on_token || !stream_post_) return Client::complete(req, tok, on_token);
+    if (tok.cancelled()) throw LlmError("已取消");
+
+    const config::LLMConfig cfg = cfg_();
+    const std::string url = cfg.base_url + "/chat/completions";
+    const std::map<std::string, std::string> headers = {
+        {"Authorization", "Bearer " + cfg.api_key},
+        {"Content-Type", "application/json"},
+        // 有的网关看这个头决定要不要给你加缓冲。加了缓冲就等于没有流式。
+        {"Accept", "text/event-stream"},
+    };
+
+    // 跑一趟 SSE。回来的是「拿到了多少正文 / 出了什么事」。
+    struct Attempt {
+        std::string text;
+        std::string sse_error;   ///< 服务端在流里塞的 error
+        int status = 0;
+        std::optional<std::string> transport_error;
+        bool canceled = false;
+    };
+    const auto run = [&](bool json_schema_mode) {
+        Attempt a;
+        nlohmann::ordered_json payload = build_payload(cfg, req, json_schema_mode);
+        payload["stream"] = true;
+
+        SseDeltas sse;
+        HttpResponse r = stream_post_(
+            url, payload.dump(), headers, cfg.timeout_s,
+            [&](const char* data, std::size_t len) {
+                if (tok.cancelled()) {
+                    a.canceled = true;
+                    return false;   // 断掉，别让它继续生成
+                }
+                const std::string piece = sse.feed(data, len);
+                if (piece.empty()) return true;
+                a.text += piece;
+                on_token(piece);
+                return true;
+            });
+        a.status = r.status;
+        a.transport_error = r.transport_error;
+        a.sse_error = sse.error();
+        // **服务端没理会 stream 的情况**：它回了一份普通的 JSON，SSE 解不
+        // 出任何东西。那份 body 在 r.body 里（流式那条只在出错时收 body，
+        // 但"整份 JSON"和"错误体"在传输上没区别），试着按整段解一次。
+        if (a.text.empty() && a.status < 400 && !r.body.empty()) {
+            try {
+                a.text = extract_content(r.body);
+                if (!a.text.empty()) on_token(a.text);
+            } catch (const std::exception&) {
+                // 解不出来就当这次没成，下面的退路会接手
+            }
+        }
+        return a;
+    };
+
+    // **三条退路，一条都不能少。**
+    //
+    //   1. 带 schema 的 SSE —— 正常那条
+    //   2. 不带 schema 的 SSE —— 有些服务不认 json_schema，理由和整段
+    //      那条里那段注释一样：各家回的状态码五花八门，没法只按码判断
+    //   3. 整段 —— 压根不支持 stream 的服务（或者流里什么都没给）
+    //
+    // 第 3 条是"接了 SSE 不会让任何一种服务变得更糟"的全部保证。
+    Attempt a = run(true);
+    if (a.canceled) throw LlmError("已取消");
+    if (!a.text.empty() && a.sse_error.empty()) return a.text;
+
+    if (a.status >= 400 || a.text.empty()) {
+        if (tok.cancelled()) throw LlmError("已取消");
+        Attempt b = run(false);
+        if (b.canceled) throw LlmError("已取消");
+        if (!b.text.empty() && b.sse_error.empty()) return b.text;
+        a = std::move(b);
+    }
+
+    // 流里明说了出错：这条要报出来，不能当成"生成完了"——
+    // 否则用户拿到的是一段空正文外加一句"写好了"。
+    if (!a.sse_error.empty() && a.text.empty()) {
+        throw LlmError("大模型服务报错：" + a.sse_error);
+    }
+    if (!a.text.empty()) return a.text;
+
+    // 退回整段那条。连不上、认证错这类问题也在这儿统一报——那边的
+    // explain_status 已经把各种状态码翻成了能照着做的话。
+    return Client::complete(req, tok, on_token);
+}
 
 std::string Client::complete(const Request& req, pipeline::CancelToken& tok,
                              const OnToken& on_token) {

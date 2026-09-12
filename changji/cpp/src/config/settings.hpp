@@ -270,9 +270,13 @@ struct ModelsConfig {
     /// 装得下的留显存，装不下的才放内存。44 GB 卡上视频模型 + 编码器 + VAE
     /// 全能常驻。预算给的是物理显存，不是 vram_gb_override——那个数是拿来
     /// 挑档位的，和这张卡实际有多少显存是两回事。
-    /// 取值三种：
+    /// 取值四种：
     ///   `cpu`  —— 全放系统内存，用到才搬。小卡唯一的选择，但每一步都等 PCIe。
     ///   `auto` —— 交给 sd.cpp 的 auto_fit 按空闲显存决定。
+    ///   `gpu`  —— **一个组件都不往内存放**，全在默认后端上。给统一内存的
+    ///     机器准备的（见 weights_for）：那种机器上"放内存"省不出任何地方。
+    ///     传给 sd.cpp 的是空的 params_backend（`auto_fit` 同时为假），
+    ///     也就是"不给任何组件指定后端"。
     ///   **别的都当成 sd.cpp 的组件规格原样传给 params_backend**，
     ///     比如 `te=cpu,vae=cpu`：只把文本编码器和 VAE 的权重放内存，
     ///     扩散模型常驻显存。
@@ -310,7 +314,8 @@ struct ModelsConfig {
 
     /// 把 `image_weights` 的 smart 按这张卡和这个模型展开。
     /// `model_gb` 是图像模型文件的大小，拿不到就传 0（按装不下处理）。
-    std::string image_weights_for(double vram_gb, double model_gb) const;
+    std::string image_weights_for(double vram_gb, double model_gb,
+                                  bool unified = false) const;
 
     /// 这一路跑起来时**真正要占的显存**（GB）：常驻权重 + 计算缓冲。
     ///
@@ -464,7 +469,10 @@ struct ModelsConfig {
     /// 驱动余量，直接和整卡显存比。VAE 也常驻再加 5.5 GB。
     ///   32.6 GB + H3 18.8：18.8 + 14.6 = 33.4 > 32.6 → "cpu"（和之前手填的一样）
     ///   80 GB：18.8 + 14.6 + 5.5 = 38.9 ≤ 80 且 ≥ 40 → "te=cpu"（只文本编码器在内存）
-    std::string weights_for(double vram_gb, double model_gb) const;
+    /// `unified` = 这块「显存」和系统内存是同一块（苹果芯片）。
+    /// **它不是个显示开关，是另一套取舍**，见实现里那段注释。
+    std::string weights_for(double vram_gb, double model_gb,
+                            bool unified = false) const;
     double image_cfg = 2.5;
     double image_flow_shift = 3.0;
 
@@ -646,7 +654,7 @@ EffectiveSpec effective_spec(const Settings& s, int table_final_steps);
 /// `card_gb` 传这张卡**物理**显存，不是 vram_gb_override——那个数是
 /// 拿来挑画质档位的，拿它算放置会把本来常驻得下的模型赶去内存。
 /// 传 0（探不到卡）时按装不下处理，也就是全放内存。
-Settings expand_placement(Settings s, double card_gb);
+Settings expand_placement(Settings s, double card_gb, bool unified = false);
 
 /// 一个模型这一轮的放置结果，给界面显示用。
 struct PlacementInfo {

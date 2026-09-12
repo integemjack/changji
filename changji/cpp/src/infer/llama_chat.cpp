@@ -1,8 +1,8 @@
 #include "infer/llama_chat.hpp"
 
+#include <algorithm>
 #include <chrono>
 #include <condition_variable>
-#include <algorithm>
 #include <cstdio>
 #include <mutex>
 #include <string>
@@ -301,48 +301,40 @@ bool LlamaChat::complete(const std::string& prompt, const std::string& schema,
 
     llama_memory_clear(llama_get_memory(lctx), true);
 
-    // **提示词要分批喂，不能一口气塞进去。**
+    // ---- 先把提示词喂进去，**分批喂** ----
     //
-    // 2026-09-11 这条把整个服务干掉过一次：点「读故事」（提示词是整本正文，
-    // 一万多字），llama.cpp 里
+    // ⚠️ **llama_decode 一次最多吃 n_batch 个 token，超了不是报错是 abort。**
+    //
     //     llama-context.cpp:1722: GGML_ASSERT(n_tokens_all <= cparams.n_batch)
-    // 直接 abort()——**不是异常，兜不住**，在跑的活全没了。
     //
-    // n_batch 是"一次 llama_decode 最多喂几个 token"，默认 2048，和上面那个
-    // n_ctx（16384）是两回事。所以长度那条守卫（n_prompt + max_tokens
-    // <= n_ctx）过得去，照样会炸在这儿——而且是提示词越长越必然，
-    // 正好是最想用大模型的那些活。
+    // 那是 GGML_ASSERT，整个进程当场没——用户正在批量写正文，写到一半
+    // 界面连同引擎一起消失（2026-09-12 实撞）。
     //
-    // 分批是 llama.cpp 自己例子里的做法：`llama_batch_get_one` 不带位置，
-    // 位置接着 KV cache 当前的走，所以顺序切开喂和一次喂完全等价。
-    // 最后一批的末尾就是提示词最后一个 token，采样拿的还是它的 logits。
-    const int n_batch = static_cast<int>(llama_n_batch(lctx));
+    // n_batch 的默认值是 **2048**，而上面那道长度检查比的是 n_ctx
+    // （这个模型是 40960）。于是"两千到四万个 token 的提示词"这一整段
+    // 区间：检查放行，decode 炸。批量写第 N 章的提示词带着前面几章的梗概
+    // 和钩子，正好落在这个区间里。
+    //
+    // 分批喂就没有这条限制：llama_batch_get_one 不带位置，位置由上下文
+    // 按 KV 里已有的长度顺着排，所以一段段喂和一次喂等价。
+    const int n_batch = std::max(1, static_cast<int>(llama_n_batch(lctx)));
     for (int i = 0; i < n_prompt; i += n_batch) {
+        // 提示词几千个 token 时这一步也要几秒，取消要能在这儿生效。
         if (tok.cancelled()) return true;
         const int n = std::min(n_batch, n_prompt - i);
-        llama_batch chunk = llama_batch_get_one(toks.data() + i, n);
-        if (llama_decode(lctx, chunk) != 0) {
-            why = "喂提示词时 llama_decode 失败（第 " + std::to_string(i) +
-                  " 个 token 起的那一批）";
+        llama_batch part = llama_batch_get_one(toks.data() + i, n);
+        if (llama_decode(lctx, part) != 0) {
+            why = "llama_decode 失败（喂提示词，第 " + std::to_string(i) +
+                  " 个 token 起，这一批 " + std::to_string(n) + " 个）";
             return false;
         }
     }
-
-    // 提示词已经喂完了，从这儿开始每次只喂一个新 token。
-    llama_batch batch = llama_batch_get_one(nullptr, 0);
-    bool first = true;
 
     for (int produced = 0; produced < max_tokens; ++produced) {
         // 取消在**每个 token 之间**查一次。写一集剧本要几分钟，
         // 不查的话点了停止要等它自己写完。
         if (tok.cancelled()) return true;
 
-        // 第一轮不用再解码：提示词那几批刚喂完，logits 已经在了。
-        if (!first && llama_decode(lctx, batch) != 0) {
-            why = "llama_decode 失败（第 " + std::to_string(produced) + " 个 token）";
-            return false;
-        }
-        first = false;
         // **别再 accept 一次。** `llama_sampler_sample` 内部已经调过
         // `llama_sampler_accept`（llama-sampler.cpp 两条返回路径上都有）。
         // 再手动接一次的话语法状态被推进两遍，第一个 token 就炸：
@@ -363,7 +355,15 @@ bool LlamaChat::complete(const std::string& prompt, const std::string& schema,
         // **回调在 append 之后、解码下一个之前。** 放在循环别处的话，
         // 取消时已经吐出去的和 out 里攒的会对不上——而调用方两边都在用。
         if (on_piece) on_piece(std::string(buf, static_cast<std::size_t>(n)));
-        batch = llama_batch_get_one(&id, 1);
+
+        // 把刚采出来的这个喂回去，下一轮才采得出下一个。
+        // **提示词那一段已经在上面喂完了**，所以这里是"先采样后 decode"，
+        // 和改之前那个"先 decode 后采样"的循环顺序正好反过来。
+        llama_batch one = llama_batch_get_one(&id, 1);
+        if (llama_decode(lctx, one) != 0) {
+            why = "llama_decode 失败（第 " + std::to_string(produced) + " 个 token）";
+            return false;
+        }
     }
     return true;
 }

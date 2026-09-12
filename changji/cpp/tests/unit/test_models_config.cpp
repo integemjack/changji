@@ -163,6 +163,15 @@ TEST_CASE("模型配置能从 toml 读出来") {
 #ifdef _WIN32
         const changji::test::ScopedEnv iso("LOCALAPPDATA",
                                            paths::to_utf8(empty_cfg));
+#elif defined(__APPLE__)
+        // ⚠️ **macOS 上换的必须是 HOME，不是 XDG_CONFIG_HOME。**
+        // user_config_dir 的 __APPLE__ 分支走的是
+        // `$HOME/Library/Application Support/changji`，那条路上**一个字都
+        // 不看 XDG_CONFIG_HOME**。所以上面说的那个故障，在 Mac 上从来没被
+        // 这道隔离挡住过——2026-09-12 在这台机器上撞到：配置里写着
+        // [models].dir，这条用例在开发机上红、在 CI 上绿（runner 是干净的，
+        // 根本没有那份用户配置）。**"只在一种机器上成立"的隔离等于没有。**
+        const changji::test::ScopedEnv iso("HOME", paths::to_utf8(empty_cfg));
 #else
         const changji::test::ScopedEnv iso("XDG_CONFIG_HOME",
                                            paths::to_utf8(empty_cfg));
@@ -513,6 +522,60 @@ TEST_CASE("weights = smart：按视频模型多大和卡多大算，不用人填
         if (e.find("vae_vram_min_gb") != std::string::npos) said = true;
     }
     CHECK(said);
+}
+
+TEST_CASE("统一内存：装得下就一个组件都不往内存放") {
+    // **苹果芯片上"权重放内存"是笔不成立的交易。**
+    //
+    // 独显上它换的是显存：权重待在系统内存里，用到才走一趟 PCIe。
+    // 统一内存上两头都不成立——CPU 和 GPU 指的是同一片物理内存，挪过去
+    // 不会让 GPU 多出一个字节；也没有那趟搬运可省。剩下的只有"把计算
+    // 赶去 CPU 跑"（UMT5-XXL 在 CPU 上 8 到 9 秒，在 GPU 上一两秒）。
+    //
+    // 所以 smart 在这种机器上顺序反过来：默认全常驻，超过 Metal 那条线
+    // 才开始退让。数字用这台 M3 Max：128 GB 统一内存，Metal 肯给 107.5 GB。
+    config::ModelsConfig m;
+    m.weights = "smart";
+    const double h3 = 18.8;   // MiniMax-H3 Q4_K_M
+
+    // 一样的卡，两套算法给出两个答案——这正是这次要改的东西
+    CHECK(m.weights_for(107.5, h3, /*unified=*/true) == "gpu");
+    CHECK(m.weights_for(107.5, h3, /*unified=*/false) == "te=cpu");
+
+    // 退让的阶梯还在：ggml 的 CPU 缓冲不算进 Metal 那条线，超了系统开始
+    // 压缩换页，那比把编码器放 CPU 慢得多。
+    //   18.8 + 14.6 + 5.5 = 38.9 —— 38 装不下，40 装得下
+    CHECK(m.weights_for(38.0, h3, true) == "te=cpu");
+    CHECK(m.weights_for(40.0, h3, true) == "gpu");
+    // 连权重带缓冲都常驻不下时和独显一样，全放内存（18.8 + 14.6 = 33.4）
+    CHECK(m.weights_for(32.6, h3, true) == "cpu");
+    // 拿不到模型大小：照旧按装不下处理
+    CHECK(m.weights_for(107.5, 0.0, true) == "cpu");
+
+    // 图像那一路同理。Qwen-Image fp8 20 GB + 解码缓冲 6.6 + 余量 4 = 30.6
+    config::ModelsConfig im;
+    im.image_weights = "smart";
+    CHECK(im.image_weights_for(107.5, 20.0, true) == "gpu");
+    CHECK(im.image_weights_for(107.5, 20.0, false) == "te=cpu,vae=cpu");
+    // 装不下：独显退到"全放内存"，统一内存退到"编码器和 VAE 放内存"——
+    // 那一档在统一内存上仍然有用（少占 Metal 的额度），而全放内存不是。
+    CHECK(im.image_weights_for(32.6, 20.0, true) == "te=cpu,vae=cpu");
+    CHECK(im.image_weights_for(32.6, 20.0, false) == "cpu");
+
+    // 人写死了值就别动它，unified 与否都一样
+    for (const char* w : {"cpu", "auto", "te=cpu,vae=cpu", "gpu"}) {
+        config::ModelsConfig other;
+        other.weights = w;
+        CAPTURE(w);
+        CHECK(other.weights_for(107.5, h3, true) == w);
+        CHECK(other.weights_for(8.0, h3, true) == w);
+    }
+
+    // **"gpu" 要按全常驻估显存。** 调度器拿这个数判要不要卸模型，
+    // 漏了这一支就会把"什么都在显存里"估成"只有缓冲"，然后不卸——
+    // 而估低的下场是 OOM。
+    CHECK(m.video_live_vram_gb("gpu", h3) == doctest::Approx(18.8 + 14.6 + 5.5));
+    CHECK(m.image_live_vram_gb("gpu", 20.0) == doctest::Approx(20.0 + 6.6 + 4.0));
 }
 
 TEST_CASE("[models]：双专家视频模型的两项") {

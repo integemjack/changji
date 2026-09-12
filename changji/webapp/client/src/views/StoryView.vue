@@ -268,6 +268,10 @@ function setStory(payload) {
   // 存的那一会儿又敲了字的章仍然是脏的，下一次刷新还得护着它。
   for (const c of chapters.value) {
     const id = c.chapter_id
+    // **AI 正往这一章写：一个字都别动。** 手里那份是正在长出来的，
+    // 而服务端那份要等它写完才落库——盖上去就是"写着写着整章空了"。
+    // 批量跑着的时候中途重读（见 refreshStory）就会撞上这一条。
+    if (streaming.value?.chapter_id === id) continue
     if (!dirtySnapshot.has(id)) buf[id] = c.text ?? ''
     else if ((buf[id] ?? '') === (c.text ?? '')) dirtySnapshot.delete(id)
   }
@@ -278,6 +282,26 @@ function setStory(payload) {
     current.value = (todo ?? chapters.value[0])?.chapter_id ?? ''
   }
   nextTick(fitAll)
+}
+
+/**
+ * 只把服务端那份重读一遍，**不清编辑器里的缓冲**。
+ *
+ * 和 load() 的区别就在这儿：load 会把 buf 和 dirtySnapshot 整个清掉，
+ * 那在批量跑着的时候是灾难——正在长出来的那一章会当场空掉，别的章没存的
+ * 改动也没了。这个只更新"服务端那份"（c.text），编辑器手里那份由
+ * setStory 按脏不脏、流没流决定要不要跟。
+ *
+ * **读不到就算了。** 它是顺手刷新，不是关键路径；批量跑着的时候引擎正忙，
+ * 为这个弹个红框只会让人以为批量挂了。
+ */
+async function refreshStory() {
+  if (!session.projectPath) return
+  try {
+    setStory(await api.getStory(session.projectPath))
+  } catch {
+    /* 下一次换章再说 */
+  }
 }
 
 async function load() {
@@ -327,6 +351,21 @@ function watchBatch() {
       // 第一次就用上了），而重试是从头生成的——照旧往后接的话，编辑器里
       // 会是"写砸的那半截 + 重写的全文"接在一起。跑完 load() 会把它冲掉，
       // 但那之前这一章看着就是坏的。
+      // **AI 换章了：把服务端那份重读一遍。**
+      //
+      // 上一章这会儿刚落库，而这一页手里那份还是空的。不重读的话：
+      //   - 左边那栏上一章一直显示「—」，而它明明写完了
+      //   - 那一章在 dirtyIds 里挂着（buf 有字、c.text 是空）
+      //   - **用户在那一章里敲一个字，存的时候就报「选中的范围不对」**
+      //     ——saveChapter 拿 c.text 的长度当 to_char，而那是 0，
+      //     引擎那边已经有六百字了。整段的账见 saveChapter。
+      //   - 批量跑着的时候翻回上一章，编辑器里是空的，刷新页面才出来
+      //     （token 是往 buf 里灌的，没听见的那几章就没有）
+      //
+      // 十六章一个多小时，中间十五次重读，一次就是一个 GET。
+      const wrote = streaming.value?.chapter_id
+      if (wrote && wrote !== msg.chapter_id) refreshStory()
+
       buf[msg.chapter_id] =
         msg.seq === 0 ? (msg.text ?? '') : (buf[msg.chapter_id] ?? '') + (msg.text ?? '')
       // at：AI 写到哪个字了。批量是从头往下写，所以就是当前长度。
@@ -452,9 +491,30 @@ function fitAll() {
   for (const el of Object.values(boxes)) fit(el)
 }
 
-/** AI 往眼前这一章写字时，把正在长的那一头一直留在视野里。 */
+/**
+ * 跟不跟着 AI 写的那一头走。
+ *
+ * **用户往上滚就松手，滚回底部就重新贴上。** 原来是每来一个 token 就
+ * 无条件 `scrollTop = scrollHeight`——想往回看一眼刚写的那几段，手一松
+ * 就被拽回底部，一个多小时的批量里翻不了任何东西。
+ *
+ * 判据是"离底部还有多远"，留 40 像素的余量：滚动位置在缩放、亚像素和
+ * 输入框重排之后常常差那么一两个像素，卡死成 `=== 0` 的话，明明在底部
+ * 却再也贴不回去了。
+ */
+const stuck = ref(true)
+const kStickSlack = 40
+
+function onScroll() {
+  const el = scroller.value
+  if (!el) return
+  stuck.value = el.scrollHeight - el.scrollTop - el.clientHeight <= kStickSlack
+}
+
+/** AI 往眼前这一章写字时，把正在长的那一头留在视野里——**除非人滚走了**。 */
 function keepEndVisible(id) {
   if (id !== current.value || !scroller.value) return
+  if (!stuck.value) return
   scroller.value.scrollTop = scroller.value.scrollHeight
 }
 
@@ -624,6 +684,12 @@ watch(current, (now, before) => {
   nextTick(() => {
     fit(boxes[now])
     if (scroller.value) scroller.value.scrollTop = 0
+    // 换了一章就是另一件事了：上一章滚到哪儿、跟没跟，都不带过来。
+    // **要在滚到顶之后设**，不然那次 scrollTop = 0 触发的 onScroll
+    // 会立刻把它判成"不在底部"。
+    nextTick(() => {
+      stuck.value = true
+    })
   })
 })
 
@@ -670,17 +736,31 @@ async function saveChapter(id) {
     scheduleSave(id, 400)
     return
   }
-  const result = await saver.run(
-    () =>
-      api.applyRevision({
-        project: session.projectPath,
-        chapter_id: id,
-        from_char: 0,
-        to_char: [...(c.text ?? '')].length,
-        text: sent,
-      }),
-    { key: 'save:' + id },
-  )
+  // **存的是一个区间：[0, 服务端那份有多长)。** 所以"服务端那份有多长"
+  // 必须是新的——旧了的话引擎会拒：「选中的范围不对：这一章有 601 个字，
+  // 而选的是 [0, 0)」。
+  //
+  // 什么时候会旧：批量正一章章往下写，上一章刚落库而这一页还没重读
+  // （见 watchBatch 里那段）。那一条现在在换章时就重读了，但**竞态还在**
+  // ——引擎可能正好在这次存的前一刻写完这一章。所以这里再兜一层：
+  // 第一次失败不弹框（quiet），重读一次拿到真正的长度，再存一次。
+  const save = (len) =>
+    api.applyRevision({
+      project: session.projectPath,
+      chapter_id: id,
+      from_char: 0,
+      to_char: len,
+      text: sent,
+    })
+
+  let result = await saver.run(() => save([...(c.text ?? '')].length),
+                               { key: 'save:' + id, quiet: true })
+  if (!result) {
+    await refreshStory()
+    const fresh = chapters.value.find((x) => x.chapter_id === id)
+    result = await saver.run(() => save([...(fresh?.text ?? '')].length),
+                             { key: 'save:' + id })
+  }
   if (!result) return
   if ((buf[id] ?? '') !== sent) scheduleSave(id)
   else dirtySnapshot.delete(id)
@@ -774,6 +854,7 @@ async function revise() {
 
   // 先把选中那段清掉，字就从那个位置长出来——这一下就是"开始写了"
   streaming.value = { chapter_id: id, from: at.from }
+  stuck.value = true   // 理由同 writeChapter
   pending.value = { chapter_id: id, prev, origin: at, after: null }
   await paint('')
 
@@ -920,6 +1001,20 @@ async function savePremise() {
 }
 
 /**
+ * 正在长出来的那份大纲。null = 没在写。
+ *
+ * 那一头每隔 200 毫秒推一帧「到此为止解出来的全份」（见引擎里的
+ * write_outline 和 stages/json_partial）。这块板子只是把它摆出来——
+ * 出一份大纲三四十秒，不摆的话那几十秒界面上一个字都没有，
+ * 而"它在想什么"正是这一步最该看见的东西。
+ */
+const outlineLive = ref(null)
+
+function emptyOutlineLive() {
+  return { premise: '', logline: '', genre: '', tone: '', characters: [], chapters: [] }
+}
+
+/**
  * 写大纲。
  *
  * **梗概不是必填的。** 选题本来就是整条流水线上最难从零开始的一步，把它
@@ -928,21 +1023,75 @@ async function savePremise() {
  * 已经有故事时也能重出：出来的先是草稿，采用了才换掉现在这几章。
  */
 async function writeStory() {
-  const result = await run(
+  const streamId = 'outline-' + Math.random().toString(36).slice(2, 10)
+  let sock = null
+  let opened = false
+
+  // 那一头写完（或者写砸了）从这条 socket 上说一声。理由同 writeChapter：
+  // 出一份大纲三四十秒，HTTP 请求占着 Crow 的一条 I/O 线程那么久，落在
+  // 同一条线程上的连接会跟着冻住。所以 POST 当场回一句"开始了"。
+  let settle = null
+  const finished = new Promise((r) => {
+    settle = r
+  })
+
+  // 从这一刻起就摆出那块"正在写"的板子，不等第一帧到。
+  outlineLive.value = emptyOutlineLive()
+
+  await new Promise((resolve) => {
+    sock = openJobSocket(
+      streamId,
+      (msg) => {
+        if (msg.job_id !== streamId) return
+        // 正在长出来的那份大纲。**整份换掉，不是往上累加**——那一头推的
+        // 是"到此为止解出来的全份"，累加会把每一帧的前缀叠成一团。
+        if (msg.type === 'outline_progress') {
+          outlineLive.value = msg
+          return
+        }
+        if (msg.type === 'job_done') {
+          settle({ ok: true, result: msg.result })
+          return
+        }
+        if (msg.type === 'job_error') {
+          settle({ ok: false, message: msg.message })
+        }
+      },
+      () => {
+        // 连接没了也一定要把等的人放出来，否则这一页会一直显示"正在写…"。
+        settle({ ok: false, message: '和引擎的连接断了，这份大纲写没写完不好说' })
+        resolve()
+      },
+      () => {
+        opened = true
+        resolve()
+      },
+    )
+    setTimeout(resolve, 2000)
+  })
+
+  const started = await run(
     () =>
-      runAsyncJob(
-        (extra) =>
-          api.writeOutline({
-            project: session.projectPath,
-            premise: premise.value.trim(),
-            scale: scale.value,
-            keywords: keywords.value.trim(),
-            ...extra,
-          }),
-        { prefix: 'outline' },
-      ),
+      api.writeOutline({
+        project: session.projectPath,
+        premise: premise.value.trim(),
+        scale: scale.value,
+        keywords: keywords.value.trim(),
+        // socket 没开就退回老路：HTTP 一直等到写完。慢，但至少拿得到结果。
+        ...(opened ? { stream: streamId, async: true } : {}),
+      }),
     { key: 'write' },
   )
+
+  let result = started
+  if (started && started.started) {
+    const fin = await finished
+    result = fin.ok ? fin.result : null
+    if (!fin.ok) ui.error(fin.message || '这份大纲没写成')
+  }
+
+  sock?.close()
+  outlineLive.value = null
   if (result) {
     draft.value = result
     bookOpen.value = false
@@ -1099,6 +1248,8 @@ async function writeChapter(chapterId, overwrite = false) {
   // 从这一刻起就锁章，不等第一个字到。**at 先给 0**：光标从头上开始，
   // 第一个字到之前也看得见"它准备从这儿写"。
   streaming.value = { chapter_id: chapterId, from: 0, at: 0 }
+  // 新起一轮就重新跟上：上一轮里人滚上去看过，不该影响这一轮。
+  stuck.value = true
 
   await new Promise((resolve) => {
     sock = openJobSocket(
@@ -1304,7 +1455,12 @@ async function stopWriting() {
 
       <!-- ================= 中：正文 ================= -->
       <section class="ed__main">
-        <div ref="scroller" class="ed__scroll" @mousedown="onPaperDown">
+        <div
+          ref="scroller"
+          class="ed__scroll"
+          @mousedown="onPaperDown"
+          @scroll.passive="onScroll"
+        >
           <!-- 草稿。AI 写完先摆出来给人看，点了采用才落库 -->
           <div v-if="draft" class="doc draft">
             <div class="doc__head">
@@ -1390,14 +1546,18 @@ async function stopWriting() {
                 >
                   直接开写
                 </button>
+                <!-- **outlineLive 也要算在忙里。** 异步那条 run() 一拿到
+                     202 就结束了，光看 isBusy('write') 的话按钮立刻变回
+                     "让 AI 写一份大纲"——再点一下就是第二份在跑，而两份
+                     写完会互相顶掉。 -->
                 <button
                   class="btn btn--ai"
                   type="button"
-                  :disabled="isBusy('write')"
+                  :disabled="isBusy('write') || !!outlineLive"
                   @click="writeStory"
                 >
                   <AppIcon name="sparkle" :size="15" />
-                  {{ isBusy('write') ? '正在写…' : '让 AI 写一份大纲' }}
+                  {{ isBusy('write') || outlineLive ? '正在写…' : '让 AI 写一份大纲' }}
                 </button>
                 <button class="btn btn--ghost" type="button" @click="pasting = !pasting">
                   粘一份现成的
@@ -1420,14 +1580,48 @@ async function stopWriting() {
                 <button
                   class="btn btn--ai"
                   type="button"
-                  :disabled="isBusy('write')"
+                  :disabled="isBusy('write') || !!outlineLive"
                   @click="writeStory"
                 >
                   <AppIcon name="sparkle" :size="15" />
-                  {{ isBusy('write') ? '正在写…' : '让 AI 重出一份大纲' }}
+                  {{ isBusy('write') || outlineLive ? '正在写…' : '让 AI 重出一份大纲' }}
                 </button>
                 <span class="tiny dim">出来先是草稿，采用了才会换掉现在这 {{ chapters.length }} 章</span>
               </template>
+            </div>
+
+            <!-- 正在长出来的那份大纲。**边写边看**，见 outlineLive。
+                 只摆已经有字的那几项：一上来全是空框的话，看着像坏了。 -->
+            <div v-if="outlineLive" class="live stack stack--sm">
+              <div class="row tiny dim">
+                <span class="live__dot" />
+                正在写…（先出选题和人物，再一章一章往下列）
+              </div>
+              <p v-if="outlineLive.logline" class="live__line">
+                {{ outlineLive.logline }}
+              </p>
+              <p v-else-if="outlineLive.premise" class="live__line">
+                {{ outlineLive.premise }}
+              </p>
+              <p v-if="outlineLive.genre || outlineLive.tone" class="tiny dim">
+                {{ [outlineLive.genre, outlineLive.tone].filter(Boolean).join(' · ') }}
+              </p>
+              <p v-if="outlineLive.characters?.length" class="tiny dim">
+                {{
+                  outlineLive.characters
+                    .filter((c) => c.name)
+                    .map((c) => c.name + (c.identity ? `（${c.identity}）` : ''))
+                    .join('、')
+                }}
+              </p>
+              <ol v-if="outlineLive.chapters?.length" class="live__chapters">
+                <li v-for="(c, i) in outlineLive.chapters" :key="i">
+                  <b>{{ c.title || '…' }}</b>
+                  <!-- 中间那个点不能省：HTML 会把标签之间的空白折掉，
+                       写成「双面人生林雨报警未果」连成一句读不出断在哪。 -->
+                  <span v-if="c.summary" class="dim">&nbsp;·&nbsp;{{ c.summary }}</span>
+                </li>
+              </ol>
             </div>
 
             <div v-if="pasting" class="stack stack--sm">
@@ -1768,6 +1962,42 @@ async function stopWriting() {
 </template>
 
 <style scoped>
+/* 「正在写」那块板子。刻意做得轻：它是过程，不是结果——
+   一会儿就被真正的草稿顶掉，做重了反而让人以为已经写完了。 */
+.live {
+  border: 1px dashed var(--line);
+  border-radius: var(--r);
+  padding: 0.75rem 0.9rem;
+  background: var(--bg-soft);
+}
+.live__dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--ai, #7c5cff);
+  margin-right: 0.4rem;
+  animation: live-pulse 1.1s ease-in-out infinite;
+}
+@keyframes live-pulse {
+  0%, 100% { opacity: 0.25; }
+  50% { opacity: 1; }
+}
+/* 动效关掉的系统上就别闪了 */
+@media (prefers-reduced-motion: reduce) {
+  .live__dot { animation: none; opacity: 0.7; }
+}
+.live__line {
+  margin: 0;
+  line-height: 1.6;
+}
+.live__chapters {
+  margin: 0;
+  padding-left: 1.2rem;
+  line-height: 1.7;
+}
+.live__chapters li + li {
+  margin-top: 0.2rem;
+}
 /* 整块就是纸。三栏之间只有细线，没有卡片、没有圆角——那一圈线本身就是
    "这是页面里的一个控件"的提示，而这一页它就是整个页面。 */
 .ed {

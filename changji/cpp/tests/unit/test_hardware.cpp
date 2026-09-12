@@ -443,3 +443,53 @@ TEST_CASE("vm_stat：读不出来就说读不出来，别猜") {
     // 没有页大小那一行 → 不猜
     CHECK_FALSE(parse_vm_stat("Pages free: 100.\n").has_value());
 }
+
+TEST_CASE("空闲不许比总量还大") {
+    // **这条是冲着一个真实故障去的。** 2026-09-12 在 128 GB 的 M3 Max 上：
+    //
+    //   总量走 sysctl，算出 96 GB（写死的 75% 兜底，而它查的那个 OID
+    //   在 macOS 26 上已经不存在了）
+    //   空闲走 vm_stat，算出 106 GB（free + inactive + speculative + purgeable，
+    //   那是"系统还能腾出多少内存"，不是"GPU 能占多少"）
+    //
+    // 两个数来自两套接口，于是"空闲比总量还大"。下游 sd_image.cpp 里
+    // `used = total - free` 得到 -10，卡在 `if (used_gb > 0.0)` 上——
+    // **Mac 上显存实测标定一次都没记下过，而且没有任何日志说它被跳过了。**
+    //
+    // 现在两个数同源（Metal 那边是同一个 MTLDevice，NVML 那边是同一次
+    // 调用），这条不变量就该永远成立。探不到显卡的机器（CI 上那两台）
+    // 两个都是空，这条用例自然跳过。
+    const auto gpu = detect_gpu();
+    const auto free_gb = free_vram_gb();
+    if (!gpu.has_value() || !free_gb.has_value()) return;
+    CAPTURE(gpu->name);
+    CAPTURE(gpu->vram_gb());
+    CAPTURE(*free_gb);
+    CHECK(*free_gb <= gpu->vram_gb());
+    CHECK(*free_gb >= 0.0);
+}
+
+TEST_CASE("统一内存：整机内存和 GPU 能用的那份是两个数") {
+    // 128 GB 的 Mac 上 vram_mb 是 Metal 肯给的 107.5 GB，unified_mb 才是 128。
+    // 只留一个的后果在两边都难看：只显示前者，用户觉得"我买的明明是 128"；
+    // 只按后者算预算，超过 Metal 那条线系统就开始压缩换页。
+    GPUInfo g;
+    CHECK_FALSE(g.unified());          // 默认就不是统一内存，别误报
+
+    g.vram_mb = 110100;                // 107.5 GB
+    g.unified_mb = 131072;             // 128 GB
+    CHECK(g.unified());
+    CHECK(g.vram_gb() == doctest::Approx(107.52).epsilon(0.01));
+
+    // 存到状态文件里再读回来，两个数都要在——漏了 unified_mb 的话
+    // 重启之后界面上那台 Mac 就又变回"一张 107.5 GB 的卡"了。
+    const nlohmann::json j = g;
+    const auto back = j.get<GPUInfo>();
+    CHECK(back.unified_mb == g.unified_mb);
+    CHECK(back.vram_mb == g.vram_mb);
+
+    // 老状态文件里没有这一项：按"不是统一内存"读，不要炸
+    const auto old = nlohmann::json{{"name", "RTX 5090"}, {"vram_mb", 32768}}
+                         .get<GPUInfo>();
+    CHECK_FALSE(old.unified());
+}

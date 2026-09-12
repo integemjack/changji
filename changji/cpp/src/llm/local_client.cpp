@@ -113,7 +113,7 @@ std::string LocalClient::complete(const Request& req, pipeline::CancelToken& tok
     return out;
 }
 
-std::shared_ptr<Client> make_client(HttpPost post) {
+std::shared_ptr<Client> make_client(HttpPost post, HttpPostStream stream_post) {
     const config::Settings s = config::runtime().snapshot();
     if (s.llm.backend == "local") {
         if (infer::llama_chat_available()) {
@@ -126,7 +126,7 @@ std::shared_ptr<Client> make_client(HttpPost post) {
     }
     return std::make_shared<RemoteClient>(
         ConfigProvider([] { return config::runtime().snapshot().llm; }),
-        std::move(post));
+        std::move(post), std::move(stream_post));
 }
 
 void register_llm_slot(std::function<config::Settings()> provider,

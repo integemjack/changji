@@ -34,6 +34,8 @@
 #include "setup/downloader.hpp"
 #include "setup/source.hpp"
 
+#include "scoped_env.hpp"
+
 using namespace changji;
 using json = nlohmann::json;
 
@@ -446,4 +448,36 @@ TEST_CASE("下到一半的模型不能算齐——aria2c 会把文件先按最�
         CHECK_FALSE(http::download_in_progress(tmp / "根本没有这个.gguf"));
     }
     fs::remove_all(tmp, ec);
+}
+
+TEST_CASE("同时下几个：按下载器分档，能用环境变量压回去") {
+    using changji::setup::parallel_lanes;
+
+    // curl 是单连接，并发几个就快几倍——这一档给得多。
+    CHECK(parallel_lanes(10, "curl") == 4);
+    // aria2c 自己已经开了 8 条连接（`-x 8`）。再乘 4 就是 32 条，
+    // 源站那边要么限速要么掐连接，所以这一档只给 2。
+    CHECK(parallel_lanes(10, "aria2c") == 2);
+
+    // **不能超过要下的文件数**：三个文件开四路，多出来的那一路
+    // 一开起来就发现没活干，白建一个线程。
+    CHECK(parallel_lanes(3, "curl") == 3);
+    CHECK(parallel_lanes(1, "curl") == 1);
+    // 一个文件都没有时也得是 1：返回 0 的话下面那个线程池一路都不起，
+    // 整轮下载会"成功"地什么都没下。
+    CHECK(parallel_lanes(0, "curl") == 1);
+
+    // 压回一个一个下，以及封顶。环境变量写坏了按默认来，不让整轮停下。
+    {
+        const changji::test::ScopedEnv one("CHANGJI_DOWNLOAD_PARALLEL", "1");
+        CHECK(parallel_lanes(10, "curl") == 1);
+    }
+    {
+        const changji::test::ScopedEnv many("CHANGJI_DOWNLOAD_PARALLEL", "99");
+        CHECK(parallel_lanes(50, "curl") == 8);   // 封在 8
+    }
+    {
+        const changji::test::ScopedEnv junk("CHANGJI_DOWNLOAD_PARALLEL", "很多");
+        CHECK(parallel_lanes(10, "curl") == 4);   // 认不出就按默认
+    }
 }
