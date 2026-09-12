@@ -578,8 +578,8 @@ void clean_dialogue_text(json& item) {
         if (!line.is_object()) continue;
         const auto tit = line.find("text");
         if (tit == line.end() || !tit->is_string()) continue;
-        *tit = strip_speech_tags(tit->get<std::string>(),
-                                 str_or(line, "char_id"));
+        *tit = strip_list_marker(strip_speech_tags(tit->get<std::string>(),
+                                                   str_or(line, "char_id")));
     }
 }
 

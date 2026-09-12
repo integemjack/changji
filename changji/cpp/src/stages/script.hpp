@@ -65,6 +65,24 @@ std::string strip_leading_timecode(const std::string& text);
 /// 「牌子上写着：营业中」这种不动——它前面那截不是机位词。
 std::string strip_camera_prefix(const std::string& text);
 
+/// 削掉开头漏出来的 markdown 列表符号。
+///
+/// **2026-09-13 实跑撞上的**（walk_c ep02）：模型写的台词是
+///
+///     林浩：-为什么要在一家普通餐厅下单？
+///
+/// 那个 `-` 是 markdown 的列表符号漏进了字符串字段。这个毛病有名字，叫
+/// 「JSON bleed」——GBNF 约束的是 JSON 的**结构**，字段的**内容**照样会带
+/// 训练数据里的格式痕迹。外层解析成功不等于字段值干净。
+///
+/// 会一路走到字幕上（media/assemble.cpp 把 line.text 原样放进字幕），
+/// 观众看得见。
+///
+/// 只削确实是列表符号的那几个：`-` `*` `+` `•` `·` `・`。
+/// **不动 `—`／`——`**——中文里破折号开头是正当写法（话被打断、话外补白），
+/// 削了是改文意。削成空串也不削。
+std::string strip_list_marker(const std::string& text);
+
 /// 台词里裹着的旁白剥掉，只留说出口的那部分。
 ///
 /// **2026-09-13 实跑撞上的**（walk_c ep02）。模型照抄了原文那一句：

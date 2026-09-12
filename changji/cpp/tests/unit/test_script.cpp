@@ -477,6 +477,48 @@ TEST_CASE("动作行开头的机位标签削掉") {
     }
 }
 
+TEST_CASE("开头漏出来的 markdown 列表符号削掉") {
+    // **2026-09-13 实跑撞上的**（walk_c ep02）：剧本里那一行是
+    //     林浩：-为什么要在一家普通餐厅下单？
+    // 那个 `-` 是 markdown 列表符号漏进了字符串字段（「JSON bleed」）——
+    // GBNF 约束的是 JSON 的结构，字段的内容照样带训练数据里的格式痕迹。
+    // 它会一路走到字幕上，观众看得见。
+    CHECK(stages::strip_list_marker("-为什么要在一家普通餐厅下单？") ==
+          "为什么要在一家普通餐厅下单？");
+    CHECK(stages::strip_list_marker("- 你好") == "你好");
+    CHECK(stages::strip_list_marker("* 你好") == "你好");
+    CHECK(stages::strip_list_marker("• 你好") == "你好");
+
+    SUBCASE("破折号开头不动——那是正当写法") {
+        // 中文里破折号开头表示话被打断或话外补白，削了是改文意。
+        CHECK(stages::strip_list_marker("——我不去。") == "——我不去。");
+        CHECK(stages::strip_list_marker("—等等！") == "—等等！");
+    }
+
+    SUBCASE("不在开头的不动") {
+        CHECK(stages::strip_list_marker("三号-B 出口") == "三号-B 出口");
+        CHECK(stages::strip_list_marker("你走吧-") == "你走吧-");
+    }
+
+    SUBCASE("削成空串就不削") {
+        // 「-」自己就是这一拍的全部内容时，留着比丢掉强：
+        // 削空之后 parse_beats_into 会把整拍丢掉。
+        CHECK(stages::strip_list_marker("-") == "-");
+        CHECK(stages::strip_list_marker("- ") == "-");
+    }
+
+    SUBCASE("走完整条解析：台词和动作行都削") {
+        const std::string raw =
+            R"({"title":"x","logline":"y","beats":[
+                {"kind":"dialogue","speaker":"林浩","text":"-为什么是我？"},
+                {"kind":"action","speaker":"","text":"- 林浩推门进来。"}]})";
+        const stages::ScriptDraft d = stages::parse_script(raw);
+        REQUIRE(d.beats.size() == 2);
+        CHECK(d.beats[0].text == "为什么是我？");
+        CHECK(d.beats[1].text == "林浩推门进来。");
+    }
+}
+
 TEST_CASE("台词里裹着的旁白剥掉，不然会被念出来") {
     // **2026-09-13 实跑撞上的**（walk_c ep02）：模型照抄了原文那一句，
     // 「她说，语气平静但带着一丝疲惫」是旁白却落在台词字段里，

@@ -231,6 +231,32 @@ std::string strip_camera_prefix(const std::string& text_in) {
     return out;
 }
 
+std::string strip_list_marker(const std::string& text_in) {
+    // 只认这几个。**不含 `—`／`——`**：中文里破折号开头是正当写法
+    // （话被打断、话外补白），削了是改文意。
+    static const char* kMarkers[] = {
+        "-", "*", "+", R"CJ(•)CJ", R"CJ(·)CJ", R"CJ(・)CJ", R"CJ(－)CJ",
+    };
+    std::string out = strip_ascii(text_in);
+    // 最多削三层：「- - 」这种见过，但削不完就是内容本身了。
+    for (int round = 0; round < 3; ++round) {
+        bool hit = false;
+        for (const char* m : kMarkers) {
+            const std::string mark = m;
+            if (!starts_with(out, mark)) continue;
+            const std::string rest = strip_ascii(out.substr(mark.size()));
+            // 削成空串就不削——「-」自己就是那一拍的全部内容时，
+            // 留着比丢掉强（丢掉这一拍会整个消失）。
+            if (rest.empty()) return out;
+            out = rest;
+            hit = true;
+            break;
+        }
+        if (!hit) break;
+    }
+    return out;
+}
+
 std::string strip_speech_tags(const std::string& text_in,
                               const std::string& speaker) {
     std::string s = strip_ascii(text_in);
@@ -797,6 +823,9 @@ void parse_beats_into(const json& arr, std::vector<Beat>& out) {
         // 机位标签只削动作行。台词里的「你听我说：」不是机位，
         // 而且台词那一行的说话人是单独一个字段，本来就不会认错。
         if (kind == "action") t = strip_camera_prefix(t);
+        // markdown 的列表符号漏进字符串字段（「JSON bleed」）。两种拍子
+        // 都要削：台词上的会进字幕，动作行上的会进画面描述。
+        t = strip_list_marker(t);
         // 台词里裹着的旁白要剥掉，否则配音会把「她说，语气平静……」
         // 一起念出来。见 strip_speech_tags。
         if (kind == "dialogue") t = strip_wrapper(strip_speech_tags(t, speaker));
