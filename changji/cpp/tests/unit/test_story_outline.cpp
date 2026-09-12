@@ -2256,6 +2256,39 @@ TEST_CASE("整段复读先摘掉，摘不干净才打回") {
     CHECK(changji::text::utf8_len(d.text) > 300);
 }
 
+TEST_CASE("模型的自言自语摘掉那一段，不废整章") {
+    // 语法把模型关在 JSON 字符串里，它想解释自己的时候那些话就落进某一段
+    // 正文（实跑原样：一段 1164 字的「不符合用户要求的“只输出 JSON”，
+    // 请忽略此部分内容……」）。原来是见着就打回，而它是硬闸——这是最后
+    // 一道还能把整章清成 0 字的闸。
+    json paras = json::array();
+    for (int i = 0; i < 16; ++i) {
+        paras.push_back("第" + std::to_string(i) +
+                        "段：她把抹布拧干，水滴落在地板上，溅出细小的一圈。");
+    }
+    paras.push_back("他停在门口：“伞我带来了。”");
+    paras.push_back("她没抬头：“放那儿吧。”");
+    paras.push_back("他把伞靠在柜台边：“那我走了。”");
+    paras.push_back("以上内容不符合用户要求的只输出 JSON，请忽略此部分内容。");
+    json scenes = json::array();
+    scenes.push_back({{"where", "深夜，便利店"},
+                      {"pov", "林晚"},
+                      {"who", json::array({"林晚", "陈默"})},
+                      {"goal", "把伞要回来"},
+                      {"obstacle", "他不认这把伞"},
+                      {"worse", "她发现伞根本不是他带来的"},
+                      {"turn", "伞柄上刻着别人的名字"},
+                      {"paragraphs", paras},
+                      {"last_line", "她把伞柄转过来，刻着的不是她的名字。"}});
+
+    const auto d = changji::stages::parse_chapter(json{{"scenes", scenes}}.dump());
+    CHECK(d.text.find("请忽略") == std::string::npos);
+    CHECK(d.text.find("JSON") == std::string::npos);
+    // 正文还在，没被废掉
+    CHECK(d.text.find("伞我带来了") != std::string::npos);
+    CHECK(changji::text::utf8_len(d.text) > 300);
+}
+
 TEST_CASE("复读摘的是句，不是段") {
     // **第一版摘的是整段重复，挡不住。** 2026-09-12 实跑里复读的是一句话
     // ——「你知道我最恨什么吗？」在三个不同的段落里各出现一次，段级去重
@@ -2373,9 +2406,12 @@ TEST_CASE("解析：没写出正文就报错，写太多就截断") {
     CHECK(changji::text::utf8_len(d.text) == 20000);
 }
 
-TEST_CASE("解析：正文里混进模型的解释就打回") {
+TEST_CASE("解析：正文里混进模型的解释，摘不干净才打回") {
     // 实跑原样：语法把模型关在 JSON 字符串里，它想纠正自己时那些话落进了
-    // 一段 1164 字的正文，字数和复读两道守卫都放过了它
+    // 一段 1164 字的正文，字数和复读两道守卫都放过了它。
+    //
+    // 现在先摘含它的那一段；这里是老形状（顶层 text 一个字符串），整份就是
+    // 一行，摘掉之后什么都不剩，所以照旧打回——摘得动的才摘。
     std::string body;
     for (int i = 0; i < 60; ++i) body += "他推开门，雨声灌了进来。";
     body += "以上内容不符合用户要求的“只输出 JSON”，请忽略此部分内容。";

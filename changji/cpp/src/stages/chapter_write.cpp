@@ -702,14 +702,56 @@ ChapterDraft parse_chapter(const std::string& raw, int min_chars, bool strict) {
                          std::to_string(min_chars) + " 个。八成是模型没听懂，重试一次");
     }
 
-    // **模型的自言自语不收。** 语法把它关在 JSON 字符串里，它想解释、想
-    // 纠正自己的时候，那些话就落进某一段正文——实跑原样：一段 1164 字的
-    // 「不符合用户要求的“只输出 JSON”，请忽略此部分内容……」。字数守卫、
-    // 复读守卫都抓不到它。小说正文里不会出现这些词。
-    for (const char* bad : {"JSON", "json", "请忽略", "用户要求", "输出应"}) {
-        if (d.text.find(bad) != std::string::npos) {
-            throw StoryError(std::string("正文里混进了模型的解释（出现「") + bad +
-                             "」）。重试一次");
+    // **模型的自言自语：摘掉那一段，别废整章。**
+    //
+    // 语法把它关在 JSON 字符串里，它想解释、想纠正自己的时候，那些话就落进
+    // 某一段正文——实跑原样：一段 1164 字的「不符合用户要求的“只输出
+    // JSON”，请忽略此部分内容……」。字数守卫、复读守卫都抓不到它。
+    //
+    // 原来是见着就打回，而它是**硬闸**——这是最后一道还能把整章清成 0 字的
+    // 闸了（占位符、引号、分镜话、复读都已经改成就地摘）。中文小说正文里
+    // 不会出现这些词，认得出、摘得掉：摘掉含它的那一段，剩下的照收。
+    {
+        static const char* kSelfTalk[] = {"JSON", "json", "请忽略", "用户要求",
+                                          "输出应"};
+        const auto is_self_talk = [&](const std::string& s) {
+            for (const char* w : kSelfTalk) {
+                if (s.find(w) != std::string::npos) return true;
+            }
+            return false;
+        };
+        if (is_self_talk(d.text)) {
+            for (DraftScene& sc : d.scenes) {
+                std::vector<std::string> kept;
+                for (std::string& para : sc.paragraphs) {
+                    if (!is_self_talk(para)) kept.push_back(std::move(para));
+                }
+                sc.paragraphs = std::move(kept);
+            }
+            std::string cleaned;
+            std::string line;
+            const auto take = [&](const std::string& one) {
+                if (text::strip_ws(one).empty() || is_self_talk(one)) return;
+                if (!cleaned.empty()) cleaned += "\n";
+                cleaned += one;
+            };
+            for (const char c : d.text) {
+                if (c != '\n') {
+                    line += c;
+                    continue;
+                }
+                take(line);
+                line.clear();
+            }
+            take(line);
+            // **摘完剩不下一半就打回。** 老形状（顶层 text 一个字符串）整份
+            // 就是一行，含了那句话整份都会被摘掉；而真出现这种情况，那一份
+            // 产出本来也不能用。摘得动的才摘，摘不动的照旧打回重试。
+            if (text::utf8_len(cleaned) < text::utf8_len(d.text) / 2) {
+                throw StoryError("正文里混进了模型的解释（「请忽略」这一类），"
+                                 "而且摘不干净。重试一次");
+            }
+            d.text = cleaned;
         }
     }
 
@@ -735,10 +777,15 @@ ChapterDraft parse_chapter(const std::string& raw, int min_chars, bool strict) {
         // 那一章还是空的。摘的粒度必须和守卫量的粒度一样（见 repetition.hpp
         // 的 kRepeatMaxSame，它数的是句）。
         std::map<std::string, int> seen;
+        std::set<std::string> seen_para;
         std::string kept;
         std::string line;
         const auto take_line = [&](const std::string& one) {
             if (text::strip_ws(one).empty()) return;
+            // **整段原样重复的，不管句子多短都丢。** 句级那道有 8 字下限
+            // （短句重复是正常的），于是「他没说话。」这种整段重复会漏过去
+            // ——实跑的重复段中位一直是 1（0~3），就是这么剩下的。
+            if (!seen_para.insert(bare(one)).second) return;
             std::string keep_para;
             for (const std::string& sent : split_sentences(one)) {
                 const std::string key = bare(sent);
