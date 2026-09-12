@@ -1,38 +1,23 @@
-# 一条命令拉起全套：Web 平台、引擎、大模型服务。
+# 一条命令拉起全套：引擎（界面在里面）、大模型服务。
 #
 #   docker compose up -d
 #
-# 然后打开 http://localhost:5174
+# 然后打开 http://localhost:8080
 #
 # **ComfyUI 那个服务 2026-09-10 拆了。** 出图出片现在走引擎进程内的
 # sd.cpp，没有第二个推理服务要起。老的 COMFYUI_* 变量留在 .env 里
 # 不起作用，可以删掉。
+#
+# **webapp 那个服务 2026-09-12 拆了，端口从 5174 变成 8080。**
+# 那一层是 Node 写的：发前端 + 把 /api/* 转给引擎。前端打包之后已经
+# 嵌进引擎二进制里（见 cpp/tools/gen_webapp.py），`/bff/*` 也由引擎
+# 自己答（见 cpp/src/http/bff_routes.hpp），这一层于是只剩转发，
+# 而它转的两头都在同一个进程里。
+# 它留下的那个 WEBAPP_PORT / CHANGJI_WEBAPP_CONFIG 在 .env 里不起作用了。
 name: changji
 
 services:
-  # 引导式 Web 平台。Node 发前端 + 转发接口，不做推理，不需要显卡。
-  # 引擎地址填错时界面仍然打得开，就是因为它单独在这一层，
-  # 前端直连引擎的话，地址一填错就等于把自己锁在门外。
-  webapp:
-    build: ./webapp
-    image: changji/webapp:latest
-    container_name: changji-webapp
-    ports:
-      - "${WEBAPP_PORT:-5174}:5174"
-    volumes:
-      # 引擎地址和投递目标写在这里，不挂出来容器一重建就没了
-      - ${CHANGJI_WEBAPP_CONFIG:-./data/webapp}:/data/webapp
-      # 上传那一步要把成片投递到这里，宿主机上接手的脚本从这儿取
-      - ${CHANGJI_PUBLISH:-./data/publish}:/data/publish
-    environment:
-      - CHANGJI_ENGINE_URL=http://changji:8080
-    depends_on:
-      changji:
-        condition: service_healthy
-    restart: unless-stopped
-
-
-  # 引擎。接口、编排、推理全在这一个进程里。
+  # 引擎。界面、接口、编排、推理全在这一个进程里。
   # 镜像编的是 CPU 后端，显卡的事留给宿主机上直接跑的那个二进制。
   changji:
     # 阶段 8 之前这里有个 CHANGJI_DOCKERFILE 开关，用来在 Python 和 C++

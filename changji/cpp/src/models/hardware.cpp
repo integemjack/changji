@@ -596,11 +596,22 @@ private:
     bool ok_ = false;
 };
 
+#endif  // !__APPLE__
+}  // namespace
+
+#if !defined(__APPLE__)
 /// 用 NVML 答出 detect_gpu 要的那三件事：名字、卡 0 的总显存、有几张卡。
 ///
 /// `live()` 一次就把这三样都给了（它本来是给顶栏那三个小表用的），
 /// 所以这里不用再写一遍 dlopen。驱动版本它给不了，留空——
 /// 界面上没有谁在显示驱动版本，为它单独再加载一个符号不值当。
+///
+/// ⚠️ **这个定义必须在匿名 namespace 外面**，和上面那句前置声明同一个
+/// 作用域。放进去过一次，macOS 上编得过（整段被 __APPLE__ 挑掉了），
+/// Linux 上是链接期的
+/// `undefined reference to changji::models::detect_gpu_nvml()`——
+/// 声明在 changji::models 里，定义在匿名 namespace 里，是两个符号。
+/// 它用到的 Nvml 类在匿名 namespace 里没关系：同一个翻译单元，看得见。
 std::optional<GPUInfo> detect_gpu_nvml() {
     const auto cards = Nvml::live();
     if (cards.empty()) return std::nullopt;
@@ -618,13 +629,32 @@ std::optional<GPUInfo> detect_gpu_nvml() {
     g.count = static_cast<int>(cards.size());
     return g;
 }
-
-#endif  // !__APPLE__
-}  // namespace
+#endif
 
 std::vector<GpuLive> gpu_live() {
 #if defined(__APPLE__)
-    return {};
+    // **顶栏上那块表在 Mac 上原来整个是空的**（这里以前就一句 `return {}`）。
+    // 用户 2026-09-12：「实际显存/内存容量大小」没显示——就是这条。
+    // NVML 在这台机器上当然没有，但 Metal 答得出同样的两个数。
+    //
+    // ⚠️ **"已用"的口径和 N 卡那边不一样，得说清楚。** NVML 报的是**整张卡**
+    // 上所有进程占的；Metal 的 currentAllocatedSize 是**本进程**通过它分配
+    // 的那些。统一内存上这反而是更该显示的数——别的程序占的那份在"内存"
+    // 那块表里，重复算进"显存"只会让两块表加起来超过整机内存。
+    //
+    // 利用率留 -1（界面显示 "—"）：Metal 没有 NVML 那种现成的
+    // "过去一段时间有内核在跑的时间占比"，要走 IOReport 那套私有接口。
+    // 宁可显示"—"，也别拿个算出来的数冒充实测。
+    const auto m = metal_memory();
+    if (!m.has_value()) return {};
+    constexpr double kGb = 1024.0 * 1024.0 * 1024.0;
+    GpuLive g;
+    g.index = 0;
+    g.name = m->name.empty() ? "Apple GPU" : m->name;
+    g.util_percent = -1;
+    g.vram_total_gb = static_cast<double>(m->max_working_set) / kGb;
+    g.vram_used_gb = static_cast<double>(m->allocated) / kGb;
+    return {g};
 #else
     return Nvml::live();
 #endif

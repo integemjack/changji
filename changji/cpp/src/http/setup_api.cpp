@@ -292,6 +292,15 @@ ApiResult get_setup_state(const config::Settings& settings,
         gpu = {{"name", profile.gpu->name},
                {"vramGb", profile.gpu->vram_gb()},
                {"count", profile.gpu->count}};
+        // **统一内存的机器上，整机多大也要告诉界面。**
+        // 这一页上所有的门槛都是拿 vramGb 比的（"≥ 81 GB 可常驻"），而在
+        // 苹果芯片上那是 Metal 肯给的那一份（128 GB 的机器上 107.5 GB），
+        // 不是整机内存。只报前者，用户看到的是"我买的明明是 128"——
+        // 而这一页正是他决定要不要下 91 GB 那一档的地方。
+        // 不是统一内存时这一项是 null，界面就只显示一个数。
+        gpu["unifiedGb"] = profile.gpu->unified()
+                               ? json(static_cast<double>(profile.gpu->unified_mb) / 1024.0)
+                               : json(nullptr);
     }
 
     return {200,

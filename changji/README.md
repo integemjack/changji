@@ -107,8 +107,11 @@ changji --port 8080
 cd webapp && npm install && npm run dev
 ```
 
-或者 `docker compose up -d` 一次拉起全套，然后打开 http://localhost:5174 。
+或者 `docker compose up -d` 一次拉起全套，然后打开 http://localhost:8080 。
 细节见 `webapp/README.md`。
+
+> compose 里原来还有个 `webapp` 服务（Node 发前端 + 转发，端口 5174），
+> 2026-09-12 拆了：前端已经嵌在引擎二进制里，那一层转的两头是同一个进程。
 
 ## 外部依赖
 

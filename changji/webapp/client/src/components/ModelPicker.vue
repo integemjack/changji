@@ -202,9 +202,13 @@ const overallPercent = computed(() => {
   return Math.min(100, (Number(p.downloaded) / Number(p.total)) * 100)
 })
 
-const currentItem = computed(
-  () => progress.value?.items?.find((i) => i.state === 'running') ?? null,
+// 同时下多个之后这里是**一组**，不是一个。头上那行按几个在跑分两种说法：
+// 只有一个就报文件名（和以前一样），多个就报个数——把四个文件名挤在
+// 一行里，谁也读不出来，而每一项下面本来就各有各的进度条。
+const runningItems = computed(
+  () => progress.value?.items?.filter((i) => i.state === 'running') ?? [],
 )
+const currentItem = computed(() => runningItems.value[0] ?? null)
 
 const failedItems = computed(
   () => progress.value?.items?.filter((i) => i.state === 'failed') ?? [],
@@ -352,6 +356,14 @@ onUnmounted(stopPolling)
             {{ state.gpu ? state.gpu.name : '没探测到' }}
             <span v-if="state.gpu" class="numeric dim">
               · {{ state.gpu.vramGb.toFixed(1) }} GB
+              <!-- 统一内存（苹果芯片）：**两个数都要显示**。下面每一档写的
+                   「≥ 81 GB 可常驻」比的是前面那个 vramGb，也就是 Metal 肯
+                   一次给出去的那一份；而机器上插的是 128 GB。只显示前者，
+                   在这一页上看到的就是"我买的明明是 128，它说我只有 107.5"，
+                   而这一页正是决定要不要下 91 GB 那一档的地方。 -->
+              <template v-if="state.gpu.unifiedGb">
+                可用 / 整机 {{ state.gpu.unifiedGb.toFixed(0) }} GB
+              </template>
               <template v-if="state.gpu.count > 1">× {{ state.gpu.count }}</template>
             </span>
           </span>
@@ -419,9 +431,11 @@ onUnmounted(stopPolling)
             "
             :label="
               running
-                ? currentItem
-                  ? `正在下 ${currentItem.name}`
-                  : '正在准备'
+                ? runningItems.length > 1
+                  ? `正在下 ${runningItems.length} 个文件`
+                  : currentItem
+                    ? `正在下 ${currentItem.name}`
+                    : '正在准备'
                 : progress.state === 'done'
                   ? '全部就绪'
                   : progress.state === 'canceled'
