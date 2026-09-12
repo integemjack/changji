@@ -1212,18 +1212,22 @@ void register_sd_slots(SettingsProvider raw_provider,
         });
     }
 
-    // **和 sd.cpp 那边拿的是同一个数。**
+    // **调度器的预算和 sd.cpp 的 max_vram 不是一回事，别去"统一"它们。**
     //
-    // 这儿原来自己又判了一次 `weights == "auto" ? physical : budget`，
-    // 和上面 budget_for 的三分支并行维护——2026-09-13 给 "cpu" 那条补上
-    // 计算缓冲的余量时，只改了 budget_for，这里就对不上了：sd.cpp 按
-    // 23.3 GB 的预算收着权重，而调度器以为预算是 28.7 GB，于是
-    // "够不够、要不要卸" 那条按一个不存在的上限在算。
+    // sd.cpp 的 max_vram：这一路的**权重**能在显存里囤多少。
+    // 调度器的 budget：整个规划的信封——各槽的 vram_estimate 要装得进去。
     //
-    // 直接调 budget_for，一处定义。视频那一路才是占大头的，按它取。
+    // 2026-09-13 我把这里改成 budget_for(Video) 想"一处定义"，结果是
+    // 信封（23.26 GB）比视频槽自己的估算（28.66 GB）还小，make_room 永远
+    // 满足不了，**每一镜都报「显存不够加载 视频。腾不出空间」然后降级**。
+    // 一整集十八镜全废。
+    //
+    // 所以这里保持按整卡算：估算和信封都用 `budget`，两者一致；
+    // 给 sd.cpp 的权重预算另算（budget_for 那边减了计算缓冲的余量），
+    // 那是**信封里给权重划的一块**，本来就该更小。
     scheduler().set_budget(
         static_cast<std::size_t>(
-            budget_for(provider(), ModelRole::Video) * 1024) *
+            (provider().models.weights == "auto" ? physical : budget) * 1024) *
         1024 * 1024);
 
     // 两个槽的估值都按整个预算算，也就是**同时只装得下一个**。
