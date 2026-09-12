@@ -11,6 +11,7 @@
 
 #include "stages/chapter_write_prompt.inc.hpp"
 #include "stages/json_extract.hpp"
+#include "stages/script.hpp"
 #include "stages/story_import.hpp"
 #include "stages/story_outline.hpp"
 #include "stages/story_plan.hpp"
@@ -609,6 +610,19 @@ static std::string normalize_quotes(std::string s) {
 ///
 /// **词表只收连着的词组，不收单字。** 「画面」「镜头」单独出现常常是正当
 /// 的——照片的画面、摄影机的镜头都是实物。
+// 逐段清洗这一串的顺序：
+//   strip_json_echo      模型把 JSON 片段抄进正文
+//   fix_unpaired_quotes  只有右引号、没有左引号
+//   strip_camera_talk    「镜头拉远」这类分镜的话
+//   strip_emphasis       markdown 的 ** __
+//   strip_list_marker    行首的 - * + •（见 stages/script.hpp）
+//
+// **最后那一道是 2026-09-13 补的。** 实跑正文里出现过
+// 「--1层停尸间的门再次打开……」——第一个减号是 markdown 列表符号，
+// 第二个是负一层的负号。它会一路走进分集的钩子、剧本和字幕。
+// 能安全用在这儿，靠的是 strip_list_marker 里那条「后面紧跟数字的减号
+// 是符号」：两轮下来削掉第一个、留住第二个，正好。
+
 /// 摘掉 markdown 的强调标记，**只去标记，留文字**。
 ///
 /// 2026-09-13 实跑：`内容只有四个字：**“别多管闲事。”**`。标记本身会原样
@@ -842,9 +856,9 @@ ChapterDraft parse_chapter(const std::string& raw, int min_chars, bool strict) {
                 ps != s.end() && ps->is_array()) {
                 for (const auto& p : *ps) {
                     if (!p.is_string()) continue;
-                    const std::string one =
+                    const std::string one = strip_list_marker(
                         strip_emphasis(strip_camera_talk(fix_unpaired_quotes(
-                            strip_json_echo(text::strip_ws(p.get<std::string>())))));
+                            strip_json_echo(text::strip_ws(p.get<std::string>()))))));
                     if (one.empty()) continue;
                     sc.paragraphs.push_back(one);
                     push_text(one);
@@ -854,9 +868,9 @@ ChapterDraft parse_chapter(const std::string& raw, int min_chars, bool strict) {
             // 分得出它当初是单独一栏——那一栏只为了**语法上不给总结留位置**。
             if (const auto last = s.find("last_line");
                 last != s.end() && last->is_string()) {
-                const std::string one =
+                const std::string one = strip_list_marker(
                     strip_emphasis(strip_camera_talk(fix_unpaired_quotes(
-                        strip_json_echo(text::strip_ws(last->get<std::string>())))));
+                        strip_json_echo(text::strip_ws(last->get<std::string>()))))));
                 if (!one.empty()) {
                     sc.paragraphs.push_back(one);
                     push_text(one);

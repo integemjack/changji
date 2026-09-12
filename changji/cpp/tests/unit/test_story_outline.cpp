@@ -1670,6 +1670,28 @@ TEST_CASE("模型的草稿纸摘掉：引用块和强调标记") {
     // 只摘正文的话两边就对不上了。
     CHECK(d.scenes[0].paragraphs.size() == 3);
 
+    SUBCASE("行首列表符号削掉，但负号留住") {
+        // **2026-09-13 实跑正文里的原样**：
+        //     --1层停尸间的门再次打开，手电筒的光束在黑暗中晃动……
+        // 第一个减号是 markdown 列表符号，第二个是「负一层」的负号。
+        // 它会一路走进分集的钩子、剧本和字幕。
+        const std::string marked =
+            "--1层停尸间的门再次打开，手电筒的光束在黑暗中晃动。";
+        const std::string neg = "-1层的空气冷得刺骨，福尔马林的味道浓重。";
+        const json d3 = {
+            {"scenes",
+             {{{"where", "停尸间"},
+               {"turn", "她看见新贴的标签"},
+               {"paragraphs", {marked, neg, good3}}}}}};
+        const auto got = changji::stages::parse_chapter(d3.dump());
+        REQUIRE(got.scenes.size() == 1);
+        CHECK(got.scenes[0].paragraphs.size() == 3);   // 一段都没少
+        // 列表符号削掉，负一层原样留着
+        CHECK(got.scenes[0].paragraphs[0] ==
+              "-1层停尸间的门再次打开，手电筒的光束在黑暗中晃动。");
+        CHECK(got.scenes[0].paragraphs[1] == neg);
+    }
+
     SUBCASE("强调标记只去符号、不摘段") {
         // 它出现在**正常段落**里，摘段会把内容一起摘掉。
         const std::string withMark =
