@@ -204,7 +204,27 @@ const currentDirty = computed(
 /** 光标在第几行（逻辑行）。状态栏上那个数。 */
 const caretLine = computed(() => body.value.slice(0, caret.value).split('\n').length)
 /** AI 正往这一章写字。这时候输入框只读，改稿那条也不接活。 */
-const locked = computed(() => streaming.value?.chapter_id === current.value)
+/**
+ * 这一章此刻能不能编辑。AI 正在往里写的那一章要锁上——两个人同时往
+ * 一份文本里写，光标和 to_char 都会对不上（见 saveChapter 那段账）。
+ *
+ * **锁要跟着写它的那件活走，活没了就得解锁。** 用户 2026-09-12 报
+ * 「AI 写作的时候我无法编辑」：批量那条的锁原来只在 `writer.running`
+ * 真→假的那一刻清（下面那个 watch），而那个跳变有好几条路走不到——
+ * 刷新之后没人轮询时不会发生（同一天的另一个坑），任务报错或被取消时
+ * 也可能错过。一旦错过，`streaming` 就永远挂在那儿，那一章**再也编不了**，
+ * 只能换个项目或者重开页面。
+ *
+ * 所以这里按来源兜底：批量那条额外要求批量任务还在跑。写一章、改一段
+ * 那两条不走 writer.running（它们有自己的 socket 和 finally），
+ * 所以不能一刀切加这个条件，否则那两条的锁会当场失效。
+ */
+const locked = computed(() => {
+  const s = streaming.value
+  if (!s || s.chapter_id !== current.value) return false
+  if (s.src === 'batch' && !writer.running) return false
+  return true
+})
 /** 选中的那一段，且是这一章的。不是这一章的选区套上来会改错地方。 */
 const target = computed(() => (sel.value?.chapter_id === current.value ? sel.value : null))
 /** 左栏列的是哪一份：有草稿时先把草稿的章节灰着列出来。 */
@@ -373,6 +393,8 @@ function watchBatch() {
         chapter_id: msg.chapter_id,
         from: 0,
         at: buf[msg.chapter_id].length,
+        // 标上来源：这把锁是批量那件活上的，活停了就该解开。见 locked。
+        src: 'batch',
       }
       // **跟着它翻页。** 一次只看一章，不跟的话批量跑一个多小时，眼前
       // 这一章一个字都不动——"看着它写"就落空了。
