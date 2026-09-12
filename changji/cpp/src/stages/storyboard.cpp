@@ -565,6 +565,24 @@ void drop_placeholder_dialogue(json& item) {
     *it = std::move(kept);
 }
 
+/// 台词里裹着的旁白剥掉。
+///
+/// **剧本那边已经剥过一遍了，这儿还要再剥一遍**：分镜的台词有两个来源，
+/// 一个是引擎照剧本放进去的（那份干净），另一个是模型自己写的——
+/// 「AI 出分镜」这条路上模型会直接写台词，它照样会把原文整句抄进来。
+/// 两个入口都堵上，见 stages::strip_speech_tags。
+void clean_dialogue_text(json& item) {
+    const auto it = item.find("dialogue");
+    if (it == item.end() || !it->is_array()) return;
+    for (auto& line : *it) {
+        if (!line.is_object()) continue;
+        const auto tit = line.find("text");
+        if (tit == line.end() || !tit->is_string()) continue;
+        *tit = strip_speech_tags(tit->get<std::string>(),
+                                 str_or(line, "char_id"));
+    }
+}
+
 }  // namespace
 
 void add_missing_speakers(json& item, const std::set<std::string>& known) {
@@ -658,6 +676,9 @@ std::vector<Shot> parse_storyboard(const std::string& raw,
         // **先删占位台词再补说话人。** 反过来的话，「（无台词）」那一句
         // 会先把一个角色补进 characters，于是这一镜凭空多了个在场的人。
         drop_placeholder_dialogue(item);
+        // 剥旁白要在删占位之后：「（无台词）」不带引号，两步互不干扰，
+        // 但顺序反过来会让剥出来的空串被当成一句真台词留下。
+        clean_dialogue_text(item);
         add_missing_speakers(item, known_chars);
         link_location(item, known_locs);
 

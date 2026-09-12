@@ -477,6 +477,65 @@ TEST_CASE("动作行开头的机位标签削掉") {
     }
 }
 
+TEST_CASE("台词里裹着的旁白剥掉，不然会被念出来") {
+    // **2026-09-13 实跑撞上的**（walk_c ep02）：模型照抄了原文那一句，
+    // 「她说，语气平静但带着一丝疲惫」是旁白却落在台词字段里，
+    // 配音会连着念出来。
+    CHECK(stages::strip_speech_tags(
+              R"(“你来了。”她说，语气平静但带着一丝疲惫。)") == "你来了。");
+
+    // 中文小说的对话只有四种形式，四种里引号都贴着句子的一头
+    CHECK(stages::strip_speech_tags(R"(他说：“我不去。”)") == "我不去。");
+    CHECK(stages::strip_speech_tags(R"(“我不去。”他说。)") == "我不去。");
+    // 提示语在中：两半要接起来，不能只留一半
+    CHECK(stages::strip_speech_tags(R"(“我不去，”他说，“你也别去。”)") ==
+          "我不去，你也别去。");
+
+    SUBCASE("引号夹在中间的不动——那不是对话形式") {
+        // 剥了会把整句话吃掉只剩两个字，而这句话本身就是要说出口的。
+        const std::string mid = R"(他说过“再见”，然后走了)";
+        CHECK(stages::strip_speech_tags(mid) == mid);
+    }
+
+    SUBCASE("正常台词一个字都不动") {
+        // 剧本里的台词本来就不带引号，这条路要完全无副作用。
+        CHECK(stages::strip_speech_tags("你听我说：别走") == "你听我说：别走");
+        CHECK(stages::strip_speech_tags("我已经下定决心了。") ==
+              "我已经下定决心了。");
+        CHECK(stages::strip_speech_tags("") == "");
+    }
+
+    SUBCASE("整句就是一对引号的交给 strip_wrapper，这里不碰") {
+        // 引号外没有字，不算裹了旁白。
+        CHECK(stages::strip_speech_tags(R"(“你来了。”)") == R"(“你来了。”)");
+    }
+
+    SUBCASE("开头重复的人名削掉") {
+        CHECK(stages::strip_speech_tags("苏婉：你来了", "苏婉") == "你来了");
+        CHECK(stages::strip_speech_tags("苏婉:你来了", "苏婉") == "你来了");
+        // 不是这个人的名字就不动
+        CHECK(stages::strip_speech_tags("林浩：你来了", "苏婉") ==
+              "林浩：你来了");
+    }
+
+    SUBCASE("剥空了就别剥") {
+        // 宁可多念一句旁白，也不要这一镜彻底没声音。
+        const std::string empty_quote = R"(“”她说。)";
+        CHECK(stages::strip_speech_tags(empty_quote) == empty_quote);
+    }
+
+    SUBCASE("走完整条解析：台词干净，动作行不受影响") {
+        const std::string raw =
+            R"({"title":"x","logline":"y","beats":[
+                {"kind":"dialogue","speaker":"苏婉","text":"\"你来了。\"她说，语气平静但带着一丝疲惫。"},
+                {"kind":"action","speaker":"","text":"她正在为一位病人换药。"}]})";
+        const stages::ScriptDraft d = stages::parse_script(raw);
+        REQUIRE(d.beats.size() == 2);
+        CHECK(d.beats[0].text == "你来了。");
+        CHECK(d.beats[1].text == "她正在为一位病人换药。");
+    }
+}
+
 TEST_CASE("给了角色名，speaker 就收成枚举") {
     // 实跑里三个角色写出了四种名字：林浩、Lin Hao、LinHao、Su Wan。
     // 下一步分镜按名字找 char_id，找不到那句就变成旁白——不配音色、

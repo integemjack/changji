@@ -133,6 +133,47 @@ std::string strip_wrapper(const std::string& text_in) {
     return out;
 }
 
+/// 一句话里所有成对引号的位置和内容。
+///
+/// 只认引号，不认括号：「（小声）」是舞台提示，那是另一回事，
+/// 归 strip_wrapper / strip_camera_prefix 管。
+struct QuotedSpan {
+    std::size_t begin = 0;   ///< 左引号的字节位置
+    std::size_t end = 0;     ///< 右引号之后的字节位置
+    std::string inner;       ///< 引号之间的内容
+};
+
+std::vector<QuotedSpan> quoted_spans(const std::string& s) {
+    // 左右一样的（ASCII 的 " 和 '）也收：模型中英文标点混着用。
+    static const char* kQuotes[][2] = {
+        {R"CJ(“)CJ", R"CJ(”)CJ"},
+        {R"CJ(「)CJ", R"CJ(」)CJ"},
+        {R"CJ(『)CJ", R"CJ(』)CJ"},
+        {R"CJ(")CJ", R"CJ(")CJ"},
+        {R"CJ(')CJ", R"CJ(')CJ"},
+    };
+    std::vector<QuotedSpan> out;
+    std::size_t i = 0;
+    while (i < s.size()) {
+        bool matched = false;
+        for (const auto& q : kQuotes) {
+            const std::string left = q[0], right = q[1];
+            if (s.compare(i, left.size(), left) != 0) continue;
+            const std::size_t close = s.find(right, i + left.size());
+            if (close == std::string::npos) continue;   // 只开不闭，不算
+            out.push_back(QuotedSpan{
+                i, close + right.size(),
+                s.substr(i + left.size(), close - i - left.size())});
+            i = close + right.size();
+            matched = true;
+            break;
+        }
+        // 按 UTF-8 字符步进，别踩进汉字中间的字节
+        if (!matched) i += text::utf8_char_len(static_cast<unsigned char>(s[i]));
+    }
+    return out;
+}
+
 std::string strip_leading_timecode(const std::string& text_in) {
     const std::string out = strip_ascii(text_in);
     for (const auto& pair : prompt::kLeadBrackets) {
@@ -188,6 +229,49 @@ std::string strip_camera_prefix(const std::string& text_in) {
         return rest;
     }
     return out;
+}
+
+std::string strip_speech_tags(const std::string& text_in,
+                              const std::string& speaker) {
+    std::string s = strip_ascii(text_in);
+
+    // 开头重复人名：「苏婉：你来了」→「你来了」。
+    // 说话人是单独一个字段，再写一遍只会被念出来。
+    if (!speaker.empty()) {
+        for (const char* colon : {R"CJ(：)CJ", ":"}) {
+            const std::string lead = speaker + colon;
+            if (starts_with(s, lead)) {
+                s = strip_ascii(s.substr(lead.size()));
+                break;
+            }
+        }
+    }
+
+    const std::vector<QuotedSpan> spans = quoted_spans(s);
+    if (spans.empty()) return s;   // 正常剧本的台词本来就不带引号
+
+    // **四种中文对话形式里，引号都贴着句子的一头。** 夹在中间的那种
+    // （「他说过“再见”，然后走了」）不是对话形式，剥了会只剩两个字。
+    const bool at_head = spans.front().begin == 0;
+    const bool at_tail = spans.back().end == s.size();
+    if (!at_head && !at_tail) return s;
+
+    // 引号外还剩字，才说明裹了旁白。整句就是一对引号的交给 strip_wrapper。
+    std::string outside;
+    std::size_t at = 0;
+    for (const auto& sp : spans) {
+        outside += s.substr(at, sp.begin - at);
+        at = sp.end;
+    }
+    outside += s.substr(at);
+    if (strip_ascii(outside).empty()) return s;
+
+    // 提示语在中的那种要把两半接起来：「“甲，”他说，“乙。”」→「甲，乙。」
+    std::string spoken;
+    for (const auto& sp : spans) spoken += sp.inner;
+    spoken = strip_ascii(spoken);
+    // 剥空了就别剥——宁可多念一句旁白，也不要这一镜彻底没声音。
+    return spoken.empty() ? s : spoken;
 }
 
 std::string normalize_speaker(const std::string& raw) {
@@ -693,6 +777,9 @@ void parse_beats_into(const json& arr, std::vector<Beat>& out) {
         // 机位标签只削动作行。台词里的「你听我说：」不是机位，
         // 而且台词那一行的说话人是单独一个字段，本来就不会认错。
         if (kind == "action") t = strip_camera_prefix(t);
+        // 台词里裹着的旁白要剥掉，否则配音会把「她说，语气平静……」
+        // 一起念出来。见 strip_speech_tags。
+        if (kind == "dialogue") t = strip_wrapper(strip_speech_tags(t, speaker));
         if (t.empty()) continue;
 
         out.push_back(Beat{kind, speaker, t});
