@@ -262,8 +262,17 @@ void JobTable::record(JobKind kind, Event ev) {
             {"kind", ev.kind},
             {"job_id", job_id},
             {"stage", ev.stage},
-            {"step", ev.current},
-            {"total", ev.total},
+            // **推 st.* 而不是 ev.*。** 上面那道「只有带总数的事件才更新
+            // 进度」只守住了服务端这份快照，推出去的消息原来带的还是事件
+            // 自己的值——于是一条 total=0 的日志事件推出去就是
+            // {step:0, total:0}，而两个 store 都是「是数字就收下」，
+            // 刚轮询回来的正确值当场被打回零。
+            //
+            // 推快照里那两个值还顺带解决了多卡时数字来回蹦：st.current
+            // 是同阶段内取过 max 的，ev.current 是各镜自己的序号。
+            // 串行时两者一个字不差。
+            {"step", st.current},
+            {"total", st.total},
             {"message", ev.message},
         };
         if (ev.shot_id.has_value()) msg["shot_id"] = *ev.shot_id;

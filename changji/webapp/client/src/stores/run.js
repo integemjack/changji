@@ -276,13 +276,27 @@ export const useWriter = defineStore('writer', () => {
 
   const live = ref(false)
   let socket = null
+  let missCount = 0
 
   async function poll() {
     try {
       state.value = await api.seriesStatus()
+      missCount = 0
       if (!state.value.running) stop()
     } catch {
-      stop()
+      // **一次取不到不等于活儿结束了。** 原来这里是 catch 就 stop()，
+      // 而轮询是这条状态线唯一的全量来源（推上来的只有增量）——停掉之后
+      // 界面永远冻在最后拿到的那一帧。
+      //
+      // 2026-09-12 用户截图逮到的：底栏写着「AI 展开中 0/4 · 正在写 ch01」，
+      // 而同一刻接口回的是 {"done":1, "message":"重写 ch02……"}。两个数
+      // 一起停在 ch01 开跑那一瞬，就是轮询早就死了。左边栏反而是对的，
+      // 因为它读的是另一条路。
+      //
+      // 分寸抄流水线那条 store：连丢几次再停。引擎重启时会连着失败几次，
+      // 立刻停太急。
+      missCount += 1
+      if (missCount >= 5) stop()
     }
   }
 

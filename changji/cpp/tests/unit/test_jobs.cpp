@@ -253,6 +253,54 @@ TEST_CASE("没有总数的事件不清空进度条") {
     CHECK(s.at("events").size() == 2);
 }
 
+TEST_CASE("推出去的那条也不能被 total=0 的事件清零") {
+    // 上一个用例守的是**快照**，这一个守的是**推上去的消息**——
+    // 2026-09-12 之前只守住了前者：record() 更新 st.* 时判断了 ev.total，
+    // 而广播那条 msg 里带的还是 ev.current / ev.total。于是一条 warn
+    // 推出去就是 {step:0, total:0}，前端两个 store 都是"是数字就收下"，
+    // 刚轮询回来的正确值当场被打回零。
+    //
+    // 用户截图逮到的样子：底栏「AI 展开中 0/4」，而同一刻接口回的是
+    // {"done":1,...}。
+    JobTable t;
+    std::mutex mu;
+    std::vector<json> got;
+    t.set_sink([&](const std::string&, const json& m) {
+        std::lock_guard lg(mu);
+        got.push_back(m);
+    });
+
+    t.start(JobKind::Run, "ep_01",
+            [](JobProgress& p) {
+                Event e;
+                e.stage = "render"; e.kind = "progress";
+                e.current = 3; e.total = 10; e.message = "画第 3 个镜头";
+                p.report(e);
+
+                Event log;
+                log.stage = "render"; log.kind = "warn";
+                log.message = "显存吃紧，转成分块解码";
+                p.report(log);   // total 保持 0
+            });
+    REQUIRE(wait_done(t, JobKind::Run));
+
+    std::vector<json> msgs;
+    {
+        std::lock_guard lg(mu);
+        msgs = got;
+    }
+    REQUIRE(msgs.size() >= 2);
+    CHECK(msgs[0].at("step") == 3);
+    CHECK(msgs[0].at("total") == 10);
+
+    // 这一条是 warn，它自己没带总数——推出去时要带着上一条的进度，
+    // 不是零。消息本身照旧更新。
+    CHECK(msgs[1].at("kind") == "warn");
+    CHECK(msgs[1].at("step") == 3);
+    CHECK(msgs[1].at("total") == 10);
+    CHECK(msgs[1].at("message") == "显存吃紧，转成分块解码");
+}
+
 TEST_CASE("消息汇收到的内容") {
     JobTable t;
     std::mutex mu;
