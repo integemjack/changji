@@ -1641,7 +1641,7 @@ TEST_CASE("提示词：只写这一章，带的是压缩的全局记忆") {
     // 把整章梗概平摊成一串镜头，写出来是概述不是场景。
     CHECK(p.find("**一场戏是**") != std::string::npos);
     CHECK(p.find("写场面，不写概述") != std::string::npos);
-    CHECK(p.find("一段推进的是**一两秒钟的事**") != std::string::npos);
+    CHECK(p.find("一段推进的是一两秒钟的事") != std::string::npos);
     CHECK(p.find(std::to_string(changji::stages::chapter_target_scenes(s)) +
                  " 场戏") != std::string::npos);
     CHECK(p.find(std::to_string(changji::stages::chapter_scene_chars(s)) +
@@ -1649,17 +1649,23 @@ TEST_CASE("提示词：只写这一章，带的是压缩的全局记忆") {
     // 每一场停在自己的 turn 上，那就是一集的收口
     CHECK(p.find("每一场停在它的 turn 上") != std::string::npos);
     CHECK(p.find("最后一场的 turn 要落到这件事上") != std::string::npos);
-    // 不许贴情绪标签，但要写内心：拆成身体和当下那句心里话
-    CHECK(p.find("神情复杂") != std::string::npos);
+    // 内心要写成身体和当下那句心里话，不要写成情绪的名字。
+    // **2026-09-12 把那十一个禁用词的清单从提示词里删了**：提示词里的
+    // 反例句会被原样抄走（这个坑记过），而情绪标签本来就有守卫在拦，
+    // 不必在提示词里再念一遍。所以这里反过来断言它不在。
+    CHECK(p.find("别写成情绪的名字") != std::string::npos);
+    CHECK(p.find("神情复杂") == std::string::npos);
+    CHECK(p.find("五味杂陈") == std::string::npos);
     CHECK(p.find("一场只跟着一个人走") != std::string::npos);
     // 长相归美术那一步，但**身体要在场上**——上一版这条被模型扩大成
     // 「不要描写人」，人物在场景里没有身体
     CHECK(p.find("不要写长相") != std::string::npos);
     CHECK(p.find("身体要在场上") != std::string::npos);
-    // 五感里至少有一个不靠眼睛
-    // 下限从「至少一个」提到「三四处，散在不同段落里」：实测每场已经有
-    // 八九处，原来那个下限根本没在约束——这一条是拿来测这个指标可不可控的
-    CHECK(p.find("不靠眼睛的细节，一场里要有三四处") != std::string::npos);
+    // 场面不能全是眼睛看见的东西。**这一条不给配额了**（原来是「一场里
+    // 要有三四处」）：给配额会变成填配额，实测「体感套话」（他感到一阵…、
+    // 指节泛白）正是涨得最多的一项。所以断言有这条要求、且没有那个数。
+    CHECK(p.find("不能全是眼睛看见的东西") != std::string::npos);
+    CHECK(p.find("三四处") == std::string::npos);
     CHECK(p.find("从上一章停下的地方接着走") != std::string::npos);
     CHECK(p.find("【这是第一章】") == std::string::npos);
 
