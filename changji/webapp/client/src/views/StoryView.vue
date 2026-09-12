@@ -441,9 +441,18 @@ function goLine(i) {
   caret.value = pos
 }
 
-onMounted(() => {
+onMounted(async () => {
   load()
-  writer.poll() // 可能是上次离开页面时还在跑的那一轮
+  // **上次离开页面时可能还在跑，那就得把轮询接着开起来。**
+  //
+  // 原来这儿只 poll 一次，拿到一帧就不管了。writer.start()（轮询 + socket）
+  // 只在点「展开」那一下调过，所以**刷新之后没有任何人在轮询**，后果有两个，
+  // 用户 2026-09-12 两个都报了：
+  //   · 顶栏和侧栏那个「展开中 0/4」冻在刷新那一帧，永远不动；
+  //   · AI 写完之后正文也不出现——下面那个 watch 等的是 writer.running
+  //     从真变假，而没人轮询的话它根本不会变。
+  await writer.poll()
+  if (writer.running) writer.start()
   watchBatch()
   window.addEventListener('beforeunload', beforeUnload)
   window.addEventListener('keydown', onKey)

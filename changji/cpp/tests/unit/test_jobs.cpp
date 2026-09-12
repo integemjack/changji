@@ -253,6 +253,54 @@ TEST_CASE("没有总数的事件不清空进度条") {
     CHECK(s.at("events").size() == 2);
 }
 
+TEST_CASE("写章节：set_done 要推出去，而且 step 取的是 done 不是 current") {
+    // 2026-09-12 用户报了两遍的那个「AI 展开中 0/4 永远不动」，根子有两条：
+    //
+    // 一、`JobProgress` 的 setter 全走 `mutate()`，而 mutate 原来**只改状态
+    //     不广播**——写章节这条路从头到尾一条进度都没推过，界面只能靠
+    //     1.5 秒一次的轮询。
+    // 二、**Run 和 Write 记在两个不同的字段上**：Run 是 current（第几镜，
+    //     由 record() 维护），Write 是 done（第几章，由 set_done 维护）。
+    //     推送那条以前只带 current，对写章节恒等于 0，正好把轮询刚拿到的
+    //     正确值覆盖掉。
+    //
+    // snapshot 和 overview 里早就各写了一遍这个映射，推送这条得跟它们一致。
+    JobTable t;
+    std::mutex mu;
+    std::vector<json> got;
+    t.set_sink([&](const std::string&, const json& m) {
+        std::lock_guard lg(mu);
+        got.push_back(m);
+    });
+
+    t.start(JobKind::Write, "",
+            [](JobProgress& p) {
+                p.set_total(4);
+                p.set_message("正在写 ch01（那把伞的重量）");
+                p.set_done(1);
+                p.set_message("正在写 ch02（铁皮箱里的沉默）");
+            });
+    REQUIRE(wait_done(t, JobKind::Write));
+
+    std::vector<json> msgs;
+    {
+        std::lock_guard lg(mu);
+        msgs = got;
+    }
+    // 至少每次 set_* 推一条，外加收尾那条 done
+    REQUIRE(msgs.size() >= 4);
+
+    // 找最后一条进度：它该是 1/4，消息是 ch02
+    const json* last = nullptr;
+    for (const auto& m : msgs) {
+        if (m.value("type", "") == "progress") last = &m;
+    }
+    REQUIRE(last != nullptr);
+    CHECK(last->value("step", -1) == 1);      // ← 取的是 done
+    CHECK(last->value("total", -1) == 4);
+    CHECK(last->value("message", "").find("ch02") != std::string::npos);
+}
+
 TEST_CASE("推出去的那条也不能被 total=0 的事件清零") {
     // 上一个用例守的是**快照**，这一个守的是**推上去的消息**——
     // 2026-09-12 之前只守住了前者：record() 更新 st.* 时判断了 ev.total，

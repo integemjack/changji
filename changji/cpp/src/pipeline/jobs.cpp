@@ -271,7 +271,12 @@ void JobTable::record(JobKind kind, Event ev) {
             // 推快照里那两个值还顺带解决了多卡时数字来回蹦：st.current
             // 是同阶段内取过 max 的，ev.current 是各镜自己的序号。
             // 串行时两者一个字不差。
-            {"step", st.current},
+            //
+            // ⚠️ **而且要按任务种类挑字段**（和 progress_of / snapshot /
+            // overview 同一套）：Run 记第几镜在 current，Write 记第几章
+            // 在 done。只推 current 的话，写章节这条路推出去恒等于 0——
+            // 我 2026-09-12 第一次改这里就漏了这一半，界面照旧是 0/4。
+            {"step", kind == JobKind::Run ? st.current : st.done},
             {"total", st.total},
             {"message", ev.message},
         };
@@ -393,10 +398,49 @@ void JobTable::wait_idle() {
 
 // ---- JobProgress ----
 
+/// 把一个槽的当前状态打成一条推给界面的进度。
+///
+/// **`step` 要按任务种类取不同的字段。** Run 记的是第几镜（`current`，由
+/// record() 维护），Write 记的是第几章（`done`，由 set_done() 维护）——
+/// 两个**不同的字段**。snapshot 和 overview 里早就各写了一遍这个映射
+/// （`k == JobKind::Run ? s.current : s.done`），推送这条以前没有，
+/// 于是推出去的 step 对写章节来说恒等于 0。
+///
+/// 三处必须是同一套映射，否则轮询拿到的和推上来的会互相打架：界面收下
+/// 推上来的 0，把刚轮询到的正确值覆盖掉，进度条就永远停在 0/4。
+static nlohmann::json progress_of(JobKind kind, const std::string& job_id,
+                                  const JobState& s) {
+    return {{"type", "progress"},
+            {"kind", "progress"},
+            {"job_id", job_id},
+            {"stage", s.stage},
+            {"step", kind == JobKind::Run ? s.current : s.done},
+            {"total", s.total},
+            {"message", s.message}};
+}
+
 template <typename F>
 void JobTable::mutate(JobKind kind, F&& fn) {
-    std::lock_guard lg(mu_);
-    fn(slot(kind).state);
+    // **改完要推出去。** 原来这儿只改状态不广播，而 JobProgress 的
+    // set_done / set_total / set_message 全走它——也就是说写章节这条路
+    // 从头到尾一条进度都没推过，界面只能靠 1.5 秒一次的轮询。轮询一旦
+    // 断了（或者被推上来的 0 覆盖），显示就冻在那儿：用户看到的是
+    // 「AI 展开中 0/4 · 正在写 ch01」，而同一刻接口回的是 done=1、
+    // 正在写 ch02。
+    std::string job_id;
+    nlohmann::json msg;
+    {
+        std::lock_guard lg(mu_);
+        JobState& st = slot(kind).state;
+        fn(st);
+        // 没在跑就不用推：起之前和收尾之后的那几次 mutate 跟界面无关，
+        // 而收尾自己会发 done/error。
+        if (!st.running) return;
+        job_id = st.job_id;
+        msg = progress_of(kind, job_id, st);
+    }
+    // **出了锁再推。** emit 自己要取这把锁拷 sink，在锁里调就是自锁。
+    emit(job_id, msg);
 }
 
 void JobProgress::report(Event ev) { table_->record(kind_, std::move(ev)); }
