@@ -766,7 +766,16 @@ std::vector<std::pair<std::string, std::string>> script_dialogue_pairs(
         if (at == std::string::npos || at == 0) continue;
         const std::string name = line.substr(0, at);
         if (text::utf8_len(name) > 12) continue;
-        const std::string said = text::strip_ws(line.substr(at + sep));
+        // **正文这条路也要清一道。** strip_list_marker / strip_speech_tags
+        // 跑在「模型 JSON → 拍子」那一步，管不到已经存下的剧本：老项目、
+        // 人手改过的、以及修这条之前生成的那些，正文里的 `-` 会原样变成
+        // 台词，再原样进字幕。这里是「剧本正文 → 台词数据」的唯一入口，
+        // 堵在这儿，三种来源一次覆盖。
+        //
+        // check_coverage / missing_dialogue_lines 和落位用的是同一个函数，
+        // 所以清洗只能放在这里面——放外面两边就对不上了。
+        const std::string said =
+            strip_list_marker(text::strip_ws(line.substr(at + sep)));
         if (!said.empty()) out.emplace_back(name, said);
     }
     return out;
