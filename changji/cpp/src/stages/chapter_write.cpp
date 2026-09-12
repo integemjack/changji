@@ -3,6 +3,7 @@
 #include "stages/repetition.hpp"
 
 #include <algorithm>
+#include <cctype>
 #include <map>
 #include <set>
 #include <string>
@@ -164,10 +165,22 @@ ordered chapter_schema(int target_scenes, int paras_per_scene) {
     const int min_scenes = std::max(2, target_scenes);
     const int max_scenes = std::max(min_scenes + 1, target_scenes + 1);
 
-    // 段数的上下限：目标的三分之二到一倍半。下限让它没法一两段交差，上限让它
+    // 段数的上下限：目标的一半到一倍半。下限让它没法一两段交差，上限让它
     // 没法写个没完。
     // 减一：最后一句现在是单独一栏，从 paragraphs 里挪出去了。
-    const int min_items = std::max(6, paras_per_scene * 2 / 3 - 1);
+    //
+    // **2026-09-12 从三分之二降到一半。** 原来那个下限（每场约 13 段）
+    // 有时候高过这一场真有的内容，而 minItems 是 GBNF 硬约束——语法里
+    // 没有"结束数组"这个选项，模型只能接着吐。它吐出来的不是正文，是
+    // 下一个字段名：`last_line": "..."`、`turn_note": ...`，最糟一章里
+    // 一连 22 段 `last_line": null}]}] }`。三跑 1715 段里 29 段这样。
+    // 用户看出来的原话是"好多明显是凑字数的字符"——字面意义上的凑字数。
+    //
+    // 下限的活儿是"别拿一两段交差"，六到十段就够；它不该顺着目标字数
+    // 一起涨，那是把"写够长"和"写完整"当成一回事。**字数从来不是质量
+    // 信号**——它是我们自己用这个旋钮拧出来的（见 minLength 那条注释里
+    // "12 出 1500~1900，20 出 2000~2700"）。
+    const int min_items = std::max(6, paras_per_scene / 2 - 1);
     const int max_items = std::max(min_items + 6, paras_per_scene * 3 / 2);
 
     const ordered schema = [&] {
@@ -614,6 +627,56 @@ static std::string strip_quote_runs(const std::string& s) {
     return out;
 }
 
+/// 把模型当成正文写出来的 **JSON 字段名** 摘掉。
+///
+/// 2026-09-12 实跑逮到的，用户先看出来的（"好多明显是凑字数的字符"）：
+/// 一场的内容讲完了，但 paragraphs 的 minItems 还没满，而语法里没有
+/// "结束数组"这个选项——于是模型把下一个字段名当成一段正文吐出来：
+///
+///     last_line": "现在，该还债了。"
+///     turn_note": 林远主动发起攻击……        （turn_note 根本不是我们的字段）
+///     last_line": null}]}] }                （一章里一连 22 段都是这个）
+///
+/// 三跑一共 1715 段，29 段是这样，占 1.69%；最糟的一章占了 22 段。
+/// 32B 那边也有，不是哪个模型独有的毛病，是闸和内容量对不上。
+///
+/// **能救的救，救不了的丢。** 冒号后面还有真话的，把字段名那截摘掉、
+/// 留下正文（上面头两条，那本来就是这一场该有的最后一句）；后面只剩
+/// JSON 标点的，整段丢掉。根子在 minItems 太高，已经一起调低了——
+/// 这道只是兜底，分寸和 strip_quote_runs 一样：能就地修好的别打回。
+static std::string strip_json_echo(const std::string& para) {
+    // 头上必须是 ASCII 标识符——中文正文不会长这样，误伤不了。
+    std::size_t i = 0;
+    while (i < para.size() &&
+           (std::isalnum(static_cast<unsigned char>(para[i])) != 0 ||
+            para[i] == '_')) {
+        ++i;
+    }
+    if (i == 0) return para;
+    std::size_t j = i;
+    if (j < para.size() && para[j] == '"') ++j;   // 它常把那半个引号也带出来
+    if (j < para.size() && para[j] == ':') {
+        ++j;
+    } else if (para.compare(j, 3, "：") == 0) {
+        j += 3;
+    } else {
+        return para;   // 没冒号，那就是普通正文，别动
+    }
+
+    std::string rest = text::strip_ws(para.substr(j));
+    // 后面只剩 JSON 的标点和 null：整段都是垃圾，丢掉。
+    // 中文是多字节的，落不进这个集合，所以真正文不会被判成标点。
+    if (rest.find_first_not_of("nul{}[],:; \t\"'") == std::string::npos) {
+        return std::string();
+    }
+    // 剩下的是真正文。外面那层半角引号是 JSON 的，摘掉；中文引号是
+    // 对白自己的，留着。
+    if (rest.size() >= 2 && rest.front() == '"' && rest.back() == '"') {
+        rest = text::strip_ws(rest.substr(1, rest.size() - 2));
+    }
+    return rest;
+}
+
 ChapterDraft parse_chapter(const std::string& raw, int min_chars, bool strict) {
     json data;
     try {
@@ -670,8 +733,8 @@ ChapterDraft parse_chapter(const std::string& raw, int min_chars, bool strict) {
                 ps != s.end() && ps->is_array()) {
                 for (const auto& p : *ps) {
                     if (!p.is_string()) continue;
-                    const std::string one = strip_camera_talk(
-                        fix_unpaired_quotes(text::strip_ws(p.get<std::string>())));
+                    const std::string one = strip_camera_talk(fix_unpaired_quotes(
+                        strip_json_echo(text::strip_ws(p.get<std::string>()))));
                     if (one.empty()) continue;
                     sc.paragraphs.push_back(one);
                     push_text(one);
@@ -682,7 +745,7 @@ ChapterDraft parse_chapter(const std::string& raw, int min_chars, bool strict) {
             if (const auto last = s.find("last_line");
                 last != s.end() && last->is_string()) {
                 const std::string one = strip_camera_talk(fix_unpaired_quotes(
-                    text::strip_ws(last->get<std::string>())));
+                    strip_json_echo(text::strip_ws(last->get<std::string>()))));
                 if (!one.empty()) {
                     sc.paragraphs.push_back(one);
                     push_text(one);

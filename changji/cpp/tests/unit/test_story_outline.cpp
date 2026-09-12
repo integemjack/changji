@@ -1278,7 +1278,13 @@ TEST_CASE("schema：正文一场一个数组，场数和段数都由语法卡住
 
     REQUIRE(sp.contains("paragraphs"));
     CHECK(sp.at("paragraphs").at("type") == "array");
-    CHECK(sp.at("paragraphs").at("minItems").get<int>() >= 12);
+    // 下限是目标的一半（2026-09-12 从三分之二降下来的）。**下限的活儿是
+    // "别拿一两段交差"，不是"写够长"**——它顺着目标字数一起涨的时候，
+    // 有时候会高过这一场真有的内容，而 minItems 是 GBNF 硬约束，模型只能
+    // 接着吐：吐出来的是 `last_line": ...` 这种字段名当正文。见
+    // chapter_write.cpp 里 min_items 那段注释。
+    CHECK(sp.at("paragraphs").at("minItems").get<int>() >= 8);
+    CHECK(sp.at("paragraphs").at("minItems").get<int>() <= 12);
     CHECK(sp.at("paragraphs").at("maxItems").get<int>() <= 34);
     CHECK(sp.at("paragraphs").at("items").at("type") == "string");
     REQUIRE(s.at("required").size() == 1);
@@ -1867,6 +1873,81 @@ TEST_CASE("整章几乎没对白就打回") {
     CHECK_NOTHROW(changji::stages::parse_chapter(make(4)));
     // 软闸：最后一次尝试照收
     CHECK_NOTHROW(changji::stages::parse_chapter(make(2), 0, false));
+}
+
+TEST_CASE("模型把 JSON 字段名当正文写出来的，摘掉") {
+    // 2026-09-12 实跑逮到的，用户先看出来的（"好多明显是凑字数的字符"）。
+    // 一场的内容讲完了，但 paragraphs 的 minItems 还没满，而 minItems 是
+    // GBNF 硬约束——语法里没有"结束数组"这个选项，模型只好把下一个字段名
+    // 当成一段正文吐出来。三跑 1715 段里 29 段这样，最糟一章占了 22 段。
+    //
+    // 闸已经一起调低了（min_items 从目标的三分之二降到一半），这道是兜底。
+    const json draft = {
+        {"scenes",
+         {{{"where", "深夜，便利店"},
+           {"pov", "林晚"},
+           {"who", {"林晚", "陈默"}},
+           {"goal", "把伞要回来"},
+           {"obstacle", "他不认这把伞"},
+           {"worse", "他把伞收进了柜台底下"},
+           {"turn", "伞柄上刻着的不是她的名字"},
+           {"paragraphs",
+            {
+                "他把伞立在门边，水顺着伞骨往下淌。",
+                // 冒号后面还有真话：摘掉字段名那截，正文留下
+                "last_line\": \"现在，该还债了。\"",
+                // 半角冒号、没带引号，字段还是它自己编的
+                "turn_note\": 他主动挑破了这件事。",
+                // 全角冒号那一种
+                "last_line：“你到底是谁？”",
+                // 后面只剩 JSON 标点：整段丢掉
+                "last_line\": null}]}] }",
+                "她没回头，手指扣着栏杆上那道缺口。",
+            }}}}}};
+
+    const auto d = changji::stages::parse_chapter(draft.dump());
+    REQUIRE(d.scenes.size() == 1);
+    const auto& ps = d.scenes[0].paragraphs;
+
+    // 纯标点那一段没了，别的都留着（六段进、五段出）
+    CHECK(ps.size() == 5);
+    for (const auto& p : ps) {
+        CHECK(p.find("last_line") == std::string::npos);
+        CHECK(p.find("turn_note") == std::string::npos);
+    }
+    // 能救的救了：正文还在，包在外面的那层半角引号摘掉了，
+    // 中文引号是对白自己的，留着
+    CHECK(ps[1] == "现在，该还债了。");
+    CHECK(ps[2] == "他主动挑破了这件事。");
+    CHECK(ps[3] == "“你到底是谁？”");
+    CHECK(ps[4] == "她没回头，手指扣着栏杆上那道缺口。");
+}
+
+TEST_CASE("正常正文里带冒号的句子别误伤") {
+    // 上面那道闸是按"ASCII 标识符 + 冒号"认的。中文正文里的冒号
+    // （"他说：……"）前面是中文，落不进这个形状；而真要有人写
+    // "Plan B：往北走"，也该原样留着。
+    const json draft = {
+        {"scenes",
+         {{{"where", "深夜，便利店"},
+           {"pov", "林晚"},
+           {"who", {"林晚", "陈默"}},
+           {"goal", "把伞要回来"},
+           {"obstacle", "他不认这把伞"},
+           {"worse", "他把伞收进了柜台底下"},
+           {"turn", "伞柄上刻着的不是她的名字"},
+           {"paragraphs",
+            {
+                "他低声说：“这把伞我留着。”",
+                "她想起那句话：谁先开口谁就输了。",
+            }}}}}};
+
+    const auto d = changji::stages::parse_chapter(draft.dump());
+    REQUIRE(d.scenes.size() == 1);
+    const auto& ps = d.scenes[0].paragraphs;
+    REQUIRE(ps.size() == 2);
+    CHECK(ps[0] == "他低声说：“这把伞我留着。”");
+    CHECK(ps[1] == "她想起那句话：谁先开口谁就输了。");
 }
 
 TEST_CASE("分镜的话按小句摘掉，不摘整段") {
