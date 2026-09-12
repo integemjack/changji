@@ -466,6 +466,24 @@ TEST_CASE("动作行开头的机位标签削掉") {
     // 只有标签没内容时留着，削成空串这一拍会被丢掉
     CHECK(stages::strip_camera_prefix("特写：") == "特写：");
 
+    SUBCASE("后期和转场的标签也要削") {
+        // **实跑撞上的**（预告片那条路）：
+        //     黑屏前最后一帧：林浩抬头望向镜头，雨水顺着脸颊滑落……
+        // 冒号前七个字，script_dialogue_pairs 认「冒号前 ≤12 字 = 说话人」，
+        // 于是整句动作描写变成一个叫「黑屏前最后一帧」的人在说话；名字认不出
+        // 就落成旁白，**旁白音会把它念出来**。
+        CHECK(stages::strip_camera_prefix(
+                  "黑屏前最后一帧：林浩抬头望向镜头，雨水顺着脸颊滑落。") ==
+              "林浩抬头望向镜头，雨水顺着脸颊滑落。");
+        CHECK(stages::strip_camera_prefix("淡入：清晨的街道") == "清晨的街道");
+        CHECK(stages::strip_camera_prefix("定格：他回头的那一瞬") ==
+              "他回头的那一瞬");
+
+        // **不收「字幕」**：「字幕：三年后」削成「三年后」之后，让旁白念
+        // 一句"三年后"其实是正当的转场处理，不该在这一层替人决定。
+        CHECK(stages::strip_camera_prefix("字幕：三年后") == "字幕：三年后");
+    }
+
     SUBCASE("只削动作行，台词不动") {
         const std::string raw =
             R"({"title":"x","logline":"y","beats":[
