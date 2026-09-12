@@ -1,9 +1,12 @@
 #include "stages/tts_backends.hpp"
 
 #include <array>
+#include <cstdint>
 #include <cstdio>
+#include <filesystem>
 #include <fstream>
 #include <mutex>
+#include <system_error>
 
 #include "infer/llama_tts.hpp"
 #include "infer/scheduler.hpp"
@@ -233,24 +236,54 @@ std::optional<TTSBackend> local_tts_backend(const fs::path& backbone,
     // 那段话就是死代码，用户永远看不到。而配音恰恰是四个槽里唯一一个
     // 有现成外部服务可换、不用改一行代码的。
     //
-    // 1.5 GB 的权重，仍然只载一次（Cached），每句台词重载一遍的话
-    // 一集就是几十次。
+    // 权重只载一次（Cached），每句台词重载一遍的话一集就是几十次。
     tts_engine_paths() = {backbone, decoder, use_gpu};
     {
         infer::SlotSpec spec;
         spec.slot = infer::Slot::TTS;
         spec.residency = infer::Residency::Cached;
-        // 1.5 GB 的权重 + KV cache 224 MB（上下文 2048，见
-        // infer/llama_tts.hpp 的 kTtsContextTokens）+ 计算缓冲，按 3 GB 记。
-        // 四个槽里最小的一个。
+
+        // **按权重文件的实际大小算，不写死。**
         //
-        // **这个数必须和真正要的对得上。** 2026-09-13 之前上下文是按模型
-        // 训练长度（32768）开的，KV cache 一家就 3.5 GB，真实占用 5.5 GB；
-        // 调度器按这里的 3 GB 腾地方，腾够了照样 OOM——而 OOM 之后配音
-        // 静默退回 estimate 后端，成片无声。
-        spec.vram_estimate = static_cast<std::size_t>(3) * 1024 * 1024 * 1024;
-        // 小到不用跟着模型走：配音那两份权重加起来就 1.5 GB 上下，
-        // 换一份也还在同一个量级。给个定值就够。
+        // 这里原来写死 3 GB，注释说"1.5 GB 的权重 + 缓冲"。两句都不对：
+        // Qwen3-TTS-12Hz-1.7B-Base-bf16 的 backbone 就有 3.23 GB，
+        // 加 mmproj 0.62 GB 一共 3.85 GB——**估的那个数连权重都不够**。
+        //
+        // 后果是进程被打死，不是慢一点。2026-09-13 确定性复现：
+        //
+        //     空卡 0 MiB → 跑一次分镜（大模型常驻）27763 MiB
+        //     → 跑配音 → 6 秒内进程死掉
+        //
+        // 32.6 GB 的卡上只剩 4.9 GB，而 make_room 按这里的 3 GB 判断
+        // "够，不用动别人"，于是不驱逐大模型；配音真要 5.7 GB，装到一半
+        // CUDA OOM，而 ggml 的错误处理是 GGML_ABORT——**整个引擎带着这一轮
+        // 的进度一起没了**，日志里只有一串地址。
+        //
+        // 账（这份模型，实测峰值 5883 MiB 佐证）：
+        //     权重     backbone 3.23 + mmproj 0.62 = 3.85 GB   ← 按文件大小
+        //     KV       上下文 2048 × 112 KiB/token  = 0.22 GB
+        //     计算缓冲                                ≈ 0.15 GB
+        //     CUDA 上下文 + cuBLAS 工作区 + 碎片      ≈ 1.5  GB
+        //                                    合计   ≈ 5.7  GB
+        //
+        // 所以：权重按文件大小取，另外留 2.5 GB 给后三项。换一份模型
+        // （更大的、量化过的）权重那一项自己跟上，后三项和模型大小基本无关。
+        //
+        // **宁可估高。** 估高只是多卸一次大模型（重载约 5 秒），
+        // 估低是整个进程被 abort。
+        constexpr double kTtsOverheadGb = 2.5;
+        std::error_code ec;
+        std::uintmax_t weights = 0;
+        for (const auto& f : {backbone, decoder}) {
+            const auto n = std::filesystem::file_size(f, ec);
+            if (!ec) weights += n;
+        }
+        // 读不到文件大小时退回一个够大的定值：宁可多卸一次。
+        const std::size_t overhead =
+            static_cast<std::size_t>(kTtsOverheadGb * 1024 * 1024 * 1024);
+        spec.vram_estimate =
+            weights > 0 ? static_cast<std::size_t>(weights) + overhead
+                        : static_cast<std::size_t>(7) * 1024 * 1024 * 1024;
         const std::size_t tts_bytes = spec.vram_estimate;
         spec.live_vram = [tts_bytes] { return tts_bytes; };
         // **比大模型还先被卸。** 配音一句话几秒，重载比出图出片便宜得多。
