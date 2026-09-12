@@ -260,6 +260,8 @@ namespace {
 /// 第 46/51 段差 788 MB，也就是 32.6 − 18.8 = 13.8 还差一点，它要 ~14.6。
 /// **已含驱动余量**（那 788 MB 是连驱动一起差的），所以直接和整卡比，不乘 0.9。
 constexpr double kVideoBuffer = 14.6;
+/// kVideoBuffer 是在哪个画布上量的。1280 × 704 = 901120 像素。
+constexpr double kVideoBufferAnchorPx = 1280.0 * 704.0;
 /// VAE 也常驻要再加这么多（放内存的话每镜解码多花 63 秒）。
 constexpr double kVideoVae = 5.5;
 /// 图像 1280×704 的解码缓冲，实测。
@@ -272,10 +274,29 @@ constexpr double kImageSlack = 4.0;
 /// （9×1.25 + 4 = 15.25，对得上）。
 constexpr double kLlmWeightFactor = 1.25;
 constexpr double kLlmOverhead = 4.0;
+
+/// 这块画布上的计算缓冲。
+///
+/// **只往上放大，不往下缩小。** 缓冲里有一部分是不随画布变的（CUDA 上下文、
+/// 常驻工作区、驱动余量），而我们**只有一个锚点**（1280×704 那次），
+/// 分不出固定和可变各占多少。往下缩会把固定那部分一起缩掉，于是在小画布上
+/// 低估——低估的后果是"以为装得下"然后 OOM，比高估严重得多。往上放大则是
+/// 线性外推：注意力开了 flash-attention（sd.cpp 的 --diffusion-fa），
+/// 激活显存随 token 数走，而 token 数随像素走，一次幂不是二次幂。
+///
+/// 要换成真曲线，得在目标机器上按 704p / 1080p / 2K 各量一次峰值显存。
+/// **不能拿 5090 量**——那张卡装不下 2K，量不到那一段。
+double video_buffer_gb(double canvas_px) {
+    if (canvas_px <= 0.0) return kVideoBuffer;   // 不知道画布，按锚点算
+    const double factor = canvas_px / kVideoBufferAnchorPx;
+    return kVideoBuffer * (factor > 1.0 ? factor : 1.0);
+}
 }  // namespace
 
 std::string ModelsConfig::weights_for(double vram_gb, double model_gb,
-                                     bool unified) const {
+                                     bool unified, double canvas_px) const {
+    // 计算缓冲跟着画布走，见 video_buffer_gb。不传画布就按锚点算。
+    const double buffer = video_buffer_gb(canvas_px);
     if (weights != "smart") return weights;
     // **文本编码器永远放内存。** 它每镜只跑一次（H3 的 Qwen3-VL-32B 实测
     // 8 到 9 秒），而它是这一套里最大的一块（18.9 GB）。放显存换来的那几秒
@@ -283,8 +304,8 @@ std::string ModelsConfig::weights_for(double vram_gb, double model_gb,
     //
     // 拿不到模型大小按装不下处理：猜错是整集出片失败，放内存只是慢。
     if (model_gb <= 0.0) return "cpu";
-    // 缓冲用 kVideoBuffer，那个数是怎么来的写在它头上。
-    if (model_gb + kVideoBuffer > vram_gb) return "cpu";   // 权重都常驻不下
+    // 缓冲那个数是怎么来的写在 kVideoBuffer / video_buffer_gb 头上。
+    if (model_gb + buffer > vram_gb) return "cpu";   // 权重都常驻不下
 
     // ---- 统一内存（苹果芯片）：装得下就一个都别往内存放 ----
     //
@@ -302,13 +323,13 @@ std::string ModelsConfig::weights_for(double vram_gb, double model_gb,
     // 退让仍然有意义——ggml 的 CPU 缓冲不算进那条线里，超了系统会开始
     // 压缩换页，那比把编码器放 CPU 慢得多。
     if (unified) {
-        const bool all_fits = model_gb + kVideoBuffer + kVideoVae <= vram_gb;
+        const bool all_fits = model_gb + buffer + kVideoVae <= vram_gb;
         return all_fits ? "gpu" : "te=cpu";
     }
 
     // VAE 也常驻要再加 5.5 GB（放内存每镜解码多花 63 秒）。既要真装得下，
     // 也要过 vae_vram_min_gb 那道门槛。
-    const bool vae_fits = model_gb + kVideoBuffer + kVideoVae <= vram_gb;
+    const bool vae_fits = model_gb + buffer + kVideoVae <= vram_gb;
     return (vram_gb >= vae_vram_min_gb && vae_fits) ? "te=cpu" : "te=cpu,vae=cpu";
 }
 
@@ -330,15 +351,19 @@ std::string ModelsConfig::image_weights_for(double vram_gb, double model_gb,
 // 常驻权重：规格里写了 vae=cpu 就只有扩散那份，写了整个 "cpu" 就一份都不常驻。
 // 缓冲不管放哪都要，所以它在两个函数里都是无条件加上的。
 double ModelsConfig::video_live_vram_gb(const std::string& placement,
-                                        double model_gb) const {
-    if (placement == "cpu") return kVideoBuffer;
+                                        double model_gb,
+                                        double canvas_px) const {
+    // **必须和 weights_for 用同一个画布**，否则会出现"那边说装得下、
+    // 这边说占不下"这种自相矛盾。
+    const double buffer = video_buffer_gb(canvas_px);
+    if (placement == "cpu") return buffer;
     // te=cpu：文本编码器在内存，扩散和 VAE 都常驻。
-    if (placement == "te=cpu") return model_gb + kVideoBuffer + kVideoVae;
+    if (placement == "te=cpu") return model_gb + buffer + kVideoVae;
     // te=cpu,vae=cpu：只有扩散常驻。
     // auto / 别的自定义规格按"全常驻"算——宁可估高，估高只是多卸一次，
     // 估低是 OOM。
-    if (placement == "te=cpu,vae=cpu") return model_gb + kVideoBuffer;
-    return model_gb + kVideoBuffer + kVideoVae;
+    if (placement == "te=cpu,vae=cpu") return model_gb + buffer;
+    return model_gb + buffer + kVideoVae;
 }
 
 double ModelsConfig::image_live_vram_gb(const std::string& placement,
@@ -732,8 +757,12 @@ double model_size_gb(const Settings& s, const std::string& entry) {
 }  // namespace
 
 Settings expand_placement(Settings s, double card_gb, bool unified) {
-    s.models.weights =
-        s.models.weights_for(card_gb, model_size_gb(s, s.models.video), unified);
+    // **画布要传进去。** 计算缓冲跟着它走（见 video_buffer_gb）：不传的话
+    // 2K 会被当成 1280×704，在大卡上判成"装得下、VAE 也常驻"，然后 OOM。
+    const auto [cw, ch] = s.video.size();
+    const double canvas_px = static_cast<double>(cw) * ch;
+    s.models.weights = s.models.weights_for(
+        card_gb, model_size_gb(s, s.models.video), unified, canvas_px);
     s.models.image_weights = s.models.image_weights_for(
         card_gb, model_size_gb(s, s.models.image), unified);
     return s;
@@ -743,7 +772,9 @@ PlacementInfo video_placement(const Settings& expanded) {
     PlacementInfo p;
     p.weights = expanded.models.weights;
     p.model_gb = model_size_gb(expanded, expanded.models.video);
-    p.live_vram_gb = expanded.models.video_live_vram_gb(p.weights, p.model_gb);
+    const auto [cw, ch] = expanded.video.size();
+    p.live_vram_gb = expanded.models.video_live_vram_gb(
+        p.weights, p.model_gb, static_cast<double>(cw) * ch);
     // "cpu" = 权重全在内存。别的规格里扩散那份都是常驻的
     // （te=cpu 只把文本编码器放内存，te=cpu,vae=cpu 再加上 VAE）。
     p.resident = p.weights != "cpu";

@@ -330,7 +330,12 @@ struct ModelsConfig {
     ///
     /// 这两个给的是老实数，专门用在那条问卡的分支上。
     /// `placement` 传展开后的规格（`weights_for` / `image_weights_for` 的返回值）。
-    double video_live_vram_gb(const std::string& placement, double model_gb) const;
+    ///
+    /// `canvas_px` 同 `weights_for`：计算缓冲跟着画布走，不传就按锚点
+    /// （1280×704）算。**这两个函数必须传同一个画布**，否则会出现
+    /// "weights_for 说装得下、live_vram 说占不下"这种自相矛盾。
+    double video_live_vram_gb(const std::string& placement, double model_gb,
+                              double canvas_px = 0.0) const;
     double image_live_vram_gb(const std::string& placement, double model_gb) const;
 
     /// 大模型载进显存要占多少（GB）。权重全在显存（`use_gpu=true`），
@@ -520,8 +525,15 @@ struct ModelsConfig {
     ///   80 GB：18.8 + 14.6 + 5.5 = 38.9 ≤ 80 且 ≥ 40 → "te=cpu"（只文本编码器在内存）
     /// `unified` = 这块「显存」和系统内存是同一块（苹果芯片）。
     /// **它不是个显示开关，是另一套取舍**，见实现里那段注释。
+    ///
+    /// `canvas_px` = 这部剧的出片画布有多少像素（宽 × 高）。**上面那个
+    /// 14.6 GB 是在 1280×704 上量的**，而计算缓冲跟着画布走：2K
+    /// （1440×2560）是它的 4.09 倍。不传的话按锚点算，也就是**画布再大也
+    /// 当成 1280×704**——那正是这里以前的行为：大卡上选了 2K，这里说
+    /// "装得下、VAE 也常驻"，然后跑到一半 OOM。传 0 或负数 = 不知道，
+    /// 按锚点算（老调用方和单元测试照旧）。
     std::string weights_for(double vram_gb, double model_gb,
-                            bool unified = false) const;
+                            bool unified = false, double canvas_px = 0.0) const;
     double image_cfg = 2.5;
     double image_flow_shift = 3.0;
 

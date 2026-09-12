@@ -471,8 +471,13 @@ Check check_weights(const config::Settings& s) {
     // unified 要传下去，不然这一项在苹果机器上会一直报"对不上"——
     // 它算的是独显那套，而引擎跑的是统一内存那套。
     const bool unified = profile.gpu.has_value() && profile.gpu->unified();
+    // 画布也要传：体检说的"该是什么"必须和真跑那条路算的是同一个数，
+    // 否则选了 2K 之后这里会一直报"对不上"（或者反过来一直报"一致"而实际
+    // 会 OOM）。
+    const auto [cw, ch] = s.video.size();
+    const double canvas_px = static_cast<double>(cw) * ch;
     one("出片", s.models.weights,
-        s.models.weights_for(card, size_gb(s.models.video), unified));
+        s.models.weights_for(card, size_gb(s.models.video), unified, canvas_px));
     one("出首帧", s.models.image_weights,
         s.models.image_weights_for(card, size_gb(s.models.image), unified));
 

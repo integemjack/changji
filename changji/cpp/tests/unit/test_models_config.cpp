@@ -516,6 +516,40 @@ TEST_CASE("weights = smart：按视频模型多大和卡多大算，不用人填
         CHECK(other.weights_for(80.0, h3) == w);
     }
 
+    SUBCASE("画布大了计算缓冲跟着大，不能还按 1280×704 判") {
+        // 上面那个 14.6 GB 是 1280×704 量的，而这里以前根本收不到画布——
+        // **2K 被当成 1280×704**：大卡上判成"装得下、VAE 也常驻"，
+        // 跑到一半 OOM。
+        config::ModelsConfig mm;
+        mm.weights = "smart";
+        const double p2k = 1440.0 * 2560.0;        // 368.6 万像素
+        const double p720 = 544.0 * 928.0;         // 50.5 万，当前标准档
+        const double anchor = 1280.0 * 704.0;      // 90.1 万，实测锚点
+
+        // 2K 是锚点的 4.09 倍，缓冲 14.6 → 59.7 GB
+        // 80 GB：18.8 + 59.7 = 78.5 装得下，但再加 VAE 5.5 就超了
+        CHECK(mm.weights_for(80.0, h3, false, p2k) == "te=cpu,vae=cpu");
+        // 不传画布还是老答案——正是这个差别说明以前判错了
+        CHECK(mm.weights_for(80.0, h3) == "te=cpu");
+
+        // 60 GB 上 2K 连扩散权重都常驻不下：18.8 + 59.7 = 78.5 > 60
+        CHECK(mm.weights_for(60.0, h3, false, p2k) == "cpu");
+        CHECK(mm.weights_for(60.0, h3) != "cpu");   // 以前会说装得下
+
+        // **只往上放大，不往下缩小。** 缓冲里有一部分不随画布变（CUDA
+        // 上下文、驱动余量），而我们只有一个锚点，分不出固定和可变。
+        // 往下缩会在小画布上低估，低估的后果是 OOM。
+        CHECK(mm.weights_for(32.6, h3, false, p720) ==
+              mm.weights_for(32.6, h3, false, anchor));
+        CHECK(mm.video_live_vram_gb("cpu", h3, p720) ==
+              doctest::Approx(mm.video_live_vram_gb("cpu", h3, anchor)));
+
+        // 两个函数必须用同一个画布，否则会自相矛盾
+        CHECK(mm.video_live_vram_gb("cpu", h3, p2k) >
+              mm.video_live_vram_gb("cpu", h3, anchor));
+        CHECK(mm.video_live_vram_gb("te=cpu", h3, p2k) > 80.0);
+    }
+
     // 负门槛要拒
     config::Settings bad;
     bad.models.vae_vram_min_gb = -1.0;
