@@ -2,6 +2,8 @@
 
 #include <atomic>
 #include <filesystem>
+#include <iostream>
+#include <optional>
 #include <map>
 #include <chrono>
 #include <cstdlib>
@@ -14,6 +16,7 @@
 #include <crow.h>
 
 #include "infer/node_status.hpp"
+#include "infer/peer_auth.hpp"
 #include "infer/task_run.hpp"
 #include "infer/scheduler.hpp"
 #include "infer/sd_backend.hpp"
@@ -58,7 +61,16 @@ crow::response json_res(const json& body, int code = 200) {
 
 }  // namespace
 
-void run_worker(const config::Settings& settings, const WorkerOptions& opts) {
+bool run_worker(const config::Settings& settings, const WorkerOptions& opts) {
+    // **先看这个地址开不开得起。** 对外监听而没设口令的话当场拒绝——
+    // 那种情况下谁都能派活过来烧这张卡、读走这台有哪些模型。
+    // 理由和判据在 peer_auth.hpp。
+    if (const auto why = refuse_to_listen(opts.host, settings.peer.token);
+        !why.empty()) {
+        std::cerr << why << std::endl;
+        return false;
+    }
+
     // **绑卡靠 CUDA_VISIBLE_DEVICES。** 在建任何 ggml 上下文之前设，
     // 之后再设没用——后端初始化的时候就把设备列表读走了。
     //
@@ -87,7 +99,25 @@ void run_worker(const config::Settings& settings, const WorkerOptions& opts) {
     // **这台的自我介绍。** 别的机器靠它决定派不派活过来：能力齐不齐、
     // 卡多大、模型目录还剩多少。拼的地方只有一处（node_status.cpp），
     // 界面上那张表和 --doctor 末尾那句用的是同一份。
-    CROW_ROUTE(app, "/status")([settings, profile] {
+    // 对外监听时，除了 /health 都要口令。
+    //
+    // **/health 故意不要**：它只回 ok/gpu/busy，探活的那一头（可能是
+    // 负载均衡、可能是脚本）不该为了 ping 一下就拿到口令。
+    const auto gate = [settings, opts](const crow::request& req)
+        -> std::optional<crow::response> {
+        if (!is_public_bind(opts.host)) return std::nullopt;
+        if (token_ok(req.get_header_value("Authorization"),
+                     settings.peer.token)) {
+            return std::nullopt;
+        }
+        return json_res({{"detail",
+                          "口令不对或者没带。要 Authorization: Bearer "
+                          "<对面 [peer].token 那个值>"}},
+                        401);
+    };
+
+    CROW_ROUTE(app, "/status")([settings, profile, gate](const crow::request& req) {
+        if (auto deny = gate(req)) return std::move(*deny);
         return json_res(node_status_json(settings, profile));
     });
 
@@ -99,7 +129,8 @@ void run_worker(const config::Settings& settings, const WorkerOptions& opts) {
     });
 
     CROW_ROUTE(app, "/task").methods(crow::HTTPMethod::POST)(
-        [state, settings](const crow::request& req) {
+        [state, settings, gate](const crow::request& req) {
+            if (auto deny = gate(req)) return std::move(*deny);
             Task task;
             try {
                 task = task_from_json(json::parse(req.body));
@@ -151,7 +182,9 @@ void run_worker(const config::Settings& settings, const WorkerOptions& opts) {
             return json_res({{"id", id}}, 202);
         });
 
-    CROW_ROUTE(app, "/task/<string>")([state](const std::string& id) {
+    CROW_ROUTE(app, "/task/<string>")(
+        [state, gate](const crow::request& req, const std::string& id) {
+        if (auto deny = gate(req)) return std::move(*deny);
         std::lock_guard lg(state->mu);
         if (!state->current || state->current_id != id) {
             return json_res({{"detail", "没有这个任务"}}, 404);
@@ -166,7 +199,9 @@ void run_worker(const config::Settings& settings, const WorkerOptions& opts) {
     });
 
     CROW_ROUTE(app, "/task/<string>/cancel")
-        .methods(crow::HTTPMethod::POST)([state](const std::string& id) {
+        .methods(crow::HTTPMethod::POST)(
+            [state, gate](const crow::request& req, const std::string& id) {
+            if (auto deny = gate(req)) return std::move(*deny);
             std::lock_guard lg(state->mu);
             if (!state->current || state->current_id != id) {
                 return json_res({{"detail", "没有这个任务"}}, 404);
@@ -211,6 +246,7 @@ void run_worker(const config::Settings& settings, const WorkerOptions& opts) {
         }
     }
     std::_Exit(0);
+    return true;   // 到不了，但签名要它
 }
 
 }  // namespace changji::infer

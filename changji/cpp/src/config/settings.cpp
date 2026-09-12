@@ -542,6 +542,9 @@ void apply_table(const toml::table& doc, Settings& s) {
             }
         }
     }
+    if (auto t = doc["peer"].as_table()) {
+        take(t, "token", s.peer.token);
+    }
     if (auto t = doc["tts"].as_table()) {
         take(t, "backend", s.tts.backend);
         take_path_str(t, "base_url", s.tts.base_url);
@@ -860,6 +863,16 @@ constexpr const char* kDefaultToml = R"(# 场记配置文件
 # 跨机部署才填：endpoints = ["http://别的机器:9001", ...]，协议一模一样。
 # auto_spawn = true
 # base_port = 9001
+
+[peer]
+# 别的机器要把活派到这台来时，认的口令。**空 = 不接外来的活。**
+#
+# 只在对外监听（--host 0.0.0.0 之类）时才要：本机多卡自己拉起的那些
+# 工作进程听的是 127.0.0.1，外面连不进来，不受这条影响。
+#
+# 没设口令却要对外监听的话，服务会当场拒绝启动并说清楚——谁都能派活
+# 过来烧这张卡、读走这台有哪些模型，那不该是默认值。
+# token = ""
 
 [llm]
 # 剧本和分镜用的大模型。backend 两个值：

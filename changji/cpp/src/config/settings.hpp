@@ -589,6 +589,17 @@ struct WorkersConfig {
     int gpu = -1;
 };
 
+/// 对等互联：这台接不接外来的活、拿什么口令认。
+///
+/// **口令只在对外监听时才要**（见 `infer/peer_auth.hpp`）：本机按显卡数
+/// 自己拉起的那些工作进程听的是回环，多卡那条路一行配置都不用改。
+/// 反过来，`--host 0.0.0.0` 而这里空着的话，服务**当场拒绝启动**——
+/// 那种情况下谁都能派活过来烧这张卡、读走这台有哪些模型。
+struct PeerConfig {
+    /// 接活时认的口令。空 = 不接外来的活。
+    std::string token;
+};
+
 /// 全部配置。
 struct Settings {
     LLMConfig llm;
@@ -599,6 +610,7 @@ struct Settings {
     AssemblyConfig assembly;
     ModelsConfig models;
     WorkersConfig workers;
+    PeerConfig peer;
 
     /// 显存覆盖。推理服务在别的机器上时本机探测不到，用它手动指定
     std::optional<double> vram_gb_override;

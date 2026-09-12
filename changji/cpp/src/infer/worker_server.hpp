@@ -33,6 +33,11 @@ struct WorkerOptions {
 };
 
 /// 起一个工作进程。阻塞到进程结束。
-void run_worker(const config::Settings& settings, const WorkerOptions& opts);
+///
+/// **回 false 表示压根没起**：对外监听而 `[peer].token` 没设时会当场
+/// 拒绝（见 `infer/peer_auth.hpp`），拒绝的理由已经打到 stderr 了。
+/// 调用方要把它变成一个非零退出码——起没起来必须能从退出码看出来，
+/// 不然拿脚本拉起一堆工作进程时，"没起来"和"起来了"长得一模一样。
+bool run_worker(const config::Settings& settings, const WorkerOptions& opts);
 
 }  // namespace changji::infer
