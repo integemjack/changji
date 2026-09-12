@@ -706,6 +706,7 @@ add_executable(changji
     src/llm/local_client.cpp
     src/llm/client_http.cpp
     src/infer/capability.cpp
+    src/infer/blob.cpp
     src/infer/peer_auth.cpp
     src/infer/node_status.cpp
     src/infer/local_exec.cpp
@@ -980,6 +981,7 @@ if(CHANGJI_BUILD_TESTS)
         tests/unit/test_exec_queue.cpp
         tests/unit/test_capability.cpp
         tests/unit/test_peer_auth.cpp
+        tests/unit/test_blob.cpp
         tests/unit/test_flow.cpp
         tests/unit/test_webapp.cpp
         tests/unit/test_shot.cpp
@@ -1055,6 +1057,7 @@ if(CHANGJI_BUILD_TESTS)
         src/infer/local_exec.cpp
         src/infer/capability.cpp
         src/infer/peer_auth.cpp
+        src/infer/blob.cpp
         src/http/flow.cpp
         src/http/webapp.cpp
         src/models/shot.cpp
