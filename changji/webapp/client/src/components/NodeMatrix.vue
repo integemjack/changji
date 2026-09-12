@@ -11,8 +11,9 @@
  * **三态是引擎算好的，界面不自己推。** 推的话迟早和调度器的判断对不上，
  * 而那种对不上表现为"表上说能派，跑起来说没有可用节点"。
  *
- * 现在是只读的：要关掉某台的某个能力，改配置里那台的 `off`。
- * 点格子开关要等写回配置那一步。
+ * 格子能点：点一下关掉／打开。存在 `<项目库>/nodes.json`，不碰
+ * config.toml——配置里那份 `off` 是**部署时定的**，界面上显示成锁着的
+ * （`locked`），要改得去动配置文件。两处取并集，任一处关了就是关了。
  */
 import { onMounted, onUnmounted, ref } from 'vue'
 import AppIcon from '@/components/AppIcon.vue'
@@ -21,6 +22,8 @@ import { api } from '@/api'
 const data = ref(null)
 const error = ref('')
 const loading = ref(false)
+/** 正在提交的那个格子，`url|cap`。同一时刻只让点一个。 */
+const pending = ref('')
 let timer = null
 
 async function load() {
@@ -42,6 +45,28 @@ onMounted(() => {
 })
 onUnmounted(() => clearInterval(timer))
 
+/**
+ * 点一个格子。
+ *
+ * **回来的就是整张新表**，直接换掉——自己在前端推一遍"点了之后该长什么样"
+ * 的话，迟早和引擎算的不一致，而那种不一致表现为"点完看着关了，跑起来
+ * 还是派给它"。
+ */
+async function toggle(node, cap) {
+  if (cap.locked || !cap.able) return
+  const key = `${node.url}|${cap.cap}`
+  if (pending.value) return
+  pending.value = key
+  try {
+    data.value = await api.setNodeOff(node.url, cap.cap, !cap.off)
+    error.value = ''
+  } catch (err) {
+    error.value = err.message
+  } finally {
+    pending.value = ''
+  }
+}
+
 /** 格子的样子。三态之外，离线那台整行压暗。 */
 function cellClass(cap, node) {
   if (!cap.able) return 'cell cell--cant'
@@ -52,9 +77,10 @@ function cellClass(cap, node) {
 
 function cellTitle(cap, node) {
   if (!cap.able) return `${cap.label}：干不了。${cap.why || ''}`
-  if (cap.off) return `${cap.label}：这台能干，但配置里把它关了（off）`
+  if (cap.locked) return `${cap.label}：配置文件里关掉的，要改得去动 [[peer.nodes]] 的 off`
+  if (cap.off) return `${cap.label}：关着。点一下打开`
   if (!node.online) return `${cap.label}：这台连不上`
-  return `${cap.label}：参与自动调度`
+  return `${cap.label}：参与自动调度。点一下关掉`
 }
 </script>
 
@@ -99,7 +125,16 @@ function cellTitle(cap, node) {
             <span v-if="n.error" class="err tiny">{{ n.error }}</span>
           </td>
           <td v-for="c in n.capabilities" :key="c.cap" class="col-cap">
-            <span :class="cellClass(c, n)" :title="cellTitle(c, n)" />
+            <button
+              type="button"
+              class="cellbtn"
+              :class="{ 'cellbtn--locked': c.locked || !c.able }"
+              :disabled="!c.able || c.locked || pending !== ''"
+              :title="cellTitle(c, n)"
+              @click="toggle(n, c)"
+            >
+              <span :class="cellClass(c, n)" />
+            </button>
           </td>
         </tr>
       </tbody>
@@ -114,8 +149,9 @@ function cellTitle(cap, node) {
     </ul>
 
     <p class="tiny dim">
-      能不能干是那台自己量出来的，这儿只能关不能开。要关掉某一样，在配置里
-      那台的 <code>off</code> 里加上它。
+      点格子关掉或打开。<b>能不能干是那台自己量出来的</b>，灰的点不动——
+      那要去装模型或者换一份编进了 sd.cpp 的二进制。配置文件里关掉的
+      （<code>[[peer.nodes]]</code> 的 <code>off</code>）也点不动。
     </p>
   </div>
 </template>
@@ -174,6 +210,17 @@ function cellTitle(cap, node) {
   display: block;
   color: var(--warn, #b45309);
   margin-top: 2px;
+}
+.cellbtn {
+  background: none;
+  border: 0;
+  padding: 4px;
+  cursor: pointer;
+  line-height: 0;
+}
+.cellbtn--locked,
+.cellbtn:disabled {
+  cursor: not-allowed;
 }
 .cell {
   display: inline-block;

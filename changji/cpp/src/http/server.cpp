@@ -37,6 +37,7 @@
 #include "util/sysstat.hpp"
 #include "http/webapp.hpp"
 #include "http/ws.hpp"
+#include "infer/node_prefs.hpp"
 #include "infer/node_registry.hpp"
 #include "infer/scheduler.hpp"
 #include "infer/sd_backend.hpp"
@@ -294,6 +295,50 @@ void run(const config::Settings& settings, const Options& opts) {
     CROW_ROUTE(app, "/api/nodes")([] {
         return json_response(infer::nodes_json(config::runtime().snapshot()));
     });
+
+    // 点那张表上的一个格子：关掉／打开某台的某个能力。
+    //
+    // 存在 <项目库>/nodes.json，不写 config.toml——理由见
+    // infer/node_prefs.hpp（那边的 off 是数组表，逐行写回那套认不了）。
+    CROW_ROUTE(app, "/api/nodes/off")
+        .methods("POST"_method)([](const crow::request& req) {
+            const auto body = nlohmann::json::parse(req.body, nullptr, false);
+            if (body.is_discarded() || !body.is_object()) {
+                return json_response({{"detail", "请求体不是一个 JSON 对象"}},
+                                     400);
+            }
+            const std::string url = body.value("url", std::string());
+            const auto cap =
+                infer::capability_from(body.value("cap", std::string()));
+            if (url.empty() || !cap) {
+                return json_response(
+                    {{"detail", "要 url 和 cap（llm/tts/frame/video/assemble）"}},
+                    422);
+            }
+            // **正在跑的时候不许改。** 半集换机器会让前后画风对不上——
+            // 和 /api/connections 那边"正在跑时不许换机器"是同一条规矩。
+            if (pipeline::jobs().running(pipeline::JobKind::Run)) {
+                return json_response(
+                    {{"detail", "正在跑，这时候改派活的机器会把这一集跑坏"}},
+                    409);
+            }
+
+            const auto s = config::runtime().snapshot();
+            const auto ws = s.workspace_path();
+            auto prefs = infer::load_node_prefs(ws);
+            if (body.value("off", false)) {
+                prefs[url].insert(*cap);
+            } else if (auto it = prefs.find(url); it != prefs.end()) {
+                it->second.erase(*cap);
+            }
+            try {
+                infer::save_node_prefs(ws, prefs);
+            } catch (const std::exception& e) {
+                // 写不进去要当场说。默默回到原样的话，用户会以为点生效了。
+                return json_response({{"detail", e.what()}}, 500);
+            }
+            return json_response(infer::nodes_json(s));
+        });
 
     // 下面这些从 runtime 取而不是用 run() 收到的那份 settings：
     // /api/connections 和 /api/settings 能在运行期改配置，

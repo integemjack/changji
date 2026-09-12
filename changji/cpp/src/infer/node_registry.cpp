@@ -2,6 +2,7 @@
 
 #include "config/runtime.hpp"
 #include "infer/local_exec.hpp"
+#include "infer/node_prefs.hpp"
 #include "infer/node_status.hpp"
 #include "util/httplib.hpp"
 #include "util/paths.hpp"
@@ -67,14 +68,28 @@ NodeState local_node(const config::Settings& s) {
 
 std::vector<NodeState> NodeRegistry::snapshot(const config::Settings& s,
                                               std::chrono::seconds max_age) {
+    std::vector<NodeState> out;
     {
         std::lock_guard lg(mu_);
         const auto age = std::chrono::steady_clock::now() - fetched_at_;
-        if (!nodes_.empty() && age < max_age) return nodes_;
+        if (!nodes_.empty() && age < max_age) out = nodes_;
     }
-    refresh(s);
-    std::lock_guard lg(mu_);
-    return nodes_;
+    if (out.empty()) {
+        refresh(s);
+        std::lock_guard lg(mu_);
+        out = nodes_;
+    }
+
+    // **开关不进缓存，每次现算。** 缓存的是"问出来的事实"（在线没有、
+    // 能干什么），那要发 HTTP 所以值得缓；开关是本地读一个小文件，
+    // 而且点一下就该立刻生效——进了缓存的话，用户点完要等五秒才看得到。
+    const NodePrefs prefs = load_node_prefs(s.workspace_path());
+    for (NodeState& n : out) {
+        const auto it = prefs.find(n.url);
+        n.off = n.off_locked;
+        if (it != prefs.end()) n.off.insert(it->second.begin(), it->second.end());
+    }
+    return out;
 }
 
 void NodeRegistry::refresh(const config::Settings& s) {
@@ -86,7 +101,10 @@ void NodeRegistry::refresh(const config::Settings& s) {
         n.url = cfg.url;
         n.name = cfg.url;   // 连上了再换成它自报的名字
         std::string complaint;
-        n.off = parse_off(cfg.off, complaint);
+        // 配置里那份是锁着的：改它要动配置文件。界面上点的那份在
+        // snapshot 里合进来。
+        n.off_locked = parse_off(cfg.off, complaint);
+        n.off = n.off_locked;
 
         const auto [origin, prefix] = split_url(cfg.url);
         httplib::Client cli(origin);
@@ -155,10 +173,13 @@ json nodes_json(const config::Settings& s) {
             const bool off = n.off.count(c) != 0;
             // 三态：干不了（灰）／能干但你关了（空心）／参与调度（实心）。
             // 界面照这个画，不自己推。
+            const bool locked = n.off_locked.count(c) != 0;
             caps.push_back({{"cap", to_string(c)},
                             {"label", label_of(c)},
                             {"able", able},
                             {"off", off},
+                            // 配置文件关的，界面上点不动
+                            {"locked", locked},
                             {"on", able && off == false && n.online}});
         }
         rows.push_back({{"url", n.url},

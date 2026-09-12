@@ -203,6 +203,9 @@ export const api = {
   // 那张「机器 × 能力」的表。**答得慢是正常的**：引擎要挨个问
   // 别的机器的 /status（每台最多 3 秒），结果缓存五秒。
   nodes: () => get('/api/nodes'),
+  // 关掉／打开某台的某个能力。**正在跑的时候会被拒（409）**：
+  // 半集换机器会让前后画风对不上。
+  setNodeOff: (url, cap, off) => post('/api/nodes/off', { url, cap, off }),
   // 此刻的负载，一次性的。顶栏那三个小表走 WebSocket（订 "system"），
   // 这个留给排查用。
   system: () => get('/api/system'),
