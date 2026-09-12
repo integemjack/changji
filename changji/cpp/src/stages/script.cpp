@@ -231,6 +231,24 @@ std::string strip_camera_prefix(const std::string& text_in) {
     return out;
 }
 
+bool is_stage_direction(const std::string& text_in) {
+    const std::string t = strip_ascii(text_in);
+    if (t.empty()) return false;
+    // 只认圆括号。**不认 【】**——那是段头用的，认了会把段头当提示删掉。
+    static const char* kRound[][2] = {
+        {R"CJ(（)CJ", R"CJ(）)CJ"},
+        {"(", ")"},
+    };
+    for (const auto& pr : kRound) {
+        const std::string left = pr[0], right = pr[1];
+        if (!starts_with(t, left) || !ends_with(t, right)) continue;
+        // 要真的是套住整段的那一对：「（甲）说完（乙）」首尾也各有一个，
+        // 但那两个不是一对，整句并没有被包住。
+        if (wraps_whole(t, left, right)) return true;
+    }
+    return false;
+}
+
 std::string strip_list_marker(const std::string& text_in) {
     // 只认这几个。**不含 `—`／`——`**：中文里破折号开头是正当写法
     // （话被打断、话外补白），削了是改文意。
@@ -818,8 +836,12 @@ void parse_beats_into(const json& arr, std::vector<Beat>& out) {
             kind = "action";
         }
 
-        std::string t =
-            strip_wrapper(strip_leading_timecode(get_str(item, "text")));
+        const std::string raw = strip_leading_timecode(get_str(item, "text"));
+        // **要在 strip_wrapper 之前判。** 它会把「（脚步声）」削成「脚步声」，
+        // 括号一没，这一句就和正常台词长得一模一样了。
+        // 整句是圆括号提示的，当动作行——那本来就是场面描述，不是台词。
+        if (kind == "dialogue" && is_stage_direction(raw)) kind = "action";
+        std::string t = strip_wrapper(raw);
         // 机位标签只削动作行。台词里的「你听我说：」不是机位，
         // 而且台词那一行的说话人是单独一个字段，本来就不会认错。
         if (kind == "action") t = strip_camera_prefix(t);

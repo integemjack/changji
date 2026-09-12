@@ -553,13 +553,24 @@ bool is_placeholder_line(const std::string& text) {
 
 namespace {
 
-/// 把占位台词从这一镜里删掉。删空了就是一个没人说话的镜头，本来就该这样。
+/// 把**不是台词**的那些从这一镜的台词里删掉。删空了就是一个没人说话的
+/// 镜头，本来就该这样。
+///
+/// 两类：
+///   占位   「（无台词）」「none」——固定词表，见 is_placeholder_line
+///   提示   「（脚步声）」「（旁白/环境音）」——整句被圆括号包住的舞台提示，
+///          见 stages::is_stage_direction。这类是开放集合，词表补不全，
+///          只能从结构上判。
+///
+/// 不删的话它们会被**念出来**（char_id 为空就走旁白音），字幕上也照写。
 void drop_placeholder_dialogue(json& item) {
     const auto it = item.find("dialogue");
     if (it == item.end() || !it->is_array()) return;
     json kept = json::array();
     for (const auto& line : *it) {
-        if (line.is_object() && is_placeholder_line(str_or(line, "text"))) continue;
+        if (!line.is_object()) { kept.push_back(line); continue; }
+        const std::string t = str_or(line, "text");
+        if (is_placeholder_line(t) || is_stage_direction(t)) continue;
         kept.push_back(line);
     }
     *it = std::move(kept);
@@ -776,7 +787,10 @@ std::vector<std::pair<std::string, std::string>> script_dialogue_pairs(
         // 所以清洗只能放在这里面——放外面两边就对不上了。
         const std::string said =
             strip_list_marker(text::strip_ws(line.substr(at + sep)));
-        if (!said.empty()) out.emplace_back(name, said);
+        // 「林浩：（脚步声）」这种整句提示不是台词，别落成一句要念的话。
+        if (!said.empty() && !is_stage_direction(said)) {
+            out.emplace_back(name, said);
+        }
     }
     return out;
 }

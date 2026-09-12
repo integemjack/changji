@@ -477,6 +477,52 @@ TEST_CASE("动作行开头的机位标签削掉") {
     }
 }
 
+TEST_CASE("整句圆括号的是舞台提示，不是台词") {
+    // **2026-09-13 实跑撞上的**（walk_c ep04 批量出分镜那一轮）：
+    //     ep04_sh005  （脚步声）
+    //     ep04_sh010  （旁白/环境音）
+    // 两条都落在台词字段、char_id 为空，会用旁白音念出来，字幕上也照写。
+    //
+    // 规则从结构上来：剧本格式里这叫 parenthetical（业内叫 wrylie），
+    // 是给演员的提示——怎么说、做什么动作——**从来不念**。
+    CHECK(stages::is_stage_direction("（脚步声）"));
+    CHECK(stages::is_stage_direction("（旁白/环境音）"));
+    CHECK(stages::is_stage_direction("(beat)"));
+    CHECK(stages::is_stage_direction("  （低声）  "));   // 首尾空白不算数
+
+    SUBCASE("没被整句包住的不算") {
+        // 首尾各有一个括号，但不是一对——整句并没有被包住。
+        CHECK_FALSE(stages::is_stage_direction("（甲）说完（乙）"));
+        CHECK_FALSE(stages::is_stage_direction("（他犹豫）我不去"));
+        CHECK_FALSE(stages::is_stage_direction("我不去（他犹豫）"));
+        CHECK_FALSE(stages::is_stage_direction("你来了。"));
+        CHECK_FALSE(stages::is_stage_direction(""));
+    }
+
+    SUBCASE("段头不能当提示删掉") {
+        // 【开场钩子 0–5 秒】是段头，认了 【】 就会把它删了。
+        CHECK_FALSE(stages::is_stage_direction("【开场钩子 0–5 秒】"));
+        CHECK_FALSE(stages::is_stage_direction("[0-3秒]"));
+    }
+
+    SUBCASE("走完整条解析：当动作行，不当台词") {
+        // **要在 strip_wrapper 之前判**：它会把「（脚步声）」削成「脚步声」，
+        // 括号一没就和正常台词长得一模一样了。
+        const std::string raw =
+            R"({"title":"x","logline":"y","beats":[
+                {"kind":"dialogue","speaker":"林浩","text":"（脚步声）"},
+                {"kind":"dialogue","speaker":"林浩","text":"我不去。"}]})";
+        const stages::ScriptDraft d = stages::parse_script(raw);
+        REQUIRE(d.beats.size() == 2);
+        CHECK(d.beats[0].kind == "action");     // 不是 dialogue
+        CHECK(d.beats[0].text == "脚步声");
+        CHECK(d.beats[1].kind == "dialogue");
+        CHECK(d.beats[1].text == "我不去。");
+        // 对白字数不该把提示算进去
+        CHECK(d.dialogue_chars() == 4);
+    }
+}
+
 TEST_CASE("开头漏出来的 markdown 列表符号削掉") {
     // **2026-09-13 实跑撞上的**（walk_c ep02）：剧本里那一行是
     //     林浩：-为什么要在一家普通餐厅下单？
