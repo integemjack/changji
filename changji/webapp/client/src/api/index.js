@@ -200,6 +200,9 @@ export const api = {
   stopRun: () => post('/api/stop', {}),
   outputs: (path) => get('/api/outputs', { path }),
   hardware: () => get('/api/hardware'),
+  // 那张「机器 × 能力」的表。**答得慢是正常的**：引擎要挨个问
+  // 别的机器的 /status（每台最多 3 秒），结果缓存五秒。
+  nodes: () => get('/api/nodes'),
   // 此刻的负载，一次性的。顶栏那三个小表走 WebSocket（订 "system"），
   // 这个留给排查用。
   system: () => get('/api/system'),
