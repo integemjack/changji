@@ -402,3 +402,174 @@ TEST_CASE("[llm].backend 选哪条后端") {
 // 留这段话是因为它反过来说明了现在的规矩：`register_llm_slot` 只登记，
 // **装是借出时才发生的**。起服务之后显存上应该看不到大模型；看到了就是
 // 哪儿又偷偷预装了。
+
+// ── 远端 SSE ────────────────────────────────────────────────────────
+//
+// 远端那条原来是整段到的（Client::complete 的默认实现：跑一遍同步的，
+// 整段回调一次）。云端 API 上写一章、写大纲于是没有"边写边看"，界面干等
+// 一两分钟最后一下子蹦出来。用户 2026-09-12：「远端那条也上 SSE」。
+//
+// 下面这几条盯的是**退路**：接了 SSE 不能让任何一种服务变得更糟。
+
+namespace {
+
+/// 假的流式发送：把预先摆好的几段字节喂给 on_chunk。
+struct FakeStream {
+    struct Call {
+        json body;
+        std::map<std::string, std::string> headers;
+    };
+    std::vector<Call> calls;
+    /// 每次调用喂哪些段。calls 用完了就回 500。
+    std::vector<std::vector<std::string>> chunks;
+    std::vector<int> statuses;      ///< 对应每次调用的状态码，默认 200
+    std::string error_body;         ///< 状态码 >= 400 时回的体
+
+    llm::HttpPostStream fn() {
+        return [this](const std::string&, const std::string& body,
+                      const std::map<std::string, std::string>& headers, double,
+                      const llm::OnChunk& on_chunk) -> llm::HttpResponse {
+            calls.push_back(Call{json::parse(body, nullptr, false), headers});
+            const std::size_t i = calls.size() - 1;
+            const int status = i < statuses.size() ? statuses[i] : 200;
+            llm::HttpResponse r;
+            r.status = status;
+            if (status >= 400) {
+                r.body = error_body;
+                return r;
+            }
+            if (i < chunks.size()) {
+                for (const auto& c : chunks[i]) {
+                    if (!on_chunk(c.data(), c.size())) break;
+                }
+            }
+            return r;
+        };
+    }
+};
+
+std::string sse_chunk(const std::string& content) {
+    return "data: {\"choices\":[{\"delta\":{\"content\":\"" + content +
+           "\"}}]}\n\n";
+}
+
+}  // namespace
+
+TEST_CASE("远端 SSE：边收边回调，拼出来的是全文") {
+    FakeHttp http;
+    FakeStream stream;
+    stream.chunks = {{sse_chunk("第一"), sse_chunk("章"), "data: [DONE]\n\n"}};
+
+    llm::RemoteClient c(test_cfg(), http.fn(), stream.fn());
+    pipeline::CancelToken tok;
+    std::vector<std::string> pieces;
+    const std::string out = c.complete(simple_req(), tok, [&](const std::string& p) {
+        pieces.push_back(p);
+    });
+
+    CHECK(out == "第一章");
+    // **给的是增量不是累计**：一段几千字的正文，每次带全文的话光字符串
+    // 拷贝就比生成还贵。
+    CHECK(pieces == std::vector<std::string>{"第一", "章"});
+    // 整段那条一次都不该走
+    CHECK(http.calls.empty());
+    // 请求里要带 stream: true，不然服务端回的是整段
+    REQUIRE(stream.calls.size() == 1);
+    CHECK(stream.calls[0].body.at("stream") == true);
+    CHECK(stream.calls[0].headers.at("Accept") == "text/event-stream");
+}
+
+TEST_CASE("远端 SSE：不给 stream_post 就还是整段那条") {
+    // TTS 那边和一堆测试拿 RemoteClient 当普通客户端用，不该被迫注入
+    // 第二个函数。没有它时行为和以前**一个字都不差**。
+    FakeHttp http;
+    http.responses = {ok("整段回来的")};
+    llm::RemoteClient c(test_cfg(), http.fn());
+    pipeline::CancelToken tok;
+    std::vector<std::string> pieces;
+    const std::string out =
+        c.complete(simple_req(), tok, [&](const std::string& p) { pieces.push_back(p); });
+    CHECK(out == "整段回来的");
+    // 默认实现会把整段回调一次——**不是不回调**，否则流式那条路上
+    // 什么都收不到，而且不报错，只是编辑器里一直空着。
+    CHECK(pieces == std::vector<std::string>{"整段回来的"});
+}
+
+TEST_CASE("远端 SSE：服务不认 json_schema 就不带 schema 再来一次") {
+    FakeHttp http;
+    FakeStream stream;
+    stream.statuses = {400, 200};
+    stream.error_body = R"({"error":{"message":"response_format not supported"}})";
+    stream.chunks = {{}, {sse_chunk("退一步就好了"), "data: [DONE]\n\n"}};
+
+    llm::RemoteClient c(test_cfg(), http.fn(), stream.fn());
+    pipeline::CancelToken tok;
+    const std::string out = c.complete(simple_req(), tok, [](const std::string&) {});
+
+    CHECK(out == "退一步就好了");
+    REQUIRE(stream.calls.size() == 2);
+    // 第一次 json_schema，第二次退回 json_object（不是把 response_format
+    // 整个去掉——退回之后结构没保证，全靠提示词里那句"只输出 JSON"
+    // 和解析阶段的括号扫描兜底，见 build_payload）
+    CHECK(stream.calls[0].body.at("response_format").at("type") == "json_schema");
+    CHECK(stream.calls[1].body.at("response_format").at("type") == "json_object");
+}
+
+TEST_CASE("远端 SSE：服务端压根不认 stream，回了一份普通 JSON") {
+    // 这条是"不会变得更糟"的核心：老服务照样能用，只是那一下是整段到的。
+    FakeHttp http;
+    FakeStream stream;
+    // 200，但没有一条 SSE，body 里是整份普通响应
+    stream.chunks = {{}, {}};
+    llm::HttpPostStream raw = stream.fn();
+    llm::HttpPostStream wrapped =
+        [&raw](const std::string& url, const std::string& body,
+               const std::map<std::string, std::string>& headers, double t,
+               const llm::OnChunk& on_chunk) {
+            llm::HttpResponse r = raw(url, body, headers, t, on_chunk);
+            r.body = ok("整段那份").body;   // 服务端把整份 JSON 一次性回了
+            return r;
+        };
+
+    llm::RemoteClient c(test_cfg(), http.fn(), wrapped);
+    pipeline::CancelToken tok;
+    std::vector<std::string> pieces;
+    const std::string out =
+        c.complete(simple_req(), tok, [&](const std::string& p) { pieces.push_back(p); });
+
+    CHECK(out == "整段那份");
+    CHECK(pieces == std::vector<std::string>{"整段那份"});
+}
+
+TEST_CASE("远端 SSE：流里报错要抛，不能当成写完了") {
+    FakeHttp http;
+    FakeStream stream;
+    stream.chunks = {
+        {"data: {\"error\":{\"message\":\"model not found\"}}\n\n"},
+        {"data: {\"error\":{\"message\":\"model not found\"}}\n\n"}};
+
+    llm::RemoteClient c(test_cfg(), http.fn(), stream.fn());
+    pipeline::CancelToken tok;
+    // 先回 200 再在流里说"这个模型没有"是常见做法。当成生成完了的话，
+    // 用户拿到的是一段空正文外加一句"写好了"。
+    CHECK_THROWS_AS(c.complete(simple_req(), tok, [](const std::string&) {}),
+                    llm::LlmError);
+}
+
+TEST_CASE("远端 SSE：中途取消要断掉，别让它继续生成") {
+    FakeHttp http;
+    FakeStream stream;
+    stream.chunks = {{sse_chunk("头一段"), sse_chunk("不该有的"), "data: [DONE]\n\n"}};
+
+    llm::RemoteClient c(test_cfg(), http.fn(), stream.fn());
+    pipeline::CancelToken tok;
+    std::vector<std::string> pieces;
+    CHECK_THROWS_AS(c.complete(simple_req(), tok,
+                               [&](const std::string& p) {
+                                   pieces.push_back(p);
+                                   tok.request();   // 收到第一段就叫停
+                               }),
+                    llm::LlmError);
+    // 叫停之后不该再有第二段——on_chunk 返回 false，传输层会断开
+    CHECK(pieces.size() == 1);
+}

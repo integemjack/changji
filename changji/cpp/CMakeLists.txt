@@ -702,6 +702,7 @@ add_executable(changji
     src/infer/sd_video.cpp
     src/infer/sd_upscale.cpp
     src/llm/client.cpp
+    src/llm/sse.cpp
     src/llm/local_client.cpp
     src/llm/client_http.cpp
     src/infer/worker_pool.cpp
@@ -992,6 +993,7 @@ if(CHANGJI_BUILD_TESTS)
         tests/unit/test_scheduler.cpp
         tests/unit/test_script.cpp
         tests/unit/test_llm_client.cpp
+        tests/unit/test_sse.cpp
         tests/unit/test_scripting.cpp
         tests/unit/test_planning.cpp
         tests/unit/test_batch.cpp
@@ -1107,6 +1109,7 @@ if(CHANGJI_BUILD_TESTS)
         src/gates/checks.cpp
         src/media/assemble.cpp
         src/llm/client.cpp
+        src/llm/sse.cpp
         src/llm/local_client.cpp
         src/config/settings.cpp
         src/config/writeback.cpp

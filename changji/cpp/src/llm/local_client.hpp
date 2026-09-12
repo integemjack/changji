@@ -65,6 +65,10 @@ void register_llm_slot(std::function<config::Settings()> provider,
 /// `post` 是远端那条要用的发送函数，由调用方注入（生产里传
 /// `default_http_post()`）。**做成参数而不是在这里直接调**：
 /// 那个函数只链进主目标，测试目标里没有，写死会让测试链不过。
-std::shared_ptr<Client> make_client(HttpPost post);
+///
+/// `stream_post` 是远端那条走 SSE 用的（生产里传
+/// `default_http_post_stream()`）。不给的话远端那条仍然能用，只是
+/// "边写边看"退回整段到——写一章、写大纲在界面上就是干等到最后一下子出来。
+std::shared_ptr<Client> make_client(HttpPost post, HttpPostStream stream_post = {});
 
 }  // namespace changji::llm

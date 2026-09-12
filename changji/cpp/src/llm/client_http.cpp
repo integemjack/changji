@@ -5,6 +5,7 @@
 
 #include "util/httplib.hpp"
 
+#include <cstdint>
 #include <string>
 
 #include "http/llm_info.hpp"
@@ -57,6 +58,65 @@ HttpPost default_http_post() {
         HttpResponse out;
         out.status = res->status;
         out.body = res->body;
+        return out;
+    };
+}
+
+HttpPostStream default_http_post_stream() {
+    return [](const std::string& url, const std::string& body,
+              const std::map<std::string, std::string>& headers,
+              double timeout_s, const OnChunk& on_chunk) -> HttpResponse {
+        const auto [origin, path] = split_base(url);
+
+        httplib::Client cli(origin);
+        const int secs = static_cast<int>(timeout_s);
+        cli.set_connection_timeout(secs, 0);
+        // **读超时是"两段之间最多等多久"，不是整条流的总时长。** 流式
+        // 那条一开就是几分钟，按整条算的话得设成天文数字；按段算，
+        // 模型每吐一个字就重置一次，卡住才会真超时。
+        cli.set_read_timeout(secs, 0);
+        cli.set_write_timeout(secs, 0);
+        cli.set_follow_location(true);
+
+        // ⚠️ **只能走 Client::send()。** 0.15.3 的 Post 没有带
+        // ContentReceiver 的重载（Get 有，Post 没有），拿普通 Post 的话
+        // httplib 会把整条流攒完再返回——那就又回到"整段到"了，而且
+        // **看不出来**：功能照常，只是流式一点不流。
+        httplib::Request rq;
+        rq.method = "POST";
+        rq.path = path;
+        for (const auto& kv : headers) rq.headers.emplace(kv.first, kv.second);
+        rq.body = body;
+
+        HttpResponse out;
+        // 状态码要在**收正文之前**知道：>= 400 时那份 body 是错误信息，
+        // 不能往 on_chunk 里送（那边是按正文解的），得攒下来交给上层翻译。
+        int status = 0;
+        rq.response_handler = [&status](const httplib::Response& res) {
+            status = res.status;
+            return true;
+        };
+        rq.content_receiver = [&](const char* data, std::size_t len,
+                                  std::uint64_t, std::uint64_t) {
+            if (status >= 400) {
+                out.body.append(data, len);
+                return true;
+            }
+            return on_chunk(data, len);
+        };
+
+        const auto res = cli.send(rq);
+        if (!res) {
+            out.status = 0;
+            // 取消时我们自己从 on_chunk 里返回了 false，httplib 报的是
+            // Canceled。那不是"连不上"，上层按取消处理，所以照样带回去。
+            out.transport_error = httplib::to_string(res.error());
+            return out;
+        }
+        out.status = res->status;
+        // 正常那条的正文已经从 on_chunk 走了；但服务端要是没理会 stream、
+        // 回了一份普通 JSON，那份内容也在 out.body 里——上层会试着按整段解。
+        if (out.body.empty() && !res->body.empty()) out.body = res->body;
         return out;
     };
 }
