@@ -49,6 +49,25 @@ std::string refuse_to_listen(const std::string& host,
            "派活那一头填同一个";
 }
 
+bool endpoint_is_local(const std::string& url) {
+    std::string rest = trim(url);
+    const auto scheme = rest.find("://");
+    if (scheme != std::string::npos) rest = rest.substr(scheme + 3);
+    // 砍掉路径和查询串
+    const auto slash = rest.find_first_of("/?");
+    if (slash != std::string::npos) rest = rest.substr(0, slash);
+    // 砍掉端口。**IPv6 要先脱方括号**：[::1]:9001 里那个冒号不是端口分隔符
+    if (!rest.empty() && rest.front() == '[') {
+        const auto close = rest.find(']');
+        rest = close == std::string::npos ? rest : rest.substr(1, close - 1);
+    } else {
+        const auto colon = rest.rfind(':');
+        if (colon != std::string::npos) rest = rest.substr(0, colon);
+    }
+    if (rest.empty()) return false;
+    return !is_public_bind(rest);
+}
+
 bool token_ok(const std::string& auth_header, const std::string& expected) {
     // **没设口令就不接。** 见头文件：安全的那边。
     const std::string want = trim(expected);

@@ -3,6 +3,9 @@
 #include "infer/worker_roster.hpp"
 
 #include <atomic>
+#include <filesystem>
+#include <fstream>
+#include <sstream>
 #include <chrono>
 #include <condition_variable>
 #include <optional>
@@ -13,9 +16,12 @@
 
 #include <nlohmann/json.hpp>
 
+#include "infer/blob.hpp"
+#include "infer/peer_auth.hpp"
 #include "infer/worker_proto.hpp"
 #include "util/httplib.hpp"
 #include "util/paths.hpp"
+#include "util/text.hpp"
 
 namespace changji::infer {
 
@@ -34,6 +40,16 @@ std::pair<std::string, std::string> split_url(const std::string& url) {
     }
     return {url.substr(0, pos == std::string::npos ? slash : pos + 3 + slash),
             rest.substr(slash)};
+}
+
+/// 读一个文件。读不了抛——**别拿空内容接着跑**：那样传过去的是一个
+/// 指纹对得上的空文件，对面照样"成功"，直到出图那步才发现参考图是空的。
+std::string read_file(const std::filesystem::path& p) {
+    std::ifstream in(p, std::ios::binary);
+    if (!in) throw std::runtime_error("读不了输入文件：" + paths::to_utf8(p));
+    std::ostringstream ss;
+    ss << in.rdbuf();
+    return ss.str();
 }
 
 }  // namespace
@@ -86,6 +102,77 @@ struct WorkerPool::Impl {
     };
 
     /// 在指定的工作进程上把任务跑完。连不上抛 Unreachable，其余照旧。
+    /// 把一个输入文件送到对面去，回它的 `blob:` 记法。
+    ///
+    /// **先问再传。** 一集 22 镜、每镜三五张参考图，而那几张是同一批文件；
+    /// 不问的话就是同一张脸传二十二遍。
+    std::string ship_input(httplib::Client& cli, const std::string& prefix,
+                           const std::string& url, const std::string& path) {
+        const std::string bytes = read_file(paths::from_utf8(path));
+        const std::string id = text::sha1_hex(bytes);
+
+        auto probe = cli.Get(prefix + "/blob/" + id + "/probe");
+        if (!probe) {
+            throw Unreachable("问不到工作进程 " + url + "：" +
+                              httplib::to_string(probe.error()));
+        }
+        bool have = false;
+        if (probe->status == 200) {
+            const auto j = json::parse(probe->body, nullptr, false);
+            have = !j.is_discarded() && j.value("have", false);
+        }
+        if (!have) {
+            auto res = cli.Post(prefix + "/blob/" + id, bytes,
+                                "application/octet-stream");
+            if (!res) {
+                throw Unreachable("传不过去 " + url + "：" +
+                                  httplib::to_string(res.error()));
+            }
+            if (res->status != 200) {
+                throw std::runtime_error(
+                    worker_rejected_message(res->status, res->body));
+            }
+        }
+        return "blob:" + id;
+    }
+
+    /// 把产物取回来，落到本机的 dest。
+    void pull_artifact(httplib::Client& cli, const std::string& prefix,
+                       const std::string& url, const std::string& artifact_id,
+                       const std::string& dest) {
+        if (artifact_id.empty()) {
+            throw std::runtime_error(
+                "对面说跑成了，却没给产物指纹——多半是那台的版本还不认 "
+                "return_artifact");
+        }
+        auto res = cli.Get(prefix + "/blob/" + artifact_id);
+        if (!res) {
+            throw Unreachable("取不回产物 " + url + "：" +
+                              httplib::to_string(res.error()));
+        }
+        if (res->status != 200) {
+            throw std::runtime_error(
+                worker_rejected_message(res->status, res->body));
+        }
+        // **落地之前核一遍指纹。** 少几个字节的 png 照样能写下去，
+        // 之后报的是一张半截图或者"权重读不对"，指向完全错误的方向。
+        const std::string real = text::sha1_hex(res->body);
+        if (real != artifact_id) {
+            throw std::runtime_error("产物传坏了：说好的是 " + artifact_id +
+                                     "，收到的是 " + real + "（" +
+                                     std::to_string(res->body.size()) +
+                                     " 字节）");
+        }
+        const auto out = paths::from_utf8(dest);
+        std::error_code ec;
+        std::filesystem::create_directories(out.parent_path(), ec);
+        std::ofstream f(out, std::ios::binary | std::ios::trunc);
+        if (!f) throw std::runtime_error("写不了产物：" + dest);
+        f.write(res->body.data(),
+                static_cast<std::streamsize>(res->body.size()));
+        if (!f) throw std::runtime_error("产物写坏了：" + dest);
+    }
+
     void run_on(std::size_t idx, const Task& task, pipeline::CancelToken& tok,
                 const StepCallback& on_step) {
         const auto [origin, prefix] = split_url(workers[idx].ep.url);
@@ -97,7 +184,22 @@ struct WorkerPool::Impl {
         cli.set_connection_timeout(10, 0);
         cli.set_read_timeout(600, 0);
 
-        auto res = cli.Post(prefix + "/task", to_json(task).dump(),
+        // **同机就什么都不搬。** 一个文件系统，参考图直接给路径、
+        // 产物直接写过去。跨机才走 blob：那边根本没有这些目录。
+        const bool remote = !endpoint_is_local(workers[idx].ep.url);
+        Task t = task;
+        if (remote) {
+            t.return_artifact = true;
+            for (auto& r : t.prompts.reference_images) {
+                r = ship_input(cli, prefix, workers[idx].ep.url, r);
+            }
+            if (t.start_image) {
+                t.start_image =
+                    ship_input(cli, prefix, workers[idx].ep.url, *t.start_image);
+            }
+        }
+
+        auto res = cli.Post(prefix + "/task", to_json(t).dump(),
                             "application/json");
         if (!res) {
             throw Unreachable("连不上工作进程 " + workers[idx].ep.url + "：" +
@@ -160,6 +262,10 @@ struct WorkerPool::Impl {
             if (p.state == "done" || p.state == "failed") {
                 if (!p.result) throw std::runtime_error("跑完了却没有结果");
                 if (!p.result->ok) throw std::runtime_error(p.result->error);
+                if (remote) {
+                    pull_artifact(cli, prefix, workers[idx].ep.url,
+                                  p.result->artifact_id, task.dest);
+                }
                 return;
             }
         }

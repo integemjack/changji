@@ -70,3 +70,17 @@ TEST_CASE("口令两端的空白不算数") {
     CHECK(token_ok("Bearer abc", "  abc  "));
     CHECK(token_ok("Bearer abc" "\n", "abc"));
 }
+
+TEST_CASE("认得出对面是不是同一台机器") {
+    // 派活时靠它决定文件搬不搬：同机就是同一个文件系统，参考图直接给
+    // 路径、产物直接写过去，一个字节都不用搬。
+    CHECK(endpoint_is_local("http://127.0.0.1:9001"));
+    CHECK(endpoint_is_local("http://localhost:9001"));
+    CHECK(endpoint_is_local("http://127.0.0.1:9001/"));
+    CHECK(endpoint_is_local("http://[::1]:9001"));
+    CHECK(endpoint_is_local("127.0.0.1:9002"));          // 没写 scheme
+
+    CHECK_FALSE(endpoint_is_local("http://192.168.1.7:9001"));
+    CHECK_FALSE(endpoint_is_local("http://gpu-box:9001"));
+    CHECK_FALSE(endpoint_is_local(""));
+}

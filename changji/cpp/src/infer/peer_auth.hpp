@@ -40,4 +40,13 @@ std::string refuse_to_listen(const std::string& host, const std::string& token);
 /// 但常量时间比较的代价是零，没有理由不做。
 bool token_ok(const std::string& auth_header, const std::string& expected);
 
+/// 这个地址指的是不是本机（`http://127.0.0.1:9001` 这种）。
+///
+/// **派活时靠它决定文件搬不搬。** 同一台机器就是同一个文件系统：
+/// 参考图直接给路径、产物直接写过去，一个字节都不用搬。跨机才走 blob。
+///
+/// 认不出的一律算跨机——猜错的方向同样挑代价小的那个：把同机误判成跨机
+/// 是多传几 MB，反过来是对面拿着一个不存在的路径去读，那一镜直接失败。
+bool endpoint_is_local(const std::string& url);
+
 }  // namespace changji::infer
