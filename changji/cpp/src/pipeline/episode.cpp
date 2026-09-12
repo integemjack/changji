@@ -190,6 +190,35 @@ std::string run_assemble(const ProjectStore& store,
         progress.report(e);
     }
 
+    // **降级的镜头要在最后这句里说出来。**
+    //
+    // 「重试超限，降级为静帧加运镜」那一句是在出片那一档报的，等装配跑完
+    // 早滚出屏幕了；而人真正读的是最后这一行。2026-09-13 实测：walk_c
+    // ep01 十八镜里有一镜降级、ep02 十五镜里有一镜降级，两条片子和全程
+    // 顺利的片子说的是同一句「成片已生成」——**看不出这一集里有一镜是
+    // 静帧凑的**。
+    //
+    // 降级本身是对的（gates.fallback_on_exhausted：保证整集能出片，而不是
+    // 卡在某一镜上）。不对的是它悄悄发生。
+    std::vector<std::string> degraded;
+    for (const models::Shot& s : shots) {
+        if (s.status == models::ShotStatus::FALLBACK) degraded.push_back(s.shot_id);
+    }
+    if (!degraded.empty()) {
+        std::string msg = "这一集有 " + std::to_string(degraded.size()) +
+                          " 个镜头重试超限，降级成了静帧加运镜：";
+        // 只列前五个。二十镜里降了十个的时候，列全了没人会读。
+        for (std::size_t i = 0; i < degraded.size() && i < 5; ++i) {
+            if (i) msg += "、";
+            msg += degraded[i];
+        }
+        if (degraded.size() > 5) msg += " 等";
+        msg += "。片子是完整的，但这几镜没有真正的运动——多半是出片时显存"
+               "不够（sd.cpp 那句 \"cannot make enough memory available\"），"
+               "腾一腾再单独重出这几镜会好。";
+        emit(progress, "assemble", "warn", msg);
+    }
+
     emit(progress, "assemble", "done", "成片已生成：" + paths::to_utf8(output),
          static_cast<int>(shots.size()), static_cast<int>(shots.size()));
     return paths::to_utf8(output);
