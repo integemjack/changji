@@ -343,11 +343,15 @@ TEST_CASE("实测显存：换了预算或画布，攒下的峰值就作废") {
         CHECK(infer::parse_measured_vram(text).size() == 1);
     }
 
-    SUBCASE("老文件里没有指纹，不作废") {
-        // 那和"指纹对不上"不是一回事：老格式归 work == 0 那条管，
-        // 一刀切作废等于把升级前攒的全扔了。
+    SUBCASE("老文件里没有指纹，一样作废") {
+        // **第一版特意放过了它们，那是错的**：新峰值比存着的低时
+        // record_measured_vram 不写文件，于是永远补不上指纹，那条陈旧值
+        // 永久留存——那一改对已经存在的文件完全无效。
+        // 放过换来的是"第一镜不用先腾显存"，代价是一个永远纠不正的数。
         const std::string old = R"({"视频":{"bytes":123,"work":456}})";
-        CHECK(infer::parse_measured_vram(old, "v23.26/i26.27/544x928").size() == 1);
+        CHECK(infer::parse_measured_vram(old, "v23.26/i26.27/544x928").empty());
+        // 不给指纹时照旧不查，老调用点行为不变
+        CHECK(infer::parse_measured_vram(old).size() == 1);
     }
 }
 

@@ -157,14 +157,19 @@ std::map<Slot, Scheduler::Measured> parse_measured_vram(
     // 峰值"，换了预算或画幅它就不再是上限，而 record_measured_vram 只升不降，
     // 自己降不回来。
     //
-    // 老文件里没有这个键。那种情况**不作废**：它和"指纹不同"不是一回事，
-    // 而且 work 那条已经在管老格式了（见下面）。
+    // **没有这个键的老文件同样作废。** 第一版特意放过了它们，想护住升级前
+    // 攒下的数——结果是那一改**对已经存在的文件完全无效**：新峰值比存着的
+    // 低，record_measured_vram 在"没长高"时直接 return、不写文件，于是永远
+    // 补不上指纹，那条陈旧值永久留存（实测偏高 28%）。
+    //
+    // 放过它们换来的是"第一镜不用先腾显存"，而代价是一个永远纠不正的数。
+    // 不划算。代码里本来就有"老格式 → 第一镜重新量"这条先例（work == 0
+    // 那支），一视同仁。
     if (!want.empty()) {
         const auto cfg = j.find("_config");
-        if (cfg != j.end() && cfg->is_string() &&
-            cfg->get<std::string>() != want) {
-            return out;
-        }
+        const bool same = cfg != j.end() && cfg->is_string() &&
+                          cfg->get<std::string>() == want;
+        if (!same) return out;
     }
     const Slot kAll[] = {Slot::LLM, Slot::Image, Slot::Video, Slot::TTS};
     for (const Slot s : kAll) {
@@ -1151,8 +1156,9 @@ void register_sd_slots(SettingsProvider raw_provider,
                 // **说一声为什么攒下的数不作数了。** 不说的话用户看到的是
                 // "设置页上那个实测值怎么没了"，以及第一镜又卸了一次模型。
                 std::fprintf(stderr,
-                             "[vram] 出片/出图的预算或画布改过了，上次量到的"
-                             "峰值不再是上限，整份作废。第一镜会重新量一次。\n");
+                             "[vram] 上次量到的峰值是在另一套配置下量的"
+                             "（预算或画布变了，或者是升级前的老文件），"
+                             "不再是上限，整份作废。第一镜会重新量一次。\n");
             }
             for (const auto& [slot, v] : loaded) {
                 scheduler().record_measured_vram(slot, v.bytes, v.work);
