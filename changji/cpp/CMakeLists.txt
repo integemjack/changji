@@ -705,6 +705,7 @@ add_executable(changji
     src/llm/sse.cpp
     src/llm/local_client.cpp
     src/llm/client_http.cpp
+    src/infer/local_exec.cpp
     src/infer/worker_pool.cpp
     src/infer/worker_farm.cpp
     src/infer/worker_server.cpp
@@ -972,6 +973,7 @@ if(CHANGJI_BUILD_TESTS)
         tests/unit/main.cpp
         tests/unit/test_worker_proto.cpp
         tests/unit/test_worker_roster.cpp
+        tests/unit/test_exec_queue.cpp
         tests/unit/test_flow.cpp
         tests/unit/test_webapp.cpp
         tests/unit/test_shot.cpp

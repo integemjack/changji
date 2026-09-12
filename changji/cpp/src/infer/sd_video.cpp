@@ -4,6 +4,7 @@
 #include <fstream>
 #include <random>
 
+#include "infer/local_exec.hpp"
 #include "infer/scheduler.hpp"
 #include "pipeline/activity.hpp"
 #include "util/paths.hpp"
@@ -101,6 +102,11 @@ stages::VideoRenderer make_video_renderer(
                       const std::optional<fs::path>& start_image,
                       const fs::path& dest, pipeline::CancelToken& tok,
                       const StepCallback& on_step) {
+        // 先拿执行位再借显存槽，同 frames.cpp。**出图和出片是两个
+        // SdContext、两把各自的 run_mu，互相挡不住**，而 sd.cpp 的进度
+        // 回调是全局的——真同时跑起来，两边的步数会串到一起。
+        auto hold = local_exec().enter(Origin::Local,
+                                       pipeline::note_queued, &tok);
         // 每一镜借一次视频槽。跨阶段的显存回收由调度器决定。
         // 同 frames.cpp：借之前先说一句。视频模型更大，卸大模型 + 读盘
         // 这一段更长，而 sd.cpp 的进度回调要等它跑起来才有。

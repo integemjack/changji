@@ -11,6 +11,7 @@
 #include "http/offload.hpp"
 #include "http/reset.hpp"
 #include "http/upload.hpp"
+#include "infer/local_exec.hpp"
 #include "infer/scheduler.hpp"
 #include "infer/sd_image.hpp"
 #include "models/project.hpp"
@@ -97,6 +98,15 @@ Rendered render_ref(const ProjectStore& store, const std::string& stem,
     // 界面上就是一个不动的转圈——那正是最需要顶栏说句话的时候。
     pipeline::Activity act{"image", paths::to_utf8(store.root()), "",
                            "正在画参考图"};
+
+    // 执行位也要排。这条路和流水线是两个来源，撞上过一次：用户这边
+    // 正画参考图，另一头的批量写作全挂在「显存不够」上。那次挡路的是
+    // 显存槽，而执行位这一层挡的是更前面那件事——两个生成同时进 sd.cpp。
+    //
+    // 这儿没有真正的取消令牌（同步接口，下面那个 tok 从不被点亮），
+    // 所以传 nullptr：排上了就等着，挡在前面的最长就是一镜。
+    auto hold = infer::local_exec().enter(infer::Origin::Local,
+                                          pipeline::note_queued, nullptr);
 
     // **借不到就排队等**，不当场抛。撞车的常态是"另一边正在写一章"
     // （一两分钟），当场抛的话用户得到一个 500，而他唯一能做的就是过会儿
