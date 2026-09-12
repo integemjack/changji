@@ -377,6 +377,39 @@ bool link_location(json& item, const std::set<std::string>& known) {
     return false;
 }
 
+bool is_placeholder_line(const std::string& text) {
+    // 先削掉外面套的括号引号，再削掉结尾的标点：模型写的是
+    // 「（无台词）」「无台词。」「(N/A)」，核都是同一个词。
+    std::string core = strip_wrapper(text::strip_ws(text));
+    core = text::strip_ws(text::rstrip_punct(core));
+    core = strip_wrapper(core);
+    std::string low;
+    for (char c : core) {
+        const unsigned char u = static_cast<unsigned char>(c);
+        low += (u >= 'A' && u <= 'Z') ? static_cast<char>(u - 'A' + 'a') : c;
+    }
+    for (const char* w : prompt::kNoLine) {
+        if (low == w) return true;
+    }
+    return false;
+}
+
+namespace {
+
+/// 把占位台词从这一镜里删掉。删空了就是一个没人说话的镜头，本来就该这样。
+void drop_placeholder_dialogue(json& item) {
+    const auto it = item.find("dialogue");
+    if (it == item.end() || !it->is_array()) return;
+    json kept = json::array();
+    for (const auto& line : *it) {
+        if (line.is_object() && is_placeholder_line(str_or(line, "text"))) continue;
+        kept.push_back(line);
+    }
+    *it = std::move(kept);
+}
+
+}  // namespace
+
 void add_missing_speakers(json& item, const std::set<std::string>& known) {
     if (!item.is_object()) return;
     const auto dit = item.find("dialogue");
@@ -456,6 +489,9 @@ std::vector<Shot> parse_storyboard(const std::string& raw,
             item["transition_dur_s"] = 0.4;
         }
 
+        // **先删占位台词再补说话人。** 反过来的话，「（无台词）」那一句
+        // 会先把一个角色补进 characters，于是这一镜凭空多了个在场的人。
+        drop_placeholder_dialogue(item);
         add_missing_speakers(item, known_chars);
         link_location(item, known_locs);
 

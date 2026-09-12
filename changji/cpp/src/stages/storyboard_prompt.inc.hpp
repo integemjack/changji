@@ -67,6 +67,31 @@ inline constexpr const char* kSbSeg6 =
 
 )CJ";
 
+// 台词栏里的占位符。schema 里写着「这一镜没有人说话就填空数组」，模型照样
+// 会塞一句「（无台词）」进去——**而那句会被配音念出来**。实跑里十四镜有四镜
+// 是这样的。
+//
+// 和 script_prompt.inc.hpp 的 kNoSpeaker 分开两份：那边是说话人栏（填了
+// none 就当旁白，**这一句还在**），这边是台词栏（整句都得删掉）。合成一份
+// 的话，一句真的由旁白说出来的话会被当成占位符删掉。
+inline constexpr const char* kNoLine[] = {
+    R"CJ(无台词)CJ",
+    R"CJ(无对白)CJ",
+    R"CJ(没有台词)CJ",
+    R"CJ(没有对白)CJ",
+    R"CJ(无人说话)CJ",
+    R"CJ(无声)CJ",
+    R"CJ(静默)CJ",
+    R"CJ(略)CJ",
+    R"CJ(无)CJ",
+    R"CJ(空)CJ",
+    R"CJ(none)CJ",
+    R"CJ(n/a)CJ",
+    R"CJ(na)CJ",
+    R"CJ(null)CJ",
+    R"CJ(nil)CJ",
+};
+
 inline constexpr const char* kSbSeg7 =
     R"CJ(
 

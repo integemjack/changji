@@ -512,3 +512,45 @@ TEST_CASE("剧本里的台词漏掉了要报出来") {
         CHECK(stages::missing_dialogue_lines("【情绪回报 33–54 秒】", {s}).empty());
     }
 }
+
+TEST_CASE("台词栏里的占位符要删掉，别让配音念出来") {
+    // 实跑里模型写的那几种。十四镜里四镜是这样，而它会一路走到配音。
+    CHECK(stages::is_placeholder_line("（无台词）"));
+    CHECK(stages::is_placeholder_line("无台词"));
+    CHECK(stages::is_placeholder_line("无台词。"));
+    CHECK(stages::is_placeholder_line("(N/A)"));
+    CHECK(stages::is_placeholder_line("None"));
+    CHECK(stages::is_placeholder_line("无"));
+
+    // 真台词一句都不能误删
+    CHECK_FALSE(stages::is_placeholder_line("站住。"));
+    CHECK_FALSE(stages::is_placeholder_line("为什么不能说？"));
+    CHECK_FALSE(stages::is_placeholder_line("无所谓了。"));
+    CHECK_FALSE(stages::is_placeholder_line("空房间里没有人。"));
+
+    SUBCASE("解析时整句删掉，而且不会因为它多补一个在场角色") {
+        const models::AssetLibrary a = test_assets();
+        const json raw = {
+            {"shots", json::array({
+                {{"shot_id", "ep01_sh001"}, {"scene_id", "sc01"}, {"order", 0},
+                 {"duration_s", 5.0}, {"shot_size", "MS"},
+                 {"first_frame_prompt", "雨夜天台"},
+                 {"characters", json::array()},
+                 {"dialogue", json::array({
+                     {{"char_id", "c_lin_wan"}, {"text", "（无台词）"}}})}},
+                {{"shot_id", "ep01_sh002"}, {"scene_id", "sc01"}, {"order", 1},
+                 {"duration_s", 3.0}, {"shot_size", "CU"},
+                 {"first_frame_prompt", "近景"},
+                 {"characters", json::array()},
+                 {"dialogue", json::array({
+                     {{"char_id", "c_lin_wan"}, {"text", "你说过会来的"}}})}}})}};
+        const auto shots = stages::parse_storyboard(raw.dump(), a);
+        REQUIRE(shots.size() == 2);
+        CHECK(shots[0].dialogue.empty());
+        // 占位那一句不该把角色补进来——这一镜画面里本来没人
+        CHECK(shots[0].characters.empty());
+        REQUIRE(shots[1].dialogue.size() == 1);
+        CHECK(shots[1].dialogue[0].text == "你说过会来的");
+        CHECK(shots[1].characters.size() == 1);
+    }
+}

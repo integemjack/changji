@@ -110,6 +110,17 @@ std::string build_storyboard_prompt(const std::string& script,
 /// 返回是否改动过，调用方要靠它决定用不用存盘。
 bool link_location(nlohmann::json& item, const std::set<std::string>& known);
 
+/// 这一句是不是「占位符」——模型该填空数组时填进来的那种。
+///
+/// **2026-09-12 实跑撞上的，而且这个会出声。** schema 里写着「这一镜没有人
+/// 说话就填空数组」，模型照样在 dialogue 里塞了一句 `（无台词）`：十四镜里
+/// 有四镜是这样。它不会被任何校验拦下——是合法的 DialogueLine，字数也够——
+/// 然后一路走到配音，**成片里真的有人念出「无台词」三个字**。
+///
+/// 和 normalize_speaker 是同一个病：那边管说话人栏里的 none / 旁白，
+/// 这边管台词栏里的（无台词）。形式是我们定的，不是模型定的。
+bool is_placeholder_line(const std::string& text);
+
 /// 把有台词但没进角色列表的说话人补进去。
 ///
 /// 这不是分镜错误，只是漏填：说话的人必然在场。
