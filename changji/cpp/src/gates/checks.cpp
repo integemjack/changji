@@ -161,8 +161,20 @@ GateResult gate_video(const models::Shot& shot, const fs::path& video_path,
         }
     }
     if (!blank_where.empty()) {
-        reasons.push_back(join(blank_where, "、") + "的画面近乎纯色，展布只有 " +
-                          fmt("%.1f", spread_min));
+        // **把均值一并报出来。** 展布这个判据分不开"纯色"和"很暗"
+        // （见 media::PixelStats::looks_blank 里那段实测），而均值分得开：
+        // 展布小 + 均值也低 = 大概率是按要求压暗的镜头，不是废图；
+        // 展布小 + 均值在中间 = 一片均匀的灰，那才是生成失败。
+        // 判据不动，但别让人只看见一句断言。
+        const double mean_avg = mean_sum / static_cast<double>(means.size());
+        std::string why = join(blank_where, "、") + "的画面近乎纯色，展布只有 " +
+                          fmt("%.1f", spread_min) + "（均值 " +
+                          fmt("%.0f", mean_avg) + "）";
+        if (mean_avg < 40.0) {
+            why += "。均值这么低，多半是这一镜本来就该很暗——"
+                   "这个检查分不开「暗」和「空」，要留就单独重出它";
+        }
+        reasons.push_back(why);
     }
 
     std::vector<std::string> clipped_where;
