@@ -1286,6 +1286,11 @@ TEST_CASE("schema：正文一场一个数组，场数和段数都由语法卡住
     CHECK(sp.at("paragraphs").at("minItems").get<int>() >= 8);
     CHECK(sp.at("paragraphs").at("minItems").get<int>() <= 12);
     CHECK(sp.at("paragraphs").at("maxItems").get<int>() <= 34);
+    // **段长的上限就是这里唯一管得住段长的东西。** 量过的真实网文段长
+    // 中位是 33 字、传统小说 60，我们算段数用的是 45；上限放到 300 的时候
+    // 实跑出来的中位是 99。描述里写"一段推进一两秒钟的事"不管用。
+    CHECK(sp.at("paragraphs").at("items").at("maxLength").get<int>() <= 150);
+    CHECK(sp.at("paragraphs").at("items").at("minLength").get<int>() >= 12);
     CHECK(sp.at("paragraphs").at("items").at("type") == "string");
     REQUIRE(s.at("required").size() == 1);
     CHECK(s.at("required")[0] == "scenes");
