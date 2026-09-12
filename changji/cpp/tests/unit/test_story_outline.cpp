@@ -1278,12 +1278,12 @@ TEST_CASE("schema：正文一场一个数组，场数和段数都由语法卡住
 
     REQUIRE(sp.contains("paragraphs"));
     CHECK(sp.at("paragraphs").at("type") == "array");
-    // 下限是目标段数的四分之三。**这个数管的是段长，不是篇幅**：一章
-    // 三千五百字的料，四十段是每段八十七字，八十段是每段四十四字，字还是
-    // 那些字。真顶到头时模型会把字段名当正文吐出来，那条由 strip_json_echo
-    // 兜底。整个来回见 chapter_write.cpp 里 min_items 那段注释。
-    CHECK(sp.at("paragraphs").at("minItems").get<int>() >= 14);
-    CHECK(sp.at("paragraphs").at("minItems").get<int>() <= 20);
+    // 下限是目标段数的一半。**别再往上提**：2026-09-12 提到四分之三试过，
+    // 段长是降下来了，但模型没话说时语法不让它停，会反复尝试跳到下一个
+    // 字段、把 token 烧光、JSON 没收尾，整章落成 0 字。
+    // 整个来回见 chapter_write.cpp 里 min_items 那段注释。
+    CHECK(sp.at("paragraphs").at("minItems").get<int>() >= 8);
+    CHECK(sp.at("paragraphs").at("minItems").get<int>() <= 12);
     CHECK(sp.at("paragraphs").at("maxItems").get<int>() <= 34);
     // 段长的上下限。**maxLength 不是段长的旋钮**——2026-09-12 把它从 300
     // 压到 150 试过，段长中位纹丝不动（78 → 83），只削掉长尾，而且真卡住

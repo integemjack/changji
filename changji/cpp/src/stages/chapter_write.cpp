@@ -183,13 +183,19 @@ ordered chapter_schema(int target_scenes, int paras_per_scene) {
     // 三、试过用 items.maxLength 把段压短——**阴性结果**，只削长尾不动
     //     中位数，还会把句子从中间切断。见那一段注释。
     //
-    // 所以回到这里，提到四分之三（每场约 16 段）。**它逼的是"把同样的
-    // 内容拆开写"，不是"多编一点出来"**——一章三千五百字的料，四十段是
-    // 每段八十七字，八十段是每段四十四字，字还是那些字。
+    // 四、于是提到四分之三（每场约 16 段），赌"它逼的是把同样的内容拆开写"。
+    //     **赌输了，当天就撤。** 段长确实降到 59（好），但一跑里整章丢了
+    //     一章：模型写着写着没话说了，语法不让它停，于是反复尝试跳到下一个
+    //     字段，把 token 烧光、JSON 没收尾。落盘里那一段长这样：
+    //         ],\"goal' : ' ', ' obs tac le': '', ' tur n''''],
+    //         \"goal' : ' ', ' obst ac le': '', ' turn''''],…
+    //     （加了 DRY 之后它每次还得拼得不一样，才出现 obs tac le /
+    //      obst ac le / obsta cle 这种畸形写法。）
+    //     **模型没话说的时候，多给它几个格子只会得到几格垃圾。**
     //
-    // 一的那个坑现在有 strip_json_echo 兜着：真顶到头了，吐出来的字段名
-    // 会被就地摘掉，不会再变成正文里的垃圾。
-    const int min_items = std::max(6, paras_per_scene * 3 / 4);
+    // 所以停在一半。段长那件事得换条路：它是"一段里塞了几件事"的问题，
+    // 不是"格子不够多"的问题，拿 minItems 硬掰会掰到没内容可填。
+    const int min_items = std::max(6, paras_per_scene / 2 - 1);
     const int max_items = std::max(min_items + 6, paras_per_scene * 3 / 2);
 
     const ordered schema = [&] {
