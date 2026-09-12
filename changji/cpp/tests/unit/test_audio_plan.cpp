@@ -17,6 +17,7 @@
 #include <nlohmann/json.hpp>
 
 #include "stages/audio_plan.hpp"
+#include "stages/limits.hpp"
 #include "stages/render.hpp"
 #include "util/paths.hpp"
 #include "util/text.hpp"
@@ -76,8 +77,12 @@ TEST_CASE("常数和 Python 一致") {
     SUBCASE("单镜上限由帧数上限推导，不是各写一份") {
         // 早先档位表里有 8 秒和 10 秒，而实际上限是 5 秒，
         // 多出来的部分被静默截断，成片比计划短了一大截且没人发现。
+        //
+        // 2026-09-13 起上限来自配置（stages/limits.hpp），所以这里跟着
+        // 当前那一份算——**不能再写死一个数**，写死就等于又回到了
+        // "分镜按一个上限排、渲染按另一个截" 那种谁也发现不了的不一致。
         CHECK(stages::max_shot_duration_s(24) ==
-              doctest::Approx(stages::kMaxFrames / 24.0));
+              doctest::Approx(stages::video_limits().max_frames_on_grid() / 24.0));
     }
 }
 

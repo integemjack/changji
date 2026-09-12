@@ -19,7 +19,7 @@
     {
       "duration_s": 1.0,
       "fps": 30,
-      "frames": 29
+      "frames": 33
     },
     {
       "duration_s": 1.5,
@@ -49,7 +49,7 @@
     {
       "duration_s": 2.5,
       "fps": 30,
-      "frames": 73
+      "frames": 77
     },
     {
       "duration_s": 3.0,
@@ -59,7 +59,7 @@
     {
       "duration_s": 3.0,
       "fps": 30,
-      "frames": 89
+      "frames": 93
     },
     {
       "duration_s": 4.0,
@@ -134,12 +134,12 @@
     {
       "duration_s": 0.458333,
       "fps": 24,
-      "frames": 9
+      "frames": 13
     },
     {
       "duration_s": 0.458333,
       "fps": 30,
-      "frames": 13
+      "frames": 17
     },
     {
       "duration_s": 0.625,
@@ -149,12 +149,12 @@
     {
       "duration_s": 0.625,
       "fps": 30,
-      "frames": 17
+      "frames": 21
     },
     {
       "duration_s": 0.791667,
       "fps": 24,
-      "frames": 17
+      "frames": 21
     },
     {
       "duration_s": 0.791667,
@@ -174,12 +174,12 @@
     {
       "duration_s": 1.125,
       "fps": 24,
-      "frames": 25
+      "frames": 29
     },
     {
       "duration_s": 1.125,
       "fps": 30,
-      "frames": 33
+      "frames": 37
     },
     {
       "duration_s": 1.291667,
@@ -194,7 +194,7 @@
     {
       "duration_s": 1.458333,
       "fps": 24,
-      "frames": 33
+      "frames": 37
     },
     {
       "duration_s": 1.458333,
@@ -214,12 +214,12 @@
     {
       "duration_s": 1.791667,
       "fps": 24,
-      "frames": 41
+      "frames": 45
     },
     {
       "duration_s": 1.791667,
       "fps": 30,
-      "frames": 53
+      "frames": 57
     },
     {
       "duration_s": 0.041667,
@@ -299,12 +299,12 @@
     {
       "duration_s": 0.1875,
       "fps": 30,
-      "frames": 5
+      "frames": 9
     },
     {
       "duration_s": 0.22916666666666666,
       "fps": 24,
-      "frames": 5
+      "frames": 9
     },
     {
       "duration_s": 0.22916666666666666,

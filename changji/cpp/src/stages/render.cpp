@@ -52,11 +52,10 @@ std::string join_reasons(const std::vector<std::string>& v) {
 }  // namespace
 
 int frames_for(double duration_s, int fps) {
-    const long raw = py_round(duration_s * fps);
-    // 4n+1 是 Wan 的硬要求。给别的数它会自己截，而截的位置不告诉你。
-    const long n = std::max(1L, py_round(static_cast<double>(raw - 1) / 4.0));
-    const long frames = 4 * n + 1;
-    return static_cast<int>(std::min<long>(frames, kMaxFrames));
+    // 格子和上限都来自配置（Wan 是 4n+1 / 121，MiniMax-H3 是 17k+5 / 360）。
+    // 写死过一版 4n+1，换模型之后就一直在给 sd.cpp 递不在格子上的数——
+    // 它自己向上对齐，不报错，表现是成片比分镜表长一点点。
+    return video_limits().frames_for(duration_s, fps);
 }
 
 std::int64_t render_seed(const std::string& shot_id, int attempts) {

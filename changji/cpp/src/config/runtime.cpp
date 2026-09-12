@@ -1,5 +1,22 @@
 #include "config/runtime.hpp"
 
+#include "stages/limits.hpp"
+
+namespace {
+
+/// 这张卡有多少显存。**探测一次就记住**：探显卡要跑 nvidia-smi，而
+/// Runtime::replace 在一次运行里会被调好几次（起服务、改设置、换机器）。
+/// 一次运行里显卡不会变。
+double detected_vram_gb() {
+    static const double v = [] {
+        const auto p = changji::models::HardwareProfile::detect(std::nullopt);
+        return p.vram_gb;
+    }();
+    return v;
+}
+
+}  // namespace
+
 namespace changji::config {
 
 Settings Runtime::snapshot() const {
@@ -8,6 +25,29 @@ Settings Runtime::snapshot() const {
 }
 
 void Runtime::replace(Settings s) {
+    // 视频模型的限制跟着配置走。**放在这一处而不是每个调用方**：能改配置的
+    // 入口有五个（起服务、/api/settings、/api/connections、初始化页……），
+    // 漏掉任何一个都是"配置改了但分镜还按老上限排"，而且不报错。
+    //
+    // **先按模型自己认，配置里填了才覆盖。** 换模型时人改的是 [models].video
+    // 那一行，不会想起来还有帧数格子要跟着改——所以默认让它自己认，
+    // 那三项留 0 就是"你看着办"。
+    stages::VideoLimits limits = stages::guess_video_limits(
+        s.models.video, !s.models.video_llm.empty());
+    // 再按这张卡夹一道：**模型能出 15 秒不等于这张卡能出 15 秒**。
+    // 探测不到显卡（单元测试、没装驱动）时 cap_by_vram 原样返回，不放开。
+    //
+    // 常驻权重按"全放内存"算（0），也就是显存全给计算缓冲——5090 上
+    // 1280×704 就是这么配的（weights = "cpu"）。真常驻一部分权重时可用的
+    // 更少，但那种配置本来也跑不了长镜头，夹得更短没坏处。
+    limits = stages::cap_by_vram(limits, detected_vram_gb(), 0.0);
+    if (s.models.video_max_frames > 0) limits.max_frames = s.models.video_max_frames;
+    if (s.models.video_frame_step > 0) limits.frame_step = s.models.video_frame_step;
+    if (s.models.video_frame_base >= 0 && s.models.video_frame_step > 0) {
+        limits.frame_base = s.models.video_frame_base;
+    }
+    stages::set_video_limits(limits);
+
     std::lock_guard lg(mu_);
     settings_ = std::move(s);
 }

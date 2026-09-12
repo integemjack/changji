@@ -20,6 +20,9 @@
 #include <nlohmann/json.hpp>
 
 #include "media/assemble.hpp"
+// 时间轴按真正会生成的帧数排，这两个头提供上限和 frames_for
+#include "stages/limits.hpp"
+#include "stages/render.hpp"
 #include "util/paths.hpp"
 
 using json = nlohmann::json;
@@ -85,9 +88,51 @@ models::DialogueLine line(const std::string& text, double dur,
     return l;
 }
 
+/// 让「名义时长 == 真实时长」，好让下面几条用例专心测时间轴本身。
+///
+/// 时间轴是按这一镜**真正会生成多少帧**排的，而帧数要落在模型的格子上
+/// （默认 MiniMax-H3 的 17k+5），所以 5 秒的镜头实际是 124 帧 = 5.167 秒。
+/// 那件事由「时间轴按真实帧数排」那一条单独钉；这几条测的是字幕时间戳和
+/// 溶解重叠，掺进帧数对齐只会让期望值看不懂。
+struct ExactFrames {
+    stages::VideoLimits saved = stages::video_limits();
+    ExactFrames() {
+        stages::VideoLimits v;
+        v.max_frames = 100000;
+        v.frame_step = 1;
+        v.frame_base = 0;
+        stages::set_video_limits(v);
+    }
+    ~ExactFrames() { stages::set_video_limits(saved); }
+};
+
 }  // namespace
 
+TEST_CASE("时间轴按这一镜真正会生成的帧数排，不按分镜表的名义时长") {
+    // 帧数要落在模型的格子上：名义 4 秒的镜头按 17k+5 对齐之后是 107 帧
+    // = 4.458 秒。按名义值排的话，每镜差的那几百毫秒会**逐镜累积**——
+    // 十几镜之后字幕和画面能错开好几秒，而每一段单独看都是对的。
+    const auto paths = make_paths("真实帧数");
+    touch(paths.shots("draft") / "a.mp4");
+    touch(paths.shots("draft") / "b.mp4");
+
+    const auto s1 = make_shot("sh001", 5.0, "shots/draft/a.mp4");
+    const auto s2 = make_shot("sh002", 4.0, "shots/draft/b.mp4");
+    const auto tl = media::build_timeline({s1, s2}, paths,
+                                          config::AssemblyConfig{});
+    REQUIRE(tl.entries.size() == 2);
+
+    const double d1 = stages::frames_for(5.0, 24) / 24.0;   // 124 帧
+    const double d2 = stages::frames_for(4.0, 24) / 24.0;   // 107 帧
+    CHECK(d1 > 5.0);
+    CHECK(d2 > 4.0);
+    CHECK(tl.entries[0].duration_s == doctest::Approx(d1));
+    CHECK(tl.entries[1].start_s == doctest::Approx(d1));
+    CHECK(tl.total_duration_s() == doctest::Approx(d1 + d2));
+}
+
 TEST_CASE("时间线：字幕时间戳来自配音的真实时长") {
+    const ExactFrames exact;
     // 用估算时长的话，一集下来字幕会越飘越远，而每一条单看都"差不多对"。
     const auto paths = make_paths("时间线");
     touch(paths.shots("draft") / "a.mp4");
@@ -133,6 +178,7 @@ TEST_CASE("时间线：字幕时间戳来自配音的真实时长") {
 }
 
 TEST_CASE("溶解让两镜重叠，起点往回挪") {
+    const ExactFrames exact;
     const auto paths = make_paths("溶解");
     touch(paths.shots("draft") / "a.mp4");
 
@@ -656,6 +702,7 @@ TEST_CASE("滤镜里的路径转义和 Python 逐字节一样") {
 }
 
 TEST_CASE("时间线的起点和字幕时间戳和 Python 一样") {
+    const ExactFrames exact;
     // 混音里每一段的偏移量全从这里来。时间线错了，adelay 也就错了，
     // 而上面那条用例是拿语料里的 segments 直接喂的，绕过了这一步。
     const json g = commands_golden().at("timeline");
@@ -723,6 +770,7 @@ TEST_CASE("时间线的起点和字幕时间戳和 Python 一样") {
 // ---------------------------------------------------------------------------
 
 TEST_CASE("时间线的排期和字幕时间戳和 Python 一样") {
+    const ExactFrames exact;
     const std::string path =
         std::string(CHANGJI_GOLDEN_DIR) + "/timeline.json";
     std::ifstream in(path, std::ios::binary);

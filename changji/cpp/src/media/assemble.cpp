@@ -5,6 +5,8 @@
 #include <fstream>
 #include <sstream>
 
+// 时间轴按真正生成得出来的帧数算，不按分镜表里的名义时长
+#include "stages/limits.hpp"
 #include "util/paths.hpp"
 #include "util/text.hpp"
 
@@ -45,7 +47,7 @@ std::vector<SubtitleCue> Timeline::cues() const {
 
 Timeline build_timeline(const std::vector<models::Shot>& shots,
                         const models::ProjectPaths& paths,
-                        const config::AssemblyConfig& /*config*/) {
+                        const config::AssemblyConfig& config) {
     Timeline timeline;
     double cursor = 0.0;
 
@@ -66,11 +68,20 @@ Timeline build_timeline(const std::vector<models::Shot>& shots,
                                    : 0.0;
         const double start = std::max(0.0, cursor - overlap);
 
+        // **时间轴按这一镜真正生成了多少帧算，不按分镜表里那个名义值。**
+        //
+        // 帧数要落在模型的格子上（Wan 4n+1、MiniMax-H3 17k+5），所以名义
+        // 4 秒的镜头出来可能是 107 帧 = 4.458 秒。按名义值排的话，每一镜
+        // 差的那几百毫秒会**逐镜累积**——十几镜之后字幕和画面能错开好几秒，
+        // 而每一段单独看都是对的，最难查的那种。
+        const double real =
+            stages::video_limits().real_duration_s(shot.duration_s, config.fps);
+
         TimelineEntry entry;
         entry.shot_id = shot.shot_id;
         entry.video_path = video;
         entry.start_s = start;
-        entry.duration_s = shot.duration_s;
+        entry.duration_s = real;
         entry.transition_in = shot.transition_in;
         entry.transition_dur_s = shot.transition_dur_s;
 
@@ -93,7 +104,7 @@ Timeline build_timeline(const std::vector<models::Shot>& shots,
             speech_cursor += dur;
         }
 
-        cursor = start + shot.duration_s;
+        cursor = start + real;
         timeline.entries.push_back(std::move(entry));
     }
     return timeline;

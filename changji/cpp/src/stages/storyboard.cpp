@@ -97,25 +97,179 @@ std::string join_lines(const std::vector<std::string>& parts) {
 
 }  // namespace
 
+// ---- 视频模型的限制 ----
+
+int VideoLimits::frames_for(double duration_s, int fps) const {
+    const int step = std::max(1, frame_step);
+    const int base = std::max(0, frame_base);
+    // **先夹再取整。** MSVC 的 long 是 32 位，给个很大的秒数（比如拿
+    // frames_for(1e9) 问"最长能多少帧"）会让 duration_s * fps 溢出，
+    // 溢出之后帧数变成负的，档位表退化成只剩一档 2 秒——一连串分镜用例
+    // 跟着挂，而根因离现场很远。
+    const double capped =
+        std::clamp(duration_s * (fps <= 0 ? 24 : fps), 0.0, 1.0e7);
+    const long raw = py_round(capped);
+    // 向上对齐到 step*k + base。给 sd.cpp 一个不在格子上的数它会自己
+    // 往上对齐，而对齐到哪儿不告诉你——那正是"成片比分镜表长一点点"的来源。
+    // 至少一个完整的格子：一帧的视频没有意义，而分镜表里出现零点几秒的
+    // 镜头会一路走到装配。老实现那句 max(1L, n) 就是干这个的。
+    long k = 1;
+    if (raw > base) {
+        k = std::max(1L, (raw - base + step - 1) / step);
+    }
+    long frames = static_cast<long>(step) * k + base;
+    // **夹到上限时也要落在格子上。** 上限本身常常不在格子上——MiniMax-H3
+    // 说能出 15 秒，15×24 = 360，而 (360-5)/17 = 20.88 不是整数。直接
+    // min(frames, 360) 会交出一个非法帧数，sd.cpp 再把它向上对齐到 362，
+    // 反而**超过**了上限。所以往下取到不超过上限的那个合法值（345）。
+    const long cap = std::max(1, max_frames);
+    if (frames > cap) {
+        const long kk = cap > base ? (cap - base) / step : 0;
+        frames = static_cast<long>(step) * kk + base;
+    }
+    if (frames < base) frames = base;
+    if (frames < 1) frames = 1;
+    return static_cast<int>(frames);
+}
+
+int VideoLimits::max_frames_on_grid() const {
+    const int step = std::max(1, frame_step);
+    const int base = std::max(0, frame_base);
+    const long cap = std::max(1, max_frames);
+    const long k = cap > base ? (cap - base) / step : 0;
+    long frames = static_cast<long>(step) * k + base;
+    if (frames < 1) frames = 1;
+    return static_cast<int>(frames);
+}
+
+double VideoLimits::max_duration_s(int fps) const {
+    const int f = fps <= 0 ? 24 : fps;
+    // 按**真正生成得出来**的最长帧数算，不是按配置里那个数：上限不在格子上
+    // 的时候两者差一截（360 → 345），档位表照 360 排就会排出根本出不来的档。
+    return static_cast<double>(max_frames_on_grid()) / static_cast<double>(f);
+}
+
+double VideoLimits::real_duration_s(double duration_s, int fps) const {
+    const int f = fps <= 0 ? 24 : fps;
+    return static_cast<double>(frames_for(duration_s, f)) /
+           static_cast<double>(f);
+}
+
+std::vector<double> VideoLimits::duration_slots(int fps) const {
+    // 候选一路排到 15 秒：换上能出长镜头的模型时（MiniMax-H3 能到 15 秒），
+    // 档位表跟着放开，一集就不必被切成十几个五秒片段。上限小的时候后面
+    // 那几档自然被滤掉，老项目一点不变。
+    const double limit = max_duration_s(fps);
+    const double all[] = {2.0, 3.0, 4.0, 5.0, 6.0, 8.0, 10.0, 12.0, 15.0};
+    std::vector<double> out;
+    for (const double s : all) {
+        if (s <= limit) out.push_back(s);
+    }
+    if (out.empty()) out.push_back(2.0);
+    return out;
+}
+
+VideoLimits guess_video_limits(const std::string& video_model_file,
+                               bool llm_encoder) {
+    std::string low;
+    for (char c : video_model_file) {
+        const unsigned char u = static_cast<unsigned char>(c);
+        low += (u >= 'A' && u <= 'Z') ? static_cast<char>(u - 'A' + 'a') : c;
+    }
+    const auto has = [&low](const char* w) {
+        return low.find(w) != std::string::npos;
+    };
+
+    VideoLimits wan;          // 最保守的那一档
+    wan.max_frames = 121;
+    wan.frame_step = 4;
+    wan.frame_base = 1;
+
+    VideoLimits h3;           // 15 秒 × 24fps，帧数 17k+5
+    h3.max_frames = 360;
+    h3.frame_step = 17;
+    h3.frame_base = 5;
+
+    if (has("minimax") || has("hailuo") || has("h3")) return h3;
+    if (has("wan")) return wan;
+    // 名字认不出就看编码器：H3 那一路挂的是 video_llm，Wan 挂的是 t5xxl。
+    return llm_encoder ? h3 : wan;
+}
+
+VideoLimits cap_by_vram(VideoLimits limits, double vram_gb, double resident_gb,
+                        int fps) {
+    // 探测不到显卡就别自作主张放开。宁可短。
+    if (vram_gb <= 0.0) return limits;
+
+    // 锚点：5090 上 1280×704、H3 权重全放内存，一个五秒镜头（124 帧）的
+    // 计算缓冲实测 ~14.6 GB。按每帧线性摊——**这是外推，不是实测曲线**，
+    // 所以再留三成余量。真要放开长镜头，先拿那张卡跑一组 5/8/12 秒量峰值。
+    constexpr double kBufferPerFrame = 14.6 / 124.0;   // ≈ 0.118 GB/帧
+    // 留一半。**这个系数是保守拍的，不是量出来的**：定成 0.5 时 5090
+    // （32.6 GB）算出来 138 帧 ≈ 5.75 秒，档位还是 {2,3,4,5}，和实测跑得动
+    // 的那一档一致；大卡才会放开（48 GB → 8 秒档，80 GB → 12 秒档）。
+    // 拿到 5/8/12 秒的峰值显存实测之后，这里应该换成真曲线。
+    constexpr double kHeadroom = 0.5;
+
+    // **再小也别低于最保守那一档（五秒）。** 跑不了五秒镜头的卡，整条流水线
+    // 本来也跑不动；把上限夹到一两秒只会让分镜排出一堆没法用的碎片，而且
+    // 单元测试跑在什么卡上就成了测试结果的一部分——那种失败离根因极远
+    // （报的是「时长吸附不对」，根子在这儿）。
+    // **按秒定，不按帧定。** 写死 121 帧的话，换成 17k+5 那个格子会向下取到
+    // 107 帧 = 4.458 秒，反而不够五秒——同一个下限在不同格子上要落在
+    // 各自合法的那个数上。
+    constexpr double kNeverBelowSeconds = 5.0;
+    const int floor_frames =
+        std::min(limits.max_frames, limits.frames_for(kNeverBelowSeconds, fps));
+
+    const double usable = (vram_gb - std::max(0.0, resident_gb)) * kHeadroom;
+    if (usable <= 0.0) {
+        // 权重就把卡占满了：不放开，退回保守那一档。
+        limits.max_frames = floor_frames;
+        return limits;
+    }
+    const int fits = static_cast<int>(usable / kBufferPerFrame);
+    limits.max_frames = std::max(floor_frames, std::min(limits.max_frames, fits));
+    return limits;
+}
+
+namespace {
+
+VideoLimits& mutable_video_limits() {
+    static VideoLimits v;
+    return v;
+}
+
+}  // namespace
+
+const VideoLimits& video_limits() { return mutable_video_limits(); }
+
+void set_video_limits(VideoLimits v) { mutable_video_limits() = std::move(v); }
+
 double max_shot_duration_s(int fps) {
-    return static_cast<double>(kMaxFrames) / static_cast<double>(fps);
+    return video_limits().max_duration_s(fps);
 }
 
 const std::vector<double>& duration_slots() {
-    static const std::vector<double> kSlots = [] {
-        // Python 那边是模块级常量，用**默认 fps=24** 算的，
-        // 配置里改了 assembly.fps 也不会重算。照抄这个行为，
-        // 不是因为它对，而是因为改了两边的分镜表就对不上了。
-        const double limit = max_shot_duration_s();
-        const double all[] = {2.0, 3.0, 4.0, 5.0, 8.0, 10.0};
-        std::vector<double> out;
-        for (const double s : all) {
-            if (s <= limit) out.push_back(s);
-        }
-        if (out.empty()) out.push_back(2.0);  // 对应 Python 的 or (2.0,)
-        return out;
-    }();
-    return kSlots;
+    // **不能再 static 缓存了。** 原来这里缓存着，注释说是「照抄 Python 的
+    // 模块级常量，改了 fps 也不重算」——而 Python 引擎 2026-09-10 就删了，
+    // 那个理由不成立；现在上限来自配置，缓存住就等于配置改了不生效。
+    //
+    // 按当前 limits 算一份留着，limits 变了才重算：snap_duration 会在
+    // rebalance 的循环里调很多次，每次构造一个 vector 没必要。
+    static thread_local std::vector<double> cached;
+    static thread_local int cached_frames = -1;
+    static thread_local int cached_step = -1;
+    static thread_local int cached_base = -1;
+    const VideoLimits& v = video_limits();
+    if (cached.empty() || cached_frames != v.max_frames ||
+        cached_step != v.frame_step || cached_base != v.frame_base) {
+        cached = v.duration_slots();
+        cached_frames = v.max_frames;
+        cached_step = v.frame_step;
+        cached_base = v.frame_base;
+    }
+    return cached;
 }
 
 double DurationQuota::total_s() const {

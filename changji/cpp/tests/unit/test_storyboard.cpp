@@ -20,6 +20,9 @@
 #include "models/shot.hpp"
 // 落位那几条要估台词念多久
 #include "stages/audio_plan.hpp"
+#include "stages/limits.hpp"
+// frames_for：帧数的格子跟着模型走
+#include "stages/render.hpp"
 #include "stages/storyboard.hpp"
 
 using namespace changji;
@@ -696,5 +699,127 @@ TEST_CASE("剧本里漏掉的台词由引擎照顺序补进镜头") {
         std::size_t most = 0;
         for (const auto& s : shots) most = std::max(most, s.dialogue.size());
         CHECK(most <= 2);
+    }
+}
+
+// ---- 视频模型的限制 ----
+//
+// 2026-09-13 从写死的常量改成配置项。写死的那个是 Wan 的（121 帧、4n+1），
+// 而服务器 2026-09-09 就换成 MiniMax-H3 了（15 秒、17k+5）——换模型只改得了
+// config.toml，改不到编译期常量。
+
+TEST_CASE("视频限制：默认最保守，换一份就跟着变") {
+    const stages::VideoLimits saved = stages::video_limits();
+
+    SUBCASE("默认是最保守的那一档，什么都不知道时不放开") {
+        // 没跑 Runtime::replace（单元测试）或者探测不到显卡时就是这一份。
+        CHECK(stages::video_limits().max_frames == 121);
+        CHECK(stages::max_shot_duration_s(24) == doctest::Approx(121.0 / 24.0));
+        CHECK(stages::duration_slots() ==
+              std::vector<double>{2.0, 3.0, 4.0, 5.0});
+        CHECK(stages::frames_for(4.0, 24) == 97);
+        CHECK(stages::frames_for(5.0, 24) == 121);
+        CHECK(stages::frames_for(30.0, 24) == 121);
+    }
+
+    SUBCASE("换成 MiniMax-H3：档位放开，帧数落在 17k+5 上") {
+        stages::VideoLimits h3;
+        h3.max_frames = 360;
+        h3.frame_step = 17;
+        h3.frame_base = 5;
+        stages::set_video_limits(h3);
+
+        // 360 不在 17k+5 的格子上，往下取到 345 = 14.375 秒
+        CHECK(stages::max_shot_duration_s(24) == doctest::Approx(345.0 / 24.0));
+        // 一集不必再被切成十几个五秒片段
+        CHECK(stages::duration_slots() ==
+              std::vector<double>{2.0, 3.0, 4.0, 5.0, 6.0, 8.0, 10.0, 12.0});
+
+        CHECK(stages::frames_for(4.0, 24) == 107);
+        CHECK(stages::frames_for(3.0, 24) == 73);    // 72 → 73，正好在格子上
+        CHECK((stages::frames_for(7.5, 24) - 5) % 17 == 0);
+
+        // 真实时长跟着帧数走——装配要用它，差的那 0.458 秒逐镜累积
+        CHECK(stages::video_limits().real_duration_s(4.0, 24) ==
+              doctest::Approx(107.0 / 24.0));
+        CHECK(stages::video_limits().real_duration_s(4.0, 24) > 4.0);
+
+        // 配音的单句上限跟着放开：一句话不必再被切成一句一镜
+        CHECK(stages::max_line_seconds(24) > 14.0);
+    }
+
+    SUBCASE("卡不够大时把模型的能力夹低") {
+        stages::VideoLimits h3;
+        h3.max_frames = 360;
+        h3.frame_step = 17;
+        h3.frame_base = 5;
+
+        // 探测不到显卡：原样返回，不自作主张放开
+        CHECK(stages::cap_by_vram(h3, 0.0, 0.0).max_frames == 360);
+
+        // 5090 32.6 GB：算出来还是五秒那一档，和实测跑得动的一致
+        const auto on5090 = stages::cap_by_vram(h3, 32.6, 0.0);
+        CHECK(on5090.max_frames < 360);
+        stages::set_video_limits(on5090);
+        CHECK(stages::duration_slots() == std::vector<double>{2.0, 3.0, 4.0, 5.0});
+
+        // 大卡才放开
+        const auto big = stages::cap_by_vram(h3, 80.0, 0.0);
+        CHECK(big.max_frames > on5090.max_frames);
+        stages::set_video_limits(big);
+        CHECK(stages::duration_slots().size() > 4);
+
+        // 权重把卡占满：退回保守那一档，而不是夹到一两秒——跑不了五秒镜头
+        // 的卡整条流水线本来也跑不动，排出一堆碎片没有意义。
+        // **下限按秒定**，所以在 17k+5 这个格子上是 124 帧（5.167 秒），
+        // 不是 121（那个向下取到 107 = 4.458 秒，反而不够五秒）。
+        CHECK(stages::cap_by_vram(h3, 8.0, 8.0).max_frames == 124);
+        // 小卡同理，至少保住五秒那一档
+        stages::set_video_limits(stages::cap_by_vram(h3, 2.0, 0.0));
+        CHECK(stages::duration_slots() == std::vector<double>{2.0, 3.0, 4.0, 5.0});
+    }
+
+    SUBCASE("上限小到一档都不剩时也有一档可用") {
+        stages::VideoLimits tiny;
+        tiny.max_frames = 12;   // 0.5 秒
+        stages::set_video_limits(tiny);
+        CHECK_FALSE(stages::duration_slots().empty());
+        // 12 不在 4n+1 的格子上，往下取到 9
+        CHECK(stages::frames_for(10.0, 24) == 9);
+    }
+
+    stages::set_video_limits(saved);
+}
+
+TEST_CASE("视频限制按模型自己认，不用人记着填") {
+    // **换模型时人改的是 [models].video 那一行**，不会想起来还有帧数格子
+    // 要跟着改；而填错了全程不报错，只是成片比分镜表长一点点。
+    const auto h3 = stages::guess_video_limits("minimax_h3_fl2va-Q4_K_M.gguf");
+    CHECK(h3.max_frames == 360);
+    CHECK(h3.frame_step == 17);
+    CHECK(h3.frame_base == 5);
+
+    const auto wan = stages::guess_video_limits("wan2.1_i2v_480p_14B_fp16.safetensors");
+    CHECK(wan.max_frames == 121);
+    CHECK(wan.frame_step == 4);
+    CHECK(wan.frame_base == 1);
+
+    // 大小写和别名
+    CHECK(stages::guess_video_limits("MiniMax_H3.gguf").frame_step == 17);
+    CHECK(stages::guess_video_limits("hailuo3_q4.gguf").frame_step == 17);
+
+    SUBCASE("名字认不出就看编码器走哪条路") {
+        // H3 挂 video_llm（Qwen3-VL），Wan 挂 video_text_encoder（UMT5-XXL），
+        // 配置里这两项只能填一个。
+        CHECK(stages::guess_video_limits("my_model.gguf", true).frame_step == 17);
+        CHECK(stages::guess_video_limits("my_model.gguf", false).frame_step == 4);
+    }
+
+    SUBCASE("两处都认不出退回最保守的一档") {
+        // 宁可把镜头限短：按短的排最坏是浪费了本事，片子照出；按长的排而
+        // 模型其实出不了，得到的是被静默截断的片子。
+        const auto unknown = stages::guess_video_limits("");
+        CHECK(unknown.max_frames == 121);
+        CHECK(unknown.frame_step == 4);
     }
 }

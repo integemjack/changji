@@ -21,6 +21,7 @@
 #include "models/shot.hpp"
 #include "pipeline/jobs.hpp"
 #include "stages/frames.hpp"
+#include "stages/limits.hpp"
 #include "stages/render.hpp"
 #include "util/paths.hpp"
 
@@ -99,30 +100,55 @@ stages::VideoRenderer fake_ok(
 
 }  // namespace
 
-TEST_CASE("时长换帧数：必须是 4n+1，而且不超过上限") {
-    // 4n+1 是 Wan 的硬要求。给别的数它会自己截，而截的位置不告诉你。
-    for (const double d : {0.5, 1.0, 2.0, 3.0, 4.0, 5.0, 5.04, 8.0, 100.0}) {
-        CAPTURE(d);
-        const int f = stages::frames_for(d);
-        CHECK((f - 1) % 4 == 0);
-        CHECK(f >= 5);                    // 至少 4*1+1
-        CHECK(f <= stages::kMaxFrames);
-    }
+TEST_CASE("时长换帧数：落在模型的格子上，而且不超过上限") {
+    // 格子和上限都来自配置（stages/limits.hpp）。**给 sd.cpp 一个不在格子上
+    // 的帧数它不报错**，自己向上对齐，对齐到哪儿不告诉你——表现是成片每一镜
+    // 都比分镜表长一点点，而误差逐镜累积。
+    const stages::VideoLimits saved = stages::video_limits();
 
-    SUBCASE("常见档位的具体值") {
+    SUBCASE("默认那一档：4n+1、121 帧") {
+        for (const double d : {0.5, 2.0, 3.0, 5.0, 100.0}) {
+            CAPTURE(d);
+            const int f = stages::frames_for(d);
+            CHECK((f - 1) % 4 == 0);
+        }
         CHECK(stages::frames_for(2.0) == 49);
         CHECK(stages::frames_for(3.0) == 73);
         CHECK(stages::frames_for(4.0) == 97);
-        // 5 秒是 121，正好是上限
         CHECK(stages::frames_for(5.0) == 121);
+        // 121 正好在格子上，所以夹住之后就是它
+        CHECK(stages::frames_for(10.0) == 121);
+        CHECK(stages::frames_for(600.0) == 121);
     }
 
-    SUBCASE("超出上限的被截住，不是让模型自己截") {
-        // 超过约 100 帧会在末帧往回跑，出现乒乓现象。
-        // 这是模型本身的限制，不是可调参数。
-        CHECK(stages::frames_for(10.0) == stages::kMaxFrames);
-        CHECK(stages::frames_for(600.0) == stages::kMaxFrames);
+    SUBCASE("换成 MiniMax-H3：17k+5，上限往下取到合法值") {
+        stages::VideoLimits h3;
+        h3.max_frames = 360;
+        h3.frame_step = 17;
+        h3.frame_base = 5;
+        stages::set_video_limits(h3);
+
+        for (const double d : {0.5, 1.0, 2.0, 3.0, 4.0, 5.0, 8.0, 15.0, 100.0}) {
+            CAPTURE(d);
+            const int f = stages::frames_for(d);
+            CHECK((f - 5) % 17 == 0);
+            CHECK(f >= 5);
+            CHECK(f <= 360);
+        }
+
+        CHECK(stages::frames_for(2.0) == 56);
+        CHECK(stages::frames_for(3.0) == 73);
+        CHECK(stages::frames_for(4.0) == 107);
+        CHECK(stages::frames_for(5.0) == 124);
+
+        // **上限 360 本身不在格子上**（(360-5)/17 = 20.88）。往下取到 345，
+        // 而不是交出 360 让 sd.cpp 向上对齐到 362——那样反而超过了上限。
+        CHECK(stages::frames_for(600.0) == 345);
+        CHECK((345 - 5) % 17 == 0);
+        CHECK(stages::max_shot_duration_s(24) == doctest::Approx(345.0 / 24.0));
     }
+
+    stages::set_video_limits(saved);
 }
 
 TEST_CASE("视频种子和首帧种子不一样") {

@@ -85,7 +85,11 @@ double estimate_speech_duration(const std::string& text_in) {
     return spoken / kCharsPerSecond + pause_total + kLeadInS + kTailS;
 }
 
-double max_line_seconds(int fps) { return max_shot_duration_s(fps) - kTailS; }
+double max_line_seconds(int fps) {
+    // 跟着视频模型的上限走：换上能出长镜头的模型，一句台词也就能更长，
+    // 不用再被切成一句一镜。
+    return max_shot_duration_s(fps) - kTailS;
+}
 
 std::vector<std::string> split_long_text(const std::string& text_in,
                                          double max_seconds) {

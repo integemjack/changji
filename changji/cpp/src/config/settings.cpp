@@ -390,6 +390,20 @@ std::vector<std::string> Settings::validate() const {
     if (models.video_vae_tile < 0) {
         errs.push_back("[models].video_vae_tile 不能是负的（0 = 用内置值）");
     }
+    // 这三项一错，分镜、渲染、配音、装配会一起走偏，而且都不报错，
+    // 所以在配置这一关就拦住。
+    // 三项都是 0 = 按模型自己认，所以只拦负数和"只填了一半"。
+    if (models.video_max_frames < 0) {
+        errs.push_back("[models].video_max_frames 不能是负的（0 = 按模型自己认）");
+    }
+    if (models.video_frame_step < 0 || models.video_frame_base < 0) {
+        errs.push_back("[models].video_frame_step / video_frame_base 不能是负的（0 = 按模型自己认）");
+    }
+    if (models.video_frame_base > 0 && models.video_frame_step <= 0) {
+        errs.push_back(
+            "[models].video_frame_base 填了就要一起填 video_frame_step："
+            "帧数的格子是 step*k + base，只给 base 定不出来");
+    }
     if (models.video_rng != "cuda" && models.video_rng != "cpu" &&
         models.video_rng != "std") {
         errs.push_back("[models].video_rng 只能是 cuda / cpu / std，现在是 " +
@@ -610,6 +624,9 @@ void apply_table(const toml::table& doc, Settings& s) {
         take(t, "video_lora_strength", s.models.video_lora_strength);
         take(t, "video_lora_tiers", s.models.video_lora_tiers);
         take(t, "video_vae_tile", s.models.video_vae_tile);
+        take(t, "video_max_frames", s.models.video_max_frames);
+        take(t, "video_frame_step", s.models.video_frame_step);
+        take(t, "video_frame_base", s.models.video_frame_base);
         take(t, "vae_vram_min_gb", s.models.vae_vram_min_gb);
     }
     take_path_str(&doc, "workspace", s.workspace);
@@ -1009,6 +1026,14 @@ subtitle_font = "Source Han Sans SC"
 # 调小换显存：块的计算缓冲小了，VAE 权重才有机会常驻显存。5090 上实测
 # VAE 放内存解码要 71 秒、放显存只要 8 秒，而按内置块大小放显存会差 112 MB。
 # video_vae_tile = 12
+#
+# 视频模型单段能出多少帧、帧数要落在什么格子上。
+# **一般不用填**：引擎按上面 video 那个文件名自己认（MiniMax-H3 360/17k+5、
+# Wan 121/4n+1），换模型就跟着换，不用记着改这里。
+#   填了才覆盖它——卡小跑不动长镜头时用得上：
+# video_max_frames = 124   # 17*7+5，正好在格子上 = 5.167 秒，回到一镜五秒的排法
+# video_frame_step = 17
+# video_frame_base = 5
 #
 # weights = "smart" 时，显存到多少才把 VAE 放显存（GB）。默认 40 是量出来的：
 # 5090（32.6 GB）上扩散 17.9 + VAE 5.5 = 23.4 GB 权重，加扩散自己约 9 GB 的
