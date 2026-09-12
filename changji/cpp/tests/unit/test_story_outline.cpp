@@ -2282,6 +2282,7 @@ TEST_CASE("收尾只说「说了一句」、不给内容，就打回") {
         return json{{"scenes", scenes}}.dump();
     };
 
+    // 只管每章最后一场：这里只有一场，它就是章尾
     CHECK_THROWS_AS(changji::stages::parse_chapter(
                         make("他低声说了一句，没人回答。")),
                     changji::stages::StoryError);
@@ -2294,6 +2295,41 @@ TEST_CASE("收尾只说「说了一句」、不给内容，就打回") {
     // 软闸：最后一次尝试照收
     CHECK_NOTHROW(changji::stages::parse_chapter(
         make("他低声说了一句，没人回答。"), 0, false));
+
+    // **中间那几场不管。** 每场都管的那一版实跑生成时间翻倍（420 → 850
+    // 秒）——模型一直写转述、一直被打回，而时间翻倍就说明它满足不了。
+    // 章尾那个钩子最要紧（这一章留给下一章的悬念），先只守它。
+    // 两场的段落也要各写各的，否则撞上「一段话不许写两遍」那道闸
+    int serial = 0;
+    const auto body = [&]() {
+        json out = json::array();
+        for (int i = 0; i < 16; ++i) {
+            out.push_back("第" + std::to_string(++serial) +
+                          "段：她把抹布拧干，水滴落在地板上，溅出细小的一圈。");
+        }
+        out.push_back("他停在门口：“伞我带来了" + std::to_string(serial) + "。”");
+        out.push_back("她没抬头：“放那儿吧" + std::to_string(serial) + "。”");
+        out.push_back("他把伞靠在柜台边：“那我走了" + std::to_string(serial) + "。”");
+        return out;
+    };
+    // 两场的 turn 必须不同，否则先撞上「两场不能停在同一件事上」那道闸
+    const auto scene = [&](const std::string& turn, const std::string& last) {
+        return json{{"where", "深夜，便利店"},
+                    {"pov", "林晚"},
+                    {"who", json::array({"林晚", "陈默"})},
+                    {"goal", "把伞要回来"},
+                    {"obstacle", "他不认这把伞"},
+                    {"worse", "她发现伞根本不是他带来的"},
+                    {"turn", turn},
+                    {"paragraphs", body()},
+                    {"last_line", last}};
+    };
+    json two = json::array();
+    two.push_back(scene("伞柄上刻着别人的名字",
+                        "他低声说了一句，没人回答。"));       // 中间那场：放过
+    two.push_back(scene("她把工牌扣在了柜台上",
+                        "他低声说：“这伞不是我的。”"));       // 章尾：合格
+    CHECK_NOTHROW(changji::stages::parse_chapter(json{{"scenes", two}}.dump()));
 }
 
 TEST_CASE("模型的自言自语摘掉那一段，不废整章") {

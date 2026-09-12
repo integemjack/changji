@@ -978,15 +978,20 @@ ChapterDraft parse_chapter(const std::string& raw, int min_chars, bool strict) {
         static const char* kHearsay[] = {"说了一句", "说了什么", "说了些什么",
                                          "问了一句", "回了一句", "应了一句",
                                          "开口说了", "低声说了"};
-        for (const DraftScene& sc : d.scenes) {
-            if (sc.paragraphs.empty()) continue;
-            const std::string& last = sc.paragraphs.back();
-            if (last.find("“") != std::string::npos) continue;  // 话写出来了
-            for (const char* w : kHearsay) {
-                if (last.find(w) == std::string::npos) continue;
-                throw StoryError(std::string("有一场的收尾只说了「") + w +
-                                 "」，没说那句话是什么：这是整集的钩子，"
-                                 "观众得听见那句话。重试一次");
+        // **只管每章最后一场。** 第一版每场都管，实跑生成时间翻倍
+        // （420 → 850 秒）——模型一直写转述、一直被打回，而按第三轮记下的
+        // 判据，时间翻倍就说明它满足不了。章尾那个钩子最要紧（它是这一章
+        // 留给下一章的悬念，也是分集里最后一集的结尾），先只守它，看能不能
+        // 把重试砍掉大半而保住对白下限。
+        if (!d.scenes.empty() && !d.scenes.back().paragraphs.empty()) {
+            const std::string& last = d.scenes.back().paragraphs.back();
+            if (last.find("“") == std::string::npos) {  // 话没写出来
+                for (const char* w : kHearsay) {
+                    if (last.find(w) == std::string::npos) continue;
+                    throw StoryError(std::string("章尾那一句只说了「") + w +
+                                     "」，没说那句话是什么：这是这一章留给"
+                                     "下一章的悬念，观众得听见那句话。重试一次");
+                }
             }
         }
     }
