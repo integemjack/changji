@@ -289,8 +289,16 @@ void run(const config::Settings& settings, const Options& opts) {
     // /api/connections 和 /api/settings 能在运行期改配置，
     // 用捕获的那份的话，改完之后体检和硬件画像还是老的，
     // 用户会以为改动没生效。
-    CROW_ROUTE(app, "/api/doctor")([] {
-        const auto settings = config::runtime().snapshot();
+    CROW_ROUTE(app, "/api/doctor")([](const crow::request& req) {
+        auto settings = config::runtime().snapshot();
+        // **画面规格是每部剧自己的**（项目目录的 changji.toml 里那个
+        // [video]），给了 path 就把它读进来。不读的话「出片画布」那一项
+        // 查的是全局默认、而出片用的是这部剧的那个——项目切到 2k 之后体检
+        // 照样说 544×928 没问题，这条检查等于没有。实测撞到过。
+        const char* path = req.url_params.get("path");
+        if (path != nullptr && *path != '\0') {
+            settings = config::load_settings(changji::paths::from_utf8(path));
+        }
         // 体检里有三项要发网络请求，最坏情况阻塞二十多秒。
         // Crow 是线程池模型，这只占住一个工作线程，不影响其它请求。
         return json_response(to_json(doctor::run_checks(settings)));
