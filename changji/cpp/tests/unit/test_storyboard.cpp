@@ -580,3 +580,81 @@ TEST_CASE("越界的转场时长兜住，别为一栏装饰丢掉一整集") {
     CHECK(one("dissolve", 0.8) == doctest::Approx(0.8));    // 合法的不动
     CHECK(one("cut", 1.5) == doctest::Approx(0.0));         // 硬切一律零
 }
+
+TEST_CASE("剧本里漏掉的台词由引擎照顺序补进镜头") {
+    // 分镜模型不搬台词：实跑一集九句只写了两句，dump 出来看是压根没生成。
+    // 台词本来就在剧本里，引擎自己放比指望模型重打一遍靠谱。
+    const models::AssetLibrary a = test_assets();
+    const std::string script =
+        "【开场钩子 0–5 秒】\n"
+        "雨夜天台。\n"
+        "林晚：你说过会来的。\n"
+        "他没有回头。\n"
+        "陈默：我来了。\n"
+        "【集尾留扣】\n"
+        "林晚：晚了七年。";
+
+    auto blank = [](const char* id, int order) {
+        models::Shot s;
+        s.shot_id = id;
+        s.scene_id = "sc01";
+        s.order = order;
+        s.duration_s = 5.0;
+        return s;
+    };
+
+    SUBCASE("一句都没写：整段按位置摊到各镜") {
+        std::vector<models::Shot> shots{blank("ep01_sh001", 0),
+                                        blank("ep01_sh002", 1),
+                                        blank("ep01_sh003", 2)};
+        CHECK(stages::place_missing_dialogue(shots, script, a) == 3);
+        CHECK(stages::missing_dialogue_lines(script, shots).empty());
+        // 顺序不能乱：先「你说过会来的」，最后「晚了七年」
+        std::vector<std::string> said;
+        for (const auto& s : shots)
+            for (const auto& d : s.dialogue) said.push_back(d.text);
+        CHECK(said == std::vector<std::string>{"你说过会来的。", "我来了。",
+                                               "晚了七年。"});
+        // 说话人认出来了，而且必然在场
+        CHECK(shots[0].dialogue[0].char_id == std::optional<std::string>("c_lin_wan"));
+        CHECK_FALSE(shots[0].characters.empty());
+    }
+
+    SUBCASE("写了一半：漏的那句插在两个锚点之间") {
+        std::vector<models::Shot> shots{blank("ep01_sh001", 0),
+                                        blank("ep01_sh002", 1),
+                                        blank("ep01_sh003", 2)};
+        models::DialogueLine first;
+        first.char_id = "c_lin_wan";
+        first.text = "你说过会来的。";
+        shots[0].dialogue.push_back(first);
+        models::DialogueLine last;
+        last.char_id = "c_lin_wan";
+        last.text = "晚了七年。";
+        shots[2].dialogue.push_back(last);
+
+        CHECK(stages::place_missing_dialogue(shots, script, a) == 1);
+        // 只补中间那一句，而且落在首尾之间
+        CHECK(shots[1].dialogue.size() == 1);
+        CHECK(shots[1].dialogue[0].text == "我来了。");
+        CHECK(shots[0].dialogue.size() == 1);
+        CHECK(shots[2].dialogue.size() == 1);
+    }
+
+    SUBCASE("已经写全了就一句不补") {
+        std::vector<models::Shot> shots{blank("ep01_sh001", 0)};
+        for (const char* t : {"你说过会来的。", "我来了。", "晚了七年。"}) {
+            models::DialogueLine d;
+            d.char_id = "c_lin_wan";
+            d.text = t;
+            shots[0].dialogue.push_back(d);
+        }
+        CHECK(stages::place_missing_dialogue(shots, script, a) == 0);
+        CHECK(shots[0].dialogue.size() == 3);
+    }
+
+    SUBCASE("没有镜头时什么也不做，不崩") {
+        std::vector<models::Shot> none;
+        CHECK(stages::place_missing_dialogue(none, script, a) == 0);
+    }
+}

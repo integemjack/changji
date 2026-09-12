@@ -8,7 +8,9 @@
 
 #include <doctest/doctest.h>
 
+#include <cstdint>
 #include <fstream>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -499,4 +501,53 @@ TEST_CASE("给了角色名，speaker 就收成枚举") {
                         .at("items").at("properties").at("speaker")
                         .contains("enum"));
     }
+}
+
+TEST_CASE("形状不写死：同一个时长能摇出不一样的节奏") {
+    // 写死的话 60 秒永远是 5/28/21/6，连着看几集是一个模子。
+    // 总拍数还是按时长来（防 13 秒那个毛病回来），但各段怎么分随这一集变。
+    const auto base = stages::act_plan(60.0);        // 不浮动，老行为
+    CHECK(base[0].to_s == 5);
+    CHECK(base[3].from_s == 54);
+
+    std::set<std::string> shapes;
+    for (int i = 0; i < 40; ++i) {
+        const auto a = stages::act_plan(60.0, stages::random_shape());
+        REQUIRE(a.size() == 4);
+        // 不管怎么摇，四段首尾相接、加起来正好一集
+        CHECK(a[0].from_s == 0);
+        CHECK(a[3].to_s == 60);
+        int beats = 0;
+        for (std::size_t k = 0; k < a.size(); ++k) {
+            CHECK(a[k].to_s > a[k].from_s);
+            if (k) CHECK(a[k].from_s == a[k - 1].to_s);
+            CHECK(a[k].min_beats >= 2);
+            beats += a[k].min_beats;
+        }
+        // 总量守得住：60 秒怎么摇都还是十几拍起
+        CHECK(beats >= 12);
+        shapes.insert(std::to_string(a[0].to_s) + "/" + std::to_string(a[1].to_s) +
+                      "/" + std::to_string(a[2].to_s));
+    }
+    // 四十次至少摇出好几种形状，不是一个模子
+    CHECK(shapes.size() >= 5);
+}
+
+TEST_CASE("摇出来的形状要和 schema、解析用的是同一个") {
+    // 种子对不上的话，段头上的秒数和模型看到的不是一回事
+    const std::uint32_t seed = stages::random_shape();
+    const auto acts = stages::act_plan(60.0, seed);
+    const json s = json(stages::script_schema(60.0, {}, seed));
+    const json& esc = s.at("properties").at("escalation").at("properties").at("beats");
+    CHECK(esc.at("minItems").get<int>() == acts[1].min_beats);
+
+    const std::string raw = R"({"title":"x","logline":"y",
+      "opening":{"beats":[{"kind":"dialogue","speaker":"甲","text":"一"}]},
+      "escalation":{"beats":[{"kind":"dialogue","speaker":"甲","text":"二"}]},
+      "payoff":{"beats":[{"kind":"dialogue","speaker":"甲","text":"三"}]},
+      "cliff":{"beats":[{"kind":"dialogue","speaker":"甲","text":"四"}]}})";
+    const stages::ScriptDraft d = stages::parse_script(raw, 60.0, seed);
+    REQUIRE(d.acts.size() == 4);
+    CHECK(d.acts[1].from_s == acts[1].from_s);
+    CHECK(d.acts[1].to_s == acts[1].to_s);
 }

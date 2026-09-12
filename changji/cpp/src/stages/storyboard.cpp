@@ -566,8 +566,10 @@ namespace {
 ///
 /// 段头（「【开场钩子 0–5 秒】」）跳过。判「这一行是台词」的办法和
 /// ScriptReader 一样：冒号前是个短名字。
-std::vector<std::string> script_dialogue_lines(const std::string& script) {
-    std::vector<std::string> out;
+/// 剧本里的台词，一句一条，带说话人。
+std::vector<std::pair<std::string, std::string>> script_dialogue_pairs(
+    const std::string& script) {
+    std::vector<std::pair<std::string, std::string>> out;
     std::size_t start = 0;
     while (start <= script.size()) {
         std::size_t end = script.find('\n', start);
@@ -587,8 +589,14 @@ std::vector<std::string> script_dialogue_lines(const std::string& script) {
         const std::string name = line.substr(0, at);
         if (text::utf8_len(name) > 12) continue;
         const std::string said = text::strip_ws(line.substr(at + sep));
-        if (!said.empty()) out.push_back(said);
+        if (!said.empty()) out.emplace_back(name, said);
     }
+    return out;
+}
+
+std::vector<std::string> script_dialogue_lines(const std::string& script) {
+    std::vector<std::string> out;
+    for (const auto& kv : script_dialogue_pairs(script)) out.push_back(kv.second);
     return out;
 }
 
@@ -673,6 +681,89 @@ std::vector<std::string> check_coverage(const std::string& script,
     }
 
     return problems;
+}
+
+int place_missing_dialogue(std::vector<Shot>& shots, const std::string& script,
+                           const AssetLibrary& assets) {
+    if (shots.empty()) return 0;
+    const auto want = script_dialogue_pairs(script);
+    if (want.empty()) return 0;
+
+    // 名字 → char_id。剧本里写的是名字，镜头里存的是 id。
+    std::map<std::string, std::string> id_of;
+    for (const auto& kv : assets.characters) id_of[kv.second.name] = kv.first;
+
+    // 这一句已经落在第几镜；-1 表示没落。
+    const int n = static_cast<int>(want.size());
+    const int m = static_cast<int>(shots.size());
+    std::vector<int> at(want.size(), -1);
+    for (int i = 0; i < n; ++i) {
+        const std::string key = squash(want[static_cast<std::size_t>(i)].second);
+        if (key.empty()) continue;
+        for (int s = 0; s < m && at[static_cast<std::size_t>(i)] < 0; ++s) {
+            for (const auto& d : shots[static_cast<std::size_t>(s)].dialogue) {
+                const std::string got = squash(d.text);
+                if (got.find(key) != std::string::npos ||
+                    (!got.empty() && key.find(got) != std::string::npos)) {
+                    at[static_cast<std::size_t>(i)] = s;
+                    break;
+                }
+            }
+        }
+    }
+
+    int placed = 0;
+    for (int i = 0; i < n; ++i) {
+        if (at[static_cast<std::size_t>(i)] >= 0) continue;
+
+        // 前后最近的锚点。夹在中间就放中间那一镜，保住先后次序。
+        int prev = -1, next = -1;
+        for (int k = i - 1; k >= 0; --k) {
+            if (at[static_cast<std::size_t>(k)] >= 0) { prev = at[static_cast<std::size_t>(k)]; break; }
+        }
+        for (int k = i + 1; k < n; ++k) {
+            if (at[static_cast<std::size_t>(k)] >= 0) { next = at[static_cast<std::size_t>(k)]; break; }
+        }
+        int target;
+        if (prev >= 0 && next >= 0) {
+            target = prev + (next - prev) / 2;
+        } else if (prev >= 0) {
+            target = prev + 1;
+        } else if (next >= 0) {
+            target = next - 1;
+        } else {
+            // 一个锚点都没有：按它在剧本里的位置摊到各镜
+            target = static_cast<int>((static_cast<double>(i) + 0.5) /
+                                      static_cast<double>(n) * m);
+        }
+        target = std::clamp(target, 0, m - 1);
+
+        Shot& shot = shots[static_cast<std::size_t>(target)];
+        models::DialogueLine line;
+        line.text = want[static_cast<std::size_t>(i)].second;
+        const auto it = id_of.find(want[static_cast<std::size_t>(i)].first);
+        // 认不出的名字当旁白。这一层不该猜，剧本那边已经把 speaker 收成
+        // 枚举了，认不出来多半真是旁白。
+        if (it != id_of.end()) line.char_id = it->second;
+        shot.dialogue.push_back(std::move(line));
+
+        // 说话的人必然在场
+        if (it != id_of.end()) {
+            const bool there = std::any_of(
+                shot.characters.begin(), shot.characters.end(),
+                [&](const models::CharacterInShot& c) {
+                    return c.char_id == it->second;
+                });
+            if (!there) {
+                models::CharacterInShot c;
+                c.char_id = it->second;
+                shot.characters.push_back(std::move(c));
+            }
+        }
+        at[static_cast<std::size_t>(i)] = target;
+        ++placed;
+    }
+    return placed;
 }
 
 std::vector<std::string> missing_dialogue_lines(const std::string& script,

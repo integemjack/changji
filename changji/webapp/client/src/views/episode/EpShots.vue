@@ -266,11 +266,16 @@ async function generate() {
         `只排到 ${humanTime(result.duration_s)}，目标 ${humanTime(target)}。分镜太少，重出一次，或者回剧本把内容写足`,
       )
     } else if (missing.length) {
-      // 分镜表照样存下来了——重出一次要再等两三分钟，而多半在某一镜里
-      // 补一句就够。所以说清楚漏了哪几句，让人自己挑怎么办。
+      // 补完还漏，说明落位那一步也没兜住。不拦，但要让人看见。
       const head = missing.slice(0, 2).map((s) => `「${s}」`).join('、')
       ui.warn(
         `出了 ${result.shots} 个镜头，但剧本里有 ${missing.length} 句台词没排进去：${head}${missing.length > 2 ? ' 等' : ''}。在镜头里补上，或者重出一次`,
+      )
+    } else if (result.placed_lines) {
+      // 分镜模型不搬台词（实跑九句只写两句），所以引擎照剧本把漏的补了。
+      // 台词和说话人都是准的，位置是估的——说一声，人可以拖一下改。
+      ui.ok(
+        `出了 ${result.shots} 个镜头，共 ${humanTime(result.duration_s)}。其中 ${result.placed_lines} 句台词是照剧本自动排进去的，位置可以在镜头里调`,
       )
     } else {
       ui.ok(`出了 ${result.shots} 个镜头，共 ${humanTime(result.duration_s)}`)

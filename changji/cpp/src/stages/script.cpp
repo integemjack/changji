@@ -4,6 +4,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <random>
 #include <set>
 #include <string>
 #include <vector>
@@ -203,19 +204,55 @@ int budget_chars(double duration_s) {
 
 // ---- 四段 ----
 
-std::vector<ActSpec> act_plan(double duration_s) {
+std::uint32_t random_shape() {
+    static thread_local std::mt19937 gen(std::random_device{}());
+    const std::uint32_t v = gen();
+    return v ? v : 1u;   // 0 表示不浮动，别撞上
+}
+
+namespace {
+
+/// 从种子里取第 k 个 0~1 之间的数。
+///
+/// 混一道 xorshift：集号往往只差一个字（ep01 / ep02），不混的话
+/// FNV 的低位差不多，形状还是一个样。
+double frac(std::uint32_t seed, int k) {
+    std::uint32_t x = seed + static_cast<std::uint32_t>(k) * 0x9E3779B9u;
+    x ^= x << 13;
+    x ^= x >> 17;
+    x ^= x << 5;
+    return static_cast<double>(x % 10000u) / 10000.0;
+}
+
+/// 在 [lo, hi] 里按种子挑一个。
+double pick(std::uint32_t seed, int k, double lo, double hi) {
+    return lo + frac(seed, k) * (hi - lo);
+}
+
+}  // namespace
+
+std::vector<ActSpec> act_plan(double duration_s, std::uint32_t variation) {
     // 秒数取整了再分。时长再短也按 4 秒排，每段至少 1 秒——
     // 银行家舍入那几条用例会传 0.5 进来，不能在这儿除出负数。
     const int total = std::max(4, static_cast<int>(std::lround(duration_s)));
-    // 开场和留扣是两头的硬件：比例上 8% / 10%，但三分钟的集开场也不能
-    // 拖到十几秒，钩子也不用留一分钟——封顶 8 / 10 秒。
+
+    // **形状不写死。** 写死的话 60 秒永远是 5/28/21/6，连着看几集一个样。
+    // 非零种子就在这几个区间里挑一组：有的集开场慢、后半段炸，有的集从头
+    // 压到尾。总拍数还是按时长来，所以「撑不满时长」那个毛病不会回来。
+    const double open_r = variation ? pick(variation, 0, 0.05, 0.14) : 0.08;
+    const double cliff_r = variation ? pick(variation, 1, 0.07, 0.17) : 0.10;
+    const double esc_share = variation ? pick(variation, 2, 0.45, 0.68) : 0.57;
+
+    // 开场和留扣是两头的硬件：三分钟的集开场也不能拖到十几秒，
+    // 钩子也不用留一分钟——封顶 8 / 10 秒。
     const int opening =
-        std::clamp(static_cast<int>(std::lround(total * 0.08)), 1, 8);
+        std::clamp(static_cast<int>(std::lround(total * open_r)), 1, 8);
     const int cliff =
-        std::clamp(static_cast<int>(std::lround(total * 0.10)), 1, 10);
+        std::clamp(static_cast<int>(std::lround(total * cliff_r)), 1, 10);
     const int middle = total - opening - cliff;  // total ≥ 4 时 ≥ 2
-    // 中段推进略多于回报：压得久，放得才有劲。
-    int escalation = std::max(1, static_cast<int>(std::lround(middle * 0.57)));
+    // 中段推进多于回报：压得久，放得才有劲。具体多多少随这一集变。
+    int escalation =
+        std::max(1, static_cast<int>(std::lround(middle * esc_share)));
     int payoff = middle - escalation;
     if (payoff < 1) {
         payoff = 1;
@@ -559,8 +596,9 @@ const ordered& script_schema() {
 }
 
 ordered script_schema(double duration_s,
-                      const std::vector<std::string>& characters) {
-    const std::vector<ActSpec> specs = act_plan(duration_s);
+                      const std::vector<std::string>& characters,
+                      std::uint32_t variation) {
+    const std::vector<ActSpec> specs = act_plan(duration_s, variation);
 
     ordered props = ordered::object();
     put_title_and_logline(props);
@@ -663,7 +701,8 @@ void parse_beats_into(const json& arr, std::vector<Beat>& out) {
 
 }  // namespace
 
-ScriptDraft parse_script(const std::string& raw, double duration_s) {
+ScriptDraft parse_script(const std::string& raw, double duration_s,
+                         std::uint32_t variation) {
     json data;
     try {
         data = extract_json(raw);
@@ -678,7 +717,9 @@ ScriptDraft parse_script(const std::string& raw, double duration_s) {
 
     // 四段的回包：四个键都在才算。少一个就退回平的那条路——
     // 模型偶尔会把四段拍成一个 beats 数组，那样解析出来还是一集，只是没段头。
-    const std::vector<ActSpec> specs = act_plan(duration_s);
+    // **种子要和出 schema、拼提示词时用的是同一个**，否则段头上的秒数
+    // 和模型看到的对不上。
+    const std::vector<ActSpec> specs = act_plan(duration_s, variation);
     const bool four = std::all_of(specs.begin(), specs.end(), [&](const ActSpec& s) {
         return data.contains(s.key);
     });

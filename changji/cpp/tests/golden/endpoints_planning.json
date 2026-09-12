@@ -1800,6 +1800,7 @@
     "shots": 2,
     "duration_s": 8.0,
     "missing_lines": [],
+    "placed_lines": 0,
     "lipsync": 1,
     "characters": [
      {
@@ -2044,6 +2045,7 @@
     "shots": 3,
     "duration_s": 12.0,
     "missing_lines": [],
+    "placed_lines": 0,
     "lipsync": 2,
     "characters": [
      {
@@ -2339,6 +2341,7 @@
     "shots": 3,
     "duration_s": 12.0,
     "missing_lines": [],
+    "placed_lines": 0,
     "lipsync": 2,
     "characters": [
      {
@@ -2633,6 +2636,7 @@
     "shots": 3,
     "duration_s": 12.0,
     "missing_lines": [],
+    "placed_lines": 0,
     "lipsync": 2,
     "characters": [
      {
@@ -3052,6 +3056,7 @@
     "shots": 3,
     "duration_s": 12.0,
     "missing_lines": [],
+    "placed_lines": 0,
     "lipsync": 2,
     "characters": [
      {
@@ -3403,6 +3408,7 @@
     "shots": 3,
     "duration_s": 12.0,
     "missing_lines": [],
+    "placed_lines": 0,
     "lipsync": 2,
     "characters": [
      {
@@ -3725,7 +3731,7 @@
    "project_after": null
   },
   {
-   "name": "出分镜：分镜里没台词",
+   "name": "出分镜：模型没写台词，引擎照剧本补上",
    "url": "/api/plan",
    "body": {
     "project": "C:\\Users\\ultra\\AppData\\Local\\Temp\\changji_planning_3brmf2ea\\case20",
@@ -3743,11 +3749,33 @@
    ],
    "status": 400,
    "response": {
-    "detail": "分镜表不完整：\n剧本里有对白，但分镜表里一句台词都没有。模型多半漏填了 dialogue 字段\n\n换一个更强的模型，或者手工补齐这些字段后再跑。"
+    "episode_id": "ep01",
+    "shots": 1,
+    "duration_s": 5.0,
+    "missing_lines": [],
+    "placed_lines": 2,
+    "lipsync": 0,
+    "characters": [
+     {
+      "char_id": "c_lin_yuan",
+      "name": "林渊",
+      "face": "单眼皮，短碎发，眼下有一道旧疤"
+     }
+    ],
+    "locations": [
+     {
+      "location_id": "loc_rooftop",
+      "name": "天台"
+     },
+     {
+      "location_id": "loc_alley",
+      "name": "小巷"
+     }
+    ]
    },
-   "compare": "detail_str",
-   "cpp_status": 400,
-   "cpp_note": null,
+   "compare": "full",
+   "cpp_status": 200,
+   "cpp_note": "分镜模型不搬台词（实跑九句只写两句）。原来这里报 400 说「产出一部哑剧」，现在引擎照剧本把台词补进镜头，所以是 200 加 placed_lines。",
    "assets_after": null,
    "project_after": null
   }

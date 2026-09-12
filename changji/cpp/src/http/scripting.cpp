@@ -277,6 +277,8 @@ ApiResult post_script_write(const json& body, llm::Client& client,
 
     std::string prompt;
     const char* source = "premise";
+    // 0 表示不浮动。照梗概续写那条老路子保持原样。
+    std::uint32_t variation = 0;
     if (plan != nullptr) {
         // 上一集的结尾拿来接语气。**按分集表的顺序取上一条**，不是按
         // project.episodes 的顺序——后者可能被手动加过集、插过预告片。
@@ -291,8 +293,15 @@ ApiResult post_script_write(const json& body, llm::Client& client,
             }
             break;
         }
+        // 这一集的形状。**四段的比例不写死**：写死的话 60 秒永远是
+        // 5/28/21/6，连着看几集是一个模子。
+        //
+        // 每写一次摇一个新的（ComfyUI 的 randomize 那个意思）——**不是按集号
+        // 哈希**，那样同一集永远是同一个形状，人不喜欢这一集的节奏也换不掉。
+        // 不满意就再点一次「重新改编」，满意了点采用，形状就跟着剧本定下来。
+        variation = stages::random_shape();
         prompt = stages::build_script_prompt_from_story(
-            story, *plan, project.style_line, names, prev_tail);
+            story, *plan, project.style_line, names, prev_tail, variation);
         source = "story";
     } else {
         prompt = stages::build_script_prompt(premise, duration_s,
@@ -312,11 +321,12 @@ ApiResult post_script_write(const json& body, llm::Client& client,
     //
     // 名字同理：提示词里说了「一字不改」，实跑还是写出了林浩 / Lin Hao /
     // LinHao / Su Wan 四种。收成枚举，和分镜那边收 char_id 是一个道理。
-    req.schema = stages::script_schema(used_duration, names);
+    req.schema = stages::script_schema(used_duration, names, variation);
     req.schema_name = "script";
 
     const stages::ScriptDraft draft = llm_guard([&] {
-        return stages::parse_script(client.complete(req, tok), used_duration);
+        return stages::parse_script(client.complete(req, tok), used_duration,
+                                    variation);
     });
 
     // 梗概存到项目上。下次写新一集时直接回填，不用凭记忆重打。

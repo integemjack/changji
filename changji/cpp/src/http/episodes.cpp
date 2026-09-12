@@ -237,6 +237,8 @@ ApiResult post_script(const json& body, llm::Client& client,
         try {
             std::vector<Shot> shots =
                 stages::parse_storyboard(client.complete(req, tok), assets);
+            // 同 post_plan：台词由引擎照剧本放，模型只管画面。
+            stages::place_missing_dialogue(shots, script, assets);
             const auto gaps = stages::check_coverage(script, shots);
             if (!gaps.empty()) {
                 std::string msg = "分镜表不完整：";

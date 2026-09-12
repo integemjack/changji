@@ -16,6 +16,7 @@
 // 和 bible/storyboard 一样，这里只有纯函数，不碰网络也不碰 llama.cpp。
 
 #include <cstddef>
+#include <cstdint>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -107,8 +108,30 @@ struct ActSpec {
     int max_beats = 0;
 };
 
+/// 摇一个形状种子。每叫一次都不一样，0 除外（0 表示不浮动）。
+///
+/// **照 ComfyUI 的 seed 那一套。** 那边 seed 是个看得见的输入框，旁边
+/// control_after_generate 可以选 randomize——不满意就再摇一次，摇到满意的
+/// 就固定下来。我们这儿「再摇一次」就是再点一次「重新改编」，「固定下来」
+/// 就是点采用（剧本存进项目，形状跟着定了）。
+///
+/// 所以**不从集号哈希**：那样同一集永远是同一个形状，人不喜欢这一集的节奏
+/// 也换不掉——那不叫多样性，叫每集一个固定的模子。
+std::uint32_t random_shape();
+
 /// 把一集按秒切成四段。时长小到切不开也不会崩（最少按 4 秒排）。
-std::vector<ActSpec> act_plan(double duration_s);
+///
+/// **总量是定的，形状不是。** 一集要撑够多少拍由时长决定（不加这个约束，
+/// 60 秒的集会写出 13 秒）；但「开场占几秒、推进占几秒」不该写死——写死了
+/// 每一集都是同一个模子，60 秒永远是 5/28/21/6，连着看几集就是一个样。
+///
+/// 所以 variation 非零时，各段的比例在下面这几个区间里挑一组：
+/// 开场 5%~14%、留扣 7%~17%、推进占中段的 45%~68%。有的集从头压到尾，
+/// 有的集开场慢、后半段炸，总拍数还是那么多。
+///
+/// variation = 0 是**不浮动**，走那组固定比例（8%/10%/57%）。老路径和
+/// 语料里的调用都不传，行为和以前一字不差。
+std::vector<ActSpec> act_plan(double duration_s, std::uint32_t variation = 0);
 
 /// 给提示词看的那一段：四段各占几秒、各干什么、至少几拍。
 ///
@@ -201,8 +224,10 @@ const nlohmann::ordered_json& script_schema();
 ///
 /// 分镜那边早就是这么干的（llm_shot_schema 把 char_id 收成枚举），注释里写的是
 /// 「收紧成枚举是防止模型凭空造角色最硬的手段」。剧本这一层一直没收。
+/// variation 要和提示词、解析那两处用**同一个**，否则段头上的秒数对不上。
 nlohmann::ordered_json script_schema(
-    double duration_s, const std::vector<std::string>& characters = {});
+    double duration_s, const std::vector<std::string>& characters = {},
+    std::uint32_t variation = 0);
 /// 选题的 JSON Schema。
 const nlohmann::ordered_json& premise_schema();
 
@@ -212,7 +237,8 @@ const nlohmann::ordered_json& premise_schema();
 ///
 /// duration_s 给了才知道每段占几秒（段头上那个数）；不给的话段还在，
 /// 只是段头没有秒数。
-ScriptDraft parse_script(const std::string& raw, double duration_s = 0.0);
+ScriptDraft parse_script(const std::string& raw, double duration_s = 0.0,
+                         std::uint32_t variation = 0);
 std::vector<PremiseIdea> parse_premises(const std::string& raw);
 
 }  // namespace changji::stages

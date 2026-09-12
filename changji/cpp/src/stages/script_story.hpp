@@ -15,6 +15,7 @@
 //
 // 纯函数，不碰网络也不碰 llama.cpp。
 
+#include <cstdint>
 #include <string>
 #include <vector>
 
@@ -66,10 +67,12 @@ std::string render_script_context(const models::Story& story,
                                   const std::string& previous_tail = "");
 
 /// 拼提示词。
+/// variation 是这一集的形状种子（见 script.hpp 的 act_plan）。要和出 schema、
+/// 解析那两处用同一个，否则段头上的秒数和模型看到的对不上。
 std::string build_script_prompt_from_story(
     const models::Story& story, const models::EpisodePlan& plan,
     models::StyleLine style_line, const std::vector<std::string>& characters = {},
-    const std::string& previous_tail = "");
+    const std::string& previous_tail = "", std::uint32_t variation = 0);
 
 /// 取一段剧本的结尾，给下一集接语气用。按字符截，不按字节。
 std::string script_tail(const std::string& script);

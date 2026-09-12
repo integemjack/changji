@@ -228,7 +228,7 @@ std::string render_script_context(const Story& story, const EpisodePlan& plan,
 std::string build_script_prompt_from_story(
     const Story& story, const EpisodePlan& plan, StyleLine style_line,
     const std::vector<std::string>& characters,
-    const std::string& previous_tail) {
+    const std::string& previous_tail, std::uint32_t variation) {
     const char* hint = style_line == StyleLine::ANIME
                            ? prompt::kScriptHintAnime
                            : prompt::kScriptHintRealistic;
@@ -241,8 +241,9 @@ std::string build_script_prompt_from_story(
     out += prompt::kStoryScriptSeg2;
     out += std::to_string(budget_chars(plan.target_duration_s));
     out += prompt::kStoryScriptRules;
-    // 四段按秒排。时长按分集表的，和字数预算同源。
-    out += render_act_brief(act_plan(plan.target_duration_s));
+    // 四段按秒排。时长按分集表的，和字数预算同源；形状随这一集浮动，
+    // 所以种子要和出 schema、解析那两处用同一个。
+    out += render_act_brief(act_plan(plan.target_duration_s, variation));
 
     if (!characters.empty()) {
         out += prompt::kStoryScriptCharsPre;

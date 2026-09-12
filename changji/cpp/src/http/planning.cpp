@@ -286,6 +286,7 @@ ApiResult post_plan(const json& body, llm::Client& client,
     const std::string episode_id = opt_str(body, "episode_id", "ep01");
     const double duration_s = opt_num(body, "duration_s", 60.0);
     const bool regenerate = opt_bool(body, "regenerate_bible", false);
+    int placed_lines = 0;
 
     ProjectStore store = open_project(body);
     Project project = load_or_400(store);
@@ -315,9 +316,14 @@ ApiResult post_plan(const json& body, llm::Client& client,
     std::vector<Shot> shots = stage_guard([&] {
         std::vector<Shot> s = stages::parse_storyboard(client.complete(req, tok),
                                                        assets);
-        // 覆盖检查在解析之后、口型推导之前。大模型很容易只写画面不写台词，
-        // 产出一部哑剧——这类问题在生成阶段就该检出，不该等到配音阶段
-        // 发现一句话都没有。
+        // **先把剧本里漏掉的台词补进去，再查。** 分镜模型不搬台词——实跑
+        // 九句只写两句，dump 出来看是压根没生成。台词本来就在剧本里，
+        // 有顺序有说话人，引擎自己放比指望模型重打一遍靠谱。
+        //
+        // 放在 check_coverage 之前：一句台词都没写的那种「哑剧」，本来就
+        // 是这一步能救回来的，不该先报错退出。
+        placed_lines = stages::place_missing_dialogue(s, script, assets);
+        // 口型要在补完台词之后推，否则补进去的那几镜不会做口型。
         const auto gaps = stages::check_coverage(script, s);
         if (!gaps.empty()) {
             std::string msg = "分镜表不完整：";
@@ -366,8 +372,8 @@ ApiResult post_plan(const json& body, llm::Client& client,
                         {"name", kv.second.name}});
     }
 
-    // 漏了几句台词**不拦**，但要说出来。拦下来等于把刚花掉的两三分钟
-    // 显卡时间一起丢了，而这张表多半还能用——人在镜头那一页补一句就行。
+    // 补完之后照理一句都不该漏。还漏的话说明落位那一步也没兜住，
+    // 照旧报出来——不拦，但要让人看见。
     json warnings = json::array();
     for (const std::string& line :
          stages::missing_dialogue_lines(script, shots)) {
@@ -379,6 +385,7 @@ ApiResult post_plan(const json& body, llm::Client& client,
         {"shots", shots.size()},
         {"duration_s", round1(total)},
         {"missing_lines", warnings},
+        {"placed_lines", placed_lines},
         {"lipsync", lipsync},
         {"characters", chars},
         {"locations", locs},
