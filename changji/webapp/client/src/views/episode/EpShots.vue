@@ -258,11 +258,19 @@ async function generate() {
   )
   if (result) {
     const target = scriptData.target_duration_s || 60
+    const missing = result.missing_lines ?? []
     // 出短了要说出来。60 秒的集出过两镜六秒——提示词里"合计 16 个镜头"
     // 一个字没少，模型照样只出两镜，然后静静地存下去，到成片才发现。
     if (result.duration_s < target * 0.8) {
       ui.warn(
         `只排到 ${humanTime(result.duration_s)}，目标 ${humanTime(target)}。分镜太少，重出一次，或者回剧本把内容写足`,
+      )
+    } else if (missing.length) {
+      // 分镜表照样存下来了——重出一次要再等两三分钟，而多半在某一镜里
+      // 补一句就够。所以说清楚漏了哪几句，让人自己挑怎么办。
+      const head = missing.slice(0, 2).map((s) => `「${s}」`).join('、')
+      ui.warn(
+        `出了 ${result.shots} 个镜头，但剧本里有 ${missing.length} 句台词没排进去：${head}${missing.length > 2 ? ' 等' : ''}。在镜头里补上，或者重出一次`,
       )
     } else {
       ui.ok(`出了 ${result.shots} 个镜头，共 ${humanTime(result.duration_s)}`)

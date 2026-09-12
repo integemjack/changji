@@ -366,10 +366,19 @@ ApiResult post_plan(const json& body, llm::Client& client,
                         {"name", kv.second.name}});
     }
 
+    // 漏了几句台词**不拦**，但要说出来。拦下来等于把刚花掉的两三分钟
+    // 显卡时间一起丢了，而这张表多半还能用——人在镜头那一页补一句就行。
+    json warnings = json::array();
+    for (const std::string& line :
+         stages::missing_dialogue_lines(script, shots)) {
+        warnings.push_back(line);
+    }
+
     return {200, {
         {"episode_id", episode_id},
         {"shots", shots.size()},
         {"duration_s", round1(total)},
+        {"missing_lines", warnings},
         {"lipsync", lipsync},
         {"characters", chars},
         {"locations", locs},

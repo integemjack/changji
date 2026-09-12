@@ -464,11 +464,22 @@ TEST_CASE("剧本里的台词漏掉了要报出来") {
     l.text = "这单要是超时，我这月房租就泡汤了。";
     s.dialogue.push_back(l);
 
-    // 只排了开场那一句，集尾留扣整段没进分镜——这一集丢的正是它的钩子
-    const auto problems = stages::check_coverage(script, {s});
-    REQUIRE(problems.size() == 1);
-    CHECK(problems[0].find("2 句台词没落到任何镜头上") != std::string::npos);
-    CHECK(problems[0].find("怎么了") != std::string::npos);
+    // 只排了开场那一句，集尾留扣整段没进分镜——这一集丢的正是它的钩子。
+    // **这不是致命错**：分镜表还能用，所以 check_coverage 不报，
+    // 由 missing_dialogue_lines 单独列出来，交给界面去说。
+    CHECK(stages::check_coverage(script, {s}).empty());
+    const auto missing = stages::missing_dialogue_lines(script, {s});
+    REQUIRE(missing.size() == 2);
+    CHECK(missing[0] == "怎么了？脸色这么难看？");
+    CHECK(missing[1] == "你到底还瞒着我什么？");
+
+    SUBCASE("标点不一样不算丢") {
+        // 模型把句号换成逗号、或者把一句拆成两镜，都是同一句话落地了
+        models::Shot t = s;
+        t.dialogue[0].text = "这单要是超时我这月房租就泡汤了";
+        CHECK(stages::missing_dialogue_lines(
+                  "林浩：这单要是超时，我这月房租就泡汤了。", {t}).empty());
+    }
 
     SUBCASE("都排上了就不报") {
         models::Shot t = s;
@@ -481,20 +492,23 @@ TEST_CASE("剧本里的台词漏掉了要报出来") {
         b.text = "你到底还瞒着我什么？";
         t.dialogue.push_back(a);
         t.dialogue.push_back(b);
+        CHECK(stages::missing_dialogue_lines(script, {s, t}).empty());
         CHECK(stages::check_coverage(script, {s, t}).empty());
     }
 
-    SUBCASE("一句都没写时只报那一条，不重复说同一个毛病") {
+    SUBCASE("一句都没写是致命的，那张表整个废了") {
         models::Shot mute = s;
         mute.dialogue.clear();
         const auto p = stages::check_coverage(script, {mute});
         REQUIRE(p.size() == 1);
         CHECK(p[0].find("一句台词都没有") != std::string::npos);
+        // 这时候不该再把剧本里每一句都列一遍，同一个毛病说两遍
+        CHECK(stages::missing_dialogue_lines(script, {mute}).empty());
     }
 
     SUBCASE("段头不算台词") {
         // 「【开场钩子 0–5 秒】」里没有冒号，但万一有别的带冒号的段头，
         // 也不该被当成一句要覆盖的台词
-        CHECK(stages::check_coverage("【情绪回报 33–54 秒】", {s}).empty());
+        CHECK(stages::missing_dialogue_lines("【情绪回报 33–54 秒】", {s}).empty());
     }
 }

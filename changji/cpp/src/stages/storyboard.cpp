@@ -627,40 +627,32 @@ std::vector<std::string> check_coverage(const std::string& script,
             "模型多半漏填了 characters 字段");
     }
 
-    // 剧本里的每一句台词都要落到某个镜头上。
-    //
-    // 只在分镜确实写了台词的时候查：一句都没写是上面那条管的事，
-    // 两条一起报等于把同一个毛病说两遍。
-    if (shot_lines > 0) {
-        std::vector<std::string> said;
-        for (const Shot& s : shots) {
-            for (const auto& line : s.dialogue) said.push_back(squash(line.text));
-        }
-        std::vector<std::string> missing;
-        for (const std::string& want : script_dialogue_lines(script)) {
-            const std::string key = squash(want);
-            if (key.empty()) continue;
-            // 两头都认：模型有时把一句拆成两镜，有时把两句并成一条。
-            const bool found = std::any_of(
-                said.begin(), said.end(), [&](const std::string& got) {
-                    return got.find(key) != std::string::npos ||
-                           (!got.empty() && key.find(got) != std::string::npos);
-                });
-            if (!found) missing.push_back(want);
-        }
-        if (!missing.empty()) {
-            // 全列出来会刷屏，报个数加前三句——够定位是哪一段丢了。
-            std::string msg = "剧本里有 " + std::to_string(missing.size()) +
-                              " 句台词没落到任何镜头上";
-            const std::size_t show = std::min<std::size_t>(missing.size(), 3);
-            for (std::size_t i = 0; i < show; ++i) {
-                msg += "\n  · " + text::truncate_utf8(missing[i], 40);
-            }
-            if (missing.size() > show) msg += "\n  · …";
-            problems.push_back(msg);
-        }
-    }
     return problems;
+}
+
+std::vector<std::string> missing_dialogue_lines(const std::string& script,
+                                                const std::vector<Shot>& shots) {
+    std::vector<std::string> said;
+    for (const Shot& s : shots) {
+        for (const auto& line : s.dialogue) said.push_back(squash(line.text));
+    }
+    // 一句都没写是 check_coverage 管的事（那张表整个废了）。这里再把剧本里
+    // 每一句都列一遍，等于把同一个毛病说两遍。
+    if (said.empty()) return {};
+
+    std::vector<std::string> missing;
+    for (const std::string& want : script_dialogue_lines(script)) {
+        const std::string key = squash(want);
+        if (key.empty()) continue;
+        // 两头都认：模型有时把一句拆成两镜，有时把两句并成一条。
+        const bool found = std::any_of(
+            said.begin(), said.end(), [&](const std::string& got) {
+                return got.find(key) != std::string::npos ||
+                       (!got.empty() && key.find(got) != std::string::npos);
+            });
+        if (!found) missing.push_back(want);
+    }
+    return missing;
 }
 
 std::vector<Shot>& rebalance_durations(std::vector<Shot>& shots, double target_s,
