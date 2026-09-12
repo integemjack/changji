@@ -6,6 +6,7 @@
 //
 // 换句话说，这个文件里没有任何值得测的判断——它只是把
 // "配置说走哪条路" 翻译成 "装哪两个函数对象"。
+#include <algorithm>
 #include <chrono>
 #include <thread>
 #include <memory>
@@ -17,6 +18,9 @@
 #include "http/run.hpp"
 #include "infer/sd_image.hpp"
 #include "infer/sd_video.hpp"
+#include "infer/node_pick.hpp"
+#include "infer/node_registry.hpp"
+#include "infer/task_run.hpp"
 #include "infer/worker_farm.hpp"
 #include "infer/worker_pool.hpp"
 #include "stages/frames.hpp"
@@ -61,23 +65,89 @@ RunDeps default_run_deps() {
                     }
                     return false;
                 });
-        const std::vector<std::string> endpoints =
+        const std::vector<std::string> farm_eps =
             farm ? farm->endpoints() : s.workers.endpoints;
 
-        // **配了工作进程就派出去算。** 空的话上面那两行原样生效——
-        // 行为和以前一模一样，这是这一步能安全落地的前提。
-        // 口令带上：本机自己拉起的那些听回环、不查，跨机那头要。
-        if (auto pool = infer::make_worker_pool(endpoints, s.peer.token)) {
-            b.frame = pool->frame_renderer();
-            b.video = pool->video_renderer();
-            b.frame_backend_name =
-                "sd.cpp（" + std::to_string(pool->size()) + " 个工作进程）";
-            // **并发上限就是池的大小。** 没有池时保持 1——
-            // 进程内不能并发（sd.cpp 的进度回调是全局的）。
-            b.render_lanes = static_cast<int>(pool->size());
-            // 池要活到渲染结束。Backends 只存 std::function，
-            // 捕获一份 shared_ptr 让它跟着活。
-            b.keepalive.push_back(pool);
+        // 别的机器：按能力挑。**出图和出片要分开挑**——一台只装了出图
+        // 模型的机器该参与首帧、不该参与出片，而以前那个池是"所有
+        // 工作进程都能干所有活"。
+        const auto nodes = infer::node_registry().snapshot(s);
+
+        // 本机进程内跑一个任务。**做成回调注入**，池那一层不该知道
+        // 配置长什么样（同 WorkerFarm::HealthProbe）。
+        const infer::LocalRunner local_runner =
+            [s](const infer::Task& t, const infer::StepCallback& on_step,
+                pipeline::CancelToken& tok) {
+                return infer::run_task_locally(t, s, infer::Origin::Local,
+                                               infer::kLocalEndpoint, on_step,
+                                               tok);
+            };
+
+        const auto eps_for = [&](infer::Capability cap) {
+            std::vector<std::string> out;
+            // 本机这一档：多卡时是自己拉起的那几个子进程，单卡时是
+            // 进程内那个槽。**两者不叠加**——多卡时进程内不该再跑，
+            // 那几个子进程已经把卡占满了。
+            if (!farm_eps.empty()) {
+                out = farm_eps;
+            } else {
+                for (const auto* n : infer::candidates_for(nodes, cap)) {
+                    if (n->url == infer::kLocalEndpoint) {
+                        out.push_back(n->url);
+                        break;
+                    }
+                }
+            }
+            // 别的机器
+            for (const auto* n : infer::candidates_for(nodes, cap)) {
+                if (n->url != infer::kLocalEndpoint) out.push_back(n->url);
+            }
+            return out;
+        };
+
+        // **只有本机一个槽就别绕池了。** 那种情况下走池是纯粹多一层
+        // 间接：一样的种子、一样的进程内 sd.cpp，只是中间过一遍任务的
+        // 序列化和路径往返。单卡单机是最常见的用法，那条路上的行为
+        // 应该和以前逐字节一样，不给自己留一个"绕了一圈才发现哪儿不同"
+        // 的机会。
+        const auto worth_pooling = [](const std::vector<std::string>& eps) {
+            if (eps.empty()) return false;
+            if (eps.size() == 1 && eps.front() == infer::kLocalEndpoint) {
+                return false;
+            }
+            return true;
+        };
+
+        // **一个池只管一个能力。** 口令带上：本机自己拉起的那些听回环、
+        // 不查，跨机那头要。
+        const auto frame_eps = eps_for(infer::Capability::Frame);
+        const auto video_eps = eps_for(infer::Capability::Video);
+        auto frame_pool =
+            worth_pooling(frame_eps)
+                ? infer::make_worker_pool(frame_eps, s.peer.token, local_runner)
+                : nullptr;
+        auto video_pool =
+            worth_pooling(video_eps)
+                ? infer::make_worker_pool(video_eps, s.peer.token, local_runner)
+                : nullptr;
+
+        if (frame_pool) {
+            b.frame = frame_pool->frame_renderer();
+            b.keepalive.push_back(frame_pool);
+        }
+        if (video_pool) {
+            b.video = video_pool->video_renderer();
+            b.keepalive.push_back(video_pool);
+        }
+        if (frame_pool || video_pool) {
+            const std::size_t n =
+                std::max(frame_pool ? frame_pool->size() : 0,
+                         video_pool ? video_pool->size() : 0);
+            b.frame_backend_name = "sd.cpp（" + std::to_string(n) + " 处算力）";
+            // **并发上限取大的那个。** 两个池不一样大时，小的那一阶段
+            // 靠池自己挡住（借不到就等），而把上限压到小的那个会让
+            // 大的那一阶段白白少跑几路。
+            b.render_lanes = static_cast<int>(n);
             if (farm) b.keepalive.push_back(farm);
         }
 

@@ -18,10 +18,28 @@
 #include <string>
 #include <vector>
 
+#include <functional>
+
+#include "infer/worker_proto.hpp"
 #include "stages/frames.hpp"
 #include "stages/render.hpp"
 
 namespace changji::infer {
+
+/// 池子里代表**本机进程内**的那个槽位的地址。
+///
+/// **本机是池里正经的一个槽，不是特例。** 不这样的话，只要配了一台远程
+/// 机器，本机那张卡就整个闲着——而那正是"本地还是远程"被做成两条代码
+/// 路径的后果。这个约定串让它变成同一条路上的一个取值。
+inline constexpr const char* kLocalEndpoint = "local";
+
+/// 在本机进程内把任务跑完。由调用方注入。
+///
+/// **做成回调而不是直接调 `run_task_locally`**：那个函数要 `Settings`，
+/// 而这个文件是给"把活发出去"用的，不该知道配置长什么样。理由和
+/// `WorkerFarm::HealthProbe` 那处一样。
+using LocalRunner = std::function<TaskResult(
+    const Task&, const StepCallback&, pipeline::CancelToken&)>;
 
 /// 一个工作进程的地址。
 struct WorkerEndpoint {
@@ -37,7 +55,8 @@ struct WorkerEndpoint {
 /// 池。**线程安全**：阶段那一层会从多个线程同时借。
 class WorkerPool {
 public:
-    explicit WorkerPool(std::vector<WorkerEndpoint> endpoints);
+    explicit WorkerPool(std::vector<WorkerEndpoint> endpoints,
+                        LocalRunner local_runner = {});
     ~WorkerPool();
 
     WorkerPool(const WorkerPool&) = delete;
@@ -66,7 +85,11 @@ private:
 ///
 /// `token` 会带给每一个地址。**一个口令走遍自己这几台**是刻意的：
 /// 都是自己的机器，每台配一个不同的口令只是给自己添麻烦。
+/// `local_runner` 给了的话，`endpoints` 里那个 `kLocalEndpoint` 就不发
+/// HTTP，直接在本进程里跑。没给而地址里又有 `local` 的话，那个槽会被
+/// 当成一台连不上的机器——所以两者要一起给。
 std::shared_ptr<WorkerPool> make_worker_pool(
-    const std::vector<std::string>& endpoints, const std::string& token = {});
+    const std::vector<std::string>& endpoints, const std::string& token = {},
+    LocalRunner local_runner = {});
 
 }  // namespace changji::infer

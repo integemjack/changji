@@ -60,6 +60,8 @@ struct WorkerPool::Impl {
     };
 
     std::vector<Worker> workers;
+    /// 本机那个槽怎么跑。空 = 池里没有本机这一档。
+    LocalRunner local_runner;
     /// 谁忙着、谁坏了。策略在 worker_roster.hpp，那份不含网络代码、能测。
     std::unique_ptr<WorkerRoster> roster;
     std::mutex mu;
@@ -175,6 +177,17 @@ struct WorkerPool::Impl {
 
     void run_on(std::size_t idx, const Task& task, pipeline::CancelToken& tok,
                 const StepCallback& on_step) {
+        // 本机那个槽：进程内跑，不发 HTTP，也不搬文件（同一个文件系统）。
+        // 排队由执行位管（见 exec_queue.hpp），这儿不用再判忙不忙。
+        if (workers[idx].ep.url == kLocalEndpoint) {
+            if (!local_runner) {
+                throw Unreachable("池里有个 local 槽，却没给怎么在本机跑");
+            }
+            const TaskResult r = local_runner(task, on_step, tok);
+            if (!r.ok) throw std::runtime_error(r.error);
+            return;
+        }
+
         const auto [origin, prefix] = split_url(workers[idx].ep.url);
         httplib::Client cli(origin);
         // 跨机那头要口令，本机那些听回环的不查——带上都不碍事。
@@ -310,8 +323,10 @@ struct WorkerPool::Impl {
     }
 };
 
-WorkerPool::WorkerPool(std::vector<WorkerEndpoint> endpoints)
+WorkerPool::WorkerPool(std::vector<WorkerEndpoint> endpoints,
+                       LocalRunner local_runner)
     : impl_(std::make_unique<Impl>()) {
+    impl_->local_runner = std::move(local_runner);
     for (auto& e : endpoints) impl_->workers.push_back({std::move(e)});
     impl_->roster = std::make_unique<WorkerRoster>(impl_->workers.size());
 }
@@ -323,6 +338,11 @@ std::size_t WorkerPool::size() const { return impl_->workers.size(); }
 std::size_t WorkerPool::alive() const {
     std::size_t n = 0;
     for (const auto& w : impl_->workers) {
+        // 本机那个槽不用 ping：它要么在，要么这个进程自己也没了。
+        if (w.ep.url == kLocalEndpoint) {
+            if (impl_->local_runner) ++n;
+            continue;
+        }
         const auto [origin, prefix] = split_url(w.ep.url);
         httplib::Client cli(origin);
         if (!w.ep.token.empty()) cli.set_bearer_token_auth(w.ep.token);
@@ -379,12 +399,13 @@ stages::VideoRenderer WorkerPool::video_renderer() {
 }
 
 std::shared_ptr<WorkerPool> make_worker_pool(
-    const std::vector<std::string>& endpoints, const std::string& token) {
+    const std::vector<std::string>& endpoints, const std::string& token,
+    LocalRunner local_runner) {
     if (endpoints.empty()) return nullptr;
     std::vector<WorkerEndpoint> eps;
     eps.reserve(endpoints.size());
     for (const auto& u : endpoints) eps.push_back(WorkerEndpoint{u, token});
-    return std::make_shared<WorkerPool>(std::move(eps));
+    return std::make_shared<WorkerPool>(std::move(eps), std::move(local_runner));
 }
 
 }  // namespace changji::infer
