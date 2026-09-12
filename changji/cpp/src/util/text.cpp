@@ -98,6 +98,66 @@ std::string clean_field(const std::string& s) {
     return rstrip_punct(strip_ws(collapse_ws(s)));
 }
 
+std::string strip_leading_ordinal(const std::string& s_in) {
+    const std::string s = strip_ws(s_in);
+    if (s.empty()) return s_in;
+
+    // 「第」
+    static const std::string kDi = R"CJ(第)CJ";
+    if (s.compare(0, kDi.size(), kDi) != 0) return s_in;
+
+    // 数字部分：阿拉伯数字或中文数字，至少一个，最多几个
+    static const char* kCnDigits[] = {
+        R"CJ(零)CJ", R"CJ(一)CJ", R"CJ(二)CJ", R"CJ(两)CJ", R"CJ(三)CJ",
+        R"CJ(四)CJ", R"CJ(五)CJ", R"CJ(六)CJ", R"CJ(七)CJ", R"CJ(八)CJ",
+        R"CJ(九)CJ", R"CJ(十)CJ", R"CJ(百)CJ",
+    };
+    std::size_t i = kDi.size();
+    int digits = 0;
+    while (i < s.size() && digits < 6) {
+        if (s[i] >= '0' && s[i] <= '9') { ++i; ++digits; continue; }
+        bool cn = false;
+        for (const char* d : kCnDigits) {
+            const std::string dd = d;
+            if (s.compare(i, dd.size(), dd) == 0) { i += dd.size(); ++digits; cn = true; break; }
+        }
+        if (!cn) break;
+    }
+    if (digits == 0) return s_in;   // 「第一滴血」的「第」后面不是数字就不动
+
+    // 单位。**只认这几个**，别的（次、名、滴……）不是章节编号。
+    static const char* kUnits[] = {
+        R"CJ(章)CJ", R"CJ(部)CJ", R"CJ(回)CJ", R"CJ(节)CJ",
+        R"CJ(篇)CJ", R"CJ(集)CJ",
+    };
+    bool unit = false;
+    for (const char* u : kUnits) {
+        const std::string uu = u;
+        if (s.compare(i, uu.size(), uu) == 0) { i += uu.size(); unit = true; break; }
+    }
+    if (!unit) return s_in;
+
+    // **必须有明确的分隔符**，或者编号就是全部内容。
+    // 「部」在中文里也是量词：「第二部手机」不带分隔符，削了就成了「手机」。
+    static const char* kSeps[] = {
+        R"CJ(：)CJ", ":", R"CJ(、)CJ", R"CJ(　)CJ", " ", ".", R"CJ(．)CJ",
+        R"CJ(-)CJ", "-", R"CJ(—)CJ",
+    };
+    std::size_t after = i;
+    bool sep = false;
+    for (const char* p2 : kSeps) {
+        const std::string pp = p2;
+        if (s.compare(after, pp.size(), pp) == 0) { after += pp.size(); sep = true; break; }
+    }
+    const std::string rest = strip_ws(s.substr(after));
+    // 没有分隔符、后面还有字：那多半是正文的一部分，不动。
+    if (!sep && !rest.empty()) return s_in;
+    // 削完什么都不剩就别削——「第三章」本身就是这一章的标题时，
+    // 留着比变成空串强。
+    if (rest.empty()) return s_in;
+    return rest;
+}
+
 std::size_t utf8_len(const std::string& s) {
     std::size_t n = 0;
     for (const char ch : s) {

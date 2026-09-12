@@ -188,6 +188,42 @@ TEST_CASE("indent_rest：第一行不动，后面每行缩进") {
     CHECK(text::indent_rest("a\n", "  ") == "a\n  ");
 }
 
+TEST_CASE("标题自己带的编号削掉，界面上才不会编两次号") {
+    // **2026-09-13 用全新项目走前三步时撞到的。** 模型出的大纲编号自己就
+    // 不一致（章/部混用），而界面上本来就有编号前缀，于是显示成
+    //     故事页   第 2 章 · 第二部：被折叠的时间
+    //     分集页   2   第1章：不该存在的呼吸
+    CHECK(text::strip_leading_ordinal("第二部：被折叠的时间") == "被折叠的时间");
+    CHECK(text::strip_leading_ordinal("第1章：不该存在的呼吸") ==
+          "不该存在的呼吸");
+    CHECK(text::strip_leading_ordinal("第三章 雨中告别") == "雨中告别");
+    CHECK(text::strip_leading_ordinal("第十回、初雪") == "初雪");
+
+    SUBCASE("没有分隔符就不削——「部」也是量词") {
+        // 「第二部手机」削了会变成「手机」。
+        CHECK(text::strip_leading_ordinal("第二部手机") == "第二部手机");
+        CHECK(text::strip_leading_ordinal("第三章雨中告别") == "第三章雨中告别");
+    }
+
+    SUBCASE("不是章节单位的不动") {
+        CHECK(text::strip_leading_ordinal("第一滴血") == "第一滴血");
+        CHECK(text::strip_leading_ordinal("第三次告别") == "第三次告别");
+        CHECK(text::strip_leading_ordinal("第几个人") == "第几个人");
+    }
+
+    SUBCASE("削完为空就不削") {
+        // 「第三章」本身就是这一章的标题时，留着比变成空串强。
+        CHECK(text::strip_leading_ordinal("第三章") == "第三章");
+        CHECK(text::strip_leading_ordinal("第三章：") == "第三章：");
+        CHECK(text::strip_leading_ordinal("") == "");
+    }
+
+    SUBCASE("正常标题一个字不动") {
+        CHECK(text::strip_leading_ordinal("雨夜送达") == "雨夜送达");
+        CHECK(text::strip_leading_ordinal("记忆回响") == "记忆回响");
+    }
+}
+
 TEST_CASE("human_time_precise：对比两个时长时零头不能丢") {
     // **踩过的那一条**：配音重排之后报
     //     [info] 按配音重排了镜头时长：1 分钟 → 1 分钟（目标 1 分钟）

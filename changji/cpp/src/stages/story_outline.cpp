@@ -326,7 +326,10 @@ Story parse_outline(const std::string& raw, const std::string& premise,
         if (story.chapters.size() >= prompt::kMaxChapters) break;
         Chapter ch;
         ch.chapter_id = chapter_id(story.chapters.size());
-        ch.title = text::clean_field(get_str(c, "title"));
+        // 标题自己带的编号要削掉：界面上本来就有「第 N 章」的前缀，
+        // 不削就成了「第 2 章 · 第二部：被折叠的时间」。见 strip_leading_ordinal。
+        ch.title = text::strip_leading_ordinal(
+            text::clean_field(get_str(c, "title")));
         ch.summary = text::strip_ws(get_str(c, "summary"));
         ch.reveal = text::clean_field(get_str(c, "reveal"));
         ch.plant = text::clean_field(get_str(c, "plant"));
