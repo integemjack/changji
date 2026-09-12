@@ -1029,7 +1029,31 @@ void register_sd_slots(SettingsProvider raw_provider,
         const std::string& w =
             role == ModelRole::Video ? s.models.weights : s.models.image_weights;
         if (w == "auto") return physical;
-        if (w == "cpu") return budget;
+        // **"cpu" 也要减计算缓冲的余量。**
+        //
+        // 这儿原来返回 `budget`（整卡 × 0.9，没减余量），撞的是上面那条注释
+        // 描述得一字不差的墙，只是隔了一条分支：
+        //
+        //   auto 那次（2026-09-10，出首帧）  权重塞满后只剩 3447 MB
+        //                                   → decode_first_stage failed，22 镜全废
+        //   cpu 这次（2026-09-13，出片）     available 3797.06 MB device
+        //                                   → weight preparation failed
+        //
+        // "cpu" 的字面意思是权重放系统内存，但 sd.cpp 的 --offload-to-cpu 是
+        // **按需搬进显存、能缓存多少由预算说了算**（官方文档：weights cached
+        // on RAM, moving them to VRAM on demand）。所以预算给多大它就占多大，
+        // 计算缓冲照样没地方——和 auto 一个道理。
+        //
+        // 实测（walk_c，544×928）：出片这一路估 14.6 GB、**实占 31.39 GB**，
+        // 整卡 31.84 GB，只剩 0.45 GB。一集十几镜里总有一两镜撞上，重试超限
+        // 就降级成静帧加运镜，而成片照出——最难发现的那种。
+        //
+        // **注意余量默认 6 GB 是按出图的 VAE 解码定的**（6576 MB），而出片的
+        // 计算缓冲更大（stages/limits.hpp 那边按 14.6 GB 记，还随画布涨）。
+        // 所以这一改是"从没有余量变成有一点余量"，不是"从此够用"。真要顶到
+        // 大画布，把 [models].vram_reserve_gb 调大——那一项的注释里写了
+        // "出更大的图要调大它"。
+        if (w == "cpu") return physical;
         return whole;
     };
     const std::size_t estimate =
