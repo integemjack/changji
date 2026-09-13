@@ -1,6 +1,9 @@
 #include "http/story_api.hpp"
 
 #include <chrono>
+#include <filesystem>
+#include <map>
+#include <mutex>
 #include <set>
 #include <string>
 #include <vector>
@@ -24,6 +27,7 @@
 #include "util/text.hpp"
 
 using json = nlohmann::json;
+namespace fs = std::filesystem;
 
 namespace changji::http {
 
@@ -160,6 +164,77 @@ void validate_or_400(const Story& story) {
     throw ApiError(400, msg);
 }
 
+/// 哪个项目上正跑着一份大纲（项目目录 → stream_id）。
+///
+/// **为什么要这本账。** 出一份大纲要一分多钟，而人会在这一分钟里刷新
+/// （用户 2026-09-13 实测：点下去 8 秒就刷新了）。刷新之后浏览器里那条
+/// socket 没了，页面不知道后台还有活在跑，于是一片空白——草稿要等写完才
+/// 落盘，那之前 GET /api/story 什么都带不回来。有了这本账，页面一进来就
+/// 知道"有一轮在跑、听哪条流"，把「正在写」的板子摆回去，写完了照样能拿到
+/// 结果。
+///
+/// 只记 stream_id，不记别的：进度本身走 ws，这里只负责"接头"。
+class OutlineRegistry {
+public:
+    static OutlineRegistry& instance() {
+        static OutlineRegistry r;
+        return r;
+    }
+    void started(const std::string& project, const std::string& stream) {
+        std::lock_guard<std::mutex> g(mu_);
+        running_[key(project)] = stream;
+        // 新的一轮起了，上一轮的错就过期了——不然写成之后页面还弹一句旧错。
+        errors_.erase(key(project));
+    }
+    /// 只擦自己那一笔：同一个项目上要是又起了一轮（旧的还没退干净），
+    /// 旧的收尾不能把新的那一笔擦掉。
+    void finished(const std::string& project, const std::string& stream) {
+        std::lock_guard<std::mutex> g(mu_);
+        const auto it = running_.find(key(project));
+        if (it != running_.end() && it->second == stream) running_.erase(it);
+    }
+    /// 写砸了。**必须记下来。** job_error 只往那条流上广播一次，页面要是
+    /// 已经刷新过（这正是用户会做的事），那句话就没人听见——盘上没草稿、
+    /// 账也擦了，页面上一片空白，连"为什么"都没有。2026-09-13 实测就是
+    /// 这样："还是不行"。
+    void failed(const std::string& project, const std::string& message) {
+        std::lock_guard<std::mutex> g(mu_);
+        errors_[key(project)] = message;
+    }
+    std::string running_for(const std::string& project) {
+        std::lock_guard<std::mutex> g(mu_);
+        const auto it = running_.find(key(project));
+        return it == running_.end() ? std::string() : it->second;
+    }
+    /// 上一轮的错。**不清**：用户两台设备同时开着，"读一次就清"只有先
+    /// 问到的那台看得见。留到下一轮 started() 或草稿被采用/丢弃再清；
+    /// 页面自己记着上次弹过哪句，同一句不弹第二次。
+    std::string error_for(const std::string& project) {
+        std::lock_guard<std::mutex> g(mu_);
+        const auto it = errors_.find(key(project));
+        return it == errors_.end() ? std::string() : it->second;
+    }
+    void clear_error(const std::string& project) {
+        std::lock_guard<std::mutex> g(mu_);
+        errors_.erase(key(project));
+    }
+
+private:
+    /// **按真实路径记，不按字符串。** 同一个项目在这台机器上有两种写法
+    /// （`AppData\Local\changji\…` 和它在 `Packages\…\LocalCache\Local\`
+    /// 下的镜像，Windows 的应用容器干的），两台设备各用一种；按字符串记的话
+    /// 一台设备起的那一轮另一台永远查不到。解不出真实路径就退回原字符串。
+    static std::string key(const std::string& project) {
+        std::error_code ec;
+        const auto canon = fs::weakly_canonical(paths::from_utf8(project), ec);
+        return ec ? project : paths::to_utf8(canon);
+    }
+
+    std::mutex mu_;
+    std::map<std::string, std::string> running_;
+    std::map<std::string, std::string> errors_;
+};
+
 }  // namespace
 
 ApiResult get_story(const std::string& path) {
@@ -174,6 +249,15 @@ ApiResult get_story(const std::string& path) {
         d["adopted"] = false;
         out["draft"] = std::move(d);
     }
+    // 正跑着一份大纲的话把那条流的 id 带回去，页面好重新接上。
+    // 没有就不带这个键，理由同 draft。
+    const std::string running = OutlineRegistry::instance().running_for(
+        paths::to_utf8(store.root()));
+    if (!running.empty()) out["outline_running"] = running;
+    // 上一轮写砸了的话把那句话带回去。没有就不带这个键。
+    const std::string err =
+        OutlineRegistry::instance().error_for(paths::to_utf8(store.root()));
+    if (!err.empty()) out["outline_error"] = err;
     return {200, std::move(out)};
 }
 
@@ -252,6 +336,25 @@ json write_outline(ProjectStore& store, const Project& project,
     pipeline::Activity act{"outline", paths::to_utf8(store.root()), "",
                            "正在出大纲"};
 
+    // **账记在这儿，不记在 post_story_outline 的异步分支里。**
+    //
+    // 2026-09-13 栽过：真实服务走的是 server.cpp 的 script_route，它先
+    // `take_async(body)` 把 async 剥掉、再把处理函数整个扔到后台——于是
+    // post_story_outline 里"带 async 才记账"的那一支在服务里从来没走过，
+    // 只有单测直接调才走。页面刷新之后问 GET /api/story，账上永远是空的。
+    // 这个函数是两条路的汇合点，只有记在这儿两边才都算数。
+    // 析构擦账：写砸了、抛了，账都不能留着，不然页面会永远显示"正在写…"。
+    struct Bookkeeping {
+        std::string project, stream;
+        Bookkeeping(std::string p, std::string s)
+            : project(std::move(p)), stream(std::move(s)) {
+            if (!stream.empty()) OutlineRegistry::instance().started(project, stream);
+        }
+        ~Bookkeeping() {
+            if (!stream.empty()) OutlineRegistry::instance().finished(project, stream);
+        }
+    } book{paths::to_utf8(store.root()), stream_id};
+
     llm::Request req;
     req.prompt =
         stages::build_outline_prompt(premise, scale, project.style_line, keywords);
@@ -311,8 +414,13 @@ json write_outline(ProjectStore& store, const Project& project,
         }
         draft = stages::parse_outline(raw, premise, scale);
     } catch (const stages::StoryError& e) {
-        throw ApiError(502, std::string("大模型没写出能用的大纲：") + e.what());
+        const std::string msg = std::string("大模型没写出能用的大纲：") + e.what();
+        // job_error 只往流上广播一次，页面刷新过就没人听见——记下来，
+        // 下一次 GET /api/story 带回去。
+        if (!stream_id.empty()) OutlineRegistry::instance().failed(book.project, msg);
+        throw ApiError(502, msg);
     } catch (const std::exception& e) {
+        if (!stream_id.empty()) OutlineRegistry::instance().failed(book.project, e.what());
         throw ApiError(502, e.what());
     }
 
@@ -360,6 +468,10 @@ ApiResult post_story_outline(const json& body, llm::Client& client,
     // 落在同一条线程上的连接会跟着冻住——顶栏那块表首当其冲。
     if (opt_bool(body, "async", false) && !stream_id.empty()) {
         const std::string project_path = paths::to_utf8(store.root());
+        // **回 202 之前就先登记一笔**（write_outline 进去还会登记一次，
+        // 幂等）。直接调这条路时页面拿到 202 马上就会去问，后台线程可能
+        // 还没跑到 write_outline。擦账和记错都在 write_outline 里，这儿不管。
+        OutlineRegistry::instance().started(project_path, stream_id);
         Offload::instance().post([project_path, premise, scale, keywords,
                                   stream_id, &client] {
             try {
@@ -392,6 +504,7 @@ ApiResult post_story_draft_drop(const json& body) {
     ProjectStore store = open_project(body);
     load_or_400(store);
     store.clear_story_draft();
+    OutlineRegistry::instance().clear_error(paths::to_utf8(store.root()));
     return {200, {{"dropped", true}}};
 }
 
@@ -432,6 +545,7 @@ ApiResult post_story_adopt(const json& body) {
     // 采用了，草稿的使命就完了。留着的话下次打开故事页会**同时**看到
     // "这本书"和一份和它一模一样的草稿。
     store.clear_story_draft();
+    OutlineRegistry::instance().clear_error(paths::to_utf8(store.root()));
 
     if (!story.premise.empty() && project.premise != story.premise) {
         project.premise = story.premise;

@@ -290,6 +290,17 @@ function setStory(payload) {
   // 「重出一份」顶掉，而这一次 setStory 是别的事情触发的刷新（存梗概、
   // 改体量都会走到这儿），拿旧的盖上去等于把新写的那份顶没了。
   if (!draft.value && payload?.draft) draft.value = payload.draft
+  // **后台还在写一份大纲的话，重新接上那条流。**
+  // 用户点下去 8 秒就刷新了：那时草稿还没落盘，这一页要是不知道后台有活
+  // 在跑，就一片空白——而写完之后的结果也没人收。
+  if (payload?.outline_running) attachOutline(payload.outline_running)
+  // 上一轮写砸了（多半是在刷新之后砸的，那句 job_error 没人听见）。
+  // 服务端一直带着这句直到下一轮或者草稿被采用/丢弃；这里记着上次弹过
+  // 哪句，同一句不弹第二次——不然每次存个梗概都再弹一遍。
+  if (payload?.outline_error && payload.outline_error !== shownOutlineError) {
+    shownOutlineError = payload.outline_error
+    ui.error('上一份大纲没写成：' + payload.outline_error)
+  }
   if (story.value?.scale) scale.value = story.value.scale
   // **只刷新没改过的那几章。** 引擎重算分集表也会回一份完整故事，照单
   // 全收的话，用户正在打字的那一章会被服务端那份盖掉。
@@ -1090,6 +1101,78 @@ const liveChars = computed(() => {
 function emptyOutlineLive() {
   return { premise: '', logline: '', genre: '', tone: '', characters: [], chapters: [] }
 }
+
+/** 重新接上的那条流（刷新之后）。null = 没接着谁。 */
+let attached = null
+/** 上一轮写砸的那句话，弹过的。同一句不弹第二次。 */
+let shownOutlineError = ''
+
+
+/**
+ * 页面进来发现后台正写着一份大纲：订上那条流，把「正在写」的板子摆回来。
+ *
+ * 和 writeStory 走的是同一条流、同一种消息，只是发起的不是这一页。
+ * 那一头推的每一帧都是"到此为止的全份"，所以中途插进来也不缺前文。
+ *
+ * **多一条轮询兜底**：订阅发出去那一刻活可能刚好写完，job_done 已经广播
+ * 过了、没人听见——那这一页会永远显示"正在写…"。所以每五秒问一次
+ * /api/story：账上没它了就收工，草稿会随那一次响应回来。
+ */
+function attachOutline(streamId) {
+  if (outlineLive.value) return // 自己正在写，或者已经接上了
+  if (attached?.id === streamId) return
+  detachOutline()
+  outlineLive.value = emptyOutlineLive()
+
+  const finish = async (result) => {
+    if (attached?.id !== streamId) return
+    detachOutline()
+    outlineLive.value = null
+    if (result) {
+      draft.value = result
+      bookOpen.value = false
+    } else {
+      // 没拿到整份结果（轮询发现它已经不在跑了）：草稿落盘了就从那儿拿
+      draft.value = null
+      await refreshStory()
+    }
+  }
+
+  const sock = openJobSocket(
+    streamId,
+    (msg) => {
+      if (msg.job_id !== streamId) return
+      if (msg.type === 'outline_progress') outlineLive.value = msg
+      else if (msg.type === 'job_done') finish(msg.result)
+      else if (msg.type === 'job_error') {
+        ui.error(msg.message || '这份大纲没写成')
+        finish(null)
+      }
+    },
+    () => {
+      /* 断了就靠下面的轮询 */
+    },
+  )
+  const timer = setInterval(async () => {
+    if (!session.projectPath) return
+    try {
+      const s = await api.getStory(session.projectPath)
+      if (!s.outline_running) finish(null)
+    } catch {
+      /* 下一轮再问 */
+    }
+  }, 5000)
+  attached = { id: streamId, sock, timer }
+}
+
+function detachOutline() {
+  if (!attached) return
+  clearInterval(attached.timer)
+  attached.sock?.close()
+  attached = null
+}
+
+onUnmounted(detachOutline)
 
 /**
  * 写大纲。

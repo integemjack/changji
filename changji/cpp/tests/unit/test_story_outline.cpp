@@ -15,6 +15,8 @@
 
 #include <algorithm>
 #include <chrono>
+#include <condition_variable>
+#include <mutex>
 #include <filesystem>
 #include <memory>
 #include <string>
@@ -429,6 +431,145 @@ TEST_CASE("POST /api/story/draft/drop：丢弃要真的丢掉") {
         CHECK(http::post_story_draft_drop(json{{"project", p_str(root)}}).status ==
               200);
     }
+
+    std::error_code ec;
+    fs::remove_all(root, ec);
+}
+
+namespace {
+
+/// 一个**卡住不返回**的大模型客户端：`release()` 之前 complete() 一直等。
+///
+/// 回放那个几毫秒就写完，"正在跑"的窗口根本抓不住——上一版用例就是
+/// 因此写成了 `if (contains) CHECK(...)`，等于没测，而真实二进制里
+/// 那本账恰恰是坏的。
+class BlockingClient : public llm::Client {
+public:
+    explicit BlockingClient(std::string reply) : reply_(std::move(reply)) {}
+    std::string complete(const llm::Request&, pipeline::CancelToken&) override {
+        std::unique_lock<std::mutex> lk(mu_);
+        cv_.wait(lk, [&] { return released_; });
+        return reply_;
+    }
+    void release() {
+        {
+            std::lock_guard<std::mutex> lk(mu_);
+            released_ = true;
+        }
+        cv_.notify_all();
+    }
+
+private:
+    std::string reply_;
+    std::mutex mu_;
+    std::condition_variable cv_;
+    bool released_ = false;
+};
+
+}  // namespace
+
+TEST_CASE("生成中途刷新：GET /api/story 要说有一轮在跑、听哪条流") {
+    // 用户 2026-09-13 实测：点下去 8 秒就刷新了。那时草稿还没落盘，页面
+    // 不知道后台有活在跑，一片空白——"还是不行"。
+    const fs::path root = fresh_project("中途刷新");
+    BlockingClient client(good_outline().dump());
+    pipeline::CancelToken tok;
+
+    const auto started = http::post_story_outline(
+        json{{"project", p_str(root)}, {"premise", "深夜便利店"},
+             {"stream", "outline-test-1"}, {"async", true}},
+        client, tok);
+    CHECK(started.status == 202);
+
+    // **202 一回来账上就得有它**——页面拿到 202 之后马上就会去问。
+    // 客户端卡着不返回，所以这一眼一定落在"正在跑"的窗口里；查不到就是
+    // 账坏了，不是时机不对。
+    const auto right_after = http::get_story(p_str(root));
+    REQUIRE(right_after.body.contains("outline_running"));
+    CHECK(right_after.body.at("outline_running") == "outline-test-1");
+
+    // 放行。写完：草稿落盘，账擦掉
+    client.release();
+    bool settled = false;
+    for (int i = 0; i < 200 && !settled; ++i) {
+        const auto now = http::get_story(p_str(root));
+        settled = now.body.contains("draft") &&
+                  !now.body.contains("outline_running");
+        if (!settled) std::this_thread::sleep_for(std::chrono::milliseconds(25));
+    }
+    CHECK(settled);
+
+    std::error_code ec;
+    fs::remove_all(root, ec);
+}
+
+TEST_CASE("生成中途刷新：经路由那条路（async 被剥掉）也要记账") {
+    // **真实服务走的就是这条。** server.cpp 的 script_route 先把 async
+    // 剥掉再把处理函数扔到后台，所以 post_story_outline 收到的 body 里
+    // 只有 stream、没有 async。2026-09-13 栽过：账只记在 async 分支里，
+    // 服务里从来没记上，而当时的用例又写成 `if (contains) CHECK`，等于没测。
+    const fs::path root = fresh_project("路由那条路");
+    BlockingClient client(good_outline().dump());
+    pipeline::CancelToken tok;
+
+    std::thread worker([&] {
+        http::post_story_outline(
+            json{{"project", p_str(root)}, {"premise", "深夜便利店"},
+                 {"stream", "outline-test-3"}},   // 没有 async
+            client, tok);
+    });
+
+    // 等它跑进 write_outline 登记（客户端卡着，窗口开着不会关）
+    bool seen = false;
+    for (int i = 0; i < 200 && !seen; ++i) {
+        const auto now = http::get_story(p_str(root));
+        seen = now.body.contains("outline_running") &&
+               now.body.at("outline_running") == "outline-test-3";
+        if (!seen) std::this_thread::sleep_for(std::chrono::milliseconds(25));
+    }
+    CHECK(seen);
+
+    client.release();
+    worker.join();
+    // 写完：账擦掉，草稿落盘
+    const auto after = http::get_story(p_str(root));
+    CHECK_FALSE(after.body.contains("outline_running"));
+    CHECK(after.body.contains("draft"));
+
+    std::error_code ec;
+    fs::remove_all(root, ec);
+}
+
+TEST_CASE("生成中途刷新：写砸了那句话也要留给下一眼") {
+    // job_error 只往那条流上广播一次，页面刷新过就没人听见——盘上没草稿、
+    // 账也擦了，页面一片空白，连"为什么"都没有。实测就是"还是不行"。
+    const fs::path root = fresh_project("中途砸了");
+    // 回放一段解不出大纲的东西，让 write_outline 抛 502
+    llm::ReplayClient client({"这不是 JSON"});
+    pipeline::CancelToken tok;
+    http::post_story_outline(
+        json{{"project", p_str(root)}, {"premise", "深夜便利店"},
+             {"stream", "outline-test-2"}, {"async", true}},
+        client, tok);
+
+    // 等它砸完（账擦掉），然后那句错必须在 GET /api/story 里
+    std::string err;
+    for (int i = 0; i < 200 && err.empty(); ++i) {
+        const auto now = http::get_story(p_str(root));
+        if (now.body.contains("outline_error")) {
+            err = now.body.at("outline_error").get<std::string>();
+        } else {
+            std::this_thread::sleep_for(std::chrono::milliseconds(25));
+        }
+    }
+    CHECK_FALSE(err.empty());
+    CHECK(err.find("大纲") != std::string::npos);
+    // **留着，不清**：两台设备同时开着，读一次就清只有先问到的那台看得见。
+    CHECK(http::get_story(p_str(root)).body.contains("outline_error"));
+    CHECK_FALSE(http::get_story(p_str(root)).body.contains("outline_running"));
+    // 丢弃草稿那一下顺手把错也清掉
+    http::post_story_draft_drop(json{{"project", p_str(root)}});
+    CHECK_FALSE(http::get_story(p_str(root)).body.contains("outline_error"));
 
     std::error_code ec;
     fs::remove_all(root, ec);
