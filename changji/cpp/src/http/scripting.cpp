@@ -7,6 +7,7 @@
 
 #include "models/project.hpp"
 #include "models/story.hpp"
+#include "pipeline/activity.hpp"
 #include "stages/script.hpp"
 #include "stages/script_story.hpp"
 #include "util/paths.hpp"
@@ -203,6 +204,13 @@ ApiResult post_script_premise(const json& body, llm::Client& client,
     req.schema = stages::premise_schema();
     req.schema_name = "premises";
 
+    // **顶栏那本账要记上。** 这几个接口是同步的，没有任务表那一套，
+    // 2026-09-13 之前它们在界面上整个不可见：用户点了「重新改编」，
+    // 顶栏一片安静，而这一刻 LLM 槽是被它占着的——另一头的批量写作会
+    // 挂在「显存不够加载 LLM」上，挡路的那件事却查不到。
+    // 见 pipeline/activity.hpp 开头那段。
+    pipeline::Activity act{"premise", paths::to_utf8(store.root()), "",
+                           "正在想梗概"};
     const auto ideas = llm_guard([&] {
         return stages::parse_premises(client.complete(req, tok));
     });
@@ -324,6 +332,11 @@ ApiResult post_script_write(const json& body, llm::Client& client,
     req.schema = stages::script_schema(used_duration, names, variation);
     req.schema_name = "script";
 
+    // 走故事那条叫「改编」，照梗概写叫「写」——按钮上的字就是这么分的
+    // （EpScript.vue 里那个 writeLabel），这儿跟着它说，不然顶栏说的和
+    // 用户刚点的那个按钮对不上。
+    pipeline::Activity act{"script", paths::to_utf8(store.root()), episode_id,
+                           plan != nullptr ? "正在改编成剧本" : "正在写剧本"};
     const stages::ScriptDraft draft = llm_guard([&] {
         return stages::parse_script(client.complete(req, tok), used_duration,
                                     variation);
@@ -404,6 +417,8 @@ ApiResult post_script_trailer(const json& body, llm::Client& client,
     req.schema = stages::script_schema();  // 平的那份：预告片是蒙太奇，不分四段
     req.schema_name = "trailer";
 
+    pipeline::Activity act{"trailer", paths::to_utf8(store.root()), "",
+                           "正在剪预告"};
     const stages::ScriptDraft draft = llm_guard([&] {
         return stages::parse_script(client.complete(req, tok));
     });

@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "models/story.hpp"
+#include "pipeline/activity.hpp"
 #include "stages/script.hpp"
 #include "stages/script_story.hpp"
 #include "stages/storyboard.hpp"
@@ -234,6 +235,10 @@ ApiResult post_script(const json& body, llm::Client& client,
                                               stages::count_beats(script)));
         req.schema_name = "storyboard";
 
+        // 同步接口也要在顶栏露面，理由见 pipeline/activity.hpp 开头那段：
+        // 它占着 LLM 槽，不露面的话别人挂在「显存不够」上而挡路的是谁查不到。
+        pipeline::Activity act{"plan", paths::to_utf8(store.root()), episode_id,
+                               "正在拆镜头"};
         try {
             std::vector<Shot> shots =
                 stages::parse_storyboard(client.complete(req, tok), assets);

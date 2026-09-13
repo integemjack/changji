@@ -8,6 +8,7 @@
 
 #include "http/reset.hpp"
 #include "models/project.hpp"
+#include "pipeline/activity.hpp"
 #include "stages/bible.hpp"
 #include "stages/storyboard.hpp"
 #include "util/paths.hpp"
@@ -231,6 +232,13 @@ ApiResult post_bible(const json& body, llm::Client& client,
     const Project project = load_or_400(store);
     AssetLibrary assets = load_assets_or_400(store);
 
+    // **顶栏那本账要记上。** 这是个同步接口，没有任务表那一套，
+    // 2026-09-13 之前它在界面上整个不可见——而它占着 LLM 槽，
+    // 另一头的活会挂在「显存不够加载 LLM」上却查不到挡路的是谁。
+    // 见 pipeline/activity.hpp 开头那段。放在这儿盖住下面两条分支。
+    pipeline::Activity act{"bible", paths::to_utf8(store.root()), episode_id,
+                           "正在定角色和场景"};
+
     // 名单从哪来。默认看项目里有没有故事——有就从故事出，那份名单是全剧
     // 完整的；没有就退回老路径从一集剧本里找，老项目还得能用。
     const std::string source = opt_str(body, "source", "auto");
@@ -292,8 +300,15 @@ ApiResult post_plan(const json& body, llm::Client& client,
     Project project = load_or_400(store);
     AssetLibrary assets = load_assets_or_400(store);
 
+    // 同 post_bible：同步接口也要在顶栏露面。一个 Activity 盖住整段——
+    // 出分镜这一次点击底下可能要跑两趟模型（先补圣经再拆镜头），
+    // 对用户那是一件事，中途只换那句话。
+    pipeline::Activity act{"plan", paths::to_utf8(store.root()), episode_id,
+                           "正在拆镜头"};
+
     // 角色设定。已有就不重做，避免覆盖用户改过的设定。
     if (regenerate || assets.characters.empty()) {
+        act.set_message("正在定角色和场景");
         // 有故事就从故事出——名单是全剧完整的，不是从这一集里找出来的。
         const Story story = load_story_or_400(store);
         assets = story.chapters.empty()
@@ -301,6 +316,7 @@ ApiResult post_plan(const json& body, llm::Client& client,
                      : generate_bible_from_story(story, project.style_line,
                                                  client, tok);
         store.save_assets(assets);
+        act.set_message("正在拆镜头");
     }
 
     const stages::DurationQuota quota = stages::DurationQuota::for_duration(duration_s);

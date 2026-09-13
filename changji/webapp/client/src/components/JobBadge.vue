@@ -29,6 +29,7 @@ import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 
 import AppIcon from '@/components/AppIcon.vue'
+import { STAGE_LABELS } from '@/api/labels'
 import { openJobSocket } from '@/composables/useJobSocket'
 import { useProjects } from '@/stores/projects'
 import { useSession } from '@/stores/session'
@@ -128,6 +129,13 @@ const KIND = {
   analyze: { label: '读故事', page: '/story', icon: 'sparkle' },
   image: { label: '出参考图', page: '/assets', icon: 'image' },
   say: { label: '朗读', page: '/story', icon: 'sparkle' },
+  // 2026-09-13 补的这四种：剧本和分镜那几个接口以前一个都没登记，
+  // 点了「重新改编」顶栏一片安静，而那一刻 LLM 槽正被它占着。
+  premise: { label: '想梗概', page: '/episode', icon: 'sparkle' },
+  script: { label: '写剧本', page: '/episode', icon: 'sparkle' },
+  trailer: { label: '剪预告', page: '/episode', icon: 'film' },
+  bible: { label: '定角色场景', page: '/assets', icon: 'sparkle' },
+  plan: { label: '拆镜头', page: '/episode', icon: 'board' },
 }
 
 function nameOf(path) {
@@ -144,9 +152,15 @@ function nameOf(path) {
 const rows = computed(() =>
   jobs.value.map((j) => {
     const k = KIND[j.kind] ?? { label: j.kind, page: '/project', icon: 'sparkle' }
+    // **出片那条要说清在跑哪一段。**
+    //
+    // `run` 是一个长跑任务，底下依次是配音、首帧、成片档、装配。一律写
+    // 「出片」的话，跑配音的那几分钟顶栏也说「出片」——用户报的原话是
+    // 「配音在界面上都不显示」。stage 引擎本来就在推，用上就行。
+    const stage = j.kind === 'run' ? STAGE_LABELS[j.stage] : ''
     return {
       ...j,
-      label: k.label,
+      label: stage || k.label,
       page: k.page,
       icon: k.icon,
       name: nameOf(j.project),
