@@ -69,6 +69,19 @@ struct VideoLimits {
     /// 比出一条烂片更糟（config/settings.cpp 的 VideoConfig::size 注释里
     /// 特意写过这一条）。
     int max_pixels = 0;
+    /// 这个模型**只认这一个帧率**时填它，0 = 不挑。
+    ///
+    /// MiniMax-H3 填 24：上游 `docs/minimax_h3.md` 写着「MiniMax-H3 runs at
+    /// 24 fps; another requested value is overridden」，`stable-diffusion.cpp`
+    /// 里也确实是硬改（`fps != 24` 就 `LOG_WARN` 然后赋 24）。
+    ///
+    /// **不认这一条的后果是全片变速，而不是报错。** 出来的裸帧是按 24fps
+    /// 的节奏演的，我们却按 `[assembly].fps` 去编码和算时长：填 30 的话
+    /// 每一镜都快 25%，人走路变小跑，配音对不上口型，字幕按 frames/30 排
+    /// 也跟着偏。sd.cpp 那句 LOG_WARN 淹在一屏 CUDA Graph 日志里，没人看得见。
+    ///
+    /// Wan 留 0：sd.cpp 对它不做覆盖，我们传什么它用什么。
+    int native_fps = 0;
 
     /// 这个秒数实际会生成多少帧：向上对齐到格子，再夹进上限。
     int frames_for(double duration_s, int fps = 24) const;
@@ -141,5 +154,13 @@ void set_video_limits(VideoLimits v);
 
 /// 单个镜头能生成的最长时长。等于 `video_limits().max_duration_s(fps)`。
 double max_shot_duration_s(int fps = 24);
+
+/// 这一轮真正该用的帧率：模型挑帧率就听模型的，否则听配置的。
+///
+/// **拆成纯函数是为了能测**，也为了只有一处在做这个决定——帧率被四个
+/// 地方读（渲染算帧数、装配算每镜时长、ffmpeg 编码、配音判一句装不装得下），
+/// 在任何一处单独纠正都会让另外三处继续用旧值，而对不上的表现是画面
+/// 和字幕慢慢错开，不是报错。
+int effective_fps(const VideoLimits& limits, int configured_fps);
 
 }  // namespace changji::stages

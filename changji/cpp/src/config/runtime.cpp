@@ -1,5 +1,7 @@
 #include "config/runtime.hpp"
 
+#include <cstdio>
+
 #include "stages/limits.hpp"
 
 namespace {
@@ -47,6 +49,22 @@ void Runtime::replace(Settings s) {
         limits.frame_base = s.models.video_frame_base;
     }
     stages::set_video_limits(limits);
+
+    // **帧率也得跟着模型走。** MiniMax-H3 只出 24fps，传别的值 sd.cpp
+    // 自己覆盖掉（只打一句 LOG_WARN，淹在 CUDA Graph 刷屏里）。而我们这边
+    // `[assembly].fps` 还按人填的那个数去算帧数、算每镜时长、编码——
+    // 填 30 的话整片快 25%，人走路变小跑，字幕跟着漂。**不报错。**
+    //
+    // 放在这儿和上面那几行同一个理由：能改配置的入口有五个，纠正写在
+    // 任何一个入口里都会漏掉另外四个。
+    const int want_fps = stages::effective_fps(limits, s.assembly.fps);
+    if (want_fps != s.assembly.fps) {
+        std::fprintf(stderr,
+                     "[配置] [assembly].fps 填的是 %d，但出片模型只出 %d fps"
+                     "（sd.cpp 会自己改掉），这次按 %d 算。\n",
+                     s.assembly.fps, want_fps, want_fps);
+        s.assembly.fps = want_fps;
+    }
 
     std::lock_guard lg(mu_);
     settings_ = std::move(s);

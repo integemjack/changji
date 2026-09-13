@@ -824,6 +824,34 @@ TEST_CASE("视频限制按模型自己认，不用人记着填") {
     }
 }
 
+TEST_CASE("帧率也是模型说了算：H3 只出 24fps") {
+    // 上游 docs/minimax_h3.md：「MiniMax-H3 runs at 24 fps; another requested
+    // value is overridden」。sd.cpp 里是硬改 + 一句 LOG_WARN，而那句警告
+    // 淹在一屏 CUDA Graph 日志里。
+    //
+    // **不跟着改的后果是全片变速，不是报错**：裸帧按 24fps 的节奏演出来，
+    // 我们却按 [assembly].fps 去编码和算时长。填 30 就是每一镜快 25%。
+    const auto h3 = stages::guess_video_limits("minimax_h3_fl2va-Q4_K_M.gguf");
+    CHECK(h3.native_fps == 24);
+    CHECK(stages::effective_fps(h3, 30) == 24);
+    CHECK(stages::effective_fps(h3, 16) == 24);
+    CHECK(stages::effective_fps(h3, 24) == 24);
+
+    SUBCASE("Wan 不挑：传什么用什么") {
+        // sd.cpp 对 Wan 不做覆盖，所以这儿也不该替人做主。
+        const auto wan = stages::guess_video_limits("wan2.2_ti2v_5B.gguf");
+        CHECK(wan.native_fps == 0);
+        CHECK(stages::effective_fps(wan, 30) == 30);
+        CHECK(stages::effective_fps(wan, 16) == 16);
+    }
+
+    SUBCASE("配置里填了 0 或负数，退回 24") {
+        const auto wan = stages::guess_video_limits("wan2.2_ti2v_5B.gguf");
+        CHECK(stages::effective_fps(wan, 0) == 24);
+        CHECK(stages::effective_fps(wan, -5) == 24);
+    }
+}
+
 // ---- 名义秒 vs 成片秒 ----
 
 TEST_CASE("再平衡压的是成片长度，不是分镜表上那串名义值") {

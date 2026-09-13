@@ -190,6 +190,7 @@ VideoLimits guess_video_limits(const std::string& video_model_file,
     h3.frame_step = 17;
     h3.frame_base = 5;
     h3.max_pixels = 1032192;  // 1344 × 768，官方 canvas_max_pixels
+    h3.native_fps = 24;       // 上游硬改，传别的值它自己覆盖掉
 
     if (has("minimax") || has("hailuo") || has("h3")) return h3;
     if (has("wan")) return wan;
@@ -249,6 +250,11 @@ void set_video_limits(VideoLimits v) { mutable_video_limits() = std::move(v); }
 
 double max_shot_duration_s(int fps) {
     return video_limits().max_duration_s(fps);
+}
+
+int effective_fps(const VideoLimits& limits, int configured_fps) {
+    if (limits.native_fps > 0) return limits.native_fps;
+    return configured_fps > 0 ? configured_fps : 24;
 }
 
 const std::vector<double>& duration_slots() {
