@@ -9,6 +9,8 @@
 
 #include <nlohmann/json.hpp>
 
+#include "config/runtime.hpp"
+#include "media/ffmpeg.hpp"
 #include "models/project.hpp"
 #include "pipeline/activity.hpp"
 #include "stages/audio.hpp"
@@ -20,7 +22,12 @@ namespace fs = std::filesystem;
 
 namespace changji::http {
 
+// **回包用 ordered_json（键序稳定，便于对拍），入参用 nlohmann::json
+// （头文件里声明的就是它）。** 两个是不同类型：一个底下是 ordered_map，
+// 一个是 std::map。混用的话声明和定义对不上，编译过、链接才炸——
+// 2026-09-13 就是这么栽的一次（undefined reference to post_voice_take）。
 using json = nlohmann::ordered_json;
+using in_json = nlohmann::json;
 using namespace changji::models;
 
 namespace {
@@ -117,7 +124,7 @@ constexpr const char* kSaveText =
     "你好，这是我说话的样子。今天天气不错，风从窗口吹进来，"
     "把桌上的纸吹得哗哗响。我慢慢把它们压好，然后坐下来，等着你开口。";
 
-unsigned int seed_of(const json& body) {
+unsigned int seed_of(const in_json& body) {
     if (body.is_object() && body.contains("seed") &&
         body.at("seed").is_number()) {
         const double v = body.at("seed").get<double>();
@@ -128,7 +135,7 @@ unsigned int seed_of(const json& body) {
     return rd() % 1000000u;
 }
 
-ProjectStore open_or_400(const json& body) {
+ProjectStore open_or_400(const in_json& body) {
     if (!body.is_object() || !body.contains("project") ||
         !body.at("project").is_string()) {
         throw ApiError(400, "没有指定项目目录");
@@ -143,6 +150,27 @@ json render_into(const ProjectStore& store, const fs::path& dest,
                  const std::string& text, unsigned int seed) {
     std::error_code ec;
     fs::create_directories(dest.parent_path(), ec);
+
+    // **先把后端搭起来。** 注册调度器里那个配音槽是 local_tts_backend
+    // 干的事，而下面 render_voice_take 是直接去借槽的——引擎刚重启、
+    // 还没跑过任何一集时，借到的是「槽 配音 还没注册」。
+    // 2026-09-13 实测撞到：八个预置种子全部摇不出来，就是这一条。
+    const config::Settings cfg = config::runtime().snapshot();
+    const auto ff = media::FFmpeg(cfg.assembly.ffmpeg_path,
+                                  cfg.assembly.ffprobe_path,
+                                  media::default_runner());
+    const stages::TTSBackend backend = stages::pick_tts_backend(cfg, ff);
+    // **摇音色只在进程内那条路上有意义。** estimate 出来的是等长静音，
+    // 摇一百次都是同一段无声；外部服务的音色是它自己管的名字，不是我们
+    // 生成的片段。这两种情况下明说，别让人对着静音以为音箱坏了。
+    if (backend.name != "local") {
+        throw ApiError(
+            503,
+            std::string("现在的配音后端是 ") + backend.name +
+                "，摇不了音色。制作音色要的是进程内配音（[tts].backend = "
+                "local）——它不给参考音频时会随机摇一个说话人，而那正是"
+                "「制作」的全部内容。");
+    }
 
     // 顶栏那本账要看得见：摇一段要借配音槽，而那一槽和大模型抢同一张卡。
     pipeline::Activity act{"say", paths::to_utf8(store.root()), "",
@@ -176,7 +204,7 @@ const std::vector<unsigned int>& preset_voice_seeds() {
     return kSeeds;
 }
 
-ApiResult post_voice_take(const json& body) {
+ApiResult post_voice_take(const in_json& body) {
     ProjectStore store = open_or_400(body);
     const unsigned int seed = seed_of(body);
     const std::string text =
@@ -191,7 +219,7 @@ ApiResult post_voice_take(const json& body) {
     return {200, render_into(store, dest, text, seed)};
 }
 
-ApiResult post_voice_save(const json& body) {
+ApiResult post_voice_save(const in_json& body) {
     ProjectStore store = open_or_400(body);
     if (!body.is_object() || !body.contains("seed") ||
         !body.at("seed").is_number()) {

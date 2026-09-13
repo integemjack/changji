@@ -9,6 +9,7 @@
 #include <system_error>
 
 #include "infer/llama_tts.hpp"
+#include "llm/client.hpp"
 #include "infer/scheduler.hpp"
 #include "pipeline/activity.hpp"
 #include "stages/audio.hpp"
@@ -376,6 +377,24 @@ std::optional<TTSBackend> local_tts_backend(const fs::path& backbone,
     // 音色列表问不到：参考音色是用户自己给的音频文件，没有服务端清单。
     // 留空，AudioStage 会按角色资产里填的来（见 audio.hpp 的 VoiceLister）。
     return b;
+}
+
+TTSBackend pick_tts_backend(const config::Settings& s,
+                            const std::optional<media::FFmpeg>& ff) {
+    if (s.tts.backend == "http" && s.tts.base_url.has_value() &&
+        !s.tts.base_url->empty()) {
+        return http_tts_backend(*s.tts.base_url, 300.0, llm::default_http_post(),
+                                ff);
+    }
+    if (s.tts.backend == "local") {
+        std::string why;
+        const auto ws = s.workspace_path();
+        auto local = local_tts_backend(s.models.resolve(s.models.tts, ws),
+                                       s.models.resolve(s.models.tts_decoder, ws),
+                                       /*use_gpu=*/true, ff, why);
+        if (local.has_value()) return std::move(*local);
+    }
+    return estimate_backend();
 }
 
 double render_voice_take(const std::string& text, const fs::path& out,

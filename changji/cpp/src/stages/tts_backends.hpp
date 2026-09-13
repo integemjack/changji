@@ -75,6 +75,18 @@ std::optional<TTSBackend> local_tts_backend(
     const std::filesystem::path& backbone, const std::filesystem::path& decoder,
     bool use_gpu, const std::optional<media::FFmpeg>& ff, std::string& why);
 
+/// 按配置搭一个配音后端。搭不起来退回估算后端（那会写出等长静音）。
+///
+/// **顺带把调度器里的配音槽注册上。** 注册是 local_tts_backend 做的事，
+/// 而借槽的人（render_voice_take、AudioStage）自己不注册——引擎刚重启、
+/// 还没跑过任何一集时直接去借，报的是「槽 配音 还没注册」，指不到根因。
+/// 2026-09-13 实测撞到：八个种子全部摇不出来，就是这一条。
+///
+/// 抽出来是因为 tts_api.cpp 和 voices.cpp 都要它，而这套代码里"同一段
+/// 逻辑抄两份"迟早分叉（见 http/reset.hpp 开头那段）。
+TTSBackend pick_tts_backend(const config::Settings& s,
+                            const std::optional<media::FFmpeg>& ff);
+
 /// 按种子出一段**不带参考音色**的语音——「制作音色」那条路专用。
 ///
 /// **为什么不走 TTSBackend::synthesize。** 那个签名上没有 seed，加上去要

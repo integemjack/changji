@@ -41,24 +41,6 @@ std::string opt_str(const json& body, const char* key) {
 /// 搭不起来就退回估算后端——那会写出一段等长静音。在出片那条路上这是
 /// 刻意的（画面那几步照样能验），但在"念给我听"这件事上没有意义，
 /// 所以响应里把后端名字回出去，界面照实说。
-stages::TTSBackend pick_backend(const config::Settings& s,
-                                const std::optional<media::FFmpeg>& ff) {
-    if (s.tts.backend == "http" && s.tts.base_url.has_value() &&
-        !s.tts.base_url->empty()) {
-        return stages::http_tts_backend(*s.tts.base_url, 300.0,
-                                        llm::default_http_post(), ff);
-    }
-    if (s.tts.backend == "local") {
-        std::string why;
-        const auto ws = s.workspace_path();
-        auto local = stages::local_tts_backend(s.models.resolve(s.models.tts, ws),
-                                               s.models.resolve(s.models.tts_decoder, ws),
-                                               /*use_gpu=*/true, ff, why);
-        if (local.has_value()) return std::move(*local);
-    }
-    return stages::estimate_backend();
-}
-
 }  // namespace
 
 ApiResult post_tts_say(const json& body) {
@@ -77,7 +59,7 @@ ApiResult post_tts_say(const json& body) {
     const config::Settings s = config::runtime().snapshot();
     const auto ff = media::FFmpeg(s.assembly.ffmpeg_path, s.assembly.ffprobe_path,
                                   media::default_runner());
-    const stages::TTSBackend backend = pick_backend(s, ff);
+    const stages::TTSBackend backend = stages::pick_tts_backend(s, ff);
     if (!backend.synthesize) throw ApiError(503, "配音后端没准备好");
 
     // 落点：项目的 audio/ 下面一个固定名字。**固定名字是刻意的**——朗读是
