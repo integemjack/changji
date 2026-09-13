@@ -203,7 +203,7 @@ Check check_llm(const config::Settings& s) {
     if (s.llm.needs_api_key() && s.llm.api_key.empty()) {
         return {"大模型", Level::WARN, "还没填 API Key（" + url + "）",
                 "去设置页的「大模型」那一节填上。\n"
-                "默认走 OpenRouter：去 openrouter.ai 注册领一把，默认挑的那几个模型本身不要钱。\n"
+                "默认走智谱：去 bigmodel.cn 控制台领一把，默认挑的 glm-4.7-flash 本身不要钱。\n"
                 "想在本机跑就把「跑在哪」改成内置，并填 [models].llm。"};
     }
 

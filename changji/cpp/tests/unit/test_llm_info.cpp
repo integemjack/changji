@@ -6,6 +6,7 @@
 
 #include <doctest/doctest.h>
 
+#include <algorithm>
 #include <filesystem>
 #include <fstream>
 #include <map>
@@ -233,4 +234,93 @@ TEST_CASE("模型目录不存在也不报错") {
     const auto r = http::get_llm_models(s, get.fn());
     CHECK(r.status == 200);
     CHECK(r.body.at("local").at("files") == json::array());
+}
+
+TEST_CASE("认识的那几家带一本小抄：known") {
+    // **为什么非有这个不可**（2026-09-13 实测）：智谱的 /models
+    // 只回 glm-4.5 / 4.5-air / 4.6 / 4.7 / 5 / 5-turbo / 5.1 / 5.2 /
+    // 5.3 / 5.3-flash——**glm-4.7-flash 不在里面而它能用**，
+    // 而它正好是我们的默认。只照 /models 渲染下拉的话，
+    // 默认那个模型在自己的下拉里是找不到的。
+    config::Settings s = test_settings();
+    s.llm.base_url = "https://open.bigmodel.cn/api/paas/v4";
+    s.llm.model = "glm-4.7-flash";
+
+    FakeGet get;
+    // 照着实测的样子回——**故意不含 glm-4.7-flash**。
+    get.reply = ok_body(json{{"data", json::array({
+                                 json{{"id", "glm-4.6"}},
+                                 json{{"id", "glm-5.3"}},
+                             })}});
+    const auto r = http::get_llm_models(s, get.fn());
+
+    // models 仍然只装服务真答应的那些：这两个字段**不合并**。
+    // 混进小抄之后，前端那句"这台服务上没有 X"就会在模型真的不存在时
+    // 也不吭声。合并是前端的事。
+    CHECK(r.body.at("models") == json::array({"glm-4.6", "glm-5.3"}));
+
+    REQUIRE(r.body.contains("known"));
+    const json& known = r.body.at("known");
+    REQUIRE(known.is_array());
+    REQUIRE(!known.empty());
+
+    std::vector<std::string> ids;
+    for (const auto& k : known) {
+        CHECK(k.contains("id"));
+        // **每一项都得有一句话。** 一串 glm-4.5/4.6/4.7/5/5.1/5.2/5.3
+        // 摆在那儿，要紧的两件事——哪个不要钱、哪个会写——名字上一个字
+        // 都看不出来。
+        CHECK(k.contains("note"));
+        CHECK_FALSE(k.at("note").get<std::string>().empty());
+        ids.push_back(k.at("id").get<std::string>());
+    }
+    // 头一个是推荐顺序的头一个，前端换家时就挑它，所以别随手改顺序。
+    CHECK(ids.front() == "glm-4.7-flash");
+    CHECK(std::find(ids.begin(), ids.end(), "glm-5.3") != ids.end());
+
+    SUBCASE("z.ai 是同一套后端，同样给") {
+        s.llm.base_url = "https://api.z.ai/api/paas/v4";
+        FakeGet g2;
+        g2.reply = ok_body(json{{"data", json::array()}});
+        CHECK_FALSE(http::get_llm_models(s, g2.fn()).body.at("known").empty());
+    }
+
+    SUBCASE("不认识的家给空的，不瞎猜") {
+        // 这是本我们自己维护的小抄，不是模型总表。认不出的地址上
+        // 编几个名字出来，比不给更糟。
+        FakeGet g2;
+        g2.reply = ok_body(json{{"data", json::array()}});
+        const auto r2 = http::get_llm_models(test_settings(), g2.fn());
+        CHECK(r2.body.at("known") == json::array());
+    }
+}
+
+TEST_CASE("连不上也要给小抄") {
+    // 刚装好还没填密钥时 /models 必然 401，**而那正是最需要
+    // 「这家都有什么、该挑哪个」的时候**。这时候把下拉渲染成空的，
+    // 人只能回去手打一个自己也不确定的名字。
+    config::Settings s = test_settings();
+    s.llm.base_url = "https://open.bigmodel.cn/api/paas/v4";
+
+    for (const int status : {401, 429, 500}) {
+        CAPTURE(status);
+        FakeGet get;
+        get.reply = llm::HttpResponse{status, "{}", std::nullopt};
+        const auto r = http::get_llm_models(s, get.fn());
+        // 失败时的老契约一个字不动：空 models、有 error、没有 current。
+        CHECK(r.body.at("models") == json::array());
+        CHECK(r.body.contains("error"));
+        CHECK_FALSE(r.body.contains("current"));
+        // 新加的这份照给。
+        CHECK_FALSE(r.body.at("known").empty());
+    }
+
+    SUBCASE("连都连不上也一样") {
+        FakeGet get;
+        get.reply.status = 0;
+        get.reply.transport_error = "Connection refused";
+        const auto r = http::get_llm_models(s, get.fn());
+        CHECK(r.body.at("models") == json::array());
+        CHECK_FALSE(r.body.at("known").empty());
+    }
 }

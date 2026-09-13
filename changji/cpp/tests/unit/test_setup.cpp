@@ -195,7 +195,7 @@ TEST_CASE("推荐：卡越大挑得越好，而且不会推荐装不下的") {
     // 理由写在 config::LLMConfig::backend 上。
     for (const double vram : {8.0, 24.0, 31.8, 80.0}) {
         CAPTURE(vram);
-        CHECK(setup::recommend(vram).at("llm") == "openrouter-free");
+        CHECK(setup::recommend(vram).at("llm") == "zhipu-free");
     }
     // 本地那几档**没有被删掉**，只是不当默认值：想自己跑照样点得动。
     const auto* llm_group = &setup::catalog().front();
@@ -321,11 +321,10 @@ TEST_CASE("写回配置：不下载那一档只写旋钮，不动模型路径") 
 }
 
 TEST_CASE("写回配置：云端那一项连地址和模型名一起写，也不动模型路径") {
-    const json patch = setup::config_patch({{"llm", "openrouter-free"}});
+    const json patch = setup::config_patch({{"llm", "zhipu-free"}});
     CHECK(patch["llm"]["backend"] == "remote");
-    CHECK(patch["llm"]["base_url"] == "https://openrouter.ai/api/v1");
-    CHECK(patch["llm"]["model"] ==
-          "nvidia/nemotron-3-super-120b-a12b:free");
+    CHECK(patch["llm"]["base_url"] == "https://open.bigmodel.cn/api/paas/v4");
+    CHECK(patch["llm"]["model"] == "glm-4.7-flash");
     // **它不是 kNoneOption，但一个文件都不下**，所以同样不该清 models.llm
     // ——盘上那个权重还在，清了的话用户想切回本地得重新去找它叫什么。
     CHECK_FALSE(patch.contains("models"));

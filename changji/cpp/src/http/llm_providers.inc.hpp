@@ -1,6 +1,11 @@
-// 本文件由 cpp/tools/gen_prompts.py 生成，不要手改。
-// 常见大模型平台的接入地址，从 web/server.py 的 LLM_PROVIDERS 原样导出。
-// 各家地址会变，改了 Python 侧就重跑这个脚本。
+// 常见大模型平台的接入地址。设置页「大模型」那一节的下拉就是它。
+//
+// 原来这份由 cpp/tools/gen_prompts.py 从 web/server.py 的 LLM_PROVIDERS
+// 导出，**那两个文件都已经不在了**（Python 侧删干净了），所以现在直接改
+// 这里。各家地址会变，发现不对就改。
+//
+// 这只是一本**地址簿**——填了地址还要自己填密钥、选模型，列在这儿不等于
+// 推荐、更不等于接通过。2026-09-14 按用户要求删掉了 OpenRouter 那一项。
 
 #pragma once
 
@@ -66,10 +71,10 @@ inline constexpr const char* kLlmProvidersJson =
  },
  {
   "id": "zhipu",
-  "name": "智谱 GLM（国内站）",
+  "name": "智谱 GLM（国内站 · 默认）",
   "base_url": "https://open.bigmodel.cn/api/paas/v4",
   "local": false,
-  "note": "和 z.ai 同一套后端、同一把密钥，国内直连这个更稳"
+  "note": "默认就是这家。glm-4.7-flash 不要钱；写作要好换 glm-5.3。和 z.ai 同一套后端、同一把密钥"
  },
  {
   "id": "ark",
@@ -112,13 +117,6 @@ inline constexpr const char* kLlmProvidersJson =
   "base_url": "https://api.openai.com/v1",
   "local": false,
   "note": "国内直连多半要自备网络"
- },
- {
-  "id": "openrouter",
-  "name": "OpenRouter（默认）",
-  "base_url": "https://openrouter.ai/api/v1",
-  "local": false,
-  "note": "默认就是这家。一把密钥转发到几百个模型，带 :free 后缀的二十来个完全免费"
  }
 ])CJ";
 

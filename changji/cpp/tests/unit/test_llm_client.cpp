@@ -49,10 +49,14 @@ config::LLMConfig test_cfg() {
 }
 
 /// 默认那套（OpenRouter + 按任务分流），只是补上密钥。
-config::LLMConfig test_cfg_openrouter() {
+/// 默认那家云服务（2026-09-14 起是智谱 bigmodel.cn）+ 一把密钥。
+///
+/// **地址不写死在这儿**，跟着 `LLMConfig` 的默认走：这个 fixture 要问的
+/// 一直是"默认配置下发出去的是什么"，换家的时候该跟着变的正是它。
+config::LLMConfig test_cfg_cloud() {
     llm::reset_schema_support();
     config::LLMConfig c;
-    c.api_key = "sk-or-v1-测试";
+    c.api_key = "测试密钥";
     return c;
 }
 
@@ -143,10 +147,12 @@ TEST_CASE("哪些地址要 API Key") {
     // 然后在第一次写剧本时撞上 401；反过来只是多提示一句。所以认不准就当要。
     config::LLMConfig c;
 
-    SUBCASE("默认那一档是 OpenRouter，必须自己填密钥") {
+    SUBCASE("默认那一档是智谱，必须自己填密钥") {
         // **这里曾经内置过一把智谱的免费密钥，2026-09-13 用户要求删掉。**
         // 别再往回加：密钥明文编进二进制，strings 一抓就有，也会进 git。
-        CHECK(c.base_url.find("openrouter.ai") != std::string::npos);
+        // ——2026-09-14 默认又换回智谱了，但**密钥这件事不跟着回来**：
+        // 默认那个 glm-4.7-flash 不要钱，人还是得自己去领一把。
+        CHECK(c.base_url.find("bigmodel.cn") != std::string::npos);
         CHECK(c.backend == "remote");
         CHECK(c.api_key.empty());
         CHECK(c.needs_api_key());
@@ -239,7 +245,7 @@ TEST_CASE("密钥单独一个文件，不混进 config.toml") {
     }
 }
 
-TEST_CASE("发往 OpenRouter 的请求要关掉「先想再写」") {
+TEST_CASE("关掉「先想再写」：字段名每家不一样，按地址挑") {
     // **2026-09-13 实测出来的，不关它这条流水线在长任务上全军覆没。**
     // nemotron-3-super：6000 token 烧掉 5288 在思考上，content 字段装的
     // 和 reasoning 字段一模一样的 12962 字英文思考稿，JSON 一个字解不出；
@@ -247,7 +253,12 @@ TEST_CASE("发往 OpenRouter 的请求要关掉「先想再写」") {
     // 同一个模型关掉之后：正文字数翻倍（507→955）、快 2.5 倍。
     //
     // 短提示词上试不出来——思考几句就够了，正文照样出得来。
-    config::LLMConfig c = test_cfg_openrouter();
+    //
+    // ⚠️ **2026-09-14 换到智谱之后这件事多了一层**：关它的字段每家名字
+    // 不一样，而 GLM-4.5 起的智谱模型**全是混合推理、默认开着思考**。
+    // 要是换家的时候忘了这一处，这一整条防线会**静悄悄失效**——症状还是
+    // 上面那两条，照样不报错。所以这个用例覆盖三种家，一种都不能少。
+    config::LLMConfig c = test_cfg_cloud();   // 默认那家 = 智谱
     FakeHttp http;
     http.responses.push_back(ok("{\"ok\":1}"));
     llm::RemoteClient rc(c, http.fn());
@@ -256,8 +267,10 @@ TEST_CASE("发往 OpenRouter 的请求要关掉「先想再写」") {
 
     REQUIRE(http.calls.size() == 1);
     const json body = http.calls[0].body;
-    REQUIRE(body.contains("reasoning"));
-    CHECK(body.at("reasoning").at("enabled") == false);
+    REQUIRE(body.contains("thinking"));
+    CHECK(body.at("thinking").at("type") == "disabled");
+    // 别家的字段一个都不能捎带着发，理由见下面那个 SUBCASE。
+    CHECK_FALSE(body.contains("reasoning"));
 
     SUBCASE("想开就开得回来") {
         c.reasoning = true;
@@ -267,13 +280,28 @@ TEST_CASE("发往 OpenRouter 的请求要关掉「先想再写」") {
         pipeline::CancelToken t2;
         rc2.complete(simple_req(), t2);
         REQUIRE(h.calls.size() == 1);
+        CHECK_FALSE(h.calls[0].body.contains("thinking"));
         CHECK_FALSE(h.calls[0].body.contains("reasoning"));
     }
 
-    SUBCASE("只对 OpenRouter 发这个字段") {
-        // reasoning 是 OpenRouter 的统一参数，别家不认。发过去被当成非法
-        // 字段整个打回的话，会被我们的退路误判成"这家不支持 json_schema"，
-        // 白白退两档。
+    SUBCASE("OpenRouter 用的是它自己那个名字") {
+        c.base_url = "https://openrouter.ai/api/v1";
+        FakeHttp h;
+        h.responses.push_back(ok("{\"ok\":1}"));
+        llm::RemoteClient rc2(c, h.fn());
+        pipeline::CancelToken t2;
+        rc2.complete(simple_req(), t2);
+        REQUIRE(h.calls.size() == 1);
+        REQUIRE(h.calls[0].body.contains("reasoning"));
+        CHECK(h.calls[0].body.at("reasoning").at("enabled") == false);
+        CHECK_FALSE(h.calls[0].body.contains("thinking"));
+    }
+
+    SUBCASE("认不出的家一个字都不发") {
+        // 这两个字段都是各家自己的参数，别家不认。发过去被当成非法字段
+        // 整个打回的话，会被我们的退路误判成"这家不支持 json_schema"，
+        // 白白退两档，而这一轮的结构就全靠提示词了——**还不报错**。
+        // 宁可漏关也不要乱发。
         FakeHttp h;
         h.responses.push_back(ok("{\"ok\":1}"));
         llm::RemoteClient rc3(test_cfg(), h.fn());   // 本机 Ollama 那套
@@ -281,26 +309,34 @@ TEST_CASE("发往 OpenRouter 的请求要关掉「先想再写」") {
         rc3.complete(simple_req(), t3);
         REQUIRE(h.calls.size() == 1);
         CHECK_FALSE(h.calls[0].body.contains("reasoning"));
+        CHECK_FALSE(h.calls[0].body.contains("thinking"));
     }
 }
 
 TEST_CASE("按任务分流：哪一步用哪个模型") {
     // 用户 2026-09-13 定的方向："发挥各自的优势，不同功能使用不同的模型"。
-    // 这条流水线要两种本事，而免费模型里没有一个两样都强：写正文要文采
-    // （Inkling 榜上 72.5），拆分镜要听话（Nemotron 3 Super 是免费档里
-    // 唯一带完整 structured_outputs 的）。
+    // 这条流水线要两种本事：写正文要文采，拆分镜要听话（分镜那份 schema
+    // 有六十多个类型定义和一串枚举，文采在那儿一点用都没有）。
     config::LLMConfig c;
 
-    // 写作那几步和结构那几步必须**不是同一个模型**——分流的全部意义
-    // 就在这儿。具体是谁会随实测改（Inkling 就是这么被换掉的：
-    // 榜上最高分，但 OpenRouter 回 403 限定入口，我们用不了）。
-    CHECK(c.model_for("chapter") != c.model_for("storyboard"));
-    CHECK(c.model_for("chapter") == c.model_for("premises"));
-    CHECK(c.model_for("storyboard") == c.model_for("bible"));
-    // 结构那几步要挑带 structured_outputs 的，兜底也是它
+    // **默认不分流。** 2026-09-14 换到智谱之后，默认那一档
+    // （glm-4.7-flash）是这家**唯一免费**的模型，分流无从分起——与其
+    // 写九行一模一样的模型名，不如空着全落到兜底那个。
+    // 想分流照 config.toml 模板里注释掉的那段抄（写作 glm-5.3 / 结构
+    // glm-5.3-flash）。
+    CHECK(c.task_models.empty());
+    CHECK(c.model_for("chapter") == c.model);
     CHECK(c.model_for("storyboard") == c.model);
 
+    // 机制本身照旧：配了就按配的走，写作那几步和结构那几步分得开。
+    c.task_models["chapter"] = "glm-5.3";
+    c.task_models["premises"] = "glm-5.3";
+    c.task_models["storyboard"] = "glm-5.3-flash";
+    CHECK(c.model_for("chapter") != c.model_for("storyboard"));
+    CHECK(c.model_for("chapter") == c.model_for("premises"));
+
     SUBCASE("没点名的任务落到兜底那个") {
+        CHECK(c.model_for("bible") == c.model);
         CHECK(c.model_for("这个任务还没有") == c.model);
         CHECK(c.model_for("") == c.model);
     }
@@ -317,14 +353,15 @@ TEST_CASE("按任务分流：哪一步用哪个模型") {
         // 而那件事不报错——只是正文忽然变难看。
         FakeHttp http;
         http.responses.push_back(ok("{\"ok\":1}"));
-        const config::LLMConfig cfg = test_cfg_openrouter();
+        config::LLMConfig cfg = test_cfg_cloud();
+        cfg.task_models["chapter"] = "glm-5.3";
         llm::Request r = simple_req();
         r.schema_name = "chapter";
         llm::RemoteClient rc(cfg, http.fn());
         pipeline::CancelToken tok;
         rc.complete(r, tok);
         REQUIRE(http.calls.size() == 1);
-        CHECK(http.calls[0].body.at("model") == cfg.model_for("chapter"));
+        CHECK(http.calls[0].body.at("model") == "glm-5.3");
         CHECK(http.calls[0].body.at("model") != cfg.model);
     }
 }
@@ -485,14 +522,14 @@ TEST_CASE("状态码翻成人话") {
     }
 
     SUBCASE("401 的两种情况说两句不同的话") {
-        config::LLMConfig c;   // 默认：OpenRouter + 空密钥
+        config::LLMConfig c;   // 默认：智谱 + 空密钥
 
         // 一、默认状态：密钥还没填。说"密钥不对"会把人支去检查一个他
         //     根本没填过的东西，而且该提哪儿领要说清楚。
         REQUIRE(c.api_key.empty());
         const std::string fresh = llm::explain_status(c, 401, "{}");
         CHECK(fresh.find("还没填") != std::string::npos);
-        CHECK(fresh.find("openrouter.ai") != std::string::npos);
+        CHECK(fresh.find("bigmodel.cn") != std::string::npos);
         CHECK(fresh.find("不对") == std::string::npos);
 
         // 二、换了一家云服务、密钥还没填。说"密钥不对"会把人支去检查
@@ -546,7 +583,8 @@ TEST_CASE("状态码翻成人话") {
             R"({"error":{"code":"1113","message":"余额不足或无可用资源包，请充值。"}})");
         CHECK(broke.find("余额") != std::string::npos);
         CHECK(broke.find("太频繁") == std::string::npos);
-        CHECK(broke.find(":free") != std::string::npos);   // 指一条出路
+        // 指一条出路：这家免费的那个叫什么，直接说出来
+        CHECK(broke.find("glm-4.7-flash") != std::string::npos);
     }
 
     SUBCASE("服务端错误") {

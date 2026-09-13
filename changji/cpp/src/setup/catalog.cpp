@@ -385,29 +385,30 @@ std::vector<Group> build() {
         // 后者是一个完整可用的选择，只差一个密钥。
         {
             Option o;
-            o.id = "openrouter-free";
-            o.family = "OpenRouter（云端 · 免费档）";
-            o.label = "OpenRouter · 免费模型";
+            o.id = "zhipu-free";
+            o.family = "智谱 GLM（云端 · 免费档）";
+            o.label = "智谱 · glm-4.7-flash（免费）";
             // **要紧的话写在 note 里，不是 family_note。** 界面上只显示
             // 选中那一档的 note（ModelPicker.vue 里那一句「家族那段话不
             // 摆出来」），family_note 收集了但一个地方都没渲染。
             o.note =
-                "不下权重，剧本交给云端。OpenRouter 一把密钥转发到几百个"
-                "模型，其中二十来个完全免费；我们按任务分流——写正文用"
-                "实跑比出来最会写的那个（nex-n2.5-pro），拆分镜用带完整"
-                "结构化输出的那个（Nemotron 3 Super）。"
+                "不下权重，剧本交给云端。国内直连，不用自备网络。"
+                "默认挑的 glm-4.7-flash 不要钱——代价是限流很紧，"
+                "成批写的时候会走得慢；写作也只在长文创作榜上排 47.8，"
+                "想要好的去设置页把模型换成 glm-5.3（81.8 分，"
+                "一部 11 集大约五块钱）。"
                 "好处是整张卡全留给出图出片；"
                 "代价是本子要发到云上，断网就不能编剧。"
-                "要先去 openrouter.ai 领一把密钥，填进设置页的"
-                "「大模型」那一节。换别家（DeepSeek、智谱、局域网里的"
+                "要先去 bigmodel.cn 控制台领一把密钥，填进设置页的"
+                "「大模型」那一节。换别家（DeepSeek、硅基流动、局域网里的"
                 " Ollama / vLLM）也只改设置页那两行。";
             o.family_note = o.note;
             o.min_vram_gb = 0.0;
             o.rank = 1000;
             o.settings = {
                 {"llm.backend", "remote"},
-                {"llm.base_url", "https://openrouter.ai/api/v1"},
-                {"llm.model", "nvidia/nemotron-3-super-120b-a12b:free"}};
+                {"llm.base_url", "https://open.bigmodel.cn/api/paas/v4"},
+                {"llm.model", "glm-4.7-flash"}};
             g.options.push_back(std::move(o));
         }
 

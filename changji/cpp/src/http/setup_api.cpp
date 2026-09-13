@@ -421,7 +421,7 @@ ApiResult post_setup_download(const config::Settings& settings, const json& body
             // 的话，中途取消就永远写不上了。
             //
             // **判据是"有没有文件"，不是"是不是 kNoneOption"。**
-            // 走云端 API 那一项（openrouter-free）也一个文件都不下，但它
+            // 走云端 API 那一项（zhipu-free）也一个文件都不下，但它
             // 带着三个必须写的旋钮。按 id 判的话它会掉进下面那个循环、
             // 循环体一次都不执行，于是**旋钮一个都没写**——而这一页会
             // 报"下完了"。用户选了云端模型、点了确认、页面说好了，

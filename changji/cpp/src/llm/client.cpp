@@ -272,9 +272,10 @@ std::string explain_status(const config::LLMConfig& cfg, int status,
         if (cfg.api_key.empty()) {
             hint = "还没填 API Key。去设置页的「大模型」那一节填上——"
                    "当前地址是 " + cfg.base_url + "。";
-            if (cfg.base_url.find("openrouter.ai") != std::string::npos) {
-                hint += "去 openrouter.ai 注册领一把——默认挑的那几个"
-                        "模型本身不要钱，但网关仍然要认人。";
+            if (cfg.base_url.find("bigmodel.cn") != std::string::npos ||
+                cfg.base_url.find("z.ai") != std::string::npos) {
+                hint += "去 bigmodel.cn 控制台领一把——默认挑的"
+                        "glm-4.7-flash 本身不要钱，但服务仍然要认人。";
             }
         } else if (!model_not_allowed(detail).empty()) {
             // **403 不都是密钥问题。** 2026-09-13 实测：OpenRouter 上
@@ -303,7 +304,7 @@ std::string explain_status(const config::LLMConfig& cfg, int status,
         if (detail.find("1113") != std::string::npos ||
             detail.find("余额") != std::string::npos) {
             hint = "这个模型要钱，而账上没余额（服务回的是 429 / 1113）。"
-                   "换一个免费模型（OpenRouter 上是带 :free 后缀的那些），"
+                   "换一个免费模型（智谱这边是 glm-4.7-flash），"
                    "或者去服务商那边充值。去设置页的「大模型」那一节改。";
         } else {
             hint = "大模型服务说请求太频繁了，等一会儿再试。"
@@ -324,20 +325,36 @@ std::string explain_status(const config::LLMConfig& cfg, int status,
 
 namespace {
 
-/// 发往 OpenRouter 时额外要带的字段。
+/// 这一家额外要带的字段。
 ///
-/// 现在只有一个：**关掉「先想再写」**。理由见
-/// config::LLMConfig::reasoning——一句话是，开着的话长任务上这几个模型
-/// 要么把英文思考稿当正文交上来，要么回一个空的 content。
+/// 现在只有一件事：**关掉「先想再写」**。理由见
+/// config::LLMConfig::reasoning——一句话是，开着的话长任务上这些模型
+/// 要么把思考稿当正文交上来，要么回一个空的 content。
 ///
-/// **只对 OpenRouter 发**：`reasoning` 是它的统一参数，别家不认，
-/// 发过去可能被当成非法字段整个打回——而那会被我们的退路误判成
-/// "这家不支持 json_schema"，白白退两档。
+/// ⚠️ **这个字段每家名字不一样，只能按地址挑**：
+///
+///     智谱（bigmodel.cn / z.ai）  "thinking": {"type": "disabled"}
+///     OpenRouter                 "reasoning": {"enabled": false}
+///
+/// **认不出的家一个字都不发。** 发错家的字段可能被当成非法参数整个打回，
+/// 而那会被我们的退档梯子误判成"这家不支持 json_schema"，白白退两档，
+/// 这一轮的结构全靠提示词——**而且不报错**。宁可漏关也不要乱发。
+///
+/// 加模型/换服务商时记得回来看一眼这里：2026-09-14 从 OpenRouter 换到
+/// 智谱，要是忘了这一处，`reasoning` 就发不出去了，而 GLM-4.5 起的
+/// 智谱模型**全是混合推理、默认开着思考**——症状正是上面那两条。
 void apply_remote_extras(const config::LLMConfig& cfg,
                          nlohmann::ordered_json& payload) {
     if (cfg.reasoning) return;
-    if (cfg.base_url.find("openrouter.ai") == std::string::npos) return;
-    payload["reasoning"] = nlohmann::ordered_json{{"enabled", false}};
+    if (cfg.base_url.find("bigmodel.cn") != std::string::npos ||
+        cfg.base_url.find("z.ai") != std::string::npos) {
+        payload["thinking"] = nlohmann::ordered_json{{"type", "disabled"}};
+        return;
+    }
+    if (cfg.base_url.find("openrouter.ai") != std::string::npos) {
+        payload["reasoning"] = nlohmann::ordered_json{{"enabled", false}};
+        return;
+    }
 }
 
 /// 远端这条路上真正发出去的那份 Request。

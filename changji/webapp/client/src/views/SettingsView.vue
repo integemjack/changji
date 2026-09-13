@@ -51,14 +51,58 @@ const engineOnline = computed(() => Boolean(overview.value?.engine?.online))
  * 404——分不清是地址错了还是名字错了。拉过来给人选，这类错就没机会发生。
  */
 const models = ref([])
+/** 引擎那边认识的这家有什么，每项 { id, note }。见后端 known_models。 */
+const known = ref([])
 const modelsError = ref('')
 const modelsLoading = ref(false)
+/** 选不着的时候手打。下拉是**有兜底的**，不是唯一入口。 */
+const customModel = ref(false)
 
+/**
+ * 下拉里摆什么。
+ *
+ * 两份东西合起来：`models` 是这台服务此刻真答应的，`known` 是引擎带的
+ * 一本小抄。**两份都要**——智谱的 `/models` 不列免费模型，我们默认那个
+ * glm-4.7-flash 就不在里面，而它能用；只照 `models` 渲染的话，默认那个
+ * 模型在自己的下拉里是找不到的。
+ *
+ * 顺序按小抄走，不按服务返回的字母序：小抄的顺序是**推荐顺序**（不要钱的
+ * 和最会写的排前头），字母序第一个是 glm-4.5，谁也不该先看见它。
+ */
+const modelOptions = computed(() => {
+  const live = new Set(models.value)
+  const seen = new Set()
+  const out = []
+  for (const k of known.value) {
+    if (!k?.id || seen.has(k.id)) continue
+    out.push({ id: k.id, note: k.note ?? '', live: live.has(k.id) })
+    seen.add(k.id)
+  }
+  for (const id of models.value) {
+    if (seen.has(id)) continue
+    out.push({ id, note: '', live: true })
+    seen.add(id)
+  }
+  // 当前填的那个不在上面两份里也得摆出来，否则 select 显示成空白，
+  // 看上去像「没填模型」，而配置里其实填着东西。
+  const current = conn.value.llm_model
+  if (current && !seen.has(current)) out.push({ id: current, note: '', live: false })
+  return out
+})
+
+/**
+ * 当前这个模型，这台服务上是不是真没有。
+ *
+ * ⚠️ **小抄里有的不算缺**。智谱的 `/models` 不列 glm-4.7-flash 而它能用，
+ * 只拿 `models` 判的话，选中默认模型会一直挂着一句「这台服务上没有
+ * glm-4.7-flash」——把一个正常配置报成坏的，比不报还糟。
+ */
 const modelMissing = computed(
   () =>
     models.value.length > 0 &&
     conn.value.llm_model &&
-    !models.value.includes(conn.value.llm_model),
+    !models.value.includes(conn.value.llm_model) &&
+    !known.value.some((k) => k?.id === conn.value.llm_model),
 )
 
 /**
@@ -67,6 +111,9 @@ const modelMissing = computed(
  * 拉到之后，如果当前填的模型这台服务上没有（或者压根没填），就默认选第一个。
  * 不这么做的话，换完平台地址那一刻配置是坏的——地址是新平台的，模型名还是
  * 上一家的，点保存就存进去一个跑不通的组合。
+ *
+ * 「第一个」取的是 `modelOptions` 的头一个而不是 `models[0]`：见上面那段，
+ * 服务回的是字母序，头一个是 glm-4.5；小抄的头一个才是默认该用的那个。
  */
 async function loadModels({ pickFirst = false } = {}) {
   modelsLoading.value = true
@@ -74,10 +121,14 @@ async function loadModels({ pickFirst = false } = {}) {
   try {
     const data = await api.llmModels()
     models.value = data.models ?? []
+    known.value = Array.isArray(data.known) ? data.known : []
     modelsError.value = data.error ?? ''
     const current = conn.value.llm_model
-    if (models.value.length && (pickFirst || !current || !models.value.includes(current))) {
-      conn.value.llm_model = models.value[0]
+    const options = modelOptions.value
+    const hit = options.some((m) => m.id === current)
+    if (options.length && (pickFirst || !current || !hit)) {
+      conn.value.llm_model = options[0].id
+      customModel.value = false
     }
   } catch (err) {
     modelsError.value = err.message
@@ -142,8 +193,11 @@ async function pickProvider(event) {
     return
   }
   await loadModels({ pickFirst: true })
-  if (models.value.length) {
-    ui.ok(`已切到 ${provider.name}，模型默认选了 ${models.value[0]}`)
+  // 报**实际选中**的那个，不是 `models[0]`——两者不一定是同一个东西：
+  // 认识的这家会按推荐顺序挑（见 modelOptions），而 models[0] 是服务
+  // 回的字母序头一个。报错了人会照着那句话去找一个没被选上的模型。
+  if (conn.value.llm_model && modelOptions.value.length) {
+    ui.ok(`已切到 ${provider.name}，模型默认选了 ${conn.value.llm_model}`)
   } else if (provider.local) {
     ui.warn(`${provider.name} 那边没应答。服务起了吗？`)
   } else {
@@ -611,21 +665,40 @@ function scrollTo(id) {
                     >
                       {{ modelsLoading ? '正在问…' : '重新拉列表' }}
                     </button>
+                    <button
+                      v-if="modelOptions.length"
+                      class="linkbtn tiny"
+                      type="button"
+                      @click.prevent="customModel = !customModel"
+                    >
+                      {{ customModel ? '从列表里选' : '自己填' }}
+                    </button>
                   </span>
+                  <!-- 列表拉不到、或者用户点了「自己填」，就退回输入框。
+                       下拉是**有兜底的**，不是唯一入口：这家我们不认识、
+                       服务又连不上的时候，手打是唯一能走的路。 -->
+                  <select
+                    v-if="modelOptions.length && !customModel"
+                    v-model="conn.llm_model"
+                    class="select mono"
+                    title="列表 = 这台服务回的 + 引擎认识的这家有什么"
+                  >
+                    <option v-for="m in modelOptions" :key="m.id" :value="m.id">
+                      {{ m.id }}{{ m.note ? ' — ' + m.note : '' }}
+                    </option>
+                  </select>
                   <input
+                    v-else
                     v-model="conn.llm_model"
                     class="input mono"
-                    list="llm-models"
-                    placeholder="qwen3:14b"
+                    placeholder="glm-4.7-flash"
                   />
-                  <datalist id="llm-models">
-                    <option v-for="m in models" :key="m" :value="m" />
-                  </datalist>
                   <span v-if="modelMissing" class="field__error">
                     这台服务上没有 {{ conn.llm_model }}，有的是：{{ models.join('、') }}
                   </span>
                   <span v-else-if="modelsError" class="tiny warn-text">
-                    列不出模型：{{ modelsError }}
+                    列不出模型：{{ modelsError }}<template v-if="known.length">
+                      。下面摆的是内置清单，能不能用得填上密钥再拉一次才知道</template>
                   </span>
                 </label>
                 <label class="field">

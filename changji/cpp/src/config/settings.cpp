@@ -1105,53 +1105,59 @@ constexpr const char* kDefaultToml = R"(# 场记配置文件
 [llm]
 # 剧本和分镜用的大模型。backend 两个值：
 #   remote —— **默认**，走下面的 base_url，任何兼容 OpenAI 接口的服务都行。
-#             默认走 OpenRouter：一把密钥转发到几百个模型，其中二十来个
-#             完全免费（带 :free 后缀）。**api_key 必须自己填**，
-#             去 openrouter.ai 领一把。
-#             换 DeepSeek、智谱、硅基流动、火山方舟，或者局域网里另一台
+#             默认走智谱（bigmodel.cn，国内直连不用自备网络）：默认挑的
+#             glm-4.7-flash 不要钱，但 **api_key 必须自己填**，
+#             去 bigmodel.cn 控制台领一把。
+#             国外访问把地址换成 https://api.z.ai/api/paas/v4，
+#             同一套后端、同一把密钥、同一份模型清单。
+#             换 DeepSeek、硅基流动、火山方舟，或者局域网里另一台
 #             机器上的 Ollama / vLLM，改这两行就是。
 #   local  —— 进程内跑，不用另起 llama-server。权重填 [models].llm，
 #             输出按 JSON Schema 约束（走语法采样，minItems 这类限制
 #             是硬的，远端那条做不到）。归调度器管：出片要显存时按实时
 #             空闲显存决定要不要让开。断网、不想让本子出境时走它。
 backend = "remote"
-base_url = "https://openrouter.ai/api/v1"
-# api_key = "去 openrouter.ai 领"
+base_url = "https://open.bigmodel.cn/api/paas/v4"
+# api_key = "去 bigmodel.cn 控制台领"
 
 # 让模型「先想再写」吗。**默认 false，而且这一项很要紧。**
-# OpenRouter 上带 reasoning 的模型（Nemotron 3 全系、nex-n2.5、ling-3.0）
-# 默认开着，而开着的话长任务上它们要么把英文思考稿当正文交上来、
-# 要么回一个空的 content——短提示词试不出来，真实长度的提示词上全军覆没。
-# 实测同一个模型关掉之后：正文字数翻倍、快 2.5 倍。
+# GLM-4.5 起的智谱模型全是混合推理、默认开着思考，而开着的话长任务上
+# 这类模型要么把思考稿当正文交上来、要么回一个空的 content——短提示词
+# 试不出来，真实长度的提示词上全军覆没。实测同一个模型关掉之后：
+# 正文字数翻倍、快 2.5 倍。
+# 关它的字段每家名字不一样（智谱 thinking、OpenRouter reasoning），
+# 程序按地址自己挑，认不出的家一个字都不发。
 # reasoning = false
 
 # 兜底模型：下面 [llm.models] 里没点名的任务用它。
-model = "nvidia/nemotron-3-super-120b-a12b:free"
+# glm-4.7-flash 是这家唯一免费的模型，也是默认——代价是限流很紧，
+# 而且它对 json_schema 回 200 但给散文（程序有退档兜底，日志里会说）。
+model = "glm-4.7-flash"
 
 # **按任务分流：哪一步用哪个模型。** 键是内部的 schema 名。
+# 默认整段是注释掉的——免费档只有一个模型，分流无从分起。
 #
-# 这条流水线要的是两种不同的本事，而免费模型里没有一个两样都强：
-#   写得好 —— 正文、梗概、大纲、预告。nex-n2.5-pro，实跑比出来的：
-#             同一场戏 17 段 1149 字、对白 88%、零套话，字数是第二名的
-#             两倍。代价是慢，46.7 秒一场。
-#             （先后试过 Inkling 和 Nemotron 3 Ultra：前者 OpenRouter
-#              回 403「只给登记在册的 agent 用」，后者长任务连接会断。
-#              选型只能靠真发一次，榜单和参数表都不算数。）
+# 想要好的就把下面这段的注释去掉。两种本事分开买：
+#   写得好 —— 正文、梗概、大纲、预告。glm-5.3 在 EQ-Bench 长文创作榜上
+#             81.8 分、slop 7.09（全榜第二低），而且八章几乎不降——
+#             写连续剧最怕的就是往后越写越塌。默认那个 glm-4.7-flash
+#             在同一个榜上 47.8、slop 48.86。
 #   听话   —— 分镜、人物表、剧本四段、分析。分镜那份 schema 有六十多个
-#             类型定义和一串枚举，文采在这儿一点用都没有。Nemotron 3 Super
-#             是免费档里唯一又大又带完整 structured_outputs 的。
+#             类型定义和一串枚举，文采在这儿一点用都没有，够听话就行。
 #
-# 只写要改的键就行，没写的落到上面那个 model。
-[llm.models]
-chapter        = "nex-agi/nex-n2.5-pro:free"
-premises       = "nex-agi/nex-n2.5-pro:free"
-story_outline  = "nex-agi/nex-n2.5-pro:free"
-story_revision = "nex-agi/nex-n2.5-pro:free"
-trailer        = "nex-agi/nex-n2.5-pro:free"
-storyboard     = "nvidia/nemotron-3-super-120b-a12b:free"
-bible          = "nvidia/nemotron-3-super-120b-a12b:free"
-script         = "nvidia/nemotron-3-super-120b-a12b:free"
-story_analysis = "nvidia/nemotron-3-super-120b-a12b:free"
+# 一部 11 集按输入 20 万 / 输出 15 万 token 估，这么配合计约 $0.73。
+# ⚠️ glm-5.3-flash 榜上没测过，别拿 5.3 的分替它背书：上一代
+#    glm-4.7 → glm-4.7-flash 掉了 18.2 分。选型只能靠真发一次。
+# [llm.models]
+# chapter        = "glm-5.3"
+# premises       = "glm-5.3"
+# story_outline  = "glm-5.3"
+# story_revision = "glm-5.3"
+# trailer        = "glm-5.3"
+# storyboard     = "glm-5.3-flash"
+# bible          = "glm-5.3-flash"
+# script         = "glm-5.3-flash"
+# story_analysis = "glm-5.3-flash"
 
 [tts]
 # backend 有三个值：

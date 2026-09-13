@@ -140,6 +140,25 @@ HttpGet default_http_get() {
         const std::string path =
             path_start == std::string::npos ? "/" : url.substr(path_start);
 
+        // **没编 TLS 的话 httplib 的构造函数直接抛**，异常一路冒到
+        // server.cpp 的 guard 那里，变成一句
+        //   500 服务端出错：'https' scheme is not supported.
+        // 而这一条路上的默认地址正好是 https（智谱）——表现就是设置页
+        // 的模型列表整个 500，llm_info 里那句"列不出来不该让设置页打不开"
+        // 也就白写了，连同那份 known 小抄一起到不了前端。
+        //
+        // 翻成一次普通的"连不上"，上层那三条失败分支照常走。
+#ifndef CPPHTTPLIB_OPENSSL_SUPPORT
+        if (origin.rfind("https://", 0) == 0) {
+            llm::HttpResponse out;
+            out.status = 0;
+            out.transport_error =
+                "这个程序编译时没带 TLS（CHANGJI_SSL=OFF），"
+                "发不了 https 请求";
+            return out;
+        }
+#endif
+
         httplib::Client cli(origin);
         const int secs = static_cast<int>(timeout_s);
         cli.set_connection_timeout(secs, 0);

@@ -94,7 +94,8 @@ struct LLMConfig {
     /// 大模型跑在哪：`remote`（默认，走 base_url）或 `local`（进程内）。
     /// **C++ 独有**——Python 那边只有远端一条路。
     ///
-    /// **2026-09-13 默认从 local 改成 remote，走 OpenRouter 的免费模型。**
+    /// **2026-09-13 默认从 local 改成 remote，走云端的免费模型**
+    /// （2026-09-14 从 OpenRouter 换成智谱，见 `base_url`）。
     /// 三笔账一起算出来的：
     ///
     ///   * **显存**。编剧模型和出图出片共用这张卡。27B 那一档权重就
@@ -105,10 +106,10 @@ struct LLMConfig {
     ///     本机跑得动的那一档最高 59.0（Qwen3.5-27B），而云上的
     ///     GLM-5.3 是 81.8、DeepSeek-V4-Pro 75.6。这个跨度不是提示词
     ///     能补回来的。
-    ///   * **钱**。OpenRouter 上带 `:free` 后缀的模型不要钱（要一把
-    ///     自己的密钥，见 `api_key`）。退一步就算用收费的，一部 11 集
-    ///     的剧按输入 20 万 / 输出 15 万 token 估，DeepSeek V4-Flash
-    ///     不到一块钱，GLM-5.3 也就几块。
+    ///   * **钱**。默认那个 `glm-4.7-flash` 不要钱（还是要一把自己的
+    ///     密钥，见 `api_key`）。退一步就算用收费的，一部 11 集的剧按
+    ///     输入 20 万 / 输出 15 万 token 估，glm-5.3-flash 四毛，
+    ///     写作榜 81.8 的 glm-5.3 也就五块。
     ///
     /// **local 那条一直留着**，不是被淘汰了：断网、不想让本子出境、
     /// 手上正好有卡的，都走它。设置页上能切，权重路径在 `[models].llm`。
@@ -119,83 +120,76 @@ struct LLMConfig {
     /// 编译时没带 llama.cpp 的话 local 会自动退回 remote 并在日志里说一声。
     std::string backend = "remote";
 
-    /// 默认走 OpenRouter（用户 2026-09-13 指定）。
+    /// 默认走智谱国内站（用户 2026-09-14 指定：「去掉 openrouter 换成
+    /// bigmodel.cn，直接用智谱」）。
     ///
-    /// 一把密钥转发到几百个模型，其中二十来个是**完全免费**的
-    /// （`pricing.prompt` 和 `completion` 都是 0）——这条流水线要的两种
-    /// 本事分别落在不同的免费模型上，见 `task_models`。
-    std::string base_url = "https://openrouter.ai/api/v1";
+    /// 国内直连不用自备网络，一家的模型从免费的 glm-4.7-flash 排到
+    /// 写作榜 81.8 的 glm-5.3，切换只改 `model` 一行。
+    /// `https://api.z.ai/api/paas/v4` 是同一套后端、同一把密钥，
+    /// 国外访问用那个。
+    std::string base_url = "https://open.bigmodel.cn/api/paas/v4";
 
     /// 兜底模型：`task_models` 里没点名的任务用它。
     ///
-    /// 挑带 `structured_outputs` 的那个而不是写得最好的那个：不认识的任务
-    /// 多半是后加的结构化抽取，宁可牺牲一点文采换"字段填得齐"。
-    std::string model = "nvidia/nemotron-3-super-120b-a12b:free";
+    /// **挑免费的那个。** 默认配置是要跟着发版到别人手里的，默认花钱
+    /// 花的是别人的钱——用户 2026-09-14 在「免费 / 写作 5.3 + 结构
+    /// 5.3-flash / 全 5.3-flash / 全 5.3」四个选项里点的就是免费这个。
+    ///
+    /// ⚠️ 免费这一档有两个实测过的代价，都在 `task_models` 的注释里
+    /// 写清楚了：它对 `json_schema` 回 200 但给散文（靠退档梯子兜），
+    /// 而且限流极狠。想要好的把 `model` 改成 `glm-5.3` 就行。
+    std::string model = "glm-4.7-flash";
 
     /// **按任务分流：哪一步用哪个模型。** 键是 `llm::Request::schema_name`。
     ///
     /// 用户 2026-09-13 定的方向："发挥各自的优势，不同功能使用不同的模型"。
-    /// 这条流水线要的其实是**两种不同的本事**，而免费模型里没有一个两样
-    /// 都强：
+    /// 这条流水线要的确实是**两种不同的本事**：
     ///
-    ///   * **写得好**（正文、梗概、大纲、预告）——要的是文采和不写套话。
-    ///     **落在 nex-n2.5-pro，这是实跑比出来的**（2026-09-13，同一场戏、
-    ///     同一段提示词、都关掉思考）：
+    ///   * **写得好**（正文、梗概、大纲、预告）——文采、不写套话。
+    ///   * **听话**（分镜、人物表、剧本四段、分析）——字段填得齐、枚举
+    ///     不乱编。分镜那份 schema 有六十多个类型定义和一串枚举，文采
+    ///     在这儿一点用都没有。
     ///
-    ///       nex-n2.5-pro            17 段 1149 字 对白 88% 套话 0 中位 67  46.7 秒
-    ///       ling-3.0-flash-sante    17 段  489 字 对白 47% 套话 0 中位 25   3.4 秒
-    ///       nemotron-3-super-120b   12 段  528 字 对白 17% 套话 0 中位 48  18.8 秒
+    /// **但默认这里是空的。** 2026-09-14 换到智谱之后，默认那一档
+    /// （`glm-4.7-flash`）是**一家里唯一免费的模型**，分流无从分起——
+    /// 与其写九行一模一样的模型名，不如空着全落到 `model`，
+    /// 留下这段注释告诉人分流这件事存在、怎么开。
     ///
-    ///     字数是别人两倍、对白比例最高、一个套话都没有，段长中位 67 也
-    ///     最接近传统小说的 60（网文中位 33，见 reference-real-chapter-shape）。
-    ///     代价是慢——46.7 秒一场。写正文这种一次几分钟的活儿担得起。
-    ///
-    ///     ⚠️ **这里先后写过 Inkling 和 Nemotron 3 Ultra，两个都栽了**：
-    ///     Inkling 是 EQ-Bench 长文创作榜上免费模型里的最高分（72.5），
-    ///     但 OpenRouter 回 403「only available on agentic harnesses」——
-    ///     免费档限定入口，只发给它登记在册的 agent / 编码工具，
-    ///     而这件事 `/models` 的任何字段里都看不出来。Ultra 是真能跑，
-    ///     但长任务上连接会断，而且写作指标不如 pro。
-    ///     **教训：选型只能靠真发一次，榜单和参数表都不算数。**
-    ///   * **听话**（分镜、人物表、剧本四段、分析）——要的是字段填得齐、
-    ///     枚举不乱编。分镜那份 schema 有六十多个类型定义和一串枚举，
-    ///     文采在这儿一点用都没有。Nemotron 3 Super 是免费档里**唯一**
-    ///     又大又带完整 `structured_outputs` 的。
-    ///
-    /// 配置里这么写（键都可以只写一部分，没写的落到 `model`）：
+    /// **想要好的，照抄这一段**（价按 2026-09-14 OpenRouter 现价估，
+    /// 一部 11 集按输入 20 万 / 输出 15 万 token 算，合计约 $0.73）：
     ///
     ///     [llm.models]
-    ///     chapter = "nvidia/nemotron-3-ultra-550b-a55b:free"
-    ///     storyboard = "nvidia/nemotron-3-super-120b-a12b:free"
+    ///     chapter        = "glm-5.3"        # 写作 81.8，slop 7.09
+    ///     premises       = "glm-5.3"
+    ///     story_outline  = "glm-5.3"
+    ///     story_revision = "glm-5.3"
+    ///     trailer        = "glm-5.3"
+    ///     storyboard     = "glm-5.3-flash"  # $0.075/$0.25，够听话就行
+    ///     bible          = "glm-5.3-flash"
+    ///     script         = "glm-5.3-flash"
+    ///     story_analysis = "glm-5.3-flash"
     ///
-    /// ⚠️ **上面那组数是单跑的。** 见 project-ai-chapter-quality 里
-    /// 「单跑打分不作数，三跑也未必」那条——同一份代码连跑两组三遍，
-    /// 对白比例能从 21% 晃到 1%。要在这几项上下结论得三跑，
-    /// 用 `/root/scene_check.py`。这里的取舍是：单跑的差距大到
-    /// （1149 对 489 字、88% 对 17% 对白）不像噪声，先按它定，
-    /// 真跑起来不对再换——换模型只改 `[llm.models]` 那几行。
-    std::map<std::string, std::string> task_models = {
-        // —— 写得好要紧 ——
-        {"chapter", "nex-agi/nex-n2.5-pro:free"},
-        {"premises", "nex-agi/nex-n2.5-pro:free"},
-        {"story_outline", "nex-agi/nex-n2.5-pro:free"},
-        {"story_revision", "nex-agi/nex-n2.5-pro:free"},
-        {"trailer", "nex-agi/nex-n2.5-pro:free"},
-        // —— 听话要紧 ——
-        {"storyboard", "nvidia/nemotron-3-super-120b-a12b:free"},
-        {"bible", "nvidia/nemotron-3-super-120b-a12b:free"},
-        {"script", "nvidia/nemotron-3-super-120b-a12b:free"},
-        {"story_analysis", "nvidia/nemotron-3-super-120b-a12b:free"},
-    };
+    /// 那两个分数来自 EQ-Bench 长文创作榜（2026-09-14 抓的）：
+    /// glm-5.3 是 **81.8**，slop **7.09**（全榜第二低），而且八章几乎不降
+    /// （17.05 → 16.95）——最后一条正对着我们写连续剧的痛处。
+    /// 默认那个 glm-4.7-flash 在同一个榜上是 **47.8**、slop 48.86。
+    /// 这个 34 分的差距**不是提示词能补回来的**。
+    ///
+    /// ⚠️ **glm-5.3-flash 榜上没测过**，别拿 5.3 的分替它背书：
+    /// 上一代 glm-4.7 → glm-4.7-Flash 掉了 18.2 分（66.0 → 47.8）。
+    /// 老规矩，**选型只能靠真发一次**——2026-09-13 在 OpenRouter 上
+    /// 照榜单挑的 Inkling（免费档最高 72.5）直接回 403「只给登记在册的
+    /// agent 用」，而这件事 `/models` 的任何字段里都看不出来。
+    std::map<std::string, std::string> task_models;
 
     /// 这一步该用哪个模型。`task` 是 schema_name，认不出就用 `model`。
     std::string model_for(const std::string& task) const;
 
     /// 让模型「先想再写」吗。**默认不让。**
     ///
-    /// OpenRouter 上那批带 reasoning 的模型（Nemotron 3 整个系列、
-    /// nex-n2.5、ling-3.0 都是）默认是开着的，而对我们这条流水线它是
-    /// **净亏**。2026-09-13 同一段写作任务、同一个模型
+    /// **GLM-4.5 起的智谱模型全是混合推理**，默认开着思考；OpenRouter 上
+    /// 那批（Nemotron 3 整个系列、nex-n2.5、ling-3.0）也一样。而对我们
+    /// 这条流水线它是**净亏**。2026-09-13 同一段写作任务、同一个模型
     /// （nemotron-3-ultra-550b）三组对照：
     ///
     ///   不加参数        62.4 秒，3404 token 里 2681 花在思考上，正文 507 字
@@ -214,15 +208,25 @@ struct LLMConfig {
     /// 我们的提示词本来就写得很死（写法要求列了七八条、schema 钉着字段），
     /// 不需要它再自己想一遍。真想开就把这项设成 true。
     ///
-    /// **只对 OpenRouter 发这个字段**：`reasoning` 是它的统一参数，
-    /// 别家不认，发过去可能被当成非法字段整个打回。
+    /// ⚠️ **关思考的字段每家名字不一样，按地址发，认不出就一个字都不发**
+    /// （`llm::apply_remote_extras`）：
+    ///
+    ///     智谱（bigmodel.cn / z.ai）  "thinking": {"type": "disabled"}
+    ///     OpenRouter                 "reasoning": {"enabled": false}
+    ///
+    /// 发错家的字段可能被当成非法参数整个打回，**而那会被退档梯子误判成
+    /// 「这家不支持 json_schema」**，白白退两档、这一轮的结构全靠提示词。
     bool reasoning = false;
 
-    /// **默认空。** OpenRouter 必须自己去 openrouter.ai 领一把填上。
+    /// **默认空，必须自己填。** 智谱的去 bigmodel.cn 控制台领一把。
     ///
-    /// 这里原来内置过一把智谱的免费密钥，2026-09-13 用户要求删掉
-    /// （"内置密钥删掉，只留 OpenRouter"）。**别再往回加**：密钥明文编进
-    /// 二进制，`strings` 一抓就有，也会进 git。
+    /// 这里原来内置过一把智谱的免费密钥，2026-09-13 用户要求删掉。
+    /// **别再往回加**：密钥明文编进二进制，`strings` 一抓就有，也会进 git。
+    ///
+    /// 密钥不跟别的配置项一起走：它落在 `<配置目录>/api_key`（一行明文，
+    /// POSIX 上 chmod 600），读的优先级 **环境变量 > 那个文件 >
+    /// config.toml 里的这一项**（老配置还认）。理由是 config.toml 会被
+    /// 整包 tar 到服务器、会被贴进聊天窗口排查问题。
     std::string api_key;
     double timeout_s = 300.0;
     double temperature = 0.7;
