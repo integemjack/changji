@@ -103,6 +103,12 @@ const char* to_string(FacePose v);
 const char* to_string(Transition v);
 const char* to_string(ShotStatus v);
 
+/// 状态的人话。**给用户看的消息里不要用枚举名**——引擎报一句
+/// 「ep01_sh001 状态是 audio_done」，人得先去查那是什么意思。
+/// 界面那边有同一张表（webapp 的 SHOT_STATUS），但引擎发出去的消息
+/// 到不了那张表：它是拼好的一整句话。
+const char* status_zh(ShotStatus v);
+
 /// 能看清嘴部动作的景别。口型判定用，不要改成靠模型判断。
 bool is_lipsync_capable(ShotSize v);
 /// 俯拍和顶拍看不清嘴，排除在口型之外。

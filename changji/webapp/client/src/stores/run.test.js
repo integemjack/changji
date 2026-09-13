@@ -152,6 +152,25 @@ describe('applyMessage', () => {
     expect(s.inflight).toHaveLength(0)
   })
 
+  it('状态回声不再往日志里加一行', () => {
+    // 引擎的 set_queue / set_pending / set_episode_id 走 mutate，推的是当前
+    // 状态快照，而快照里的 message 是上一条真事件留下的。照单追加的话每句话
+    // 都被重印一遍——2026-09-13 实机：装配跑完，日志里「成片已生成」连着
+    // 两行，第二行是队列计数的回声。
+    const s = useRun()
+    s.applyMessage({ type: 'progress', kind: 'done', stage: 'assemble',
+                     message: '成片已生成：output/ep01.mp4', step: 16, total: 16 })
+    expect(s.state.events).toHaveLength(1)
+
+    s.applyMessage({ type: 'progress', kind: 'progress', stage: 'assemble',
+                     message: '成片已生成：output/ep01.mp4', step: 16, total: 16,
+                     echo: true })
+    expect(s.state.events).toHaveLength(1)
+    // 状态还是要收：进度条靠的就是这条路。
+    expect(s.state.current).toBe(16)
+    expect(s.state.message).toBe('成片已生成：output/ep01.mp4')
+  })
+
   it('任务结束清空正在跑的表', async () => {
     const s = useRun()
     s.applyMessage({ type: 'progress', kind: 'progress', stage: 'draft',

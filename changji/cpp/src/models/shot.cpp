@@ -117,6 +117,21 @@ const char* to_string(Transition v) {
     return "?";
 }
 
+const char* status_zh(ShotStatus v) {
+    switch (v) {
+        case ShotStatus::PLANNED:         return "未开工";
+        case ShotStatus::AUDIO_DONE:      return "配音完成，还没出片";
+        case ShotStatus::FRAME_DONE:      return "首帧完成，还没出片";
+        case ShotStatus::DRAFT_DONE:      return "草稿完成";
+        case ShotStatus::DRAFT_REJECTED:  return "草稿未过闸门";
+        case ShotStatus::FINAL_DONE:      return "成片完成";
+        case ShotStatus::FINAL_REJECTED:  return "成片未过闸门";
+        case ShotStatus::FALLBACK:        return "已降级为静帧";
+        case ShotStatus::LOCKED:          return "已锁定";
+    }
+    return "状态不明";
+}
+
 const char* to_string(ShotStatus v) {
     switch (v) {
         case ShotStatus::PLANNED:         return "planned";

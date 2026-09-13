@@ -416,7 +416,18 @@ static nlohmann::json progress_of(JobKind kind, const std::string& job_id,
             {"stage", s.stage},
             {"step", kind == JobKind::Run ? s.current : s.done},
             {"total", s.total},
-            {"message", s.message}};
+            {"message", s.message},
+            // **这条是状态回声，不是新发生的事。**
+            //
+            // mutate 推的是当前快照，而 `message` 是上一条真事件留下的——
+            // 界面把每条推上来的消息都往事件表里追加一行，于是每次
+            // set_queue / set_pending / set_episode_id 都会把上一句重印一遍。
+            // 2026-09-13 实机看到：装配跑完，日志里「成片已生成」连着两行
+            // （第二行是 run.cpp 里 `p.set_queue(++done, total)` 的回声）。
+            //
+            // 带总数的进度还是要推（它是这条路存在的理由，见 mutate 的注释），
+            // 所以不是不发，而是标出来：界面照收状态，但不再当成新的一行。
+            {"echo", true}};
 }
 
 template <typename F>

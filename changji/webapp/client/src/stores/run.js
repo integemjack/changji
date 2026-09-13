@@ -195,18 +195,26 @@ export const useRun = defineStore('run', () => {
       message: msg.message ?? base.message,
       // 事件日志按镜头分组显示，推上来的这条也要进去，否则跑的过程中
       // 日志是空的，要等结束才一次性出现。
-      events: [
-        ...(base.events ?? []),
-        {
-          at: Date.now() / 1000,
-          stage: msg.stage ?? '',
-          kind: msg.kind ?? (msg.type === 'error' ? 'error' : 'progress'),
-          message: msg.message ?? '',
-          shot_id: msg.shot_id,
-          current: msg.step ?? 0,
-          total: msg.total ?? 0,
-        },
-      ].slice(-200),
+      //
+      // **echo 的除外。** 引擎那边 set_queue / set_pending / set_episode_id
+      // 走的是 mutate，推的是当前状态快照，而快照里的 message 是上一条真
+      // 事件留下的——照单追加的话每一句话都会被重印一遍。2026-09-13 实机：
+      // 装配完日志里「成片已生成」连着两行，第二行是队列计数的回声。
+      // 状态照收（进度条要它），事件表不收。
+      events: msg.echo
+        ? (base.events ?? [])
+        : [
+            ...(base.events ?? []),
+            {
+              at: Date.now() / 1000,
+              stage: msg.stage ?? '',
+              kind: msg.kind ?? (msg.type === 'error' ? 'error' : 'progress'),
+              message: msg.message ?? '',
+              shot_id: msg.shot_id,
+              current: msg.step ?? 0,
+              total: msg.total ?? 0,
+            },
+          ].slice(-200),
     }
   }
 

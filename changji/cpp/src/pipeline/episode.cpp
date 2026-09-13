@@ -176,6 +176,35 @@ std::set<ShotStatus> render_entry_states(Tier tier, bool skip_draft) {
             ShotStatus::AUDIO_DONE};
 }
 
+bool assembly_usable(const Shot& s) {
+    // 只装配**已经出片而且过了闸门**的镜头。
+    // DRAFT_DONE 也收：只跑草稿档验叙事时，那一档就是成品。
+    static const std::set<ShotStatus> kUsable = {
+        ShotStatus::FINAL_DONE, ShotStatus::DRAFT_DONE, ShotStatus::FALLBACK,
+        ShotStatus::LOCKED};
+    return s.video_path.has_value() && !s.video_path->empty() &&
+           kUsable.count(s.status) > 0;
+}
+
+std::vector<std::string> assembly_left_out(const Episode& ep) {
+    // **存字符串，不存指针。** `sorted_shots()` 按值返回，range-for 里那份
+    // 临时 vector 出了循环就析构了——存 `const Shot*` 的话整张表立刻悬空，
+    // 后面拼消息时读到的是已释放内存里的 std::string，实机表现是
+    // `std::bad_alloc` 把整个装配打断（2026-09-13 撞到，就在这里）。
+    std::vector<std::string> out;
+    for (const auto& s : ep.sorted_shots()) {
+        if (assembly_usable(s)) continue;
+        std::string line = s.shot_id + "：" + models::status_zh(s.status);
+        // 状态说得过去、片子却不在，是另一回事（多半是文件被删了），
+        // 光报状态会让人以为是状态卡住了。
+        if (!s.video_path.has_value() || s.video_path->empty()) {
+            line += "（还没有视频文件）";
+        }
+        out.push_back(std::move(line));
+    }
+    return out;
+}
+
 namespace {
 
 double now_seconds() {
@@ -214,18 +243,9 @@ std::vector<std::string> ids_of(const std::vector<Shot*>& shots) {
 std::string run_assemble(const ProjectStore& store,
                          const config::Settings& settings, Episode& ep,
                          const media::FFmpeg& ff, JobProgress& progress) {
-    // 只装配**已经出片而且过了闸门**的镜头。
-    // DRAFT_DONE 也收：只跑草稿档验叙事时，那一档就是成品。
-    static const std::set<ShotStatus> kUsable = {
-        ShotStatus::FINAL_DONE, ShotStatus::DRAFT_DONE, ShotStatus::FALLBACK,
-        ShotStatus::LOCKED};
-
     std::vector<Shot> shots;
     for (const auto& s : ep.sorted_shots()) {
-        if (s.video_path.has_value() && !s.video_path->empty() &&
-            kUsable.count(s.status)) {
-            shots.push_back(s);
-        }
+        if (assembly_usable(s)) shots.push_back(s);
     }
     if (shots.empty()) {
         throw std::runtime_error("没有可装配的镜头。先跑渲染阶段");
@@ -234,6 +254,23 @@ std::string run_assemble(const ProjectStore& store,
     emit(progress, "assemble", "start",
          "装配 " + std::to_string(shots.size()) + " 个镜头", 0,
          static_cast<int>(shots.size()));
+
+    // **漏下的镜头要点名。** 和降级那条一样：不拦（剩下的镜头照样能拼成片），
+    // 但要说出是谁、为什么、怎么办。判据见 assembly_left_out。
+    const std::vector<std::string> left_out = assembly_left_out(ep);
+    if (!left_out.empty()) {
+        std::string msg = "这一集有 " + std::to_string(ep.shots.size()) +
+                          " 个镜头，只有 " + std::to_string(shots.size()) +
+                          " 个进了成片。没进去的：";
+        for (std::size_t i = 0; i < left_out.size() && i < 3; ++i) {
+            msg += "\n  " + left_out[i];
+        }
+        if (left_out.size() > 3) {
+            msg += "\n  …… 还有 " + std::to_string(left_out.size() - 3) + " 个";
+        }
+        msg += "\n这几镜出完片再装配一次，片子才是完整的。";
+        emit(progress, "assemble", "warn", msg);
+    }
 
     // **装配前先查音画能不能装下**，装完再发现就得重做整集。
     // 查出问题只报不拦：拦下来的话一句台词长了一点整集就出不来，

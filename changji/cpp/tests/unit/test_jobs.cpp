@@ -349,6 +349,56 @@ TEST_CASE("推出去的那条也不能被 total=0 的事件清零") {
     CHECK(msgs[1].at("message") == "显存吃紧，转成分块解码");
 }
 
+TEST_CASE("状态快照要标成回声，不能让界面当成新的一条") {
+    // mutate 推的是当前状态，而状态里的 message 是**上一条真事件**留下的。
+    // 界面把每条推上来的消息都往事件表里追加一行，于是每次 set_queue /
+    // set_pending / set_episode_id 都会把上一句重印一遍。
+    //
+    // 2026-09-13 实机（walk_c ep01 只跑装配）：
+    //   [assemble/done]     成片已生成：…/ep01.mp4
+    //   [assemble/progress] 成片已生成：…/ep01.mp4   ← run.cpp 的 set_queue
+    //
+    // 推还是要推（进度条靠它），但要能分出哪条是回声。
+    JobTable t;
+    std::mutex mu;
+    std::vector<json> got;
+    t.set_sink([&](const std::string&, const json& m) {
+        std::lock_guard lg(mu);
+        got.push_back(m);
+    });
+
+    t.start(JobKind::Run, "ep_01", [](JobProgress& p) {
+        Event e;
+        e.stage = "assemble";
+        e.kind = "done";
+        e.current = 16;
+        e.total = 16;
+        e.message = "成片已生成：output/ep01.mp4";
+        p.report(e);
+        p.set_queue(1, 1);   // ← 回声就是从这儿来的
+    });
+    REQUIRE(wait_done(t, JobKind::Run));
+
+    std::vector<json> msgs;
+    {
+        std::lock_guard lg(mu);
+        msgs = got;
+    }
+    REQUIRE(msgs.size() >= 2);
+
+    // 真事件不带 echo：界面照旧记一行。
+    CHECK(msgs[0].at("kind") == "done");
+    CHECK(msgs[0].value("echo", false) == false);
+
+    // 回声带 echo，而且内容确实和上一条一样——这就是它必须被标出来的理由。
+    CHECK(msgs[1].at("kind") == "progress");
+    CHECK(msgs[1].value("echo", false) == true);
+    CHECK(msgs[1].at("message") == msgs[0].at("message"));
+    // 状态还是真的：进度条读的是这两个数。
+    CHECK(msgs[1].at("step") == 16);
+    CHECK(msgs[1].at("total") == 16);
+}
+
 TEST_CASE("消息汇收到的内容") {
     JobTable t;
     std::mutex mu;

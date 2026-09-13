@@ -845,6 +845,77 @@ TEST_CASE("出首帧挑的是「没有能用首帧」的，不只是 AUDIO_DONE"
     fs::remove_all(root, ec);
 }
 
+TEST_CASE("装配漏下谁要点名，不能只报一个数") {
+    // **装配那道筛选本来是静默的。** 不可用的镜头直接不进片子，唯一的线索
+    // 是「装配 16 个镜头」这个数——人得自己记得这一集有 18 镜才看得出来。
+    // 2026-09-13 实机：walk_c ep01 两镜重跑过配音退回 audio_done，
+    // 成片从 18 镜 61.8 秒变成 16 镜 54.3 秒，消息一个字都没提。
+    //
+    // 这一组同时钉住第一版的实现错：那一版把 `const Shot*` 存进表里，
+    // 而 `sorted_shots()` 是按值返回的，出了 range-for 整张表全悬空，
+    // 实机表现是 `std::bad_alloc` 直接打断装配。这里的 CHECK 读的就是
+    // 循环之后的内容——真悬空了就读不出这些字。
+    auto add = [](models::Episode& ep, const std::string& id,
+                  models::ShotStatus st, const char* video) {
+        models::Shot s;
+        s.shot_id = id;
+        s.scene_id = "sc01";
+        s.order = static_cast<int>(ep.shots.size());
+        s.status = st;
+        if (video) s.video_path = video;
+        ep.shots.push_back(s);
+    };
+
+    models::Episode ep;
+    ep.episode_id = "ep01";
+    add(ep, "sh_final",    models::ShotStatus::FINAL_DONE, "v/a.mp4");
+    add(ep, "sh_draft",    models::ShotStatus::DRAFT_DONE, "v/b.mp4");
+    add(ep, "sh_fallback", models::ShotStatus::FALLBACK,   "v/c.mp4");
+    add(ep, "sh_locked",   models::ShotStatus::LOCKED,     "v/d.mp4");
+    add(ep, "sh_audio",    models::ShotStatus::AUDIO_DONE, nullptr);
+    add(ep, "sh_gone",     models::ShotStatus::FINAL_DONE, nullptr);
+    add(ep, "sh_rejected", models::ShotStatus::FINAL_REJECTED, "v/e.mp4");
+
+    SUBCASE("能进片子的四种状态") {
+        CHECK(pipeline::assembly_usable(ep.shots[0]));
+        CHECK(pipeline::assembly_usable(ep.shots[1]));
+        CHECK(pipeline::assembly_usable(ep.shots[2]));
+        CHECK(pipeline::assembly_usable(ep.shots[3]));
+    }
+    SUBCASE("状态够了但片子不在，一样不能进") {
+        // 光看状态的话引擎以为有，装配时拿一个空路径去喂 ffmpeg。
+        CHECK_FALSE(pipeline::assembly_usable(ep.shots[5]));
+    }
+
+    const auto out = pipeline::assembly_left_out(ep);
+
+    SUBCASE("点的是没进去的那三个，不是全部") {
+        REQUIRE(out.size() == 3);
+        CHECK(out[0].rfind("sh_audio：", 0) == 0);
+        CHECK(out[1].rfind("sh_gone：", 0) == 0);
+        CHECK(out[2].rfind("sh_rejected：", 0) == 0);
+    }
+    SUBCASE("说的是人话，不是枚举名") {
+        // 这句是给人看的。status_zh 存在就是为了这一条。
+        REQUIRE(out.size() == 3);
+        CHECK(out[0].find("配音完成，还没出片") != std::string::npos);
+        CHECK(out[0].find("audio_done") == std::string::npos);
+        CHECK(out[2].find("成片未过闸门") != std::string::npos);
+    }
+    SUBCASE("片子不在要单说——和状态卡住不是一回事") {
+        REQUIRE(out.size() == 3);
+        CHECK(out[1].find("还没有视频文件") != std::string::npos);
+        CHECK(out[2].find("还没有视频文件") == std::string::npos);
+    }
+    SUBCASE("全都能进就一个字都不说") {
+        models::Episode all_ok;
+        all_ok.episode_id = "ep02";
+        add(all_ok, "a", models::ShotStatus::FINAL_DONE, "v/a.mp4");
+        add(all_ok, "b", models::ShotStatus::LOCKED, "v/b.mp4");
+        CHECK(pipeline::assembly_left_out(all_ok).empty());
+    }
+}
+
 TEST_CASE("各阶段挑哪些镜头跑，和 Python 一样") {
     const std::string path =
         std::string(CHANGJI_GOLDEN_DIR) + "/episode_pick.json";

@@ -188,6 +188,22 @@ std::vector<models::Shot*> pick_for_frames(
     models::Episode& ep, const models::ProjectPaths& paths, bool force,
     const std::set<std::string>& only_shots = {});
 
+/// 这一镜能不能进成片：既出了片（video_path 有值）又过了闸门。
+///
+/// **导出来是为了让它只有一份。** 同一条判据有两个用处——挑谁进片子、
+/// 告诉人谁没进去——两处各写一遍的话迟早对不上，而对不上的表现是
+/// 「装配 16 个镜头」后面跟着一句「没进去的：（空）」。
+bool assembly_usable(const models::Shot& s);
+
+/// 没能进成片的镜头，一镜一行：`ep01_sh001：配音完成，还没出片`。
+/// 全都能进就返回空表。
+///
+/// 装配那道筛选本来是**静默**的：不可用的镜头直接不进片子，唯一的线索是
+/// 「装配 16 个镜头」这个数，人得自己记得这一集有 18 镜才看得出来。
+/// 2026-09-13 实机撞到：walk_c ep01 两镜因为重跑过配音退回 audio_done，
+/// 成片从 18 镜 61.8 秒变成 16 镜 54.3 秒，而消息一个字都没提。
+std::vector<std::string> assembly_left_out(const models::Episode& ep);
+
 /// 一个档位的入口状态。
 ///
 /// 草稿档收 `AUDIO_DONE` 是关键：首帧失败的镜头状态停在那里，
