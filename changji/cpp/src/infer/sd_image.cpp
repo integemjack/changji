@@ -689,6 +689,13 @@ std::shared_ptr<SdContext> SdContext::create(const config::Settings& settings,
 
     // sd_ctx_params_init 的默认是 false。6 GB 卡上这一项直接影响塞不塞得下。
     p.diffusion_flash_attn = m.diffusion_flash_attn;
+    // Qwen-Image-Edit 2511 要这一项，上游 docs/qwen_image_edit.md 原话：
+    // "must be enabled; otherwise, image editing quality will degrade
+    // significantly"。按文件名认，别让人记着填。
+    if (!is_video && which.find("2511") != std::string::npos &&
+        config::ModelsConfig::accepts_reference_images(which)) {
+        p.model_args = "qwen_image_zero_cond_t=true";
+    }
     p.max_vram = impl.max_vram.c_str();
     p.params_backend = impl.params_backend.c_str();
     p.n_threads = -1;   // -1 = 物理核数

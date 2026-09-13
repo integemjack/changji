@@ -1327,3 +1327,26 @@ TEST_CASE("只有编辑模型才收参考图：按文件名认 edit") {
     CHECK_FALSE(ModelsConfig::accepts_reference_images("D:/edit_models/qwen-image-Q4.gguf"));
     CHECK_FALSE(ModelsConfig::accepts_reference_images(""));
 }
+
+TEST_CASE("Qwen-Image-Edit 2509/2511 要一起填视觉塔，初版 Edit 和基础模型不用") {
+    // 不填的话 sd.cpp 只说一句 vision disabled 就照常出图，出来的和参考图
+    // 对不上——那种错人会先去怀疑参考图本身。见 validate 里那段。
+    const auto said = [](const config::ModelsConfig& m) {
+        for (const auto& e : m.validate()) {
+            if (e.find("image_text_encoder_vision") != std::string::npos) return true;
+        }
+        return false;
+    };
+    config::ModelsConfig m;
+    m.image = "Qwen-Image-Edit-2509-Q4_K_S.gguf";
+    CHECK(said(m));
+    m.image = "qwen-image-edit-2511-Q4_K_M.gguf";
+    CHECK(said(m));
+    m.image_text_encoder_vision = "Qwen2.5-VL-7B-Instruct.mmproj-Q8_0.gguf";
+    CHECK_FALSE(said(m));
+    m.image_text_encoder_vision.clear();
+    m.image = "Qwen_Image_Edit-Q8_0.gguf";   // 初版 Edit 不要视觉塔
+    CHECK_FALSE(said(m));
+    m.image = "qwen-image-Q6_K.gguf";        // 基础模型根本不收参考图
+    CHECK_FALSE(said(m));
+}

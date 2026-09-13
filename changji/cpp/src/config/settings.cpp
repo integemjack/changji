@@ -252,6 +252,21 @@ std::vector<std::string> ModelsConfig::validate() const {
                               "image / video 那几个模型文件。")
                 : "models.engine 只能是 sd，当前是 " + engine);
     }
+    // Qwen-Image-Edit 2509 起，编码器要带视觉塔才看得见参考图。没带的话
+    // sd.cpp 只打一句 "no vision weights detected, vision disabled"，然后
+    // 照常跑——参考图只剩 VAE 潜空间那一半进 DiT，出来的图对不上参考。
+    // 上游 docs/qwen_image_edit.md 的 2509 例子带着 --llm_vision，初版
+    // Edit 的例子不带。2511 还要 model_args（出图那边自己加，见 sd_image.cpp）。
+    if (accepts_reference_images(image) &&
+        (image.find("2509") != std::string::npos ||
+         image.find("2511") != std::string::npos) &&
+        image_text_encoder_vision.empty()) {
+        errs.push_back(
+            "[models].image 是 Qwen-Image-Edit 2509/2511，要一起填 "
+            "image_text_encoder_vision（Qwen2.5-VL-7B 的 mmproj）：不填的话"
+            "编码器看不见参考图，sd.cpp 只在日志里说一句 vision disabled 就"
+            "照常出图，出来的和参考图对不上");
+    }
     return errs;
 }
 
