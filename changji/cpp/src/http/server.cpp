@@ -1608,10 +1608,13 @@ void run(const config::Settings& settings, const Options& opts) {
         auto r = guard([]() -> ApiResult {
             nlohmann::ordered_json arr = nlohmann::ordered_json::array();
             int n = 1;
-            for (const unsigned int seed : preset_voice_seeds()) {
-                arr.push_back({{"id", "preset" + std::to_string(n)},
-                               {"name", "预置 " + std::to_string(n)},
-                               {"seed", seed}});
+            for (const auto& p : preset_voices()) {
+                // 名字里带上基频：「预置 1」七个并排，看不出哪个是男声。
+                arr.push_back(
+                    {{"id", "preset" + std::to_string(n)},
+                     {"name", "预置 " + std::to_string(n)},
+                     {"seed", p.seed},
+                     {"hz", p.hz}});
                 ++n;
             }
             return {200, {{"presets", std::move(arr)}}};

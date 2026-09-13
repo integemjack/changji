@@ -63,6 +63,7 @@ TEST_CASE("项目里存了参考音色时，这个接口就是那份清单") {
     touch("c_lin_wan.wav");
     touch("c_chen_mo.mp3");
     touch("笔记.txt");   // 不是音频，不该进清单
+    touch(".take.wav");  // 摇音色的临时落点，也不该进清单
 
     const auto r = http::get_voices(paths::to_utf8(root), "local");
     CHECK(r.status == 200);

@@ -9,7 +9,6 @@
 #include <system_error>
 
 #include "infer/llama_tts.hpp"
-#include "llm/client.hpp"
 #include "infer/scheduler.hpp"
 #include "pipeline/activity.hpp"
 #include "stages/audio.hpp"
@@ -379,19 +378,25 @@ std::optional<TTSBackend> local_tts_backend(const fs::path& backbone,
     return b;
 }
 
+std::optional<TTSBackend> ensure_local_tts(
+    const config::Settings& s, const std::optional<media::FFmpeg>& ff,
+    std::string& why) {
+    const auto ws = s.workspace_path();
+    return local_tts_backend(s.models.resolve(s.models.tts, ws),
+                             s.models.resolve(s.models.tts_decoder, ws),
+                             /*use_gpu=*/true, ff, why);
+}
+
 TTSBackend pick_tts_backend(const config::Settings& s,
-                            const std::optional<media::FFmpeg>& ff) {
+                            const std::optional<media::FFmpeg>& ff,
+                            const llm::HttpPost& post) {
     if (s.tts.backend == "http" && s.tts.base_url.has_value() &&
         !s.tts.base_url->empty()) {
-        return http_tts_backend(*s.tts.base_url, 300.0, llm::default_http_post(),
-                                ff);
+        return http_tts_backend(*s.tts.base_url, 300.0, post, ff);
     }
     if (s.tts.backend == "local") {
         std::string why;
-        const auto ws = s.workspace_path();
-        auto local = local_tts_backend(s.models.resolve(s.models.tts, ws),
-                                       s.models.resolve(s.models.tts_decoder, ws),
-                                       /*use_gpu=*/true, ff, why);
+        auto local = ensure_local_tts(s, ff, why);
         if (local.has_value()) return std::move(*local);
     }
     return estimate_backend();

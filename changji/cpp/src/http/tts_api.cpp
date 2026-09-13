@@ -59,7 +59,8 @@ ApiResult post_tts_say(const json& body) {
     const config::Settings s = config::runtime().snapshot();
     const auto ff = media::FFmpeg(s.assembly.ffmpeg_path, s.assembly.ffprobe_path,
                                   media::default_runner());
-    const stages::TTSBackend backend = stages::pick_tts_backend(s, ff);
+    const stages::TTSBackend backend =
+        stages::pick_tts_backend(s, ff, llm::default_http_post());
     if (!backend.synthesize) throw ApiError(503, "配音后端没准备好");
 
     // 落点：项目的 audio/ 下面一个固定名字。**固定名字是刻意的**——朗读是

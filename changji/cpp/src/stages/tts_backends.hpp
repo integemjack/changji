@@ -84,8 +84,22 @@ std::optional<TTSBackend> local_tts_backend(
 ///
 /// 抽出来是因为 tts_api.cpp 和 voices.cpp 都要它，而这套代码里"同一段
 /// 逻辑抄两份"迟早分叉（见 http/reset.hpp 开头那段）。
+/// 只把**进程内**那条搭起来，顺带注册调度器里那个配音槽。
+///
+/// 比下面那个窄一号，是因为有些调用方（摇音色）本来就只认进程内这一条，
+/// 而**宽的那个要一个 HTTP poster**——`llm::default_http_post` 定义在
+/// client_http.cpp 里，那个文件链 httplib，CMakeLists 专门把它排除在
+/// 单元测试的链接之外。在这儿调它，测试目标就链不上了
+/// （2026-09-13 栽过：undefined reference to default_http_post）。
+std::optional<TTSBackend> ensure_local_tts(
+    const config::Settings& s, const std::optional<media::FFmpeg>& ff,
+    std::string& why);
+
+/// **poster 由调用方给**，不在这儿调 `llm::default_http_post()`：
+/// 理由见上面那段。
 TTSBackend pick_tts_backend(const config::Settings& s,
-                            const std::optional<media::FFmpeg>& ff);
+                            const std::optional<media::FFmpeg>& ff,
+                            const llm::HttpPost& post);
 
 /// 按种子出一段**不带参考音色**的语音——「制作音色」那条路专用。
 ///

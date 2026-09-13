@@ -45,11 +45,17 @@ std::vector<std::string> clips_in(const fs::path& dir) {
     for (const auto& e : fs::directory_iterator(dir, ec)) {
         if (ec) break;
         if (!e.is_regular_file(ec)) continue;
+        const std::string fname = paths::to_utf8(e.path().filename());
+        // **点开头的不算。** 摇音色那条把试听落在 `.take.wav` 上（固定名字，
+        // 摇一次盖一次），它是临时的，不该出现在"有哪些音色"里——
+        // 2026-09-13 实测：清单里真的冒出来一条 voices/.take.wav，
+        // 用户点它就等于挑了"上一次随手摇的那一下"。
+        if (!fname.empty() && fname[0] == '.') continue;
         const std::string ext = paths::to_utf8(e.path().extension());
         if (ext != ".wav" && ext != ".mp3" && ext != ".m4a" && ext != ".flac") {
             continue;
         }
-        out.push_back("voices/" + paths::to_utf8(e.path().filename()));
+        out.push_back("voices/" + fname);
     }
     // 目录遍历的顺序是文件系统给的，排一下——不排的话同一个项目在不同
     // 机器上这一栏的顺序不一样，看着像数据变了。
@@ -116,13 +122,28 @@ std::string slugify(const std::string& name, unsigned int seed) {
     return out;
 }
 
-/// 试听用的那句话。短，摇得快。
-constexpr const char* kTakeText = "你好，这是我说话的样子。";
-
-/// 存下来时念的那一段。**比试听长**，理由见 post_voice_save 的注释。
-constexpr const char* kSaveText =
-    "你好，这是我说话的样子。今天天气不错，风从窗口吹进来，"
-    "把桌上的纸吹得哗哗响。我慢慢把它们压好，然后坐下来，等着你开口。";
+/// 摇音色念的那一段。**试听和存下来用的是同一段，这一条是硬的。**
+///
+/// 2026-09-13 实测：音色是 **(种子, 文本)** 的函数，不是种子一个人的。
+/// 同一个种子换一段文本，摇出来就是另一个人：
+///
+///     seed=1789   短句 112 Hz   长句 205 Hz
+///     seed=3313   短句 137 Hz   长句 224 Hz
+///     seed=5051   短句 235 Hz   长句 220 Hz
+///
+/// 上一版试听念短句、存下来念长句，于是**存进去的不是你刚才听到的那个
+/// 声音**——那正是这套代码里反复出现的那一类毛病（界面说的和实际做的
+/// 不是一回事），这次栽在我自己手上。
+///
+/// 同一个种子加同一段文本是**逐字节确定的**（实测两次 md5 相同），
+/// 所以存的时候按同一段重出一次就等于把听到的那一段留下来，不用另存
+/// 一份临时文件。
+///
+/// 长度上折中在八九秒：**参考音频太短克隆不稳**（社区实测 3 秒能认出
+/// 来，8~15 秒明显更好），而摇是要反复点的，十几秒一下太磨人。
+constexpr const char* kVoiceText =
+    "你好，这是我说话的样子。今天风有点大，窗外的树叶一直在响，"
+    "我把窗户关上了。";
 
 unsigned int seed_of(const in_json& body) {
     if (body.is_object() && body.contains("seed") &&
@@ -159,17 +180,25 @@ json render_into(const ProjectStore& store, const fs::path& dest,
     const auto ff = media::FFmpeg(cfg.assembly.ffmpeg_path,
                                   cfg.assembly.ffprobe_path,
                                   media::default_runner());
-    const stages::TTSBackend backend = stages::pick_tts_backend(cfg, ff);
-    // **摇音色只在进程内那条路上有意义。** estimate 出来的是等长静音，
-    // 摇一百次都是同一段无声；外部服务的音色是它自己管的名字，不是我们
-    // 生成的片段。这两种情况下明说，别让人对着静音以为音箱坏了。
-    if (backend.name != "local") {
+    // **摇音色只在进程内那条路上有意义**，所以只搭这一条：estimate 出来
+    // 的是等长静音，摇一百次都是同一段无声；外部服务的音色是它自己管的
+    // 名字，不是我们生成的片段。
+    //
+    // 用窄的那个而不是 pick_tts_backend，还有一条链接上的理由：宽的那个
+    // 要一个 HTTP poster，而 default_http_post 在 client_http.cpp 里，
+    // 那个文件链 httplib、被 CMakeLists 排除在单元测试之外——voices.cpp
+    // 是在测试目标里的。见 tts_backends.hpp 上那段。
+    std::string why;
+    const auto local = stages::ensure_local_tts(cfg, ff, why);
+    if (cfg.tts.backend != "local" || !local.has_value()) {
         throw ApiError(
             503,
-            std::string("现在的配音后端是 ") + backend.name +
-                "，摇不了音色。制作音色要的是进程内配音（[tts].backend = "
-                "local）——它不给参考音频时会随机摇一个说话人，而那正是"
-                "「制作」的全部内容。");
+            cfg.tts.backend != "local"
+                ? std::string("现在的配音后端是 ") + cfg.tts.backend +
+                      "，摇不了音色。制作音色要的是进程内配音"
+                      "（[tts].backend = local）——它不给参考音频时会随机"
+                      "摇一个说话人，而那正是「制作」的全部内容。"
+                : "进程内配音搭不起来：" + why);
     }
 
     // 顶栏那本账要看得见：摇一段要借配音槽，而那一槽和大模型抢同一张卡。
@@ -196,12 +225,25 @@ json render_into(const ProjectStore& store, const fs::path& dest,
 
 }  // namespace
 
-const std::vector<unsigned int>& preset_voice_seeds() {
-    // 八个。多了用户听不过来（一段几秒，八段就是一分钟）。
-    static const std::vector<unsigned int> kSeeds = {
-        1101, 2027, 3313, 4409, 5521, 6637, 7743, 8859,
+const std::vector<PresetVoice>& preset_voices() {
+    // **这七个是摇出来挑的，不是我编的。**
+    //
+    // 2026-09-13 在服务器上摇了二十个候选种子，逐个量基频，然后贪心挑出
+    // 两两至少差 15 Hz 的一组。上一版随手写的八个里 3313 和 8859 都落在
+    // 137 Hz——八格里有两格大概率是同一个人，白占一格。
+    //
+    // 七个不是八个：分得开比凑够数重要。二十个候选里 273 Hz 往上只剩
+    // 279，差 6 Hz，凑第八个只会多一个听不出区别的。
+    //
+    // `hz` 是**那次实测的值**，给界面当"摇之前的提示"用——想要男声就点
+    // 最左边那个，不用一个个摇过去。它不是承诺：同一个种子在这台机器上
+    // 是可复现的（实测两次 md5 完全相同），换一张卡、换一版权重之后
+    // 数字可能微动，界面上真正显示的还是摇完当场量的那个。
+    static const std::vector<PresetVoice> kPresets = {
+        {1789, 112}, {3313, 137}, {4409, 161}, {4523, 192},
+        {6637, 209}, {5051, 235}, {3541, 273},
     };
-    return kSeeds;
+    return kPresets;
 }
 
 ApiResult post_voice_take(const in_json& body) {
@@ -210,7 +252,7 @@ ApiResult post_voice_take(const in_json& body) {
     const std::string text =
         body.is_object() && body.contains("text") && body.at("text").is_string()
             ? body.at("text").get<std::string>()
-            : std::string(kTakeText);
+            : std::string(kVoiceText);
 
     // **落点是固定的一个临时文件。** 摇是随手点的，一次点几十下；
     // 按种子起名的话 voices/ 里会堆满再也用不上的 wav，而它们和真正
@@ -235,7 +277,9 @@ ApiResult post_voice_save(const in_json& body) {
 
     const fs::path dest =
         store.paths().voices() / paths::from_utf8(stem + ".wav");
-    json out = render_into(store, dest, kSaveText, seed);
+    // **和试听念同一段。** 见 kVoiceText 上面那段：换文本就换人，
+    // 所以这里不能"重出一段更长的"，否则存进去的不是刚才听到的。
+    json out = render_into(store, dest, kVoiceText, seed);
     out["saved"] = store.paths().rel(dest);
     out["name"] = stem;
 
