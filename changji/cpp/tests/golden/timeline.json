@@ -232,7 +232,7 @@
           {
             "shot_id": "sh002",
             "video_path": "video/sh002.mp4",
-            "start_s": 2.5,
+            "start_s": 3.0,
             "duration_s": 4.0,
             "transition_in": "dissolve",
             "transition_dur_s": 0.5,
@@ -241,8 +241,8 @@
             ],
             "cues": [
               {
-                "start_s": 2.5,
-                "end_s": 5.0,
+                "start_s": 3.0,
+                "end_s": 5.5,
                 "text": "第二句。",
                 "style": "dialogue"
               }
@@ -257,8 +257,8 @@
             "style": "dialogue"
           },
           {
-            "start_s": 2.5,
-            "end_s": 5.0,
+            "start_s": 3.0,
+            "end_s": 5.5,
             "text": "第二句。",
             "style": "dialogue"
           }
@@ -760,7 +760,7 @@
           {
             "shot_id": "sh002",
             "video_path": "video/sh002.mp4",
-            "start_s": 2.5,
+            "start_s": 3.0,
             "duration_s": 3.0,
             "transition_in": "dissolve",
             "transition_dur_s": 0.5,
@@ -769,8 +769,8 @@
             ],
             "cues": [
               {
-                "start_s": 2.5,
-                "end_s": 3.5,
+                "start_s": 3.0,
+                "end_s": 4.0,
                 "text": "二。",
                 "style": "dialogue"
               }
@@ -779,7 +779,7 @@
           {
             "shot_id": "sh003",
             "video_path": "video/sh003.mp4",
-            "start_s": 4.75,
+            "start_s": 6.0,
             "duration_s": 3.0,
             "transition_in": "dissolve",
             "transition_dur_s": 0.75,
@@ -788,8 +788,8 @@
             ],
             "cues": [
               {
-                "start_s": 4.75,
-                "end_s": 5.75,
+                "start_s": 6.0,
+                "end_s": 7.0,
                 "text": "三。",
                 "style": "dialogue"
               }
@@ -804,14 +804,14 @@
             "style": "dialogue"
           },
           {
-            "start_s": 2.5,
-            "end_s": 3.5,
+            "start_s": 3.0,
+            "end_s": 4.0,
             "text": "二。",
             "style": "dialogue"
           },
           {
-            "start_s": 4.75,
-            "end_s": 5.75,
+            "start_s": 6.0,
+            "end_s": 7.0,
             "text": "三。",
             "style": "dialogue"
           }
@@ -819,5 +819,5 @@
       }
     }
   ],
-  "note": "由 cpp/tests/export_timeline_golden.py 生成，不要手改。字幕时间戳来自配音量出来的真实时长——算错了不报错，表现是字幕和人声对不上，而且一集下来越飘越远。"
+  "note": "由 cpp/tests/export_timeline_golden.py 生成；那个生成器随 Python 一起删了，现在这份是回归工具。字幕时间戳必须按真实时长排，不能按名义值，否则字幕和画面对不上，而且一集里越飘越远。\n2026-09-13 改过一次：涉及转场的三条用例原来把非硬切镜头的起点往回挪 transition_dur_s（Python 那边就是这么算的），但 C++ 的装配走 `-f concat -c copy` 纯硬切，全树一处 xfade 都没有——**转场从来没被渲染过**。于是时间线比成片短、字幕比画面早，而且逐个 dissolve 累积。walk_c ep01 实测：两镜 dissolve 各 0.4 秒，片尾字幕比画面早 0.80 秒（sh004 差 -0.40、sh009 起一直 -0.80）。这正是本文件开头那句警告的现象。改成不减重叠：起点就是前面几镜真实时长之和。"
 }

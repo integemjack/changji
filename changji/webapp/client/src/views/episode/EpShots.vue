@@ -971,7 +971,16 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
             </label>
             <label class="field">
               <span class="field__label">转场</span>
-              <select v-model="draft.transition_in" class="select">
+              <!-- **选了也还不会渲染。** 装配走的是 `-f concat -c copy`
+                   纯硬切，全树没有一处 xfade——这两项现在只是记下来的意图。
+                   真做要把整条片子重编码一遍，是另一件事。
+                   （2026-09-13 之前更糟：时间线按重叠算，字幕比画面早，
+                   每个 dissolve 累积 0.4 秒。） -->
+              <select
+                v-model="draft.transition_in"
+                class="select"
+                title="记下来的意图；装配暂时是纯硬切，转场还没有渲染"
+              >
                 <option v-for="o in TRANSITIONS" :key="o.value" :value="o.value">{{ o.label }}</option>
               </select>
             </label>

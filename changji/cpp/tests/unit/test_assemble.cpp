@@ -177,7 +177,20 @@ TEST_CASE("时间线：字幕时间戳来自配音的真实时长") {
     }
 }
 
-TEST_CASE("溶解让两镜重叠，起点往回挪") {
+TEST_CASE("转场不影响时间线：装配是纯硬切，没有重叠") {
+    // **这条用例原来钉的是反的**：「溶解让两镜重叠，起点往回挪」，
+    // 期望 4.6。可装配走的是 `-f concat -c copy`，全树一处 xfade 都没有
+    // ——转场从来没被渲染过，两镜之间根本没有重叠。
+    //
+    // 按重叠排时间线的后果是**字幕比画面早，而且逐个 dissolve 累积**。
+    // 2026-09-13 在 walk_c ep01 上量到的（两镜 dissolve，各 0.4 秒）：
+    //
+    //     ep01_sh001    画面 0.00   字幕 0.00   差 +0.00
+    //     ep01_sh004    画面 13.58  字幕 13.18  差 -0.40
+    //     ep01_sh009    画面 31.13  字幕 30.33  差 -0.80
+    //     ep01_sh014_b  画面 59.50  字幕 58.70  差 -0.80
+    //
+    // 每一条单看都"差不多对"，连起来到片尾差了将近一秒。
     const ExactFrames exact;
     const auto paths = make_paths("溶解");
     touch(paths.shots("draft") / "a.mp4");
@@ -189,12 +202,16 @@ TEST_CASE("溶解让两镜重叠，起点往回挪") {
 
     const auto tl = media::build_timeline({s1, s2}, paths,
                                           config::AssemblyConfig{});
-    CHECK(tl.entries[1].start_s == doctest::Approx(4.6));
+    // 第二镜就接在第一镜后面，一秒不差。
+    CHECK(tl.entries[1].start_s == doctest::Approx(5.0));
+    // 字段本身照旧记着——它是意图，将来真做转场时要用。
+    CHECK(tl.entries[1].transition_in == models::Transition::DISSOLVE);
+    CHECK(tl.entries[1].transition_dur_s == doctest::Approx(0.4));
 
-    SUBCASE("硬切不重叠") {
+    SUBCASE("硬切同样不重叠") {
         auto s3 = make_shot("sh003", 4.0, "shots/draft/a.mp4");
         s3.transition_in = models::Transition::CUT;
-        s3.transition_dur_s = 0.4;   // 硬切时这个值该被忽略
+        s3.transition_dur_s = 0.4;
         const auto t = media::build_timeline({s1, s3}, paths,
                                              config::AssemblyConfig{});
         CHECK(t.entries[1].start_s == doctest::Approx(5.0));

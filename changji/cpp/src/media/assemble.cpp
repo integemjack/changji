@@ -62,11 +62,28 @@ Timeline build_timeline(const std::vector<models::Shot>& shots,
                                 paths::to_utf8(video));
         }
 
-        // 溶解会让两镜重叠，起点要往回挪。硬切没有重叠。
-        const double overlap = shot.transition_in != models::Transition::CUT
-                                   ? shot.transition_dur_s
-                                   : 0.0;
-        const double start = std::max(0.0, cursor - overlap);
+        // **不减重叠——因为根本没有重叠。**
+        //
+        // 这里原来写的是"溶解会让两镜重叠，起点要往回挪"，把非硬切镜头的
+        // 起点往前拉 transition_dur_s。可拼接走的是
+        // `-f concat -c copy`（下面 concat_args），**纯硬切，全树一处
+        // xfade / acrossfade / fade= 都没有**——转场从来没被渲染过。
+        //
+        // 于是时间线比成片短、字幕比画面早，而且**逐个 dissolve 累积**。
+        // 2026-09-13 在 walk_c ep01 上量到的（两镜 dissolve，各 0.4 秒）：
+        //
+        //     ep01_sh001    画面 0.00   字幕 0.00   差 +0.00
+        //     ep01_sh004    画面 13.58  字幕 13.18  差 -0.40
+        //     ep01_sh009    画面 31.13  字幕 30.33  差 -0.80
+        //     ep01_sh014_b  画面 59.50  字幕 58.70  差 -0.80
+        //
+        // 每一条字幕单看都"差不多对"，连起来到片尾差了将近一秒。
+        //
+        // **真要做转场是另一件事**：xfade 要把整条片子重编码一遍
+        // （`-c copy` 就没了），画质和时间都要付代价。在那之前，
+        // shot.transition_in / transition_dur_s 只是记下来的意图，
+        // 时间线不能按它算——**模拟一个不渲染的东西，错的是两处**。
+        const double start = cursor;
 
         // **时间轴按这一镜真正生成了多少帧算，不按分镜表里那个名义值。**
         //
