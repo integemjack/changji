@@ -24,17 +24,29 @@
 namespace changji::models {
 
 /// 画质档位。分级生成靠它。
-enum class Tier { DRAFT, PREVIEW, FINAL };
+///
+/// **只有两档。** 中间那档 `preview` 2026-09-13 删了：整棵树除了这个
+/// 文件自己没有任何地方用过它，能选的只有 draft 和 final
+/// （`config/settings.cpp` 里 `frame_tier`、`video_lora_tiers` 的校验
+/// 都只认这两个）。留着的唯一效果是 `/api/hardware` 多回一档看不懂的数
+/// ——实测 5090 上它报 1280×704 / 20 步 / 207 秒，比成片档（544×928 /
+/// 6 步 / 96.6 秒）又大又慢，因为成片档会被项目画幅和 Turbo 盖掉，
+/// 而它不会。一个没人用、还自相矛盾的数字，删掉比解释便宜。
+enum class Tier { DRAFT, FINAL };
 
+/// **DRAFT 必须排在第一个。** nlohmann 这个宏的 from_json 对认不出的
+/// 取值回退到列表首项（json.hpp 里 `(it != end) ? it : begin(m)`）。
+/// 老版本的工作进程可能还会在任务里发 `"tier": "preview"`，回退成
+/// DRAFT 正好也是 `worker_proto` 那个字段的默认值——不报错，也不会
+/// 悄悄当成成片档去跑。
 NLOHMANN_JSON_SERIALIZE_ENUM(Tier, {
     {Tier::DRAFT, "draft"},
-    {Tier::PREVIEW, "preview"},
     {Tier::FINAL, "final"},
 })
 
 const char* to_string(Tier v);
 
-/// 三个档位的固定顺序。遍历时用它，别依赖 map 的顺序。
+/// 两个档位的固定顺序。遍历时用它，别依赖 map 的顺序。
 const std::vector<Tier>& all_tiers();
 
 /// 规整到 32 的倍数。分辨率不是 32 的倍数会导致 Wan 的潜空间对不齐。

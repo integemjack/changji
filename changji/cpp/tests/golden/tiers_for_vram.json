@@ -12,12 +12,6 @@
         "measured_seconds": 245.5,
         "steps": 20,
         "width": 768
-      },
-      "preview": {
-        "height": 352,
-        "measured_seconds": 67.9,
-        "steps": 16,
-        "width": 640
       }
     },
     "vram_gb": 4.0
@@ -35,12 +29,6 @@
         "measured_seconds": 245.5,
         "steps": 20,
         "width": 768
-      },
-      "preview": {
-        "height": 352,
-        "measured_seconds": 67.9,
-        "steps": 16,
-        "width": 640
       }
     },
     "vram_gb": 7.5
@@ -58,12 +46,6 @@
         "measured_seconds": 245.5,
         "steps": 20,
         "width": 768
-      },
-      "preview": {
-        "height": 352,
-        "measured_seconds": 67.9,
-        "steps": 16,
-        "width": 640
       }
     },
     "vram_gb": 8.0
@@ -81,12 +63,6 @@
         "measured_seconds": 299.9,
         "steps": 20,
         "width": 960
-      },
-      "preview": {
-        "height": 448,
-        "measured_seconds": 93.9,
-        "steps": 18,
-        "width": 768
       }
     },
     "vram_gb": 11.5
@@ -104,12 +80,6 @@
         "measured_seconds": 299.9,
         "steps": 20,
         "width": 960
-      },
-      "preview": {
-        "height": 448,
-        "measured_seconds": 93.9,
-        "steps": 18,
-        "width": 768
       }
     },
     "vram_gb": 12.0
@@ -127,12 +97,6 @@
         "measured_seconds": 392.0,
         "steps": 20,
         "width": 1280
-      },
-      "preview": {
-        "height": 544,
-        "measured_seconds": 120.0,
-        "steps": 20,
-        "width": 960
       }
     },
     "vram_gb": 15.5
@@ -150,12 +114,6 @@
         "measured_seconds": 392.0,
         "steps": 20,
         "width": 1280
-      },
-      "preview": {
-        "height": 544,
-        "measured_seconds": 120.0,
-        "steps": 20,
-        "width": 960
       }
     },
     "vram_gb": 15.9
@@ -173,12 +131,6 @@
         "measured_seconds": 392.0,
         "steps": 20,
         "width": 1280
-      },
-      "preview": {
-        "height": 544,
-        "measured_seconds": 120.0,
-        "steps": 20,
-        "width": 960
       }
     },
     "vram_gb": 16.0
@@ -196,12 +148,6 @@
         "measured_seconds": 908.7,
         "steps": 20,
         "width": 1920
-      },
-      "preview": {
-        "height": 704,
-        "measured_seconds": 207.1,
-        "steps": 20,
-        "width": 1280
       }
     },
     "vram_gb": 23.5
@@ -219,12 +165,6 @@
         "measured_seconds": 908.7,
         "steps": 20,
         "width": 1920
-      },
-      "preview": {
-        "height": 704,
-        "measured_seconds": 207.1,
-        "steps": 20,
-        "width": 1280
       }
     },
     "vram_gb": 24.0
@@ -242,12 +182,6 @@
         "measured_seconds": 908.7,
         "steps": 20,
         "width": 1920
-      },
-      "preview": {
-        "height": 704,
-        "measured_seconds": 207.1,
-        "steps": 20,
-        "width": 1280
       }
     },
     "vram_gb": 48.0

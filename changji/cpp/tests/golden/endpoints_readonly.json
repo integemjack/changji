@@ -16,12 +16,6 @@
             "seconds": 392.0,
             "steps": 20,
             "width": 1280
-          },
-          "preview": {
-            "height": 544,
-            "seconds": 120.0,
-            "steps": 20,
-            "width": 960
           }
         },
         "vram_gb": 15.9
@@ -60,11 +54,6 @@
             "height": 704,
             "steps": 20,
             "width": 1280
-          },
-          "preview": {
-            "height": 544,
-            "steps": 20,
-            "width": 960
           }
         },
         "tts": {

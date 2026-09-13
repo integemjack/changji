@@ -66,20 +66,25 @@ double round1(double x) {
 // 的 baseline（res_multistep + simple）。挂 Turbo 那类蒸馏 LoRA 时不走这个数
 // ——effective_spec 会换成 6，见那里的注释。
 //
-// 草稿和预览档的步数是**我们自己为了省时间定的**，和模型的标准值无关：
+// 草稿档的步数是**我们自己为了省时间定的**，和模型的标准值无关：
 // 草稿只用来看构图和叙事，糊一点无所谓。
+//
+// **中间那档（preview）2026-09-13 删了。** 表里原来还有一列
+// 1280×704/20、960×544/20、768×432/18、640×352/16，整棵树没有一处用
+// 过它。留着的唯一效果是 /api/hardware 多回一档：实测 5090 上报
+// 1280×704 / 20 步 / 207 秒，比成片档的 544×928 / 6 步 / 96.6 秒又大
+// 又慢——因为成片档出去之前会被项目画幅和 Turbo 盖掉，而它不会。
 struct TierRow {
     double threshold;
     int draft[3];    // w, h, steps
-    int preview[3];
     int final_[3];
 };
 
 const TierRow kTierTable[] = {
-    {23.5, {768, 432, 10},  {1280, 704, 20},  {1920, 1088, 20}},
-    {15.5, {640, 352, 10},  {960, 544, 20},   {1280, 704, 20}},
-    {11.5, {512, 288, 8},   {768, 432, 18},   {960, 544, 20}},
-    {7.5,  {448, 256, 8},   {640, 352, 16},   {768, 432, 20}},
+    {23.5, {768, 432, 10},  {1920, 1088, 20}},
+    {15.5, {640, 352, 10},  {1280, 704, 20}},
+    {11.5, {512, 288, 8},   {960, 544, 20}},
+    {7.5,  {448, 256, 8},   {768, 432, 20}},
 };
 constexpr int kTierRows = static_cast<int>(sizeof(kTierTable) / sizeof(kTierTable[0]));
 
@@ -90,7 +95,6 @@ constexpr int kReferenceIndex = 1;
 const int* row_for(const TierRow& row, Tier t) {
     switch (t) {
         case Tier::DRAFT:   return row.draft;
-        case Tier::PREVIEW: return row.preview;
         case Tier::FINAL:   return row.final_;
     }
     return row.draft;
@@ -100,7 +104,6 @@ const int* row_for(const TierRow& row, Tier t) {
 double reference_seconds(Tier t) {
     switch (t) {
         case Tier::DRAFT:   return 27.0;
-        case Tier::PREVIEW: return 120.0;
         case Tier::FINAL:   return 392.0;
     }
     return 0.0;
@@ -150,14 +153,13 @@ std::string pad_right(const std::string& s, std::size_t width) {
 const char* to_string(Tier v) {
     switch (v) {
         case Tier::DRAFT:   return "draft";
-        case Tier::PREVIEW: return "preview";
         case Tier::FINAL:   return "final";
     }
     return "?";
 }
 
 const std::vector<Tier>& all_tiers() {
-    static const std::vector<Tier> kAll = {Tier::DRAFT, Tier::PREVIEW, Tier::FINAL};
+    static const std::vector<Tier> kAll = {Tier::DRAFT, Tier::FINAL};
     return kAll;
 }
 
