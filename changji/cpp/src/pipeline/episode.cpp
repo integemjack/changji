@@ -200,22 +200,34 @@ std::string run_assemble(const ProjectStore& store,
     //
     // 降级本身是对的（gates.fallback_on_exhausted：保证整集能出片，而不是
     // 卡在某一镜上）。不对的是它悄悄发生。
-    std::vector<std::string> degraded;
+    std::vector<const models::Shot*> degraded;
     for (const models::Shot& s : shots) {
-        if (s.status == models::ShotStatus::FALLBACK) degraded.push_back(s.shot_id);
+        if (s.status == models::ShotStatus::FALLBACK) degraded.push_back(&s);
     }
     if (!degraded.empty()) {
         std::string msg = "这一集有 " + std::to_string(degraded.size()) +
-                          " 个镜头重试超限，降级成了静帧加运镜：";
-        // 只列前五个。二十镜里降了十个的时候，列全了没人会读。
-        for (std::size_t i = 0; i < degraded.size() && i < 5; ++i) {
-            if (i) msg += "、";
-            msg += degraded[i];
+                          " 个镜头重试超限，降级成了静帧加运镜。"
+                          "片子是完整的，但这几镜没有真正的运动：";
+        // **把闸门当时说的原话带上，不要猜原因。**
+        //
+        // 上一版这里写的是"多半是出片时显存不够"——那是写的时候只见过
+        // 显存那一种。实测至少还有一种：walk_c ep01_sh004 是一个按要求
+        // 压暗的镜头（车内只有手机蓝光），被"近乎纯色"那道闸门误判，
+        // 和显存毫无关系。一句自信的错误归因，比不给原因更糟：人照着
+        // 去腾显存，腾完还是降级。
+        //
+        // 每一镜的 gate_notes 里存着当时的原话，直接给它。
+        // 只列前三个：二十镜里降了十个的时候，列全了没人会读。
+        for (std::size_t i = 0; i < degraded.size() && i < 3; ++i) {
+            msg += "\n  " + degraded[i]->shot_id;
+            if (!degraded[i]->gate_notes.empty()) {
+                msg += "：" + degraded[i]->gate_notes.front();
+            }
         }
-        if (degraded.size() > 5) msg += " 等";
-        msg += "。片子是完整的，但这几镜没有真正的运动——多半是出片时显存"
-               "不够（sd.cpp 那句 \"cannot make enough memory available\"），"
-               "腾一腾再单独重出这几镜会好。";
+        if (degraded.size() > 3) {
+            msg += "\n  …… 还有 " + std::to_string(degraded.size() - 3) + " 个";
+        }
+        msg += "\n单独重出这几镜看看；一直降级的话，按上面那句说的原因处理。";
         emit(progress, "assemble", "warn", msg);
     }
 
