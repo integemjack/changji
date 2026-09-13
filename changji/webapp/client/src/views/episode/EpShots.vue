@@ -29,6 +29,7 @@ import {
   CAMERA_MOVES,
   SHOT_SIZES,
   TRANSITIONS,
+  qualityLabel,
   sizeLabel,
 } from '@/api/labels'
 import { humanTime, useAction } from '@/composables/useAction'
@@ -128,9 +129,9 @@ const missingAssets = computed(() => {
 const tagline = computed(() => {
   const v = video.value
   const size = v
-    ? `${v.orientation === 'landscape' ? '横屏' : '竖屏'} ${
-        v.quality === '2k' ? '2K' : '标准'
-      } · ${v.width}×${v.height}`
+    ? `${v.orientation === 'landscape' ? '横屏' : '竖屏'} ${qualityLabel(
+        v.quality,
+      )} · ${v.width}×${v.height}`
     : ''
   if (!shots.value.length) return size
   return `${shots.value.length} 镜 · ${humanTime(totalDuration.value)}${size ? ' · ' + size : ''}`

@@ -35,6 +35,23 @@ export const CAMERA_MOVES = [
   { value: 'orbit', label: '环绕' },
 ]
 
+/**
+ * 画质档位。**取值仍然是 "720p"/"hd"/"2k"**——那是存在每个项目
+ * changji.toml 的 [video] 里的字符串，改了名老项目就读不出来。
+ *
+ * 短边长边分开存，是因为**同一档在横屏和竖屏下要反过来写**：竖屏的
+ * 720p 是 544×928，横屏是 928×544。上一版把 "544×928" 直接写死在
+ * <option> 里，横屏项目那三行全是错的。
+ *
+ * 数字跟着引擎 config/settings.cpp 的 VideoConfig::size()，
+ * 改那边这里也要改（两边都是 32 对齐的硬约束，不能随手填）。
+ */
+export const VIDEO_QUALITIES = [
+  { value: '720p', label: '标准', short: 544, long: 928, note: '快' },
+  { value: 'hd', label: '高清', short: 704, long: 1280, note: '推荐' },
+  { value: '2k', label: '2K', short: 1440, long: 2560, note: '很吃显存' },
+]
+
 export const TRANSITIONS = [
   { value: 'cut', label: '硬切' },
   { value: 'dissolve', label: '溶解' },
@@ -63,6 +80,24 @@ export const sizeLabel = (v) => pick(SHOT_SIZES, v)
 export const angleLabel = (v) => pick(CAMERA_ANGLES, v)
 export const moveLabel = (v) => pick(CAMERA_MOVES, v)
 export const transitionLabel = (v) => pick(TRANSITIONS, v)
+
+/**
+ * 画质档的中文名。
+ *
+ * 以前是写在墙顶那行读数里的一句三元式 `quality === '2k' ? '2K' : '标准'`
+ * ——2026-09-11 加回 hd 那一档之后，704×1280 的项目在界面上写着"标准"。
+ * 两个值的三元式配三个值的字段，加一档就错一档，所以收到这儿来。
+ */
+export const qualityLabel = (v) => pick(VIDEO_QUALITIES, v)
+
+/** 某一档在某个画幅下的真实尺寸，形如 "544×928"。 */
+export const qualitySize = (v, orientation) => {
+  const q = VIDEO_QUALITIES.find((x) => x.value === v)
+  if (!q) return ''
+  return orientation === 'landscape'
+    ? `${q.long}×${q.short}`
+    : `${q.short}×${q.long}`
+}
 export const statusOf = (v) => SHOT_STATUS[v] ?? { label: v, tone: 'neutral' }
 
 /** 流水线阶段。制作页的进度条和事件流用。 */

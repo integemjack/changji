@@ -17,6 +17,7 @@ import { computed, onMounted, ref, watch } from 'vue'
 import EmptyState from '@/components/EmptyState.vue'
 import { projectStage } from '@/composables/project-stage'
 import { api } from '@/api'
+import { VIDEO_QUALITIES, qualitySize } from '@/api/labels'
 import { humanAgo } from '@/composables/useAction'
 import { useAction } from '@/composables/useAction'
 import { useProjects } from '@/stores/projects'
@@ -212,11 +213,15 @@ watch(
             <label class="field">
               <span class="field__label">清晰度</span>
               <!-- **取值仍然是 "720p"**：那是存在每个项目 changji.toml 里的
-                   字符串，改了名老项目就读不出来。显示的是真实尺寸。 -->
+                   字符串，改了名老项目就读不出来。显示的是真实尺寸。
+
+                   尺寸按当前画幅算，**不能写死**：上一版三行都是竖屏的
+                   数（544×928…），横屏项目看到的三行全是反的；而且 2K
+                   那行连竖屏都写反了（2560×1440）。 -->
               <select v-model="video.quality" class="select" :title="'出来是 ' + sizeText">
-                <option value="720p">标准 544×928 · 快</option>
-                <option value="hd">高清 704×1280 · 推荐</option>
-                <option value="2k">2K 2560×1440 · 很吃显存</option>
+                <option v-for="q in VIDEO_QUALITIES" :key="q.value" :value="q.value">
+                  {{ q.label }} {{ qualitySize(q.value, video.orientation) }} · {{ q.note }}
+                </option>
               </select>
             </label>
           </div>
