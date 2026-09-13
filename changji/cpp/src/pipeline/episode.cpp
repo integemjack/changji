@@ -2,8 +2,10 @@
 
 #include <algorithm>
 #include <chrono>
+#include <filesystem>
 #include <set>
 #include <stdexcept>
+#include <system_error>
 
 #include "gates/checks.hpp"
 #include "util/paths.hpp"
@@ -11,6 +13,8 @@
 #include "stages/audio_plan.hpp"
 #include "stages/storyboard.hpp"
 #include "util/human_time.hpp"
+
+namespace fs = std::filesystem;
 
 namespace changji::pipeline {
 
@@ -497,14 +501,49 @@ RunReport run_episode(const ProjectStore& store,
 
                 const int n = static_cast<int>(report.frames.size());
                 int failed = 0;
+                // **失败之后不一定就是纯文生视频。**
+                //
+                // 出首帧失败时只记 attempts，`frame_path` 原样留着（见
+                // stages/frames.cpp 的 apply）。只要那个旧文件还在，
+                // 出片阶段照样会拿它当起点——于是这一句"会退回纯文生视频"
+                // 是错的，而错得很隐蔽：用户以为这几镜是文生的，实际是
+                // 拿一张**上一次的、可能还是另一个画幅的**图生出来的。
+                // 2026-09-13 就是这么撞上的：项目从 720p 改成 hd 之后，
+                // 首帧全部失败，成片却拿 544×928 的旧图生出了 704×1280。
+                int stale = 0;
                 for (const auto& o : report.frames) {
-                    if (!o.ok) ++failed;
+                    if (o.ok) continue;
+                    ++failed;
+                    const auto it = std::find_if(
+                        todo.begin(), todo.end(), [&](const models::Shot* s) {
+                            return s->shot_id == o.shot_id;
+                        });
+                    if (it == todo.end()) continue;
+                    const models::Shot* s = *it;
+                    if (!s->frame_path.has_value() || s->frame_path->empty()) {
+                        continue;
+                    }
+                    std::error_code ec;
+                    if (fs::is_regular_file(store.paths().abs(*s->frame_path),
+                                            ec)) {
+                        ++stale;
+                    }
                 }
                 std::string done_msg =
                     "首帧完成 " + std::to_string(n - failed) + " 个";
                 if (failed > 0) {
-                    done_msg += "，失败 " + std::to_string(failed) +
-                                " 个（这些镜头会退回纯文生视频）";
+                    done_msg += "，失败 " + std::to_string(failed) + " 个";
+                    if (stale > 0) {
+                        done_msg +=
+                            "。其中 " + std::to_string(stale) +
+                            " 个还留着上一次出的首帧，出片会直接拿它当起点"
+                            "——如果这中间改过画幅或者改过画面描述，出来的"
+                            "东西不是你现在要的，先把这几镜的首帧重出一遍";
+                    }
+                    if (failed > stale) {
+                        done_msg += "。另外 " + std::to_string(failed - stale) +
+                                    " 个没有可用的首帧，会退回纯文生视频";
+                    }
                 }
                 emit(progress, "frames", "done", done_msg, n, n);
             }

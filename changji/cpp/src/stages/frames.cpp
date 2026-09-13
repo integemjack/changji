@@ -177,7 +177,25 @@ std::vector<FrameOutcome> run_frames(std::vector<Shot*>& shots,
             }
 
             try {
-                const PromptBundle prompts = composer.compose(*shot);
+                PromptBundle prompts = composer.compose(*shot);
+                // **参考图的路径要还原成绝对的。**
+                //
+                // 资产库里存的是相对项目根的路径（`refs/c_xxx_front.png`），
+                // 那是有意的——项目目录整个拷到别的机器上还能读。但底下
+                // `load_image` 是直接拿它开文件的，于是解析到**引擎进程的
+                // 当前目录**去了（服务器上是 /root），必然打不开。
+                //
+                // 2026-09-13 实测撞到：报的是「读不了参考图
+                // refs/c_li_hao_ran_front.png」，而那个文件明明在项目里躺着。
+                // 后果是**只要角色出过参考图，这一镜的首帧就必然失败**——
+                // 而参考图恰恰是跨镜头一致性的全部依靠。之前没露出来，
+                // 是因为那几个验过的项目都还没出过参考图。
+                //
+                // 消息里那个相对路径本身就是线索：这一层的报错一律该是
+                // 绝对路径，看见相对的就说明哪儿漏了还原。
+                for (std::string& r : prompts.reference_images) {
+                    r = paths::to_utf8(paths.abs(r));
+                }
                 const fs::path dest =
                     paths.frames() / paths::from_utf8(shot->shot_id + ".png");
 

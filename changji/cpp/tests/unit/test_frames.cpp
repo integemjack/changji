@@ -388,6 +388,50 @@ TEST_CASE("逐步进度会广播出去") {
     fs::remove_all(root, ec);
 }
 
+TEST_CASE("参考图传到后端时已经是绝对路径") {
+    // **踩出来的。** 资产库里存的是相对项目根的路径
+    // （`refs/c_xxx_front.png`），那是为了项目目录能整个拷到别的机器上。
+    // 但底下 sd_image.cpp 的 load_image 是直接拿它开文件的，相对路径
+    // 会解析到**引擎进程的当前目录**——服务器上是 /root，必然打不开。
+    //
+    // 2026-09-13 实测：报的是「读不了参考图 refs/c_li_hao_ran_front.png」，
+    // 而那个文件明明在项目里躺着。后果是**只要角色出过参考图，这一镜的
+    // 首帧就必然失败**，而参考图恰恰是跨镜头一致性的全部依靠。
+    const fs::path root = temp_root("参考图路径");
+    const models::ProjectPaths paths(root);
+
+    models::AssetLibrary assets = make_assets();
+    assets.characters["c_lin_wan"].ref_front = "refs/c_lin_wan_front.png";
+
+    auto owned = std::vector<models::Shot>{make_shot("ep01_sh001")};
+    std::vector<models::Shot*> shots = {&owned[0]};
+
+    std::vector<std::string> got;
+    auto renderer = [&](const models::Shot&, const stages::PromptBundle& p,
+                        const models::TierSpec&, const fs::path& dest,
+                        pipeline::CancelToken&, const infer::StepCallback&) {
+        got = p.reference_images;
+        std::error_code ec;
+        fs::create_directories(dest.parent_path(), ec);
+        std::ofstream(dest, std::ios::binary) << "x";
+    };
+
+    pipeline::JobTable table;
+    pipeline::CancelToken tok;
+    table.start(pipeline::JobKind::Run, "ep01", [&](pipeline::JobProgress& p) {
+        stages::run_frames(shots, assets, make_spec(), paths, renderer, p, tok, 1);
+    });
+    table.wait_idle();
+
+    REQUIRE(got.size() == 1);
+    CAPTURE(got[0]);
+    CHECK(fs::path(paths::from_utf8(got[0])).is_absolute());
+    CHECK(fs::path(paths::from_utf8(got[0])) == paths.abs("refs/c_lin_wan_front.png"));
+
+    std::error_code ec;
+    fs::remove_all(root, ec);
+}
+
 TEST_CASE("提示词按画幅缩放后传给后端") {
     // 分辨率必须是 32 的倍数，否则潜空间对不齐，出来的图是错位的。
     const fs::path root = temp_root("缩放");
