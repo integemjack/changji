@@ -21,6 +21,7 @@
 // 画布上限跟着模型走
 #include "stages/limits.hpp"
 #include "models/hardware.hpp"
+#include "llm/client.hpp"
 #include "infer/sd_backend.hpp"
 #include "util/paths.hpp"
 #include "util/proc.hpp"
@@ -231,6 +232,16 @@ Check check_llm(const config::Settings& s) {
             return {"大模型", Level::OK, url + "  " + model, ""};
         }
     }
+    // **在我们那本小抄上的，不算"没有"。** 见 llm::known_models：
+    // 智谱的 /models 只列收费那几个，而默认那个 glm-4.7-flash 正是
+    // 免费的、不在列表里、却能用——照 names 判的话，一台配置完全正确
+    // 的机器每次体检都要挨这一句，而"报告说错了比不说更糟"。
+    for (const auto& [id, note] : llm::known_models(url)) {
+        if (id != model) continue;
+        return {"大模型", Level::OK, url + "  " + model,
+                "这家的 /models 没把它列出来（免费档常这样），但它是能用的。\n" + note};
+    }
+
     if (!names.empty()) {
         // 服务在跑，只是这份清单里没有配置指定的那个。
         //

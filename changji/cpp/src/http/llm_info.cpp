@@ -44,43 +44,6 @@ std::vector<std::string> list_gguf(const fs::path& dir) {
     return out;
 }
 
-/// 我们认识的这家的模型，每个配一句**选它还是不选它**的话。
-///
-/// 两件事让这份清单非有不可，都是 2026-09-13 实测撞出来的：
-///
-///   1. **智谱的 `/models` 不列免费模型。** z.ai 和 bigmodel.cn 都只回
-///      glm-4.5 / 4.5-air / 4.6 / 4.7 / 5 / 5-turbo / 5.1 / 5.2 / 5.3 /
-///      5.3-flash——**glm-4.7-flash 不在里面，而它能用**（服务端回的
-///      `model` 字段就是它），它还正好是我们的默认。只照 `/models` 渲染
-///      下拉的话，默认那个模型在自己的下拉里是找不到的。
-///   2. **光有名字选不动。** 一串 glm-4.5/4.6/4.7/5/5.1/5.2/5.3 摆在那儿，
-///      谁也不知道该点哪个。要紧的两件事——**哪个不要钱、哪个会写**——
-///      名字上一个字都看不出来。
-///
-/// 分数是 EQ-Bench 长文创作榜（2026-09-14 抓的，见
-/// config::LLMConfig::task_models）。**不写具体单价**：那些数我只在
-/// 转售的网关上核过，各家官网价会变，写进界面就是在替服务商报价。
-///
-/// 认不出的地址回空数组——这是本**我们自己维护的小抄**，不是模型总表，
-/// 真实能用什么以 `/models` 拉回来的为准。
-std::vector<std::pair<std::string, std::string>> known_models(
-    const std::string& base_url) {
-    const bool zhipu = base_url.find("bigmodel.cn") != std::string::npos ||
-                       base_url.find("z.ai") != std::string::npos;
-    if (!zhipu) return {};
-    return {
-        {"glm-4.7-flash",
-         "免费 · 默认。限流很紧，成批写会慢；写作榜 47.8"},
-        {"glm-5.3", "这一档最会写：写作榜 81.8、套话 7.09，八章几乎不降"},
-        {"glm-5.3-flash", "便宜档。⚠️ 写作榜上没测过，别照 5.3 的分想当然"},
-        {"glm-5.2", "写作榜 77.9"},
-        {"glm-5", "写作榜 70.9"},
-        {"glm-4.7", "写作榜 66.0"},
-        {"glm-4.6", "写作榜 57.3"},
-        {"glm-4.5", "写作榜 55.5"},
-    };
-}
-
 }  // namespace
 
 ApiResult get_llm_providers() {
@@ -110,7 +73,7 @@ ApiResult get_llm_models(const config::Settings& settings, const HttpGet& fetch)
     // 应的东西，前端那句「这台服务上没有 X」靠它判；混进我们的小抄之后
     // 那句话就会在模型真的不存在时也不吭声。合并交给前端去做。
     json known = json::array();
-    for (const auto& [id, note] : known_models(settings.llm.base_url)) {
+    for (const auto& [id, note] : llm::known_models(settings.llm.base_url)) {
         known.push_back({{"id", id}, {"note", note}});
     }
 

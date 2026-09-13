@@ -24,6 +24,8 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <utility>
+#include <vector>
 
 #include <nlohmann/json.hpp>
 
@@ -177,6 +179,29 @@ std::string extract_content(const std::string& raw_body);
 /// 地址填错了、模型名写错了、密钥过期了。用户该看到的是"去设置里改地址"。
 std::string explain_status(const config::LLMConfig& cfg, int status,
                            const std::string& body);
+
+/// **我们认识的这家有哪些模型**，每个配一句「选它还是不选它」的话。
+/// 返回 `{模型名, 一句话}`，认不出的地址回空。
+///
+/// 两处在用，两处的理由不一样，但都绕不开同一件事——
+/// **智谱的 `/models` 不列免费模型**（2026-09-13 实测：z.ai 和
+/// bigmodel.cn 都只回 glm-4.5 ~ glm-5.3-flash 这些收费的，
+/// **glm-4.7-flash 不在里面而它能用**，服务端回的 `model` 字段就是它），
+/// 而它正好是我们的默认：
+///
+///   * `/api/llm/models` —— 只照 `/models` 渲染下拉的话，默认那个模型
+///     在自己的下拉里是找不到的。顺带给每个模型一句话：一串
+///     glm-4.5/4.6/4.7/5/5.1/5.2/5.3 摆在那儿，要紧的两件事
+///     （哪个不要钱、哪个会写）名字上一个字都看不出来。
+///   * 体检 —— 「这台服务上没有 X」那句话对着默认配置误报。
+///
+/// ⚠️ 这是本**我们自己维护的小抄，不是模型总表**。真实能用什么以
+/// `/models` 拉回来的为准；小抄只用来补它漏掉的那些、和给一句说明。
+/// 分数来自 EQ-Bench 长文创作榜（2026-09-14 抓的）。
+/// **不写具体单价**：那些数只在转售的网关上核过，各家官网价会变，
+/// 写进界面就是在替服务商报价。
+std::vector<std::pair<std::string, std::string>> known_models(
+    const std::string& base_url);
 
 /// 每次调用时取一份当前配置。
 ///

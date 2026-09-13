@@ -337,6 +337,26 @@ std::string explain_status(const config::LLMConfig& cfg, int status,
     return out;
 }
 
+std::vector<std::pair<std::string, std::string>> known_models(
+    const std::string& base_url) {
+    const bool zhipu = base_url.find("bigmodel.cn") != std::string::npos ||
+                       base_url.find("z.ai") != std::string::npos;
+    if (!zhipu) return {};
+    // 顺序是**推荐顺序**，不是字母序：设置页换家时挑的就是头一个，
+    // 而字母序头一个是 glm-4.5，谁也不该先看见它。改顺序前想一下这件事。
+    return {
+        {"glm-4.7-flash",
+         "免费 · 默认。限流很紧，成批写会慢；写作榜 47.8"},
+        {"glm-5.3", "这一档最会写：写作榜 81.8、套话 7.09，八章几乎不降"},
+        {"glm-5.3-flash", "便宜档。⚠️ 写作榜上没测过，别照 5.3 的分想当然"},
+        {"glm-5.2", "写作榜 77.9"},
+        {"glm-5", "写作榜 70.9"},
+        {"glm-4.7", "写作榜 66.0"},
+        {"glm-4.6", "写作榜 57.3"},
+        {"glm-4.5", "写作榜 55.5"},
+    };
+}
+
 namespace {
 
 /// 这一家额外要带的字段。
