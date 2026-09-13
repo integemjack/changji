@@ -452,3 +452,16 @@ TEST_CASE("HTTP 后端：两处和 Python 不一样的地方，是故意的") {
     // 所以这条偏差目前只有代码注释和方案文档记着，没有用例。
     // 装上 ffmpeg 之后应该补：回一段 mp3，断言拿得到时长。
 }
+
+TEST_CASE("进程内配音的采样默认值抄的是官方 generation_config.json") {
+    // Qwen/Qwen3-TTS-12Hz-1.7B-Base 随模型发布的 generation_config.json
+    // （2026-09-13 核过）：temperature 0.9、top_k 50、top_p 1.0、
+    // repetition_penalty 1.05。以前这里是 llama.cpp 的通用默认
+    // （top_k 40 / top_p 0.9，没温度也没重复惩罚），不是这个模型的。
+    // 这条用例钉的是"来源"：谁改了这几个数，得先去核官方那份。
+    const infer::LlamaTtsRequest req;
+    CHECK(req.temperature == doctest::Approx(0.9f));
+    CHECK(req.top_k == 50);
+    CHECK(req.top_p == doctest::Approx(1.0f));
+    CHECK(req.repetition_penalty == doctest::Approx(1.05f));
+}

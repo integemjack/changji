@@ -184,8 +184,26 @@ bool LlamaTts::synthesize(const LlamaTtsRequest& req, double& out_duration_s,
     if (im.smpl != nullptr) llama_sampler_free(im.smpl);
     llama_sampler_chain_params sp = llama_sampler_chain_default_params();
     im.smpl = llama_sampler_chain_init(sp);
+    // 顺序照 HF 的 generate：重复惩罚先改 logits，再 top_k / top_p 截断，
+    // 再温度，最后按分布抽。四个数的来历见 LlamaTtsRequest。
+    // 惩罚窗口给整段上下文（HF 的 repetition_penalty 看的是整个已生成
+    // 序列）。**不能传 -1**：common 那层把 -1 当"上下文长度"，而这里直接
+    // 调的是核心采样器，它做的是 `max(last_n, 0)`——-1 变 0，0 = 关掉，
+    // 于是这一道悄悄不存在。上下文本来就是按 kTtsContextTokens 开的，
+    // 窗口给这个数就是"全部"。只惩罚"重复"这一项，频率/存在惩罚官方没开。
+    if (req.repetition_penalty > 0.0f && req.repetition_penalty != 1.0f) {
+        const llama_vocab* vocab = llama_model_get_vocab(im.model);
+        llama_sampler_chain_add(
+            im.smpl, llama_sampler_init_penalties(llama_vocab_n_tokens(vocab),
+                                                  kTtsContextTokens,
+                                                  req.repetition_penalty, 0.0f,
+                                                  0.0f));
+    }
     llama_sampler_chain_add(im.smpl, llama_sampler_init_top_k(req.top_k));
     llama_sampler_chain_add(im.smpl, llama_sampler_init_top_p(req.top_p, 1));
+    if (req.temperature > 0.0f) {
+        llama_sampler_chain_add(im.smpl, llama_sampler_init_temp(req.temperature));
+    }
     llama_sampler_chain_add(im.smpl, llama_sampler_init_dist(req.seed));
 
     mtmd::bitmap_ptr speaker;

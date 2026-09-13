@@ -102,8 +102,25 @@ struct LlamaTtsRequest {
     /// 输出到哪个 wav。
     std::filesystem::path out;
 
-    int top_k = 40;
-    float top_p = 0.9;
+    /// 采样旋钮。**默认值抄的是官方仓库随模型发布的 generation_config.json**
+    /// （Qwen/Qwen3-TTS-12Hz-1.7B-Base，2026-09-13 核过）：
+    ///
+    ///     temperature 0.9 · top_k 50 · top_p 1.0 · repetition_penalty 1.05
+    ///
+    /// 以前是 top_k 40 / top_p 0.9、没有温度（等于 1.0）、没有重复惩罚——
+    /// 那是 llama.cpp 的通用默认，不是这个模型的。差在两头：温度 1.0 比
+    /// 官方热，top_p 0.9 又比官方窄；而重复惩罚那一项官方是开着的，它管的
+    /// 是语义码重复——同一个码连着出就是那种「卡住的音节」。
+    ///
+    /// 子模型（声学细节那一层）的 top_k / top_p 也传这两个数；它的温度
+    /// mtmd 自己钉在 0.9（mtmd.cpp 里那行 `inp.temp = 0.9f`），正好也是
+    /// 官方 subtalker 的值，所以不用另给。
+    int top_k = 50;
+    float top_p = 1.0f;
+    float temperature = 0.9f;
+    /// 1.0 = 关。作用在骨干模型采语义码那一层，窗口是整段上下文
+    /// （HF 的 repetition_penalty 语义就是看整个已生成序列）。
+    float repetition_penalty = 1.05f;
     /// UINT32_MAX 表示随机。**默认给一个定值**：配音重跑一次就换一个
     /// 声音的话，用户没法靠重跑修一句坏台词，只能整集重配。
     unsigned int seed = 1234;
