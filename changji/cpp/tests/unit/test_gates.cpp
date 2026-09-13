@@ -81,6 +81,12 @@ struct FakeFF {
     /// 依次回这些亮度统计，用光了重复最后一条。
     std::vector<std::string> frames = {kNormalFrame};
     std::string loudnorm_out;
+    /// tblend 那条运动量命令回这个。默认给一段"会动、没硬切"的：
+    /// 三帧差 2.0 / 3.0 / 4.0。留空 = 老 ffmpeg 没这个滤镜，量不到。
+    std::string motion_out =
+        "frame:0 pts:512 pts_time:0.04\nlavfi.signalstats.YAVG=2.0\n"
+        "frame:1 pts:1024 pts_time:0.08\nlavfi.signalstats.YAVG=4.0\n"
+        "frame:2 pts:1536 pts_time:0.12\nlavfi.signalstats.YAVG=3.0\n";
     bool probe_fails = false;
     bool stats_fail = false;
     mutable std::size_t frame_i = 0;
@@ -107,6 +113,12 @@ struct FakeFF {
                     return r;
                 }
                 r.out = probe_out;
+                return r;
+            }
+            // 运动量那条也带 signalstats，但它是整段的差分，先分出去，
+            // 否则会吃掉 frames 序列里的一条、把后面取样点的顺序带偏。
+            if (contains("tblend")) {
+                r.out = motion_out;
                 return r;
             }
             if (contains("signalstats")) {
@@ -534,5 +546,47 @@ TEST_CASE("画面闸门的判定和 Python 一条一条对得上") {
         // **判定是契约。** 它决定这一镜是重试、退回还是降级。
         CHECK(std::string(gates::to_string(r.verdict)) ==
               c.at("verdict").get<std::string>());
+    }
+}
+
+TEST_CASE("运动量只报数不判：进 metrics、挂在「通过闸门」后面") {
+    // 2026-09-13：几乎不动的片子（均值 0.27～0.66）和中途硬切的片子
+    // （最大 45 / 中位 2.2）都能过闸门。先把数露出来，攒够再定阈值。
+    FakeFF f;
+    models::Shot shot;
+    shot.shot_id = "ep01_sh001";
+    config::GateConfig cfg;
+
+    SUBCASE("量到了：均值、中位、最大都进 metrics，判定不变") {
+        const auto r = gates::gate_video(shot, fake_video("运动"), f.ff(), cfg);
+        CHECK(r.ok());
+        CHECK(r.metrics.at("motion_mean") == doctest::Approx(3.0));
+        CHECK(r.metrics.at("motion_median") == doctest::Approx(3.0));
+        CHECK(r.metrics.at("motion_max") == doctest::Approx(4.0));
+        CHECK(gates::motion_note(r) == "（运动 3.0，最大 4）");
+    }
+    SUBCASE("中途硬切的那种：最大值远高于中位，数照记，仍然放行") {
+        f.motion_out =
+            "lavfi.signalstats.YAVG=2.0\nlavfi.signalstats.YAVG=45.0\n"
+            "lavfi.signalstats.YAVG=2.2\n";
+        const auto r = gates::gate_video(shot, fake_video("运动"), f.ff(), cfg);
+        CHECK(r.ok());
+        CHECK(r.metrics.at("motion_median") == doctest::Approx(2.2));
+        CHECK(r.metrics.at("motion_max") == doctest::Approx(45.0));
+        CHECK(gates::motion_note(r) == "（运动 16.4，最大 45）");
+    }
+    SUBCASE("量不到（老 ffmpeg 没 tblend）：不进 metrics，也不算失败") {
+        f.motion_out = "";
+        const auto r = gates::gate_video(shot, fake_video("运动"), f.ff(), cfg);
+        CHECK(r.ok());
+        CHECK(r.metrics.count("motion_mean") == 0);
+        CHECK(gates::motion_note(r).empty());
+    }
+    SUBCASE("运动量那条命令不吃亮度取样的序列") {
+        // 三个取样点分别回三帧；要是 tblend 那条被当成第四次取样，
+        // 片尾那一帧就轮不到——这里第三帧是纯色的，必须被拦下来。
+        f.frames = {kNormalFrame, kNormalFrame, kBlankFrame};
+        const auto r = gates::gate_video(shot, fake_video("运动"), f.ff(), cfg);
+        CHECK_FALSE(r.ok());
     }
 }

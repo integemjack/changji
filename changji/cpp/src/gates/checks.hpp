@@ -93,4 +93,10 @@ Verdict decide_next(const GateResult& result, const models::Shot& shot,
 /// 闸门结果概览。无人值守时这是人唯一要看的东西。
 std::string summarize(const std::vector<GateResult>& results);
 
+/// 「通过闸门」那句话后面挂的运动量：`（运动 3.5，最大 45）`。
+///
+/// 闸门对运动量只报数不判（见 gate_video 里那段），所以过了闸门的镜头
+/// 这个数得有地方露出来，不然攒不出定阈值的样本。没量到就回空串。
+std::string motion_note(const GateResult& result);
+
 }  // namespace changji::gates

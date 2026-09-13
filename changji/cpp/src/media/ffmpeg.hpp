@@ -149,6 +149,14 @@ struct ProcResult {
     bool timed_out = false;
 };
 
+/// 一段片子的运动量，见 FFmpeg::motion_stats。frames = 0 表示没量到。
+struct MotionStats {
+    int frames = 0;
+    double mean = 0.0;
+    double median = 0.0;
+    double max = 0.0;
+};
+
 using Runner = std::function<ProcResult(const std::string& exe,
                                         const std::vector<std::string>& args,
                                         double timeout_s)>;
@@ -176,6 +184,19 @@ public:
     /// 在片段的几个位置取样。**只看一帧会漏掉中途崩坏的镜头。**
     std::vector<PixelStats> sample_pixel_stats(const std::filesystem::path& p,
                                                int samples = 3) const;
+
+    /// 整段片子的运动量：相邻帧的平均绝对差（缩到 256 宽、灰度，0~255）。
+    ///
+    /// **亮度取样看不出这两种废片**（2026-09-13 实测）：
+    ///   * 几乎不动的——项目 321 的四镜成片，画面很清楚（展布正常），
+    ///     相邻帧差均值只有 0.27～0.66；能动的镜头在 2.7～3.6；
+    ///   * 中途硬切成另一场戏的——8 秒那镜均值 3.5、中位 2.2、**最大 45**。
+    /// 一个数分开第一种（均值），一个数分开第二种（最大值对中位数）。
+    ///
+    /// 走 ffmpeg 的 tblend=difference + signalstats，不在进程里解码，
+    /// 和 pixel_stats 一个路数；192 帧的片子 0.4 秒。老 ffmpeg 没有
+    /// tblend 的话抛 FFmpegError，调用方按"量不到"处理，别让闸门因此失败。
+    MotionStats motion_stats(const std::filesystem::path& p) const;
 
     /// 测响度。两遍归一法的第一遍。
     std::map<std::string, double> measure_loudness(

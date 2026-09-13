@@ -287,13 +287,16 @@ std::vector<RenderOutcome> render_batch(std::vector<Shot*>& shots,
                     local.gate_notes.clear();
                     done[i].ok = true;
                     done[i].rel_path = *local.video_path;
-                    say("shot_done", local.shot_id + " 通过闸门");
+                    say("shot_done", local.shot_id + " 通过闸门" +
+                                         gates::motion_note(res));
                     break;
                 }
 
                 const gates::Verdict verdict = gate.decide(res, local);
                 local.gate_notes = res.reasons;
-                say("gate", res.describe());
+                // 没过的也把运动量带上：亮度跳变 / 纯色那几条常常和「中途
+                // 硬切」「几乎不动」是同一件事，两个数放一起才看得出来。
+                say("gate", res.describe() + gates::motion_note(res));
 
                 if (verdict == gates::Verdict::Retry) {
                     local.attempts += 1;

@@ -353,6 +353,45 @@ std::vector<PixelStats> FFmpeg::sample_pixel_stats(const fs::path& p,
     return out;
 }
 
+MotionStats parse_motion(const std::string& text) {
+    // metadata=print 每帧打一行 "lavfi.signalstats.YAVG=2.345"，
+    // 这里 YAVG 是**差分图**的均值，也就是相邻两帧的平均绝对差。
+    std::vector<double> diffs;
+    std::istringstream in(text);
+    std::string line;
+    while (std::getline(in, line)) {
+        const std::string trimmed = text::strip_ws(line);
+        const std::string key = "lavfi.signalstats.YAVG=";
+        if (trimmed.rfind(key, 0) != 0) continue;
+        diffs.push_back(to_double(trimmed.substr(key.size())));
+    }
+    MotionStats m;
+    if (diffs.empty()) return m;
+    m.frames = static_cast<int>(diffs.size());
+    double sum = 0.0;
+    for (const double d : diffs) {
+        sum += d;
+        m.max = std::max(m.max, d);
+    }
+    m.mean = sum / static_cast<double>(diffs.size());
+    std::vector<double> sorted = diffs;
+    std::sort(sorted.begin(), sorted.end());
+    m.median = sorted[sorted.size() / 2];
+    return m;
+}
+
+MotionStats FFmpeg::motion_stats(const fs::path& p) const {
+    // scale 到 256 宽再算：一是快（整段解码的大头在这儿），二是让不同画幅
+    // 的数能横着比。tblend=difference 出的是相邻帧的差分图，signalstats
+    // 的 YAVG 就是它的均值。
+    return parse_motion(run(
+        {"-i", paths::to_utf8(p), "-vf",
+         "scale=256:-2,format=gray,tblend=all_mode=difference,signalstats,"
+         "metadata=print:key=lavfi.signalstats.YAVG:file=-",
+         "-f", "null", "-"},
+        300.0));
+}
+
 std::map<std::string, double> FFmpeg::measure_loudness(const fs::path& p) const {
     const std::string out = run(
         {"-i", paths::to_utf8(p), "-af",

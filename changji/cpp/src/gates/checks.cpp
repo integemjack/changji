@@ -70,6 +70,15 @@ std::string position_name(int index, int total) {
     return "片中";
 }
 
+std::string motion_note(const GateResult& result) {
+    const auto mean = result.metrics.find("motion_mean");
+    const auto mx = result.metrics.find("motion_max");
+    if (mean == result.metrics.end() || mx == result.metrics.end()) return "";
+    return "（运动 " + fmt("%.1f", mean->second) + "，最大 " +
+           fmt("%.0f", mx->second) + "）";
+}
+
+
 GateResult gate_video(const models::Shot& shot, const fs::path& video_path,
                       const media::FFmpeg& ff, const config::GateConfig& cfg,
                       std::optional<double> expected_duration_s,
@@ -204,6 +213,21 @@ GateResult gate_video(const models::Shot& shot, const fs::path& video_path,
             reasons.push_back("片中亮度剧烈跳变 " + fmt("%.0f", swing) +
                               "，可能中途崩坏");
         }
+    }
+
+    // 运动量。**只报数，不判**（2026-09-13 起）：几乎不动的片子（均值
+    // 0.27～0.66）和中途硬切的片子（最大 45 / 中位 2.2）现在都能过闸门，
+    // 但手上各只有几个样本，阈值先别拍——数进 metrics，出片那边把它写进
+    // 「通过闸门」那句话里，攒够了再定判据。见 media::FFmpeg::motion_stats。
+    // 量不到（老 ffmpeg、文件坏了）不算失败：上面几道已经把坏文件拦住了。
+    try {
+        const media::MotionStats motion = ff.motion_stats(video_path);
+        if (motion.frames > 0) {
+            metrics["motion_mean"] = round_to(motion.mean, 2);
+            metrics["motion_median"] = round_to(motion.median, 2);
+            metrics["motion_max"] = round_to(motion.max, 2);
+        }
+    } catch (const media::FFmpegError&) {
     }
 
     if (!reasons.empty()) {
