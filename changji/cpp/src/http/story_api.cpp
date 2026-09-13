@@ -165,7 +165,16 @@ void validate_or_400(const Story& story) {
 ApiResult get_story(const std::string& path) {
     ProjectStore store = open_project(path);
     load_or_400(store); // 只为了验证这是个项目目录，结果不用
-    return {200, story_response(load_story_or_400(store))};
+    json out = story_response(load_story_or_400(store));
+    // **还没采用的那份大纲跟着回去**，故事页才恢复得出来。没有就不带这个
+    // 键——前端拿 `?? null` 兜着，但"有没有草稿"这件事靠键在不在表达。
+    const Story draft = store.load_story_draft();
+    if (!draft.empty()) {
+        json d = story_response(draft);
+        d["adopted"] = false;
+        out["draft"] = std::move(d);
+    }
+    return {200, std::move(out)};
 }
 
 ApiResult post_story(const json& body) {
@@ -283,6 +292,17 @@ json write_outline(ProjectStore& store, const Project& project,
                 const json snap = partial.snapshot();
                 if (!snap.is_object()) return;   // 这一帧补不出来，跳过
                 json msg = outline_progress_payload(snap);
+                // **到此为止收了多少字。空窗期唯一看得见的活口。**
+                //
+                // 上面挑的那几栏（logline / 人物 / 章节）要等模型写到那一栏
+                // 才有东西，而它写这份 JSON 的键序每次都不一样：赶上先写
+                // 章节摘要的时候，二三十秒里那几栏全是空的，板子上只剩一句
+                // 「正在写…」和一个转着的点——跟卡死了长得一模一样。
+                // 用户 2026-09-13 报的「ai 正在写的内容也不显示」就是这一段。
+                //
+                // 这个数不挑栏目、一直在涨，是"它确实在动"的硬证据。
+                msg["raw_chars"] =
+                    static_cast<int>(text::utf8_len(partial.raw()));
                 msg["type"] = "outline_progress";
                 msg["job_id"] = stream_id;
                 msg["seq"] = seq++;
@@ -300,8 +320,17 @@ json write_outline(ProjectStore& store, const Project& project,
     draft.episode_duration_s = existing.episode_duration_s;
     draft.plan = stages::plan_episodes(draft, draft.episode_duration_s);
 
+    // **落库，但只落在草稿那份上。** 正式的 story.json 一个字不动——
+    // 要不要拿它换掉现在这几章，仍然由人点「采用」决定。
+    //
+    // 这一步 2026-09-13 补的。原来这份草稿只活在浏览器的一个 ref 里，
+    // 而出一份大纲要三四十秒到一分多钟：刷新一下、切个页面、换台机器看，
+    // 那一分钟就白花了，界面上连刚才写了什么都不剩。用户报的原话是
+    // 「点击让 ai 写大纲，刷新后什么都没有了」。
+    store.save_story_draft(draft);
+
     json out = story_response(draft);
-    // **草稿，没落库。** 前端要拿这一份去 /api/story/adopt 才算数。
+    // 还是草稿：没进 story.json。前端要拿它去 /api/story/adopt 才算数。
     out["adopted"] = false;
     return out;
 }
@@ -354,6 +383,18 @@ ApiResult post_story_outline(const json& body, llm::Client& client,
                                keywords, stream_id, client, tok)};
 }
 
+/// 丢掉还没采用的那份大纲。
+///
+/// 界面上那个「丢弃」按钮原来只是把浏览器里的 ref 清成 null——草稿落库
+/// 之后不清服务端那份的话，刷新一下它又回来了，而用户刚刚明确说了不要。
+ApiResult post_story_draft_drop(const json& body) {
+    forbid_extra(body, {"project"});
+    ProjectStore store = open_project(body);
+    load_or_400(store);
+    store.clear_story_draft();
+    return {200, {{"dropped", true}}};
+}
+
 ApiResult post_story_adopt(const json& body) {
     forbid_extra(body, {"project", "story", "overwrite"});
     ProjectStore store = open_project(body);
@@ -388,6 +429,9 @@ ApiResult post_story_adopt(const json& body) {
 
     validate_or_400(story);
     store.save_story(story);
+    // 采用了，草稿的使命就完了。留着的话下次打开故事页会**同时**看到
+    // "这本书"和一份和它一模一样的草稿。
+    store.clear_story_draft();
 
     if (!story.premise.empty() && project.premise != story.premise) {
         project.premise = story.premise;

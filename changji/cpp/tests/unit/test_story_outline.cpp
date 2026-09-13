@@ -357,14 +357,102 @@ TEST_CASE("POST /api/story/outline：只回草稿，不落库") {
     // 大纲阶段没正文，一章一集
     CHECK(r.body.at("episodes").get<int>() == 2);
 
-    // **盘上还是空的。** 源头没人审过就落库，后面几十分钟渲染全是白跑。
+    // **正式那份还是空的。** 源头没人审过就落库，后面几十分钟渲染全是白跑。
     ProjectStore store(root);
     CHECK(store.load_story().empty());
+
+    // **但草稿落库了。** 出一份大纲要三四十秒到一分多钟，而它原来只活在
+    // 浏览器的一个 ref 里——刷新一下那一分钟就白花了，界面上连刚才写了
+    // 什么都不剩（用户 2026-09-13 报的原话：「点击让 ai 写大纲，刷新后
+    // 什么都没有了」）。落库不改变"要不要采用"归谁决定，只是让它活过刷新。
+    const Story kept = store.load_story_draft();
+    CHECK_FALSE(kept.empty());
+    CHECK(kept.chapters.size() == 2);
 
     // 提示词确实拼过并发出去了
     REQUIRE(client.calls().size() == 1);
     CHECK(client.calls()[0].prompt.find("深夜便利店") != std::string::npos);
     CHECK(client.calls()[0].schema_name == "story_outline");
+
+    std::error_code ec;
+    fs::remove_all(root, ec);
+}
+
+TEST_CASE("GET /api/story：还没采用的那份大纲跟着回去") {
+    // 这是"刷新之后草稿还在"的那一半：写完落库只解决了存，读的时候
+    // 不带回去的话故事页照样恢复不出来。
+    const fs::path root = fresh_project("草稿回读");
+    llm::ReplayClient client({good_outline().dump()});
+    pipeline::CancelToken tok;
+    http::post_story_outline(
+        json{{"project", p_str(root)}, {"premise", "深夜便利店"}}, client, tok);
+
+    const auto r = http::get_story(p_str(root));
+    CHECK(r.status == 200);
+    // 正式那份还是空的
+    CHECK(r.body.at("empty").get<bool>());
+    CHECK(r.body.at("chapters").get<int>() == 0);
+    // 草稿在
+    REQUIRE(r.body.contains("draft"));
+    CHECK(r.body.at("draft").at("chapters").get<int>() == 2);
+    CHECK_FALSE(r.body.at("draft").at("adopted").get<bool>());
+
+    SUBCASE("没有草稿时不带这个键") {
+        // "有没有草稿"靠键在不在表达。带一个 null 回去的话，前端那句
+        // `payload?.draft` 判起来还得再分一层。
+        const fs::path clean = fresh_project("没草稿");
+        CHECK_FALSE(http::get_story(p_str(clean)).body.contains("draft"));
+        std::error_code ec2;
+        fs::remove_all(clean, ec2);
+    }
+
+    std::error_code ec;
+    fs::remove_all(root, ec);
+}
+
+TEST_CASE("POST /api/story/draft/drop：丢弃要真的丢掉") {
+    // 界面上那个「丢弃」原来只是把浏览器里的 ref 清成 null。草稿落库之后
+    // 不清服务端那份的话，刷新一下它又回来了——而用户刚明确说了不要。
+    const fs::path root = fresh_project("丢弃");
+    llm::ReplayClient client({good_outline().dump()});
+    pipeline::CancelToken tok;
+    http::post_story_outline(
+        json{{"project", p_str(root)}, {"premise", "深夜便利店"}}, client, tok);
+    REQUIRE_FALSE(ProjectStore(root).load_story_draft().empty());
+
+    const auto r = http::post_story_draft_drop(json{{"project", p_str(root)}});
+    CHECK(r.status == 200);
+    CHECK(ProjectStore(root).load_story_draft().empty());
+    CHECK_FALSE(http::get_story(p_str(root)).body.contains("draft"));
+
+    SUBCASE("没有草稿时丢一下也不报错") {
+        CHECK(http::post_story_draft_drop(json{{"project", p_str(root)}}).status ==
+              200);
+    }
+
+    std::error_code ec;
+    fs::remove_all(root, ec);
+}
+
+TEST_CASE("采用之后草稿要清掉") {
+    // 留着的话下次打开故事页会**同时**看到"这本书"和一份和它一模一样的
+    // 草稿，而那份草稿上还挂着「采用 / 丢弃」两个按钮。
+    const fs::path root = fresh_project("采用清草稿");
+    llm::ReplayClient client({good_outline().dump()});
+    pipeline::CancelToken tok;
+    const auto drafted = http::post_story_outline(
+        json{{"project", p_str(root)}, {"premise", "深夜便利店"}}, client, tok);
+    REQUIRE_FALSE(ProjectStore(root).load_story_draft().empty());
+
+    http::post_story_adopt(
+        json{{"project", p_str(root)},
+             {"story", drafted.body.at("story")},
+             {"overwrite", true}});
+
+    ProjectStore store(root);
+    CHECK(store.load_story().chapters.size() == 2);   // 正式那份进去了
+    CHECK(store.load_story_draft().empty());          // 草稿没了
+    CHECK_FALSE(http::get_story(p_str(root)).body.contains("draft"));
 
     std::error_code ec;
     fs::remove_all(root, ec);

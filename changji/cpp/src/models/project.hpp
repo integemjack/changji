@@ -133,6 +133,8 @@ public:
     std::filesystem::path project_file() const;
     std::filesystem::path assets_file() const;
     std::filesystem::path story_file() const;
+    /// 还没采用的那份大纲。见 ProjectStore::load_story_draft。
+    std::filesystem::path story_draft_file() const;
     std::filesystem::path refs() const;
     /// 角色的参考音色片段。
     ///
@@ -186,9 +188,24 @@ public:
     /// 那会让每个调用点都去拼一次路径。
     Story load_story() const;
 
+    /// 读还没采用的那份大纲。**没有就返回空 Story，不抛**（同 load_story）。
+    ///
+    /// **为什么草稿要落库。** AI 出一份大纲要三四十秒到一分多钟，而它
+    /// 原来只活在浏览器的一个 ref 里——刷新一下、切个页面、换台机器看，
+    /// 那一分钟就白花了，而且界面上连"刚才写了什么"都不剩。
+    /// 用户 2026-09-13 报的就是这个："点击让 ai 写大纲，刷新后什么都没有了"。
+    ///
+    /// **草稿和正式那份分开存，不是直接盖上去**：重出的大纲会把现在这几章
+    /// 整份换掉，那一步必须由人点「采用」。落库只是让这份草稿活过刷新，
+    /// 不改变"要不要采用"这个决定归谁。
+    Story load_story_draft() const;
+
     void save_project(Project& project) const;
     void save_assets(const AssetLibrary& assets) const;
     void save_story(const Story& story) const;
+    void save_story_draft(const Story& draft) const;
+    /// 把草稿删掉。采用了、或者人点「丢弃」之后调。
+    void clear_story_draft() const;
 
     /// 把外部文件复制进项目，返回相对路径。
     ///

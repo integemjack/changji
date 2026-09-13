@@ -43,7 +43,7 @@ public:
 
     /// 攒到现在有多少字节。给节流用（没长就别重解一遍）。
     std::size_t size() const { return raw_.size(); }
-
+    /// 到此为止收到的原文。进度帧拿它数字数，见 write_outline。
     const std::string& raw() const { return raw_; }
 
 private:

@@ -56,6 +56,12 @@ nlohmann::json outline_progress_payload(const nlohmann::json& partial);
 /// 两个故事拌在一起。已经展开过正文时要显式 overwrite，否则 409。
 ApiResult post_story_adopt(const nlohmann::json& body);
 
+/// POST /api/story/draft/drop —— 丢掉还没采用的那份大纲。
+///
+/// 草稿是落库的（见 ProjectStore::load_story_draft），所以「丢弃」不能
+/// 只清浏览器里那个 ref——不清服务端那份的话刷新一下它又回来了。
+ApiResult post_story_draft_drop(const nlohmann::json& body);
+
 /// POST /api/story/plan —— 按每集时长重算分集表。
 ApiResult post_story_plan(const nlohmann::json& body);
 

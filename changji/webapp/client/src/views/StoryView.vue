@@ -280,6 +280,16 @@ function setStory(payload) {
   story.value = payload?.story ?? null
   premise.value = story.value?.premise ?? ''
   savedPremise.value = premise.value.trim()
+  // **还没采用的那份大纲从服务端恢复。**
+  //
+  // AI 出一份大纲要三四十秒到一分多钟，而它原来只活在 draft 这个 ref 里
+  // ——刷新一下、切个页面、换台机器看，那一分钟就白花了，界面上连刚才
+  // 写了什么都不剩。用户 2026-09-13 报的就是这个。
+  //
+  // **只在自己手里没有时才认服务端那份**：正在看的那份草稿可能刚被
+  // 「重出一份」顶掉，而这一次 setStory 是别的事情触发的刷新（存梗概、
+  // 改体量都会走到这儿），拿旧的盖上去等于把新写的那份顶没了。
+  if (!draft.value && payload?.draft) draft.value = payload.draft
   if (story.value?.scale) scale.value = story.value.scale
   // **只刷新没改过的那几章。** 引擎重算分集表也会回一份完整故事，照单
   // 全收的话，用户正在打字的那一章会被服务端那份盖掉。
@@ -1041,6 +1051,42 @@ async function savePremise() {
  */
 const outlineLive = ref(null)
 
+/**
+ * 这一刻已经有字的那几章。**一个字都没有的不摆。**
+ *
+ * 大模型写这份 JSON 的键序每次都不一样：赶上它先写 chapters 的时候，
+ * 数组里会先出现一个空壳子（title 和 summary 都还没写），而模板原来那句
+ * `c.title || '…'` 就把它渲成一个孤零零的「…」，一挂二三十秒。
+ * 用户 2026-09-13 报的「ai 正在写的内容也不显示」就是这个——不是没在写，
+ * 是写的东西还没轮到有名字的那一栏。
+ */
+const liveChapters = computed(() =>
+  (outlineLive.value?.chapters ?? []).filter((c) => c.title || c.summary),
+)
+
+/**
+ * 到此为止写出来多少字。**空窗期唯一看得见的活口。**
+ *
+ * 不摆这个数的话，那二三十秒里板子上只有一句「正在写…」和一个转着的点，
+ * 跟卡死了长得一模一样。这个数一直在涨，是"它确实在动"的证据。
+ */
+const liveChars = computed(() => {
+  const o = outlineLive.value
+  if (!o) return 0
+  // **优先用服务端那个数。** 它数的是收到的原文，不挑栏目——而下面这个
+  // 合计只数得到已经解出来的那几栏，模型先写章节摘要时它一直是 0。
+  if (o.raw_chars) return o.raw_chars
+  const n = (s) => [...(s ?? '')].length
+  return (
+    n(o.logline) +
+    n(o.premise) +
+    n(o.genre) +
+    n(o.tone) +
+    (o.characters ?? []).reduce((a, c) => a + n(c.name) + n(c.identity), 0) +
+    (o.chapters ?? []).reduce((a, c) => a + n(c.title) + n(c.summary) + n(c.hook), 0)
+  )
+})
+
 function emptyOutlineLive() {
   return { premise: '', logline: '', genre: '', tone: '', characters: [], chapters: [] }
 }
@@ -1217,6 +1263,25 @@ async function analyzeStory() {
     { key: 'analyze' },
   )
   if (result) draft.value = result
+}
+
+/**
+ * 丢掉这份草稿。
+ *
+ * **服务端那份也要删。** 草稿是落库的（story_draft.json），只清这个 ref
+ * 的话刷新一下它又回来了——而用户刚刚明确说了不要。
+ *
+ * 先清界面再发请求：这一步没有什么可失败的，而让人对着一份"已经丢了"的
+ * 草稿等一个来回没有意义。真没删掉也不致命，下次点还能再丢。
+ */
+async function dropDraft() {
+  draft.value = null
+  if (!session.projectPath) return
+  try {
+    await api.dropStoryDraft({ project: session.projectPath })
+  } catch {
+    // 删不掉就算了，不打扰。刷新之后它会再出现，那时候再点一次。
+  }
 }
 
 async function adoptDraft() {
@@ -1518,7 +1583,7 @@ async function stopWriting() {
               >
                 采用这一份
               </button>
-              <button class="btn btn--ghost" type="button" @click="draft = null">丢弃</button>
+              <button class="btn btn--ghost" type="button" @click="dropDraft">丢弃</button>
             </div>
           </div>
 
@@ -1626,7 +1691,11 @@ async function stopWriting() {
             <div v-if="outlineLive" class="live stack stack--sm">
               <div class="row tiny dim">
                 <span class="live__dot" />
-                正在写…（先出选题和人物，再一章一章往下列）
+                正在写…（键序每次不一样，先出什么看它自己）
+                <!-- **这个数是空窗期唯一看得见的活口。** 模型有时先写章节
+                     摘要，那几十秒里上面几栏全是空的——只有这个数在涨，
+                     人才知道它没卡死。 -->
+                <template v-if="liveChars">· 已经写了 {{ liveChars }} 字</template>
               </div>
               <p v-if="outlineLive.logline" class="live__line">
                 {{ outlineLive.logline }}
@@ -1645,8 +1714,12 @@ async function stopWriting() {
                     .join('、')
                 }}
               </p>
-              <ol v-if="outlineLive.chapters?.length" class="live__chapters">
-                <li v-for="(c, i) in outlineLive.chapters" :key="i">
+              <!-- **空壳子不摆。** 见 liveChapters：模型先写 chapters 时
+                   数组里会先冒出一个 title 和 summary 都还没写的空对象，
+                   原来那句 `c.title || '…'` 把它渲成一个孤零零的「…」，
+                   一挂二三十秒，看着就像坏了。 -->
+              <ol v-if="liveChapters.length" class="live__chapters">
+                <li v-for="(c, i) in liveChapters" :key="i">
                   <b>{{ c.title || '…' }}</b>
                   <!-- 中间那个点不能省：HTML 会把标签之间的空白折掉，
                        写成「双面人生林雨报警未果」连成一句读不出断在哪。 -->
