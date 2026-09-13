@@ -306,6 +306,20 @@ std::string explain_status(const config::LLMConfig& cfg, int status,
             hint = "这个模型要钱，而账上没余额（服务回的是 429 / 1113）。"
                    "换一个免费模型（智谱这边是 glm-4.7-flash），"
                    "或者去服务商那边充值。去设置页的「大模型」那一节改。";
+            // **手上有 GLM Coding Plan 订阅的人会撞在这儿，而且想不明白。**
+            // 那份额度只认智谱登记在册的编程工具（Claude Code、Cline、
+            // Cursor 那些），官方原话是"在除规定工具外调用 API，不可享用
+            // Coding 套餐的额度"——我们这个程序不在册，于是同一把密钥
+            // 调过来要么报余额不足，要么**直接去扣按量余额**。
+            // 不说这一句的话，用户会盯着一个明明还有额度的订阅反复怀疑
+            // 是自己填错了。
+            if (cfg.base_url.find("bigmodel.cn") != std::string::npos ||
+                cfg.base_url.find("z.ai") != std::string::npos) {
+                hint +=
+                    "\n⚠️ 有 GLM Coding Plan 订阅也一样：那份额度只认智谱"
+                    "登记在册的编程工具，自己写的程序调不到，正是这个报错。"
+                    "订阅之外另充一点按量余额，或者就用免费那个。";
+            }
         } else {
             hint = "大模型服务说请求太频繁了，等一会儿再试。"
                    "免费档限流很紧，隔十几秒再点一次多半就过了。";
