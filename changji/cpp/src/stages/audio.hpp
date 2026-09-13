@@ -84,6 +84,23 @@ double probe_wav_duration(const std::filesystem::path& path);
 std::optional<double> wav_peak_ratio(const std::filesystem::path& path);
 
 /// 跑配音并锁定镜头时长。
+/// 参考音色：项目内的相对路径还原成绝对的，别的原样放过。
+///
+/// **为什么要有它。** 进程内配音把 `voice_id` 当**一段音频的路径**用
+/// （tts_backends.cpp 里 `req.speaker_ref`），而资产库里存的是相对项目根的
+/// `voices/c_xxx.wav`——那是有意的，项目整个拷到别的机器上还能读。不还原
+/// 的话它解析到**引擎进程的当前目录**（服务器上是 /root），必然打不开，
+/// 而报的错只是一句"参考音色读不了"。2026-09-13 参考图那个坑是同一个形状。
+///
+/// **判据是"项目里真有这个文件"，不是"看着像路径"。** 外部配音服务那条路
+/// 上 voice_id 是音色名（"zh-CN-XiaoxiaoNeural"），按后缀猜、按有没有斜杠
+/// 猜都会猜错；而"项目里有这个文件"是一查就知道的事实。
+///
+/// 出片那条（AudioStage）和试听那条（/api/tts/say）都要过它——两处各写
+/// 一份的话，迟早只改一边，而那种 bug 的表现是"镜头里能用、试听不出声"。
+std::optional<std::string> resolve_voice(const std::optional<std::string>& voice,
+                                         const models::ProjectPaths& paths);
+
 class AudioStage {
 public:
     AudioStage(TTSBackend backend, config::TTSConfig config,

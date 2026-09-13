@@ -528,6 +528,34 @@ void run(const config::Settings& settings, const Options& opts) {
             return json_response(r.body, r.status);
         });
 
+    // 参考音色：一段人声片段，进程内配音照着它的音色念。
+    // 形状照抄上面的参考图那条——multipart 解析留在路由层。
+    CROW_ROUTE(app, "/api/character/voice").methods("POST"_method)
+        ([](const crow::request& req) {
+            auto r = guard([&]() -> ApiResult {
+                crow::multipart::message msg(req);
+                const auto field = [&](const char* name) -> std::string {
+                    auto it = msg.part_map.find(name);
+                    return it == msg.part_map.end() ? std::string() : it->second.body;
+                };
+                auto fit = msg.part_map.find("file");
+                if (fit == msg.part_map.end()) throw ApiError(400, "没有上传文件");
+                const std::string ctype =
+                    fit->second.get_header_object("Content-Type").value;
+                return post_character_voice(field("project"), field("char_id"),
+                                            ctype, fit->second.body);
+            });
+            return json_response(r.body, r.status);
+        });
+
+    CROW_ROUTE(app, "/api/character/voice/clear").methods("POST"_method)
+        ([](const crow::request& req) {
+            auto r = guard([&] {
+                return post_character_voice_clear(parse_body(req.body));
+            });
+            return json_response(r.body, r.status);
+        });
+
     CROW_ROUTE(app, "/api/character/reference/clear").methods("POST"_method)
         ([](const crow::request& req) {
             auto r = guard([&] {

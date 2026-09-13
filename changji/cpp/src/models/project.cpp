@@ -239,6 +239,7 @@ fs::path ProjectPaths::project_file() const { return root_ / kProjectFile; }
 fs::path ProjectPaths::assets_file() const { return root_ / kAssetsFile; }
 fs::path ProjectPaths::story_file() const { return root_ / kStoryFile; }
 fs::path ProjectPaths::refs() const { return root_ / "refs"; }
+fs::path ProjectPaths::voices() const { return root_ / "voices"; }
 fs::path ProjectPaths::audio() const { return root_ / "audio"; }
 fs::path ProjectPaths::frames() const { return root_ / "frames"; }
 fs::path ProjectPaths::subtitles() const { return root_ / "subtitles"; }

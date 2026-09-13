@@ -168,6 +168,11 @@ export const api = {
   makeBible: (payload) => post('/api/bible', payload),
   saveCharacter: (payload) => post('/api/character', payload),
   clearReference: (payload) => post('/api/character/reference/clear', payload),
+  // 参考音色：一段人声片段，进程内配音照着它的音色念。**没有服务端的
+  // 音色清单**，所以"选音色"这件事就是"给一段参考音频"，见 /api/voices。
+  uploadCharacterVoice: (form) =>
+    request('/api/character/voice', { method: 'POST', body: form }),
+  clearCharacterVoice: (payload) => post('/api/character/voice/clear', payload),
   uploadReference: (form) =>
     request('/api/character/reference', { method: 'POST', body: form }),
   // 照着设定里那段外观描述现画一张。**一次一张，同步，几十秒**——头一张

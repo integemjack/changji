@@ -21,6 +21,7 @@ namespace {
 
 double round3(double v) { return std::nearbyint(v * 1000.0) / 1000.0; }
 
+
 void put_u32(std::ostream& o, std::uint32_t v) {
     const char b[4] = {static_cast<char>(v & 0xFF),
                        static_cast<char>((v >> 8) & 0xFF),
@@ -235,6 +236,17 @@ void AudioStage::split_long_lines(models::Shot& shot) const {
     shot.dialogue = out;
 }
 
+std::optional<std::string> resolve_voice(const std::optional<std::string>& voice,
+                                         const models::ProjectPaths& paths) {
+    if (!voice.has_value() || voice->empty()) return voice;
+    const fs::path raw = paths::from_utf8(*voice);
+    if (raw.is_absolute()) return voice;
+    std::error_code ec;
+    const fs::path abs_p = paths.abs(*voice);
+    if (!fs::is_regular_file(abs_p, ec)) return voice;
+    return paths::to_utf8(abs_p);
+}
+
 const std::vector<std::string>& AudioStage::available_voices() {
     if (!voices_.has_value()) {
         // 查一次就够，缓存住。一集四十镜、每镜两句，不缓存就是八十次请求。
@@ -311,12 +323,24 @@ ShotAudioPlan AudioStage::process_shot(models::Shot& shot,
         queue.pop_front();
 
         const auto voice = voice_for(line, assets);
+        // **参考音色是项目里的相对路径，喂给合成器之前要还原成绝对的。**
+        //
+        // 进程内配音把 voice_id 当一段音频的路径用（tts_backends.cpp 里
+        // `req.speaker_ref`），而资产库里存的是相对项目根的
+        // `voices/c_xxx.wav`——那是有意的，项目整个拷到别的机器上还能读。
+        // 不还原的话它解析到**引擎进程的当前目录**，服务器上是 /root，
+        // 必然打不开，而报的错只是一句"参考音色读不了"。
+        // 和 2026-09-13 早些时候参考图那个坑是同一个形状。
+        //
+        // **只还原真的落在项目里的那种。** 外部配音服务那条路上 voice_id
+        // 是个音色名（"zh-CN-XiaoxiaoNeural" 之类），不是路径，碰都不能碰。
+        const auto voice_arg = resolve_voice(voice, paths_);
         char name[64];
         std::snprintf(name, sizeof(name), "%s_%02d.wav", shot.shot_id.c_str(), idx);
         const fs::path out = paths_.audio() / paths::from_utf8(name);
 
         const SynthesisResult result = backend_.synthesize(
-            line.text, out, voice, line.emotion, line.emotion_intensity);
+            line.text, out, voice_arg, line.emotion, line.emotion_intensity);
 
         // **合成出来还是装不下，按实测语速重切一次再合成。**
         //

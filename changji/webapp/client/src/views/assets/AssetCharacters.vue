@@ -253,6 +253,74 @@ async function upload(charId, slot, event) {
 }
 
 /**
+ * 传一段参考音色。
+ *
+ * **这就是这一版的"选音色"。** 进程内配音没有服务端的音色清单——音色来自
+ * 一段人声片段，模型照着它的音色念（tts_backends.cpp 里 `speaker_ref`）。
+ * 以前这一栏只有一个空输入框，要用户手打路径，打错的表现只是配音失败。
+ *
+ * 传完**不会自动重配音**：音色和外观不一样，它不影响画面，所以和改名字
+ * 一个待遇（editing_assets.cpp 里 kAppearance 不含 voice_id）。要让它生效，
+ * 去镜头墙对那几镜点「配音」。
+ */
+async function uploadVoice(charId, event) {
+  const file = event.target.files?.[0]
+  if (!file) return
+  const form = new FormData()
+  form.append('project', session.projectPath)
+  form.append('char_id', charId)
+  form.append('file', file)
+  const result = await run(() => api.uploadCharacterVoice(form), {
+    key: 'voice:' + charId,
+  })
+  event.target.value = ''
+  if (!result) return
+  if (edits[charId]) edits[charId].voice_id = result.saved
+  ui.ok(`参考音色已存（${result.size_kb} KB）。去镜头墙点「配音」让它生效`)
+  await loadVoices()
+  await load()
+}
+
+async function clearVoice(charId) {
+  const result = await run(
+    () => api.clearCharacterVoice({ project: session.projectPath, char_id: charId }),
+    { key: 'voice:' + charId },
+  )
+  if (!result) return
+  if (edits[charId]) edits[charId].voice_id = ''
+  ui.ok('参考音色已撤，配音会退回自动挑')
+  await loadVoices()
+  await load()
+}
+
+/**
+ * 试听：拿这个角色当前的音色念一句。
+ *
+ * **念的是这个角色自己的台词**（找不到就用一句通用的）——听"某某某"念
+ * 一段和剧本无关的话，判断不出这个音色配不配得上这个人。
+ */
+async function tryVoice(charId) {
+  const voice = edits[charId]?.voice_id || ''
+  const c = characters.value.find((x) => x.char_id === charId)
+  const text = `你好，我是${c?.name || charId}。这是我说话的样子。`
+  const result = await run(
+    () => api.say({ project: session.projectPath, text, voice }),
+    { key: 'say:' + charId },
+  )
+  if (!result) return
+  // **estimate 后端出来的是静音。** 不说的话，用户对着一段没声音的音频
+  // 会以为是自己音箱坏了——引擎照实回了 backend，这里照实说。
+  if (result.backend === 'estimate') {
+    ui.warn('现在的配音后端只算时长不出声（estimate），听不到东西是正常的')
+  }
+  // 字段是 `rel` 不是 audio_path，见 tts_api.cpp 的返回体。
+  const url = mediaUrl(session.projectPath, result.rel) + '&_=' + Date.now()
+  new Audio(url).play().catch(() => {
+    ui.info('浏览器挡住了自动播放，音频存在 ' + result.rel)
+  })
+}
+
+/**
  * 照着上面那段"拼出来的提示词"现画一张。
  *
  * **这是这一页上唯一真正在用 AI 的地方**（还有场景那张空景图）：人是谁、
@@ -578,11 +646,13 @@ async function clearRef(charId, slot) {
                     猜的性别：{{ openChar.voice_gender === 'female' ? '女' : '男' }}
                   </span>
                 </span>
-                <!-- **是输入框不是下拉框。** 拆掉 ComfyUI 之后音色不再是
-                     服务端的一份清单：进程内配音要的是一段参考音频的路径，
-                     外部服务要的是那个服务认的音色名。两种都得能手填——
-                     留成下拉框的话，列表永远是空的，用户**根本填不进去**。
-                     服务端真给了清单（将来某个后端支持）就走 datalist。 -->
+                <!-- **手填的那一栏留着，但它不再是唯一的路。**
+                     进程内配音的音色来自一段参考音频，外部服务要的是那个
+                     服务认的音色名——两种都得能填，所以输入框不能换成
+                     下拉框。但"只有一个空输入框"等于要用户手打路径，
+                     打错的表现只是配音失败（2026-09-13 用户提的）。
+                     所以下面补两件事：把项目里已有的片段列出来能点，
+                     以及直接传一段进去。 -->
                 <input
                   v-model="edits[openChar.char_id].voice_id"
                   class="input mono"
@@ -592,7 +662,58 @@ async function clearRef(charId, slot) {
                 <datalist v-if="voices.length" :id="'voices-' + openChar.char_id">
                   <option v-for="v in voices" :key="v" :value="v" />
                 </datalist>
-                <span v-if="!voicesLoading && voicesError" class="tiny warn-text">
+
+                <div class="row row--wrap">
+                  <label class="btn btn--sm btn--ghost">
+                    {{ edits[openChar.char_id].voice_id ? '换一段' : '传一段人声' }}
+                    <input
+                      type="file"
+                      accept="audio/wav,audio/x-wav,audio/mpeg,audio/mp4,audio/flac"
+                      hidden
+                      @change="uploadVoice(openChar.char_id, $event)"
+                    />
+                  </label>
+                  <button
+                    class="btn btn--sm btn--ghost"
+                    type="button"
+                    :disabled="!edits[openChar.char_id].voice_id || isBusy('say:' + openChar.char_id)"
+                    @click="tryVoice(openChar.char_id)"
+                  >
+                    {{ isBusy('say:' + openChar.char_id) ? '合成中…' : '试听' }}
+                  </button>
+                  <button
+                    v-if="edits[openChar.char_id].voice_id"
+                    class="btn btn--sm btn--ghost"
+                    type="button"
+                    @click="clearVoice(openChar.char_id)"
+                  >
+                    撤
+                  </button>
+                </div>
+
+                <!-- 项目里已经有的几段，点一下就换过去。**这就是这一版的
+                     "音色清单"**：没有服务端列表，有的是这个项目存了哪几段。
+                     用 btn 那套而不是 chip：chip 的样式 scoped 在 EpShots 里，
+                     搬过来只会是一排没样式的裸按钮。 -->
+                <div v-if="voices.length" class="row row--wrap">
+                  <button
+                    v-for="v in voices"
+                    :key="v"
+                    class="btn btn--sm"
+                    :class="
+                      edits[openChar.char_id].voice_id === v
+                        ? 'btn--primary'
+                        : 'btn--ghost'
+                    "
+                    type="button"
+                    :title="v"
+                    @click="edits[openChar.char_id].voice_id = v"
+                  >
+                    {{ v.replace(/^voices\//, '') }}
+                  </button>
+                </div>
+
+                <span v-if="!voicesLoading && voicesError" class="tiny dim">
                   {{ voicesError }}
                 </span>
               </label>

@@ -56,6 +56,30 @@ ApiResult post_location_reference(const std::string& project_path,
                                   const std::string& content_type,
                                   const std::string& data);
 
+/// 参考音色能传哪些格式。返回扩展名，认不出来返回空串。
+///
+/// 进程内配音把 `voice_id` 当**一段人声片段的路径**用（tts_backends.cpp
+/// 里 `req.speaker_ref`），模型照着它的音色念。所以"选音色"这件事在这一版
+/// 等于"给一段参考音频"——界面上那个空的文本框以前要求用户手打路径，
+/// 而路径打错的表现只是配音失败。
+std::string voice_suffix_for(const std::string& content_type);
+
+/// 单段上限 8MB。参考音色几秒到十几秒就够，给一首歌进来没有意义。
+constexpr std::size_t kVoiceMaxBytes = 8u * 1024u * 1024u;
+
+/// POST /api/character/voice —— 传一段参考音色，存进 voices/。
+///
+/// **不触发重跑。** 和改音色那一栏一个待遇（editing_assets.cpp 里
+/// kAppearance 不含 voice_id）：它不影响画面。要让新音色生效，在镜头墙上
+/// 对那几镜点「配音」——2026-09-13 补了这个按钮。
+ApiResult post_character_voice(const std::string& project_path,
+                               const std::string& char_id,
+                               const std::string& content_type,
+                               const std::string& data);
+
+/// POST /api/character/voice/clear —— 清掉这个角色的参考音色。
+ApiResult post_character_voice_clear(const nlohmann::json& body);
+
 /// POST /api/character/reference/clear
 ApiResult post_character_reference_clear(const nlohmann::json& body);
 

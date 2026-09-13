@@ -95,9 +95,13 @@ ApiResult post_tts_say(const json& body) {
     stages::SynthesisResult res;
     try {
         const std::string voice = opt_str(body, "voice");
-        res = backend.synthesize(
-            said, out, voice.empty() ? std::nullopt : std::optional(voice), "",
-            1.0);
+        // **和出片那条走同一个还原。** 角色上传的参考音色存成
+        // `voices/c_xxx.wav`（相对项目根），直接喂给合成器会解析到引擎
+        // 进程的当前目录。两处各写一份的话迟早只改一边，那种 bug 的表现
+        // 是"镜头里能用、试听不出声"。见 stages/audio.hpp 里 resolve_voice。
+        const auto voice_arg = stages::resolve_voice(
+            voice.empty() ? std::nullopt : std::optional(voice), store.paths());
+        res = backend.synthesize(said, out, voice_arg, "", 1.0);
     } catch (const std::exception& e) {
         throw ApiError(502, std::string("念不出来：") + e.what());
     }

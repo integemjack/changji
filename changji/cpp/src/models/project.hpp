@@ -134,6 +134,12 @@ public:
     std::filesystem::path assets_file() const;
     std::filesystem::path story_file() const;
     std::filesystem::path refs() const;
+    /// 角色的参考音色片段。
+    ///
+    /// **不在 project_subdirs() 里**，是上传第一段音色时才建的——
+    /// 那份清单被 project_expectations.json 钉着（老项目的目录结构是
+    /// 契约的一部分），为一个可选功能改它不值当。
+    std::filesystem::path voices() const;
     std::filesystem::path audio() const;
     std::filesystem::path frames() const;
     std::filesystem::path subtitles() const;

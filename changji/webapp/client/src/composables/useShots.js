@@ -39,6 +39,16 @@ import { useUi } from '@/stores/ui'
  * 本来满意的那张就没了，等于把已经对的东西推倒重来。
  */
 export const STEPS = [
+  // **顺序就是流水线的顺序**：配音定时长，时长定帧数，帧数定画面。
+  //
+  // 配音这一格 2026-09-13 补的。以前墙上只有首帧和成片两个按钮，配音
+  // 只能跟着「只出首帧」捎带跑，单独重跑一镜的配音**在界面上没有入口**
+  // ——而改完角色音色之后要做的恰恰就是这件事。用户报的原话是
+  // 「配音在界面上都不显示」。
+  //
+  // 单镜重跑本来就带 force（见下面 start 里那段），所以不用改引擎：
+  // 配音那一段的入口状态是 PLANNED，force 之下不看状态。
+  { id: 'audio', icon: 'play', label: '配音', hint: '只重出这一镜的配音；改完音色用它' },
   { id: 'frames', icon: 'image', label: '首帧', hint: '只重出这一镜的首帧图' },
   { id: 'final', icon: 'film', label: '成片', hint: '留着首帧，只重出视频' },
 ]
@@ -417,7 +427,7 @@ export function useShots() {
     }
   }
 
-  /** 「首帧」或「成片」那个按钮该画成什么。 */
+  /** 「配音」「首帧」「成片」那几个按钮各该画成什么。 */
   function stepBtn(shot, step) {
     if (isWaiting(shot.shot_id, step.id)) {
       return { icon: 'close', title: `不重出${step.label}了` }

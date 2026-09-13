@@ -74,6 +74,19 @@ std::string write_ref(const ProjectStore& store, const std::string& stem,
     return store.paths().rel(dest);
 }
 
+/// 参考音色收哪几种。**wav 放第一个**：进程内那条路最稳的就是它，
+/// 别的格式要看 ggml 那边的解码器编没编进去。
+const std::array<std::pair<const char*, const char*>, 5>& voice_types() {
+    static const std::array<std::pair<const char*, const char*>, 5> kTypes = {{
+        {"audio/wav", ".wav"},
+        {"audio/x-wav", ".wav"},
+        {"audio/mpeg", ".mp3"},
+        {"audio/mp4", ".m4a"},
+        {"audio/flac", ".flac"},
+    }};
+    return kTypes;
+}
+
 /// 对应 Python 的 round(len(data)/1024)。
 int size_kb(const std::string& data) {
     return static_cast<int>(std::nearbyint(static_cast<double>(data.size()) / 1024.0));
@@ -136,6 +149,81 @@ ApiResult post_character_reference(const std::string& project_path,
         {"reset_shots", reset_all_shots(store)},
         {"size_kb", size_kb(data)},
     }};
+}
+
+std::string voice_suffix_for(const std::string& content_type) {
+    for (const auto& kv : voice_types()) {
+        if (content_type == kv.first) return kv.second;
+    }
+    return {};
+}
+
+ApiResult post_character_voice(const std::string& project_path,
+                               const std::string& char_id,
+                               const std::string& content_type,
+                               const std::string& data) {
+    ProjectStore store = open_project(project_path);
+    AssetLibrary assets = store.load_assets();
+    const auto it = assets.characters.find(char_id);
+    if (it == assets.characters.end()) throw ApiError(404, "没有角色 " + char_id);
+
+    const std::string suffix = voice_suffix_for(content_type);
+    if (suffix.empty()) {
+        throw ApiError(400, "只收 wav、mp3、m4a、flac，收到的是 " +
+                                (content_type.empty() ? std::string("(空)")
+                                                      : content_type));
+    }
+    if (data.empty()) throw ApiError(400, "文件是空的");
+    if (data.size() > kVoiceMaxBytes) {
+        const double mb = static_cast<double>(data.size()) / 1024.0 / 1024.0;
+        char buf[32];
+        std::snprintf(buf, sizeof(buf), "%.1f", mb);
+        throw ApiError(400, std::string("太大了（") + buf +
+                                " MB）。参考音色几秒到十几秒的干净人声就够");
+    }
+
+    // **voices/ 是懒建的**，见 ProjectPaths::voices 上面那段。
+    std::error_code ec;
+    const fs::path dir = store.paths().voices();
+    fs::create_directories(dir, ec);
+
+    // 同名不同扩展名的旧片段要清掉，理由同 claim_ref_path：
+    // 留着的话目录里躺一段永远用不上的，而用户看不到。
+    const fs::path dest = dir / paths::from_utf8(char_id + suffix);
+    for (const auto& kv : voice_types()) {
+        const fs::path stale = dir / paths::from_utf8(char_id + kv.second);
+        if (stale != dest && fs::is_regular_file(stale, ec)) fs::remove(stale, ec);
+    }
+
+    std::ofstream out(dest, std::ios::binary | std::ios::trunc);
+    if (!out) throw ApiError(500, "写不了文件：" + paths::to_utf8(dest));
+    out.write(data.data(), static_cast<std::streamsize>(data.size()));
+    out.close();
+    if (!out) throw ApiError(500, "写文件时出错：" + paths::to_utf8(dest));
+
+    const std::string rel = store.paths().rel(dest);
+    it->second.voice_id = rel;
+    store.save_assets(assets);
+
+    // **不重跑。** 见头文件那段：音色不影响画面，和改名字一个待遇。
+    return {200, {{"saved", rel}, {"size_kb", size_kb(data)}}};
+}
+
+ApiResult post_character_voice_clear(const json& body) {
+    ProjectStore store = open_project(need_str(body, "project"));
+    const std::string char_id = need_str(body, "char_id");
+    AssetLibrary assets = store.load_assets();
+    const auto it = assets.characters.find(char_id);
+    if (it == assets.characters.end()) throw ApiError(404, "没有角色 " + char_id);
+
+    std::error_code ec;
+    const fs::path dir = store.paths().voices();
+    for (const auto& kv : voice_types()) {
+        fs::remove(dir / paths::from_utf8(char_id + kv.second), ec);
+    }
+    it->second.voice_id = std::nullopt;
+    store.save_assets(assets);
+    return {200, {{"cleared", true}}};
 }
 
 ApiResult post_location_reference(const std::string& project_path,
