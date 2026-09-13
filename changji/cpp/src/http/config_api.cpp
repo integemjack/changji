@@ -189,7 +189,6 @@ ApiResult get_connections() {
         {"vram_gb_override", s.vram_gb_override.has_value()
                                  ? json(*s.vram_gb_override)
                                  : json(nullptr)},
-        {"tts_engine", s.tts.engine},
         {"config_file", paths::to_utf8(user_config_path())},
         // 被环境变量顶住的字段，改了也是白改，界面要说出来
         {"env_locked", env},
@@ -206,7 +205,7 @@ ApiResult post_connections(const json& body, const DoctorFn& check) {
     const json& patch = *pit;
     static const std::set<std::string> kAllowed = {
         "llm_base_url", "llm_model", "llm_api_key", "llm_temperature",
-        "tts_backend", "tts_base_url", "tts_engine", "vram_gb_override"};
+        "tts_backend", "tts_base_url", "vram_gb_override"};
     forbid_extra(patch, kAllowed, "patch.");
 
     // 正在跑的时候换机器会把这一集跑坏：前半集是一台机器出的，
@@ -258,10 +257,6 @@ ApiResult post_connections(const json& body, const DoctorFn& check) {
                 const auto x = need_string(v, key);
                 note(key, s.tts.backend != x);
                 s.tts.backend = x;
-            } else if (field == "engine") {
-                const auto x = need_string(v, key);
-                note(key, s.tts.engine != x);
-                s.tts.engine = x;
             } else if (field == "base_url") {
                 const auto x = need_string(v, key);
                 note(key, s.tts.base_url.value_or("") != x);
@@ -336,7 +331,6 @@ ApiResult post_connections(const json& body, const DoctorFn& check) {
                 else if (field == "temperature") value = s.llm.temperature;
             } else if (section == "tts") {
                 if (field == "backend") value = s.tts.backend;
-                else if (field == "engine") value = s.tts.engine;
                 // 对应 Python 的 "" if value is None else value
                 else if (field == "base_url") value = s.tts.base_url.value_or("");
             }
@@ -403,7 +397,7 @@ ApiResult post_settings(const json& body) {
         "subtitle_max_lines", "scene_transition_s",
         "gates_enabled", "max_attempts_per_shot", "min_pixel_std",
         "min_frame_similarity", "max_audio_drift_s", "target_lufs",
-        "fallback_on_exhausted", "tts_tolerance_s", "tts_max_tempo_shift"};
+        "fallback_on_exhausted"};
     forbid_extra(patch, kAllowed, "patch.");
 
     std::map<std::string, json> data;
@@ -501,8 +495,6 @@ ApiResult post_settings(const json& body) {
     take_bool("fallback_on_exhausted", s.gates.fallback_on_exhausted);
     take_bool("gates_enabled", s.gates.enabled);
 
-    take_num("tts_tolerance_s", s.tts.tolerance_s);
-    take_num("tts_max_tempo_shift", s.tts.max_tempo_shift);
 
     // 校验不过就整体回滚——半套改动比不改更糟，用户看到"已应用"
     // 但配置是残的。
@@ -555,8 +547,7 @@ ApiResult post_settings(const json& body) {
                 else if (field == "fallback_on_exhausted")
                     value = s.gates.fallback_on_exhausted;
             } else if (section == "tts") {
-                if (field == "tolerance_s") value = s.tts.tolerance_s;
-                else if (field == "max_tempo_shift") value = s.tts.max_tempo_shift;
+
             }
             if (!value.is_null()) payload[section][field] = value;
         }

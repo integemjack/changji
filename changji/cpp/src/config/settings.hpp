@@ -137,11 +137,18 @@ struct TTSConfig {
     /// [models].tts / [models].tts_decoder。
     std::string backend = "local";
     std::optional<std::string> base_url;  ///< backend 为 http 时必填
-    std::string engine = "cosyvoice3";
-    /// 台词时长与镜头时长的允许偏差。超出就要靠尾帧冻结或音频微调吸收
-    double tolerance_s = 0.25;
-    /// 音频变速的安全区。有口型的镜头收得更紧
-    double max_tempo_shift = 0.03;
+
+    // **这里原来还有三项：engine / tolerance_s / max_tempo_shift。**
+    // 2026-09-13 删了——查下来它们**有校验、有持久化、设置页上能改，
+    // 但没有任何一个阶段读过**，而注释还写着"超出靠音频微调吸收"、
+    // "有口型的镜头收得更紧"，描述的是不存在的行为。
+    //
+    // 台词装不下实际走的是**按实测语速重切一次再合成**
+    // （stages/audio.cpp 里那段），不是变速；外部配音服务的请求体里
+    // 也没有 engine 这一项。
+    //
+    // 一个能改却什么都不做的旋钮比没有更糟：人调完以为生效了。
+    // 老配置里写了这三项照样能读——take() 只认识的键才取。
 
     std::vector<std::string> validate() const;
 };

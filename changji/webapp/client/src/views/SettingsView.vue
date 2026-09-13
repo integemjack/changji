@@ -248,8 +248,6 @@ async function load() {
       params.value = {
         ...s.assembly,
         ...s.gates,
-        tts_tolerance_s: s.tts?.tolerance_s,
-        tts_max_tempo_shift: s.tts?.max_tempo_shift,
       }
     }
     for (const [key, message] of Object.entries(data.errors ?? {})) {
@@ -719,18 +717,13 @@ function scrollTo(id) {
                   placeholder="后端选 HTTP 时必填"
                 />
               </label>
-              <!-- [tts].engine 不在界面上：两条后端都不读它，提交时原样带回去。 -->
-              <label class="field">
-                <span class="field__label">时长容差（秒）</span>
-                <input
-                  v-model.number="params.tts_tolerance_s"
-                  class="input numeric"
-                  type="number"
-                  step="0.05"
-                  min="0"
-                  title="台词和镜头时长的允许偏差，超出靠尾帧冻结或变速吸收"
-                />
-              </label>
+              <!-- **这里原来还有「时长容差」和「变速安全区」两个输入框，
+                   2026-09-13 删了。** 它们和 [tts].engine 一样：有校验、
+                   有持久化、能改，但引擎里**没有任何一个阶段读过**，而
+                   提示语写的是"超出靠尾帧冻结或变速吸收"——那个行为不存在。
+                   台词装不下实际走的是按实测语速重切一次再合成
+                   （stages/audio.cpp）。一个能改却什么都不做的旋钮比没有
+                   更糟：人调完以为生效了。 -->
             </div>
           </section>
 
@@ -855,18 +848,6 @@ function scrollTo(id) {
                     type="number"
                     step="0.5"
                     title="短视频平台一般收 -16 到 -14"
-                  />
-                </label>
-                <label class="field">
-                  <span class="field__label">变速安全区</span>
-                  <input
-                    v-model.number="params.tts_max_tempo_shift"
-                    class="input numeric"
-                    type="number"
-                    step="0.01"
-                    min="0"
-                    max="0.2"
-                    title="有口型的镜头收得更紧，超了会听出来"
                   />
                 </label>
               </div>

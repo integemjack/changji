@@ -55,10 +55,6 @@
             "steps": 20,
             "width": 1280
           }
-        },
-        "tts": {
-          "max_tempo_shift": 0.03,
-          "tolerance_s": 0.25
         }
       },
       "name": "settings",

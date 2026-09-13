@@ -106,7 +106,9 @@ export const STAGE_LABELS = {
   frames: '首帧',
   draft: '草稿档',
   final: '成片档',
-  lipsync: '口型',
+  // **没有 lipsync 这个阶段。** 2026-09-13 查过：Stage 枚举里只有
+  // Audio/Frames/Draft/Final/Assemble，引擎一次都没发过 stage="lipsync"。
+  // 这一条留着是历史残留，删了免得下一个人以为有这么一步。
   gate: '质量闸门',
   assemble: '装配成片',
   done: '完成',

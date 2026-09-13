@@ -820,17 +820,19 @@ async function clearRef(charId, slot) {
                   <!-- 预置音色就是几个固定的种子：每个人在每台机器上摇到的
                        是同一批人。点一下就摇那一个。 -->
                   <div v-if="presets.length" class="row row--wrap">
-                    <span class="tiny dim">预置：</span>
+                    <!-- 基频是摇出来量的：男声大致 85~180 Hz、女声 165~255。
+                         标它比编一个"沉稳中年男"诚实，而且点之前就能挑。 -->
+                    <span class="tiny dim">预置（按音高排）：</span>
                     <button
                       v-for="p in presets"
                       :key="p.id"
                       class="btn btn--sm btn--ghost"
                       type="button"
                       :disabled="isBusy('take')"
-                      :title="'种子 ' + p.seed"
+                      :title="'种子 ' + p.seed + (p.hz ? '，上次量到约 ' + p.hz + ' Hz' : '')"
                       @click="rollVoice(p.seed)"
                     >
-                      {{ p.name }}
+                      {{ p.name }}<span v-if="p.hz" class="dim"> · {{ p.hz }}Hz</span>
                     </button>
                   </div>
 

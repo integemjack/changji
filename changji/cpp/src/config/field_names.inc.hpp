@@ -27,10 +27,6 @@ inline constexpr const char* kFieldNames[][2] = {
     {R"CJ(min_frame_similarity)CJ", R"CJ(与首帧相似度下限)CJ"},
     {R"CJ(max_audio_drift_s)CJ", R"CJ(台词落点最大偏差)CJ"},
     {R"CJ(target_lufs)CJ", R"CJ(响度目标)CJ"},
-    {R"CJ(tolerance_s)CJ", R"CJ(时长容差)CJ"},
-    {R"CJ(max_tempo_shift)CJ", R"CJ(变速上限)CJ"},
-    {R"CJ(tts_tolerance_s)CJ", R"CJ(配音时长容差)CJ"},
-    {R"CJ(tts_max_tempo_shift)CJ", R"CJ(配音变速上限)CJ"},
     {R"CJ(gates_enabled)CJ", R"CJ(质量闸门)CJ"},
     {R"CJ(fallback_on_exhausted)CJ", R"CJ(重试超限降级)CJ"},
     {R"CJ(draft_width)CJ", R"CJ(草稿档宽)CJ"},
@@ -65,8 +61,6 @@ inline constexpr const char* kSettingSections[][3] = {
     {R"CJ(target_lufs)CJ", R"CJ(gates)CJ", R"CJ(target_lufs)CJ"},
     {R"CJ(fallback_on_exhausted)CJ", R"CJ(gates)CJ", R"CJ(fallback_on_exhausted)CJ"},
     {R"CJ(gates_enabled)CJ", R"CJ(gates)CJ", R"CJ(enabled)CJ"},
-    {R"CJ(tts_tolerance_s)CJ", R"CJ(tts)CJ", R"CJ(tolerance_s)CJ"},
-    {R"CJ(tts_max_tempo_shift)CJ", R"CJ(tts)CJ", R"CJ(max_tempo_shift)CJ"},
 };
 
 }  // namespace changji::stages::prompt

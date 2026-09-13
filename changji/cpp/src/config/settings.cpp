@@ -173,8 +173,6 @@ std::vector<std::string> TTSConfig::validate() const {
     }
     // Python 侧这一条在 doctor 里查而不是在模型里查，这里保持一致，
     // 避免配置加载阶段就因为还没填地址而整个起不来。
-    check_ge(errs, "tts.tolerance_s", tolerance_s, 0);
-    check_range(errs, "tts.max_tempo_shift", max_tempo_shift, 0.0, 0.2);
     return errs;
 }
 
@@ -584,9 +582,6 @@ void apply_table(const toml::table& doc, Settings& s) {
     if (auto t = doc["tts"].as_table()) {
         take(t, "backend", s.tts.backend);
         take_path_str(t, "base_url", s.tts.base_url);
-        take(t, "engine", s.tts.engine);
-        take(t, "tolerance_s", s.tts.tolerance_s);
-        take(t, "max_tempo_shift", s.tts.max_tempo_shift);
     }
     if (auto t = doc["gates"].as_table()) {
         take(t, "enabled", s.gates.enabled);

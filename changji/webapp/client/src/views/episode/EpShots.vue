@@ -155,7 +155,7 @@ const FILTERS = [
   { key: 'all', label: '全部' },
   { key: 'todo', label: '未完成' },
   { key: 'problem', label: '有问题' },
-  { key: 'lipsync', label: '要口型' },
+  { key: 'lipsync', label: '适合口型' },
 ]
 
 const shown = computed(() => {
@@ -687,7 +687,13 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
           <span><i class="swatch swatch--info" />进行中</span>
           <span><i class="swatch swatch--warn" />未过闸</span>
           <span><i class="swatch swatch--ok" />已完成</span>
-          <span v-if="lipsyncCount">{{ lipsyncCount }} 镜要口型</span>
+          <!-- **「适合」不是「会做」。** 流水线里没有口型这一步（Stage 枚举
+               只有配音/首帧/草稿/成片/装配），这个标记现在只是"这一镜嘴
+               对着镜头、将来做口型要处理它"。写成"要口型"的话读起来像是
+               出片时会做，而它不会。 -->
+          <span v-if="lipsyncCount" :title="'流水线暂时没有口型这一步，这个标记只说这几镜适合做'">
+            {{ lipsyncCount }} 镜适合做口型
+          </span>
           <span v-if="problemCount" class="warn-text">{{ problemCount }} 镜有备注</span>
         </div>
       </div>
@@ -1004,9 +1010,12 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
             <span class="field__label">字幕</span>
             <input v-model="draft.subtitle_text" class="input" />
           </label>
-          <label class="switch" title="按景别、机位和面朝方向自动推的，一般不用改">
+          <label
+            class="switch"
+            title="按景别、机位和面朝方向自动推的，一般不用改。注意：流水线暂时没有口型这一步，这个标记只是记下来"
+          >
             <input v-model="draft.needs_lipsync" type="checkbox" />
-            <span>做口型</span>
+            <span>适合做口型</span>
           </label>
         </div>
 

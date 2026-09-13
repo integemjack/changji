@@ -101,10 +101,12 @@ ApiResult get_settings(const config::Settings& s, const HardwareProfile& p) {
             {"target_lufs", s.gates.target_lufs},
             {"fallback_on_exhausted", s.gates.fallback_on_exhausted},
         }},
-        {"tts", {
-            {"tolerance_s", s.tts.tolerance_s},
-            {"max_tempo_shift", s.tts.max_tempo_shift},
-        }},
+        // **这里原来有 tts 那一组（tolerance_s / max_tempo_shift）。**
+        // 2026-09-13 两项都删了——有校验、有持久化、设置页能改，但引擎里
+        // 没有任何一个阶段读过。删完这一组一项不剩，整个键跟着去掉：
+        // 留一个空对象的话 nlohmann 会把它序列化成 null，前端拿到
+        // `settings.tts.xxx` 就是一次 undefined。
+        // backend / base_url 不在这儿，它们在 /api/connections。
     }};
 }
 

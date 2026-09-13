@@ -129,7 +129,7 @@ TEST_CASE("读连接设置的字段形状") {
                           "llm_base_url", "llm_model",
                           "llm_api_key_set", "llm_api_key_hint",
                           "llm_temperature", "tts_backend", "tts_base_url",
-                          "tts_engine", "vram_gb_override", "config_file",
+                          "vram_gb_override", "config_file",
                           "env_locked"}) {
         CAPTURE(k);
         CHECK(r.body.contains(k));
@@ -361,7 +361,7 @@ TEST_CASE("改运行参数：三组字段都能改") {
         return http::post_settings(json{
             {"fps", 30}, {"crf", 20}, {"subtitle_font", "思源黑体"},
             {"max_attempts_per_shot", 5}, {"gates_enabled", false},
-            {"tts_tolerance_s", 0.5},
+            {"target_lufs", -15.0},
         });
     });
     REQUIRE(r.status == 200);
@@ -371,7 +371,9 @@ TEST_CASE("改运行参数：三组字段都能改") {
     CHECK(s.assembly.subtitle_font == "思源黑体");
     CHECK(s.gates.max_attempts_per_shot == 5);
     CHECK(s.gates.enabled == false);
-    CHECK(s.tts.tolerance_s == doctest::Approx(0.5));
+    // tts_tolerance_s 2026-09-13 删了：它有校验有持久化，但引擎里没有
+    // 任何一个阶段读过它。换成一个真的会生效的字段。
+    CHECK(s.gates.target_lufs == doctest::Approx(-15.0));
     CHECK(r.body.at("changed").size() == 6);
 }
 
