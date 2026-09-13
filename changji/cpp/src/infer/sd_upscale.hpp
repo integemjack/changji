@@ -1,6 +1,8 @@
 #pragma once
 
 #include <filesystem>
+#include <string>
+#include <vector>
 
 #include "config/settings.hpp"
 
@@ -26,5 +28,18 @@ void upscale_video(const std::filesystem::path& in,
                    const std::filesystem::path& out,
                    const std::filesystem::path& model, int out_w, int out_h,
                    const config::AssemblyConfig& assembly);
+
+/// 最后那道 ffmpeg 的参数：把放大后的裸帧压回目标尺寸，
+/// **并且把原片 `src` 的音轨原样带过来**。
+///
+/// 单拎出来是为了能在没有 sd.cpp 的构建里也测到——音轨丢没丢是这一步
+/// 决定的，而它和超分本身没有任何关系。实测踩过：上一版这里是 `-an`，
+/// 按 doctor 的建议给成片超分，出来是一段哑片。
+std::vector<std::string> encode_args(const std::filesystem::path& raw_up,
+                                     int big_w, int big_h,
+                                     const std::filesystem::path& src,
+                                     int out_w, int out_h, int fps,
+                                     const config::AssemblyConfig& assembly,
+                                     const std::filesystem::path& out);
 
 }  // namespace changji::infer

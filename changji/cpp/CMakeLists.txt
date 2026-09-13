@@ -1020,6 +1020,7 @@ if(CHANGJI_BUILD_TESTS)
         tests/unit/test_subtitles.cpp
         tests/unit/test_gates.cpp
         tests/unit/test_assemble.cpp
+        tests/unit/test_upscale.cpp
         tests/unit/test_audio_plan.cpp
         tests/unit/test_audio.cpp
         tests/unit/test_tts_backends.cpp

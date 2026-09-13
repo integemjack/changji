@@ -4,6 +4,7 @@
 #include <filesystem>
 #include <fstream>
 #include <string>
+#include <system_error>
 #include <vector>
 
 #include "infer/sd_backend.hpp"
@@ -86,6 +87,48 @@ std::vector<unsigned char> decode_to_raw(const fs::path& in, const Probe& p,
 
 }  // namespace
 
+std::vector<std::string> encode_args(const fs::path& raw_up, int big_w,
+                                     int big_h, const fs::path& src,
+                                     int out_w, int out_h, int fps,
+                                     const config::AssemblyConfig& assembly,
+                                     const fs::path& out) {
+    return {
+        "-y",
+        // 0 号输入：放大后的裸帧。裸数据不带宽高帧率，都要在这里补上。
+        "-f", "rawvideo",
+        "-pixel_format", "rgb24",
+        "-video_size", std::to_string(big_w) + "x" + std::to_string(big_h),
+        "-framerate", std::to_string(fps),
+        "-i", paths::to_utf8(raw_up),
+        // 1 号输入：原片。**只为了把它的音轨带过来。**
+        //
+        // 上一版这里写的是 `-an`，出来的是一段哑片。而 doctor 里那句
+        // "要 2K 就出完再跑 changji --upscale" 指的正是**成片**——按它
+        // 做一遍，配音和音效全没了，而且中间一句提示都没有。
+        //
+        // 和烧字幕那条（assemble.cpp 的 burn_args）一个道理：这一步只
+        // 碰画面，音轨原样拷贝就行，重编码一次是白白多一次有损压缩。
+        //
+        // `1:a:0?` 末尾那个问号是"没有就算了"——分镜级的片段本来就
+        // 可能没有音轨，不能因此整条命令失败。
+        "-i", paths::to_utf8(src),
+        "-map", "0:v:0",
+        "-map", "1:a:0?",
+        "-vf",
+        "scale=" + std::to_string(out_w) + ":" + std::to_string(out_h) +
+            ":flags=lanczos",
+        "-c:v", assembly.video_codec,
+        "-crf", std::to_string(assembly.crf),
+        "-pix_fmt", assembly.pix_fmt,
+        "-r", std::to_string(fps),
+        "-c:a", "copy",
+        // **不加 -shortest。** 画面和音轨是同一段源解出来的，长度本来
+        // 就一样；加了反而会在两边差半帧时截掉尾巴。assemble.hpp 里那
+        // 条同样的告诫是踩出来的。
+        paths::to_utf8(out),
+    };
+}
+
 #ifdef CHANGJI_HAVE_SD
 
 void upscale_video(const fs::path& in, const fs::path& out,
@@ -122,6 +165,45 @@ void upscale_video(const fs::path& in, const fs::path& out,
     const int factor = ::get_upscale_factor(ctx);
     std::fprintf(stderr, "[超分] 模型倍率 %d，先放大再压到 %d×%d\n", factor,
                  out_w, out_h);
+
+    // **先算中间文件要多大，不够就当场说。**
+    //
+    // 放大后每帧是原来的 factor² 倍：544×928 的一帧 1.5 MB，x4 之后
+    // 24 MB。一分钟的片子（1483 帧）就是 36 GB 写在 `out` 旁边。而
+    // doctor 里那句"要 2K 就出完再跑 changji --upscale"指的正是成片，
+    // 所以这个量级是常态，不是极端情况。
+    //
+    // 整段解进内存、整段写盘的做法要改成流式（见 decode_to_raw 上面
+    // 那句）。在那之前，**至少不能跑满五十分钟再死在磁盘满上**——
+    // 那时候 GPU 的时间已经花掉了，报的还是 ffmpeg 的一句英文。
+    const std::size_t big_frame_bytes =
+        frame_bytes * static_cast<std::size_t>(factor) * factor;
+    const std::size_t need = big_frame_bytes * frames;
+    const double need_gb = static_cast<double>(need) / (1024.0 * 1024 * 1024);
+    std::error_code space_ec;
+    const fs::space_info space = fs::space(fs::absolute(out).parent_path(), space_ec);
+    const double free_gb =
+        space_ec ? -1.0 : static_cast<double>(space.available) / (1024.0 * 1024 * 1024);
+    std::fprintf(stderr, "[超分] 中间文件要 %.1f GB（%zu 帧 × %.1f MB）\n",
+                 need_gb, frames,
+                 static_cast<double>(big_frame_bytes) / (1024.0 * 1024));
+    if (!space_ec && space.available < need) {
+        char msg[512];
+        std::snprintf(msg, sizeof(msg),
+                      "磁盘不够：放大到 %d×%d 要先写 %.1f GB 的中间文件"
+                      "（%zu 帧 × %.1f MB），而 %s 上只剩 %.1f GB。\n"
+                      "腾出空间，或者把片子切成几段分开跑。",
+                      p.width * factor, p.height * factor, need_gb, frames,
+                      static_cast<double>(big_frame_bytes) / (1024.0 * 1024),
+                      paths::to_utf8(fs::absolute(out).parent_path()).c_str(),
+                      free_gb);
+        ::free_upscaler_ctx(ctx);
+        // 解出来的裸帧（原尺寸，也有几个 G）先删掉再报——
+        // 磁盘本来就满了，不能再占着。
+        std::error_code rm_ec;
+        fs::remove(raw_in, rm_ec);
+        throw SdError(msg);
+    }
 
     std::ofstream up(raw_up, std::ios::binary | std::ios::trunc);
     if (!up) throw SdError("写不了中间文件：" + paths::to_utf8(raw_up));
@@ -162,17 +244,11 @@ void upscale_video(const fs::path& in, const fs::path& out,
     const int big_h = p.height * factor;
     const auto exe = proc::which(assembly.ffmpeg_path);
     if (!exe.has_value()) throw SdError("找不到 ffmpeg");
-    const proc::Result r = proc::run(
-        *exe,
-        {"-y", "-f", "rawvideo", "-pixel_format", "rgb24", "-video_size",
-         std::to_string(big_w) + "x" + std::to_string(big_h), "-framerate",
-         std::to_string(p.fps), "-i", paths::to_utf8(raw_up), "-an", "-vf",
-         "scale=" + std::to_string(out_w) + ":" + std::to_string(out_h) +
-             ":flags=lanczos",
-         "-c:v", assembly.video_codec, "-crf", std::to_string(assembly.crf),
-         "-pix_fmt", assembly.pix_fmt, "-r", std::to_string(p.fps),
-         paths::to_utf8(out)},
-        0);
+    const proc::Result r =
+        proc::run(*exe,
+                  encode_args(raw_up, big_w, big_h, in, out_w, out_h, p.fps,
+                              assembly, out),
+                  0);
     std::error_code ec;
     fs::remove(raw_in, ec);
     fs::remove(raw_up, ec);

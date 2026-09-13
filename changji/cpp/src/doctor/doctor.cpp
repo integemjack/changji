@@ -554,9 +554,19 @@ Check check_canvas(const config::Settings& s) {
     return {"出片画布", Level::WARN,
             got + " 超出这个模型的画布上限 " +
                 std::to_string(limits.max_pixels) + " 像素（" + ratio + " 倍）",
+            // **建议要能照着做。** 上一版只说"出完再跑 changji --upscale"，
+            // 可这条命令还要一个 ESRGAN 权重，而那个文件**不在首次运行
+            // 的下载清单里**（setup/catalog.cpp 一个超分条目都没有）——
+            // 照着做的人会卡在"--upscale 还要 --upscale-model"这句上，
+            // 而它没说该去下哪个文件。
             "模型在训练分布之外跑，出来多半是伪影，不是糊一点。\n"
-            "把 [video].quality 调回 hd（704×1280），要 2K 就出完再跑 "
-            "changji --upscale。"};
+            "把 [video].quality 调回 hd（704×1280）。要 2K 就先出标准档，"
+            "再单独超分：\n"
+            "  changji --upscale 成片.mp4 出来的.mp4 \\\n"
+            "    --upscale-model <RealESRGAN_x4plus.pth 的路径> \\\n"
+            "    --upscale-size 1440x2560\n"
+            "那个权重要自己下（Real-ESRGAN 的 v0.1.0 release，67 MB），"
+            "清单里没有。逐帧超分没有帧间一致性，做完要看片子。"};
 }
 
 Report run_checks(const config::Settings& settings) {
