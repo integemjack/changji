@@ -13,6 +13,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include "infer/lora_names.hpp"
 #include "infer/scheduler.hpp"
 #include "models/hardware.hpp"
 #include "util/paths.hpp"
@@ -591,7 +592,18 @@ std::shared_ptr<SdContext> SdContext::create(const config::Settings& settings,
         const auto p = m.resolve(m.video_lora, ws);
         std::error_code ec;
         if (fs::is_regular_file(p, ec)) {
-            impl.lora = paths::to_utf8(p);
+            // **先核张量名。** H3 的 Turbo LoRA 是裸名，sd.cpp 对不上会悄悄
+            // 不挂——挂着和摘掉出的片字节相同，跑了四天才发现。裸名就用
+            // 旁边那份加了前缀的副本，见 infer/lora_names.hpp。核不了
+            // （文件坏了、目录只读）就照原来的传，让 sd.cpp 自己报。
+            fs::path use = p;
+            try {
+                use = ensure_sdcpp_lora_names(p);
+            } catch (const std::exception& e) {
+                std::fprintf(stderr, "[出片] 核 LoRA 张量名失败（%s），照原文件传\n",
+                             e.what());
+            }
+            impl.lora = paths::to_utf8(use);
             impl.lora_strength = static_cast<float>(m.video_lora_strength);
         } else {
             // **默认就指着 Turbo 那份，所以"文件不在"是常态，不是错误**

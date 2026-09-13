@@ -698,6 +698,7 @@ add_executable(changji
     src/infer/llama_chat.cpp
     src/infer/scheduler.cpp
     src/infer/sd_backend.cpp
+    src/infer/lora_names.cpp
     src/infer/sd_image.cpp
     src/infer/sd_video.cpp
     src/infer/sd_upscale.cpp
@@ -988,6 +989,7 @@ if(CHANGJI_BUILD_TESTS)
         tests/unit/test_ref_gen.cpp
         tests/unit/test_jobs.cpp
         tests/unit/test_models_config.cpp
+        tests/unit/test_lora_names.cpp
         tests/unit/test_bible.cpp
         tests/unit/test_storyboard.cpp
         tests/unit/test_scheduler.cpp
@@ -1099,6 +1101,7 @@ if(CHANGJI_BUILD_TESTS)
         src/infer/llama_chat.cpp
         src/infer/scheduler.cpp
         src/infer/sd_backend.cpp
+        src/infer/lora_names.cpp
         src/infer/sd_image.cpp
         src/infer/sd_video.cpp
         src/infer/sd_upscale.cpp
