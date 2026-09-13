@@ -714,7 +714,26 @@ void SdContext::generate(const ImageRequest& req, const fs::path& dest,
     if (tok.cancelled()) throw SdError("已取消");
 
     std::vector<sd_image_t> refs;
-    for (const auto& p : req.reference_images) refs.push_back(load_image(p));
+    // **基础版文生图模型不收参考图。** sd.cpp 看到 ref_images 就走 EDIT
+    // mode，基础模型出来的是参考图的翻版，然后出片那边拿到一张和提示词
+    // 矛盾的首帧只能硬切。来历见 ModelsConfig::accepts_reference_images。
+    const bool take_refs =
+        config::ModelsConfig::accepts_reference_images(impl_->diffusion);
+    if (!take_refs && !req.reference_images.empty()) {
+        static bool said = false;   // 每镜都喊一遍是噪声，说一次够了
+        if (!said) {
+            said = true;
+            std::fprintf(
+                stderr,
+                "[出图] %s 是文生图模型，这一轮不传参考图：sd.cpp 会把参考图"
+                "当编辑源，出来的是它的翻版。角色一致性靠文字描述；要用参考图"
+                "就把 [models].image 换成 Qwen-Image-Edit\n",
+                impl_->diffusion.c_str());
+        }
+    }
+    if (take_refs) {
+        for (const auto& p : req.reference_images) refs.push_back(load_image(p));
+    }
     // 上面任何一张读失败都会抛，此时前面几张的内存还没释放。
     // 用一个哨兵在退出时收拾。
     struct RefGuard {

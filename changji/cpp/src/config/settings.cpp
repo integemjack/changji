@@ -758,6 +758,18 @@ double model_size_gb(const Settings& s, const std::string& entry) {
 
 }  // namespace
 
+bool ModelsConfig::accepts_reference_images(const std::string& image_file) {
+    std::string low;
+    for (const char c : image_file) {
+        const unsigned char u = static_cast<unsigned char>(c);
+        low += (u >= 'A' && u <= 'Z') ? static_cast<char>(u - 'A' + 'a') : c;
+    }
+    // 只看文件名那一段：目录名里带 edit 不算数。
+    const std::size_t slash = low.find_last_of("/\\");
+    if (slash != std::string::npos) low = low.substr(slash + 1);
+    return low.find("edit") != std::string::npos;
+}
+
 Settings expand_placement(Settings s, double card_gb, bool unified) {
     // **画布要传进去。** 计算缓冲跟着它走（见 video_buffer_gb）：不传的话
     // 2K 会被当成 1280×704，在大卡上判成"装得下、VAE 也常驻"，然后 OOM。

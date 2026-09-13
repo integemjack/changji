@@ -1311,3 +1311,19 @@ TEST_CASE("单镜上限是剧的属性：[video].max_shot_s 往下夹，不往�
     s.video.max_shot_s = 5.0;
     CHECK(config::video_limits_for(s).max_frames == 90);
 }
+
+TEST_CASE("只有编辑模型才收参考图：按文件名认 edit") {
+    // sd.cpp 看到 ref_images 就走 EDIT mode；基础版 Qwen-Image 出来的是
+    // 参考图的翻版（2026-09-13 项目 321 ep01_sh002 实见）。见
+    // ModelsConfig::accepts_reference_images 头上那段。
+    using config::ModelsConfig;
+    CHECK_FALSE(ModelsConfig::accepts_reference_images("qwen-image-Q6_K.gguf"));
+    CHECK_FALSE(ModelsConfig::accepts_reference_images(
+        "/root/models/qwen_image_fp8_e4m3fn.safetensors"));
+    CHECK(ModelsConfig::accepts_reference_images("Qwen_Image_Edit-Q8_0.gguf"));
+    CHECK(ModelsConfig::accepts_reference_images("Qwen-Image-Edit-2509-Q4_K_S.gguf"));
+    CHECK(ModelsConfig::accepts_reference_images("qwen-image-edit-2511-Q4_K_M.gguf"));
+    // 目录名里的 edit 不算：模型是哪个看文件
+    CHECK_FALSE(ModelsConfig::accepts_reference_images("D:/edit_models/qwen-image-Q4.gguf"));
+    CHECK_FALSE(ModelsConfig::accepts_reference_images(""));
+}

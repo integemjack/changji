@@ -334,6 +334,21 @@ struct ModelsConfig {
     /// Q6_K 16 GB、Q4 12 GB 就装得下。装得下才 "te=cpu,vae=cpu"，否则 "cpu"。
     std::string image_weights = "smart";
 
+    /// 这个图像模型收不收参考图。**按文件名认：带 edit 的才收。**
+    ///
+    /// sd.cpp 只要看到 ref_images 就走 EDIT mode（日志里是 "Using 'qwen'
+    /// preset for reference images" + "EDIT mode"），把参考图的潜空间当
+    /// 编辑源塞给 DiT。基础版 Qwen-Image 没学过这条路，出来的就是参考图的
+    /// **翻版**：2026-09-13 项目 321 的 ep01_sh002，提示词是「豪华卧室，
+    /// 李浩然从床上坐起，震惊地看着镜中的自己」，首帧出的是那张棚拍立绘
+    /// （灰底、全身、站姿），重出一遍还是。出片模型拿到和提示词矛盾的
+    /// 首帧，0.5 秒处硬切成卧室（相邻帧差最大 89），亮度闸门是撞巧拦下的。
+    /// 上游 docs/qwen_image_edit.md 里 `-r` 参考图的例子全是 Edit 权重。
+    ///
+    /// 所以基础模型一律不传参考图，角色一致性靠身份层的文字；要用参考图
+    /// 就换 Qwen-Image-Edit（2509 起还要 `image_text_encoder_vision`）。
+    static bool accepts_reference_images(const std::string& image_file);
+
     /// 把 `image_weights` 的 smart 按这张卡和这个模型展开。
     /// `model_gb` 是图像模型文件的大小，拿不到就传 0（按装不下处理）。
     std::string image_weights_for(double vram_gb, double model_gb,
