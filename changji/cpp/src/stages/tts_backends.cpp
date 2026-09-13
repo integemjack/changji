@@ -378,4 +378,43 @@ std::optional<TTSBackend> local_tts_backend(const fs::path& backbone,
     return b;
 }
 
+double render_voice_take(const std::string& text, const fs::path& out,
+                         unsigned int seed) {
+    // **借的是同一个槽、用的是同一个引擎实例。** 另开一个 LlamaTts 的话，
+    // 1.5 GB 权重要再装一份，而调度器对显存的账上也不认这一份。
+    infer::Scheduler::AcquireOptions opt;
+    opt.wait = infer::kAcquireWait;
+    opt.on_queued = pipeline::note_queued;
+    auto lease = infer::scheduler().acquire(infer::Slot::TTS, opt);
+    std::shared_ptr<infer::LlamaTts> engine;
+    {
+        std::lock_guard lg(tts_mu());
+        engine = tts_engine();
+    }
+    if (!engine) {
+        throw AudioError(
+            "进程内配音没装起来，摇不了音色。"
+            "「制作音色」只在 [tts].backend = local 这条路上有意义——"
+            "外部配音服务的音色是它自己管的名字，不是我们生成的片段");
+    }
+
+    infer::LlamaTtsRequest req;
+    req.text = text;
+    req.out = out;
+    req.seed = seed;
+    // **speaker_ref 故意留空。** 留空时说话人是被采样出来的，种子换一个
+    // 就是换一个人；给了参考音色反而只会复刻那一个人，摇不出新的。
+
+    double duration = 0;
+    std::string why;
+    if (!engine->synthesize(req, duration, why)) {
+        throw AudioError("摇音色失败：" + why);
+    }
+    if (duration <= 0) duration = probe_wav_duration(out);
+    // 判据和三个后端共用：出来是静音时"成功了"和"成功了但没出声"
+    // 在返回值上一模一样。
+    reject_silent_audio(out, duration, text);
+    return duration;
+}
+
 }  // namespace changji::stages

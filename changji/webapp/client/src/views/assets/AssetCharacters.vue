@@ -118,7 +118,10 @@ function onEsc(e) {
   // 抽屉盖着半个屏幕，而鼠标多半正停在里面——Esc 是唯一不用先瞄准的出口。
   if (e.key === 'Escape' && openId.value) openId.value = ''
 }
-onMounted(() => document.addEventListener('keydown', onEsc))
+onMounted(() => {
+  document.addEventListener('keydown', onEsc)
+  loadPresets()
+})
 onUnmounted(() => document.removeEventListener('keydown', onEsc))
 
 watch(() => session.projectPath, load, { immediate: true })
@@ -249,6 +252,73 @@ async function upload(charId, slot, event) {
   event.target.value = ''
   if (!result) return
   ui.ok(`参考图已存（${result.size_kb} KB），${result.reset_shots} 个镜头退回重跑`)
+  await load()
+}
+
+// ---- 制作音色 ----
+//
+// **为什么是"摇"不是"描述"。** 我们这条运行时（llama.cpp 的 mtmd）只实现
+// 了 Qwen3-TTS 的 Base 模式，也就是参考音频克隆；自带说话人的 CustomVoice
+// 和用文字描述造音色的 VoiceDesign 都不在里面。而不给参考音频时，说话人是
+// 和内容一起被采样出来的——**种子换一个就是换一个人**。
+//
+// 所以流程是：摇一个 → 试听 → 不满意再摇 → 满意了起个名存下来。存下来的
+// 是一段音频，从此这个角色被克隆锁死，再也不会变。
+const presets = ref([])
+const take = ref(null)        // { rel, seed, seconds, hz }
+const takeName = ref('')
+
+async function loadPresets() {
+  try {
+    presets.value = (await api.voicePresets()).presets ?? []
+  } catch {
+    presets.value = []
+  }
+}
+
+/** 播一段刚摇出来的。加时间戳绕开缓存——落点是固定的那个 .take.wav。 */
+function playRel(rel) {
+  const url = mediaUrl(session.projectPath, rel) + '&_=' + Date.now()
+  new Audio(url).play().catch(() => {
+    ui.info('浏览器挡住了自动播放，音频存在 ' + rel)
+  })
+}
+
+/** 摇一个。不给种子就让引擎随机，回包里带着它——喜欢这一摇才存得下来。 */
+async function rollVoice(seed = null) {
+  const result = await run(
+    () => api.voiceTake({ project: session.projectPath, ...(seed === null ? {} : { seed }) }),
+    { key: 'take' },
+  )
+  if (!result) return
+  take.value = result
+  playRel(result.rel)
+}
+
+/**
+ * 存成音色。
+ *
+ * **存的时候引擎会按同一个种子重出一段更长的**：试听那段只有几秒，而参考
+ * 音频越长克隆越稳。种子一样，人就一样。
+ */
+async function saveTake(charId) {
+  if (!take.value) return
+  const result = await run(
+    () =>
+      api.voiceSave({
+        project: session.projectPath,
+        seed: take.value.seed,
+        name: takeName.value,
+        char_id: charId,
+      }),
+    { key: 'savetake' },
+  )
+  if (!result) return
+  if (edits[charId]) edits[charId].voice_id = result.saved
+  ui.ok(`音色「${result.name}」存好了，已挂到这个角色上。去镜头墙点「配音」让它生效`)
+  take.value = null
+  takeName.value = ''
+  await loadVoices()
   await load()
 }
 
@@ -716,6 +786,74 @@ async function clearRef(charId, slot) {
                 <span v-if="!voicesLoading && voicesError" class="tiny dim">
                   {{ voicesError }}
                 </span>
+
+                <!-- 制作音色。**摇不是描述**，理由见脚本里那一段。 -->
+                <details class="voice-make">
+                  <summary class="tiny">制作一个新音色</summary>
+                  <p class="tiny dim">
+                    不给参考音频时，说话人是随机摇出来的——摇到喜欢的存下来，
+                    从此这个声音就定死了。
+                  </p>
+                  <div class="row row--wrap">
+                    <button
+                      class="btn btn--sm btn--primary"
+                      type="button"
+                      :disabled="isBusy('take')"
+                      @click="rollVoice()"
+                    >
+                      {{ isBusy('take') ? '摇着…' : take ? '再摇一个' : '摇一个' }}
+                    </button>
+                    <button
+                      v-if="take"
+                      class="btn btn--sm btn--ghost"
+                      type="button"
+                      @click="playRel(take.rel)"
+                    >
+                      再听一遍
+                    </button>
+                    <span v-if="take" class="tiny dim numeric">
+                      种子 {{ take.seed }}
+                      <template v-if="take.hz"> · 基频约 {{ take.hz }} Hz</template>
+                    </span>
+                  </div>
+
+                  <!-- 预置音色就是几个固定的种子：每个人在每台机器上摇到的
+                       是同一批人。点一下就摇那一个。 -->
+                  <div v-if="presets.length" class="row row--wrap">
+                    <span class="tiny dim">预置：</span>
+                    <button
+                      v-for="p in presets"
+                      :key="p.id"
+                      class="btn btn--sm btn--ghost"
+                      type="button"
+                      :disabled="isBusy('take')"
+                      :title="'种子 ' + p.seed"
+                      @click="rollVoice(p.seed)"
+                    >
+                      {{ p.name }}
+                    </button>
+                  </div>
+
+                  <div v-if="take" class="row row--wrap">
+                    <input
+                      v-model="takeName"
+                      class="input"
+                      placeholder="给它起个名，比如 低沉男声"
+                    />
+                    <button
+                      class="btn btn--sm btn--primary"
+                      type="button"
+                      :disabled="isBusy('savetake')"
+                      @click="saveTake(openChar.char_id)"
+                    >
+                      {{ isBusy('savetake') ? '存着…' : '存成音色' }}
+                    </button>
+                  </div>
+                  <p v-if="take" class="tiny dim">
+                    存的时候会按同一个种子重出一段更长的——参考音频越长，
+                    克隆越稳。
+                  </p>
+                </details>
               </label>
 
               <label class="field">
@@ -756,6 +894,22 @@ async function clearRef(charId, slot) {
 </template>
 
 <style scoped>
+/* 制作音色那一块。默认收起来——大多数时候用户只是想挑一个已有的，
+   摇音色是偶尔才做的事。 */
+.voice-make {
+  margin-top: 6px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+.voice-make > summary {
+  cursor: pointer;
+  user-select: none;
+}
+.voice-make > * + * {
+  margin-top: 6px;
+}
+
 .chars {
   display: flex;
   flex-direction: column;

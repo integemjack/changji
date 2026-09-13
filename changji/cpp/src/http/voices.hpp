@@ -12,6 +12,9 @@
 // 而它现在恰好承担了"告诉用户音色怎么配"这件事——那句说明比一个
 // 空下拉框有用。
 #include <string>
+#include <vector>
+
+#include <nlohmann/json.hpp>
 
 #include "http/readonly.hpp"
 
@@ -26,5 +29,34 @@ namespace changji::http {
 /// `backend` 是 `[tts].backend` 的值，用来决定那句说明怎么写——
 /// 说错了比不说更糟：让用 local 的人去查一个他根本没在用的服务。
 ApiResult get_voices(const std::string& path, const std::string& backend);
+
+/// 预置音色用的那几个种子。
+///
+/// **"预置"在这一版是一组固定的种子，不是一组下载来的音频。** 我们这条
+/// 运行时（llama.cpp 的 mtmd）只实现了 Qwen3-TTS 的 Base 模式，也就是
+/// 参考音频克隆；自带 9 个说话人的 CustomVoice 和用文字描述造音色的
+/// VoiceDesign 都不在里面（上游 PR #26254）。而不给参考音频时说话人是
+/// 被采样出来的，**种子定死了，摇出来的人就定死了**——所以固定几个种子
+/// 就等于固定几个音色，每个人在每台机器上拿到的是同一套。
+///
+/// 数字本身没有含义，别去解读；它们只需要**互不相同而且不再改动**。
+/// 改了的话，已经存进项目的那些片段还在（存的是音频不是种子），
+/// 但"预置 3"从此指向另一个人。
+const std::vector<unsigned int>& preset_voice_seeds();
+
+/// POST /api/voice/take —— 摇一段音色试听。
+///
+/// body: `{project, seed?, text?}`。不给 seed 就随机一个并在回包里带上
+/// ——用户要是喜欢这一摇，得能把它存下来。
+ApiResult post_voice_take(const nlohmann::json& body);
+
+/// POST /api/voice/save —— 把某个种子摇出来的音色存成参考音频。
+///
+/// body: `{project, seed, name, char_id?}`。存进 `voices/<名字>.wav`，
+/// 给了 char_id 就顺手挂到那个角色的 voice_id 上。
+///
+/// **存的时候重出一段更长的**：试听那段只要几秒，而参考音频越长克隆
+/// 越稳（社区实测 3 秒能认出来，8~15 秒明显更好）。种子一样，人就一样。
+ApiResult post_voice_save(const nlohmann::json& body);
 
 }  // namespace changji::http

@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <vector>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -128,6 +129,137 @@ std::optional<double> wav_peak_ratio(const fs::path& path) {
         peak = std::max(peak, v < 0 ? -v : v);
     }
     return peak / 32768.0;
+}
+
+namespace {
+
+/// 把 16 位单声道 PCM 读出来，顺带给出采样率。读不了返回空。
+///
+/// 和 wav_peak_ratio 走同一套块遍历：**不能假定 fmt 在 12、data 在 36**，
+/// 很多引擎会插一个 LIST 块写元数据。
+struct WavPcm {
+    std::vector<double> x;
+    int rate = 0;
+};
+
+std::optional<WavPcm> read_wav_mono(const fs::path& path) {
+    std::ifstream in(path, std::ios::binary);
+    if (!in) return std::nullopt;
+    std::string all((std::istreambuf_iterator<char>(in)),
+                    std::istreambuf_iterator<char>());
+    if (all.size() < 12 || all.compare(0, 4, "RIFF") != 0 ||
+        all.compare(8, 4, "WAVE") != 0) {
+        return std::nullopt;
+    }
+    std::uint16_t format = 0, channels = 0, bits = 0;
+    std::uint32_t rate = 0;
+    std::size_t data_off = 0, data_len = 0;
+    std::size_t off = 12;
+    while (off + 8 <= all.size()) {
+        const std::string id = all.substr(off, 4);
+        const std::uint32_t size = get_u32(all, off + 4);
+        if (id == "fmt ") {
+            format = get_u16(all, off + 8);
+            channels = get_u16(all, off + 10);
+            rate = get_u32(all, off + 12);
+            bits = get_u16(all, off + 22);
+        } else if (id == "data") {
+            data_off = off + 8;
+            data_len = std::min<std::size_t>(size, all.size() - data_off);
+            break;
+        }
+        off += 8 + size + (size % 2);
+    }
+    if (format != 1 || bits != 16 || channels == 0 || rate == 0 || data_len < 2) {
+        return std::nullopt;
+    }
+    WavPcm out;
+    out.rate = static_cast<int>(rate);
+    const std::size_t stride = static_cast<std::size_t>(channels) * 2;
+    out.x.reserve(data_len / stride);
+    // 多声道只取第一路：TTS 出来的是单声道，用户传进来的可能不是，
+    // 而混下来对基频没有好处（两路相位差会削掉周期性）。
+    for (std::size_t i = data_off; i + stride <= data_off + data_len; i += stride) {
+        out.x.push_back(static_cast<std::int16_t>(get_u16(all, i)) / 32768.0);
+    }
+    return out;
+}
+
+/// 一帧里的基频。测不出来返回 0。
+///
+/// 归一化自相关：`r(lag) = Σx[i]x[i+lag] / sqrt(Σx[i]² · Σx[i+lag]²)`。
+/// 归一化这一步不能省——不归一的话 r 随能量单调增，峰值总落在最小的
+/// lag（也就是最高的频率）上。
+double frame_f0(const std::vector<double>& x, std::size_t from, std::size_t n,
+                int rate) {
+    // 人声基频取 60~400 Hz。低于 60 的是低频噪声，高于 400 的在中文里
+    // 基本只会是倍频误判。
+    const std::size_t min_lag = static_cast<std::size_t>(rate / 400);
+    const std::size_t max_lag = static_cast<std::size_t>(rate / 60);
+    if (min_lag < 2 || n < max_lag * 2) return 0.0;
+
+    double mean = 0.0;
+    for (std::size_t i = 0; i < n; ++i) mean += x[from + i];
+    mean /= static_cast<double>(n);
+
+    double e0 = 0.0;
+    for (std::size_t i = 0; i < n; ++i) {
+        const double v = x[from + i] - mean;
+        e0 += v * v;
+    }
+    // 静音帧不参与。**判据是能量，不是峰值**：一段削顶的噪声峰值很高，
+    // 但它没有周期性，下面那道 0.35 的门槛会把它挡掉。
+    if (e0 < 1e-6) return 0.0;
+
+    double best_r = 0.0;
+    std::size_t best_lag = 0;
+    for (std::size_t lag = min_lag; lag <= max_lag; ++lag) {
+        // 右边界：比到 x 的尾巴就停。帧起点越靠后，能比的 lag 越少。
+        if (from + n + lag > x.size()) break;
+        double num = 0.0, e1 = 0.0;
+        for (std::size_t i = 0; i < n; ++i) {
+            const double a = x[from + i] - mean;
+            const double b = x[from + i + lag] - mean;
+            num += a * b;
+            e1 += b * b;
+        }
+        if (e1 < 1e-9) continue;
+        const double r = num / std::sqrt(e0 * e1);
+        if (r > best_r) {
+            best_r = r;
+            best_lag = lag;
+        }
+    }
+    // 0.35 是"这一帧确实有周期性"的门槛。清音（s、sh、f）本来就没有
+    // 基频，它们该被挡在外面，而不是贡献一个随机数。
+    if (best_lag == 0 || best_r < 0.35) return 0.0;
+    return static_cast<double>(rate) / static_cast<double>(best_lag);
+}
+
+}  // namespace
+
+std::optional<double> estimate_wav_f0(const fs::path& path) {
+    const auto pcm = read_wav_mono(path);
+    if (!pcm.has_value() || pcm->rate <= 0) return std::nullopt;
+
+    // 40 毫秒一帧、20 毫秒一跳。40 毫秒在 60 Hz 上也有两个多周期，
+    // 自相关才站得住。
+    const std::size_t frame = static_cast<std::size_t>(pcm->rate * 0.04);
+    const std::size_t hop = static_cast<std::size_t>(pcm->rate * 0.02);
+    if (frame == 0 || hop == 0 || pcm->x.size() < frame * 2) return std::nullopt;
+
+    std::vector<double> hits;
+    for (std::size_t i = 0; i + frame < pcm->x.size(); i += hop) {
+        const double f = frame_f0(pcm->x, i, frame, pcm->rate);
+        if (f > 0.0) hits.push_back(f);
+    }
+    // 太少就别给数。一两帧撞对了不代表测出了这段话的基频。
+    if (hits.size() < 5) return std::nullopt;
+
+    // **中位数，不是均值。** 浊音段里偶尔有一帧落到倍频或半频上，
+    // 均值会被拽走，中位数不会。
+    std::sort(hits.begin(), hits.end());
+    return hits[hits.size() / 2];
 }
 
 double probe_wav_duration(const fs::path& path) {

@@ -1583,6 +1583,42 @@ void run(const config::Settings& settings, const Options& opts) {
         return json_response(r.body, r.status);
     });
 
+    // 「制作音色」：摇一段试听、满意了存成参考音频。
+    //
+    // **为什么是摇而不是描述。** 我们这条运行时（llama.cpp 的 mtmd）只
+    // 实现了 Qwen3-TTS 的 Base 模式，也就是参考音频克隆；自带说话人的
+    // CustomVoice 和用文字描述造音色的 VoiceDesign 都不在里面。而不给
+    // 参考音频时说话人是被采样出来的，种子换一个就是换一个人。
+    // 见 http/voices.hpp 里 preset_voice_seeds 上面那段。
+    CROW_ROUTE(app, "/api/voice/take").methods("POST"_method)
+        ([](const crow::request& req) {
+            auto r = guard([&] { return post_voice_take(parse_body(req.body)); });
+            return json_response(r.body, r.status);
+        });
+
+    CROW_ROUTE(app, "/api/voice/save").methods("POST"_method)
+        ([](const crow::request& req) {
+            auto r = guard([&] { return post_voice_save(parse_body(req.body)); });
+            return json_response(r.body, r.status);
+        });
+
+    // 预置音色就是一组固定的种子。**回的是种子不是音频**——音频要摇出来
+    // 才有，而摇一次要几秒，八个一起摇会让页面卡半分钟。
+    CROW_ROUTE(app, "/api/voice/presets")([] {
+        auto r = guard([]() -> ApiResult {
+            nlohmann::ordered_json arr = nlohmann::ordered_json::array();
+            int n = 1;
+            for (const unsigned int seed : preset_voice_seeds()) {
+                arr.push_back({{"id", "preset" + std::to_string(n)},
+                               {"name", "预置 " + std::to_string(n)},
+                               {"seed", seed}});
+                ++n;
+            }
+            return {200, {{"presets", std::move(arr)}}};
+        });
+        return json_response(r.body, r.status);
+    });
+
     CROW_ROUTE(app, "/api/outputs")([](const crow::request& req) {
         auto r = guard([&] { return get_outputs(required_query(req, "path")); });
         return json_response(r.body, r.status);

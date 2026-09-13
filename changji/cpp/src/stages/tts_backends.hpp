@@ -75,4 +75,19 @@ std::optional<TTSBackend> local_tts_backend(
     const std::filesystem::path& backbone, const std::filesystem::path& decoder,
     bool use_gpu, const std::optional<media::FFmpeg>& ff, std::string& why);
 
+/// 按种子出一段**不带参考音色**的语音——「制作音色」那条路专用。
+///
+/// **为什么不走 TTSBackend::synthesize。** 那个签名上没有 seed，加上去要
+/// 动三个后端和每一个调用方；而这条路本来就只对进程内那一条有意义——
+/// 外部配音服务的音色是它自己管的名字，不是我们生成出来的片段。
+///
+/// **种子就是音色。** 不给参考音频时，说话人是和内容一起被采样出来的，
+/// 换一个种子就是换一个人。Qwen3-TTS 那边"设固定种子以减少音色漂移"
+/// 说的是同一件事的反面。所以「制作音色」= 摇种子 → 试听 → 满意了把这
+/// 一段存成参考音频，从此它被克隆锁死，再也不会变。
+///
+/// 返回时长（秒）。进程内配音没装起来、或者出来是静音，抛 AudioError。
+double render_voice_take(const std::string& text,
+                         const std::filesystem::path& out, unsigned int seed);
+
 }  // namespace changji::stages

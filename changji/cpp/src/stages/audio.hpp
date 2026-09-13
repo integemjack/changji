@@ -75,6 +75,19 @@ void write_silence(const std::filesystem::path& path, double seconds,
 /// 而且这样在没装 ffmpeg 的机器上配音那条路照样能跑。
 double probe_wav_duration(const std::filesystem::path& path);
 
+/// 估一段 16 位 PCM wav 的基频，单位 Hz。测不出来（不是 wav、全静音、
+/// 没有周期性）返回空。
+///
+/// **为什么要有它。** 「制作音色」那条路是摇种子——不给参考音频时种子
+/// 决定音色，摇出来一段就是一个新声音。可摇出来之后它叫什么？我没法
+/// 听，也不该替用户断言"这是沉稳中年男声"。基频是**能量出来的客观数**：
+/// 男声大致 85~180 Hz，女声 165~255 Hz，标出来比编一个形容词诚实，
+/// 而且和角色资产里那个 voice_gender 对得上。
+///
+/// 做法是逐帧自相关取中位数。中位数不是均值：浊音段里偶尔会有一帧
+/// 落到倍频或者半频上，均值会被拽走，中位数不会。
+std::optional<double> estimate_wav_f0(const std::filesystem::path& path);
+
 /// 读 16 位 PCM wav 的峰值（最大采样绝对值 / 满幅，0..1）。
 ///
 /// 给"疑似空音频"那道检查用：ComfyUI 节点失败时吐的占位音频是**全零**，

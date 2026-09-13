@@ -173,6 +173,11 @@ export const api = {
   uploadCharacterVoice: (form) =>
     request('/api/character/voice', { method: 'POST', body: form }),
   clearCharacterVoice: (payload) => post('/api/character/voice/clear', payload),
+  // 「制作音色」：不给参考音频时种子决定说话人，摇一个试听，满意了存下来。
+  // **存下来之后它就是一段普通的参考音频**，从此被克隆锁死，不会再变。
+  voicePresets: () => get('/api/voice/presets'),
+  voiceTake: (payload) => post('/api/voice/take', payload),
+  voiceSave: (payload) => post('/api/voice/save', payload),
   uploadReference: (form) =>
     request('/api/character/reference', { method: 'POST', body: form }),
   // 照着设定里那段外观描述现画一张。**一次一张，同步，几十秒**——头一张
