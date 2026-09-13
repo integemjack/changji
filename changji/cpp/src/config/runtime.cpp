@@ -1,5 +1,6 @@
 #include "config/runtime.hpp"
 
+#include <algorithm>
 #include <cstdio>
 
 #include "stages/limits.hpp"
@@ -26,11 +27,7 @@ Settings Runtime::snapshot() const {
     return settings_;
 }
 
-void Runtime::replace(Settings s) {
-    // 视频模型的限制跟着配置走。**放在这一处而不是每个调用方**：能改配置的
-    // 入口有五个（起服务、/api/settings、/api/connections、初始化页……），
-    // 漏掉任何一个都是"配置改了但分镜还按老上限排"，而且不报错。
-    //
+stages::VideoLimits video_limits_for(const Settings& s) {
     // **先按模型自己认，配置里填了才覆盖。** 换模型时人改的是 [models].video
     // 那一行，不会想起来还有帧数格子要跟着改——所以默认让它自己认，
     // 那三项留 0 就是"你看着办"。
@@ -57,7 +54,29 @@ void Runtime::replace(Settings s) {
     if (s.models.video_frame_base >= 0 && s.models.video_frame_step > 0) {
         limits.frame_base = s.models.video_frame_base;
     }
-    stages::set_video_limits(limits);
+    // 最后是这部剧自己要的。**放在手填覆盖之后**：video_max_frames 是
+    // "这张卡/这个模型最多能出多少"，max_shot_s 是"这部剧要多短"，
+    // 剧的要求只能往下夹，不能借它把机器的上限抬上去。
+    if (s.video.max_shot_s > 0.0) {
+        const int fps = stages::effective_fps(limits, s.assembly.fps);
+        // frames_for 已经夹在上限之内，所以要的秒数比机器上限还长时它回的
+        // 就是上限本身（对齐到格子），这时什么都别动。
+        const int want = limits.frames_for(s.video.max_shot_s, fps);
+        if (want < limits.max_frames_on_grid()) limits.max_frames = want;
+    }
+    return limits;
+}
+
+void apply_video_limits(const Settings& s) {
+    stages::set_video_limits(video_limits_for(s));
+}
+
+void Runtime::replace(Settings s) {
+    // 视频模型的限制跟着配置走。**放在这一处而不是每个调用方**：能改配置的
+    // 入口有五个（起服务、/api/settings、/api/connections、初始化页……），
+    // 漏掉任何一个都是"配置改了但分镜还按老上限排"，而且不报错。
+    // 怎么算的见 video_limits_for；按项目重读设置的那几条路也调它。
+    apply_video_limits(s);
 
     // **帧率也得跟着模型走。** MiniMax-H3 只出 24fps，传别的值 sd.cpp
     // 自己覆盖掉（只打一句 LOG_WARN，淹在 CUDA Graph 刷屏里）。而我们这边

@@ -72,6 +72,11 @@ std::vector<std::string> VideoConfig::validate() const {
     if (quality != "720p" && quality != "hd" && quality != "2k") {
         errs.push_back("video.quality 只能是 720p、hd 或 2k，现在是 " + quality);
     }
+    // 0 = 自己定。填了就得是个能排出镜头的数：最短的档位是 2 秒。
+    if (max_shot_s < 0.0 || (max_shot_s > 0.0 && max_shot_s < 2.0)) {
+        errs.push_back("video.max_shot_s 要么是 0（按模型和显卡自己定），"
+                       "要么至少 2 秒，现在是 " + std::to_string(max_shot_s));
+    }
     return errs;
 }
 
@@ -542,6 +547,7 @@ void apply_table(const toml::table& doc, Settings& s) {
     if (auto t = doc["video"].as_table()) {
         take(t, "orientation", s.video.orientation);
         take(t, "quality", s.video.quality);
+        take(t, "max_shot_s", s.video.max_shot_s);
     }
     if (auto t = doc["tiers"].as_table()) {
         take(t, "draft_width", s.tiers.draft_width);
@@ -1162,6 +1168,11 @@ constexpr const char* kProjectToml = R"(# 这部剧自己的配置（一个项�
 #   720p → 544×928    hd → 704×1280    2k → 1440×2560（一张 32 GB 的卡跑不动）
 orientation = "@ORIENTATION@"
 quality = "@QUALITY@"
+# 单个镜头最长几秒。**这是剧的属性，不是显存的函数**：竖屏短剧单镜 5 秒左右
+# 是标准单位，一镜只保留一个核心动作；出片模型能出 15 秒不等于该出——实测
+# 8 秒的镜头会中途硬切成另一场戏。横屏片子想要长镜头就往上调。
+# 0 = 按模型和这张卡自己定。
+max_shot_s = 5.0
 
 [assembly]
 # 帧率不在这里：它跟着出片模型走（MiniMax-H3 只出 24 fps），写了也会被纠正。

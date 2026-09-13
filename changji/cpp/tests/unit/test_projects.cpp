@@ -359,6 +359,8 @@ TEST_CASE("新建项目时落一份标准的项目配置") {
     const config::Settings s = config::load_settings(made);
     CHECK(s.video.orientation == "portrait");
     CHECK(s.video.quality == "720p");
+    // 单镜上限按短剧的标准单位钉成 5 秒——这是剧的属性，见 VideoConfig::max_shot_s
+    CHECK(s.video.max_shot_s == doctest::Approx(5.0));
     CHECK(s.assembly.crf == config::AssemblyConfig{}.crf);
     CHECK(s.gates.max_attempts_per_shot ==
           config::GateConfig{}.max_attempts_per_shot);

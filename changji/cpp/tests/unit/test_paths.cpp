@@ -123,6 +123,18 @@ TEST_CASE("user_config_dir 在 Windows 上是 LocalAppData 不是 Roaming") {
 // ---------------------------------------------------------------------------
 
 TEST_CASE("配置文件的位置和 Python 一致（默认环境）") {
+    // 测试入口把配置目录整体指到了一个空目录（tests/unit/main.cpp），而这
+    // 一条钉的正是**默认环境**下配置文件落在哪儿，所以在这儿把那道隔离
+    // 临时撤掉：Windows 把 LOCALAPPDATA 放回家目录下的默认位置，Linux
+    // 清掉 XDG_CONFIG_HOME；macOS 那道隔离改的是 HOME，home_dir() 跟着变，
+    // 下面比的又是"相对家目录的那一段"，所以不用动。
+#if defined(_WIN32)
+    const test::ScopedEnv undo_isolation(
+        "LOCALAPPDATA",
+        paths::to_utf8(paths::home_dir() / "AppData" / "Local"));
+#elif !defined(__APPLE__)
+    const test::ScopedEnv undo_isolation("XDG_CONFIG_HOME", "");
+#endif
     const std::string path =
         std::string(CHANGJI_GOLDEN_DIR) + "/user_dirs.json";
     std::ifstream in(path, std::ios::binary);

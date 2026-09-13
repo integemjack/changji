@@ -240,6 +240,9 @@ ApiResult post_run(const json& body, const RunDeps& deps) {
             // 两处于是分叉：界面写"成片步数 28"，实际每一镜跑 Turbo 的 6 步。
             // 现在两边都调这一个函数，见 config::effective_spec。
             pipeline::apply_project_spec(settings, profile);
+            // 单镜上限也是这部剧的属性（[video].max_shot_s），这条路不经过
+            // Runtime，要自己按项目那份设置算一遍。见 config::apply_video_limits。
+            config::apply_video_limits(settings);
             const pipeline::Backends backends = deps.backends(settings, store);
 
             // 阶段名的校验在这里，不在上面的路由里：

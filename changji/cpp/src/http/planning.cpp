@@ -1,4 +1,5 @@
 #include "http/planning.hpp"
+#include "config/runtime.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -319,6 +320,9 @@ ApiResult post_plan(const json& body, llm::Client& client,
         act.set_message("正在拆镜头");
     }
 
+    // 单镜的时长档位是这部剧的属性（[video].max_shot_s），按项目那份设置
+    // 算一遍再拆镜头。见 config::apply_video_limits。
+    config::apply_video_limits(config::load_settings(store.root()));
     const stages::DurationQuota quota = stages::DurationQuota::for_duration(duration_s);
     llm::Request req;
     req.prompt = stages::build_storyboard_prompt(script, assets, quota, episode_id);

@@ -1,4 +1,5 @@
 #include "http/batch.hpp"
+#include "config/runtime.hpp"
 
 #include <cmath>
 #include <cstdint>
@@ -490,6 +491,9 @@ ApiResult post_plan_all(const json& body, std::shared_ptr<llm::Client> client) {
                         store.save_assets(assets);
                     }
 
+                    // 单镜的时长档位是这部剧的属性（[video].max_shot_s），
+                    // 按项目那份设置算一遍再拆镜头。见 config::apply_video_limits。
+                    config::apply_video_limits(config::load_settings(store.root()));
                     const stages::DurationQuota quota =
                         stages::DurationQuota::for_duration(ep->target_duration_s);
                     llm::Request sreq;

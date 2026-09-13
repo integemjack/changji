@@ -15,6 +15,7 @@
 #include <map>
 #include <string>
 #include <system_error>
+#include <vector>
 
 #include "scoped_env.hpp"
 #include "config/runtime.hpp"
@@ -843,6 +844,17 @@ TEST_CASE("[video]：横竖屏加清晰度，宽高算出来") {
             }
         }
     }
+    SUBCASE("单镜上限：0 = 自己定，填了至少 2 秒") {
+        config::VideoConfig v;
+        CHECK(v.max_shot_s == 0.0);
+        CHECK(v.validate().empty());
+        v.max_shot_s = 5.0;
+        CHECK(v.validate().empty());
+        v.max_shot_s = -1.0;
+        CHECK_FALSE(v.validate().empty());
+        v.max_shot_s = 1.0;   // 最短的档位是 2 秒，1 秒排不出任何镜头
+        CHECK_FALSE(v.validate().empty());
+    }
     SUBCASE("认不出的取值要拒，别悄悄当默认") {
         for (const auto& [field, bad] :
              std::vector<std::pair<std::string, std::string>>{
@@ -1266,4 +1278,36 @@ TEST_CASE("workload_scale：档位表的耗时换算到真跑那一档") {
         CHECK(config::workload_scale(1920, 1088, 20, empty) ==
               doctest::Approx(1.0));
     }
+}
+
+TEST_CASE("单镜上限是剧的属性：[video].max_shot_s 往下夹，不往上抬") {
+    // 2026-09-13 实测：H3 权重全放内存时峰值显存不随帧数涨，「按显存推
+    // 单镜上限」推的是个不存在的量；而放开到 8 秒的镜头会中途硬切成另一
+    // 场戏。行业里竖屏短剧单镜 5 秒左右是标准单位。所以由剧定。
+    config::Settings s;
+    s.models.video = "minimax_h3_fl2va-Q4_K_M.gguf";   // 17k+5，模型上限 360
+
+    // 0 = 自己定：走模型 ∩ 显卡 ∩ 内核那条链，结果至少保住五秒那一档
+    s.video.max_shot_s = 0.0;
+    const auto auto_limits = config::video_limits_for(s);
+    CHECK(auto_limits.frame_step == 17);
+    CHECK(auto_limits.max_frames >= 124);
+
+    // 剧要 3 秒：3×24 = 72 → 17k+5 对齐到 73。任何卡上都比五秒那道地板低，
+    // 所以这个数不受测试机有没有显卡影响
+    s.video.max_shot_s = 3.0;
+    CHECK(config::video_limits_for(s).max_frames == 73);
+    CHECK(config::video_limits_for(s).duration_slots() ==
+          std::vector<double>{2.0, 3.0});
+
+    // 剧要 15 秒：只能往下夹，不会把机器的上限抬上去
+    s.video.max_shot_s = 15.0;
+    CHECK(config::video_limits_for(s).max_frames == auto_limits.max_frames);
+
+    // 手填的 video_max_frames 是机器的上限，剧的要求仍然只往下夹
+    s.models.video_max_frames = 90;
+    s.video.max_shot_s = 3.0;
+    CHECK(config::video_limits_for(s).max_frames == 73);
+    s.video.max_shot_s = 5.0;
+    CHECK(config::video_limits_for(s).max_frames == 90);
 }

@@ -1,4 +1,5 @@
 #include "http/episodes.hpp"
+#include "config/runtime.hpp"
 
 #include <algorithm>
 #include <cstdio>
@@ -224,6 +225,9 @@ ApiResult post_script(const json& body, llm::Client& client,
     json out = {{"saved", true}, {"regenerated", false}};
     if (regenerate) {
         const AssetLibrary assets = store.load_assets();
+        // 单镜的时长档位是这部剧的属性（[video].max_shot_s），按项目那份设置
+        // 算一遍再拆镜头。见 config::apply_video_limits。
+        config::apply_video_limits(config::load_settings(store.root()));
         const stages::DurationQuota quota =
             stages::DurationQuota::for_duration(ep->target_duration_s);
         llm::Request req;
