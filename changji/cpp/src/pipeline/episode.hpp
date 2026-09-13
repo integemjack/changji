@@ -158,6 +158,36 @@ std::vector<models::Shot*> pick(models::Episode& ep,
                                 bool force,
                                 const std::set<std::string>& only_shots = {});
 
+/// 出首帧这一段要跑哪些镜头。
+///
+/// **不能只按状态挑。** 入口状态是 `AUDIO_DONE`（时长锁死了才能定帧数），
+/// 可界面上那个「只出首帧（差 N）」按钮是按**有没有首帧文件**数的，
+/// 两边对不上：一镜首帧失败之后照样会被出片那一段收走（走纯文生视频），
+/// 于是它停在 `FINAL_DONE` / `FALLBACK` 而手里一张首帧都没有——
+/// 界面把它算进「差 N」，引擎一个都挑不到，**点了跑完还是差 N，
+/// 而且一句话都没有**。
+///
+/// 2026-09-13 全盘数过：203 个缺首帧的镜头里，12 个停在 `FINAL_DONE`、
+/// 11 个停在 `FALLBACK`，都够不着。（`PLANNED` 那 202 个不在此列——
+/// 按钮发的是 `["audio","frames"]`，配音那一段会把它们推到 `AUDIO_DONE`，
+/// 同一轮里首帧就挑得到了。）
+///
+/// 所以判据是两条：
+///   * `AUDIO_DONE` —— 正常流程里的入口，照旧；
+///   * 已经过了配音、又**没有能用的首帧文件**的——`PLANNED` 除外
+///     （它的时长还没锁，带着错的时长去出首帧是另一种错），
+///     `LOCKED` 除外（人工锁定的不动）。
+///
+/// 「能用」是连磁盘一起看的：`frame_path` 记着而文件不在，一样要重出。
+///
+/// **重出首帧会让已经出过片的那几镜退回 `FRAME_DONE`**，因为那几条视频
+/// 不是照这张新首帧生成的。这不是新行为——「重出首帧」那条路（force）
+/// 本来就是这样；这里只是让不带 force 的那条和它一致。调用方要把这件事
+/// 说给用户听，见 run_episode 里出首帧那一段的 start 消息。
+std::vector<models::Shot*> pick_for_frames(
+    models::Episode& ep, const models::ProjectPaths& paths, bool force,
+    const std::set<std::string>& only_shots = {});
+
 /// 一个档位的入口状态。
 ///
 /// 草稿档收 `AUDIO_DONE` 是关键：首帧失败的镜头状态停在那里，

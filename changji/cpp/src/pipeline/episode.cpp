@@ -49,6 +49,66 @@ std::vector<Shot*> pick(Episode& ep, const std::set<ShotStatus>& want,
     return todo;
 }
 
+namespace {
+
+/// 这一镜手里有没有一张能用的首帧。
+///
+/// **连磁盘一起看。** 只看 `frame_path` 记没记的话，人把 frames/ 删掉
+/// 之后引擎还以为有——出片那一段会拿一个不存在的路径去当起点，
+/// 而那一支只会 warn 一句"记着首帧但文件不在"然后退回纯文生视频。
+bool has_usable_frame(const Shot& s, const ProjectPaths& paths) {
+    if (!s.frame_path.has_value() || s.frame_path->empty()) return false;
+    std::error_code ec;
+    return fs::is_regular_file(paths.abs(*s.frame_path), ec);
+}
+
+/// 配音是不是已经落定了。落定了时长才锁死，帧数才定得下来。
+///
+/// PLANNED 不算：配音失败的镜头停在那里，带着**估的**时长，
+/// 照它出首帧等于把错的时长焊进画面。
+/// LOCKED 不算：人工确认过的不动。
+bool audio_settled(ShotStatus st) {
+    switch (st) {
+        case ShotStatus::AUDIO_DONE:
+        case ShotStatus::FRAME_DONE:
+        case ShotStatus::DRAFT_DONE:
+        case ShotStatus::DRAFT_REJECTED:
+        case ShotStatus::FINAL_DONE:
+        case ShotStatus::FINAL_REJECTED:
+        case ShotStatus::FALLBACK:
+            return true;
+        case ShotStatus::PLANNED:
+        case ShotStatus::LOCKED:
+            return false;
+    }
+    return false;
+}
+
+}  // namespace
+
+std::vector<Shot*> pick_for_frames(Episode& ep, const ProjectPaths& paths,
+                                   bool force,
+                                   const std::set<std::string>& only_shots) {
+    std::vector<Shot*> all;
+    all.reserve(ep.shots.size());
+    for (auto& s : ep.shots) all.push_back(&s);
+    std::stable_sort(all.begin(), all.end(),
+                     [](const Shot* a, const Shot* b) { return a->order < b->order; });
+
+    std::vector<Shot*> todo;
+    for (Shot* s : all) {
+        if (!only_shots.empty() && only_shots.count(s->shot_id) == 0) continue;
+        if (force) { todo.push_back(s); continue; }
+        // 正常流程的入口：配音刚跑完，这一轮就该出它的首帧。
+        if (s->status == ShotStatus::AUDIO_DONE) { todo.push_back(s); continue; }
+        // 补漏：配音早就落定了，可手里没有能用的首帧。见头文件里那一大段。
+        if (audio_settled(s->status) && !has_usable_frame(*s, paths)) {
+            todo.push_back(s);
+        }
+    }
+    return todo;
+}
+
 models::TierSpec frame_spec(const models::HardwareProfile& profile,
                             const config::Settings& settings) {
     const auto tier =
@@ -508,15 +568,33 @@ RunReport run_episode(const ProjectStore& store,
             // 阶段 5 时这里临时放宽收了 PLANNED（那会儿配音还没移植），
             // 现在配音接上了，收回来。配音失败的镜头状态停在 PLANNED，
             // 于是自动被挡在首帧之外——那是对的，它们带着错的时长。
-            auto todo = pick(*ep, {ShotStatus::AUDIO_DONE}, opts.force, opts.only_shots);
+            auto todo = pick_for_frames(*ep, store.paths(), opts.force,
+                                        opts.only_shots);
             progress.set_pending(ids_of(todo));
             if (todo.empty()) {
                 emit(progress, "frames", "done", "首帧已完成，跳过");
             } else {
-                emit(progress, "frames", "start",
-                     "给 " + std::to_string(todo.size()) + " 个镜头出首帧（" +
-                         backends.frame_backend_name + "）",
-                     0, static_cast<int>(todo.size()));
+                // **已经出过片的那几镜要说一声。**
+                //
+                // 它们会因为重出首帧退回 FRAME_DONE——那几条视频不是照这张
+                // 新首帧生成的，留着状态等于说"这一镜是拿它生的"，不是实话。
+                // 但这是**花钱的**（一镜几分钟），所以不能闷声干。
+                int had_video = 0;
+                for (const Shot* s : todo) {
+                    if (s->video_path.has_value() && !s->video_path->empty()) {
+                        ++had_video;
+                    }
+                }
+                std::string head = "给 " + std::to_string(todo.size()) +
+                                   " 个镜头出首帧（" +
+                                   backends.frame_backend_name + "）";
+                if (had_video > 0) {
+                    head += "。其中 " + std::to_string(had_video) +
+                            " 镜已经出过片了：那几条视频不是照这张新首帧生成的，"
+                            "所以它们会退回「等出片」，要重新跑一次出片";
+                }
+                emit(progress, "frames", "start", head, 0,
+                     static_cast<int>(todo.size()));
 
                 report.frames = stages::run_frames(
                     todo, assets, frame_spec(profile, settings),

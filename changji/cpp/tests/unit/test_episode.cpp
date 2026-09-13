@@ -756,6 +756,95 @@ TEST_CASE("没有 ffmpeg 时跳过装配，并说清产物在哪") {
 // todo，不是照着源码抄的 predicate——抄歪了语料和代码会一起歪。
 // ---------------------------------------------------------------------------
 
+TEST_CASE("出首帧挑的是「没有能用首帧」的，不只是 AUDIO_DONE") {
+    // **界面按有没有首帧文件数，引擎按状态挑，两边对不上。**
+    //
+    // 一镜首帧失败之后照样会被出片那一段收走（退回纯文生视频），于是它停在
+    // FINAL_DONE / FALLBACK 而手里一张首帧都没有。界面上「只出首帧（差 N）」
+    // 把它算进去了，引擎却一个都挑不到——点了跑完还是差 N，一句话都没有。
+    //
+    // 2026-09-13 全盘数过：203 个缺首帧的镜头里，12 个 FINAL_DONE、
+    // 11 个 FALLBACK，都够不着。
+    const fs::path root =
+        fs::temp_directory_path() / paths::from_utf8("changji_挑首帧");
+    std::error_code ec;
+    fs::remove_all(root, ec);
+    const models::ProjectPaths paths(root);
+    fs::create_directories(paths.frames(), ec);
+
+    auto add = [](models::Episode& ep, const std::string& id,
+                  models::ShotStatus st, const char* frame,
+                  const char* video) {
+        models::Shot s;
+        s.shot_id = id;
+        s.scene_id = "sc01";
+        s.order = static_cast<int>(ep.shots.size());
+        s.status = st;
+        if (frame) s.frame_path = frame;
+        if (video) s.video_path = video;
+        ep.shots.push_back(s);
+    };
+
+    models::Episode ep;
+    ep.episode_id = "ep01";
+    add(ep, "sh_audio",     models::ShotStatus::AUDIO_DONE, nullptr, nullptr);
+    add(ep, "sh_final_ok",  models::ShotStatus::FINAL_DONE, "frames/ok.png", "v/a.mp4");
+    add(ep, "sh_final_bad", models::ShotStatus::FINAL_DONE, nullptr, "v/b.mp4");
+    add(ep, "sh_fallback",  models::ShotStatus::FALLBACK,   nullptr, nullptr);
+    add(ep, "sh_planned",   models::ShotStatus::PLANNED,    nullptr, nullptr);
+    add(ep, "sh_locked",    models::ShotStatus::LOCKED,     nullptr, "v/c.mp4");
+    add(ep, "sh_dangling",  models::ShotStatus::FINAL_DONE, "frames/gone.png", "v/d.mp4");
+
+    // 只有 ok.png 是真存在的；gone.png 记着但文件不在。
+    std::ofstream(paths.frames() / paths::from_utf8("ok.png"), std::ios::binary)
+        << "假的 PNG";
+
+    const auto ids = [](const std::vector<models::Shot*>& v) {
+        std::vector<std::string> out;
+        for (const models::Shot* s : v) out.push_back(s->shot_id);
+        return out;
+    };
+
+    const auto got = ids(pipeline::pick_for_frames(ep, paths, /*force=*/false));
+    CAPTURE(got.size());
+
+    SUBCASE("配音刚跑完的照旧收") {
+        CHECK(std::find(got.begin(), got.end(), "sh_audio") != got.end());
+    }
+    SUBCASE("出过片但没首帧的要补上——这条就是那个 bug") {
+        CHECK(std::find(got.begin(), got.end(), "sh_final_bad") != got.end());
+        CHECK(std::find(got.begin(), got.end(), "sh_fallback") != got.end());
+    }
+    SUBCASE("首帧记着但文件不在，也要重出") {
+        // 只看字段的话引擎以为有，出片时拿一个不存在的路径当起点。
+        CHECK(std::find(got.begin(), got.end(), "sh_dangling") != got.end());
+    }
+    SUBCASE("已经有首帧的不动") {
+        CHECK(std::find(got.begin(), got.end(), "sh_final_ok") == got.end());
+    }
+    SUBCASE("PLANNED 不收：时长还没锁") {
+        // 配音失败的停在这里，带着估的时长。照它出首帧等于把错的时长
+        // 焊进画面。界面上那个按钮发的是 ["audio","frames"]，配音那一段
+        // 会先把它推到 AUDIO_DONE，同一轮里就收得到了。
+        CHECK(std::find(got.begin(), got.end(), "sh_planned") == got.end());
+    }
+    SUBCASE("LOCKED 不收：人工确认过的不动") {
+        CHECK(std::find(got.begin(), got.end(), "sh_locked") == got.end());
+    }
+    SUBCASE("force 之下谁都收") {
+        const auto all = ids(pipeline::pick_for_frames(ep, paths, /*force=*/true));
+        CHECK(all.size() == ep.shots.size());
+    }
+    SUBCASE("指定了镜头就只认这几个") {
+        const auto one =
+            ids(pipeline::pick_for_frames(ep, paths, false, {"sh_fallback"}));
+        REQUIRE(one.size() == 1);
+        CHECK(one[0] == "sh_fallback");
+    }
+
+    fs::remove_all(root, ec);
+}
+
 TEST_CASE("各阶段挑哪些镜头跑，和 Python 一样") {
     const std::string path =
         std::string(CHANGJI_GOLDEN_DIR) + "/episode_pick.json";
