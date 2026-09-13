@@ -1,9 +1,17 @@
+// 超分那条命令行的测试。
+//
+// **这里测的不是超分本身，是最后那道 ffmpeg 的参数。** 音轨丢没丢由它
+// 决定，而丢了不报错——2026-09-13 实测：544×928 h264+aac 进去，
+// 1088×1920 h264 出来，一条音频流都没有。doctor 又恰好建议"要 2K 就
+// 出完再跑 changji --upscale"，指的正是成片。
+
+#include <doctest/doctest.h>
+
 #include <algorithm>
 #include <string>
 #include <vector>
 
 #include "config/settings.hpp"
-#include "doctest.h"
 #include "infer/sd_upscale.hpp"
 
 using namespace changji;
