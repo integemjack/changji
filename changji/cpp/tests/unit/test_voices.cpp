@@ -86,7 +86,14 @@ TEST_CASE("摇音色的临时文件只留最近一个，老的那个固定名字
         CHECK(fs::exists(keep));
     }
     SUBCASE("目录不存在就什么都不做") {
-        CHECK(http::sweep_old_takes(root / "没这个目录", keep) == 0);
+        // **中文路径一律走 paths::from_utf8**，这一行原来是直接给的字面量。
+        // `fs::path(const char*)` 在 Windows 上按当前 ANSI 代码页解释，不是
+        // UTF-8，这台机器上映射不过去就当场抛——报的是
+        // "No mapping for the Unicode character exists in the target
+        // multi-byte code page"，看着像被测代码炸了，其实是用例自己构造
+        // 参数时就炸了。同一个用例里另外六处都是对的，就漏了这一处。
+        CHECK(http::sweep_old_takes(root / paths::from_utf8("没这个目录"),
+                                    keep) == 0);
     }
 
     fs::remove_all(root, ec);
