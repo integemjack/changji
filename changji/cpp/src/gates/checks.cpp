@@ -226,6 +226,30 @@ GateResult gate_video(const models::Shot& shot, const fs::path& video_path,
             metrics["motion_mean"] = round_to(motion.mean, 2);
             metrics["motion_median"] = round_to(motion.median, 2);
             metrics["motion_max"] = round_to(motion.max, 2);
+
+            // **片中硬切这一种判。** 2026-09-13 三次实见，都是首帧和提示词
+            // 对不上、模型只好在半路切到提示词要的画面：参考图翻版当首帧
+            // （最大 89 / 中位 3.3）、8 秒长镜头（45 / 2.2）、手机特写画成
+            // 拿手机的人（77 / 约 2）。正常镜头最大不过 27（那镜均值 8.3，
+            // 是真的在动）。所以判据是"最大值又高又孤"：≥ 40 且 ≥ 中位的
+            // 10 倍。甩镜那种快速运动是整段都大，中位跟着高，不会撞上。
+            //
+            // **判成 REGRESS 不是 RETRY**：首帧没变的话换种子重出视频还是
+            // 那张首帧，还是得切。要回首帧阶段换个种子重出（render.cpp 里
+            // 认 cut_inside 这个标记把状态退回去）。
+            constexpr double kCutMaxDiff = 40.0;
+            constexpr double kCutRatio = 10.0;
+            if (motion.max >= kCutMaxDiff &&
+                motion.max >= kCutRatio * std::max(motion.median, 0.1)) {
+                metrics["cut_inside"] = 1.0;
+                return fail(shot.shot_id, Verdict::Regress, gate_name,
+                            {"片中硬切：相邻帧差最大 " + fmt("%.0f", motion.max) +
+                             "，中位只有 " + fmt("%.1f", motion.median) +
+                             "。多半是首帧和提示词对不上，模型半路切到了提示词"
+                             "要的画面。换种子重出视频没用，已退回首帧阶段，"
+                             "再跑一次首帧和出片"},
+                            metrics);
+            }
         }
     } catch (const media::FFmpegError&) {
     }

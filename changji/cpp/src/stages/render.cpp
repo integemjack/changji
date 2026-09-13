@@ -306,6 +306,15 @@ std::vector<RenderOutcome> render_batch(std::vector<Shot*>& shots,
                     fallback(join_reasons(res.reasons));
                     break;
                 }
+                // 片中硬切：问题在首帧（和提示词对不上），退回到"等出首帧"
+                // 那一档，attempts 加一让首帧换个种子。下一次跑首帧和出片
+                // 就会把这一镜重做；这一轮装配会点名它缺了。
+                if (res.metrics.count("cut_inside") != 0) {
+                    local.status = ShotStatus::AUDIO_DONE;
+                    local.attempts += 1;
+                    done[i].error = join_reasons(res.reasons);
+                    break;
+                }
                 // Regress：重跑没用，标记后交给人。
                 local.status = spec.tier == Tier::FINAL
                                    ? ShotStatus::FINAL_REJECTED

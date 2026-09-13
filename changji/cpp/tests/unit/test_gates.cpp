@@ -565,12 +565,12 @@ TEST_CASE("运动量只报数不判：进 metrics、挂在「通过闸门」后�
         CHECK(r.metrics.at("motion_max") == doctest::Approx(4.0));
         CHECK(gates::motion_note(r) == "（运动 3.0，最大 4）");
     }
-    SUBCASE("中途硬切的那种：最大值远高于中位，数照记，仍然放行") {
+    SUBCASE("中途硬切的那种：最大值远高于中位，数照记，判 REGRESS（见下一条）") {
         f.motion_out =
             "lavfi.signalstats.YAVG=2.0\nlavfi.signalstats.YAVG=45.0\n"
             "lavfi.signalstats.YAVG=2.2\n";
         const auto r = gates::gate_video(shot, fake_video("运动"), f.ff(), cfg);
-        CHECK(r.ok());
+        CHECK(r.verdict == gates::Verdict::Regress);
         CHECK(r.metrics.at("motion_median") == doctest::Approx(2.2));
         CHECK(r.metrics.at("motion_max") == doctest::Approx(45.0));
         CHECK(gates::motion_note(r) == "（运动 16.4，最大 45）");
@@ -588,5 +588,38 @@ TEST_CASE("运动量只报数不判：进 metrics、挂在「通过闸门」后�
         f.frames = {kNormalFrame, kNormalFrame, kBlankFrame};
         const auto r = gates::gate_video(shot, fake_video("运动"), f.ff(), cfg);
         CHECK_FALSE(r.ok());
+    }
+}
+
+TEST_CASE("片中硬切判 REGRESS：最大帧差又高又孤，问题在首帧不在种子") {
+    // 三次实见的数：89/3.3、45/2.2、77/约 2；正常镜头最大不过 27。
+    FakeFF f;
+    models::Shot shot;
+    shot.shot_id = "ep01_sh004";
+    config::GateConfig cfg;
+
+    SUBCASE("孤零零一个大跳变：REGRESS，带 cut_inside 标记") {
+        f.motion_out = "lavfi.signalstats.YAVG=2.0\nlavfi.signalstats.YAVG=77.0\n"
+                       "lavfi.signalstats.YAVG=2.3\nlavfi.signalstats.YAVG=1.9\n";
+        const auto r = gates::gate_video(shot, fake_video("硬切"), f.ff(), cfg);
+        CHECK(r.verdict == gates::Verdict::Regress);
+        CHECK(r.metrics.count("cut_inside") == 1);
+        CHECK(mentions(r, "片中硬切"));
+        CHECK(mentions(r, "首帧"));
+        // decide_next 不看重试次数：REGRESS 就是 REGRESS
+        CHECK(gates::decide_next(r, shot, cfg) == gates::Verdict::Regress);
+    }
+    SUBCASE("整段都在动（甩镜、快切前的运动）：中位也高，不算硬切") {
+        f.motion_out = "lavfi.signalstats.YAVG=20.0\nlavfi.signalstats.YAVG=45.0\n"
+                       "lavfi.signalstats.YAVG=30.0\nlavfi.signalstats.YAVG=25.0\n";
+        const auto r = gates::gate_video(shot, fake_video("甩镜"), f.ff(), cfg);
+        CHECK(r.ok());
+        CHECK(r.metrics.count("cut_inside") == 0);
+    }
+    SUBCASE("最大值不够高（27 那种真在动的镜头）：放行") {
+        f.motion_out = "lavfi.signalstats.YAVG=2.0\nlavfi.signalstats.YAVG=27.0\n"
+                       "lavfi.signalstats.YAVG=2.5\n";
+        const auto r = gates::gate_video(shot, fake_video("真动"), f.ff(), cfg);
+        CHECK(r.ok());
     }
 }
