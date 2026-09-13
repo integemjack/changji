@@ -187,6 +187,20 @@ enum class ModelRole {
 /// 压根没法告诉 generate_image 出几帧。
 std::string sd_model_problem(const config::Settings& settings, ModelRole role);
 
+/// 配置里的 `flow_shift` 翻成传给 sd.cpp 的那个 float。
+/// **`<= 0` 就是"没填"，翻成 `INFINITY`**——sd.cpp 看到 INFINITY 会用
+/// 它按模型架构定的 `default_flow_shift`（Wan 5、HunyuanVideo 7、
+/// MiniMax-H3 12、Qwen-Image / SD3 这一类 3）。
+///
+/// **这一步存在的理由是一次真出过的错。** `video_flow_shift` 的默认值
+/// 原来写死 3.0，那是上游 docs/wan.md 给 Wan2.2 TI2V-5B 的推荐值；
+/// 出片模型换成 MiniMax-H3 之后这个数没人跟着改，于是每一镜都在拿
+/// Wan 的 time-shift 跑 H3（它要的是 12）。**全程不报错**，
+/// 表现只是"片子看着不太对"——人会先去怀疑提示词。
+///
+/// 和 `sd_model_problem` 一样放在 `#ifdef` 外面，为的是测得到。
+float sd_flow_shift(double configured);
+
 /// 中心裁剪矩形，单位像素。
 struct CropBox {
     int x = 0;

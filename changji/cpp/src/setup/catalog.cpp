@@ -435,12 +435,17 @@ std::vector<Group> build() {
                  779849816ULL, "video_lora",
                  "Turbo 蒸馏。采样从 28 步压到 6 步，实测一镜 242 秒降到 124 秒"});
 
-            // H3 的三个旋钮和 Wan 完全不同，**填错了三处都不报错**：
+            // H3 的四个旋钮和 Wan 完全不同，**填错了四处都不报错**：
             // 编码器走 video_llm 不是 video_text_encoder（上面已经这么填了）、
-            // cfg 是 1.0 不是 6.0、随机数发生器要 cpu。
+            // cfg 是 1.0 不是 6.0、随机数发生器要 cpu、flow_shift 要 12 不是 3。
             // 错了的表现是出来的片和提示词没关系，人会先去怀疑提示词。
             o.settings.push_back({"models.video_rng", "cpu"});
             o.settings.push_back({"models.video_cfg", 1.0});
+            // **0 = 自动**，也就是让 sd.cpp 按架构给 H3 那个 12。
+            // 这一条以前漏了，于是从 Wan 换过来的人配置里留着 Wan 的 3.0，
+            // 每一镜都用错的 time-shift 跑。写 0 而不是写 12，是为了上游
+            // 哪天改了这个数我们能跟上；也把旧配置里那个 3.0 洗掉。
+            o.settings.push_back({"models.video_flow_shift", 0.0});
             o.settings.push_back({"models.video_lora_strength", 1.0});
             o.settings.push_back({"models.video_lora_tiers", "both"});
             // **步数交给引擎自己算，这里一定要写 0（＝没填）。**

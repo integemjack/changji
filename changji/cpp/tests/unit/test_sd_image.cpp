@@ -14,6 +14,7 @@
 
 #include <cmath>
 #include <filesystem>
+#include <limits>
 #include <map>
 #include <string>
 
@@ -227,6 +228,40 @@ TEST_CASE("出片没配 video：单独一句话") {
 //
 // 这一组测的是 center_crop_box 的算术。它存在的理由见头文件：
 // sd.cpp 拿到比例不同的 init_image 会直接拉伸，不报错。
+
+// ---- flow_shift：0 = 交给模型架构自己定 ----
+//
+// 这一组盯的是一次真出过的错：`video_flow_shift` 的默认值写死 3.0
+// （上游 docs/wan.md 给 Wan2.2 TI2V-5B 的推荐值），出片模型换成
+// MiniMax-H3 之后没人跟着改，每一镜都在拿 Wan 的 time-shift 跑 H3
+// （它要的是 12），**而且全程不报错**。
+//
+// 现在 0 = 没填 = 传 INFINITY，sd.cpp 看到 INFINITY 才会去用它那张
+// 按架构分的 default_flow_shift 表。所以"0 翻成 INFINITY"这一步
+// 是整条自适应链的关键一环，写反了就又变回写死。
+
+TEST_CASE("没填 flow_shift：翻成 INFINITY，让 sd.cpp 按架构挑") {
+    CHECK(std::isinf(infer::sd_flow_shift(0.0)));
+    // 负数和 NaN 也当没填——总比把一个坏数喂进采样器强。
+    CHECK(std::isinf(infer::sd_flow_shift(-1.0)));
+    CHECK(std::isinf(infer::sd_flow_shift(
+        std::numeric_limits<double>::quiet_NaN())));
+    // INFINITY 是正的：sd.cpp 判的是 std::isfinite，负无穷也能过那一关，
+    // 但会当成一个"填了的"负数用下去。
+    CHECK(infer::sd_flow_shift(0.0) > 0.0f);
+}
+
+TEST_CASE("填了就照填的来：不因为有默认值就覆盖用户的数") {
+    CHECK(infer::sd_flow_shift(3.0) == doctest::Approx(3.0f));
+    CHECK(infer::sd_flow_shift(12.0) == doctest::Approx(12.0f));
+}
+
+TEST_CASE("默认配置里两条路都是自动") {
+    // 这一条是上面那个错的回归闸：谁再把 3.0 写回默认值，这里就红。
+    const config::ModelsConfig m;
+    CHECK(std::isinf(infer::sd_flow_shift(m.video_flow_shift)));
+    CHECK(std::isinf(infer::sd_flow_shift(m.image_flow_shift)));
+}
 
 TEST_CASE("比例本来就一样：一刀不裁") {
     // 尺寸不同但比例相同——缩放交给下游，这里不该动。

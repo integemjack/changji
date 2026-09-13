@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <cstring>
 #include <fstream>
+#include <limits>
 #include <map>
 #include <mutex>
 #include <random>
@@ -63,6 +64,14 @@ std::string sd_model_problem(const config::Settings& settings, ModelRole role) {
     }
     return "没配出图模型。在 changji.toml 的 [models] 里填 image，"
            "或者把出图交给推理服务";
+}
+
+// 同样在 #ifdef 外面，理由见头文件。
+float sd_flow_shift(double configured) {
+    if (!(configured > 0.0)) {  // 0、负数、NaN 都算"没填"
+        return std::numeric_limits<float>::infinity();
+    }
+    return static_cast<float>(configured);
 }
 
 namespace {
@@ -526,7 +535,8 @@ struct SdContext::Impl {
     std::string llm, llm_vision;
     /// 这个角色的采样旋钮，建上下文时按 [models] 里的角色值定下来。
     double cfg = 7.0;
-    double flow_shift = 3.0;
+    /// 0 = 自动，交给 sd.cpp 按架构挑。见 sd_flow_shift。
+    double flow_shift = 0.0;
     /// 两个专家交班的 sigma 阈值。只在 high_noise 非空时有意义。
     double moe_boundary = 0.875;
 
@@ -726,7 +736,7 @@ void SdContext::generate(const ImageRequest& req, const fs::path& dest,
     // cfg / flow_shift 按角色从 [models] 来，不用请求里那个 7.0——
     // 见 ModelsConfig::image_cfg 上面那段。
     g.sample_params.guidance.txt_cfg = static_cast<float>(impl_->cfg);
-    g.sample_params.flow_shift = static_cast<float>(impl_->flow_shift);
+    g.sample_params.flow_shift = sd_flow_shift(impl_->flow_shift);
     // VAE 分块解码——和 generate_video 那边同一套写法。不填的话 sd.cpp
     // 整图解码，1280×704 要 6.6 GB 缓冲，fp8 常驻的 32 GB 卡上出不来图。
     g.vae_tiling_params.enabled = req.vae_tiling;
@@ -832,7 +842,7 @@ void SdContext::generate_video(const VideoRequest& req, const fs::path& raw_dest
     // cfg / flow_shift 按角色从 [models] 来，不用请求里那个 7.0——
     // 见 ModelsConfig::image_cfg 上面那段。
     g.sample_params.guidance.txt_cfg = static_cast<float>(impl_->cfg);
-    g.sample_params.flow_shift = static_cast<float>(impl_->flow_shift);
+    g.sample_params.flow_shift = sd_flow_shift(impl_->flow_shift);
     // **高噪声专家的旋钮要单独填一遍。** sd_vid_gen_params_init 给它的是
     // 另一套默认值（cfg 7.0、flow_shift 无穷），不填的话前几步会在一个
     // 和低噪声那份完全不同的 cfg 上跑——而这**不会报错**，只是出来的片
@@ -843,8 +853,7 @@ void SdContext::generate_video(const VideoRequest& req, const fs::path& raw_dest
     // 填成具体数字的话两段步数是**相加**的，总步数会翻倍。
     g.high_noise_sample_params.guidance.txt_cfg =
         static_cast<float>(impl_->cfg);
-    g.high_noise_sample_params.flow_shift =
-        static_cast<float>(impl_->flow_shift);
+    g.high_noise_sample_params.flow_shift = sd_flow_shift(impl_->flow_shift);
     g.moe_boundary = static_cast<float>(impl_->moe_boundary);
 
     // LoRA。**这个数组要活到 generate_video 返回**——sd_vid_gen_params_t

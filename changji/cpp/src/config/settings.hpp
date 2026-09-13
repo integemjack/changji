@@ -356,13 +356,25 @@ struct ModelsConfig {
     /// 整份预算那个估值——于是反过来把图像模型卸掉，两边来回踢。
     double llm_live_vram_gb(double model_gb) const;
 
-    /// 采样的两个旋钮，按角色分开。默认值照抄 sd.cpp 上游文档的推荐命令行：
-    /// docs/wan.md 给 Wan2.2 TI2V-5B 的是 `--cfg-scale 6.0 --flow-shift 3.0`，
-    /// docs/qwen_image.md 给 Qwen-Image 的是 `--cfg-scale 2.5 --flow-shift 3`。
-    /// 以前两条路都是 cfg 7.0、flow_shift 不设（sd.cpp 给 Wan 的内置默认是 5）。
-    /// **C++ 独有**（Python 那边这些在 ComfyUI 工作流里）。
+    /// 采样的两个旋钮，按角色分开。**C++ 独有**（Python 那边这些在
+    /// ComfyUI 工作流里）。
+    ///
+    /// **`flow_shift` 的 0 = 自动**，也就是把 `INFINITY` 传给 sd.cpp，让它
+    /// 按**模型架构**挑：Wan 5、HunyuanVideo 7、**MiniMax-H3 12**、
+    /// Qwen-Image / SD3 这一类 3（上游 `stable-diffusion.cpp` 里那张
+    /// `default_flow_shift` 表）。填了正数就是覆盖它。
+    ///
+    /// **默认从 3.0 改成 0（2026-09-13）。** 3.0 是照抄上游 docs/wan.md 给
+    /// Wan2.2 TI2V-5B 的推荐命令行（`--cfg-scale 6.0 --flow-shift 3.0`）写死
+    /// 的，出片模型换成 MiniMax-H3 之后没人跟着改——H3 要的是 12，我们
+    /// 一直在拿 Wan 的数跑它，**而且不报错**。这个数还不只喂给采样器：
+    /// H3 那条路上 sd.cpp 把它一路塞进 `MiniMaxH3DiffusionExtra`，DiT 内部
+    /// 的 time-shift 吃的是同一个值，所以差的是 4 倍不是一点点。
+    ///
+    /// 写死一个数就是在赌"出片模型永远是这一个"。换模型时漏改无声无息，
+    /// 所以这里的正确默认是"别赌，问模型"。
     double video_cfg = 6.0;
-    double video_flow_shift = 3.0;
+    double video_flow_shift = 0.0;
 
     /// 双专家视频模型的**高噪声**那一份。**C++ 独有**，Python 没有这条路。
     ///
@@ -542,7 +554,9 @@ struct ModelsConfig {
     std::string weights_for(double vram_gb, double model_gb,
                             bool unified = false, double canvas_px = 0.0) const;
     double image_cfg = 2.5;
-    double image_flow_shift = 3.0;
+    /// 0 = 自动，同 `video_flow_shift`。Qwen-Image 的架构默认就是 3，
+    /// 和以前写死的那个数一样，所以这条改默认不改行为。
+    double image_flow_shift = 0.0;
 
     /// 首帧按哪个档位出：`final`（默认）还是 `draft`。**C++ 独有。**
     ///

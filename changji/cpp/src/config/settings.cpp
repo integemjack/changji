@@ -1020,12 +1020,16 @@ subtitle_font = "Source Han Sans SC"
 # ≤ 显存的九成）：fp8 20 GB 在 32 GB 卡上装不下→cpu；Q6_K 16 GB 装得下→常驻。
 # image_weights = "smart"
 #
-# 采样旋钮，按角色分开。默认值是 sd.cpp 上游文档给这两个模型的推荐值，
-# 一般不用动。图像那条路 cfg 太高（比如 7）出来的就是噪点。
+# 采样旋钮，按角色分开。图像那条路 cfg 太高（比如 7）出来的就是噪点。
+#
+# flow_shift 的 0（默认）= 自动，让 sd.cpp 按**模型架构**挑：Wan 5、
+# HunyuanVideo 7、MiniMax-H3 12、Qwen-Image 3。以前这里写死 3.0（Wan 的数），
+# 换成 H3 之后一直在拿 Wan 的 time-shift 跑它，而且不报错。除非你在对某个
+# 具体模型调参，否则别填。
 # video_cfg = 6.0
-# video_flow_shift = 3.0
+# video_flow_shift = 0.0
 # image_cfg = 2.5
-# image_flow_shift = 3.0
+# image_flow_shift = 0.0
 #
 # 首帧按哪个档位出。默认 draft（和 Python 一样）；首帧是跨镜头一致性的锚点，
 # 又会当起始图喂给出片那一步，草稿档的首帧配成片档的视频等于把锚点放大两倍
