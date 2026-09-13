@@ -19,6 +19,8 @@
 //
 // 第一版就是这么写的，上面那段是查出来之后补的。
 
+#include <filesystem>
+#include <memory>
 #include <string>
 
 #ifdef _WIN32
@@ -67,6 +69,64 @@ private:
     std::string name_;
     std::string old_;
     bool had_ = false;
+};
+
+/// 把**用户级**配置目录指到一个空目录，析构时还原。
+///
+/// `config::load_settings(项目目录)` 先读 `user_config_path()`（用户级），
+/// 再叠上项目里的 `changji.toml`。所以任何走 `load_settings` 的用例，
+/// 默认都在读**这台开发机上真实的那份配置**。
+///
+/// 后果是"在干净机器上过、在真在用的机器上挂"，而且报错离原因很远：
+///   * 2026-09-10 服务器上配了模型，于是「没写的项保持空」常年红一个，
+///     红着红着就没人看了，真回归也照样漏过去；
+///   * 2026-09-13 服务器上 `[models].video` 是 MiniMax-H3，而 H3 只出
+///     24fps，于是写回那条「fps 改成 30 了吗」在服务器上挂、在 Windows
+///     上过——两台机器的差别根本不在被测代码里。
+///
+/// ⚠️ **三个平台换的不是同一个变量**，写漏一个就等于这道隔离在那台机器上
+/// 不存在（上面第二条正是这么发生的）：
+///   * Windows：`LOCALAPPDATA`
+///   * macOS：**`HOME`**——`user_config_dir` 的 `__APPLE__` 分支走的是
+///     `$HOME/Library/Application Support/changji`，一个字都不看
+///     `XDG_CONFIG_HOME`；
+///   * 其它：`XDG_CONFIG_HOME`。
+///
+/// ⚠️ **隔离目录用纯 ASCII 名。** 把带中文的路径塞进 `LOCALAPPDATA`，
+/// Windows 上会抛 "No mapping for the Unicode character exists in the
+/// target multi-byte code page"——环境变量那条路上有一步窄字符转换。
+class ScopedUserConfigDir {
+public:
+    explicit ScopedUserConfigDir(const std::string& tag = "default")
+        : dir_(std::filesystem::temp_directory_path() /
+               ("changji_empty_cfg_" + tag)) {
+        std::error_code ec;
+        std::filesystem::remove_all(dir_, ec);
+        std::filesystem::create_directories(dir_, ec);
+        const std::string v = paths::to_utf8(dir_);
+#ifdef _WIN32
+        guard_ = std::make_unique<ScopedEnv>("LOCALAPPDATA", v);
+#elif defined(__APPLE__)
+        guard_ = std::make_unique<ScopedEnv>("HOME", v);
+#else
+        guard_ = std::make_unique<ScopedEnv>("XDG_CONFIG_HOME", v);
+#endif
+    }
+
+    ~ScopedUserConfigDir() {
+        guard_.reset();  // 先还原环境变量，再删目录
+        std::error_code ec;
+        std::filesystem::remove_all(dir_, ec);
+    }
+
+    ScopedUserConfigDir(const ScopedUserConfigDir&) = delete;
+    ScopedUserConfigDir& operator=(const ScopedUserConfigDir&) = delete;
+
+    const std::filesystem::path& dir() const { return dir_; }
+
+private:
+    std::filesystem::path dir_;
+    std::unique_ptr<ScopedEnv> guard_;
 };
 
 }  // namespace changji::test

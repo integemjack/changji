@@ -20,6 +20,8 @@
 #include "config/writeback.hpp"
 #include "util/paths.hpp"
 
+#include "scoped_env.hpp"
+
 using namespace changji;
 namespace fs = std::filesystem;
 using json = nlohmann::json;
@@ -50,7 +52,15 @@ std::string slurp(const fs::path& p) {
 }
 
 /// 写回之后再加载一遍，确认文件还是合法的、值也对。
+///
+/// **必须隔离用户级配置。** load_settings 先读 user_config_path() 再叠
+/// 项目那份，不隔离的话这些用例读的是开发机上真实的配置。2026-09-13
+/// 在服务器上撞到：那台机器 `[models].video` 是 MiniMax-H3，而 H3 只出
+/// 24fps（load_settings 会把 `[assembly].fps` 纠回去），于是「fps 改成
+/// 30 了吗」在服务器上挂、在 Windows 上过——差别根本不在被测代码里。
+/// 隔离怎么做、三个平台各换哪个变量，见 scoped_env.hpp。
 config::Settings reload(const fs::path& dir) {
+    const test::ScopedUserConfigDir iso("writeback");
     return config::load_settings(dir);
 }
 

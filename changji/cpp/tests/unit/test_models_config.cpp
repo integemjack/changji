@@ -148,36 +148,12 @@ TEST_CASE("模型配置能从 toml 读出来") {
         // 再读项目里的 changji.toml，两份是叠加的。这台机器上要是真配过
         // 模型（服务器上就是），那几项永远不会是空的——这条用例于是在
         // 干净机器上过、在真在用的机器上挂。2026-09-10 在服务器上撞到：
-        // 整套 575 个用例常年红一个，红着红着就没人看了，真回归也照样漏过去。
+        // 整套用例常年红一个，红着红着就没人看了，真回归也照样漏过去。
         //
-        // Linux/BSD 认 XDG_CONFIG_HOME，Windows 认 LOCALAPPDATA，
-        // 都指到一个空的临时目录，用户级那份就等于不存在。
-        // **这个隔离目录用纯 ASCII 名。** 外面那个 tmp 故意带中文（这条
-        // 用例本来就要测中文路径能不能一路走到底），但那是给「模型库」用的。
-        // 把带中文的路径塞进 LOCALAPPDATA 会在 Windows 上抛
-        // "No mapping for the Unicode character exists in the target
-        // multi-byte code page"——环境变量那条路上有一步窄字符转换，
-        // 而这跟这条用例要测的东西没关系，别把两件事绞在一起。
-        const fs::path empty_cfg =
-            fs::temp_directory_path() / "changji_empty_cfg_for_test";
-        fs::remove_all(empty_cfg, ec);
-        fs::create_directories(empty_cfg, ec);
-#ifdef _WIN32
-        const changji::test::ScopedEnv iso("LOCALAPPDATA",
-                                           paths::to_utf8(empty_cfg));
-#elif defined(__APPLE__)
-        // ⚠️ **macOS 上换的必须是 HOME，不是 XDG_CONFIG_HOME。**
-        // user_config_dir 的 __APPLE__ 分支走的是
-        // `$HOME/Library/Application Support/changji`，那条路上**一个字都
-        // 不看 XDG_CONFIG_HOME**。所以上面说的那个故障，在 Mac 上从来没被
-        // 这道隔离挡住过——2026-09-12 在这台机器上撞到：配置里写着
-        // [models].dir，这条用例在开发机上红、在 CI 上绿（runner 是干净的，
-        // 根本没有那份用户配置）。**"只在一种机器上成立"的隔离等于没有。**
-        const changji::test::ScopedEnv iso("HOME", paths::to_utf8(empty_cfg));
-#else
-        const changji::test::ScopedEnv iso("XDG_CONFIG_HOME",
-                                           paths::to_utf8(empty_cfg));
-#endif
+        // 具体怎么隔离（三个平台各换哪个变量、为什么目录名得是纯 ASCII）
+        // 挪进 scoped_env.hpp 了——2026-09-13 写回那边也栽在同一件事上，
+        // 两处各写一份迟早分家，而分了家最难发现。
+        const changji::test::ScopedUserConfigDir iso("models_config");
         const fs::path cfg2 = tmp / "changji.toml";
         {
             std::ofstream out(cfg2, std::ios::binary);
