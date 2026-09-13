@@ -237,6 +237,17 @@ struct ActiveGeneration {
     /// 这一轮量过了没有。**一次生成只量一次**：问一次 nvidia-smi 要
     /// 一百毫秒上下，每一步都问的话出图那种几十步的会明显变慢。
     bool sampled = false;
+    /// 这一次生成期间**整张卡被占掉的峰值**（GB），每次回调都刷一遍，
+    /// 生成结束再记给调度器。只在 NVML 那条路可用时这么量（进程内一次
+    /// 查询不到一毫秒）；退回 nvidia-smi 那条路时还是老办法量一次。
+    ///
+    /// 为什么不能只量第一步：H3 权重全放内存、分段跑，第一步时显存只有
+    /// 权重的头几段和一小块缓冲（约 10 GB），峰值在后面的段和 VAE 解码
+    /// （24～29 GB）。按第一步记的话调度器以为出片只要 10 GB，首帧那 16 GB
+    /// 的图像模型就留在卡上不卸，下一镜出片当场"cannot make enough memory"
+    /// （2026-09-13 q4_full sh004 实见，三次全败降级）。
+    bool measure_alone = false;
+    double peak_used_gb = 0.0;
 };
 
 ActiveGeneration& active() {
@@ -304,6 +315,25 @@ void preview_trampoline(int step, int frame_count, sd_image_t* frames,
     for (const auto& sink : sinks) sink(tag, step, url);
 }
 
+/// 生成结束把这一轮的峰值记给调度器。失败的那一轮也记：OOM 之前占到
+/// 多少正是下次该腾出多少。
+void record_peak_vram(bool /*ok*/) {
+    ActiveGeneration& a = active();
+    double peak = 0.0;
+    Slot slot = Slot::Image;
+    std::size_t work = 0;
+    {
+        std::lock_guard lg(a.mu);
+        if (!a.measure_alone) return;
+        peak = a.peak_used_gb;
+        slot = a.slot;
+        work = a.work;
+    }
+    if (peak <= 0.0) return;
+    scheduler().record_measured_vram(
+        slot, static_cast<std::size_t>(peak * 1024) * 1024 * 1024, work);
+}
+
 void progress_trampoline(int step, int steps, float time, void* /*data*/) {
     ActiveGeneration& a = active();
     StepCallback cb;
@@ -339,64 +369,46 @@ void progress_trampoline(int step, int steps, float time, void* /*data*/) {
     //
     // 量它是因为**静态估算靠不住**：同一路 weights="cpu"，我算 14.6 GB、
     // 实测 74 GB。见 Scheduler::record_measured_vram。
-    if (!loading && step >= 1) {
-        bool first = false;
-        Slot slot = Slot::Image;
-        std::size_t work = 0;
+    // **每次回调刷一遍峰值**（NVML 可用时）。为什么不只量第一步，见
+    // ActiveGeneration::peak_used_gb。量的是"总量 − 空闲"，也就是整张卡
+    // 被占掉的，所以只在这个槽是唯一装着的时候才算数（measure_alone 在
+    // 生成开始时定，见 generate / generate_video）。
+    {
+        bool alone = false;
         {
             std::lock_guard lg(a.mu);
-            if (!a.sampled) {
-                a.sampled = true;
-                first = true;
-                slot = a.slot;
-                work = a.work;
-            }
+            alone = a.measure_alone;
         }
-        if (first) {
-            // **只在这个槽是唯一装着的时候才记。**
-            //
-            // 量的是"总量 − 空闲"，也就是**整张卡上被占掉的**，不是这个槽
-            // 单独占的。别的槽（大模型 15 GB）同时装着的话，那 15 GB 会被
-            // 算到这个槽头上，于是它的上限被抬高，以后每次都以为自己要
-            // 90 GB——该留的时候反而去卸别人。
-            //
-            // 只在独占时记，数就是干净的。代价是记得少一点：开机后第一次
-            // 出片通常正好是独占（别的还没装），够用了。
-            // **这里不能 return**：底下还有取消检查（sd_cancel_generation
-            // 就是在这个回调里发的），提前返回等于让「停止」在这一步失灵。
-            const auto loaded = scheduler().loaded_slots();
-            const bool alone = loaded.size() == 1 && loaded.front() == slot;
-            if (alone) {
-                // **总量和空闲要一次问出来。**
-                //
-                // 以前是分两次：空闲走 free_vram_gb，总量走
-                // HardwareProfile::detect。两个数来自两个时刻，而我们要的
-                // 是它们的差——中间只要有别的动静，差值就不是这个槽占的，
-                // 却会被当成实测值记下来，之后每一镜都拿它判要不要卸模型。
-                //
-                // detect 还会跑一遍完整硬件探测（fork nvidia-smi、查 PATH、
-                // 读 CPU 信息），而这里是 sd.cpp 的采样回调——这个进程
-                // CUDA 映射最满、最不该 fork 的时候。NVML 那条路一次调用
-                // 两个数都有，连 fork 都不用。
-                //
-                // 拿不到就退回老路（Mac 上就没有 NVML 这条）。
-                double free_now = 0.0;
-                double total_gb = 0.0;
-                if (const auto t = models::vram_totals_gb(); t.has_value()) {
-                    total_gb = t->total_gb;
-                    free_now = t->free_gb;
-                } else if (const auto f = models::free_vram_gb(); f.has_value()) {
-                    const auto prof = models::HardwareProfile::detect(std::nullopt);
-                    total_gb = prof.gpu.has_value() ? prof.gpu->vram_gb() : 0.0;
-                    free_now = *f;
+        if (alone) {
+            if (const auto t = models::vram_totals_gb(); t.has_value()) {
+                const double used_gb = t->total_gb - t->free_gb;
+                std::lock_guard lg(a.mu);
+                if (used_gb > a.peak_used_gb) a.peak_used_gb = used_gb;
+            } else if (!loading && step >= 1) {
+                // 没有 NVML：退回老办法，第一个采样步量一次
+                bool first = false;
+                Slot slot = Slot::Image;
+                std::size_t work = 0;
+                {
+                    std::lock_guard lg(a.mu);
+                    if (!a.sampled) {
+                        a.sampled = true;
+                        first = true;
+                        slot = a.slot;
+                        work = a.work;
+                    }
                 }
-                if (total_gb > 0.0) {
-                    const double used_gb = total_gb - free_now;
-                    if (used_gb > 0.0) {
-                        scheduler().record_measured_vram(
-                            slot,
-                            static_cast<std::size_t>(used_gb * 1024) * 1024 * 1024,
-                            work);
+                if (first) {
+                    if (const auto f = models::free_vram_gb(); f.has_value()) {
+                        const auto prof = models::HardwareProfile::detect(std::nullopt);
+                        const double total_gb = prof.gpu.has_value() ? prof.gpu->vram_gb() : 0.0;
+                        const double used_gb = total_gb - *f;
+                        if (total_gb > 0.0 && used_gb > 0.0) {
+                            scheduler().record_measured_vram(
+                                slot,
+                                static_cast<std::size_t>(used_gb * 1024) * 1024 * 1024,
+                                work);
+                        }
                     }
                 }
             }
@@ -802,6 +814,10 @@ void SdContext::generate(const ImageRequest& req, const fs::path& dest,
         a.slot = Slot::Image;
         a.work = static_cast<std::size_t>(req.width) * req.height;
         a.sampled = false;   // 每次生成重新量一遍，见 progress_trampoline
+        a.peak_used_gb = 0.0;
+        // 只在这个槽是唯一装着的时候量，理由见 peak_used_gb。
+        const auto loaded = scheduler().loaded_slots();
+        a.measure_alone = loaded.size() == 1 && loaded.front() == Slot::Image;
     }
     a.cancel_sent.store(false, std::memory_order_relaxed);
     ::sd_set_progress_callback(progress_trampoline, nullptr);
@@ -814,6 +830,7 @@ void SdContext::generate(const ImageRequest& req, const fs::path& dest,
     sd_image_t* out = nullptr;
     int count = 0;
     const bool ok = ::generate_image(impl_->ctx, &g, &out, &count);
+    record_peak_vram(ok);
 
     {
         std::lock_guard lg(a.mu);
@@ -939,6 +956,9 @@ void SdContext::generate_video(const VideoRequest& req, const fs::path& raw_dest
         a.work = static_cast<std::size_t>(req.width) * req.height *
                  std::max(1, req.frames);
         a.sampled = false;
+        a.peak_used_gb = 0.0;
+        const auto loaded = scheduler().loaded_slots();
+        a.measure_alone = loaded.size() == 1 && loaded.front() == Slot::Video;
     }
     a.cancel_sent.store(false, std::memory_order_relaxed);
     ::sd_set_progress_callback(progress_trampoline, nullptr);
@@ -952,6 +972,7 @@ void SdContext::generate_video(const VideoRequest& req, const fs::path& raw_dest
     int count = 0;
     sd_audio_t* audio = nullptr;
     const bool ok = ::generate_video(impl_->ctx, &g, &frames, &count, &audio);
+    record_peak_vram(ok);
 
     {
         std::lock_guard lg(a.mu);

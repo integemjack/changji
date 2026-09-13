@@ -320,6 +320,27 @@ bool Scheduler::make_room(std::size_t need, Slot keep, std::size_t work) {
         it != measured_.end() && usable(it->second)) {
         live = it->second.bytes;
         live_measured = true;
+    } else if (const auto it2 = measured_.find(keep);
+               it2 != measured_.end() && it2->second.bytes > 0 && work > 0 &&
+               it2->second.work > 0 && it2->second.work < work) {
+        // **量过、但量的是个更小的活：按活的比例放大，不要扔掉退回估算。**
+        //
+        // 2026-09-13 q4_full 实见：出片刚在 73 帧的镜头上量到 24 GB，下一镜
+        // 106 帧，活更大、量到的数"不算数"，于是退回静态估算——那个数比
+        // 卡上剩的 9.5 GB 还小，判成"够，不卸"，首帧那 16 GB 的图像模型留
+        // 在卡上，sd.cpp 当场 "cannot make enough memory"，三次全败降级。
+        // 而实测峰值随活只会涨不会跌（H3 分段跑，帧数多了显存其实不涨，
+        // 画幅大了会涨），按比例放大是偏保守的那一边：多卸一次，不会 OOM。
+        const double scale = static_cast<double>(work) /
+                             static_cast<double>(it2->second.work);
+        double scaled = static_cast<double>(it2->second.bytes) * scale;
+        if (total_vram_ > 0 && scaled > static_cast<double>(total_vram_)) {
+            scaled = static_cast<double>(total_vram_);
+        }
+        live = static_cast<std::size_t>(scaled);
+        // 放大过的不算"量到的"：决策记录里仍写"估的"——它确实是推的，
+        // 只是推的起点是实测而不是那张静态表。
+        live_measured = false;
     } else if (self && self->spec.live_vram) {
         // 每次现问：模型可能已经被换过了。见 SlotSpec::live_vram。
         const std::size_t got = self->spec.live_vram();
@@ -491,7 +512,15 @@ Lease Scheduler::acquire_once(Slot slot, std::size_t work) {
         // 所以量过的活不够大时，重新腾一次地方。**不看返回值**：模型已经
         // 装着了，腾不出来也只能照跑（和以前一样），但能腾就腾——
         // 这样只会比以前多卸一个该卸的，不会把原来跑得通的变成报错。
-        if (work > 0 && !measurement_covers(slot, work)) {
+        //
+        // **量过的活够大也要看一眼卡上现在还剩多少**（2026-09-13 q4_full
+        // sh004 实见）：出片槽早就装着、峰值也量过（独占时 24.9 GB），
+        // 中间跑了首帧阶段，图像模型 16 GB 也装上了；回头出片时槽是装着的、
+        // 量过的活也够大，于是一次判断都不做——卡上只剩 9.5 GB，sd.cpp
+        // 当场 "cannot make enough memory"，三次全败降级。量到的峰值是
+        // 独占时的数，别的槽后来装了多少它不知道，只有 make_room 里那道
+        // "问卡"能知道。所以只要说了这次多大的活，就重走一遍 make_room。
+        if (work > 0) {
             (void)make_room(e->spec.vram_estimate, slot, work);
         } else {
             // **这一镜什么都没干，就不能让上一镜的结论继续挂在那儿。**

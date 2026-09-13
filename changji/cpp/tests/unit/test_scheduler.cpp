@@ -458,6 +458,92 @@ TEST_CASE("显存真空着的时候别瞎卸模型") {
     }
 }
 
+TEST_CASE("量过一个更小的活：按比例放大再判，别退回估算") {
+    // 2026-09-13 q4_full 实见：73 帧的镜头量到 24 GB，下一镜 106 帧，
+    // "量过的活不够大"于是退回估算，估算比卡上剩的 9.5 GB 还小，判成
+    // 够、不卸，sd.cpp 当场 cannot make enough memory。
+    Scheduler s;
+    s.set_budget(10ull << 30);
+
+    int image_unloads = 0;
+    SlotSpec img;
+    img.slot = Slot::Image;
+    img.vram_estimate = 8ull << 30;
+    img.load = [] {};
+    img.unload = [&image_unloads] { ++image_unloads; };
+    s.register_slot(img);
+
+    SlotSpec vid;
+    vid.slot = Slot::Video;
+    vid.vram_estimate = 8ull << 30;
+    // 静态估算故意给个偏小的数（5 GB）：正是它把人骗了
+    vid.live_vram = [] { return std::size_t(5ull << 30); };
+    vid.load = [] {};
+    vid.unload = [] {};
+    s.register_slot(vid);
+
+    { auto lease = s.acquire(Slot::Image); }
+    // 出片在活=100 的镜头上量到 20 GB
+    s.record_measured_vram(Slot::Video, 20ull << 30, 100);
+    // 卡上剩 25 GB
+    s.set_free_vram_probe([] { return std::optional<double>(25.0); });
+
+    SUBCASE("这次的活不比量过的大：20 ≤ 25，不卸") {
+        Scheduler::AcquireOptions opt;
+        opt.work = 100;
+        { auto lease = s.acquire(Slot::Video, opt); }
+        CHECK(image_unloads == 0);
+    }
+    SUBCASE("这次的活大一半：20 × 1.5 = 30 > 25，要卸——不能退回那个 5 GB 的估算") {
+        Scheduler::AcquireOptions opt;
+        opt.work = 150;
+        { auto lease = s.acquire(Slot::Video, opt); }
+        CHECK(image_unloads == 1);
+    }
+}
+
+TEST_CASE("槽装着、峰值也量过，中间别的槽装上来了：回头再借要重新问卡") {
+    // 2026-09-13 q4_full sh004：出片槽独占时量到 24.9 GB；首帧阶段把
+    // 16 GB 的图像模型装上；回头出片，槽装着、量过的活也够大，一次判断
+    // 都不做，卡上只剩 9.5 GB，sd.cpp 当场 cannot make enough memory。
+    Scheduler s;
+    // 预算 20 GB：两个槽各估 8 GB，都装着时再借就超预算，走到"问卡"那一步
+    // （静态账 ≤ 预算时 make_room 直接放行，那条路不问卡）。
+    s.set_budget(20ull << 30);
+
+    int image_unloads = 0;
+    SlotSpec img;
+    img.slot = Slot::Image;
+    img.vram_estimate = 8ull << 30;
+    img.evict_priority = 1;
+    img.load = [] {};
+    img.unload = [&image_unloads] { ++image_unloads; };
+    s.register_slot(img);
+
+    SlotSpec vid;
+    vid.slot = Slot::Video;
+    vid.vram_estimate = 8ull << 30;
+    vid.evict_priority = 9;
+    vid.load = [] {};
+    vid.unload = [] {};
+    s.register_slot(vid);
+
+    Scheduler::AcquireOptions opt;
+    opt.work = 100;
+    double free_gb = 26.0;
+    s.set_free_vram_probe([&free_gb] { return std::optional<double>(free_gb); });
+
+    { auto v = s.acquire(Slot::Video, opt); }          // 出片槽装上、独占
+    s.record_measured_vram(Slot::Video, 24ull << 30, 100);   // 量到 24 GB
+    { auto i = s.acquire(Slot::Image); }               // 首帧阶段把图像装上
+    CHECK(image_unloads == 0);
+
+    free_gb = 9.5;   // 图像模型占掉了一大块
+    { auto v = s.acquire(Slot::Video, opt); }          // 回头出片：槽是装着的
+    // 24 > 9.5：必须把图像模型卸掉，不能因为"装着、量过"就放行
+    CHECK(image_unloads == 1);
+}
+
 TEST_CASE("显存不够时，每个槽要给出各自的出路") {
     // 只说一句"显存不够"用户无从下手。配音和大模型都能换成外部服务
     // （改配置，不改代码），出图出片躲不掉、只能在放内存和降分辨率之间挑。
@@ -1179,13 +1265,15 @@ TEST_CASE("从头到尾走一遍用户要的那条路") {
     CHECK(s.loaded(Slot::LLM));
     CHECK(s.room_note(Slot::Video) == "显存够，没动别的模型");
 
-    // 5b）**同一档再出一镜：这一镜什么都没干，就不能照抄上一镜的话。**
-    //     槽装着、画幅也罩得住，走的是快路（不重新腾地方）。以前
-    //     last_decision_ 停在上一镜，于是进度条上这一镜会抄上一镜的结论
-    //     ——上一镜要是卸过，这一镜就凭空多出一句"腾显存：卸了 1 个模型"。
+    // 5b）**同一档再出一镜：这一镜也要重新问一次卡。** 以前槽装着、画幅
+    //     罩得住就走快路（不重新腾地方），2026-09-13 栽了：中间首帧阶段把
+    //     图像模型装上，回头出片一次判断都不做，sd.cpp 当场没内存。现在
+    //     只要说了这次多大的活就重走 make_room——这里什么都没变，所以是
+    //     "够，没动"，而且不会抄上一镜的结论（上一镜要是卸过也不会被算到
+    //     这一镜头上）。
     { auto v = s.acquire(Slot::Video, small); }
     CHECK(llm_unloads == 1);
-    CHECK(s.room_note(Slot::Video) == "模型本来就装着，没动别的");
+    CHECK(s.room_note(Slot::Video) == "显存够，没动别的模型");
 
     // 6）用户把画幅换成 2K：量过的活比这次小，那个数不算数 -> 回到保守。
     //    在标准档量到的 74 GB 拿去给 2K 判"够"，下一步就是显存爆掉。
@@ -1272,15 +1360,17 @@ TEST_CASE("走快路的那一镜，不能照抄上一镜的结论") {
     // 这一镜跑完量到了。
     s.record_measured_vram(Slot::Video, 74 * GB, small);
 
-    // 第二镜：槽还装着、画幅也罩得住 -> 走快路，什么都没干。
+    // 第二镜：槽还装着、画幅也罩得住。**以前走快路什么都不干**，2026-09-13
+    // 栽了（中间别的槽装上来，回头一次判断都不做就 OOM），现在只要说了
+    // 这次多大的活就重新问一次卡：74 ≤ 81，够，没动。
     { auto v = s.acquire(Slot::Video, small); }
     CHECK(llm_unloads == 1);
-    // **不能还是"卸了 1 个模型"**，也不该说成"显存够"——那会让人以为
-    // 刚做过一次判断。照实说：本来就装着。
-    CHECK(s.room_note(Slot::Video) == "模型本来就装着，没动别的");
+    // **不能还是"卸了 1 个模型"**——那是上一镜的结论。这一镜真判过了，
+    // 照实说"够"。
+    CHECK(s.room_note(Slot::Video) == "显存够，没动别的模型");
     const auto d = s.last_room_decision();
     REQUIRE(d.valid);
-    CHECK(d.already_loaded);
+    CHECK_FALSE(d.already_loaded);
     CHECK(d.kept);
     CHECK(d.evicted == 0);
 }
