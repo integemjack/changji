@@ -141,9 +141,17 @@ std::string slugify(const std::string& name, unsigned int seed) {
 ///
 /// 长度上折中在八九秒：**参考音频太短克隆不稳**（社区实测 3 秒能认出
 /// 来，8~15 秒明显更好），而摇是要反复点的，十几秒一下太磨人。
+/// **长度还影响摇出来的音域，这一条是量出来的。** 同样 24 个种子：
+///
+///     短句（12 字 / 约 2.5 秒）   112 ~ 279 Hz
+///     中句（29 字 / 约 7 秒）     135 ~ 296 Hz
+///     长句（58 字 / 约 10 秒）    149 ~ 270 Hz   ← 低音男声整个没了
+///
+/// 长句会把说话人往训练分布的中间拽，摇一整轮也摇不出 149 以下的——
+/// 而短剧最缺的恰恰是那一头。所以定在中句：音域最宽，片长 6~10 秒
+/// 又还在"参考音频够用"的区间里。
 constexpr const char* kVoiceText =
-    "你好，这是我说话的样子。今天风有点大，窗外的树叶一直在响，"
-    "我把窗户关上了。";
+    "你好，这是我说话的样子。今天风有点大，窗外的树叶一直在响。";
 
 unsigned int seed_of(const in_json& body) {
     if (body.is_object() && body.contains("seed") &&
@@ -164,6 +172,11 @@ ProjectStore open_or_400(const in_json& body) {
     const std::string p = body.at("project").get<std::string>();
     if (p.empty()) throw ApiError(400, "没有指定项目目录");
     return ProjectStore(paths::from_utf8(p));
+}
+
+/// 摇出来那一段的落点。**点开头**，所以不进音色清单。
+fs::path take_path(const fs::path& dir, unsigned int seed) {
+    return dir / paths::from_utf8(".take_" + std::to_string(seed) + ".wav");
 }
 
 /// 出一段，顺带把基频量出来。
@@ -226,22 +239,29 @@ json render_into(const ProjectStore& store, const fs::path& dest,
 }  // namespace
 
 const std::vector<PresetVoice>& preset_voices() {
-    // **这七个是摇出来挑的，不是我编的。**
+    // **这九个是摇出来挑的，不是我编的。**
     //
-    // 2026-09-13 在服务器上摇了二十个候选种子，逐个量基频，然后贪心挑出
-    // 两两至少差 15 Hz 的一组。上一版随手写的八个里 3313 和 8859 都落在
-    // 137 Hz——八格里有两格大概率是同一个人，白占一格。
+    // 2026-09-13 在服务器上摇了二十八个候选种子（都念 kVoiceText 那一段），
+    // 逐个量基频，再贪心挑出两两至少差 18 Hz 的一组。候选的范围是
+    // 96 ~ 304 Hz，挑出来这九个把它铺满：
     //
-    // 七个不是八个：分得开比凑够数重要。二十个候选里 273 Hz 往上只剩
-    // 279，差 6 Hz，凑第八个只会多一个听不出区别的。
+    //     96   低音男       212  偏低女 / 偏高男
+    //     135  男           231  女
+    //     164  偏高男       258  女
+    //     192  偏低女       276  偏高女
+    //                       296  高女
     //
-    // `hz` 是**那次实测的值**，给界面当"摇之前的提示"用——想要男声就点
-    // 最左边那个，不用一个个摇过去。它不是承诺：同一个种子在这台机器上
-    // 是可复现的（实测两次 md5 完全相同），换一张卡、换一版权重之后
-    // 数字可能微动，界面上真正显示的还是摇完当场量的那个。
+    // **数量是挑出来的，不是定好的。** 先定"两两差多少才算听得出区别"，
+    // 剩下几个就是几个——反过来先定八个再凑，凑出来的那几个里必然有
+    // 听不出差别的。上一版随手写的八个里就有两个都落在 137 Hz。
+    //
+    // `hz` 是**那次实测的值**，给界面当"摇之前的提示"用——想要低音男声
+    // 就点最左边那个，不用一个个摇过去。它不是承诺：同一个种子配同一段
+    // 文本在这台机器上逐字节可复现（实测两次 md5 相同），换一张卡、换一
+    // 版权重之后数字可能微动，界面上真正显示的还是摇完当场量的那个。
     static const std::vector<PresetVoice> kPresets = {
-        {1789, 112}, {3313, 137}, {4409, 161}, {4523, 192},
-        {6637, 209}, {5051, 235}, {3541, 273},
+        {9137, 96},  {7001, 135}, {2027, 164}, {7743, 192}, {6113, 212},
+        {3313, 231}, {1013, 258}, {3541, 276}, {1789, 296},
     };
     return kPresets;
 }
@@ -254,10 +274,26 @@ ApiResult post_voice_take(const in_json& body) {
             ? body.at("text").get<std::string>()
             : std::string(kVoiceText);
 
-    // **落点是固定的一个临时文件。** 摇是随手点的，一次点几十下；
-    // 按种子起名的话 voices/ 里会堆满再也用不上的 wav，而它们和真正
-    // 存下来的音色混在同一个目录里，看着像出了一堆废文件。
-    const fs::path dest = store.paths().voices() / ".take.wav";
+    // **落点按种子起名，而且只留最近这一个。**
+    //
+    // 固定一个 `.take.wav` 的话，"存下来"那一步就分不清手里这段是哪个
+    // 种子摇的——摇了 A 又摇 B、然后去存 A，拷过去的会是 B。按种子起名
+    // 就不可能对错。点开头，所以不会进音色清单（clips_in 里挡着）。
+    //
+    // 摇是随手点的，一次点几十下，不清的话 voices/ 里会堆一地；
+    // 所以每摇一次就把上一次那个删掉，任何时候至多留一个。
+    const fs::path dir = store.paths().voices();
+    const fs::path dest = take_path(dir, seed);
+    std::error_code ec;
+    if (fs::is_directory(dir, ec)) {
+        for (const auto& e : fs::directory_iterator(dir, ec)) {
+            if (ec) break;
+            const std::string fname = paths::to_utf8(e.path().filename());
+            if (fname.rfind(".take_", 0) == 0 && e.path() != dest) {
+                fs::remove(e.path(), ec);
+            }
+        }
+    }
     return {200, render_into(store, dest, text, seed)};
 }
 
@@ -277,9 +313,34 @@ ApiResult post_voice_save(const in_json& body) {
 
     const fs::path dest =
         store.paths().voices() / paths::from_utf8(stem + ".wav");
+
+    // **优先把刚才听的那一段直接拷过去。**
+    //
+    // 同种子同文本是确定的（实测两次 md5 相同），所以重出一遍也能得到
+    // 同一段。但"拷过去"是**结构上**保证了"存的就是听的"，而重出是靠
+    // 确定性这个经验性质——模型中途被驱逐重载、换一版权重，那个性质
+    // 就不一定还在，而它一旦不在，表现又是"存进去的不是刚才听到的"，
+    // 也就是刚修好的那个毛病重新长回来。顺带还省掉八秒。
+    //
+    // 拿不到就退回重出：有人可能不经试听直接存（比如脚本调接口）。
+    std::error_code ec;
+    const fs::path take = take_path(store.paths().voices(), seed);
+    json out;
+    {
+        if (fs::is_regular_file(take, ec) && take != dest) {
+            fs::copy_file(take, dest, fs::copy_options::overwrite_existing, ec);
+            if (!ec) {
+                out = {{"rel", store.paths().rel(dest)},
+                       {"seed", seed},
+                       {"seconds", stages::probe_wav_duration(dest)}};
+                const auto f0 = stages::estimate_wav_f0(dest);
+                if (f0.has_value()) out["hz"] = std::lround(*f0);
+            }
+        }
+    }
     // **和试听念同一段。** 见 kVoiceText 上面那段：换文本就换人，
     // 所以这里不能"重出一段更长的"，否则存进去的不是刚才听到的。
-    json out = render_into(store, dest, kVoiceText, seed);
+    if (out.is_null()) out = render_into(store, dest, kVoiceText, seed);
     out["saved"] = store.paths().rel(dest);
     out["name"] = stem;
 
