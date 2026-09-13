@@ -140,7 +140,9 @@ TEST_CASE("探测不到显卡时按 12GB 保守估算") {
     const HardwareProfile p = HardwareProfile::detect(6.0);
     CHECK(p.vram_gb == doctest::Approx(6.0));
     CHECK_FALSE(p.detected);  // 给了覆盖值就不算探测到
-    CHECK(p.tiers.size() == 3);
+    // 两档：preview 2026-09-13 删了，见 models/hardware.hpp 上面那段。
+    // 写 all_tiers().size() 而不是字面量，下次增删档位这里不用跟着改。
+    CHECK(p.tiers.size() == all_tiers().size());
     // 6GB 落在最低那一档
     CHECK(p.tiers.at(Tier::DRAFT).width == 448);
 }
@@ -149,7 +151,7 @@ TEST_CASE("本机探测能跑通且不崩") {
     // 这台机器上有没有卡都不影响：detect 的契约是探测不到就返回空，
     // 不是抛异常。前置验证里 doctor 崩掉的教训就在这里。
     const HardwareProfile p = HardwareProfile::detect();
-    CHECK(p.tiers.size() == 3);
+    CHECK(p.tiers.size() == all_tiers().size());
     CHECK(p.vram_gb > 0.0);
     if (p.gpu.has_value()) {
         CHECK_FALSE(p.gpu->name.empty());
