@@ -172,10 +172,20 @@ export function useShots() {
    *
    * 别用 inflight 里的 step/total：那是整集的位置（第 21 镜 / 共 22 镜），
    * 拿它画单镜的条，正在跑的那一镜一出现就是 95%，跑完还是 95%。
+   *
+   * **准备段返回 null，走马灯。** 那一段的分母不是一个，它会一轮一轮地
+   * 重来：出片一镜实测 0→28 跑满三遍（扩散模型、编码器、VAE 各一遍），
+   * 采样完了 VAE 分块解码又是一轮 0→351。拿它画条的话，进度条在一镜里
+   * **倒退四次**——比不动更像出了事。
+   *
+   * 下面 shotState 那段注释里早就把准备和采样分开说了（文字上写"准备
+   * 8/28"和"成片 3/6 步"），条没跟上而已。走马灯在这儿是诚实的：那一段
+   * 确实不知道还要多久。
    */
   function pct(shotId) {
     const x = inflightBy.value[shotId]
     if (!x || typeof x.shotStep !== 'number' || !x.shotSteps) return null
+    if (x.shotPrep) return null
     return Math.min(100, Math.round((x.shotStep / x.shotSteps) * 100))
   }
 
