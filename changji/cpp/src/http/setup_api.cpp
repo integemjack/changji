@@ -365,12 +365,29 @@ ApiResult get_setup_state(const config::Settings& settings,
 }
 
 ApiResult post_setup_download(const config::Settings& settings, const json& body) {
+    // **只保存配置，不下文件。** 用户 2026-09-14："模型没下载也应该可以
+    // 保存，提示用户是否现在下载。"
+    //
+    // 这两件事本来就该分开：「这一档是我要的」是个决定，「文件到盘上了」
+    // 是件体力活。捆在一起的后果是——挑一档 40 GB 的权重，就得先等它下完
+    // 才算选上，中途一停配置还回到原样。
+    //
+    // 默认仍是 true，老的调用方一个字都不用改。
+    const bool want_download = [&] {
+        const auto it = body.find("download");
+        return it == body.end() || !it->is_boolean() || it->get<bool>();
+    }();
+
     if (setup::Downloader::instance().running()) {
         // 409 而不是静默忽略：用户点了第二次而界面什么都没变的话，
         // 他会以为第一次没点上。
+        // **只保存也拦**：下载器正拿着上一套选择在跑，这会儿把配置改成
+        // 另一套，下完那一下 on_item_done 又会写回去，两边打架。
         throw ApiError(409, "已经在下了。要换选择先点停止。");
     }
-    if (setup::pick_tool().empty()) {
+    // **这一条只在真要下的时候问。** 机器上没装 aria2/curl 跟"我想把配置
+    // 存下来"毫无关系，而拦在这儿的话，没装下载器的机器连模型都选不了。
+    if (want_download && setup::pick_tool().empty()) {
         throw ApiError(400,
                        "这台机器上没找到下载器（aria2c 或 curl）。"
                        "装一个再回来：Debian/Ubuntu 是 apt-get install -y aria2，"
@@ -415,18 +432,21 @@ ApiResult post_setup_download(const config::Settings& settings, const json& body
         if (pick == selections.end()) continue;
         const Option* opt = g.find(pick->second);
         if (opt == nullptr) throw ApiError(400, "不认识的选项：" + pick->second);
-        if (opt->files.empty()) {
-            // 不下文件的那几组只有旋钮要写（比如 llm.backend = remote、
-            // base_url、model）。**立刻写**：它们不参与下载，等下载完再写
-            // 的话，中途取消就永远写不上了。
-            //
-            // **判据是"有没有文件"，不是"是不是 kNoneOption"。**
-            // 走云端 API 那一项（zhipu-free）也一个文件都不下，但它
-            // 带着三个必须写的旋钮。按 id 判的话它会掉进下面那个循环、
-            // 循环体一次都不执行，于是**旋钮一个都没写**——而这一页会
-            // 报"下完了"。用户选了云端模型、点了确认、页面说好了，
-            // 然后第一次写剧本还在用老地址。
-            if (opt->settings.empty()) continue;
+
+        // **每一组选中的配置都立刻写，不管它要不要下文件。**
+        //
+        // 原来只有 `files.empty()` 那几组（云端 API、"不下载"）在这儿写，
+        // 要下文件的那些等 on_item_done 在整组下完之后才写。那样一来
+        // "选中"和"下完"是同一件事，中途一停就什么都没留下。
+        //
+        // ⚠️ 下面那个 on_item_done 的老注释说「一组的文件全齐了才写」，
+        // 防的是**半组**：video 指着新模型、video_vae 还是上一档，两个
+        // 文件都在盘上却不配套，sd.cpp 不报错只出一段花屏。**那个顾虑
+        // 和这里不冲突**——这里写的是整组，一个文件都还没下。配置指着
+        // 盘上没有的文件是个**说得出口**的状态：体检里那条"配了 N 项、
+        // 其中 M 项缺"会直接点出来（doctor.cpp 的 configured/missing）。
+        // 静默的花屏和明说的缺文件，不是一码事。
+        if (!opt->settings.empty()) {
             const json patch = setup::config_patch({{g.key, opt->id}});
             for (const auto& [section, values] : patch.items()) {
                 if (!values.is_object()) {
@@ -435,8 +455,10 @@ ApiResult post_setup_download(const config::Settings& settings, const json& body
                 }
                 for (const auto& [k, v] : values.items()) immediate[section][k] = v;
             }
-            continue;
         }
+        // 判据是"有没有文件"，不是"是不是 kNoneOption"：走云端 API
+        // 那一项（zhipu-free）也一个文件都不下，但它带着三个必须写的旋钮。
+        if (opt->files.empty()) continue;
         for (const auto& f : opt->files) {
             items.push_back(
                 {g.key, opt->id, f, setup::resolve_url(source, f.repo, f.path)});
@@ -449,8 +471,12 @@ ApiResult post_setup_download(const config::Settings& settings, const json& body
         throw ApiError(500, std::string("配置写不进去：") + e.what());
     }
 
-    if (items.empty()) {
-        // 全选了"不下载"，或者选的都已经在盘上。不算错——直接当下完了。
+    if (!want_download || items.empty()) {
+        // 两种情况回同一个形状，因为对调用方来说是同一件事：**没起下载**。
+        //   * `download:false` —— 只保存。配置上面那次 persist 已经写进去
+        //     了，要下什么由前端问过用户再说。
+        //   * items 为空 —— 全选了"不下载"，或者选的都已经在盘上。
+        // 两者都不算错。
         return {200, {{"started", false},
                       {"progress", setup::Downloader::instance().snapshot().to_json()}}};
     }

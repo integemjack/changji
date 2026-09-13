@@ -26,7 +26,7 @@
  * 刷新页面、关掉浏览器第二天回来、换台设备看。轮询这三种都对，
  * 事件流每一种都要另写一段补偿。
  */
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 
 import AppIcon from '@/components/AppIcon.vue'
 import ProgressBar from '@/components/ProgressBar.vue'
@@ -55,6 +55,14 @@ const dir = ref('')
 const source = ref('')
 const starting = ref(false)
 const progress = ref(null)
+/**
+ * 存完了，但文件还缺——「现在下吗」那一问摆出来没有。
+ *
+ * 只有 save() 会把它立起来。用户接着又改了选择的话要放下（见下面那个
+ * watch）：那一问针对的是**刚存下去的那一套**，选择一变它就问的不是
+ * 同一件事了。
+ */
+const askDownload = ref(false)
 const expanded = ref({}) // 哪几组展开了文件明细
 
 let timer = null
@@ -257,17 +265,7 @@ function pruneEmpty(obj) {
 
 /** 一轮跑完（下完、失败、取消）之后的收尾。三条路都要走同一遍。 */
 async function afterRun(kind) {
-  const data = await api.setupState()
-  state.value = data
-  picks.value = { ...data.recommended, ...pruneEmpty(data.selected) }
-  // **跑完一轮就算他在这一页上做过决定了。** 有几组故意选了「不下载」的话
-  // 模型确实还缺，而不记这一笔的话他每次打开都会被拦回来，
-  // 每次都要再点一次「先跳过」。
-  markSetupHandled()
-  // 路由守卫一个会话只问一次。不清掉的话，下完之后点「进入首页」
-  // 会被那个缓存下来的"还缺模型"又弹回来。
-  clearSetupCheck()
-  emit('applied')
+  await syncAfterWrite()
   if (kind !== 'done') return
   // **换一档已经下过的模型走的也是这条路**（引擎照样起一轮，只是每个文件
   // 都判成"盘上已有"）。那时候说"模型都准备好了"是答非所问——
@@ -298,8 +296,62 @@ function stopPolling() {
   timer = null
 }
 
+/** 配置写进去之后，页面上要跟着对齐的那几样。save 和 afterRun 共用。 */
+async function syncAfterWrite() {
+  const data = await api.setupState()
+  state.value = data
+  picks.value = { ...data.recommended, ...pruneEmpty(data.selected) }
+  // **写过一次就算他在这一页上做过决定了。** 有几组故意没下的话模型确实
+  // 还缺，而不记这一笔的话他每次打开都会被拦回来。
+  markSetupHandled()
+  // 路由守卫一个会话只问一次。不清掉的话，存完点「进入首页」会被那个
+  // 缓存下来的"还缺模型"又弹回来。
+  clearSetupCheck()
+  emit('applied')
+}
+
+/**
+ * 存这一套选择——**只写配置，一个文件都不碰**。
+ *
+ * 用户 2026-09-14："模型没下载也应该可以保存，提示用户是否现在下载。"
+ * 「这一档是我要的」和「文件到盘上了」本来就是两件事：捆在一起的话，
+ * 挑一档 40 GB 的权重就得先等它下完才算选上，中途一停配置还回到原样。
+ *
+ * 存完还缺文件的话不自作主张开下，把 askDownload 立起来问一句。
+ */
+async function save() {
+  starting.value = true
+  askDownload.value = false
+  try {
+    const res = await api.startSetupDownload({
+      selections: picks.value,
+      dir: dir.value?.trim() || undefined,
+      source: source.value || undefined,
+      download: false,
+    })
+    progress.value = res.progress
+    // **缺多少要在刷新之前读。** 刷新会按配置里新写进去的那一套重排
+    // picks，plan 跟着重算。
+    const missing = plan.value.need
+    const wasUnchanged = unchanged.value
+    await syncAfterWrite()
+    if (missing > 0) {
+      askDownload.value = true
+      ui.ok('配置存好了。模型还缺一些，下面问你要不要现在下')
+    } else {
+      ui.ok(wasUnchanged ? '配置重写好了' : '已经换过去了，配置写好了')
+    }
+  } catch (err) {
+    ui.error(err.message)
+  } finally {
+    starting.value = false
+  }
+}
+
+/** 真的开下。主按钮不再直接走这儿——问过「现在下吗」才来。 */
 async function start() {
   starting.value = true
+  askDownload.value = false
   try {
     const res = await api.startSetupDownload({
       selections: picks.value,
@@ -328,6 +380,12 @@ async function stop() {
     ui.error(err.message)
   }
 }
+
+// 改了选择，那一问就不算数了——它问的是刚存下去的那一套。
+// **flush: 'sync' 不是随手加的。** 默认那档是微任务，而 save() 里
+// syncAfterWrite 刚给 picks 整个赋过值——回调会排在 askDownload 立起来
+// 之后跑，把刚问出口的话又收回去，那一问就再也不出现。
+watch(picks, () => { askDownload.value = false }, { deep: true, flush: 'sync' })
 
 defineExpose({ reload: load, state, running })
 
@@ -625,30 +683,54 @@ onUnmounted(stopPolling)
         </div>
         <div class="foot__act">
           <slot name="actions" :running="running" />
-          <!-- 没改动时不禁用，只改文案：重写一遍配置是幂等的，配置漂了时靠它修。 -->
+          <!-- 没改动时不禁用，只改文案：重写一遍配置是幂等的，配置漂了时靠它修。
+
+               **这个按钮只存配置，一个文件都不下。** 缺的东西下不下，
+               存完之后由下面那一问说了算。所以 `!state.tool`（机器上
+               没有 aria2/curl）也不再禁它——那跟"我想把选择存下来"
+               没有关系，它只该拦住真正要下的那一下。 -->
           <button
             class="btn btn--primary"
             type="button"
-            :disabled="running || starting || !state.tool"
+            :disabled="running || starting"
             :title="unchanged && plan.need === 0 ? '把这一套的配置项重写一遍，配置手改坏了时用' : ''"
-            @click="start"
+            @click="save"
           >
-            <AppIcon
-              :name="plan.need > 0 ? 'upload' : 'check'"
-              :size="16"
-              :class="{ down: plan.need > 0 }"
-            />
+            <AppIcon name="check" :size="16" />
             {{
               starting
-                ? '正在开始…'
+                ? '正在保存…'
                 : plan.need > 0
-                  ? '下载并使用'
+                  ? '保存'
                   : unchanged
                     ? '重写配置'
                     : '换成这一套'
             }}
           </button>
         </div>
+      </div>
+
+      <!-- 存完了，但文件还缺。**问一句，不自作主张替他开下**——
+           这一套可能是四十几 GB，也可能他就是想先把选择定下来。 -->
+      <div v-if="askDownload" class="askdl">
+        <span class="askdl__msg">
+          配置存好了。这一套还差
+          <span class="numeric strong">{{ humanBytes(plan.need) }}</span>
+          没下，现在下吗？
+        </span>
+        <button
+          class="btn btn--primary btn--sm"
+          type="button"
+          :disabled="running || starting || !state.tool"
+          :title="state.tool ? '' : '这台机器上没有 aria2 或 curl，下不了'"
+          @click="start"
+        >
+          <AppIcon name="upload" :size="14" class="down" />
+          现在下载
+        </button>
+        <button class="btn btn--ghost btn--sm" type="button" @click="askDownload = false">
+          以后再说
+        </button>
       </div>
 
       <p v-if="!dense" class="tiny dim mono center">配置文件：{{ state.configFile }}</p>
@@ -811,6 +893,25 @@ onUnmounted(stopPolling)
 /* ---------- 底栏 ---------- */
 
 /* 初始化页上它粘在底下，是真正浮着的东西，所以带底和边。 */
+/* 存完之后那一问。**跟在 foot 后面单独一行**，不挤进 foot__act：
+   那一排是「我要做什么」，这一行是「刚做完，还有一件事」，
+   混在一起的话用户分不清哪个按钮是主的。 */
+.askdl {
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
+  flex-wrap: wrap;
+  margin-top: var(--s3);
+  padding: var(--s3) var(--s4);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  background: color-mix(in srgb, var(--surface) 94%, transparent);
+}
+.askdl__msg {
+  flex: 1 1 16rem;
+  font-size: 0.9em;
+}
+
 .foot {
   position: sticky;
   bottom: 0;
