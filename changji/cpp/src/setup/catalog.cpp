@@ -373,8 +373,46 @@ std::vector<Group> build() {
             g.options.push_back(std::move(o));
         }
 
+        // **默认这一项，不是上面任何一个本地权重。**
+        //
+        // rank 比最大的本地档（32B Q8_0 = 405）还高，min_vram_gb 是 0，
+        // 所以 recommend() 在任何一张卡上都会挑它。理由在
+        // config::LLMConfig::backend 的注释里，一句话是：本地那一档写作
+        // 最高 59 分而它要占走整张卡，云上这一档不要钱。
+        //
+        // 它不是 kNoneOption——「什么都不装」和「装好了，用这个」是两件事。
+        // 前者在 recommend() 里被跳过（那是这一页要解决的状态），
+        // 后者是一个完整可用的选择，只差一个密钥。
+        {
+            Option o;
+            o.id = "openrouter-free";
+            o.family = "OpenRouter（云端 · 免费档）";
+            o.label = "OpenRouter · 免费模型";
+            // **要紧的话写在 note 里，不是 family_note。** 界面上只显示
+            // 选中那一档的 note（ModelPicker.vue 里那一句「家族那段话不
+            // 摆出来」），family_note 收集了但一个地方都没渲染。
+            o.note =
+                "不下权重，剧本交给云端。OpenRouter 一把密钥转发到几百个"
+                "模型，其中二十来个完全免费；我们按任务分流——写正文用"
+                "实跑比出来最会写的那个（nex-n2.5-pro），拆分镜用带完整"
+                "结构化输出的那个（Nemotron 3 Super）。"
+                "好处是整张卡全留给出图出片；"
+                "代价是本子要发到云上，断网就不能编剧。"
+                "要先去 openrouter.ai 领一把密钥，填进设置页的"
+                "「大模型」那一节。换别家（DeepSeek、智谱、局域网里的"
+                " Ollama / vLLM）也只改设置页那两行。";
+            o.family_note = o.note;
+            o.min_vram_gb = 0.0;
+            o.rank = 1000;
+            o.settings = {
+                {"llm.backend", "remote"},
+                {"llm.base_url", "https://openrouter.ai/api/v1"},
+                {"llm.model", "nvidia/nemotron-3-super-120b-a12b:free"}};
+            g.options.push_back(std::move(o));
+        }
+
         g.options.push_back(none_option(
-            "不下载 · 用外接大模型服务",
+            "不下载 · 用别的外接服务",
             "剧本交给别的机器或者云端（Ollama、vLLM、DeepSeek 之类）。"
             "选它之后去设置页填地址和密钥。",
             {{"llm.backend", "remote"}}));
@@ -684,7 +722,13 @@ json config_patch(const std::map<std::string, std::string>& selections) {
 
         for (const auto& [key, value] : opt->settings) put(key, value);
 
-        if (opt->id == kNoneOption) continue;  // 不下载就不动 owned_roles
+        // **不下任何文件的选项一律不动 owned_roles。**
+        //
+        // 判据是「有没有文件」而不是「是不是 kNoneOption」：走云端那一项
+        // 也一个文件都不下，而把 models.llm 清空的话，用户以后想切回本地
+        // 就得重新去找他早就下好的那个权重叫什么名字——盘上还在，配置里
+        // 没了，而界面上只会说"没选模型"。
+        if (opt->files.empty()) continue;
 
         // **每个键都写。** 没用到的写空串，否则上一次选的模型会留在配置里
         // 被当成这一次的一部分——video_lora 就是这么栽的。

@@ -91,21 +91,139 @@ struct TiersConfig {
 };
 
 struct LLMConfig {
-    /// 大模型跑在哪：`local`（默认，进程内）或 `remote`（走 base_url）。
+    /// 大模型跑在哪：`remote`（默认，走 base_url）或 `local`（进程内）。
     /// **C++ 独有**——Python 那边只有远端一条路。
     ///
-    /// **默认内置**：那是"一个程序跑所有"的那条，不用另起 llama-server，
-    /// 而且归调度器管——出片要显存时它按实时空闲显存决定要不要让开。
-    /// 权重路径在 `[models].llm`。
+    /// **2026-09-13 默认从 local 改成 remote，走 OpenRouter 的免费模型。**
+    /// 三笔账一起算出来的：
     ///
-    /// **remote 那条一直留着**，不是过渡方案：本机跑不动大模型的、
-    /// 想用云上更强模型的、团队共用一台推理机的，都走它。设置页上能切。
+    ///   * **显存**。编剧模型和出图出片共用这张卡。27B 那一档权重就
+    ///     25.3 GB，而单卡 5090 出片时显存峰值已经 31.5/32.6 GB——它不是
+    ///     "占一点"，是把整张卡拿走再还回来，每一集要来回几十次。挪到
+    ///     云上等于白拿回这些显存和每次驱逐/重载的时间。
+    ///   * **写得好不好**。EQ-Bench 长文创作榜上（2026-09-13 抓的）
+    ///     本机跑得动的那一档最高 59.0（Qwen3.5-27B），而云上的
+    ///     GLM-5.3 是 81.8、DeepSeek-V4-Pro 75.6。这个跨度不是提示词
+    ///     能补回来的。
+    ///   * **钱**。OpenRouter 上带 `:free` 后缀的模型不要钱（要一把
+    ///     自己的密钥，见 `api_key`）。退一步就算用收费的，一部 11 集
+    ///     的剧按输入 20 万 / 输出 15 万 token 估，DeepSeek V4-Flash
+    ///     不到一块钱，GLM-5.3 也就几块。
+    ///
+    /// **local 那条一直留着**，不是被淘汰了：断网、不想让本子出境、
+    /// 手上正好有卡的，都走它。设置页上能切，权重路径在 `[models].llm`。
+    /// 它还有一样远端给不了的东西——schema 走 GBNF 是**硬约束**
+    /// （minItems / minLength 那些），远端那条只能削掉再写进提示词，
+    /// 见 llm::remote_schema。
+    ///
     /// 编译时没带 llama.cpp 的话 local 会自动退回 remote 并在日志里说一声。
-    std::string backend = "local";
+    std::string backend = "remote";
 
-    std::string base_url = "http://127.0.0.1:11434/v1";
-    std::string model = "qwen3:14b";
-    std::string api_key = "ollama";  ///< 本地服务通常不校验
+    /// 默认走 OpenRouter（用户 2026-09-13 指定）。
+    ///
+    /// 一把密钥转发到几百个模型，其中二十来个是**完全免费**的
+    /// （`pricing.prompt` 和 `completion` 都是 0）——这条流水线要的两种
+    /// 本事分别落在不同的免费模型上，见 `task_models`。
+    std::string base_url = "https://openrouter.ai/api/v1";
+
+    /// 兜底模型：`task_models` 里没点名的任务用它。
+    ///
+    /// 挑带 `structured_outputs` 的那个而不是写得最好的那个：不认识的任务
+    /// 多半是后加的结构化抽取，宁可牺牲一点文采换"字段填得齐"。
+    std::string model = "nvidia/nemotron-3-super-120b-a12b:free";
+
+    /// **按任务分流：哪一步用哪个模型。** 键是 `llm::Request::schema_name`。
+    ///
+    /// 用户 2026-09-13 定的方向："发挥各自的优势，不同功能使用不同的模型"。
+    /// 这条流水线要的其实是**两种不同的本事**，而免费模型里没有一个两样
+    /// 都强：
+    ///
+    ///   * **写得好**（正文、梗概、大纲、预告）——要的是文采和不写套话。
+    ///     **落在 nex-n2.5-pro，这是实跑比出来的**（2026-09-13，同一场戏、
+    ///     同一段提示词、都关掉思考）：
+    ///
+    ///       nex-n2.5-pro            17 段 1149 字 对白 88% 套话 0 中位 67  46.7 秒
+    ///       ling-3.0-flash-sante    17 段  489 字 对白 47% 套话 0 中位 25   3.4 秒
+    ///       nemotron-3-super-120b   12 段  528 字 对白 17% 套话 0 中位 48  18.8 秒
+    ///
+    ///     字数是别人两倍、对白比例最高、一个套话都没有，段长中位 67 也
+    ///     最接近传统小说的 60（网文中位 33，见 reference-real-chapter-shape）。
+    ///     代价是慢——46.7 秒一场。写正文这种一次几分钟的活儿担得起。
+    ///
+    ///     ⚠️ **这里先后写过 Inkling 和 Nemotron 3 Ultra，两个都栽了**：
+    ///     Inkling 是 EQ-Bench 长文创作榜上免费模型里的最高分（72.5），
+    ///     但 OpenRouter 回 403「only available on agentic harnesses」——
+    ///     免费档限定入口，只发给它登记在册的 agent / 编码工具，
+    ///     而这件事 `/models` 的任何字段里都看不出来。Ultra 是真能跑，
+    ///     但长任务上连接会断，而且写作指标不如 pro。
+    ///     **教训：选型只能靠真发一次，榜单和参数表都不算数。**
+    ///   * **听话**（分镜、人物表、剧本四段、分析）——要的是字段填得齐、
+    ///     枚举不乱编。分镜那份 schema 有六十多个类型定义和一串枚举，
+    ///     文采在这儿一点用都没有。Nemotron 3 Super 是免费档里**唯一**
+    ///     又大又带完整 `structured_outputs` 的。
+    ///
+    /// 配置里这么写（键都可以只写一部分，没写的落到 `model`）：
+    ///
+    ///     [llm.models]
+    ///     chapter = "nvidia/nemotron-3-ultra-550b-a55b:free"
+    ///     storyboard = "nvidia/nemotron-3-super-120b-a12b:free"
+    ///
+    /// ⚠️ **上面那组数是单跑的。** 见 project-ai-chapter-quality 里
+    /// 「单跑打分不作数，三跑也未必」那条——同一份代码连跑两组三遍，
+    /// 对白比例能从 21% 晃到 1%。要在这几项上下结论得三跑，
+    /// 用 `/root/scene_check.py`。这里的取舍是：单跑的差距大到
+    /// （1149 对 489 字、88% 对 17% 对白）不像噪声，先按它定，
+    /// 真跑起来不对再换——换模型只改 `[llm.models]` 那几行。
+    std::map<std::string, std::string> task_models = {
+        // —— 写得好要紧 ——
+        {"chapter", "nex-agi/nex-n2.5-pro:free"},
+        {"premises", "nex-agi/nex-n2.5-pro:free"},
+        {"story_outline", "nex-agi/nex-n2.5-pro:free"},
+        {"story_revision", "nex-agi/nex-n2.5-pro:free"},
+        {"trailer", "nex-agi/nex-n2.5-pro:free"},
+        // —— 听话要紧 ——
+        {"storyboard", "nvidia/nemotron-3-super-120b-a12b:free"},
+        {"bible", "nvidia/nemotron-3-super-120b-a12b:free"},
+        {"script", "nvidia/nemotron-3-super-120b-a12b:free"},
+        {"story_analysis", "nvidia/nemotron-3-super-120b-a12b:free"},
+    };
+
+    /// 这一步该用哪个模型。`task` 是 schema_name，认不出就用 `model`。
+    std::string model_for(const std::string& task) const;
+
+    /// 让模型「先想再写」吗。**默认不让。**
+    ///
+    /// OpenRouter 上那批带 reasoning 的模型（Nemotron 3 整个系列、
+    /// nex-n2.5、ling-3.0 都是）默认是开着的，而对我们这条流水线它是
+    /// **净亏**。2026-09-13 同一段写作任务、同一个模型
+    /// （nemotron-3-ultra-550b）三组对照：
+    ///
+    ///   不加参数        62.4 秒，3404 token 里 2681 花在思考上，正文 507 字
+    ///   exclude=true    34.8 秒，1697 token 里 1185 花在思考上，正文 508 字
+    ///   **enabled=false 24.3 秒，984 token 一个字没花在思考上，正文 955 字**
+    ///
+    /// **关掉之后正文字数翻倍、快 2.5 倍。** `exclude` 只是不回传那段思考，
+    /// token 照烧、正文照样被挤掉，治标不治本。
+    ///
+    /// 更要命的是长任务：nemotron-3-super 不关思考时 6000 token 烧掉 5288，
+    /// `content` 字段里装的和 `reasoning` 字段**一模一样**的 12962 字英文
+    /// 思考稿，JSON 一个字都解不出来；nex-n2.5 和 ling-3.0 干脆回一个
+    /// **空的 content**。也就是说不关它，这几个模型在真实长度的提示词上
+    /// 全军覆没——而短提示词上试不出来，思考几句就够了。
+    ///
+    /// 我们的提示词本来就写得很死（写法要求列了七八条、schema 钉着字段），
+    /// 不需要它再自己想一遍。真想开就把这项设成 true。
+    ///
+    /// **只对 OpenRouter 发这个字段**：`reasoning` 是它的统一参数，
+    /// 别家不认，发过去可能被当成非法字段整个打回。
+    bool reasoning = false;
+
+    /// **默认空。** OpenRouter 必须自己去 openrouter.ai 领一把填上。
+    ///
+    /// 这里原来内置过一把智谱的免费密钥，2026-09-13 用户要求删掉
+    /// （"内置密钥删掉，只留 OpenRouter"）。**别再往回加**：密钥明文编进
+    /// 二进制，`strings` 一抓就有，也会进 git。
+    std::string api_key;
     double timeout_s = 300.0;
     double temperature = 0.7;
 
@@ -136,6 +254,18 @@ struct LLMConfig {
     /// 会不够——那时候报的是"提示词太长"这句能读懂的话，不是静默截断，
     /// 用户照着把这个数调大就行。
     int context_tokens = 16384;
+
+    /// 这个地址要不要 API Key。
+    ///
+    /// 只有两个地方问它：初始化页判「这一组配齐了没有」，体检判「该不该
+    /// 去连」。两处都不能只看 backend——默认配置就是「远端 + 空密钥」，
+    /// 只看 backend 的话初始化页会放人过去、体检会报一句"连不上"外加
+    /// 「用 Docker 起 ollama」，而真正的原因是密钥还没填。
+    ///
+    /// 判据是地址：本机和局域网上的服务（Ollama、LM Studio、自建 vLLM）
+    /// 默认都不校验，云服务一律要。**认不准就当要**——多提示一句的代价，
+    /// 比把人放过去然后在第一次写剧本时 401 小得多。
+    bool needs_api_key() const;
 
     std::vector<std::string> validate() const;
 };
@@ -183,7 +313,12 @@ struct GateConfig {
     double max_true_peak_db = -1.5;
     // 重试策略
     int max_attempts_per_shot = 3;
-    /// 重试超限时降级为静帧加运镜，保证整集能出片
+    /// 重试超限时**保留最后那一版视频**（闸门没过，但片子在，装配照收），
+    /// 保证整集能出片而不是卡在某一镜上。
+    ///
+    /// 这里原来写的是"降级为静帧加运镜"。**没有那回事**：render.cpp 的
+    /// fallback 只改状态、写一句备注，全代码库一处 zoompan 都没有
+    /// （2026-09-13 查过）。名字里的 fallback 指的就是"退而求其次用这一版"。
     bool fallback_on_exhausted = true;
 
     std::vector<std::string> validate() const;
@@ -740,6 +875,29 @@ struct Settings {
 
 /// 用户全局配置的位置。跨平台。
 std::filesystem::path user_config_path();
+
+/// 密钥单独存的那个文件（`<配置目录>/api_key`）。
+///
+/// **不跟 config.toml 放一起，是因为那个文件到处跑。** 部署是
+/// `tar -czf … cpp webapp | ssh …` 整包推到服务器，排查问题时整份贴进
+/// 聊天窗口，出错了截图发人——密钥混在里面的话，每一次都是一次泄漏，
+/// 而且泄漏的时候没有任何迹象。这个项目里已经有过一次教训：ssh 密码
+/// 在对话里暴露过。
+///
+/// 文件内容就是密钥本身一行，不带任何格式——要的是「能单独存、单独换、
+/// 单独 chmod、单独加进 .gitignore」。
+///
+/// 读的优先级：环境变量 > 这个文件 > config.toml 里的 `[llm].api_key`
+/// （老配置还认，但新写的一律落到这里）。
+std::filesystem::path user_api_key_path();
+
+/// 读那个文件。不存在、读不动、或者是空的都返回空串。
+std::string read_api_key_file();
+
+/// 把密钥写进那个文件。空串表示删掉它。返回写到了哪儿。
+///
+/// POSIX 上顺手 chmod 600——这是唯一一个值得这么对待的文件。
+std::filesystem::path write_api_key_file(const std::string& key);
 
 /// 按优先级合并配置：环境变量 > 项目配置 > 用户全局配置 > 默认值。
 ///

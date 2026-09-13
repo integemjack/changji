@@ -323,11 +323,14 @@ ApiResult post_connections(const json& body, const DoctorFn& check) {
                 continue;
             }
             const auto [section, field] = split_conn_key(key);
+            // **密钥不进 config.toml**，单独一个文件，见
+            // config::user_api_key_path 上那段注释。这里 continue 掉，
+            // 写文件那一下在循环外面。
+            if (section == "llm" && field == "api_key") continue;
             json value;
             if (section == "llm") {
                 if (field == "base_url") value = s.llm.base_url;
                 else if (field == "model") value = s.llm.model;
-                else if (field == "api_key") value = s.llm.api_key;
                 else if (field == "temperature") value = s.llm.temperature;
             } else if (section == "tts") {
                 if (field == "backend") value = s.tts.backend;
@@ -337,9 +340,28 @@ ApiResult post_connections(const json& body, const DoctorFn& check) {
             payload[section][field] = value;
         }
         try {
-            saved_to = paths::to_utf8(save_user_config(payload));
+            // payload 可能是空的——这次只改了密钥的话，上面那个循环把它
+            // continue 掉了，而 save_user_config 对空 patch 不该留下痕迹。
+            if (!payload.empty()) {
+                saved_to = paths::to_utf8(save_user_config(payload));
+            }
         } catch (const std::exception& e) {
             throw ApiError(500, std::string("配置写不进去：") + e.what());
+        }
+
+        // **密钥单独写它自己那个文件。**
+        //
+        // 不跟 config.toml 放一起：那个文件会被整包 tar 到服务器、
+        // 会被贴进聊天窗口排查问题。密钥混在里面的话每一次都是一次泄漏，
+        // 而且泄漏时没有任何迹象。见 config::user_api_key_path。
+        if (std::find(changed.begin(), changed.end(), "llm_api_key") !=
+            changed.end()) {
+            try {
+                const auto p = config::write_api_key_file(s.llm.api_key);
+                if (saved_to.is_null()) saved_to = paths::to_utf8(p);
+            } catch (const std::exception& e) {
+                throw ApiError(500, std::string("密钥写不进去：") + e.what());
+            }
         }
     }
 

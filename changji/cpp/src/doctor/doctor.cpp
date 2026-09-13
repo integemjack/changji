@@ -67,9 +67,17 @@ std::optional<json> get_json(const std::string& url, const std::string& path,
                              const httplib::Headers& headers = {}) {
     SplitUrl s = split_url(url);
     if (!s.ok) return std::nullopt;
-    // 阶段 0 未启用 OpenSSL，https 地址连不上。体检里这会表现为
-    // 「连不上」，与真的连不上无法区分。接云端 LLM 时必须打开。
+
+#ifndef CPPHTTPLIB_OPENSSL_SUPPORT
+    // 这一版没编进 OpenSSL，httplib 发不了 https。
+    //
+    // **原来这一句是无条件的**，注释写着"阶段 0 未启用 OpenSSL"——而
+    // CHANGJI_SSL 早就默认 ON 了。2026-09-13 大模型的默认地址改成云端
+    // （https）之后，这句无条件的 return 会让体检对一个**完全正常**的
+    // 配置一律报"连不上"。加上这道 #ifndef 之后，编进了 SSL 的版本
+    // 照常去连，没编进去的版本才走这条早退。
     if (s.origin.rfind("https://", 0) == 0) return std::nullopt;
+#endif
 
     httplib::Client cli(s.origin);
     cli.set_connection_timeout(timeout_s, 0);
@@ -169,8 +177,8 @@ Check check_llm(const config::Settings& s) {
                     "构建时要 CHANGJI_LLAMA=ON；"
                     "或者把 [llm].backend 改回 remote 并填 base_url"};
         }
-        // **没填权重就不是 OK。** 进程内是现在的默认，而刚装好的机器
-        // [models].llm 一定是空的——那时候写剧本和出分镜一步都走不了。
+        // **没填权重就不是 OK。** 特意切到进程内、却没填权重的机器上，
+        // [models].llm 是空的——那时候写剧本和出分镜一步都走不了。
         // 报绿的后果是用户点了「写剧本」才撞上一个运行期错误，
         // 而他刚看过一份全绿的体检报告。
         //
@@ -186,13 +194,30 @@ Check check_llm(const config::Settings& s) {
 
     const std::string& url = s.llm.base_url;
     const std::string& model = s.llm.model;
+
+    // **密钥没填就别去连。** 刚装好的机器就是这个状态（默认是远端的
+    // glm-4.7-flash，密钥要用户自己去领）。不分这一支的话，401 会被
+    // get_json 当成失败，报出来是"连不上 https://api.z.ai/…"
+    // 外加一句"用 Docker 起 ollama"——三样东西全指错方向，而这正是
+    // 上面那段注释说的"报告说错了比不说更糟"。
+    if (s.llm.needs_api_key() && s.llm.api_key.empty()) {
+        return {"大模型", Level::WARN, "还没填 API Key（" + url + "）",
+                "去设置页的「大模型」那一节填上。\n"
+                "默认走 OpenRouter：去 openrouter.ai 注册领一把，默认挑的那几个模型本身不要钱。\n"
+                "想在本机跑就把「跑在哪」改成内置，并填 [models].llm。"};
+    }
+
     httplib::Headers h{{"Authorization", "Bearer " + s.llm.api_key}};
     auto body = get_json(url, "/models", 8, h);
     if (!body) {
+        // 本机服务和云服务该做的事不一样，一句话糊过去会把人支错方向。
         return {"大模型", Level::WARN, "连不上 " + url,
-                "剧本和分镜要用它。没有它也能手写分镜表。\n"
-                "用 Docker: docker compose up -d ollama\n"
-                "本机装了 Ollama 就确认它已启动"};
+                "剧本和分镜要用它。没有它也能手写分镜表。\n" +
+                    (s.llm.needs_api_key()
+                         ? std::string("地址和密钥去设置页核一眼；"
+                                       "国内直连不通的服务要自备网络。")
+                         : std::string("用 Docker: docker compose up -d ollama\n"
+                                       "本机装了 Ollama 就确认它已启动"))};
     }
     std::vector<std::string> names;
     if (body->contains("data") && (*body)["data"].is_array()) {
@@ -207,18 +232,25 @@ Check check_llm(const config::Settings& s) {
         }
     }
     if (!names.empty()) {
-        // 服务在跑，只是没有配置里指定的那个模型。
-        // 这不是错误，用现有的任何一个都能出分镜。
+        // 服务在跑，只是这份清单里没有配置指定的那个。
+        //
+        // **不能一口咬定"没有这个模型"。** 2026-09-13 实测：智谱的 /models
+        // 只列 glm-4.5 ~ glm-5.3-flash 这些收费的，**免费的 glm-4.7-flash
+        // 根本不在里面，而它是能用的**（发过去回 200，服务端回的 model 字段
+        // 就是 glm-4.7-flash）。照老话术报的话，一台配置完全正确的机器会被
+        // 告知"上面没有这个模型"，还附一句 ollama pull——而这是个云服务。
         std::string list;
         for (size_t i = 0; i < names.size() && i < 5; ++i) {
             if (i) list += "、";
             list += names[i];
         }
-        return {"大模型", Level::WARN, url + " 上没有 " + model,
-                "服务正常，现有模型：" + list + "\n"
-                "二选一：\n"
-                "  用现有的：export CHANGJI_LLM_MODEL=" + names[0] + "\n"
-                "  或拉取指定的：ollama pull " + model};
+        if (names.size() > 5) list += " 等 " + std::to_string(names.size()) + " 个";
+        return {"大模型", Level::WARN, model + " 不在 " + url + " 的清单里",
+                "有些平台的 /models 不列免费模型（智谱就是），那样的话这条可以"
+                "不管——写剧本时真调得通就行。\n"
+                "清单上有的：" + list + "\n"
+                "确实写错了的话：去设置页的「大模型」那一节改，或者 "
+                "export CHANGJI_LLM_MODEL=" + names[0]};
     }
     return {"大模型", Level::WARN, url + " 一个模型都没有",
             "拉取一个：ollama pull " + model};

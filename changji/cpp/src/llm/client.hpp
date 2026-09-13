@@ -111,9 +111,57 @@ public:
 ///
 /// 三个阶段的 payload 是同一个形状，Python 那边抄了三遍。这里合成一处——
 /// 这不算破契约：契约是"发给大模型服务的东西"，形状一致就行。
+///
+/// **它原样用 `req` 里的东西，不做任何加工。** 远端那条路上要做的两处
+/// 加工（削 schema、把 schema 写进提示词）在 RemoteClient 里先改 Request，
+/// 见 remote_schema / schema_as_prompt。分开是因为这个函数被一条
+/// 「和 Python 逐字段一样」的语料钉着，加工混进来就分不清差异是谁造成的。
 nlohmann::ordered_json build_payload(const config::LLMConfig& cfg,
                                      const Request& req,
                                      bool json_schema_mode);
+
+/// 把 schema 削成 OpenAI 兼容接口吃得下的样子。
+///
+/// **不削的话，我们最管用的那几条约束会把整个 schema 一起带走。**
+/// 兼容接口的 `json_schema` 严格模式**不支持**这些校验关键字：
+/// minItems / maxItems / uniqueItems / minLength / maxLength / pattern /
+/// format / minimum / maximum / multipleOf / minProperties / maxProperties
+/// / patternProperties / propertyNames——**不是忽略，是整份 schema 退回
+/// 400**。而 400 会触发下面那条退路：不带 schema 再发一次。于是「加了
+/// minItems 让它没得选」变成「这一次调用连字段名都没有约束」，而且不报错。
+///
+/// 所以这里把它们摘掉，**顺手折进 `description`**：
+/// `{"type":"array","minItems":2}` → 描述末尾多一句「（至少 2 项）」。
+/// 折而不是丢，是因为**远端那条路上模型是看得见 description 的**
+/// （整份 schema 进请求体），而本地那条看不见（GBNF 只留结构，
+/// 见 stages/chapter_write.cpp 那段注释）。两条路上这些数都还在起作用，
+/// 只是一条靠语法、一条靠读。
+///
+/// 本地那条**不要调用它**：GBNF 认这些关键字，削了就真的没了。
+nlohmann::ordered_json remote_schema(const nlohmann::ordered_json& schema);
+
+/// 把 schema 抄进提示词里。退回 `json_object` 那一下用。
+///
+/// **退回之后 schema 不会再出现在请求体里的任何地方**——`response_format`
+/// 只剩一个 `{"type":"json_object"}`，而我们的提示词里从来没写过字段名
+/// （分镜那份光 schema 就几十个字段和一串枚举）。也就是说这一下模型是
+/// 在「随便吐个 JSON」，而调用方在按 Shot 的字段去解析它。原来这条退路
+/// 的注释写着"全靠提示词里那句『只输出 JSON』"——那句话保不住任何东西。
+///
+/// 抄的是**原始** schema，不是削过的：这里它是给人（模型）读的文字，
+/// minItems 那些数读得懂就有用。
+std::string schema_as_prompt(const std::string& prompt,
+                             const nlohmann::ordered_json& schema);
+
+/// 忘掉"哪些服务不支持 json_schema"那笔账。
+///
+/// 那笔账是**进程级**的（见 client.cpp 的 SchemaSupport）：一个地址上的一个
+/// 模型被验明不吃 json_schema 之后，往后就直接走退路，省下每次白花的那一整
+/// 次生成。进程级是对的——同一个服务在一次运行里不会忽然支持起来——但它也
+/// 意味着**测试之间会互相串**：前一个用例验出"这个假服务不支持"，后一个用例
+/// 就再也发不出 json_schema 了，而它断言的正是那一下。所以测试的 fixture 要
+/// 调它。生产代码没有理由调。
+void reset_schema_support();
 
 /// 从返回里抽出内容。抽不到抛 LlmError。
 ///

@@ -113,6 +113,22 @@ json option_json(const Option& o, const fs::path& models_dir, double vram_gb) {
 /// 拿"文件都在盘上"当判据是不行的：两档量化的配套文件可以都下过，
 /// 那时候分不出配置里用的是哪一档。
 std::string current_option(const Group& g, const config::Settings& s) {
+    // **远端那条路不按文件认。** 切到云端时我们特意没清 [models].llm
+    // （见 catalog.cpp 的 config_patch），所以上次下的那个权重还在配置里；
+    // 按文件认的话这一页会选中本地那一档，而实际跑的是云端——界面说的
+    // 和真跑的不是一回事，比不显示更糟。
+    if (g.key == "llm" && s.llm.backend != "local") {
+        for (const auto& o : g.options) {
+            for (const auto& [key, value] : o.settings) {
+                if (key == "llm.model" && value.is_string() &&
+                    value.get<std::string>() == s.llm.model) {
+                    return o.id;
+                }
+            }
+        }
+        // 认不出是哪一家（自己填的地址）：那就是"用别的外接服务"那一项。
+        return kNoneOption;
+    }
     if (g.owned_roles.empty()) return {};
     config::ModelsConfig copy = s.models;
     const std::string* primary = models_field(copy, g.owned_roles.front());
@@ -169,7 +185,14 @@ std::string* models_field(config::ModelsConfig& m, const std::string& role) {
 bool group_satisfied(const Group& g, const config::Settings& s) {
     // 编剧和配音有另一条出路：接外面的服务。那时候本机一个文件都没有
     // 也算配齐——不认这一条的话，用云端大模型的人会被永远挡在这一页上。
-    if (g.key == "llm" && s.llm.backend != "local") return true;
+    //
+    // **但云端那条还要有密钥才算配齐。** 2026-09-13 默认改成了远端的
+    // glm-4.7-flash，装完就是"backend=remote、api_key 空"这个状态；
+    // 只看 backend 的话这一页会说"配好了"放人过去，然后第一次写剧本
+    // 401。本机/局域网的服务不要求——Ollama 那些根本不校验。
+    if (g.key == "llm" && s.llm.backend != "local") {
+        return !s.llm.needs_api_key() || !s.llm.api_key.empty();
+    }
     if (g.key == "tts" && s.tts.backend != "local") return true;
     if (g.owned_roles.empty()) return true;
 
@@ -392,10 +415,18 @@ ApiResult post_setup_download(const config::Settings& settings, const json& body
         if (pick == selections.end()) continue;
         const Option* opt = g.find(pick->second);
         if (opt == nullptr) throw ApiError(400, "不认识的选项：" + pick->second);
-        if (opt->id == kNoneOption) {
-            // 不下载的那几组只有旋钮要写（比如 llm.backend = remote）。
-            // **立刻写**：它们不参与下载，等下载完再写的话，
-            // 中途取消就永远写不上了。
+        if (opt->files.empty()) {
+            // 不下文件的那几组只有旋钮要写（比如 llm.backend = remote、
+            // base_url、model）。**立刻写**：它们不参与下载，等下载完再写
+            // 的话，中途取消就永远写不上了。
+            //
+            // **判据是"有没有文件"，不是"是不是 kNoneOption"。**
+            // 走云端 API 那一项（openrouter-free）也一个文件都不下，但它
+            // 带着三个必须写的旋钮。按 id 判的话它会掉进下面那个循环、
+            // 循环体一次都不执行，于是**旋钮一个都没写**——而这一页会
+            // 报"下完了"。用户选了云端模型、点了确认、页面说好了，
+            // 然后第一次写剧本还在用老地址。
+            if (opt->settings.empty()) continue;
             const json patch = setup::config_patch({{g.key, opt->id}});
             for (const auto& [section, values] : patch.items()) {
                 if (!values.is_object()) {

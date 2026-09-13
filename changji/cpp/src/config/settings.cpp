@@ -146,6 +146,26 @@ std::vector<std::string> TiersConfig::validate() const {
     return errs;
 }
 
+std::string LLMConfig::model_for(const std::string& task) const {
+    const auto it = task_models.find(task);
+    return it == task_models.end() || it->second.empty() ? model : it->second;
+}
+
+bool LLMConfig::needs_api_key() const {
+    if (backend == "local") return false;
+    // 只认几个明确的本机/私网写法，别的一律当云。172.16~172.31 是一整段
+    // 私网，这里按前缀列——写不全的那几个（172.2x）落到"当云"那一侧，
+    // 代价只是多提示一句。
+    static const char* kLocal[] = {"//127.0.0.1", "//localhost", "//0.0.0.0",
+                                   "//[::1]",     "//192.168.",  "//10.",
+                                   "//172.16.",   "//172.17.",   "//172.18.",
+                                   "//172.19.",   "//172.30.",   "//172.31."};
+    for (const char* m : kLocal) {
+        if (base_url.find(m) != std::string::npos) return false;
+    }
+    return true;
+}
+
 std::vector<std::string> LLMConfig::validate() const {
     std::vector<std::string> errs;
     if (backend != "remote" && backend != "local") {
@@ -497,6 +517,48 @@ fs::path user_config_path() {
     return paths::user_config_dir(kAppName) / "config.toml";
 }
 
+fs::path user_api_key_path() {
+    return paths::user_config_dir(kAppName) / "api_key";
+}
+
+std::string read_api_key_file() {
+    std::error_code ec;
+    const fs::path p = user_api_key_path();
+    if (!fs::is_regular_file(p, ec)) return {};
+    std::ifstream in(p, std::ios::binary);
+    if (!in.good()) return {};
+    std::string s((std::istreambuf_iterator<char>(in)),
+                  std::istreambuf_iterator<char>());
+    // 文件里就一行密钥。**把首尾空白全剃掉**：用编辑器存出来的多半带一个
+    // 结尾换行，带着它发出去的 Authorization 头会被网关判成非法，报的是
+    // 401——而那会把人支去查一个其实填对了的密钥。
+    const auto b = s.find_first_not_of(" \t\r\n");
+    if (b == std::string::npos) return {};
+    const auto e = s.find_last_not_of(" \t\r\n");
+    return s.substr(b, e - b + 1);
+}
+
+fs::path write_api_key_file(const std::string& key) {
+    const fs::path p = user_api_key_path();
+    std::error_code ec;
+    fs::create_directories(p.parent_path(), ec);
+    if (key.empty()) {
+        fs::remove(p, ec);   // 清空 = 删掉，别留一个空文件在那儿让人猜
+        return p;
+    }
+    {
+        std::ofstream out(p, std::ios::binary | std::ios::trunc);
+        out << key;
+    }
+#ifndef _WIN32
+    // 只给自己读写。Windows 上没有对应的简单做法，跳过。
+    fs::permissions(p, fs::perms::owner_read | fs::perms::owner_write,
+                    fs::perm_options::replace, ec);
+#endif
+    return p;
+}
+
+
 namespace {
 
 /// 环境变量后缀 -> 配置路径。与 Python 的 _ENV_MAPPING 一一对应。
@@ -581,6 +643,16 @@ void apply_table(const toml::table& doc, Settings& s) {
         take(t, "temperature", s.llm.temperature);
         take(t, "parallel", s.llm.parallel);
         take(t, "context_tokens", s.llm.context_tokens);
+        take(t, "reasoning", s.llm.reasoning);
+        // [llm.models] —— 按任务分流。**只覆盖写了的键**，没写的留着默认，
+        // 否则用户想单独换一个任务就得把九个键全抄一遍。
+        if (auto mt = (*t)["models"].as_table()) {
+            for (const auto& [k, v] : *mt) {
+                if (auto sv = v.template value<std::string>()) {
+                    s.llm.task_models[std::string(k.str())] = *sv;
+                }
+            }
+        }
     }
     if (auto t = doc["workers"].as_table()) {
         if (auto v = (*t)["gpu"].value<std::int64_t>()) {
@@ -746,6 +818,13 @@ Settings load_settings(const std::optional<fs::path>& project_dir) {
     Settings s;  // 内置默认值就是成员初始化器
     read_toml_into(user_config_path(), s);
     if (project_dir) read_toml_into(*project_dir / "changji.toml", s);
+    // **密钥单独一个文件，压过 config.toml 里那份。**
+    // 老配置里写了 [llm].api_key 的照样认（上面那行已经读进来了），
+    // 但只要单独那个文件在，就以它为准——见 user_api_key_path。
+    // 环境变量仍然最大，所以 apply_env 排在后面。
+    if (const std::string k = read_api_key_file(); !k.empty()) {
+        s.llm.api_key = k;
+    }
     apply_env(s);
 
     // 地址类的值统一规整，避免 http://x:8188/ 和 http://x:8188
@@ -1025,14 +1104,54 @@ constexpr const char* kDefaultToml = R"(# 场记配置文件
 
 [llm]
 # 剧本和分镜用的大模型。backend 两个值：
-#   local  —— **默认，进程内跑**，不用另起 llama-server。权重填
-#             [models].llm，输出按 JSON Schema 约束（走语法采样）。
-#             归调度器管：出片要显存时按实时空闲显存决定要不要让开。
-#   remote —— 走下面的 base_url，任何兼容 OpenAI 接口的服务都行。
-#             本机跑不动、想用云上更强的模型、团队共用一台推理机，都走它。
-backend = "local"
-base_url = "http://127.0.0.1:11434/v1"
-model = "qwen3:14b"
+#   remote —— **默认**，走下面的 base_url，任何兼容 OpenAI 接口的服务都行。
+#             默认走 OpenRouter：一把密钥转发到几百个模型，其中二十来个
+#             完全免费（带 :free 后缀）。**api_key 必须自己填**，
+#             去 openrouter.ai 领一把。
+#             换 DeepSeek、智谱、硅基流动、火山方舟，或者局域网里另一台
+#             机器上的 Ollama / vLLM，改这两行就是。
+#   local  —— 进程内跑，不用另起 llama-server。权重填 [models].llm，
+#             输出按 JSON Schema 约束（走语法采样，minItems 这类限制
+#             是硬的，远端那条做不到）。归调度器管：出片要显存时按实时
+#             空闲显存决定要不要让开。断网、不想让本子出境时走它。
+backend = "remote"
+base_url = "https://openrouter.ai/api/v1"
+# api_key = "去 openrouter.ai 领"
+
+# 让模型「先想再写」吗。**默认 false，而且这一项很要紧。**
+# OpenRouter 上带 reasoning 的模型（Nemotron 3 全系、nex-n2.5、ling-3.0）
+# 默认开着，而开着的话长任务上它们要么把英文思考稿当正文交上来、
+# 要么回一个空的 content——短提示词试不出来，真实长度的提示词上全军覆没。
+# 实测同一个模型关掉之后：正文字数翻倍、快 2.5 倍。
+# reasoning = false
+
+# 兜底模型：下面 [llm.models] 里没点名的任务用它。
+model = "nvidia/nemotron-3-super-120b-a12b:free"
+
+# **按任务分流：哪一步用哪个模型。** 键是内部的 schema 名。
+#
+# 这条流水线要的是两种不同的本事，而免费模型里没有一个两样都强：
+#   写得好 —— 正文、梗概、大纲、预告。nex-n2.5-pro，实跑比出来的：
+#             同一场戏 17 段 1149 字、对白 88%、零套话，字数是第二名的
+#             两倍。代价是慢，46.7 秒一场。
+#             （先后试过 Inkling 和 Nemotron 3 Ultra：前者 OpenRouter
+#              回 403「只给登记在册的 agent 用」，后者长任务连接会断。
+#              选型只能靠真发一次，榜单和参数表都不算数。）
+#   听话   —— 分镜、人物表、剧本四段、分析。分镜那份 schema 有六十多个
+#             类型定义和一串枚举，文采在这儿一点用都没有。Nemotron 3 Super
+#             是免费档里唯一又大又带完整 structured_outputs 的。
+#
+# 只写要改的键就行，没写的落到上面那个 model。
+[llm.models]
+chapter        = "nex-agi/nex-n2.5-pro:free"
+premises       = "nex-agi/nex-n2.5-pro:free"
+story_outline  = "nex-agi/nex-n2.5-pro:free"
+story_revision = "nex-agi/nex-n2.5-pro:free"
+trailer        = "nex-agi/nex-n2.5-pro:free"
+storyboard     = "nvidia/nemotron-3-super-120b-a12b:free"
+bible          = "nvidia/nemotron-3-super-120b-a12b:free"
+script         = "nvidia/nemotron-3-super-120b-a12b:free"
+story_analysis = "nvidia/nemotron-3-super-120b-a12b:free"
 
 [tts]
 # backend 有三个值：
@@ -1048,7 +1167,7 @@ engine = "cosyvoice3"
 # 质量闸门。全自动模式下这些阈值决定废片能不能被拦住。
 enabled = true
 max_attempts_per_shot = 3
-# 重试超限时降级为静帧加运镜，保证整集能出片而不是卡死。
+# 重试超限时保留最后那一版（闸门没过，但片子在），保证整集能出片而不是卡死。
 fallback_on_exhausted = true
 
 [assembly]

@@ -73,8 +73,11 @@ TEST_CASE("每个文件都有仓库、路径和核对过的字节数") {
                 CHECK(o.files.empty());
                 continue;
             }
+            // **判据是"下不下文件"，不是"是不是 kNoneOption"。**
+            // 走云端 API 那一项也一个文件都不下，它不是"什么都不装"，
+            // 是一个完整可用的选择——见 catalog.cpp 里 glm-4.7-flash-api。
+            if (o.files.empty()) continue;
             CAPTURE(o.id);
-            CHECK_FALSE(o.files.empty());
             for (const auto& f : o.files) {
                 CAPTURE(f.name);
                 CHECK_FALSE(f.name.empty());
@@ -186,9 +189,19 @@ TEST_CASE("推荐：卡越大挑得越好，而且不会推荐装不下的") {
     // ——用户这台机器上现在跑的就是完整版（权重放内存，实测 124 秒一镜），
     // 那个选择由配置里的「正在用」保住，不会被推荐值顶掉。
     CHECK(rec5090.at("video") == "h3-pruned-q4_k_m");
-    // 32 GB 上不该推 32B 的编剧模型：它和出图模型来回换，
-    // 每次重载的代价随模型大小涨。预算只给六成，见 recommend()。
-    CHECK(rec5090.at("llm").rfind("qwen3-14b-", 0) == 0);
+    // **编剧那一组一律推云端那一项，跟卡多大没关系**（2026-09-13 改的）。
+    // 本地跑得动的最好一档在 EQ-Bench 长文创作榜上是 59 分，而它要占走
+    // 整张卡；glm-4.7-flash 的 API 不要钱，卡全留给出图出片。
+    // 理由写在 config::LLMConfig::backend 上。
+    for (const double vram : {8.0, 24.0, 31.8, 80.0}) {
+        CAPTURE(vram);
+        CHECK(setup::recommend(vram).at("llm") == "openrouter-free");
+    }
+    // 本地那几档**没有被删掉**，只是不当默认值：想自己跑照样点得动。
+    const auto* llm_group = &setup::catalog().front();
+    REQUIRE(llm_group->key == "llm");
+    CHECK(llm_group->find("qwen3-14b-q4_k_m") != nullptr);
+    CHECK(llm_group->find("qwen3-32b-q8_0") != nullptr);
 }
 
 TEST_CASE("显存门槛是从引擎那两个函数反推的，不是手填的") {
@@ -234,9 +247,13 @@ TEST_CASE("每个家族的每一档精度都在表里") {
         for (const auto& o : g.options) {
             if (o.id == setup::kNoneOption) continue;
             CAPTURE(o.id);
-            CHECK_FALSE(o.quant.empty());       // 每一档都要说清是哪个精度
             CHECK_FALSE(o.family.empty());
             CHECK_FALSE(o.family_note.empty()); // 界面按家族显示这一句
+            // **量化档和显存门槛只有本地权重才有。** 云端那一项没有权重，
+            // 也就没有"哪个精度""要多少显存"可言——它的门槛正好是 0，
+            // 这也是 recommend() 在任何一张卡上都挑得动它的原因。
+            if (o.files.empty()) continue;
+            CHECK_FALSE(o.quant.empty());       // 每一档都要说清是哪个精度
             CHECK(o.min_vram_gb > 0);
             by_family[o.family].insert(o.quant);
         }
@@ -303,6 +320,17 @@ TEST_CASE("写回配置：不下载那一档只写旋钮，不动模型路径") 
     CHECK_FALSE(patch.contains("models"));
 }
 
+TEST_CASE("写回配置：云端那一项连地址和模型名一起写，也不动模型路径") {
+    const json patch = setup::config_patch({{"llm", "openrouter-free"}});
+    CHECK(patch["llm"]["backend"] == "remote");
+    CHECK(patch["llm"]["base_url"] == "https://openrouter.ai/api/v1");
+    CHECK(patch["llm"]["model"] ==
+          "nvidia/nemotron-3-super-120b-a12b:free");
+    // **它不是 kNoneOption，但一个文件都不下**，所以同样不该清 models.llm
+    // ——盘上那个权重还在，清了的话用户想切回本地得重新去找它叫什么。
+    CHECK_FALSE(patch.contains("models"));
+}
+
 TEST_CASE("写回配置：认不出的选项跳过那一组，不炸") {
     const json patch = setup::config_patch(
         {{"video", "这个选项早就删了"}, {"image", "qwen-image-q6_k"}});
@@ -341,7 +369,18 @@ TEST_CASE("配齐了没有：接外面的服务也算配齐") {
     CHECK_FALSE(http::group_satisfied(*llm, s));
 
     // **这一条挡住的是"用云端大模型的人被永远关在初始化页上"。**
+    // 本机/局域网的服务不校验密钥，填不填都算配齐。
     s.llm.backend = "remote";
+    s.llm.base_url = "http://127.0.0.1:11434/v1";
+    s.llm.api_key = "";
+    CHECK(http::group_satisfied(*llm, s));
+
+    // **默认那一档（OpenRouter）没填密钥就不算配齐。** 只看 backend
+    // 的话这一页会放人过去，然后第一次写剧本 401。
+    s.llm = config::LLMConfig{};
+    REQUIRE(s.llm.api_key.empty());
+    CHECK_FALSE(http::group_satisfied(*llm, s));
+    s.llm.api_key = "sk-or-v1-填了";
     CHECK(http::group_satisfied(*llm, s));
 
     // 配了一个不存在的文件不算配齐：手抄配置抄错、模型没下完都是这种，

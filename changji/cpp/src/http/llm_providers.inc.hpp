@@ -58,11 +58,18 @@ inline constexpr const char* kLlmProvidersJson =
   "note": "platform.moonshot.cn 申请密钥"
  },
  {
+  "id": "zai",
+  "name": "智谱 z.ai",
+  "base_url": "https://api.z.ai/api/paas/v4",
+  "local": false,
+  "note": "glm-4.7-flash 免费但限流很紧；国内站 open.bigmodel.cn 是同一套后端"
+ },
+ {
   "id": "zhipu",
-  "name": "智谱 GLM",
+  "name": "智谱 GLM（国内站）",
   "base_url": "https://open.bigmodel.cn/api/paas/v4",
   "local": false,
-  "note": "bigmodel.cn 申请密钥"
+  "note": "和 z.ai 同一套后端、同一把密钥，国内直连这个更稳"
  },
  {
   "id": "ark",
@@ -108,10 +115,10 @@ inline constexpr const char* kLlmProvidersJson =
  },
  {
   "id": "openrouter",
-  "name": "OpenRouter",
+  "name": "OpenRouter（默认）",
   "base_url": "https://openrouter.ai/api/v1",
   "local": false,
-  "note": "一个密钥转发到几百个模型"
+  "note": "默认就是这家。一把密钥转发到几百个模型，带 :free 后缀的二十来个完全免费"
  }
 ])CJ";
 
