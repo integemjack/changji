@@ -23,6 +23,7 @@
 #include "config/settings.hpp"
 #include "llm/client.hpp"
 #include "media/ffmpeg.hpp"
+#include "models/character.hpp"
 #include "models/project.hpp"
 #include "stages/audio.hpp"
 
@@ -100,6 +101,45 @@ std::optional<TTSBackend> ensure_local_tts(
 TTSBackend pick_tts_backend(const config::Settings& s,
                             const std::optional<media::FFmpeg>& ff,
                             const llm::HttpPost& post);
+
+/// 一个预置音色：一个种子，外加那次实测的基频。
+struct PresetVoice {
+    unsigned int seed = 0;
+    /// 实测基频（Hz）。**给界面当"摇之前的提示"用**，不是承诺——
+    /// 真正显示的是摇完当场量的那个。
+    ///
+    /// **这个数只在配 kVoiceText 那一段文本时成立。** 音色是
+    /// (种子, 文本) 的函数，换一段文本同一个种子就是另一个人
+    /// （2026-09-13 实测，见 tts_backends.cpp 里 kVoiceText 上面那段）。
+    int hz = 0;
+};
+
+/// 预置音色。**是一组固定的种子，不是一组下载来的音频。**
+///
+/// 我们这条运行时（llama.cpp 的 mtmd）只实现了 Qwen3-TTS 的 Base 模式，
+/// 也就是参考音频克隆；自带 9 个说话人的 CustomVoice 和用文字描述造音色
+/// 的 VoiceDesign 都不在里面（上游 PR #26254）。而不给参考音频时说话人是
+/// 被采样出来的，**种子和文本定死了，摇出来的人就定死了**——所以固定
+/// 几个种子就等于固定几个音色，每个人在每台机器上拿到的是同一套。
+const std::vector<PresetVoice>& preset_voices();
+
+/// 摇音色念的那一段。预置表里那些 hz 都是配它量出来的。
+const char* voice_sample_text();
+
+/// **给一个还没有音色的角色定一个，并把参考音频落到项目里。**
+///
+/// 返回相对项目根的路径；角色已经有音色了就原样返回，不重出。
+///
+/// **为什么必须有这一步。** 不给参考音频时，每次合成都重新采样一个说话
+/// 人，而音色是 (种子, 文本) 的函数——换一句台词就是换一个人。
+/// 2026-09-13 在 walk_c 上量到的：同一个角色 c_lin_hao 的**同一句话被
+/// 拆成两半**，前半句 136 Hz、后半句 338 Hz，一句话说到一半换了个人。
+/// 整集每个角色每句话都是不同的人，而且全程不报错。
+///
+/// 按角色的 voice_gender 从预置表里挑（男声挑低的、女声挑高的），
+/// 用 voice_order 错开，免得两个男角色撞成同一个人。
+std::string ensure_character_voice(const models::ProjectStore& store,
+                                   models::Character& c);
 
 /// 按种子出一段**不带参考音色**的语音——「制作音色」那条路专用。
 ///

@@ -402,6 +402,88 @@ TTSBackend pick_tts_backend(const config::Settings& s,
     return estimate_backend();
 }
 
+/// 摇音色念的那一段。**试听和存下来用的是同一段，这一条是硬的。**
+///
+/// 2026-09-13 实测：音色是 **(种子, 文本)** 的函数，不是种子一个人的。
+/// 同一个种子换一段文本，摇出来就是另一个人（1789：短句 112 Hz、
+/// 长句 205 Hz）。所以听的和存的必须念同一段。
+///
+/// **长度还影响能摇出多宽的音域**，同样一批种子：
+///
+///     短句（12 字 / 约 2.5 秒）   112 ~ 279 Hz
+///     中句（29 字 / 约 7 秒）      96 ~ 304 Hz   ← 定在这
+///     长句（58 字 / 约 10 秒）    149 ~ 270 Hz   ← 低音男声整个没了
+///
+/// 长句会把说话人往训练分布中间拽，而短剧最缺的恰恰是那一头。中句音域
+/// 最宽，片长 6~10 秒又还在"参考音频够用"的区间（社区实测 3 秒能认出来、
+/// 8~15 秒明显更好）。
+constexpr const char* kVoiceText =
+    "你好，这是我说话的样子。今天风有点大，窗外的树叶一直在响。";
+
+const char* voice_sample_text() { return kVoiceText; }
+
+const std::vector<PresetVoice>& preset_voices() {
+    // **这九个是摇出来挑的，不是编的。**
+    //
+    // 2026-09-13 在服务器上摇了二十八个候选种子（都念 kVoiceText），逐个
+    // 量基频，再贪心挑出两两至少差 18 Hz 的一组。候选范围 96~304 Hz，
+    // 这九个把它铺满：
+    //
+    //     96   低音男       212  偏低女 / 偏高男
+    //     135  男           231  女
+    //     164  偏高男       258  女
+    //     192  偏低女       276  偏高女
+    //                       296  高女
+    //
+    // **数量是挑出来的，不是定好的。** 先定"差多少才算听得出区别"，剩几个
+    // 就是几个；反过来先定八个再凑，凑出来的必然有听不出差别的。
+    static const std::vector<PresetVoice> kPresets = {
+        {9137, 96},  {7001, 135}, {2027, 164}, {7743, 192}, {6113, 212},
+        {3313, 231}, {1013, 258}, {3541, 276}, {1789, 296},
+    };
+    return kPresets;
+}
+
+std::string ensure_character_voice(const models::ProjectStore& store,
+                                   models::Character& c) {
+    if (c.voice_id.has_value() && !c.voice_id->empty()) {
+        std::error_code ec;
+        if (fs::is_regular_file(store.paths().abs(*c.voice_id), ec)) {
+            return *c.voice_id;
+        }
+        // 记着但文件不在（项目拷过来漏了 voices/）：当没有，重出一份。
+    }
+
+    // **按性别挑。** 分界线 180 Hz 是常用的那条（男声 85~180、
+    // 女声 165~255），落在中间那一档两边都能用。
+    const auto& all = preset_voices();
+    std::vector<const PresetVoice*> pool;
+    for (const auto& p : all) {
+        const bool low = p.hz < 180;
+        if (c.voice_gender == "male" && low) pool.push_back(&p);
+        else if (c.voice_gender == "female" && !low) pool.push_back(&p);
+    }
+    // 性别不确定（或者那一档空了）就整张表都能挑，别挑不出来。
+    if (pool.empty()) {
+        for (const auto& p : all) pool.push_back(&p);
+    }
+    // **用 voice_order 错开**：两个男角色不该是同一个人。order 是资产库
+    // 里给的登场序，没给就是 0，那也比全撞在第一个强。
+    const std::size_t idx =
+        static_cast<std::size_t>(c.voice_order < 0 ? 0 : c.voice_order) %
+        pool.size();
+    const unsigned int seed = pool[idx]->seed;
+
+    const fs::path dir = store.paths().voices();
+    std::error_code ec;
+    fs::create_directories(dir, ec);
+    const fs::path dest = dir / paths::from_utf8(c.char_id + ".wav");
+    render_voice_take(kVoiceText, dest, seed);
+
+    c.voice_id = store.paths().rel(dest);
+    return *c.voice_id;
+}
+
 double render_voice_take(const std::string& text, const fs::path& out,
                          unsigned int seed) {
     // **借的是同一个槽、用的是同一个引擎实例。** 另开一个 LlamaTts 的话，

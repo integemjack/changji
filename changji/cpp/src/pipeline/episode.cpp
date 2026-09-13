@@ -12,6 +12,7 @@
 #include "media/assemble.hpp"
 #include "stages/audio_plan.hpp"
 #include "stages/storyboard.hpp"
+#include "stages/tts_backends.hpp"
 #include "util/human_time.hpp"
 
 namespace fs = std::filesystem;
@@ -363,7 +364,9 @@ RunReport run_episode(const ProjectStore& store,
     const double started = now_seconds();
 
     Project project = store.load_project();
-    const AssetLibrary assets = store.load_assets();
+    // **不是 const**：配音那一段会给没有音色的角色各定一个，写回 voice_id
+    // 再存盘（见下面 ensure_character_voice 那一块）。
+    AssetLibrary assets = store.load_assets();
     Episode* ep = project.episode_by_id(opts.episode_id);
     if (ep == nullptr) {
         throw std::runtime_error("项目里没有剧集 " + opts.episode_id);
@@ -484,6 +487,58 @@ RunReport run_episode(const ProjectStore& store,
                 emit(progress, "audio", "start",
                      "给 " + std::to_string(todo.size()) + " 个镜头配音，" + how,
                      0, static_cast<int>(todo.size()));
+
+                // **先给没有音色的角色各定一个。**
+                //
+                // 不给参考音频时，每次合成都重新采样一个说话人，而音色是
+                // (种子, 文本) 的函数——换一句台词就是换一个人。
+                // 2026-09-13 在 walk_c 上量到的：同一个角色的**同一句话被
+                // 拆成两半**，前半句 136 Hz、后半句 338 Hz，说到一半换了
+                // 个人。整集每个角色每句都是不同的人，而且全程不报错。
+                //
+                // 定一次就落成一段参考音频存进 voices/，之后每句都克隆它。
+                // 一个角色只花一次（约八秒），而且人可以随时去角色页换掉。
+                //
+                // **只管这一批要配音的镜头里真出场的那几个**：整个资产库
+                // 都摸一遍的话，没戏份的角色也白占八秒。
+                if (backend.name == "local") {
+                    std::set<std::string> speaking;
+                    for (const Shot* s : todo) {
+                        for (const auto& line : s->dialogue) {
+                            if (line.char_id.has_value() && !line.char_id->empty()) {
+                                speaking.insert(*line.char_id);
+                            }
+                        }
+                    }
+                    int made = 0;
+                    for (const std::string& id : speaking) {
+                        const auto it = assets.characters.find(id);
+                        if (it == assets.characters.end()) continue;
+                        if (it->second.voice_id.has_value() &&
+                            !it->second.voice_id->empty()) {
+                            continue;
+                        }
+                        try {
+                            emit(progress, "audio", "progress",
+                                 "给 " + it->second.name + " 定一个音色");
+                            stages::ensure_character_voice(store, it->second);
+                            ++made;
+                        } catch (const std::exception& e) {
+                            // 定不出来不拦着整集：退回原来那条（每句随机一个
+                            // 说话人），难听但出得来。说一声就行。
+                            emit(progress, "audio", "warn",
+                                 it->second.name + " 的音色没定上：" + e.what() +
+                                     "。这个角色的每句台词会是不同的声音");
+                        }
+                    }
+                    if (made > 0) {
+                        store.save_assets(assets);
+                        emit(progress, "audio", "done",
+                             "给 " + std::to_string(made) +
+                                 " 个角色定了音色，存在项目的 voices/ 里。"
+                                 "不满意可以去角色页换一个，换完重跑这一段配音");
+                    }
+                }
 
                 stages::AudioStage stage(backend, settings.tts, store.paths());
                 report.audio = stage.run(todo, assets, progress, tok);

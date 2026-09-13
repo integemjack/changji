@@ -28,6 +28,7 @@ namespace changji::http {
 // 2026-09-13 就是这么栽的一次（undefined reference to post_voice_take）。
 using json = nlohmann::ordered_json;
 using in_json = nlohmann::json;
+using stages::preset_voices;
 using namespace changji::models;
 
 namespace {
@@ -122,36 +123,10 @@ std::string slugify(const std::string& name, unsigned int seed) {
     return out;
 }
 
-/// 摇音色念的那一段。**试听和存下来用的是同一段，这一条是硬的。**
-///
-/// 2026-09-13 实测：音色是 **(种子, 文本)** 的函数，不是种子一个人的。
-/// 同一个种子换一段文本，摇出来就是另一个人：
-///
-///     seed=1789   短句 112 Hz   长句 205 Hz
-///     seed=3313   短句 137 Hz   长句 224 Hz
-///     seed=5051   短句 235 Hz   长句 220 Hz
-///
-/// 上一版试听念短句、存下来念长句，于是**存进去的不是你刚才听到的那个
-/// 声音**——那正是这套代码里反复出现的那一类毛病（界面说的和实际做的
-/// 不是一回事），这次栽在我自己手上。
-///
-/// 同一个种子加同一段文本是**逐字节确定的**（实测两次 md5 相同），
-/// 所以存的时候按同一段重出一次就等于把听到的那一段留下来，不用另存
-/// 一份临时文件。
-///
-/// 长度上折中在八九秒：**参考音频太短克隆不稳**（社区实测 3 秒能认出
-/// 来，8~15 秒明显更好），而摇是要反复点的，十几秒一下太磨人。
-/// **长度还影响摇出来的音域，这一条是量出来的。** 同样 24 个种子：
-///
-///     短句（12 字 / 约 2.5 秒）   112 ~ 279 Hz
-///     中句（29 字 / 约 7 秒）     135 ~ 296 Hz
-///     长句（58 字 / 约 10 秒）    149 ~ 270 Hz   ← 低音男声整个没了
-///
-/// 长句会把说话人往训练分布的中间拽，摇一整轮也摇不出 149 以下的——
-/// 而短剧最缺的恰恰是那一头。所以定在中句：音域最宽，片长 6~10 秒
-/// 又还在"参考音频够用"的区间里。
-constexpr const char* kVoiceText =
-    "你好，这是我说话的样子。今天风有点大，窗外的树叶一直在响。";
+// 念的那一段和预置表都搬到 stages/tts_backends 去了：出片那条路上
+// 「给没设音色的角色自动定一个」也要用它们，而 pipeline 不该反向依赖
+// http 层。**一个数两处定义迟早分叉**，而分叉的表现是预置表里的 hz
+// 和实际摇出来的对不上。
 
 unsigned int seed_of(const in_json& body) {
     if (body.is_object() && body.contains("seed") &&
@@ -238,33 +213,6 @@ json render_into(const ProjectStore& store, const fs::path& dest,
 
 }  // namespace
 
-const std::vector<PresetVoice>& preset_voices() {
-    // **这九个是摇出来挑的，不是我编的。**
-    //
-    // 2026-09-13 在服务器上摇了二十八个候选种子（都念 kVoiceText 那一段），
-    // 逐个量基频，再贪心挑出两两至少差 18 Hz 的一组。候选的范围是
-    // 96 ~ 304 Hz，挑出来这九个把它铺满：
-    //
-    //     96   低音男       212  偏低女 / 偏高男
-    //     135  男           231  女
-    //     164  偏高男       258  女
-    //     192  偏低女       276  偏高女
-    //                       296  高女
-    //
-    // **数量是挑出来的，不是定好的。** 先定"两两差多少才算听得出区别"，
-    // 剩下几个就是几个——反过来先定八个再凑，凑出来的那几个里必然有
-    // 听不出差别的。上一版随手写的八个里就有两个都落在 137 Hz。
-    //
-    // `hz` 是**那次实测的值**，给界面当"摇之前的提示"用——想要低音男声
-    // 就点最左边那个，不用一个个摇过去。它不是承诺：同一个种子配同一段
-    // 文本在这台机器上逐字节可复现（实测两次 md5 相同），换一张卡、换一
-    // 版权重之后数字可能微动，界面上真正显示的还是摇完当场量的那个。
-    static const std::vector<PresetVoice> kPresets = {
-        {9137, 96},  {7001, 135}, {2027, 164}, {7743, 192}, {6113, 212},
-        {3313, 231}, {1013, 258}, {3541, 276}, {1789, 296},
-    };
-    return kPresets;
-}
 
 ApiResult post_voice_take(const in_json& body) {
     ProjectStore store = open_or_400(body);
@@ -272,7 +220,7 @@ ApiResult post_voice_take(const in_json& body) {
     const std::string text =
         body.is_object() && body.contains("text") && body.at("text").is_string()
             ? body.at("text").get<std::string>()
-            : std::string(kVoiceText);
+            : std::string(stages::voice_sample_text());
 
     // **落点按种子起名，而且只留最近这一个。**
     //
@@ -340,7 +288,7 @@ ApiResult post_voice_save(const in_json& body) {
     }
     // **和试听念同一段。** 见 kVoiceText 上面那段：换文本就换人，
     // 所以这里不能"重出一段更长的"，否则存进去的不是刚才听到的。
-    if (out.is_null()) out = render_into(store, dest, kVoiceText, seed);
+    if (out.is_null()) out = render_into(store, dest, stages::voice_sample_text(), seed);
     out["saved"] = store.paths().rel(dest);
     out["name"] = stem;
 

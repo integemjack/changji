@@ -1603,13 +1603,13 @@ void run(const config::Settings& settings, const Options& opts) {
         });
 
     // 预置音色就是一组固定的种子。**回的是种子不是音频**——音频要摇出来
-    // 才有，而摇一次要几秒，八个一起摇会让页面卡半分钟。
+    // 才有，而摇一次要几秒，九个一起摇会让页面卡一分多钟。
     CROW_ROUTE(app, "/api/voice/presets")([] {
         auto r = guard([]() -> ApiResult {
             nlohmann::ordered_json arr = nlohmann::ordered_json::array();
             int n = 1;
-            for (const auto& p : preset_voices()) {
-                // 名字里带上基频：「预置 1」七个并排，看不出哪个是男声。
+            for (const auto& p : stages::preset_voices()) {
+                // 名字里带上基频：九个「预置 N」并排，看不出哪个是男声。
                 arr.push_back(
                     {{"id", "preset" + std::to_string(n)},
                      {"name", "预置 " + std::to_string(n)},
