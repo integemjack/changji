@@ -331,3 +331,49 @@ TEST_CASE("缺一层不会留下孤零零的分隔符") {
     CHECK(p.rfind("，") != p.size() - 3);   // 不以分隔符结尾
     CHECK(p.rfind("，", 0) != 0);            // 也不以它开头
 }
+
+TEST_CASE("大特写不带身份层：物件特写里塞角色全身描述，出来的是人不是物件") {
+    // 2026-09-13 q4_full sh004：分镜要床头柜手机特写，角色列表挂着男主，
+    // 身份层排最前，出的首帧是拿手机站在床边的全身人像；身份层挪后、只留
+    // 脸都不行，整个去掉才对。见 PromptComposer::compose 里那段。
+    models::AssetLibrary a = make_assets(models::StyleLine::REALISTIC);
+    models::Shot s;
+    s.shot_id = "ep01_sh004";
+    s.scene_id = "sc01";
+    s.camera_angle = models::CameraAngle::EYE_LEVEL;
+    s.first_frame_prompt = "床头柜上的手机屏幕亮起，只能看到林晚模糊的手部阴影";
+    models::CharacterInShot in;
+    in.char_id = "c_lin_wan";
+    s.characters = {in};
+
+    s.location_id = "loc_rooftop";
+
+    SUBCASE("ECU：没有名字、脸、衣着、场景，画面描述和风格还在，参考图也不带") {
+        s.shot_size = models::ShotSize::ECU;
+        const auto p = stages::PromptComposer(a).compose(s);
+        CHECK(p.positive.find("鹅蛋脸") == std::string::npos);
+        CHECK(p.positive.find("白色衬衫") == std::string::npos);
+        CHECK(p.positive.find("锈蚀护栏") == std::string::npos);   // 场景层
+        CHECK(p.positive.find("床头柜上的手机屏幕亮起") != std::string::npos);
+        CHECK(p.positive.find("大特写") != std::string::npos);
+        CHECK(p.positive.find("电影感") != std::string::npos);     // 风格层照旧
+        CHECK(p.reference_images.empty());
+    }
+    SUBCASE("CU 及以上照旧带身份层和场景层") {
+        s.shot_size = models::ShotSize::CU;
+        const auto p = stages::PromptComposer(a).compose(s);
+        CHECK(p.positive.find("鹅蛋脸") != std::string::npos);
+        CHECK(p.positive.find("锈蚀护栏") != std::string::npos);
+        CHECK(p.reference_images.size() == 2);
+    }
+    SUBCASE("ECU 引用了未注册场景照样拦") {
+        s.shot_size = models::ShotSize::ECU;
+        s.location_id = "loc_nowhere";
+        CHECK_THROWS(stages::PromptComposer(a).compose(s));
+    }
+    SUBCASE("ECU 引用了未注册角色照样拦") {
+        s.shot_size = models::ShotSize::ECU;
+        s.characters[0].char_id = "c_nobody";
+        CHECK_THROWS(stages::PromptComposer(a).compose(s));
+    }
+}

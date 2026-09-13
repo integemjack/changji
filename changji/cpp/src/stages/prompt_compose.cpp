@@ -89,12 +89,33 @@ PromptBundle PromptComposer::compose(const Shot& shot) const {
     std::vector<std::string> refs;
 
     // ---- 身份层。逐字节从资产库拼出来，模型碰不到。----
+    //
+    // **大特写（ECU）不带身份层。** 2026-09-13 q4_full sh004 实见：分镜要的
+    // 是「豪华卧室床头柜特写。一部智能手机屏幕亮起……只能看到李浩然模糊的
+    // 手部阴影」，角色列表里挂着他，身份层（名字、脸、身材、衣着）排在最前，
+    // 出图模型就画了一个拿手机站在床边的全身人像；换种子重出还是。出片模型
+    // 拿到这张和提示词矛盾的首帧，半路硬切到手机特写。同一镜四种拼法各出
+    // 一遍：身份层在前→全身人像；挪到画面描述后面→还是全身人像；只留脸的
+    // 描述放后面→一张脸浮在镜子里；**整个去掉→前景手机、背景虚化的人**，
+    // 唯一对得上分镜的一张。
+    //
+    // 大特写本来就只装得下一个局部（手、眼、物件），角色的全身描述在这一
+    // 档里没有位置；画面描述会点名是谁的眼、谁的手，够了。代价是脸的大特写
+    // 少了那几个字的长相描述——两秒的插入镜头，可以接受。
+    //
+    // **场景层同样不带。** 去掉身份层之后同一镜再出：前景是手机，背景还是
+    // 整间卧室加一个虚化的人——场景层那句「豪华卧室，柔和自然光……」把
+    // 整个房间拉了进来，出片模型在 1.7 秒处又切到真正的手机大特写。连场景
+    // 层也去掉之后才是分镜要的那张：手、手机、床头柜、床的一角。画面描述
+    // 里本来就写着"只能看到床的一角"，大特写要的环境就那么一点，靠它够了。
+    const bool insert_shot = shot.shot_size == ShotSize::ECU;
     for (const CharacterInShot& in_shot : shot.characters) {
         const auto it = assets_.characters.find(in_shot.char_id);
         if (it == assets_.characters.end()) {
             throw RenderError("镜头 " + shot.shot_id + " 引用了未注册角色 " +
                               in_shot.char_id);
         }
+        if (insert_shot) continue;   // 校验照做，层不拼、参考图不带
         const Character& c = it->second;
         std::vector<std::string> beats = {
             c.render_prompt(style_line_, in_shot.wardrobe_state)};
@@ -113,6 +134,9 @@ PromptBundle PromptComposer::compose(const Shot& shot) const {
             throw RenderError("镜头 " + shot.shot_id + " 引用了未注册场景 " +
                               *shot.location_id);
         }
+    }
+    if (!insert_shot && shot.location_id.has_value() && !shot.location_id->empty()) {
+        const auto it = assets_.locations.find(*shot.location_id);
         layers.push_back(it->second.render_prompt(style_line_));
         if (it->second.ref_empty.has_value() && !it->second.ref_empty->empty()) {
             refs.push_back(*it->second.ref_empty);
