@@ -14,6 +14,8 @@
 #include <fstream>
 #include <sstream>
 #include <string>
+#include <utility>
+#include <vector>
 
 #include <nlohmann/json.hpp>
 
@@ -231,6 +233,80 @@ TEST_CASE("ASS 整份文件逐字节和 Python 对上") {
         const std::string want = c.at("expected");
         const std::string diff = first_diff(got, want);
         CHECK_MESSAGE(diff.empty(), name << "：" << diff);
+    }
+}
+
+TEST_CASE("字幕样式跟着真实画布缩，不然每行都从两头出画") {
+    // **实机撞出来的。** 成片画布 2026-09-10 从 1080×1920 改成 544×928
+    // 之后，样式里那几个数原封不动：字号 54、左右边距各 60、单行 15 字。
+    // 15 × 54 = 810 像素，而 544 减掉两边 60 只剩 424——每一行都超出
+    // 将近一倍。更糟的是 WrapStyle: 2 不自动折行（断点是我们自己插的），
+    // 所以超出的部分是**直接切掉**：从 walk_c ep01 抽的那一帧上，
+    // 「该死，这单要是超时了我得赔光这」左边的"该"和右边的"这"各缺一半。
+    SUBCASE("参考画布上一个字都不动") {
+        media::AssOptions opt;   // 默认就是 1080×1920
+        const auto m = media::ass_metrics(opt);
+        CHECK(m.font_size == 54);
+        CHECK(m.margin_h == 60);
+        CHECK(m.margin_v == 180);
+        CHECK(m.max_chars_per_line == 15);
+    }
+
+    SUBCASE("544×928：横向按宽比缩，纵向按高比缩") {
+        media::AssOptions opt;
+        opt.width = 544;
+        opt.height = 928;
+        const auto m = media::ass_metrics(opt);
+        CHECK(m.font_size == 27);    // 54 × 544/1080
+        CHECK(m.margin_h == 30);
+        CHECK(m.margin_v == 87);     // 180 × 928/1920
+        // 装得下：15 × 27 = 405 ≤ 544 − 60 = 484
+        CHECK(m.max_chars_per_line * m.font_size <= opt.width - 2 * m.margin_h);
+    }
+
+    SUBCASE("每一档都装得下") {
+        for (const auto& wh : std::vector<std::pair<int, int>>{
+                 {544, 928}, {704, 1280}, {1440, 2560},
+                 {928, 544}, {1280, 704}, {2560, 1440}}) {
+            media::AssOptions opt;
+            opt.width = wh.first;
+            opt.height = wh.second;
+            const auto m = media::ass_metrics(opt);
+            CAPTURE(opt.width);
+            CAPTURE(opt.height);
+            CAPTURE(m.font_size);
+            CAPTURE(m.max_chars_per_line);
+            CHECK(m.max_chars_per_line * m.font_size <=
+                  opt.width - 2 * m.margin_h);
+            CHECK(m.max_chars_per_line >= 6);
+        }
+    }
+
+    SUBCASE("字号被人单独调大时，单行字数跟着让步") {
+        // 兜底那一层：不信配置里那个 15，按算出来的宽度取小的。
+        media::AssOptions opt;
+        opt.width = 544;
+        opt.height = 928;
+        opt.font_size = 108;   // 参考画布上的两倍
+        const auto m = media::ass_metrics(opt);
+        CHECK(m.font_size == 54);
+        CHECK(m.max_chars_per_line < 15);
+        CHECK(m.max_chars_per_line * m.font_size <= opt.width - 2 * m.margin_h);
+    }
+
+    SUBCASE("真出一份 ASS，样式行里是缩过的数") {
+        media::AssOptions opt;
+        opt.width = 544;
+        opt.height = 928;
+        const std::string ass = media::build_ass(
+            {media::SubtitleCue{0.0, 2.0, "该死，这单要是超时了我得赔光这个月的房租",
+                                "dialogue"}},
+            opt);
+        CHECK(ass.find("PlayResX: 544") != std::string::npos);
+        CHECK(ass.find("Style: dialogue,Source Han Sans SC,27,") !=
+              std::string::npos);
+        CHECK(ass.find(",30,30,87,1") != std::string::npos);
+        CHECK(ass.find(",60,60,180,1") == std::string::npos);
     }
 }
 

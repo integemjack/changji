@@ -236,8 +236,46 @@ std::string ass_time(double seconds) {
     return buf;
 }
 
+/// 把参考画布上的数缩到真实画布上。
+///
+/// 横向的按宽比缩，纵向的按高比缩——和 libass 从 PlayResX/PlayResY 往
+/// 真实分辨率缩的口径一致。**字号按宽比缩不是按高比**：要装得下的是
+/// 一行字的宽度，而竖屏时两个比一样，横屏时按高缩会把字压成十几像素。
+AssStyleMetrics ass_metrics(const AssOptions& opt) {
+    AssStyleMetrics m;
+    const double sx = opt.width > 0
+                          ? static_cast<double>(opt.width) / kAssRefWidth
+                          : 1.0;
+    const double sy = opt.height > 0
+                          ? static_cast<double>(opt.height) / kAssRefHeight
+                          : 1.0;
+    m.font_size = std::max(12, static_cast<int>(std::lround(opt.font_size * sx)));
+    m.margin_h = std::max(8, static_cast<int>(std::lround(opt.margin_h * sx)));
+    m.margin_v = std::max(8, static_cast<int>(std::lround(opt.margin_v * sy)));
+
+    // **最后再按真实宽度兜一次底。**
+    //
+    // 上面那两个数只要有一个被人单独改过，"多少字装得下"就和
+    // max_chars_per_line 对不上了，而对不上的表现是字**被切掉**，
+    // 不是折行——WrapStyle: 2 只认我们自己插进去的硬换行。所以这里
+    // 不信任那个配置值，按算出来的宽度取小的那个。
+    //
+    // 满宽中文字的宽度约等于字号（1 em），display_width 里 ASCII 记 0.5，
+    // 所以"多少个单位"直接就是 可用宽度 / 字号。
+    m.max_chars_per_line = opt.max_chars_per_line;
+    if (opt.width > 0 && m.font_size > 0) {
+        const int usable = opt.width - 2 * m.margin_h;
+        const int fits = usable / m.font_size;
+        // 低于 6 个字就不是"断行"了，是把每个字单独一行。那种时候宁可
+        // 让它略微超一点，也别切成这样——超出的部分至少还看得见一半。
+        if (fits >= 6) m.max_chars_per_line = std::min(m.max_chars_per_line, fits);
+    }
+    return m;
+}
+
 std::string build_ass(const std::vector<SubtitleCue>& cues,
                       const AssOptions& opt) {
+    const AssStyleMetrics m = ass_metrics(opt);
     std::ostringstream os;
     // WrapStyle 2 = 只在显式换行符处断行。断点由上面的 wrap_chinese 算好，
     // 不让渲染库自作主张——libass 对中文只按字符断，会在词中间折断。
@@ -253,19 +291,20 @@ std::string build_ass(const std::vector<SubtitleCue>& cues,
           "OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, "
           "ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, "
           "Alignment, MarginL, MarginR, MarginV, Encoding\n"
-       << "Style: dialogue," << opt.font << "," << opt.font_size
+       << "Style: dialogue," << opt.font << "," << m.font_size
        << ",&H00FFFFFF,&H000000FF,&H00000000,&H64000000,0,0,0,0,100,100,0,0,1,3,"
-          "1,2,60,60,"
-       << opt.margin_v << ",1\n"
+          "1,2,"
+       << m.margin_h << "," << m.margin_h << "," << m.margin_v << ",1\n"
        << "Style: narration," << opt.font << ","
-       << static_cast<int>(opt.font_size * 0.92)
+       << static_cast<int>(m.font_size * 0.92)
        << ",&H00E8E8E8,&H000000FF,&H00000000,&H64000000,0,1,0,0,100,100,0,0,1,3,"
-          "1,2,60,60,"
-       << opt.margin_v << ",1\n"
+          "1,2,"
+       << m.margin_h << "," << m.margin_h << "," << m.margin_v << ",1\n"
        << "Style: title," << opt.font << ","
-       << static_cast<int>(opt.font_size * 1.4)
+       << static_cast<int>(m.font_size * 1.4)
        << ",&H00FFFFFF,&H000000FF,&H00000000,&H96000000,1,0,0,0,100,100,2,0,1,4,"
-          "2,5,60,60,0,1\n"
+          "2,5,"
+       << m.margin_h << "," << m.margin_h << ",0,1\n"
        << "\n"
        << "[Events]\n"
        << "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, "
@@ -275,7 +314,7 @@ std::string build_ass(const std::vector<SubtitleCue>& cues,
     for (const auto& cue : cues) {
         if (text::strip_ws(cue.text).empty()) continue;
         const auto wrapped = wrap_chinese(
-            cue.text, static_cast<double>(opt.max_chars_per_line), opt.max_lines);
+            cue.text, static_cast<double>(m.max_chars_per_line), opt.max_lines);
         std::string body;
         for (std::size_t i = 0; i < wrapped.size(); ++i) {
             if (i) body += "\\N";   // ASS 的硬换行

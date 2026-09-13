@@ -51,16 +51,45 @@ struct SubtitleCue {
 /// ASS 的时间格式：时:分:秒.厘秒。
 std::string ass_time(double seconds);
 
+/// 样式里那几个数是按哪块画布定的。
+///
+/// **字号、边距都是"在 1080×1920 上应该是多大"**，`build_ass` 会按
+/// `AssOptions::width/height` 缩到真实画布上。定这个参考系是因为
+/// 2026-09-13 实测撞到：成片画布从 1080×1920 变成 544×928 之后，
+/// 字号还是 54、左右边距还是 60、单行还是 15 个字——15 × 54 = 810 像素，
+/// 而 544 减掉两边 60 只剩 424，**每一行都从左右两头出画**，而且
+/// `WrapStyle: 2` 不自动折行，所以是直接切掉，不是折下来。
+inline constexpr int kAssRefWidth = 1080;
+inline constexpr int kAssRefHeight = 1920;
+
 struct AssOptions {
     int width = 1080;
     int height = 1920;
     std::string font = "Source Han Sans SC";
+    /// 在 1080 宽上的字号。真实画布上的字号由 build_ass 按宽度缩。
     int font_size = 54;
     int max_chars_per_line = 15;
     int max_lines = 2;
     /// 竖屏短剧的字幕放在下方**偏上一点**，避开平台的界面元素。
+    /// 同样是 1920 高上的数，按高度缩。
     int margin_v = 180;
+    /// 左右各留多少。同样是 1080 宽上的数。
+    int margin_h = 60;
 };
+
+/// 缩到真实画布之后的那几个数。
+struct AssStyleMetrics {
+    int font_size = 0;
+    int margin_h = 0;
+    int margin_v = 0;
+    /// 兜过底的单行字数：再大就装不下了，不管配置里写的是多少。
+    int max_chars_per_line = 0;
+};
+
+/// 把 `opt` 里那几个参考画布上的数缩到 `opt.width/height` 上。
+///
+/// 单拎出来是为了能直接测——切字幕这件事看成片才发现，而成片要跑一集。
+AssStyleMetrics ass_metrics(const AssOptions& opt);
 
 std::string build_ass(const std::vector<SubtitleCue>& cues,
                       const AssOptions& opt = {});
