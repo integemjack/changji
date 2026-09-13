@@ -1203,17 +1203,23 @@ void register_sd_slots(SettingsProvider raw_provider,
     {
         const fs::path store =
             paths::user_data_dir("changji") / "vram_measured.json";
-        // **这套实测值属于哪一套配置。** 只收真正会改变占用的那几项：
-        // 两条路各自的预算（预算决定 sd.cpp 能在显存里囤多少权重）和画布
-        // （缓冲随它涨）。模型换了的话文件大小会让预算那一项跟着变，
+        // **这套实测值属于哪一套配置。** 只收真正会改变占用、而且没有
+        // 别的地方记着的那几项：两条路各自的预算（预算决定 sd.cpp 能在
+        // 显存里囤多少权重）。模型换了的话文件大小会让预算那一项跟着变，
         // 不必单列。
+        //
+        // **画布不进指纹**（2026-09-13 起）。以前也收，但收的是**全局**
+        // 设置里的画布，而画布是项目的属性：全局是 544×928、项目是
+        // 704×1280，指纹一样、实测照收；反过来全局改一下，项目没变，
+        // 整份作废。画布该走的门是 record_measured_vram 记下的 work
+        // （像素 × 帧），量过的活罩不住这次的活时按比例放大
+        // （Scheduler::make_room），那才是按每一镜真实的画幅判。
         const std::string fingerprint = [&] {
             const config::Settings s0 = provider();
-            const auto [cw, ch] = s0.video.size();
             char buf[128];
-            std::snprintf(buf, sizeof(buf), "v%.2f/i%.2f/%dx%d",
+            std::snprintf(buf, sizeof(buf), "v%.2f/i%.2f",
                           budget_for(s0, ModelRole::Video),
-                          budget_for(s0, ModelRole::Image), cw, ch);
+                          budget_for(s0, ModelRole::Image));
             return std::string(buf);
         }();
         std::error_code ec;

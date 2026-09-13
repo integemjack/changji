@@ -345,7 +345,7 @@ TEST_CASE("实测显存：写出去再读回来，要一模一样") {
     CHECK(back.find(infer::Slot::LLM) == back.end());
 }
 
-TEST_CASE("实测显存：换了预算或画布，攒下的峰值就作废") {
+TEST_CASE("实测显存：换了预算，攒下的峰值就作废；画布不进指纹") {
     // **2026-09-13 撞到的。** 给出片的预算补上计算缓冲的余量之后，一镜的
     // 实际峰值从 32143 MiB 降到 24563 MiB（省了 7.4 GB），而记录下来的还是
     // 31.39 GB——record_measured_vram 是「只往上记，不往下调」。
@@ -357,21 +357,26 @@ TEST_CASE("实测显存：换了预算或画布，攒下的峰值就作废") {
     std::map<infer::Slot, M> m;
     m[infer::Slot::Video] = M{31ull << 30, 504832ull * 124};
     const std::string text =
-        infer::serialize_measured_vram(m, "v28.66/i26.27/544x928");
+        infer::serialize_measured_vram(m, "v28.66/i26.27");
 
     SUBCASE("指纹一样：照收") {
         const auto back =
-            infer::parse_measured_vram(text, "v28.66/i26.27/544x928");
+            infer::parse_measured_vram(text, "v28.66/i26.27");
         REQUIRE(back.size() == 1);
         CHECK(back.at(infer::Slot::Video).bytes == (31ull << 30));
     }
 
     SUBCASE("预算改了：整份作废") {
-        CHECK(infer::parse_measured_vram(text, "v23.26/i26.27/544x928").empty());
+        CHECK(infer::parse_measured_vram(text, "v23.26/i26.27").empty());
     }
 
-    SUBCASE("画布改了：整份作废") {
-        CHECK(infer::parse_measured_vram(text, "v28.66/i26.27/1440x2560").empty());
+    SUBCASE("老文件的指纹带着画布：和新指纹对不上，作废一次就好") {
+        // 以前指纹里收的是**全局**设置的画布，而画布是项目的属性——
+        // 项目 704×1280、全局 544×928 时指纹照样一样；全局改一下项目没变
+        // 却整份作废。画布现在走 record_measured_vram 记的 work 那道门。
+        const std::string old_style =
+            infer::serialize_measured_vram(m, "v28.66/i26.27/544x928");
+        CHECK(infer::parse_measured_vram(old_style, "v28.66/i26.27").empty());
     }
 
     SUBCASE("不给指纹就不查——老调用点行为不变") {
@@ -384,7 +389,7 @@ TEST_CASE("实测显存：换了预算或画布，攒下的峰值就作废") {
         // 永久留存——那一改对已经存在的文件完全无效。
         // 放过换来的是"第一镜不用先腾显存"，代价是一个永远纠不正的数。
         const std::string old = R"({"视频":{"bytes":123,"work":456}})";
-        CHECK(infer::parse_measured_vram(old, "v23.26/i26.27/544x928").empty());
+        CHECK(infer::parse_measured_vram(old, "v23.26/i26.27").empty());
         // 不给指纹时照旧不查，老调用点行为不变
         CHECK(infer::parse_measured_vram(old).size() == 1);
     }
