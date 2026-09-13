@@ -448,9 +448,9 @@ std::vector<std::string> Settings::validate() const {
             "[models].video_frame_base 填了就要一起填 video_frame_step："
             "帧数的格子是 step*k + base，只给 base 定不出来");
     }
-    if (models.video_rng != "cuda" && models.video_rng != "cpu" &&
-        models.video_rng != "std") {
-        errs.push_back("[models].video_rng 只能是 cuda / cpu / std，现在是 " +
+    if (models.video_rng != "auto" && models.video_rng != "cuda" &&
+        models.video_rng != "cpu" && models.video_rng != "std") {
+        errs.push_back("[models].video_rng 只能是 auto / cuda / cpu / std，现在是 " +
                        models.video_rng);
     }
     if (!models.video_llm.empty() && !models.video_text_encoder.empty()) {
@@ -773,6 +773,48 @@ double model_size_gb(const Settings& s, const std::string& entry) {
 
 }  // namespace
 
+ModelsConfig::VideoFamily ModelsConfig::video_family() const {
+    std::string low;
+    for (const char c : video) {
+        const unsigned char u = static_cast<unsigned char>(c);
+        low += (u >= 'A' && u <= 'Z') ? static_cast<char>(u - 'A' + 'a') : c;
+    }
+    const auto has = [&low](const char* w) { return low.find(w) != std::string::npos; };
+    if (has("minimax") || has("hailuo") || has("h3")) return VideoFamily::MiniMaxH3;
+    if (has("wan")) return video_high_noise.empty() ? VideoFamily::Wan5B : VideoFamily::WanA14B;
+    if (!video_llm.empty()) return VideoFamily::MiniMaxH3;
+    return VideoFamily::Unknown;
+}
+
+double ModelsConfig::effective_video_cfg() const {
+    if (video_cfg > 0.0) return video_cfg;
+    switch (video_family()) {
+        case VideoFamily::MiniMaxH3: return 1.0;   // docs/minimax_h3.md：--cfg-scale 1.0
+        case VideoFamily::WanA14B: return 3.5;     // docs/wan.md A14B
+        case VideoFamily::Wan5B: return 6.0;       // docs/wan.md TI2V-5B
+        case VideoFamily::Unknown: break;
+    }
+    return 6.0;   // 老默认，认不出家族时别乱猜
+}
+
+std::string ModelsConfig::effective_video_rng() const {
+    if (video_rng != "auto") return video_rng;
+    // 上游给 H3 的命令行明写 --rng cpu；sd.cpp 自己的默认是 cuda。
+    return video_family() == VideoFamily::MiniMaxH3 ? "cpu" : "cuda";
+}
+
+void resolve_model_family_defaults(Settings& s) {
+    // 把 0 / auto 落成具体值。读取设置的两条入口都调（见 normalize_fps_for_model
+    // 头上那段：load_settings 和 Runtime::replace 互不相通），下游拿到的
+    // 永远是具体值，不用每个消费方都记得去问家族。
+    // 认不出家族（多半是根本没配视频模型）就不动：留着 0 / auto，
+    // 消费方用 effective_* 时照样拿到老默认 6.0 / cuda；而模板解析出来
+    // 仍等于内置默认值，那条用例钉的正是这一点。
+    if (s.models.video_family() == ModelsConfig::VideoFamily::Unknown) return;
+    s.models.video_cfg = s.models.effective_video_cfg();
+    s.models.video_rng = s.models.effective_video_rng();
+}
+
 bool ModelsConfig::accepts_reference_images(const std::string& image_file) {
     std::string low;
     for (const char c : image_file) {
@@ -886,6 +928,8 @@ std::vector<std::string> migrate_legacy(Settings& s) {
     if (std::string note = normalize_fps_for_model(s); !note.empty()) {
         notes.push_back(std::move(note));
     }
+    // cfg / rng 的 0 / auto 按模型家族落成具体值，同样两条入口都做。
+    resolve_model_family_defaults(s);
     // **拆掉一条路之后，老配置不能让程序起不来。**
     //
     // 2026-09-10 拆 ComfyUI 时只在 validate() 里加了迁移说明，
@@ -1081,7 +1125,7 @@ subtitle_font = "Source Han Sans SC"
 # HunyuanVideo 7、MiniMax-H3 12、Qwen-Image 3。以前这里写死 3.0（Wan 的数），
 # 换成 H3 之后一直在拿 Wan 的 time-shift 跑它，而且不报错。除非你在对某个
 # 具体模型调参，否则别填。
-# video_cfg = 6.0
+# video_cfg = 0.0   # 0 = 按模型家族自动：H3 1.0、Wan A14B 3.5、Wan 5B 6.0
 # video_flow_shift = 0.0
 # image_cfg = 2.5
 # image_flow_shift = 0.0
@@ -1115,7 +1159,7 @@ subtitle_font = "Source Han Sans SC"
 # 出片用哪种随机数发生器：cuda（默认，Wan 那一路）/ cpu / std。
 # 上游给 MiniMax-H3 的命令行是 --rng cpu；发生器不同则同一个种子出的画面不同，
 # 而且不报错。只影响出片，出图那条不动。
-# video_rng = "cpu"
+# video_rng = "auto"   # auto = 按模型家族：H3 cpu、其余 cuda
 #
 # 出片挂一个 LoRA。Turbo 那类蒸馏适配器能把采样步数压到 6 步左右（约 5 倍）。
 # **挂上之后步数要跟着改**，不改的话白挂。认不认这类给 ComfyUI 做的 LoRA

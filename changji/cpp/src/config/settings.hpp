@@ -403,7 +403,13 @@ struct ModelsConfig {
     ///
     /// 写死一个数就是在赌"出片模型永远是这一个"。换模型时漏改无声无息，
     /// 所以这里的正确默认是"别赌，问模型"。
-    double video_cfg = 6.0;
+    /// **`video_cfg` 的 0 = 按模型家族自动**（2026-09-13 起）：H3 1.0、
+    /// Wan 2.2 A14B 3.5、Wan 5B 6.0（都是上游 docs 里给的命令行）。以前默认
+    /// 写死 6.0，而 `video_lora` / `video_max_frames` 的默认早就按 H3 了——
+    /// 手改 `[models].video` 换成 H3 的人拿 6.0 跑：多跑一遍 uncond（时间
+    /// 翻倍）而且不报错。初始化页选家族时会写具体值，那条路不受影响。
+    /// 取值见 effective_video_cfg。
+    double video_cfg = 0.0;
     double video_flow_shift = 0.0;
 
     /// 双专家视频模型的**高噪声**那一份。**C++ 独有**，Python 没有这条路。
@@ -452,7 +458,18 @@ struct ModelsConfig {
     /// 命令行明写着 `--rng cpu`**（docs/minimax_h3.md）——不同的发生器
     /// 出的初始噪声不一样，同一个种子出来的画面就不一样，而且不报错。
     /// 只影响出片那条上下文，出图那条不动（改了会连首帧一起变）。
-    std::string video_rng = "cuda";
+    /// **`auto` = 按模型家族**（H3 → cpu，其余 → cuda），理由同 video_cfg。
+    std::string video_rng = "auto";
+
+    /// 出片模型是哪一家。按 `video` 的文件名认，认不出看编码器走哪条路
+    /// （`video_llm` 非空 = H3 那一路）。和 stages::guess_video_limits 是
+    /// 同一套判据。
+    enum class VideoFamily { Unknown, Wan5B, WanA14B, MiniMaxH3 };
+    VideoFamily video_family() const;
+    /// `video_cfg` 填了就是它，0 就按家族给；家族认不出给 6.0（老默认）。
+    double effective_video_cfg() const;
+    /// `video_rng` 不是 auto 就是它，auto 按家族给。
+    std::string effective_video_rng() const;
 
     /// 出片挂一个 LoRA（相对 `dir` 或绝对路径）。**C++ 独有。**
     ///
@@ -837,6 +854,10 @@ std::vector<std::string> migrate_legacy(Settings& s);
 ///
 /// 所以两条都调这一个函数。`migrate_legacy` 里调了一次，覆盖第一条。
 std::string normalize_fps_for_model(Settings& s);
+
+/// 把 `[models].video_cfg` 的 0 和 `video_rng` 的 auto 按模型家族落成具体值。
+/// 和 normalize_fps_for_model 一样，读设置的两条入口都要调。
+void resolve_model_family_defaults(Settings& s);
 
 /// 哪些设置正被环境变量顶着。
 ///

@@ -566,7 +566,7 @@ std::shared_ptr<SdContext> SdContext::create(const config::Settings& settings,
     // 拿视频模型进去整个进程崩）。走到这里时 image 一定非空。
     const bool is_video = role == ModelRole::Video;
     const std::string& which = is_video ? m.video : m.image;
-    impl.cfg = is_video ? m.video_cfg : m.image_cfg;
+    impl.cfg = is_video ? m.effective_video_cfg() : m.image_cfg;
     impl.flow_shift = is_video ? m.video_flow_shift : m.image_flow_shift;
     impl.diffusion = paths::to_utf8(m.resolve(which, ws));
     // 双专家的高噪声那一份。只有视频那条路有——Qwen-Image 不是 MoE。
@@ -679,8 +679,11 @@ std::shared_ptr<SdContext> SdContext::create(const config::Settings& settings,
     // 随机数发生器。**sd.cpp 的默认是 cuda**，而上游给 MiniMax-H3 的命令行
     // 是 --rng cpu。发生器不同则初始噪声不同，同一个种子出的画面就不一样，
     // 而且没有任何报错。只在出片这条路上认这一项。
-    if (is_video && m.video_rng != "cuda") {
-        p.rng_type = ::str_to_rng_type(m.video_rng.c_str());
+    // effective_*：读设置那两条入口已经把 auto 落成具体值，这里再问一遍
+    // 是给没经过它们的 Settings（单元测试、直接构造的）兜底。
+    const std::string rng = m.effective_video_rng();
+    if (is_video && rng != "cuda") {
+        p.rng_type = ::str_to_rng_type(rng.c_str());
     }
     if (!impl.text_encoder.empty()) {
         // **是 t5xxl_path，不是 embeddings_connectors_path。**

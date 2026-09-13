@@ -90,6 +90,7 @@ void Runtime::replace(Settings s) {
     if (const std::string note = normalize_fps_for_model(s); !note.empty()) {
         std::fprintf(stderr, "[配置] %s\n", note.c_str());
     }
+    resolve_model_family_defaults(s);
 
     std::lock_guard lg(mu_);
     settings_ = std::move(s);

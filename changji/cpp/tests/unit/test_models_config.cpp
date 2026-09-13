@@ -654,11 +654,13 @@ TEST_CASE("[models]：双专家视频模型的两项") {
         }
         CHECK(said);
     }
-    SUBCASE("随机数发生器：默认 cuda，认 cpu/std，别的拒") {
+    SUBCASE("随机数发生器：默认 auto 按家族，认 cpu/std，别的拒") {
         // sd.cpp 的默认是 cuda，Wan 那一路就用它；上游给 MiniMax-H3 的
         // 命令行是 --rng cpu。发生器不同则同一个种子出的画面不同，
         // **而且不报错**，所以这一项必须能配、且拼错要拦住。
-        CHECK(config::ModelsConfig{}.video_rng == "cuda");
+        // 默认 auto：没配视频模型时落成 cuda（老默认），配了 H3 落成 cpu。
+        CHECK(config::ModelsConfig{}.video_rng == "auto");
+        CHECK(config::ModelsConfig{}.effective_video_rng() == "cuda");
         {
             std::ofstream f(tmp / "changji.toml", std::ios::binary);
             f << "[models]\nvideo_rng = \"cpu\"\n";
@@ -1349,4 +1351,55 @@ TEST_CASE("Qwen-Image-Edit 2509/2511 要一起填视觉塔，初版 Edit 和基�
     CHECK_FALSE(said(m));
     m.image = "qwen-image-Q6_K.gguf";        // 基础模型根本不收参考图
     CHECK_FALSE(said(m));
+}
+
+TEST_CASE("cfg / rng 的默认按出片模型家族给，别再默认 Wan 的 6.0") {
+    // video_lora / video_max_frames 的默认早就按 H3 了，cfg 还默认 6.0 是
+    // 自相矛盾：手改 [models].video 换成 H3 的人拿 6.0 跑，多跑一遍 uncond
+    // 还不报错。上游 docs：H3 --cfg-scale 1.0 --rng cpu；Wan A14B 3.5；5B 6.0。
+    config::ModelsConfig m;
+    CHECK(m.video_cfg == 0.0);
+    CHECK(m.video_family() == config::ModelsConfig::VideoFamily::Unknown);
+    CHECK(m.effective_video_cfg() == doctest::Approx(6.0));
+
+    m.video = "minimax_h3_fl2va-Q4_K_M.gguf";
+    CHECK(m.video_family() == config::ModelsConfig::VideoFamily::MiniMaxH3);
+    CHECK(m.effective_video_cfg() == doctest::Approx(1.0));
+    CHECK(m.effective_video_rng() == "cpu");
+
+    m.video = "wan2.2_ti2v_5B_fp16.safetensors";
+    CHECK(m.video_family() == config::ModelsConfig::VideoFamily::Wan5B);
+    CHECK(m.effective_video_cfg() == doctest::Approx(6.0));
+    CHECK(m.effective_video_rng() == "cuda");
+    m.video_high_noise = "Wan2.2-I2V-A14B-HighNoise-Q8_0.gguf";
+    CHECK(m.video_family() == config::ModelsConfig::VideoFamily::WanA14B);
+    CHECK(m.effective_video_cfg() == doctest::Approx(3.5));
+
+    // 名字认不出就看编码器：挂了 video_llm 就是 H3 那一路
+    m = config::ModelsConfig{};
+    m.video = "mystery.gguf";
+    m.video_llm = "qwen3vl_32b_minimax_h3-Q4_K_M.gguf";
+    CHECK(m.effective_video_cfg() == doctest::Approx(1.0));
+
+    // 填了就是填的，家族不管
+    m.video = "minimax_h3_fl2va-Q4_K_M.gguf";
+    m.video_cfg = 2.0;
+    m.video_rng = "std";
+    CHECK(m.effective_video_cfg() == doctest::Approx(2.0));
+    CHECK(m.effective_video_rng() == "std");
+
+    SUBCASE("load_settings 读出来的已经是具体值，下游不用再问家族") {
+        const fs::path tmp = fs::temp_directory_path() / paths::from_utf8("changji_cfg_family");
+        std::error_code ec;
+        fs::remove_all(tmp, ec);
+        fs::create_directories(tmp, ec);
+        {
+            std::ofstream f(tmp / "changji.toml", std::ios::binary);
+            f << "[models]\nvideo = \"minimax_h3_fl2va-Q4_K_M.gguf\"\n";
+        }
+        const config::Settings s = config::load_settings(tmp);
+        CHECK(s.models.video_cfg == doctest::Approx(1.0));
+        CHECK(s.models.video_rng == "cpu");
+        fs::remove_all(tmp, ec);
+    }
 }
