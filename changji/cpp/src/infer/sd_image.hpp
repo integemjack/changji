@@ -32,6 +32,33 @@ public:
 };
 
 /// 一次出图的参数。
+/// 一次生成的采样旋钮。**属于这一次请求，不属于加载好的模型。**
+///
+/// 以前这三个数是在 `SdContext::create` 时从 `[models]` 读出来、
+/// 冻在上下文里的，`ImageRequest::cfg` 上还留着一行注释说自己"不再生效"。
+/// 那个设计有两个后果，都是 2026-09-13 验 flow_shift 时当场撞到的：
+///
+///   1. **项目自己的 `changji.toml` 完全不参与。** 建上下文用的是
+///      `register_sd_slots` 里那个全局 `provider()`（`Runtime::snapshot()`），
+///      而出片每跑一集是拿 `load_settings(项目目录)` 的那一份跑的。
+///      于是我在项目里写 `video_flow_shift`，两次出片**字节完全相同**。
+///   2. **上下文是 `Residency::Cached`**，改了全局配置也要等它被卸载才生效。
+///      于是"改个参数重跑一镜看看"这件事根本不成立，而它不报错。
+///
+/// 请求里带着走就没有这两个问题——`use_lora` 早就是这么做的，
+/// 理由写在 sd_video.cpp 里：上下文是草稿和成片共用的。
+struct SamplingKnobs {
+    /// 文本 CFG。**H3 要 1.0，Qwen-Image 要 2.5，Wan 要 6.0**，差得很远。
+    /// `<= 0` = 没填，`generate*` 会当场抛——悄悄用 sd.cpp 的 7.0 跑 H3
+    /// 出来的是一团噪点，而那种错人会先去怀疑提示词。
+    double cfg = 0.0;
+    /// 0 = 自动，交给 sd.cpp 按模型架构挑。见 `sd_flow_shift`。
+    double flow_shift = 0.0;
+    /// 双专家模型两个专家交班的 sigma 阈值。`<= 0` = 用 sd.cpp 的默认。
+    /// 只有 `video_high_noise` 非空时有意义。
+    double moe_boundary = 0.0;
+};
+
 struct ImageRequest {
     std::string positive;
     std::string negative;
@@ -41,9 +68,8 @@ struct ImageRequest {
     /// 种子。**必须显式给**，不能让它随机——重跑同一个镜头要能得到
     /// 同一张图，否则"重试"和"换一张"就分不清了。
     std::int64_t seed = 0;
-    /// **不再生效。** cfg 按角色从 [models].image_cfg / video_cfg 来，
-    /// 留着这个字段只是不想动所有构造点。
-    double cfg = 7.0;
+    /// 这一次的采样旋钮。**必须填**，见 SamplingKnobs。
+    SamplingKnobs knobs;
     /// 参考图的绝对路径。图像编辑模型那条路会用，纯文生图忽略。
     std::vector<std::filesystem::path> reference_images;
 
@@ -117,9 +143,8 @@ struct VideoRequest {
     int frames = 49;
     int fps = 24;
     std::int64_t seed = 0;
-    /// **不再生效。** cfg 按角色从 [models].image_cfg / video_cfg 来，
-    /// 留着这个字段只是不想动所有构造点。
-    double cfg = 7.0;
+    /// 这一次的采样旋钮。**必须填**，见 SamplingKnobs。
+    SamplingKnobs knobs;
     /// 首帧。跨镜头一致性全靠它，没有的话退化成纯文生视频。
     std::optional<std::filesystem::path> start_image;
 
@@ -185,6 +210,14 @@ enum class ModelRole {
 /// 2026-09-08 实测那么干会让整个进程崩掉（0xc0000094 整数除零），
 /// 因为 `sd_img_gen_params_t` 没有 video_frames 字段，
 /// 压根没法告诉 generate_image 出几帧。
+/// 从设置里把这个角色的采样旋钮取出来。
+///
+/// **只有这一个地方在做这件事**，三个构造请求的地方（出首帧、出片、
+/// 参考图）都调它。角色分开是因为图像和视频这两套数完全不同，
+/// 而共用过一次的后果是"出图那条路从来没真跑过，没人发现"。
+SamplingKnobs sampling_knobs_for(const config::Settings& settings,
+                                 ModelRole role);
+
 std::string sd_model_problem(const config::Settings& settings, ModelRole role);
 
 /// 配置里的 `flow_shift` 翻成传给 sd.cpp 的那个 float。

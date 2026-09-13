@@ -23,18 +23,38 @@ const std::string& lookup(const std::map<K, std::string>& m, K key) {
     return it == m.end() ? kEmpty : it->second;
 }
 
-/// 用分隔符连接，**跳过空串**。
+/// 用分隔符连接，**跳过空串，并且削掉每一段尾巴上的断句标点**。
 ///
 /// 跳空是必须的：不跳的话缺一层就多一个"，，"，
 /// 而那个双逗号会被模型当成一个停顿信号。
+///
+/// **削尾标点是 2026-09-13 补的，治的是同一个病的另一半。** 大模型写完一段
+/// 描述习惯性地点一个句号，而这里紧跟着又接一个「，」，拼出来是"。，"——
+/// 和双逗号一样是个坏掉的分隔符，而且它一直在那儿：
+///
+/// | | 以句号结尾的 |
+/// |---|---|
+/// | walk_c 的 `first_frame_prompt` | 61 / 61 |
+/// | 新出的那份 `first_frame_prompt` | 46 / 47 |
+/// | 新出的那份 `motion_prompt` | 51 / 52 |
+///
+/// 也就是说**每一张首帧的提示词里都有一个"。，"**，从来没人看见——因为
+/// 它不报错，只是让模型多读到一个停顿。运动描述那一栏以前是空的，
+/// 所以这半边直到 `motion_prompt` 变成必填才露出来。
+///
+/// 削的是 `rstrip_punct` 那一套（。.；;，,、和空格），**不含 ！？ 和引号**：
+/// "他说：「走！」"那种结尾是内容，不是断句。段落中间的句号一个不动——
+/// 那是真的句子结构，只有贴着分隔符的那个是噪声。
 std::string join_nonempty(const std::vector<std::string>& parts,
                           const std::string& sep) {
     std::string out;
     bool first = true;
     for (const auto& p : parts) {
         if (p.empty()) continue;
+        const std::string clean = text::rstrip_punct(p);
+        if (clean.empty()) continue;
         if (!first) out += sep;
-        out += p;
+        out += clean;
         first = false;
     }
     return out;

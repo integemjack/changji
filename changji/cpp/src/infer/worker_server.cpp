@@ -190,7 +190,7 @@ void run_worker(const config::Settings& settings, const WorkerOptions& opts) {
                     if (task.kind == TaskKind::Frame) {
                         models::Shot shot;
                         shot.shot_id = task.shot_id;
-                        stages::sd_renderer_with_seed(task.seed)(
+                        stages::sd_renderer_with_seed(settings, task.seed)(
                             shot, task.prompts, task.spec, dest, live->tok,
                             on_step);
                     } else {

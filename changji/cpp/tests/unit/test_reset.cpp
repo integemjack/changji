@@ -112,7 +112,7 @@ TEST_CASE("被退回的镜头，重试次数归零、上一轮的闸门意见清
 
     const Shot& redone = shot_with(after, ShotStatus::FINAL_DONE);
     // attempts 不归零的话，重试次数会从旧值接着数，
-    // 第一次重跑就可能直接判超限、降级成静帧。
+    // 第一次重跑就可能直接判超限、降级。
     CHECK(redone.attempts == 0);
     // gate_notes 是上一轮画面的意见。新画面还没出，留着会让
     // 界面上显示一条对不上的评语。

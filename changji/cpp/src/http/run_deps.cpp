@@ -32,7 +32,9 @@ RunDeps default_run_deps() {
     d.backends = [](const config::Settings& s, const ProjectStore& store) {
         pipeline::Backends b;
         // 默认这一套：进程内 sd.cpp。
-        b.frame = stages::sd_renderer();
+        // 两边都拿 `s`：这是**这一集**的设置（出片那条路每跑一集
+        // 都 load_settings(项目目录) 重读），采样旋钮要跟着它走。
+        b.frame = stages::sd_renderer(s);
         b.video = infer::sd_video_renderer(s);
         b.frame_backend_name = "sd.cpp";
 

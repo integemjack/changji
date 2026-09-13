@@ -84,10 +84,16 @@ ShotCountBounds shot_count_bounds(const DurationQuota& quota, double target_s,
 /// 生成给大模型的 JSON Schema。
 ///
 /// 从 pydantic 导出的 Shot schema 出发（见 shot_schema.inc.hpp），
-/// 做三件事：删掉运行时字段、把角色和场景 id 收紧成枚举、
-/// 去掉 needs_lipsync（那个由规则算）。
+/// 做四件事：删掉运行时字段、把角色和场景 id 收紧成枚举、
+/// 去掉 needs_lipsync（那个由规则算）、把运动那两栏钉成必填。
 ///
 /// 收紧成枚举是防止模型凭空造角色最硬的手段。
+///
+/// **`required` 这张表本身就是最硬的那个旋钮。** 不在表里的字段模型会整个
+/// 略过，解析时补上结构体默认值，全程不报错——实测一份 198 镜的项目里
+/// `motion_prompt` 空了 198 个、`camera_move` 全是 static，而同一张表里
+/// 在 required 里的 `shot_size` 有五种取值。加字段进来要想清楚，
+/// 不加则等于默认它不会被填。
 ///
 /// bounds 给了就把镜头数写进 shots 的 minItems / maxItems。
 nlohmann::ordered_json llm_shot_schema(const models::AssetLibrary& assets,

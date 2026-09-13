@@ -126,7 +126,7 @@ const char* status_zh(ShotStatus v) {
         case ShotStatus::DRAFT_REJECTED:  return "草稿未过闸门";
         case ShotStatus::FINAL_DONE:      return "成片完成";
         case ShotStatus::FINAL_REJECTED:  return "成片未过闸门";
-        case ShotStatus::FALLBACK:        return "已降级为静帧";
+        case ShotStatus::FALLBACK:        return "重试超限，已降级";
         case ShotStatus::LOCKED:          return "已锁定";
     }
     return "状态不明";

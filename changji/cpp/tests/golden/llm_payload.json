@@ -708,11 +708,10 @@
                     "type": "string"
                   },
                   "motion_prompt": {
-                    "default": "",
-                    "description": "运动描述，给视频模型",
+                    "type": "string",
+                    "minLength": 12,
                     "maxLength": 400,
-                    "title": "Motion Prompt",
-                    "type": "string"
+                    "description": "这几秒画面怎么动：谁在动、朝哪个方向动、快还是慢，镜头跟不跟。首帧已经定死了长相、服装和场景，这里只写动的部分，不要复述它们"
                   },
                   "shot_size": {
                     "$ref": "#/$defs/ShotSize",
@@ -723,8 +722,19 @@
                     "default": "eye_level"
                   },
                   "camera_move": {
-                    "$ref": "#/$defs/CameraMove",
-                    "default": "static"
+                    "type": "string",
+                    "enum": [
+                      "static",
+                      "pan_left",
+                      "pan_right",
+                      "tilt_up",
+                      "tilt_down",
+                      "push_in",
+                      "pull_out",
+                      "handheld",
+                      "orbit"
+                    ],
+                    "description": "这一镜的运镜。只有定格的物件特写、静止的空镜才填 static"
                   },
                   "camera_id": {
                     "anyOf": [
@@ -819,7 +829,9 @@
                   "scene_id",
                   "order",
                   "first_frame_prompt",
+                  "motion_prompt",
                   "shot_size",
+                  "camera_move",
                   "duration_s",
                   "characters",
                   "dialogue"
@@ -1066,11 +1078,10 @@
                           "type": "string"
                         },
                         "motion_prompt": {
-                          "default": "",
-                          "description": "运动描述，给视频模型",
+                          "type": "string",
+                          "minLength": 12,
                           "maxLength": 400,
-                          "title": "Motion Prompt",
-                          "type": "string"
+                          "description": "这几秒画面怎么动：谁在动、朝哪个方向动、快还是慢，镜头跟不跟。首帧已经定死了长相、服装和场景，这里只写动的部分，不要复述它们"
                         },
                         "shot_size": {
                           "$ref": "#/$defs/ShotSize",
@@ -1081,8 +1092,19 @@
                           "default": "eye_level"
                         },
                         "camera_move": {
-                          "$ref": "#/$defs/CameraMove",
-                          "default": "static"
+                          "type": "string",
+                          "enum": [
+                            "static",
+                            "pan_left",
+                            "pan_right",
+                            "tilt_up",
+                            "tilt_down",
+                            "push_in",
+                            "pull_out",
+                            "handheld",
+                            "orbit"
+                          ],
+                          "description": "这一镜的运镜。只有定格的物件特写、静止的空镜才填 static"
                         },
                         "camera_id": {
                           "anyOf": [
@@ -1177,7 +1199,9 @@
                         "scene_id",
                         "order",
                         "first_frame_prompt",
+                        "motion_prompt",
                         "shot_size",
+                        "camera_move",
                         "duration_s",
                         "characters",
                         "dialogue"
@@ -1418,11 +1442,10 @@
                     "type": "string"
                   },
                   "motion_prompt": {
-                    "default": "",
-                    "description": "运动描述，给视频模型",
+                    "type": "string",
+                    "minLength": 12,
                     "maxLength": 400,
-                    "title": "Motion Prompt",
-                    "type": "string"
+                    "description": "这几秒画面怎么动：谁在动、朝哪个方向动、快还是慢，镜头跟不跟。首帧已经定死了长相、服装和场景，这里只写动的部分，不要复述它们"
                   },
                   "shot_size": {
                     "$ref": "#/$defs/ShotSize",
@@ -1433,8 +1456,19 @@
                     "default": "eye_level"
                   },
                   "camera_move": {
-                    "$ref": "#/$defs/CameraMove",
-                    "default": "static"
+                    "type": "string",
+                    "enum": [
+                      "static",
+                      "pan_left",
+                      "pan_right",
+                      "tilt_up",
+                      "tilt_down",
+                      "push_in",
+                      "pull_out",
+                      "handheld",
+                      "orbit"
+                    ],
+                    "description": "这一镜的运镜。只有定格的物件特写、静止的空镜才填 static"
                   },
                   "camera_id": {
                     "anyOf": [
@@ -1529,7 +1563,9 @@
                   "scene_id",
                   "order",
                   "first_frame_prompt",
+                  "motion_prompt",
                   "shot_size",
+                  "camera_move",
                   "duration_s",
                   "characters",
                   "dialogue"

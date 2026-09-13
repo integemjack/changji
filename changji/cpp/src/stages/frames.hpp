@@ -58,14 +58,19 @@ using FrameRenderer = std::function<void(
 /// 用 sd.cpp 出图的那个 renderer。
 ///
 /// 它自己不管模型加载——那是调度器的事。每次调用时向调度器借图像槽。
-FrameRenderer sd_renderer();
+/// 出首帧的实现。**要 settings**：采样旋钮（image_cfg /
+/// image_flow_shift）跟着请求走，而这一份是「这一集」的设置——建 SD
+/// 上下文用的是全局那份，两者在出片那条路上不是同一个东西。
+/// 见 infer::SamplingKnobs。
+FrameRenderer sd_renderer(const config::Settings& settings);
 
 /// 同上，但**种子由外面给**。
 ///
 /// 工作进程用这个：任务里带着协调者算好的种子。它自己算不了——
 /// `frame_seed` 要 `attempts`，而工作进程拿不到那个数。
 /// 用错种子出来的图和串行跑的不一样，**而且不会有任何报错**。
-FrameRenderer sd_renderer_with_seed(std::int64_t seed);
+FrameRenderer sd_renderer_with_seed(const config::Settings& settings,
+                                   std::int64_t seed);
 
 /// 给一批镜头出首帧。
 ///

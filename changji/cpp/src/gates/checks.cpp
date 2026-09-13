@@ -382,7 +382,7 @@ Verdict decide_next(const GateResult& result, const models::Shot& shot,
     if (result.verdict == Verdict::Regress) return Verdict::Regress;
     if (shot.attempts + 1 >= cfg.max_attempts_per_shot) {
         // **降级而不是停下来。** 无人值守跑一晚上，为一镜停住等于
-        // 整晚白熬；降级成静帧加运镜至少整集能出片，问题记录下来事后查。
+        // 整晚白熬；留着最后那一版至少整集能出片，问题记录下来事后查。
         return cfg.fallback_on_exhausted ? Verdict::Fallback : Verdict::Regress;
     }
     return Verdict::Retry;

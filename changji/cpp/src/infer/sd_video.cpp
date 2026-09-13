@@ -96,7 +96,11 @@ stages::VideoRenderer make_video_renderer(
     std::optional<std::int64_t> seed_override) {
     const config::AssemblyConfig assembly = settings.assembly;
     const std::string lora_tiers = settings.models.video_lora_tiers;
-    return [assembly, seed_override, lora_tiers](
+    // **这一份是「这一集」的设置**（出片每跑一集都 load_settings(项目目录)
+    // 重读一遍），而建 SD 上下文用的是全局那份。采样旋钮跟着请求走才对得上，
+    // 见 SamplingKnobs。
+    const SamplingKnobs knobs = sampling_knobs_for(settings, ModelRole::Video);
+    return [assembly, seed_override, lora_tiers, knobs](
                const models::Shot& shot, const stages::RenderPlan& plan,
                       const std::optional<fs::path>& start_image,
                       const fs::path& dest, pipeline::CancelToken& tok,
@@ -132,6 +136,7 @@ stages::VideoRenderer make_video_renderer(
         req.tag = shot.shot_id;   // 预览挂到哪一格，见 VideoRequest::tag
 
         req.fps = assembly.fps;
+        req.knobs = knobs;
         req.seed = seed_override
                        ? *seed_override
                        : stages::render_seed(shot.shot_id, shot.attempts);

@@ -166,7 +166,7 @@ struct WorkerPool::Impl {
     /// 连不上就换一个再试。**这不是镜头的重试**：镜头的 attempts 管的是
     /// "这一镜的画面不行，换个种子再来"，而一台机器崩了跟画面没关系。
     /// 8×L20 上真发生过：一个工作进程 OOM 崩了、systemd 正在重启它，
-    /// 十一个镜头连着挑中它，每个 attempts 加到 3 直接降级成静帧——
+    /// 十一个镜头连着挑中它，每个 attempts 加到 3 直接降级——
     /// 而池子里另外七个好好的，一个都没被试过。
     void run_task(const Task& task, pipeline::CancelToken& tok,
                   const StepCallback& on_step) {

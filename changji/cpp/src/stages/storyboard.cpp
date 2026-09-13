@@ -466,6 +466,47 @@ ordered llm_shot_schema(const AssetLibrary& assets, ShotCountBounds bounds) {
                           {"enum", duration_slots()},
                           {"description", "只能取这些值"}};
 
+    // ---- 运动那两栏：必填，而且 camera_move 不留 default ----
+    //
+    // **2026-09-13 从一份真实项目查出来的。** 雨夜天台 198 镜里
+    // `motion_prompt` 空了 198 个、`camera_move` 是 static 的 198 个、
+    // `camera_angle` 是 eye_level 的 198 个——三个数都恰好是 `Shot` 结构体的
+    // 默认值。而同一份表里 `shot_size` 有五种取值（MS 107、MLS 39、LS 25、
+    // CU 18、MCU 9），`characters` 和 `dialogue` 也都填得好好的。
+    //
+    // 分界线就是 `required`：**在里面的字段模型都填了，不在里面的它整个略过**，
+    // 解析时补上结构体默认值，全程一个字不报。措辞救不了这一条——提示词里把
+    // 「运动」写十遍，语法上不填仍然合法（chapter_write 那边一路踩出来的同一句：
+    // 管得住模型的不是措辞，是它没得选）。
+    //
+    // 而这两栏恰恰是图生视频**唯一**能照着动的依据：首帧已经把长相、服装、
+    // 场景定死了，视频模型收到的运动描述就是
+    // `move_zh(camera_move)` + `motion_prompt` + 各角色的 action
+    // （见 PromptComposer::motion_prompt）。三项全默认时那段字拼出来是
+    // 「固定镜头，站立不动」——**我们花几分钟显卡时间，求它别动**。
+    //
+    // `minLength` 12：一个带主语和方向的短句大概这么长。**别再往上抬**——
+    // 下限高过这一镜真有的内容时，模型会拿 JSON 字段名凑数（写正文那边实测
+    // 1.69% 的段落是这么来的）。
+    kept["motion_prompt"] = {
+        {"type", "string"},
+        {"minLength", 12},
+        {"maxLength", 400},
+        {"description",
+         "这几秒画面怎么动：谁在动、朝哪个方向动、快还是慢，镜头跟不跟。"
+         "首帧已经定死了长相、服装和场景，这里只写动的部分，不要复述它们"}};
+    // 枚举从 $defs 里取，不在这儿抄第二份——`Shot` 里加一种运镜这儿会跟着走。
+    // **去掉 default**：留着等于告诉模型「这一栏可以不管」，而它正是这么做的。
+    ordered move_enum = ordered::array({"static"});
+    if (defs.contains("CameraMove") && defs["CameraMove"].contains("enum")) {
+        move_enum = defs["CameraMove"]["enum"];
+    }
+    kept["camera_move"] = {
+        {"type", "string"},
+        {"enum", move_enum},
+        {"description",
+         "这一镜的运镜。只有定格的物件特写、静止的空镜才填 static"}};
+
     // characters 和 dialogue 必须是必填并且带说明。
     // 只给一个 $ref 而不说要填什么，模型会整个略过这两个字段，
     // 结果是分镜里一句台词都没有，配音和口型全部落空。
@@ -483,8 +524,11 @@ ordered llm_shot_schema(const AssetLibrary& assets, ShotCountBounds bounds) {
     ordered shots_item = ordered::object();
     shots_item["type"] = "object";
     shots_item["properties"] = kept;
+    // `motion_prompt` / `camera_move` 在这儿，理由见上面那一大段：不在这张表里
+    // 的字段，模型会整个略过，然后我们拿结构体默认值当成它的选择。
     shots_item["required"] = {"shot_id", "scene_id", "order", "first_frame_prompt",
-                              "shot_size", "duration_s", "characters", "dialogue"};
+                              "motion_prompt", "shot_size", "camera_move",
+                              "duration_s", "characters", "dialogue"};
     shots_item["additionalProperties"] = false;
 
     ordered shots = ordered::object();

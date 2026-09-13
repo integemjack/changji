@@ -117,6 +117,9 @@ Rendered render_ref(const ProjectStore& store, const std::string& stem,
     req.height = spec.height;
     req.steps = spec.steps;
     req.seed = seed;
+    // 采样旋钮跟着请求走（见 infer::SamplingKnobs）。这里的 settings 是
+    // load_settings(store.root()) 来的，也就是这个项目那一份。
+    req.knobs = infer::sampling_knobs_for(settings, infer::ModelRole::Image);
     // **打上 tag，采样中途那张小图才推得出来。**
     //
     // 用户 2026-09-12：「画图方式也要实时返回步数图」。一张几十秒，头

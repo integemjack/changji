@@ -651,7 +651,7 @@ TEST_CASE("并发出首帧和串行的结果一模一样") {
 
 TEST_CASE("并发时失败那镜的 attempts 只加一次") {
     // 写回要是漏了同步，同一镜可能被加两次——而 attempts 是闸门的重试
-    // 计数，多加一次就可能直接判超限降级，画面从此变成静帧加运镜。
+    // 计数，多加一次就可能直接判超限降级，这一镜从此用的就是没过闸门的那一版。
     const models::ProjectPaths paths(temp_root("并发失败"));
     std::vector<models::Shot> owned;
     for (int i = 0; i < 5; ++i) {
@@ -749,7 +749,7 @@ TEST_CASE("每出完一张就落一次盘，不是整批跑完才落") {
 TEST_CASE("逐镜落盘时 attempts 只加一次") {
     // 写回有两条路（逐镜落盘、收尾），`attempts += 1` 不幂等。
     // 两条都跑一遍的话这一镜凭空多一次重试计数，超限之后会被降级成
-    // 静帧加运镜——而日志里只会说"重试超限"，看不出是多算的。
+    // 降级——而日志里只会说"重试超限"，看不出是多算的。
     const models::ProjectPaths paths(temp_root("落盘不重复"));
     std::vector<models::Shot> owned{make_shot("sh1")};
     std::vector<models::Shot*> shots{&owned[0]};

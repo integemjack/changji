@@ -332,6 +332,45 @@ TEST_CASE("缺一层不会留下孤零零的分隔符") {
     CHECK(p.rfind("，", 0) != 0);            // 也不以它开头
 }
 
+TEST_CASE("模型写的句号不会和分隔符撞成「。，」") {
+    // 上一条的另一半，2026-09-13 才发现。大模型写完一段描述习惯点个句号，
+    // 而下一层紧跟着接「，」，拼出来就是"。，"——和双逗号一样是个坏掉的
+    // 分隔符。**而且它一直在那儿**：walk_c 的 first_frame_prompt 61/61
+    // 以句号结尾，也就是每一张首帧的提示词里都有一个，从来没人看见。
+    //
+    // 运动描述那一栏以前是空的，所以这半边直到 motion_prompt 变成必填
+    // 才露出来（新出的 51/52 条也以句号结尾）。
+    models::AssetLibrary a = make_assets(models::StyleLine::REALISTIC);
+
+    models::Shot s;
+    s.shot_id = "ep01_sh001";
+    s.scene_id = "sc01";
+    s.shot_size = models::ShotSize::MS;
+    s.camera_angle = models::CameraAngle::EYE_LEVEL;
+    s.camera_move = models::CameraMove::PUSH_IN;
+    s.first_frame_prompt = "雨点砸在积水里，霓虹灯反射其上。";
+    s.motion_prompt = "雨势渐大，他缓缓抬头。";
+
+    const stages::PromptComposer composer(a);
+    const std::string pos = composer.compose(s).positive;
+    const std::string motion = composer.motion_prompt(s);
+
+    CHECK(pos.find("。，") == std::string::npos);
+    CHECK(motion.find("。，") == std::string::npos);
+    // 内容本身不能被削掉，只削贴着分隔符的那个句号。
+    CHECK(pos.find("霓虹灯反射其上") != std::string::npos);
+    CHECK(motion.find("他缓缓抬头") != std::string::npos);
+    // 段落中间的句号是真的句子结构，一个都不能动。
+    CHECK(pos.find("雨点砸在积水里，霓虹灯反射其上") != std::string::npos);
+
+    SUBCASE("！和？是内容，不是断句，不许削") {
+        models::Shot q = s;
+        q.motion_prompt = "他猛地回头！";
+        const std::string m = stages::PromptComposer(a).motion_prompt(q);
+        CHECK(m.find("他猛地回头！") != std::string::npos);
+    }
+}
+
 TEST_CASE("大特写不带身份层：物件特写里塞角色全身描述，出来的是人不是物件") {
     // 2026-09-13 q4_full sh004：分镜要床头柜手机特写，角色列表挂着男主，
     // 身份层排最前，出的首帧是拿手机站在床边的全身人像；身份层挪后、只留

@@ -54,14 +54,23 @@ inline constexpr const char* kSbSeg6 =
    换装只能通过 wardrobe_state 填一个状态名。
 5. first_frame_prompt 描述这一镜的画面：环境、光线、构图、角色的姿态和位置。
    同样不要描述角色长相，系统会自动拼接。
-6. dialogue 必须填。剧本里的每一句台词都要落到某个镜头上，一句都不能丢。
+6. motion_prompt 必须填，写这几秒里画面怎么动：谁在动、朝哪个方向动、快还是慢，
+   镜头跟不跟。画面里除了人还有什么在动（天气、烟尘、水、火光、布料、头发），
+   有就一起写上。
+   这一栏是决定画面动不动的唯一依据：first_frame_prompt 只定住第一帧，
+   长相、服装、场景也都已经定死了，这里不要再复述它们，也不要写剪辑用语。
+7. camera_move 必须按这一镜真正需要的运镜挑，不要整集都用同一个：
+   推进情绪用 push_in，交代环境用 pull_out 或 pan_left / pan_right，
+   跟着人走用 handheld，绕着看用 orbit。
+   只有定格的物件特写或静止的空镜才填 static。
+8. dialogue 必须填。剧本里的每一句台词都要落到某个镜头上，一句都不能丢。
    说话的人填 char_id，旁白留空。这一镜没人说话才填空数组。
    说话的角色也必须同时出现在 characters 里。
-7. 同一场景内连续镜头尽量复用 camera_id，避免越轴。
-8. transition_in 默认 cut 且 transition_dur_s 必须为 0；
-   只有场景切换才用 dissolve，此时 transition_dur_s 填 0.4。
-9. continuity_notes 记录需要与前后镜保持一致的细节，比如道具在哪只手。
-10. 如果剧本里有信息不足以确定画面的地方，写进 missing_info，不要自己编。
+9. 同一场景内连续镜头尽量复用 camera_id，避免越轴。
+10. transition_in 默认 cut 且 transition_dur_s 必须为 0；
+    只有场景切换才用 dissolve，此时 transition_dur_s 填 0.4。
+11. continuity_notes 记录需要与前后镜保持一致的细节，比如道具在哪只手。
+12. 如果剧本里有信息不足以确定画面的地方，写进 missing_info，不要自己编。
 
 剧本：
 

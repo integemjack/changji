@@ -182,3 +182,39 @@ TEST_CASE("批量回填口型标记") {
               table[i].at("expected_needs_lipsync").get<bool>());
     }
 }
+
+TEST_CASE("给人看的状态：中文、每一种都有、不许出现枚举名") {
+    // status_zh 存在的理由只有一条：引擎发给人的消息里不该冒出 audio_done
+    // 这种词（装配那句「没进去的：…」就在用它）。
+    //
+    // **fallback 那一条尤其要盯。** 它原来叫「已降级为静帧」，而全代码库
+    // 没有任何地方生成静帧、也没有任何运镜——2026-09-13 查过，一处 zoompan
+    // 都没有，render.cpp 的 fallback 只改状态、写一句备注，留下的就是最后
+    // 那一版视频。实测 walk_c ep01_sh004 逐帧 YAVG 从 23.1 平滑降到 19.1，
+    // 是真视频不是冻帧。人照着那句话去找「哪一镜不动」，永远找不到。
+    //
+    // 而且这句话要**在两种语境里都成立**：这一镜进了成片（"用的是没过闸门
+    // 的那一版"），和这一镜连视频文件都没有（装配那句会在后面补
+    // 「（还没有视频文件）」）。所以它只说「重试超限，已降级」，
+    // 不替后面那半句把话说死。
+    const ShotStatus all[] = {
+        ShotStatus::PLANNED,        ShotStatus::AUDIO_DONE,
+        ShotStatus::FRAME_DONE,     ShotStatus::DRAFT_DONE,
+        ShotStatus::DRAFT_REJECTED, ShotStatus::FINAL_DONE,
+        ShotStatus::FINAL_REJECTED, ShotStatus::FALLBACK,
+        ShotStatus::LOCKED,
+    };
+    for (const ShotStatus st : all) {
+        const std::string zh = status_zh(st);
+        CAPTURE(to_string(st));
+        CHECK(zh != "状态不明");
+        // 枚举名一个字都不该漏出去
+        CHECK(zh.find(to_string(st)) == std::string::npos);
+        CHECK(zh.find('_') == std::string::npos);
+    }
+
+    CHECK(std::string(status_zh(ShotStatus::FALLBACK)) == "重试超限，已降级");
+    // 这一句在"连视频都没有"的语境里也要读得通，所以不能提"那一版"。
+    CHECK(std::string(status_zh(ShotStatus::FALLBACK)).find("静帧") ==
+          std::string::npos);
+}

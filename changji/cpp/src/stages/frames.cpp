@@ -52,8 +52,12 @@ std::int64_t frame_seed(const std::string& shot_id, int attempts) {
 namespace {
 
 /// 出图那一段的公共实现。`seed_override` 有值就用它，没有就按镜头算。
-FrameRenderer make_sd_renderer(std::optional<std::int64_t> seed_override) {
-    return [seed_override](const Shot& shot, const PromptBundle& prompts,
+FrameRenderer make_sd_renderer(const config::Settings& settings,
+                              std::optional<std::int64_t> seed_override) {
+    const infer::SamplingKnobs knobs =
+        infer::sampling_knobs_for(settings, infer::ModelRole::Image);
+    return [seed_override, knobs](const Shot& shot,
+              const PromptBundle& prompts,
               const TierSpec& spec, const fs::path& dest,
               pipeline::CancelToken& tok, const infer::StepCallback& on_step) {
         // 每次借一下。**不在外面借一次拿着不放**——那样跑首帧期间
@@ -89,6 +93,7 @@ FrameRenderer make_sd_renderer(std::optional<std::int64_t> seed_override) {
         req.steps = spec.steps;
         // 预览要挂到墙上哪一格，靠这个。见 ImageRequest::tag。
         req.tag = shot.shot_id;
+        req.knobs = knobs;
         req.seed = seed_override ? *seed_override
                                  : frame_seed(shot.shot_id, shot.attempts);
         for (const auto& r : prompts.reference_images) {
@@ -100,10 +105,13 @@ FrameRenderer make_sd_renderer(std::optional<std::int64_t> seed_override) {
 
 }  // namespace
 
-FrameRenderer sd_renderer() { return make_sd_renderer(std::nullopt); }
+FrameRenderer sd_renderer(const config::Settings& settings) {
+    return make_sd_renderer(settings, std::nullopt);
+}
 
-FrameRenderer sd_renderer_with_seed(std::int64_t seed) {
-    return make_sd_renderer(seed);
+FrameRenderer sd_renderer_with_seed(const config::Settings& settings,
+                                   std::int64_t seed) {
+    return make_sd_renderer(settings, seed);
 }
 
 std::vector<FrameOutcome> run_frames(std::vector<Shot*>& shots,
@@ -143,7 +151,7 @@ std::vector<FrameOutcome> run_frames(std::vector<Shot*>& shots,
             shot->status = ShotStatus::FRAME_DONE;
         } else {
             // attempts 加一是给闸门的重试计数用的：超限之后流水线会
-            // 降级成静帧加运镜，保证整集能出片。
+            // 留着最后那一版接着往下走，保证整集能出片。
             shot->attempts += 1;
         }
         done[i].committed = true;

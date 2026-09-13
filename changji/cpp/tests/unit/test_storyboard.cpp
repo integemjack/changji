@@ -239,6 +239,44 @@ TEST_CASE("schema 里角色 id 被收紧成枚举") {
                  .at("properties").contains("needs_lipsync"));
 }
 
+TEST_CASE("运动那两栏是必填的") {
+    // **上面那条对拍测不出这个。** 它比的是整份 schema 相等，而语料是跟着
+    // 代码一起改的；真正要钉死的是「为什么」，所以单拎出来一条。
+    //
+    // 依据是一份真实项目：雨夜天台 198 镜里 motion_prompt 空了 198 个、
+    // camera_move 是 static 的 198 个——恰好都是 Shot 结构体的默认值，
+    // 而同一张表里在 required 里的 shot_size 有五种取值。
+    // 不在 required 里 = 模型整个略过 = 图生视频只收到「固定镜头，站立不动」。
+    const json s = json(stages::llm_shot_schema(test_assets()));
+    const json& item = s.at("properties").at("shots").at("items");
+    const json& req = item.at("required");
+    const auto required_has = [&req](const char* key) {
+        for (const auto& v : req) {
+            if (v == key) return true;
+        }
+        return false;
+    };
+
+    CHECK(required_has("motion_prompt"));
+    CHECK(required_has("camera_move"));
+
+    const json& motion = item.at("properties").at("motion_prompt");
+    // 光必填还不够——填一个字也算填了。
+    CHECK(motion.at("minLength") == 12);
+    // 下限别再往上抬：高过这一镜真有的内容时，模型会拿 JSON 字段名凑数。
+    CHECK(motion.at("maxLength") == 400);
+    // default 留着等于告诉模型「这一栏可以不管」。
+    CHECK_FALSE(motion.contains("default"));
+
+    const json& move = item.at("properties").at("camera_move");
+    CHECK_FALSE(move.contains("default"));
+    // 枚举跟着 Shot 的定义走，不在 storyboard.cpp 里抄第二份：
+    // 那边加一种运镜、这边忘了跟，模型就永远挑不到新的那个。
+    CHECK(move.at("enum") ==
+          s.at("$defs").at("CameraMove").at("enum"));
+    CHECK(move.at("enum").size() == 9);
+}
+
 TEST_CASE("资产库没有角色时报错") {
     models::AssetLibrary empty;
     CHECK_THROWS_AS(stages::llm_shot_schema(empty), stages::StoryboardError);
