@@ -55,15 +55,12 @@ void Runtime::replace(Settings s) {
     // `[assembly].fps` 还按人填的那个数去算帧数、算每镜时长、编码——
     // 填 30 的话整片快 25%，人走路变小跑，字幕跟着漂。**不报错。**
     //
-    // 放在这儿和上面那几行同一个理由：能改配置的入口有五个，纠正写在
-    // 任何一个入口里都会漏掉另外四个。
-    const int want_fps = stages::effective_fps(limits, s.assembly.fps);
-    if (want_fps != s.assembly.fps) {
-        std::fprintf(stderr,
-                     "[配置] [assembly].fps 填的是 %d，但出片模型只出 %d fps"
-                     "（sd.cpp 会自己改掉），这次按 %d 算。\n",
-                     s.assembly.fps, want_fps, want_fps);
-        s.assembly.fps = want_fps;
+    // **这是两条入口里的第二条。** 另一条是 `load_settings`：出片那条路
+    // 每跑一集都从项目的 changji.toml 重读一遍设置（http/run.cpp 里那句
+    // `load_settings(store.root())`），**根本不经过 Runtime**。两条互不
+    // 相通，只堵一条等于没堵，所以那边在 migrate_legacy 里调同一个函数。
+    if (const std::string note = normalize_fps_for_model(s); !note.empty()) {
+        std::fprintf(stderr, "[配置] %s\n", note.c_str());
     }
 
     std::lock_guard lg(mu_);

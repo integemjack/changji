@@ -932,6 +932,52 @@ TEST_CASE("没有老取值时迁移一句话都不说") {
     CHECK(http.tts.backend == "http");
 }
 
+TEST_CASE("帧率跟着出片模型纠回去，并且说一声") {
+    // **这一条堵的是第二条入口。** 出片那条路每跑一集都从项目的
+    // changji.toml 重读一遍设置（http/run.cpp 的 load_settings(store.root())），
+    // 根本不经过 Runtime::replace——只在 Runtime 里纠正的话，整集会带着
+    // 错的帧率跑完，而表现不是报错是**整片变速**。
+    config::Settings s;
+    s.models.video = "minimax_h3_fl2va-Q4_K_M.gguf";
+    s.assembly.fps = 30;
+
+    const auto notes = config::migrate_legacy(s);
+
+    CHECK(s.assembly.fps == 24);
+    REQUIRE(notes.size() == 1);
+    // 说清楚从几改到几，否则用户只看到片子不对、不知道是谁改的。
+    CHECK(notes[0].find("30") != std::string::npos);
+    CHECK(notes[0].find("24") != std::string::npos);
+    CHECK(notes[0].find("[assembly].fps") != std::string::npos);
+
+    SUBCASE("本来就对就一句话都不说") {
+        config::Settings ok;
+        ok.models.video = "minimax_h3_fl2va-Q4_K_M.gguf";
+        ok.assembly.fps = 24;
+        CHECK(config::migrate_legacy(ok).empty());
+        CHECK(ok.assembly.fps == 24);
+    }
+
+    SUBCASE("模型不挑帧率就别替人做主") {
+        // sd.cpp 对 Wan 不做覆盖，传什么用什么。
+        config::Settings wan;
+        wan.models.video = "wan2.2_ti2v_5B.gguf";
+        wan.assembly.fps = 30;
+        CHECK(config::migrate_legacy(wan).empty());
+        CHECK(wan.assembly.fps == 30);
+    }
+
+    SUBCASE("名字认不出时看编码器走哪条路") {
+        // H3 挂 video_llm，Wan 挂 video_text_encoder。
+        config::Settings guess;
+        guess.models.video = "my_video_model.gguf";
+        guess.models.video_llm = "qwen3vl_32b_minimax_h3-Q4_K_M.gguf";
+        guess.assembly.fps = 16;
+        CHECK(config::migrate_legacy(guess).size() == 1);
+        CHECK(guess.assembly.fps == 24);
+    }
+}
+
 TEST_CASE("这一轮真正会用的规格：出片跟 Turbo，首帧不跟") {
     // **界面和真跑的必须是同一个数。** 2026-09-10 用户问"怎么没用 turbo"，
     // 因为设置页照着档位表显示"成片步数 28"，而每一镜实际跑的是 6 步。

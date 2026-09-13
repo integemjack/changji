@@ -8,6 +8,7 @@
 
 #include <toml++/toml.hpp>
 
+#include "stages/limits.hpp"
 #include "util/paths.hpp"
 
 namespace changji::config {
@@ -829,8 +830,29 @@ double workload_scale(int table_width, int table_height, int table_steps,
     return px_ratio * (kFixedShare + (1.0 - kFixedShare) * step_ratio);
 }
 
+std::string normalize_fps_for_model(Settings& s) {
+    const auto limits =
+        stages::guess_video_limits(s.models.video, !s.models.video_llm.empty());
+    const int want = stages::effective_fps(limits, s.assembly.fps);
+    if (want == s.assembly.fps) return {};
+    const int had = s.assembly.fps;
+    s.assembly.fps = want;
+    return "[assembly].fps 填的是 " + std::to_string(had) +
+           "，但出片模型只出 " + std::to_string(want) +
+           " fps——sd.cpp 会自己改掉，只在日志里留一句淹在 CUDA Graph "
+           "刷屏里的 LOG_WARN。这次按 " + std::to_string(want) +
+           " 算。不跟着改的话整片变速：裸帧是按 " + std::to_string(want) +
+           "fps 的节奏演的，而帧数、每镜时长、编码都按你填的那个数走。";
+}
+
 std::vector<std::string> migrate_legacy(Settings& s) {
     std::vector<std::string> notes;
+    // 帧率跟着出片模型走。放在这儿是因为这个函数正是"设置读进来之后
+    // 自己纠一遍并大声说一句"的那一处，而出片那条路每跑一集都会经过它
+    // （http/run.cpp 的 load_settings(store.root())）。
+    if (std::string note = normalize_fps_for_model(s); !note.empty()) {
+        notes.push_back(std::move(note));
+    }
     // **拆掉一条路之后，老配置不能让程序起不来。**
     //
     // 2026-09-10 拆 ComfyUI 时只在 validate() 里加了迁移说明，

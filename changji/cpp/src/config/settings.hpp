@@ -794,6 +794,20 @@ PlacementInfo image_placement(const Settings& expanded);
 /// `load_settings` 会自己调一遍并把返回的话打到 stderr。单独暴露是为了能测。
 std::vector<std::string> migrate_legacy(Settings& s);
 
+/// 出片模型只认一个帧率时，把 `[assembly].fps` 拉到那个数上。
+/// 改了就返回要说的那句话，没改返回空串。
+///
+/// **为什么不能只在一处做。** 帧率被四个地方读（渲染算帧数、装配算每镜
+/// 时长、ffmpeg 编码、配音判一句装不装得下），而设置进内存的入口有两条
+/// 互不相通的：`load_settings`（从 toml 读，出片那条路每跑一集都走它，
+/// 见 http/run.cpp 里 `load_settings(store.root())` 那行）和
+/// `Runtime::replace`（设置页改完塞进来的）。只堵一条，另一条照样带着
+/// 错的帧率跑完一整集——而表现不是报错，是**整片变速**：裸帧按模型自己
+/// 那个帧率演，我们按人填的那个数算时长和编码，填 30 就是每镜快 25%。
+///
+/// 所以两条都调这一个函数。`migrate_legacy` 里调了一次，覆盖第一条。
+std::string normalize_fps_for_model(Settings& s);
+
 /// 哪些设置正被环境变量顶着。
 ///
 /// 环境变量优先级最高。容器里用 compose 注入地址是常态，这时候在界面上
