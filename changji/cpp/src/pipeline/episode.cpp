@@ -70,7 +70,22 @@ void apply_project_spec(config::Settings& settings,
                         models::HardwareProfile& profile) {
     auto it = profile.tiers.find(models::Tier::FINAL);
     if (it == profile.tiers.end()) return;
-    const auto eff = config::effective_spec(settings, it->second.steps);
+    // **要的是"表里那个数"，不是 tiers 里现在躺着的那个。**
+    //
+    // `Runtime::profile()` 已经先用 effective_spec 把 tiers[FINAL].steps
+    // 换成实跑的值了（挂着 Turbo 就是 6），好让 /api/hardware 和磁盘上的
+    // 成片对得上。拿它再算一次就是**同一个变换套两次**：final_steps 还是
+    // 6（那一支幂等），可 frame_steps = table_final_steps 不幂等，
+    // 首帧步数从 20 塌成 6。
+    //
+    // 出图那一步没有 Turbo LoRA，6 步就是裸跑 6 步——首帧糊，而首帧是
+    // 每一镜的起始图和跨镜头一致性的锚点，糊了后面全糊，全程不报错。
+    // effective_spec 里那段注释早就写着这一条，是这条调用链把它架空了。
+    // 2026-09-13 实机撞到：进度条写着"出首帧（第 1/6 步）"。
+    const int table_steps = profile.table_final_steps > 0
+                                ? profile.table_final_steps
+                                : it->second.steps;
+    const auto eff = config::effective_spec(settings, table_steps);
     it->second.width = eff.width;
     it->second.height = eff.height;
     it->second.steps = eff.final_steps;

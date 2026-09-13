@@ -870,6 +870,53 @@ TEST_CASE("跳过草稿档时，成片档要收首帧刚做完的那批") {
     }
 }
 
+TEST_CASE("整条链走一遍：首帧步数不会被 Turbo 压两次") {
+    // **单看 effective_spec 是对的，合起来是错的。**
+    //
+    // test_models_config 里那几条一直绿着（`effective_spec(s, 28)
+    // .frame_steps == 28`），因为它们给的是表里的原始值。可实际调用链上
+    // 传进去的已经不是原始值了：
+    //
+    //   Runtime::profile()  —— 先用 effective_spec 把 tiers[FINAL].steps
+    //                          换成实跑的 6，好让 /api/hardware 和磁盘上
+    //                          的成片对得上（commit f5cae4d）
+    //   apply_project_spec  —— 拿这个 6 当"表里的值"再算一次
+    //
+    // final_steps 那一支幂等（turbo 恒给 6），frame_steps 不幂等，于是
+    // 首帧从 20 步塌成 6 步。出图那一步没有 Turbo LoRA，6 步就是裸跑，
+    // 首帧糊；而首帧是每一镜的起始图和跨镜头一致性的锚点。
+    // 2026-09-13 实机撞到：进度条写着"出首帧 ep01_sh003（第 1/6 步）"。
+    models::HardwareProfile profile;
+    profile.tiers[models::Tier::DRAFT] = {models::Tier::DRAFT, 512, 288, 10};
+    // Runtime::profile() 交出来的就是这个形状：steps 已经压过，
+    // 原始值另存在 table_final_steps 里。
+    profile.tiers[models::Tier::FINAL] = {models::Tier::FINAL, 544, 928, 6};
+    profile.table_final_steps = 20;
+
+    config::Settings s;
+    REQUIRE(s.models.frame_steps == 0);        // 没人显式填
+    s.models.video_lora = "";                  // 不挂 Turbo，省得去摸文件
+
+    pipeline::apply_project_spec(s, profile);
+
+    CHECK(s.models.frame_steps == 20);         // 不是 6
+    CHECK(pipeline::frame_spec(profile, s).steps == 20);
+
+    SUBCASE("再套一次也还是 20") {
+        // 幂等：同一个 profile 被 apply 两遍不该越走越小。
+        pipeline::apply_project_spec(s, profile);
+        CHECK(s.models.frame_steps == 20);
+    }
+
+    SUBCASE("没记原始值的老 profile 退回读 tiers") {
+        models::HardwareProfile old;
+        old.tiers[models::Tier::FINAL] = {models::Tier::FINAL, 544, 928, 20};
+        config::Settings s2;
+        pipeline::apply_project_spec(s2, old);
+        CHECK(s2.models.frame_steps == 20);
+    }
+}
+
 TEST_CASE("首帧的规格：默认跟成片档的画幅，但不跟 Turbo 压出来的步数") {
     // 两条都**不报错**，只让出来的图"看着不太行"，所以钉在这儿。
     //

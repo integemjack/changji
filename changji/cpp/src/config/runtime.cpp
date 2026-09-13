@@ -121,6 +121,12 @@ models::HardwareProfile Runtime::profile() const {
     const auto fin = p.tiers.find(models::Tier::FINAL);
     if (fin != p.tiers.end() && fin->second.steps > 0) {
         models::TierSpec& spec = fin->second;
+        // **压扁之前先把这个数存下来。**
+        //
+        // 这里存而不是只靠 detect() 存，是因为上面 [tiers] 和进程内覆盖
+        // 可能已经改过它——人显式填了 final_steps 的话，首帧该跟着那个
+        // 数走，不是跟着表里的原始值走。见 HardwareProfile::table_final_steps。
+        p.table_final_steps = spec.steps;
         const auto eff = effective_spec(snap, spec.steps);
         // 耗时的缩法（为什么不是纯步数比）写在 workload_scale 头上。
         // 必须在改 spec 之前算：它拿的是**表里**那一档当基准。

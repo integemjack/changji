@@ -236,8 +236,24 @@ struct HardwareProfile {
     std::map<Tier, TierSpec> tiers;
     bool detected = false;
 
+    /// **成片档在"被 Turbo 压扁之前"的步数。**
+    ///
+    /// `tiers[FINAL].steps` 到了外面已经不是表里那个数了：
+    /// `Runtime::profile()` 会先用 `effective_spec` 把它换成实跑的值
+    /// （挂着 Turbo 就是 6），好让 /api/hardware 显示的规格和磁盘上的
+    /// 成片对得上。那是对的。
+    ///
+    /// 问题是**还有人要那个原始值**：首帧的步数。出图那一步没有 Turbo
+    /// LoRA，跟着跑 6 步就是裸跑 6 步（见 effective_spec 里那段）。
+    /// 而 `apply_project_spec` 拿 `tiers[FINAL].steps` 当"表里的值"再
+    /// 算一次——**同一个变换套了两次**，首帧步数从 20 塌成 6。
+    /// 2026-09-13 实机撞到：进度条写着"出首帧（第 1/6 步）"。
+    ///
+    /// 所以把原始值单独留一份。0 表示"没记"，那时候退回读 tiers。
+    int table_final_steps = 0;
+
     NLOHMANN_DEFINE_TYPE_INTRUSIVE_WITH_DEFAULT(
-        HardwareProfile, gpu, vram_gb, tiers, detected)
+        HardwareProfile, gpu, vram_gb, tiers, detected, table_final_steps)
 
     static HardwareProfile detect(std::optional<double> override_vram_gb = std::nullopt);
 

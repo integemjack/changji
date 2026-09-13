@@ -896,6 +896,10 @@ HardwareProfile HardwareProfile::detect(std::optional<double> override_vram_gb) 
         p.detected = false;
     }
     p.tiers = tiers_for_vram(p.vram_gb);
+    // 表里那个数单独留一份，见 HardwareProfile::table_final_steps。
+    // 外面会把 tiers[FINAL].steps 换成实跑的值，换完就找不回来了。
+    const auto fin = p.tiers.find(Tier::FINAL);
+    if (fin != p.tiers.end()) p.table_final_steps = fin->second.steps;
     return p;
 }
 
