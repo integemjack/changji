@@ -29,10 +29,12 @@
 #
 # 这六个是**纯 CPU** 的包。带显卡的另有一档（下面的 build-gpu），
 # Windows 和 Linux 各四条路：cuda / rocm / sycl / vulkan，包名就是
-# `changji-<系统>-x64-<后端>`。那一档只在**打 tag 或者手动勾选**时跑，
-# 理由和触发条件写在它自己那段注释里。
+# `changji-<系统>-x64-<后端>`。**正式版和 beta 编的是同一批包**——beta 上
+# 也有 N 卡 / A 卡 / Intel 卡的包，不再是只有 CPU 版。手动跑时想省时间，
+# 勾"只编 CPU 包"。
 #
-# ⚠️ **每推一次分支就是六个平台各编一遍 sd.cpp + llama.cpp**，一轮几十分钟。
+# ⚠️ **每推一次分支是十四个格子**：六个 CPU 平台各编一遍 sd.cpp + llama.cpp
+# （几十分钟），外加八个 GPU 格子（一格一两个小时，加起来几十个核·小时）。
 # 只改文档也照编。嫌费的话在 on.push 底下加 paths-ignore。
 
 name: 发布
@@ -43,8 +45,8 @@ on:
     tags: ['v*']
   workflow_dispatch:
     inputs:
-      gpu:
-        description: '连 GPU 包一起编（CUDA / ROCm / SYCL / Vulkan，八个格子，几小时）'
+      skip_gpu:
+        description: '只编 CPU 包（跳过 CUDA / ROCm / SYCL / Vulkan 那八个格子，快几个小时）'
         type: boolean
         default: false
 
@@ -71,14 +73,16 @@ jobs:
       - id: v
         env:
           # push 事件下这个是空串——只有手动跑才有值。
-          WANT_GPU: ${{ inputs.gpu }}
+          SKIP_GPU: ${{ inputs.skip_gpu }}
         run: |
-          # **GPU 那八格默认不跑。** 一轮几十个核·小时，而只改了一行
-          # 文案的提交也会照跑。打 tag（正式发布）时必跑，手动跑时看勾没勾。
-          if [ "${GITHUB_REF_TYPE}" = "tag" ] || [ "$WANT_GPU" = "true" ]; then
-            echo "gpu=true"  >> "$GITHUB_OUTPUT"
-          else
+          # **GPU 那八格默认跑**，打 tag 和推分支一视同仁：beta 是给人真拿去
+          # 试的，只给 CPU 包的话试出来的是"能跑但慢得离谱"，反馈没意义。
+          # 代价是每推一次分支就是几十个核·小时——只改文案的提交想省下来，
+          # 手动跑并勾上"只编 CPU 包"。
+          if [ "$SKIP_GPU" = "true" ]; then
             echo "gpu=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "gpu=true"  >> "$GITHUB_OUTPUT"
           fi
           if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
             echo "version=${GITHUB_REF_NAME}"  >> "$GITHUB_OUTPUT"
@@ -478,12 +482,14 @@ jobs:
   #              **A 卡和 Intel 卡的用户先给这个**，另外两条是给愿意装
   #              厂商全家桶换性能的人准备的。
   #
-  # **这一档不跟着每次推分支跑。** 一格动辄一两个小时（每多一个显卡架构，
-  # ggml 那几百个 .cu 就整体多编一遍），八格一起是几十个核·小时。触发：
+  # **这一档跟着每次推分支跑。** 一格动辄一两个小时（每多一个显卡架构，
+  # ggml 那几百个 .cu 就整体多编一遍），八格一起是几十个核·小时——知道贵，
+  # 但 beta 是给人真拿去试的，只给 CPU 包等于让人拿一个慢得离谱的版本试。
+  # 触发：
   #
   #   打 tag        → 跑
-  #   手动跑        → 勾上 "连 GPU 包一起编" 才跑
-  #   推分支        → 不跑（beta 上只有 CPU 包）
+  #   推分支        → 跑（beta 上和正式版一样有这八个包）
+  #   手动跑        → 跑；勾上 "只编 CPU 包" 才跳过
   #
   # **哪一格挂了都不挡发布。** publish 只等上面六个 CPU 格子；GPU 这边编出
   # 几个就发几个，发布说明里那张表也是照 dist/ 里真有的东西生成的。理由是
@@ -1025,8 +1031,12 @@ jobs:
     # 不然 GPU 包编好的时候 Release 已经建完了，得再发一次。
     # 下面那个 if 才是关键：只要六个 CPU 格子全过就发，GPU 那八格挂几个都
     # 照发——它们依赖四家厂商的下载地址，为了一个烂掉的链接把整个 Release
-    # 卡住不值。build-gpu 被跳过（推分支那种）时 needs 的结果是 skipped，
-    # 没有 always()/!cancelled() 的话这个 job 会跟着被跳过。
+    # 卡住不值。build-gpu 被跳过（手动跑勾了"只编 CPU 包"那种）时 needs 的
+    # 结果是 skipped，没有 always()/!cancelled() 的话这个 job 会跟着被跳过。
+    #
+    # ⚠️ 代价是**发 beta 要等 GPU 那八格**，从推上去到 Release 上有东西
+    # 是按小时算的，不是几十分钟。急着拿 CPU 包试的话去 Actions 那一趟的
+    # artifacts 里下，不用等 Release。
     needs: [meta, build, build-gpu]
     if: ${{ !cancelled() && needs.build.result == 'success' && needs.meta.result == 'success' }}
     runs-on: ubuntu-24.04
