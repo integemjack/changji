@@ -193,6 +193,22 @@ std::string run_assemble(const ProjectStore& store,
 
     const media::Timeline timeline =
         media::build_timeline(shots, store.paths(), settings.assembly);
+
+    // **字幕自检。** `media::subtitle_problems` 早就写好了，头文件里注明
+    // 「装配后闸门要用」，可 2026-09-13 查下来**全代码库一处调用都没有**
+    // ——只有单元测试碰过它。写了不接等于没写。
+    //
+    // 和上面音画那条一样只报不拦：一条字幕短了 0.1 秒不该让整集出不来，
+    // 而人看见了可以自己回去改。
+    for (const std::string& note :
+         media::subtitle_problems(timeline, settings.assembly)) {
+        Event e;
+        e.stage = "assemble";
+        e.kind = "gate";
+        e.message = "字幕：" + note;
+        progress.report(e);
+    }
+
     media::Assembler assembler(ff, settings.assembly, store.paths(),
                                settings.gates.target_lufs,
                                settings.gates.max_true_peak_db);
