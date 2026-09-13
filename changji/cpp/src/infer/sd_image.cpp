@@ -68,6 +68,23 @@ std::string sd_model_problem(const config::Settings& settings, ModelRole role) {
 }
 
 // 同样在 #ifdef 外面，理由见头文件。
+SamplingKnobs sampling_knobs_for(const config::Settings& settings,
+                                 ModelRole role) {
+    const auto& m = settings.models;
+    SamplingKnobs k;
+    if (role == ModelRole::Video) {
+        k.cfg = m.video_cfg;
+        k.flow_shift = m.video_flow_shift;
+        // 高噪声那份为空 = 不是双专家，交班阈值没有意义，留 0。
+        k.moe_boundary = m.video_high_noise.empty() ? 0.0 : m.video_moe_boundary;
+    } else {
+        k.cfg = m.image_cfg;
+        k.flow_shift = m.image_flow_shift;
+    }
+    return k;
+}
+
+// 同样在 #ifdef 外面，理由见头文件。
 float sd_flow_shift(double configured) {
     if (!(configured > 0.0)) {  // 0、负数、NaN 都算"没填"
         return std::numeric_limits<float>::infinity();
@@ -85,6 +102,23 @@ std::mutex& preview_mu() {
 std::map<int, PreviewSink>& preview_sinks() {
     static std::map<int, PreviewSink> m;
     return m;
+}
+
+/// cfg 没填就当场抛。
+///
+/// **不给它一个"兜底默认值"是故意的。** sd.cpp 自己的默认是 7.0，
+/// 而 H3 要 1.0、Qwen-Image 要 2.5。拿 7.0 跑 H3 出来的是一团噪点，
+/// 而那种错人会先去怀疑提示词、再怀疑首帧，最后才想到旋钮——
+/// 这一路正是 2026-09-13 flow_shift 那次走过的。
+/// 少填一个字段就当场停，比跑完两分钟拿到一团噪点便宜得多。
+[[maybe_unused]] void require_knobs(const SamplingKnobs& k,
+                                   const char* what) {
+    if (!(k.cfg > 0.0)) {
+        throw SdError(std::string(what) +
+                      "的请求没填 cfg。构造请求的地方要调 "
+                      "sampling_knobs_for(settings, role) 把 [models] 里那套"
+                      "旋钮带上——这是调用方的 bug，不是配置问题。");
+    }
 }
 
 }  // namespace
@@ -546,12 +580,10 @@ struct SdContext::Impl {
     /// **和 text_encoder 互斥**：一次只填其中一边——Wan 走 t5xxl，
     /// Qwen-Image 走 llm，两个参数位不是一回事。
     std::string llm, llm_vision;
-    /// 这个角色的采样旋钮，建上下文时按 [models] 里的角色值定下来。
-    double cfg = 7.0;
-    /// 0 = 自动，交给 sd.cpp 按架构挑。见 sd_flow_shift。
-    double flow_shift = 0.0;
-    /// 两个专家交班的 sigma 阈值。只在 high_noise 非空时有意义。
-    double moe_boundary = 0.875;
+    // **采样旋钮不在这儿了。** cfg / flow_shift / moe_boundary 以前是建
+    // 上下文时从全局 [models] 冻下来的，于是项目自己的 changji.toml 不
+    // 参与、改了配置也要等上下文被卸载才生效——两条都不报错。现在跟着
+    // 每次请求走，见 SamplingKnobs。
 
     ~Impl() {
         if (ctx) ::free_sd_ctx(ctx);
@@ -578,13 +610,10 @@ std::shared_ptr<SdContext> SdContext::create(const config::Settings& settings,
     // 拿视频模型进去整个进程崩）。走到这里时 image 一定非空。
     const bool is_video = role == ModelRole::Video;
     const std::string& which = is_video ? m.video : m.image;
-    impl.cfg = is_video ? m.effective_video_cfg() : m.image_cfg;
-    impl.flow_shift = is_video ? m.video_flow_shift : m.image_flow_shift;
     impl.diffusion = paths::to_utf8(m.resolve(which, ws));
     // 双专家的高噪声那一份。只有视频那条路有——Qwen-Image 不是 MoE。
     if (is_video && !m.video_high_noise.empty()) {
         impl.high_noise = paths::to_utf8(m.resolve(m.video_high_noise, ws));
-        impl.moe_boundary = m.video_moe_boundary;
     }
 
     // **VAE 和文本编码器要按角色挑，不能两边共用一套。**
@@ -786,10 +815,11 @@ void SdContext::generate(const ImageRequest& req, const fs::path& dest,
     g.seed = req.seed;
     g.batch_count = 1;
     g.sample_params.sample_steps = req.steps;
-    // cfg / flow_shift 按角色从 [models] 来，不用请求里那个 7.0——
-    // 见 ModelsConfig::image_cfg 上面那段。
-    g.sample_params.guidance.txt_cfg = static_cast<float>(impl_->cfg);
-    g.sample_params.flow_shift = sd_flow_shift(impl_->flow_shift);
+    // cfg / flow_shift 跟着请求走，不是建上下文时冻下来的那一份。
+    // 为什么，见 SamplingKnobs。
+    require_knobs(req.knobs, "出图");
+    g.sample_params.guidance.txt_cfg = static_cast<float>(req.knobs.cfg);
+    g.sample_params.flow_shift = sd_flow_shift(req.knobs.flow_shift);
     // VAE 分块解码——和 generate_video 那边同一套写法。不填的话 sd.cpp
     // 整图解码，1280×704 要 6.6 GB 缓冲，fp8 常驻的 32 GB 卡上出不来图。
     g.vae_tiling_params.enabled = req.vae_tiling;
@@ -897,10 +927,11 @@ void SdContext::generate_video(const VideoRequest& req, const fs::path& raw_dest
     g.fps = req.fps;
     g.seed = req.seed;
     g.sample_params.sample_steps = req.steps;
-    // cfg / flow_shift 按角色从 [models] 来，不用请求里那个 7.0——
-    // 见 ModelsConfig::image_cfg 上面那段。
-    g.sample_params.guidance.txt_cfg = static_cast<float>(impl_->cfg);
-    g.sample_params.flow_shift = sd_flow_shift(impl_->flow_shift);
+    // cfg / flow_shift 跟着请求走，不是建上下文时冻下来的那一份。
+    // 为什么，见 SamplingKnobs。
+    require_knobs(req.knobs, "出片");
+    g.sample_params.guidance.txt_cfg = static_cast<float>(req.knobs.cfg);
+    g.sample_params.flow_shift = sd_flow_shift(req.knobs.flow_shift);
     // **高噪声专家的旋钮要单独填一遍。** sd_vid_gen_params_init 给它的是
     // 另一套默认值（cfg 7.0、flow_shift 无穷），不填的话前几步会在一个
     // 和低噪声那份完全不同的 cfg 上跑——而这**不会报错**，只是出来的片
@@ -910,9 +941,13 @@ void SdContext::generate_video(const VideoRequest& req, const fs::path& raw_dest
     // （sd.cpp 扫 sigma 序列，第一个小于阈值的下标就是交班点）。
     // 填成具体数字的话两段步数是**相加**的，总步数会翻倍。
     g.high_noise_sample_params.guidance.txt_cfg =
-        static_cast<float>(impl_->cfg);
-    g.high_noise_sample_params.flow_shift = sd_flow_shift(impl_->flow_shift);
-    g.moe_boundary = static_cast<float>(impl_->moe_boundary);
+        static_cast<float>(req.knobs.cfg);
+    g.high_noise_sample_params.flow_shift = sd_flow_shift(req.knobs.flow_shift);
+    // 0 = 没填，沿用 sd_vid_gen_params_init 给的 0.875。单专家时本来
+    // 就没有意义（sampling_knobs_for 在那种情况下留 0）。
+    if (req.knobs.moe_boundary > 0.0) {
+        g.moe_boundary = static_cast<float>(req.knobs.moe_boundary);
+    }
 
     // LoRA。**这个数组要活到 generate_video 返回**——sd_vid_gen_params_t
     // 存的是指针，不拷贝。放在这一层的局部变量里正好（下面就调用了）。
@@ -1138,7 +1173,7 @@ void register_sd_slots(SettingsProvider raw_provider,
         //
         // 实测（walk_c，544×928）：出片这一路估 14.6 GB、**实占 31.39 GB**，
         // 整卡 31.84 GB，只剩 0.45 GB。一集十几镜里总有一两镜撞上，重试超限
-        // 就降级成静帧加运镜，而成片照出——最难发现的那种。
+        // 就降级（留着最后那一版没过闸门的），而成片照出——最难发现的那种。
         //
         // **注意余量默认 6 GB 是按出图的 VAE 解码定的**（6576 MB），而出片的
         // 计算缓冲更大（stages/limits.hpp 那边按 14.6 GB 记，还随画布涨）。
