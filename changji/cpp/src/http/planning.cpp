@@ -375,6 +375,25 @@ ApiResult post_plan(const json& body, llm::Client& client,
                         {"name", kv.second.name}});
     }
 
+    // **有几镜没落到场景上。**
+    //
+    // 分镜 schema 里 location_id 是 `anyOf[enum, null]`，模型可以不填，
+    // 而不填的后果是出首帧时**整段场景描述丢掉**——同一个咖啡馆的几镜
+    // 各画各的。2026-09-13 实测 walk_c ep01：18 镜里 13 镜是空的，
+    // 而那 13 镜的 scene_id 写着 loc_caf_day / loc_ca_day / lo_cafe_da
+    // ——模型在抄自己上一条输出并且越抄越缺字母，link_location 要精确
+    // 匹配，于是全部落空。
+    //
+    // **这里只报数，不强制模型必须选一个。** 对拍语料里有 82 条
+    // `"location_id": null`，那是合法状态（手建的镜头、还没登记场景的
+    // 项目）；而实测也见过选错的（sh001 是雨夜街头，却挂上了医院急诊科，
+    // 出来的图是雨衣骑手站在病房里）。强制选等于把"没有"换成"可能是错
+    // 的"，那不一定更好。人看见这个数就能自己判——补、还是重出一次。
+    int no_location = 0;
+    for (const Shot& s : shots) {
+        if (!s.location_id.has_value() || s.location_id->empty()) ++no_location;
+    }
+
     // 补完之后照理一句都不该漏。还漏的话说明落位那一步也没兜住，
     // 照旧报出来——不拦，但要让人看见。
     json warnings = json::array();
@@ -389,6 +408,7 @@ ApiResult post_plan(const json& body, llm::Client& client,
         {"duration_s", round1(total)},
         {"missing_lines", warnings},
         {"placed_lines", placed_lines},
+        {"shots_without_location", no_location},
         {"lipsync", lipsync},
         {"characters", chars},
         {"locations", locs},

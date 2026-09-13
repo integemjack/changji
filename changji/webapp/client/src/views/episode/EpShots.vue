@@ -297,6 +297,19 @@ async function generate() {
     } else {
       ui.ok(`出了 ${result.shots} 个镜头，共 ${humanTime(result.duration_s)}`)
     }
+    // **没落到场景上的那几镜单独说一句。**
+    //
+    // 和上面几条不是一回事，所以不并进那个 if 链：上面说的是"长度够不够、
+    // 台词漏没漏"，这条说的是画面。没有场景的镜头出首帧时**整段场景描述
+    // 丢掉**，同一个咖啡馆的几镜会各画各的，而全程不报错。
+    // 2026-09-13 实测 walk_c ep01：18 镜里 13 镜是空的。
+    const noLoc = result.shots_without_location ?? 0
+    if (noLoc > 0 && session.locations.length > 0) {
+      ui.warn(
+        `其中 ${noLoc} 个镜头没挑场景。这几镜出首帧时不会带上场景的外观描述，` +
+          `同一个地方的几镜可能各画各的——在镜头里挑一下，或者重出一次`,
+      )
+    }
     await load()
   }
 }

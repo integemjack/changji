@@ -1801,6 +1801,7 @@
     "duration_s": 8.1,
     "missing_lines": [],
     "placed_lines": 0,
+    "shots_without_location": 0,
     "lipsync": 1,
     "characters": [
      {
@@ -2046,6 +2047,7 @@
     "duration_s": 12.1,
     "missing_lines": [],
     "placed_lines": 0,
+    "shots_without_location": 0,
     "lipsync": 2,
     "characters": [
      {
@@ -2342,6 +2344,7 @@
     "duration_s": 12.1,
     "missing_lines": [],
     "placed_lines": 0,
+    "shots_without_location": 0,
     "lipsync": 2,
     "characters": [
      {
@@ -2637,6 +2640,7 @@
     "duration_s": 12.1,
     "missing_lines": [],
     "placed_lines": 0,
+    "shots_without_location": 0,
     "lipsync": 2,
     "characters": [
      {
@@ -3057,6 +3061,7 @@
     "duration_s": 12.1,
     "missing_lines": [],
     "placed_lines": 0,
+    "shots_without_location": 0,
     "lipsync": 2,
     "characters": [
      {
@@ -3409,6 +3414,7 @@
     "duration_s": 12.1,
     "missing_lines": [],
     "placed_lines": 0,
+    "shots_without_location": 0,
     "lipsync": 2,
     "characters": [
      {
@@ -3754,6 +3760,7 @@
     "duration_s": 5.0,
     "missing_lines": [],
     "placed_lines": 2,
+    "shots_without_location": 0,
     "lipsync": 0,
     "characters": [
      {
