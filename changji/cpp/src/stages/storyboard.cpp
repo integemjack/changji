@@ -235,6 +235,18 @@ VideoLimits cap_by_vram(VideoLimits limits, double vram_gb, double resident_gb,
     return limits;
 }
 
+VideoLimits cap_by_kernel_limit(VideoLimits limits, int width, int height) {
+    if (width <= 0 || height <= 0) return limits;
+    // 实测跑得动的最大「像素 × 帧」：704×1280×192（8 秒）。294 帧炸。
+    // 来历见头文件。**没有五秒那道地板**：这是硬墙，地板抬上去就是让
+    // 分镜排出必炸的镜头——2K 下只剩 46 帧，那就 46 帧。
+    constexpr double kMaxPixelFrames = 704.0 * 1280.0 * 192.0;
+    const double px = static_cast<double>(width) * static_cast<double>(height);
+    const int fits = static_cast<int>(kMaxPixelFrames / px);
+    if (fits < limits.max_frames) limits.max_frames = std::max(1, fits);
+    return limits;
+}
+
 namespace {
 
 VideoLimits& mutable_video_limits() {

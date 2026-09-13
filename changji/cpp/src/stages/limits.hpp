@@ -144,6 +144,32 @@ VideoLimits guess_video_limits(const std::string& video_model_file,
 VideoLimits cap_by_vram(VideoLimits limits, double vram_gb,
                         double resident_gb, int fps = 24);
 
+/// 按画布把帧数夹到**内核跑得动**的范围。**这一条不是显存。**
+///
+/// 2026-09-13 在 5090 上照上面那段注释的要求量了一组（704×1280、H3
+/// Q4_K_M、权重全放内存、Turbo 6 步，同一镜同一首帧）：
+///
+///   107 帧（4 秒）   峰值 28.8 GB   228 秒
+///   192 帧（8 秒）   峰值 24.4 GB   485 秒
+///   294 帧（12 秒）  **整个引擎当场死掉**，8 秒内：
+///     `CUDA error: invalid configuration argument`（ggml_cuda_kernel_launch）
+///
+/// 两件事：显存曲线**根本不随帧数涨**——sd.cpp 按预算分段跑，长镜头换来
+/// 的是时间（几乎线性）不是显存，所以 cap_by_vram 里那条「每帧 0.118 GB」
+/// 是错的（只是错在保守那一侧）；而真正的墙是序列长到某个内核的启动网格
+/// 超出 CUDA 的上限，报的不是 OOM，是启动参数非法，**炸的是整个进程**，
+/// 正在跑的那一集全丢。cap_by_vram 在大卡上会把这个上限放开到 12 秒，
+/// 然后正好撞上这堵墙。
+///
+/// 所以这一道按「像素 × 帧」量：704×1280×192 = 1.73 亿跑得动，
+/// ×294 = 2.65 亿炸。天花板取跑得动的那个数（保守；真边界在两者之间，
+/// 还没二分——每二分一次要炸一次引擎）。画布小，换算出来的帧数就多：
+/// 544×928 下是 342 帧，比模型自己的上限还高，等于不夹；
+/// 2K（1440×2560）下只剩 46 帧 ≈ 2 秒——2K 本来就跑不了（见 max_pixels）。
+///
+/// width / height ≤ 0（不知道画布）时原样返回。已经比天花板低的不会被抬高。
+VideoLimits cap_by_kernel_limit(VideoLimits limits, int width, int height);
+
 /// 进程内当前这一份。默认是最保守的那一档，由 config::Runtime::replace 注入。
 ///
 /// 做成全局可设而不是到处传参：用到它的是 stages 里的纯函数

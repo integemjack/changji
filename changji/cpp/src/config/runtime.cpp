@@ -43,6 +43,15 @@ void Runtime::replace(Settings s) {
     // 1280×704 就是这么配的（weights = "cpu"）。真常驻一部分权重时可用的
     // 更少，但那种配置本来也跑不了长镜头，夹得更短没坏处。
     limits = stages::cap_by_vram(limits, detected_vram_gb(), 0.0);
+    // 再按画布夹一道**内核跑得动**的上限。这一条不是显存：大卡上 cap_by_vram
+    // 会放开到 12 秒，而 704×1280 跑到 294 帧是整个引擎当场死掉
+    // （见 cap_by_kernel_limit 的实测表）。画布取的是这份设置里的 [video]，
+    // 也就是 --project 那个项目的；别的项目按各自的画布出片时，这里用的
+    // 仍是这一份——和上面帧率那条一样的两条入口问题，先按最常见的一路堵住。
+    {
+        const auto [cw, ch] = s.video.size();
+        limits = stages::cap_by_kernel_limit(limits, cw, ch);
+    }
     if (s.models.video_max_frames > 0) limits.max_frames = s.models.video_max_frames;
     if (s.models.video_frame_step > 0) limits.frame_step = s.models.video_frame_step;
     if (s.models.video_frame_base >= 0 && s.models.video_frame_step > 0) {

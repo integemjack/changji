@@ -945,3 +945,36 @@ TEST_CASE("real_total_s 数的是帧，不是分镜表") {
 
     stages::set_video_limits(saved);
 }
+
+TEST_CASE("按画布夹内核跑得动的帧数上限：不是显存，是序列长度") {
+    // 2026-09-13 5090 实测（704×1280）：192 帧跑得动，294 帧整个引擎
+    // 当场死（CUDA invalid configuration argument）。数在 limits.hpp。
+    stages::VideoLimits h3;
+    h3.max_frames = 360;
+    h3.frame_step = 17;
+    h3.frame_base = 5;
+
+    // 704×1280：上限落在实测跑得动的 192，横竖一样
+    CHECK(stages::cap_by_kernel_limit(h3, 704, 1280).max_frames == 192);
+    CHECK(stages::cap_by_kernel_limit(h3, 1280, 704).max_frames == 192);
+
+    // 544×928：换算出来 342，比模型自己的 360 低一点，但仍远高于 5090 上
+    // 显存那一道——所以在这张卡、这个画幅上什么都不变
+    const auto std_canvas = stages::cap_by_kernel_limit(h3, 544, 928);
+    CHECK(std_canvas.max_frames == 342);
+    CHECK(std_canvas.max_frames > stages::cap_by_vram(h3, 32.6, 0.0).max_frames);
+
+    // 大卡上 cap_by_vram 放开到十几秒，这一道要把它按回来
+    const auto big = stages::cap_by_kernel_limit(
+        stages::cap_by_vram(h3, 80.0, 0.0), 704, 1280);
+    CHECK(big.max_frames == 192);
+
+    // 2K：只剩 46 帧，**没有五秒地板**——地板抬上去就是让分镜排出必炸的镜头
+    CHECK(stages::cap_by_kernel_limit(h3, 1440, 2560).max_frames == 46);
+
+    // 不知道画布就不动；已经比天花板低的不会被抬高
+    CHECK(stages::cap_by_kernel_limit(h3, 0, 0).max_frames == 360);
+    stages::VideoLimits wan;
+    wan.max_frames = 121;
+    CHECK(stages::cap_by_kernel_limit(wan, 704, 1280).max_frames == 121);
+}
