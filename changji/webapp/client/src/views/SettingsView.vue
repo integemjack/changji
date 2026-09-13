@@ -277,6 +277,32 @@ async function saveNode() {
   }
 }
 
+/**
+ * 密钥单独存。
+ *
+ * **不跟别的设置一起提交**，两个理由：
+ *   一、密钥是唯一一个「只想改这一样」的场合——换一把 key 不该顺带把
+ *       地址、模型、温度、配音后端全重新提交一遍，那几项里任何一个
+ *       正被环境变量顶着，都会多出一句莫名其妙的警告；
+ *   二、它在引擎那边落的是**另一个文件**（配置目录里的 api_key，
+ *       不进 config.toml），本来就不是同一笔写入。
+ */
+async function saveApiKey() {
+  const key = apiKeyInput.value.trim()
+  if (!key) {
+    ui.warn('先把密钥填进去')
+    return
+  }
+  const result = await run(
+    () => api.saveConnections({ patch: { llm_api_key: key }, persist: persist.value }),
+    { key: 'apikey' },
+  )
+  if (!result) return
+  apiKeyInput.value = ''
+  ui.ok(result.saved_to ? `密钥已存到 ${result.saved_to}` : '密钥已保存')
+  await load()
+}
+
 /** 连接类设置。改了等于换一台干活的机器，保存完引擎会自动重新体检。 */
 async function saveConnections() {
   const patch = {
@@ -287,15 +313,13 @@ async function saveConnections() {
     tts_base_url: conn.value.tts_base_url ?? '',
     tts_engine: conn.value.tts_engine,
   }
-  // 密钥只在用户真填了新的时候才提交。空着就是「别动它」，
-  // 提交空串会把原来的密钥抹掉。
-  if (apiKeyInput.value.trim()) patch.llm_api_key = apiKeyInput.value.trim()
+  // **密钥不在这儿提交**，它有自己的按钮（saveApiKey）。
+  // 捎带着提交的话，"改个温度"会顺手把密钥也写一遍。
 
   const result = await run(() => api.saveConnections({ patch, persist: persist.value }), {
     key: 'conn',
   })
   if (!result) return
-  apiKeyInput.value = ''
   ui.ok(
     result.changed?.length
       ? `改了 ${result.labels?.join('、') || result.changed.join('、')}`
@@ -611,14 +635,27 @@ function scrollTo(id) {
                       {{ conn.llm_api_key_set ? conn.llm_api_key_hint : '未设置' }}
                     </span>
                   </span>
-                  <input
-                    v-model="apiKeyInput"
-                    class="input mono"
-                    type="password"
-                    placeholder="留空表示不改"
-                    autocomplete="off"
-                    title="本地服务通常不校验"
-                  />
+                  <!-- 密钥单独存单独提交，见 saveApiKey。它在引擎那边落的是
+                       配置目录里的 api_key 文件，不进 config.toml。 -->
+                  <div class="keyrow">
+                    <input
+                      v-model="apiKeyInput"
+                      class="input mono keyrow__input"
+                      type="password"
+                      placeholder="本机服务一般不用填"
+                      autocomplete="off"
+                      title="单独存一个文件，不会写进 config.toml"
+                      @keyup.enter="saveApiKey"
+                    />
+                    <button
+                      class="btn btn--sm"
+                      type="button"
+                      :disabled="!apiKeyInput.trim() || isBusy('apikey')"
+                      @click="saveApiKey"
+                    >
+                      {{ isBusy('apikey') ? '存…' : '存密钥' }}
+                    </button>
+                  </div>
                 </label>
                 <label class="field">
                   <span class="field__label">温度</span>
@@ -851,9 +888,15 @@ function scrollTo(id) {
                   />
                 </label>
               </div>
-              <label class="switch" title="保证整集能出片，而不是卡在某一镜上">
+              <!-- 原来这里写「重试超限降级为静帧加运镜」。**没有那回事**：
+                   引擎的 fallback 只是留着最后那一版视频，全代码库一处
+                   zoompan 都没有（2026-09-13 查过）。 -->
+              <label
+                class="switch"
+                title="关掉的话，重试超限的镜头会标成「未过闸门」，整集停在那儿等人"
+              >
                 <input v-model="params.fallback_on_exhausted" type="checkbox" />
-                <span>重试超限降级为静帧加运镜</span>
+                <span>重试超限就留着最后那一版（没过闸门也照用）</span>
               </label>
             </div>
           </section>
