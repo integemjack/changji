@@ -1183,6 +1183,11 @@ void run(const config::Settings& settings, const Options& opts) {
                     throw ApiError(400, msg);
                 }
 
+                // 老项目（建在有标准模板之前）没有这份文件时先按项目模板
+                // 起底。不然 save_user_config 拿**全局**模板起底，项目配置里
+                // 会冒出 [llm]、[workers] 这些和剧无关的节。
+                // 文件已经在的话这一步什么都不做，下面照常改那两行。
+                config::write_project_config(root, v);
                 config::save_user_config(
                     json{{"video",
                           {{"orientation", v.orientation},

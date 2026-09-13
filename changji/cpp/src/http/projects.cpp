@@ -97,9 +97,22 @@ ApiResult post_new_project(const json& body, const config::Settings& settings) {
 
     const std::string name = paths::to_utf8(path.filename());
     const std::string title = opt_str(body, "title", "");
+
+    // 画幅可以在建项目时就定；没给就按内置默认（竖屏 720p）。
+    // **先校验再建目录**：目录建了再报 400，下次同名就是 409，用户会以为
+    // 名字被占了。
+    config::VideoConfig video;
+    video.orientation = opt_str(body, "orientation", video.orientation);
+    video.quality = opt_str(body, "quality", video.quality);
+    if (const auto errs = video.validate(); !errs.empty()) {
+        throw ApiError(400, errs.front());
+    }
+
     try {
         ProjectStore store = ProjectStore::create(
             path, text::project_slug(name), title.empty() ? name : title, line);
+        // 一部剧一份标准参数，建的时候就落下来。见 project_config_template。
+        config::write_project_config(store.root(), video);
         return {200, {{"root", paths::to_utf8(store.root())}}};
     } catch (const fs::filesystem_error& e) {
         throw ApiError(400, std::string("创建目录失败：") + e.what());

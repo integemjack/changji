@@ -829,4 +829,24 @@ std::string default_config_template();
 std::filesystem::path write_default_config(
     const std::optional<std::filesystem::path>& path = std::nullopt);
 
+/// **项目自己那份** changji.toml 的模板原文。
+///
+/// 和上面那份全局模板是两回事：全局那份写的是**这台机器**的属性
+/// （模型文件、显存、端口、大模型地址），这份只放**这部剧**的属性
+/// （画幅、装配、闸门、按剧调的采样旋钮）。以前项目目录里没有这份文件，
+/// 只有用户在界面上改过画幅才会冒出一个只有 [video] 两行的 toml；
+/// 而 `save_user_config` 遇到文件不存在时拿**全局**模板起底——
+/// 于是一个项目的配置里出现 `[llm]`、`[workers]` 这些和剧无关的节。
+///
+/// **新建项目时就写一份标准的**（2026-09-13 起）。每部剧的差异在这里改，
+/// 不用去动全局；全局定死一个值等于把这台机器刻进每一部剧。
+std::string project_config_template();
+
+/// 在项目目录写一份标准的 changji.toml，画幅按 `video` 填。
+///
+/// **已经有了就一个字节都不动**（返回 false）：老项目里那份是用户改过的。
+/// 写了返回 true。写不进去抛 std::runtime_error。
+bool write_project_config(const std::filesystem::path& project_root,
+                          const VideoConfig& video);
+
 }  // namespace changji::config

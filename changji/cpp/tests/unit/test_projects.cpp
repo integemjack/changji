@@ -10,6 +10,7 @@
 #include <chrono>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <string>
 #include <thread>
 
@@ -338,4 +339,70 @@ TEST_CASE("项目 id 的 slug 规则和角色的不一样") {
     CHECK(text::slug("Lin Wan") == "lin_wan");
     CHECK(text::slug("林晚").rfind("x", 0) == 0);
     CHECK(text::slug("林晚").size() == 7);
+}
+
+TEST_CASE("新建项目时落一份标准的项目配置") {
+    // 以前项目目录里没有 changji.toml，只有用户在界面上改过画幅才冒出一个
+    // 两行的；而那时 save_user_config 拿全局模板起底，项目配置里会出现
+    // [llm]、[workers] 这些机器的属性。现在建项目就写一份只含剧的属性的。
+    Workspace ws("项目配置");
+    const auto r = http::guard([&] {
+        return http::post_new_project(json{{"path", "配置剧"}}, ws.settings);
+    });
+    REQUIRE(r.status == 200);
+    const fs::path made = paths::from_utf8(r.body.at("root").get<std::string>());
+    const fs::path toml = made / "changji.toml";
+    REQUIRE(fs::is_regular_file(toml));
+
+    // 解析得动，画幅是内置默认，别的节解析出来就是默认值（模板没有夹带
+    // 别的东西），而且机器的属性一个都不在里面。
+    const config::Settings s = config::load_settings(made);
+    CHECK(s.video.orientation == "portrait");
+    CHECK(s.video.quality == "720p");
+    CHECK(s.assembly.crf == config::AssemblyConfig{}.crf);
+    CHECK(s.gates.max_attempts_per_shot ==
+          config::GateConfig{}.max_attempts_per_shot);
+    std::ifstream in(toml, std::ios::binary);
+    const std::string text((std::istreambuf_iterator<char>(in)),
+                           std::istreambuf_iterator<char>());
+    CHECK(text.find("[llm]") == std::string::npos);
+    CHECK(text.find("[workers]") == std::string::npos);
+    CHECK(text.find("dir =") == std::string::npos);
+    // 模板里那两个占位符都要换掉
+    CHECK(text.find("@ORIENTATION@") == std::string::npos);
+    CHECK(text.find("@QUALITY@") == std::string::npos);
+
+    SUBCASE("建的时候就能定画幅") {
+        const auto r2 = http::guard([&] {
+            return http::post_new_project(
+                json{{"path", "横屏剧"}, {"orientation", "landscape"},
+                     {"quality", "hd"}},
+                ws.settings);
+        });
+        REQUIRE(r2.status == 200);
+        const fs::path made2 =
+            paths::from_utf8(r2.body.at("root").get<std::string>());
+        const config::Settings s2 = config::load_settings(made2);
+        CHECK(s2.video.orientation == "landscape");
+        CHECK(s2.video.quality == "hd");
+        CHECK(s2.video.size() == std::pair<int, int>{1280, 704});
+    }
+
+    SUBCASE("画幅写错了在建目录之前就拒") {
+        const auto r3 = http::guard([&] {
+            return http::post_new_project(
+                json{{"path", "错画幅"}, {"quality", "4k"}}, ws.settings);
+        });
+        CHECK(r3.status == 400);
+        CHECK_FALSE(fs::exists(ws.root / paths::from_utf8("错画幅")));
+    }
+
+    SUBCASE("已经有的那份一个字节都不动") {
+        const std::string before = text;
+        CHECK_FALSE(config::write_project_config(made, config::VideoConfig{}));
+        std::ifstream in2(toml, std::ios::binary);
+        const std::string after((std::istreambuf_iterator<char>(in2)),
+                                std::istreambuf_iterator<char>());
+        CHECK(after == before);
+    }
 }

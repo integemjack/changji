@@ -1134,4 +1134,95 @@ fs::path write_default_config(const std::optional<fs::path>& path) {
     return target;
 }
 
+// ---- 项目自己那份 ----
+
+namespace {
+
+// **只放这部剧的属性。** 模型文件、显存、端口、大模型地址是机器的属性，
+// 在全局配置里；写到这儿的话把项目目录拷到另一台机器就跑不起来。
+//
+// 明写出来（而不是注释掉）的几项就是"一部剧的标准参数"：新建时按内置
+// 默认值落下来，以后全局默认再变也不影响已建的剧——每部剧自己说了算。
+// [models] 那一节全是注释：采样旋钮多数时候跟着模型走，按剧调才打开。
+//
+// 两个占位符由 write_project_config 换成真实取值。
+constexpr const char* kProjectToml = R"(# 这部剧自己的配置（一个项目一份）。
+#
+# 只放「这部剧的属性」：画幅、装配、闸门、按剧调的采样旋钮。
+# 机器的属性（模型文件、显存、端口、大模型地址）在全局配置里，不要写到这儿——
+# 否则项目目录拷到另一台机器就跑不起来。
+# 优先级：环境变量 > 本文件 > 全局配置 > 内置默认值
+#
+# 这份是新建项目时按标准参数生成的。每部剧的差异在这里改，别去改全局。
+
+[video]
+# 画幅是这部剧的属性，不是这台机器的：同一台机器上可以同时有竖屏短剧和横屏片子。
+#   orientation = "portrait" | "landscape"
+#   quality     = "720p" | "hd" | "2k"
+#   720p → 544×928    hd → 704×1280    2k → 1440×2560（一张 32 GB 的卡跑不动）
+orientation = "@ORIENTATION@"
+quality = "@QUALITY@"
+
+[assembly]
+# 帧率不在这里：它跟着出片模型走（MiniMax-H3 只出 24 fps），写了也会被纠正。
+crf = 18
+# 只在场景切换处用溶解（秒），同场景内一律硬切。
+scene_transition_s = 0.4
+# 中文字幕单行上限（全角字符数）和字体。
+subtitle_max_chars_per_line = 15
+subtitle_font = "Source Han Sans SC"
+
+[gates]
+# 质量闸门。全自动模式下这些阈值决定废片能不能被拦住。
+enabled = true
+max_attempts_per_shot = 3
+# 重试超限时保留最后那一版（闸门没过，但片子在），保证整集能出片而不是卡死。
+fallback_on_exhausted = true
+
+[models]
+# **模型文件不要写在这里**，那是机器的属性。这一节只放按剧调的采样旋钮，
+# 全部注释掉 = 跟全局走。flow_shift 的 0 = 自动（按模型架构挑）。
+# video_cfg = 1.0
+# video_flow_shift = 0.0
+# video_lora_strength = 1.0
+# image_cfg = 2.5
+# image_flow_shift = 0.0
+)";
+
+void replace_all_in(std::string& s, const std::string& from,
+                    const std::string& to) {
+    for (std::size_t pos = s.find(from); pos != std::string::npos;
+         pos = s.find(from, pos + to.size())) {
+        s.replace(pos, from.size(), to);
+    }
+}
+
+}  // namespace
+
+std::string project_config_template() {
+    std::string s = kProjectToml;
+    const VideoConfig v;
+    replace_all_in(s, "@ORIENTATION@", v.orientation);
+    replace_all_in(s, "@QUALITY@", v.quality);
+    return s;
+}
+
+bool write_project_config(const fs::path& project_root, const VideoConfig& video) {
+    const fs::path target = project_root / paths::from_utf8("changji.toml");
+    std::error_code ec;
+    if (fs::exists(target, ec)) return false;
+    // 先校验再写：写进去一个非法值的话，下一次加载整个项目都打不开。
+    if (const auto errs = video.validate(); !errs.empty()) {
+        throw std::runtime_error(errs.front());
+    }
+    std::string s = kProjectToml;
+    replace_all_in(s, "@ORIENTATION@", video.orientation);
+    replace_all_in(s, "@QUALITY@", video.quality);
+    fs::create_directories(project_root, ec);
+    std::ofstream out(target, std::ios::binary);
+    if (!out) throw std::runtime_error("写不了项目配置：" + paths::to_utf8(target));
+    out << s;
+    return true;
+}
+
 }  // namespace changji::config
