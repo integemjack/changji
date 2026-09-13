@@ -11,6 +11,7 @@
 // **接口保留而不是删掉**：角色页打开时会拉它，删了前端要跟着改，
 // 而它现在恰好承担了"告诉用户音色怎么配"这件事——那句说明比一个
 // 空下拉框有用。
+#include <filesystem>
 #include <string>
 #include <vector>
 
@@ -43,8 +44,26 @@ ApiResult post_voice_take(const nlohmann::json& body);
 /// body: `{project, seed, name, char_id?}`。存进 `voices/<名字>.wav`，
 /// 给了 char_id 就顺手挂到那个角色的 voice_id 上。
 ///
-/// **存的时候重出一段更长的**：试听那段只要几秒，而参考音频越长克隆
-/// 越稳（社区实测 3 秒能认出来，8~15 秒明显更好）。种子一样，人就一样。
+/// **存的就是刚才听的那一段**——直接把 `.take_<seed>.wav` 拷过去。
+///
+/// 原来是"按同一个种子重出一段更长的"（参考音频越长克隆越稳）。那是错的：
+/// 音色是 (种子, 文本) 的函数，换文本就换人——实测 1789 号从 112 Hz 变成
+/// 205 Hz、3313 号从 137 变成 224。拷贝还是**结构上**保证了"存的就是听的"，
+/// 不靠"同种子同文本确定性"这个经验性质（换一版权重就未必还在）。
+/// 手里没有那一段才退回重出（比如有人不经试听直接调接口）。
 ApiResult post_voice_save(const nlohmann::json& body);
+
+/// 摇音色的临时文件：`voices/` 里除了 `keep` 之外所有 `.take*`。
+///
+/// 摇是随手点的，一次点几十下，不清的话 voices/ 里会堆一地；
+/// 所以每摇一次就把上一次那个删掉，任何时候至多留一个。
+///
+/// **前缀是 `.take` 而不是 `.take_`**：上一版落在固定的 `.take.wav` 上，
+/// 只认带下划线的话那一个永远删不掉，在老项目里躺一辈子。
+///
+/// 导出来是因为**这是一段删文件的代码**，前缀写错就是删错东西。
+/// 返回删掉了几个。
+int sweep_old_takes(const std::filesystem::path& voices_dir,
+                    const std::filesystem::path& keep);
 
 }  // namespace changji::http

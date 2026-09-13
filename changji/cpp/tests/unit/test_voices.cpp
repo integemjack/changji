@@ -46,6 +46,52 @@ TEST_CASE("音色接口：两条后端各说各的") {
     }
 }
 
+TEST_CASE("摇音色的临时文件只留最近一个，老的那个固定名字也要清掉") {
+    // 摇是随手点的，一次点几十下。不清的话 voices/ 里会堆一地
+    // （它们点开头，清单里看不见，所以堆了也不知道）。
+    //
+    // **前缀是 `.take` 不是 `.take_`**：上一版落在固定的 `.take.wav` 上，
+    // 只认带下划线的话那一个永远删不掉——2026-09-13 在 walk_c 的 voices/ 里
+    // 看见它躺着，372 KB，谁也不会去看。
+    //
+    // 这是一段删文件的代码，所以判据要有用例守着：删多了就是删用户的音色。
+    const fs::path root =
+        fs::temp_directory_path() / paths::from_utf8("changji_清临时音色");
+    std::error_code ec;
+    fs::remove_all(root, ec);
+    fs::create_directories(root, ec);
+
+    const auto touch = [&](const char* name) {
+        std::ofstream(root / paths::from_utf8(name), std::ios::binary) << "假的";
+    };
+    touch(".take.wav");        // 上一版的固定落点
+    touch(".take_1789.wav");   // 上一摇
+    touch(".take_3313.wav");   // 要留的这一摇
+    touch("c_lin_wan.wav");    // 真音色，动不得
+    touch("低音男.wav");       // 真音色，动不得
+    touch("笔记.txt");         // 别的文件，动不得
+
+    const fs::path keep = root / paths::from_utf8(".take_3313.wav");
+    CHECK(http::sweep_old_takes(root, keep) == 2);
+
+    CHECK(fs::exists(keep));
+    CHECK_FALSE(fs::exists(root / paths::from_utf8(".take.wav")));
+    CHECK_FALSE(fs::exists(root / paths::from_utf8(".take_1789.wav")));
+    CHECK(fs::exists(root / paths::from_utf8("c_lin_wan.wav")));
+    CHECK(fs::exists(root / paths::from_utf8("低音男.wav")));
+    CHECK(fs::exists(root / paths::from_utf8("笔记.txt")));
+
+    SUBCASE("再扫一遍没得删，也不该报错") {
+        CHECK(http::sweep_old_takes(root, keep) == 0);
+        CHECK(fs::exists(keep));
+    }
+    SUBCASE("目录不存在就什么都不做") {
+        CHECK(http::sweep_old_takes(root / "没这个目录", keep) == 0);
+    }
+
+    fs::remove_all(root, ec);
+}
+
 TEST_CASE("项目里存了参考音色时，这个接口就是那份清单") {
     // **进程内配音没有服务端的音色列表**，所以"有哪些音色"等于"这个项目
     // 存了哪几段人声"。2026-09-13 之前这个接口只回一句说明，角色页那一栏

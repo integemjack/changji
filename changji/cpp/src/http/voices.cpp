@@ -214,6 +214,24 @@ json render_into(const ProjectStore& store, const fs::path& dest,
 }  // namespace
 
 
+int sweep_old_takes(const fs::path& voices_dir, const fs::path& keep) {
+    std::error_code ec;
+    if (!fs::is_directory(voices_dir, ec)) return 0;
+    int n = 0;
+    for (const auto& e : fs::directory_iterator(voices_dir, ec)) {
+        if (ec) break;
+        const std::string fname = paths::to_utf8(e.path().filename());
+        // 前缀是 `.take`，不是 `.take_`：上一版落在固定的 `.take.wav` 上，
+        // 只认带下划线的话那一个永远删不掉，在老项目里躺一辈子
+        // （2026-09-13 在 walk_c 的 voices/ 里看见了它）。
+        if (fname.rfind(".take", 0) != 0) continue;
+        if (e.path() == keep) continue;
+        std::error_code rm;
+        if (fs::remove(e.path(), rm)) ++n;
+    }
+    return n;
+}
+
 ApiResult post_voice_take(const in_json& body) {
     ProjectStore store = open_or_400(body);
     const unsigned int seed = seed_of(body);
@@ -228,20 +246,11 @@ ApiResult post_voice_take(const in_json& body) {
     // 种子摇的——摇了 A 又摇 B、然后去存 A，拷过去的会是 B。按种子起名
     // 就不可能对错。点开头，所以不会进音色清单（clips_in 里挡着）。
     //
-    // 摇是随手点的，一次点几十下，不清的话 voices/ 里会堆一地；
-    // 所以每摇一次就把上一次那个删掉，任何时候至多留一个。
+    // 摇是随手点的，一次点几十下，不清的话 voices/ 里会堆一地。判据见
+    // sweep_old_takes。
     const fs::path dir = store.paths().voices();
     const fs::path dest = take_path(dir, seed);
-    std::error_code ec;
-    if (fs::is_directory(dir, ec)) {
-        for (const auto& e : fs::directory_iterator(dir, ec)) {
-            if (ec) break;
-            const std::string fname = paths::to_utf8(e.path().filename());
-            if (fname.rfind(".take_", 0) == 0 && e.path() != dest) {
-                fs::remove(e.path(), ec);
-            }
-        }
-    }
+    sweep_old_takes(dir, dest);
     return {200, render_into(store, dest, text, seed)};
 }
 

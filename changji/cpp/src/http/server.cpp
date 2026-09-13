@@ -1609,7 +1609,8 @@ void run(const config::Settings& settings, const Options& opts) {
             nlohmann::ordered_json arr = nlohmann::ordered_json::array();
             int n = 1;
             for (const auto& p : stages::preset_voices()) {
-                // 名字里带上基频：九个「预置 N」并排，看不出哪个是男声。
+                // **基频单独给一个字段**，界面挨着名字印（「预置 1 · 96Hz」）。
+                // 九个「预置 N」并排，光看名字分不出哪个是男声。
                 arr.push_back(
                     {{"id", "preset" + std::to_string(n)},
                      {"name", "预置 " + std::to_string(n)},
