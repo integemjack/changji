@@ -15,6 +15,7 @@ import { computed, onMounted, ref, watch } from 'vue'
 import AppIcon from '@/components/AppIcon.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import { api, mediaUrl } from '@/api'
+import { isFilmOf } from '@/api/labels'
 import { humanAgo, humanTime, useAction } from '@/composables/useAction'
 import { useSession } from '@/stores/session'
 import { useUi } from '@/stores/ui'
@@ -85,7 +86,7 @@ const warnings = computed(() => {
   // mtime），所以对不上时这一条干脆不说。
   const planned = session.counters.plannedDurationS
   const forThisEp =
-    session.episodeId && currentFile.value?.name?.includes(session.episodeId)
+    isFilmOf(currentFile.value?.name, session.episodeId)
   if (p.maxDurationS && planned && forThisEp && planned > p.maxDurationS) {
     out.push(`约 ${humanTime(planned)}，超过上限 ${humanTime(p.maxDurationS)}`)
   }
@@ -132,7 +133,7 @@ async function loadAll() {
     assets.value = ast
     if (!form.value.rel) {
       const mine = session.episodeId
-        ? files.value.find((f) => f.name.includes(session.episodeId))
+        ? files.value.find((f) => isFilmOf(f.name, session.episodeId))
         : null
       form.value.rel = (mine ?? files.value[0])?.rel ?? ''
     }

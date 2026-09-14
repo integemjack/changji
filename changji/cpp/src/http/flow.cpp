@@ -168,10 +168,37 @@ json flow_assess(const json& project, const json& shots, const json& outputs,
         !shots.empty() && produced == static_cast<int>(shots.size());
 
     // ---- 成片：产物里有这一集的 ----
+    //
+    // ⚠️ **不能用裸 `find`。** 集号到 99 以内是 `ep%02d`，**第 100 集起
+    // 变成 `ep100`、`ep101`……**（story_plan.cpp 的 `ep_id`、
+    // http/episodes.cpp 的 `ep_fmt` 都刻意留了这一支）。于是站在 `ep10`
+    // 上时 `"ep107.mp4".find("ep10")` 命中——ep100 到 ep109 十条片子全算
+    // 成 ep10 的，这一格当场打勾，而 ep10 可能一帧都没出。短剧动辄七八十
+    // 上百集，这不是假想的数。
+    //
+    // 判据要求**两边都挨着非字母数字**（或者到头）：`ep01.mp4` 真、
+    // `ep01_2k.mp4` 真（手动超分那份还算这一集）、`导演版_ep01.mp4` 真、
+    // `ep107.mp4` 对 `ep10` 假。前端 api/labels.js 的 `isFilmOf` 是同一
+    // 条规则的 JS 版，两边要一起改。
+    const auto film_of = [](const std::string& name, const std::string& id) {
+        const auto alnum = [](unsigned char c) {
+            return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') ||
+                   (c >= 'A' && c <= 'Z');
+        };
+        for (std::size_t at = name.find(id); at != std::string::npos;
+             at = name.find(id, at + 1)) {
+            const bool left = at > 0 && alnum(static_cast<unsigned char>(name[at - 1]));
+            const std::size_t end = at + id.size();
+            const bool right =
+                end < name.size() && alnum(static_cast<unsigned char>(name[end]));
+            if (!left && !right) return true;
+        }
+        return false;
+    };
     bool has_film = false;
     for (const auto& o : outputs) {
         const auto name = str_of(o, "name");
-        if (episode_id.empty() || name.find(episode_id) != std::string::npos) {
+        if (episode_id.empty() || film_of(name, episode_id)) {
             has_film = true;
             break;
         }

@@ -10,6 +10,7 @@ import { computed, onActivated, ref, watch } from 'vue'
 import AppIcon from '@/components/AppIcon.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import { api, mediaUrl } from '@/api'
+import { isFilmOf } from '@/api/labels'
 import { humanAgo } from '@/composables/useAction'
 import { useRun } from '@/stores/run'
 import { useSession } from '@/stores/session'
@@ -113,7 +114,9 @@ const shotsLeft = computed(
   () => shots.value.filter((s) => !s.video_path).length,
 )
 const forThisEpisode = computed(() =>
-  session.episodeId ? files.value.filter((f) => f.name.includes(session.episodeId)) : [],
+  session.episodeId
+    ? files.value.filter((f) => isFilmOf(f.name, session.episodeId))
+    : [],
 )
 
 /**
@@ -130,10 +133,7 @@ const forThisEpisode = computed(() =>
  *     别的集的片，一个字都不说。
  */
 const isMine = computed(
-  () =>
-    !!current.value &&
-    !!session.episodeId &&
-    String(current.value.name ?? '').includes(session.episodeId),
+  () => !!current.value && isFilmOf(current.value.name, session.episodeId),
 )
 
 async function load() {
@@ -383,7 +383,7 @@ watch(currentRel, () => {
               </span>
             </span>
             <span
-              v-if="session.episodeId && f.name.includes(session.episodeId)"
+              v-if="isFilmOf(f.name, session.episodeId)"
               class="pill pill--accent tiny nowrap"
             >
               本集

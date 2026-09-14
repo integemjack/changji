@@ -32,6 +32,7 @@ import EpPublish from '@/views/episode/EpPublish.vue'
 import EpScript from '@/views/episode/EpScript.vue'
 import EpShots from '@/views/episode/EpShots.vue'
 import { api } from '@/api'
+import { isFilmOf } from '@/api/labels'
 import { useAction } from '@/composables/useAction'
 import { useRun, useWriter } from '@/stores/run'
 import { useSession } from '@/stores/session'
@@ -107,7 +108,8 @@ async function load() {
     sc.status === 'fulfilled' ? [...String(sc.value?.script ?? '').trim()].length : 0
   shots.value = sh.status === 'fulfilled' ? (sh.value?.shots ?? []) : []
   const files = out.status === 'fulfilled' ? (out.value?.files ?? []) : []
-  outputs.value = files.filter((f) => String(f.name ?? '').includes(epId)).length
+  // `includes` 会把 ep100~ep109 全算成 ep10 的，见 isFilmOf 头上那段
+  outputs.value = files.filter((f) => isFilmOf(f.name, epId)).length
   // 投递那层不在时 platforms 回的是 {error: "…"}，不是抛异常（见 EpPublish）
   publishOk.value = ps.status === 'fulfilled' && !ps.value?.error
   loaded.value = true

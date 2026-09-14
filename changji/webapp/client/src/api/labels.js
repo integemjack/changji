@@ -151,3 +151,38 @@ export const STAGE_LABELS = {
   final: '成片档',
   assemble: '装配成片',
 }
+
+/**
+ * 这个成片文件属不属于这一集。
+ *
+ * ⚠️ **不能用 `name.includes(episodeId)`。** 集号到 99 以内是 `ep%02d`，
+ * **第 100 集起变成 `ep100`、`ep101`……**（story_plan.cpp 的 `ep_id` 和
+ * http/episodes.cpp 的 `ep_fmt` 都是这么写的，那是刻意留的）。于是站在
+ * `ep10` 上时，`"ep107.mp4".includes("ep10")` 是真——`ep100` 到 `ep109`
+ * 十条片子全算成 ep10 的。短剧动辄七八十上百集，这不是假想的数。
+ *
+ * 后果不是少一个数，是**审片页会播错片而且不吭声**：`load()` 默认选
+ * `forThisEpisode[0]`（片单按 mtime 倒序），完全可能选中 ep107 那条；
+ * 而 `isMine` 用的是同一个判据，于是它也说"这是你这一集的"——那句
+ * 「播着别的集的片，一个字都不说」的守卫正好被同一个 bug 绕过去。
+ * 底下那条跳转条画的永远是 ep10 的镜头，点一下按 ep10 的时长跳。
+ *
+ * 判据改成**两边都要挨着非字母数字**（或者文件名的头尾）：
+ *
+ *   ep01.mp4      / ep01  → 真（后面是 `.`）
+ *   ep01_2k.mp4   / ep01  → 真（后面是 `_`，手动超分出来的那份还算这一集）
+ *   导演版_ep01.mp4 / ep01 → 真（前面是 `_`，改过名的也还认）
+ *   ep107.mp4     / ep10  → 假（后面是 `0`，这才是要挡的那条）
+ *
+ * 引擎那边 flow.cpp 的 `has_film` 是同一个判据的 C++ 版，两边要一起改。
+ */
+export function isFilmOf(name, episodeId) {
+  const id = String(episodeId ?? '')
+  if (!id) return false
+  const s = String(name ?? '')
+  const alnum = (c) => c !== undefined && /[A-Za-z0-9]/.test(c)
+  for (let at = s.indexOf(id); at >= 0; at = s.indexOf(id, at + 1)) {
+    if (!alnum(s[at - 1]) && !alnum(s[at + id.length])) return true
+  }
+  return false
+}
