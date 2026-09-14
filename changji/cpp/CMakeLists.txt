@@ -868,6 +868,23 @@ if(WIN32)
     endif()
 else()
     target_compile_options(changji PRIVATE -Wall -Wextra -Wpedantic)
+    # **clang 家族要把 constexpr 求值的步数上限抬高。**
+    #
+    # `bundled_webapp.inc.hpp` 是一个 constexpr 数组，几十万字符的字面量，
+    # 每个 `string_view` 的长度都要在编译期一个字符一个字符数出来。clang
+    # 默认上限（-fconstexpr-steps，约 100 万步）对 icpx（Intel 那个 clang）
+    # 不够，报出来的是
+    #     error: constexpr variable 'kBundledWebappChunks' must be
+    #            initialized by a constant expression
+    #     note: in call to 'length(&"…")'
+    # ——看起来像是那个生成的头文件坏了，其实只是数不完。前端一大，
+    # 别的 clang 迟早也会撞上，所以这里按编译器给，不按平台。
+    # clang-cl 走的是 MSVC 那套参数（windows-arm64 那格用它），不能塞
+    # GNU 风格的 -f 选项进去，所以把它排除掉。
+    if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|IntelLLVM"
+       AND NOT CMAKE_CXX_COMPILER_FRONTEND_VARIANT STREQUAL "MSVC")
+        target_compile_options(changji PRIVATE -fconstexpr-steps=50000000)
+    endif()
     find_package(Threads REQUIRED)
     target_link_libraries(changji PRIVATE Threads::Threads)
     # NVML 是运行时 dlopen 的，链接期不依赖它——但 dlopen 本身在老一点的

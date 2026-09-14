@@ -511,6 +511,13 @@ jobs:
     runs-on: ${{ matrix.runner }}
     # 360 就是 GitHub 的上限，而且真会用满。超时了就减下面两个架构列表。
     timeout-minutes: 360
+    # **没配 ONEAPI_WIN_URL 时，windows-x64-sycl 红了不算整趟红。**
+    # Intel 的 Windows 安装器地址里带一串 UUID，没有稳定别名，只能由人去
+    # 官网复制一次填进仓库变量（下面那一步会把拿法整段打出来）。在那之前
+    # 这一格必然失败，而它一失败，**另外七个包明明编好了，整趟构建还是
+    # 一片红**——谁看见都会以为 GPU 包全没出来。
+    # 配上 ONEAPI_WIN_URL 之后这里自动变回 false，它照旧能拦住真的失败。
+    continue-on-error: ${{ matrix.target == 'windows-x64-sycl' && vars.ONEAPI_WIN_URL == '' }}
     env:
       CHANGJI_VERSION: ${{ needs.meta.outputs.version }}
 
@@ -652,10 +659,21 @@ jobs:
           sudo mkdir -p /etc/apt/keyrings
           curl -fsSL https://repo.radeon.com/rocm/rocm.gpg.key \
             | sudo gpg --dearmor -o /etc/apt/keyrings/rocm.gpg
+          # **两个仓库都要加。** rocm 那个只有 ROCm 自己的包；hsa-rocr 要的
+          # `libdrm-amdgpu-amdgpu1` 和 hsa-rocr-dev 要的 `libdrm-amdgpu-dev`
+          # 在 amdgpu 仓库里（AMD 的安装文档也是两个一起加）。少一个的表现
+          # 不是"缺某个包"这种明话，而是 apt 甩一句
+          #     E: Unable to correct problems, you have held broken packages.
+          # ——它把解不开的依赖统统归成这一句，看不出缺的是谁。
+          echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/rocm.gpg] https://repo.radeon.com/amdgpu/${ROCM_VER}/ubuntu jammy main" \
+            | sudo tee /etc/apt/sources.list.d/amdgpu.list
           echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/rocm.gpg] https://repo.radeon.com/rocm/apt/${ROCM_VER} jammy main" \
             | sudo tee /etc/apt/sources.list.d/rocm.list
           sudo apt-get update -qq
-          sudo apt-get install -y -qq --no-install-recommends \
+          # **这一句不加 -qq。** 上面那句报错的全部内容就是"有包装不上"，
+          # 而真正有用的「谁依赖谁、差哪一个版本」全被 -qq 吞了，
+          # 于是日志里只剩一行没法追的话。装不上时那几十行才是线索。
+          sudo apt-get install -y --no-install-recommends \
             rocm-hip-sdk rocblas-dev hipblas-dev
           echo "ROCM_PATH=/opt/rocm" >> "$GITHUB_ENV"
           echo "HIP_PATH=/opt/rocm"  >> "$GITHUB_ENV"
@@ -823,7 +841,17 @@ jobs:
         run: |
           $out = ((Get-Location).Path -replace '\\','/') + "/out"
           $ssl = ((Get-Location).Path -replace '\\','/') + "/openssl"
-          $extra = if ("${{ matrix.gpu }}" -eq "cuda") {
+          # **[string[]] 和"不带 @"这两处都是必须的，少一处 vulkan 那格就编不了。**
+          #
+          # PowerShell 会把只有一个元素的数组拆封成普通字符串，而 vulkan 这格
+          # 恰好只有一个元素（cuda 那格有两个，所以一直没事）。接着 `@extra`
+          # 是 splat——splat 一个字符串会把它**按字符**拆开发出去，cmake 收到的
+          # 是 `-` `D` `C` `H` … 于是报
+          #     CMake Warning: Ignoring extra path from command line: "N"
+          #     CMake Error: Unknown argument -
+          # 本机拿 argecho 复现过：@$str 出 22 个单字符参数，$str 出 1 个。
+          # 原生命令收数组本来就会展开成多个参数，所以这儿不需要 splat。
+          [string[]]$extra = if ("${{ matrix.gpu }}" -eq "cuda") {
             @("-DCHANGJI_SD_CUDA=ON", "-DCHANGJI_CUDA_ARCH=$env:CUDA_ARCH")
           } else {
             @("-DCHANGJI_SD_VULKAN=ON")
@@ -837,7 +865,7 @@ jobs:
             -DCMAKE_RUNTIME_OUTPUT_DIRECTORY="$out" `
             -DCMAKE_RUNTIME_OUTPUT_DIRECTORY_RELEASE="$out" `
             -DOPENSSL_ROOT_DIR="$ssl" `
-            @extra
+            $extra
           if ($LASTEXITCODE -ne 0) { throw "配置失败" }
           cmake --build build --config Release --target changji --parallel
           if ($LASTEXITCODE -ne 0) { throw "编译失败" }
@@ -847,6 +875,13 @@ jobs:
       # enable_language(HIP)，而是把那批 .cu 当普通 C++ 交给当前的 C++
       # 编译器——所以那个编译器必须是认识 HIP 的那一个，MSVC 不行。
       # 也因此这一格只能用 Ninja：VS 生成器换不掉编译器。
+      # ⚠️ **OpenSSL 那四行不能只写 OPENSSL_ROOT_DIR。**
+      # 这一格的编译器是 HIP SDK 里的 clang++（GNU 风格的驱动），CMake 的
+      # FindOpenSSL 是**按编译器分叉**去猜库文件名的：MSVC 那条找
+      # libssl.lib，非 MSVC 那条找 libssl.a / libssl.dll.a。而 openssl 那个
+      # job 是拿 MSVC 编的，出来的就是 .lib——于是这一格配置期报
+      # 「找不到 OpenSSL ≥ 3.0」，而 openssl/ 目录明明就在旁边。
+      # 直接把两个库和头目录点名给它，绕开那套猜名字的逻辑。
       - name: 配置 + 编（Windows：ROCm）
         if: runner.os == 'Windows' && matrix.gpu == 'rocm'
         shell: pwsh
@@ -867,7 +902,11 @@ jobs:
             -DCHANGJI_HIP_ARCH="$env:HIP_ARCH" `
             -DCMAKE_RUNTIME_OUTPUT_DIRECTORY="$out" `
             -DCMAKE_RUNTIME_OUTPUT_DIRECTORY_RELEASE="$out" `
-            -DOPENSSL_ROOT_DIR="$ssl"
+            -DOPENSSL_ROOT_DIR="$ssl" `
+            -DOPENSSL_USE_STATIC_LIBS=ON `
+            -DOPENSSL_INCLUDE_DIR="$ssl/include" `
+            -DOPENSSL_SSL_LIBRARY="$ssl/lib/libssl.lib" `
+            -DOPENSSL_CRYPTO_LIBRARY="$ssl/lib/libcrypto.lib"
           if ($LASTEXITCODE -ne 0) { throw "配置失败" }
           cmake --build build --target changji --parallel
           if ($LASTEXITCODE -ne 0) { throw "编译失败" }
@@ -924,8 +963,22 @@ jobs:
         run: |
           BIN=out/changji
           test -f "$BIN" || { echo "产物不在 $BIN，实际编到哪儿去了："; find out build -maxdepth 3 -name 'changji*' 2>/dev/null; exit 1; }
-          "$BIN" --version
-          test "$("$BIN" --version)" = "$CHANGJI_VERSION"
+          # **cuda / rocm 这两格不能真把二进制跑起来。**
+          # 它们链的是驱动库（libcuda.so.1 / libamdhip64），而那东西是**显卡
+          # 驱动**装的，不是 toolkit 带的——CI 上没有卡也就没有驱动，加载器
+          # 当场报 "error while loading shared libraries: libcuda.so.1"，
+          # 退出码 127。这不是包坏了，是这台机器上跑不了。
+          # 2026-09-13 linux-x64-cuda 就红在这儿：编是编好了，卡在这一句上，
+          # 于是 N 卡的包一个都没发出去。
+          # 下面 strings 那条判据照旧跑——它正是为"后端没编进去"准备的，
+          # 而且不需要显卡。
+          case "${{ matrix.gpu }}" in
+            cuda|rocm)
+              echo "这一格跳过「跑一下」：${{ matrix.gpu }} 的二进制要显卡驱动才加载得起来，CI 上没有卡" ;;
+            *)
+              "$BIN" --version
+              test "$("$BIN" --version)" = "$CHANGJI_VERSION" ;;
+          esac
           case "${{ matrix.gpu }}" in
             cuda|rocm) MARK=ggml_cuda_ ;;
             sycl)      MARK=ggml_sycl_ ;;
@@ -950,9 +1003,18 @@ jobs:
               Select-Object FullName
             throw "产物不在 $bin"
           }
-          $v = & $bin --version
-          Write-Host $v
-          if ($v -ne $env:CHANGJI_VERSION) { throw "版本号对不上：$v" }
+          # 理由同上面那一步：cuda / rocm 的 exe 要 nvcuda.dll / amdhip64.dll
+          # 才起得来，那是**显卡驱动**里的，toolkit 不带、CI 上也没有卡。
+          # 表现比 Linux 那边更隐蔽：进程起不来，`& $bin --version` 什么都不
+          # 输出，于是这儿报的是「版本号对不上：」——后面空着，看起来像版本
+          # 号写错了。2026-09-13 windows-x64-cuda 就死在这句上。
+          if ("${{ matrix.gpu }}" -in @("cuda","rocm")) {
+            Write-Host "这一格跳过「跑一下」：${{ matrix.gpu }} 的 exe 要显卡驱动才加载得起来，CI 上没有卡"
+          } else {
+            $v = & $bin --version
+            Write-Host $v
+            if ($v -ne $env:CHANGJI_VERSION) { throw "版本号对不上：$v" }
+          }
           $mark = switch ("${{ matrix.gpu }}") {
             "cuda"   { "ggml_cuda_" }
             "rocm"   { "ggml_cuda_" }
