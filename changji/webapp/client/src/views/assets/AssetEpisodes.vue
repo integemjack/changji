@@ -396,7 +396,14 @@ async function planAll() {
     () => api.planAll({ project: session.projectPath, overwrite: false }),
     { key: 'planAll' },
   )
-  if (result) ui.info(`正在给 ${result.episodes.join('、')} 补分镜，去「这一集」能看进度`)
+  // **别写「去『这一集』能看进度」。** 批量补分镜跑在"写"那个槽上
+  // （和写整季同一个），而「这一集」那一页盯的是"出片"那个槽——它那儿
+  // 一动不动。真正一直看得见的是顶栏那块「AI 作业中」。
+  if (result) {
+    ui.info(
+      `正在给 ${result.episodes.join('、')} 补分镜，顶栏那块「AI 作业中」里看进度`,
+    )
+  }
 }
 
 </script>

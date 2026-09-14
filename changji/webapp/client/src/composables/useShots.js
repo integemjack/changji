@@ -22,7 +22,7 @@ import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 
 import { api } from '@/api'
 import { STAGE_LABELS, statusOf } from '@/api/labels'
-import { useRun } from '@/stores/run'
+import { useRun, useWriter } from '@/stores/run'
 import { useSession } from '@/stores/session'
 import { useUi } from '@/stores/ui'
 
@@ -77,6 +77,10 @@ export function useShots() {
   const session = useSession()
   const ui = useUi()
   const runStore = useRun()
+  // 批量补分镜（/api/plan/all）跑在"写"那个槽上，不是"出片"那个。
+  // 不订它的话，那一轮给这一集补完分镜，墙上还是空的——人要切一次 tab
+  // 或者刷新才看得到，而那一轮正是他在这一页上点着「去补」起的。
+  const writeStore = useWriter()
 
   const shots = ref([])
   /**
@@ -594,6 +598,14 @@ export function useShots() {
     runStore.poll()
     syncPending()
   }
+  // 批量那条跑完也重拉一次。只订下降沿：跑的过程中它一章一集地写，
+  // 而这一页要的是"这一集的分镜出来了没有"。
+  watch(
+    () => writeStore.running,
+    (now, before) => {
+      if (before && !now) load()
+    },
+  )
   watch(
     () => runStore.running,
     (now, before) => {
