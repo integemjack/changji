@@ -6,14 +6,21 @@
  * 各写一份的话迟早分叉，而分叉的表现是"其中一条线的进度不动了"，
  * 很难联想到是两份拷贝没同步。
  *
- * ⚠️ **按任务类别订阅，不是按 job_id。** 引擎的 job_id 是随机生成的，
- * 而且不从任何接口暴露出去（`POST /api/run` 回 {started, queue}，
- * `GET /api/run` 那些字段里也没有）。按类别订阅还有一个好处：
- * **可以在任务开始之前订上**，中间不会漏消息。
+ * **订的是"频道名"，不是某一次任务。** 今天有三类频道名在用：
+ *
+ *   `run` / `write`   两个作业槽。⚠️ 这两条**必须按槽订、不能按 job_id**：
+ *                     引擎的 job_id 是随机的，而且不从任何接口暴露出去
+ *                     （`POST /api/run` 回 {started, queue}，`GET /api/run`
+ *                     里也没有）。按槽订还有一个好处：**可以在任务开始之前
+ *                     就订上**，中间不会漏消息。
+ *   `refs` / `system` 两条固定频道（参考图进度、机器负载）。
+ *   随机流号            调用方自己造的那种（`bible-a3f9c2`），发请求时把它
+ *                     当 `stream` 一起送过去，引擎就把这一件活的消息播到
+ *                     这个名字上。见 useAsyncJob。
+ *
+ * （这里原来还导出一个 `JOB_KINDS = ['run', 'write']`，从来没有人用过，
+ * 而它那个名字会让人以为频道只有那两种。）
  */
-
-/** 引擎的任务类别。和 job_id 的前缀对应（"run-a3f..." → "run"）。 */
-export const JOB_KINDS = ['run', 'write']
 
 export function jobSocketUrl() {
   const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:'

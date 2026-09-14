@@ -1391,28 +1391,36 @@ async function writeStory() {
   // 永远显示在想。
   if (opened) thinking.start(streamId)
 
-  const started = await run(
-    () =>
-      api.writeOutline({
-        project: session.projectPath,
-        premise: premise.value.trim(),
-        scale: scale.value,
-        keywords: keywords.value.trim(),
-        // socket 没开就退回老路：HTTP 一直等到写完。慢，但至少拿得到结果。
-        ...(opened ? { stream: streamId, async: true } : {}),
-      }),
-    { key: 'write' },
-  )
+  let result = null
+  try {
+    const started = await run(
+      () =>
+        api.writeOutline({
+          project: session.projectPath,
+          premise: premise.value.trim(),
+          scale: scale.value,
+          keywords: keywords.value.trim(),
+          // socket 没开就退回老路：HTTP 一直等到写完。慢，但至少拿得到结果。
+          ...(opened ? { stream: streamId, async: true } : {}),
+        }),
+      { key: 'write' },
+    )
 
-  let result = started
-  if (started && started.started) {
-    const fin = await finished
-    result = fin.ok ? fin.result : null
-    if (!fin.ok) ui.error(fin.message || '这份大纲没写成')
+    result = started
+    if (started && started.started) {
+      const fin = await finished
+      result = fin.ok ? fin.result : null
+      if (!fin.ok) ui.error(fin.message || '这份大纲没写成')
+    }
+  } finally {
+    // 上面那句注释说的就是这两行。它原来**不在 finally 里**——今天不漏是
+    // 因为 `run()` 把异常吞了（catch 完回 undefined），也就是说这两行的
+    // 正确性挂在另一个函数的实现细节上。哪天 run 改成往外抛、或者中间加
+    // 一条提前 return，顶栏就会永远显示「正在思考」，还漏一条 WebSocket。
+    // 隔壁 useAsyncJob 用的就是真 finally。
+    thinking.finish(streamId)
+    sock?.close()
   }
-
-  thinking.finish(streamId)
-  sock?.close()
   outlineLive.value = null
   if (result) {
     draft.value = result
@@ -1657,29 +1665,33 @@ async function writeChapter(chapterId, overwrite = false) {
   // 永远显示在想。
   if (opened) thinking.start(streamId)
 
-  const started = await run(
-    () =>
-      api.writeChapter({
-        project: session.projectPath,
-        chapter_id: chapterId,
-        overwrite,
-        // socket 没开就退回老路：让 HTTP 那个请求一直等到写完。慢，但至少
-        // 拿得到结果——没有 socket 的话异步那条根本没地方把结果送回来。
-        ...(opened ? { stream: streamId, async: true } : {}),
-      }),
-    { key: 'chapter:' + chapterId },
-  )
+  let result = null
+  try {
+    const started = await run(
+      () =>
+        api.writeChapter({
+          project: session.projectPath,
+          chapter_id: chapterId,
+          overwrite,
+          // socket 没开就退回老路：让 HTTP 那个请求一直等到写完。慢，但至少
+          // 拿得到结果——没有 socket 的话异步那条根本没地方把结果送回来。
+          ...(opened ? { stream: streamId, async: true } : {}),
+        }),
+      { key: 'chapter:' + chapterId },
+    )
 
-  let result = started
-  if (started && started.started) {
-    // 异步那条：HTTP 只说了"开始了"，真正的结果在 socket 上。
-    const fin = await finished
-    result = fin.ok ? fin.result : null
-    if (!fin.ok) ui.error(fin.message || '这一章没写成')
+    result = started
+    if (started && started.started) {
+      // 异步那条：HTTP 只说了"开始了"，真正的结果在 socket 上。
+      const fin = await finished
+      result = fin.ok ? fin.result : null
+      if (!fin.ok) ui.error(fin.message || '这一章没写成')
+    }
+  } finally {
+    // 理由同 writeStory 里那段：注释一直说"清在 finally 里"，而它原来不在。
+    thinking.finish(streamId)
+    sock?.close()
   }
-
-  thinking.finish(streamId)
-  sock?.close()
   streaming.value = null
   if (!result) {
     // 写砸了：把流出来那半截清掉，别在稿子里留一段没头没尾的东西。
