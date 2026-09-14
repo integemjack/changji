@@ -174,7 +174,9 @@ async function bible() {
   const parts = []
   if (c.length) parts.push(`${c.length} 个新角色：${c.join('、')}`)
   if (l.length) parts.push(`${l.length} 个新场景`)
-  ui.ok(parts.length ? `补了 ${parts.join('；')}` : '故事里的人和地方库里都有了，没补新的')
+  // 收掉了几条同名的要说出来——"场景从 25 变成 15"不解释的话看着像丢了东西
+  if (result.merged) parts.push(`收掉 ${result.merged} 条重名的`)
+  ui.ok(parts.length ? parts.join('；') : '故事里的人和地方库里都有了，没补新的')
   touch() // 三个格子和这儿的数一起重拉
 }
 

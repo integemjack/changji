@@ -12,6 +12,7 @@
 // 单独列为"必须逐字节"的一类，与接口契约的"结构兼容"标准不同。
 
 #include <map>
+#include <set>
 #include <optional>
 #include <string>
 #include <vector>
@@ -161,6 +162,13 @@ struct StyleProfile {
         StyleProfile, style_line, global_style, negative_prompt, aspect_ratio)
 };
 
+/// 同名合并的结果：**被丢掉的 id → 留下来的那个**。
+///
+/// 分镜表里存的是 id，合并完必须拿它把镜头上的引用改过去，不然那些镜头
+/// 查不到场景——不报错，只是渲染时拿不到空间和光线，画面里的房间每镜
+/// 都不一样。
+using IdRemap = std::map<std::string, std::string>;
+
 /// 角色和场景的资产库。分镜表里的每个 id 都必须能在这里查到。
 struct AssetLibrary {
     // 必须保持插入顺序，不能用 std::map。
@@ -201,6 +209,30 @@ struct AssetLibrary {
 
     std::vector<std::string> validate() const;
 };
+
+/// 把同名的场景收成一个，返回被丢掉的 id → 留下的那个。
+///
+/// **为什么按名字判重而不是按 id。** 场景 id 是模型自己起的 key 拼出来的
+/// （`loc_` + slug(key)），而它每次给同一个地方起的 key 都不一样：
+/// 2026-09-14 实见一个项目里「临川大学旧礼堂后台」占了三条——
+/// `loc_linchuan_university_old_auditorium_backstage`、
+/// `loc_linchuan_university_old_stage_backstage`、
+/// `loc_old_stage_backstage_daytime`。按 id 判重等于不判：25 个场景里
+/// 10 个是重的，墙上翻着找很难受，而且同一个地方会出三张不一样的空景图。
+///
+/// **只认完全相同的名字**（前后空白不算）。不做模糊匹配——「旧礼堂后台」
+/// 和「旧礼堂后台走廊」是两个地方，收成一个就再也分不开了，而合并没有撤销。
+///
+/// 留谁：`in_use`（分镜表引用着的）里那个优先——丢掉它等于把镜头指空；
+/// 其次是有空景图的，那是几十秒一张画出来的；再次是描述写得全的；
+/// 都一样就留 id 字典序最小的，好让结果可复现。留下的那条会把自己空着的
+/// 字段从被丢掉的那几条里补上。
+IdRemap dedupe_locations(AssetLibrary& lib,
+                         const std::set<std::string>& in_use = {});
+
+/// 角色同上。模型给人起的 key 一样会漂（`c_chen_yu` / `c_chenyu`）。
+IdRemap dedupe_characters(AssetLibrary& lib,
+                          const std::set<std::string>& in_use = {});
 
 /// 从身份描述里猜性别。猜不出来返回空串。
 /// 身份描述里通常会写「一位年轻的女性」这类话，够用了。

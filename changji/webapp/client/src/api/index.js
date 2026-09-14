@@ -206,6 +206,8 @@ export const api = {
   saveShot: (payload) => post('/api/shot', payload),
   batchShots: (payload) => post('/api/shots/batch', payload),
   linkLocations: (payload) => post('/api/shots/link_locations', payload),
+  /** 把同名的场景/角色收成一条。不叫模型，秒回。 */
+  dedupeAssets: (payload) => post('/api/assets/dedupe', payload),
   reorderShots: (payload) => post('/api/shots/reorder', payload),
   newEpisode: (payload) => post('/api/episode', payload),
   episodeAction: (payload) => post('/api/episode/action', payload),

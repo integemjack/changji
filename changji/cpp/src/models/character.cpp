@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <array>
 #include <cctype>
+#include <map>
 #include <set>
 #include <tuple>
 
@@ -340,6 +341,113 @@ std::optional<std::string> pick_voice(const std::vector<std::string>& available,
     int i = index % n;
     if (i < 0) i += n;
     return tier[static_cast<std::size_t>(i)];
+}
+
+namespace {
+
+/// 判重用的名字：去掉前后空白。**只做这一步**——见 dedupe_locations 头上
+/// 那段，模糊匹配会把两个真不一样的地方粘死。
+std::string dedupe_key(const std::string& name) {
+    return std::string(text::strip_ws(name));
+}
+
+/// 一条场景"值不值得留"。数越大越该留。
+/// 顺序：分镜引用着 > 有空景图 > 描述写得全。
+std::tuple<int, int, int> weight_of(const Location& l, bool in_use) {
+    const int has_ref = (l.ref_empty.has_value() && !l.ref_empty->empty()) ? 1 : 0;
+    const int filled = static_cast<int>(!l.space.empty()) +
+                       static_cast<int>(!l.lighting.empty()) +
+                       static_cast<int>(!l.palette.empty());
+    return {in_use ? 1 : 0, has_ref, filled};
+}
+
+std::tuple<int, int, int> weight_of(const Character& c, bool in_use) {
+    const auto& a = c.appearance;
+    const int refs = static_cast<int>(c.ref_front.has_value()) +
+                     static_cast<int>(c.ref_three_quarter.has_value()) +
+                     static_cast<int>(c.ref_back.has_value());
+    const int filled = static_cast<int>(!a.identity.empty()) +
+                       static_cast<int>(!a.body.empty()) +
+                       static_cast<int>(!a.face.empty()) +
+                       static_cast<int>(!a.attire.empty());
+    return {in_use ? 1 : 0, refs, filled};
+}
+
+/// 空着的字段从被丢掉的那条补上。**只补空的**：留下来的那条是挑出来的，
+/// 它写了的东西不该被淘汰掉的那条盖掉。
+void fill_gaps(Location& keep, const Location& drop) {
+    if (keep.space.empty())    keep.space = drop.space;
+    if (keep.lighting.empty()) keep.lighting = drop.lighting;
+    if (keep.palette.empty())  keep.palette = drop.palette;
+    if ((!keep.ref_empty.has_value() || keep.ref_empty->empty()) &&
+        drop.ref_empty.has_value() && !drop.ref_empty->empty()) {
+        keep.ref_empty = drop.ref_empty;
+    }
+}
+
+void fill_gaps(Character& keep, const Character& drop) {
+    if (keep.appearance.identity.empty()) keep.appearance.identity = drop.appearance.identity;
+    if (keep.appearance.body.empty())     keep.appearance.body = drop.appearance.body;
+    if (keep.appearance.face.empty())     keep.appearance.face = drop.appearance.face;
+    if (keep.appearance.attire.empty())   keep.appearance.attire = drop.appearance.attire;
+    if (keep.appearance.style.empty())    keep.appearance.style = drop.appearance.style;
+    if (!keep.ref_front.has_value())          keep.ref_front = drop.ref_front;
+    if (!keep.ref_three_quarter.has_value())  keep.ref_three_quarter = drop.ref_three_quarter;
+    if (!keep.ref_back.has_value())           keep.ref_back = drop.ref_back;
+    if (!keep.voice_id.has_value())           keep.voice_id = drop.voice_id;
+    if (!keep.voice_ref_audio.has_value())    keep.voice_ref_audio = drop.voice_ref_audio;
+}
+
+/// 两种资产一套逻辑，只有"怎么称重"和"补哪些字段"不一样。
+template <typename T>
+IdRemap dedupe_by_name(OrderedMap<T>& items, const std::set<std::string>& in_use) {
+    // 名字 → 这个名字下所有的 id，按原顺序。
+    std::map<std::string, std::vector<std::string>> by_name;
+    std::vector<std::string> order;
+    for (const auto& kv : items) {
+        const std::string k = dedupe_key(kv.second.name);
+        // 名字空着的一律不碰：它们互相之间什么都证明不了。
+        if (k.empty()) continue;
+        if (by_name.find(k) == by_name.end()) order.push_back(k);
+        by_name[k].push_back(kv.first);
+    }
+
+    IdRemap remap;
+    for (const std::string& name : order) {
+        const std::vector<std::string>& ids = by_name[name];
+        if (ids.size() < 2) continue;
+
+        // 挑一条留下。并列时取 id 字典序最小的——**结果要可复现**，
+        // 不然同一份库跑两遍能收出两个不同的 id 来。
+        std::string keep = ids.front();
+        auto best = weight_of(items.at(keep), in_use.count(keep) != 0);
+        for (const std::string& id : ids) {
+            const auto w = weight_of(items.at(id), in_use.count(id) != 0);
+            if (w > best || (w == best && id < keep)) {
+                best = w;
+                keep = id;
+            }
+        }
+
+        for (const std::string& id : ids) {
+            if (id == keep) continue;
+            fill_gaps(items.at(keep), items.at(id));
+            remap[id] = keep;
+        }
+    }
+
+    for (const auto& kv : remap) items.erase(kv.first);
+    return remap;
+}
+
+}  // namespace
+
+IdRemap dedupe_locations(AssetLibrary& lib, const std::set<std::string>& in_use) {
+    return dedupe_by_name(lib.locations, in_use);
+}
+
+IdRemap dedupe_characters(AssetLibrary& lib, const std::set<std::string>& in_use) {
+    return dedupe_by_name(lib.characters, in_use);
 }
 
 }  // namespace changji::models

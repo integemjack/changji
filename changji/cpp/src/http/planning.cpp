@@ -167,32 +167,122 @@ Story load_story_or_400(const ProjectStore& store) {
 /// 从故事出和从剧本出两条路走到这里是一样的，所以提出来：合并规则、
 /// 重跑镜头的判断、回包形状都只该有一份。source 只是告诉前端这次的名单
 /// 是从哪来的——「为什么这次多出来三个人」全靠它解释。
+/// 库里叫这个名字的是哪一条。**判重靠名字，不靠 id。**
+///
+/// 场景 id 是模型自己起的 key 拼出来的，而它每次给同一个地方起的 key 都
+/// 不一样：一个实见的项目里「临川大学旧礼堂后台」占了三条 id。
+/// 按 id 判重等于不判——每定一次妆，同一个地方就再进来一条，25 个场景里
+/// 10 个是重的，而且同一个地方会各出一张不一样的空景图。
+template <typename T>
+const std::string* find_by_name(const OrderedMap<T>& items,
+                                const std::string& name) {
+    const std::string key{text::strip_ws(name)};
+    if (key.empty()) return nullptr;
+    for (const auto& kv : items) {
+        if (std::string(text::strip_ws(kv.second.name)) == key) return &kv.first;
+    }
+    return nullptr;
+}
+
+/// 分镜表引用着哪些 id。合并同名时**优先留这些**——丢掉一个被引用的 id
+/// 等于把那些镜头指空，而那不报错，只是渲染时拿不到空间和光线。
+std::set<std::string> ids_in_use(const Project& project) {
+    std::set<std::string> out;
+    for (const auto& ep : project.episodes) {
+        for (const auto& sh : ep.shots) {
+            if (sh.location_id.has_value() && !sh.location_id->empty()) {
+                out.insert(*sh.location_id);
+            }
+            // scene_id 也可能直接写着场景 id（模型十次有八次只填它）
+            if (!sh.scene_id.empty()) out.insert(sh.scene_id);
+            for (const auto& c : sh.characters) out.insert(c.char_id);
+        }
+    }
+    return out;
+}
+
+/// 把镜头上的引用改到留下来的那个 id 上。返回改了几镜。
+int remap_shots(Project& project, const IdRemap& remap) {
+    if (remap.empty()) return 0;
+    const auto lookup = [&remap](const std::string& id) -> const std::string* {
+        const auto it = remap.find(id);
+        return it == remap.end() ? nullptr : &it->second;
+    };
+    int touched = 0;
+    for (auto& ep : project.episodes) {
+        for (auto& sh : ep.shots) {
+            bool hit = false;
+            if (sh.location_id.has_value()) {
+                if (const std::string* to = lookup(*sh.location_id)) {
+                    sh.location_id = *to;
+                    hit = true;
+                }
+            }
+            if (const std::string* to = lookup(sh.scene_id)) {
+                sh.scene_id = *to;
+                hit = true;
+            }
+            for (auto& c : sh.characters) {
+                if (const std::string* to = lookup(c.char_id)) {
+                    c.char_id = *to;
+                    hit = true;
+                }
+            }
+            if (hit) ++touched;
+        }
+    }
+    return touched;
+}
+
 ApiResult merge_bible(const ProjectStore& store, AssetLibrary assets,
                       const AssetLibrary& fresh, bool overwrite,
                       const char* source) {
-    // 合并，不是替换。同名的默认保留旧的：手改过的设定、传过的参考图
-    // 都挂在旧的那一份上。勾了覆盖才让新的顶掉。
+    Project project = load_or_400(store);
+    const std::set<std::string> in_use = ids_in_use(project);
+
+    // ---- 一、先把库里已经重了的收一收 ----
+    //
+    // 2026-09-14 之前这儿按 id 判重，于是同一个地方每定一次妆就多一条。
+    // 存量得有人收，而定妆正是"整理这个库"的那个动作。
+    IdRemap remap = dedupe_locations(assets, in_use);
+    for (const auto& kv : dedupe_characters(assets, in_use)) remap.insert(kv);
+
+    // ---- 二、合并，不是替换 ----
+    //
+    // 同名的默认保留旧的：手改过的设定、传过的参考图都挂在旧的那一份上。
+    // 勾了覆盖才让新的顶掉，**但 id 留旧的**——分镜表里存的是 id，换掉
+    // 等于把已有的镜头指空。
     std::vector<std::string> added_c, added_l;
     int kept = 0;
     for (const auto& kv : fresh.characters) {
-        const bool exists = assets.characters.contains(kv.first);
-        if (exists && !overwrite) {
+        const std::string* mine = find_by_name(assets.characters, kv.second.name);
+        const std::string id = mine != nullptr ? *mine : kv.first;
+        if (mine != nullptr && !overwrite) {
             ++kept;
             continue;
         }
-        if (!exists) added_c.push_back(kv.first);
-        assets.characters[kv.first] = kv.second;
+        if (mine == nullptr) added_c.push_back(id);
+        Character c = kv.second;
+        c.char_id = id;
+        assets.characters[id] = std::move(c);
     }
     for (const auto& kv : fresh.locations) {
-        const bool exists = assets.locations.contains(kv.first);
-        if (exists && !overwrite) {
+        const std::string* mine = find_by_name(assets.locations, kv.second.name);
+        const std::string id = mine != nullptr ? *mine : kv.first;
+        if (mine != nullptr && !overwrite) {
             ++kept;
             continue;
         }
-        if (!exists) added_l.push_back(kv.first);
-        assets.locations[kv.first] = kv.second;
+        if (mine == nullptr) added_l.push_back(id);
+        Location l = kv.second;
+        l.location_id = id;
+        assets.locations[id] = std::move(l);
     }
     store.save_assets(assets);
+
+    // 收掉的那些 id 可能正被镜头引用着，跟着改过去。
+    const int remapped = remap_shots(project, remap);
+    if (remapped > 0) store.save_project(project);
 
     // 外观变了等于全剧提示词都变了，已渲染的镜头得退回重跑。
     // 只新增没覆盖的话，老镜头用的还是原来那份设定，不用动。
@@ -229,6 +319,10 @@ ApiResult merge_bible(const ProjectStore& store, AssetLibrary assets,
         {"added_characters", added_c},
         {"added_locations", added_l},
         {"kept", kept},
+        // 收掉了几条重的、跟着改了几镜。界面上要说出来——
+        // "场景从 25 变成 15" 不解释的话看着像丢了东西。
+        {"merged", static_cast<int>(remap.size())},
+        {"remapped_shots", remapped},
         {"characters", chars},
         {"locations", locs},
         {"reset_shots", reset},
@@ -241,6 +335,43 @@ ApiResult merge_bible(const ProjectStore& store, AssetLibrary assets,
 double round1(double x) { return std::nearbyint(x * 10.0) / 10.0; }
 
 }  // namespace
+
+ApiResult post_assets_dedupe(const json& body) {
+    // 把库里同名的场景/角色收成一条，镜头上的引用跟着改。**不叫模型。**
+    //
+    // 定妆那条路已经顺手做这件事了（见 merge_bible），但定妆要跑一趟大模型
+    // ——思考模型十几分钟一次——而存量项目里的重名是 2026-09-14 之前按 id
+    // 判重攒下来的（一个实见项目 25 个场景 9 个名字），收它们不该要等一趟
+    // 大模型。这个口子就是那一半：只收，不出新的。
+    forbid_extra(body, {"project"});
+    ProjectStore store = open_project(body);
+    Project project = load_or_400(store);
+    AssetLibrary assets = load_assets_or_400(store);
+
+    const int before_l = static_cast<int>(assets.locations.size());
+    const int before_c = static_cast<int>(assets.characters.size());
+    const std::set<std::string> in_use = ids_in_use(project);
+    IdRemap remap = dedupe_locations(assets, in_use);
+    for (const auto& kv : dedupe_characters(assets, in_use)) remap.insert(kv);
+    if (remap.empty()) {
+        return {200, {{"merged", 0}, {"remapped_shots", 0},
+                      {"characters", before_c}, {"locations", before_l}}};
+    }
+    store.save_assets(assets);
+    const int remapped = remap_shots(project, remap);
+    if (remapped > 0) store.save_project(project);
+
+    json dropped = json::object();
+    for (const auto& kv : remap) dropped[kv.first] = kv.second;
+    return {200, {
+        {"merged", static_cast<int>(remap.size())},
+        {"remapped_shots", remapped},
+        {"characters", static_cast<int>(assets.characters.size())},
+        {"locations", static_cast<int>(assets.locations.size())},
+        // 谁并进了谁。界面上不显示，但排障时"那个 id 去哪了"就靠它
+        {"dropped", dropped},
+    }};
+}
 
 ApiResult post_bible(const json& body, llm::Client& client,
                      pipeline::CancelToken& tok) {

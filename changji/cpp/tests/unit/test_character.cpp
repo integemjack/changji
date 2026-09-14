@@ -190,3 +190,125 @@ TEST_CASE("音色挑选的排序规则") {
                   gender + "/" + std::to_string(index));
     }
 }
+
+// ---------------------------------------------------------------------------
+// 同名合并
+// ---------------------------------------------------------------------------
+//
+// 2026-09-14 实见：一个项目 25 个场景里 10 个是重的——「临川大学旧礼堂后台」
+// 占了三条 id。场景 id 是模型起的 key 拼出来的，同一个地方每次的 key 都不一样，
+// 按 id 判重等于不判。
+
+namespace {
+
+Location loc(const std::string& id, const std::string& name,
+             const std::string& space = "", const char* ref = nullptr) {
+    Location l;
+    l.location_id = id;
+    l.name = name;
+    l.space = space;
+    if (ref) l.ref_empty = ref;
+    return l;
+}
+
+}  // namespace
+
+TEST_CASE("同名场景收成一条，返回丢掉的 id 指向留下的") {
+    AssetLibrary lib;
+    lib.locations["loc_a"] = loc("loc_a", "旧礼堂后台", "堆着道具箱");
+    lib.locations["loc_b"] = loc("loc_b", "旧礼堂后台");
+    lib.locations["loc_c"] = loc("loc_c", "舞台中央");
+
+    const IdRemap remap = dedupe_locations(lib);
+
+    REQUIRE(lib.locations.size() == 2);
+    CHECK(lib.locations.contains("loc_a"));  // 描述写得全的留下
+    CHECK(lib.locations.contains("loc_c"));
+    CHECK_FALSE(lib.locations.contains("loc_b"));
+    REQUIRE(remap.size() == 1);
+    CHECK(remap.at("loc_b") == "loc_a");
+}
+
+TEST_CASE("分镜引用着的那条优先留，哪怕它描述更空") {
+    AssetLibrary lib;
+    lib.locations["loc_full"] = loc("loc_full", "天台", "水泥地面", "refs/x.png");
+    lib.locations["loc_used"] = loc("loc_used", "天台");
+
+    const IdRemap remap = dedupe_locations(lib, {"loc_used"});
+
+    REQUIRE(lib.locations.size() == 1);
+    CHECK(lib.locations.contains("loc_used"));
+    CHECK(remap.at("loc_full") == "loc_used");
+    // 留下的那条把空着的字段从丢掉的补上：描述和空景图都不该跟着丢
+    CHECK(lib.locations.at("loc_used").space == "水泥地面");
+    REQUIRE(lib.locations.at("loc_used").ref_empty.has_value());
+    CHECK(*lib.locations.at("loc_used").ref_empty == "refs/x.png");
+}
+
+TEST_CASE("留下的那条不被丢掉的盖掉：只补空的") {
+    AssetLibrary lib;
+    lib.locations["loc_1"] = loc("loc_1", "小巷", "砖墙窄巷");
+    lib.locations["loc_2"] = loc("loc_2", "小巷", "另一种写法");
+
+    dedupe_locations(lib, {"loc_1"});
+    CHECK(lib.locations.at("loc_1").space == "砖墙窄巷");
+}
+
+TEST_CASE("都一样时留 id 字典序最小的，结果可复现") {
+    AssetLibrary a;
+    a.locations["loc_zeta"] = loc("loc_zeta", "门口");
+    a.locations["loc_beta"] = loc("loc_beta", "门口");
+    a.locations["loc_alpha"] = loc("loc_alpha", "门口");
+    AssetLibrary b = a;
+
+    const IdRemap ra = dedupe_locations(a);
+    const IdRemap rb = dedupe_locations(b);
+    CHECK(a.locations.contains("loc_alpha"));
+    CHECK(ra == rb);
+    CHECK(ra.size() == 2);
+}
+
+TEST_CASE("名字只认前后空白，不做模糊匹配") {
+    AssetLibrary lib;
+    lib.locations["loc_1"] = loc("loc_1", " 旧礼堂后台 ");
+    lib.locations["loc_2"] = loc("loc_2", "旧礼堂后台");
+    lib.locations["loc_3"] = loc("loc_3", "旧礼堂后台走廊");  // 不是同一个地方
+
+    const IdRemap remap = dedupe_locations(lib);
+    CHECK(lib.locations.size() == 2);
+    CHECK(remap.size() == 1);
+    CHECK(lib.locations.contains("loc_3"));
+}
+
+TEST_CASE("名字空着的一律不碰") {
+    AssetLibrary lib;
+    lib.locations["loc_1"] = loc("loc_1", "");
+    lib.locations["loc_2"] = loc("loc_2", "");
+    CHECK(dedupe_locations(lib).empty());
+    CHECK(lib.locations.size() == 2);
+}
+
+TEST_CASE("角色同名也收，参考图和音色跟着补") {
+    AssetLibrary lib;
+    Character a;
+    a.char_id = "c_chen_yu";
+    a.name = "陈屿";
+    a.ref_front = "refs/front.png";
+    Character b;
+    b.char_id = "c_chenyu";
+    b.name = "陈屿";
+    b.voice_id = "v1";
+    b.appearance.face = "方脸";
+    lib.characters["c_chen_yu"] = a;
+    lib.characters["c_chenyu"] = b;
+
+    const IdRemap remap = dedupe_characters(lib);
+    REQUIRE(lib.characters.size() == 1);
+    // a 有一张参考图，b 只有描述——参考图更值钱
+    REQUIRE(lib.characters.contains("c_chen_yu"));
+    CHECK(remap.at("c_chenyu") == "c_chen_yu");
+    const Character& kept = lib.characters.at("c_chen_yu");
+    CHECK(kept.appearance.face == "方脸");
+    REQUIRE(kept.voice_id.has_value());
+    CHECK(*kept.voice_id == "v1");
+}

@@ -25,6 +25,10 @@ namespace changji::http {
 /// 跑起来直接报「场景未注册」。
 ///
 /// 同名的默认保留旧的——手改过的设定、传过的参考图都挂在旧的那一份上。
+/// POST /api/assets/dedupe —— 把同名的场景/角色收成一条，镜头引用跟着改。
+/// 不叫模型，只收不出。定妆那条路顺手也做，这是给存量项目的快路。
+ApiResult post_assets_dedupe(const nlohmann::json& body);
+
 ApiResult post_bible(const nlohmann::json& body, llm::Client& client,
                      pipeline::CancelToken& tok);
 

@@ -661,6 +661,10 @@ void run(const config::Settings& settings, const Options& opts) {
         script_route(&post_script_trailer));
 
     // 出角色圣经和分镜表。走同一套包装。
+    CROW_ROUTE(app, "/api/assets/dedupe").methods("POST"_method)([](const crow::request& req) {
+        auto r = guard([&] { return post_assets_dedupe(parse_body(req.body)); });
+        return json_response(r.body, r.status);
+    });
     CROW_ROUTE(app, "/api/bible").methods("POST"_method)(
         script_route(&post_bible));
     CROW_ROUTE(app, "/api/plan").methods("POST"_method)(
