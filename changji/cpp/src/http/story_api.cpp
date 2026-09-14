@@ -716,7 +716,16 @@ json write_one_chapter(ProjectStore& store, const Project& project, Story story,
 
     // 登记到顶栏那本账上。不登记的话这一两分钟里引擎在界面上看着是闲着的
     // ——而它正占着大模型那一槽，别的活全得等。
-    pipeline::Activity act{"write_one", paths::to_utf8(store.root()), chapter_id,
+    //
+    // **第三个参数是 episode_id，不能塞 chapter_id。** 这两个是两套命名
+    // （`^ch[0-9]+$` 对 `episode_id`），而前端拿这个字段干的事是
+    // `session.selectEpisode(row.episode_id)`（JobBadge 的 go()，点这一行
+    // 就跳过去）。塞进去之后：集号变成 "ch03" → 写进 localStorage →
+    // `/bff/flow` 那边只在**空串**时才回落到第一集，非空但不认识的原样
+    // 回给你 → 前端看见 `data.episodeId === episodeId.value` 就不改了。
+    // 于是集号永久卡在一个不存在的集上，刷新也还在：顶栏那个下拉空着、
+    // 「这一集」整页没东西。章是全剧的，本来就不属于某一集，留空。
+    pipeline::Activity act{"write_one", paths::to_utf8(store.root()), "",
                            "正在写 " + (me->title.empty() ? chapter_id : me->title)};
 
     llm::Request req;
@@ -978,8 +987,10 @@ ApiResult post_story_revise(const json& body, llm::Client& client,
     const std::string stream_id = text::strip_ws(opt_str(body, "stream"));
     const bool streaming = !stream_id.empty();
 
-    pipeline::Activity act{"revise", paths::to_utf8(store.root()),
-                           span.chapter_id, "正在改这一段"};
+    // 同 write_one：第三个参数是 episode_id，`span.chapter_id` 不是集号，
+    // 塞进去会把前端的集号卡死在一个不存在的集上。
+    pipeline::Activity act{"revise", paths::to_utf8(store.root()), "",
+                           "正在改这一段"};
 
     llm::Request req;
     // **流式那条不要 JSON。** 逐字插进编辑器的话，用户先看到的会是
