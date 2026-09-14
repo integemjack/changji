@@ -338,7 +338,17 @@ async function genAll() {
     // ref_done，那两格和这儿的数都订着它。见 useRefStream。
   }
   bulk.value = null
-  if (made) ui.ok(`画好了 ${made} 张`)
+  // 这一轮十几分钟，中途在项目库里点别的剧很自然——活儿是替 `project`
+  // 排的、也一直替它跑完（上面那段把项目钉死了）。所以这句话要说清是替谁
+  // 画的，不然它落在新这一部的屏幕上，而这一部一张新图都没有。
+  // 照 AssetEpisodes / EpisodeView 那几条现成的说法。
+  if (made) {
+    if (project !== session.projectPath) {
+      ui.info(`那一部剧画好了 ${made} 张，但你已经切走了——回去就能看到`)
+    } else {
+      ui.ok(`画好了 ${made} 张`)
+    }
+  }
 }
 
 async function loadStory() {

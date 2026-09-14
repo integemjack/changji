@@ -1759,6 +1759,22 @@ async function adoptDraft() {
     { key: 'adopt', refresh: true },
   )
   if (result) {
+    // **切走了就到此为止。**
+    //
+    // 下面那三句（清 buf、清 dirtySnapshot、清 draft）原来是无条件跑的，
+    // 而 `setStory(result, project)` 自己带着归属判断、切走了会直接返回。
+    // 两下凑一起就是：**新这一部的编辑器被清空，而且没人再把它填回来**
+    // ——`buf` 是编辑器的正文来源（`body = buf[current]`），清完不 setStory
+    // 的话每一章都显示成空白；更糟的是 `currentDirty` 判的是
+    // `body !== chapter.text`，空对非空当场为真，于是那一章挂着"改过了"，
+    // 人在上面敲一个字，防抖保存就把**空白加那一个字**写回这一章。
+    //
+    // 采用本身是对着 `project` 发的，已经落盘了，所以照那几条现成的写法
+    // （suggestIdeas / analyzeStory / importPasted）说一句就回去。
+    if (project !== session.projectPath) {
+      ui.info('那一部剧的大纲采用了，但你已经切走了——回去就能看到')
+      return
+    }
     // **「下一步让 AI 读一遍」这句提醒，引擎是特意送上来的。**
     //
     // 出草稿那几条接口都带一个 `needs_analysis`（characters 为空就是真），
