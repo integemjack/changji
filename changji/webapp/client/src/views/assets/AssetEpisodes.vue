@@ -46,6 +46,8 @@ const writer = useWriter()
 const story = ref(null)
 const assets = ref(null)
 const loading = ref(false)
+/** 这一趟读砸了的话，那句话。空串 = 没砸（没有故事的项目回的是 200 加空故事）。 */
+const loadError = ref('')
 const openChapter = ref('')
 
 // **体量不在这一格。** 它是"这个故事有多长"，写大纲时就要定，属于创作，
@@ -223,6 +225,7 @@ async function load() {
     if (!mine()) return
     story.value = got.story ?? null
     assets.value = lib
+    loadError.value = ''
   } catch (err) {
     if (!mine()) return
     // **读不到就得空着。** 没有故事的项目是 200 加一份空故事（story.json
@@ -232,6 +235,10 @@ async function load() {
     // 重新分集、落成剧集）按的是现在这一部。
     story.value = null
     assets.value = null
+    // 清是对的（上面那段），但清完不能摆「还没有故事」——那句话是断言，
+    // 而这会儿有没有根本不知道。尤其上面那个「每集几秒」一改就是**重新
+    // 分集**，而它就摆在这句话的正上方。同 StoryView / EpScript 上那几段。
+    loadError.value = err.message
     ui.error(err.message)
   } finally {
     if (mine()) loading.value = false
@@ -500,7 +507,8 @@ async function planAll() {
 <template>
   <div class="eps">
     <!-- 同一个故事，每集多长决定切成几集。集数是算出来的。改时长就是重新分集。 -->
-    <div class="toolbar">
+    <!-- 读砸了整条不摆：这里每一样动的都是分集表，而这会儿手里连章节都没有。 -->
+    <div v-if="!loadError" class="toolbar">
       <label class="dur">
         <span class="tiny dim">每集</span>
         <select
@@ -550,6 +558,14 @@ async function planAll() {
     <!-- 图标名要在 AppIcon 的 PATHS 里有。`book` 没有，拼不到就落回 ⓘ——
          一个说「还没有故事」的空状态顶着信息图标。`script` 是故事那一步在
          侧边栏用的同一个，指过去的也正是那一页。 -->
+    <EmptyState
+      v-else-if="loadError"
+      icon="warn"
+      tone="warn"
+      title="读不到这部剧的故事"
+      :hint="loadError"
+    />
+
     <EmptyState v-else-if="!hasStory" icon="script" title="还没有故事">
       <RouterLink to="/story" class="btn btn--sm">去写故事</RouterLink>
     </EmptyState>

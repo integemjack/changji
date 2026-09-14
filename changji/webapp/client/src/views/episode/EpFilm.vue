@@ -42,6 +42,8 @@ const frameBust = (shotId) => runner.settledBy.get(shotId) ?? 0
 
 const files = ref([])
 const loading = ref(false)
+/** 片单这一趟读砸了的话，那句话。空串 = 没砸。 */
+const loadError = ref('')
 const currentRel = ref('')
 const shots = ref([])
 const videoEl = ref(null)
@@ -150,12 +152,18 @@ async function load() {
     const data = await api.outputs(session.projectPath)
     if (want !== session.projectPath) return
     files.value = data.files ?? []
+    loadError.value = ''
     // 默认选当前这一集的成片，没有就选最新的一条
     const mine = forThisEpisode.value[0] ?? files.value[0]
     currentRel.value = mine?.rel ?? ''
   } catch (err) {
     if (want !== session.projectPath) return
     ui.error(err.message)
+    // **读砸了不能摆「还没有成片」。** 这一页上那句话的代价比别处大：
+    // 人照着它去镜头页重跑一轮，而成片可能好好地躺在磁盘上——那是几十
+    // 分钟到几个钟头的显卡时间，换来一份本来就有的东西。
+    // 同 EpScript / EpShots / StoryView 上那几段。
+    loadError.value = err.message
     files.value = []
   } finally {
     if (want === session.projectPath) loading.value = false
@@ -267,6 +275,14 @@ watch(currentRel, () => {
     <EmptyState v-if="!session.hasProject" icon="folder" tone="warn" title="还没选项目">
       <RouterLink to="/project" class="btn btn--primary">去项目页</RouterLink>
     </EmptyState>
+
+    <EmptyState
+      v-else-if="!loading && loadError"
+      icon="warn"
+      tone="warn"
+      title="读不到这部剧的成片"
+      :hint="loadError"
+    />
 
     <EmptyState
       v-else-if="!loading && !files.length && shots.length && !shotsLeft"
