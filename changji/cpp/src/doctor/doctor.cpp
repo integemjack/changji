@@ -307,9 +307,27 @@ Check check_gpu(const config::Settings& s) {
         os << "按配置的 " << static_cast<int>(*s.vram_gb_override) << " GB 推导档位";
         return {"显卡", Level::OK, os.str(), ""};
     }
+    // **「推理服务在别的机器上」不能无条件说。**
+    //
+    // 这句话原来是照 ComfyUI 那套写的，而那一层 2026-09-10 就拆了
+    // （见 run_checks 里那条注释：「出图出片都在进程内，没有外部服务要连」）。
+    // 今天唯一"渲染在别的机器上"的形态是 `[workers].endpoints` 填了跨机
+    // 地址——没填的话出图出片就跑在**这台机器**上，没有显卡就是 CPU，
+    // 而「出图后端」那一项自己写着「只能用 CPU 跑，一镜要几小时」。
+    //
+    // 对一台真没卡的机器无条件说「这是正常的」，等于把唯一一条会提醒
+    // "你这台跑不动"的线索说成没事。所以按有没有配 endpoints 分开说。
+    const bool offloaded = !s.workers.endpoints.empty();
     return {"显卡", Level::WARN, "本机未探测到，按 12 GB 估算",
-            "推理服务如果在别的机器上，这是正常的。\n"
-            "为了让画质档位推导正确，在配置里填 vram_gb_override"};
+            offloaded
+                ? "渲染交给 [workers].endpoints 上那几台了，本机没卡是正常的。\n"
+                  "为了让画质档位推导正确，在配置里填 vram_gb_override"
+                : "出图和出片跑在这台机器上——没有外部推理服务那一层了。\n"
+                  "真没有显卡的话它会退回 CPU——一镜要几小时，不是慢一点。\n"
+                  "有卡却探不到：多半是驱动或者容器没透传进来。\n"
+                  "确实要在这台上跑，先把档位推导弄对：在配置里填 "
+                  "vram_gb_override。\n"
+                  "渲染放在别的机器上是另一条路：填 [workers].endpoints。"};
 }
 
 Check check_workspace(const config::Settings& s) {
