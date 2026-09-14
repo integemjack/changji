@@ -100,7 +100,14 @@ const SECTIONS = [
 ]
 
 const engineOnline = computed(() => Boolean(overview.value?.engine?.online))
-/** 体检里没过的那几项。level 只有 ok 是好的，其余（warn / bad）都要人看。 */
+/**
+ * 体检里没过的那几项。
+ *
+ * **level 只有三个值：`ok` / `warn` / `fail`**（doctor.hpp 的 to_string
+ * 写死的，那儿还专门写着"前端按这三个值上色"）。这行注释原来写的是
+ * "warn / bad"、底下样式表里写的是 `check--error`——同一档东西三处三个
+ * 名字，而三个里没有一个是线上真发的那个。见下面 .check--fail 那段。
+ */
 const failedChecks = computed(() =>
   (overview.value?.doctor?.checks ?? []).filter((c) => c.level !== 'ok'),
 )
@@ -821,10 +828,17 @@ function scrollTo(id) {
 .check--warn :deep(svg) {
   color: var(--warn);
 }
-.check--error {
+/* ⚠️ **这一档的类名是 `fail`，不是 `error`。**
+   引擎发的只有 ok / warn / fail 三个值（doctor.hpp::to_string），而这儿
+   原来写的是 `.check--error`——拼出来的 `check--fail` 没有任何规则命中，
+   于是**最严重的那几项反而最不显眼**：warn 有黄底黄图标，fail 落回
+   .check 的灰底加一个灰图标，比警告还淡。而这一节就是拿来看"卡在哪"的，
+   「还不能跑」那颗红丸子指的正是这几条。
+   ProjectView 的进度条栽过同一种：拼出来的 modifier 一个都没定义。 */
+.check--fail {
   background: var(--danger-soft);
 }
-.check--error :deep(svg) {
+.check--fail :deep(svg) {
   color: var(--danger);
 }
 .check__name {
