@@ -383,7 +383,18 @@ function busyProject(p) {
           />
           <span v-else class="item__name truncate">{{ p.name }}</span>
 
-          <span class="item__stage tiny truncate" :class="`item__stage--${projectStage(p).tone}`">
+          <!-- **坏了的时候引擎是说了原因的，别丢掉。** `broken` 和
+               `story_broken` 回的都是那一句异常原文（读不到就是空串），而
+               栏上只画得下「读不了」「故事文件坏了」四五个字。没有这一行的
+               话，人看到的是一句判决加一个没有下文——而那句原话往往就是
+               答案（哪个文件、第几行、权限还是格式）。
+               没坏的时候挂的是这一格自己那句话：窄栏上它常常被截断
+               （「10 集里落成 3 集，还没分镜」）。 -->
+          <span
+            class="item__stage tiny truncate"
+            :class="`item__stage--${projectStage(p).tone}`"
+            :title="p.broken || p.story_broken || projectStage(p).label"
+          >
             {{ projectStage(p).label }}
           </span>
 
