@@ -89,6 +89,31 @@ const charMissing = computed(() =>
   ),
 )
 const locMissing = computed(() => locations.value.filter((l) => !l.ref_empty).length)
+
+/**
+ * **挡着「设定」这一步的那两件事，要在 tab 上就说。**
+ *
+ * 侧栏那个对勾（`done.assets`）的判据是：有角色、场景都登记了、**而且这一集
+ * 的镜头都真接到场景上**（引擎 flow.cpp 里那句 `scenes_ok`——靠 scene_id
+ * 蒙对的不算）。参考图缺不缺它一概不问。
+ *
+ * 而这两件事原来只画在场景格**里面**那两条提示上，设定页默认落在角色格：
+ * 侧栏说「设定还没做完」，人点进来一看角色齐、图也齐，不知道该按哪儿，
+ * 非得挨个 tab 翻过去才撞见。
+ *
+ * 数不用另外问：`/bff/flow` 每次都在回（`counters.unlinkedShots` /
+ * `counters.missingLocations`），此前整个界面只有拿不到的投递层读过它。
+ * 挡着的排在「缺图」前面——缺图只是画面会差一点，这两样是这一步过不去。
+ */
+const unlinkedShots = computed(() => Number(session.counters?.unlinkedShots ?? 0))
+const unregisteredLocs = computed(
+  () => (session.counters?.missingLocations ?? []).length,
+)
+const locGap = computed(() => {
+  if (unregisteredLocs.value) return `${unregisteredLocs.value} 个没登记`
+  if (unlinkedShots.value) return `${unlinkedShots.value} 镜没接上`
+  return locMissing.value ? `缺 ${locMissing.value}` : ''
+})
 const unwritten = computed(
   () => chapters.value.filter((c) => !(c.text ?? '').trim()).length,
 )
@@ -108,7 +133,7 @@ const TABS = computed(() => [
     key: 'locations',
     label: '场景',
     n: locations.value.length,
-    gap: locMissing.value ? `缺 ${locMissing.value}` : '',
+    gap: locGap.value,
   },
   {
     key: 'episodes',
