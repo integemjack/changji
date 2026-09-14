@@ -599,6 +599,23 @@ watch(() => session.projectPath, () => {
   // 上一部剧那条大纲流也脱钩：留着它没有意义（写完的结果不能装进这一部），
   // 而新这一部要是也有活在跑，下面 load() → setStory 会自己接上。
   detachOutline()
+  // **这几样都是"上一部剧的"，得跟着走。** load() 只清 buf 和
+  // dirtySnapshot，下面这些原来一直留着，而它们都认章号——两部剧里都有
+  // ch01，于是全落在新这一部头上：
+  //
+  //   · draft：setStory 只在自己手里没有时才认服务端那份
+  //     （`if (!draft.value && payload?.draft)`），所以上一部的草稿会一直
+  //     挂着——**在新这一部按一下「采用」就整份写进去了**。
+  //   · sel / chat：改稿的选区是字符偏移，套到另一部剧的同名章上就是改错
+  //     地方；旁边那串对话也还是上一部的。
+  //   · streaming / pending：上一部那章的"正在写"锁和撤销底稿。锁尤其难受
+  //     ——批量还在上一部跑着（writer.running 是全局的一个槽），新这一部的
+  //     同名章会被锁成不能编辑，而这一部根本没人在写它。
+  draft.value = null
+  sel.value = null
+  chat.value = []
+  streaming.value = null
+  pending.value = null
   load()
 })
 watch(
