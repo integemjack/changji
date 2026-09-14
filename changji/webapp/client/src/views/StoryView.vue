@@ -584,6 +584,9 @@ watch(() => session.projectPath, () => {
   // 在故事页敲两个字、1.5 秒内在项目库里点了另一部剧，那几个字就没了。
   // 每一次排队都带着自己那部剧的路径，所以冲出去落的是**原来那一部**。
   flushAll()
+  // 上一部剧那条大纲流也脱钩：留着它没有意义（写完的结果不能装进这一部），
+  // 而新这一部要是也有活在跑，下面 load() → setStory 会自己接上。
+  detachOutline()
   load()
 })
 watch(
@@ -970,12 +973,29 @@ async function revise() {
   const head = allChars.slice(0, at.from).join('')
   const tail = allChars.slice(at.to).join('')
 
+  /**
+   * **这一趟是替哪部剧写的。**
+   *
+   * 流式这三条路都要几十秒到一两分钟，而这期间人完全可能去项目库点另一部
+   * 剧。换剧时 `load()` 只清了 buf 和 dirtySnapshot，**没人管在途的这条
+   * 流**：它照样往 `buf[章号]` 上画，而章号是 ch01 这种、两部剧里都有，
+   * 于是上一部的字长在这一部的编辑器里，还被标成"改过了"。收尾那下更狠
+   * ——`scheduleSave` 默认绑的是**当前**项目，A 的稿子就存进 B 的同名章。
+   *
+   * 所以：画之前认一次，收尾之前再认一次。换走了就把这一份丢掉，不画不存。
+   * 丢是对的：这一段只活在客户端（改稿那条接口不落库），而把它塞进另一部
+   * 剧是实打实的破坏。
+   */
+  const owner = session.projectPath
+  const mine = () => owner === session.projectPath
+
   const streamId = 'story-' + Math.random().toString(36).slice(2, 10)
   let acc = ''
   let sock = null
   let opened = false
 
   const paint = async (text) => {
+    if (!mine()) return // 换剧了，别往新这一部的编辑器上画
     buf[id] = head + text + tail
     dirtySnapshot.add(id)
     await nextTick()
@@ -1055,14 +1075,25 @@ async function revise() {
   // 永远显示在想。
   if (opened) thinking.start(streamId)
 
-  const started = await run(post, { key: 'revise' })
-  let result = started
-  if (started && started.started) {
-    const fin = await finished
-    result = fin.ok ? fin.result : null
-    if (!fin.ok) ui.error(fin.message || '这一段没改成')
+  let result = null
+  try {
+    const started = await run(post, { key: 'revise' })
+    result = started
+    if (started && started.started) {
+      const fin = await finished
+      result = fin.ok ? fin.result : null
+      if (!fin.ok) ui.error(fin.message || '这一段没改成')
+    }
+  } finally {
+    // 上面那句注释说的就是这一下。理由同 writeStory / writeChapter 那两处：
+    // 它原来摆在直线上，不漏全靠 `run()` 把异常吞了。
+    finish()
   }
-  finish()
+  if (!mine()) {
+    // 人已经在看别的剧了。这一段属于上一部，扔掉——留下只会写错地方。
+    ui.warn('中途换了项目，刚才那一段改稿没有留下')
+    return
+  }
   if (!result) {
     // 改砸了，把清掉的那一段放回去
     buf[id] = prev
@@ -1280,6 +1311,14 @@ function attachOutline(streamId) {
 
   const finish = async (result) => {
     if (attached?.id !== streamId) return
+    // **接的是哪部剧的那条流。** 在 A 上起了一份大纲、没写完就去看 B：
+    // 这条流还挂着（B 那边没有 outline_running，没人来顶掉它），写完之后
+    // 照样把草稿摆到 B 上——而那份草稿一按「采用」就写进 B 了。和预告片
+    // 草稿、三条流式写作是同一个坑。
+    if (attached.project !== session.projectPath) {
+      detachOutline()
+      return
+    }
     detachOutline()
     outlineLive.value = null
     if (result) {
@@ -1316,7 +1355,7 @@ function attachOutline(streamId) {
       /* 下一轮再问 */
     }
   }, 5000)
-  attached = { id: streamId, sock, timer }
+  attached = { id: streamId, sock, timer, project: session.projectPath }
 }
 
 function detachOutline() {
@@ -1348,6 +1387,11 @@ async function writeStory() {
   const finished = new Promise((r) => {
     settle = r
   })
+
+  // 这一趟是替哪部剧写的。理由同上面两条流：换剧之后把上一部的大纲草稿
+  // 摆在这一部上，点一下「采用」就写进去了——和预告片草稿那处是同一个坑。
+  const owner = session.projectPath
+  const mine = () => owner === session.projectPath
 
   // 从这一刻起就摆出那块"正在写"的板子，不等第一帧到。
   outlineLive.value = emptyOutlineLive()
@@ -1422,6 +1466,11 @@ async function writeStory() {
     sock?.close()
   }
   outlineLive.value = null
+  if (!mine()) {
+    // 上一部剧的大纲，别摆在这一部上——摆了就有人会去点「采用」。
+    ui.warn('中途换了项目，刚出的那份大纲没有留下')
+    return
+  }
   if (result) {
     draft.value = result
     bookOpen.value = false
@@ -1596,6 +1645,10 @@ async function adoptDraft() {
  */
 async function writeChapter(chapterId, overwrite = false) {
   if (overwrite && !confirm('重写会把这一章现在的正文整份顶掉。确定？')) return
+  // 这一趟是替哪部剧写的。理由见 reviseSelection 里那段（换剧之后在途的流
+  // 会把上一部的字画进这一部，收尾那下还会把整份 story 换成上一部的）。
+  const owner = session.projectPath
+  const mine = () => owner === session.projectPath
   const streamId = 'chapter-' + Math.random().toString(36).slice(2, 10)
   let acc = ''
   let sock = null
@@ -1641,6 +1694,7 @@ async function writeChapter(chapterId, overwrite = false) {
         }
         if (msg.type !== 'story_token') return
         acc += msg.text ?? ''
+        if (!mine()) return // 换剧了，别往新这一部的编辑器上画
         buf[chapterId] = acc
         streaming.value = { chapter_id: chapterId, from: 0, at: acc.length }
         await nextTick()
@@ -1693,6 +1747,12 @@ async function writeChapter(chapterId, overwrite = false) {
     sock?.close()
   }
   streaming.value = null
+  if (!mine()) {
+    // 人已经在看别的剧了。**setStory 在这儿是最危险的一下**：它会把上一部
+    // 的整份故事装进这一部的界面，接着任何一次自动保存都写到错的项目上。
+    ui.warn('中途换了项目，这一章写完了但没有装进来。回去那部剧刷新一下就看得到')
+    return
+  }
   if (!result) {
     // 写砸了：把流出来那半截清掉，别在稿子里留一段没头没尾的东西。
     // **重写失败要放回原来那份**，不是清空——原来那一章是好好的。
