@@ -188,7 +188,7 @@ Check check_llm(const config::Settings& s) {
     // 上面那段注释说的"报告说错了比不说更糟"。
     if (s.llm.needs_api_key() && s.llm.api_key.empty()) {
         return {"大模型", Level::WARN, "还没填 API Key（" + url + "）",
-                "去设置页的「大模型」那一节填上。\n"
+                "去项目页「模型」那一行点一下编剧模型的名字，在弹出来的窗口里填。\n"
                 "默认走智谱：去 bigmodel.cn 控制台领一把，默认挑的 glm-4.7-flash 本身不要钱。\n"
                 "只有远端这一条路了。"};
     }
@@ -245,7 +245,7 @@ Check check_llm(const config::Settings& s) {
                 "有些平台的 /models 不列免费模型（智谱就是），那样的话这条可以"
                 "不管——写剧本时真调得通就行。\n"
                 "清单上有的：" + list + "\n"
-                "确实写错了的话：去设置页的「大模型」那一节改，或者 "
+                "确实写错了的话：去项目页那个模型窗口里改，或者 "
                 "export CHANGJI_LLM_MODEL=" + names[0]};
     }
     return {"大模型", Level::WARN, url + " 一个模型都没有",

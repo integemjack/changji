@@ -175,17 +175,20 @@ std::string explain_status(const config::LLMConfig& cfg, int status,
         if (about_model) {
             hint = "大模型服务在，但它没有 " + cfg.model + " 这个模型。"
                    "本地 Ollama 的话先 ollama pull " + cfg.model +
-                   "，或者去设置页的「大模型」那一节换一个已经有的模型名。";
+                   "，或者去项目页「模型」那一行点一下编剧模型的名字，"
+                   "在弹出来的窗口里换一个已经有的。";
         } else {
             hint = "大模型服务在 " + url + " 上没有这个接口。"
                    "多半是地址填错了——地址要带 /v1 结尾，"
-                   "而且那台机器上的服务得真的起着。去设置页的「大模型」那一节改。";
+                   "而且那台机器上的服务得真的起着。"
+                   "去项目页「模型」那一行点一下编剧模型的名字，在那个窗口里改。";
         }
     } else if (status == 401 || status == 403) {
         // **三种情况要说三句不同的话。** 都说成「API Key 不对」的话，
         // 前两种会把人支去检查一个他根本没填过的东西。
         if (cfg.api_key.empty()) {
-            hint = "还没填 API Key。去设置页的「大模型」那一节填上——"
+            hint = "还没填 API Key。去项目页「模型」那一行点一下编剧模型的"
+                   "名字，在弹出来的窗口里填——"
                    "当前地址是 " + cfg.base_url + "。";
             if (cfg.base_url.find("bigmodel.cn") != std::string::npos ||
                 cfg.base_url.find("z.ai") != std::string::npos) {
@@ -205,11 +208,12 @@ std::string explain_status(const config::LLMConfig& cfg, int status,
             // 我们猜的那句反而盖住了它。
             hint = "这个模型不让我们用（" + std::to_string(status) + "）：" +
                    model_not_allowed(detail) +
-                   "\n密钥本身多半没问题——去设置页的「大模型」那一节换一个"
+                   "\n密钥本身多半没问题——去项目页那个模型窗口里换一个"
                    "模型试试。";
         } else {
             hint = "大模型服务拒绝了这次请求（" + std::to_string(status) +
-                   "），八成是 API Key 不对。去设置页改。";
+                   "），八成是 API Key 不对。"
+                   "去项目页「模型」那一行点一下编剧模型的名字，在那个窗口里换一把。";
         }
     } else if (status == 429) {
         // **429 不一定是"太频繁"。** 智谱把"余额不足/没有可用资源包"也回
@@ -220,7 +224,7 @@ std::string explain_status(const config::LLMConfig& cfg, int status,
             detail.find("余额") != std::string::npos) {
             hint = "这个模型要钱，而账上没余额（服务回的是 429 / 1113）。"
                    "换一个免费模型（智谱这边是 glm-4.7-flash），"
-                   "或者去服务商那边充值。去设置页的「大模型」那一节改。";
+                   "或者去服务商那边充值。改在项目页那个模型窗口里。";
             // **手上有 GLM Coding Plan 订阅的人会撞在这儿，而且想不明白。**
             // 那份额度只认智谱登记在册的编程工具（Claude Code、Cline、
             // Cursor 那些），官方原话是"在除规定工具外调用 API，不可享用

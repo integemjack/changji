@@ -500,7 +500,7 @@ ApiResult post_setup_download(const config::Settings& settings, const json& body
         // 静默的花屏和明说的缺文件，不是一码事。
         //
         // ⚠️ **没动过的组不要重写。** 2026-09-14 用户报「智谱的模型名又
-        // 保存不了了」——真相是：他在「大模型」那一节把 llm.model 改成
+        // 保存不了了」——真相是：他在模型那个窗口里把 llm.model 改成
         // glm-5.3 存好了，接着点了这一页的保存，而 llm 这一组的选中项
         // 仍然是 `zhipu-free`，那一项的 settings 里**写死着
         // `llm.model = glm-4.7-flash`**，于是把他刚存的模型名冲回默认。
@@ -519,7 +519,7 @@ ApiResult post_setup_download(const config::Settings& settings, const json& body
             json patch = setup::config_patch({{g.key, opt->id}});
             // **已经在这家了就别动模型名。** 上面那条「一组都没变时全写」
             // 是留给「重写配置」的，但它会连 `llm.model` 一起重写成这一项
-            // 写死的那个默认值——而模型名恰恰是用户在「大模型」那一节自己
+            // 写死的那个默认值——而模型名恰恰是用户在那个窗口里自己
             // 挑的，不是这一页管的东西。判据是地址没变：地址一样就说明他
             // 还在这家，没换服务商，那模型名归他。
             if (!changed && patch.contains("llm") && patch["llm"].is_object() &&
