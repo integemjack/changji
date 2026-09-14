@@ -513,15 +513,22 @@ export function useShots() {
    * 一轮几十分钟到几小时的渲染。
    */
   function stepBtn(shot, step) {
-    if (isWaiting(shot.shot_id, step.id)) {
-      return { icon: 'close', label: '取消排队', title: `不重出${step.label}了` }
-    }
+    // ⚠️ **「正在跑」要排在「排队中」前面，和 shotAction 一模一样。**
+    //
+    // 一镜可以同时是这两种：这一轮跑着别的镜头时点了它的「重出成片」
+    // （进 waiting），跑着跑着引擎自己走到了它（进 inflight）。那时候两条
+    // 分支都成立，而 `shotAction` 第一条判的是"正在跑"——按下去是 `stop()`，
+    // 停的是整轮。这儿原来先判排队，按钮上写着「取消排队」，按下去却把一轮
+    // 几十分钟到几小时的渲染停掉了。
     if (shotRunning(shot.shot_id)) {
       return {
         icon: 'pause',
         label: '停下这一轮',
         title: '这一镜正在跑。引擎只能整轮地停，按下去这一轮都停',
       }
+    }
+    if (isWaiting(shot.shot_id, step.id)) {
+      return { icon: 'close', label: '取消排队', title: `不重出${step.label}了` }
     }
     if (runStore.running || sent.value.size > 0) {
       return {

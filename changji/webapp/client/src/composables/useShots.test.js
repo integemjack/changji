@@ -118,6 +118,38 @@ describe('排队中的重出', () => {
     expect(wall.isWaiting('s1', 'final')).toBe(false)
   })
 
+  /**
+   * 一镜可以**同时**在队列里、又被引擎接手：跑着别的镜头时点了它的「重出
+   * 成片」（进 waiting），跑着跑着引擎自己走到了它（进 inflight）。
+   *
+   * 那时候两条分支都成立，而 `shotAction` 第一条判的是"正在跑"——按下去
+   * 是 `stop()`，停的是**整轮**。按钮要是还写着「取消排队」，人就是照着
+   * 一句"取消一次重出"把一轮几十分钟到几小时的渲染停了。
+   */
+  it('既在排队又被引擎接手：按钮得说「停下这一轮」，那才是按下去会发生的事', async () => {
+    shots.mockResolvedValue({ shots: [{ shot_id: 's1', status: 'planned', order: 0 }] })
+    runStatus.mockResolvedValue({ running: true, events: [] })
+    run.mockReset()
+
+    const { runStore, wall } = freshWall()
+    await runStore.poll()
+
+    await wall.shotAction({ shot_id: 's1' }, 'final')
+    expect(wall.isWaiting('s1', 'final')).toBe(true)
+
+    // 引擎走到了这一镜
+    runStore.applyMessage({
+      type: 'progress', job_id: 'run-1', stage: 'final',
+      shot_id: 's1', step: 1, total: 20, message: '出成片',
+    })
+    expect(wall.shotRunning('s1')).toBe(true)
+
+    const btn = wall.stepBtn({ shot_id: 's1' }, { id: 'final', label: '成片', icon: 'film' })
+    // ← 改之前这里是「取消排队」：先判的排队，而按下去走的是 stop()
+    expect(btn.label).toBe('停下这一轮')
+    expect(btn.icon).toBe('pause')
+  })
+
   it('再点一下就是取消排队', async () => {
     shots.mockResolvedValue({ shots: [{ shot_id: 's1', status: 'planned', order: 0 }] })
     runStatus.mockResolvedValue({ running: true, events: [] })
