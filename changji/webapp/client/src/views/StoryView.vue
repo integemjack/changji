@@ -672,11 +672,19 @@ watch(() => session.projectPath, () => {
   //   · streaming / pending：上一部那章的"正在写"锁和撤销底稿。锁尤其难受
   //     ——批量还在上一部跑着（writer.running 是全局的一个槽），新这一部的
   //     同名章会被锁成不能编辑，而这一部根本没人在写它。
+  //   · ideas：那三个点子是照**上一部**的梗概和各集简介避重想出来的（见
+  //     suggestIdeas）。两部剧都还没有故事时，「从这儿开始」那一屏长得
+  //     一模一样，三张卡就那么留在新这一部下面——点一张，pickIdea 直接
+  //     `savePremise()`，上一部的选题当场存成了这一部的梗概。
+  //   · audio：念出来那段音频落在上一部的目录里（URL 里钉着它的路径），
+  //     换了剧还挂在状态条上，按播放放的是上一部的声音。
   draft.value = null
   sel.value = null
   chat.value = []
   streaming.value = null
   pending.value = null
+  ideas.value = []
+  audio.value = null
   load()
 })
 watch(
