@@ -1264,10 +1264,19 @@ onDeactivated(() => window.removeEventListener('keydown', onKey))
           </p>
 
           <div class="row row--wrap tiny dim">
-            <span v-if="locationOf(openShot)" class="tag tag--loc">
+            <!-- **用全局那套 pill。** 这两个原来写的是 `tag tag--loc` /
+                 `tag tag--char`，而这三个类名在这个组件的 scoped 里和
+                 base.css 里都不存在——于是这一行上「安保室」「老王」是两段
+                 光秃秃的字，而紧挨着它们的「拍子」用的是真正的 pill：同一
+                 行里两种长相，看不出前两个也是牌子。 -->
+            <span v-if="locationOf(openShot)" class="pill pill--neutral tiny">
               {{ locName(locationOf(openShot)) }}
             </span>
-            <span v-for="cid in openShot.char_ids ?? []" :key="cid" class="tag tag--char">
+            <span
+              v-for="cid in openShot.char_ids ?? []"
+              :key="cid"
+              class="pill pill--neutral tiny"
+            >
               {{ charName(cid) }}
             </span>
             <span v-if="openShot.beat" class="pill pill--neutral tiny">{{ openShot.beat }}</span>
@@ -1473,6 +1482,37 @@ onDeactivated(() => window.removeEventListener('keydown', onKey))
   color: var(--danger);
 }
 .alert :deep(svg) { flex: none; }
+
+/* 抽屉里那几对并排的字段（景别 / 机位 / 运镜、转场 / 转场时长）。
+   **这一条原来不存在**：模板里写着 `grid grid--pairs`，而全局的 `.grid`
+   只有 `display:grid` 和间距、一列都没给——于是那几对字段是竖着一行一个
+   排的，抽屉比该有的高出一大截，"成对"这件事也看不出来。
+   写法照设置页的 .grid--2 / .grid--3（那两条也是这么定的），下限取小一点：
+   抽屉比设置页窄。 */
+.grid--pairs {
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+}
+
+/* 抽屉里的分段标题：画面 / 镜头语言 / 声音与字幕。
+   原来也没有这一条，三段标题和正文一个样子，分段等于没分。
+   照 .field__label 那一档（同一个抽屉里的标签就是它）。 */
+.group {
+  margin: var(--s4) 0 0;
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  color: var(--text-2);
+}
+
+/* 「更多：负向提示词、转场、口型」那个折叠。
+   一字不差抄角色页那份（同一个控件、同一个位置感），这儿原来没有。 */
+.fold__t {
+  color: var(--text-3);
+  font-size: var(--fs-xs);
+  cursor: pointer;
+}
+.fold[open] .fold__t {
+  margin-bottom: 4px;
+}
 
 /* ---- 时间轴 ---- */
 .timeline {
