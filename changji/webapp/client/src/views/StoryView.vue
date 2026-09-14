@@ -422,9 +422,21 @@ async function deleteChapter() {
 }
 
 async function refreshStory() {
-  if (!session.projectPath) return
+  // **带上归属再交给 setStory。**
+  //
+  // 这一趟的三个调用方都在调之前确认过"还在这部剧上"，但确认完之后还有
+  // 一个 GET 的来回——换剧就发生在那个来回里。而 setStory 的归属判断
+  // （`forProject !== session.projectPath` 就直接返回）只在**传了**第二个
+  // 参数时才生效，这儿原来没传，于是全 setStory 里唯一一条不设防的路。
+  //
+  // 落地就是 load() 上面那段写的那件事：上一部剧的正文装进这一部的编辑器，
+  // 接着敲字触发的自动存用的是**这一部**的路径，等于把上一部的章节内容
+  // 写进这一部。最长的那条路是批量写——一跑一个多小时，中间十五次重读，
+  // 每一次都是一扇窗。
+  const want = session.projectPath
+  if (!want) return
   try {
-    setStory(await api.getStory(session.projectPath))
+    setStory(await api.getStory(want), want)
   } catch {
     /* 下一次换章再说 */
   }
