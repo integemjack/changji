@@ -73,6 +73,33 @@ const {
 } = useShots()
 
 const openId = ref('')
+/**
+ * 抽屉开关时的焦点。
+ *
+ * 这个抽屉是 `position: fixed; inset: 0` 的全屏遮罩，和那三个弹窗一个性质：
+ * 用键盘按开它之后，焦点还留在**遮罩后面**那颗按钮上，按 Tab 是在看不见的
+ * 页面里走；关掉之后焦点落到 `<body>`，下一次 Tab 得从整页开头重走。
+ *
+ * 开：焦点放到面板本身（tabindex="-1"），不猜第一个控件。盯的是面板出现
+ * 那一刻——模板 ref 是响应式的，元素挂上来就聚焦。
+ * 关：还给把它叫起来的那颗按钮。**只在从"没开"到"开"时记一次**，换一条
+ * （不关抽屉直接点另一个）时不重记，否则记下的会是抽屉里面的元素。
+ */
+const panel = ref(null)
+watch(panel, (el) => el?.focus())
+let opener = null
+watch(openId, (now, before) => {
+  if (now && !before) {
+    opener = document.activeElement
+    return
+  }
+  if (!now) {
+    const back = opener
+    opener = null
+    back?.focus?.()
+  }
+})
+
 const draft = ref(null)
 const selected = ref(new Set())
 const filter = ref('all')
@@ -1094,7 +1121,7 @@ onDeactivated(() => window.removeEventListener('keydown', onKey))
 
     <!-- 详情抽屉。点墙上任意一格滑出来。 -->
     <div v-if="draft && openShot" class="drawer" @click.self="close">
-      <aside class="drawer__panel">
+      <aside ref="panel" class="drawer__panel" tabindex="-1">
         <header class="drawer__head">
           <b class="numeric" :title="`${openShot.shot_id}（↑ ↓ 换镜头）`">{{ openShot.order + 1 }}</b>
           <span class="pill nowrap" :class="`pill--${shotTone(openShot)}`">

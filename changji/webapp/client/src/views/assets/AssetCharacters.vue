@@ -79,6 +79,33 @@ function cellPct(charId) {
 const assets = ref(null)
 const loading = ref(false)
 const openId = ref('')
+/**
+ * 抽屉开关时的焦点。
+ *
+ * 这个抽屉是 `position: fixed; inset: 0` 的全屏遮罩，和那三个弹窗一个性质：
+ * 用键盘按开它之后，焦点还留在**遮罩后面**那颗按钮上，按 Tab 是在看不见的
+ * 页面里走；关掉之后焦点落到 `<body>`，下一次 Tab 得从整页开头重走。
+ *
+ * 开：焦点放到面板本身（tabindex="-1"），不猜第一个控件。盯的是面板出现
+ * 那一刻——模板 ref 是响应式的，元素挂上来就聚焦。
+ * 关：还给把它叫起来的那颗按钮。**只在从"没开"到"开"时记一次**，换一条
+ * （不关抽屉直接点另一个）时不重记，否则记下的会是抽屉里面的元素。
+ */
+const panel = ref(null)
+watch(panel, (el) => el?.focus())
+let opener = null
+watch(openId, (now, before) => {
+  if (now && !before) {
+    opener = document.activeElement
+    return
+  }
+  if (!now) {
+    const back = opener
+    opener = null
+    back?.focus?.()
+  }
+})
+
 const edits = ref({}) // char_id -> 编辑中的副本
 const voices = ref([])
 const voicesError = ref('')
@@ -726,7 +753,7 @@ async function clearRef(charId, slot) {
            抽屉是用来改的——把编辑器塞回牌子里会把那一格撑成一整行，
            一墙的牌子跟着重排，而人刚刚就是靠位置认出那张牌的。 -->
       <div v-if="openChar" class="drawer" @click.self="openId = ''">
-        <aside class="drawer__panel">
+        <aside ref="panel" class="drawer__panel" tabindex="-1">
           <header class="drawer__head">
             <b>{{ openChar.name }}</b>
             <span class="tiny dim mono">{{ openChar.char_id }}</span>

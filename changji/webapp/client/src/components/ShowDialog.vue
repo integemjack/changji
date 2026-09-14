@@ -141,6 +141,28 @@ const panel = ref(null)
 watch(panel, (el) => el?.focus())
 
 /**
+ * 关掉之后把焦点还回去。
+ *
+ * 不还的话焦点落在 `<body>` 上：下一次按 Tab 是从整页开头重走，而人刚才
+ * 站在页面中间那颗按钮上。开的时候记一下是谁把它叫起来的，关的时候还给它
+ * ——那颗按钮已经不在了（比如刚被这次操作删掉）也没关系，focus 一个不在
+ * 文档里的元素什么都不会发生。
+ */
+let opener = null
+watch(
+  () => props.open,
+  (now) => {
+    if (now) {
+      opener = document.activeElement
+      return
+    }
+    const back = opener
+    opener = null
+    back?.focus?.()
+  },
+)
+
+/**
  * 关掉之前问一句。
  *
  * 这儿本来就有 `dirty`，但只拿去控制保存按钮的禁用——点一下弹窗外面、
