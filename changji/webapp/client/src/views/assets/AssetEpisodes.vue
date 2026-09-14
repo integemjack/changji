@@ -192,7 +192,21 @@ async function load() {
     loading.value = false
   }
 }
-watch(() => session.projectPath, load, { immediate: true })
+watch(
+  () => session.projectPath,
+  () => {
+    // **换剧要把预告片草稿扔掉。** 它是上一部剧的字，而 adoptTrailer 写的
+    // 是 `session.projectPath`——也就是**现在这一部**。剪完一条不采用、去
+    // 项目库点了另一部剧，草稿那一格还原样挂着（load 只换 story 和资产），
+    // 这时候按「存成 trailer 这一集」，上一部剧的预告片就落进这一部了。
+    //
+    // 只在换剧这一条路上清。load 还挂在 `finished` 上（资产库一变就重拉），
+    // 在那儿清的话，隔壁格子出完图会顺手把人正看着的草稿收走。
+    trailerDraft.value = null
+    load()
+  },
+  { immediate: true },
+)
 watch(finished, load)
 
 async function pickDuration(event) {
@@ -266,6 +280,16 @@ async function adoptTrailer() {
           episode_id: TRAILER_ID,
           title: trailerDraft.value.title,
           target_duration_s: trailerDurationS.value,
+        })
+      } else if (trailerDraft.value.title) {
+        // 重剪一条覆盖上一条。标题只在建集那一下写过，不补这一句的话，
+        // 顶栏的集号选择器上挂的还是**上一条**预告片的名字，而底下的
+        // 剧本已经换了——存剧本那一趟只写 script / 时长 / 梗概。
+        await api.episodeAction({
+          project: session.projectPath,
+          episode_id: TRAILER_ID,
+          action: 'rename',
+          new_title: trailerDraft.value.title,
         })
       }
       await api.saveScript({
