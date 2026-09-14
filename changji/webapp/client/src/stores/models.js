@@ -46,6 +46,8 @@ export const useModels = defineStore('models', () => {
   const error = ref('')
 
   let timer = null
+  /** 连着拉不回来几拍了。见 poll()。 */
+  let misses = 0
 
   const groups = computed(() => state.value?.groups ?? [])
   const running = computed(() => progress.value?.state === 'running')
@@ -208,15 +210,29 @@ export const useModels = defineStore('models', () => {
 
   function poll() {
     if (timer) return
+    misses = 0
     timer = setInterval(async () => {
       try {
         progress.value = await api.setupProgress()
+        misses = 0
         if (progress.value?.state !== 'running') {
           stopPoll()
           await load()
         }
       } catch {
-        stopPoll()
+        // ⚠️ **丢一拍不能就撒手。**
+        //
+        // 引擎重启、代理抖一下、机器睡一会儿，都会让这一拍拉不回来。
+        // 而这儿原来是 `catch { stopPoll() }`——一次失败轮询就永久停了，
+        // **而没有任何东西再把它打开**（只有 load() 会重起，而下载期间
+        // 没人调 load）。下几个 GB 的权重是几十分钟的事，表现就是进度条
+        // 冻在某个数上一动不动，速度和剩余时间也停住，而下载其实还在跑，
+        // 界面一个字都不说。
+        //
+        // 出片那条 store 早就是这个写法：「引擎重启时会连着失败几次。
+        // 立刻报错太吵，连丢三次再说。」这儿跟上。
+        misses += 1
+        if (misses >= 3) stopPoll()
       }
     }, 1000)
   }
