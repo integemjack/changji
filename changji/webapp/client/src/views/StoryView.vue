@@ -679,6 +679,13 @@ watch(() => session.projectPath, () => {
   //     `savePremise()`，上一部的选题当场存成了这一部的梗概。
   //   · audio：念出来那段音频落在上一部的目录里（URL 里钉着它的路径），
   //     换了剧还挂在状态条上，按播放放的是上一部的声音。
+  //   · pasting / pasted：「导入原稿」那个框里**还没按导入**的那一整段。
+  //     上面 importPasted 的注释只防住了"发出去之后换剧"（回包落地那一下
+  //     比一次项目路径），防不住"换剧之后才按"——而那才是常态：粘一本书
+  //     进来，去项目库点一眼别的剧，回来这个框原样开着、字一个不少，按
+  //     「导入」发出去的 `project` 是**现读**的，于是上一部的整本小说被切
+  //     成章节装进了新这一部。和上面 ideas 那条是同一种坏法，只是这一段
+  //     是人自己粘进来的、一次几十万字。
   draft.value = null
   sel.value = null
   chat.value = []
@@ -686,6 +693,13 @@ watch(() => session.projectPath, () => {
   pending.value = null
   ideas.value = []
   audio.value = null
+  // 这一段不落盘，清掉就真没了——说一句，别当没发生过（同 AssetEpisodes
+  // 里预告片草稿那处的规矩）。原文还在人自己的剪贴板或者源文件里。
+  if (pasted.value.trim()) {
+    ui.info('那段还没导入的原稿清掉了——它是上一部剧的，留着按「导入」会切进这一部')
+  }
+  pasting.value = false
+  pasted.value = ''
   load()
 })
 watch(
