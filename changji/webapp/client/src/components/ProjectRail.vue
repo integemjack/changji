@@ -66,6 +66,40 @@ const box = ref(null)
 /** 正在确认删除的那一条，和确认框里打的目录名。 */
 const removing = ref('')
 const confirmName = ref('')
+/**
+ * 引擎此刻在跑哪几个项目（目录绝对路径）。空集 = 不知道。
+ *
+ * **只能从 `/api/system` 拿。** `/api/run` 和 `/api/script/series` 那两份
+ * 快照里没有 `project`——它们的字段数被单元测试钉死了（「跟 Python 的
+ * snapshot 对拍，也不能多」），加不得。而 `running_work()` 那份列表
+ * 每一条都带着 project，`/api/system` 和 "system" 频道推的就是它。
+ *
+ * 开 ⋯ 菜单那一下问一次，不轮询：这个答案只在人要动手的那一刻有用。
+ */
+const busyPaths = ref(new Set())
+
+async function refreshBusy() {
+  if (!(runner.running || writer.running)) {
+    busyPaths.value = new Set()
+    return
+  }
+  try {
+    const sys = await api.system()
+    busyPaths.value = new Set(
+      (sys.jobs ?? []).map((j) => j.project).filter(Boolean),
+    )
+  } catch {
+    // 问不到就退回"不确定"，下面那道闸会一律挡住。
+    busyPaths.value = new Set()
+  }
+}
+
+/** 开 / 关这一条的 ⋯。开的时候顺手问一次谁在跑。 */
+function toggleMenu(p) {
+  const open = menuFor.value !== p.path
+  menuFor.value = open ? p.path : ''
+  if (open) refreshBusy()
+}
 
 /**
  * 收没收起，**故事页和别处各记各的**。
@@ -256,11 +290,10 @@ async function remove(p) {
  * 才弹一条红字。
  */
 function busyProject(p) {
-  const running = runner.running || writer.running
-  if (!running) return false
-  const cur = runner.state?.project || writer.state?.project || ''
-  // 不知道在跑哪个就一律当成"可能是它"——和引擎那道闸同一个方向
-  return !cur || cur === p.path
+  if (!(runner.running || writer.running)) return false
+  // 不知道在跑哪个就一律当成"可能是它"——和引擎那道闸同一个方向（fail-closed）
+  if (!busyPaths.value.size) return true
+  return busyPaths.value.has(p.path)
 }
 </script>
 
@@ -340,7 +373,7 @@ function busyProject(p) {
             class="item__more"
             type="button"
             title="改名、删掉"
-            @click.stop="menuFor = menuFor === p.path ? '' : p.path"
+            @click.stop="toggleMenu(p)"
           >
             ⋯
           </button>
