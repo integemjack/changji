@@ -169,7 +169,15 @@ async function bible() {
     { key: 'bible', refresh: true },
   )
   if (!result) return
-  const c = result.added_characters ?? []
+  // **把 id 翻回人话。** `added_characters` 回的是 `c_lin_wan` 这种 id，
+  // 直接 join 出去就是「2 个新角色：c_lin_wan、c_chen_mo」——而这一条正是
+  // 定妆完人第一眼看的东西。这套系统的规矩本来就写着「分镜表里只有 id，
+  // 界面负责把它翻回人话」（见 EpShots 里 charName 那段），这儿漏了。
+  // 名字不用另外去问：同一个回包里的 `characters` 每条都带着 name。
+  const nameOf = new Map(
+    (result.characters ?? []).map((x) => [x.char_id, x.name]).filter(([, n]) => n),
+  )
+  const c = (result.added_characters ?? []).map((id) => nameOf.get(id) || id)
   const l = result.added_locations ?? []
   const parts = []
   if (c.length) parts.push(`${c.length} 个新角色：${c.join('、')}`)
