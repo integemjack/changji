@@ -246,8 +246,16 @@ ApiResult post_shots_link_locations(const json& body) {
     }
     if (total) store.save_project(project);
 
-    // 接上之后提示词才完整，已渲染的那些是按缺场景的提示词跑出来的
-    const int reset = total ? reset_all_shots(store) : 0;
+    // 接上之后提示词才完整，已渲染的那些是按缺场景的提示词跑出来的。
+    //
+    // **只退真接过的那几集。** 这儿原来是 reset_all_shots——接一集的场景，
+    // 整个项目已经渲染好的镜头全被退回待跑，而别的集的提示词一个字都没变
+    // （见 reset.hpp 开头那条判据）。用户按的那颗按钮上写的是这一集，
+    // 代价却是下一次「开始」把全剧重跑几小时。`linked` 里装的正好是
+    // "哪一集真接上了几镜"，没接上的集（n 为 0）也不该动。
+    std::set<std::string> touched;
+    for (const auto& kv : linked.items()) touched.insert(kv.key());
+    const int reset = total ? reset_shots_in(store, touched) : 0;
     return {200, {{"linked", total}, {"episodes", linked}, {"reset_shots", reset}}};
 }
 

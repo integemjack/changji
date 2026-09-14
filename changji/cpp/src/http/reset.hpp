@@ -12,6 +12,9 @@
 // （见下），三份拷贝迟早会分叉，而分叉的表现是"同一件事在不同入口
 // 结果不一样"，这种 bug 很难联想到是拷贝没同步。
 
+#include <set>
+#include <string>
+
 #include "models/project.hpp"
 
 namespace changji::http {
@@ -30,5 +33,15 @@ namespace changji::http {
 /// 顺带把 attempts 归零、gate_notes 清空——那些是上一轮的产物，
 /// 留着会让重试次数从旧值接着数，第一次重跑就可能直接判超限。
 int reset_all_shots(const models::ProjectStore& store);
+
+/// 同样的规则，但**只动指定的那几集**。
+///
+/// `/api/shots/link_locations` 要的是这个。它改的是「某一集的镜头接回哪个
+/// 场景」——别的集的提示词一个字都没变，不符合上面那条"改了会影响提示词的
+/// 东西"。拿 reset_all_shots 去收尾的话，接一集的场景会把**整个项目**已经
+/// 渲染好的镜头全退回待跑，下一次按「开始」就是几小时的重跑，而用户按的
+/// 那颗按钮上写的是这一集。
+int reset_shots_in(const models::ProjectStore& store,
+                   const std::set<std::string>& episode_ids);
 
 }  // namespace changji::http
