@@ -73,12 +73,44 @@ function place() {
   let left = r.right - w
   if (left < MARGIN) left = MARGIN
   if (left + w > window.innerWidth - MARGIN) left = window.innerWidth - MARGIN - w
-  pos.value = { top: Math.round(r.bottom + 6), left: Math.round(left), width: w }
+  const next = { top: Math.round(r.bottom + 6), left: Math.round(left), width: w }
+  // 没挪就别写：下面 replace() 是一秒一次的，原样写回去会让这块浮层
+  // （里头是一段一直在长、还自动贴底的文字）每秒白重排一次。
+  const cur = pos.value
+  if (cur.top === next.top && cur.left === next.left && cur.width === next.width) return
+  pos.value = next
 }
 
 watch(open, (v) => {
   if (v) place()
 })
+
+/**
+ * **量一次不够，徽标自己会动。**
+ *
+ * `place()` 原来只在浮层打开那一下跑一次，而它量的是徽标当时在哪儿。
+ * 顶栏那一排是 `display: flex` 加一个 `spacer` 顶到右边的——也就是说
+ * 这块徽标的右边缘由**它右边那几个东西的宽度**决定，而那几个一直在变：
+ *
+ *   · SysMeter 两秒推一条，「8%」变「100%」就宽出两个字符；
+ *   · JobBadge 一开跑就出现、跑完就消失，而"正在思考"这几分钟里恰恰
+ *     是别的活最容易起落的时候；
+ *   · 窗口一改大小，整排跟着挪。
+ *
+ * 浮层是 `position: fixed` 加写死的 top/left/width，于是它会一点点和
+ * 徽标错开；窗口缩窄时更糟——left 是按旧宽度算的，520px 的浮层会挂到
+ * 视口外面去，还可能把整页顶出一条横向滚动条。而这块浮层的存在时间正是
+ * 十几分钟那一档（注释开头就写着"实测 glm-5.3 写一份大纲，光思考就超过
+ * 十分钟"），错开是必然发生的，不是边角情形。
+ *
+ * 开着的时候跟着重量一次就行：下面那个「想了多久」的秒表本来就一秒一跳，
+ * 顺手带上；窗口改大小再单挂一条。关着的时候一次都不量。
+ */
+function replace() {
+  if (open.value) place()
+}
+onMounted(() => window.addEventListener('resize', replace))
+onUnmounted(() => window.removeEventListener('resize', replace))
 
 /** 按过停的那几条，按钮变成"停着…"不让再按。 */
 const stopping = ref(new Set())
@@ -155,6 +187,8 @@ watch(
       return
     }
     const tick = () => {
+      // 秒表跳一下顺手把浮层的位置重量一次，理由见 replace() 上面那段
+      replace()
       const at = current.value?.at
       if (!at) return
       const s = Math.max(0, Math.round((Date.now() - at) / 1000))
