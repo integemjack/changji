@@ -123,9 +123,14 @@ function onDocClick(e) {
   if (root.value?.contains(e.target)) return
   pinned.value = false
 }
-onMounted(() => document.addEventListener('click', onDocClick))
+// **捕获阶段。** 页面上别处有十几处 `@click.stop`（项目库那几行、卡片、
+// 抽屉、菜单），挂在冒泡阶段的话点到它们这张浮层收不掉——而它有 520px
+// 宽、盖在页面上，思考一段可能十几分钟。顶栏隔壁那块（JobBadge）为同一
+// 件事改过，理由那儿写着：捕获阶段先于它们拿到事件，且只读不拦。
+// 点徽标本身不受影响：那时候 e.target 在 root 里，上面那句就返回了。
+onMounted(() => document.addEventListener('click', onDocClick, true))
 onUnmounted(() => {
-  document.removeEventListener('click', onDocClick)
+  document.removeEventListener('click', onDocClick, true)
   clearInterval(timer)
 })
 
