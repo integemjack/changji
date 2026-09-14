@@ -43,6 +43,7 @@ import { projectStage } from '@/composables/project-stage'
 import { api } from '@/api'
 import { useAction } from '@/composables/useAction'
 import { useProjects } from '@/stores/projects'
+import { readLocal, writeLocal } from '@/composables/local-storage'
 import { useRun, useWriter } from '@/stores/run'
 import { useSession } from '@/stores/session'
 import { useUi } from '@/stores/ui'
@@ -114,11 +115,11 @@ const foldTick = ref(0)
 const collapsed = computed({
   get() {
     foldTick.value // 写 localStorage 之后靠它重算
-    const v = localStorage.getItem(foldKey.value)
+    const v = readLocal(foldKey.value)
     return v === null ? onStory.value : v === '1'
   },
   set(v) {
-    localStorage.setItem(foldKey.value, v ? '1' : '0')
+    writeLocal(foldKey.value, v ? '1' : '0')
     foldTick.value++
   },
 })

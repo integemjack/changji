@@ -28,6 +28,8 @@
 
 import { createRouter, createWebHistory } from 'vue-router'
 
+import { store } from '@/composables/local-storage'
+
 import {
   clearReloadMark,
   isChunkLoadError,
@@ -164,7 +166,7 @@ router.onError((err, to) => {
     )
     return
   }
-  if (!shouldAutoReload(globalThis.sessionStorage)) {
+  if (!shouldAutoReload(store('session'))) {
     window.dispatchEvent(
       new CustomEvent('changji:error', {
         detail: '页面资源加载不出来。刷新一次还是这样的话，多半是这一版没部署完整。',
@@ -180,5 +182,10 @@ router.afterEach((to) => {
   document.title = to.meta?.title ? `${to.meta.title} · 场记` : '场记'
   // 进得来就说明资源是好的，把"重载过一次"那一笔清掉——
   // 不清的话这一会话里下次真遇到换版，就不会自动重载了。
-  clearReloadMark(globalThis.sessionStorage)
+  // ⚠️ **这一句每次导航都跑。** 原来写的是 `globalThis.sessionStorage`——
+  // 而在不给用存储的浏览器上，那个**属性访问本身**就抛，于是每跳一次页
+  // 抛一次，抛出来又进 onError、那儿再访问一次同一个属性。chunk-error 里
+  // 那两个函数早就把 storage 当参数收着（「隐私模式下它会抛」），漏的是
+  // 取它的这一下。
+  clearReloadMark(store('session'))
 })

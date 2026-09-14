@@ -49,6 +49,7 @@ import { useAction } from '@/composables/useAction'
 import { runAsyncJob } from '@/composables/useAsyncJob'
 import { openJobSocket } from '@/composables/useJobSocket'
 import { useThinking } from '@/stores/thinking'
+import { readLocal, writeLocal } from '@/composables/local-storage'
 import { useSession } from '@/stores/session'
 import { useUi } from '@/stores/ui'
 import { useWriter } from '@/stores/run'
@@ -136,11 +137,11 @@ let lastTyped = 0
 
 // ---- 版面 ----
 function remembered(key, fallback) {
-  const v = localStorage.getItem(key)
+  const v = readLocal(key)
   return v === null ? fallback : v === '1'
 }
 function remember(key, v) {
-  localStorage.setItem(key, v ? '1' : '0')
+  writeLocal(key, v ? '1' : '0')
 }
 /** 左栏章节列表开没开。记在这台机器上。 */
 const listOpen = ref(remembered('changji.story.list', true))

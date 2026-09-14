@@ -8,13 +8,19 @@
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 import { api } from '@/api'
+import { dropLocal, readLocal, writeLocal } from '@/composables/local-storage'
 
 const KEY_PROJECT = 'changji.project'
 const KEY_EPISODE = 'changji.episode'
 
 export const useSession = defineStore('session', () => {
-  const projectPath = ref(localStorage.getItem(KEY_PROJECT) || '')
-  const episodeId = ref(localStorage.getItem(KEY_EPISODE) || '')
+  // **这两句在 App.vue 挂载之前跑**（App 的 setup 第一件事就是 useSession）。
+  // 裸着用 localStorage 的话，一台把 cookie 设成「全部阻止」的浏览器上它
+  // 会在属性访问那一下抛 SecurityError——位置在 ErrorBoundary 外面、
+  // ToastStack 还不存在的时候，结果是一片白，界面上一个字都没有。
+  // 见 composables/local-storage.js 开头那段。
+  const projectPath = ref(readLocal(KEY_PROJECT) || '')
+  const episodeId = ref(readLocal(KEY_EPISODE) || '')
 
   const project = ref(null) // /api/project 的返回
   const flow = ref(null) // /bff/flow 的返回
@@ -41,24 +47,24 @@ export const useSession = defineStore('session', () => {
 
   function selectProject(path) {
     projectPath.value = path
-    localStorage.setItem(KEY_PROJECT, path)
+    writeLocal(KEY_PROJECT, path)
     // 换项目时旧的集号一定对不上，先清掉，refresh 会挑第一集
     episodeId.value = ''
-    localStorage.removeItem(KEY_EPISODE)
+    dropLocal(KEY_EPISODE)
     project.value = null
     flow.value = null
   }
 
   function selectEpisode(id) {
     episodeId.value = id || ''
-    if (id) localStorage.setItem(KEY_EPISODE, id)
-    else localStorage.removeItem(KEY_EPISODE)
+    if (id) writeLocal(KEY_EPISODE, id)
+    else dropLocal(KEY_EPISODE)
   }
 
   function clear() {
     selectProject('')
     projectPath.value = ''
-    localStorage.removeItem(KEY_PROJECT)
+    dropLocal(KEY_PROJECT)
   }
 
   /** 重新问一遍项目和流程进度。每一步做完都调它。 */

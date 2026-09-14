@@ -3,11 +3,16 @@
 import { defineStore } from 'pinia'
 import { ref, watch } from 'vue'
 
+import { readLocal, writeLocal } from '@/composables/local-storage'
+
 let seq = 0
 
 export const useUi = defineStore('ui', () => {
   const toasts = ref([])
-  const theme = ref(localStorage.getItem('changji.theme') || 'system')
+  // 和 session 那边同一个理由：这几句跑在 App.vue 挂载之前，裸着用
+  // localStorage 的话，不给用的浏览器上整个界面是一片白。
+  // 见 composables/local-storage.js 开头那段。
+  const theme = ref(readLocal('changji.theme') || 'system')
 
   /**
    * 项目栏靠哪边。在设置页的「界面」里换（没有拖拽），**记在这台机器上**。
@@ -19,9 +24,9 @@ export const useUi = defineStore('ui', () => {
    * 拿它去 CSS 里当类名会得到一个谁也不认识的类，界面上表现成栏不见了。
    */
   const railSide = ref(
-    localStorage.getItem('changji.railSide') === 'left' ? 'left' : 'right',
+    readLocal('changji.railSide') === 'left' ? 'left' : 'right',
   )
-  watch(railSide, (value) => localStorage.setItem('changji.railSide', value))
+  watch(railSide, (value) => writeLocal('changji.railSide', value))
 
   /**
    * 专注模式：把顶栏和项目库收起来，稿纸铺满整个窗口。
@@ -38,8 +43,8 @@ export const useUi = defineStore('ui', () => {
    * **记在这台机器上**：喜欢专注写的人每次打开都该直接是专注的，而"每次
    * 都要先按一下"本身就是那句"你花在调工具上的时间，工具就成了干扰"。
    */
-  const focusMode = ref(localStorage.getItem('changji.focusMode') === '1')
-  watch(focusMode, (v) => localStorage.setItem('changji.focusMode', v ? '1' : '0'))
+  const focusMode = ref(readLocal('changji.focusMode') === '1')
+  watch(focusMode, (v) => writeLocal('changji.focusMode', v ? '1' : '0'))
 
   function applyTheme(value) {
     const root = document.documentElement
@@ -48,7 +53,7 @@ export const useUi = defineStore('ui', () => {
   }
   applyTheme(theme.value)
   watch(theme, (value) => {
-    localStorage.setItem('changji.theme', value)
+    writeLocal('changji.theme', value)
     applyTheme(value)
   })
 
