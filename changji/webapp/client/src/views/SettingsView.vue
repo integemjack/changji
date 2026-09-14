@@ -844,6 +844,16 @@ function scrollTo(id) {
   font-weight: 600;
   width: 7em;
 }
+/* 「怎么办」那一截。**引擎是按多行写的**——FFmpeg 那条给了 Windows /
+   macOS / Debian 各一行，还按冒号对齐。这个类名模板里一直挂着，而规则
+   一条都没有，于是换行全塌成空格，三条命令首尾相连挤成一行；README 里
+   那句「缺什么它会说，并且给出怎么办」到这儿就只剩前半句。
+   `pre-wrap` 不是 `pre-line`：后者会把 `macOS:   brew` 里对齐用的空格
+   也并掉。整行占满一格，别和名字、detail 挤在同一行上。 */
+.check__fix {
+  flex-basis: 100%;
+  white-space: pre-wrap;
+}
 .check__detail {
   flex: 1;
   min-width: 12ch;

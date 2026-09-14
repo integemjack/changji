@@ -696,7 +696,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
           <AppIcon name="warn" :size="14" />
           <strong>{{ c.name }}</strong>
           <span>{{ c.detail }}</span>
-          <span v-if="c.fix" class="tiny dim">{{ c.fix }}</span>
+          <span v-if="c.fix" class="alert__fix tiny dim">{{ c.fix }}</span>
         </p>
       </div>
     </section>
@@ -1107,6 +1107,13 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
   border-radius: var(--r);
   font-size: var(--fs-sm);
   line-height: 1.5;
+  /* 体检那几条带着多行的「怎么办」，不让换行的话它们会被挤成一条线 */
+  flex-wrap: wrap;
+}
+/* 同设置页的 .check__fix：引擎把这段按多行写的，塌成一行就没法照着做了 */
+.alert__fix {
+  flex-basis: 100%;
+  white-space: pre-wrap;
 }
 .alert--warn {
   background: var(--warn-soft);
