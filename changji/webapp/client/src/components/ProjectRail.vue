@@ -317,15 +317,23 @@ function busyProject(p) {
       <template v-if="!collapsed">
         <span class="rail__title">项目库</span>
         <span class="spacer" />
-        <button
-          class="btn btn--ghost btn--sm"
-          type="button"
-          title="加一个项目"
-          @click="adding = true"
-        >
-          <AppIcon name="plus" :size="15" />
-        </button>
       </template>
+      <!-- **一个项目都没有的时候，收起也要留着这个加号。**
+           它是新建项目的唯一入口（AddProjectDialog 只从这儿开），而收起
+           状态是记在 localStorage 里的：删掉最后一个项目之后，项目页那个
+           空状态写着「点栏头的加号建一个」，栏头却只有一个箭头——提示指着
+           一个不在屏幕上的东西。
+           不是无条件常显：有项目时收起就是为了省地方，那时候列表和加号
+           一起收走是对的；而列表为空时收起本来也省不下什么。 -->
+      <button
+        v-if="!collapsed || !store.count"
+        class="btn btn--ghost btn--sm"
+        type="button"
+        title="加一个项目"
+        @click="adding = true"
+      >
+        <AppIcon name="plus" :size="15" />
+      </button>
     </div>
 
     <template v-if="!collapsed">
