@@ -361,7 +361,28 @@ async function loadAssets() {
   }
 }
 
+/** story/assets 里那两份是哪部剧读回来的。 */
+let shownFor = null
+
+/**
+ * 换了一部剧，先把上两份擦掉。
+ *
+ * 那两个 `want !== projectPath` 的闸管的是"回来晚了别乱写"，管不了这段
+ * 空当里标签上写着什么：`story`/`assets` 不为空就一直照着算，而它们装的
+ * 还是上一部的角色和分集。于是从 A 点到 B 的那一两秒里，B 的标签上明晃
+ * 晃写着「角色 2 · 缺 6」「分集 10 · 8 章没正文」——而 B 可能一个角色都
+ * 没有。三个格子自己读的是新的，同一屏上两套数。
+ *
+ * 只在 loadAll 里擦：画完一张图那条（`watch(finished, loadAssets)`）项目
+ * 没变，擦了的话每出一张图标签就空一下。
+ */
 function loadAll() {
+  const want = session.projectPath
+  if (want !== shownFor) {
+    shownFor = want
+    story.value = null
+    assets.value = null
+  }
   loadStory()
   loadAssets()
 }
