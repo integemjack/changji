@@ -237,6 +237,22 @@ async function load() {
     if (mine()) loading.value = false
   }
 }
+/**
+ * 剪好还没采用的那一条预告片。**声明必须留在这儿**，不能跟着它那一族
+ * （extras / trailerDurationS / TRAILER_ID）放到下面的折叠区那一节去。
+ *
+ * ⚠️ 下面那个换剧的 watch 带着 `immediate: true`——Vue 会在 `watch()`
+ * 这一句上**同步**跑一次回调，而回调第一件事就是 `trailerDraft.value = null`。
+ * 声明在它后面的话，那一下落在 const 的暂时性死区里，当场
+ * `ReferenceError: Cannot access 'trailerDraft' before initialization`，
+ * setup 抛出去、这一格整个渲染不出来——「分集」那一 tab 点开就是错误页。
+ *
+ * 0e65fcf 把那个 watch 从 `watch(…, load, { immediate: true })` 改成带
+ * 回调的写法时就是这么栽的（AssetCharacters 那三个 ref 2026-09-15 早些
+ * 时候刚因为同一件事提过一次）。
+ */
+const trailerDraft = ref(null)
+
 watch(
   () => session.projectPath,
   () => {
@@ -297,7 +313,6 @@ async function makeEpisodes() {
 // ---------------------------------------------------------------------------
 
 const extras = ref(false)
-const trailerDraft = ref(null)
 const trailerDurationS = ref(20)
 /** 预告片挂在固定集号上，只有一条，重剪覆盖上一条 */
 const TRAILER_ID = 'trailer'
