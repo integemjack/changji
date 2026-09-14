@@ -132,6 +132,37 @@ textarea {
   border-color: transparent;
 }
 
+/* 抽屉头上那几个只有图标的小按钮：关闭的 ✕、把这一镜往前往后挪一格。
+   角色、场景、镜头三个抽屉都在用，所以定在这儿而不是各写一份。
+
+   ⚠️ **这个类名一直挂在模板上，而规则一条都没有。** 上面那条全局 button
+   只设了 `font` 和 `color`——**没有清掉原生外观**。于是这五个按钮渲染成
+   系统原生按钮：浅灰底加一圈边框；而 `color: inherit` 让暗色主题的浅色字
+   落在那块浅灰上，那个 ✕ 几乎看不见。两个挪位按钮还带 :disabled，
+   原生那套至少还画得出禁用态，自定义之后得自己补上。 */
+.iconbtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--text-2);
+  line-height: 1;
+  cursor: pointer;
+}
+.iconbtn:hover:not(:disabled) {
+  background: var(--surface-2);
+  color: var(--text);
+}
+.iconbtn:disabled {
+  color: var(--text-3);
+  cursor: not-allowed;
+}
+
 .btn--danger {
   color: var(--danger);
   border-color: color-mix(in srgb, var(--danger) 40%, transparent);
