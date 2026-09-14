@@ -518,6 +518,23 @@ ApiResult post_settings(const json& body) {
     take_bool("gates_enabled", s.gates.enabled);
 
 
+    // **帧率在这儿就纠回去，别等到 replace 里。**
+    //
+    // `Runtime::replace` 本来就会调 `normalize_fps_for_model`（MiniMax-H3
+    // 只出 24fps，填别的整片会变速），但它纠的是**它自己那份拷贝**——这儿
+    // 这个 `s` 一个字不动，然后下面 persist 那一步把**没纠过的那个数**写进
+    // 配置文件。于是：文件里写着 30，跑起来是 24，设置页重读之后显示 24。
+    // 那个 30 从此永远是死的，还骗下一个打开这个文件的人。
+    //
+    // 纠回来的理由要说给人听。`replace` 里那句只 fprintf 到 stderr，而
+    // 双击启动的人根本看不到 stderr——他看到的是：填了 30，弹一句「参数已
+    // 保存到配置文件」，然后那一格自己变回 24，一个字的解释都没有。
+    // 跟着响应回去，界面照实说一句。
+    std::vector<std::string> notes;
+    if (std::string note = normalize_fps_for_model(s); !note.empty()) {
+        notes.push_back(std::move(note));
+    }
+
     // 校验不过就整体回滚——半套改动比不改更糟，用户看到"已应用"
     // 但配置是残的。
     const auto errs = s.validate();
@@ -586,6 +603,9 @@ ApiResult post_settings(const json& body) {
         {"changed", changed},
         {"labels", labels_for(changed)},
         {"saved_to", saved_to},
+        // 「照你填的没法做，按这个来了」那一类。今天只有帧率会进来；
+        // 空数组也照发，前端拿 `?? []` 兜着就行。
+        {"notes", notes},
     }};
 }
 

@@ -309,6 +309,16 @@ async function saveParams() {
     success: persist.value ? '参数已保存到配置文件' : '参数已生效（重启后失效）',
   })
   if (result) {
+    // **「照你填的没法做，按这个来了」要说出来。**
+    //
+    // 今天只有帧率会进这个数组：出片模型只出 24fps（MiniMax-H3），填 30
+    // 引擎会纠回去——不纠的话整片快 25%，人走路变小跑，字幕跟着漂。引擎
+    // 那句解释原来只 fprintf 到 stderr，而双击启动的人根本看不到 stderr：
+    // 他看到的是填了 30、弹一句「参数已保存到配置文件」，然后那一格自己
+    // 变回 24，一个字都没有。
+    //
+    // 用 warn 加长停留：这句话比一条绿提示长，3.2 秒读不完。
+    for (const note of result.notes ?? []) ui.push('warn', note, 12000)
   // **存成功了就把基准线推平**，否则下面那次 load 会以为这一节
   // 还改着、跳过刷新，角标就永远挂在那儿了。见 load() 里那段。
     savedParams.value = JSON.stringify(params.value)
