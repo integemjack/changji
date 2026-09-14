@@ -74,6 +74,56 @@ TEST_CASE("镜头、成片、上传合成了一步「这一集」") {
     CHECK(http::flow_steps().size() == 4);
 }
 
+TEST_CASE("「这一集」打勾看的是**这一集自己**的成片，三位集号不许串到两位上") {
+    // 判据是 flow.cpp 里那个 film_of。它原来是 `name.find(episode_id)`，
+    // 而集号到 99 以内是 ep%02d、**第 100 集起变成 ep100**（story_plan.cpp
+    // 的 ep_id 里刻意写的），于是站在 ep10 上时 ep100～ep109 十条片子全算
+    // 成它的——短剧动辄上百集，这不是假想的数。
+    //
+    // **前端有同一条规则的 JS 版**（api/labels.js 的 isFilmOf，
+    // api/film-of.test.js 把边界一条条钉住了），而这一侧一条用例都没有。
+    // 两边分头写的东西迟早分叉，所以这儿照着那份用例钉一遍。
+    const auto film = [](const char* name) {
+        return json::array({json{{"name", name}}});
+    };
+    const auto done_for = [&](const char* name, const char* ep) {
+        return http::flow_assess(a_project(), json::array(), film(name), ep)
+            .at("done")
+            .at("episode")
+            .get<bool>();
+    };
+
+    // 引擎自己出的那份：<集号>.mp4
+    CHECK(done_for("ep01.mp4", "ep01"));
+    CHECK(done_for("ep10.mp4", "ep10"));
+    CHECK(done_for("ep107.mp4", "ep107"));
+
+    // **三位不许串到两位**——修的就是这一条
+    CHECK_FALSE(done_for("ep100.mp4", "ep10"));
+    CHECK_FALSE(done_for("ep109.mp4", "ep10"));
+    // 反过来也不许
+    CHECK_FALSE(done_for("ep10.mp4", "ep100"));
+
+    // 人手加的后缀还算这一集（体检里那条 2K 出路教人 --upscale 出一份）
+    CHECK(done_for("ep01_2k.mp4", "ep01"));
+    CHECK(done_for("ep01-final.mp4", "ep01"));
+    CHECK(done_for("导演版_ep01.mp4", "ep01"));
+
+    // 别的集一律不算
+    CHECK_FALSE(done_for("ep02.mp4", "ep01"));
+    CHECK_FALSE(done_for("trailer.mp4", "ep01"));
+    CHECK_FALSE(done_for("ep011.mp4", "ep01"));
+
+    // 同一个集号在名字里出现两次，有一处对得上就算——不扫完的话
+    // `ep100_ep10.mp4` 会被第一处的失败带跑
+    CHECK(done_for("ep100_ep10.mp4", "ep10"));
+
+    // 没选集：这一层的策略是"有片子就算"（flow.cpp 里
+    // `episode_id.empty() || film_of(...)` 那一句），和 film_of 本身
+    // 对空集号回假不是一回事。
+    CHECK(done_for("ep99.mp4", ""));
+}
+
 TEST_CASE("「故事」这一格") {
     const auto steps = keys_of(http::flow_steps());
     CHECK(steps.count("story") == 1);
