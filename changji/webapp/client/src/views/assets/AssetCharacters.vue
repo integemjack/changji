@@ -192,7 +192,31 @@ onUnmounted(() => {
 onActivated(() => document.addEventListener('keydown', onEsc))
 onDeactivated(() => document.removeEventListener('keydown', onEsc))
 
-watch(() => session.projectPath, load, { immediate: true })
+/**
+ * **换项目要先把手里那份编辑清掉。**
+ *
+ * `load()` 里那段「只刷新没改过的」是为 `watch(finished, load)` 写的——
+ * 一键出图一张接一张，每张几十秒就重拉一次，抽屉里正在改字的人不能被
+ * 服务端那份一遍遍盖回去。
+ *
+ * 但**换项目走的是同一个 load**，而 edits 是按 id 索引的：两部剧里出现
+ * 同一个 id 不是稀奇事（id 是照名字生成的，续集、复制出来的项目、同名
+ * 角色都会撞），撞上的那一条会被当成"这条人家改过、别刷新"，于是上一部
+ * 的外观描述留在这一部的抽屉里，一存就写进去了。
+ *
+ * 所以换项目这条路先清空再读：那时候"手里改了还没存的"本来就属于上一部，
+ * 冲不冲得掉是另一回事（这一页没有自动保存，走开就是丢），但绝不能跟着
+ * 到下一部去。抽屉也一并收起来——它开着的是上一部那一条。
+ */
+watch(
+  () => session.projectPath,
+  () => {
+    edits.value = {}
+    openId.value = ''
+    load()
+  },
+  { immediate: true },
+)
 // 频道上说哪一张画完了就重拉——**刷新过页面的人只剩这条路**：
 // 发起那次请求的 promise 早随着旧页面一起没了。
 watch(finished, load)

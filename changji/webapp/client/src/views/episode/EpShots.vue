@@ -528,6 +528,15 @@ watch(
   () => [session.projectPath, session.episodeId],
   () => {
     selected.value = new Set()
+    // **抽屉也要跟着关。**
+    //
+    // 换集之后 `openShot` 找不到那个 shot_id 了（id 带集号前缀），模板上
+    // 那道 `v-if="draft && openShot"` 会把抽屉藏起来——看着像关了。可
+    // `draft` 和 `openId` 还在：`draftDirty` 照样算成"有改动"，于是在**新
+    // 这一集**点第一个镜头，弹出来的是「这一镜有改动还没保存，切走就没
+    // 了」——说的是一个已经看不见、还属于上一集的镜头。
+    openId.value = ''
+    draft.value = null
   },
 )
 watch(shots, (list) => {
