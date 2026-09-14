@@ -911,19 +911,6 @@ function scrollTo(id) {
   min-width: 12ch;
 }
 
-.switch {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--s2);
-  cursor: pointer;
-  font-size: var(--fs-base);
-}
-.switch input {
-  width: 16px;
-  height: 16px;
-  accent-color: var(--accent);
-}
-
 /* 外观那三个：选中的那个点亮。 */
 .is-on {
   color: var(--accent);

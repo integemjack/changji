@@ -858,9 +858,6 @@ async function clearEmpty(locationId) {
   padding: var(--s4);
 }
 
-.textarea--tight {
-  min-height: 0;
-}
 /* 折起来的排障块。summary 默认是 list-item，带个三角；留着——那个三角
    正是"这里还有东西"的唯一提示。 */
 .fold__t {
