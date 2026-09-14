@@ -84,6 +84,9 @@ async function load() {
   } catch {
     // 刚建好还没有资产库。两个空框，存一次就有了。
     style.value = { global_style: '', negative_prompt: '' }
+    // 这一句也要跟着清：不清的话，上一部剧读到的「动漫线 / 写实线」
+    // 会顶在这一部的标题旁边，而这一部根本没读出来。
+    styleLine.value = ''
   }
   savedStyle.value = JSON.stringify(style.value)
   resetOnStyle.value = false
@@ -104,6 +107,18 @@ async function load() {
 }
 
 watch(() => props.open, (now) => now && load())
+
+/**
+ * 关掉之前问一句。
+ *
+ * 这儿本来就有 `dirty`，但只拿去控制保存按钮的禁用——点一下弹窗外面、
+ * 或者右上角那个 ×，改的画风和负向就没了，一声不吭。镜头抽屉和角色抽屉
+ * 早有这道拦截（「这一镜有改动还没保存，关掉就没了」），措辞照它们。
+ */
+function tryClose() {
+  if (dirty.value && !confirm('画面和风格有改动还没保存，关掉就没了。确定？')) return
+  emit('close')
+}
 
 async function save() {
   const v = await run(
@@ -151,7 +166,7 @@ async function save() {
 </script>
 
 <template>
-  <div v-if="open" class="mask" @click.self="emit('close')">
+  <div v-if="open" class="mask" @click.self="tryClose">
     <section v-if="video" class="dlg">
       <header class="dlg__head">
         <h2 class="dlg__t">这部片子长什么样</h2>
@@ -159,7 +174,7 @@ async function save() {
           {{ styleLine === 'anime' ? '动漫线' : '写实线' }}
         </span>
         <span class="spacer" />
-        <button class="btn btn--ghost btn--sm" type="button" @click="emit('close')">
+        <button class="btn btn--ghost btn--sm" type="button" @click="tryClose">
           <AppIcon name="close" :size="14" />
         </button>
       </header>
