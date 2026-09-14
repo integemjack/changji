@@ -355,8 +355,9 @@ export function useShots() {
     // （`sent` 非空）才来得及生效，否则那一下会走提交那条路撞 409。
     const before = sent.value
     sent.value = new Set([...sent.value, ...lit])
+    let res
     try {
-      await api.run({
+      res = await api.run({
         project: session.projectPath,
         episode_id: session.episodeId,
         // 重跑单镜时**一定要带 force**：那一镜已经是完成状态，
@@ -371,6 +372,31 @@ export function useShots() {
       sent.value = before   // 没起来就别亮着
       // 409（已经在跑）由调用方接住改成排队，别在这儿弹红框。
       return { ok: false, error: err }
+    }
+    /**
+     * **引擎说它有键没认出来的时候，得说一声。**
+     *
+     * `/api/run` 刻意不 forbid 多余的键（前端和引擎的版本不一定同步升，
+     * 多一个键就 422 会让整个功能挂掉），改成"照收不误、但把不认识的列
+     * 回来"。引擎那段注释写着这条存在的理由，是一次真事故：把 `shot_ids`
+     * 误写成 `only_shots`，引擎一声不吭当成"没指定镜头"，于是「重出这一镜」
+     * 变成整集重渲 18 镜、跑了二十分钟。
+     *
+     * 它接着写「写错字段名的当场就知道」——**而只有有人看才知道**。
+     * 这一发的返回原来是整个扔掉的（`await api.run(...)` 连接都不接），
+     * 于是那条通道从头到尾没人听：唯一的客户端就是这儿。
+     *
+     * 正常用法下它是静默的（这一版发的五个键引擎都认）。真响了就说明
+     * 手里这份前端和引擎对不上——多半是浏览器攥着旧的 index.html，
+     * router/chunk-error.js 兜的正是同一种情况——而这一轮真跑的，很可能
+     * 和你按的不是一回事。
+     */
+    const ignored = res?.ignored_fields
+    if (Array.isArray(ignored) && ignored.length) {
+      ui.warn(
+        `引擎不认识这几项、已经忽略：${ignored.join('、')}。` +
+          '这一轮跑的可能和你按的不是一回事，刷新一次再试',
+      )
     }
     runStore.start()
     return { ok: true }
