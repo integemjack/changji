@@ -324,7 +324,11 @@ async function save() {
                 :title="finish.music_ready ? '一集一条器乐，压在台词底下' : '这台机器还没配配乐命令（全局配置 [sound].music_command），勾了也出不来'"
               >
                 <input v-model="finish.music" type="checkbox" />
-                <span>配乐<span v-if="!finish.music_ready" class="warn">（机器上没配）</span></span>
+                <!-- **这一截要是黄的。** 原来写的是 `class="warn"`，而这个组件的
+                     scoped 里没有 .warn，base.css 里也没有（全局那个叫
+                     warn-text）——于是这句"这台机器还没配配乐命令，勾了也出
+                     不来"和旁边的「配乐」两个字长得一模一样，等于没标。 -->
+                <span>配乐<span v-if="!finish.music_ready" class="warn-text">（机器上没配）</span></span>
               </label>
             </div>
           </div>
