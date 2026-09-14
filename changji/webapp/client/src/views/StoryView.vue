@@ -367,8 +367,11 @@ async function deleteChapter() {
   const n = countOf(c.chapter_id)
   const label = chapterLabel(c, index.value)
   if (!confirm(`删掉「${label}」${n ? `（${n} 字）` : ''}，没有撤销。确定？`)) return
-  // 手里没存的先放掉：删都删了，再存回去等于复活
-  clearTimeout(timers[c.chapter_id])
+  // 手里没存的先放掉：删都删了，再存回去等于复活。
+  // **`.t` 不能漏**：timers 里放的是 { t, project }，把整个对象交给
+  // clearTimeout 是静默无效的，那次存照样会在 1.5 秒后把这一章写回去。
+  clearTimeout(timers[c.chapter_id]?.t)
+  delete timers[c.chapter_id]
   const result = await run(
     () => api.deleteChapter({ project: session.projectPath, chapter_id: c.chapter_id }),
     { key: 'delch' },
@@ -554,12 +557,27 @@ onUnmounted(() => {
   batchSock?.close()
   batchSock = null
   sizer?.disconnect()
-  for (const t of Object.values(timers)) clearTimeout(t)
+  // ⚠️ **这儿原来是 clearTimeout，那等于把刚敲的字丢掉。**
+  //
+  // `beforeunload` 只管关标签页和刷新，**管不到站内换页**——在故事页敲两个
+  // 字、1.5 秒内点顶栏的「设定」，这一页就卸了，排着的那次存被取消，
+  // 那几个字再也找不回来，而且一声不吭。文件开头写着"页面走开之前要拦
+  // 一下，不然改的字就没了"，拦的只有浏览器那一半。
+  //
+  // 冲出去是安全的：请求已经发出，闭包还活着；组件没了只是没人去画结果，
+  // 而 saveChapter 里那道 project 判断会把动界面那几句跳掉。
+  flushAll()
   window.removeEventListener('beforeunload', beforeUnload)
   window.removeEventListener('keydown', onKey)
   narrowQuery.removeEventListener('change', onNarrow)
 })
-watch(() => session.projectPath, load)
+watch(() => session.projectPath, () => {
+  // **先冲再读。** load() 会把 buf 和 dirtySnapshot 整个清掉；不先冲的话，
+  // 在故事页敲两个字、1.5 秒内在项目库里点了另一部剧，那几个字就没了。
+  // 每一次排队都带着自己那部剧的路径，所以冲出去落的是**原来那一部**。
+  flushAll()
+  load()
+})
 watch(
   () => writer.running,
   (now, before) => {
@@ -804,16 +822,26 @@ function toggleFollow() {
 }
 
 // ---- 自动存 ----
-const timers = {}
-function scheduleSave(id, delay = 1500) {
-  clearTimeout(timers[id])
-  timers[id] = setTimeout(() => saveChapter(id), delay)
+//
+// **每一次排队都记住这几个字属于哪部剧。** 存的时候只认 `session.projectPath`
+// 的话，排队那 1.5 秒里换了项目，这一存就写进**新打开的那部剧**里去了——
+// 换项目走的是 watch，组件不卸载，定时器原样留着。
+const timers = {} // chapter_id -> { t, project }
+function scheduleSave(id, delay = 1500, project = session.projectPath) {
+  clearTimeout(timers[id]?.t)
+  timers[id] = { project, t: setTimeout(() => saveChapter(id, project), delay) }
 }
+/** 立刻存，不等那 1.5 秒。没排过队就按当前项目算（失焦那一下就是这样）。 */
 function flushSave(id) {
   if (!id) return
-  clearTimeout(timers[id])
+  const pending = timers[id]
+  clearTimeout(pending?.t)
   delete timers[id]
-  return saveChapter(id)
+  return saveChapter(id, pending?.project)
+}
+/** 排着的全部冲出去。走开之前调——**不是 clearTimeout**，见 onUnmounted。 */
+function flushAll() {
+  for (const id of Object.keys(timers)) flushSave(id)
 }
 
 /**
@@ -822,7 +850,7 @@ function flushSave(id) {
  * 存的那一会儿又敲了字的话，这一章仍算脏、再排一次；不然 setStory 会拿
  * 服务端那份（旧的）把刚敲的字盖掉。
  */
-async function saveChapter(id) {
+async function saveChapter(id, project = session.projectPath) {
   const c = chapters.value.find((x) => x.chapter_id === id)
   if (!c) return
   const sent = buf[id] ?? ''
@@ -833,7 +861,8 @@ async function saveChapter(id) {
   if (!sent.trim()) return
   // 上一章还在存，排在后面
   if (saver.busy.value) {
-    scheduleSave(id, 400)
+    // 重排也要带着原来那部剧，不然这 400 毫秒里换了项目就存错地方
+    scheduleSave(id, 400, project)
     return
   }
   // **存的是一个区间：[0, 服务端那份有多长)。** 所以"服务端那份有多长"
@@ -846,7 +875,7 @@ async function saveChapter(id) {
   // 第一次失败不弹框（quiet），重读一次拿到真正的长度，再存一次。
   const save = (len) =>
     api.applyRevision({
-      project: session.projectPath,
+      project,
       chapter_id: id,
       from_char: 0,
       to_char: len,
@@ -856,12 +885,21 @@ async function saveChapter(id) {
   let result = await saver.run(() => save([...(c.text ?? '')].length),
                                { key: 'save:' + id, quiet: true })
   if (!result) {
+    // **界面已经换走的话就别重读了。** refreshStory 拿回来的是**现在**那部剧
+    // 的长度，照着它再存一次等于往新剧里写旧字。第一次没成就照实说一句。
+    if (project !== session.projectPath) {
+      ui.error(`「${c.title || id}」最后改的那几个字没存回去`)
+      return
+    }
     await refreshStory()
     const fresh = chapters.value.find((x) => x.chapter_id === id)
     result = await saver.run(() => save([...(fresh?.text ?? '')].length),
                              { key: 'save:' + id })
   }
   if (!result) return
+  // 存进去了，但这一页已经在看别的剧（或者已经卸了）。下面那三句都是
+  // 拿这次的结果去动界面，这时候动就是拿旧数据盖掉新打开的那部剧。
+  if (project !== session.projectPath) return
   if ((buf[id] ?? '') !== sent) scheduleSave(id)
   else dirtySnapshot.delete(id)
   setStory(result)
