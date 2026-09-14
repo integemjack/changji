@@ -558,11 +558,22 @@ ApiResult post_plan_all(const json& body, std::shared_ptr<llm::Client> client) {
                         breq.schema = stages::bible_schema();
                         breq.schema_name = "bible";
                         breq.on_thinking = thinking_sink();
-                        assets = stages::parse_bible(
+                        AssetLibrary made = stages::parse_bible(
                             client->complete(breq, tok), project.style_line,
                             config::load_settings(store.root())
                                 .video.aspect_ratio());
-                        store.save_assets(assets);
+                        // **写回之前看一眼：这一分钟里别处可能已经补上了。**
+                        // 出这份圣经要跑一趟大模型，而这期间人完全可能在设
+                        // 定页按了「照故事定妆」。那就用人家那份——它是照整
+                        // 个故事出的，比这儿照一集剧本出的全，而且人正看着
+                        // 它。反过来拿这一份顶掉，人刚定完的角色当场全换。
+                        AssetLibrary latest = store.load_assets();
+                        if (latest.characters.empty()) {
+                            assets = std::move(made);
+                            store.save_assets(assets);
+                        } else {
+                            assets = std::move(latest);
+                        }
                     }
 
                     // 单镜的时长档位是这部剧的属性（[video].max_shot_s），
