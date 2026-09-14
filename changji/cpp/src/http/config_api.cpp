@@ -502,6 +502,17 @@ ApiResult post_settings(const json& body) {
         changed.push_back(key);
     };
 
+    // **只写不读的那两个：记下改之前的值，等下判"人是不是真动了它"。**
+    //
+    // 下面那两条 notes 原来判的是"这个键在不在请求里"——而设置页那次保存
+    // 是**把 params 整份发过来**（`saveParams` 遍历 params 的每一项），
+    // 而 params 是 `{...s.assembly, ...s.gates}` 摊平来的，这两个键一直在
+    // 里面（界面上没有它们的控件，值却跟着走）。照"在不在"判的话，每按一次
+    // 「保存参数」都会弹一条 12 秒的黄字，说一件人根本没做过的事。
+    // 改成比值：真改了才说。
+    const double before_transition_s = s.assembly.scene_transition_s;
+    const double before_similarity = s.gates.min_frame_similarity;
+
     take_int("fps", s.assembly.fps);
     take_int("crf", s.assembly.crf);
     take_str("subtitle_font", s.assembly.subtitle_font);
@@ -550,8 +561,10 @@ ApiResult post_settings(const json& body) {
     // 和别处四处说明**正好相反**的确认。
     //
     // 不拒收（老配置里有这一行，`/api/settings` 的对拍语料也钉着它），
-    // 就在回执里说一句。`notes` 这条通道本来就是为「照你填的没法做」留的。
-    if (data.find("scene_transition_s") != data.end()) {
+    // 而是在**真的被改动**时说一句。`notes` 这条通道本来就是为「照你填的
+    // 没法做」留的。**判据是"值变了"不是"键在不在"**，理由见上面
+    // before_transition_s 那段。
+    if (s.assembly.scene_transition_s != before_transition_s) {
         notes.push_back(
             "[assembly].scene_transition_s 存下来了，但它现在不生效："
             "装配是 -f concat -c copy 直接拼，全程硬切，引擎里一处转场"
@@ -560,8 +573,9 @@ ApiResult post_settings(const json& body) {
     // 同上：闸门那一组里也有一个只写不读的。**没有「与首帧比相似度」这道
     // 闸门**——gates/checks.cpp 里读 `min_frame_similarity` 的一处都没有
     // （见 settings.hpp 那个字段头上那段）。设置页上那个输入框 2026-09-15
-    // 撤了，但白名单还收它（老客户端、curl、老配置），收到就说一句。
-    if (data.find("min_frame_similarity") != data.end()) {
+    // 撤了，但白名单还收它（老客户端、curl、老配置）。同上：**改了才说**，
+    // 光是跟着一整份 params 发过来不算。
+    if (s.gates.min_frame_similarity != before_similarity) {
         notes.push_back(
             "[gates].min_frame_similarity 存下来了，但它现在不生效："
             "引擎里没有「和首帧比相似度」这道闸门，一处都没读过这个数。"
