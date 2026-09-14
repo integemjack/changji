@@ -1431,14 +1431,36 @@ void run(const config::Settings& settings, const Options& opts) {
         }
         const json& project = proj.body;
 
-        // 没指定就跟第一集走，和 Node 那边一样
+        // 没指定就跟第一集走，和 Node 那边一样。
+        //
+        // **认不出来的也算"没指定"。** 原来的判据只有"空串"，于是非空但
+        // 不在这部剧里的集号（前端 localStorage 里躺着一个删掉的集号、
+        // 另一个标签页刚把它删了、或者别处传错了）会被**原样回给前端**。
+        // 而前端那句「引擎挑了哪一集就跟着它」比的是
+        // `data.episodeId !== episodeId.value`——两边一样，它就不改；
+        // `data.episodeId` 又非空，`if (!data.episodeId) selectEpisode('')`
+        // 那条兜底也不走。结果集号永久卡在一个不存在的集上，还写在
+        // localStorage 里，刷新也出不来：顶栏那个下拉 v-model 落空显示
+        // 空白，「这一集」整页没有东西，而界面上一个字都不会说。
+        //
+        // 前端是**指望这儿判**的（session.js：「省得前端自己再判一遍第一
+        // 集是谁」），那就真判到底：查不到就退回第一集；一集都没有就回
+        // 空串，让前端把它清掉。
         std::string episode_id;
         if (const char* e = req.url_params.get("episode_id")) episode_id = e;
         const auto& eps = project.contains("episodes") && project["episodes"].is_array()
                               ? project["episodes"]
                               : json::array();
-        if (episode_id.empty() && !eps.empty() && eps[0].is_object()) {
-            episode_id = eps[0].value("episode_id", std::string());
+        const bool known =
+            !episode_id.empty() &&
+            std::any_of(eps.begin(), eps.end(), [&](const json& e) {
+                return e.is_object() &&
+                       e.value("episode_id", std::string()) == episode_id;
+            });
+        if (!known) {
+            episode_id = !eps.empty() && eps[0].is_object()
+                             ? eps[0].value("episode_id", std::string())
+                             : std::string();
         }
         json episode = nullptr;
         for (const auto& e : eps) {

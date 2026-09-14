@@ -254,10 +254,12 @@ function askRemove() {
 /**
  * 删掉这一集。
  *
- * **删完必须先把集号清空再 refresh。** `/bff/flow` 只在没给 episode_id 时
- * 才回落到第一集；给了一个已经不存在的，它照样把这个 id 回给前端，而
- * `session.refresh()` 看见 id 没变就不换——页面会停在一个空壳上，tab 上
- * 全是 0，人以为东西都没了。
+ * **删完先把集号清空再 refresh。** 这一句原来是必须的：`/bff/flow` 那会儿
+ * 只在**没给** episode_id 时才回落到第一集，给了一个已经不存在的它照样
+ * 原样回，而 `session.refresh()` 看见 id 没变就不换——页面停在一个空壳上，
+ * tab 上全是 0，人以为东西都没了。引擎那边已经改成"查不到也回落"
+ * （server.cpp 的 /bff/flow），这一句于是变成**省一趟**：不清的话要多发
+ * 一次带死集号的请求，再靠回来的 id 把界面换过去，中间闪一下。
  */
 async function remove() {
   const gone = session.episodeId
