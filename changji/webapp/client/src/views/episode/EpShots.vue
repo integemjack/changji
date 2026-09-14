@@ -46,7 +46,7 @@ const { run, isBusy, error } = useAction()
 const {
   shots,
   episodeDuration, loading, load, bust, previewOf,
-  pct, shotState, busy, shotRunning,
+  pct, shotState, busy,
   start, stop, shotAction, stepBtn, shotTone, running,
 } = useShots()
 
@@ -85,7 +85,6 @@ const totalDuration = computed(() =>
   episodeDuration.value ??
   shots.value.reduce((a, s) => a + (s.real_duration_s ?? s.duration_s ?? 0), 0),
 )
-const lipsyncCount = computed(() => shots.value.filter((s) => s.needs_lipsync).length)
 const problemCount = computed(
   () => shots.value.filter((s) => s.gate_notes?.length).length,
 )
@@ -134,8 +133,11 @@ const tagline = computed(() => {
         v.quality,
       )} · ${v.width}×${v.height}`
     : ''
-  if (!shots.value.length) return size
-  return `${shots.value.length} 镜 · ${humanTime(totalDuration.value)}${size ? ' · ' + size : ''}`
+  // 镜数在 tab 上，画幅在项目页「这部片子」那一行——这儿只剩这一集多长。
+  // size 留着算，抽屉和格子比例还要它（cellRatio）。
+  void size
+  if (!shots.value.length) return ''
+  return humanTime(totalDuration.value)
 })
 
 /**
@@ -156,7 +158,6 @@ const FILTERS = [
   { key: 'all', label: '全部' },
   { key: 'todo', label: '未完成' },
   { key: 'problem', label: '有问题' },
-  { key: 'lipsync', label: '适合口型' },
 ]
 
 const shown = computed(() => {
@@ -320,13 +321,6 @@ async function generate() {
   }
 }
 
-async function planAll() {
-  const result = await run(
-    () => api.planAll({ project: session.projectPath, overwrite: false }),
-    { key: 'planAll' },
-  )
-  if (result) ui.info(`正在给 ${result.episodes.join('、')} 补分镜，去第二步能看进度`)
-}
 
 async function saveShot() {
   if (!draft.value) return
@@ -575,14 +569,6 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
       </button>
       <template v-else>
         <button
-          class="btn btn--ghost btn--sm"
-          type="button"
-          :disabled="!session.hasProject"
-          @click="planAll"
-        >
-          批量补分镜
-        </button>
-        <button
           class="btn btn--ai"
           type="button"
           :disabled="!session.episodeId || isBusy('plan')"
@@ -626,7 +612,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
       <span>还没有{{ missingAssets.join('和') }}</span>
       <span class="spacer" />
       <RouterLink
-        :to="missingAssets[0] === '角色' ? '/characters' : '/scenes'"
+        :to="missingAssets[0] === '角色' ? '/assets?tab=characters' : '/assets?tab=locations'"
         class="btn btn--ghost btn--sm"
       >
         先去出{{ missingAssets[0] }}
@@ -688,19 +674,12 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
             <span class="tl__n">{{ s.order + 1 }}</span>
           </button>
         </div>
-        <div class="timeline__legend tiny dim">
-          <span><i class="swatch swatch--neutral" />未开工</span>
-          <span><i class="swatch swatch--info" />进行中</span>
-          <span><i class="swatch swatch--warn" />未过闸</span>
-          <span><i class="swatch swatch--ok" />已完成</span>
-          <!-- **「适合」不是「会做」。** 流水线里没有口型这一步（Stage 枚举
-               只有配音/首帧/草稿/成片/装配），这个标记现在只是"这一镜嘴
-               对着镜头、将来做口型要处理它"。写成"要口型"的话读起来像是
-               出片时会做，而它不会。 -->
-          <span v-if="lipsyncCount" :title="'流水线暂时没有口型这一步，这个标记只说这几镜适合做'">
-            {{ lipsyncCount }} 镜适合做口型
-          </span>
-          <span v-if="problemCount" class="warn-text">{{ problemCount }} 镜有备注</span>
+        <!-- 图例删了：四个色块一眼看得懂，格子上的状态字还写着同一件事。
+             「N 镜适合做口型」也删了——流水线里没有口型这一步（Stage 枚举
+             只有配音/首帧/草稿/成片/装配），给不存在的步骤计数是误导。
+             有备注的才值得提一句，那是要人去看的。 -->
+        <div v-if="problemCount" class="timeline__legend tiny">
+          <span class="warn-text">{{ problemCount }} 镜有备注</span>
         </div>
       </div>
 
@@ -830,31 +809,12 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
             <button class="cell__no numeric" type="button" title="改这一镜" @click="toggle(s)">
               {{ s.order + 1 }}
             </button>
+            <!-- 格子上只有序号和状态。原来每格还有三个重出按钮（配音/首帧/
+                 成片），16 镜就是 48 个按钮铺在一面什么都还没出的墙上；
+                 重出是改的时候才要的事，抽屉页脚有同一排。 -->
             <button class="cell__state tiny truncate" type="button" title="改这一镜" @click="toggle(s)">
               {{ shotState(s) }}
             </button>
-            <span class="spacer" />
-            <button
-              v-if="shotRunning(s.shot_id)"
-              class="iconbtn"
-              type="button"
-              title="停下这一轮（跑完的镜头留着）"
-              @click="shotAction(s, 'final')"
-            >
-              <AppIcon name="pause" :size="14" />
-            </button>
-            <template v-else>
-              <button
-                v-for="step in STEPS"
-                :key="step.id"
-                class="iconbtn"
-                type="button"
-                :title="stepBtn(s, step).title"
-                @click="shotAction(s, step.id)"
-              >
-                <AppIcon :name="stepBtn(s, step).icon" :size="14" />
-              </button>
-            </template>
           </div>
 
           <p v-if="s.gate_notes?.length" class="cell__notes tiny">
@@ -869,11 +829,10 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
     <div v-if="draft && openShot" class="drawer" @click.self="close">
       <aside class="drawer__panel">
         <header class="drawer__head">
-          <b class="numeric" title="↑ ↓ 换镜头">{{ openShot.order + 1 }}</b>
+          <b class="numeric" :title="`${openShot.shot_id}（↑ ↓ 换镜头）`">{{ openShot.order + 1 }}</b>
           <span class="pill nowrap" :class="`pill--${shotTone(openShot)}`">
             {{ shotState(openShot) }}
           </span>
-          <span v-if="openShot.needs_lipsync" class="pill pill--info nowrap tiny">口型</span>
           <span class="spacer" />
           <!-- 触屏上拖不动格子，这一对是给它们留的 -->
           <button
@@ -913,8 +872,6 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
               {{ charName(cid) }}
             </span>
             <span v-if="openShot.beat" class="pill pill--neutral tiny">{{ openShot.beat }}</span>
-            <span class="spacer" />
-            <span class="mono">{{ openShot.shot_id }}</span>
           </div>
 
           <p class="group">画面</p>
@@ -935,11 +892,6 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
             <span class="field__label">运动提示词</span>
             <textarea v-model="draft.motion_prompt" class="textarea textarea--tight mono" rows="2" />
           </label>
-          <label class="field">
-            <span class="field__label">负向提示词</span>
-            <textarea v-model="draft.negative_prompt" class="textarea textarea--tight mono" rows="2" />
-          </label>
-
           <p class="group">镜头语言</p>
           <div class="grid grid--pairs">
             <label class="field">
@@ -975,34 +927,6 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
                 :disabled="draft.duration_locked"
               />
             </label>
-            <label class="field">
-              <span class="field__label">转场</span>
-              <!-- **选了也还不会渲染。** 装配走的是 `-f concat -c copy`
-                   纯硬切，全树没有一处 xfade——这两项现在只是记下来的意图。
-                   真做要把整条片子重编码一遍，是另一件事。
-                   （2026-09-13 之前更糟：时间线按重叠算，字幕比画面早，
-                   每个 dissolve 累积 0.4 秒。） -->
-              <select
-                v-model="draft.transition_in"
-                class="select"
-                title="记下来的意图；装配暂时是纯硬切，转场还没有渲染"
-              >
-                <option v-for="o in TRANSITIONS" :key="o.value" :value="o.value">{{ o.label }}</option>
-              </select>
-            </label>
-            <label class="field">
-              <span class="field__label">转场时长</span>
-              <input
-                v-model.number="draft.transition_dur_s"
-                class="input numeric"
-                type="number"
-                step="0.1"
-                min="0"
-                max="2"
-                :disabled="draft.transition_in === 'cut'"
-                :title="draft.transition_in === 'cut' ? '硬切固定为 0' : ''"
-              />
-            </label>
           </div>
 
           <p class="group">声音与字幕</p>
@@ -1025,13 +949,54 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
             <span class="field__label">字幕</span>
             <input v-model="draft.subtitle_text" class="input" />
           </label>
-          <label
-            class="switch"
-            title="按景别、机位和面朝方向自动推的，一般不用改。注意：流水线暂时没有口型这一步，这个标记只是记下来"
-          >
-            <input v-model="draft.needs_lipsync" type="checkbox" />
-            <span>适合做口型</span>
-          </label>
+
+          <!-- **折起来的三样：两样流水线还不做，一样很少改。**
+               转场：装配走的是 `-f concat -c copy` 纯硬切，全树没有一处
+               xfade，选了也不会渲染，只是记下来的意图。（2026-09-13 之前
+               更糟：时间线按重叠算，字幕比画面早，每个 dissolve 累积 0.4 秒。）
+               口型：Stage 枚举里没有这一步，这个勾只说"这一镜适合做"。
+               负向提示词：全剧那份在项目页「这部片子」里，单镜的很少动。 -->
+          <details class="fold">
+            <summary class="fold__t">更多：负向提示词、转场、口型</summary>
+            <div class="stack stack--sm">
+              <label class="field">
+                <span class="field__label">负向提示词</span>
+                <textarea v-model="draft.negative_prompt" class="textarea textarea--tight mono" rows="2" />
+              </label>
+              <div class="grid grid--pairs">
+                <label class="field">
+                  <span class="field__label">转场</span>
+                  <select
+                    v-model="draft.transition_in"
+                    class="select"
+                    title="记下来的意图；装配暂时是纯硬切，转场还没有渲染"
+                  >
+                    <option v-for="o in TRANSITIONS" :key="o.value" :value="o.value">{{ o.label }}</option>
+                  </select>
+                </label>
+                <label class="field">
+                  <span class="field__label">转场时长</span>
+                  <input
+                    v-model.number="draft.transition_dur_s"
+                    class="input numeric"
+                    type="number"
+                    step="0.1"
+                    min="0"
+                    max="2"
+                    :disabled="draft.transition_in === 'cut'"
+                    :title="draft.transition_in === 'cut' ? '硬切固定为 0' : ''"
+                  />
+                </label>
+              </div>
+              <label
+                class="switch"
+                title="按景别、机位和面朝方向自动推的，一般不用改。流水线暂时没有口型这一步，这个勾只是记下来"
+              >
+                <input v-model="draft.needs_lipsync" type="checkbox" />
+                <span>适合做口型</span>
+              </label>
+            </div>
+          </details>
         </div>
 
         <footer class="drawer__foot">

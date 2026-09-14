@@ -281,6 +281,15 @@ async function addEpisode() {
   }
 }
 
+/** 给全项目还没分镜的集补分镜。从「这一集」的镜头格搬来的，理由见模板。 */
+async function planAll() {
+  const result = await run(
+    () => api.planAll({ project: session.projectPath, overwrite: false }),
+    { key: 'planAll' },
+  )
+  if (result) ui.info(`正在给 ${result.episodes.join('、')} 补分镜，去「这一集」能看进度`)
+}
+
 defineExpose({ load })
 </script>
 
@@ -307,6 +316,19 @@ defineExpose({ load })
           · {{ chapters.length - writtenCount }} 章还没正文</template>
       </span>
       <span class="spacer" />
+      <!-- 给全项目还没分镜的集都出一遍。原来在「这一集」的镜头格上——
+           一个管**全项目**的按钮摆在**一集**的页面上。它属于这儿：
+           这一格就是所有集摆在一起的地方。 -->
+      <button
+        v-if="hasStory && plan.length"
+        class="btn btn--ghost btn--sm"
+        type="button"
+        :disabled="isBusy('planAll')"
+        title="把还没有分镜的集一次出完，有分镜的不动"
+        @click="planAll"
+      >
+        {{ isBusy('planAll') ? '排着…' : '批量补分镜' }}
+      </button>
       <button
         v-if="hasStory"
         class="btn btn--primary btn--sm"

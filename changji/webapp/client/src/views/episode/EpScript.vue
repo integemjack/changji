@@ -187,8 +187,14 @@ async function save() {
       </button>
     </div>
 
-    <!-- 场次头：剧本的第一行。来自分集表压着的那几场，不来自 AI -->
-    <section v-if="hasHead" class="head">
+    <!-- 场次头：写剧本的依据，来自分集表压着的那几场，不来自 AI。
+         **没剧本时摊开，有了剧本折起来**——那时它说的话剧本已经说过了，
+         和底下「原文」同一条规矩。 -->
+    <details v-if="hasHead" class="head" :open="!script.trim()">
+      <summary class="source__sum">
+        <span>这一集要拍什么</span>
+        <span class="tiny dim numeric">{{ scenes.length }} 场</span>
+      </summary>
       <div v-for="(s, i) in scenes" :key="i" class="head__scene">
         <div class="head__where">
           <AppIcon name="scene" :size="14" />
@@ -207,7 +213,7 @@ async function save() {
         <span v-if="ctx.hook">· 停在「{{ ctx.hook }}」</span>
         <span v-if="!fromStory">这一集不在分集表上，照梗概写</span>
       </div>
-    </section>
+    </details>
 
     <!-- 原文：这一集要拍的那段小说。没剧本时默认展开，人读的就是它 -->
     <details v-if="sourceText" class="source" :open="!script.trim()">
@@ -257,7 +263,6 @@ async function save() {
       v-else-if="!script.trim() && !draft && mode !== 'edit'"
       icon="script"
       :title="fromStory ? '原文在上面，还没改编成剧本' : '这一集还没有剧本'"
-      :hint="fromStory ? '点「改编成剧本」，AI 把它变成四段能拍的拍子；也可以手写' : ''"
     />
 
     <ScriptReader

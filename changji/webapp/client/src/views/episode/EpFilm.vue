@@ -5,7 +5,7 @@
  * 审片页。左边选片，右边播。手机上折成上下两段。
  * 播放器要够大——这一页存在的意义就是让人真的看一遍再发出去。
  */
-import { computed, ref, watch } from 'vue'
+import { computed, onActivated, ref, watch } from 'vue'
 
 import AppIcon from '@/components/AppIcon.vue'
 import EmptyState from '@/components/EmptyState.vue'
@@ -15,6 +15,12 @@ import { useSession } from '@/stores/session'
 import { useUi } from '@/stores/ui'
 
 const emit = defineEmits(['go'])
+/** 投递那一层在不在。不在就没有「去上传」——它指向一个不存在的 tab。 */
+const props = defineProps({ canPublish: { type: Boolean, default: false } })
+
+// 这一格被 KeepAlive 冻着：在镜头格出完片切过来，看到的还是切走时那份。
+// 切过来时自己重拉，就不用摆一个「刷新」按钮让人替它记着。
+onActivated(load)
 const session = useSession()
 const ui = useUi()
 
@@ -109,24 +115,10 @@ function onTimeUpdate(event) {
 
 <template>
   <div class="stack stack--lg">
-    <div class="toolbar">
-      <span v-if="current" class="tiny dim truncate">{{ current.name }}</span>
+    <div v-if="current && props.canPublish" class="toolbar">
+      <span class="tiny dim truncate">{{ current.name }}</span>
       <span class="spacer" />
-      <button
-        class="btn btn--ghost btn--sm"
-        type="button"
-        :disabled="loading || !session.hasProject"
-        @click="load"
-      >
-        <AppIcon name="refresh" :size="14" />
-        刷新
-      </button>
-      <button
-        v-if="current"
-        class="btn btn--primary"
-        type="button"
-        @click="emit('go', 'publish')"
-      >
+      <button class="btn btn--primary" type="button" @click="emit('go', 'publish')">
         <AppIcon name="upload" :size="15" />
         去上传
       </button>
@@ -183,20 +175,16 @@ function onTimeUpdate(event) {
           </div>
         </div>
 
-        <div v-if="current" class="player__meta row row--wrap tiny dim">
+        <!-- 完整路径删了（一年用一次，见项目页那条），要抄放在 title 里 -->
+        <div v-if="current" class="player__meta row row--wrap tiny dim" :title="current.rel">
           <span class="numeric">{{ current.size_mb }} MB</span>
           <span>{{ humanAgo(current.mtime) }}</span>
-          <span class="mono truncate">{{ current.rel }}</span>
-          <span class="spacer" />
-          <RouterLink to="/publish" class="btn btn--ghost btn--sm">
-            <AppIcon name="upload" :size="14" />
-            投递这一条
-          </RouterLink>
         </div>
       </section>
 
-      <!-- 片单 -->
-      <section class="sec reel">
+      <!-- 片单。**只有一条时不显示**：这是全项目的成片清单摆在一集的页面上，
+           一条的时候播放器本身就是答案，清单只是把同一件事再说一遍。 -->
+      <section v-if="files.length > 1" class="sec reel">
         <div class="sec__head">
           <h2 class="sec__t">已出的片</h2>
           <span class="tiny dim">{{ files.length }} 条</span>
