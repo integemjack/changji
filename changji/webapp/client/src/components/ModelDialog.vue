@@ -278,7 +278,12 @@ async function download() {
           <template v-else>没探测到显卡</template>
           <template v-if="diskFree"> ｜ 盘剩 {{ humanBytes(diskFree) }}</template>
         </span>
-        <button class="btn btn--ghost btn--sm" type="button" @click="emit('close')">
+        <button
+          class="btn btn--ghost btn--sm"
+          type="button"
+          aria-label="关闭"
+          @click="emit('close')"
+        >
           <AppIcon name="close" :size="14" />
         </button>
       </header>

@@ -98,7 +98,12 @@ async function openExisting() {
             <div class="card__title">加一个项目</div>
             <div class="card__sub">新建一个，或者把已经有的目录接进来。</div>
           </div>
-          <button class="btn btn--ghost btn--sm" type="button" @click="emit('close')">
+          <button
+            class="btn btn--ghost btn--sm"
+            type="button"
+            aria-label="关闭"
+            @click="emit('close')"
+          >
             <AppIcon name="close" :size="15" />
           </button>
         </div>

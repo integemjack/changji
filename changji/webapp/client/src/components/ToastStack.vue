@@ -23,7 +23,7 @@ onUnmounted(() => window.removeEventListener('changji:error', onGlobalError))
       :key="t.id"
       class="toast"
       :class="`toast--${t.kind}`"
-      role="status"
+      :role="t.kind === 'error' ? 'alert' : 'status'"
     >
       <AppIcon :name="ICONS[t.kind] || 'info'" :size="15" class="toast__icon" />
       <span class="toast__text">{{ t.text }}</span>

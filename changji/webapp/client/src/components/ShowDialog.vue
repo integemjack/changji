@@ -174,7 +174,7 @@ async function save() {
           {{ styleLine === 'anime' ? '动漫线' : '写实线' }}
         </span>
         <span class="spacer" />
-        <button class="btn btn--ghost btn--sm" type="button" @click="tryClose">
+        <button class="btn btn--ghost btn--sm" type="button" aria-label="关闭" @click="tryClose">
           <AppIcon name="close" :size="14" />
         </button>
       </header>
