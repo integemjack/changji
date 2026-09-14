@@ -81,7 +81,18 @@ async function loadShow() {
   const video = v.status === 'fulfilled' ? v.value : null
   const style = a.status === 'fulfilled' ? a.value.style : null
   show.value = {
-    orientation: video?.orientation === 'landscape' ? '横屏' : '竖屏',
+    // **读不出来就别说「竖屏」。**
+    //
+    // 这里原来是 `video?.orientation === 'landscape' ? '横屏' : '竖屏'`：
+    // 接口挂了、项目在别处被删了的时候 `video` 是 null，这个三目稳稳落到
+    // "竖屏"——于是这一行**信誓旦旦地报了一个它根本没读到的值**，而在横屏
+    // 项目上那就是一句假话。资产库那边同一件事写着「显示一个跑的时候根本
+    // 不会用的值，比不显示更糟」。
+    orientation: video
+      ? video.orientation === 'landscape'
+        ? '横屏'
+        : '竖屏'
+      : '画幅读不出来',
     size: video ? qualitySize(video.quality, video.orientation) : '',
     look: style?.global_style || '',
   }
@@ -194,7 +205,9 @@ watch(() => session.projectPath, loadShow, { immediate: true })
         <span class="line__k">这部片子</span>
         <span class="line__v truncate">
           <template v-if="show">
-            {{ show.orientation }} · {{ show.size }}<template v-if="show.look"> · {{ show.look }}</template>
+            <!-- 分隔符跟着后一段走：读不出画幅时 size 是空的，写死的
+                 「 · 」会在行尾留一个没有下文的点。 -->
+            {{ show.orientation }}<template v-if="show.size"> · {{ show.size }}</template><template v-if="show.look"> · {{ show.look }}</template>
           </template>
           <span v-else class="dim">读取中…</span>
         </span>
