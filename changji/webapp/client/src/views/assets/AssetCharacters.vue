@@ -1224,12 +1224,29 @@ async function clearRef(charId, slot) {
                 </details>
               </label>
 
+              <!-- ⚠️ **「训了角色 LoRA 才填」是句假话。** 引擎一处都没有
+                   加载角色 LoRA 的地方：`Character` 上确实有 `lora_path`
+                   和 `lora_strength`（`/api/asset/edit` 的白名单还收），
+                   但全仓库读它们的**零处**——sd_image.cpp 里唯一挂 LoRA
+                   的分支是 `if (is_video && !m.video_lora.empty())`，出图
+                   那条路上根本没有 LoRA。
+
+                   这一栏里的词真正会发生的事只有一件：
+                   `Character::render_prompt` 把它拼在这个人提示词的**最
+                   前面**（character.cpp）。所以按原来那句话去做——训一个
+                   LoRA、把触发词填进来——得到的是"每张图的提示词最前面
+                   多了一个模型不认识的词"，只会更差。
+
+                   它有用的场合是另一个：词已经**长在出图模型里**（LoRA
+                   合进了 checkpoint，或者模型本来就认这个词）。改成照这个
+                   说。栏目名不动，那个词本身还叫这个。 -->
               <label class="field">
                 <span class="field__label">LoRA 触发词</span>
                 <input
                   v-model="edits[openChar.char_id].lora_trigger"
                   class="input mono"
-                  placeholder="训了角色 LoRA 才填"
+                  title="这个词会拼在这个人提示词的最前面。引擎不加载角色 LoRA，所以只有出图模型本来就认得它才有用——比如把 LoRA 合进了 checkpoint。放一个单独的 .safetensors 在旁边没人读。"
+                  placeholder="出图模型自己认得的词"
                 />
               </label>
             </div>
