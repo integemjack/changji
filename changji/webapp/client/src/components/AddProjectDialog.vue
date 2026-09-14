@@ -91,10 +91,18 @@ const workspace = computed(() => store.workspace || '工作目录')
  * 不是切走之后才发现回不去。
  */
 const inWorkspace = computed(() => {
-  const w = (store.workspace || '').replace(/[\\/]+$/, '').toLowerCase()
-  const v = openPath.value.trim().replace(/[\\/]+$/, '').toLowerCase()
+  // ⚠️ **两种分隔符要先统一。** 这一页的占位符写的是
+  // `例如：E:\AI短剧\雨夜天台`，而引擎回的 workspace 也是反斜杠那一份；
+  // 可是从资源管理器地址栏、别的工具、聊天记录里粘过来的经常是正斜杠，
+  // Windows 两种都认。原来是拿"原样的斜杠"逐字比：库是 `E:\AI短剧`、
+  // 填的是 `E:/AI短剧/雨夜天台`，两条 startsWith 都不中，于是**对一条
+  // 确实在库里的路径**弹出下面那句加粗的「切走就找不回来了」。
+  // 一句吓人的假话比不说更糟。
+  const norm = (x) => String(x || '').trim().replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase()
+  const w = norm(store.workspace)
+  const v = norm(openPath.value)
   if (!w || !v) return true // 还没填就别先吓人
-  return v.startsWith(w + '\\') || v.startsWith(w + '/')
+  return v.startsWith(w + '/')
 })
 
 // 每次打开都从头来。留着上次的输入，第二次打开会看见一个填了一半的框，
