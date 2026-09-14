@@ -173,8 +173,12 @@ Check check_llm(const config::Settings& s) {
         return {"大模型", Level::FAIL,
                 "配的是进程内跑，而这条路已经没有了",
                 "配置里把 [llm].backend 改成 remote。\n"
-                "地址和密钥两条路都能填——界面上是项目页点「模型」那一行的\n"
-                "大模型那一格，命令行是 [llm].base_url 和 api_key。\n"
+                // 项目页那一行上没有「大模型」这三个字：四个按钮各写着
+                // 模型名，鼠标停上去才是组名，而编剧那一组叫「编剧模型」
+                // （catalog.cpp 的 g.title）。同一个检查里另外两条分支早就
+                // 改成说「编剧模型的名字」了，这条漏了。
+                "地址和密钥两条路都能填——界面上是项目页「模型」那一行点一下\n"
+                "编剧模型的名字，命令行是 [llm].base_url 和 api_key。\n"
                 "默认走智谱（bigmodel.cn），glm-4.7-flash 不要钱。"};
     }
 
@@ -253,6 +257,17 @@ Check check_llm(const config::Settings& s) {
                 "清单上有的：" + list + "\n"
                 "确实写错了的话：去项目页那个模型窗口里改，或者 "
                 "export CHANGJI_LLM_MODEL=" + names[0]};
+    }
+    // **云服务和本机服务该做的事不一样**，一句话糊过去会把人支错方向——
+    // 上面「连不上」那条早就按 `needs_api_key()` 分了两支，这条漏了：
+    // 对着智谱（或者任何一个 /models 回空清单的云服务）说一句
+    // 「ollama pull glm-4.7-flash」，照着做只会得到一句找不到命令。
+    if (s.llm.needs_api_key()) {
+        return {"大模型", Level::WARN, url + " 的模型清单是空的",
+                "有些平台的 /models 本来就不列（智谱免费档就这样），那样的话\n"
+                "这条可以不管——写剧本时真调得通就行。\n"
+                "真连错了地址的话：项目页「模型」那一行点一下编剧模型的名字，\n"
+                "在弹出来的窗口里核一眼。"};
     }
     return {"大模型", Level::WARN, url + " 一个模型都没有",
             "拉取一个：ollama pull " + model};
