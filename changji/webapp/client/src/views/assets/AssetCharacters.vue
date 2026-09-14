@@ -482,7 +482,12 @@ async function genRef(charId, slot) {
     { key: 'gen:' + charId + slot },
   )
   if (!result) return
-  ui.ok(`${SLOTS.find((s) => s.key === slot)?.label ?? slot}画好了（${Math.round(result.seconds)} 秒）`)
+  // 出图那一趟同样会退镜头（引擎注释：「和上传那条一样**无条件重跑**：
+  // 参考图直接决定画面长什么样」），回包里带着数，这儿原来只报秒数。
+  ui.ok(
+    `${SLOTS.find((s) => s.key === slot)?.label ?? slot}画好了（${Math.round(result.seconds)} 秒）` +
+      (result.reset_shots ? `，${result.reset_shots} 个镜头退回重跑` : ''),
+  )
   await load()
 }
 
@@ -550,7 +555,20 @@ async function clearRef(charId, slot) {
     { key: 'clr:' + charId + slot },
   )
   if (result) {
-    ui.ok('已撤掉这张参考图')
+    // 回包里有 `cleared` 和 `reset_shots`，这儿原来一个都没读。
+    //
+    // **撤一张参考图会把已渲染的镜头退回待跑**（引擎那边撤完就调
+    // reset_all_shots），而提示里一个字没有——隔壁「上传」和「保存」都报
+    // 这件事，独独撤图不报。人撤掉一张图，整屏的「成片完成」在下一次重拉
+    // 之后变成「未开工」，而他刚看到的提示只说了「已撤掉」。
+    //
+    // `cleared` 为假是"本来就没有这张图"（引擎提前返回、一镜没退）。
+    ui.ok(
+      result.cleared === false
+        ? '这个位置本来就没有参考图'
+        : '已撤掉这张参考图' +
+            (result.reset_shots ? `，${result.reset_shots} 个镜头退回重跑` : ''),
+    )
     touch() // 同 upload：撤图不发 ref_done，这一格和「缺 N」都靠它重拉
   }
 }

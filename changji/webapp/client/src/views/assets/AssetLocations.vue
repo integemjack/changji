@@ -334,7 +334,11 @@ async function genEmpty(locationId) {
     { key: 'gen:' + locationId },
   )
   if (!result) return
-  ui.ok(`空景图画好了（${Math.round(result.seconds)} 秒）`)
+  // 同角色格：出图也会退镜头，回包里有数。
+  ui.ok(
+    `空景图画好了（${Math.round(result.seconds)} 秒）` +
+      (result.reset_shots ? `，${result.reset_shots} 个镜头退回重跑` : ''),
+  )
   await load()
 }
 
@@ -348,7 +352,13 @@ async function clearEmpty(locationId) {
     { key: 'clr:' + locationId },
   )
   if (result) {
-    ui.ok('已撤掉空景图')
+    // 同角色格那处：撤图会把已渲染的镜头退回待跑，得说出来。
+    ui.ok(
+      result.cleared === false
+        ? '这个场景本来就没有空景图'
+        : '已撤掉空景图' +
+            (result.reset_shots ? `，${result.reset_shots} 个镜头退回重跑` : ''),
+    )
     touch() // 同 upload：撤图不发 ref_done，这一格和「缺 N」都靠它重拉
   }
 }
