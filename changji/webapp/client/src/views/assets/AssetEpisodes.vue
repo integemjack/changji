@@ -288,12 +288,16 @@ const TRAILER_ID = 'trailer'
  * 「接着前几集写」的上下文。
  */
 async function writeTrailer() {
+  // 开工那一刻把项目钉死：`runAsyncJob` 要等那条 socket 开（最多两秒）
+  // 才把请求发出去，这中间在项目库里点了别的剧的话，下面这个 `project`
+  // 读到的就是新那一部。同文件里一键出图那条的理由。
+  const project = session.projectPath
   const result = await run(
     () =>
       runAsyncJob(
         (extra) =>
           api.writeTrailer({
-            project: session.projectPath,
+            project,
             duration_s: trailerDurationS.value,
             ...extra,
           }),

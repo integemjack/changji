@@ -43,7 +43,30 @@ const savedScript = ref('')
 const ctx = ref(null)
 const loading = ref(false)
 const mode = ref('read')
-const draft = ref(null)
+/**
+ * 写出来还没采用的那一份，**按「项目 + 集号」存**。
+ *
+ * 原来是一个裸 ref，而写一篇要一两分钟：这中间在顶栏换一集，回包落地那
+ * 一下 `draft.value = result` 就把**上一集的剧本**贴在新这一集的抽屉里，
+ * 而「采用」发的是当前的集号——按下去就是 ep01 的稿子盖掉 ep02 的正文。
+ * `load()` 里那句 `draft.value = null` 挡不住它：清空发生在回包之前。
+ *
+ * 按集号存之后，落地那一下只填它自己那一格；人切回去还能接着看，不用再
+ * 等一两分钟。这一份**不落盘**（引擎只存大纲草稿，不存剧本草稿），所以
+ * 丢掉就是白跑一趟。
+ */
+const drafts = ref({})
+function setDraft(key, v) {
+  const next = { ...drafts.value }
+  if (v) next[key] = v
+  else delete next[key]
+  drafts.value = next
+}
+/** 当前这一集那一份。可写——模板里「丢弃」和下面几处照旧 `draft = null`。 */
+const draft = computed({
+  get: () => drafts.value[ctxKey()] ?? null,
+  set: (v) => setDraft(ctxKey(), v),
+})
 
 /**
  * 手里这份稿子是**哪一集**的。
@@ -104,7 +127,10 @@ async function load() {
   // 本身慢，顺序反过来是真会发生的。
   const want = ctxKey()
   loading.value = true
-  draft.value = null
+  // **这儿原来有一句 `draft.value = null`。** 那时候草稿是个裸 ref、装的
+  // 是上一集那一份，进来先清是对的。现在草稿按集号存，这一句清的正好是
+  // **要进的这一集自己那一份**——在 ep02 写了一篇没采用、去 ep01 看一眼
+  // 再回来，那一篇就没了，而它不落盘，等于白跑一两分钟。
   try {
     const [data, context] = await Promise.all([
       api.getScript(session.projectPath, session.episodeId),
@@ -189,7 +215,9 @@ function flush() {
 function beforeUnload(e) {
   const unsaved = dirty.value && script.value.trim()
   const inFlight = isBusy('write')
-  if (!unsaved && !inFlight && !draft.value) return
+  // 草稿按集号存着，别只看当前这一格：在 ep01 写了一篇没采用、切到 ep02
+  // 再刷新，丢的是 ep01 那一篇。
+  if (!unsaved && !inFlight && !Object.keys(drafts.value).length) return
   e.preventDefault()
   e.returnValue = ''
 }
@@ -211,22 +239,33 @@ watch(
 )
 
 async function write() {
+  // 开工那一刻把四样都钉死。这一趟一两分钟，中途换集的话：请求本身会带
+  // 着新集号（`runAsyncJob` 要等 socket 开才发，最多两秒）、梗概和目标时
+  // 长也成了新那一集的，而写出来的东西还会落到新那一集的抽屉里。
+  const project = session.projectPath
+  const episodeId = session.episodeId
+  const key = ctxKey()
+  const premise = session.project?.premise ?? ''
+  const seconds = durationS.value
   const result = await run(
     () =>
       runAsyncJob(
         (extra) =>
           api.writeScript({
-            project: session.projectPath,
-            episode_id: session.episodeId,
-            premise: session.project?.premise ?? '',
-            duration_s: durationS.value,
+            project,
+            episode_id: episodeId,
+            premise,
+            duration_s: seconds,
             ...extra,
           }),
         { prefix: 'script', label: '写剧本' },
       ),
     { key: 'write' },
   )
-  if (result) draft.value = result
+  if (!result) return
+  setDraft(key, result)
+  // 人已经走了：别把它画在别的集上，也别当它没发生过——这一份没落盘。
+  if (key !== ctxKey()) ui.info(`${episodeId} 的剧本写好了，切回那一集就能看`)
 }
 
 async function adopt() {

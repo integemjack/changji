@@ -162,6 +162,14 @@ function pick(key) {
  * 路，得知道拿哪一集。有故事的项目引擎不看它。
  */
 async function bible() {
+  // **确认框里报的代价是这一部剧的，那这一趟就得落在这一部上。**
+  //
+  // `runAsyncJob` 要等那条 socket 开（最多两秒）才发请求，而下面原来现读
+  // session：这两秒里在项目库点了另一部剧，`overwrite` 那一下就带着"会冲
+  // 掉 15 张参考图"的确认，落到一部**没被问过**的剧上——而那一下是没有撤
+  // 销的。一键出图那条早就把项目钉死了，理由写在它旁边。
+  const project = session.projectPath
+  const episodeId = session.episodeId
   const over = overwrite.value
   if (over) {
     // **把代价写成数字。** 「会冲掉参考图」听着像一句免责声明，而实际
@@ -184,9 +192,9 @@ async function bible() {
       runAsyncJob(
         (extra) =>
           api.makeBible({
-            project: session.projectPath,
+            project,
             overwrite: over,
-            ...(session.episodeId ? { episode_id: session.episodeId } : {}),
+            ...(episodeId ? { episode_id: episodeId } : {}),
             ...extra,
           }),
         { prefix: 'bible', label: '照故事定妆' },

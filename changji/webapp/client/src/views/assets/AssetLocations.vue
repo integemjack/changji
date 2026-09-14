@@ -423,12 +423,17 @@ async function uploadEmpty(locationId, event) {
  * 那是个不属于任何角色、也没法改的人。
  */
 async function genEmpty(locationId) {
+  // 开工那一刻把项目钉死：`runAsyncJob` 要等那条 socket 开（最多两秒）
+  // 才把请求发出去，这中间在项目库里点了别的剧的话，下面这个 `project`
+  // 读到的就是新那一部。同文件里一键出图那条的理由。
+  // 同角色格：locationId 是上一部剧的 id，落到新那一部上就是 404。
+  const project = session.projectPath
   const result = await run(
     () =>
       runAsyncJob(
         (extra) =>
           api.generateLocationReference({
-            project: session.projectPath,
+            project,
             location_id: locationId,
             ...extra,
           }),
