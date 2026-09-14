@@ -264,16 +264,10 @@ async function remove() {
   await session.refresh()
 }
 
-// 旧路径 /shots /film /publish 直接进来时，把视图对上
-const LEGACY = { '/shots': 'shots', '/film': 'film', '/publish': 'publish' }
-watch(
-  () => route.path,
-  (path) => {
-    const want = LEGACY[path]
-    if (want) router.replace({ path: '/episode', query: { view: want } })
-  },
-  { immediate: true },
-)
+// **这儿原来还有一段"旧路径进来就把视图对上"**（/shots /film /publish →
+// `?view=`）。那段永远不会跑：router 里那五条 redirect 在组件挂之前就把
+// 路径换成 /episode 了，所以这一页看到的 `route.path` 只可能是 /episode。
+// 留着会让人以为改旧路径要动两个地方。
 
 watch(() => [session.projectPath, session.episodeId], load, { immediate: true })
 // 切 tab 的时候顺手重拉一次：子视图在自己格子里干完的活（采用剧本、出了
