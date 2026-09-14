@@ -68,20 +68,32 @@ const dirName = computed(() => {
 
 /** 「这部片子」那一行的答案：画幅 · 尺寸 · 画风开头一句。 */
 const show = ref(null)
+/** show 里那份是哪部剧读回来的。换剧时用来决定要不要先擦掉。 */
+let shownFor = null
 
 async function loadShow() {
-  if (!session.projectPath) {
+  const want = session.projectPath
+  // **换了一部剧，先把上一部的答案擦掉。**
+  //
+  // 下面那句 want !== projectPath 只挡住了"回来晚了别乱写"，挡不住这段
+  // 空当里屏幕上印着什么：这一行只在 show 为空时才写「读取中…」，不擦的
+  // 话从 A 点到 B 的一两秒里，B 的行上**明晃晃写着 A 的画幅和画风**，而
+  // 且没有任何标记说它是旧的——和上面 orientation 那段是同一条道理：
+  // 宁可说"还不知道"，不能理直气壮地报一个别处的值。
+  //
+  // 弹窗保存后的那一趟（@saved）want 和 shownFor 相等，不擦，不闪。
+  if (want !== shownFor) {
     show.value = null
-    return
+    shownFor = want
   }
+  if (!want) return
   // 这一趟是给哪部剧读的。在项目库里连着点两部，两趟都在路上，回来的顺序
   // 不保证——资产库（style 从那儿来）比 video 那一趟大得多，慢的那趟后
   // 落地就把**上一部**的画幅和画风写在这一部的行上，而这一行是这一页仅剩
   // 的五件东西之一，错了没有别处对得出来。
-  const want = session.projectPath
   const [v, a] = await Promise.allSettled([
-    api.projectVideo(session.projectPath),
-    api.assets(session.projectPath),
+    api.projectVideo(want),
+    api.assets(want),
   ])
   if (want !== session.projectPath) return
   const video = v.status === 'fulfilled' ? v.value : null
