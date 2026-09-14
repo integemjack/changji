@@ -1002,7 +1002,7 @@ onDeactivated(() => window.removeEventListener('keydown', onKey))
         <p v-for="c in failedChecks" :key="c.name" class="alert alert--bad">
           <AppIcon name="warn" :size="14" />
           <strong>{{ c.name }}</strong>
-          <span>{{ c.detail }}</span>
+          <span class="alert__detail">{{ c.detail }}</span>
           <span v-if="c.fix" class="alert__fix tiny dim">{{ c.fix }}</span>
         </p>
       </div>
@@ -1467,6 +1467,11 @@ onDeactivated(() => window.removeEventListener('keydown', onKey))
   line-height: 1.5;
   /* 体检那几条带着多行的「怎么办」，不让换行的话它们会被挤成一条线 */
   flex-wrap: wrap;
+}
+/* 同设置页的 .check__detail：体检那几条的正文也可能是多行的（缺哪几个
+   模型文件是一行一个）。 */
+.alert__detail {
+  white-space: pre-wrap;
 }
 /* 同设置页的 .check__fix：引擎把这段按多行写的，塌成一行就没法照着做了 */
 .alert__fix {

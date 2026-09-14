@@ -894,9 +894,15 @@ function scrollTo(id) {
   flex-basis: 100%;
   white-space: pre-wrap;
 }
+/* **这一段也可能是多行的。** 「配了 5 项，其中 2 项的文件不存在：」后面
+   跟的是一行一个文件名（doctor.cpp 里 `detail += "\n  " + x`），出图后端
+   那条也是版本加一行编译信息。没有这一句的话它们塌成一条，那串文件名挤在
+   一起反而看不出是几个。和下面 .check__fix 同一个理由、同一个取值——
+   pre-wrap 而不是 pre-line：行首那两个空格是列表的缩进，要留住。 */
 .check__detail {
   flex: 1;
   min-width: 12ch;
+  white-space: pre-wrap;
 }
 
 /* 这儿原来有 .is-on（「外观」那三个主题按钮里选中的那个点亮）。
