@@ -1,6 +1,10 @@
 <script setup>
 /**
- * 第八步：上传至平台。
+ * 发布。「这一集」那一页的第四格——引擎带着投递那一层时才出现（见
+ * EpisodeView 的 publishOk）。
+ *
+ * （这个抬头以前写着「第八步：上传至平台」。八步那套 2026-09-11 合成了
+ *  四步，这一格现在挂在「这一集」里面。）
  *
  * 各家平台的开放接口都要资质和密钥，这里不假装能替用户登录。
  * 做的是投递：把成片和一份填好的元数据放到目标目录，或者 POST 给
@@ -81,8 +85,14 @@ const warnings = computed(() => {
 })
 
 async function loadAll() {
+  // 这一趟是给哪部剧/哪一集读的。换项目、换集都会叫它，两趟叠在一起时
+  // 回来的顺序不保证——慢的那趟后落地，就把上一部的片单和投递记录摆在
+  // 这一部下面，而下面那颗「投递」按的是当前这一部。
+  const want = `${session.projectPath}\u0000${session.episodeId}`
+  const mine = () => want === `${session.projectPath}\u0000${session.episodeId}`
   try {
     const [ps, ts] = await Promise.all([api.platforms(), api.publishTargets()])
+    if (!mine()) return
     platforms.value = ps.platforms ?? []
     targets.value = ts.targets ?? []
     // **引擎说这一套没搬进来时，要照原话说出去。**
@@ -107,6 +117,7 @@ async function loadAll() {
       api.publishRecords(session.projectPath),
       api.assets(session.projectPath),
     ])
+    if (!mine()) return
     files.value = out.files ?? []
     records.value = rec.records ?? []
     assets.value = ast
@@ -124,12 +135,30 @@ async function loadAll() {
 onMounted(loadAll)
 watch(() => [session.projectPath, session.episodeId], loadAll)
 
-// 标题没填过就拿集名兜底。用户改过之后不再覆盖。
+/**
+ * 标题和简介没填过就拿这一集的兜底。**人改过的不覆盖。**
+ *
+ * ⚠️ 判据不能只是"空不空"：那样从 ep01 换到 ep02，框里留着的是 ep01 的
+ * 标题（它不空），于是 ep02 会带着上一集的名字投出去——而投递是发到外面
+ * 去的，错了不像存盘那样还能改回来。
+ *
+ * 记一下上次自动填的是什么：框里还是那一份就说明人没动过，换集时换成新
+ * 这一集的；人改过了（和记下的不一样）就一个字不动。
+ */
+let autoFilled = { title: '', description: '' }
 watch(
   () => session.episode,
   (ep) => {
-    if (ep && !form.value.title) form.value.title = ep.title || ''
-    if (ep && !form.value.description) form.value.description = ep.synopsis || ''
+    if (!ep) return
+    const title = ep.title || ''
+    const desc = ep.synopsis || ''
+    if (!form.value.title || form.value.title === autoFilled.title) {
+      form.value.title = title
+    }
+    if (!form.value.description || form.value.description === autoFilled.description) {
+      form.value.description = desc
+    }
+    autoFilled = { title, description: desc }
   },
   { immediate: true },
 )
