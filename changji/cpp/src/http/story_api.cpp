@@ -723,6 +723,8 @@ json write_one_chapter(ProjectStore& store, const Project& project, Story story,
     // 分集质量换一个动画。所以照旧约束成 JSON，只在 token 流上顺手把正文
     // 那个字段解出来推给编辑器——见 stages/json_stream。
     Story next;
+    // 落地的时候这一章还在不在。见下面那段"接在刚读回来的那一份上"。
+    bool chapter_gone = false;
     try {
         const int floor_chars = static_cast<int>(
             stages::chapter_target_chars(story) * stages::kChapterMinRatio);
@@ -745,7 +747,26 @@ json write_one_chapter(ProjectStore& store, const Project& project, Story story,
             });
         }
         const stages::ChapterDraft d = stages::parse_chapter(raw, floor_chars);
-        next = stages::apply_chapter(story, chapter_id, d);
+        // **接在刚读回来的那一份上，不是进函数时那份。**
+        //
+        // 上面这一趟要跑一两分钟，而这一两分钟里用户完全可能在编辑器里改
+        // **别的章**——故事页就是这么设计的：一边看 AI 写，一边还能读能改，
+        // 只有正在写的那一章是锁着的，改完 1.5 秒自动保存直接落 story.json。
+        // 拿进函数时那份快照整份写回去，那些字就被悄悄吞掉了：不报错，人是
+        // 过几分钟翻回那一章才发现自己白改了。
+        //
+        // 批量展开那条（batch.cpp 里 `apply_chapter(store.load_story(), …)`）
+        // 早就这么写了，注释也在那儿——单章这条是同一个函数、同一种坏法，
+        // 只是漏了。重读一次的代价是一个文件。
+        Story latest = store.load_story();
+        if (latest.chapter_by_id(chapter_id) == nullptr) {
+            // 这一两分钟里这一章被删了。**不能混进下面那句 502 里说**
+            // ——「大模型没写出能用的正文」是假话，正文写出来了，只是没
+            // 地方放了。
+            chapter_gone = true;
+        } else {
+            next = stages::apply_chapter(latest, chapter_id, d);
+        }
     } catch (const stages::StoryError& e) {
         // story_error 是给编辑器用的（把流了一半的字撤掉）。异步那条路上
         // 还有个人在等最终结果，那条 job_error 由 server.cpp 的 start_async
@@ -763,6 +784,11 @@ json write_one_chapter(ProjectStore& store, const Project& project, Story story,
                                             {"message", e.what()}});
         }
         throw ApiError(502, e.what());
+    }
+    if (chapter_gone) {
+        throw ApiError(409, "写完的时候「" + chapter_id +
+                                "」已经不在这个故事里了（写的这一两分钟里被"
+                                "删掉了），这一章的正文没处放。");
     }
 
     // 钩子换了，切点就换了。正文落进去之前那些候选是对着空正文算的。
