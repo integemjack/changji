@@ -91,7 +91,10 @@ const writeLabel = computed(() => {
 })
 
 async function load() {
-  if (!session.projectPath || !session.episodeId) return
+  if (!session.projectPath || !session.episodeId) {
+    loading.value = false // 理由同镜头墙那处：被顶掉的那趟不会清它
+    return
+  }
   // **这一趟是给哪一集读的。**
   //
   // 顶栏连着换两集，两趟请求都在路上，回来的顺序不保证——慢的那一趟后落地

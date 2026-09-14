@@ -96,6 +96,11 @@ export function useShots() {
     if (!session.projectPath || !session.episodeId) {
       shots.value = []
       episodeDuration.value = null
+      // **早返回也要把转圈关掉。** 上一趟要是被顶掉了，它的 finally 里那句
+      // `if (mine()) loading.value = false` 不会动 loading——而这一趟又从这儿
+      // 就回去了，于是转圈永远停在真。界面上的表现是空状态和列表都不画
+      // （两个都判着 `!loading`），一片空白。
+      loading.value = false
       return
     }
     // **这一趟是给哪一集读的。**

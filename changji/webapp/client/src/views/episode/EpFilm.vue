@@ -104,6 +104,7 @@ const isMine = computed(
 async function load() {
   if (!session.projectPath) {
     files.value = []
+    loading.value = false // 理由同镜头墙那处：被顶掉的那趟不会清它
     return
   }
   // 这一趟是给哪部剧读的。换剧时两趟会叠在一起，慢的那趟后落地就把上

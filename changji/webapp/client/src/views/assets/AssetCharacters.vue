@@ -155,7 +155,10 @@ const characters = computed(() =>
 const refsUsed = computed(() => assets.value?.reference_images_used)
 
 async function load() {
-  if (!session.projectPath) return
+  if (!session.projectPath) {
+    loading.value = false // 理由同镜头墙那处：被顶掉的那趟不会清它
+    return
+  }
   // 换剧时两趟会叠在一起，慢的那趟后落地就把上一部的角色摆在这一部下面
   const want = session.projectPath
   loading.value = true
