@@ -145,8 +145,12 @@ Check check_fonts(const config::Settings& s) {
 Check check_tts(const config::Settings& s) {
     if (s.tts.backend == "http") {
         if (!s.tts.base_url || s.tts.base_url->empty()) {
+            // **两条路都说。** 这段话既给 `changji --doctor`（那儿只能改
+            // 配置），也给网页上的体检——而网页那一页往下翻两节就是「配音」
+            // 的「服务地址」输入框。只说"去配置里填"的人正对着那个框。
             return {"配音", Level::FAIL, "配了 http 后端但没填地址",
-                    "在配置里填 tts.base_url"};
+                    "界面上：设置页「配音」那一节填「服务地址」。\n"
+                    "命令行：配置里填 tts.base_url。"};
         }
         return {"配音", Level::OK, "独立服务 " + *s.tts.base_url, ""};
     }
@@ -168,7 +172,9 @@ Check check_llm(const config::Settings& s) {
     if (s.llm.backend == "local") {
         return {"大模型", Level::FAIL,
                 "配的是进程内跑，而这条路已经没有了",
-                "把 [llm].backend 改成 remote，填上 base_url 和 api_key。\n"
+                "配置里把 [llm].backend 改成 remote。\n"
+                "地址和密钥两条路都能填——界面上是项目页点「模型」那一行的\n"
+                "大模型那一格，命令行是 [llm].base_url 和 api_key。\n"
                 "默认走智谱（bigmodel.cn），glm-4.7-flash 不要钱。"};
     }
 
