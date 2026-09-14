@@ -202,8 +202,13 @@ ApiResult post_location(const json& body) {
 }
 
 ApiResult post_style(const json& body) {
+    // ⚠️ **aspect_ratio 不在这儿收。** 它由画幅派生（见
+    // config::VideoConfig::aspect_ratio），改画幅走 /bff/project/video。
+    // 2026-09-14 之前它在这个白名单里，于是「横屏 + 9:16」配得出来
+    // 也不报错，出来是参考图竖的、成片横的。老前端要是还在发它，
+    // 422 说得清「这儿改不了」，比默默写进去强。
     static const std::set<std::string> kAllowed = {
-        "global_style", "negative_prompt", "aspect_ratio",
+        "global_style", "negative_prompt",
     };
     const json patch = patch_of(body);
     ProjectStore store = open_for_patch(body, patch, kAllowed);
@@ -218,14 +223,13 @@ ApiResult post_style(const json& body) {
         if (v.is_null()) continue;
         if (k == "global_style")         draft.global_style = need_string(v, "global_style");
         else if (k == "negative_prompt") draft.negative_prompt = need_string(v, "negative_prompt");
-        else if (k == "aspect_ratio")    draft.aspect_ratio = need_string(v, "aspect_ratio");
     }
     assets.style = std::move(draft);
     store.save_assets(assets);
 
     // 全剧风格层所有镜头都会带上，这三个字段任一变了就得全部重跑。
     const bool touched = changed(before, patch,
-                                 {"global_style", "negative_prompt", "aspect_ratio"});
+                                 {"global_style", "negative_prompt"});
     // 注意默认 false，和另外两个接口不一样
     const int reset = (touched && want_reset(body, false)) ? reset_all_shots(store) : 0;
     return {200, {{"saved", true}, {"reset_shots", reset}}};

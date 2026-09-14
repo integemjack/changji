@@ -520,8 +520,10 @@ ApiResult post_plan_all(const json& body, std::shared_ptr<llm::Client> client) {
                         breq.schema = stages::bible_schema();
                         breq.schema_name = "bible";
                         breq.on_thinking = thinking_sink();
-                        assets = stages::parse_bible(client->complete(breq, tok),
-                                                     project.style_line);
+                        assets = stages::parse_bible(
+                            client->complete(breq, tok), project.style_line,
+                            config::load_settings(store.root())
+                                .video.aspect_ratio());
                         store.save_assets(assets);
                     }
 

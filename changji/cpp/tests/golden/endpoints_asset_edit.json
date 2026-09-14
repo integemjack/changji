@@ -662,25 +662,35 @@
           }
         },
         "style": {
-          "aspect_ratio": "16:9",
+          "aspect_ratio": "9:16",
           "global_style": "写实电影感，浅景深",
           "negative_prompt": "模糊，低质量",
           "style_line": "realistic"
         }
       },
       "body": {
-        "reset_shots": 0,
-        "saved": true
+        "detail": [
+          {
+            "input": "16:9",
+            "loc": [
+              "body",
+              "patch",
+              "aspect_ratio"
+            ],
+            "msg": "Extra inputs are not permitted",
+            "type": "extra_forbidden"
+          }
+        ]
       },
       "compare": "full",
       "extra": {},
-      "name": "改画幅_触发重跑",
+      "name": "改比例_422",
       "patch": {
         "aspect_ratio": "16:9"
       },
       "reset_shots": null,
-      "shot_status_after": "audio_done",
-      "status": 200,
+      "shot_status_after": null,
+      "status": 422,
       "url": "/api/style"
     },
     {

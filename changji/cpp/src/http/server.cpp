@@ -39,6 +39,7 @@
 #include "infer/sd_backend.hpp"
 #include "infer/sd_image.hpp"
 #include "models/hardware.hpp"
+#include "models/project.hpp"
 #include "http/job_stream.hpp"
 #include "http/offload.hpp"
 #include "pipeline/activity.hpp"
@@ -1177,6 +1178,29 @@ void run(const config::Settings& settings, const Options& opts) {
                           {{"orientation", v.orientation},
                            {"quality", v.quality}}}},
                     root / "changji.toml");
+
+                // **比例跟着画幅一起写。**
+                //
+                // 这两个字段管的是同一件事，但住在两个文件里：
+                //     画幅  changji.toml [video].orientation      → 成片尺寸
+                //     比例  assets.json StyleProfile.aspect_ratio → 参考图尺寸
+                // 这个接口以前一个字都不碰后者，于是「横屏 + 9:16」配得出来
+                // 也不报错，出来是参考图竖的、成片横的——而参考图是每一镜
+                // 的底子。**存一次画面就把那份拷贝对齐**，顺带治好老项目。
+                //
+                // 资产库还没建起来的新项目跳过：这时候没有文件可改，
+                // 而定妆那一步会按当时的画幅写对（见 post_bible）。
+                try {
+                    const models::ProjectStore store{root};
+                    models::AssetLibrary assets = store.load_assets();
+                    if (assets.style.aspect_ratio != v.aspect_ratio()) {
+                        assets.style.aspect_ratio = v.aspect_ratio();
+                        store.save_assets(assets);
+                    }
+                } catch (const std::exception&) {
+                    // 画面设置本身已经存好了，不该因为资产库不在就整个失败。
+                }
+
                 const auto [w, h] = v.size();
                 return ApiResult{200,
                                  {{"orientation", v.orientation},

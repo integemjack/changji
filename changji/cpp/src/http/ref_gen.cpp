@@ -72,14 +72,16 @@ struct Rendered {
 /// 实测 5090 上多花一倍（544×928 约一分钟，1088×1920 要两分钟）。
 Rendered render_ref(const ProjectStore& store, const std::string& stem,
                     const std::string& positive, const std::string& negative,
-                    std::int64_t seed, const std::string& aspect_ratio,
-                    const std::string& stream_id) {
+                    std::int64_t seed, const std::string& stream_id) {
     // **项目自己的 changji.toml 盖在全局上**，和跑流水线走同一条路。
     config::Settings settings = config::load_settings(store.root());
     HardwareProfile profile = config::runtime().profile();
     pipeline::apply_project_spec(settings, profile);
-    const TierSpec spec =
-        pipeline::frame_spec(profile, settings).scaled_to(aspect_ratio);
+    // **比例从画幅来，不从资产库来。** 这儿手里就有 Settings，没有理由
+    // 再去读那份派生出来的拷贝——2026-09-14 之前读的是后者，而它能被单独
+    // 改成和画幅相反，于是参考图竖的、成片横的，参考图还正是每一镜的底子。
+    const TierSpec spec = pipeline::frame_spec(profile, settings)
+                              .scaled_to(settings.video.aspect_ratio());
     if (spec.width <= 0 || spec.height <= 0 || spec.steps <= 0) {
         throw ApiError(500, "档位表里没有首帧那一档，出不了图。先去设置页体检一下");
     }
@@ -214,8 +216,7 @@ json character_ref_job(const std::string& project_path,
     const Rendered out = render_ref(
         store, char_id + "_" + slot,
         stages::build_character_ref_prompt(c, assets.style, slot),
-        stages::ref_negative(assets.style), seed, assets.style.aspect_ratio,
-        stream_id);
+        stages::ref_negative(assets.style), seed, stream_id);
 
     if (slot == "front")              c.ref_front = out.rel;
     else if (slot == "three_quarter") c.ref_three_quarter = out.rel;
@@ -307,8 +308,7 @@ json location_ref_job(const std::string& project_path,
     const Rendered out = render_ref(
         store, location_id + "_empty",
         stages::build_location_ref_prompt(l, assets.style),
-        stages::ref_negative(assets.style), seed, assets.style.aspect_ratio,
-        stream_id);
+        stages::ref_negative(assets.style), seed, stream_id);
 
     l.ref_empty = out.rel;
     store.save_assets(assets);

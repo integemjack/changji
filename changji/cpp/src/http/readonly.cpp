@@ -332,7 +332,10 @@ ApiResult get_assets(const std::string& path) {
             {"style_line", to_string(assets.style.style_line)},
             {"global_style", assets.style.global_style},
             {"negative_prompt", assets.style.negative_prompt},
-            {"aspect_ratio", assets.style.aspect_ratio},
+            // **报画幅算出来的那个，不报盘上那份拷贝。** 老项目里那份
+            // 可能和画幅不一致（2026-09-14 之前它能单独改），而界面上
+            // 显示一个跑的时候根本不会用的值，比不显示更糟。
+            {"aspect_ratio", img_settings.video.aspect_ratio()},
         }},
     }};
 }

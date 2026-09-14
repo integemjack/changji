@@ -122,6 +122,7 @@ auto stage_guard(F&& fn) -> decltype(fn()) {
 }
 
 AssetLibrary generate_bible(const std::string& script, StyleLine style_line,
+                            const std::string& aspect_ratio,
                             llm::Client& client, pipeline::CancelToken& tok) {
     llm::Request req;
     req.prompt = stages::build_bible_prompt(script, style_line);
@@ -129,7 +130,8 @@ AssetLibrary generate_bible(const std::string& script, StyleLine style_line,
     req.schema_name = "bible";
     req.on_thinking = thinking_sink();
     return stage_guard([&] {
-        return stages::parse_bible(client.complete(req, tok), style_line);
+        return stages::parse_bible(client.complete(req, tok), style_line,
+                                   aspect_ratio);
     });
 }
 
@@ -138,6 +140,7 @@ AssetLibrary generate_bible(const std::string& script, StyleLine style_line,
 /// 和上面那个的区别见 stages/bible.hpp：老的那条是"读一集剧本找出角色"，
 /// 于是全剧共用的资产库其实是从第一集推出来的。
 AssetLibrary generate_bible_from_story(const Story& story, StyleLine style_line,
+                                       const std::string& aspect_ratio,
                                        llm::Client& client,
                                        pipeline::CancelToken& tok) {
     llm::Request req;
@@ -146,7 +149,8 @@ AssetLibrary generate_bible_from_story(const Story& story, StyleLine style_line,
     req.schema_name = "bible";
     req.on_thinking = thinking_sink();
     return stage_guard([&] {
-        return stages::parse_bible(client.complete(req, tok), style_line);
+        return stages::parse_bible(client.complete(req, tok), style_line,
+                                   aspect_ratio);
     });
 }
 
@@ -263,13 +267,20 @@ ApiResult post_bible(const json& body, llm::Client& client,
                                 "Input should be 'auto', 'story' or 'script'",
                                 body.at("source"), "enum");
     }
+    // 定妆要知道这部剧是横是竖：比例由画幅派生，而它会写进资产库
+    // （见 StyleProfile::aspect_ratio）。以前这儿吃 parse_bible 的默认值
+    // "9:16"，横屏项目每定一次妆就被改回竖屏。
+    const std::string ratio =
+        config::load_settings(store.root()).video.aspect_ratio();
+
     const Story story = load_story_or_400(store);
     if (source == "story" && story.chapters.empty()) {
         throw ApiError(400, "这个项目还没有故事，先去写一份大纲");
     }
     if (source != "script" && !story.chapters.empty()) {
         const AssetLibrary from_story =
-            generate_bible_from_story(story, project.style_line, client, tok);
+            generate_bible_from_story(story, project.style_line, ratio, client,
+                                      tok);
         return merge_bible(store, std::move(assets), from_story, overwrite,
                            "story");
     }
@@ -293,7 +304,7 @@ ApiResult post_bible(const json& body, llm::Client& client,
     if (script.empty()) throw ApiError(400, "还没有剧本，先去写一集");
 
     const AssetLibrary fresh =
-        generate_bible(script, project.style_line, client, tok);
+        generate_bible(script, project.style_line, ratio, client, tok);
 
     return merge_bible(store, std::move(assets), fresh, overwrite,
                        "script");
@@ -327,10 +338,14 @@ ApiResult post_plan(const json& body, llm::Client& client,
         act.set_message("正在定角色和场景");
         // 有故事就从故事出——名单是全剧完整的，不是从这一集里找出来的。
         const Story story = load_story_or_400(store);
+        // 比例由画幅派生，理由同 post_bible 里那一段。
+        const std::string ratio =
+            config::load_settings(store.root()).video.aspect_ratio();
         assets = story.chapters.empty()
-                     ? generate_bible(script, project.style_line, client, tok)
+                     ? generate_bible(script, project.style_line, ratio, client,
+                                      tok)
                      : generate_bible_from_story(story, project.style_line,
-                                                 client, tok);
+                                                 ratio, client, tok);
         store.save_assets(assets);
         act.set_message("正在拆镜头");
     }

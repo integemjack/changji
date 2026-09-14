@@ -64,9 +64,12 @@ std::string build_bible_prompt_from_story(const models::Story& story,
 ///
 /// raw 是模型吐的原始文本，可能裹着 ```json 之类的外壳，
 /// 解析前会先抽出 JSON 部分。
+/// `aspect_ratio` **没有默认值，故意的**。它以前默认 "9:16"，于是横屏
+/// 项目每定一次妆，assets.json 里的比例就被悄悄改回竖屏——不报错，
+/// 下一次出参考图才看得出来。传 `settings.video.aspect_ratio()`。
 models::AssetLibrary parse_bible(const std::string& raw,
                                  models::StyleLine style_line,
-                                 const std::string& aspect_ratio = "9:16");
+                                 const std::string& aspect_ratio);
 
 /// 默认负向提示词。
 ///

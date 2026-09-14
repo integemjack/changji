@@ -77,6 +77,16 @@ struct VideoConfig {
 
     /// 算出宽高。两边都是 32 的倍数。
     std::pair<int, int> size() const;
+
+    /// 这部剧的画面比例。**画幅是唯一的源，比例是它的函数。**
+    ///
+    /// 以前 `StyleProfile.aspect_ratio` 是一份独立可改的拷贝，于是能配成
+    /// 「横屏 + 9:16」——不报错，出来是参考图竖的、成片横的，而参考图正是
+    /// 每一镜的底子。现在凡是要比例的地方都从这儿取（或者取那份由这儿
+    /// 派生出来的拷贝，见 StyleProfile::aspect_ratio）。
+    std::string aspect_ratio() const {
+        return orientation == "landscape" ? "16:9" : "9:16";
+    }
 };
 
 struct TiersConfig {

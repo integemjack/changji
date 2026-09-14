@@ -410,6 +410,18 @@ RunReport run_episode(const ProjectStore& store,
     // **不是 const**：配音那一段会给没有音色的角色各定一个，写回 voice_id
     // 再存盘（见下面 ensure_character_voice 那一块）。
     AssetLibrary assets = store.load_assets();
+
+    // **比例跟画幅对一次账。**
+    //
+    // 出首帧和出片那两层（run_frames / render_batch）拿不到 Settings，
+    // 它们从 `assets.style.aspect_ratio` 取比例把档位表的宽高转过来。
+    // 而那份拷贝在 2026-09-14 之前是能单独改的，老项目里可能和画幅不一致
+    // ——那样出来是首帧竖的、成片横的，全程不报错。
+    //
+    // **只改内存里这一份，不回写盘。** 跑一集不该顺手改项目文件；真要
+    // 落盘由存画面那个接口做（见 /bff/project/video）。
+    assets.style.aspect_ratio = settings.video.aspect_ratio();
+
     Episode* ep = project.episode_by_id(opts.episode_id);
     if (ep == nullptr) {
         throw std::runtime_error("项目里没有剧集 " + opts.episode_id);

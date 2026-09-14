@@ -145,7 +145,17 @@ struct StyleProfile {
     StyleLine style_line = StyleLine::REALISTIC;
     std::string global_style;    ///< 全剧画风、色温、质感
     std::string negative_prompt;
-    std::string aspect_ratio = "9:16"; ///< 9:16 竖屏 或 16:9 横屏
+    /// 画面比例。**派生出来的，不是自己一份。**
+    ///
+    /// 唯一的源是项目 `[video].orientation`（见 config::VideoConfig::
+    /// aspect_ratio）。这儿留一份拷贝只是因为出图那几层（run_frames /
+    /// render_batch）拿不到 Settings，而它们要拿它把档位表里的宽高转过来。
+    ///
+    /// ⚠️ **别再给它开独立的写入口。** 它曾经是可以单独改的，于是能配成
+    /// 「横屏 + 9:16」：不报错，出来参考图竖的、成片横的。写它的地方现在
+    /// 只有三处，都是从画幅算出来的——存画面（/bff/project/video）、
+    /// 定妆（parse_bible）、跑流水线之前对一次账（pipeline::run_episode）。
+    std::string aspect_ratio = "9:16";
 
     NLOHMANN_DEFINE_TYPE_INTRUSIVE_WITH_DEFAULT(
         StyleProfile, style_line, global_style, negative_prompt, aspect_ratio)
