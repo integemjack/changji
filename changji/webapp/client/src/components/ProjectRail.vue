@@ -34,7 +34,7 @@
  * 键盘那条路靠 tabindex + role + keydown 自己补——这条栏是换项目唯一的
  * 入口，纯键盘用户丢了它就换不了项目。
  */
-import { computed, nextTick, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 
 import AppIcon from '@/components/AppIcon.vue'
@@ -131,13 +131,34 @@ function toggleMenu(p) {
  * 在那些页上干的事。两边分开记，在故事页展开过一次不会让别处也跟着变。
  */
 const onStory = computed(() => route.meta?.step === 'story')
+/**
+ * 手机宽度。**只用来定"没设过的时候默认收不收起"。**
+ *
+ * 展开态那 10rem 在 375px 的屏上就是 160px——占掉 43%，正文只剩 215px，
+ * 实测设置页的「重新体检」被裁成「重新体」、「保存」裁成「保」，项目页
+ * 那行「读不到模型清单…」也断在半截。而这一栏又不能 display:none
+ * （理由见样式里那段：861–900px 那一版就是这么把"换项目"整个弄没的）。
+ *
+ * 出路是这一栏自己早就有的那一个：**收起**。收起之后只剩一条窄边，
+ * 上面那个箭头和加号都还在（加号是新建项目的唯一入口，样式注释里专门
+ * 交代过收起也要留着），想换项目点一下就展开。
+ *
+ * 只动**默认值**，不动用户的选择：下面 collapsed 的 getter 里，
+ * localStorage 有值就以它为准，这条只在"从来没手动收放过"时起作用。
+ */
+const narrowQuery = window.matchMedia('(max-width: 560px)')
+const narrow = ref(narrowQuery.matches)
+const onNarrow = (e) => {
+  narrow.value = e.matches
+}
 const foldKey = computed(() => (onStory.value ? 'changji.rail.story' : 'changji.rail'))
 const foldTick = ref(0)
 const collapsed = computed({
   get() {
     foldTick.value // 写 localStorage 之后靠它重算
     const v = readLocal(foldKey.value)
-    return v === null ? onStory.value : v === '1'
+    // 没设过：故事页本来就默认收起（那一页要整屏写字），手机上一律收起
+    return v === null ? onStory.value || narrow.value : v === '1'
   },
   set(v) {
     writeLocal(foldKey.value, v ? '1' : '0')
@@ -163,7 +184,13 @@ const shown = computed(() =>
   [...store.items].sort((a, b) => projectStage(b).rank - projectStage(a).rank),
 )
 
-onMounted(() => store.load())
+onMounted(() => {
+  store.load()
+  // 旋转屏幕、改窗口大小都会跨过那条线。addEventListener 而不是 onchange：
+  // 后者只能挂一个，别处再挂就把这个顶掉了。
+  narrowQuery.addEventListener('change', onNarrow)
+})
+onUnmounted(() => narrowQuery.removeEventListener('change', onNarrow))
 
 /**
  * 跑完一集、写完一批之后，卡上那句「到哪一步了」要跟上。
@@ -519,6 +546,13 @@ function busyProject(p) {
   border-bottom: 0;
 }
 .rail__title {
+  /* ⚠️ **三个字的标题不能竖着排。** 这一行是 flex，默认每一项都可以被
+     压缩（flex-shrink: 1）；窄屏上栏一收窄，这个 span 就被压到一个字宽，
+     「项目库」当场折成三行。窄屏实测（375px）撞到过。
+     不换行、宁可截断：一个「项目…」比竖排的三个字好读得多。 */
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
   font-size: var(--fs-sm);
   font-weight: 600;
   color: var(--text-2);
@@ -705,4 +739,11 @@ function busyProject(p) {
     width: 10rem;
   }
 }
+/* **10rem 已经是"展开"的下限了，手机上不能再往下收。**
+   栏头那一行（折叠箭头 + 「项目库」 + 加号）连边距一共要 160px 上下，
+   正好就是 10rem——再窄一点 flex 就开始压缩里面的项，实测 7.75rem 时
+   折叠箭头和标题一起被压到 17px，「项目库」当场折成三行（标题那条
+   white-space: nowrap 就是为这个加的，至少不再竖排）。
+   所以手机上的出路不是把展开态改窄，是**默认就收起来**——见上面
+   `collapsed` 那段。收起之后正文拿回整屏，而列表和加号一个都没少。 */
 </style>
