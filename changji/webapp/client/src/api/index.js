@@ -153,6 +153,8 @@ export const api = {
   // 展开一章的正文。**这个是直接落库的**，不回草稿——它只往空字段里填
   // 东西，而十六章走草稿-采用就是三十二次点击。
   writeChapter: (payload) => post('/api/story/chapter', payload),
+  /** 删一章。分集表跟着改，回包里说改了几条。 */
+  deleteChapter: (payload) => post('/api/story/chapter/delete', payload),
   // 一口气展开所有还没正文的章。走长跑作业，进度在 seriesStatus 里，
   // 和「写整季」共用同一个任务槽。
   writeChapters: (payload) => post('/api/story/chapters', payload),

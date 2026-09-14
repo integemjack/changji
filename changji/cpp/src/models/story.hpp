@@ -272,6 +272,23 @@ struct Story {
     const Chapter* chapter_by_id(const std::string& chapter_id) const;
     Chapter* chapter_by_id(const std::string& chapter_id);
 
+    /// 删一章的账：分集表里丢了几条、挪了几条。
+    struct ChapterRemoval {
+        bool removed = false;
+        int plan_dropped = 0; ///< 整条落在这一章里的分集条目，跟着没了
+        int plan_moved = 0;   ///< 跨着这一章的条目，起止收缩到还在的章上
+    };
+
+    /// 删一章，**顺手把分集表改对**。
+    ///
+    /// 不能只从 chapters 里抹掉：分集表每一集记的是 from_chapter → to_chapter，
+    /// 删了中间一章，跨着它的那一集就指着一个不存在的 id——不报错，落成剧集
+    /// 时才炸。所以：只覆盖这一章的条目一起删；起点在这一章的，起点挪到
+    /// 下一章开头；终点在这一章的，终点挪到上一章末尾。
+    ///
+    /// 章节 id 不重排：id 只是 id，重排会把分集表里剩下的引用全弄错。
+    ChapterRemoval remove_chapter(const std::string& chapter_id);
+
     /// 展开了正文的章节数。大纲写完是 0，逐章展开时往上涨。
     int written_chapters() const;
 

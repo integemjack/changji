@@ -152,4 +152,51 @@ std::vector<std::string> Story::validate() const {
     return errs;
 }
 
+Story::ChapterRemoval Story::remove_chapter(const std::string& chapter_id) {
+    ChapterRemoval out;
+    const auto it = std::find_if(chapters.begin(), chapters.end(),
+                                 [&](const Chapter& c) { return c.chapter_id == chapter_id; });
+    if (it == chapters.end()) return out;
+    const std::size_t at = static_cast<std::size_t>(it - chapters.begin());
+
+    // 上一章 / 下一章：跨着这一章的分集条目要收缩到它们身上
+    const Chapter* prev = at > 0 ? &chapters[at - 1] : nullptr;
+    const Chapter* next = at + 1 < chapters.size() ? &chapters[at + 1] : nullptr;
+    // 末尾字符按码点数——分集表里的 to_char 就是码点偏移（见 EpisodePlan）
+    const auto cp_len = [](const std::string& t) {
+        int n = 0;
+        for (unsigned char ch : t) if ((ch & 0xC0) != 0x80) ++n;
+        return n;
+    };
+
+    std::vector<EpisodePlan> kept;
+    kept.reserve(plan.size());
+    for (EpisodePlan e : plan) {
+        const bool from_here = e.from_chapter == chapter_id;
+        const bool to_here = e.to_chapter == chapter_id;
+        if (from_here && to_here) {
+            ++out.plan_dropped;
+            continue;
+        }
+        if (from_here) {
+            // 起点挪到下一章开头。没有下一章说明它是最后一章，而 to 在更后面
+            // 是不可能的——那就整条都不成立，丢掉。
+            if (next == nullptr) { ++out.plan_dropped; continue; }
+            e.from_chapter = next->chapter_id;
+            e.from_char = 0;
+            ++out.plan_moved;
+        } else if (to_here) {
+            if (prev == nullptr) { ++out.plan_dropped; continue; }
+            e.to_chapter = prev->chapter_id;
+            e.to_char = cp_len(prev->text);
+            ++out.plan_moved;
+        }
+        kept.push_back(std::move(e));
+    }
+    plan = std::move(kept);
+    chapters.erase(it);
+    out.removed = true;
+    return out;
+}
+
 }  // namespace changji::models

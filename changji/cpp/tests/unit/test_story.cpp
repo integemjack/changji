@@ -456,3 +456,81 @@ TEST_CASE("story.json 读写：不存在时是空的，存完读回来一样") {
 
     fs::remove_all(root, ec);
 }
+
+// ---------------------------------------------------------------------------
+// 删一章
+// ---------------------------------------------------------------------------
+
+namespace {
+
+EpisodePlan span(const std::string& id, const std::string& from, int from_char,
+                 const std::string& to, int to_char) {
+    EpisodePlan e;
+    e.episode_id = id;
+    e.from_chapter = from;
+    e.from_char = from_char;
+    e.to_chapter = to;
+    e.to_char = to_char;
+    return e;
+}
+
+}  // namespace
+
+TEST_CASE("删中间一章：跨着它的分集条目收缩，只在它里面的条目丢掉，id 不重排") {
+    Story s;
+    s.chapters = {mk("ch01", "一", 100), mk("ch02", "二", 200), mk("ch03", "三", 300)};
+    s.plan = {
+        span("ep01", "ch01", 0, "ch02", 50),    // 终点在 ch02 → 终点挪到 ch01 末尾
+        span("ep02", "ch02", 50, "ch02", 200),  // 整条在 ch02 → 丢
+        span("ep03", "ch02", 120, "ch03", 300), // 起点在 ch02 → 起点挪到 ch03 开头
+        span("ep04", "ch03", 0, "ch03", 100),   // 不沾边 → 原样
+    };
+
+    const auto r = s.remove_chapter("ch02");
+    CHECK(r.removed);
+    CHECK(r.plan_dropped == 1);
+    CHECK(r.plan_moved == 2);
+
+    REQUIRE(s.chapters.size() == 2);
+    CHECK(s.chapters[0].chapter_id == "ch01");
+    CHECK(s.chapters[1].chapter_id == "ch03"); // 不重排成 ch02
+
+    REQUIRE(s.plan.size() == 3);
+    CHECK(s.plan[0].to_chapter == "ch01");
+    CHECK(s.plan[0].to_char == 100); // ch01 是 100 个字，按码点数
+    CHECK(s.plan[1].episode_id == "ep03");
+    CHECK(s.plan[1].from_chapter == "ch03");
+    CHECK(s.plan[1].from_char == 0);
+    CHECK(s.plan[2].episode_id == "ep04");
+    CHECK(s.plan[2].from_chapter == "ch03");
+}
+
+TEST_CASE("删头一章、末一章：没有可收缩的邻居时那条丢掉") {
+    Story s;
+    s.chapters = {mk("ch01", "一", 10), mk("ch02", "二", 20)};
+    s.plan = {span("ep01", "ch01", 0, "ch02", 5)};
+    const auto r = s.remove_chapter("ch01");
+    CHECK(r.removed);
+    CHECK(r.plan_moved == 1);
+    REQUIRE(s.plan.size() == 1);
+    CHECK(s.plan[0].from_chapter == "ch02");
+
+    Story t;
+    t.chapters = {mk("ch01", "一", 10)};
+    t.plan = {span("ep01", "ch01", 0, "ch01", 10)};
+    const auto q = t.remove_chapter("ch01");
+    CHECK(q.removed);
+    CHECK(q.plan_dropped == 1);
+    CHECK(t.chapters.empty());
+    CHECK(t.plan.empty());
+}
+
+TEST_CASE("没有这个 id 一个字不动") {
+    Story s;
+    s.chapters = {mk("ch01", "一", 10)};
+    s.plan = {span("ep01", "ch01", 0, "ch01", 10)};
+    const auto r = s.remove_chapter("ch99");
+    CHECK_FALSE(r.removed);
+    CHECK(s.chapters.size() == 1);
+    CHECK(s.plan.size() == 1);
+}

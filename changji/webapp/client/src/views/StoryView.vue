@@ -344,6 +344,33 @@ function setStory(payload) {
  * **读不到就算了。** 它是顺手刷新，不是关键路径；批量跑着的时候引擎正忙，
  * 为这个弹个红框只会让人以为批量挂了。
  */
+/**
+ * 删当前这一章。引擎顺手把分集表改对（跨着这一章的条目收缩、只在它
+ * 里面的丢掉），回包里说改了几条——改过的话落成剧集要重跑，得说出来。
+ */
+async function deleteChapter() {
+  const c = chapter.value
+  if (!c) return
+  const n = countOf(c.chapter_id)
+  const label = chapterLabel(c, index.value)
+  if (!confirm(`删掉「${label}」${n ? `（${n} 字）` : ''}，没有撤销。确定？`)) return
+  // 手里没存的先放掉：删都删了，再存回去等于复活
+  clearTimeout(timers[c.chapter_id])
+  const result = await run(
+    () => api.deleteChapter({ project: session.projectPath, chapter_id: c.chapter_id }),
+    { key: 'delch' },
+  )
+  if (!result) return
+  const i = index.value
+  delete buf[c.chapter_id]
+  dirtySnapshot.delete(c.chapter_id)
+  setStory(result)
+  const rest = chapters.value
+  current.value = rest.length ? rest[Math.min(i, rest.length - 1)].chapter_id : ''
+  const touched = (result.plan_dropped ?? 0) + (result.plan_moved ?? 0)
+  ui.ok(touched ? `删了。分集表改了 ${touched} 处，落成剧集要重跑` : '删了')
+}
+
 async function refreshStory() {
   if (!session.projectPath) return
   try {
@@ -1959,6 +1986,15 @@ async function stopWriting() {
                     >
                       {{ summaryOpen ? '折起大纲' : '展开大纲' }}
                     </button>
+                    <!-- 破坏性又少用，配在这儿不配常驻按钮。确认框把代价写成数字。 -->
+                    <button
+                      class="menu__item menu__item--danger"
+                      type="button"
+                      :disabled="locked || isBusy('delch')"
+                      @click="menuOpen = false; deleteChapter()"
+                    >
+                      删这一章
+                    </button>
                   </div>
                 </template>
               </div>
@@ -2505,6 +2541,9 @@ async function stopWriting() {
 }
 .menu__item:hover:not(:disabled) {
   background: var(--surface-3);
+}
+.menu__item--danger:not(:disabled) {
+  color: var(--danger);
 }
 .menu__item:disabled {
   opacity: 0.45;

@@ -545,6 +545,26 @@ ApiResult post_story_draft_drop(const json& body) {
     return {200, {{"dropped", true}}};
 }
 
+ApiResult post_story_chapter_delete(const json& body) {
+    forbid_extra(body, {"project", "chapter_id"});
+    ProjectStore store = open_project(body);
+    load_or_400(store);
+    const std::string chapter_id = opt_str(body, "chapter_id", "");
+    if (chapter_id.empty()) {
+        throw unprocessable_top("chapter_id", "Field required", body, "missing");
+    }
+    Story story = load_story_or_400(store);
+    const Story::ChapterRemoval r = story.remove_chapter(chapter_id);
+    if (!r.removed) throw ApiError(404, "没有章节 " + chapter_id);
+    store.save_story(story);
+
+    json out = story_response(story);
+    out["deleted"] = chapter_id;
+    out["plan_dropped"] = r.plan_dropped;
+    out["plan_moved"] = r.plan_moved;
+    return {200, std::move(out)};
+}
+
 ApiResult post_story_adopt(const json& body) {
     forbid_extra(body, {"project", "story", "overwrite"});
     ProjectStore store = open_project(body);

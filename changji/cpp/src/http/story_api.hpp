@@ -62,6 +62,12 @@ ApiResult post_story_adopt(const nlohmann::json& body);
 /// 只清浏览器里那个 ref——不清服务端那份的话刷新一下它又回来了。
 ApiResult post_story_draft_drop(const nlohmann::json& body);
 
+/// POST /api/story/chapter/delete —— 删一章。body: {project, chapter_id}
+///
+/// 分集表跟着改（见 Story::remove_chapter），回包里说改了几条：改过的话
+/// 「落成剧集」要重跑，界面上要把这句说出来。没有这个 id 是 404。
+ApiResult post_story_chapter_delete(const nlohmann::json& body);
+
 /// POST /api/story/plan —— 按每集时长重算分集表。
 ApiResult post_story_plan(const nlohmann::json& body);
 
