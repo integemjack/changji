@@ -100,16 +100,26 @@ export const qualitySize = (v, orientation) => {
 }
 export const statusOf = (v) => SHOT_STATUS[v] ?? { label: v, tone: 'neutral' }
 
-/** 流水线阶段。制作页的进度条和事件流用。 */
+/**
+ * 流水线阶段。制作页的进度条和事件流用。
+ *
+ * **键必须是引擎的 `stage`，不是 `kind`。** 三处消费者
+ * （JobBadge、useShots、run store）查的都是 `x.stage`，而引擎那边
+ * `stage` 的取值只有 `pipeline::Stage` 那五个（episode.hpp 的枚举 →
+ * to_string：audio / frames / draft / final / assemble），一个不多。
+ *
+ * 这儿原来还有 `gate: '质量闸门'` 和 `done: '完成'` 两条——**那是 kind
+ * 不是 stage**（`e.kind = "gate"`、`emit(progress, "audio", "done", …)`），
+ * 永远查不到。删掉它们，顺带把下面这句提醒接上：
+ *
+ * **没有 lipsync 这个阶段。** 2026-09-13 查过：引擎一次都没发过
+ * stage="lipsync"。这句话留着，免得下一个人以为有这么一步——而它原来
+ * 紧挨着的正是刚说的那两条永远命不中的键。
+ */
 export const STAGE_LABELS = {
   audio: '配音',
   frames: '首帧',
   draft: '草稿档',
   final: '成片档',
-  // **没有 lipsync 这个阶段。** 2026-09-13 查过：Stage 枚举里只有
-  // Audio/Frames/Draft/Final/Assemble，引擎一次都没发过 stage="lipsync"。
-  // 这一条留着是历史残留，删了免得下一个人以为有这么一步。
-  gate: '质量闸门',
   assemble: '装配成片',
-  done: '完成',
 }
