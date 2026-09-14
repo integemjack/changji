@@ -294,9 +294,17 @@ ApiResult post_story_chapters(const json& body,
                             req, p.token(), [&](const std::string& piece) {
                                 const std::string fresh = field.feed(piece);
                                 if (fresh.empty()) return;
+                                // **带上项目。** 这条流广播在 "write" 这个
+                                // 槽上（客户端只订得到类名），而槽是全局
+                                // 的一个：界面那头常驻一条连接收它。人在
+                                // 批量跑着的时候去看另一部剧，收到的还是
+                                // 这一部的正文——不说清是谁的，那边就会把
+                                // 它画进别人的编辑器里。章号是 ch01 这种，
+                                // 两部剧都有，光靠它分不出来。
                                 ws::hub().broadcast(
                                     job_id, {{"type", "story_token"},
                                              {"job_id", job_id},
+                                             {"project", paths::to_utf8(store.root())},
                                              {"chapter_id", id},
                                              {"seq", seq++},
                                              {"text", fresh}});

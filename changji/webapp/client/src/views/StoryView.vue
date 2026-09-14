@@ -444,6 +444,18 @@ function watchBatch() {
     'write',
     async (msg) => {
       if (msg.type !== 'story_token' || !msg.chapter_id) return
+      // **这一条是哪部剧的。**
+      //
+      // 这条订的是 "write" 那个**全局槽**（具体 job_id 不从接口暴露，只能
+      // 按类订），而批量一跑就是一个多小时。人中途去项目库点另一部剧的话，
+      // 收到的还是上一部的正文——章号是 ch01 这种、两部剧都有，光靠它分不
+      // 出来，于是上一部的字一路长进这一部的编辑器，接着 current 还会跟着
+      // 跳章。引擎 2026-09-15 起在这条消息里带上了 project（batch.cpp 那条
+      // broadcast），比一下就知道该不该收。
+      //
+      // 老引擎不带这个字段：那时 `msg.project` 是 undefined，照旧全收，
+      // 行为和以前一样。
+      if (msg.project && msg.project !== session.projectPath) return
       // **落到它自己那一章上。** 批量是一章一章顺着写的，但消息里带着
       // chapter_id，不靠顺序猜——猜错的话字会长进隔壁那一章。
       //
