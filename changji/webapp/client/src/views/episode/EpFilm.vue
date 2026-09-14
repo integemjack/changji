@@ -11,6 +11,7 @@ import AppIcon from '@/components/AppIcon.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import { api, mediaUrl } from '@/api'
 import { humanAgo } from '@/composables/useAction'
+import { useRun } from '@/stores/run'
 import { useSession } from '@/stores/session'
 import { useUi } from '@/stores/ui'
 
@@ -23,6 +24,20 @@ const props = defineProps({ canPublish: { type: Boolean, default: false } })
 onActivated(load)
 const session = useSession()
 const ui = useUi()
+const runner = useRun()
+
+/**
+ * 跳转条上那张首帧该用哪一代。
+ *
+ * 首帧写在 `frames/<shot_id>.png` 上，重出是原地覆盖、地址不变，而
+ * `/api/media` 一个缓存头都不发（见下面 srcOf 那段）——不挂换代号的话，
+ * 重出过的那几镜在这条跳转条上一直是老图。片子本身按 mtime 换代，条上
+ * 的缩略图原来什么都没有。
+ *
+ * 用 run store 按镜记的那个数（`settledBy`），只换这一集里真重跑过的那
+ * 几张；整条无条件换代的话，每切一次这一格就要重拉十几张全尺寸首帧。
+ */
+const frameBust = (shotId) => runner.settledBy.get(shotId) ?? 0
 
 const files = ref([])
 const loading = ref(false)
@@ -256,7 +271,7 @@ watch(currentRel, () => {
             >
               <img
                 v-if="c.frame_path"
-                :src="mediaUrl(session.projectPath, c.frame_path)"
+                :src="mediaUrl(session.projectPath, c.frame_path) + '&_=' + frameBust(c.shot_id)"
                 :alt="`第 ${c.order + 1} 镜`"
                 loading="lazy"
               />
