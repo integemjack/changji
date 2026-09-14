@@ -1625,6 +1625,15 @@ void run(const config::Settings& settings, const Options& opts) {
             return json_response(r.body, r.status);
         });
 
+    // 「只改梗概」。**界面不走这条**，走的是 POST /api/story。
+    //
+    // 梗概在盘上有两份：story.json 里那份是故事页编辑的，project.json 里
+    // 那份是老流程写剧本的提示词读的。这条只写后者，两份就此对不上——而
+    // `post_story` 专门为这件事多写了一句同步（「两边各存一份的话，在故事
+    // 页改完梗概、去写剧本用的还是旧的那句」）。
+    //
+    // 留着是因为它在和 Python 的对拍范围内，删了就是破契约；但别再给它接
+    // 新的调用方，要改梗概就走 /api/story。
     CROW_ROUTE(app, "/api/project/premise").methods("POST"_method)(
         [](const crow::request& req) {
             auto r = guard([&] {

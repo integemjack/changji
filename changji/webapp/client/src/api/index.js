@@ -125,6 +125,7 @@ export const api = {
   // 没人叫——而它头上那段注释还写着"两条都留着，都要能切"，读代码的人会
   // 去界面上找那个开关。引擎那条路线留着（老机器上 backend = "local" 的配置
   // 靠它改回来，见 server.cpp 那段），界面这边不留一个没人用的入口。
+
   // 首次运行那一页。**四条都在 /bff**：下模型这件事引擎独有，
   // /api 那一套在和 Python 的对拍范围内，加进去就是一处破契约。
   setupState: () => get('/bff/setup/state'),
@@ -153,7 +154,16 @@ export const api = {
   deleteProject: (payload) => post('/api/project/delete', payload),
   /** 改剧名。只动 project.json 的 title，目录不搬——目录名是项目的身份。 */
   renameProject: (payload) => post('/api/project/rename', payload),
-  savePremise: (payload) => post('/api/project/premise', payload),
+  // 「只改梗概」那条（POST /api/project/premise）**这儿不留绑定**。
+  //
+  // 它只写 project.json 的 premise，而梗概在盘上有**两份**：story.json 里
+  // 那份是故事页编辑的，project.json 里那份是老流程写剧本的提示词读的。
+  // `/api/story` 是唯一会把两份一起对上的入口（见 post_story：「两边各存
+  // 一份的话，在故事页改完梗概、去写剧本用的还是旧的那句」），故事页走的
+  // 就是它。留一个"看起来更专一"的绑定在这儿，下一个人会顺手挑它，然后
+  // 得到两份对不上的梗概——不报错，只是写剧本用的是旧那句。
+  //
+  // 引擎那条路线留着：它在和 Python 的对拍范围内，删了就是破契约。
 
   // ---- 引擎：剧本 ----
   writeScript: (payload) => post('/api/script/write', payload),
