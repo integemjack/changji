@@ -171,7 +171,6 @@ const shown = computed(() => {
       (s) => s.gate_notes?.length || s.status.endsWith('rejected'),
     )
   }
-  if (filter.value === 'lipsync') return shots.value.filter((s) => s.needs_lipsync)
   return shots.value
 })
 
