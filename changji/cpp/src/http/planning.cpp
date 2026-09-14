@@ -512,18 +512,25 @@ ApiResult post_plan(const json& body, llm::Client& client,
         return std::move(r.shots);
     });
 
-    Episode* ep = project.episode_by_id(episode_id);
+    // **写回去之前重新读一份。**
+    //
+    // 上面拆一趟镜头要一到几分钟（`regenerate` 那条还要先跑一趟定妆），
+    // 而 `project` 是那几分钟**之前**读的。把它整份写回去，这期间界面上改
+    // 的东西全被悄悄吞掉：别的集的镜头抽屉存的那一笔、改过的集名、手动加
+    // 的一集。批量那条（post_plan_all）和写整季那条都是这么修的。
+    Project latest = store.load_project();
+    Episode* ep = latest.episode_by_id(episode_id);
     if (ep == nullptr) {
         Episode fresh;
         fresh.episode_id = episode_id;
         fresh.target_duration_s = duration_s;
-        project.episodes.push_back(std::move(fresh));
-        ep = &project.episodes.back();
+        latest.episodes.push_back(std::move(fresh));
+        ep = &latest.episodes.back();
     }
     ep->script = need_str(body, "script");   // 存原文，不是 strip 过的
     ep->target_duration_s = duration_s;
     ep->shots = shots;
-    store.save_project(project);
+    store.save_project(latest);
 
     // **按成片长度报，不按分镜表那串名义值加。** 模型只能按格子出帧，
     // 名义 4 秒出来是 4.458 秒（见 stages::real_total_s）。这个数不只是
