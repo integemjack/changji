@@ -36,9 +36,6 @@ const ui = useUi()
 const stepKey = computed(() => route.meta?.step ?? '')
 const current = computed(() => STEP_ROUTES.find((s) => s.key === stepKey.value) ?? null)
 const isSettings = computed(() => route.name === 'settings')
-// 初始化页要整块屏幕。顶栏这时候一个都点不动（还没有项目，引擎也还没
-// 模型），摆在那儿只会让人以为哪里没加载出来。
-const bare = computed(() => route.meta?.chrome === false)
 // 宽页（故事）：页面不滚，滚的是页面里那一格。见 router 里那条注释。
 const wide = computed(() => route.meta?.wide === true)
 
@@ -54,7 +51,7 @@ const wide = computed(() => route.meta?.wide === true)
 const canFocus = computed(() => stepKey.value === 'story')
 const focused = computed(() => canFocus.value && ui.focusMode)
 const peeking = ref(false)
-const chromeOff = computed(() => bare.value || (focused.value && !peeking.value))
+const chromeOff = computed(() => focused.value && !peeking.value)
 
 function onEdgePeek(e) {
   if (!focused.value) return
@@ -209,7 +206,6 @@ function cycleTheme() {
         <div
           class="main__inner"
           :class="{
-            'main__inner--bare': bare,
             'main__inner--focus': focused,
             'main__inner--wide': wide,
           }"
@@ -408,12 +404,6 @@ function cycleTheme() {
   padding: 0;
 }
 
-.main__inner--bare {
-  max-width: none;
-  padding: 0;
-  padding-left: env(safe-area-inset-left);
-  padding-right: env(safe-area-inset-right);
-}
 /* 宽页：**页面不滚**。外层 overflow 关掉、整条高度交给页面，页面里
    哪一格该滚由它自己定。故事页靠这个让正文那一格独占滚动——
    之前页面和稿纸各有一根滚动条，高度算错一次整页就垮。 */
@@ -458,7 +448,6 @@ function cycleTheme() {
   .main__inner {
     padding: var(--s4) var(--s4) var(--s10);
   }
-  .main__inner--bare,
   .main__inner--wide {
     padding: 0;
   }
