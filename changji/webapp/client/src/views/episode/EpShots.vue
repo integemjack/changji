@@ -191,6 +191,28 @@ const draftDirty = computed(() => {
   return JSON.stringify(nowLines) !== JSON.stringify(wasLines)
 })
 
+/**
+ * 换转场，**顺手把时长带对**。
+ *
+ * 引擎那边这两项是一对（`Shot::validate`）：硬切的转场时长必须是 0，
+ * 非硬切的必须大于 0。而界面上它们是两个独立控件，硬切时只把时长输入框
+ * `disabled` 掉——**禁用不等于把值改成 0**。于是：
+ *
+ *   一镜本来是「溶解 0.5 秒」，改成硬切 → 输入框灰掉，值还是 0.5 →
+ *   保存 400「硬切的转场时长必须为 0」。而那个必须改成 0 的框正灰着，
+ *   人改不了；退回溶解再填 0 又撞另一条「必须大于 0」。**这一镜从此存不
+ *   进去了**，除非把转场原样改回去。
+ *
+ * 反方向（硬切改成溶解）人还能自己填个数救回来，但也不该让他撞一次 400
+ * 才知道。两边都在这儿一次带对。
+ */
+function pickTransition(v) {
+  if (!draft.value) return
+  draft.value.transition_in = v
+  if (v === 'cut') draft.value.transition_dur_s = 0
+  else if (!(draft.value.transition_dur_s > 0)) draft.value.transition_dur_s = 0.5
+}
+
 function openDraft(shot) {
   openId.value = shot.shot_id
   draft.value = {
@@ -1053,10 +1075,13 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
               <div class="grid grid--pairs">
                 <label class="field">
                   <span class="field__label">转场</span>
+                  <!-- **不用 v-model**：换转场的时候要顺手把时长带对，
+                       见 pickTransition。 -->
                   <select
-                    v-model="draft.transition_in"
+                    :value="draft.transition_in"
                     class="select"
                     title="记下来的意图；装配暂时是纯硬切，转场还没有渲染"
+                    @change="pickTransition($event.target.value)"
                   >
                     <option v-for="o in TRANSITIONS" :key="o.value" :value="o.value">{{ o.label }}</option>
                   </select>
