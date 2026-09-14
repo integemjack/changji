@@ -920,10 +920,17 @@ async function clearRef(charId, slot) {
                              一句不动的「画着…」分不清是在画还是卡住了；
                              而头十几秒还在把模型读进显存，那段时间一步都
                              不会推——所以没数的时候仍然显示「画着…」。 -->
+                        <!-- ⚠️ **键要用 targetOf。** 引擎那条 refs 频道上
+                             的 target 是 `char_id_slot`（中间有下划线），
+                             而这儿原来拼的是 `char_id + slot`——
+                             `c_lin_wanfront` 这种，`genPct` 里永远查不到，
+                             于是上面那段注释说的百分比一次都没出现过，
+                             抽屉里从头到尾只有「画着…」。墙上那份（trio__pct）
+                             用的就是 targetOf，一直是对的。 -->
                         {{
                           isBusy('gen:' + openChar.char_id + s.key)
-                            ? genPct[openChar.char_id + s.key]
-                              ? genPct[openChar.char_id + s.key] + '%'
+                            ? genPct[targetOf(openChar.char_id, s.key)]
+                              ? genPct[targetOf(openChar.char_id, s.key)] + '%'
                               : '画着…'
                             : '画'
                         }}
