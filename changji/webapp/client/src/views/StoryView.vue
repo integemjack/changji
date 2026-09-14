@@ -1857,8 +1857,13 @@ async function writeChapter(chapterId, overwrite = false) {
     // 理由同 writeStory 里那段：注释一直说"清在 finally 里"，而它原来不在。
     thinking.finish(streamId)
     sock?.close()
+    // **锁也清在这儿。** 它原来在 finally 后面一行——只要中间有任何一条
+    // 路把异常抛出去，这一章就永远锁着（`locked` 判的就是 streaming），
+    // 人只能换个项目或者重开页面。而这一页为同一件事已经加过一层兜底
+    // （`s.src === 'batch' && !writer.running`），那层兜底只管批量那条，
+    // 写一章、改一段这两条靠的正是这一句。
+    streaming.value = null
   }
-  streaming.value = null
   if (!mine()) {
     // 人已经在看别的剧了。**setStory 在这儿是最危险的一下**：它会把上一部
     // 的整份故事装进这一部的界面，接着任何一次自动保存都写到错的项目上。
