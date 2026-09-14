@@ -139,6 +139,20 @@ void Character::validate(std::vector<std::string>& errs) const {
     }
 }
 
+/// 取某个服装状态的描述，对不上就退回默认那身。
+///
+/// ⚠️ **今天这条 for 循环永远走不进去。** `wardrobe` 这个数组没有任何一处
+/// 会往里写：定妆那一步不产（[bible] 的提示词反过来还叮嘱「剧情中的换装
+/// 不在这里写」）、`/api/character` 的白名单里没有 `wardrobe`、界面上一个
+/// 字都没有。唯一的办法是手改 assets.json。
+///
+/// 而分镜那边是**被提示词教着填**的（prompts.toml 的 storyboard_rules 第 4
+/// 条：「换装只能通过 wardrobe_state 填一个状态名」），模型于是认认真真写
+/// suit_torn、雨中。对不上，这里一声不吭退回 `appearance.attire`——出来的
+/// 每一帧穿的都是那身干净的常服，中间没有任何地方会提一句。
+///
+/// 退回本身是对的（语料 prompt_compose 里那条「没这个状态」钉的就是它），
+/// 缺的是上游：**谁来创建 WardrobeVariant**。
 std::string Character::wardrobe_desc(const std::string& wardrobe_state) const {
     if (!wardrobe_state.empty() && wardrobe_state != "default") {
         for (const auto& v : wardrobe) {

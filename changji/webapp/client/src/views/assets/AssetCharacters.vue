@@ -134,7 +134,12 @@ const FIELDS = [
   { key: 'identity', label: '身份', hint: '性别、年龄段、气质。这一段权重最高。', rows: 2 },
   { key: 'body', label: '体型', hint: '身高感、体态。可留空。', rows: 2 },
   { key: 'face', label: '五官发型', hint: '脸型、发型、发色、瞳色。认脸靠它。', rows: 3 },
-  { key: 'attire', label: '默认服装', hint: '换装状态另设，这里写常态。', rows: 2 },
+  // ⚠️ 原来这句写的是「换装状态另设，这里写常态」——而**没有「另设」这回事**：
+  // 换装靠 `Character.wardrobe` 里的 WardrobeVariant，而创建它的地方一处都
+  // 没有（定妆不产、`/api/character` 白名单里没有 wardrobe、界面上没有）。
+  // 分镜那边照提示词填了 wardrobe_state，`wardrobe_desc()` 对不上就一声不吭
+  // 退回这一段。所以这一栏事实上是**全片唯一**的服装来源，得这么说。
+  { key: 'attire', label: '默认服装', hint: '这个人全片穿什么，就看这一段——剧情里的换装今天没有地方设，分镜写了也会退回这里。', rows: 2 },
   { key: 'style', label: '专属画风', hint: '只加在这个角色身上的修饰。可留空。', rows: 2 },
 ]
 

@@ -159,6 +159,18 @@ keywords_pre = "往这个方向想："
 # 分镜的硬性要求第 2 条起。**整集一次拆**（[storyboard]）和**按场拆**
 # （[storyboard_scene]）共用；前者是逐字节对拍的，改这里要连语料一起改。
 # 第 1 条（shot_id 的写法）留在各自的表里，它中间要插剧集 id。
+#
+# ⚠️ **第 4 条末尾那句「换装只能通过 wardrobe_state 填一个状态名」，
+# 今天写了等于没写。** 那个状态名要能对上 `Character::wardrobe` 里的一条
+# `WardrobeVariant`，而**没有任何一处会创建它**：定妆那一步不产（[bible]
+# 那边反过来还叮嘱「剧情中的换装不在这里写」）、`/api/character` 的白名单
+# 里没有 wardrobe、界面上一个字都没有。对不上的时候
+# `Character::wardrobe_desc()` 一声不吭退回 `appearance.attire`
+# （models/character.cpp），于是模型认认真真填的 suit_torn / 雨中，出来
+# 的每一帧穿的都是那身干净的常服，中间没有任何地方会提一句。
+#
+# 这一句先留着：改它要连 stage_storyboard 那份逐字节语料一起动，而真正
+# 缺的那一环也不在这儿——要补的是"谁来创建 WardrobeVariant"。
 storyboard_rules = """
 2. order 从 0 开始递增。
 3. duration_s 只能取配额里出现过的值，且各档位的数量必须与配额完全一致。
