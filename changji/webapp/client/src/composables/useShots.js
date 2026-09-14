@@ -600,10 +600,16 @@ export function useShots() {
   }
   // 批量那条跑完也重拉一次。只订下降沿：跑的过程中它一章一集地写，
   // 而这一页要的是"这一集的分镜出来了没有"。
+  //
+  // `session.refresh()` 也要跟着叫，理由同下面出片那条：顶栏那个集号下拉
+  // 上写着每一集多少镜、侧边那几个对勾也按分镜算，而批量补分镜正好把这两
+  // 样都改了。不叫的话它们停在开跑之前，直到下一次换集或者干完点别的。
   watch(
     () => writeStore.running,
     (now, before) => {
-      if (before && !now) load()
+      if (!(before && !now)) return
+      load()
+      session.refresh()
     },
   )
   watch(
