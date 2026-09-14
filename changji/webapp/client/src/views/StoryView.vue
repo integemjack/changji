@@ -374,7 +374,9 @@ async function deleteChapter() {
   delete timers[c.chapter_id]
   const result = await run(
     () => api.deleteChapter({ project: session.projectPath, chapter_id: c.chapter_id }),
-    { key: 'delch' },
+    // 反方向的同一件事：删掉最后一章之后 done.story 该灭，不重拉的话
+    // 导航上会给一部已经没有故事的剧一直打着勾。
+    { key: 'delch', refresh: true },
   )
   if (!result) return
   const i = index.value
@@ -1443,7 +1445,11 @@ async function startBlank() {
         },
         overwrite: true,
       }),
-    { key: 'blank' },
+    // **要 refresh。** 这一下从"没有故事"变成"有一章"，而顶栏那一步的对勾
+    // 读的是 `/bff/flow` 的 done.story（判据就是章节数），不重拉的话人写完
+    // 第一章、导航上还说他没写故事，下一步那个点也还钉在「故事」上。
+    // 隔壁「采用这一份」（adopt）一直是带着的，这条和它是同一件事。
+    { key: 'blank', refresh: true },
   )
   if (!result) return
   setStory(result)
@@ -1476,7 +1482,8 @@ async function addChapter() {
 async function reverseFromEpisodes() {
   const result = await run(
     () => api.storyFromEpisodes({ project: session.projectPath, overwrite: true }),
-    { key: 'reverse' },
+    // 同 startBlank：这一下也是从无到有地长出章节，对勾要跟着亮。
+    { key: 'reverse', refresh: true },
   )
   if (!result) return
   setStory(result)
