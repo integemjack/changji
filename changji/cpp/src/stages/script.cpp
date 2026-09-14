@@ -9,6 +9,7 @@
 #include <string>
 #include <vector>
 
+#include "stages/audio_plan.hpp"
 #include "stages/json_extract.hpp"
 #include "stages/prompts.inc.hpp"
 #include "util/text.hpp"
@@ -442,6 +443,29 @@ std::string normalize_speaker(const std::string& raw) {
     const std::string key = lower_ascii(strip_ascii(name));
     return no_speaker_words().count(key) ? std::string() : name;
 }
+
+/// **中文语速全仓只能有一个数。**
+///
+/// 它今天有三份拷贝，三份都是 4.6，而三份各自独立：
+///
+///   · `cpp/prompts.toml` 的 `chars_per_second`（→ 这儿用的
+///     `prompt::script::kCharsPerSecond`）——决定**叫模型写多少字**；
+///   · `stages/audio_plan.hpp` 的 `kCharsPerSecond`——决定
+///     `estimate_speech_duration()` 算出来**每句实际多长**，而那个数会
+///     反推回去锁死镜头时长；
+///   · 前端 `ScriptReader` 那个 `charsPerSecond` 默认值——界面上
+///     「约 x 秒」和「偏短 / 合适 / 偏长」那个丸子。
+///
+/// 它们说的是同一件物理事实（一个人一秒念几个字）。谁单独动一个，症状是
+/// **剧本长度看着正好、成片却长出两成**，而且一处都不报错：预算按 A 算、
+/// 真实时长按 B 算、屏幕上那句话按 C 算。
+///
+/// 前两份在这儿用 static_assert 钉死（改一个编不过）；第三份由
+/// `webapp/client/src/api/speech-rate.test.js` 直接读 prompts.toml 比对。
+static_assert(prompt::script::kCharsPerSecond == kCharsPerSecond,
+              "prompts.toml 的 chars_per_second 和 stages/audio_plan.hpp 的 "
+              "kCharsPerSecond 必须一致：前者决定写多少字，后者决定念多久。"
+              "只改一个，剧本会看着正好而成片长出一截，两边都不报错。");
 
 int budget_chars(double duration_s) {
     // Python 的 int() 是**朝零截断**，不是四舍五入
