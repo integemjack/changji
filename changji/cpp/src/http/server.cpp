@@ -1021,13 +1021,17 @@ void run(const config::Settings& settings, const Options& opts) {
         return json_response(out);
     });
 
-    // ---- 大模型跑在哪：内置还是外接 ----
+    // ---- 大模型跑在哪 ----
     //
     // 走 /bff 不走 /api/connections：那个接口在对拍覆盖范围内，
     // Python 没有 llm.backend 这个字段。
     //
-    // **两条都要留着。** 默认内置（一个程序跑所有），但本机跑不动大模型的、
-    // 想用云上更强模型的、团队共用一台推理机的，都要能切到外接。
+    // **这儿只剩一条路了。** 原来这段写着「两条都要留着，默认内置」——那是
+    // 进程内那条还在的时候；它 2026-09-14 删了（理由见生成的配置模板里
+    // [llm] 那段），下面的校验也只放 remote 过。所以这条路线现在的全部用处
+    // 是**把老机器上那份 backend = "local" 的配置改回来**：体检那条警告让人
+    // 去改配置文件，改不动的（装在别人机器上、没有文件访问）还能 POST 一下。
+    // 界面上没有对应的控件，也不该再加——只有一个值的开关是摆设。
     CROW_ROUTE(app, "/bff/settings/llm")
         .methods("POST"_method)([](const crow::request& req) {
             auto r = guard([&] {

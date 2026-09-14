@@ -184,8 +184,17 @@ bool LLMConfig::needs_api_key() const {
 
 std::vector<std::string> LLMConfig::validate() const {
     std::vector<std::string> errs;
+    // **只有 remote 一个值了**（进程内那条 2026-09-14 删掉，见下面生成的
+    // 模板里那段）。"local" 仍然放行，是为了让老机器**还能起来**——起不来
+    // 的话人只看到一行 stderr，而起得来就能在设置页的体检里读到那条写清楚
+    // 了改哪一行的警告（doctor.cpp 里 `s.llm.backend == "local"` 那条）。
+    //
+    // 但话不能跟着放宽：原来这句写的是「只能是 remote 或 local」，而 local
+    // 是条死路——把 backend 敲错一个字母的人照着它填 local，配置过了检查、
+    // 密钥也不再被要求（needs_api_key 对 local 返回 false），然后每一次叫
+    // 模型都失败。这句只说真正能用的那一个。
     if (backend != "remote" && backend != "local") {
-        errs.push_back("llm.backend 只能是 remote 或 local，当前是 " + backend);
+        errs.push_back("llm.backend 只能是 remote，当前是 " + backend);
     }
     check_gt(errs, "llm.timeout_s", timeout_s, 0);
     check_range(errs, "llm.temperature", temperature, 0.0, 2.0);
@@ -1179,7 +1188,7 @@ constexpr const char* kDefaultToml = R"(# 场记配置文件
 # base_port = 9001
 
 [llm]
-# 剧本和分镜用的大模型。backend 两个值：
+# 剧本和分镜用的大模型。backend 只有 remote 这一个值（下面说了为什么）：
 #   remote —— **默认**，走下面的 base_url，任何兼容 OpenAI 接口的服务都行。
 #             默认走智谱（bigmodel.cn，国内直连不用自备网络）：默认挑的
 #             glm-4.7-flash 不要钱，但 **api_key 必须自己填**，

@@ -120,9 +120,11 @@ export const api = {
   projectVideo: (project) => get('/bff/project/video', { path: project }),
   /** 这一轮引擎还没落定的镜头。页面一进来靠它把「排队中」重新点亮。 */
   runPending: () => get('/bff/run/pending'),
-  // 大模型跑在哪：内置还是外接。**两条都留着**——本机跑不动大模型的、
-  // 想用云上更强模型的、团队共用一台推理机的，都要能切。
-  saveLlmBackend: (backend) => post('/bff/settings/llm', { backend }),
+  // 「大模型跑在哪：内置还是外接」那条（POST /bff/settings/llm）**没有了**。
+  // 进程内那条 2026-09-14 删掉之后引擎只收 remote 一个值，这个函数也就一直
+  // 没人叫——而它头上那段注释还写着"两条都留着，都要能切"，读代码的人会
+  // 去界面上找那个开关。引擎那条路线留着（老机器上 backend = "local" 的配置
+  // 靠它改回来，见 server.cpp 那段），界面这边不留一个没人用的入口。
   // 首次运行那一页。**四条都在 /bff**：下模型这件事引擎独有，
   // /api 那一套在和 Python 的对拍范围内，加进去就是一处破契约。
   setupState: () => get('/bff/setup/state'),
