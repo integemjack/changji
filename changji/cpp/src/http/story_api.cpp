@@ -500,9 +500,23 @@ ApiResult post_story_outline(const json& body, llm::Client& client,
                   num_in_range(body, "variation", 0.0, -1.0, 4294967295.0))
             : stages::random_shape();
 
-    // 异步那条，理由和写一章一模一样（见 post_story_chapter 里那段）：
-    // 这个 handler 占着 Crow 的一条 I/O 线程，而出一份大纲要三四十秒，
-    // 落在同一条线程上的连接会跟着冻住——顶栏那块表首当其冲。
+    // 自己挪到后台的那一条。理由和别的长活一样（那一整段在 server.cpp 的
+    // `start_async` 头上）：这个 handler 占着 Crow 的一条 I/O 线程，而出一份
+    // 大纲要三四十秒，落在同一条线程上的连接会跟着冻住——顶栏那块表首当
+    // 其冲。（这里原来写着"见 post_story_chapter 里那段"，而那个函数里
+    // 没有这样一段：它压根没有自己的异步分支，整件事交给 script_route。）
+    //
+    // ⚠️ **真实服务走的不是这一条。** `/api/story/outline` 挂在
+    // `script_route` 上，而它 `take_async(body)` 会把 `async` 这个键**删掉**
+    // 再把处理函数扔进 `start_async`——所以到这儿时 body 里只剩 stream，
+    // 下面这个 if 永远是假。走到这里的只有直接调用（用例就是这么测的，见
+    // test_story_outline.cpp 里那两条）。
+    //
+    // 这也是下面 `own` 那个令牌够不着的原因：`start_async` 会挂一个
+    // JobScope 把令牌按 stream_id 登记进表里，顶栏「停下」按的就是它；
+    // 这一条没有，所以这里的令牌谁也触发不了。**要是哪天让这条上生产
+    // （比如给它换一条不剥 async 的路由），得照 start_async 先挂
+    // `const JobScope scope{stream_id};`**，否则那个按钮会安静地失效。
     if (opt_bool(body, "async", false) && !stream_id.empty()) {
         const std::string project_path = paths::to_utf8(store.root());
         // **回 202 之前就先登记一笔**（write_outline 进去还会登记一次，
