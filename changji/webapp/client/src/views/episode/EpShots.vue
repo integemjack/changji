@@ -268,7 +268,17 @@ function onKey(event) {
   const at = list.findIndex((s) => s.shot_id === openId.value)
   const to = at + (event.key === 'ArrowDown' ? 1 : -1)
   if (at < 0 || to < 0 || to >= list.length) return
-  if (draftDirty.value) return   // 有改动就不跳，免得静默丢掉
+  // **问同一句。**
+  //
+  // 这儿原来是「有改动就 return」：数据是保住了，但按下去什么都不发生、
+  // 也没有任何解释。鼠标点另一格会问「这一镜有改动还没保存，切走就没了」，
+  // 键盘却只是不动——同一件事两种脾气，而这一页上「有没有改动」根本没有
+  // 角标（只有保存按钮亮不亮），人按两下 ↓ 只会以为方向键坏了。
+  //
+  // 答应了之后 draft 整个换成新那一镜，不脏了，所以连按不会一路弹窗。
+  if (draftDirty.value && !confirm('这一镜有改动还没保存，切走就没了。确定？')) {
+    return
+  }
   openDraft(list[to])
   nextTick(() => {
     document
