@@ -14,7 +14,7 @@
  * 场景也要每集重做一遍——这条是从原来的 ContextBar 继承下来的判断。
  */
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { useRoute } from 'vue-router'
 
 import AppIcon from '@/components/AppIcon.vue'
 import ErrorBoundary from '@/components/ErrorBoundary.vue'
@@ -29,7 +29,6 @@ import { useSession } from '@/stores/session'
 import { useUi } from '@/stores/ui'
 
 const route = useRoute()
-const router = useRouter()
 const session = useSession()
 const ui = useUi()
 
@@ -73,6 +72,22 @@ onUnmounted(() => {
 })
 
 const perEpisode = computed(() => current.value?.phase === 'episode')
+
+/**
+ * 顶栏那个项目名按的是项目库的开关。
+ *
+ * 折叠状态按页分两份（故事页默认收起，别处默认展开），键和默认值都跟
+ * ProjectRail 里那一份一致——两边读的是 store 里同一份状态。
+ */
+const railKey = computed(() =>
+  stepKey.value === 'story' ? 'changji.rail.story' : 'changji.rail',
+)
+const railOpen = computed(
+  () => !ui.railCollapsed(railKey.value, stepKey.value === 'story'),
+)
+function toggleRail() {
+  ui.setRailCollapsed(railKey.value, railOpen.value)
+}
 const projectName = computed(
   () => session.project?.title || session.project?.project_id || '未命名项目',
 )
@@ -108,16 +123,20 @@ function cycleTheme() {
         <span class="brand__mark">场</span>
       </RouterLink>
 
-      <!-- **写「这一部剧」不写「换个项目」。** 它去的是 /project，而那一页
-           是这一部剧的进度和设置（画幅、模型、删除），根本没有项目列表——
-           换项目唯一的地方是项目库那条栏。标签指错地方的后果：想删项目的
-           人不会点它，想换项目的人点进去连提示都看不到。 -->
+      <!-- **点它打开项目库，不是去 /project。**
+           顶栏里原来有三个控件指向同一个 /project：品牌「场」、这个项目名、
+           导航第一项「项目」——挨在一起，去同一个地方。而这三个里只有这一个
+           显示着"我在哪部剧"，它最该干的事是把**能换剧的那个地方**打开
+           （/project 那一页是这一部剧的进度和设置，根本没有项目列表）。
+           现在三个控件三件事：品牌回首页、「项目」去那一页、项目名开列表。
+           ⚠️ 这条依赖 ui.railCollapsed——折叠状态 2026-09-14 从 ProjectRail
+           自己的 computed 提到 store 里了，理由见 stores/ui.js 那段。 -->
       <button
         v-if="session.hasProject"
         class="proj"
         type="button"
-        title="这一部剧的进度和设置"
-        @click="router.push('/project')"
+        :title="railOpen ? '收起项目库' : '打开项目库，换一部剧'"
+        @click="toggleRail"
       >
         <AppIcon name="folder" :size="14" />
         <span class="proj__name truncate">{{ projectName }}</span>
@@ -148,8 +167,10 @@ function cycleTheme() {
           @change="onPickEpisode"
         >
           <option v-if="!session.episodes.length" value="">还没有剧集</option>
+          <!-- 镜数去掉了：「这一集」那一排 tab 上就写着「镜头 16 · 差 16
+               首帧」，比这儿一个光秃秃的数说得多。省下来的宽度给标题。 -->
           <option v-for="ep in session.episodes" :key="ep.episode_id" :value="ep.episode_id">
-            {{ ep.episode_id }} · {{ ep.title || '未命名' }}（{{ ep.shots }} 镜）
+            {{ ep.episode_id }} · {{ ep.title || '未命名' }}
           </option>
         </select>
       </label>
@@ -345,9 +366,14 @@ function cycleTheme() {
   background: var(--accent);
 }
 
+/* 集号。**上限放宽到 26rem**：硬件表和引擎灯从常驻改成条件出现之后，
+   顶栏右边空出四百多像素，而这一栏是整条里唯一装着长中文的东西——
+   「ep01 · 开学后，林小满发现陈屿一直在躲她（上）」在 14rem 里只露得出
+   前六个字。放不下时 flex 会自己收，不会把右边那几个图标挤出去。 */
 .ep {
-  flex: none;
-  max-width: 14rem;
+  flex: 0 1 auto;
+  min-width: 8rem;
+  max-width: 26rem;
 }
 .ep .select {
   max-width: 100%;

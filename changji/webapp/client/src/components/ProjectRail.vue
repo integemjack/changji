@@ -1,6 +1,6 @@
 <script setup>
 /**
- * 项目库。**常驻在右边，不在项目页里。**
+ * 项目库。**常驻在侧边（靠哪边在设置-界面里选），不在项目页里。**
  *
  * 换项目原来要先走到第一步那一页，挑完再走回来——而人在写故事、看镜头的
  * 时候想起来要对照另一部剧，这一来一回就把当前这一页的状态丢了。
@@ -76,17 +76,9 @@ const confirmName = ref('')
  */
 const onStory = computed(() => route.meta?.step === 'story')
 const foldKey = computed(() => (onStory.value ? 'changji.rail.story' : 'changji.rail'))
-const foldTick = ref(0)
 const collapsed = computed({
-  get() {
-    foldTick.value // 写 localStorage 之后靠它重算
-    const v = localStorage.getItem(foldKey.value)
-    return v === null ? onStory.value : v === '1'
-  },
-  set(v) {
-    localStorage.setItem(foldKey.value, v ? '1' : '0')
-    foldTick.value++
-  },
+  get: () => ui.railCollapsed(foldKey.value, onStory.value),
+  set: (v) => ui.setRailCollapsed(foldKey.value, v),
 })
 
 /**

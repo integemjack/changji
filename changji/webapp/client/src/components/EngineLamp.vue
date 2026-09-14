@@ -33,19 +33,23 @@ onUnmounted(() => clearInterval(timer))
 </script>
 
 <template>
+  <!-- ⚠️ **连上了就不显示。**
+       绿灯是常态：一块永远写着「引擎已连接」的牌子占着 99px，说的是
+       "一切正常"——而这一页上每一样东西都在正常工作，没有哪一样需要为此
+       专门立一块牌子。连不上才是要人看的，那条是红的、带 ⚠、点过去就是
+       设置页的体检。和设定页的「缺 6」、这一集的「差 16 首帧」同一条规矩：
+       出问题才出现。
+       首次检查那一小会儿（status 还是 null）也不显示——那时候说什么都
+       是猜的，而灯一闪一闪反而像坏了。 -->
   <RouterLink
+    v-if="status && !status.online"
     to="/settings"
-    class="lamp"
-    :class="status?.online ? 'lamp--on' : 'lamp--off'"
-    :title="
-      status?.online
-        ? `引擎已连接 ${status.baseUrl}（${status.latencyMs}ms）`
-        : `引擎连不上：${status?.error || '检查中'}`
-    "
+    class="lamp lamp--off"
+    :title="`引擎连不上：${status.error || '检查中'}`"
   >
     <span class="lamp__dot" :class="{ 'lamp__dot--pulse': checking }" />
-    <span class="lamp__text">{{ status?.online ? '引擎已连接' : '引擎离线' }}</span>
-    <AppIcon v-if="!status?.online" name="warn" :size="13" />
+    <span class="lamp__text">引擎离线</span>
+    <AppIcon name="warn" :size="13" />
   </RouterLink>
 </template>
 

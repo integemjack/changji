@@ -8,6 +8,17 @@
  * **推，不轮询。** 订 "system" 这一类，引擎两秒推一条；没人订它就不采样。
  * 断了五秒后再连；连不上就整块不显示——顶栏上一个不动的数比没有更误导。
  *
+ * ⚠️ **只在有活在跑的时候出现**（2026-09-14）。它原来是常驻的，四个数
+ * 四条杠占 398px——比整条导航（260px）还宽，1280 屏上是顶栏最大的一块，
+ * 而 1000px 时它会被压成一串残缺的读数、820px 时干脆整个消失。
+ *
+ * 它回答的不是"我在哪、能去哪、有没有出事"，是"卡到底动没动"——**那个
+ * 问题只在跑的时候存在**，而那时候旁边的 JobBadge 本来就出现了。不跑的
+ * 时候要看硬件，去设置页的体检，那儿有显卡、显存和权重放哪的全部细节。
+ *
+ * 判据取自**同一条消息**：JobBadge 订的也是 "system"，读的是同一帧里的
+ * `msg.jobs`。不另开 socket，也不必和别处的状态对齐。
+ *
  * 每一项一个数加一条 3px 的小杠。杠是给眼角看的：写字的时候不会去读
  * 数字，但余光看得见杠满没满；满了变红。
  */
@@ -16,6 +27,10 @@ import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { openJobSocket } from '@/composables/useJobSocket'
 
 const stat = ref(null)
+/** 此刻在跑的那些活。和 JobBadge 读的是同一帧的同一个字段。 */
+const jobs = ref([])
+/** 跑着才显示。理由见文件头。 */
+const busy = computed(() => jobs.value.length > 0)
 let sock = null
 let retry = null
 let watchdog = null
@@ -46,10 +61,12 @@ function connect() {
       if (msg.type !== 'system') return
       lastAt = Date.now()
       stat.value = msg
+      jobs.value = msg.jobs ?? []
     },
     () => {
       sock = null
       stat.value = null
+      jobs.value = []
       clearTimeout(retry)
       retry = setTimeout(connect, 5000)
     },
@@ -103,7 +120,7 @@ function gb(v) {
 
 <template>
   <div
-    v-if="stat"
+    v-if="stat && busy"
     class="sys"
     :class="{ 'is-stale': stale }"
     :title="stale ? `显卡正忙，问不动它——这是 ${Math.round(stat.age_s)} 秒前的读数` : ''"

@@ -24,6 +24,33 @@ export const useUi = defineStore('ui', () => {
   watch(railSide, (value) => localStorage.setItem('changji.railSide', value))
 
   /**
+   * 项目库收没收起。**故事页和别处各记各的。**
+   *
+   * 故事页默认收起：那一页是个编辑器，而这条栏列着另外几部剧——你正在写
+   * 第一章，旁边摆着"你还可以去干的别的事"。别的页默认展开，换项目本来
+   * 就是在那些页上干的事。
+   *
+   * ⚠️ **提到 store 里是为了外面能开它。** 原来这套状态活在 ProjectRail
+   * 自己的 computed 里，靠一个手写的 `foldTick` 假依赖重算——别的组件写
+   * localStorage 根本不会触发重算，于是顶栏那个项目名想"点一下把项目库
+   * 打开"做不到，只能给它挂一个跳去 /project 的链接（而那一页没有项目
+   * 列表）。现在它是一份真状态，谁都能读能写。
+   */
+  const railFold = ref({
+    'changji.rail': localStorage.getItem('changji.rail'),
+    'changji.rail.story': localStorage.getItem('changji.rail.story'),
+  })
+  /** 这一类页面收起了吗。`def` 是没存过时的默认。 */
+  function railCollapsed(key, def) {
+    const v = railFold.value[key]
+    return v === null || v === undefined ? def : v === '1'
+  }
+  function setRailCollapsed(key, value) {
+    railFold.value = { ...railFold.value, [key]: value ? '1' : '0' }
+    localStorage.setItem(key, value ? '1' : '0')
+  }
+
+  /**
    * 专注模式：把顶栏和项目库收起来，稿纸铺满整个窗口。
    *
    * **这一条是抄来的，不是想出来的。** 写作类编辑器的共识是"文档占据整个
@@ -72,6 +99,7 @@ export const useUi = defineStore('ui', () => {
 
   return {
     toasts, theme, railSide, focusMode,
+    railFold, railCollapsed, setRailCollapsed,
     push, ok, info, warn, error, dismiss,
   }
 })
