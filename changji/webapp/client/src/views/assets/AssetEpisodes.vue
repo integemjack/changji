@@ -20,6 +20,7 @@ import { api, mediaUrl } from '@/api'
 import { runAsyncJob } from '@/composables/useAsyncJob'
 import { useAction } from '@/composables/useAction'
 import { useRefStream } from '@/composables/useRefStream'
+import { useWriter } from '@/stores/run'
 import { useSession } from '@/stores/session'
 import { useUi } from '@/stores/ui'
 
@@ -40,6 +41,7 @@ const { run, isBusy } = useAction()
  * 从来没接上过。改成订同一条线，和另外两格一致。）
  */
 const { finished, bustOf } = useRefStream()
+const writer = useWriter()
 
 const story = ref(null)
 const assets = ref(null)
@@ -251,6 +253,15 @@ watch(
   { immediate: true },
 )
 watch(finished, load)
+// 批量展开正文跑完，这一页的章节长度、分集线、「几章没正文」都变了。
+// 理由同 AssetsView 那条：不订的话跑完一个多小时回来，看到的还是开跑
+// 之前那份，而且不会自己变。
+watch(
+  () => writer.running,
+  (now, before) => {
+    if (before && !now) load()
+  },
+)
 
 async function pickDuration(event) {
   const seconds = Number(event.target.value)

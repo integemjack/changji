@@ -40,6 +40,7 @@ import { api } from '@/api'
 import { useAction } from '@/composables/useAction'
 import { runAsyncJob } from '@/composables/useAsyncJob'
 import { useRefStream } from '@/composables/useRefStream'
+import { useWriter } from '@/stores/run'
 import { useSession } from '@/stores/session'
 import { useUi } from '@/stores/ui'
 
@@ -49,6 +50,7 @@ const router = useRouter()
 const ui = useUi()
 const { run, isBusy } = useAction()
 const { finished, touch } = useRefStream()
+const writer = useWriter()
 
 const story = ref(null)
 /**
@@ -399,6 +401,22 @@ onMounted(loadAll)
 watch(() => session.projectPath, loadAll)
 // 画完一张、定妆完——tab 上的数跟着走
 watch(finished, loadAssets)
+/**
+ * 批量那条跑完，这一行标签也要跟上。
+ *
+ * 「分集」那一格写的是「10 · 8 章没正文」，而"没正文"这个数是从故事来的
+ * ——批量展开正文（和"写"那个槽上的别的活）动的正是它。不订的话，跑了一
+ * 个多小时回到这一页，那一格还是开跑之前的数，而且不会自己变。
+ *
+ * 只订下降沿：跑的过程中它一章章写，这一行是给"到哪一步了"看的，不是
+ * 进度条。
+ */
+watch(
+  () => writer.running,
+  (now, before) => {
+    if (before && !now) loadAll()
+  },
+)
 </script>
 
 <template>
