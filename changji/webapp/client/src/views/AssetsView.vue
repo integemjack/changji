@@ -184,6 +184,18 @@ async function bible() {
   if (l.length) parts.push(`${l.length} 个新场景`)
   // 收掉了几条同名的要说出来——"场景从 25 变成 15"不解释的话看着像丢了东西
   if (result.merged) parts.push(`收掉 ${result.merged} 条重名的`)
+  // **后面这两个数一直没人读，而引擎是特意回的。**
+  //
+  // 它们说的是这一下**动了已经存在的东西**，而上面那几句说的都是新增：
+  //
+  //   · remapped_shots：收掉重名的之后，原来指着被收那一条的镜头要改指向
+  //     （引擎 planning.cpp 那句注释就写着「跟着改了几镜……界面上要说出来」）。
+  //   · reset_shots：勾了覆盖时，全项目已经渲染过的镜头被退回「待重跑」、
+  //     重试次数清零。按之前弹的那个确认框只说了「已渲染的镜头要重跑」，
+  //     没说几个；真跑完更该报实数——场景格那条关联的提示早就是这个规矩
+  //     （只提真的发生了的重置）。
+  if (result.remapped_shots) parts.push(`${result.remapped_shots} 个镜头跟着改了指向`)
+  if (result.reset_shots) parts.push(`${result.reset_shots} 个镜头退回重跑`)
   ui.ok(parts.length ? parts.join('；') : '故事里的人和地方库里都有了，没补新的')
   touch() // 三个格子和这儿的数一起重拉
 }
