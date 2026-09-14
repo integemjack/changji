@@ -583,6 +583,35 @@ async function loadPreview() {
   }
 }
 
+/**
+ * 抽屉开着的时候，引擎那头把这一镜改了——**人没动过的话就跟上**。
+ *
+ * 出片跑起来之后这一页每 6 秒重拉一次镜头表，而 `draft` 是开抽屉那一刻
+ * 拷的一份，从来不跟。于是在抽屉里点「重出配音」等它跑完：引擎按配音时长
+ * 反推 `duration_s` 并把 `duration_locked` 置真，而抽屉里还是旧的那个数、
+ * 那个输入框也还开着。后果有两层：
+ *
+ *   · `draftDirty` 拿 draft 和刚拉回来的比，**凭空变成"有改动"**——关抽屉
+ *     时弹一句「这一镜有改动还没保存」，而人一个字都没改；
+ *   · 这时候真按了保存，`patch.duration_s` 送的是**锁定之前**那个数，
+ *     引擎那边没有针对 `duration_locked` 的拦截（只有改台词那条会把它
+ *     置假），于是配音反推出来的时长被一个旧值顶掉，而锁还挂着。
+ *
+ * 判据用现成的 `draftDirty`：**只在人没改过的时候跟**，改过就一个字不动。
+ * 和资产页 load 里那条是同一个规矩。相等就不换对象，免得每 6 秒白重绘
+ * 一次抽屉。
+ */
+watch(shots, () => {
+  if (!draft.value || draftDirty.value) return
+  const fresh = shots.value.find((s) => s.shot_id === draft.value.shot_id)
+  if (!fresh) return
+  const next = {
+    ...fresh,
+    dialogue_texts: (fresh.dialogue ?? []).map((d) => d.text),
+  }
+  if (JSON.stringify(next) !== JSON.stringify(draft.value)) draft.value = next
+})
+
 watch(() => session.projectPath, loadVideo, { immediate: true })
 // 镜头数、还差几镜、跑没跑完——任何一个变了，这句话就该重算。
 // 跑的过程中不算（上面那个卫语句挡着），停下来那一刻会算一次。
