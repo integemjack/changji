@@ -282,8 +282,13 @@ async function loadStory() {
     story.value = null
     return
   }
+  // 哪一部剧的那一趟。在项目库里连着点两部，慢的那趟后落地就把上一部的
+  // 章节和分集表挂在这一部的 tab 上（「分集 12」），而三个格子自己读的
+  // 是新的——同一屏上两套数。
+  const want = session.projectPath
   try {
     const data = await api.getStory(session.projectPath)
+    if (want !== session.projectPath) return
     story.value = data.story ?? null
   } catch {
     // 没有故事的老项目走到这儿是正常的，分集那格自己会说
@@ -296,8 +301,11 @@ async function loadAssets() {
     assets.value = null
     return
   }
+  const want = session.projectPath
   try {
-    assets.value = await api.assets(session.projectPath)
+    const got = await api.assets(session.projectPath)
+    if (want !== session.projectPath) return
+    assets.value = got
   } catch {
     // 刚建的项目还没有资产库。tab 上就只有名字，不该整页红。
     assets.value = null
@@ -373,7 +381,7 @@ watch(finished, loadAssets)
           <button
             class="btn btn--sm btn--ai"
             type="button"
-            :disabled="isBusy('genall') || isBusy('bible') || !characters.length"
+            :disabled="isBusy('genall') || isBusy('bible') || (!characters.length && !locations.length)"
             :title="
               overwrite
                 ? '连已经有的一起重画。改了画风之后用——已有的图还是老提示词出的'
