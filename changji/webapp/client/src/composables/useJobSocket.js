@@ -30,7 +30,8 @@ export function jobSocketUrl() {
 /**
  * 连上并订阅一类任务。
  *
- * @param {string} kind      "run" 或 "write"
+ * @param {string} kind      频道名：`run` / `write` / `refs` / `system`，
+ *                           或者调用方自己造的那种随机流号
  * @param {(msg: object) => void} onMessage 收到一条消息（已经解析成对象）
  * @param {() => void} [onDrop] 断开时叫一声，调用方据此退回轮询
  * @param {() => void} [onOpen] 订阅**已经发出去**之后叫一声
