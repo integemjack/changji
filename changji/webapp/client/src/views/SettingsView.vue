@@ -96,12 +96,22 @@ const SECTIONS = [
   // 模型选择，改放进项目页面"）。**搬走的是"挑"，不是"往哪儿下"**——
   // 目录和下载源是整台机器共用的（"模型的路径放到设置里，这个全局统一的"），
   // 留在这儿。
-  { id: 'tts', title: '配音' },
-  { id: 'models', title: '模型目录和下载' },
-  { id: 'assembly', title: '装配与闸门' },
+  // ⚠️ **下面这三节只在引擎连得上时才渲染**（模板里那句
+  // `<template v-if="engineOnline">`，理由写在那儿：读不到任何值，
+  // 摆出来是一排空框）。导航这边也得跟着，否则连不上时这三个按钮照旧
+  // 摆着、点下去 `scrollTo` 找不到那个 id，`?.` 一兜就是**什么都不发生**。
+  // 而"引擎连不上"恰恰是最常打开这一页的时候（人就是来修连接的），
+  // 那时候一半的导航是死的。
+  { id: 'tts', title: '配音', needsEngine: true },
+  { id: 'models', title: '模型目录和下载', needsEngine: true },
+  { id: 'assembly', title: '装配与闸门', needsEngine: true },
 ]
 
 const engineOnline = computed(() => Boolean(overview.value?.engine?.online))
+/** 导航上摆哪几个：只摆这一刻真的在页面上的那几节。见 SECTIONS 里那段。 */
+const shownSections = computed(() =>
+  SECTIONS.filter((s) => !s.needsEngine || engineOnline.value),
+)
 /**
  * 体检里没过的那几项。
  *
@@ -374,7 +384,7 @@ function scrollTo(id) {
       <!-- 小节导航 -->
       <nav class="secnav">
         <button
-          v-for="s in SECTIONS"
+          v-for="s in shownSections"
           :key="s.id"
           class="secnav__item"
           type="button"
