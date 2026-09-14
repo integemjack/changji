@@ -325,6 +325,17 @@ watch(
     // 「正在画」那几格也松开：它们按 char_id_slot 记，而两部剧里撞同一个
     // id 不稀奇。见 useRefStream 的 forgetAll。
     forgetAll()
+    // **参考音色那份清单是按项目读的**（`/api/voices?path=`，扫的是
+    // 这部剧 voices/ 下的片段），也得跟着走。
+    //
+    // 不清的后果不是"多显示几条"，是**再也不会刷新**：下面 toggle() 里那句
+    // 判据是 `if (!voices.length && !voicesError) loadVoices()`——上一部剧
+    // 有片段的话 `voices.length` 非零，于是换到新这一部之后**一次都不会
+    // 重新问**。抽屉里那排可点的音色片和 datalist 摆的全是上一部的，点一下
+    // 就把上一部的路径写进这一部角色的 voice_id，按保存就落盘了。
+    // 和上面 take 那条是同一件事，只是那条是"摇出来的"、这条是"已经存过的"。
+    voices.value = []
+    voicesError.value = ''
     load()
   },
   { immediate: true },
@@ -342,16 +353,23 @@ watch(finished, load)
  * 下拉框有用。「正在问」的状态也留着：接口本身还是异步的。
  */
 async function loadVoices() {
+  // **钉住是替哪部剧问的。** 这一趟是按项目读的，而抽屉开着的时候在项目库
+  // 里点另一部剧随时会发生；回来晚了不判的话，上一部的片段列表就摆在新这
+  // 一部的抽屉里。同 loadAssets 那条闸。
+  const want = session.projectPath
+  const mine = () => want === session.projectPath
   voicesError.value = ''
   voicesLoading.value = true
   try {
-    const data = await api.voices(session.projectPath)
+    const data = await api.voices(want)
+    if (!mine()) return
     voices.value = data.voices ?? []
     if (data.error) voicesError.value = data.error
   } catch (err) {
+    if (!mine()) return
     voicesError.value = err.message
   } finally {
-    voicesLoading.value = false
+    if (mine()) voicesLoading.value = false
   }
 }
 

@@ -773,10 +773,21 @@ async function batchRerun(step) {
 // ---- 体检和画幅 ----
 
 async function loadDoctor() {
+  // **和下面 loadVideo 同一道闸。** 两条是同一个 watch 里一前一后发的，
+  // 而这一条**更慢**：体检里有三项要发网络请求、各自 8 秒超时，最坏
+  // 二十多秒；画幅那条只是读两个文件。于是它反而是更容易后落地的那个。
+  //
+  // 落错了不是显示偏一点：`doctor.can_run` 决定 `blocked`，而 blocked
+  // 关着「开始出片」和「只出首帧」两颗按钮、还会在墙上摆一段「还不能跑」
+  // 的说明。上一部剧的结论落到这一部头上，表现是这一部明明能跑却被拦住
+  // （或者反过来），而理由写的是另一台机器/另一部剧的事。
+  const want = session.projectPath
   try {
-    // 带上这部剧：「出片画布」查的是这部剧的画幅（见 api.doctor 那段）。
-    doctor.value = await api.doctor(session.projectPath)
+    const got = await api.doctor(want)
+    if (want !== session.projectPath) return
+    doctor.value = got
   } catch (err) {
+    if (want !== session.projectPath) return
     doctor.value = {
       can_run: false,
       checks: [{ name: '体检', level: 'error', detail: err.message }],
