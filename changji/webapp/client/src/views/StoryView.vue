@@ -1548,9 +1548,23 @@ async function adoptDraft() {
         story: draft.value.story,
         overwrite: true,
       }),
-    { key: 'adopt', success: '采用了，写进项目了', refresh: true },
+    // success 不写在这儿：下一句要按草稿的 needs_analysis 分两种说法
+    { key: 'adopt', refresh: true },
   )
   if (result) {
+    // **「下一步让 AI 读一遍」这句提醒，引擎是特意送上来的。**
+    //
+    // 出草稿那几条接口都带一个 `needs_analysis`（characters 为空就是真），
+    // 而它旁边的注释写着：「前端靠这个数提醒人『下一步让 AI 读一遍』，
+    // 不然采用之后会一路走到分镜才发现资产库是空的。」——这个数从来没人读，
+    // 那条路也就一直是：采用 → 去设定 → 三格全空 → 不知道该按哪儿。
+    //
+    // 不加新按钮：「提人物」本来就在这一页的工具行上，这里只是把话说到。
+    ui.ok(
+      draft.value?.needs_analysis
+        ? '采用了。接着点「提人物」让 AI 读一遍，人物和地点才有'
+        : '采用了，写进项目了',
+    )
     for (const k of Object.keys(buf)) delete buf[k]
     dirtySnapshot.clear()
     setStory(result)

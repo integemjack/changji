@@ -384,7 +384,18 @@ async function saveShot() {
     { key: 'save', refresh: true },
   )
   if (!result) return
-  ui.ok(result.reset ? '已保存，这一镜退回重跑' : '已保存')
+  // **字段名是 `reset_to_planned`，不是 `reset`。**
+  //
+  // 引擎回的是 `{saved, reset_to_planned, status}`（editing.cpp 那个
+  // post_shot 的结尾），而这儿读的 `result.reset` 永远是 undefined——于是
+  // 这句话**从来没出现过**。
+  //
+  // 而它要说的事天天发生：只要动了画面那几项（visual_desc、首帧提示词、
+  // 运镜提示词、负向、台词），引擎就把这一镜退回 PLANNED、重试次数归零
+  // （`const bool reset = touched_visual && !patch_has_status;`）。抽屉里
+  // 改一句提示词存一下，格子就从「成片完成」变回「未开工」，而屏幕上只说
+  // 了「已保存」——人第一反应是刚才那一镜的成片丢了。
+  ui.ok(result.reset_to_planned ? '已保存，这一镜退回重跑' : '已保存')
   await load()
   // 重新读一遍之后抽屉要跟着新数据走，否则「未保存」的提示会一直挂着
   const fresh = shots.value.find((s) => s.shot_id === openId.value)
