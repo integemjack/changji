@@ -1,18 +1,31 @@
 <script setup>
 /**
- * 挑模型、下模型。**初始化页和设置页共用这一个组件。**
+ * 挑模型、下模型。**初始化页和项目页共用这一个组件。**
+ *
+ * 2026-09-14 从设置页搬到项目页（用户："去掉设置页面的模型选择，改放进
+ * 项目页面"）。设置页只剩「大模型」那一节——那是接哪台服务、用哪把密钥，
+ * 和"这台机器上有哪些权重文件"不是一件事。
  *
  * 为什么共用而不是各写一份：两处要做的事是同一件——看这台机器该用哪一档、
  * 换一档、把缺的下下来。分成两份的话，量化档的说明、显存门槛、
  * 「换家族要清空上一家的键」这些迟早只改一边，而分家的表现是
- * 设置页写着一套、初始化页写着另一套，用户不知道该信哪个。
+ * 项目页写着一套、初始化页写着另一套，用户不知道该信哪个。
  *
  * 两处唯一的差别在外面那圈：初始化页是一整页带「先跳过 / 进入首页」，
- * 设置页是一节。所以那两个按钮走插槽，组件自己不管跳转。
+ * 项目页是一节。所以那两个按钮走插槽，组件自己不管跳转。
+ *
+ * ⚠️ **摆在项目页上，管的仍然是整台机器。** 写的是全局 config.toml 的
+ * `[models]`，换一部剧也是这一套权重。项目页上那句话必须说出来，
+ * 否则用户会以为每部剧能各用各的模型——画幅和全剧风格才是项目自己的。
  *
  * ---
  *
- * 三条界面上的取舍：
+ * 四条界面上的取舍：
+ *
+ * **保存只保存，下载是下载**（用户 2026-09-14："保存就是单纯的保存配置"）。
+ * 保存写配置、一个文件都不碰；缺文件的那几组各自后面摆一个「下载 X GB」，
+ * 点了才下，进度和速度就长在那一行下面。以前是存完弹一句「现在下吗」，
+ * 等于把同一件事问两遍，而且那一问离"缺的是哪一组"很远。
  *
  * **推荐是选好的，不是标出来的。** 进来时每一组已经选中一项——已经配着的
  * 优先，没配过才用按显卡推的那一档。只标一个「推荐」角标让用户自己去点的话，
@@ -26,7 +39,7 @@
  * 刷新页面、关掉浏览器第二天回来、换台设备看。轮询这三种都对，
  * 事件流每一种都要另写一段补偿。
  */
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 
 import AppIcon from '@/components/AppIcon.vue'
 import ProgressBar from '@/components/ProgressBar.vue'
@@ -41,7 +54,7 @@ defineProps({
   dense: { type: Boolean, default: false },
 })
 
-// 配置真的写进去了。设置页要靠它重读一遍——步数、画幅这些跟着模型变。
+// 配置真的写进去了。外面那一层要重读的话靠它——步数这些跟着模型变。
 const emit = defineEmits(['applied'])
 
 const ui = useUi()
@@ -55,14 +68,6 @@ const dir = ref('')
 const source = ref('')
 const starting = ref(false)
 const progress = ref(null)
-/**
- * 存完了，但文件还缺——「现在下吗」那一问摆出来没有。
- *
- * 只有 save() 会把它立起来。用户接着又改了选择的话要放下（见下面那个
- * watch）：那一问针对的是**刚存下去的那一套**，选择一变它就问的不是
- * 同一件事了。
- */
-const askDownload = ref(false)
 const expanded = ref({}) // 哪几组展开了文件明细
 
 let timer = null
@@ -190,6 +195,64 @@ const plan = computed(() => {
   return { total, have, need: Math.max(0, total - have) }
 })
 
+/**
+ * 这一组还差多少字节没下。
+ *
+ * 云端那一项和「不下载」都是 0（它们一个文件都不要），所以这个数也是
+ * 「要不要在这一组后面摆下载按钮」的判据——**按文件缺不缺，不按是不是
+ * 本地模型**：本地那一档下全了也不该再摆一个按钮。
+ */
+function groupNeed(g) {
+  const o = pickedOption(g)
+  if (!o || !o.totalBytes) return 0
+  return Math.max(0, Number(o.totalBytes) - Number(o.haveBytes ?? 0))
+}
+
+/** 这一组在当前这次下载快照里的那几个文件。快照里每一项都带 group。 */
+function groupItems(g) {
+  return (progress.value?.items ?? []).filter((i) => i.group === g.key)
+}
+
+/**
+ * 这一组的下载进度，没有就是 null。
+ *
+ * 一组一份而不是只报总数：现在下载是**按组起的**（点哪一组的按钮就下
+ * 哪一组），总进度条放在最上面的话，用户点的那一行下面什么都不会动。
+ */
+function groupStat(g) {
+  const items = groupItems(g)
+  if (!items.length) return null
+  let downloaded = 0
+  let total = 0
+  let speed = 0
+  let active = false
+  let failed = false
+  for (const i of items) {
+    downloaded += Number(i.downloaded) || 0
+    total += Number(i.total) || 0
+    if (i.state === 'running') speed += Number(i.speedBps) || 0
+    if (i.state === 'running' || i.state === 'pending') active = true
+    if (i.state === 'failed') failed = true
+  }
+  return {
+    items,
+    downloaded,
+    total,
+    speed,
+    failed,
+    running: running.value && active,
+    percent: total ? Math.min(100, (downloaded / total) * 100) : 0,
+  }
+}
+
+/** 还缺文件的那几组。底下那个「下载缺的」只在不止一组时才出现。 */
+const missingGroups = computed(() => groups.value.filter((g) => groupNeed(g) > 0))
+
+/** 这次快照横跨几组。跨组时才在最上面摆一条总进度。 */
+const snapGroupCount = computed(
+  () => new Set((progress.value?.items ?? []).map((i) => i.group)).size,
+)
+
 /** 选的这一套和配置里现在用的那一套一样吗。设置页靠它决定按钮亮不亮。 */
 const unchanged = computed(() => {
   const current = state.value?.selected ?? {}
@@ -311,17 +374,17 @@ async function syncAfterWrite() {
 }
 
 /**
- * 存这一套选择——**只写配置，一个文件都不碰**。
+ * 存这一套选择——**保存就是单纯的保存配置，一个文件都不碰**。
  *
- * 用户 2026-09-14："模型没下载也应该可以保存，提示用户是否现在下载。"
- * 「这一档是我要的」和「文件到盘上了」本来就是两件事：捆在一起的话，
- * 挑一档 40 GB 的权重就得先等它下完才算选上，中途一停配置还回到原样。
+ * 用户 2026-09-14："保存就是单纯的保存配置。"
+ * 「这一档是我要的」和「文件到盘上了」是两件事，捆在一起的话，挑一档
+ * 40 GB 的权重就得先等它下完才算选上，中途一停配置还回到原样。
  *
- * 存完还缺文件的话不自作主张开下，把 askDownload 立起来问一句。
+ * 存完缺文件也**不再多问一句**「现在下吗」——缺的那几组自己后面就摆着
+ * 下载按钮，问一遍是把同一件事说两次。
  */
 async function save() {
   starting.value = true
-  askDownload.value = false
   try {
     const res = await api.startSetupDownload({
       selections: picks.value,
@@ -336,8 +399,7 @@ async function save() {
     const wasUnchanged = unchanged.value
     await syncAfterWrite()
     if (missing > 0) {
-      askDownload.value = true
-      ui.ok('配置存好了。模型还缺一些，下面问你要不要现在下')
+      ui.ok(`配置存好了。还差 ${humanBytes(missing)} 没下，点那一组后面的「下载」`)
     } else {
       ui.ok(wasUnchanged ? '配置重写好了' : '已经换过去了，配置写好了')
     }
@@ -348,13 +410,25 @@ async function save() {
   }
 }
 
-/** 真的开下。主按钮不再直接走这儿——问过「现在下吗」才来。 */
-async function start() {
+/**
+ * 开下。`only` 给了就只下那一组，不给是把缺的全下了。
+ *
+ * **按组下是默认的那条路**：用户点的是某一行后面的按钮，下的就该是那一
+ * 行。整套一起下只留给初始化页——那时候四组都是空的，一组一组点没有意义。
+ *
+ * ⚠️ 引擎那边收到 selections 会**顺手把这几组的配置写实**（见
+ * post_setup_download）。所以按组下的时候只把这一组报上去：把整份 picks
+ * 都发过去的话，用户在别的组里刚改了还没保存的选择会被一起写进配置——
+ * 而他按的只是「下载这一档」。
+ */
+async function start(only = null) {
   starting.value = true
-  askDownload.value = false
   try {
+    const selections = only
+      ? { [only.key]: picks.value[only.key] }
+      : { ...picks.value }
     const res = await api.startSetupDownload({
-      selections: picks.value,
+      selections,
       dir: dir.value?.trim() || undefined,
       source: source.value || undefined,
     })
@@ -363,8 +437,8 @@ async function start() {
       startPolling()
       return
     }
-    // 一个文件都不用碰（每一组选的都是「不下载」）。引擎那边连一轮都
-    // 没起，所以这儿自己收尾。
+    // 一个文件都不用碰（选的是「不下载」，或者文件已经都在盘上）。
+    // 引擎那边连一轮都没起，所以这儿自己收尾。
     await afterRun('done')
   } catch (err) {
     ui.error(err.message)
@@ -380,12 +454,6 @@ async function stop() {
     ui.error(err.message)
   }
 }
-
-// 改了选择，那一问就不算数了——它问的是刚存下去的那一套。
-// **flush: 'sync' 不是随手加的。** 默认那档是微任务，而 save() 里
-// syncAfterWrite 刚给 picks 整个赋过值——回调会排在 askDownload 立起来
-// 之后跑，把刚问出口的话又收回去，那一问就再也不出现。
-watch(picks, () => { askDownload.value = false }, { deep: true, flush: 'sync' })
 
 defineExpose({ reload: load, state, running })
 
@@ -475,8 +543,14 @@ onUnmounted(stopPolling)
         </div>
       </div>
 
-      <!-- ---------- 下载中 / 下完了 ---------- -->
-      <div v-if="running || finished || failedItems.length" class="card card--run">
+      <!-- ---------- 总进度：只在一次下载横跨好几组时才摆 ----------
+           下载现在是按组起的，进度也在那一组自己后面。整套一起下
+           （初始化页的「下载缺的」）才需要一条总的，否则这块和下面
+           每一组里那条说的是同一件事。 -->
+      <div
+        v-if="snapGroupCount > 1 && (running || finished || failedItems.length)"
+        class="card card--run"
+      >
         <div class="card__body stack">
           <ProgressBar
             :percent="overallPercent"
@@ -551,20 +625,18 @@ onUnmounted(stopPolling)
               <AppIcon name="stop" :size="14" />
               停下
             </button>
-            <template v-else>
-              <button
-                v-if="failedItems.length || progress.state === 'canceled'"
-                class="btn btn--sm"
-                type="button"
-                title="从断点续"
-                @click="start"
-              >
-                <AppIcon name="refresh" :size="14" />
-                接着下
-              </button>
-              <!-- 初始化页在这儿放「进入首页」；设置页什么都不放。 -->
-              <slot name="done" :state="progress.state" />
-            </template>
+            <!-- `start()` 要带括号：写成 `@click="start"` 的话，Vue 把
+                 那个 MouseEvent 当第一个实参传进去，`only` 就成了事件对象。 -->
+            <button
+              v-else-if="failedItems.length || progress.state === 'canceled'"
+              class="btn btn--sm"
+              type="button"
+              title="从断点续"
+              @click="start()"
+            >
+              <AppIcon name="refresh" :size="14" />
+              接着下
+            </button>
           </div>
         </div>
       </div>
@@ -635,12 +707,116 @@ onUnmounted(stopPolling)
             <span v-if="pickedOption(g).totalBytes" class="tiny dim numeric nowrap">
               {{ humanBytes(pickedOption(g).totalBytes) }}
             </span>
+            <!-- **缺文件才摆这个按钮。** 云端那一项和「不下载」一个文件都
+                 不要（groupNeed 是 0），下全了的也不摆——摆一个点了什么都
+                 不会发生的按钮，比没有更糟。
+                 只下这一组，不碰别的组，见 start(only)。 -->
+            <button
+              v-if="groupNeed(g) > 0"
+              class="btn btn--sm"
+              type="button"
+              :disabled="running || starting || !state.tool"
+              :title="
+                state.tool
+                  ? '只下这一组，并把这一组的配置指到这一档'
+                  : '这台机器上没有 aria2 或 curl，下不了'
+              "
+              @click="start(g)"
+            >
+              <AppIcon name="upload" :size="14" class="down" />
+              下载 {{ humanBytes(groupNeed(g)) }}
+            </button>
           </div>
 
           <!-- 选中那一档自己的一句。这是挑档的唯一依据，留着。 -->
           <p v-if="pickedOption(g)?.note" class="tiny dim">
             {{ pickedOption(g).note }}
           </p>
+
+          <!-- ---------- 这一组的下载进度 ----------
+               点了上面那个按钮之后，进度、速度、剩余时间就长在这一行下面，
+               不用去页面别处找。 -->
+          <div v-if="groupStat(g)" class="card card--run">
+            <div class="card__body stack stack--sm">
+              <ProgressBar
+                :percent="groupStat(g).percent"
+                :tone="groupStat(g).failed ? 'danger' : groupStat(g).running ? 'accent' : 'ok'"
+                :label="
+                  groupStat(g).running
+                    ? '正在下'
+                    : groupStat(g).failed
+                      ? '有文件没下下来'
+                      : progress.state === 'canceled'
+                        ? '已停下'
+                        : '这一组齐了'
+                "
+                :detail="`${humanBytes(groupStat(g).downloaded)} / ${humanBytes(groupStat(g).total)}`"
+              />
+              <div class="row row--between tiny dim">
+                <span class="numeric">
+                  <template v-if="groupStat(g).running && groupStat(g).speed > 0">
+                    {{ humanRate(groupStat(g).speed) }}
+                    <template v-if="progress.etaSeconds > 0">
+                      · 还要 {{ humanTime(progress.etaSeconds) }}
+                    </template>
+                  </template>
+                  <template v-else-if="groupStat(g).running">正在连…</template>
+                </span>
+                <span>{{ groupStat(g).percent.toFixed(1) }}%</span>
+              </div>
+
+              <ul class="items">
+                <li
+                  v-for="item in groupStat(g).items"
+                  :key="item.name"
+                  class="item"
+                  :class="`item--${item.state}`"
+                >
+                  <span class="item__dot" />
+                  <span class="item__name mono truncate">{{ item.name }}</span>
+                  <span class="item__state tiny dim nowrap">
+                    {{ ITEM_LABEL[item.state] || item.state }}
+                  </span>
+                  <span class="item__size tiny dim numeric nowrap">
+                    <template v-if="item.state === 'running'">
+                      {{ humanBytes(item.downloaded) }} / {{ humanBytes(item.total) }}
+                      <template v-if="item.speedBps > 0">
+                        · {{ humanRate(item.speedBps) }}
+                      </template>
+                    </template>
+                    <template v-else>{{ humanBytes(item.total) }}</template>
+                  </span>
+                  <div v-if="item.state === 'running'" class="item__bar">
+                    <div class="item__fill" :style="{ width: itemPercent(item) + '%' }" />
+                  </div>
+                  <p v-if="item.error" class="item__err tiny">{{ item.error }}</p>
+                </li>
+              </ul>
+
+              <div class="row">
+                <button
+                  v-if="groupStat(g).running"
+                  class="btn btn--danger btn--sm"
+                  type="button"
+                  @click="stop"
+                >
+                  <AppIcon name="stop" :size="14" />
+                  停下
+                </button>
+                <button
+                  v-else-if="groupNeed(g) > 0"
+                  class="btn btn--sm"
+                  type="button"
+                  :disabled="running || starting || !state.tool"
+                  title="从断点续"
+                  @click="start(g)"
+                >
+                  <AppIcon name="refresh" :size="14" />
+                  接着下
+                </button>
+              </div>
+            </div>
+          </div>
 
           <!-- 展开条件要带上"这一档有文件"，不然选「不下载」会留个空盒子。 -->
           <button
@@ -683,12 +859,28 @@ onUnmounted(stopPolling)
         </div>
         <div class="foot__act">
           <slot name="actions" :running="running" />
+          <!-- 初始化页在这儿放「进入首页」。**放在底下这条而不是进度卡里**：
+               一组一组下的时候那张卡根本不出现，按钮跟着一起没了。 -->
+          <slot name="done" :state="progress?.state" />
+          <!-- **不止一组缺东西时才摆这个。** 初始化页四组都是空的，一组一组
+               点没有意义；项目页上一般只缺一两组，那时候按钮就在那一组后面，
+               这儿再来一个是把同一件事说两次。 -->
+          <button
+            v-if="missingGroups.length > 1"
+            class="btn"
+            type="button"
+            :disabled="running || starting || !state.tool"
+            :title="state.tool ? '把缺的几组一起下了' : '这台机器上没有 aria2 或 curl，下不了'"
+            @click="start()"
+          >
+            <AppIcon name="upload" :size="16" class="down" />
+            下载缺的 {{ humanBytes(plan.need) }}
+          </button>
           <!-- 没改动时不禁用，只改文案：重写一遍配置是幂等的，配置漂了时靠它修。
 
-               **这个按钮只存配置，一个文件都不下。** 缺的东西下不下，
-               存完之后由下面那一问说了算。所以 `!state.tool`（机器上
-               没有 aria2/curl）也不再禁它——那跟"我想把选择存下来"
-               没有关系，它只该拦住真正要下的那一下。 -->
+               **保存就是单纯的保存配置，一个文件都不下**（用户 2026-09-14）。
+               所以 `!state.tool`（机器上没有 aria2/curl）也不禁它——那跟
+               "我想把选择存下来"没有关系，它只该拦住真正要下的那一下。 -->
           <button
             class="btn btn--primary"
             type="button"
@@ -708,29 +900,6 @@ onUnmounted(stopPolling)
             }}
           </button>
         </div>
-      </div>
-
-      <!-- 存完了，但文件还缺。**问一句，不自作主张替他开下**——
-           这一套可能是四十几 GB，也可能他就是想先把选择定下来。 -->
-      <div v-if="askDownload" class="askdl">
-        <span class="askdl__msg">
-          配置存好了。这一套还差
-          <span class="numeric strong">{{ humanBytes(plan.need) }}</span>
-          没下，现在下吗？
-        </span>
-        <button
-          class="btn btn--primary btn--sm"
-          type="button"
-          :disabled="running || starting || !state.tool"
-          :title="state.tool ? '' : '这台机器上没有 aria2 或 curl，下不了'"
-          @click="start"
-        >
-          <AppIcon name="upload" :size="14" class="down" />
-          现在下载
-        </button>
-        <button class="btn btn--ghost btn--sm" type="button" @click="askDownload = false">
-          以后再说
-        </button>
       </div>
 
       <p v-if="!dense" class="tiny dim mono center">配置文件：{{ state.configFile }}</p>
@@ -896,22 +1065,6 @@ onUnmounted(stopPolling)
 /* 存完之后那一问。**跟在 foot 后面单独一行**，不挤进 foot__act：
    那一排是「我要做什么」，这一行是「刚做完，还有一件事」，
    混在一起的话用户分不清哪个按钮是主的。 */
-.askdl {
-  display: flex;
-  align-items: center;
-  gap: var(--s3);
-  flex-wrap: wrap;
-  margin-top: var(--s3);
-  padding: var(--s3) var(--s4);
-  border: 1px solid var(--line);
-  border-radius: var(--r-lg);
-  background: color-mix(in srgb, var(--surface) 94%, transparent);
-}
-.askdl__msg {
-  flex: 1 1 16rem;
-  font-size: 0.9em;
-}
-
 .foot {
   position: sticky;
   bottom: 0;

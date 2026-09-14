@@ -4,10 +4,16 @@
  *
  * **这一页只说当前这个项目。** 选哪一部在常驻的项目库里。这一页显示的是：
  * 这是哪部剧（logline）、到哪一步了、这一部剧自己的设置（画面、全剧风格）、
- * 以及删掉它。
+ * 用哪些模型，以及删掉它。
  *
  * 画面和全剧风格**是项目级的**——一台机器上可以同时有竖屏短剧和横屏片子，
  * 所以它们不能回全局设置页。
+ *
+ * **模型不是项目级的，但也搬到这一页了**（用户 2026-09-14："去掉设置页面
+ * 的模型选择，改放进项目页面"）。理由站得住：挑模型和挑画幅是同一个场合
+ * 的事——开一部新剧、决定这部片子长什么样、跑起来要多久。设置页那一堆
+ * （引擎地址、密钥、闸门阈值）是装机时配一次的东西，不该和它挤在一起。
+ * 代价是得说清楚它写的是全局配置，所以那一节的标题旁边挂着那句话。
  *
  * 2026-09-11 起照故事页的样子：没有页头、没有卡片、没有解释性的段落。
  * 一行读数，两块表单并排，删项目是最底下一行字。
@@ -15,6 +21,7 @@
 import { computed, onMounted, ref, watch } from 'vue'
 
 import EmptyState from '@/components/EmptyState.vue'
+import ModelPicker from '@/components/ModelPicker.vue'
 import { projectStage } from '@/composables/project-stage'
 import { api } from '@/api'
 import { VIDEO_QUALITIES, qualitySize } from '@/api/labels'
@@ -284,6 +291,20 @@ watch(
         </section>
       </div>
 
+    </template>
+
+    <!-- 模型。**不在 hasProject 那个分支里**：一台刚装好的机器上一个项目
+         都没有，而那正是最需要挑模型和下模型的时候；关在"先建个项目"
+         后面的话，跳过初始化页的人再也找不到这一页。 -->
+    <section class="sec">
+      <div class="sec__head">
+        <h2 class="sec__t">模型</h2>
+        <span class="tiny dim">整台机器共用一套，不分项目</span>
+      </div>
+      <ModelPicker dense />
+    </section>
+
+    <template v-if="session.hasProject">
       <!-- 删掉这个项目。一行字，点开才有确认框。不可逆，摆在最底下。 -->
       <section class="sec">
         <div class="row row--wrap">

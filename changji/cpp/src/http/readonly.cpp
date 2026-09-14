@@ -324,7 +324,8 @@ ApiResult get_assets(const std::string& path) {
         {"reference_hint", refs_honored ? "" :
             "参考图会传给出图模型，但当前这个是纯文生图的，它不会照着画——"
             "画面靠的是下面那段拼出来的提示词。要让参考图真生效，"
-            "去设置页换一个图像编辑模型（Qwen-Image-Edit、Flux Kontext 这类）。"},
+            "去项目页的「模型」那一节换一个图像编辑模型"
+            "（Qwen-Image-Edit、Flux Kontext 这类）。"},
         {"characters", characters},
         {"locations", locations},
         {"style", {

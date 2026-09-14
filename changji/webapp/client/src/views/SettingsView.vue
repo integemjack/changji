@@ -10,7 +10,6 @@
 import { computed, onMounted, ref, watch } from 'vue'
 
 import AppIcon from '@/components/AppIcon.vue'
-import ModelPicker from '@/components/ModelPicker.vue'
 import { api } from '@/api'
 import { useAction } from '@/composables/useAction'
 import { useUi } from '@/stores/ui'
@@ -33,7 +32,8 @@ const apiKeyInput = ref('')
 const SECTIONS = [
   { id: 'engine', title: '引擎' },
   { id: 'llm', title: '大模型' },
-  { id: 'models', title: '模型' },
+  // 「模型」那一节 2026-09-14 搬去项目页了（用户的话："去掉设置页面的
+  // 模型选择，改放进项目页面"）。这一页只剩装机时配一次的东西。
   { id: 'render', title: '出图出片' },
   { id: 'tts', title: '配音' },
   { id: 'assembly', title: '装配' },
@@ -54,9 +54,26 @@ const models = ref([])
 /** 引擎那边认识的这家有什么，每项 { id, note }。见后端 known_models。 */
 const known = ref([])
 const modelsError = ref('')
-const modelsLoading = ref(false)
-/** 选不着的时候手打。下拉是**有兜底的**，不是唯一入口。 */
+/** 选中它才露出手填输入框。放进下拉的最后一项，不再另开一个按钮。 */
+const CUSTOM_MODEL = '__custom__'
 const customModel = ref(false)
+
+/**
+ * 下拉选了一项。
+ *
+ * **不用 v-model。** 选中「其他」时要把控件整个换成输入框，而 v-model
+ * 会先把 `__custom__` 这个哨兵写进 conn.llm_model——那一瞬间它就是要存的
+ * 值，中途要是触发一次保存，存进配置的就是这个假名字。
+ */
+function pickModel(event) {
+  const v = event.target.value
+  if (v === CUSTOM_MODEL) {
+    customModel.value = true
+    return
+  }
+  conn.value.llm_model = v
+}
+const modelsLoading = ref(false)
 
 /**
  * 下拉里摆什么。
@@ -128,7 +145,6 @@ async function loadModels({ pickFirst = false } = {}) {
     const hit = options.some((m) => m.id === current)
     if (options.length && (pickFirst || !current || !hit)) {
       conn.value.llm_model = options[0].id
-      customModel.value = false
     }
   } catch (err) {
     modelsError.value = err.message
@@ -204,6 +220,27 @@ async function pickProvider(event) {
     ui.info(`${provider.name} 的地址填好了，还要在下面填 API Key 才能问到模型列表`)
   }
 }
+/**
+ * 两节各自要提交的那几项，和"读回来之后动过没有"。
+ *
+ * 摆出「未存」那个角标是有用的：这一页上每一节的保存都是独立的，
+ * 改了一节去点另一节的保存按钮，什么都不会发生，而页面上原来没有任何
+ * 迹象说明这件事。
+ */
+const llmPatch = computed(() => ({
+  llm_base_url: conn.value.llm_base_url,
+  llm_model: conn.value.llm_model,
+  llm_temperature: Number(conn.value.llm_temperature),
+}))
+const ttsPatch = computed(() => ({
+  tts_backend: conn.value.tts_backend,
+  tts_base_url: conn.value.tts_base_url ?? '',
+}))
+const savedLlm = ref('')
+const savedTts = ref('')
+const llmDirty = computed(() => JSON.stringify(llmPatch.value) !== savedLlm.value)
+const ttsDirty = computed(() => JSON.stringify(ttsPatch.value) !== savedTts.value)
+
 const envLocked = computed(() => conn.value?.env_locked ?? {})
 const nodeLocked = computed(() => node.value?.envLocked ?? {})
 
@@ -290,6 +327,10 @@ async function load() {
     overview.value = data
     node.value = { ...data.node }
     conn.value = { ...(data.connections ?? {}) }
+    // 基准线：这两句之后「未存」才说得准。放在这儿而不是保存成功那一下，
+    // 是因为引擎可能没照单全收（被环境变量顶着的项就不会变）。
+    savedLlm.value = JSON.stringify(llmPatch.value)
+    savedTts.value = JSON.stringify(ttsPatch.value)
     // 引擎把参数分了组，界面上摊平成一层，提交时再拆回去
     const s = data.settings
     if (s) {
@@ -357,21 +398,20 @@ async function saveApiKey() {
   await load()
 }
 
-/** 连接类设置。改了等于换一台干活的机器，保存完引擎会自动重新体检。 */
-async function saveConnections() {
-  const patch = {
-    llm_base_url: conn.value.llm_base_url,
-    llm_model: conn.value.llm_model,
-    llm_temperature: Number(conn.value.llm_temperature),
-    tts_backend: conn.value.tts_backend,
-    tts_base_url: conn.value.tts_base_url ?? '',
-    tts_engine: conn.value.tts_engine,
-  }
-  // **密钥不在这儿提交**，它有自己的按钮（saveApiKey）。
-  // 捎带着提交的话，"改个温度"会顺手把密钥也写一遍。
-
+/**
+ * 连接类设置。改了等于换一台干活的机器，保存完引擎会自动重新体检。
+ *
+ * **一节一个按钮，各存各的。** 2026-09-14 之前是一个按钮把大模型和配音
+ * 一起提交，而那个按钮长在「配音」那一节里——用户在「大模型」挑完模型，
+ * 整节上没有一个能点的东西，只能靠标题里那句"大模型和配音一起保存"猜。
+ * 分开之后还有一个好处：改配音不会把大模型那几项也重写一遍。
+ *
+ * 密钥仍然不在这儿提交，它有自己的按钮（saveApiKey）——捎带着提交的话，
+ * "改个温度"会顺手把密钥也写一遍。
+ */
+async function saveConn(patch, key) {
   const result = await run(() => api.saveConnections({ patch, persist: persist.value }), {
-    key: 'conn',
+    key,
   })
   if (!result) return
   ui.ok(
@@ -384,6 +424,13 @@ async function saveConnections() {
   }
   await load()
 }
+
+/** 「大模型」那一节：接哪台服务、用哪个模型、多敢编。 */
+const saveLlm = () => saveConn(llmPatch.value, 'llm')
+
+/** 「配音」那一节。`tts_engine` 不提交——引擎的白名单里没有这一项，
+ *  而 /api/connections 也从来不回它，提交的是个 undefined。 */
+const saveTts = () => saveConn(ttsPatch.value, 'conn')
 
 async function saveParams() {
   const patch = {}
@@ -592,6 +639,24 @@ function scrollTo(id) {
                 {{ llmState.text }}<template v-if="llmState.measured">
                   · 实测 {{ llmState.measured }}</template>
               </span>
+              <span v-if="!llmLocal && llmDirty" class="pill pill--warn tiny">未存</span>
+              <span class="spacer" />
+              <!-- **这一节自己的保存按钮。** 2026-09-14 之前它没有：地址、
+                   模型名、温度全靠「配音」那一节的保存按钮捎带着提交，
+                   那个按钮离这儿隔着三节，标题里写着"大模型和配音一起
+                   保存"——等于把最常改的一项藏在一个看不见的地方。
+                   用户在这儿挑完模型，找不到任何能点的东西。 -->
+              <div v-if="!llmLocal" class="sec__acts">
+                <button
+                  class="btn btn--primary btn--sm"
+                  type="button"
+                  :disabled="isBusy('llm')"
+                  title="存地址、模型名和温度，存完重新体检"
+                  @click="saveLlm"
+                >
+                  {{ isBusy('llm') ? '保存中…' : '保存' }}
+                </button>
+              </div>
             </div>
             <div class="stack">
               <label class="field field--narrow">
@@ -665,33 +730,41 @@ function scrollTo(id) {
                     >
                       {{ modelsLoading ? '正在问…' : '重新拉列表' }}
                     </button>
-                    <button
-                      v-if="modelOptions.length"
-                      class="linkbtn tiny"
-                      type="button"
-                      @click.prevent="customModel = !customModel"
-                    >
-                      {{ customModel ? '从列表里选' : '自己填' }}
-                    </button>
                   </span>
-                  <!-- 列表拉不到、或者用户点了「自己填」，就退回输入框。
-                       下拉是**有兜底的**，不是唯一入口：这家我们不认识、
-                       服务又连不上的时候，手打是唯一能走的路。 -->
+                  <!-- **下拉，不是 datalist。** 2026-09-14 这里来回换过两次，
+                       两次都被用户当场否掉，各记一笔：
+
+                       * 换成「select + 一个『自己填』按钮」——他要填一个
+                         列表里没有的名字，发现默认打不进去。
+                       * 换回 `<input list=datalist>`——**列表当场少了一半**。
+                         Chrome 的 datalist 会拿输入框里**已有的值**去过滤
+                         建议：框里是 `glm-5.3` 时，只剩包含这段的那几项。
+                         用户要的是"把这家有什么摆出来让我挑"，而 datalist
+                         天生做不到这件事。
+
+                       所以是 select。列表 = 这台服务回的 + 我们认识的这家
+                       有什么 + 当前这个值（兜底，见 modelOptions），
+                       所以配置里填着什么都不会在自己的下拉里消失。
+                       最后一项是「其他」，选它才露出输入框——手填是**退路**，
+                       不是默认入口。 -->
                   <select
-                    v-if="modelOptions.length && !customModel"
-                    v-model="conn.llm_model"
+                    v-if="!customModel"
                     class="select mono"
-                    title="列表 = 这台服务回的 + 引擎认识的这家有什么"
+                    :value="conn.llm_model"
+                    title="这台服务回的 + 我们认识的这家有什么"
+                    @change="pickModel"
                   >
                     <option v-for="m in modelOptions" :key="m.id" :value="m.id">
                       {{ m.id }}{{ m.note ? ' — ' + m.note : '' }}
                     </option>
+                    <option :value="CUSTOM_MODEL">其他（手动填一个）…</option>
                   </select>
                   <input
                     v-else
                     v-model="conn.llm_model"
                     class="input mono"
-                    placeholder="glm-4.7-flash"
+                    placeholder="填一个这家的模型名"
+                    @blur="customModel = !conn.llm_model"
                   />
                   <span v-if="modelMissing" class="field__error">
                     这台服务上没有 {{ conn.llm_model }}，有的是：{{ models.join('、') }}
@@ -746,14 +819,6 @@ function scrollTo(id) {
             </div>
           </section>
 
-          <!-- 模型：和初始化页是同一个组件（ModelPicker）。 -->
-          <section id="sec-models" class="sec">
-            <div class="sec__head">
-              <h2 class="sec__t">模型</h2>
-            </div>
-            <ModelPicker dense @applied="load" />
-          </section>
-
           <!-- 出图出片 -->
           <!-- 显示的是真正会用的数（effective），不是档位表推的：
                画幅来自项目的 [video]，步数在挂了 Turbo 时压到 6。 -->
@@ -762,9 +827,11 @@ function scrollTo(id) {
               <h2 class="sec__t">出图出片</h2>
               <span class="spacer" />
               <div class="sec__acts">
-                <button class="btn btn--ghost btn--sm" type="button" @click="scrollTo('models')">
+                <!-- 换模型在项目页。这儿只显示"这一轮真正会用的数"，
+                     点过去就是改它的地方。 -->
+                <RouterLink class="btn btn--ghost btn--sm" to="/project">
                   换模型
-                </button>
+                </RouterLink>
               </div>
             </div>
             <div class="grid grid--2">
@@ -796,15 +863,17 @@ function scrollTo(id) {
           <section id="sec-tts" class="sec">
             <div class="sec__head">
               <h2 class="sec__t">配音</h2>
+              <span v-if="ttsDirty" class="pill pill--warn tiny">未存</span>
               <span class="spacer" />
               <div class="sec__acts">
-                <!-- 大模型走内置时上面一个大模型字段都没显示，那时只保存配音。 -->
+                <!-- **只存配音这两项。** 以前这个按钮连大模型那几项一起提交，
+                     而大模型那一节自己没有按钮——见 saveConn 上面那段。 -->
                 <button
                   class="btn btn--primary btn--sm"
                   type="button"
                   :disabled="isBusy('conn')"
-                  :title="llmLocal ? '保存配音后端，保存完重新体检' : '大模型和配音一起保存，保存完重新体检'"
-                  @click="saveConnections"
+                  title="保存配音后端和地址，保存完重新体检"
+                  @click="saveTts"
                 >
                   {{ isBusy('conn') ? '保存中…' : '保存' }}
                 </button>
