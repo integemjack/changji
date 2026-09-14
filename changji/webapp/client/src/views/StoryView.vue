@@ -269,7 +269,13 @@ function stateText(id) {
   if (failedText(id)) return '砸了'
   if (isDirty(id)) return '●'
   const n = countOf(id)
-  return n ? String(n) : '—'
+  // 没写的不画「—」：九行里八个破折号等于没说。整行压暗（见 .ch.is-blank），
+  // 写了的才显示字数，哪几章有字一眼分出来。
+  return n ? String(n) : ''
+}
+/** 一个字都没有、也没在写、也没脏——左栏整行压暗。 */
+function isBlank(id) {
+  return !countOf(id) && !isDirty(id) && streaming.value?.chapter_id !== id && !failedText(id)
 }
 function stateClass(id) {
   if (streaming.value?.chapter_id === id) return 'is-live'
@@ -1600,7 +1606,11 @@ async function stopWriting() {
             v-for="(c, i) in listChapters"
             :key="c.chapter_id"
             class="ch"
-            :class="{ 'is-on': !draft && c.chapter_id === current, 'is-ghost': !!draft }"
+            :class="{
+              'is-on': !draft && c.chapter_id === current,
+              'is-ghost': !!draft,
+              'is-blank': !draft && isBlank(c.chapter_id),
+            }"
             type="button"
             :disabled="!!draft"
             :title="failedText(c.chapter_id) ? '写砸了：' + failedText(c.chapter_id) : c.summary || ''"
@@ -1614,19 +1624,13 @@ async function stopWriting() {
           </button>
         </div>
 
-        <!-- 整本书的那几件事。不常用，但要找得到。 -->
-        <div v-if="!draft" class="list__foot">
-          <template v-if="writer.running">
-            <span class="list__run tiny">
-              <span class="dot" />
-              展开中 {{ writer.state?.done ?? 0 }} / {{ writer.state?.total ?? 0 }}
-            </span>
-            <button class="btn btn--danger btn--sm" type="button" @click="stopWriting">
-              停
-            </button>
-          </template>
+        <!-- 页脚只留每次都要按的那一个。批量展开的进度和「停」在状态栏
+             （那份多一句"正在写第几章"和「跟着翻」），这儿原来又写了一遍，
+             删了；跑的时候把按钮藏起来就够。「加一章」是整本书的事，
+             搬去「这本书」那一屏。 -->
+        <div v-if="!draft && (unwritten || needsAnalysis) && !writer.running" class="list__foot">
           <button
-            v-else-if="unwritten"
+            v-if="unwritten"
             class="btn btn--ai btn--sm"
             type="button"
             :disabled="isBusy('chapters')"
@@ -1644,16 +1648,6 @@ async function stopWriting() {
             @click="analyzeStory"
           >
             {{ isBusy('analyze') ? '正在读…' : '提人物' }}
-          </button>
-          <button
-            class="btn btn--ghost btn--sm"
-            type="button"
-            :disabled="isBusy('addch')"
-            title="加一章空的，接着写"
-            @click="addChapter"
-          >
-            <AppIcon name="plus" :size="13" />
-            加一章
           </button>
         </div>
       </aside>
@@ -1718,6 +1712,12 @@ async function stopWriting() {
               placeholder="这部剧讲什么？想好了就写一句，比如：深夜便利店，前任推门进来，手里拿着五年前她送的那把伞。&#10;没想好就空着，让 AI 来一个。"
               @blur="savePremise"
             />
+            <!-- 关键词和篇幅只在**出大纲**的时候有用。没故事时它们就是起手式，
+                 摊开；有了故事之后重出是破坏性又少用的事，连按钮一起折进
+                 「▸ 让 AI 重出一份大纲」里，这一屏只剩梗概和加一章。
+                 「分几集在设定·分集那儿定」那句删了：在解释什么不在这儿。 -->
+            <component :is="hasStory ? 'details' : 'div'" class="regen stack stack--sm">
+            <summary v-if="hasStory" class="fold__t">让 AI 重出一份大纲</summary>
             <input
               v-model="keywords"
               class="input"
@@ -1737,7 +1737,6 @@ async function stopWriting() {
                   {{ sc.label }}
                 </button>
               </div>
-              <span class="tiny dim">分几集在「设定 · 分集」那儿定</span>
             </div>
             <div class="row row--wrap">
               <template v-if="!hasStory">
@@ -1789,10 +1788,25 @@ async function stopWriting() {
                   @click="writeStory"
                 >
                   <AppIcon name="sparkle" :size="15" />
-                  {{ isBusy('write') || outlineLive ? '正在写…' : '让 AI 重出一份大纲' }}
+                  {{ isBusy('write') || outlineLive ? '正在写…' : '重出' }}
                 </button>
                 <span class="tiny dim">出来先是草稿，采用了才会换掉现在这 {{ chapters.length }} 章</span>
               </template>
+            </div>
+            </component>
+
+            <!-- 从左栏页脚搬来的。整本书的事，配在整本书这一屏 -->
+            <div v-if="hasStory" class="row">
+              <button
+                class="btn btn--ghost btn--sm"
+                type="button"
+                :disabled="isBusy('addch')"
+                title="加一章空的，接着写"
+                @click="addChapter"
+              >
+                <AppIcon name="plus" :size="13" />
+                加一章
+              </button>
             </div>
 
             <!-- 正在长出来的那份大纲。**边写边看**，见 outlineLive。
@@ -2005,7 +2019,7 @@ async function stopWriting() {
                 :readonly="locked"
                 :placeholder="
                   chapter.summary
-                    ? '这一章要写的是：' + chapter.summary + '\n\n从这儿开始写，或者点上面「照大纲写这一章」让 AI 先来一版。'
+                    ? '从这儿开始写，或者点上面「照大纲写这一章」让 AI 先来一版。'
                     : '从这儿开始写。写完在左边点「提人物」，人物关系和地点就出来了。'
                 "
                 :value="body"
@@ -2114,7 +2128,7 @@ async function stopWriting() {
               <button type="button" @click="sel = null">改整章</button>
             </template>
             <template v-else>
-              改整章，{{ chars }} 字。在正文里拖选一段就只改那一段。
+              改整章 · {{ chars }} 字
             </template>
           </div>
           <blockquote v-if="target" class="ai__quote small">{{ target.text }}</blockquote>
@@ -2175,6 +2189,14 @@ async function stopWriting() {
 </template>
 
 <style scoped>
+.regen > .fold__t {
+  color: var(--text-3);
+  font-size: var(--fs-xs);
+  cursor: pointer;
+}
+.regen[open] > .fold__t {
+  margin-bottom: 4px;
+}
 /* 「正在写」那块板子。刻意做得轻：它是过程，不是结果——
    一会儿就被真正的草稿顶掉，做重了反而让人以为已经写完了。 */
 .live {
@@ -2302,6 +2324,12 @@ async function stopWriting() {
 .ch.is-on {
   background: var(--accent-soft);
   color: var(--accent);
+}
+.ch.is-blank {
+  color: var(--text-3);
+}
+.ch.is-blank.is-on {
+  color: var(--text);
 }
 .ch.is-ghost {
   opacity: 0.55;
