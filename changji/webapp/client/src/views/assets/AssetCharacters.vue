@@ -1249,7 +1249,7 @@ async function clearRef(charId, slot) {
 
               <!-- ⚠️ **「训了角色 LoRA 才填」是句假话。** 引擎一处都没有
                    加载角色 LoRA 的地方：`Character` 上确实有 `lora_path`
-                   和 `lora_strength`（`/api/asset/edit` 的白名单还收），
+                   和 `lora_strength`（`POST /api/character` 的白名单还收），
                    但全仓库读它们的**零处**——sd_image.cpp 里唯一挂 LoRA
                    的分支是 `if (is_video && !m.video_lora.empty())`，出图
                    那条路上根本没有 LoRA。

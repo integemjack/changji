@@ -81,7 +81,7 @@ struct Character {
     //
     // ⚠️ **三个里只有 `lora_trigger` 真在用。** 它被 `render_prompt()`
     // 拼在提示词最前面（character.cpp）。而 `lora_path` / `lora_strength`
-    // 存得下、`/api/asset/edit` 的白名单也收，**读它们的一处都没有**：
+    // 存得下、`POST /api/character` 的白名单也收，**读它们的一处都没有**：
     // 出图那条路上没有任何加载 LoRA 的地方，sd_image.cpp 里唯一挂 LoRA 的
     // 分支是 `if (is_video && !m.video_lora.empty())`——只有视频，而且用的
     // 是全局那一个，不是这个人身上的。
