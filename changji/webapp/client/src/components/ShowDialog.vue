@@ -61,10 +61,28 @@ const sizeText = computed(() =>
   video.value ? `${video.value.width}×${video.value.height}` : '—',
 )
 
+/**
+ * 面板里那几份是哪部剧读回来的。
+ *
+ * 不记的话换剧再开这个窗，门是照开的（`v-if="video"` 看的是有没有值，
+ * 不是值属于谁）——**新剧的窗上写着上一部的画幅、清晰度、画风**，而这几
+ * 个框是可以直接改了按保存的：那一下把 A 的画幅写进了 B。就算手慢没按，
+ * 读回来的那一趟也会把人刚敲的字顶掉。
+ */
+let loadedFor = null
+
 async function load() {
-  if (!session.projectPath) return
+  const want = session.projectPath
+  if (!want) return
+  if (want !== loadedFor) {
+    video.value = null
+    styleLine.value = ''
+    style.value = { global_style: '', negative_prompt: '' }
+    finish.value = null
+    loadedFor = want
+  }
   try {
-    const d = await api.projectVideo(session.projectPath)
+    const d = await api.projectVideo(want)
     video.value = { ...d }
   } catch (err) {
     // 读不到不该让弹窗开不了——项目可能是老的，还没有这一节。
@@ -75,7 +93,7 @@ async function load() {
   savedVideo.value = JSON.stringify(video.value)
 
   try {
-    const data = await api.assets(session.projectPath)
+    const data = await api.assets(want)
     styleLine.value = data.style?.style_line ?? ''
     style.value = {
       global_style: data.style?.global_style ?? '',
@@ -92,7 +110,7 @@ async function load() {
   resetOnStyle.value = false
 
   try {
-    const f = await api.projectFinish(session.projectPath)
+    const f = await api.projectFinish(want)
     finish.value = {
       preset: f.look?.preset ?? 'film',
       ambient: f.sound?.ambient ?? true,
@@ -224,7 +242,12 @@ async function save() {
     <section v-if="video" ref="panel" class="dlg" tabindex="-1">
       <header class="dlg__head">
         <h2 class="dlg__t">这部片子长什么样</h2>
-        <span class="pill pill--neutral tiny">
+        <!-- **读不出来就不挂这个牌子。** 取值只有 "realistic" 和
+             "anime" 两个（models::StyleLine），空串是"没读到"——资产库
+             还没建、或者那一趟挂了。这儿原来是个二选一的三目，空串稳稳
+             落到「写实线」，于是一部动漫剧的窗上挂着"写实线"。下面那句
+             catch 里把它清成空串正是为了别挂错，清了还照挂等于白清。 -->
+        <span v-if="styleLine" class="pill pill--neutral tiny">
           {{ styleLine === 'anime' ? '动漫线' : '写实线' }}
         </span>
         <span class="spacer" />
