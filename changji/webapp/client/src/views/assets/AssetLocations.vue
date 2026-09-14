@@ -26,7 +26,7 @@ const ui = useUi()
 const { run, isBusy } = useAction()
 
 /** 进度、预览、在不在跑——都从那条固定频道来。见 useRefStream。 */
-const { pct: genPct, preview, live, finished } = useRefStream()
+const { pct: genPct, preview, live, finished, touch } = useRefStream()
 
 /** 引擎那边怎么叫这一格。改这里就得改 ref_gen.cpp 里拼 stem 那一行。 */
 const targetOf = (id) => `${id}_empty`
@@ -251,7 +251,12 @@ async function uploadEmpty(locationId, event) {
     `空景图已存（${result.size_kb} KB）` +
       (result.reset_shots ? `，${result.reset_shots} 个镜头退回重跑` : ''),
   )
-  await load()
+  // **招呼一声就够。** 传图和撤图都不走 `ref_done`（那条只有出图才发），
+  // 而这一格和设定页 tab 上那个「缺 N」都订着 finished——touch 一下两边
+  // 一起重拉。自己再 `await load()` 的话，同一个 /api/assets 打两次。
+  // `bible()` 那儿用的就是这个写法。touch 的注释里说的「资产库变了但不是
+  // 画完一张」，就是这两下。
+  touch()
 }
 
 /**
@@ -295,7 +300,7 @@ async function clearEmpty(locationId) {
   )
   if (result) {
     ui.ok('已撤掉空景图')
-    await load()
+    touch() // 同 upload：撤图不发 ref_done，这一格和「缺 N」都靠它重拉
   }
 }
 </script>

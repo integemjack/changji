@@ -42,7 +42,7 @@ const { run, isBusy } = useAction()
  *
  * key 是 `char_id_slot`——**和引擎那边的 target 逐字一样**，不然对不上。
  */
-const { pct: genPct, preview, live, finished } = useRefStream()
+const { pct: genPct, preview, live, finished, touch } = useRefStream()
 
 /** 引擎那边怎么叫这一格。改这里就得改 ref_gen.cpp 里拼 stem 那一行。 */
 const targetOf = (charId, slot) => `${charId}_${slot}`
@@ -256,7 +256,12 @@ async function upload(charId, slot, event) {
     `参考图已存（${result.size_kb} KB）` +
       (result.reset_shots ? `，${result.reset_shots} 个镜头退回重跑` : ''),
   )
-  await load()
+  // **招呼一声就够。** 传图和撤图都不走 `ref_done`（那条只有出图才发），
+  // 而这一格和设定页 tab 上那个「缺 N」都订着 finished——touch 一下两边
+  // 一起重拉。自己再 `await load()` 的话，同一个 /api/assets 打两次。
+  // `bible()` 那儿用的就是这个写法。touch 的注释里说的「资产库变了但不是
+  // 画完一张」，就是这两下。
+  touch()
 }
 
 // ---- 制作音色 ----
@@ -472,7 +477,7 @@ async function clearRef(charId, slot) {
   )
   if (result) {
     ui.ok('已撤掉这张参考图')
-    await load()
+    touch() // 同 upload：撤图不发 ref_done，这一格和「缺 N」都靠它重拉
   }
 }
 </script>
