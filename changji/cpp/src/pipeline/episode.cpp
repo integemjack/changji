@@ -722,7 +722,27 @@ RunReport run_episode(const ProjectStore& store,
                         }
                     }
                     if (made > 0) {
-                        store.save_assets(assets);
+                        // **同上面那个 save()：重新读一份，只把刚定下来的
+                        // 音色写进去。** `assets` 也是开跑那一刻读的，而定
+                        // 音色发生在几分钟之后——整份写回去会把这期间在设定
+                        // 页改的外观、提示词、参考图路径全盖掉。
+                        //
+                        // `ensure_character_voice` 只改一个字段（voice_id），
+                        // 所以只搬这一个；这期间人自己挑了音色的就不顶。
+                        AssetLibrary latest = store.load_assets();
+                        for (const std::string& id : speaking) {
+                            const auto src = assets.characters.find(id);
+                            if (src == assets.characters.end()) continue;
+                            if (!src->second.voice_id.has_value()) continue;
+                            auto dst = latest.characters.find(id);
+                            if (dst == latest.characters.end()) continue;
+                            if (dst->second.voice_id.has_value() &&
+                                !dst->second.voice_id->empty()) {
+                                continue;
+                            }
+                            dst->second.voice_id = src->second.voice_id;
+                        }
+                        store.save_assets(latest);
                         emit(progress, "audio", "done",
                              "给 " + std::to_string(made) +
                                  " 个角色定了音色，存在项目的 voices/ 里。"
