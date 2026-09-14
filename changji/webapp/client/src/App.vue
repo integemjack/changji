@@ -73,9 +73,28 @@ onUnmounted(() => {
 })
 
 const perEpisode = computed(() => current.value?.phase === 'episode')
-const projectName = computed(
-  () => session.project?.title || session.project?.project_id || '未命名项目',
-)
+/**
+ * 顶栏那个项目名。
+ *
+ * **读不到的时候拿目录名顶上，别说「未命名项目」。** `session.project`
+ * 为空有两种情形，没有一种是"这部剧没起名字"：
+ *
+ *   · `/bff/flow` 还没回来——每次进页面都有那么一小会儿，顶栏先闪一下
+ *     「未命名项目」再变成真名；
+ *   · flow 回了 400/404（项目被删了、挪了位置）——那时候它是**长期**空的，
+ *     顶栏就一直挂着「未命名项目」，而那部剧其实好好地叫着别的名字。
+ *
+ * 而「未命名项目」说的偏偏就是"这部剧没起名字"。同一件事 JobBadge 的
+ * `nameOf` 和项目页的 `dirName` 都是拿目录名顶的（各自注释里写着理由），
+ * 这儿跟上它们。
+ */
+const projectName = computed(() => {
+  const p = session.project
+  if (p?.title) return p.title
+  if (p?.project_id) return p.project_id
+  const dir = (session.projectPath || '').split(/[\\/]+/).filter(Boolean).pop()
+  return dir || '未命名项目'
+})
 
 /** 第一个还没做完的那一步。导航上给它一个点，代替原来那条 stepbar。 */
 const nextKey = computed(() => {
