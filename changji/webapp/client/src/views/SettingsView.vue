@@ -903,7 +903,4 @@ function scrollTo(id) {
   }
 }
 /* 配置里有 vram_gb_override 顶着真实显存、估算判「够」那类提醒 */
-.warn-text {
-  color: var(--warn);
-}
 </style>

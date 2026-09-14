@@ -406,6 +406,17 @@ textarea {
 .dim {
   color: var(--text-3);
 }
+/* 一行字的轻重。**和 .dim 一样是工具类，所以在这儿**——
+   它们原来分别写在 SettingsView 和 EpShots 的 scoped 里各一份，而
+   scoped 不跨组件：项目库那条错误、角色页那句「参考图不会照着画」、
+   项目页那个「删掉」，三处都写着类名却拿不到规则，一律是正文颜色。
+   警告长得不像警告，正是这一条要修的。 */
+.warn-text {
+  color: var(--warn);
+}
+.danger-text {
+  color: var(--danger);
+}
 .small {
   font-size: var(--fs-sm);
 }

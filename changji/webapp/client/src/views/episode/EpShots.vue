@@ -1160,8 +1160,6 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
 .swatch--info { background: color-mix(in srgb, var(--info) 45%, transparent); }
 .swatch--warn { background: color-mix(in srgb, var(--warn) 45%, transparent); }
 .swatch--ok   { background: color-mix(in srgb, var(--ok) 45%, transparent); }
-.warn-text { color: var(--warn); }
-
 /* ---- 筛选片 ---- */
 .chips {
   display: flex;
