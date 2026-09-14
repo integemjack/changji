@@ -36,6 +36,7 @@ export const useRun = defineStore('run', () => {
   const live = ref(false)
   let timer = null
   let socket = null
+  let retry = null
   let missCount = 0
 
   const running = computed(() => Boolean(state.value?.running))
@@ -218,15 +219,36 @@ export const useRun = defineStore('run', () => {
     }
   }
 
+  /**
+   * 断了之后过几秒再连一次。
+   *
+   * **另外两条频道都这么做，只有这两条不做。** refs（参考图）和顶栏那条
+   * 都排一个 5 秒后的重连；这两条断了就是断了——`openSocket` 只有 `start()`
+   * 会调，而 `start()` 见 `polling` 已经是 true 就提前 return，于是**一次
+   * 断线之后，这一整轮都退回轮询**。
+   *
+   * 代价不是"慢一点"：单镜那一块的进度、采样中途的预览小图、落定一镜就
+   * 立刻重拉，**只从这条 socket 来**。轮询给的是总进度和阶段名。引擎那边
+   * 记过这个症状——「不是"没有进度"，而是进度看着是对的、只有单镜那一块
+   * 不动」（bff_routes.hpp）。写作那条同理：批量展开正文时一个个冒出来的
+   * 字全在这条线上。
+   *
+   * ⚠️ **进来先掐掉排着的那次**，否则会像 refs 那条一样越积越多：排着
+   * 重连的同时有人又调了 start()，两条都连上，消息收两遍。
+   */
   function openSocket() {
     if (socket) return
+    clearTimeout(retry)
+    retry = null
     socket = openJobSocket('run', (msg) => {
       live.value = true
       applyMessage(msg)
     }, () => {
       live.value = false
       socket = null
-      // 断了不用做别的：定时器一直开着，自动就退回轮询。
+      // 定时器一直开着，这几秒里退回轮询，不会断档。
+      // 只在还想要进度的时候重连——stop() 之后不该自己爬起来。
+      if (polling.value) retry = setTimeout(openSocket, 5000)
     })
   }
 
@@ -245,6 +267,8 @@ export const useRun = defineStore('run', () => {
     polling.value = false
     if (timer) clearInterval(timer)
     timer = null
+    clearTimeout(retry)
+    retry = null
     if (socket) {
       const sock = socket
       socket = null
@@ -284,6 +308,7 @@ export const useWriter = defineStore('writer', () => {
 
   const live = ref(false)
   let socket = null
+  let retry = null
   let missCount = 0
 
   async function poll() {
@@ -340,21 +365,30 @@ export const useWriter = defineStore('writer', () => {
     // 轮询留着：推的是增量，episodes 那些只有全量里有；
     // 而且 WebSocket 连不上时它就是唯一的路。
     timer = setInterval(poll, intervalMs)
-    if (!socket) {
-      socket = openJobSocket('write', (msg) => {
-        live.value = true
-        applyMessage(msg)
-      }, () => {
-        live.value = false
-        socket = null
-      })
-    }
+    openSocket()
+  }
+
+  /** 同 useRun 的那一个，理由见那儿。 */
+  function openSocket() {
+    if (socket) return
+    clearTimeout(retry)
+    retry = null
+    socket = openJobSocket('write', (msg) => {
+      live.value = true
+      applyMessage(msg)
+    }, () => {
+      live.value = false
+      socket = null
+      if (polling.value) retry = setTimeout(openSocket, 5000)
+    })
   }
 
   function stop() {
     polling.value = false
     if (timer) clearInterval(timer)
     timer = null
+    clearTimeout(retry)
+    retry = null
     if (socket) {
       const sock = socket
       socket = null
