@@ -1346,7 +1346,7 @@ onDeactivated(() => window.removeEventListener('keydown', onKey))
             @click="shotAction(openShot, step.id)"
           >
             <AppIcon :name="stepBtn(openShot, step).icon" :size="14" />
-            重出{{ step.label }}
+            {{ stepBtn(openShot, step).label }}
           </button>
         </footer>
       </aside>

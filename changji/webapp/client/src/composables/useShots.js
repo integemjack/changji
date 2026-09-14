@@ -502,15 +502,35 @@ export function useShots() {
     }
   }
 
-  /** 「配音」「首帧」「成片」那几个按钮各该画成什么。 */
+  /**
+   * 「配音」「首帧」「成片」那几个按钮各该画成什么。**四种状态**，和
+   * `shotAction` 的四条路一一对着——那四条路的判断顺序就是这儿的顺序。
+   *
+   * ⚠️ **正在跑的那一镜，这颗按钮是「停」。** `shotAction` 第一条路就是
+   * `stop()`（引擎只有整轮的停，没有单镜的），而这儿原来没有对应的分支：
+   * 抽屉开在正在渲染的那一镜上时，按钮写着「重出成片」、提示写着「排进队列，
+   * 这一轮跑完重出」——按下去却是停掉整轮。说的和做的不是一回事，而代价是
+   * 一轮几十分钟到几小时的渲染。
+   */
   function stepBtn(shot, step) {
     if (isWaiting(shot.shot_id, step.id)) {
-      return { icon: 'close', title: `不重出${step.label}了` }
+      return { icon: 'close', label: '取消排队', title: `不重出${step.label}了` }
+    }
+    if (shotRunning(shot.shot_id)) {
+      return {
+        icon: 'pause',
+        label: '停下这一轮',
+        title: '这一镜正在跑。引擎只能整轮地停，按下去这一轮都停',
+      }
     }
     if (runStore.running || sent.value.size > 0) {
-      return { icon: step.icon, title: `排进队列，这一轮跑完重出${step.label}` }
+      return {
+        icon: step.icon,
+        label: `重出${step.label}`,
+        title: `排进队列，这一轮跑完重出${step.label}`,
+      }
     }
-    return { icon: step.icon, title: step.hint }
+    return { icon: step.icon, label: `重出${step.label}`, title: step.hint }
   }
 
   // ---- 跑起来之后定期重拉 ----
