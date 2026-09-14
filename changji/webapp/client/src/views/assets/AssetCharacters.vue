@@ -621,6 +621,15 @@ async function genAllRefs(charId) {
 }
 
 async function clearRef(charId, slot) {
+  // **这一下会把全项目已渲染的镜头退回待跑。**
+  //
+  // 引擎撤完就调 reset_all_shots（参考图直接决定画面长什么样），而这颗按钮
+  // 在界面上只是抽屉里一个小小的「撤掉」。这个库里比它轻的动作都问一句
+  // ——定妆覆盖、一键全部重画、三张一起画、删章删集删项目，全都问。
+  //
+  // 顺带说清另一件事：文件本身留在盘上（引擎那儿写着"用户可能只是想先试试
+  // 没有参考图的效果"），但界面上接不回来——要用回那张图得重新传一遍。
+  if (!confirm('撤掉这张参考图？已经渲染好的镜头会退回重跑；图片文件留在盘上，但界面上接不回来，要用回它得重新传一遍。')) return
   const result = await run(
     () => api.clearReference({ project: session.projectPath, char_id: charId, slot }),
     { key: 'clr:' + charId + slot },
