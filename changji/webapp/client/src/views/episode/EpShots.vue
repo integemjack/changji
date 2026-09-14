@@ -1224,7 +1224,14 @@ onDeactivated(() => window.removeEventListener('keydown', onKey))
             </button>
           </div>
 
-          <p v-if="s.gate_notes?.length" class="cell__notes tiny">
+          <!-- 闸门备注是"这一镜为什么没过"的全部答案（「首帧相似度 0.42
+               低于 0.6」这种），而格子只有一行放得下。挂在 title 上，扫墙
+               的时候不用一格格点开。抽屉里那份是不截断的。 -->
+          <p
+            v-if="s.gate_notes?.length"
+            class="cell__notes tiny"
+            :title="s.gate_notes.join('；')"
+          >
             <AppIcon name="warn" :size="12" />
             <span class="truncate">{{ s.gate_notes.join('；') }}</span>
           </p>

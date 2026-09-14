@@ -267,7 +267,10 @@ async function go(row) {
           <span class="jb__num numeric">{{ r.current }}/{{ r.total }}</span>
         </template>
         <template v-else><span /><span /></template>
-        <span class="jb__msg truncate">{{ r.message }}</span>
+        <!-- 这一句是引擎现说的（「正在给 ep02 出分镜」「显存不够，排队中」），
+             一行放不下就截断——全文挂 title 上，不然最要紧的那半句正好在
+             外面。 -->
+        <span class="jb__msg truncate" :title="r.message">{{ r.message }}</span>
       </button>
     </div>
   </div>

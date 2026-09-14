@@ -390,7 +390,7 @@ async function save() {
              而且**这儿和那儿原来各摆一颗、各算各的**——引擎数的是结构化
              拍子，阅读器是把渲染好的文本猜回来，碰上「字幕：三年后」这种
              带冒号的描写就会打架，同一份稿子一个写偏短一个写合适。 -->
-        <span class="tiny dim truncate">{{ draft.logline }}</span>
+        <span class="tiny dim truncate" :title="draft.logline">{{ draft.logline }}</span>
         <span class="spacer" />
         <button
           class="btn btn--primary btn--sm"

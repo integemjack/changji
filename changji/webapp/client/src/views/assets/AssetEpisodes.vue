@@ -547,7 +547,8 @@ async function planAll() {
             </span>
           </span>
 
-          <span v-if="ep.hook" class="cut__hook truncate">{{ ep.hook }}</span>
+          <!-- 钩子是"这一集停在哪儿"的全部说明，分集线上一行放不下。 -->
+          <span v-if="ep.hook" class="cut__hook truncate" :title="ep.hook">{{ ep.hook }}</span>
           <span v-else class="cut__hook dim">章尾</span>
         </div>
       </template>
