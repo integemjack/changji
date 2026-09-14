@@ -535,6 +535,29 @@ ApiResult post_settings(const json& body) {
         notes.push_back(std::move(note));
     }
 
+    // **「已应用 场景转场」是这份代码里最后一处还在说它管用的地方。**
+    //
+    // `scene_transition_s` 今天**没有任何一处读它**：装配走
+    // `-f concat -c copy`，全程硬切，引擎里一处 xfade / acrossfade / fade=
+    // 都没有（media/assemble.cpp 里那段还写着为什么连"按转场往回挪起点"
+    // 都不能做——模拟一个不渲染的东西，字幕会比画面早，而且逐镜累积）。
+    //
+    // 别处都已经说清楚了：settings.hpp 那个字段头上有一整段 ⚠️，两份配置
+    // 模板里各写着「⚠️ 转场目前不生效……改了不会有任何变化」，设置页上那个
+    // 输入框 2026-09-14 也撤了。漏的是这儿——字段还在上面的白名单里收着，
+    // 而回执里 `labels_for` 会把它翻成中文「场景转场」，拼出来就是
+    // 「已应用 场景转场」。拿 curl 或者老客户端改它的人，得到的是一句
+    // 和别处四处说明**正好相反**的确认。
+    //
+    // 不拒收（老配置里有这一行，`/api/settings` 的对拍语料也钉着它），
+    // 就在回执里说一句。`notes` 这条通道本来就是为「照你填的没法做」留的。
+    if (data.find("scene_transition_s") != data.end()) {
+        notes.push_back(
+            "[assembly].scene_transition_s 存下来了，但它现在不生效："
+            "装配是 -f concat -c copy 直接拼，全程硬切，引擎里一处转场"
+            "都没渲染。改这个数不会有任何变化。");
+    }
+
     // 校验不过就整体回滚——半套改动比不改更糟，用户看到"已应用"
     // 但配置是残的。
     const auto errs = s.validate();
@@ -603,7 +626,8 @@ ApiResult post_settings(const json& body) {
         {"changed", changed},
         {"labels", labels_for(changed)},
         {"saved_to", saved_to},
-        // 「照你填的没法做，按这个来了」那一类。今天只有帧率会进来；
+        // 「照你填的没法做，按这个来了」那一类。今天两条会进来：帧率被
+        // 模型纠回去，和「场景转场收下了但不生效」。
         // 空数组也照发，前端拿 `?? []` 兜着就行。
         {"notes", notes},
     }};
