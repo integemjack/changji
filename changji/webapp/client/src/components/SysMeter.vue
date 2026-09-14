@@ -37,8 +37,22 @@ let gone = false
  */
 const kStaleMs = 8000
 
+/**
+ * 这一条连接是第几条。理由和 JobBadge 里那段一字不差——两个组件是同一份
+ * 写法，也就有同一个毛病：
+ *
+ *   看门狗 `dead.close()` 之后紧接着 `connect()`，而 onclose 是**异步**
+ *   到的；那份讣告属于上一条，却会把刚建好那条的状态清掉并排一次重连，
+ *   五秒后再连一条——而刚才那条既没关也没人记着。每触发一次看门狗就
+ *   多留一条，两个组件都订着 system，一次抖动漏两条。
+ */
+let gen = 0
+
 function connect() {
   if (gone) return
+  clearTimeout(retry)
+  retry = null
+  const myGen = ++gen
   lastAt = Date.now()
   sock = openJobSocket(
     'system',
@@ -48,6 +62,7 @@ function connect() {
       stat.value = msg
     },
     () => {
+      if (myGen !== gen) return // 上一条的讣告，别动现在这条
       sock = null
       stat.value = null
       clearTimeout(retry)

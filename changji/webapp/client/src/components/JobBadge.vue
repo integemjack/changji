@@ -50,8 +50,31 @@ let gone = false
 /** 和系统表同一条规矩：八秒没动静就当断了。见 SysMeter 里那段。 */
 const kStaleMs = 8000
 
+/**
+ * 这一条连接是第几条。**断开回调要认自己那一条**。
+ *
+ * 两条重连路径撞在一起会出事：
+ *
+ *   看门狗发现八秒没动静 → `dead.close()` → 紧接着 `connect()` 连上新的
+ *   而 `close()` 的 onclose 是**异步**到的——它带着的是**上一条**的讣告，
+ *   却会把刚建好那条的状态一并清掉（`sock = null`、清空 jobs），
+ *   还顺手排一个五秒后的重连。
+ *
+ *   五秒后那次到点，又连一条；而刚才那条既没关、也没人记着。
+ *   往后每次看门狗触发都多留一条，越积越多——两条都订着 system，
+ *   引擎两秒一次的系统表和任务表就收两遍。
+ *
+ * 用一个递增的号认人：讣告上的号和当前的对不上，就是上一条的，不理。
+ * `connect()` 进来还要先掐掉排着的那次——这一条和 refs、出片那两条频道
+ * 刚修过的是同一个毛病。
+ */
+let gen = 0
+
 function connect() {
   if (gone) return
+  clearTimeout(retry)
+  retry = null
+  const myGen = ++gen
   lastAt = Date.now()
   sock = openJobSocket(
     'system',
@@ -61,6 +84,10 @@ function connect() {
       jobs.value = msg.jobs ?? []
     },
     () => {
+      // 上一条的讣告，现在这条好好的——不要动它。
+      // （连不上时 openJobSocket 会同步回调，那会儿号还是相等的，
+      //   所以这一条不会把"一上来就连不上"那种情况挡掉。）
+      if (myGen !== gen) return
       sock = null
       jobs.value = []
       clearTimeout(retry)
