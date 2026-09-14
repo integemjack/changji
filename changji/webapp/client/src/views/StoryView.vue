@@ -2043,8 +2043,17 @@ async function stopWriting() {
           <div v-else-if="chapter" class="doc doc--chapter">
             <!-- 章头在正文里，随正文滚。左栏收起时它就是切换章节的地方。 -->
             <div class="doc__head">
+              <!-- **窄屏不出这个按钮。** `listShown` 是
+                   `listOpen && !narrow && !focusMode`，而窄屏（≤1100px）
+                   下面根本没有左栏那一版——媒体查询里只把右边的对话栏挪了
+                   位置，`.ed__list` 整个不渲染。所以少了 `!narrow` 的话，
+                   这个按钮在窄窗口里一直亮着、点了 `listOpen = true` 却
+                   什么都不会出现（还顺手把这个偏好写进了 localStorage），
+                   点一百下都一样。
+                   窄屏下换章走旁边那个 select，它的条件是同一个
+                   `!listShown`，本来就一直在。 -->
               <button
-                v-if="!listShown && !ui.focusMode"
+                v-if="!listShown && !narrow && !ui.focusMode"
                 class="btn btn--ghost btn--sm"
                 type="button"
                 title="章节列表"
