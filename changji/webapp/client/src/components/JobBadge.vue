@@ -131,7 +131,9 @@ const KIND = {
   say: { label: '朗读', page: '/story', icon: 'sparkle' },
   // 2026-09-13 补的这四种：剧本和分镜那几个接口以前一个都没登记，
   // 点了「重新改编」顶栏一片安静，而那一刻 LLM 槽正被它占着。
-  premise: { label: '想梗概', page: '/episode', icon: 'sparkle' },
+  // 梗概在故事页那个框里想（`/story` 的「想几个给我挑」），不在这一集里。
+  // 原来指着 /episode 是照着"剧本大纲"那一页写的，那一页 2026-09-11 删了。
+  premise: { label: '想梗概', page: '/story', icon: 'sparkle' },
   script: { label: '写剧本', page: '/episode', icon: 'sparkle' },
   trailer: { label: '剪预告', page: '/episode', icon: 'film' },
   bible: { label: '定角色场景', page: '/assets', icon: 'sparkle' },

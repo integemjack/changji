@@ -70,6 +70,19 @@ const pasting = ref(false)
 const pasted = ref('')
 const premise = ref('')
 const savedPremise = ref('')
+/**
+ * AI 想出来的几个选题，还没挑。空数组 = 没在挑。
+ *
+ * **和大纲那条路是两件事。** 「让 AI 写一份大纲」是一步到位：一分钟后
+ * 回来一整本书的骨架，人只能整份采用或整份丢弃。而多数人卡住的地方在更
+ * 前面——梗概那个框里一个字都没有。这一条只要十几秒，回来三个方向，
+ * 挑一个填进框里，接下来是写是改都还是人说了算。
+ *
+ * 引擎那头 2026-09-13 就写好了（`/api/script/premise`，连顶栏那本账都
+ * 记着「想梗概」），只是界面上一直没有入口：梗概框的占位符写着"没想好
+ * 就空着，让 AI 来一个"，而页面上没有任何一个按钮能让 AI 来一个。
+ */
+const ideas = ref([])
 
 // **体量在这一页，每集时长在「设定 · 分集」。** 两个数看着像一对，其实是
 // 两件事：体量是"这个故事有多长"（创作，写大纲时就要定），每集时长是
@@ -1096,6 +1109,46 @@ async function savePremise() {
 }
 
 /**
+ * 让 AI 想几个选题。**不落库**——它回的是候选，人挑了才算数。
+ *
+ * 关键词那一格和「重出大纲」共用：往哪个方向想，这两件事要的是同一个词。
+ * 有故事时那一格折在「让 AI 重出一份大纲」里，没展开就是空串，引擎收空串
+ * 是合法的（自由发挥）。
+ */
+async function suggestIdeas() {
+  if (!session.projectPath) {
+    ui.warn('先选一个项目')
+    return
+  }
+  const result = await run(
+    () =>
+      api.suggestPremises({
+        project: session.projectPath,
+        keywords: keywords.value.trim(),
+        count: 3,
+      }),
+    { key: 'ideas' },
+  )
+  if (!result) return
+  ideas.value = result.ideas ?? []
+  // 引擎把已有的梗概和各集简介都算作"想过的方向"避重，所以连点两次
+  // 拿回来的是新的三个。一个都没回来只可能是模型没按格式答。
+  if (!ideas.value.length) ui.warn('这一轮一个都没想出来，再点一次试试')
+}
+
+/**
+ * 挑中一个：填进梗概框并**立刻存下**。
+ *
+ * 不留在框里等失焦——挑完接着就点"让 AI 写一份大纲"的人，那一下点击不会
+ * 先触发 blur（按钮在另一块里），梗概就没存进去，大纲会照着空梗概写。
+ */
+async function pickIdea(it) {
+  premise.value = it.premise || ''
+  ideas.value = []
+  await savePremise()
+}
+
+/**
  * 正在长出来的那份大纲。null = 没在写。
  *
  * 那一头每隔 200 毫秒推一帧「到此为止解出来的全份」（见引擎里的
@@ -1736,9 +1789,43 @@ async function stopWriting() {
               v-model="premise"
               class="textarea start__premise"
               rows="4"
-              placeholder="这部剧讲什么？想好了就写一句，比如：深夜便利店，前任推门进来，手里拿着五年前她送的那把伞。&#10;没想好就空着，让 AI 来一个。"
+              placeholder="这部剧讲什么？想好了就写一句，比如：深夜便利店，前任推门进来，手里拿着五年前她送的那把伞。&#10;没想好就空着，让 AI 想几个给你挑。"
               @blur="savePremise"
             />
+            <!-- 「想几个给我挑」。**紧贴梗概框**：它回答的就是这个框里该写
+                 什么，隔一块就成了另一件事。十几秒回来三个方向，比一口气
+                 出一整份大纲（一分多钟，只能整份收整份扔）轻得多。 -->
+            <div class="row row--wrap">
+              <button
+                class="btn btn--ai btn--sm"
+                type="button"
+                :disabled="isBusy('ideas')"
+                @click="suggestIdeas"
+              >
+                <AppIcon name="sparkle" :size="14" />
+                {{ isBusy('ideas') ? '正在想…' : ideas.length ? '再想三个' : '想几个给我挑' }}
+              </button>
+              <template v-if="ideas.length">
+                <span class="small dim">挑一个就填进上面那个框</span>
+                <span class="spacer" />
+                <button class="btn btn--ghost btn--sm" type="button" @click="ideas = []">
+                  都不要
+                </button>
+              </template>
+            </div>
+            <div v-if="ideas.length" class="ideas">
+              <button
+                v-for="(it, i) in ideas"
+                :key="i"
+                class="idea"
+                type="button"
+                @click="pickIdea(it)"
+              >
+                <b class="idea__t">{{ it.title }}</b>
+                <span class="idea__p">{{ it.premise }}</span>
+                <span v-if="it.hook" class="idea__h">钩子 · {{ it.hook }}</span>
+              </button>
+            </div>
             <!-- 关键词和篇幅只在**出大纲**的时候有用。没故事时它们就是起手式，
                  摊开；有了故事之后重出是破坏性又少用的事，连按钮一起折进
                  「▸ 让 AI 重出一份大纲」里，这一屏只剩梗概和加一章。
@@ -2847,6 +2934,44 @@ async function stopWriting() {
 .start__premise {
   min-height: 7em;
   font-size: var(--fs-md);
+}
+
+/* AI 想的那几个选题。**一列不是一排**：梗概是两三行字，并排三列就要
+   截断，而截断之后三个看起来一样长、一样模糊，没法挑。 */
+.ideas {
+  display: grid;
+  gap: var(--s2);
+}
+
+.idea {
+  display: grid;
+  gap: 4px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.idea:hover {
+  border-color: var(--accent);
+}
+
+.idea__t {
+  font-size: var(--fs-md);
+}
+
+.idea__p {
+  color: var(--text-dim);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.idea__h {
+  color: var(--text-3);
+  font-size: 12px;
 }
 .draft {
   display: grid;
