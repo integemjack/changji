@@ -81,6 +81,20 @@ export const useRun = defineStore('run', () => {
   const settled = ref(0)
 
   /**
+   * 每一镜各自落定过几次。**给缩略图换代号用。**
+   *
+   * 首帧和视频都写在固定路径上（`frames/<shot_id>.png`、
+   * `shots/<shot_id>.mp4`），重出一遍是**原地覆盖**，地址一个字不变——
+   * 浏览器于是照旧拿缓存里那张。表现很难看：force 重跑时，每一镜跑完那
+   * 一下预览图消失、牌子当场"变回"老样子，而人正盯着看新的出得对不对。
+   *
+   * 整轮跑完那一下界面会把全部图换一次代（useShots 的 `bust`），但那是
+   * 几十分钟之后的事。按镜记一个数，落定哪一镜就只换哪一镜——不然一镜
+   * 落定要把满墙二十张图全重拉一遍。
+   */
+  const settledBy = ref(new Map())
+
+  /**
    * 正在跑的镜头此刻长什么样：shot_id → `data:image/png;base64,…`。
    *
    * 引擎每一步把潜空间投影成一张小图推上来（88×160 那种），牌子上放大
@@ -212,7 +226,12 @@ export const useRun = defineStore('run', () => {
 
     trackInflight(msg)
     // 带 shot_id 的非 progress 事件 = 这一镜落定了。见 settled。
-    if (msg.shot_id && msg.kind && msg.kind !== 'progress') settled.value += 1
+    if (msg.shot_id && msg.kind && msg.kind !== 'progress') {
+      settled.value += 1
+      const next = new Map(settledBy.value)
+      next.set(msg.shot_id, (next.get(msg.shot_id) ?? 0) + 1)
+      settledBy.value = next
+    }
 
     // 字段名不一样：推上来的叫 step，快照里叫 current。
     // 直接把 msg 铺进 state 的话，进度条会读到 undefined。
@@ -317,6 +336,7 @@ export const useRun = defineStore('run', () => {
 
   return {
     state, running, percent, stageLabel, events, inflight, polling, live, settled,
+    settledBy,
     previewBy, previewOf,
     poll, start, stop, applyMessage,
   }

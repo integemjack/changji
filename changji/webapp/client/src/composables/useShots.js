@@ -649,8 +649,20 @@ export function useShots() {
   /** 这一镜此刻的预览图（采样中途），没有就是空串。见 run store 的 previewBy。 */
   const previewOf = (shotId) => runStore.previewOf(shotId)
 
+  /**
+   * 这一镜的图该用哪一代。
+   *
+   * 首帧和视频都写在固定路径上，重出是原地覆盖、地址不变，浏览器会一直
+   * 拿缓存里那张。整轮跑完那一下 `bust` 会把全墙换一次代，但一轮几十分钟
+   * ——中间每一镜跑完那一下，预览图消失、牌子当场"变回"老样子，而人正盯
+   * 着看新的出得对不对。所以再叠上这一镜自己落定过几次（run store 的
+   * `settledBy`），只换刚跑完的那一张。
+   */
+  const bustOf = (shotId) =>
+    bust.value + (runStore.settledBy.get(shotId) ?? 0)
+
   return {
-    shots, episodeDuration, loading, load, bust, previewOf,
+    shots, episodeDuration, loading, load, bust, bustOf, previewOf,
     inflightBy, pct, shotState, busy, shotRunning, isWaiting,
     start, starting, stop, shotAction, stepBtn, shotTone,
     running: computed(() => runStore.running),

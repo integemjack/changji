@@ -66,7 +66,7 @@ const { run, isBusy, error } = useAction()
 // 镜头表、每镜进度、重出队列，全在这儿。见 useShots。
 const {
   shots,
-  episodeDuration, loading, load, bust, previewOf,
+  episodeDuration, loading, load, bustOf, previewOf,
   pct, shotState, busy,
   start, starting, stop, shotAction, stepBtn, shotTone, running,
 } = useShots()
@@ -1126,11 +1126,11 @@ onDeactivated(() => window.removeEventListener('keydown', onKey))
                  所以二十二个播放器和二十二张缩略图一样轻。 -->
             <video
               v-if="s.video_path"
-              :key="s.shot_id + ':' + bust"
+              :key="s.shot_id + ':' + bustOf(s.shot_id)"
               class="cell__video"
-              :src="mediaUrl(session.projectPath, s.video_path) + '&_=' + bust"
+              :src="mediaUrl(session.projectPath, s.video_path) + '&_=' + bustOf(s.shot_id)"
               :poster="s.frame_path
-                ? mediaUrl(session.projectPath, s.frame_path) + '&_=' + bust
+                ? mediaUrl(session.projectPath, s.frame_path) + '&_=' + bustOf(s.shot_id)
                 : undefined"
               controls
               playsinline
@@ -1138,7 +1138,7 @@ onDeactivated(() => window.removeEventListener('keydown', onKey))
             />
             <img
               v-else-if="s.frame_path"
-              :src="mediaUrl(session.projectPath, s.frame_path) + '&_=' + bust"
+              :src="mediaUrl(session.projectPath, s.frame_path) + '&_=' + bustOf(s.shot_id)"
               :alt="s.visual_desc"
               loading="lazy"
             />
