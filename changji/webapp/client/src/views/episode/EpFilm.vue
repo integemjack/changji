@@ -63,6 +63,26 @@ const forThisEpisode = computed(() =>
   session.episodeId ? files.value.filter((f) => f.name.includes(session.episodeId)) : [],
 )
 
+/**
+ * 正在播的这条，是不是**这一集**的片。
+ *
+ * 片单是全项目的（有意的，见下面那段），所以这一页上完全可能在播别的集：
+ * 手点了片单里的另一条，或者这一集还没出片、load() 回落到了最新的那条。
+ *
+ * 两处都要认它：
+ *   · 分镜跳转条画的是 `shots`——**永远是这一集的**。播着 ep02 的片、
+ *     底下摆着 ep01 的缩略图，点一下按 ep01 的时长跳，跳到哪儿全凭巧合。
+ *   · 片名原来只在最上面那条工具栏里出现，而那条整条挂在 `canPublish` 上；
+ *     投递那层不在（现在的默认构建就是）时它根本不渲染——于是页面上播着
+ *     别的集的片，一个字都不说。
+ */
+const isMine = computed(
+  () =>
+    !!current.value &&
+    !!session.episodeId &&
+    String(current.value.name ?? '').includes(session.episodeId),
+)
+
 async function load() {
   if (!session.projectPath) {
     files.value = []
@@ -131,6 +151,13 @@ function seekTo(chapter) {
 function onTimeUpdate(event) {
   playhead.value = event.target.currentTime
 }
+
+// 换一条片，播放头得跟着回零：video 换了 key 是重新挂的，在第一次
+// timeupdate 之前 playhead 还停在上一条的位置上，跳转条会把一个毫不相干
+// 的格子标成「正在播」。
+watch(currentRel, () => {
+  playhead.value = 0
+})
 </script>
 
 <template>
@@ -173,7 +200,7 @@ function onTimeUpdate(event) {
           </div>
 
           <!-- 分镜跳转条 -->
-          <div v-if="chapters.length" class="strip">
+          <div v-if="chapters.length && isMine" class="strip">
             <button
               v-for="c in chapters"
               :key="c.shot_id"
@@ -197,8 +224,11 @@ function onTimeUpdate(event) {
 
         <!-- 完整路径删了（一年用一次，见项目页那条），要抄放在 title 里 -->
         <div v-if="current" class="player__meta row row--wrap tiny dim" :title="current.rel">
+          <span class="truncate">{{ current.name }}</span>
           <span class="numeric">{{ current.size_mb }} MB</span>
           <span>{{ humanAgo(current.mtime) }}</span>
+          <!-- 播的不是这一集时要挑明：它同时也是上面那条跳转条不见了的原因 -->
+          <span v-if="!isMine" class="pill pill--warn tiny nowrap">别的集</span>
         </div>
       </section>
 
@@ -334,6 +364,12 @@ function onTimeUpdate(event) {
 
 .player__meta {
   padding: var(--s2) 0;
+}
+/* 片名是 flex 里的一项：min-width 默认是 auto，而 .truncate 又把它设成
+   nowrap，于是长文件名不缩、直接把这一行顶出屏幕。给它一条能缩的下限，
+   省略号才真的省得掉。 */
+.player__meta .truncate {
+  min-width: 0;
 }
 
 .reel {
