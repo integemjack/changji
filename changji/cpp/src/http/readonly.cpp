@@ -239,6 +239,18 @@ ApiResult get_shots(const std::string& path, const std::string& episode_id) {
             // `duration_s`，于是标题写「18 镜 · 58 秒」而片子是 61.8 秒
             // （ffprobe 量的）——**格子规则不能在前端复刻一份**，那是第三份
             // 副本，模型一换就全错。
+            //
+            // ⚠️ **这儿按 24 fps 算**（`real_duration_s` 的默认参数），而装
+            // 配那边用的是 `config.fps`（media/assemble.cpp）。今天两边一定
+            // 相等：帧率跟着出片模型走，当前这个（MiniMax-H3）硬是 24，配置
+            // 里写别的会被 normalize_fps_for_model 纠回去。
+            //
+            // 哪天接一个 native_fps 不是 24 的模型、或者接一个不报 native_fps
+            // 的模型而用户把 [assembly].fps 填成 30——这两个数就会对不上，
+            // 表现是成片页那条跳转条点哪一镜都偏、镜头页那句"这一集多长"也
+            // 偏，而全程不报错。那时候要把项目的 fps 传进来（注意这个接口
+            // 跑得很勤：出片时每 6 秒一次，别顺手在里面读 TOML；而且对拍
+            // 语料按现在这样钉着）。
             {"real_duration_s", round1(stages::video_limits().real_duration_s(
                                     s.duration_s))},
         });
