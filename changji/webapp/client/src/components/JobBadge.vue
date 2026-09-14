@@ -334,6 +334,23 @@ async function go(row) {
   border-radius: var(--r-md);
   box-shadow: 0 6px 24px rgb(0 0 0 / 0.35);
 }
+/* **手机上这块弹层比屏幕还宽。**
+ *
+ * 上面那个 `min-width: 380px` 配 `right: 0`：弹层右边缘对齐角标，而角标在
+ * 顶栏靠右（顶栏左右各留 16px）。375px 的手机上，380 的下限意味着左边要
+ * 溢出 20 多个像素——不是被裁掉就是把整页顶出一条横向滚动，而这个库里
+ * 别处都写着"整页不许横滚"。这个组件原来一条窄屏规则都没有。
+ *
+ * 下限去掉、上限按屏宽算：右边缘离屏幕右沿 16px，宽度取 100vw-24px，
+ * 左边就还剩 8px。行里那两条 minmax(0, …) 本来就能缩，名字和消息上都有
+ * .truncate，挤是挤一点，但看得见也点得动。 */
+@media (max-width: 520px) {
+  .jb__pop {
+    min-width: 0;
+    max-width: calc(100vw - 24px);
+  }
+}
+
 .jb__row {
   display: grid;
   grid-template-columns: auto auto minmax(0, 1fr) auto 56px auto minmax(0, 1.2fr);
