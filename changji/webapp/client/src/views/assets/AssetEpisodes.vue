@@ -12,7 +12,7 @@
  * 分集是**章节之间那条线**，不是另一张表。单独列一张「第 3 集覆盖第 5~6
  * 章」的表，人看不见线画在哪，还得回去翻第 5 章是什么。
  */
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, onActivated, onMounted, onUnmounted, ref, watch } from 'vue'
 
 import AppIcon from '@/components/AppIcon.vue'
 import EmptyState from '@/components/EmptyState.vue'
@@ -414,7 +414,38 @@ function beforeUnload(e) {
   e.preventDefault()
   e.returnValue = ''
 }
-onMounted(() => window.addEventListener('beforeunload', beforeUnload))
+/**
+ * 让「写」那个槽的状态**真的有人在看**。
+ *
+ * ⚠️ **`writer` 这个 store 原来只有故事页在驱动。** `writer.start()` /
+ * `writer.poll()` 全仓只出现在 StoryView 里，而读 `writer.running` 的有
+ * 五处：这一格、AssetsView、EpisodeView、ProjectRail、useShots。
+ * 没人轮询的时候 `writer.state` 一直是 null，`running` 恒为假——
+ * 那五处挂在它上面的 watch **一次都不会触发**。
+ *
+ * 落到这一格上就是：在这儿按「批量补分镜」（它跑在"写"那个槽上），
+ * 从头到尾没有任何一处轮询过那个槽，于是下面那条「跑完了重拉」的 watch
+ * 是死的——跑完一个多小时回来，章节长度、分集线、「几章没正文」还是开跑
+ * 之前那份，而且不会自己变。那条 watch 的注释写的正是这件事，它只是
+ * 没等到人。AssetsView 的标签数、EpisodeView 的四个标签同理。
+ *
+ * 故事页早就为同一件事补过（它 onMounted 里那两句，注释写着「刷新之后
+ * 没有任何人在轮询」），这儿照它办：进来先问一次，还在跑就把轮询接上。
+ * `poll()` 自己会在"没在跑"时 stop()，所以不在跑的时候这两句只多一次请求。
+ *
+ * **onActivated 也要**：这一格被 AssetsView 的 `<KeepAlive>` 冻着，
+ * 切到角色格再切回来 onMounted 不会再跑，而那中间别处完全可能起一轮。
+ */
+async function watchWriter() {
+  await writer.poll()
+  if (writer.running) writer.start()
+}
+
+onMounted(() => {
+  window.addEventListener('beforeunload', beforeUnload)
+  watchWriter()
+})
+onActivated(watchWriter)
 onUnmounted(() => window.removeEventListener('beforeunload', beforeUnload))
 
 /** 手动加一集。没走故事那条路的老项目还得有这个口子。 */
@@ -454,6 +485,10 @@ async function planAll() {
   // （和写整季同一个），而「这一集」那一页盯的是"出片"那个槽——它那儿
   // 一动不动。真正一直看得见的是顶栏那块「AI 作业中」。
   if (result) {
+    // **把轮询接上。** 不接的话没有任何一处在看"写"那个槽，下面那条
+    // 「跑完了重拉」的 watch 永远等不到 running 从真变假——见 watchWriter
+    // 上面那段。故事页点「展开」那一下也是这么做的（writeAllChapters）。
+    writer.start()
     ui.info(
       `正在给 ${result.episodes.join('、')} 补分镜，顶栏那块「AI 作业中」里看进度`,
     )
