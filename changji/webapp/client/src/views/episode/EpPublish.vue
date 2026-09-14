@@ -76,8 +76,17 @@ const warnings = computed(() => {
   if (p.ratio && ratio && p.ratio !== ratio) {
     out.push(`平台要 ${p.ratio}，项目是 ${ratio}`)
   }
+  // **只有挑的是这一集的片子时，这个数才说得上话。**
+  //
+  // `plannedDurationS` 是顶栏选中那一集的排布时长（/bff/flow 按
+  // episode_id 算的），而片单是**全项目**的——挑了别集那一条还拿它比上限，
+  // 就是拿 A 的长度判 B 能不能发：A 短 B 长时该拦的不拦，反过来平白拦一
+  // 条合格的。成片本身的时长引擎没回（/api/outputs 只有名字、大小、
+  // mtime），所以对不上时这一条干脆不说。
   const planned = session.counters.plannedDurationS
-  if (p.maxDurationS && planned && planned > p.maxDurationS) {
+  const forThisEp =
+    session.episodeId && currentFile.value?.name?.includes(session.episodeId)
+  if (p.maxDurationS && planned && forThisEp && planned > p.maxDurationS) {
     out.push(`约 ${humanTime(planned)}，超过上限 ${humanTime(p.maxDurationS)}`)
   }
   if (!form.value.title.trim()) out.push('标题为空')
