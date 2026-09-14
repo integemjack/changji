@@ -269,41 +269,60 @@ async function write() {
 }
 
 async function adopt() {
-  if (!draft.value) return
+  const taking = draft.value
+  if (!taking) return
+  // **整件事钉在它自己那一集上。**
+  //
+  // 一个来回之间在顶栏换一集：请求本身是同步拼好的（发的是对的那一集），
+  // 但落地这几句原来现读——`draft.value` 是按集号取的（见上面那段），换集
+  // 之后它是新那一集的那一份、多半是 null，`draft.value.script` 当场抛
+  // TypeError；就算不为 null，那也是把**上一集采用的稿子**画进新这一集的
+  // 编辑器里，而 savedScript 一起被设成它，"有没有改过"显示没改过——接着
+  // 敲两个字一存，整篇就写进这一集了（和 load 那条防的是同一件事）。
+  const key = ctxKey()
+  const project = session.projectPath
+  const episodeId = session.episodeId
+  const seconds = durationS.value
   const done = await run(
     () =>
       api.saveScript({
-        project: session.projectPath,
-        episode_id: session.episodeId,
-        script: draft.value.script,
-        duration_s: durationS.value,
-        synopsis: draft.value.logline,
+        project,
+        episode_id: episodeId,
+        script: taking.script,
+        duration_s: seconds,
+        synopsis: taking.logline,
       }),
     { key: 'adopt', success: '采用了', refresh: true },
   )
-  if (done) {
-    script.value = draft.value.script
-    savedScript.value = script.value
-    draft.value = null
-    mode.value = 'read'
-  }
+  if (!done) return
+  setDraft(key, null)
+  if (key !== ctxKey()) return   // 人已经走了：那一集自己的编辑器下次读就是新的
+  script.value = taking.script
+  savedScript.value = script.value
+  mode.value = 'read'
+  owner = { project, episode: episodeId, duration: seconds }
 }
 
 async function save() {
+  // 同 adopt：存的是这一集这一份，落地那几句也只能动这一集。
+  const key = ctxKey()
+  const sent = script.value
   const done = await run(
     () =>
       api.saveScript({
         project: session.projectPath,
         episode_id: session.episodeId,
-        script: script.value,
+        script: sent,
         duration_s: durationS.value,
       }),
     { key: 'save', success: '剧本已保存', refresh: true },
   )
-  if (done) {
-    savedScript.value = script.value
-    if (script.value.trim()) mode.value = 'read'
-  }
+  if (!done) return
+  // 换集了就别动新这一集的状态：`savedScript` 被设成上一集那份的话，
+  // 新这一集会显示成"没改过"，而它可能正改着。
+  if (key !== ctxKey()) return
+  savedScript.value = sent
+  if (sent.trim()) mode.value = 'read'
 }
 </script>
 

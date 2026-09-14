@@ -1305,16 +1305,23 @@ async function suggestIdeas() {
     ui.warn('先选一个项目')
     return
   }
+  // 想三个要跑一趟大模型（几十秒）。中途换了剧的话，这三条是照**上一部**
+  // 的故事避重想出来的，摆在新这一部的框里，挑一个就存成了它的梗概。
+  const project = session.projectPath
   const result = await run(
     () =>
       api.suggestPremises({
-        project: session.projectPath,
+        project,
         keywords: keywords.value.trim(),
         count: 3,
       }),
     { key: 'ideas' },
   )
   if (!result) return
+  if (project !== session.projectPath) {
+    ui.info('那一部剧的几个点子想好了，但你已经切走了——回去再点一次')
+    return
+  }
   ideas.value = result.ideas ?? []
   // 引擎把已有的梗概和各集简介都算作"想过的方向"避重，所以连点两次
   // 拿回来的是新的三个。一个都没回来只可能是模型没按格式答。
@@ -1579,10 +1586,18 @@ async function importPasted() {
     ui.warn('先把文本粘进来')
     return
   }
+  // 粘进来的可能是一整本书，切一趟要几秒。换剧那一下这份草稿会被清掉
+  // （见换剧那个 watch），而回包落地又会把它摆回来——摆在新这一部上，
+  // 点一下「采用」就整本写进去了。
+  const project = session.projectPath
   const result = await run(
-    () => api.importStory({ project: session.projectPath, text: pasted.value }),
+    () => api.importStory({ project, text: pasted.value }),
     { key: 'import' },
   )
+  if (result && project !== session.projectPath) {
+    ui.warn('中途换了项目，切好的那一份没有留下')
+    return
+  }
   if (result) {
     draft.value = result
     pasting.value = false
