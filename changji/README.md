@@ -73,7 +73,7 @@ Windows / macOS / Linux，x64 和 arm64 都有，包名形如
 
 想试还没发版的：`beta` 那个预发布是每推一次分支就重编重传的滚动版本，
 `CHANGJI_VERSION=beta bash install.sh` 装它。**beta 上的包和正式版是同一批**，
-带显卡的那几个（`-cuda` / `-rocm` / `-sycl` / `-vulkan`）也在，不是只有 CPU 版。
+带显卡的那两个（`-cuda` / `-vulkan`）也在，不是只有 CPU 版。A 卡和 Intel 卡用 `-vulkan`。
 
 自己编见 [cpp/README.md](cpp/README.md)。
 
