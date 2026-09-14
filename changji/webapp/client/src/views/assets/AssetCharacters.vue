@@ -579,7 +579,12 @@ async function genAllRefs(charId) {
   const have = SLOTS.filter((s) => mine?.['ref_' + s.key]).length
   if (
     have &&
-    !confirm(`会把这个角色已有的 ${have} 张参考图重画一遍，手传上去的也会被顶掉。确定？`)
+    !confirm(
+      `会把这个角色已有的 ${have} 张参考图重画一遍，手传上去的也会被顶掉；` +
+        // 同设定页那颗「全部重画」：出图会让引擎把全项目已渲染的镜头退回
+        // 待跑，这一项比"重画三张"本身重。
+        `已经渲染好的镜头也会退回重跑。确定？`,
+    )
   ) {
     return
   }
