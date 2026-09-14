@@ -335,6 +335,23 @@ ApiResult get_assets(const std::string& path) {
 
     return {200, {
         {"reference_images_used", refs_honored},
+        // ⚠️ **这句话原来指了一条走不通的路。** 它写的是「去项目页「模型」
+        // 那一行换一个图像编辑模型（Qwen-Image-Edit、**Flux Kontext** 这类）」，
+        // 三处对不上：
+        //
+        //   · 那个弹窗里的首帧那一组**全是文生图**（catalog.cpp 里 g.title
+        //     就写着「首帧模型（文生图）」，kImage 只有 qwen-image-* 那一串
+        //     量化档），换不出编辑模型来——得自己下好再填 [models].image。
+        //   · 引擎是**按文件名**认编辑模型的（accepts_reference_images：
+        //     文件名里带 edit 才算）。Flux Kontext 的文件名是
+        //     `flux1-kontext-…`，认不出来——照这句话换过去，参考图照样一张
+        //     都不传，而这条提示还挂在那儿。引擎自己那段契约也只点名
+        //     Qwen-Image-Edit。
+        //   · 2509 起还要配上 image_text_encoder_vision，不说的话换完还是
+        //     不работа。
+        //
+        // （为什么基础模型一律不传：sd.cpp 见到 ref_images 就走 EDIT mode，
+        // 基础版出来的是参考图的翻版——settings.hpp 那段记着实见的那一镜。）
         {"reference_hint", refs_honored ? "" :
             "参考图会传给出图模型，但当前这个是纯文生图的，它不会照着画——"
             "画面靠的是下面那段拼出来的提示词。要让参考图真生效，"
@@ -343,8 +360,10 @@ ApiResult get_assets(const std::string& path) {
             // 出来——参考图归首帧那一组（catalog.cpp 里 g.title =
             // 「首帧模型（文生图）」）。只说"那一节"的人会在项目页上找一个
             // 不存在的小标题。
-            "去项目页「模型」那一行点一下首帧模型的名字，换一个图像编辑模型"
-            "（Qwen-Image-Edit、Flux Kontext 这类）。"},
+            "把 [models].image 换成 Qwen-Image-Edit（2509 起还要一并配上 "
+            "image_text_encoder_vision）。⚠️ 引擎是按**文件名**认的，名字里"
+            "带 edit 才算——官方那几份自带，改过名就认不出来。模型下载那一"
+            "组里没有这一档（它那一组是文生图），要自己下好再填路径。"},
         {"characters", characters},
         {"locations", locations},
         {"style", {
