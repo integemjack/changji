@@ -191,23 +191,40 @@ const scenesOf = (ep) =>
 async function load() {
   if (!session.projectPath) {
     story.value = null
+    assets.value = null
+    // 早返回也要把转圈关掉，理由同镜头墙那处：被顶掉的那趟不会清它，
+    // 而这一页转圈亮着的时候章节表和空状态都不画，一片空白。
+    loading.value = false
     return
   }
+  // 这一趟是给哪部剧读的。在项目库里连着点三部，回来的顺序不保证——
+  // 慢的那趟后落地，画的就是别的剧的章节和分集线。
+  const want = session.projectPath
+  const mine = () => want === session.projectPath
   loading.value = true
   try {
     // 两份一起拉：分集线上要显示的人脸和空景图在资产库里，
     // 而一集是哪几个人在哪几个地方，在故事里。
     const [got, lib] = await Promise.all([
-      api.getStory(session.projectPath),
+      api.getStory(want),
       // 资产库拉不动不该把整页挡住——那时候分集线退成只有名字。
-      api.assets(session.projectPath).catch(() => null),
+      api.assets(want).catch(() => null),
     ])
+    if (!mine()) return
     story.value = got.story ?? null
     assets.value = lib
   } catch (err) {
+    if (!mine()) return
+    // **读不到就得空着。** 没有故事的项目是 200 加一份空故事（story.json
+    // 不存在时引擎回空的那份），走到这儿的是真出事了：项目被挪走、
+    // story.json 坏了、引擎连不上。这时候原来什么都不清——上一部剧的章节
+    // 和分集线就**原样留在这一部的页面上**，而下面那排按钮（改时长就是
+    // 重新分集、落成剧集）按的是现在这一部。
+    story.value = null
+    assets.value = null
     ui.error(err.message)
   } finally {
-    loading.value = false
+    if (mine()) loading.value = false
   }
 }
 watch(
