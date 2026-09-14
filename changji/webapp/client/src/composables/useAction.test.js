@@ -21,7 +21,7 @@ vi.mock('@/stores/session', () => ({
   useSession: () => ({ async refresh() {} }),
 }))
 
-import { useAction } from './useAction'
+import { humanBytes, useAction } from './useAction'
 
 function deferred() {
   let resolve
@@ -32,6 +32,24 @@ function deferred() {
   })
   return { promise, resolve, reject }
 }
+
+describe('humanBytes 的单位进位', () => {
+  // 循环只保证 value < 1000，而 toFixed 会把 999.999 四舍五入成 1000——
+  // 每个单位边界都有这么一个窗口，撞上就印出「1000 KB」这种非规范写法。
+  it('四舍五入顶到 1000 时要进到下一档', () => {
+    expect(humanBytes(999999)).toBe('1.0 MB')
+    expect(humanBytes(999999999)).toBe('1.0 GB')
+  })
+  it('没顶到的照旧', () => {
+    expect(humanBytes(999)).toBe('999 B')
+    expect(humanBytes(1000)).toBe('1 KB')
+    expect(humanBytes(1500000000000)).toBe('1.5 TB')
+  })
+  it('0 和负数都是 0 B', () => {
+    expect(humanBytes(0)).toBe('0 B')
+    expect(humanBytes(-1)).toBe('0 B')
+  })
+})
 
 describe('useAction', () => {
   it('不同的 key 同时跑，互不相干', async () => {

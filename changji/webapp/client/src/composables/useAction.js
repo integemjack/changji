@@ -97,7 +97,16 @@ export function humanBytes(bytes) {
     at += 1
   }
   // 字节和 KB 不带小数：「512 B」比「512.0 B」好读
-  const digits = at <= 1 ? 0 : value >= 100 ? 0 : 1
+  let digits = at <= 1 ? 0 : value >= 100 ? 0 : 1
+  // ⚠️ **四舍五入之后可能正好顶到 1000。** 上面那个循环只保证
+  // `value < 1000`，而 999999 B 在 KB 这一档是 999.999，按 0 位小数印出来
+  // 就是「1000 KB」——本该进位成「1.0 MB」。每个单位边界都有这么一个窗口
+  // （999.5 ~ 999.999），模型动辄几百 MB，撞上不稀奇。
+  if (Number(value.toFixed(digits)) >= 1000 && at < units.length - 1) {
+    value /= 1000
+    at += 1
+    digits = at <= 1 ? 0 : value >= 100 ? 0 : 1
+  }
   return `${value.toFixed(digits)} ${units[at]}`
 }
 
