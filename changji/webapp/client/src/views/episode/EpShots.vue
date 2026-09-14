@@ -19,7 +19,16 @@
  * 不同——有分镜 vs 每镜都出到成片，是两个真实的里程碑，只是不该对应
  * 两个页面。`/bff/flow` 一行没改。
  */
-import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
+import {
+  computed,
+  nextTick,
+  onActivated,
+  onDeactivated,
+  onMounted,
+  onUnmounted,
+  ref,
+  watch,
+} from 'vue'
 
 import AppIcon from '@/components/AppIcon.vue'
 import EmptyState from '@/components/EmptyState.vue'
@@ -647,6 +656,25 @@ onMounted(() => {
   window.addEventListener('keydown', onKey)
 })
 onUnmounted(() => window.removeEventListener('keydown', onKey))
+
+/**
+ * **切到别的格子就把键盘让出去。**
+ *
+ * 这一页被「这一集」的 `<KeepAlive>` 冻着——切到剧本 / 成片，组件是
+ * **停用**不是卸载，`onUnmounted` 不会跑，这个 keydown 监听照样挂在
+ * window 上。而 `onKey` 只看 `openId` 非空，切 tab 并不会关抽屉：
+ *
+ *   在镜头格点开一镜 → 切到成片格 → 按 ↑ / ↓
+ *   → `preventDefault()` 照常执行，**页面和播放器都没法用方向键了**，
+ *     而它真正做的事（换到上一镜 / 下一镜）发生在一个看不见的抽屉里。
+ *
+ * Esc 同理：在别的格子上按 Esc 会把那个看不见的抽屉关掉。
+ *
+ * 重复 add 同一个函数引用是安全的（DOM 会去重），所以首次挂载时
+ * onMounted 和 onActivated 都跑一遍也没关系。
+ */
+onActivated(() => window.addEventListener('keydown', onKey))
+onDeactivated(() => window.removeEventListener('keydown', onKey))
 </script>
 
 <template>
