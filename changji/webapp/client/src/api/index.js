@@ -52,7 +52,7 @@ async function request(url, { method = 'GET', body, signal, raw } = {}) {
       typeof detail === 'string'
         ? detail
         : Array.isArray(detail)
-          ? detail.map((d) => d.msg || JSON.stringify(d)).join('；')
+          ? detail.map(fieldError).join('；')
           : `请求失败（${res.status}）`
     throw new ApiError(message, res.status, data)
   }
@@ -72,6 +72,29 @@ const post = (url, body, opts) => request(url, { ...opts, method: 'POST', body }
 const del = (url, opts) => request(url, { ...opts, method: 'DELETE' })
 
 /** 媒体文件的地址。给 img / video / audio 的 src 用。 */
+/**
+ * 422 里的一条，翻成人能看懂的一句。
+ *
+ * **字段名在 `loc` 里，不在 `msg` 里。** 引擎照 pydantic 的形状发
+ * （`{type, loc:["body", 字段], msg, input}`，见 readonly.hpp 的
+ * `unprocessable_top`），而 msg 是那套固定的英文短语——「Extra inputs are
+ * not permitted」「Input should be a valid number」。只取 msg 的话，用户
+ * 看到的是**一句没有主语的英文**：多传了哪个字段、哪个数不合法，一个字
+ * 都没有。而这一族错误的全部信息量就在字段名上。
+ *
+ * `loc` 的第一段固定是 "body"（pydantic 用来分 body / query / path），
+ * 对用户没意义，去掉；剩下的用点连起来，正好是引擎那边写的
+ * 「patch.preset」这种。
+ */
+function fieldError(d) {
+  if (!d || typeof d !== 'object') return String(d)
+  const msg = d.msg || JSON.stringify(d)
+  const where = Array.isArray(d.loc)
+    ? d.loc.filter((x) => x !== 'body' && x !== 'query' && x !== 'path').join('.')
+    : ''
+  return where ? `${where}：${msg}` : msg
+}
+
 export function mediaUrl(project, rel) {
   if (!project || !rel) return ''
   return '/api/media' + qs({ path: project, rel })
