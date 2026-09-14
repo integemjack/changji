@@ -134,6 +134,26 @@ const providerId = computed(() => {
   return providers.value.find((p) => p.base_url.replace(/\/+$/, '') === here)?.id || ''
 })
 
+/**
+ * 密钥框里那句提示。
+ *
+ * ⚠️ **`llmKeySet` 说的是"存过一把"，不是"这一家的存过"。** 配置里只有
+ * 一个 api_key，换家不换它。于是从智谱换到 DeepSeek 时，框里照旧写着
+ * 「已填过，留空就不改」——照着留空存下去，发给 DeepSeek 的是智谱那把，
+ * 要到第一次写稿才 401，而那时人早忘了这一步。
+ *
+ * 这正是上面那个「密钥一直摆着别按填没填过隐藏」要修的同一件事，只是
+ * 当初只把框露出来了，框里那句话没跟着改。
+ */
+const keyHint = computed(() => {
+  const trim = (u) => (u || '').trim().replace(/\/+$/, '')
+  const here = trim(baseUrl.value)
+  const saved = trim(models.llmBaseUrl)
+  if (here && saved && here !== saved) return '换了一家，这家的密钥要重新填'
+  if (models.llmKeySet) return '已填过，留空就不改'
+  return models.llmKeyNeeded ? '这家要密钥' : '本机服务一般不用填'
+})
+
 /** 换一家：把地址换过去，模型列表跟着重拉。 */
 async function pickProvider(id) {
   const p = providers.value.find((x) => x.id === id)
@@ -395,9 +415,7 @@ async function download() {
             v-model="apiKey"
             class="input mono"
             type="password"
-            :placeholder="
-              models.llmKeySet ? '已填过，留空就不改' : (models.llmKeyNeeded ? '这家要密钥' : '本机服务一般不用填')
-            "
+            :placeholder="keyHint"
           />
         </label>
 
@@ -492,7 +510,10 @@ async function download() {
           :disabled="busy"
           @click="download"
         >
-          <AppIcon name="upload" :size="14" />
+          <!-- 下载用 download，不是 upload——那个箭头是从托盘里往**上**
+               飞出去的，印在「下载 8.2 GB」上是反的。另外三处用 upload 的
+               地方（去上传、投递）是真的往外送。 -->
+          <AppIcon name="download" :size="14" />
           下载 {{ humanBytes(need) }}
         </button>
         <button
