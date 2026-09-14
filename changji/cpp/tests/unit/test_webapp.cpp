@@ -87,10 +87,13 @@ TEST_CASE("前端真的嵌进来了") {
     // 编出来的二进制照样能起、接口照样好使，只是打开端口一片空白——
     // 比报错难查得多，因为服务是活的。
     const auto* index = http::find_webapp_file("index.html");
+    // 这句话和 server.cpp 那条 500 是同一份跑法的两份拷贝，两边都要能照着
+    // 敲通：`cd` 完要回到 changji/（不然 cpp/tools 不在手边），解释器写
+    // python3（macOS 和多数 Linux 里没有 `python`）。
     REQUIRE_MESSAGE(index != nullptr,
-                    "index.html 没嵌进来。跑一下："
-                    "cd webapp/client && npm run build，"
-                    "然后 python cpp/tools/gen_webapp.py");
+                    "index.html 没嵌进来。在 changji/ 目录下跑一下："
+                    "cd webapp/client && npm run build && cd ../.. ，然后 "
+                    "python3 cpp/tools/gen_webapp.py（Windows 上是 python）");
     const std::string html(*index);
     CHECK(html.find("<script") != std::string::npos);
     // Vite 打出来的入口一定引 /assets/ 下的东西；没有就是空壳

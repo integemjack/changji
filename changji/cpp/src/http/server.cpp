@@ -1538,9 +1538,17 @@ void run(const config::Settings& settings, const Options& opts) {
         }
         if (!body) {
             res.code = 500;
+            // **照着这句话敲下去要能跑通。** 原来写的是
+            // 「cd webapp/client && npm run build，然后 python
+            // cpp/tools/gen_webapp.py」——两处都不成立：`cd` 之后人还站在
+            // webapp/client 里，那儿没有 cpp/tools；而现在的 macOS 和多数
+            // Linux 发行版里根本没有 `python` 这个命令（只有 python3）。
+            // 脚本自己头上那段跑法是对的（带着 `&& cd ../..`），抄它。
             res.body =
-                "前端没打包进来。生成一下：cd webapp/client && npm run build，"
-                "然后 python cpp/tools/gen_webapp.py，再重编。";
+                "前端没打包进来。在 changji/ 目录下跑一遍："
+                "cd webapp/client && npm run build && cd ../.. ，然后 "
+                "python3 cpp/tools/gen_webapp.py（Windows 上是 python），"
+                "再重编。";
             res.set_header("Content-Type", "text/plain; charset=utf-8");
             return;
         }
