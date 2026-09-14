@@ -1,5 +1,11 @@
 /**
- * 中文语速这个数，界面这份和引擎那份对不对得上。
+ * 阅读视图从引擎**抄过来的那几个数**，和真身对不对得上。
+ *
+ * ScriptReader 一共抄了四个：中文语速、对白占比、以及「偏短 / 偏长」那两
+ * 条阈值。四个都是"引擎先算一遍、界面再算一遍"的那种数，抄的一方一旦落后，
+ * 症状都是**同一份稿子两个说法**，而两边都不报错。
+ *
+ * ---- 语速 ----
  *
  * **为什么值得单写一条用例。** 这是一份**抄过来的**数：真身在
  * `cpp/prompts.toml` 的 `chars_per_second`，而同一件物理事实（一个人一秒
@@ -68,5 +74,79 @@ describe('中文语速', () => {
     const share = engineNumber('dialogue_share')
     expect(share).toBeGreaterThan(0)
     expect(share).toBeLessThanOrEqual(1)
+  })
+})
+
+/**
+ * 从 ScriptReader 源码里抠一个写死的小数。
+ *
+ * 抠的是"那一行里第一个小数"，所以传进来的 anchor 要能定位到那一行。
+ */
+function readerNumber(anchor) {
+  const p = fileURLToPath(new URL('../components/ScriptReader.vue', import.meta.url))
+  const line = fs
+    .readFileSync(p, 'utf8')
+    .split('\n')
+    .find((l) => l.includes(anchor) && !l.trimStart().startsWith('*') && !l.trimStart().startsWith('//'))
+  if (!line) throw new Error(`ScriptReader 里找不到含「${anchor}」的代码行`)
+  const m = line.match(/([0-9]*\.[0-9]+)/)
+  if (!m) throw new Error(`「${anchor}」那一行里没有小数`)
+  return Number(m[1])
+}
+
+describe('对白占比', () => {
+  it('阅读视图里那个 0.62 和 prompts.toml 的 dialogue_share 是同一个数', () => {
+    // 用在「这一段对白不够」那条提示上（一段的时长里对白占几成）。
+    // 落后了的表现是：引擎按新的比重算预算，而这一页按旧的比重提醒，
+    // 于是一段明明够了却一直挂着"不够"，或者反过来。
+    expect(readerNumber('* 0.62 *')).toBe(engineNumber('dialogue_share'))
+  })
+})
+
+/**
+ * 「偏短 / 合适 / 偏长」那两条阈值。
+ *
+ * 真身在 `cpp/src/http/scripting.cpp` 的 `post_script_write`：
+ * `chars > budget * 1.35` 是偏长、`chars < budget * 0.6` 是偏短。
+ *
+ * **两条路都会走到**：写出来还没采用的那一份，`fit` 是引擎算好送过来的
+ * （EpScript 里 `:fit="draft.fit"`）；而**已经存下来的剧本没有这条**——
+ * `/api/script` 不回 `fit`，那一份的丸子是这一页自己按抄来的阈值算的。
+ * 抄的那份落后，同一份稿子在草稿面板上写「合适」、存下来之后写「偏短」。
+ *
+ * 这条读的是 C++ 源码而不是某个配置文件——那两个数就写在那儿，没有第二
+ * 个源头。锚在 `out["fit"] = chars > budget *` 上，只有正片那一处是这个
+ * 形状（预告片那一处的上界是 `chars > budget`，没有乘号）。
+ */
+describe('够不够的两条阈值', () => {
+  const CPP = fileURLToPath(new URL('../../../../cpp/src/http/scripting.cpp', import.meta.url))
+
+  function engineFit() {
+    const src = fs.readFileSync(CPP, 'utf8')
+    const m = src.match(
+      /out\["fit"\]\s*=\s*chars\s*>\s*budget\s*\*\s*([0-9.]+)[\s\S]{0,120}?chars\s*<\s*budget\s*\*\s*([0-9.]+)/,
+    )
+    if (!m) throw new Error('scripting.cpp 里找不到 post_script_write 那两条阈值')
+    return { long: Number(m[1]), short: Number(m[2]) }
+  }
+
+  /** 界面那两个数写在同一行三目里，一次抠两个。 */
+  function readerFit() {
+    const p = fileURLToPath(new URL('../components/ScriptReader.vue', import.meta.url))
+    const m = fs
+      .readFileSync(p, 'utf8')
+      .match(/r\s*<\s*([0-9.]+)\s*\?\s*'偏短'\s*:\s*r\s*>\s*([0-9.]+)\s*\?\s*'偏长'/)
+    if (!m) throw new Error('ScriptReader 里找不到「偏短 / 偏长」那个三目')
+    return { short: Number(m[1]), long: Number(m[2]) }
+  }
+
+  it('界面那两个数和引擎一致', () => {
+    expect(readerFit()).toEqual(engineFit())
+  })
+
+  it('短的那条在长的那条下面（写反了整页反过来）', () => {
+    const engine = engineFit()
+    expect(engine.short).toBeLessThan(1)
+    expect(engine.long).toBeGreaterThan(1)
   })
 })
