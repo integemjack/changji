@@ -149,7 +149,21 @@ onUnmounted(() => {
  */
 const KIND = {
   run: { label: '出片', page: '/episode', icon: 'film' },
-  write: { label: '写正文', page: '/story', icon: 'sparkle' },
+  // **「写」这个槽里跑的不止一种活**（JobKind::Write 只有一个，三条路共用
+  // 它）：展开剩下 N 章、写整季、以及**批量补分镜**（/api/plan/all，从设定页
+  // 的「分集」那一格按下去的）。写死「写正文」的话，补分镜跑着的时候顶栏
+  // 说的是「写正文」，而它右边那句引擎现说的消息写着「正在给 ep02 出分镜」
+  // ——同一行里两种说法。而设定页那条提示恰恰是叫人来这儿看的
+  // （「正在给 … 补分镜，顶栏那块「AI 作业中」里看进度」）。
+  //
+  // 三条路的 message 都自带主语（「正在写 ch03（第三章）」「正在写第 3 集」
+  // 「正在给 ep02 出分镜」），所以这一格退回**类别**就够，具体干什么由它说。
+  // 引擎那边今天分不出来：三条 start 传的 episode_id 都是空串，stage 也只有
+  // 出片那一族在报——真要分，得先给这个槽加一个能认的字段。
+  //
+  // 页面仍然指 /story：三条里两条（展开正文、写整季）在那儿，补分镜那条在
+  // 设定页的「分集」格。分不出来的时候指中多数那一个。
+  write: { label: '批量', page: '/story', icon: 'sparkle' },
   write_one: { label: '写这一章', page: '/story', icon: 'sparkle' },
   revise: { label: '改稿', page: '/story', icon: 'sparkle' },
   outline: { label: '出大纲', page: '/story', icon: 'sparkle' },
