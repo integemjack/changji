@@ -535,7 +535,25 @@ async function batch(action) {
     { key: 'batch', refresh: true },
   )
   if (!result) return
-  ui.ok(`${selected.value.size} 个镜头已${labels[action]}`)
+  // **报真改了几个，不是报点了几个。**
+  //
+  // 引擎回的是 `{changed, total, skipped_locked}`，而这儿原来数的是选中数。
+  // 差别是实打实的：`reset` 会跳过锁定的镜头（引擎那句注释——「锁定的镜头
+  // 是人工确认过的，批量重置不该动它们，否则一次误操作就把已经审过的片全
+  // 废了」），`lock` 跳过本来就锁着的，`clear_notes` 跳过没有备注的。
+  //
+  // 挑十镜、其中三镜锁着，按「退回重跑」——屏幕说「10 个镜头已退回重跑」，
+  // 而那三镜原样不动。人接着会去纳闷为什么它们还挂着「成片完成」，
+  // 而真正的答案（锁着，所以护住了）引擎明明算好了送过来。
+  const done = result.changed ?? 0
+  const kept = result.skipped_locked ?? 0
+  if (done) {
+    ui.ok(`${done} 个镜头已${labels[action]}` + (kept ? `，${kept} 个锁定的没动` : ''))
+  } else if (kept) {
+    ui.info(`选中的 ${kept} 镜都锁着，没有动。要重跑先解锁`)
+  } else {
+    ui.info('这几镜本来就是这样，没有要改的')
+  }
   selected.value = new Set()
   await load()
 }
