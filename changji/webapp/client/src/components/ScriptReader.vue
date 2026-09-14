@@ -23,6 +23,19 @@ const props = defineProps({
   // 目标时长和对白字数预算。给了就在顶栏画出"够不够"。
   targetSeconds: { type: Number, default: 0 },
   budgetChars: { type: Number, default: 0 },
+  /**
+   * 现成的「够不够」裁决。给了就用它，不自己算。
+   *
+   * **两边的分子不是一回事。** 引擎数的是结构化的拍子（模型直接标了哪条是
+   * 台词），而这一页是把渲染好的文本**再解析回来猜**——「冒号在前 12 个字
+   * 以内」。碰上「字幕：三年后」「画外音：他没回头」这类带冒号的描写行，
+   * 猜法会把它算成台词，对白字数就虚高，够不够的结论可能跟着翻面。
+   *
+   * 草稿那一屏两处都在（面板头上是引擎的、这条信息条上是自己算的），
+   * 于是同一份稿子可能一个写「偏短」一个写「合适」。引擎那份是权威的，
+   * 传进来就以它为准。
+   */
+  fit: { type: String, default: '' },
 })
 
 /** 台词说话人的配色。同一个人从头到尾同一个颜色，扫一眼就认得出。 */
@@ -118,6 +131,7 @@ const empty = computed(() => parsed.value.sections.every((s) => !s.blocks.length
 
 /** 够不够。阈值和后端 post_script_write 的 fit 一样：0.6 以下偏短，1.35 以上偏长。 */
 const fit = computed(() => {
+  if (props.fit) return props.fit
   if (!props.budgetChars) return ''
   const r = stats.value.chars / props.budgetChars
   return r < 0.6 ? '偏短' : r > 1.35 ? '偏长' : '合适'

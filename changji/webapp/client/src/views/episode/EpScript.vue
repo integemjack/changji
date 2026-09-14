@@ -240,9 +240,11 @@ async function save() {
     <section v-if="draft" class="sec draft">
       <div class="sec__head">
         <h2 class="sec__t">写好了，还没存</h2>
-        <span class="pill nowrap" :class="draft.fit === '合适' ? 'pill--ok' : 'pill--warn'">
-          {{ draft.fit }}
-        </span>
+        <!-- 「够不够」那颗丸子挪到下面阅读器的信息条上了：它旁边就是
+             「对白 123 / 171 字」那几个数，裁决挨着依据才读得懂。
+             而且**这儿和那儿原来各摆一颗、各算各的**——引擎数的是结构化
+             拍子，阅读器是把渲染好的文本猜回来，碰上「字幕：三年后」这种
+             带冒号的描写就会打架，同一份稿子一个写偏短一个写合适。 -->
         <span class="tiny dim truncate">{{ draft.logline }}</span>
         <span class="spacer" />
         <button
@@ -266,6 +268,7 @@ async function save() {
         :text="draft.script"
         :target-seconds="durationS"
         :budget-chars="draft.budget_chars ?? 0"
+        :fit="draft.fit ?? ''"
       />
     </section>
 
