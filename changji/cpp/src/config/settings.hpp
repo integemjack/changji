@@ -305,6 +305,11 @@ struct TTSConfig {
     //
     // 一个能改却什么都不做的旋钮比没有更糟：人调完以为生效了。
     // 老配置里写了这三项照样能读——take() 只认识的键才取。
+    //
+    // **配置模板漏了跟着改，2026-09-15 才补上**：settings.cpp 的
+    // kDefaultToml 里一直印着 `engine = "cosyvoice3"`，于是每台新装的机器
+    // 生成出来的 changji.toml 里都躺着这一行——它不被读，还点名了一个并不
+    // 是在跑的引擎。删字段的时候要连生成模板一起搜一遍。
 
     std::vector<std::string> validate() const;
 };

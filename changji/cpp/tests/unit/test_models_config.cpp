@@ -334,7 +334,8 @@ std::string toml_section(const std::string& tpl, const std::string& name) {
 }  // namespace
 
 TEST_CASE("模板的 [tts] 那一节提到了代码认的每一个后端") {
-    // 代码里真的分派到的三个值：doctor/needs.cpp、http/run_deps.cpp
+    // 代码里真的分派到的两个值：doctor/needs.cpp、http/run_deps.cpp
+    // （第三个 comfy 2026-09-10 拆了，settings.cpp 的校验现在直接拒它）
     const std::string sec =
         toml_section(config::default_config_template(), "tts");
     REQUIRE_FALSE(sec.empty());

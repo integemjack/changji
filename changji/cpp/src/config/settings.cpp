@@ -1231,14 +1231,14 @@ model = "glm-4.7-flash"
 # story_analysis = "glm-5.3-flash"
 
 [tts]
-# backend 有三个值：
+# backend 只有两个值（第三个 comfy 2026-09-10 随 ComfyUI 一起拆了，
+# 老配置填它会被校验拦下并给出改法）：
 #   local —— **进程内配音，不需要装任何外部服务**。要填下面 [models] 里的
 #            tts 和 tts_decoder 两个模型文件。想先听听效果的话，不必配也不必
 #            建项目，直接：changji --say "雨下了一整夜。" --tts-model <骨干>
 #            --tts-decoder <解码器>
 #   http  —— 独立的配音服务
 backend = "local"
-engine = "cosyvoice3"
 
 [gates]
 # 质量闸门。全自动模式下这些阈值决定废片能不能被拦住。
