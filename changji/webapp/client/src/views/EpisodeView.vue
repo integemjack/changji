@@ -219,17 +219,28 @@ async function commitRename() {
  */
 async function duplicate() {
   menuOpen.value = false
+  // **钉住项目。** 复制一份要把整张分镜表读出来再写回去，回来还跟着 refresh
+  // 一趟，中间隔两个来回。路径现读的话，这中间换了剧，最后那句
+  // `selectEpisode` 就把**上一部**复制出来的集号写进了新这一部（还写进
+  // localStorage）：新这一部的每一页都拿着一个它没有的集号去问引擎，而且
+  // 刷新也不会自己好。删一集那条为同一类事写过注释，在下面。
+  const project = session.projectPath
   const made = await run(
     () =>
       api.episodeAction({
-        project: session.projectPath,
+        project,
         episode_id: session.episodeId,
         action: 'duplicate',
       }),
     { key: 'epDup' },
   )
   if (!made) return
+  if (project !== session.projectPath) {
+    ui.info(`那一部剧复制出了 ${made.episode_id}，但你已经切走了——回去就在`)
+    return
+  }
   await session.refresh()
+  if (project !== session.projectPath) return
   session.selectEpisode(made.episode_id)
   ui.ok(`复制成 ${made.episode_id}，${made.shots} 个镜头都要重跑`)
 }

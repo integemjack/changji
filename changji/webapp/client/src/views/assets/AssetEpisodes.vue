@@ -404,18 +404,29 @@ onUnmounted(() => window.removeEventListener('beforeunload', beforeUnload))
 
 /** 手动加一集。没走故事那条路的老项目还得有这个口子。 */
 async function addEpisode() {
+  // **钉住项目。** 建一集要落盘、回来还跟着 refresh 一趟，中间隔两个来回，
+  // 而这中间在项目库里点一下别的剧是随时会发生的。路径现读的话后果落在
+  // 最后那句 `selectEpisode` 上：**上一部**新建的那个集号被写进了新这一部
+  // （还顺手写进 localStorage），于是新这一部的每一页都拿着一个它根本没有
+  // 的集号去问引擎——界面上长得像"引擎抽风"，而且刷新也不会自己好。
+  // 同文件里剪预告片、采用预告片那两条的理由。
+  const project = session.projectPath
   const created = await run(
     () =>
       api.newEpisode({
-        project: session.projectPath,
+        project,
         target_duration_s: durationS.value,
       }),
     { key: 'addEp', success: '新建了一集' },
   )
-  if (created) {
-    await session.refresh()
-    session.selectEpisode(created.episode_id)
+  if (!created) return
+  if (project !== session.projectPath) {
+    ui.info(`那一部剧加了 ${created.episode_id}，但你已经切走了——集没丢，回去就在`)
+    return
   }
+  await session.refresh()
+  if (project !== session.projectPath) return
+  session.selectEpisode(created.episode_id)
 }
 
 /** 给全项目还没分镜的集补分镜。从「这一集」的镜头格搬来的，理由见模板。 */
