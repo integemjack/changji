@@ -390,7 +390,25 @@ export function useShots() {
         if (rest.size) next.set(id, rest)
       }
       waiting.value = next
-      start(ids, [step.id])
+      // **没发出去就放回队列。**
+      //
+      // 这一组是在上面那几行里先从 waiting 里摘掉的（要先摘，不然下一次
+      // flush 会把同一批再交一遍）。而 start 有两条不发的路：引擎那边已经
+      // 有别的活在跑（409），或者上一发还在路上（starting）。原来两条都是
+      // 直接丢——人点的「重出」连同格子上那个「排队中」一起悄悄没了，
+      // 不报错，也不会再试。
+      //
+      // 放回去而不是整份还原：这半秒里可能又有人点了别的镜头。
+      start(ids, [step.id]).then((r) => {
+        if (r?.ok) return
+        const back = new Map(waiting.value)
+        for (const id of ids) {
+          const set = new Set(back.get(id) ?? [])
+          set.add(step.id)
+          back.set(id, set)
+        }
+        waiting.value = back
+      })
       return
     }
   }
