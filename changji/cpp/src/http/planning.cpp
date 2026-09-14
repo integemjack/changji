@@ -235,10 +235,16 @@ int remap_shots(Project& project, const IdRemap& remap) {
     return touched;
 }
 
-ApiResult merge_bible(const ProjectStore& store, AssetLibrary assets,
-                      const AssetLibrary& fresh, bool overwrite,
-                      const char* source) {
+ApiResult merge_bible(const ProjectStore& store, const AssetLibrary& fresh,
+                      bool overwrite, const char* source) {
     Project project = load_or_400(store);
+    // **库要在这儿读，不能让调用方在出圣经之前就读好。**
+    //
+    // 出一次圣经要跑一分钟往上。这一分钟里界面完全可能在改角色——抽屉里
+    // 改完外观点保存，直接落 assets.json。拿一分钟前那份当底 merge 回去，
+    // 那笔改动就没了，而且不报错。项目那一份（上面一行）本来就是现读的，
+    // 库这一份跟上它。
+    AssetLibrary assets = load_assets_or_400(store);
     const std::set<std::string> in_use = ids_in_use(project);
 
     // ---- 一、先把库里已经重了的收一收 ----
@@ -382,7 +388,6 @@ ApiResult post_bible(const json& body, llm::Client& client,
 
     ProjectStore store = open_project(body);
     const Project project = load_or_400(store);
-    AssetLibrary assets = load_assets_or_400(store);
 
     // **顶栏那本账要记上。** 这是个同步接口，没有任务表那一套，
     // 2026-09-13 之前它在界面上整个不可见——而它占着 LLM 槽，
@@ -413,8 +418,7 @@ ApiResult post_bible(const json& body, llm::Client& client,
         const AssetLibrary from_story =
             generate_bible_from_story(story, project.style_line, ratio, client,
                                       tok);
-        return merge_bible(store, std::move(assets), from_story, overwrite,
-                           "story");
+        return merge_bible(store, from_story, overwrite, "story");
     }
 
     std::string script = text::strip_ws(opt_str(body, "script", ""));
@@ -438,8 +442,7 @@ ApiResult post_bible(const json& body, llm::Client& client,
     const AssetLibrary fresh =
         generate_bible(script, project.style_line, ratio, client, tok);
 
-    return merge_bible(store, std::move(assets), fresh, overwrite,
-                       "script");
+    return merge_bible(store, fresh, overwrite, "script");
 }
 
 ApiResult post_plan(const json& body, llm::Client& client,

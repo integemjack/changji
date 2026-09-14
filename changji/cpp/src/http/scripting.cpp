@@ -373,10 +373,22 @@ ApiResult post_script_write(const json& body, llm::Client& client,
     });
 
     // 梗概存到项目上。下次写新一集时直接回填，不用凭记忆重打。
+    //
+    // **写回之前重读一遍。** `project` 是这个请求一开头读的那一份，而上面
+    // 那次生成跑了一两分钟——这几分钟里界面完全可能在改别的东西（镜头抽屉
+    // 存一笔、改个集名、加一集）。这儿真正要改的只有 premise 一个字段，
+    // 却要把整份旧 project 写回去，那些改动就被悄悄吞掉了。
+    //
+    // 同一个形状在批量那两条长任务上也有，理由写在 batch.cpp 里那两段。
     const std::string trimmed = text::strip_ws(premise);
     if (project.premise != trimmed) {
-        project.premise = text::truncate_utf8(trimmed, 2000);
-        store.save_project(project);
+        Project latest = store.load_project();
+        if (latest.premise != trimmed) {
+            latest.premise = text::truncate_utf8(trimmed, 2000);
+            store.save_project(latest);
+        }
+        // 本地这份也跟上：下面还要拿它拼回包
+        project.premise = latest.premise;
     }
 
     const int budget = stages::budget_chars(used_duration);
