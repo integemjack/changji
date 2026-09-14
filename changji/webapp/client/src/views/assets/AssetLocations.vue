@@ -169,9 +169,26 @@ async function load() {
   if (!session.projectPath) return
   loading.value = true
   try {
+    const before = edits.value
     assets.value = await api.assets(session.projectPath)
+    // ⚠️ **改了还没存的那一条不能被盖掉。**
+    //
+    // 这个 load 不只在换项目时跑：`watch(finished, load)` 让它在**每画完
+    // 一张参考图**的时候也跑一遍。而一键出图是一张接一张、每张几十秒——
+    // 抽屉里正在改外观描述的人，每隔几十秒手底下的字就被服务端那份原样
+    // 盖回去一次，一声不吭。单独给某个角色出一张图也一样。
+    //
+    // 照故事页那条既有规矩办（`setStory` 只刷新不在 dirtySnapshot 里的章）：
+    // **只刷新没改过的那几条**。先把新的资产库装上，`changed()` 比的就是
+    // 「手里这份」和「刚拿回来这份」，正好是要的判据。
+    //
+    // 空景图缩略图不受影响：它们绑的是 `l.ref_empty`，从 assets
+    // 来，不从 edits 来——所以留着草稿不会把刚画完的图冻在旧的上。
     edits.value = Object.fromEntries(
-      (assets.value.locations ?? []).map((l) => [l.location_id, { ...l }]),
+      (assets.value.locations ?? []).map((l) => [
+        l.location_id,
+        before[l.location_id] && changed(l.location_id) ? before[l.location_id] : { ...l },
+      ]),
     )
   } catch (err) {
     ui.error(err.message)
