@@ -67,8 +67,17 @@ function connect() {
   )
 }
 
+/**
+ * 资产库变了但不是画完一张（定妆、删人）——也让订着 `finished` 的页面重拉。
+ * 复用同一个计数器而不是再开一个：三个格子都已经 watch 着它，
+ * "资产库有变化去重拉"对它们来说是同一件事。
+ */
+function touch() {
+  finished.value += 1
+}
+
 export function useRefStream() {
   // **只连一次。** 两个 tab（角色、场景）都要用，而它们会来回切。
   if (!sock) connect()
-  return { pct, preview, live, finished }
+  return { pct, preview, live, finished, touch }
 }

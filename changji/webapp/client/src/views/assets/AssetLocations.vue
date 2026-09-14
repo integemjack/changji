@@ -50,6 +50,48 @@ function onEsc(e) {
 const assets = ref(null)
 const shots = ref([])
 const loading = ref(false)
+
+/**
+ * 筛这一格。
+ *
+ * **25 个场景、名字前缀还高度雷同**（「临川大学旧礼堂观众席第一排 /
+ * 最后一排 / 后台 / 舞台中央…」），翻着找很难受；而真正要找的多半是
+ * "哪些还没画"。所以两样：一个搜索框，一个「只看缺图」。
+ */
+const q = ref('')
+
+function match(l) {
+  const k = q.value.trim().toLowerCase()
+  if (k && !String(l.name || '').toLowerCase().includes(k)) return false
+  return true
+}
+
+/** 名字里大家共用的那一截前缀。扫这一格时要认的是尾巴。 */
+const prefix = computed(() => {
+  const names = locations.value.map((l) => String(l.name || ''))
+  if (names.length < 3) return ''
+  let p = names[0]
+  for (const n of names.slice(1)) {
+    let i = 0
+    while (i < p.length && i < n.length && p[i] === n[i]) i += 1
+    p = p.slice(0, i)
+    if (!p) break
+  }
+  // 太短的共用前缀不值得折（「临」「临川」这种），四个字起
+  return p.length >= 4 ? p : ''
+})
+
+/** 这张牌要不要缩成一半高：没图、而且这会儿也没在画。 */
+function flat(l) {
+  if (l.ref_empty) return false
+  const t = targetOf(l.location_id)
+  return !live[t] && !preview[t] && !isBusy(`gen:${l.location_id}`)
+}
+
+function head(l) {
+  const n = String(l.name || '')
+  return prefix.value && n.startsWith(prefix.value) ? n.slice(prefix.value.length) : n
+}
 const edits = ref({})
 const showOthers = ref(false)
 
@@ -105,14 +147,16 @@ async function linkLocations() {
 // 还没出分镜的时候无从知道这一集用哪几个，全都算本集的
 const hasShots = computed(() => shots.value.length > 0)
 const mine = computed(() =>
-  hasShots.value
+  (hasShots.value
     ? locations.value.filter((l) => usage.value.has(l.location_id))
-    : locations.value,
+    : locations.value
+  ).filter(match),
 )
 const others = computed(() =>
-  hasShots.value
+  (hasShots.value
     ? locations.value.filter((l) => !usage.value.has(l.location_id))
-    : [],
+    : []
+  ).filter(match),
 )
 
 /** 分镜引用了、但库里没有的场景。跑起来会直接报「场景未注册」。 */
@@ -174,37 +218,6 @@ function changed(id) {
  * 默认只补还没定过妆的：库里已有的同名场景保住，手改过的描述和传过的
  * 空景图都还在。勾了覆盖才让新出的顶掉，那会把全剧镜头退回重跑。
  */
-async function generate(overwrite) {
-  if (!session.episodeId) {
-    ui.warn('先在上面挑一集')
-    return
-  }
-  if (overwrite && !confirm('覆盖会冲掉手改过的场景描述和空景图，全剧镜头也要重跑。继续？')) {
-    return
-  }
-  const result = await run(
-    () =>
-      runAsyncJob(
-        (extra) =>
-          api.makeBible({
-            project: session.projectPath,
-            episode_id: session.episodeId,
-            overwrite,
-            ...extra,
-          }),
-        { prefix: 'bible', label: '给场景定妆' },
-      ),
-    { key: 'bible', refresh: true },
-  )
-  if (!result) return
-  const added = result.added_locations?.length ?? 0
-  ui.ok(
-    added
-      ? `补了 ${added} 个新场景：${result.added_locations.join('、')}`
-      : '这一集的场景库里都有了，没补新的',
-  )
-  await load()
-}
 
 async function save(id) {
   const draft = edits.value[id]
@@ -287,37 +300,13 @@ async function clearEmpty(locationId) {
   <div class="locs">
     <!-- 场景库是全剧共用的一份，分镜表里只存 id。这一页按「本集用到的」分组。
          工具行：刷新、重定、照故事定。 -->
+    <!-- 只剩一个搜索框，理由见 AssetCharacters 里同一段。出了分镜之后
+         墙上只有本集用到的，那时候得说一句——不然 25 个场景只见 6 个，
+         像丢了。 -->
     <div class="toolbar">
-      <span class="tiny dim">{{ hasShots ? '本集用到' : '场景库' }} {{ mine.length }} 个</span>
+      <span v-if="hasShots" class="tiny dim">本集用到 {{ mine.length }} 个</span>
       <span class="spacer" />
-      <button
-        class="btn btn--ghost btn--sm"
-        type="button"
-        :disabled="loading || !session.hasProject"
-        title="刷新"
-        @click="load"
-      >
-        <AppIcon name="refresh" :size="14" />
-      </button>
-      <button
-        v-if="locations.length"
-        class="btn btn--ghost btn--sm"
-        type="button"
-        :disabled="!session.episodeId || isBusy('bible')"
-        title="同名场景用新出的顶掉旧的，手改过的描述和空景图会丢"
-        @click="generate(true)"
-      >
-        全部重新定妆
-      </button>
-      <button
-        class="btn btn--ai btn--sm"
-        type="button"
-        :disabled="!session.episodeId || isBusy('bible')"
-        @click="generate(false)"
-      >
-        <AppIcon name="sparkle" :size="14" />
-        {{ isBusy('bible') ? '正在读故事…' : '照故事定妆' }}
-      </button>
+      <input v-model="q" class="input find" placeholder="找场景" />
     </div>
 
     <!-- **不要在这儿套一个光秃秃的 <template>**：Vue 只把带
@@ -348,10 +337,17 @@ async function clearEmpty(locationId) {
         v-if="!loading && !locations.length"
         icon="scene"
         title="场景库还是空的"
-        hint="先写故事，再点「照故事定妆」"
+        hint="先写故事，再点右上角「照故事定妆」"
       >
         <RouterLink to="/story" class="btn btn--sm">去写故事</RouterLink>
       </EmptyState>
+
+      <EmptyState
+        v-else-if="!loading && !mine.length && !others.length"
+        icon="search"
+        title="没有对得上的"
+        hint="换个词试试"
+      />
 
       <template v-else>
         <!-- 本集场景 -->
@@ -368,6 +364,7 @@ async function clearEmpty(locationId) {
               :class="{
                 'cell--live': isBusy('gen:' + l.location_id) || live[targetOf(l.location_id)],
                 'cell--open': openId === l.location_id,
+                'cell--flat': flat(l),
               }"
             >
               <div class="cell__frame" @click="toggle(l.location_id)">
@@ -408,14 +405,17 @@ async function clearEmpty(locationId) {
                       : null
                   "
                 />
-                <button class="cell__name truncate" type="button" title="改这个场景" @click="toggle(l.location_id)">
-                  {{ l.name }}
+                <button
+                  class="cell__name truncate"
+                  type="button"
+                  :title="l.name"
+                  @click="toggle(l.location_id)"
+                >
+                  <span v-if="prefix" class="cell__pre">{{ prefix }}</span>{{ head(l) }}
                 </button>
                 <span class="spacer" />
+                <!-- 「有空景图/缺图」删了：图在不在，看框里就知道 -->
                 <span v-if="changed(l.location_id)" class="pill pill--warn tiny">未保存</span>
-                <span class="pill tiny" :class="l.ref_empty ? 'pill--ok' : 'pill--neutral'">
-                  {{ l.ref_empty ? '有空景图' : '缺图' }}
-                </span>
               </div>
             </article>
           </div>
@@ -509,10 +509,13 @@ async function clearEmpty(locationId) {
                 />
               </label>
 
-              <div class="field" title="每个镜头拿到的都是这一串">
-                <span class="field__label">拼出来的提示词</span>
+              <!-- **折起来。** 这是排障用的——出来的图不对时，翻开看一眼
+                   真正发给画图模型的那一串。平时它是一整段灰字，白占抽屉里
+                   三分之一的高度，而抽屉是用来改描述的。 -->
+              <details class="fold" title="每个镜头拿到的都是这一串">
+                <summary class="fold__t">拼出来的提示词</summary>
                 <p class="rendered mono">{{ openLoc.rendered }}</p>
-              </div>
+              </details>
             </div>
 
             <div class="drawer__foot">
@@ -622,6 +625,13 @@ async function clearEmpty(locationId) {
 }
 .cell--live { border-color: var(--accent); }
 .cell--open { outline: 2px solid var(--accent); }
+/* **一个占位符不需要 16:9 的框。** 25 个没画的场景按原尺寸排是 2258px，
+   缩成一半之后约 700px——而这一页真正要扫的就是"哪些还没画"。 */
+.cell--flat .cell__frame {
+  aspect-ratio: auto;
+  height: 54px;
+}
+.cell--flat .loc__blank .tiny { display: none; }
 /* 空景图给人看的是空间，宽一点看得清家具位置——所以是 16:9，
    不跟角色那边的 9:16。成片是竖屏，但这一格不是成片。 */
 .cell__frame {
@@ -684,6 +694,19 @@ async function clearEmpty(locationId) {
   min-width: 0;
 }
 .cell__bottom .pill { position: relative; }
+/* 共用的那一截前缀退成小字灰字，大字留给区别的那半截 */
+.cell__pre {
+  color: var(--text-3);
+  font-weight: 400;
+  font-size: var(--fs-xs);
+}
+
+/* 搜索框不该和按钮抢地方：够打四五个字就行 */
+.find {
+  width: 8rem;
+  padding: 2px 8px;
+  font-size: var(--fs-xs);
+}
 
 /* 抽屉。和角色那边同一套尺寸。 */
 .drawer {
@@ -811,6 +834,16 @@ async function clearEmpty(locationId) {
 
 .textarea--tight {
   min-height: 0;
+}
+/* 折起来的排障块。summary 默认是 list-item，带个三角；留着——那个三角
+   正是"这里还有东西"的唯一提示。 */
+.fold__t {
+  color: var(--text-3);
+  font-size: var(--fs-xs);
+  cursor: pointer;
+}
+.fold[open] .fold__t {
+  margin-bottom: 4px;
 }
 .rendered {
   margin: 0;

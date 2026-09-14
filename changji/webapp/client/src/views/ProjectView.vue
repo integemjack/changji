@@ -2,42 +2,51 @@
 /**
  * 这一部剧。
  *
- * **这一页只说当前这个项目。** 选哪一部在常驻的项目库里。这一页显示的是：
- * 这是哪部剧（logline）、到哪一步了、这一部剧自己的设置（画面、全剧风格）、
- * 用哪些模型，以及删掉它。
+ * **这一页只显示答案，改东西一律在弹窗里。** 2026-09-14 重排的规矩：
+ * 每次打开这一页都要回答的问题，才配留在页面上；其余三条出路——改的时候
+ * 才要的进弹窗，出问题才要的条件出现，别处已经说了的删掉。
  *
- * 画面和全剧风格**是项目级的**——一台机器上可以同时有竖屏短剧和横屏片子，
- * 所以它们不能回全局设置页。
+ * 按这条过完，原来那 41 件东西剩 5 件：这是哪部剧（logline）、到哪一步了
+ * （进度条）、这部片子长什么样（一行答案）、拿哪几个模型跑（四个名字）、
+ * 删掉它。整页从 1826px 压到一屏以内。
  *
- * **模型不是项目级的，但也搬到这一页了**（用户 2026-09-14："去掉设置页面
- * 的模型选择，改放进项目页面"）。理由站得住：挑模型和挑画幅是同一个场合
- * 的事——开一部新剧、决定这部片子长什么样、跑起来要多久。设置页那一堆
- * （引擎地址、密钥、闸门阈值）是装机时配一次的东西，不该和它挤在一起。
- * 代价是得说清楚它写的是全局配置，所以那一节的标题旁边挂着那句话。
+ * 砍掉的里面值得记的几条：
+ *   · `0 集 0 镜 0 成片` —— 进度条和阶段文字已经说完了，而且还没到那一步
+ *     时三个 0 是噪音不是信息；
+ *   · `19 小时前` —— 没有任何决定依赖它；
+ *   · 完整路径 —— 一年用一次（找文件），却天天占半行，换成一个 📁；
+ *   · 「写实线」标签 —— 画风那段文字自己就写着"实拍摄影"。
  *
- * 2026-09-11 起照故事页的样子：没有页头、没有卡片、没有解释性的段落。
- * 一行读数，两块表单并排，删项目是最底下一行字。
+ * **模型那一行不在 hasProject 分支里**：一台刚装好的机器上一个项目都没有，
+ * 而那正是最需要挑模型的时候。初始化页 2026-09-14 删了（用户：「不需要
+ * 初始化页面」），这一行就是它的替代品——没有项目时整页只有它和"新建项目"，
+ * 看不见反而难。
  */
 import { computed, onMounted, ref, watch } from 'vue'
 
+import AppIcon from '@/components/AppIcon.vue'
 import EmptyState from '@/components/EmptyState.vue'
-import ModelPicker from '@/components/ModelPicker.vue'
-import { projectStage } from '@/composables/project-stage'
+import ModelDialog from '@/components/ModelDialog.vue'
+import ShowDialog from '@/components/ShowDialog.vue'
 import { api } from '@/api'
-import { VIDEO_QUALITIES, qualitySize } from '@/api/labels'
-import { humanAgo } from '@/composables/useAction'
+import { qualitySize } from '@/api/labels'
+import { projectStage } from '@/composables/project-stage'
 import { useAction } from '@/composables/useAction'
+import { useModels } from '@/stores/models'
 import { useProjects } from '@/stores/projects'
 import { useSession } from '@/stores/session'
 import { useUi } from '@/stores/ui'
 
 const store = useProjects()
 const session = useSession()
+const models = useModels()
 const ui = useUi()
 const { run, isBusy } = useAction()
 
 const removing = ref(false)
 const confirmName = ref('')
+const showOpen = ref(false)
+const modelKey = ref('') // 打开的是哪一组的弹窗，空串是没开
 
 /** 项目库里这一条。统计和阶段都从它来，和右边那条栏读的是同一份。 */
 const me = computed(() => store.byPath(session.projectPath))
@@ -46,88 +55,25 @@ const title = computed(
   () => session.project?.title || session.project?.project_id || '',
 )
 
-// 全剧风格。所有镜头共用的一层，是这部剧的创作常量：开工时定一次，
-// 后面基本不动。改一次会让已经出好的镜头退回重跑，所以下面那个勾要人自己点。
-const style = ref({ global_style: '', negative_prompt: '', aspect_ratio: '9:16' })
-const savedStyle = ref('')
-const styleLine = ref('')
-const resetOnStyle = ref(false)
-const styleDirty = computed(() => JSON.stringify(style.value) !== savedStyle.value)
+/** 「这部片子」那一行的答案：画幅 · 尺寸 · 画风开头一句。 */
+const show = ref(null)
 
-const video = ref(null)
-const savedVideo = ref('')
-const videoDirty = computed(
-  () => video.value && JSON.stringify(video.value) !== savedVideo.value,
-)
-const sizeText = computed(() =>
-  video.value ? `${video.value.width}×${video.value.height}` : '—',
-)
-
-async function loadVideo() {
+async function loadShow() {
   if (!session.projectPath) {
-    video.value = null
+    show.value = null
     return
   }
-  try {
-    const d = await api.projectVideo(session.projectPath)
-    video.value = { ...d }
-    savedVideo.value = JSON.stringify(video.value)
-  } catch (err) {
-    // 读不到不该让整页红——项目可能是老的，还没有这一节。
-    // 那时候按默认值显示，用户存一次就写进去了。
-    video.value = { orientation: 'portrait', quality: '720p', width: 544, height: 928 }
-    savedVideo.value = ''
-    ui.warn(`读不到画面设置，按默认显示：${err.message}`)
+  const [v, a] = await Promise.allSettled([
+    api.projectVideo(session.projectPath),
+    api.assets(session.projectPath),
+  ])
+  const video = v.status === 'fulfilled' ? v.value : null
+  const style = a.status === 'fulfilled' ? a.value.style : null
+  show.value = {
+    orientation: video?.orientation === 'landscape' ? '横屏' : '竖屏',
+    size: video ? qualitySize(video.quality, video.orientation) : '',
+    look: style?.global_style || '',
   }
-}
-
-async function saveVideo() {
-  const d = await run(
-    () =>
-      api.saveProjectVideo({
-        path: session.projectPath,
-        orientation: video.value.orientation,
-        quality: video.value.quality,
-      }),
-    { key: 'video', success: '画面设置已保存' },
-  )
-  if (!d) return
-  // **拿服务端算出来的宽高回填。** 前端不该自己算——那样两处规则会漂，
-  // 而 32 对齐这种事错了要到出图那一步才发现。
-  video.value = { ...d }
-  savedVideo.value = JSON.stringify(video.value)
-}
-
-async function loadStyle() {
-  if (!session.projectPath) return
-  try {
-    const data = await api.assets(session.projectPath)
-    styleLine.value = data.style?.style_line ?? ''
-    style.value = {
-      global_style: data.style?.global_style ?? '',
-      negative_prompt: data.style?.negative_prompt ?? '',
-      aspect_ratio: data.style?.aspect_ratio ?? '9:16',
-    }
-    savedStyle.value = JSON.stringify(style.value)
-  } catch {
-    // 项目坏了或者刚建好还没有资产库，这一块不显示就是了
-    savedStyle.value = ''
-  }
-}
-
-async function saveStyle() {
-  const result = await run(
-    () =>
-      api.saveStyle({
-        project: session.projectPath,
-        patch: style.value,
-        reset_shots: resetOnStyle.value,
-      }),
-    { key: 'style', refresh: true },
-  )
-  if (!result) return
-  savedStyle.value = JSON.stringify(style.value)
-  ui.ok(result.reset_shots ? `风格已改，${result.reset_shots} 个镜头退回重跑` : '已保存')
 }
 
 async function remove() {
@@ -143,18 +89,31 @@ async function remove() {
   await store.load()
 }
 
+/**
+ * 把项目目录的路径抄到剪贴板。
+ *
+ * 原来这儿是页面上印着的一长串路径——一年用一次（找文件），却天天占半行。
+ * **不做"在文件管理器里打开"**：那要引擎加一个接口，而为一个图标去开一条
+ * 能执行 shell 的路不值当。抄走自己去粘，够用。
+ */
+async function copyPath() {
+  const path = session.projectPath
+  try {
+    await navigator.clipboard.writeText(path)
+    ui.ok('路径抄好了')
+  } catch {
+    // 没有剪贴板权限（http 下的非 localhost 就没有）。把路径显示出来，
+    // 让他自己选——总比一个点了没反应的图标强。
+    ui.info(path)
+  }
+}
+
 onMounted(() => {
   if (!store.loaded) store.load()
+  models.load()
 })
 
-watch(
-  () => session.projectPath,
-  () => {
-    loadVideo()
-    loadStyle()
-  },
-  { immediate: true },
-)
+watch(() => session.projectPath, loadShow, { immediate: true })
 </script>
 
 <template>
@@ -162,178 +121,93 @@ watch(
        App.vue 里给顶栏项目按钮写的 .proj { max-width: 11rem } 会套到这儿，
        整页被压成 176px 宽。栽过一次。 -->
   <div class="pj">
-    <EmptyState
-      v-if="!session.hasProject"
-      icon="folder"
-      tone="warn"
-      title="还没选项目"
-      hint="在项目库里点一个"
-    />
-
-    <template v-else>
-      <!-- 这是哪部剧、到哪一步了：一行读数 -->
-      <section class="sec">
+    <template v-if="session.hasProject">
+      <!-- 这是哪部剧 -->
+      <div class="head">
         <p class="lead" :class="{ dim: !me?.logline }">{{ me?.logline || '还没写故事' }}</p>
-        <div class="meta tiny dim">
-          <span v-if="stage" class="stage" :class="`stage--${stage.tone}`">{{ stage.label }}</span>
-          <span><b class="numeric">{{ me?.chapters ?? 0 }}</b> 章</span>
-          <span><b class="numeric">{{ me?.episodes ?? 0 }}</b> 集</span>
-          <span><b class="numeric">{{ me?.shots ?? 0 }}</b> 镜</span>
-          <span><b class="numeric">{{ me?.outputs ?? 0 }}</b> 成片</span>
-          <span>{{ humanAgo(me?.mtime) }}</span>
-          <span class="mono truncate">{{ session.projectPath }}</span>
-        </div>
-        <div v-if="stage" class="bar">
+        <button class="btn btn--ghost btn--sm" type="button" title="抄走路径" @click="copyPath">
+          <AppIcon name="folder" :size="14" />
+        </button>
+        <button
+          class="btn btn--ghost btn--sm"
+          :class="{ 'danger-text': !removing }"
+          type="button"
+          @click="removing = !removing"
+        >
+          {{ removing ? '算了' : '删掉' }}
+        </button>
+      </div>
+
+      <div v-if="removing" class="row row--wrap confirm-row">
+        <input
+          v-model="confirmName"
+          class="input confirm"
+          :placeholder="'照着打一遍「' + title + '」'"
+        />
+        <button
+          class="btn btn--danger btn--sm"
+          type="button"
+          :disabled="confirmName !== title || isBusy('delete')"
+          @click="remove"
+        >
+          永久删除
+        </button>
+      </div>
+
+      <!-- 到哪一步了 -->
+      <div v-if="stage" class="progress">
+        <span class="stage tiny" :class="`stage--${stage.tone}`">{{ stage.label }}</span>
+        <div class="bar">
           <div
             class="bar__fill"
             :class="`bar__fill--${stage.tone}`"
             :style="{ width: stage.percent + '%' }"
           />
         </div>
-      </section>
-
-      <div class="cols">
-        <!-- 画面 -->
-        <section v-if="video" class="sec">
-          <div class="sec__head">
-            <h2 class="sec__t">画面</h2>
-            <span v-if="videoDirty" class="pill pill--warn">未存</span>
-            <span class="spacer" />
-            <button
-              class="btn btn--primary btn--sm"
-              type="button"
-              :disabled="!videoDirty || isBusy('video')"
-              title="只影响以后出的镜头"
-              @click="saveVideo"
-            >
-              {{ isBusy('video') ? '存着…' : '保存' }}
-            </button>
-          </div>
-          <div class="form">
-            <label class="field">
-              <span class="field__label">画幅</span>
-              <select v-model="video.orientation" class="select">
-                <option value="portrait">竖屏</option>
-                <option value="landscape">横屏</option>
-              </select>
-            </label>
-            <label class="field">
-              <span class="field__label">清晰度</span>
-              <!-- **取值仍然是 "720p"**：那是存在每个项目 changji.toml 里的
-                   字符串，改了名老项目就读不出来。显示的是真实尺寸。
-
-                   尺寸按当前画幅算，**不能写死**：上一版三行都是竖屏的
-                   数（544×928…），横屏项目看到的三行全是反的；而且 2K
-                   那行连竖屏都写反了（2560×1440）。 -->
-              <select v-model="video.quality" class="select" :title="'出来是 ' + sizeText">
-                <option v-for="q in VIDEO_QUALITIES" :key="q.value" :value="q.value">
-                  {{ q.label }} {{ qualitySize(q.value, video.orientation) }} · {{ q.note }}
-                </option>
-              </select>
-            </label>
-          </div>
-        </section>
-
-        <!-- 全剧风格 -->
-        <section v-if="savedStyle" class="sec">
-          <div class="sec__head">
-            <h2 class="sec__t">全剧风格</h2>
-            <span class="pill pill--neutral">{{ styleLine === 'anime' ? '动漫线' : '写实线' }}</span>
-            <span v-if="styleDirty" class="pill pill--warn">未存</span>
-            <span class="spacer" />
-            <button
-              class="btn btn--primary btn--sm"
-              type="button"
-              :disabled="!styleDirty || isBusy('style')"
-              @click="saveStyle"
-            >
-              {{ isBusy('style') ? '存着…' : '保存' }}
-            </button>
-          </div>
-          <div class="form">
-            <label class="field">
-              <span class="field__label">画风</span>
-              <textarea
-                v-model="style.global_style"
-                class="textarea textarea--tight"
-                rows="3"
-                placeholder="电影感冷调，浅景深，胶片颗粒"
-              />
-            </label>
-            <label class="field">
-              <span class="field__label">负向</span>
-              <textarea
-                v-model="style.negative_prompt"
-                class="textarea textarea--tight"
-                rows="3"
-                placeholder="多手多脚，文字水印，糊脸"
-              />
-            </label>
-          </div>
-          <div class="row row--wrap">
-            <div class="chips" title="改画幅要重跑所有镜头">
-              <button
-                v-for="r in ['9:16', '16:9', '1:1', '4:5']"
-                :key="r"
-                class="chip"
-                :class="{ 'chip--on': style.aspect_ratio === r }"
-                type="button"
-                @click="style.aspect_ratio = r"
-              >
-                {{ r }}
-              </button>
-            </div>
-            <label class="switch" title="不勾的话新风格只对之后才跑的镜头生效">
-              <input v-model="resetOnStyle" type="checkbox" />
-              <span>已出的镜头退回重跑</span>
-            </label>
-          </div>
-        </section>
       </div>
 
-    </template>
-
-    <!-- 模型。**不在 hasProject 那个分支里**：一台刚装好的机器上一个项目
-         都没有，而那正是最需要挑模型和下模型的时候；关在"先建个项目"
-         后面的话，跳过初始化页的人再也找不到这一页。 -->
-    <section class="sec">
-      <div class="sec__head">
-        <h2 class="sec__t">模型</h2>
-        <span class="tiny dim">整台机器共用一套，不分项目</span>
-      </div>
-      <ModelPicker dense />
-    </section>
-
-    <template v-if="session.hasProject">
-      <!-- 删掉这个项目。一行字，点开才有确认框。不可逆，摆在最底下。 -->
-      <section class="sec">
-        <div class="row row--wrap">
-          <button
-            class="btn btn--ghost btn--sm"
-            :class="{ 'danger-text': !removing }"
-            type="button"
-            @click="removing = !removing"
-          >
-            {{ removing ? '算了' : '删掉这个项目' }}
-          </button>
-          <template v-if="removing">
-            <input
-              v-model="confirmName"
-              class="input confirm"
-              :placeholder="'照着打一遍「' + title + '」'"
-            />
-            <button
-              class="btn btn--danger btn--sm"
-              type="button"
-              :disabled="confirmName !== title || isBusy('delete')"
-              @click="remove"
-            >
-              永久删除
-            </button>
+      <!-- 这部片子长什么样：一行答案，✎ 开弹窗 -->
+      <button class="line" type="button" @click="showOpen = true">
+        <span class="line__k">这部片子</span>
+        <span class="line__v truncate">
+          <template v-if="show">
+            {{ show.orientation }} · {{ show.size }}<template v-if="show.look"> · {{ show.look }}</template>
           </template>
-        </div>
-      </section>
+          <span v-else class="dim">读取中…</span>
+        </span>
+        <AppIcon name="wand" :size="14" class="line__go" />
+      </button>
     </template>
+
+    <!-- 拿哪几个模型跑。**没有项目也显示**，理由见文件开头。 -->
+    <div class="line line--static">
+      <span class="line__k">模型</span>
+      <span class="line__v names">
+        <button
+          v-for="m in models.inUse"
+          :key="m.key"
+          class="name"
+          :class="{ 'name--missing': m.missing }"
+          type="button"
+          :title="m.title + (m.missing ? '（还没下全）' : '')"
+          @click="modelKey = m.key"
+        >
+          {{ m.name }}<span v-if="m.missing" class="warn">⚠</span>
+        </button>
+        <span v-if="!models.inUse.length" class="dim tiny">读取中…</span>
+      </span>
+    </div>
+
+    <EmptyState
+      v-if="!session.hasProject"
+      icon="folder"
+      tone="warn"
+      title="还没选项目"
+      hint="在右边项目库里点一个，或者新建一个"
+    />
+
+    <ShowDialog :open="showOpen" @close="showOpen = false" @saved="loadShow" />
+    <ModelDialog :open="!!modelKey" :group-key="modelKey" @close="modelKey = ''" />
   </div>
 </template>
 
@@ -341,104 +215,120 @@ watch(
 .pj {
   display: flex;
   flex-direction: column;
+  gap: var(--s2);
+  padding-bottom: var(--s4);
 }
+
+.head {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--s2);
+}
+
 .lead {
-  margin: 0 0 var(--s2);
+  flex: 1;
+  margin: 0;
   font-size: var(--fs-md);
   line-height: 1.6;
 }
-.meta {
+
+.confirm-row {
+  margin-top: calc(var(--s2) * -1);
+}
+
+.confirm {
+  max-width: 22rem;
+}
+
+.progress {
   display: flex;
-  align-items: baseline;
-  gap: var(--s3);
-  flex-wrap: wrap;
-  min-width: 0;
+  align-items: center;
+  gap: var(--s2);
 }
-.meta b {
-  color: var(--text);
-  font-size: var(--fs-base);
-}
-.meta .truncate {
-  min-width: 0;
-  max-width: 40ch;
-}
-.stage {
-  font-weight: 600;
-}
-.stage--ok {
-  color: var(--ok);
-}
-.stage--warn {
-  color: var(--warn);
-}
-.stage--accent {
-  color: var(--accent);
-}
+
 .bar {
-  margin-top: var(--s2);
-  height: 3px;
-  border-radius: 2px;
-  background: var(--surface-2);
+  flex: 1;
+  height: 4px;
+  border-radius: 999px;
+  background: var(--line);
   overflow: hidden;
 }
+
 .bar__fill {
   height: 100%;
   background: var(--accent);
-  transition: width 0.2s var(--ease);
-}
-.bar__fill--ok {
-  background: var(--ok);
-}
-.bar__fill--warn {
-  background: var(--warn);
 }
 
-/* 画面和风格并排。窄了就叠。 */
-.cols {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
-  gap: 0 var(--s8);
-}
-.form {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-  gap: var(--s3);
-  margin-bottom: var(--s3);
-}
-.textarea--tight {
-  min-height: 0;
-}
-.chips {
-  display: inline-flex;
-  border: 1px solid var(--line);
-  border-radius: var(--r-sm);
-  overflow: hidden;
-}
-.chip {
-  padding: 4px 10px;
-  border: 0;
-  background: transparent;
-  color: var(--text-2);
-  font-size: var(--fs-sm);
-  cursor: pointer;
-}
-.chip--on {
-  background: var(--accent-soft);
-  color: var(--accent);
-}
-.switch {
-  display: inline-flex;
+/* 一行答案。整行可点——点哪儿都是"我要改这个"。 */
+.line {
+  display: flex;
   align-items: center;
-  gap: 6px;
-  font-size: var(--fs-sm);
-  color: var(--text-2);
+  gap: var(--s2);
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
   cursor: pointer;
 }
-.danger-text {
-  color: var(--danger);
+
+.line:hover {
+  border-color: var(--accent);
 }
-.confirm {
-  width: 18em;
-  height: 27px;
+
+/* 模型那行整行不可点——可点的是里面每一个名字 */
+.line--static {
+  cursor: default;
+}
+
+.line--static:hover {
+  border-color: var(--line);
+}
+
+.line__k {
+  flex: 0 0 4.5rem;
+  color: var(--text-dim);
+  font-size: 12px;
+}
+
+.line__v {
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+}
+
+.line__go {
+  flex: 0 0 auto;
+  color: var(--text-dim);
+}
+
+.names {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+}
+
+.name {
+  padding: 2px 6px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.name:hover {
+  border-color: var(--accent);
+}
+
+.name--missing {
+  color: var(--warn, #f5a524);
+}
+
+.warn {
+  margin-left: 3px;
 }
 </style>

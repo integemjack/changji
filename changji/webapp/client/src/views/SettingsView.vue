@@ -7,14 +7,13 @@
  *   连接——换机器；画质与装配——换成片规格；闸门——换废片判定。
  * 页面上只放控件和读数。一个控件要是非得解释才会用，解释进它的 title。
  */
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 
 import AppIcon from '@/components/AppIcon.vue'
 import { api } from '@/api'
 import { useAction } from '@/composables/useAction'
 import { useUi } from '@/stores/ui'
 import { describeRoomDecision } from '@/composables/room-decision'
-import { describeLlmState } from '@/composables/llm-state'
 import { placementRows as buildPlacementRows } from '@/composables/placement-rows'
 
 const ui = useUi()
@@ -27,13 +26,59 @@ const node = ref({ engineBaseUrl: '', engineTimeoutMs: 600000 })
 const conn = ref({})
 const params = ref({})
 const persist = ref(true)
-const apiKeyInput = ref('')
+
+// 模型往哪儿下。整台机器一套，和"挑哪个模型"（在项目页）是两件事。
+const modelsDir = ref('')
+const modelsSource = ref('')
+const modelsSources = ref([])
+const modelsTool = ref('')
+const savedDir = ref('')
+const savedSource = ref('')
+const modelsDirty = computed(
+  () => modelsDir.value !== savedDir.value || modelsSource.value !== savedSource.value,
+)
+
+async function loadModelsDir() {
+  try {
+    const d = await api.setupState()
+    modelsDir.value = d.modelsDir || ''
+    modelsSource.value = d.source || ''
+    modelsSources.value = d.sources || []
+    modelsTool.value = d.tool || ''
+    savedDir.value = modelsDir.value
+    savedSource.value = modelsSource.value
+  } catch {
+    // 读不到就留空。这一节不该让整页红——它装机时配一次，平时不看。
+  }
+}
+
+async function saveModelsDir() {
+  // **一组模型都不选**：这一节只管往哪儿下，不管下什么。引擎那边
+  // `download: false` 加空 selections 就是"只存设置"（见 post_setup_download）。
+  const ok = await run(
+    () =>
+      api.startSetupDownload({
+        selections: {},
+        dir: modelsDir.value.trim() || undefined,
+        source: modelsSource.value || undefined,
+        download: false,
+      }),
+    { key: 'modelsDir', success: '存好了' },
+  )
+  if (!ok) return
+  await loadModelsDir()
+}
 
 const SECTIONS = [
   { id: 'engine', title: '引擎' },
-  { id: 'llm', title: '大模型' },
-  // 「模型」那一节 2026-09-14 搬去项目页了（用户的话："去掉设置页面的
-  // 模型选择，改放进项目页面"）。这一页只剩装机时配一次的东西。
+  // 「大模型」那一节 2026-09-14 整个删了（用户：「加上 key，去掉设置里的
+  // 大模型选择」）。服务、模型名、接口地址、密钥、温度全在项目页点模型名
+  // 弹出来的那个窗口里——一件事分两页配，改完一处另一处还显示着旧的。
+  // 「挑哪个模型」2026-09-14 搬去项目页了（用户的话："去掉设置页面的
+  // 模型选择，改放进项目页面"）。**搬走的是"挑"，不是"往哪儿下"**——
+  // 目录和下载源是整台机器共用的（"模型的路径放到设置里，这个全局统一的"），
+  // 留在这儿。
+  { id: 'models', title: '模型目录和下载' },
   { id: 'render', title: '出图出片' },
   { id: 'tts', title: '配音' },
   { id: 'assembly', title: '装配' },
@@ -44,182 +89,6 @@ const SECTIONS = [
 
 const engineOnline = computed(() => Boolean(overview.value?.engine?.online))
 
-/**
- * 那台大模型服务上都有哪些模型。
- *
- * 模型名以前只能手打。打错了要跑到写剧本那一步才报错，而报出来的是一个
- * 404——分不清是地址错了还是名字错了。拉过来给人选，这类错就没机会发生。
- */
-const models = ref([])
-/** 引擎那边认识的这家有什么，每项 { id, note }。见后端 known_models。 */
-const known = ref([])
-const modelsError = ref('')
-/** 选中它才露出手填输入框。放进下拉的最后一项，不再另开一个按钮。 */
-const CUSTOM_MODEL = '__custom__'
-const customModel = ref(false)
-
-/**
- * 下拉选了一项。
- *
- * **不用 v-model。** 选中「其他」时要把控件整个换成输入框，而 v-model
- * 会先把 `__custom__` 这个哨兵写进 conn.llm_model——那一瞬间它就是要存的
- * 值，中途要是触发一次保存，存进配置的就是这个假名字。
- */
-function pickModel(event) {
-  const v = event.target.value
-  if (v === CUSTOM_MODEL) {
-    customModel.value = true
-    return
-  }
-  conn.value.llm_model = v
-}
-const modelsLoading = ref(false)
-
-/**
- * 下拉里摆什么。
- *
- * 两份东西合起来：`models` 是这台服务此刻真答应的，`known` 是引擎带的
- * 一本小抄。**两份都要**——智谱的 `/models` 不列免费模型，我们默认那个
- * glm-4.7-flash 就不在里面，而它能用；只照 `models` 渲染的话，默认那个
- * 模型在自己的下拉里是找不到的。
- *
- * 顺序按小抄走，不按服务返回的字母序：小抄的顺序是**推荐顺序**（不要钱的
- * 和最会写的排前头），字母序第一个是 glm-4.5，谁也不该先看见它。
- */
-const modelOptions = computed(() => {
-  const live = new Set(models.value)
-  const seen = new Set()
-  const out = []
-  for (const k of known.value) {
-    if (!k?.id || seen.has(k.id)) continue
-    out.push({ id: k.id, note: k.note ?? '', live: live.has(k.id) })
-    seen.add(k.id)
-  }
-  for (const id of models.value) {
-    if (seen.has(id)) continue
-    out.push({ id, note: '', live: true })
-    seen.add(id)
-  }
-  // 当前填的那个不在上面两份里也得摆出来，否则 select 显示成空白，
-  // 看上去像「没填模型」，而配置里其实填着东西。
-  const current = conn.value.llm_model
-  if (current && !seen.has(current)) out.push({ id: current, note: '', live: false })
-  return out
-})
-
-/**
- * 当前这个模型，这台服务上是不是真没有。
- *
- * ⚠️ **小抄里有的不算缺**。智谱的 `/models` 不列 glm-4.7-flash 而它能用，
- * 只拿 `models` 判的话，选中默认模型会一直挂着一句「这台服务上没有
- * glm-4.7-flash」——把一个正常配置报成坏的，比不报还糟。
- */
-const modelMissing = computed(
-  () =>
-    models.value.length > 0 &&
-    conn.value.llm_model &&
-    !models.value.includes(conn.value.llm_model) &&
-    !known.value.some((k) => k?.id === conn.value.llm_model),
-)
-
-/**
- * 拉模型列表。
- *
- * 拉到之后，如果当前填的模型这台服务上没有（或者压根没填），就默认选第一个。
- * 不这么做的话，换完平台地址那一刻配置是坏的——地址是新平台的，模型名还是
- * 上一家的，点保存就存进去一个跑不通的组合。
- *
- * 「第一个」取的是 `modelOptions` 的头一个而不是 `models[0]`：见上面那段，
- * 服务回的是字母序，头一个是 glm-4.5；小抄的头一个才是默认该用的那个。
- */
-async function loadModels({ pickFirst = false } = {}) {
-  modelsLoading.value = true
-  modelsError.value = ''
-  try {
-    const data = await api.llmModels()
-    models.value = data.models ?? []
-    known.value = Array.isArray(data.known) ? data.known : []
-    modelsError.value = data.error ?? ''
-    const current = conn.value.llm_model
-    const options = modelOptions.value
-    const hit = options.some((m) => m.id === current)
-    if (options.length && (pickFirst || !current || !hit)) {
-      conn.value.llm_model = options[0].id
-    }
-  } catch (err) {
-    modelsError.value = err.message
-  } finally {
-    modelsLoading.value = false
-  }
-}
-
-/**
- * 平台预设。
- *
- * 各家都是 OpenAI 兼容接口，差别只在 base_url 和密钥，所以不用为每一家写
- * 适配器——列出来只是免得用户去翻各家文档找那一行地址。选完仍然能手改。
- *
- * 选中一家之后要立刻把地址存进引擎再拉模型列表：模型列表是引擎按它当前
- * 的配置去问的，不先存就还是在问上一家。
- */
-const providers = ref([])
-const providerId = ref('')
-
-async function loadProviders() {
-  try {
-    providers.value = (await api.llmProviders()).providers ?? []
-  } catch {
-    providers.value = []
-  }
-}
-
-const currentProvider = computed(
-  () => providers.value.find((p) => p.id === providerId.value) ?? null,
-)
-
-// 地址和某一家对上了就把选择器显示成那一家，没对上就是「自定义」
-watch(
-  () => [conn.value.llm_base_url, providers.value.length],
-  () => {
-    const url = String(conn.value.llm_base_url || '').replace(/\/+$/, '')
-    const hit = providers.value.find(
-      (p) => p.base_url.replace(/\/+$/, '') === url,
-    )
-    providerId.value = hit?.id ?? ''
-  },
-)
-
-async function pickProvider(event) {
-  const id = event.target.value
-  providerId.value = id
-  const provider = providers.value.find((p) => p.id === id)
-  if (!provider) return
-  conn.value.llm_base_url = provider.base_url
-  // 先把地址落到引擎上，模型列表才问得对地方
-  const saved = await run(
-    () =>
-      api.saveConnections({
-        patch: { llm_base_url: provider.base_url },
-        persist: persist.value,
-      }),
-    { key: 'provider', quiet: true },
-  )
-  if (!saved) {
-    ui.warn('地址没存上，模型列表可能还是上一家的')
-    return
-  }
-  await loadModels({ pickFirst: true })
-  // 报**实际选中**的那个，不是 `models[0]`——两者不一定是同一个东西：
-  // 认识的这家会按推荐顺序挑（见 modelOptions），而 models[0] 是服务
-  // 回的字母序头一个。报错了人会照着那句话去找一个没被选上的模型。
-  if (conn.value.llm_model && modelOptions.value.length) {
-    ui.ok(`已切到 ${provider.name}，模型默认选了 ${conn.value.llm_model}`)
-  } else if (provider.local) {
-    ui.warn(`${provider.name} 那边没应答。服务起了吗？`)
-  } else {
-    ui.info(`${provider.name} 的地址填好了，还要在下面填 API Key 才能问到模型列表`)
-  }
-}
 /**
  * 两节各自要提交的那几项，和"读回来之后动过没有"。
  *
@@ -238,10 +107,8 @@ const ttsPatch = computed(() => ({
 }))
 const savedLlm = ref('')
 const savedTts = ref('')
-const llmDirty = computed(() => JSON.stringify(llmPatch.value) !== savedLlm.value)
 const ttsDirty = computed(() => JSON.stringify(ttsPatch.value) !== savedTts.value)
 
-const envLocked = computed(() => conn.value?.env_locked ?? {})
 const nodeLocked = computed(() => node.value?.envLocked ?? {})
 
 /**
@@ -253,30 +120,6 @@ const nodeLocked = computed(() => node.value?.envLocked ?? {})
  */
 const embedded = computed(() => node.value?.embedded === true)
 
-/**
- * 大模型跑在哪：`local`（进程内）还是 `remote`（走 base_url）。
- *
- * 走 local 时下面那一整排远端字段——平台、API 地址、模型名、密钥——
- * **一个都不读**。摆着只会让人调了没反应，和之前那个"配音引擎"输入框
- * 一样。权重路径在配置文件的 [models].llm。
- *
- * 这一项从 bff 拿，不从 /api/connections：那个接口在对拍覆盖范围内，
- * Python 没有这个字段，加进去就是一处破契约。
- */
-const llmLocal = computed(() => node.value?.llmBackend === 'local')
-
-/** 内置和外接之间切。切完重读一遍——体检那几项会跟着变。 */
-async function switchLlm(e) {
-  const backend = e.target.value
-  const ok = await run(() => api.saveLlmBackend(backend), {
-    key: 'llmBackend',
-    success: backend === 'local' ? '大模型改成内置' : '大模型改成外接 API',
-  })
-  // 失败时把下拉框拨回去——不拨的话它显示的是没生效的那个值，
-  // 而用户会以为已经切过去了。
-  e.target.value = ok ? backend : node.value?.llmBackend || 'local'
-  if (ok) await load()
-}
 const hardware = computed(() => overview.value?.hardware)
 
 /**
@@ -292,19 +135,6 @@ const hardware = computed(() => overview.value?.hardware)
  */
 const effective = computed(() => overview.value?.effective ?? null)
 
-/**
- * 大模型现在装着没有。
- *
- * 「默认加载 llm，点击出片清理掉大模型，够就不清理」——这三句描述的都是
- * 同一个状态，而它以前在界面上完全看不到：用户只能看到"跑在哪"是内置，
- * 看不出此刻权重是在显存里还是已经被出片腾走了。
- *
- * 是页面打开那一刻的快照，刷新才更新——够用了：用户是在出片前后各看一眼
- * 来确认"到底清没清"。
- */
-const llmState = computed(() => describeLlmState(overview.value?.node))
-
-// 程序算出来的权重放置。两个模型各一行；没有这一项（老引擎）就整块不显示。
 const placement = computed(() => effective.value?.placement ?? null)
 const llmRuntime = computed(() => effective.value?.llm ?? null)
 const placementRows = computed(() => buildPlacementRows(placement.value))
@@ -348,7 +178,6 @@ async function load() {
     for (const [key, message] of Object.entries(data.errors ?? {})) {
       ui.warn(`${key} 读不到：${message}`)
     }
-    if (data.engine?.online) loadModels()
   } catch (err) {
     ui.error(err.message)
   } finally {
@@ -357,8 +186,8 @@ async function load() {
 }
 
 onMounted(() => {
+  loadModelsDir()
   load()
-  loadProviders()
 })
 
 async function saveNode() {
@@ -371,33 +200,6 @@ async function saveNode() {
     await load()
   }
 }
-
-/**
- * 密钥单独存。
- *
- * **不跟别的设置一起提交**，两个理由：
- *   一、密钥是唯一一个「只想改这一样」的场合——换一把 key 不该顺带把
- *       地址、模型、温度、配音后端全重新提交一遍，那几项里任何一个
- *       正被环境变量顶着，都会多出一句莫名其妙的警告；
- *   二、它在引擎那边落的是**另一个文件**（配置目录里的 api_key，
- *       不进 config.toml），本来就不是同一笔写入。
- */
-async function saveApiKey() {
-  const key = apiKeyInput.value.trim()
-  if (!key) {
-    ui.warn('先把密钥填进去')
-    return
-  }
-  const result = await run(
-    () => api.saveConnections({ patch: { llm_api_key: key }, persist: persist.value }),
-    { key: 'apikey' },
-  )
-  if (!result) return
-  apiKeyInput.value = ''
-  ui.ok(result.saved_to ? `密钥已存到 ${result.saved_to}` : '密钥已保存')
-  await load()
-}
-
 /**
  * 连接类设置。改了等于换一台干活的机器，保存完引擎会自动重新体检。
  *
@@ -424,9 +226,6 @@ async function saveConn(patch, key) {
   }
   await load()
 }
-
-/** 「大模型」那一节：接哪台服务、用哪个模型、多敢编。 */
-const saveLlm = () => saveConn(llmPatch.value, 'llm')
 
 /** 「配音」那一节。`tts_engine` 不提交——引擎的白名单里没有这一项，
  *  而 /api/connections 也从来不回它，提交的是个 undefined。 */
@@ -629,196 +428,9 @@ function scrollTo(id) {
           </div>
         </section>
 
-        <template v-if="engineOnline && conn.llm_base_url !== undefined">
-          <!-- 大模型 -->
-          <section id="sec-llm" class="sec">
-            <div class="sec__head">
-              <h2 class="sec__t">大模型</h2>
-              <!-- 「出片时自动让开」是句空话，除非能看到让没让开。 -->
-              <span v-if="llmLocal" class="pill pill--neutral tiny mono">
-                {{ llmState.text }}<template v-if="llmState.measured">
-                  · 实测 {{ llmState.measured }}</template>
-              </span>
-              <span v-if="!llmLocal && llmDirty" class="pill pill--warn tiny">未存</span>
-              <span class="spacer" />
-              <!-- **这一节自己的保存按钮。** 2026-09-14 之前它没有：地址、
-                   模型名、温度全靠「配音」那一节的保存按钮捎带着提交，
-                   那个按钮离这儿隔着三节，标题里写着"大模型和配音一起
-                   保存"——等于把最常改的一项藏在一个看不见的地方。
-                   用户在这儿挑完模型，找不到任何能点的东西。 -->
-              <div v-if="!llmLocal" class="sec__acts">
-                <button
-                  class="btn btn--primary btn--sm"
-                  type="button"
-                  :disabled="isBusy('llm')"
-                  title="存地址、模型名和温度，存完重新体检"
-                  @click="saveLlm"
-                >
-                  {{ isBusy('llm') ? '保存中…' : '保存' }}
-                </button>
-              </div>
-            </div>
-            <div class="stack">
-              <label class="field field--narrow">
-                <span class="field__label">跑在哪</span>
-                <select
-                  class="select"
-                  :value="node?.llmBackend || 'local'"
-                  :disabled="isBusy('llmBackend')"
-                  title="内置：这个进程里跑，权重在配置文件的 [models].llm。外接：任何兼容 OpenAI 接口的服务"
-                  @change="switchLlm"
-                >
-                  <option value="local">内置</option>
-                  <option value="remote">外接 API</option>
-                </select>
-              </label>
-              <!-- 走内置时这一整排都不读，直接不显示。 -->
-              <div v-if="!llmLocal" class="grid grid--2">
-                <label class="field field--wide">
-                  <span class="field__label">平台</span>
-                  <select
-                    class="select"
-                    :value="providerId"
-                    :disabled="isBusy('provider')"
-                    :title="currentProvider?.note || '选一个会自动填地址并挑好模型，也可以在下面手填'"
-                    @change="pickProvider"
-                  >
-                    <option value="">自定义</option>
-                    <optgroup label="本机">
-                      <option
-                        v-for="p in providers.filter((x) => x.local)"
-                        :key="p.id"
-                        :value="p.id"
-                      >
-                        {{ p.name }}
-                      </option>
-                    </optgroup>
-                    <optgroup label="云服务">
-                      <option
-                        v-for="p in providers.filter((x) => !x.local)"
-                        :key="p.id"
-                        :value="p.id"
-                      >
-                        {{ p.name }}
-                      </option>
-                    </optgroup>
-                  </select>
-                </label>
-
-                <label class="field">
-                  <span class="field__label">
-                    API 地址
-                    <span v-if="envLocked.llm_base_url" class="pill pill--warn tiny">
-                      被 {{ envLocked.llm_base_url }} 顶着
-                    </span>
-                  </span>
-                  <input
-                    v-model="conn.llm_base_url"
-                    class="input mono"
-                    placeholder="http://127.0.0.1:11434/v1"
-                    title="要带 /v1"
-                  />
-                </label>
-                <label class="field">
-                  <span class="field__label">
-                    模型名
-                    <button
-                      class="linkbtn tiny"
-                      type="button"
-                      :disabled="modelsLoading"
-                      @click.prevent="loadModels"
-                    >
-                      {{ modelsLoading ? '正在问…' : '重新拉列表' }}
-                    </button>
-                  </span>
-                  <!-- **下拉，不是 datalist。** 2026-09-14 这里来回换过两次，
-                       两次都被用户当场否掉，各记一笔：
-
-                       * 换成「select + 一个『自己填』按钮」——他要填一个
-                         列表里没有的名字，发现默认打不进去。
-                       * 换回 `<input list=datalist>`——**列表当场少了一半**。
-                         Chrome 的 datalist 会拿输入框里**已有的值**去过滤
-                         建议：框里是 `glm-5.3` 时，只剩包含这段的那几项。
-                         用户要的是"把这家有什么摆出来让我挑"，而 datalist
-                         天生做不到这件事。
-
-                       所以是 select。列表 = 这台服务回的 + 我们认识的这家
-                       有什么 + 当前这个值（兜底，见 modelOptions），
-                       所以配置里填着什么都不会在自己的下拉里消失。
-                       最后一项是「其他」，选它才露出输入框——手填是**退路**，
-                       不是默认入口。 -->
-                  <select
-                    v-if="!customModel"
-                    class="select mono"
-                    :value="conn.llm_model"
-                    title="这台服务回的 + 我们认识的这家有什么"
-                    @change="pickModel"
-                  >
-                    <option v-for="m in modelOptions" :key="m.id" :value="m.id">
-                      {{ m.id }}{{ m.note ? ' — ' + m.note : '' }}
-                    </option>
-                    <option :value="CUSTOM_MODEL">其他（手动填一个）…</option>
-                  </select>
-                  <input
-                    v-else
-                    v-model="conn.llm_model"
-                    class="input mono"
-                    placeholder="填一个这家的模型名"
-                    @blur="customModel = !conn.llm_model"
-                  />
-                  <span v-if="modelMissing" class="field__error">
-                    这台服务上没有 {{ conn.llm_model }}，有的是：{{ models.join('、') }}
-                  </span>
-                  <span v-else-if="modelsError" class="tiny warn-text">
-                    列不出模型：{{ modelsError }}<template v-if="known.length">
-                      。下面摆的是内置清单，能不能用得填上密钥再拉一次才知道</template>
-                  </span>
-                </label>
-                <label class="field">
-                  <span class="field__label">
-                    API Key
-                    <span class="pill pill--neutral tiny">
-                      {{ conn.llm_api_key_set ? conn.llm_api_key_hint : '未设置' }}
-                    </span>
-                  </span>
-                  <!-- 密钥单独存单独提交，见 saveApiKey。它在引擎那边落的是
-                       配置目录里的 api_key 文件，不进 config.toml。 -->
-                  <div class="keyrow">
-                    <input
-                      v-model="apiKeyInput"
-                      class="input mono keyrow__input"
-                      type="password"
-                      placeholder="本机服务一般不用填"
-                      autocomplete="off"
-                      title="单独存一个文件，不会写进 config.toml"
-                      @keyup.enter="saveApiKey"
-                    />
-                    <button
-                      class="btn btn--sm"
-                      type="button"
-                      :disabled="!apiKeyInput.trim() || isBusy('apikey')"
-                      @click="saveApiKey"
-                    >
-                      {{ isBusy('apikey') ? '存…' : '存密钥' }}
-                    </button>
-                  </div>
-                </label>
-                <label class="field">
-                  <span class="field__label">温度</span>
-                  <input
-                    v-model.number="conn.llm_temperature"
-                    class="input numeric"
-                    type="number"
-                    step="0.1"
-                    min="0"
-                    max="2"
-                    title="高了更敢编，低了更听话。写剧本 0.7 上下"
-                  />
-                </label>
-              </div>
-            </div>
-          </section>
-
+        <!-- 引擎连不上时下面这几节一个都别摆：它们全是"这台引擎怎么配"，
+             而那时候读不到任何值，摆出来是一排空框。 -->
+        <template v-if="engineOnline">
           <!-- 出图出片 -->
           <!-- 显示的是真正会用的数（effective），不是档位表推的：
                画幅来自项目的 [video]，步数在挂了 Turbo 时压到 6。 -->
@@ -904,6 +516,43 @@ function scrollTo(id) {
                    （stages/audio.cpp）。一个能改却什么都不做的旋钮比没有
                    更糟：人调完以为生效了。 -->
             </div>
+          </section>
+
+          <!-- 模型目录和下载。**只管往哪儿下，不管下什么**——挑模型在项目页。 -->
+          <section id="sec-models" class="sec">
+            <div class="sec__head">
+              <h2 class="sec__t">模型目录和下载</h2>
+              <span class="tiny dim">整台机器共用。挑哪个模型在项目页</span>
+              <span class="spacer" />
+              <button
+                class="btn btn--primary btn--sm"
+                type="button"
+                :disabled="!modelsDirty || isBusy('modelsDir')"
+                @click="saveModelsDir"
+              >
+                {{ isBusy('modelsDir') ? '存着…' : '保存' }}
+              </button>
+            </div>
+            <div class="grid grid--2">
+              <label class="field">
+                <span class="field__label">模型目录</span>
+                <input v-model="modelsDir" class="input mono" placeholder="留空用默认位置" />
+              </label>
+              <label class="field">
+                <span class="field__label">下载源</span>
+                <select v-model="modelsSource" class="select">
+                  <option v-for="o in modelsSources" :key="o.id" :value="o.id">
+                    {{ o.label }}<template v-if="o.note"> · {{ o.note }}</template>
+                  </option>
+                </select>
+              </label>
+            </div>
+            <!-- **没有下载器才提示怎么装。** 原来这两行安装命令是无条件印在
+                 页面上的，而装了 aria2 的机器上它一年也用不着。 -->
+            <p v-if="!modelsTool" class="tiny bad">
+              这台机器上没找到下载器（aria2c 或 curl），下不了模型。
+              Debian/Ubuntu 装：apt-get install -y aria2；Windows：winget install aria2.aria2
+            </p>
           </section>
 
           <!-- 装配 -->

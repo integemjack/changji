@@ -17,6 +17,11 @@ import { useRefStream } from '@/composables/useRefStream'
 import { useSession } from '@/stores/session'
 import { useUi } from '@/stores/ui'
 
+const props = defineProps({
+  /** 故事里的人物关系。只为抽屉里那几行，墙上不显示。 */
+  relations: { type: Array, default: () => [] },
+})
+
 const session = useSession()
 const ui = useUi()
 const { run, isBusy } = useAction()
@@ -96,7 +101,30 @@ const FIELDS = [
   { key: 'style', label: '专属画风', hint: '只加在这个角色身上的修饰。可留空。', rows: 2 },
 ]
 
-const characters = computed(() => assets.value?.characters ?? [])
+/**
+ * 筛这一格。**和场景那格同一套**（见 AssetLocations）——人多起来时，
+ * 要找的多半是"哪几个还没画全"，而不是某一个具体的人。
+ */
+const q = ref('')
+
+/** 这张牌要不要缩成一半高：三张全空、而且这会儿也没在画。 */
+function flat(c) {
+  return !SLOTS.some((s) => c['ref_' + s.key]) && !cellBusy(c.char_id)
+}
+
+/** 跟这个人有关的关系。定妆的依据，挨着它服务的那个人。 */
+function relsOf(c) {
+  return props.relations.filter((r) => r.a === c.name || r.b === c.name)
+}
+
+const all = computed(() => assets.value?.characters ?? [])
+const characters = computed(() =>
+  all.value.filter((c) => {
+    const k = q.value.trim().toLowerCase()
+    if (k && !String(c.name || '').toLowerCase().includes(k)) return false
+    return true
+  }),
+)
 const refsUsed = computed(() => assets.value?.reference_images_used)
 
 async function load() {
@@ -190,40 +218,6 @@ function changed(charId) {
  * 的设定和参考图都留着。第五集冒出一个新角色时，不该把前四集主角的脸
  * 重新想一遍。
  */
-async function generate(overwrite) {
-  if (overwrite) {
-    // **把代价写成数字。** 「会冲掉参考图」听着像一句免责声明，而实际
-    // 发生的是十几张图连同画它们的十几分钟一起没了，且没有撤销。
-    // 2026-09-12 就这么丢过一次（15 张）。
-    const lost =
-      SLOTS.reduce(
-        (n, sl) => n + characters.value.filter((c) => c['ref_' + sl.key]).length,
-        0,
-      ) + (assets.value?.locations ?? []).filter((l) => l.ref_empty).length
-    const cost = lost
-      ? `会冲掉 ${lost} 张参考图（重画一遍约 ${Math.ceil((lost * 30) / 60)} 分钟），`
-      : ''
-    if (!confirm(`${cost}手改过的设定也会被顶掉，已渲染的镜头要重跑。继续？`)) {
-      return
-    }
-  }
-  const result = await run(
-    () =>
-      runAsyncJob(
-        (extra) => api.makeBible({ project: session.projectPath, overwrite, ...extra }),
-        { prefix: 'bible', label: '照故事定妆' },
-      ),
-    { key: 'bible', refresh: true },
-  )
-  if (!result) return
-  const added = result.added_characters?.length ?? 0
-  ui.ok(
-    added
-      ? `补了 ${added} 个新角色：${result.added_characters.join('、')}`
-      : '剧本里的人物库里都有了，没补新的',
-  )
-  await load()
-}
 
 async function save(charId) {
   const draft = edits.value[charId]
@@ -480,50 +474,40 @@ async function clearRef(charId, slot) {
 <template>
   <div class="chars">
     <!-- 人是故事里定的，这一页只给他们定妆。工具行：刷新、重定、照故事定。 -->
+    <!-- 只剩一个搜索框。刷新（页面订着 refs 频道）、只看缺图（一键出图
+         本来就把缺的全画了）、定妆和覆盖的勾（页级动作，在 tab 那一行）——
+         2026-09-14 都从这儿撤了。
+         ⚠️ **搜索框不要加"多了才显示"的门槛。** 加过一次（>8），两个角色的
+         项目上一个搜索框都没有，用户看到的就是"一点变化都没有"。 -->
     <div class="toolbar">
-      <span class="tiny dim">{{ characters.length }} 人</span>
       <span class="spacer" />
-      <button
-        class="btn btn--ghost btn--sm"
-        type="button"
-        :disabled="loading || !session.hasProject"
-        title="刷新"
-        @click="load"
-      >
-        <AppIcon name="refresh" :size="14" />
-      </button>
-      <button
-        v-if="characters.length"
-        class="btn btn--ghost btn--sm"
-        type="button"
-        :disabled="isBusy('bible')"
-        title="同名角色用新出的顶掉旧的，手改过的设定和参考图会丢"
-        @click="generate(true)"
-      >
-        全部重新定妆
-      </button>
-      <button
-        class="btn btn--ai btn--sm"
-        type="button"
-        :disabled="!session.hasProject || isBusy('bible')"
-        @click="generate(false)"
-      >
-        <AppIcon name="sparkle" :size="14" />
-        {{ isBusy('bible') ? '正在读故事…' : '照故事定妆' }}
-      </button>
+      <input v-model="q" class="input find" placeholder="找人" />
     </div>
 
     <!-- **不要在这儿套一个光秃秃的 <template>**：Vue 只把带
          v-if/v-for/v-slot 的 template 当片段，没有指令的会当成真的
          HTML template 元素渲染出去——浏览器默认 display:none，
          内容全在 DOM 里、一个字不报错，就是看不见。栽过一次。 -->
-      <p v-if="refsUsed === false" class="tiny warn-text">{{ assets?.reference_hint }}</p>
+      <!-- **一句结论，理由折起来。** 引擎给的这段是 112 个字，横在工具行
+           和角色墙中间；而它每次说的都是同一件事，读完第一遍之后就只是一堵
+           墙。摘要说结论，展开才是"为什么、怎么办"。 -->
+      <details v-if="refsUsed === false" class="fold fold--warn">
+        <summary class="fold__t warn-text">参考图不会照着画</summary>
+        <p class="tiny">{{ assets?.reference_hint }}</p>
+      </details>
 
       <EmptyState
-        v-if="!loading && !characters.length"
+        v-if="!loading && !characters.length && all.length"
+        icon="search"
+        title="没有对得上的"
+        hint="换个词试试"
+      />
+
+      <EmptyState
+        v-else-if="!loading && !characters.length"
         icon="user"
         title="还没有角色"
-        hint="先写故事，再点「照故事定妆」"
+        hint="先写故事，再点右上角「照故事定妆」"
       >
         <RouterLink to="/story" class="btn btn--sm">去写故事</RouterLink>
       </EmptyState>
@@ -537,7 +521,11 @@ async function clearRef(charId, slot) {
           v-for="c in characters"
           :key="c.char_id"
           class="cell"
-          :class="{ 'cell--live': cellBusy(c.char_id), 'cell--open': openId === c.char_id }"
+          :class="{
+            'cell--live': cellBusy(c.char_id),
+            'cell--open': openId === c.char_id,
+            'cell--flat': flat(c),
+          }"
           :data-char="c.char_id"
         >
           <!-- 三张各占三分之一，鼠标放上去那张摊开成全图。
@@ -588,16 +576,9 @@ async function clearRef(charId, slot) {
               {{ c.name }}
             </button>
             <span class="spacer" />
+            <!-- 只剩「未保存」。0/3 和「音色/自动」删了：三个空格子本身就是
+                 0/3，图能说的话不再用字说一遍；音色是改的时候才要的，在抽屉里。 -->
             <span v-if="changed(c.char_id)" class="pill pill--warn tiny">未保存</span>
-            <span class="pill tiny" :class="c.voice_id ? 'pill--ok' : 'pill--neutral'">
-              {{ c.voice_id ? '音色' : '自动' }}
-            </span>
-            <span
-              class="pill tiny"
-              :class="SLOTS.filter((s) => c['ref_' + s.key]).length === 3 ? 'pill--ok' : 'pill--neutral'"
-            >
-              {{ SLOTS.filter((s) => c['ref_' + s.key]).length }}/3
-            </span>
           </div>
 
         </article>
@@ -618,6 +599,16 @@ async function clearRef(charId, slot) {
               ✕
             </button>
           </header>
+
+          <!-- 跟这个人有关的关系。它是定妆的依据（想复仇的人和想赎罪的人
+               眼神不一样），原来横在整面墙上头——依据该挨着它服务的那个人。 -->
+          <div v-if="relsOf(openChar).length" class="rels">
+            <div v-for="(r, i) in relsOf(openChar)" :key="i" class="rel">
+              <b class="rel__who">{{ r.a === openChar.name ? r.b : r.a }}</b>
+              <span v-if="r.kind" class="pill pill--neutral tiny nowrap">{{ r.kind }}</span>
+              <span v-if="r.tension" class="rel__why small">{{ r.tension }}</span>
+            </div>
+          </div>
         <div class="drawer__body">
           <div class="chr__cols">
             <!-- 外观 -->
@@ -637,10 +628,13 @@ async function clearRef(charId, slot) {
                 />
               </label>
 
-              <div class="field" title="每个镜头拿到的都是这一串，逐字节相同">
-                <span class="field__label">拼出来的提示词</span>
+              <!-- **折起来。** 这是排障用的——出来的图不对时，翻开看一眼
+                   真正发给画图模型的那一串。平时它是一整段灰字，白占抽屉里
+                   三分之一的高度，而抽屉是用来改描述的。 -->
+              <details class="fold" title="每个镜头拿到的都是这一串，逐字节相同">
+                <summary class="fold__t">拼出来的提示词</summary>
                 <p class="rendered mono">{{ openChar.rendered }}</p>
-              </div>
+              </details>
             </div>
 
             <!-- 参考图与音色 -->
@@ -938,6 +932,12 @@ async function clearRef(charId, slot) {
   background: var(--surface);
 }
 .cell--live { border-color: var(--accent); }
+/* 三张全空的牌缩一半高。三个占位符不需要 9:16 的框——这一页真正要扫的
+   是"哪些还没画"，而空牌越矮，有图的越显眼。 */
+.cell--flat .trio {
+  aspect-ratio: auto;
+  height: 72px;
+}
 /* 抽屉开着的时候，墙上那张牌描一圈——不然一屏牌子长得一样，
    收起抽屉之后找不回刚才改的是哪个。 */
 .cell--open { outline: 2px solid var(--accent); }
@@ -1064,6 +1064,30 @@ async function clearRef(charId, slot) {
   position: relative;
 }
 
+/* 抽屉里的关系那几行 */
+.rels {
+  display: grid;
+  gap: var(--s1);
+  padding: var(--s2) var(--s3);
+  border-bottom: 1px solid var(--line);
+}
+.rel {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s2);
+  flex-wrap: wrap;
+  font-size: var(--fs-sm);
+}
+.rel__who { flex: none; }
+.rel__why { color: var(--text-2); min-width: 0; }
+
+/* 搜索框不该和按钮抢地方：够打四五个字就行 */
+.find {
+  width: 7rem;
+  padding: 2px 8px;
+  font-size: var(--fs-xs);
+}
+
 /* 抽屉。和「这一集」那面墙同一套尺寸，改一处两边就该一起改。 */
 .drawer {
   position: fixed;
@@ -1132,6 +1156,23 @@ async function clearRef(charId, slot) {
   min-height: 0;
 }
 
+/* 折起来的排障块。summary 默认是 list-item，带个三角；留着——那个三角
+   正是"这里还有东西"的唯一提示。 */
+.fold__t {
+  color: var(--text-3);
+  font-size: var(--fs-xs);
+  cursor: pointer;
+}
+.fold[open] .fold__t {
+  margin-bottom: 4px;
+}
+.fold--warn {
+  align-self: flex-start;
+}
+.fold--warn p {
+  max-width: 46rem;
+  color: var(--text-2);
+}
 .rendered {
   margin: 0;
   padding: var(--s3);

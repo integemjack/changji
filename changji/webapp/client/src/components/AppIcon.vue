@@ -28,6 +28,7 @@ const PATHS = {
   trash: 'M4 7h16M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2M6 7l1 13a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1l1-13',
   close: 'M6 6l12 12M18 6L6 18',
   menu: 'M4 7h16M4 12h16M4 17h16',
+  search: 'M11 18a7 7 0 1 0 0-14 7 7 0 0 0 0 14M16 16l4.5 4.5',
   play: 'M7 4.5 19 12 7 19.5z',
   stop: 'M6 6h12v12H6z',
   pause: 'M9 5v14M15 5v14',

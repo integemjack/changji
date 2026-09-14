@@ -447,7 +447,13 @@ ApiResult post_setup_download(const config::Settings& settings, const json& body
     for (const auto& [key, value] : it->items()) {
         if (value.is_string()) selections[key] = value.get<std::string>();
     }
-    if (selections.empty()) throw ApiError(400, "一组都没选");
+    // **一组都没选，但只是存设置，那是合法的。**
+    //
+    // 2026-09-14 起「模型目录」和「下载源」归设置页管（用户：「模型的路径
+    // 放到设置里，这个全局统一的」），而它们和"挑哪一档模型"是两件事——
+    // 改目录时一组都不用选。真要下却一组没选才是错：那时候没有任何文件
+    // 可下，静默返回的话用户会对着一个不动的进度条等。
+    if (selections.empty() && want_download) throw ApiError(400, "一组都没选");
 
     // 模型放哪。用户填了就以填的为准，**而且要先写进配置再开下**——
     // 否则下完之后配置里的相对路径仍然相对老目录解析，文件在盘上却"找不到"。
