@@ -309,8 +309,19 @@ ApiResult post_story_chapters(const json& body,
                                              {"seq", seq++},
                                              {"text", fresh}});
                             });
+                        // **接在刚读回来的那一份上，不是循环开头那份。**
+                        //
+                        // 上面这次生成要跑一两分钟，而这一两分钟里用户完全
+                        // 可能在编辑器里改别的章——那一页就是这么设计的：
+                        // 一边看 AI 写，一边还能读能改，而改完 1.5 秒自动
+                        // 保存直接落 story.json。拿循环开头那份快照整份写
+                        // 回去，那些字就被悄悄吞掉了，不报错，人是过几分钟
+                        // 翻回去才发现。
+                        //
+                        // 重读一次的代价是一个文件；换来的是"丢一章手写的
+                        // 正文"这种没法补救的事不会发生。
                         next = stages::apply_chapter(
-                            cur, id,
+                            store.load_story(), id,
                             stages::parse_chapter(raw, floor_chars,
                                                   attempt + 1 < kAttempts));
                         last_error.clear();
@@ -551,7 +562,20 @@ ApiResult post_plan_all(const json& body, std::shared_ptr<llm::Client> client) {
                         p.set_message(episode_id + "：" + m);
                     };
                     ep->shots = pipeline::run_storyboard(sb, *client, tok).shots;
-                    store.save_project(project);
+
+                    // **写回之前重读一遍。** 理由同上面写整季那处：拆一集
+                    // 镜头要跑几分钟，而这几分钟里界面可能在改别的集的镜头、
+                    // 改集名、加一集——`project` 是循环开头那份快照，整份
+                    // 写回去就把那些改动吞了。只把这一集的镜头放进新读的
+                    // 那一份。
+                    //
+                    // 这一集在这期间被删了的话就别写了：拿旧快照写回去
+                    // 等于把它从坟里刨出来。
+                    Project latest = store.load_project();
+                    if (Episode* target = latest.episode_by_id(episode_id)) {
+                        target->shots = ep->shots;
+                        store.save_project(latest);
+                    }
                 } catch (const std::exception& e) {
                     // 一集出错不拖垮后面几集。跑一晚上，早上发现第二集挂了
                     // 导致后面十集都没动，那这一晚上就白熬了。
