@@ -285,7 +285,37 @@ async function remove() {
 // 路径换成 /episode 了，所以这一页看到的 `route.path` 只可能是 /episode。
 // 留着会让人以为改旧路径要动两个地方。
 
-watch(() => [session.projectPath, session.episodeId], load, { immediate: true })
+/**
+ * 换了项目或者换了集，**先把开着的那几个"下一步会动手"的东西收掉**。
+ *
+ * ⚠️ 最要紧的是 `removing`。删一集那行确认是这么摆的：
+ * 「删掉「ep03 雨夜」？1200 字剧本、18 个镜头一起没了」加一颗红的
+ * 「永久删除」——**没有"照着打一遍名字"那道闸**（项目那边有，这儿没有，
+ * 因为删一集比删一部剧轻）。而那一行里的名字和两个数全是跟着当前集算的。
+ *
+ * 于是：在 ep03 上点开「删掉」，犹豫一下去顶栏切到 ep05 看一眼，这一行
+ * **原地不动**，只是内容换成了「删掉「ep05 …」？」。回来一点那颗红的，
+ * 删掉的是 ep05——而人当初决定要删的是 ep03。中间没有第二道确认。
+ *
+ * `renaming` 同理但轻一档：`commitRename` 用的是**现读**的 session.episodeId，
+ * 在 ep03 上敲了一半的标题，切到 ep05 再回车，改的是 ep05 的名字。
+ *
+ * `menuOpen` 一并收：那个 ⋯ 菜单里就是这两条路的入口，飘在一个已经不是
+ * 它的集上没有意义。
+ *
+ * （同一类事这一页别处已经防过了——`duplicate` 和 `remove` 都把项目/集号
+ * 钉在动手那一刻。这几个是"动手之前"的那一段，一直没人管。）
+ */
+watch(
+  () => [session.projectPath, session.episodeId],
+  () => {
+    removing.value = false
+    renaming.value = false
+    menuOpen.value = false
+    load()
+  },
+  { immediate: true },
+)
 // 切 tab 的时候顺手重拉一次：子视图在自己格子里干完的活（采用剧本、出了
 // 分镜、出完片）这儿才看得到。切 tab 正是人要看另一格答案的那一刻。
 watch(view, load)
