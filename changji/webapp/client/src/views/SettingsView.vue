@@ -3,9 +3,23 @@
  * 设置。
  *
  * 所有环境和参数都收在这一页，别的地方一个配置项都不放。
- * 分三层，按「改了会影响什么」排：
- *   连接——换机器；画质与装配——换成片规格；闸门——换废片判定。
  * 页面上只放控件和读数。一个控件要是非得解释才会用，解释进它的 title。
+ *
+ * 2026-09-14 重排。**打开这一页要回答的问题只有一个：能不能跑、不能的话
+ * 卡在哪。** 答案是体检，而它原来排在 1200px 的表单后面、12 项全印
+ * （包括 sd.cpp 的 `SSE3 = 1 | AVX = 1 …` 那种调试串）。现在体检在最上面，
+ * 只摆没过的，全部折在「▸ 另外 N 项」里。
+ *
+ * 砍掉的：
+ *   · 「出图出片」——两个只读数加一个去项目页的链接。画幅是项目的，
+ *     换模型在项目页，步数是算出来的诊断，进体检一行。
+ *   · 「外观」——顶栏那个月亮图标就是主题切换，这一节是它的第二份。
+ *   · 引擎里的「权重放哪」「上次腾显存」——运行诊断，不是设置，归体检；
+ *     显卡、画幅在引擎和体检里各说了一遍，留体检那份。
+ *   · 装配里的「转场（秒）」——assemble.cpp 自己写着"xfade / acrossfade /
+ *     fade= 都没有，转场从来没被渲染过"。能改、存得住、什么都不做，和
+ *     09-13 删的「时长容差」同一类。
+ * 装配和闸门合成一节：它们本来就是一个按钮一起存的。
  */
 import { computed, onMounted, ref } from 'vue'
 
@@ -70,6 +84,7 @@ async function saveModelsDir() {
 }
 
 const SECTIONS = [
+  { id: 'doctor', title: '体检' },
   { id: 'engine', title: '引擎' },
   // 「大模型」那一节 2026-09-14 整个删了（用户：「加上 key，去掉设置里的
   // 大模型选择」）。服务、模型名、接口地址、密钥、温度全在项目页点模型名
@@ -78,16 +93,19 @@ const SECTIONS = [
   // 模型选择，改放进项目页面"）。**搬走的是"挑"，不是"往哪儿下"**——
   // 目录和下载源是整台机器共用的（"模型的路径放到设置里，这个全局统一的"），
   // 留在这儿。
-  { id: 'models', title: '模型目录和下载' },
-  { id: 'render', title: '出图出片' },
   { id: 'tts', title: '配音' },
-  { id: 'assembly', title: '装配' },
-  { id: 'gates', title: '闸门' },
-  { id: 'doctor', title: '体检' },
-  { id: 'look', title: '外观' },
+  { id: 'models', title: '模型目录和下载' },
+  { id: 'assembly', title: '装配与闸门' },
 ]
 
 const engineOnline = computed(() => Boolean(overview.value?.engine?.online))
+/** 体检里没过的那几项。level 只有 ok 是好的，其余（warn / bad）都要人看。 */
+const failedChecks = computed(() =>
+  (overview.value?.doctor?.checks ?? []).filter((c) => c.level !== 'ok'),
+)
+const okChecks = computed(() =>
+  (overview.value?.doctor?.checks ?? []).filter((c) => c.level === 'ok'),
+)
 
 /**
  * 两节各自要提交的那几项，和"读回来之后动过没有"。
@@ -136,7 +154,6 @@ const hardware = computed(() => overview.value?.hardware)
 const effective = computed(() => overview.value?.effective ?? null)
 
 const placement = computed(() => effective.value?.placement ?? null)
-const llmRuntime = computed(() => effective.value?.llm ?? null)
 const placementRows = computed(() => buildPlacementRows(placement.value))
 
 /**
@@ -256,14 +273,6 @@ function scrollTo(id) {
 
 <template>
   <div class="stack stack--lg">
-    <div class="toolbar">
-      <span class="spacer" />
-      <button class="btn btn--ghost btn--sm" type="button" :disabled="loading" @click="load">
-        <AppIcon name="refresh" :size="14" :class="{ spin: loading }" />
-        重新读取
-      </button>
-    </div>
-
     <div class="set">
       <!-- 小节导航 -->
       <nav class="secnav">
@@ -286,6 +295,110 @@ function scrollTo(id) {
       </nav>
 
       <div class="stack stack--lg set__body">
+        <!-- 体检。**排最上面，只摆没过的。** 这一页要回答的就是"能不能跑、
+             卡在哪"；过了的那十几项和引擎里那几段运行诊断全折在下面。
+             大模型是黄字不是红字：出片那条路不用它。 -->
+        <section id="sec-doctor" class="sec">
+          <div class="sec__head">
+            <h2 class="sec__t">体检</h2>
+            <span
+              v-if="overview?.doctor"
+              class="pill"
+              :class="overview.doctor.can_run ? 'pill--ok' : 'pill--danger'"
+            >
+              {{ overview.doctor.can_run ? '可以开工' : '还不能跑' }}
+            </span>
+            <span v-else-if="!engineOnline" class="pill pill--danger">引擎连不上</span>
+            <span class="spacer" />
+            <!-- 这一页不会自己更新（配置文件能在外面改），这是少数该有刷新的地方 -->
+            <button class="btn btn--ghost btn--sm" type="button" :disabled="loading" @click="load">
+              <AppIcon name="refresh" :size="14" :class="{ spin: loading }" />
+              重新体检
+            </button>
+          </div>
+          <div v-if="overview?.doctor" class="stack stack--sm">
+            <div
+              v-for="c in failedChecks"
+              :key="c.name"
+              class="check"
+              :class="`check--${c.level}`"
+            >
+              <AppIcon name="warn" :size="14" />
+              <span class="check__name nowrap">{{ c.name }}</span>
+              <span class="check__detail">{{ c.detail }}</span>
+              <span v-if="c.fix" class="check__fix tiny dim">{{ c.fix }}</span>
+            </div>
+            <details class="fold">
+              <summary class="fold__t">
+                {{ failedChecks.length ? `另外 ${okChecks.length} 项都过了` : `全部 ${okChecks.length} 项都过了` }}
+                <template v-if="embedded"> · 运行诊断</template>
+              </summary>
+              <div class="stack stack--sm">
+                <div v-for="c in okChecks" :key="c.name" class="check check--ok">
+                  <AppIcon name="check" :size="14" />
+                  <span class="check__name nowrap">{{ c.name }}</span>
+                  <span class="check__detail">{{ c.detail }}</span>
+                </div>
+                <div class="check check--ok">
+                  <AppIcon name="check" :size="14" />
+                  <span class="check__name nowrap">步数</span>
+                  <span class="check__detail mono">
+                    出片 {{ effective?.finalSteps ?? '—' }}
+                    <span
+                      v-if="effective?.turbo"
+                      class="pill pill--ok tiny"
+                      :title="`挂着 Turbo LoRA，出视频按 6 步走（档位表推的是 ${effective?.tableSteps} 步）`"
+                    >Turbo</span>
+                    <span v-else-if="effective?.stepsPinned" class="pill pill--neutral tiny">配置里写死</span>
+                    · 首帧 {{ effective?.frameSteps ?? '—' }}
+                  </span>
+                </div>
+                <!-- 程序给两个模型算出来的权重放置。「够就不清理」判的是实测那个数。 -->
+                <div v-if="embedded && placement" class="field">
+                  <span class="field__label">权重放哪</span>
+                  <div class="stack stack--sm">
+                    <div v-for="row in placementRows" :key="row.key" class="mono tiny">
+                      {{ row.label }}：
+                      <span :class="row.resident ? 'pill pill--ok tiny' : 'pill pill--warn tiny'">
+                        {{ row.resident ? '常驻显存' : '放内存' }}
+                      </span>
+                      <template v-if="row.modelGb > 0">
+                        模型 {{ row.modelGb.toFixed(1) }} GB · 估 {{ row.liveVramGb.toFixed(1) }} GB<template
+                          v-if="row.measured !== null"
+                        > · <strong>实测 {{ row.measured.toFixed(1) }} GB</strong><template
+                          v-if="row.measuredWorkMp !== null"
+                        >（{{ row.measuredWorkMp }} MP·帧）</template></template>
+                      </template>
+                      <template v-else>（模型没配或读不到）</template>
+                    </div>
+                  </div>
+                </div>
+                <!-- 最近一次腾地方的判断。没发生过就不显示。 -->
+                <div v-if="embedded && roomDecision" class="field">
+                  <span class="field__label">上次腾显存</span>
+                  <div v-if="roomDecision.skipped" class="mono tiny">
+                    借「{{ roomDecision.slot }}」：{{ roomDecision.verdict }}
+                  </div>
+                  <div v-else class="mono tiny">
+                    借「{{ roomDecision.slot }}」：需要 {{ roomDecision.need }}（{{ roomDecision.needHow }}）·
+                    空闲 {{ roomDecision.free }}（{{ roomDecision.how }}）
+                    <span :class="roomDecision.ok ? 'pill pill--ok tiny' : 'pill pill--warn tiny'">
+                      {{ roomDecision.verdict }}
+                    </span>
+                  </div>
+                  <!-- 判「够」却是拿估的判的：这正是 CUDA OOM 的前一步。 -->
+                  <span
+                    v-if="!roomDecision.skipped && roomDecision.ok && !roomDecision.needTrusted"
+                    class="tiny warn-text"
+                  >
+                    这次的「够」是估算判的，这个槽还没量过，真跑可能不够
+                  </span>
+                </div>
+              </div>
+            </details>
+          </div>
+        </section>
+
         <!-- 引擎 -->
         <section id="sec-engine" class="sec">
           <div class="sec__head">
@@ -351,79 +464,7 @@ function scrollTo(id) {
                 配置里 vram_gb_override = {{ effective.vramOverride }} 顶着这张卡，把那一行删掉
               </span>
             </div>
-            <!-- 配的上限和实际开出来的要分开摆：真开几个由显存说了算。 -->
-            <div
-              v-if="embedded && llmRuntime && llmRuntime.backend === 'local'"
-              class="field"
-            >
-              <span class="field__label">大模型并行</span>
-              <div class="mono tiny">
-                <template v-if="!llmRuntime.loaded">
-                  还没装上 · 上限 {{ llmRuntime.parallelWanted }} 路
-                </template>
-                <template v-else>
-                  <span
-                    class="pill tiny"
-                    :class="
-                      llmRuntime.slots >= llmRuntime.parallelWanted
-                        ? 'pill--ok'
-                        : 'pill--warn'
-                    "
-                    :title="
-                      llmRuntime.slots < llmRuntime.parallelWanted
-                        ? '显存只够开这么多'
-                        : ''
-                    "
-                  >
-                    {{ llmRuntime.slots }} 路
-                  </span>
-                  上限 {{ llmRuntime.parallelWanted }} 路 · 每路
-                  {{ llmRuntime.contextTokens }} token
-                </template>
-              </div>
-            </div>
 
-            <!-- 程序给两个模型算出来的权重放置。「够就不清理」判的是实测那个数。 -->
-            <div v-if="embedded && placement" class="field">
-              <span class="field__label">权重放哪</span>
-              <div class="stack stack--sm">
-                <div v-for="row in placementRows" :key="row.key" class="mono tiny">
-                  {{ row.label }}：
-                  <span :class="row.resident ? 'pill pill--ok tiny' : 'pill pill--warn tiny'">
-                    {{ row.resident ? '常驻显存' : '放内存' }}
-                  </span>
-                  <template v-if="row.modelGb > 0">
-                    模型 {{ row.modelGb.toFixed(1) }} GB · 估 {{ row.liveVramGb.toFixed(1) }} GB<template
-                      v-if="row.measured !== null"
-                    > · <strong>实测 {{ row.measured.toFixed(1) }} GB</strong><template
-                      v-if="row.measuredWorkMp !== null"
-                    >（{{ row.measuredWorkMp }} MP·帧）</template></template>
-                  </template>
-                  <template v-else>（模型没配或读不到）</template>
-                </div>
-              </div>
-            </div>
-            <!-- 最近一次腾地方的判断。没发生过就不显示。 -->
-            <div v-if="embedded && roomDecision" class="field">
-              <span class="field__label">上次腾显存</span>
-              <div v-if="roomDecision.skipped" class="mono tiny">
-                借「{{ roomDecision.slot }}」：{{ roomDecision.verdict }}
-              </div>
-              <div v-else class="mono tiny">
-                借「{{ roomDecision.slot }}」：需要 {{ roomDecision.need }}（{{ roomDecision.needHow }}）·
-                空闲 {{ roomDecision.free }}（{{ roomDecision.how }}）
-                <span :class="roomDecision.ok ? 'pill pill--ok tiny' : 'pill pill--warn tiny'">
-                  {{ roomDecision.verdict }}
-                </span>
-              </div>
-              <!-- 判「够」却是拿估的判的：这正是 CUDA OOM 的前一步。 -->
-              <span
-                v-if="!roomDecision.skipped && roomDecision.ok && !roomDecision.needTrusted"
-                class="tiny warn-text"
-              >
-                这次的「够」是估算判的，这个槽还没量过，真跑可能不够
-              </span>
-            </div>
             <p class="tiny dim mono">配置文件：{{ node.configFile }}</p>
           </div>
         </section>
@@ -431,45 +472,6 @@ function scrollTo(id) {
         <!-- 引擎连不上时下面这几节一个都别摆：它们全是"这台引擎怎么配"，
              而那时候读不到任何值，摆出来是一排空框。 -->
         <template v-if="engineOnline">
-          <!-- 出图出片 -->
-          <!-- 显示的是真正会用的数（effective），不是档位表推的：
-               画幅来自项目的 [video]，步数在挂了 Turbo 时压到 6。 -->
-          <section id="sec-render" class="sec">
-            <div class="sec__head">
-              <h2 class="sec__t">出图出片</h2>
-              <span class="spacer" />
-              <div class="sec__acts">
-                <!-- 换模型在项目页。这儿只显示"这一轮真正会用的数"，
-                     点过去就是改它的地方。 -->
-                <RouterLink class="btn btn--ghost btn--sm" to="/project">
-                  换模型
-                </RouterLink>
-              </div>
-            </div>
-            <div class="grid grid--2">
-              <div class="field">
-                <span class="field__label">步数</span>
-                <span class="mono">
-                  出片 {{ effective?.finalSteps ?? '—' }}
-                  <span
-                    v-if="effective?.turbo"
-                    class="pill pill--ok tiny"
-                    :title="`挂着 Turbo LoRA，出视频按 6 步走（档位表推的是 ${effective?.tableSteps} 步）`"
-                  >Turbo</span>
-                  <span v-else-if="effective?.stepsPinned" class="pill pill--neutral tiny">
-                    配置里写死
-                  </span>
-                  · 首帧 {{ effective?.frameSteps ?? '—' }}
-                </span>
-              </div>
-              <div class="field">
-                <span class="field__label">画幅</span>
-                <span class="mono" title="每部剧自己的，在项目页上选">
-                  {{ effective ? `${effective.width}×${effective.height}` : '—' }}
-                </span>
-              </div>
-            </div>
-          </section>
 
           <!-- 配音 -->
           <section id="sec-tts" class="sec">
@@ -499,14 +501,10 @@ function scrollTo(id) {
                   <option value="http">HTTP 服务</option>
                 </select>
               </label>
-              <label class="field">
+              <!-- 选「内置」时不摆一个灰掉的空框，选 HTTP 才出现 -->
+              <label v-if="conn.tts_backend === 'http'" class="field">
                 <span class="field__label">服务地址</span>
-                <input
-                  v-model="conn.tts_base_url"
-                  class="input mono"
-                  :disabled="conn.tts_backend !== 'http'"
-                  placeholder="后端选 HTTP 时必填"
-                />
+                <input v-model="conn.tts_base_url" class="input mono" placeholder="必填" />
               </label>
               <!-- **这里原来还有「时长容差」和「变速安全区」两个输入框，
                    2026-09-13 删了。** 它们和 [tts].engine 一样：有校验、
@@ -521,8 +519,7 @@ function scrollTo(id) {
           <!-- 模型目录和下载。**只管往哪儿下，不管下什么**——挑模型在项目页。 -->
           <section id="sec-models" class="sec">
             <div class="sec__head">
-              <h2 class="sec__t">模型目录和下载</h2>
-              <span class="tiny dim">整台机器共用。挑哪个模型在项目页</span>
+              <h2 class="sec__t" title="整台机器共用；挑哪个模型在项目页">模型目录和下载</h2>
               <span class="spacer" />
               <button
                 class="btn btn--primary btn--sm"
@@ -555,10 +552,22 @@ function scrollTo(id) {
             </p>
           </section>
 
-          <!-- 装配 -->
+          <!-- 装配与闸门。**一个按钮一起存，就是一节。** 原来是两节，
+               「保存」只在闸门那节、提示写着"装配和闸门一起保存"。 -->
           <section id="sec-assembly" class="sec">
             <div class="sec__head">
-              <h2 class="sec__t">装配</h2>
+              <h2 class="sec__t">装配与闸门</h2>
+              <span class="spacer" />
+              <div class="sec__acts">
+                <button
+                  class="btn btn--primary btn--sm"
+                  type="button"
+                  :disabled="isBusy('params')"
+                  @click="saveParams"
+                >
+                  {{ isBusy('params') ? '保存中…' : '保存' }}
+                </button>
+              </div>
             </div>
             <div class="grid grid--3">
               <label class="field">
@@ -576,16 +585,9 @@ function scrollTo(id) {
                   title="越小画质越好、文件越大。18 是常用值"
                 />
               </label>
-              <label class="field">
-                <span class="field__label">转场（秒）</span>
-                <input
-                  v-model.number="params.scene_transition_s"
-                  class="input numeric"
-                  type="number"
-                  step="0.1"
-                  title="只在换场景处溶解，同场景内一律硬切"
-                />
-              </label>
+              <!-- 「转场（秒）」删了：assemble.cpp 写着"xfade / acrossfade /
+                   fade= 都没有，转场从来没被渲染过"。配置键留着，界面上不摆
+                   一个什么都不做的旋钮。 -->
               <label class="field">
                 <span class="field__label">字幕字体</span>
                 <input v-model="params.subtitle_font" class="input" />
@@ -603,30 +605,11 @@ function scrollTo(id) {
                 <input v-model.number="params.subtitle_max_lines" class="input numeric" type="number" />
               </label>
             </div>
-          </section>
-
-          <!-- 闸门 -->
-          <section id="sec-gates" class="sec">
-            <div class="sec__head">
-              <h2 class="sec__t">闸门</h2>
+            <div class="stack">
               <label class="switch">
                 <input v-model="params.enabled" type="checkbox" />
-                <span>开启</span>
+                <span>闸门开启</span>
               </label>
-              <span class="spacer" />
-              <div class="sec__acts">
-                <button
-                  class="btn btn--primary btn--sm"
-                  type="button"
-                  :disabled="isBusy('params')"
-                  title="装配和闸门一起保存"
-                  @click="saveParams"
-                >
-                  {{ isBusy('params') ? '保存中…' : '保存' }}
-                </button>
-              </div>
-            </div>
-            <div class="stack">
               <div class="grid grid--3">
                 <label class="field">
                   <span class="field__label">每镜重试</span>
@@ -692,62 +675,22 @@ function scrollTo(id) {
             </div>
           </section>
 
-          <!-- 体检。大模型是黄字不是红字：出片那条路不用它。 -->
-          <section id="sec-doctor" class="sec">
-            <div class="sec__head">
-              <h2 class="sec__t">体检</h2>
-              <span
-                v-if="overview?.doctor"
-                class="pill"
-                :class="overview.doctor.can_run ? 'pill--ok' : 'pill--danger'"
-              >
-                {{ overview.doctor.can_run ? '可以开工' : '还不能跑' }}
-              </span>
-            </div>
-            <div v-if="overview?.doctor" class="stack stack--sm">
-              <div
-                v-for="c in overview.doctor.checks"
-                :key="c.name"
-                class="check"
-                :class="`check--${c.level}`"
-              >
-                <AppIcon :name="c.level === 'ok' ? 'check' : 'warn'" :size="14" />
-                <span class="check__name nowrap">{{ c.name }}</span>
-                <span class="check__detail">{{ c.detail }}</span>
-                <span v-if="c.fix" class="check__fix tiny dim">{{ c.fix }}</span>
-              </div>
-            </div>
-          </section>
         </template>
 
-        <!-- 外观 -->
-        <section id="sec-look" class="sec">
-          <div class="sec__head">
-            <h2 class="sec__t">外观</h2>
-          </div>
-          <div class="row">
-            <button
-              v-for="t in [
-                { v: 'system', l: '跟随系统' },
-                { v: 'dark', l: '深色' },
-                { v: 'light', l: '浅色' },
-              ]"
-              :key="t.v"
-              class="btn btn--ghost btn--sm"
-              :class="{ 'is-on': ui.theme === t.v }"
-              type="button"
-              @click="ui.theme = t.v"
-            >
-              {{ t.l }}
-            </button>
-          </div>
-        </section>
       </div>
     </div>
   </div>
 </template>
 
 <style scoped>
+.fold__t {
+  color: var(--text-3);
+  font-size: var(--fs-xs);
+  cursor: pointer;
+}
+.fold[open] > .fold__t {
+  margin-bottom: 6px;
+}
 .set {
   display: grid;
   grid-template-columns: 168px minmax(0, 1fr);
