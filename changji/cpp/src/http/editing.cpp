@@ -152,7 +152,21 @@ ApiResult post_shot(const json& body) {
     }
     patch.erase("dialogue_texts");
 
-    // 改了这些就得重出画面
+    // 改了这些就得重出画面。
+    //
+    // ⚠️ **这是「调用方设过这个键」的语义，不是「值变了」**：下面只看键在
+    // 不在、值非 null，不和当前值比。Python 那边 patch 是
+    // `model_dump(exclude_none=True)`，只有真设过的字段才会出现，所以两者
+    // 等价——照抄的是那套语义，别顺手改成比值（对拍语料按现在这样钉着）。
+    //
+    // 代价是调用方必须守约。界面 2026-09-15 之前把十三个字段整份发过来，
+    // 于是每一次保存都必然 touched_visual：改个字幕错别字也把这一镜退回
+    // PLANNED、解掉锁、下一轮整个重渲染。现在它只送真改过的那几项
+    // （EpShots 的 saveShot）。
+    //
+    // 资产那两条（角色、场景）不一样，它们是**比值**的——见
+    // editing_assets.cpp 的 changed()。两边不同不是疏忽：那边一份 patch
+    // 里塞的是整份设定，而这边是一次编辑。
     bool touched_visual = false;
     for (auto it = patch.begin(); it != patch.end(); ++it) {
         if (!it.value().is_null() && visual_keys().count(it.key()) != 0) {
