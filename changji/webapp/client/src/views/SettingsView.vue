@@ -188,14 +188,35 @@ const roomDecision = computed(() =>
   describeRoomDecision(placement.value?.lastRoomDecision),
 )
 
+/**
+ * 这一趟是替哪部剧问的。
+ *
+ * ⚠️ **这一页 2026-09-15 才变成"跟项目走"的**（体检里「出片画布」那一项
+ * 要按这部剧的画幅查），同时挂上了换项目就重拉的 watch。而
+ * `/bff/settings/overview` **是全应用最慢的一条**：它里面整跑一遍体检，
+ * 其中三项要发网络请求、各自 8 秒超时，最坏二十多秒。
+ *
+ * 也就是说这一页的两趟叠在一起不是零点几秒的窗口，是**几十秒**的窗口：
+ * 在项目库里点 A 再点 B，A 那趟后落地就把 A 的体检结论、那颗
+ * 「可以开工 / 还不能跑」的牌子写在 B 上，而顶栏写的是 B。
+ * 这正是这个库里反复修过的那一类（session.refresh、AssetsView、EpFilm
+ * 都有同一道闸），加这条 watch 时漏了。
+ */
+let loadSeq = 0
+
 async function load() {
+  const mine = ++loadSeq
+  // **钉住路径再发**，不要在 await 之后现读：这一趟问的和下面写进去的
+  // 必须是同一部剧。
+  const want = session.projectPath
   loading.value = true
   try {
     // **带上顶栏选中的那部剧。** 这一份里的体检有一项是「出片画布」，
     // 而画幅是每部剧自己的——不带的话查的是全局默认，2K 的项目上这一节
     // 会说没问题、上面那颗牌子会写「可以开工」，而镜头页开跑前的体检
     // （走 /api/doctor，带了 path）会说超了。见 api.settingsOverview。
-    const data = await api.settingsOverview(session.projectPath)
+    const data = await api.settingsOverview(want)
+    if (mine !== loadSeq) return
     overview.value = data
     // ⚠️ **改了还没存的那一节不要盖掉。**
     //
@@ -239,9 +260,14 @@ async function load() {
       ui.warn(`${key} 读不到：${message}`)
     }
   } catch (err) {
+    // 过期那一趟的报错也不算数：上一部剧被删了回的 404 会在新这一部的
+    // 页面上弹一句莫名其妙的红字。同 session.refresh 那处。
+    if (mine !== loadSeq) return
     ui.error(err.message)
   } finally {
-    loading.value = false
+    // 转圈只由最后那一趟关。被顶掉的那趟关掉的话，还在路上的那趟就没有
+    // 任何"正在读"的表示了。
+    if (mine === loadSeq) loading.value = false
   }
 }
 
