@@ -29,6 +29,7 @@ import AppIcon from '@/components/AppIcon.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import ScriptReader from '@/components/ScriptReader.vue'
 import { api } from '@/api'
+import { countScriptChars } from '@/api/labels'
 import { runAsyncJob } from '@/composables/useAsyncJob'
 import { useAction } from '@/composables/useAction'
 import { useSession } from '@/stores/session'
@@ -90,7 +91,7 @@ let owner = null
 const dirty = computed(() => script.value !== savedScript.value)
 /** 「现在在看哪部剧的哪一集」。异步那几趟拿它认自己有没有过期。 */
 const ctxKey = () => `${session.projectPath}\u0000${session.episodeId}`
-const wordCount = computed(() => script.value.replace(/\s/g, '').length)
+const wordCount = computed(() => countScriptChars(script.value))
 // 时长和引擎写剧本时用的同源：有分集表按分集表，没有按这一集自己的
 const durationS = computed(
   () => ctx.value?.target_duration_s || session.episode?.target_duration_s || 60,

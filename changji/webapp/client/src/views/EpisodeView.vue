@@ -32,7 +32,7 @@ import EpPublish from '@/views/episode/EpPublish.vue'
 import EpScript from '@/views/episode/EpScript.vue'
 import EpShots from '@/views/episode/EpShots.vue'
 import { api } from '@/api'
-import { isFilmOf } from '@/api/labels'
+import { countScriptChars, isFilmOf } from '@/api/labels'
 import { useAction } from '@/composables/useAction'
 import { useRun, useWriter } from '@/stores/run'
 import { useSession } from '@/stores/session'
@@ -104,8 +104,7 @@ async function load() {
     api.platforms(),
   ])
   if (mine !== loadSeq) return
-  scriptChars.value =
-    sc.status === 'fulfilled' ? [...String(sc.value?.script ?? '').trim()].length : 0
+  scriptChars.value = sc.status === 'fulfilled' ? countScriptChars(sc.value?.script) : 0
   shots.value = sh.status === 'fulfilled' ? (sh.value?.shots ?? []) : []
   const files = out.status === 'fulfilled' ? (out.value?.files ?? []) : []
   // `includes` 会把 ep100~ep109 全算成 ep10 的，见 isFilmOf 头上那段
