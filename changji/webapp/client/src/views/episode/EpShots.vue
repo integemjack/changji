@@ -402,17 +402,48 @@ async function generate() {
 }
 
 
+/**
+ * 抽屉里按保存。
+ *
+ * ⚠️ **只送真改过的那几项。** 这儿原来是把十三个字段连同台词整份发过去，
+ * 而引擎判"要不要退回重跑"看的是**patch 里有没有这个键**，不是值变没变
+ * （editing.cpp：`if (!it.value().is_null() && visual_keys().count(...))`
+ * ——那套语义是给 Python 客户端定的，那边 patch 是 `model_dump
+ * (exclude_none=True)`，只有调用方真设过的字段才会出现）。
+ *
+ * visual_keys 是 first_frame_prompt / motion_prompt / negative_prompt /
+ * shot_size / camera_angle / camera_move / duration_s——七项里有四项是
+ * 每个镜头都有值的，所以整份发过去等于**每一次保存都必然 touched_visual**：
+ *
+ *   · 只改了一个字幕错别字、只换了个转场（这两项都不在 visual_keys 里），
+ *     按下保存，这一镜照样从「成片完成」退回「未开工」、attempts 清零、
+ *     闸门备注清空——下一轮出片会把它整个重渲染一遍，几十秒到几分钟的卡；
+ *   · **锁定的镜头也会被解掉**：reset 那一支直接写 status = PLANNED，而
+ *     锁正是为了护住人工审过的那几镜（批量重置就特意跳过它们）。
+ *
+ * 按键比对现成的：`draftDirty` 比的就是这十三项加台词，照它来。
+ */
 async function saveShot() {
   if (!draft.value) return
+  const was = shots.value.find((s) => s.shot_id === draft.value.shot_id)
   const patch = {}
   for (const k of [
     'visual_desc', 'first_frame_prompt', 'motion_prompt', 'negative_prompt',
     'subtitle_text', 'beat', 'shot_size', 'camera_angle', 'camera_move',
     'transition_in', 'transition_dur_s', 'duration_s', 'needs_lipsync',
   ]) {
-    patch[k] = draft.value[k]
+    if (!was || draft.value[k] !== was[k]) patch[k] = draft.value[k]
   }
-  patch.dialogue_texts = draft.value.dialogue_texts
+  const nowLines = draft.value.dialogue_texts ?? []
+  const wasLines = (was?.dialogue ?? []).map((d) => d.text)
+  // 台词那一项引擎自己是逐条比值的（改了才清配音、才算动过画面），
+  // 一并按"变没变"送，免得空跑一趟比较。
+  if (!was || JSON.stringify(nowLines) !== JSON.stringify(wasLines)) {
+    patch.dialogue_texts = nowLines
+  }
+  // 按钮判着 draftDirty，正常走不到这儿；真空了就别发——空 patch 在引擎
+  // 那边是一次白存（照样重写 project.json）。
+  if (!Object.keys(patch).length) return
   const result = await run(
     () =>
       api.saveShot({
@@ -430,11 +461,16 @@ async function saveShot() {
   // post_shot 的结尾），而这儿读的 `result.reset` 永远是 undefined——于是
   // 这句话**从来没出现过**。
   //
-  // 而它要说的事天天发生：只要动了画面那几项（visual_desc、首帧提示词、
-  // 运镜提示词、负向、台词），引擎就把这一镜退回 PLANNED、重试次数归零
-  // （`const bool reset = touched_visual && !patch_has_status;`）。抽屉里
-  // 改一句提示词存一下，格子就从「成片完成」变回「未开工」，而屏幕上只说
-  // 了「已保存」——人第一反应是刚才那一镜的成片丢了。
+  // 而它要说的事天天发生：动了画面那几项——引擎的 visual_keys 是首帧提示
+  // 词、运镜提示词、负向、镜别、机位、运镜、时长，外加台词改没改——它就把
+  // 这一镜退回 PLANNED、重试次数归零（`const bool reset = touched_visual
+  // && !patch_has_status;`）。抽屉里改一句提示词存一下，格子就从「成片完
+  // 成」变回「未开工」，而屏幕上只说了「已保存」——人第一反应是刚才那一镜
+  // 的成片丢了。
+  //
+  // （visual_desc 不在那张表里：它不进出图提示词，只在接着往下拆分镜时
+  //  当上一镜的尾巴用——storyboard_run.cpp 里那句 prev_tail。上面那段
+  //  只送改过的字段，就是为了让这句话只在真该出现的时候出现。）
   ui.ok(result.reset_to_planned ? '已保存，这一镜退回重跑' : '已保存')
   await load()
   // 重新读一遍之后抽屉要跟着新数据走，否则「未保存」的提示会一直挂着
