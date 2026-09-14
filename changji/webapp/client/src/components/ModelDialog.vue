@@ -386,11 +386,25 @@ async function download() {
         </p>
 
         <div v-if="stat" class="stack stack--sm">
+          <!-- **总大小还不知道的时候，别画一条停在 0% 的进度条。**
+               `stat.percent` 是 `total ? done/total : 0`——下载刚起步（文件
+               还是 pending，拿不到 Content-Length），或者对面干脆不发这个头，
+               total 就是 0，于是进度条钉在最左边、旁边写着「0 B / 0 B」，
+               而下面同时还在报速度。几个 G 的模型这一段可能持续很久，看着
+               就是卡死了。
+               ProgressBar 早就为这件事留了 `indeterminate`（连来回跑的那段
+               动画都写好了），只是一直没人接上。总大小不知道时那行字也只报
+               已经下了多少——这是此刻唯一说得准的数。 -->
           <ProgressBar
             :percent="stat.percent"
+            :indeterminate="stat.running && !stat.total"
             :tone="stat.failed ? 'danger' : stat.running ? 'accent' : 'ok'"
             :label="stat.failed ? '有文件没下下来' : stat.running ? '正在下' : '这一组齐了'"
-            :detail="`${humanBytes(stat.downloaded)} / ${humanBytes(stat.total)}`"
+            :detail="
+              stat.total
+                ? `${humanBytes(stat.downloaded)} / ${humanBytes(stat.total)}`
+                : humanBytes(stat.downloaded)
+            "
           />
           <div v-if="stat.running" class="row row--between tiny dim">
             <span class="numeric">
