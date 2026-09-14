@@ -1250,7 +1250,9 @@ fallback_on_exhausted = true
 [assembly]
 fps = 24
 crf = 18
-# 只在场景切换处用溶解，同场景内一律硬切。
+# ⚠️ 转场目前不生效：装配是 `-f concat -c copy` 直接拼，全程硬切，
+# 引擎里一处 xfade / acrossfade 都没有（见 media/assemble.cpp 里那段）。
+# 这个数还收着（改它不报错、也存得住），但改了不会有任何变化。
 scene_transition_s = 0.4
 # 中文字幕单行上限，全角字符数。
 subtitle_max_chars_per_line = 15
@@ -1467,7 +1469,8 @@ chain_frames = true
 [assembly]
 # 帧率不在这里：它跟着出片模型走（MiniMax-H3 只出 24 fps），写了也会被纠正。
 crf = 18
-# 只在场景切换处用溶解（秒），同场景内一律硬切。
+# ⚠️ 转场目前不生效：装配是 `-f concat -c copy` 直接拼，全程硬切。
+# 这个数还收着，但改了不会有任何变化。见 media/assemble.cpp。
 scene_transition_s = 0.4
 # 中文字幕单行上限（全角字符数）和字体。
 subtitle_max_chars_per_line = 15
