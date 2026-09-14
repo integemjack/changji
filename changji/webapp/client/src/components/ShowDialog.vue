@@ -256,13 +256,17 @@ async function save() {
 
       <footer class="dlg__foot">
         <span class="spacer" />
+        <!-- 存是**三趟**：画面、风格、成片工序。这儿原来只挡前两趟——
+             第三趟在路上时按钮已经变回可点，而 `dirty` 也还是真（saved*
+             要到弹窗关掉重开才刷新）。连点两下，带着「重置镜头」的那趟
+             风格保存就又发了一遍，而那一下是要把已渲染的镜头退回重跑的。 -->
         <button
           class="btn btn--primary btn--sm"
           type="button"
-          :disabled="!dirty || isBusy('video') || isBusy('style')"
+          :disabled="!dirty || isBusy('video') || isBusy('style') || isBusy('finish')"
           @click="save"
         >
-          {{ isBusy('video') || isBusy('style') ? '存着…' : '保存' }}
+          {{ isBusy('video') || isBusy('style') || isBusy('finish') ? '存着…' : '保存' }}
         </button>
       </footer>
     </section>
