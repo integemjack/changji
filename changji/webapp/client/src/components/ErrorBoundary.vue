@@ -48,7 +48,7 @@ function retry() {
     <pre class="boom__detail mono">{{ failed.message || String(failed) }}</pre>
     <div class="boom__acts">
       <button class="btn btn--primary" type="button" @click="retry">重试</button>
-      <RouterLink to="/project" class="btn">回第一步</RouterLink>
+      <RouterLink to="/project" class="btn">回项目页</RouterLink>
       <button class="btn btn--ghost" type="button" @click="$router.go(0)">
         整页重载
       </button>

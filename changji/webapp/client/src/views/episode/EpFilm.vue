@@ -145,10 +145,10 @@ function onTimeUpdate(event) {
     </div>
 
     <EmptyState v-if="!session.hasProject" icon="folder" tone="warn" title="还没选项目">
-      <RouterLink to="/project" class="btn btn--primary">去第一步</RouterLink>
+      <RouterLink to="/project" class="btn btn--primary">去项目页</RouterLink>
     </EmptyState>
 
-    <EmptyState v-else-if="!loading && !files.length" icon="film" title="还没有成片" hint="先把制作跑完">
+    <EmptyState v-else-if="!loading && !files.length" icon="film" title="还没有成片" hint="这一集的镜头还没跑出来，跑完自动装配成片">
       <button class="btn btn--primary" type="button" @click="emit('go', 'shots')">
         去做镜头
       </button>
