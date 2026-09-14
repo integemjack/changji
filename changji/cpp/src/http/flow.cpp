@@ -29,10 +29,6 @@ const json& arr_of(const json& o, const char* key) {
     return *it;
 }
 
-bool blank(const std::string& s) {
-    return s.find_first_not_of(" \t\r\n") == std::string::npos;
-}
-
 }  // namespace
 
 json flow_steps() {
@@ -81,9 +77,13 @@ json flow_assess(const json& project, const json& shots, const json& outputs,
 
     // ---- 「剧本大纲」那一格 2026-09-11 没有了 ----
     //
-    // 全剧那半在故事页，单集那半在「这一集」的剧本视图。写过几集这个数
-    // 还留着当计数用：故事页要显示「已落成几集」，而 done 里不该有一个
-    // 没有格子对应的键（test_flow 的「多出来的 key 是死代码」那条盯着）。
+    // 全剧那半在故事页，单集那半在「这一集」的剧本视图。`done` 里因此
+    // 不能有这个键——test_flow 的「多出来的 key 是死代码」那条盯着。
+    //
+    // 写过几集这个数留在 counters 里。**但界面上没有一处读它**：项目栏
+    // 那句「10 集里落成 3 集」是 project-stage.js 自己从项目的 episodes
+    // 里数出来的。这儿原来写着"故事页要显示「已落成几集」"，那是把
+    // 「有这么个数」当成了「有人在用这个数」。
     const auto& episodes = arr_of(project, "episodes");
     int written = 0;
     for (const auto& e : episodes) {
@@ -131,8 +131,11 @@ json flow_assess(const json& project, const json& shots, const json& outputs,
     // **两半都要过。** 人物和场景在同一个资产库里，缺哪一半分镜都指不到，
     // 而下一步（出首帧）会直接报「场景未注册」或者拿不到角色的外观块。
     done["assets"] = !characters.empty() && scenes_ok;
-    // 哪一半没过另外报出来，界面上要说得出是缺人还是缺景——
-    // 只说"设定没做完"的话，用户得自己挨个翻。
+    // 哪一半没过各报一个布尔。**界面上没有一处读这两个**：设定页那排
+    // tab 上"是缺人还是缺景"确实说得出来，但它靠的是下面 unlinkedShots /
+    // missingLocations 那两个数（AssetsView 里 locGap 那段），因为要说的
+    // 不只是"没过"，还得是"几个没登记 / 几镜没接上"。这两个布尔到今天
+    // 一个读者都没有。
     counters["charactersOk"] = !characters.empty();
     counters["scenesOk"] = scenes_ok;
 
@@ -181,8 +184,10 @@ json flow_assess(const json& project, const json& shots, const json& outputs,
     // 投递记录存在 Node 那个 BFF 自己的配置里，引擎这边没有那份数据，
     // 而且发不发是可选的收尾动作，把它算进来会让这一格永远不打勾。
     done["episode"] = has_film;
-    // 镜头有没有全出完另外报一个数。这一格的进度条和「还差几镜」都靠它，
-    // 而判定本身用的是上面那条。
+    // 镜头有没有全出完另外报一个布尔，判定本身用的是上面那条。
+    // **界面不读它**（「这一集」那一页的「还差 N 首帧 / N 视频」是自己
+    // 拿 /api/shots 数的），但 test_flow 有四条用例盯着它，是这个文件里
+    // 被测得最细的一条判据——「光有分镜表不算出完」说的就是它。
     counters["shotsDone"] = shots_done;
 
     counters["shots"] = static_cast<int>(shots.size());
@@ -192,7 +197,6 @@ json flow_assess(const json& project, const json& shots, const json& outputs,
     counters["episodeLocations"] = static_cast<int>(used.size());
     counters["missingLocations"] = missing;
     counters["unlinkedShots"] = unlinked;
-    counters["episodesWritten"] = written;
     counters["lipsync"] = lipsync;
     counters["plannedDurationS"] = planned;
     counters["outputs"] = static_cast<int>(outputs.size());
