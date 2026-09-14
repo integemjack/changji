@@ -320,10 +320,20 @@ watch(() => session.projectPath, loadShow, { immediate: true })
   height: 100%;
   background: var(--accent);
 }
-/* ⚠️ **四个 tone 都得有类。** 模板里拼的是 `bar__fill--${stage.tone}`，
-   而这四个 modifier 2026-09-14 之前一个都没定义——拼出来是不存在的选择器，
+/* ⚠️ **五个 tone 都得有类。** 模板里拼的是 `bar__fill--${stage.tone}`，
+   而这几个 modifier 2026-09-14 之前一个都没定义——拼出来是不存在的选择器，
    全落回上面那条橙。阶段那句话删掉之后（栏里已经写着同一句），颜色是这条
-   进度条**唯一**还能区分"跑完了"和"读不了"的通道，不能再是同一个橙。 */
+   进度条**唯一**还能区分"跑完了"和"读不了"的通道，不能再是同一个橙。
+
+   **是五个不是四个**：`projectStage` 返回 ok / warn / accent / bad / dim
+   （project-stage.js 里那六处 return 数一遍就有），项目栏那份
+   `.item__stage--*` 五个都写齐了、注释也写的五个，这儿漏了 accent。
+   漏了之所以一直看不出来，是因为上面 `.bar__fill` 的底色正好就是
+   `var(--accent)`——**靠巧合对上的**。哪天底色一改，"正在做"那一档就
+   跟着变成别的颜色，而且照旧不报错。补上，让这张表真的是满的。 */
+.bar__fill--accent {
+  background: var(--accent);
+}
 .bar__fill--ok {
   background: var(--ok);
 }
