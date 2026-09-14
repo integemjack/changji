@@ -160,6 +160,20 @@ async function loadShots() {
 }
 
 watch(() => [session.projectPath, session.episodeId], load, { immediate: true })
+/**
+ * 那一轮跑完，片子就是这一刻落盘的——这一页要自己看见。
+ *
+ * 这一格被 KeepAlive 冻着，进来时靠 `onActivated(load)` 重拉；但"开跑之后
+ * 切到这一格等着看成片"是很自然的一种用法，而那样 onActivated 早就过去了
+ * ——装配写盘时这一页一动不动，人以为没出来，其实文件已经在了。
+ * 只订下降沿：跑的过程中这一页没有任何东西会变。
+ */
+watch(
+  () => runner.running,
+  (now, before) => {
+    if (before && !now) load()
+  },
+)
 
 /**
  * 成片的地址，**带上这个文件的 mtime**。
