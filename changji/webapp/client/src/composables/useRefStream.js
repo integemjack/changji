@@ -38,6 +38,21 @@ function forget(target) {
 }
 
 function connect() {
+  // ⚠️ **进来先把排着的那次重连掐掉。**
+  //
+  // 断线时这儿会排一个 5 秒后的 `connect`。而这 5 秒里只要有组件挂载
+  // （换到设定页就会发生——三个格子都调 `useRefStream()`），那个
+  // `if (!sock) connect()` 会当场再连一条；随后排着的那次照样到点，
+  // **又连一条，而前一条既没关也没人记着**。
+  //
+  // 后果不是多一条闲连接：两条都订着 refs，引擎每画完一张图播一条
+  // `ref_done`，于是 `finished` 一次加二——三个页面各把 /api/assets
+  // 重拉两遍。再断一次就再多一条，越积越多。
+  //
+  // 实测过：断线 → 期间挂载 → 到点重连，三条 socket 里两条活着，
+  // 一张图画完 finished 加 2。
+  clearTimeout(retry)
+  retry = null
   sock = openJobSocket(
     'refs',
     (msg) => {
