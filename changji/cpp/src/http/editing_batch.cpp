@@ -161,7 +161,12 @@ ApiResult post_shots_reorder(const json& body) {
     // 而且是那种要播一遍才发现的乱。
     //
     // 不重跑任何镜头：换顺序不改画面，已经渲染好的还能用。
-    // 转场是装配时按前后镜头算的，跟着新顺序自然就对了。
+    //
+    // （原来这儿还有一句「转场是装配时按前后镜头算的，跟着新顺序自然就
+    // 对了」。**装配根本不渲染转场**——拼接走的是 `-f concat -c copy`，
+    // 全树一处 xfade / acrossfade 都没有，见 media/assemble.cpp 里那段。
+    // transition_in / transition_dur_s 到今天为止只是记下来的意图。
+    // 结论不变：换顺序确实不用重跑。）
     ProjectStore store = open_project(body);
     const std::string episode_id = need_str(body, "episode_id");
     Project project = store.load_project();
