@@ -1171,9 +1171,22 @@ onDeactivated(() => window.removeEventListener('keydown', onKey))
         </header>
 
         <div class="drawer__body stack stack--sm">
+          <!-- **试了几次也要说。**
+               `attempts` 是**累计**的（跨轮攒着，引擎拿它和设置页那个
+               「每镜最多重试几次」比），而它在界面上一直没露过面。后果很
+               具体：一镜把次数用完、状态成了「已降级」，人点「重出成片」
+               ——引擎照跑（force 绕过状态），但只剩一次机会，失败了又回到
+               降级。屏幕上看着就是"点了跟没点一样"。
+               把这个数摆出来，那句「重试次数用完了」才有地方对。真要从头
+               再来，是选中它按「退回重跑」——那条会把 attempts 清零。 -->
           <p v-if="openShot.gate_notes?.length" class="alert alert--warn">
             <AppIcon name="warn" :size="14" />
-            <span>{{ openShot.gate_notes.join('；') }}</span>
+            <span>
+              {{ openShot.gate_notes.join('；') }}
+              <template v-if="openShot.attempts">
+                （已试 {{ openShot.attempts }} 次；要从头再来，选中它按「退回重跑」）
+              </template>
+            </span>
           </p>
 
           <div class="row row--wrap tiny dim">
