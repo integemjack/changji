@@ -158,7 +158,7 @@ function sliceOf(ep) {
  * 正文还没写的章走不到第二步（没得扫），那就直接用章级名单——那时候它是
  * 计划，显示计划是对的。
  */
-function castOf(ep, key, listKey, lookup, refKey) {
+function castOf(ep, listKey, lookup, refKey) {
   const covered = chaptersOf(ep)
   const listed = []
   for (const c of covered) {
@@ -184,9 +184,9 @@ function castOf(ep, key, listKey, lookup, refKey) {
 }
 
 const facesOf = (ep) =>
-  castOf(ep, 'who', 'characters', charByName.value, 'ref_front')
+  castOf(ep, 'characters', charByName.value, 'ref_front')
 const scenesOf = (ep) =>
-  castOf(ep, 'where', 'locations', locByName.value, 'ref_empty')
+  castOf(ep, 'locations', locByName.value, 'ref_empty')
 
 async function load() {
   if (!session.projectPath) {
