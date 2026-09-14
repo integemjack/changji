@@ -1,7 +1,9 @@
 #include "stages/prompt_compose.hpp"
 
 #include <map>
+#include <utility>
 
+#include "stages/prompts.inc.hpp"
 #include "util/text.hpp"
 
 namespace changji::stages {
@@ -60,40 +62,31 @@ std::string join_nonempty(const std::vector<std::string>& parts,
     return out;
 }
 
+/// prompts.toml 里 [compose.*] 那几张词表读成 map。键是枚举名（和 to_string
+/// 出来的一样），所以下面三个函数按名字查，查不到还是空串——理由见 lookup。
+template <std::size_t N>
+std::map<std::string, std::string> zh_table(
+    const std::pair<const char*, const char*> (&rows)[N]) {
+    std::map<std::string, std::string> m;
+    for (const auto& [key, zh] : rows) m.emplace(key, zh);
+    return m;
+}
+
 }  // namespace
 
 const std::string& shot_size_zh(ShotSize v) {
-    static const std::map<ShotSize, std::string> m = {
-        {ShotSize::ECU, "大特写"}, {ShotSize::CU, "特写"},
-        {ShotSize::MCU, "近景"},   {ShotSize::MS, "中景"},
-        {ShotSize::MLS, "中远景"}, {ShotSize::LS, "远景"},
-        {ShotSize::ELS, "大远景"},
-    };
-    return lookup(m, v);
+    static const auto m = zh_table(prompt::compose::kShotSize);
+    return lookup(m, std::string(to_string(v)));
 }
 
 const std::string& angle_zh(CameraAngle v) {
-    static const std::map<CameraAngle, std::string> m = {
-        {CameraAngle::LOW, "仰拍"},      {CameraAngle::EYE_LEVEL, "平视"},
-        {CameraAngle::HIGH, "俯拍"},     {CameraAngle::OVERHEAD, "顶拍"},
-        {CameraAngle::DUTCH, "斜角构图"},
-    };
-    return lookup(m, v);
+    static const auto m = zh_table(prompt::compose::kCameraAngle);
+    return lookup(m, std::string(to_string(v)));
 }
 
 const std::string& move_zh(CameraMove v) {
-    static const std::map<CameraMove, std::string> m = {
-        {CameraMove::STATIC, "固定镜头"},
-        {CameraMove::PAN_LEFT, "向左横摇"},
-        {CameraMove::PAN_RIGHT, "向右横摇"},
-        {CameraMove::TILT_UP, "上摇"},
-        {CameraMove::TILT_DOWN, "下摇"},
-        {CameraMove::PUSH_IN, "镜头缓慢推近"},
-        {CameraMove::PULL_OUT, "镜头缓慢拉远"},
-        {CameraMove::HANDHELD, "手持轻微晃动"},
-        {CameraMove::ORBIT, "环绕运镜"},
-    };
-    return lookup(m, v);
+    static const auto m = zh_table(prompt::compose::kCameraMove);
+    return lookup(m, std::string(to_string(v)));
 }
 
 PromptComposer::PromptComposer(AssetLibrary assets)

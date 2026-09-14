@@ -10,6 +10,7 @@
 #include <utility>
 
 #include "llm/sse.hpp"
+#include "stages/prompts.inc.hpp"
 #include "util/text.hpp"
 
 using json = nlohmann::json;
@@ -182,11 +183,7 @@ std::string schema_as_prompt(const std::string& prompt, const ordered& schema) {
     if (schema.is_null() || schema.empty()) return prompt;
     // 缩进两格而不是压成一行：这份东西是给模型读的，分镜那份有几十个字段，
     // 压成一行之后连人都看不出哪个字段套在哪个里面。
-    return prompt +
-           "\n\n只输出一个 JSON 对象，前后不要有别的话，也不要放进代码块里。"
-           "它必须符合下面这份 JSON Schema——字段名、层级、枚举值、"
-           "还有描述里写的那些数量和字数限制，都要照着来：\n" +
-           schema.dump(2);
+    return prompt + stages::prompt::llm::kSchemaSuffix + schema.dump(2);
 }
 
 ordered build_payload(const config::LLMConfig& cfg, const Request& req,

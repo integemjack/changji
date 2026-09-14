@@ -166,7 +166,8 @@ tests/
 ├── unit/           单元测试，读 tests/golden/ 里的语料
 └── golden/         金语料，当年由 Python 侧导出，**冻在版本库里**
 
-tools/              codegen（前端、东亚字宽）与假大模型
+prompts.toml        **所有提示词**（大模型的、出图的）。构建时生成进二进制，改提示词改这儿
+tools/              codegen（提示词、前端、东亚字宽）与假大模型
 patches/            leejet/ggml 扩展补丁集 + 自动应用脚本
 verify/             前置验证工程（一次性，结论在 RESULTS.md）
 ```

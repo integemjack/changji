@@ -6,7 +6,7 @@
 #include <vector>
 
 #include "stages/json_extract.hpp"
-#include "stages/story_analyze_prompt.inc.hpp"
+#include "stages/prompts.inc.hpp"
 #include "stages/story_outline.hpp"
 #include "util/text.hpp"
 
@@ -71,8 +71,8 @@ std::string render_chapters_for_analysis(const Story& story) {
     const std::size_t n = story.chapters.size();
     if (n == 0) return {};
 
-    std::size_t per = prompt::kAnalyzeBudgetChars / n;
-    if (per < prompt::kAnalyzeMinPerChapter) per = prompt::kAnalyzeMinPerChapter;
+    std::size_t per = prompt::story_analyze::kBudgetChars / n;
+    if (per < prompt::story_analyze::kMinPerChapter) per = prompt::story_analyze::kMinPerChapter;
     // 开头给得比结尾多：结尾只要够看出钩子落在哪，开头要交代清楚人和处境。
     const std::size_t head_n = per * 2 / 3;
     const std::size_t tail_n = per - head_n;
@@ -168,14 +168,14 @@ const ordered& analyze_schema() {
 
 std::string build_analyze_prompt(const Story& story, StyleLine style_line) {
     std::string out;
-    out += prompt::kAnalyzeSeg0;
-    out += style_line == StyleLine::ANIME ? prompt::kAnalyzeHintAnime
-                                          : prompt::kAnalyzeHintRealistic;
-    out += prompt::kAnalyzeSeg1;
-    out += prompt::kAnalyzeRules;
-    out += prompt::kAnalyzeChaptersHead;
+    out += prompt::story_analyze::kSeg0;
+    out += style_line == StyleLine::ANIME ? prompt::story_analyze::kHintAnime
+                                          : prompt::story_analyze::kHintRealistic;
+    out += prompt::story_analyze::kSeg1;
+    out += prompt::story_analyze::kRules;
+    out += prompt::story_analyze::kChaptersHead;
     out += render_chapters_for_analysis(story);
-    out += prompt::kAnalyzeTail;
+    out += prompt::story_analyze::kTail;
     return out;
 }
 

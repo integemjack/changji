@@ -1,5 +1,8 @@
 #include "models/character.hpp"
 
+// 默认画风的词在 prompts.toml 的 [style] 里。这个头只有常量，不依赖 stages 的
+// 任何东西，models 层 include 它不算倒挂。
+#include "stages/prompts.inc.hpp"
 #include "util/text.hpp"
 
 #include <algorithm>
@@ -92,10 +95,8 @@ const char* to_string(StyleLine v) {
 }
 
 std::string default_style(StyleLine style_line) {
-    if (style_line == StyleLine::ANIME) {
-        return "日系二维动画，赛璐璐上色，干净线条，平涂阴影";
-    }
-    return "实拍摄影，真实人像，皮肤有自然纹理，柔和自然光，浅景深";
+    return style_line == StyleLine::ANIME ? stages::prompt::style::kDefaultAnime
+                                          : stages::prompt::style::kDefaultRealistic;
 }
 
 // ── AppearanceBlock ────────────────────────────────────────────────────

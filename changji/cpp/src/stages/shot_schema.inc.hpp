@@ -1,7 +1,8 @@
-// 本文件由 cpp/tools/gen_prompts.py 生成，不要手改。
-// pydantic 从 Shot 的字段定义导出的 JSON Schema，原样嵌进来。
-// llm_shot_schema() 在这上面做删字段和收紧枚举的加工。
-// 改了 Shot 的定义就要重跑这个脚本。
+// Shot 的 JSON Schema，当年由 pydantic 从 Python 侧的字段定义导出、原样嵌进来。
+// **现在直接改这里**：导出它的那套 Python 早删了；今天的 tools/gen_prompts.py
+// 管的是 prompts.toml（提示词），不生成这个文件。
+// llm_shot_schema() 在这上面做删字段和收紧枚举的加工。改了 Shot 的定义，
+// 这里要跟着手改。
 
 #pragma once
 

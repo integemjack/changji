@@ -3,8 +3,7 @@
 #include <string>
 #include <vector>
 
-#include "stages/bible_prompt.inc.hpp"
-#include "stages/bible_story_prompt.inc.hpp"
+#include "stages/prompts.inc.hpp"
 #include "stages/json_extract.hpp"
 #include "util/text.hpp"
 
@@ -85,15 +84,15 @@ const ordered& bible_schema() {
 }
 
 std::string build_bible_prompt(const std::string& script, StyleLine style_line) {
-    // 各段来自 bible_prompt.inc.hpp，那个文件是从 Python 生成的。
-    const char* hint = style_line == StyleLine::ANIME ? prompt::kBibleHintAnime
-                                                      : prompt::kBibleHintRealistic;
+    // 各段来自 prompts.toml 的 [bible]，和 Python 逐字节一致。
+    const char* hint = style_line == StyleLine::ANIME ? prompt::bible::kHintAnime
+                                                      : prompt::bible::kHintRealistic;
     std::string out;
-    out += prompt::kBiblePrefix;
+    out += prompt::bible::kPrefix;
     out += hint;
-    out += prompt::kBibleMiddle;
+    out += prompt::bible::kMiddle;
     out += script;
-    out += prompt::kBibleTail;
+    out += prompt::bible::kTail;
     return out;
 }
 
@@ -152,7 +151,7 @@ std::string render_story_for_bible(const Story& story) {
     }
     if (!chapters.empty()) {
         out += "\n【分章】\n";
-        out += text::truncate_utf8(chapters, prompt::kBibleChaptersMaxChars);
+        out += text::truncate_utf8(chapters, prompt::bible_story::kChaptersMaxChars);
     }
 
     return out;
@@ -160,31 +159,22 @@ std::string render_story_for_bible(const Story& story) {
 
 std::string build_bible_prompt_from_story(const Story& story,
                                           StyleLine style_line) {
-    const char* hint = style_line == StyleLine::ANIME ? prompt::kBibleHintAnime
-                                                      : prompt::kBibleHintRealistic;
+    const char* hint = style_line == StyleLine::ANIME ? prompt::bible::kHintAnime
+                                                      : prompt::bible::kHintRealistic;
     std::string out;
-    out += prompt::kBibleStoryPrefix;
+    out += prompt::bible_story::kPrefix;
     out += hint;
-    out += prompt::kBibleStoryMiddle;
+    out += prompt::bible_story::kMiddle;
     out += render_story_for_bible(story);
-    out += prompt::kBibleStoryTail;
+    out += prompt::bible_story::kTail;
     return out;
 }
 
 std::string default_negative(StyleLine style_line) {
-    static const std::string base =
-        "低质量，模糊，过曝，畸形，多余的手指，画得不好的手部，"
-        "画得不好的脸部，静止不动的画面，字幕，水印";
-    if (style_line == StyleLine::ANIME) return base + "，写实，照片质感，真人";
-    // ⚠️ **写实线这儿不加"压卡通"。** 试过加一句
-    // 「3D 渲染，卡通，动画，插画，CG 质感」——治的是同一个病（没有画风词
-    // 时模型爱往 3D 卡通跑），但这串字是和 Python 逐字节对拍的接口输出，
-    // 一改三条对拍用例当场红。
-    //
-    // 正向那边已经有底子了（StyleProfile 的 default_style，读资产库时补进
-    // global_style），够用；真要再压一道，项目页那个「负向」框就是干这个
-    // 的，而且写在那儿用户看得见。
-    return base;
+    // 词在 prompts.toml 的 [style] 里，为什么写实线不加"压卡通"也写在那儿。
+    std::string out = prompt::style::kNegativeBase;
+    if (style_line == StyleLine::ANIME) out += prompt::style::kNegativeAnimeExtra;
+    return out;
 }
 
 AssetLibrary parse_bible(const std::string& raw, StyleLine style_line,

@@ -7,8 +7,7 @@
 
 #include "stages/script.hpp"
 // 画风那两句和正片那一份共用——同一部剧不该因为换了条写作路线就换语气。
-#include "stages/script_prompt.inc.hpp"
-#include "stages/script_story_prompt.inc.hpp"
+#include "stages/prompts.inc.hpp"
 #include "util/text.hpp"
 
 namespace changji::stages {
@@ -109,10 +108,10 @@ std::string episode_text(const Story& story, const EpisodePlan& plan) {
 std::string script_tail(const std::string& script) {
     const std::vector<std::string> chars = text::utf8_chars(script);
     const std::size_t n = chars.size();
-    if (n <= prompt::kStoryPrevTailMaxChars) return text::strip_ws(script);
+    if (n <= prompt::script_story::kPrevTailMaxChars) return text::strip_ws(script);
 
     std::string tail;
-    for (std::size_t i = n - prompt::kStoryPrevTailMaxChars; i < n; ++i) {
+    for (std::size_t i = n - prompt::script_story::kPrevTailMaxChars; i < n; ++i) {
         tail += chars[i];
     }
     // 从半行中间开始的话，模型会把那半句当成一个完整的拍子去接。
@@ -176,13 +175,13 @@ std::string render_script_context(const Story& story, const EpisodePlan& plan,
     }
     if (!recap.empty()) {
         out += "\n【前情提要】（之前发生过的事，不要再演一遍）\n";
-        out += text::truncate_utf8(recap, prompt::kStoryRecapMaxChars);
+        out += text::truncate_utf8(recap, prompt::script_story::kRecapMaxChars);
     }
 
     const std::string tail = text::strip_ws(previous_tail);
     if (!tail.empty()) {
         out += "\n【上一集是这么结束的】\n";
-        out += text::truncate_utf8(tail, prompt::kStoryPrevTailMaxChars);
+        out += text::truncate_utf8(tail, prompt::script_story::kPrevTailMaxChars);
         out += "\n";
     }
 
@@ -205,7 +204,7 @@ std::string render_script_context(const Story& story, const EpisodePlan& plan,
     out += "\n【这一集】\n";
     const std::string body = episode_text(story, plan);
     if (!body.empty()) {
-        out += text::truncate_utf8(body, prompt::kStoryEpisodeMaxChars);
+        out += text::truncate_utf8(body, prompt::script_story::kEpisodeMaxChars);
     } else {
         for (const auto& id : episode_chapters(story, plan)) {
             const Chapter* c = story.chapter_by_id(id);
@@ -230,33 +229,33 @@ std::string build_script_prompt_from_story(
     const std::vector<std::string>& characters,
     const std::string& previous_tail, std::uint32_t variation) {
     const char* hint = style_line == StyleLine::ANIME
-                           ? prompt::kScriptHintAnime
-                           : prompt::kScriptHintRealistic;
+                           ? prompt::script::kHintAnime
+                           : prompt::script::kHintRealistic;
 
     std::string out;
-    out += prompt::kStoryScriptSeg0;
+    out += prompt::script_story::kSeg0;
     out += format_f0(plan.target_duration_s);
-    out += prompt::kStoryScriptSeg1;
+    out += prompt::script_story::kSeg1;
     out += hint;
-    out += prompt::kStoryScriptSeg2;
+    out += prompt::script_story::kSeg2;
     out += std::to_string(budget_chars(plan.target_duration_s));
-    out += prompt::kStoryScriptRules;
+    out += prompt::script_story::kRules;
     // 四段按秒排。时长按分集表的，和字数预算同源；形状随这一集浮动，
     // 所以种子要和出 schema、解析那两处用同一个。
     out += render_act_brief(act_plan(plan.target_duration_s, variation));
 
     if (!characters.empty()) {
-        out += prompt::kStoryScriptCharsPre;
+        out += prompt::script_story::kCharsPre;
         for (std::size_t i = 0; i < characters.size(); ++i) {
             if (i > 0) out += "、";
             out += characters[i];
         }
-        out += prompt::kStoryScriptCharsPost;
+        out += prompt::script_story::kCharsPost;
     }
 
-    out += prompt::kStoryScriptContextHead;
+    out += prompt::script_story::kContextHead;
     out += render_script_context(story, plan, previous_tail);
-    out += prompt::kStoryScriptTail;
+    out += prompt::script_story::kTail;
     return out;
 }
 

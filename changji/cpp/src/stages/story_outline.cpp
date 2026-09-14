@@ -6,7 +6,7 @@
 #include <vector>
 
 #include "stages/json_extract.hpp"
-#include "stages/story_outline_prompt.inc.hpp"
+#include "stages/prompts.inc.hpp"
 #include "util/text.hpp"
 
 using json = nlohmann::json;
@@ -217,33 +217,33 @@ std::string build_outline_prompt(const std::string& premise, StoryScale scale,
                                  StyleLine style_line,
                                  const std::string& keywords) {
     const char* hint = style_line == StyleLine::ANIME
-                           ? prompt::kOutlineHintAnime
-                           : prompt::kOutlineHintRealistic;
+                           ? prompt::story_outline::kHintAnime
+                           : prompt::story_outline::kHintRealistic;
     std::string out;
-    out += prompt::kOutlineSeg0;
+    out += prompt::story_outline::kSeg0;
     out += hint;
-    out += prompt::kOutlineSeg1;
+    out += prompt::story_outline::kSeg1;
     out += std::to_string(suggested_chapters(scale));
-    out += prompt::kOutlineSeg2;
-    out += prompt::kOutlineRules;
+    out += prompt::story_outline::kSeg2;
+    out += prompt::story_outline::kRules;
 
     const std::string kw = text::strip_ws(keywords);
     if (!kw.empty()) {
-        out += prompt::kOutlineKeywordsPre;
-        out += text::truncate_utf8(kw, prompt::kOutlineKeywordsMaxChars);
-        out += prompt::kOutlineKeywordsPost;
+        out += prompt::story_outline::kKeywordsPre;
+        out += text::truncate_utf8(kw, prompt::story_outline::kKeywordsMaxChars);
+        out += prompt::story_outline::kKeywordsPost;
     }
 
     // 梗概可空：空着就让模型自己定选题。三个入口里只有「我自己有个想法」
     // 那条是从手写的一句话开始的，把它做成硬门槛等于又把人摁回空白框前面。
     const std::string p = text::strip_ws(premise);
     if (p.empty()) {
-        out += prompt::kOutlineNoPremise;
+        out += prompt::story_outline::kNoPremise;
     } else {
-        out += prompt::kOutlineTailHead;
-        out += text::truncate_utf8(p, prompt::kOutlinePremiseMaxChars);
+        out += prompt::story_outline::kTailHead;
+        out += text::truncate_utf8(p, prompt::story_outline::kPremiseMaxChars);
     }
-    out += prompt::kOutlineTailEnd;
+    out += prompt::story_outline::kTailEnd;
     return out;
 }
 
@@ -277,7 +277,7 @@ Story parse_outline(const std::string& raw, const std::string& premise,
     const auto chars = data.find("characters");
     if (chars != data.end() && chars->is_array()) {
         for (const auto& c : *chars) {
-            if (story.characters.size() >= prompt::kMaxCharacters) break;
+            if (story.characters.size() >= prompt::story_outline::kMaxCharacters) break;
             StoryCharacter sc;
             sc.name = text::clean_field(get_str(c, "name"));
             if (sc.name.empty() || !names.insert(sc.name).second) continue;
@@ -323,7 +323,7 @@ Story parse_outline(const std::string& raw, const std::string& premise,
         throw StoryError("大纲里一章都没有");
     }
     for (const auto& c : *chaps) {
-        if (story.chapters.size() >= prompt::kMaxChapters) break;
+        if (story.chapters.size() >= prompt::story_outline::kMaxChapters) break;
         Chapter ch;
         ch.chapter_id = chapter_id(story.chapters.size());
         // 标题自己带的编号要削掉：界面上本来就有「第 N 章」的前缀，

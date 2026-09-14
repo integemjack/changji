@@ -5,7 +5,7 @@
 #include <stdexcept>
 
 #include "stages/story_import.hpp"
-#include "stages/story_revise_prompt.inc.hpp"
+#include "stages/prompts.inc.hpp"
 #include "util/text.hpp"
 
 using ordered = nlohmann::ordered_json;
@@ -139,10 +139,10 @@ std::string build_revise_prompt(const Story& story, const Span& span,
     if (c == nullptr) throw std::runtime_error("没有这一章：" + span.chapter_id);
 
     std::string out;
-    out += prompt::kReviseHead;
-    out += style_line == StyleLine::ANIME ? prompt::kReviseHintAnime
-                                          : prompt::kReviseHintRealistic;
-    out += prompt::kReviseRules;
+    out += prompt::story_revise::kHead;
+    out += style_line == StyleLine::ANIME ? prompt::story_revise::kHintAnime
+                                          : prompt::story_revise::kHintRealistic;
+    out += prompt::story_revise::kRules;
 
     // ---- 压缩的全局记忆。只要名字和身份 ----
     //
@@ -178,16 +178,16 @@ std::string build_revise_prompt(const Story& story, const Span& span,
     // 用户说"再短一点"的时候，"一点"是相对上一版说的。丢了这段历史，
     // 模型只能从原文重新出发，于是改了三轮还在原地。
     if (!history.empty()) {
-        out += prompt::kReviseHistoryHead;
+        out += prompt::story_revise::kHistoryHead;
         for (const auto& t : history) {
             const std::string who = t.role == "assistant" ? "你" : "作者";
             out += who + "：" + text::collapse_ws(t.text) + "\n";
         }
     }
 
-    out += prompt::kReviseTaskHead;
+    out += prompt::story_revise::kTaskHead;
     out += text::strip_ws(instruction);
-    out += plain ? prompt::kRevisePlainTail : prompt::kReviseTail;
+    out += plain ? prompt::story_revise::kPlainTail : prompt::story_revise::kTail;
     return out;
 }
 

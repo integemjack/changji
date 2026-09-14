@@ -9,7 +9,7 @@
 #include <string>
 #include <vector>
 
-#include "stages/chapter_write_prompt.inc.hpp"
+#include "stages/prompts.inc.hpp"
 #include "stages/json_extract.hpp"
 #include "stages/script.hpp"
 #include "stages/story_import.hpp"
@@ -387,16 +387,16 @@ std::string build_chapter_prompt(const Story& story,
     const Chapter& me = story.chapters[static_cast<std::size_t>(idx)];
 
     std::string out;
-    out += prompt::kChapterSeg0;
-    out += style_line == StyleLine::ANIME ? prompt::kChapterHintAnime
-                                          : prompt::kChapterHintRealistic;
-    out += prompt::kChapterSeg1;
+    out += prompt::chapter_write::kSeg0;
+    out += style_line == StyleLine::ANIME ? prompt::chapter_write::kHintAnime
+                                          : prompt::chapter_write::kHintRealistic;
+    out += prompt::chapter_write::kSeg1;
     out += std::to_string(chapter_target_scenes(story));
-    out += prompt::kChapterSeg1b;
+    out += prompt::chapter_write::kSeg1b;
     out += std::to_string(chapter_scene_chars(story));
-    out += prompt::kChapterSeg2;
-    out += prompt::kChapterRules;
-    out += prompt::kChapterContextHead;
+    out += prompt::chapter_write::kSeg2;
+    out += prompt::chapter_write::kRules;
+    out += prompt::chapter_write::kContextHead;
 
     // ---- 压缩的全局记忆 ----
     if (!story.logline.empty()) out += "【这个故事】" + story.logline + "\n";
@@ -480,7 +480,7 @@ std::string build_chapter_prompt(const Story& story,
 
     if (!recap.empty()) {
         out += "\n【前情提要】（已经发生过的，不要重写）\n";
-        out += text::truncate_utf8(recap, prompt::kChapterRecapMaxChars);
+        out += text::truncate_utf8(recap, prompt::chapter_write::kRecapMaxChars);
     }
 
     // ---- 上一章的结尾，用来接语气 ----
@@ -492,8 +492,8 @@ std::string build_chapter_prompt(const Story& story,
             const std::vector<std::string> chars = text::utf8_chars(tail);
             std::string piece;
             const std::size_t from =
-                chars.size() > prompt::kChapterPrevTailMaxChars
-                    ? chars.size() - prompt::kChapterPrevTailMaxChars
+                chars.size() > prompt::chapter_write::kPrevTailMaxChars
+                    ? chars.size() - prompt::chapter_write::kPrevTailMaxChars
                     : 0;
             for (std::size_t i = from; i < chars.size(); ++i) piece += chars[i];
             out += text::strip_ws(piece);
@@ -509,7 +509,7 @@ std::string build_chapter_prompt(const Story& story,
         }
     }
 
-    if (idx == 0) out += prompt::kChapterFirstHead;
+    if (idx == 0) out += prompt::chapter_write::kFirstHead;
 
     // ---- 这一章要写的 ----
     out += "\n【这一章】" + me.title + "\n";
@@ -539,7 +539,7 @@ std::string build_chapter_prompt(const Story& story,
         out += "\n【最后一场的 turn 要落到这件事上】" + me.hooks.back().text + "\n";
     }
 
-    out += prompt::kChapterTail;
+    out += prompt::chapter_write::kTail;
     return out;
 }
 
@@ -891,7 +891,7 @@ ChapterDraft parse_chapter(const std::string& raw, int min_chars, bool strict) {
     if (d.text.empty()) throw StoryError("大模型没写出正文");
     // 失控往下写个没完的时候截住。这段正文会整份存进 story.json，
     // 而且后面每一集的提示词都要读它。
-    d.text = text::truncate_utf8(d.text, prompt::kChapterMaxChars);
+    d.text = text::truncate_utf8(d.text, prompt::chapter_write::kMaxChars);
 
     // **短得离谱的不收。** 见 kChapterMinRatio：模型会把章标题填进正文
     // 字段，一两个字也是合法 JSON，静默存下去的话故事看着有几章、

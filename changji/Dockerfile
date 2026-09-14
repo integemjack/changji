@@ -28,8 +28,9 @@ RUN if [ -n "$APT_MIRROR" ]; then \
         done; \
     fi
 
-# python3 是 CHANGJI_LLAMA=ON 要的：llama.cpp 拉下来要就地打 leejet 的
-# 扩展补丁（patches/apply_to_llamacpp.py），CMakeLists 里
+# python3 两处要：提示词（cpp/prompts.toml）是构建时由 tools/gen_prompts.py
+# 生成进二进制的，无条件要；CHANGJI_LLAMA=ON 时 llama.cpp 拉下来还要就地打
+# leejet 的扩展补丁（patches/apply_to_llamacpp.py）。CMakeLists 里
 # find_package(Python3 REQUIRED) 找不到解释器会在配置期就停下。
 #
 # libssl-dev 是 CHANGJI_SSL=ON 要的：httplib 发 https 靠它，而 CMakeLists

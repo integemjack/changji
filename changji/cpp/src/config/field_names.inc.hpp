@@ -1,5 +1,6 @@
-// 本文件由 cpp/tools/gen_prompts.py 生成，不要手改。
-// 字段的中文标签，从 web/server.py 的 _FIELD_NAMES 原样导出。
+// 字段的中文标签，当年从 web/server.py 的 _FIELD_NAMES 原样导出。那套 Python
+// 早删了，**现在直接改这里**；今天的 tools/gen_prompts.py 管的是 prompts.toml
+// （提示词），不生成这个文件。
 // 报「已应用 min_frame_similarity」不如报「与首帧相似度下限」。
 // 另外是配置段映射：哪个字段该写进配置文件的哪一节。
 

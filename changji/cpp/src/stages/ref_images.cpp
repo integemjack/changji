@@ -1,7 +1,7 @@
 #include "stages/ref_images.hpp"
 
 #include "stages/bible.hpp"
-#include "stages/ref_images_prompt.inc.hpp"
+#include "stages/prompts.inc.hpp"
 #include "util/text.hpp"
 
 namespace changji::stages {
@@ -10,9 +10,9 @@ using namespace changji::models;
 
 const std::vector<RefPose>& ref_poses() {
     static const std::vector<RefPose> poses = {
-        {"front", "正面", prompt::kPoseFront},
-        {"three_quarter", "四分之三侧", prompt::kPoseThreeQuarter},
-        {"back", "背面", prompt::kPoseBack},
+        {"front", "正面", prompt::ref_images::kPoseFront},
+        {"three_quarter", "四分之三侧", prompt::ref_images::kPoseThreeQuarter},
+        {"back", "背面", prompt::ref_images::kPoseBack},
     };
     return poses;
 }
@@ -51,10 +51,10 @@ std::string build_character_ref_prompt(const Character& c,
     // 同一个人，而那靠的就是这段字逐字节相同——这里自己再写一套形容词，
     // 参考图上那个人和成片里那个人就是两个人。
     return join_parts({
-        prompt::kRefCharacterHead,
+        prompt::ref_images::kCharacterHead,
         pose.phrase,
         c.render_prompt(style.style_line),
-        prompt::kRefCharacterTail,
+        prompt::ref_images::kCharacterTail,
         style.global_style,
     });
 }
@@ -62,12 +62,12 @@ std::string build_character_ref_prompt(const Character& c,
 std::string build_location_ref_prompt(const Location& l,
                                       const StyleProfile& style) {
     return join_parts({
-        prompt::kRefLocationHead,
+        prompt::ref_images::kLocationHead,
         l.render_prompt(style.style_line),
         // 「里面不能有人」写在外观块后面：写前面的话会被后面那串具体的
         // 空间描述冲淡——出图提示词里靠后的词权重低，但这一条是硬要求，
         // 所以单独成段而不是塞在开头一长串里。
-        prompt::kRefLocationNoPeople,
+        prompt::ref_images::kLocationNoPeople,
         style.global_style,
     });
 }
@@ -76,7 +76,7 @@ std::string ref_negative(const StyleProfile& style) {
     std::string out = style.negative_prompt.empty()
                           ? default_negative(style.style_line)
                           : style.negative_prompt;
-    out += prompt::kRefNegativeExtra;
+    out += prompt::ref_images::kNegativeExtra;
     return out;
 }
 

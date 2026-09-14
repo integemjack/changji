@@ -10,7 +10,7 @@
 #include <vector>
 
 #include "stages/json_extract.hpp"
-#include "stages/script_prompt.inc.hpp"
+#include "stages/prompts.inc.hpp"
 #include "util/text.hpp"
 
 using json = nlohmann::json;
@@ -21,6 +21,113 @@ namespace changji::stages {
 using namespace changji::models;
 
 namespace {
+
+// ---- 解析模型输出用的几张表 ----
+//
+// **不在 prompts.toml 里**：那份是喂给模型的话，这几张是从模型吐回来的
+// 东西里认形式用的，改它们不该动到提示词那一层。原来和提示词放在一个
+// 头里，2026-09-14 提示词搬去 prompts.toml 时留在了这儿。
+
+// 机位标签里的景别词。动作行开头挂一个「镜头特写：」时靠它认出来。
+//
+// **不进提示词，只在解析时用。** 提示词里列一串「不要写镜头/特写/近景」，
+// 模型会把这些词原样抄进正文——2026-09-11 在章节那边栽过一次
+// （反例句被逐字抄走）。形式是我们定的，削掉就完了。
+inline constexpr const char* kCameraWords[] = {
+    R"CJ(镜头)CJ",
+    R"CJ(特写)CJ",
+    R"CJ(近景)CJ",
+    R"CJ(中景)CJ",
+    R"CJ(远景)CJ",
+    R"CJ(全景)CJ",
+    R"CJ(空镜)CJ",
+    R"CJ(画面)CJ",
+    R"CJ(闪回)CJ",
+    R"CJ(插入)CJ",
+    // 2026-09-13 补的一批**后期/转场**术语。上面那十个都是「怎么拍」，
+    // 这一批是「不是拍出来的」——行业写法里这类信息本来就用【】标出来，
+    // 意思是"画面里没有，是后期合成的"。模型会把它们写成 `标签：内容`，
+    // 而那和一句台词长得一模一样。
+    //
+    // **实跑撞上的**（预告片那条路）：
+    //     黑屏前最后一帧：林浩抬头望向镜头，雨水顺着脸颊滑落……
+    // 冒号前七个字，script_dialogue_pairs 认「冒号前 ≤12 字 = 说话人」，
+    // 于是整句动作描写变成一个叫「黑屏前最后一帧」的人在说话；名字认不出
+    // 就落成旁白，**旁白音会把它念出来**。
+    //
+    // 只收确定不会被念出口的那些。**不收「字幕」**：「字幕：三年后」削成
+    // 「三年后」之后，让旁白念一句"三年后"其实是正当的转场处理，
+    // 两种做法都说得通，不该在这一层替人决定。
+    R"CJ(黑屏)CJ",
+    R"CJ(定格)CJ",
+    R"CJ(定场)CJ",
+    R"CJ(淡入)CJ",
+    R"CJ(淡出)CJ",
+    R"CJ(化入)CJ",
+    R"CJ(叠化)CJ",
+    R"CJ(转场)CJ",
+    R"CJ(航拍)CJ",
+    R"CJ(慢镜)CJ",
+    R"CJ(特效)CJ",
+    R"CJ(蒙太奇)CJ",
+};
+
+// 说话人为空的各种写法。模型经常无视 schema 填 none、旁白 这类词，
+// 原样当名字用的话，成片字幕上会出现「none：寂静」。
+inline constexpr const char* kNoSpeaker[] = {
+    R"CJ((none))CJ",
+    R"CJ(-)CJ",
+    R"CJ(n/a)CJ",
+    R"CJ(na)CJ",
+    R"CJ(narrator)CJ",
+    R"CJ(nil)CJ",
+    R"CJ(none)CJ",
+    R"CJ(none.)CJ",
+    R"CJ(null)CJ",
+    R"CJ(ost)CJ",
+    R"CJ(vo)CJ",
+    R"CJ(voiceover)CJ",
+    R"CJ(—)CJ",
+    R"CJ(旁白)CJ",
+    R"CJ(无)CJ",
+    R"CJ(画外音)CJ",
+    R"CJ(空)CJ",
+    R"CJ(（无）)CJ",
+};
+
+// 整段外面套的括号和引号。左右相同的（引号）判断规则不一样，
+// 见 C++ 侧 wraps_whole 的注释。
+inline constexpr const char* kWrappers[][2] = {
+    {R"CJ(（)CJ", R"CJ(）)CJ"},
+    {R"CJ(()CJ", R"CJ())CJ"},
+    {R"CJ(【)CJ", R"CJ(】)CJ"},
+    {R"CJ([)CJ", R"CJ(])CJ"},
+    {R"CJ(“)CJ", R"CJ(”)CJ"},
+    {R"CJ(")CJ", R"CJ(")CJ"},
+    {R"CJ(「)CJ", R"CJ(」)CJ"},
+    {R"CJ(『)CJ", R"CJ(』)CJ"},
+    {R"CJ(')CJ", R"CJ(')CJ"},
+};
+
+// 只削开头这几种括号里的时间码。
+inline constexpr const char* kLeadBrackets[][2] = {
+    {R"CJ([)CJ", R"CJ(])CJ"},
+    {R"CJ(【)CJ", R"CJ(】)CJ"},
+    {R"CJ(（)CJ", R"CJ(）)CJ"},
+    {R"CJ(()CJ", R"CJ())CJ"},
+};
+
+// 括号里出现这些才算时间码。光有数字不够——
+// 「（他犹豫了3秒）」和「（第3次）」得区分开。
+inline constexpr const char* kTimeUnits[] = {
+    R"CJ(秒)CJ",
+    R"CJ(s)CJ",
+    R"CJ(S)CJ",
+    R"CJ(:)CJ",
+    R"CJ(：)CJ",
+    R"CJ(分)CJ",
+    R"CJ(帧)CJ",
+};
 
 /// 对应 Python 的 f"{x:.0f}"。
 ///
@@ -79,7 +186,7 @@ bool wraps_whole(const std::string& s, const std::string& left,
 const std::set<std::string>& no_speaker_words() {
     static const std::set<std::string> kWords = [] {
         std::set<std::string> s;
-        for (const char* w : prompt::kNoSpeaker) s.insert(w);
+        for (const char* w : kNoSpeaker) s.insert(w);
         return s;
     }();
     return kWords;
@@ -118,7 +225,7 @@ std::string strip_wrapper(const std::string& text_in) {
     bool changed = true;
     while (changed && text::utf8_len(out) >= 2) {
         changed = false;
-        for (const auto& pair : prompt::kWrappers) {
+        for (const auto& pair : kWrappers) {
             const std::string left = pair[0], right = pair[1];
             if (!starts_with(out, left) || !ends_with(out, right)) continue;
             if (!wraps_whole(out, left, right)) continue;
@@ -176,7 +283,7 @@ std::vector<QuotedSpan> quoted_spans(const std::string& s) {
 
 std::string strip_leading_timecode(const std::string& text_in) {
     const std::string out = strip_ascii(text_in);
-    for (const auto& pair : prompt::kLeadBrackets) {
+    for (const auto& pair : kLeadBrackets) {
         const std::string left = pair[0], right = pair[1];
         if (!starts_with(out, left)) continue;
         const std::size_t end = out.find(right);
@@ -192,7 +299,7 @@ std::string strip_leading_timecode(const std::string& text_in) {
         // 还要有时间单位。光有数字不够——
         // 「（他犹豫了3秒）」和「（第3次）」得区分开。
         bool has_unit = false;
-        for (const char* u : prompt::kTimeUnits) {
+        for (const char* u : kTimeUnits) {
             if (inside.find(u) != std::string::npos) {
                 has_unit = true;
                 break;
@@ -215,7 +322,7 @@ std::string strip_camera_prefix(const std::string& text_in) {
         // （「牌子上写着：营业中」），削掉会丢内容。
         if (text::utf8_len(head) > 8) continue;
         bool camera = false;
-        for (const char* w : prompt::kCameraWords) {
+        for (const char* w : kCameraWords) {
             if (head.find(w) != std::string::npos) {
                 camera = true;
                 break;
@@ -338,7 +445,7 @@ std::string normalize_speaker(const std::string& raw) {
 
 int budget_chars(double duration_s) {
     // Python 的 int() 是**朝零截断**，不是四舍五入
-    const double v = duration_s * prompt::kCharsPerSecond * prompt::kDialogueShare;
+    const double v = duration_s * prompt::script::kCharsPerSecond * prompt::script::kDialogueShare;
     return std::max(20, static_cast<int>(v));
 }
 
@@ -404,8 +511,8 @@ std::vector<ActSpec> act_plan(double duration_s, std::uint32_t variation) {
     int at = 0;
     for (int i = 0; i < 4; ++i) {
         ActSpec a;
-        a.key = prompt::kActKeys[i];
-        a.label = prompt::kActLabels[i];
+        a.key = prompt::script::kActKeys[i];
+        a.label = prompt::script::kActLabels[i];
         a.from_s = at;
         a.to_s = at + seconds[i];
         at = a.to_s;
@@ -421,14 +528,14 @@ std::vector<ActSpec> act_plan(double duration_s, std::uint32_t variation) {
 }
 
 std::string render_act_brief(const std::vector<ActSpec>& specs) {
-    std::string out = prompt::kActBlockHead;
+    std::string out = prompt::script::kActBlockHead;
     for (std::size_t i = 0; i < specs.size(); ++i) {
         const ActSpec& s = specs[i];
         out += "  " + s.label + "（" + std::to_string(s.from_s) + "–" +
-               std::to_string(s.to_s) + " 秒）：" + prompt::kActBriefs[i] +
+               std::to_string(s.to_s) + " 秒）：" + prompt::script::kActBriefs[i] +
                "。至少 " + std::to_string(s.min_beats) + " 拍。\n";
     }
-    out += prompt::kActBlockTail;
+    out += prompt::script::kActBlockTail;
     return out;
 }
 
@@ -485,7 +592,7 @@ bool parse_act_header(const std::string& line_in, std::string* label,
     }
 
     bool known = false;
-    for (const char* l : prompt::kActLabels) {
+    for (const char* l : prompt::script::kActLabels) {
         if (name == l) {
             known = true;
             break;
@@ -569,30 +676,30 @@ std::string build_script_prompt(const std::string& premise, double duration_s,
                                 const std::string& previous,
                                 const std::vector<std::string>& characters) {
     std::string out;
-    out += prompt::kScriptSeg0;
+    out += prompt::script::kSeg0;
     out += format_f0(duration_s);
-    out += prompt::kScriptSeg1;
-    out += style_line == StyleLine::ANIME ? prompt::kScriptHintAnime
-                                          : prompt::kScriptHintRealistic;
-    out += prompt::kScriptSeg2;
+    out += prompt::script::kSeg1;
+    out += style_line == StyleLine::ANIME ? prompt::script::kHintAnime
+                                          : prompt::script::kHintRealistic;
+    out += prompt::script::kSeg2;
     out += std::to_string(budget_chars(duration_s));
-    out += prompt::kScriptRules;
+    out += prompt::script::kRules;
     out += render_act_brief(act_plan(duration_s));
 
     if (!characters.empty()) {
-        out += prompt::kScriptCharsPre;
+        out += prompt::script::kCharsPre;
         out += join(characters, "、");
-        out += prompt::kScriptCharsPost;
+        out += prompt::script::kCharsPost;
     }
     const std::string prev = strip_ascii(previous);
     if (!prev.empty()) {
-        out += prompt::kScriptPrevPre;
-        out += text::truncate_utf8(prev, prompt::kPrevMaxChars);
-        out += prompt::kScriptPrevPost;
+        out += prompt::script::kPrevPre;
+        out += text::truncate_utf8(prev, prompt::script::kPrevMaxChars);
+        out += prompt::script::kPrevPost;
     }
-    out += prompt::kScriptTailHead;
+    out += prompt::script::kTailHead;
     out += strip_ascii(premise);
-    out += prompt::kScriptTailEnd;
+    out += prompt::script::kTailEnd;
     return out;
 }
 
@@ -600,33 +707,33 @@ std::string build_premise_prompt(const std::string& keywords,
                                  StyleLine style_line, int count,
                                  const std::vector<std::string>& existing) {
     std::string out;
-    out += prompt::kPremiseSeg0;
-    out += style_line == StyleLine::ANIME ? prompt::kPremiseHintAnime
-                                          : prompt::kPremiseHintRealistic;
-    out += prompt::kPremiseSeg1;
+    out += prompt::script_premise::kSeg0;
+    out += style_line == StyleLine::ANIME ? prompt::script_premise::kHintAnime
+                                          : prompt::script_premise::kHintRealistic;
+    out += prompt::script_premise::kSeg1;
     out += std::to_string(count);
-    out += prompt::kPremiseRules;
+    out += prompt::script_premise::kRules;
 
     const std::string kw = strip_ascii(keywords);
     if (!kw.empty()) {
-        out += prompt::kPremiseKeywordsPre;
+        out += prompt::script_premise::kKeywordsPre;
         out += kw;
-        out += prompt::kPremiseKeywordsPost;
+        out += prompt::script_premise::kKeywordsPost;
     }
     if (!existing.empty()) {
         // 已经有的方向要避开，否则连点两次「再想几个」会拿到同一批
         std::vector<std::string> trimmed;
         const std::size_t n =
-            std::min<std::size_t>(existing.size(), prompt::kExistingMaxItems);
+            std::min<std::size_t>(existing.size(), prompt::script_premise::kExistingMaxItems);
         for (std::size_t i = 0; i < n; ++i) {
             trimmed.push_back(text::truncate_utf8(strip_ascii(existing[i]),
-                                                  prompt::kExistingMaxChars));
+                                                  prompt::script_premise::kExistingMaxChars));
         }
-        out += prompt::kPremiseExistingPre;
+        out += prompt::script_premise::kExistingPre;
         out += join(trimmed, "、");
-        out += prompt::kPremiseExistingPost;
+        out += prompt::script_premise::kExistingPost;
     }
-    out += prompt::kPremiseTailEnd;
+    out += prompt::script_premise::kTailEnd;
     return out;
 }
 
@@ -635,29 +742,29 @@ std::string build_trailer_prompt(const std::string& premise, double duration_s,
                                  const std::string& episodes,
                                  const std::vector<std::string>& characters) {
     std::string out;
-    out += prompt::kTrailerSeg0;
-    out += style_line == StyleLine::ANIME ? prompt::kTrailerHintAnime
-                                          : prompt::kTrailerHintRealistic;
-    out += prompt::kTrailerSeg1;
+    out += prompt::script_trailer::kSeg0;
+    out += style_line == StyleLine::ANIME ? prompt::script_trailer::kHintAnime
+                                          : prompt::script_trailer::kHintRealistic;
+    out += prompt::script_trailer::kSeg1;
     out += format_f0(duration_s);
-    out += prompt::kTrailerSeg2;
+    out += prompt::script_trailer::kSeg2;
     out += std::to_string(budget_chars(duration_s));
-    out += prompt::kTrailerRules;
+    out += prompt::script_trailer::kRules;
 
     if (!characters.empty()) {
-        out += prompt::kTrailerCharsPre;
+        out += prompt::script_trailer::kCharsPre;
         out += join(characters, "、");
-        out += prompt::kTrailerCharsPost;
+        out += prompt::script_trailer::kCharsPost;
     }
     const std::string eps = strip_ascii(episodes);
     if (!eps.empty()) {
-        out += prompt::kTrailerEpisodesPre;
-        out += text::truncate_utf8(eps, prompt::kEpisodesMaxChars);
-        out += prompt::kTrailerEpisodesPost;
+        out += prompt::script_trailer::kEpisodesPre;
+        out += text::truncate_utf8(eps, prompt::script_trailer::kEpisodesMaxChars);
+        out += prompt::script_trailer::kEpisodesPost;
     }
-    out += prompt::kTrailerTailHead;
+    out += prompt::script_trailer::kTailHead;
     out += strip_ascii(premise);
-    out += prompt::kTrailerTailEnd;
+    out += prompt::script_trailer::kTailEnd;
     return out;
 }
 
@@ -751,7 +858,7 @@ ordered script_schema(double duration_s,
         beats["maxItems"] = s.max_beats;
         beats["description"] = s.label + "，" + std::to_string(s.from_s) + "–" +
                                std::to_string(s.to_s) + " 秒。" +
-                               prompt::kActBriefs[i];
+                               prompt::script::kActBriefs[i];
         beats["items"] = beat_item_schema(true, characters);
 
         ordered act = ordered::object();

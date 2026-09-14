@@ -652,6 +652,33 @@ else()
     set(CHANGJI_METAL_SOURCES "")
 endif()
 
+# ---- 提示词：prompts.toml → 生成头 ----
+#
+# 所有喂给大模型和出图模型的提示词都在 prompts.toml 里，构建时由
+# tools/gen_prompts.py 生成成一个头（generated/stages/prompts.inc.hpp），
+# 编进二进制。生成到构建目录、不进版本库，和 bundled_webapp.inc.hpp 那份
+# 刻意不同：前端那份进了版本库，代价是有"谁忘了跑脚本"的窗口（编出旧界面、
+# 没有任何地方报错）；提示词一天改几次，这个窗口开着迟早出事，所以让 ninja
+# 管依赖——prompts.toml 一变就重新生成，引用它的 .cpp 跟着重编。
+#
+# 找不到 Python 就在配置期停下。CHANGJI_LLAMA 那一段也要它（打补丁），
+# 这里是无条件的：没有提示词什么都编不了。
+find_package(Python3 COMPONENTS Interpreter REQUIRED)
+set(CHANGJI_PROMPTS_TOML "${CMAKE_CURRENT_SOURCE_DIR}/prompts.toml")
+set(CHANGJI_GENERATED_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated")
+set(CHANGJI_PROMPTS_HPP "${CHANGJI_GENERATED_DIR}/stages/prompts.inc.hpp")
+add_custom_command(
+    OUTPUT "${CHANGJI_PROMPTS_HPP}"
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tools/gen_prompts.py"
+            "${CHANGJI_PROMPTS_TOML}" "${CHANGJI_PROMPTS_HPP}"
+    DEPENDS "${CHANGJI_PROMPTS_TOML}" "${CMAKE_CURRENT_SOURCE_DIR}/tools/gen_prompts.py"
+    COMMENT "提示词：prompts.toml → stages/prompts.inc.hpp"
+    VERBATIM)
+# 单独一个 target，changji 和 changji_tests 都挂在它上面——同一个生成文件
+# 给多个目标用，CMake 文档推荐的就是这个写法，而不是把 OUTPUT 列进每个
+# 目标的源文件里。
+add_custom_target(changji_prompts DEPENDS "${CHANGJI_PROMPTS_HPP}")
+
 add_executable(changji
     src/main.cpp
     src/util/paths.cpp
@@ -756,8 +783,10 @@ target_compile_features(changji PRIVATE cxx_std_20)
 
 target_include_directories(changji PRIVATE
     src
+    "${CHANGJI_GENERATED_DIR}"    # stages/prompts.inc.hpp，见上面「提示词」那一段
     "${ASIO_INCLUDE_DIR}"
 )
+add_dependencies(changji changji_prompts)
 # 我们那份 httplib 排在最前面，见上面 INTERFACE_SYSTEM_INCLUDE_DIRECTORIES 那段。
 target_include_directories(changji BEFORE PRIVATE "${httplib_SOURCE_DIR}")
 
@@ -1163,8 +1192,9 @@ if(CHANGJI_BUILD_TESTS)
     )
     # Crow 的头目录：ws.cpp 要 <crow/websocket.h>。Crow 是纯头文件库，
     # 加个包含路径就够，不用链它的 app（测试里只碰 Hub 那个纯数据结构）。
-    target_include_directories(changji_tests PRIVATE src "${ASIO_INCLUDE_DIR}"
-                               "${crow_SOURCE_DIR}/include")
+    target_include_directories(changji_tests PRIVATE src "${CHANGJI_GENERATED_DIR}"
+                               "${ASIO_INCLUDE_DIR}" "${crow_SOURCE_DIR}/include")
+    add_dependencies(changji_tests changji_prompts)
     target_link_libraries(changji_tests PRIVATE
         nlohmann_json::nlohmann_json
         tomlplusplus::tomlplusplus)

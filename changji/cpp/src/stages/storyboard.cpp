@@ -17,7 +17,7 @@
 // 段头识别（count_beats 要跳过「【开场钩子 0–5 秒】」那一行）
 #include "stages/script.hpp"
 #include "stages/shot_schema.inc.hpp"
-#include "stages/storyboard_prompt.inc.hpp"
+#include "stages/prompts.inc.hpp"
 #include "util/text.hpp"
 
 using json = nlohmann::json;
@@ -28,6 +28,34 @@ namespace changji::stages {
 using namespace changji::models;
 
 namespace {
+
+// **不在 prompts.toml 里**：这是认模型输出用的表，不是提示词。原来和提示词
+// 放在一个头里，2026-09-14 提示词搬去 prompts.toml 时留在了这儿。
+
+// 台词栏里的占位符。schema 里写着「这一镜没有人说话就填空数组」，模型照样
+// 会塞一句「（无台词）」进去——**而那句会被配音念出来**。实跑里十四镜有四镜
+// 是这样的。
+//
+// 和 script.cpp 的 kNoSpeaker 分开两份：那边是说话人栏（填了
+// none 就当旁白，**这一句还在**），这边是台词栏（整句都得删掉）。合成一份
+// 的话，一句真的由旁白说出来的话会被当成占位符删掉。
+inline constexpr const char* kNoLine[] = {
+    R"CJ(无台词)CJ",
+    R"CJ(无对白)CJ",
+    R"CJ(没有台词)CJ",
+    R"CJ(没有对白)CJ",
+    R"CJ(无人说话)CJ",
+    R"CJ(无声)CJ",
+    R"CJ(静默)CJ",
+    R"CJ(略)CJ",
+    R"CJ(无)CJ",
+    R"CJ(空)CJ",
+    R"CJ(none)CJ",
+    R"CJ(n/a)CJ",
+    R"CJ(na)CJ",
+    R"CJ(null)CJ",
+    R"CJ(nil)CJ",
+};
 
 /// 对应 Python 的 f"{x:g}"。
 ///
@@ -568,21 +596,21 @@ std::string build_storyboard_prompt(const std::string& script,
                                    : join_lines(place_lines);
 
     std::string out;
-    out += prompt::kSbSeg0;
+    out += prompt::storyboard::kSeg0;
     out += roster;
-    out += prompt::kSbSeg1;
+    out += prompt::storyboard::kSeg1;
     out += places;
-    out += prompt::kSbSeg2;
+    out += prompt::storyboard::kSeg2;
     out += quota.describe();
-    out += prompt::kSbSeg3;
+    out += prompt::storyboard::kSeg3;
     out += std::to_string(quota.shot_count());
-    out += prompt::kSbSeg4;
+    out += prompt::storyboard::kSeg4;
     out += format_g(quota.total_s());
-    out += prompt::kSbSeg5;
+    out += prompt::storyboard::kSeg5;
     out += episode_id;
-    out += prompt::kSbSeg6;
+    out += prompt::storyboard::kSeg6;
     out += script;
-    out += prompt::kSbSeg7;
+    out += prompt::storyboard::kSeg7;
     return out;
 }
 
@@ -607,7 +635,7 @@ bool is_placeholder_line(const std::string& text) {
         const unsigned char u = static_cast<unsigned char>(c);
         low += (u >= 'A' && u <= 'Z') ? static_cast<char>(u - 'A' + 'a') : c;
     }
-    for (const char* w : prompt::kNoLine) {
+    for (const char* w : kNoLine) {
         if (low == w) return true;
     }
     return false;
