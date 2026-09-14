@@ -620,6 +620,31 @@ function retry(record) {
 </template>
 
 <style scoped>
+/* 「投递这一套没搬进来」那条横幅。
+   **这一页原来没有 .alert**：它用着 `class="alert alert--warn"`，而这两个
+   类名在这个组件的 scoped 里和 base.css 里都不存在——scoped 跨不过组件，
+   别处（设置页、场景页、镜头页）各有一份自己的。于是这条横幅一直是一行
+   光秃秃的字，而它恰恰是这一页最要紧的一句：不说清楚的话，人会照着页面
+   上能点的按钮去加投递目标，然后撞上 501。
+   照镜头页那一份的样子（有底色的块），因为这儿也是独立成段的一条横幅。 */
+.alert {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  margin: 0 0 var(--s3);
+  padding: var(--s2) var(--s3);
+  border-radius: var(--r);
+  font-size: var(--fs-sm);
+  line-height: 1.5;
+}
+.alert--warn {
+  background: var(--warn-soft);
+  color: var(--warn);
+}
+.alert :deep(svg) {
+  flex: none;
+}
+
 .pub {
   display: grid;
   grid-template-columns: minmax(0, 1.15fr) minmax(0, 0.85fr);
