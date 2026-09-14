@@ -746,7 +746,9 @@ RunReport run_episode(const ProjectStore& store,
                         emit(progress, "audio", "done",
                              "给 " + std::to_string(made) +
                                  " 个角色定了音色，存在项目的 voices/ 里。"
-                                 "不满意可以去角色页换一个，换完重跑这一段配音");
+                                 // 「角色页」2026-09-11 合成「设定」了。
+                                 "不满意可以去设定页的「人物」点开这个角色换"
+                                 "一个，换完回镜头墙点这一镜的「配音」重跑");
                     }
                 }
 

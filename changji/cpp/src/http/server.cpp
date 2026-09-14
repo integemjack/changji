@@ -1733,7 +1733,7 @@ void run(const config::Settings& settings, const Options& opts) {
         return json_response(r.body, r.status);
     });
 
-    // 服务端有哪些参考音色。角色页打开时顺带拉一次。
+    // 服务端有哪些参考音色。设定页的「人物」那一格打开时顺带拉一次。
     //
     CROW_ROUTE(app, "/api/voices")([](const crow::request& req) {
         auto r = guard([&] {

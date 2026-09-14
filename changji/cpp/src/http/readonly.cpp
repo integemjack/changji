@@ -200,8 +200,9 @@ ApiResult get_shots(const std::string& path, const std::string& episode_id) {
             {"shot_id", s.shot_id},
             {"order", s.order},
             {"scene_id", s.scene_id},
-            // 这一集用到哪几个场景，界面靠它算。缺了的话场景页
-            // 只能把全剧的场景一股脑列出来，看不出跟本集的关系。
+            // 这一集用到哪几个场景，界面靠它算。缺了的话设定页的
+            // 「场景」那一格只能把全剧的场景一股脑列出来，看不出跟
+            // 本集的关系。
             {"location_id", opt(s.location_id)},
             {"char_ids", char_ids},
             {"shot_size", to_string(s.shot_size)},

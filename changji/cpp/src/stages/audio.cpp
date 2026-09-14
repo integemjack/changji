@@ -583,8 +583,13 @@ std::vector<ShotAudioPlan> AudioStage::run(std::vector<models::Shot*>& shots,
         pipeline::Event e;
         e.stage = "audio";
         e.kind = "warn";
+        // 指路要指到今天真有的那个地方：「角色场景页」2026-09-11 就合成
+        // 「设定」了，而且那一格从来不是下拉框——音色是一个带候选清单的
+        // 输入框（进程内配音要一段参考音频的路径，外部服务要它自己认的
+        // 音色名，两种都得能手填，见 AssetCharacters 里那段注释）。
         e.message = "这些音色服务端上没有，已自动换成可用的：" + names +
-                    "。想指定的话去角色场景页从下拉框里选";
+                    "。想指定的话去设定页的「人物」，点开这个角色，"
+                    "在「音色」那一格填或者挑一段";
         progress.report(e);
     }
     return plans;
