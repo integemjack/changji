@@ -457,6 +457,9 @@ async function genRef(charId, slot) {
 
 /** 三张一起画。**一张一张来**：显存只够一张，并发只会排队，还看不出进度。 */
 async function genAllRefs(charId) {
+  // 三张要跑一分多钟。中途换了剧的话，后面那两张会拿这一部的 char_id 去
+  // 新那一部出图（id 在那边不存在，404）。活儿是替这一部排的，钉住它。
+  const project = session.projectPath
   for (const s of SLOTS) {
     genStep.value = { charId, label: s.label }
     const ok = await run(
@@ -464,7 +467,7 @@ async function genAllRefs(charId) {
         runAsyncJob(
           (extra) =>
             api.generateReference({
-              project: session.projectPath,
+              project,
               char_id: charId,
               slot: s.key,
               ...extra,

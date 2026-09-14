@@ -204,11 +204,18 @@ async function bible() {
  */
 async function genAll() {
   const force = overwrite.value
+  // **开跑那一刻把项目钉死。**
+  //
+  // 这一轮要跑十几分钟，而下面每一张图原来都现读一次 `session.projectPath`。
+  // 中途在项目库里点了另一部剧，接着那几张就拿**上一部**的角色 id 去新这一
+  // 部出图：id 在新项目里不存在，一路 404，`run` 报一句看不懂的错然后 break
+  // ——而人只是换了个项目看看。活儿是替那一部排的，就一直替那一部跑完。
+  const project = session.projectPath
   // **这一读要包起来。** 它原来是裸的 `await api.assets(...)`：引擎打个嗝、
   // 项目被别处删了，这一下就抛出去成了没人接的 Promise 拒绝——按钮点下去
   // 一点反应都没有，也不报错。而下面每一张图那次调用都是包着的，只有
   // 开头这一读漏了。用同一个 key，读的那几百毫秒里按钮也是灰的。
-  const data = await run(() => api.assets(session.projectPath), { key: 'genall' })
+  const data = await run(() => api.assets(project), { key: 'genall' })
   if (!data) return
   const jobs = []
   for (const c of data.characters ?? []) {
@@ -247,13 +254,13 @@ async function genAll() {
           (extra) =>
             j.kind === 'char'
               ? api.generateReference({
-                  project: session.projectPath,
+                  project,
                   char_id: j.id,
                   slot: j.slot,
                   ...extra,
                 })
               : api.generateLocationReference({
-                  project: session.projectPath,
+                  project,
                   location_id: j.id,
                   ...extra,
                 }),
