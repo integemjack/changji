@@ -995,6 +995,56 @@ void clean_dialogue_text(json& item) {
     }
 }
 
+/// 认不出的枚举取值，当它没填过。
+///
+/// nlohmann 的枚举反序列化在认不出取值时**静默回落到表里第一项**，不报错。
+/// 客户端那条路早就为这件事回头验了一次（`editing.cpp` 的 `parse_enum`，
+/// 对拍语料里 `shot_size: "XXL"` 就是一条 400），**模型这条路一直是照单收
+/// 的**。
+///
+/// 最刺眼的是 shot_size：
+///
+///   缺这个键        → `ShotSize::MS`（中景，结构体默认值）
+///   填「medium」    → `ShotSize::ECU`（**大特写**，表里第一项）
+///
+/// 同一件事——没有可用的取值——两种结果，而且错的那种更离谱：一镜本该是
+/// 中景，出来是一张大特写，全程不报错。camera_angle 一样（缺了是 eye_level，
+/// 认不出是 low 仰拍）。
+///
+/// **是抹掉不是报错**：这一栏填错不值得把另外十几个好镜头一起作废——
+/// 上面 transition_dur_s 那段是同一条理由（「实跑撞上过一次，84 秒的显卡
+/// 时间没了」）。抹掉之后走的是结构体默认值，和模型压根没填这一栏一模一样，
+/// 而那条路流水线本来就走得通。
+template <typename E>
+void drop_if_unknown(json& obj, const char* key) {
+    const auto it = obj.find(key);
+    if (it == obj.end()) return;
+    // **null 也抹掉。** 这几栏都不是可空的（可空的是 location_id 那种，
+    // schema 里写成 anyOf[string, null]）。留着 null 的话，
+    // `NLOHMANN_..._WITH_DEFAULT` 展开出来的 `value(key, 默认值)` 会拿这个
+    // null 去转枚举——照样落到表里第一项，绕过了这道闸。
+    if (!it->is_string()) {
+        obj.erase(key);
+        return;
+    }
+    const std::string want = it->get<std::string>();
+    if (std::string(to_string(it->get<E>())) != want) obj.erase(key);
+}
+
+void drop_unknown_enums(json& item) {
+    if (!item.is_object()) return;
+    drop_if_unknown<ShotSize>(item, "shot_size");
+    drop_if_unknown<CameraAngle>(item, "camera_angle");
+    drop_if_unknown<CameraMove>(item, "camera_move");
+    drop_if_unknown<Lens>(item, "lens");
+    drop_if_unknown<Transition>(item, "transition_in");
+    const auto cit = item.find("characters");
+    if (cit == item.end() || !cit->is_array()) return;
+    for (auto& c : *cit) {
+        if (c.is_object()) drop_if_unknown<FacePose>(c, "face_pose");
+    }
+}
+
 /// 只留下**允许大模型填**的那些字段，台词行里那三项也一并剥掉。
 ///
 /// 上面 `llm_shot_schema` 已经把 schema 裁到 `kLlmShotFields` 了，但那只管
@@ -1098,6 +1148,13 @@ std::vector<Shot> parse_storyboard(const std::string& raw,
         }
 
         if (!item.contains("order")) item["order"] = static_cast<int>(i);
+
+        // **先洗枚举。** 认不出就当没填，别让它悄悄变成表里第一项
+        // （见 drop_unknown_enums）。放在最前面，是因为下面那段
+        // transition_dur_s 要读 `transition_in` 来决定硬切是不是该清零——
+        // 读到一个认不出的值（"wipe"）会走"不是硬切"那一支，而这一栏最后
+        // 又落回 cut，于是出来一个「硬切 + 0.4 秒转场时长」的自相矛盾。
+        drop_unknown_enums(item);
 
         // float(x or 默认值)：0、null、缺失、空串都落到默认值
         double dur = duration_slots().back();

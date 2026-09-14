@@ -384,6 +384,54 @@ TEST_CASE("覆盖检查") {
     }
 }
 
+TEST_CASE("认不出的枚举取值当没填，不能变成表里第一项") {
+    // nlohmann 的枚举反序列化认不出取值时会静默回落到表里第一项。客户端
+    // 那条路早就回头验过一次（editing.cpp 的 parse_enum，对拍语料里
+    // `shot_size: "XXL"` 是一条 400），模型这条路一直照单收。
+    //
+    // 最刺眼的是 shot_size：缺这个键给的是 MS（中景），填「medium」给的
+    // 却是 ECU（**大特写**）——同一件事两种结果，而且错的那种更离谱。
+    const models::AssetLibrary a = test_assets();
+    json doc = json::parse(golden().at("parses").at(0).at("raw").get<std::string>());
+    json& items = (doc.is_object() && doc.contains("shots")) ? doc["shots"] : doc;
+    REQUIRE(items.is_array());
+    REQUIRE_FALSE(items.empty());
+    for (auto& sh : items) {
+        sh["shot_size"] = "medium";        // 认不出 → 原来会变成 ECU
+        sh["camera_angle"] = "45deg";      // 认不出 → 原来会变成 low
+        sh["camera_move"] = "zoom";
+        sh["lens"] = "35mm";
+        sh["transition_in"] = "wipe";
+        if (sh.contains("characters") && sh["characters"].is_array()) {
+            for (auto& c : sh["characters"]) {
+                if (c.is_object()) c["face_pose"] = "side";
+            }
+        }
+    }
+
+    const std::vector<models::Shot> shots = stages::parse_storyboard(doc.dump(), a);
+    REQUIRE_FALSE(shots.empty());
+    bool saw_character = false;
+    for (const models::Shot& s : shots) {
+        CHECK(s.shot_size == models::ShotSize::MS);
+        CHECK(s.camera_angle == models::CameraAngle::EYE_LEVEL);
+        CHECK(s.camera_move == models::CameraMove::STATIC);
+        CHECK(s.lens == models::Lens::AUTO);
+        CHECK(s.transition_in == models::Transition::CUT);
+        for (const models::CharacterInShot& c : s.characters) {
+            saw_character = true;
+            CHECK(c.face_pose == models::FacePose::FRONT);
+        }
+    }
+    CHECK(saw_character);
+
+    // 认得出的取值要原样留着——别把这一条写成"所有枚举都清零"
+    for (auto& sh : items) sh["shot_size"] = "ELS";
+    const std::vector<models::Shot> kept = stages::parse_storyboard(doc.dump(), a);
+    REQUIRE_FALSE(kept.empty());
+    for (const models::Shot& s : kept) CHECK(s.shot_size == models::ShotSize::ELS);
+}
+
 TEST_CASE("模型多填的状态字段一律剥掉") {
     // schema 那边已经把字段裁到 kLlmShotFields 了，但 schema 走的是各家
     // provider 的 response_format——支持得好不好各不相同，不支持的那几家
