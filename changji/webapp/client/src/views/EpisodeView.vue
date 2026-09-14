@@ -68,11 +68,26 @@ const loaded = ref(false)
  * 数写回去了。
  */
 let loadSeq = 0
+/** 现在标签上这几个数是哪一集的。换集要先擦，别让上一集的数挂着。 */
+let shownFor = null
 
 async function load() {
   const mine = ++loadSeq
   const proj = session.projectPath
   const epId = session.episodeId
+  // **换了一集，先擦。** 趟号只挡住"回来晚了别写"，挡不住这一两秒里标签
+  // 上印着什么——不擦的话 ep02 的标签上写着 ep01 的「剧本 1232 字」「镜头
+  // 16 · 差 16 首帧」。擦成 0 之后标签只剩名字（这页本来就有这个分支：没
+  // 剧本、没分镜时只显示名字），那是此刻唯一说得准的。
+  // 切 tab、跑完一轮那两条叫进来时集号没变，不擦，也就不闪。
+  const key = `${proj}\u0000${epId}`
+  if (key !== shownFor) {
+    shownFor = key
+    scriptChars.value = 0
+    shots.value = []
+    outputs.value = 0
+    loaded.value = false
+  }
   if (!proj || !epId) {
     scriptChars.value = 0
     shots.value = []
