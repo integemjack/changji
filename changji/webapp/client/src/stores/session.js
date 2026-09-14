@@ -73,6 +73,27 @@ export const useSession = defineStore('session', () => {
       if (!data.episodeId) selectEpisode('')
     } catch (err) {
       error.value = err.message
+      // **说出来。** 这一条原来只写进 error 就完了，而 `session.error`
+      // 界面上一处都没读——于是这条路整个是哑的：
+      //
+      //   · 400/404（项目被删了、路径不对）：下面把 project 清空，
+      //     而 hasProject 看的是 projectPath，还是真的。结果每一页都
+      //     退成「还没选到某一集 / 顶上挑一集」，顶栏那个集号下拉是空的
+      //     ——一个指着用户去做一件做不到的事的提示，真正的原因一个字没有。
+      //   · 5xx / 连不上：project 和 flow 都留着上一份，页面照旧画着旧数据，
+      //     而侧边栏的对勾、集号、进度全停在上一次成功那一刻。
+      //
+      // 走 `changji:error` 这条自定义事件，和 router.onError 同一个口子
+      // （见 router/index.js）：ToastStack 订着它。store 里不直接叫 ui
+      // store，是为了不让这两个互相认识。
+      //
+      // 不怕刷屏：refresh 是边沿触发的（换项目、换集、干完一件事各一次），
+      // 没有任何一处在轮询它。
+      window.dispatchEvent(
+        new CustomEvent('changji:error', {
+          detail: `读不到这个项目：${err.message}`,
+        }),
+      )
       // 项目被删了或者路径不对，别把坏路径一直留着挡住后面的操作
       if (err.status === 400 || err.status === 404) {
         project.value = null
