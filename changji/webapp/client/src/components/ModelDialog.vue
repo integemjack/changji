@@ -231,6 +231,22 @@ async function save() {
   }
 }
 
+/**
+ * 停下这一轮下载。
+ *
+ * **要接住错。** 这儿原来是模板里直接 `@click="models.stop()"`，而 store
+ * 里那个 stop 是裸的 `await api.cancelSetupDownload()`——取消发不出去（引擎
+ * 正忙、连接断了）就是一个没人接的 Promise 拒绝：按钮点下去没反应，进度条
+ * 还在走，用户只会再点几下。旁边 save / download 两个都是包着的。
+ */
+async function stopDownload() {
+  try {
+    await models.stop()
+  } catch (e) {
+    ui.error('停不下来：' + e.message)
+  }
+}
+
 async function download() {
   busy.value = true
   try {
@@ -383,7 +399,7 @@ async function download() {
                 · 还要 {{ humanTime(models.progress.etaSeconds) }}
               </template>
             </span>
-            <button class="btn btn--ghost btn--sm" type="button" @click="models.stop()">
+            <button class="btn btn--ghost btn--sm" type="button" @click="stopDownload">
               停下
             </button>
           </div>

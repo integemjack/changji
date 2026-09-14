@@ -196,7 +196,12 @@ async function bible() {
  */
 async function genAll() {
   const force = overwrite.value
-  const data = await api.assets(session.projectPath)
+  // **这一读要包起来。** 它原来是裸的 `await api.assets(...)`：引擎打个嗝、
+  // 项目被别处删了，这一下就抛出去成了没人接的 Promise 拒绝——按钮点下去
+  // 一点反应都没有，也不报错。而下面每一张图那次调用都是包着的，只有
+  // 开头这一读漏了。用同一个 key，读的那几百毫秒里按钮也是灰的。
+  const data = await run(() => api.assets(session.projectPath), { key: 'genall' })
+  if (!data) return
   const jobs = []
   for (const c of data.characters ?? []) {
     for (const slot of SLOTS) {
