@@ -276,7 +276,9 @@ watch(
 }
 
 .think__time {
-  color: var(--text-dim);
+  /* 没有 --text-dim 这个变量（是 --text-2 / --text-3）。写错的变量整条
+     声明作废，这几处一直跟着父元素的颜色走——该轻的不轻。 */
+  color: var(--text-3);
 }
 
 .think__n {
@@ -315,7 +317,7 @@ watch(
   overflow-y: auto;
   font-size: 12px;
   line-height: 1.65;
-  color: var(--text-dim);
+  color: var(--text-2);
   white-space: pre-wrap;
   word-break: break-word;
 }

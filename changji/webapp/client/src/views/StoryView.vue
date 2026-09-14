@@ -2613,7 +2613,10 @@ async function stopWriting() {
   border: 1px dashed var(--line);
   border-radius: var(--r);
   padding: 0.75rem 0.9rem;
-  background: var(--bg-soft);
+  /* 没有 --bg-soft 这个变量（tokens.css 里是 --bg-sunken）。写错的变量
+     在 CSS 里不报错，只是整条声明作废——这块板子一直是透明的，而它靠底色
+     和虚线边把"这是过程不是结果"说出来。 */
+  background: var(--bg-sunken);
 }
 .live__dot {
   width: 7px;
@@ -3246,7 +3249,7 @@ async function stopWriting() {
 }
 
 .idea__p {
-  color: var(--text-dim);
+  color: var(--text-2);
   font-size: 13px;
   line-height: 1.6;
 }

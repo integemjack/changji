@@ -274,7 +274,9 @@ const secondsOf = (text) => Math.max(1, Math.round(text.length / props.charsPerS
   border-top: 1px dashed var(--line);
   font-size: var(--fs-sm);
   font-weight: 600;
-  color: var(--fg-dim);
+  /* 没有 --fg-dim（是 --text-2 / --text-3）。作废之后这一行继承正文色，
+     和台词一样重——而它是分场线，本该比内容轻一档。 */
+  color: var(--text-2);
   letter-spacing: 0.02em;
 }
 

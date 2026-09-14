@@ -367,7 +367,9 @@ watch(() => session.projectPath, loadShow, { immediate: true })
 
 .line__k {
   flex: 0 0 4.5rem;
-  color: var(--text-dim);
+  /* 没有 --text-dim（是 --text-2 / --text-3）。别处的 .field__label 用的
+     就是 --text-2，这一行是同一类标签。 */
+  color: var(--text-2);
   font-size: 12px;
 }
 
@@ -379,7 +381,7 @@ watch(() => session.projectPath, loadShow, { immediate: true })
 
 .line__go {
   flex: 0 0 auto;
-  color: var(--text-dim);
+  color: var(--text-3);
 }
 
 .names {

@@ -331,7 +331,9 @@ async function go(row) {
   padding: 4px;
   background: var(--surface);
   border: 1px solid var(--line);
-  border-radius: var(--r-md);
+  /* 没有 --r-md（是 --r-sm / --r / --r-lg）。作废之后这张浮层是方角的，
+     而隔壁那张思考浮层写死 10px，正好是 --r。 */
+  border-radius: var(--r);
   box-shadow: 0 6px 24px rgb(0 0 0 / 0.35);
 }
 /* **手机上这块弹层比屏幕还宽。**
@@ -360,7 +362,7 @@ async function go(row) {
   border: 0;
   border-radius: var(--r-sm);
   background: transparent;
-  color: var(--text-1);
+  color: var(--text);
   font-size: var(--fs-xs);
   text-align: left;
   cursor: pointer;

@@ -1303,7 +1303,7 @@ async function clearRef(charId, slot) {
   position: relative;
   border: 0;
   background: transparent;
-  color: var(--text-1);
+  color: var(--text);
   font-size: var(--fs-sm);
   font-weight: 600;
   cursor: pointer;
