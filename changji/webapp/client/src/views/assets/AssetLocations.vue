@@ -10,7 +10,7 @@
  * 那几个：出分镜之前，AI 按这一集的剧本补新场景；出了分镜之后，按镜头
  * 实际引用的 id 分成「本集用到」和「其他集的」两组。
  */
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, onActivated, onDeactivated, onMounted, onUnmounted, ref, watch } from 'vue'
 
 import AppIcon from '@/components/AppIcon.vue'
 import EmptyState from '@/components/EmptyState.vue'
@@ -219,6 +219,20 @@ async function loadShots() {
 
 onMounted(() => document.addEventListener('keydown', onEsc))
 onUnmounted(() => document.removeEventListener('keydown', onEsc))
+
+/**
+ * **切到别的格子就把 Esc 让出去。**
+ *
+ * 设定那三格被 AssetsView 的 `<KeepAlive>` 冻着——切走是**停用**不是卸载，
+ * `onUnmounted` 不跑，这个 keydown 照样挂在 document 上。而 `onEsc` 只看
+ * 自己的 `openId` 非空，切格子并不会关抽屉：在场景格按一下 Esc，隔壁角色
+ * 格那个看不见的抽屉跟着一起关了，回去才发现它自己合上了。
+ *
+ * 镜头页早有这道（见 EpShots 里 onActivated 那段）。重复 add 同一个函数
+ * 引用是安全的（DOM 去重），首次挂载时两个钩子都跑一遍没关系。
+ */
+onActivated(() => document.addEventListener('keydown', onEsc))
+onDeactivated(() => document.removeEventListener('keydown', onEsc))
 
 watch(() => [session.projectPath, session.episodeId], load, { immediate: true })
 watch(finished, load)   // 画完一张就重拉，刷新过页面的人只剩这条路
