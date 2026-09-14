@@ -33,12 +33,13 @@ import EpScript from '@/views/episode/EpScript.vue'
 import EpShots from '@/views/episode/EpShots.vue'
 import { api } from '@/api'
 import { useAction } from '@/composables/useAction'
-import { useRun } from '@/stores/run'
+import { useRun, useWriter } from '@/stores/run'
 import { useSession } from '@/stores/session'
 import { useUi } from '@/stores/ui'
 
 const session = useSession()
 const runner = useRun()
+const writer = useWriter()
 const ui = useUi()
 const route = useRoute()
 const router = useRouter()
@@ -287,12 +288,18 @@ watch(view, load)
  *
  * 只订"跑完那一下"，不跟着每一镜刷——这一层一次要发四个请求，而跑的过程
  * 中真正要看的是墙，不是标签。出片写盘也正好发生在这一刻，「成片」那个数
- * 跟着一起对上。写整季那条（writer）不订：它动的是故事页那边的东西。
+ * 跟着一起对上。
+ *
+ * ⚠️ **"写"那个槽也要订。** 这儿原来写着「写整季那条（writer）不订：它动
+ * 的是故事页那边的东西」——那句话现在不成立了：同一个槽上跑的还有**批量
+ * 补分镜**（/api/plan/all，直接写这几集的分镜表）和写整季（新建剧集、写
+ * 剧本）。两样动的都正是这一行标签上的数。不订的话，在分集那一格点完
+ * 「批量补分镜」，跑完回到这一页，「镜头」那一格还写着 0。
  */
 watch(
-  () => runner.running,
-  (now, before) => {
-    if (before && !now) load()
+  () => [runner.running, writer.running],
+  ([run, write], [wasRun, wasWrite]) => {
+    if ((wasRun && !run) || (wasWrite && !write)) load()
   },
 )
 </script>
