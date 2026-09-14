@@ -472,6 +472,18 @@ ApiResult get_projects(const config::Settings& settings) {
             }
             if (logline.empty()) logline = project.premise;
 
+            // **砍短了要说一声。**
+            //
+            // 这一行是项目页上「这是哪部剧」的全部内容，而它常常不是一句
+            // 真正的 logline：没写大纲的项目回落到梗概，而梗概能有两千字。
+            // 砍到 80 字不加任何记号的话，屏幕上就是一句从中间断掉的话，
+            // 看着像是内容写坏了——而这一页别处没有第二个地方能对出来。
+            //
+            // 比字节数就够：truncate_utf8 回的是原串的前缀。
+            const std::string one_line = text::collapse_ws(logline);
+            std::string shown = text::truncate_utf8(one_line, 80);
+            if (shown.size() < one_line.size()) shown += "…";
+
             items.push_back({json{
                 {"path", paths::to_utf8(child)},
                 // 目录名单独给，前端不该自己去切路径分隔符，
@@ -485,7 +497,7 @@ ApiResult get_projects(const config::Settings& settings) {
                 {"shots", shots},
                 {"done_shots", done},
                 {"outputs", outputs},
-                {"logline", text::truncate_utf8(text::collapse_ws(logline), 80)},
+                {"logline", shown},
                 {"chapters", chapters},
                 {"written_chapters", written_chapters},
                 {"planned_episodes", planned_episodes},
