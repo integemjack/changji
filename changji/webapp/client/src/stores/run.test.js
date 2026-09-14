@@ -70,6 +70,37 @@ describe('applyMessage', () => {
     expect(s.events.find((e) => e.kind === 'shot_done')?.shot_id).toBe('sh2')
   })
 
+  /**
+   * 首帧和视频都写在固定路径上（`frames/<shot_id>.png`），重出是原地覆盖、
+   * 地址一个字不变——而 /api/media 一个缓存头都不发。墙上那张图靠这个数换
+   * 代：数不动，浏览器就一直给缓存里那张，人盯着看新的出得对不对，看到的
+   * 是旧的。
+   *
+   * 要按镜记，不是记一个全局的：一镜落定就把满墙二十张图全重拉一遍，几十
+   * 分钟一轮下来是几百次请求。
+   */
+  it('每一镜各记各的落定次数：缩略图靠它换代', () => {
+    const s = useRun()
+    const at = (shot, kind) =>
+      s.applyMessage({ type: 'progress', kind, stage: 'draft', shot_id: shot,
+                       step: 1, total: 4, message: '' })
+
+    at('sh1', 'progress')          // 在跑不算落定
+    expect(s.settledBy.get('sh1')).toBe(undefined)
+
+    at('sh1', 'shot_done')
+    at('sh2', 'warn')              // 没过闸也是落定：那一版也换过文件
+    expect(s.settledBy.get('sh1')).toBe(1)
+    expect(s.settledBy.get('sh2')).toBe(1)
+    expect(s.settledBy.get('sh3')).toBe(undefined)
+
+    at('sh1', 'progress')          // 重试
+    at('sh1', 'shot_done')
+    expect(s.settledBy.get('sh1')).toBe(2)
+    // 别的镜头不跟着变——跟着变就等于全局换代，满墙重拉
+    expect(s.settledBy.get('sh2')).toBe(1)
+  })
+
   it('换阶段时，上一阶段留下的全清掉', () => {
     // **这一条是被一个真 bug 逼出来的。** 配音和首帧两个阶段只报 progress、
     // 不报 shot_done，于是跑过的镜头全部永久挂在表里——一集跑完配音之后
