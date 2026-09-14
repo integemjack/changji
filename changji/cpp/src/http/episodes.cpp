@@ -145,6 +145,20 @@ ApiResult get_script_context(const std::string& path,
     const double duration =
         plan != nullptr ? plan->target_duration_s : ep->target_duration_s;
 
+    // 四段按秒怎么排。
+    //
+    // ⚠️ **这里只能按 variation = 0 算，也就是"步步紧逼"那一组**（开场钩子 /
+    // 冲突推进 / 情绪回报 / 集尾留扣）。真正写剧本那一下 variation 是
+    // `random_shape()` 现摇的（见 post_script_write），五组走法里挑一组，
+    // 而那个数**一个字节都没存下来**——这条接口没法知道那一集用的是哪一组。
+    //
+    // 所以这几个 label 只在五分之一的情况下和剧本里的段头对得上：一集写的
+    // 是「【当头一击 0–5 秒】」，这儿报的却是「开场钩子」。秒数也一样，
+    // 三个比例都随 variation 浮动。
+    //
+    // 界面今天不画这一段（四段读数是 ScriptReader 从**剧本正文里的段头**
+    // 解出来的，那才是这一集真正的那一组）。要画之前先想清楚上面这件事，
+    // 或者先把 variation 存进 Episode 里。
     json acts = json::array();
     for (const auto& a : stages::act_plan(duration)) {
         acts.push_back({{"key", a.key},
