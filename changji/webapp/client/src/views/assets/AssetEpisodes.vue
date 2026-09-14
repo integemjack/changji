@@ -19,12 +19,27 @@ import EmptyState from '@/components/EmptyState.vue'
 import { api, mediaUrl } from '@/api'
 import { runAsyncJob } from '@/composables/useAsyncJob'
 import { useAction } from '@/composables/useAction'
+import { useRefStream } from '@/composables/useRefStream'
 import { useSession } from '@/stores/session'
 import { useUi } from '@/stores/ui'
 
 const session = useSession()
 const ui = useUi()
 const { run, isBusy } = useAction()
+/**
+ * 资产库变了就重拉——**这一格也要订**。
+ *
+ * 分集线上那一排人脸和空景图是从资产库来的（`facesOf` / `scenesOf`），
+ * 而资产库是隔壁两格在改：照故事定妆会加人加地方、一键出图会把脸画出来。
+ * 角色格和场景格都订着 `finished`，这一格原来没订——三格被 KeepAlive
+ * 冻着来回切，于是在角色格定完妆切回来，分集线上新角色那一格还是空的，
+ * 非得整个离开「设定」再回来才对。
+ *
+ * （原来这儿挂着 `defineExpose({ load })`，看着像是留给父组件招呼用的，
+ * 但 AssetsView 用的是 `<AssetEpisodes v-else />`——没有 ref，那个口子
+ * 从来没接上过。改成订同一条线，和另外两格一致。）
+ */
+const { finished } = useRefStream()
 
 const story = ref(null)
 const assets = ref(null)
@@ -178,6 +193,7 @@ async function load() {
   }
 }
 watch(() => session.projectPath, load, { immediate: true })
+watch(finished, load)
 
 async function pickDuration(event) {
   const seconds = Number(event.target.value)
@@ -290,7 +306,6 @@ async function planAll() {
   if (result) ui.info(`正在给 ${result.episodes.join('、')} 补分镜，去「这一集」能看进度`)
 }
 
-defineExpose({ load })
 </script>
 
 <template>
