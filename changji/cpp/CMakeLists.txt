@@ -980,6 +980,17 @@ if(CHANGJI_STATIC_RUNTIME AND NOT MSVC)
         # 做成静默跳过而不是报错，是为了让六个平台共用同一行构建命令——
         # 报错的话 CI 矩阵里 macOS 那两格就得单独写一份参数。
         message(STATUS "macOS：CHANGJI_STATIC_RUNTIME 跳过（系统自带 libc++）")
+    elseif(CHANGJI_SD_SYCL OR CMAKE_CXX_COMPILER_ID STREQUAL "IntelLLVM")
+        # **SYCL 那一档也跳过。** icpx 的 -fsycl 和 -static-libstdc++ 互斥，
+        # 它直接拒：
+        #     icpx: error: invalid argument '-static-libstdc++'
+        #                  not allowed with '-fsycl'
+        # 而且**是在链接那一步才报**，前面一整趟编译全白跑（2026-09-14 在
+        # CI 的 linux-x64-sycl 那格实测撞到）。
+        # 这一档本来也不指望"零运行时依赖"：SYCL 的包要求机器上装着 oneAPI
+        # 运行时（MKL 那些按 G 算，塞不进一个 Release 资产），libstdc++
+        # 跟着系统走不多一条依赖。
+        message(STATUS "SYCL：CHANGJI_STATIC_RUNTIME 跳过（-fsycl 不让静态链 libstdc++）")
     else()
         # Linux 上不做全静态：glibc 静态链接会在 getaddrinfo 这类
         # 依赖 NSS 的调用上出问题，而我们要连 LLM 和推理服务，全是域名解析。
