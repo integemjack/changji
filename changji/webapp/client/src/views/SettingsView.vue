@@ -37,6 +37,18 @@ const { run, isBusy } = useAction()
 
 const overview = ref(null)
 const loading = ref(true)
+/**
+ * 这一趟读砸了的话，那句话。
+ *
+ * **没有它的时候，读砸和「还在读」长得一模一样。** 这一页上「引擎」那颗
+ * 牌子判的是 `!overview`——而 overview 读砸了也是 null，于是它永远停在
+ * 「检查中」。偏偏这一节的标题就是「引擎」，人来这儿正是要问一句"它到底
+ * 通不通"，而「检查中」是所有答案里最容易让人干等的那一个。
+ *
+ * 也不能一律写「连不上」：500 是引擎活着但这一趟砸了（配置文件语法错、
+ * 体检里某项抛了），和「没人应答」不是一回事。
+ */
+const loadError = ref('')
 
 const node = ref({ engineBaseUrl: '', engineTimeoutMs: 600000 })
 const conn = ref({})
@@ -228,6 +240,7 @@ async function load() {
     const data = await api.settingsOverview(want)
     if (mine !== loadSeq) return
     overview.value = data
+    loadError.value = ''
     // ⚠️ **改了还没存的那一节不要盖掉。**
     //
     // 这个 load 不只在进页面时跑：**体检那一节的「重新体检」按的就是它**，
@@ -273,6 +286,7 @@ async function load() {
     // 过期那一趟的报错也不算数：上一部剧被删了回的 404 会在新这一部的
     // 页面上弹一句莫名其妙的红字。同 session.refresh 那处。
     if (mine !== loadSeq) return
+    loadError.value = err.message
     ui.error(err.message)
   } finally {
     // 转圈只由最后那一趟关。被顶掉的那趟关掉的话，还在路上的那趟就没有
@@ -533,9 +547,25 @@ function scrollTo(id) {
             <h2 class="sec__t">引擎</h2>
             <span
               class="pill"
-              :class="!overview ? 'pill--neutral' : engineOnline ? 'pill--ok' : 'pill--danger'"
+              :class="
+                loadError
+                  ? 'pill--danger'
+                  : !overview
+                    ? 'pill--neutral'
+                    : engineOnline
+                      ? 'pill--ok'
+                      : 'pill--danger'
+              "
             >
-              {{ !overview ? '检查中' : engineOnline ? `已连接 ${overview.engine?.latencyMs}ms` : '连不上' }}
+              {{
+                loadError
+                  ? '读不到'
+                  : !overview
+                    ? '检查中'
+                    : engineOnline
+                      ? `已连接 ${overview.engine?.latencyMs}ms`
+                      : '连不上'
+              }}
             </span>
             <span class="spacer" />
             <div v-if="!embedded" class="sec__acts">
@@ -550,7 +580,13 @@ function scrollTo(id) {
             </div>
           </div>
           <div class="stack">
-            <p v-if="overview && !engineOnline" class="alert alert--bad">
+            <!-- 读砸了：把引擎自己那句话原样摆出来。「连不上」那条说的是
+                 引擎没应答，这一条说的是这一趟问砸了——两件事分开说。 -->
+            <p v-if="loadError" class="alert alert--bad">
+              <AppIcon name="warn" :size="15" />
+              读不到这一页要的那份：{{ loadError }}
+            </p>
+            <p v-else-if="overview && !engineOnline" class="alert alert--bad">
               <AppIcon name="warn" :size="15" />
               {{ overview?.engine?.error || '引擎离线' }}
             </p>
