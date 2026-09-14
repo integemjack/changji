@@ -235,16 +235,29 @@ const shown = computed(() => {
 
 // ---- 抽屉 ----
 
+/**
+ * 抽屉里能改的那几项。**一份，两处用**：判"改了没保存"和拼 patch。
+ *
+ * 原来这张表在两个地方各写了一遍（`draftDirty` 和 `saveShot`），而它们
+ * 一旦漂开，坏法都是不报错的那种：只加进保存那份，角标和关抽屉时那句
+ * 「改了还没保存」看不见这一项，改完点外面就没了；只加进判脏那份，角标
+ * 亮着而保存不发它，那一项永远回不到"已保存"。
+ *
+ * 台词（`dialogue_texts`）不在这张表里：它是个数组，两处都另外按值比。
+ * 引擎那边的白名单见 editing.cpp 的 `allowed_keys()`——那儿还多一个
+ * `status`，改状态走的是批量那条路（锁定/解锁），不从抽屉发。
+ */
+const DRAFT_KEYS = [
+  'visual_desc', 'first_frame_prompt', 'motion_prompt', 'negative_prompt',
+  'subtitle_text', 'beat', 'shot_size', 'camera_angle', 'camera_move',
+  'transition_in', 'transition_dur_s', 'duration_s', 'needs_lipsync',
+]
+
 const draftDirty = computed(() => {
   if (!draft.value) return false
   const was = shots.value.find((s) => s.shot_id === draft.value.shot_id)
   if (!was) return false
-  const keys = [
-    'visual_desc', 'first_frame_prompt', 'motion_prompt', 'negative_prompt',
-    'subtitle_text', 'beat', 'shot_size', 'camera_angle', 'camera_move',
-    'transition_in', 'transition_dur_s', 'duration_s', 'needs_lipsync',
-  ]
-  if (keys.some((k) => draft.value[k] !== was[k])) return true
+  if (DRAFT_KEYS.some((k) => draft.value[k] !== was[k])) return true
   const nowLines = draft.value.dialogue_texts ?? []
   const wasLines = (was.dialogue ?? []).map((d) => d.text)
   return JSON.stringify(nowLines) !== JSON.stringify(wasLines)
@@ -466,11 +479,7 @@ async function saveShot() {
   if (!draft.value) return
   const was = shots.value.find((s) => s.shot_id === draft.value.shot_id)
   const patch = {}
-  for (const k of [
-    'visual_desc', 'first_frame_prompt', 'motion_prompt', 'negative_prompt',
-    'subtitle_text', 'beat', 'shot_size', 'camera_angle', 'camera_move',
-    'transition_in', 'transition_dur_s', 'duration_s', 'needs_lipsync',
-  ]) {
+  for (const k of DRAFT_KEYS) {
     if (!was || draft.value[k] !== was[k]) patch[k] = draft.value[k]
   }
   const nowLines = draft.value.dialogue_texts ?? []
