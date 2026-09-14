@@ -231,8 +231,20 @@ async function startRename(p) {
   renaming.value = p.path
   newName.value = p.name
   await nextTick()
-  box.value?.focus()
-  box.value?.select()
+  // ⚠️ **这个 ref 挂在 v-for 里的元素上，Vue 收的是数组。**
+  //
+  // 编译产物里那一项带着 `ref_for: true`（`npx vue-tsc` 看不出来，要把
+  // 模板编出来才看得见），于是 `box.value` 是 `[input]` 而不是 input。
+  // 这儿原来写的是 `box.value?.focus()`——`?.` 只判 `box.value` 本身是不是
+  // 空，数组是真值，照走下去调 `box.value.focus()`，**每点一次「改名」
+  // 抛一个 TypeError**，聚焦和全选一件都没发生。
+  //
+  // 而上面那段注释里说的正是没聚焦的后果：清掉 renaming 的三条路
+  // （Enter / Esc / blur）全挂在这个框身上，没聚焦过就永远不会 blur——
+  // 点了改名又去点别的项目，那一行就一直挂着编辑框而不是剧名。
+  const el = Array.isArray(box.value) ? box.value[0] : box.value
+  el?.focus()
+  el?.select()
 }
 
 async function commitRename(p) {
