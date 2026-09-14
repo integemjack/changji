@@ -467,15 +467,25 @@ ApiResult post_script_series(const json& body,
                     continue;
                 }
 
-                const std::string episode_id = next_episode_id(project);
+                // **写回去之前重新读一份。**
+                //
+                // 上面那次生成跑了一两分钟，而 `project` 是那一两分钟**之前**
+                // 读的。把它整份写回去，这期间界面上改的东西全被悄悄吞掉：
+                // 镜头抽屉存的那一笔、改过的集名、手动加的一集、删掉的一集。
+                // 同 post_story_chapters 和 post_plan_all 那两处，理由一样。
+                //
+                // 集号也要按新那份算：这几分钟里手动加过一集的话，照旧那份
+                // 算出来的号会撞上它。
+                Project latest = store.load_project();
+                const std::string episode_id = next_episode_id(latest);
                 Episode ep;
                 ep.episode_id = episode_id;
                 ep.title = draft.title;
                 ep.synopsis = draft.logline;
                 ep.script = draft.render();
                 ep.target_duration_s = duration_s;
-                project.episodes.push_back(std::move(ep));
-                store.save_project(project);
+                latest.episodes.push_back(std::move(ep));
+                store.save_project(latest);
 
                 p.add_episode(json{
                     {"episode_id", episode_id},
