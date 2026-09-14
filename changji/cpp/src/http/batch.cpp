@@ -175,6 +175,14 @@ ApiResult post_story_chapters(const json& body,
         throw ApiError(409, "已经在写了");
     }
     ProjectStore store = open_project(body);
+    // **回给界面的项目串，用客户端自己发来的那一份。**
+    //
+    // 不能用 `store.root()`：ProjectPaths 的构造会做 weakly_canonical
+    // （见 project.cpp），而界面手里那串来自项目列表、不保证规范化过
+    // ——macOS 上 /tmp 会解成 /private/tmp 这类符号链接，两串就对不上。
+    // 下面那条流式正文要靠这串让界面认"这是不是我这部剧的"；对不上的话
+    // 收到的正文会被整个丢掉，而且是静默的。
+    const std::string client_project = need_str(body, "project");
     const Project project = load_or_400(store);
 
     Story story;
@@ -198,7 +206,7 @@ ApiResult post_story_chapters(const json& body,
     const models::StyleLine style = project.style_line;
     const bool started = pipeline::jobs().start(
         pipeline::JobKind::Write, "",
-        [store, client, todo, style](pipeline::JobProgress& p) {
+        [store, client, todo, style, client_project](pipeline::JobProgress& p) {
             p.set_total(static_cast<int>(todo.size()));
             // 推流式正文要用它。**按类订阅也收得到**：Hub 把 job_id 里第一个
             // '-' 之前的部分当类名（"write-a3f…" → "write"），而客户端只订
@@ -304,7 +312,7 @@ ApiResult post_story_chapters(const json& body,
                                 ws::hub().broadcast(
                                     job_id, {{"type", "story_token"},
                                              {"job_id", job_id},
-                                             {"project", paths::to_utf8(store.root())},
+                                             {"project", client_project},
                                              {"chapter_id", id},
                                              {"seq", seq++},
                                              {"text", fresh}});

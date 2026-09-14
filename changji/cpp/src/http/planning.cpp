@@ -388,6 +388,14 @@ ApiResult post_bible(const json& body, llm::Client& client,
 
     ProjectStore store = open_project(body);
     const Project project = load_or_400(store);
+    // **先验一遍资产库读不读得动，再去跑大模型。**
+    //
+    // 真正要用的那一份在 merge_bible 里现读（那是为了不吞掉出圣经这一分钟
+    // 里用户在抽屉里改的东西，理由写在那儿）。但"文件本身是坏的"这件事要
+    // 早说：不验的话，一个坏掉的 assets.json 会让人白等一分钟大模型，
+    // 回来才看到 400。库不存在不算坏——load_assets 回一个空库，新项目第一次
+    // 定妆走的正是这条。
+    load_assets_or_400(store);
 
     // **顶栏那本账要记上。** 这是个同步接口，没有任务表那一套，
     // 2026-09-13 之前它在界面上整个不可见——而它占着 LLM 槽，
