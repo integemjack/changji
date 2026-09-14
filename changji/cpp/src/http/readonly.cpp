@@ -4,6 +4,7 @@
 #include <cctype>
 #include <cmath>
 #include <filesystem>
+#include <set>
 
 #include "config/settings.hpp"
 #include "models/hardware.hpp"
@@ -375,12 +376,22 @@ ApiResult get_projects(const config::Settings& settings) {
             try {
                 project = store.load_project();
             } catch (const std::exception& e) {
+                // **mtime 用目录自己的，不是 0.0。** 传 0.0 的话下面那个
+                // 降序 stable_sort 会把坏掉的项目永久钉在列表最后一条——
+                // 而「出问题的东西」正该是最先看见的。
                 items.push_back({json{{"path", paths::to_utf8(child)},
                                       {"dir", dir_name},
                                       {"name", dir_name},
                                       {"broken", e.what()}},
-                                 0.0});
+                                 util::file_mtime_unix(child)});
                 continue;
+            }
+
+            // **正片和预告分开数。** 预告片和正片同住 project.episodes，
+            // 混在一起数的话，一部只剪了预告的剧在项目库里显示成「1 集」。
+            int episode_count = 0;
+            for (const auto& ep : project.episodes) {
+                if (is_regular_episode(ep.episode_id)) ++episode_count;
             }
 
             int shots = 0, done = 0;
@@ -394,11 +405,29 @@ ApiResult get_projects(const config::Settings& settings) {
                 }
             }
 
+            // 成片数。**只认文件名恰好等于某一集正片 id 的那些。**
+            //
+            // 装配写出去的名字就是 `episode_id + ".mp4"`（见 media/assemble
+            // 那一头），所以正着匹配即可。反过来"排除预告"用子串判是错的：
+            // 任何一个短 id（`ep`、`e` 这种，POST /api/episode 不拦长度）都会
+            // 命中全部 epNN.mp4，一部全出完的剧 outputs 恒为 0。
+            //
+            // 顺带把分母兜住：这么数出来的 outputs 天然 ≤ 正片集数，不会出现
+            // 「删了几集但 output 目录里的 mp4 还在」导致进度条永远满格。
+            std::set<std::string> regular_ids;
+            for (const auto& ep : project.episodes) {
+                if (is_regular_episode(ep.episode_id)) {
+                    regular_ids.insert(ep.episode_id);
+                }
+            }
             int outputs = 0;
             const fs::path out_dir = store.paths().output();
             if (fs::is_directory(out_dir, ec)) {
                 for (const auto& f : fs::directory_iterator(out_dir, ec)) {
-                    if (f.path().extension() == ".mp4") ++outputs;
+                    if (f.path().extension() != ".mp4") continue;
+                    if (regular_ids.count(paths::to_utf8(f.path().stem())) != 0) {
+                        ++outputs;
+                    }
                 }
             }
 
@@ -421,6 +450,7 @@ ApiResult get_projects(const config::Settings& settings) {
             // 里面）。但这个列表本来就在读 project.json，而那个装着整张
             // 分镜表，通常更大——多这一份不改变量级。
             std::string logline;
+            std::string story_broken;
             int chapters = 0;
             int written_chapters = 0;
             int planned_episodes = 0;
@@ -430,9 +460,15 @@ ApiResult get_projects(const config::Settings& settings) {
                 chapters = static_cast<int>(story.chapters.size());
                 written_chapters = story.written_chapters();
                 planned_episodes = static_cast<int>(story.plan.size());
-            } catch (const std::exception&) {
+            } catch (const std::exception& e) {
                 // 读不了就当没有。**一个坏掉的 story.json 不该让整个项目库
                 // 列不出来**——那时候用户连"去哪个项目修它"都看不见。
+                //
+                // **但要把「坏了」和「空的」分开。** 2026-09-14 之前这里
+                // 一声不吭，于是一个正文全写完、只是 JSON 崩了的项目，在
+                // 项目库里和 smoke-tmp 那种空壳长得一模一样（都是「还没写
+                // 故事」）——顺手删掉的正是投入最多的那一个。
+                story_broken = e.what();
             }
             if (logline.empty()) logline = project.premise;
 
@@ -442,8 +478,10 @@ ApiResult get_projects(const config::Settings& settings) {
                 // 那段代码在 Windows 和容器里得写两套
                 {"dir", dir_name},
                 {"name", project.title.empty() ? dir_name : project.title},
-                {"style_line", to_string(project.style_line)},
-                {"episodes", static_cast<int>(project.episodes.size())},
+                // ⚠️ **style_line 2026-09-14 摘掉了。** 引擎每次列项目都算，
+                // 而前端全库零引用——画风属于「这一部剧的详情」，归项目页
+                // 的「这部片子」那个弹窗。
+                {"episodes", episode_count},
                 {"shots", shots},
                 {"done_shots", done},
                 {"outputs", outputs},
@@ -451,6 +489,7 @@ ApiResult get_projects(const config::Settings& settings) {
                 {"chapters", chapters},
                 {"written_chapters", written_chapters},
                 {"planned_episodes", planned_episodes},
+                {"story_broken", story_broken},
                 {"mtime", mtime},
             }, mtime});
         }

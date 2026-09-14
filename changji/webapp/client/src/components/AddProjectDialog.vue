@@ -29,6 +29,20 @@ const openPath = ref('')
 
 const workspace = computed(() => store.workspace || '工作目录')
 
+/**
+ * 填的这条路径在不在项目库目录下面。
+ *
+ * 库里的接进来之后栏上本来就有它那一条；**库外的没有**——引擎那份列表
+ * 只扫工作目录，而全仓没有任何「最近打开」的登记。这件事要在人填之前说，
+ * 不是切走之后才发现回不去。
+ */
+const inWorkspace = computed(() => {
+  const w = (store.workspace || '').replace(/[\\/]+$/, '').toLowerCase()
+  const v = openPath.value.trim().replace(/[\\/]+$/, '').toLowerCase()
+  if (!w || !v) return true // 还没填就别先吓人
+  return v.startsWith(w + '\\') || v.startsWith(w + '/')
+})
+
 // 每次打开都从头来。留着上次的输入，第二次打开会看见一个填了一半的框，
 // 而那多半是上次放弃掉的东西。
 watch(
@@ -148,9 +162,15 @@ async function openExisting() {
                 placeholder="例如：E:\AI短剧\雨夜天台"
                 @keyup.enter="openExisting"
               />
+              <!-- ⚠️ **别再写「它会出现在项目库里」。** 项目库那条栏只列
+                   工作目录下面的项目（引擎 get_projects 扫的就是那一个
+                   目录），库外的目录接进来只是把它设成当前项目，栏上没有
+                   它那一条，也没有任何「最近打开」的登记——切走之后界面上
+                   没有一个地方能把这条路径想起来。 -->
               <span class="field__hint">
                 得是一个已经建好的项目目录（里面有 project.json）。
-                接进来之后它会出现在右边的项目库里。
+                <strong v-if="!inWorkspace">它不在项目库目录下，接进来只对这一次有效——
+                栏上不会有它那一条，切走之后要再打一遍这条路径。</strong>
               </span>
             </label>
           </template>

@@ -85,6 +85,7 @@ async function saveModelsDir() {
 
 const SECTIONS = [
   { id: 'doctor', title: '体检' },
+  { id: 'look', title: '界面' },
   { id: 'engine', title: '引擎' },
   // 「大模型」那一节 2026-09-14 整个删了（用户：「加上 key，去掉设置里的
   // 大模型选择」）。服务、模型名、接口地址、密钥、温度全在项目页点模型名
@@ -397,6 +398,23 @@ function scrollTo(id) {
               </div>
             </details>
           </div>
+        </section>
+
+        <!-- 界面。**这一节是拖拽换边的替代品。**
+             项目库那条栏原来靠拖栏头换边（约 110 行 + 一个只为
+             setPointerCapture 存在的守卫函数），而靠哪边一辈子设一次，
+             是「改的时候才要的」。主题不在这儿：顶栏右上那个图标就是它。 -->
+        <section id="sec-look" class="sec">
+          <div class="sec__head">
+            <h2 class="sec__t">界面</h2>
+          </div>
+          <label class="field">
+            <span class="field__label">项目库靠哪边</span>
+            <select v-model="ui.railSide" class="select">
+              <option value="right">右边</option>
+              <option value="left">左边</option>
+            </select>
+          </label>
         </section>
 
         <!-- 引擎 -->

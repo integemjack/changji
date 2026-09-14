@@ -286,6 +286,207 @@ TEST_CASE("正在跑的时候不让删项目") {
     pipeline::jobs().wait_idle();
 }
 
+TEST_CASE("确认名字：目录名和剧名都认") {
+    // 2026-09-14 之前只认目录名，而界面上到处显示的是剧名——一个目录叫
+    // convenience-store、剧名叫「深夜便利店」的项目，确认框要你打剧名才
+    // 解锁，打完提交引擎回 400 要目录名，这条路彻底堵死。
+    Workspace ws("双名");
+    const fs::path proj = ws.settings.workspace_path() / "convenience-store";
+    models::ProjectStore::create(proj, "convenience-store", "深夜便利店");
+
+    // 剧名认
+    auto r = http::guard([&] {
+        return http::post_delete_project(
+            json{{"path", paths::to_utf8(proj)}, {"confirm_name", "深夜便利店"}},
+            ws.settings);
+    });
+    CHECK(r.status == 200);
+    CHECK_FALSE(fs::exists(proj));
+
+    // 目录名也认
+    const fs::path again = ws.settings.workspace_path() / "corner-shop";
+    models::ProjectStore::create(again, "corner-shop", "拐角小店");
+    r = http::guard([&] {
+        return http::post_delete_project(
+            json{{"path", paths::to_utf8(again)}, {"confirm_name", "corner-shop"}},
+            ws.settings);
+    });
+    CHECK(r.status == 200);
+
+    // 两个都不是的还是拦住，而且报的是目录名——那是磁盘上的身份
+    const fs::path third = ws.settings.workspace_path() / "third-shop";
+    models::ProjectStore::create(third, "third-shop", "第三家");
+    r = http::guard([&] {
+        return http::post_delete_project(
+            json{{"path", paths::to_utf8(third)}, {"confirm_name", "随便打的"}},
+            ws.settings);
+    });
+    CHECK(r.status == 400);
+    CHECK(fs::is_directory(third));
+}
+
+TEST_CASE("跑片的闸只挡正在跑的那个项目") {
+    // 单卡上一集要跑很久，而「趁着在跑顺手把测试残留清了」恰恰是这段时间
+    // 最想干的事。原来这道闸不看路径，任何项目都删不掉。
+    Workspace ws("跑着删别的");
+    const fs::path busy = make_project(ws, "在跑的");
+    const fs::path idle = make_project(ws, "闲着的");
+
+    pipeline::jobs().cancel(pipeline::JobKind::Run);
+    pipeline::jobs().wait_idle();
+    std::atomic<bool> release{false};
+    pipeline::jobs().start(
+        pipeline::JobKind::Run, "ep01",
+        [&release](pipeline::JobProgress& p) {
+            while (!release.load() && !p.cancelled()) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            }
+        },
+        "", paths::to_utf8(busy));
+
+    // 正在跑的那个：挡
+    auto r = http::guard([&] {
+        return http::post_delete_project(
+            json{{"path", paths::to_utf8(busy)}, {"confirm_name", "在跑的"}},
+            ws.settings);
+    });
+    CHECK(r.status == 409);
+    CHECK(fs::is_directory(busy));
+
+    // 别的项目：放行
+    r = http::guard([&] {
+        return http::post_delete_project(
+            json{{"path", paths::to_utf8(idle)}, {"confirm_name", "闲着的"}},
+            ws.settings);
+    });
+    CHECK(r.status == 200);
+    CHECK_FALSE(fs::exists(idle));
+
+    release = true;
+    pipeline::jobs().cancel(pipeline::JobKind::Run);
+    pipeline::jobs().wait_idle();
+}
+
+TEST_CASE("不知道在跑哪个项目时一律挡住") {
+    // start 的 project 是尾参、默认空串，留空表示"不知道"。放行等于可能
+    // 删掉正在跑的那个——比误挡严重得多，所以 fail-closed。
+    Workspace ws("不知道跑哪个");
+    const fs::path proj = make_project(ws, "无辜的");
+
+    pipeline::jobs().cancel(pipeline::JobKind::Run);
+    pipeline::jobs().wait_idle();
+    std::atomic<bool> release{false};
+    pipeline::jobs().start(pipeline::JobKind::Run, "ep01",
+                           [&release](pipeline::JobProgress& p) {
+                               while (!release.load() && !p.cancelled()) {
+                                   std::this_thread::sleep_for(
+                                       std::chrono::milliseconds(1));
+                               }
+                           });
+
+    const auto r = http::guard([&] {
+        return http::post_delete_project(
+            json{{"path", paths::to_utf8(proj)}, {"confirm_name", "无辜的"}},
+            ws.settings);
+    });
+    CHECK(r.status == 409);
+    CHECK(fs::is_directory(proj));
+
+    release = true;
+    pipeline::jobs().cancel(pipeline::JobKind::Run);
+    pipeline::jobs().wait_idle();
+}
+
+TEST_CASE("改剧名：只动 title，目录一个字不改") {
+    Workspace ws("改名");
+    const fs::path proj = make_project(ws, "原来的名字");
+
+    auto r = http::guard([&] {
+        return http::post_project_rename(
+            json{{"project", paths::to_utf8(proj)}, {"title", "  深夜便利店  "}});
+    });
+    REQUIRE(r.status == 200);
+    CHECK(r.body.at("title") == "深夜便利店");  // 两端空白去掉
+    CHECK(fs::is_directory(proj));              // 目录没搬
+    CHECK(models::ProjectStore(proj).load_project().title == "深夜便利店");
+
+    // 空名字拦住：放过去的话列表会回落到目录名，看着像"改名没生效"
+    r = http::guard([&] {
+        return http::post_project_rename(
+            json{{"project", paths::to_utf8(proj)}, {"title", "   "}});
+    });
+    CHECK(r.status == 400);
+    CHECK(models::ProjectStore(proj).load_project().title == "深夜便利店");
+}
+
+TEST_CASE("正在跑时改名也挡住：跑的那一头会把 title 整份盖回去") {
+    Workspace ws("跑着改名");
+    const fs::path busy = make_project(ws, "在跑的");
+    const fs::path idle = make_project(ws, "闲着的");
+
+    pipeline::jobs().cancel(pipeline::JobKind::Run);
+    pipeline::jobs().wait_idle();
+    std::atomic<bool> release{false};
+    pipeline::jobs().start(
+        pipeline::JobKind::Run, "ep01",
+        [&release](pipeline::JobProgress& p) {
+            while (!release.load() && !p.cancelled()) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            }
+        },
+        "", paths::to_utf8(busy));
+
+    auto r = http::guard([&] {
+        return http::post_project_rename(
+            json{{"project", paths::to_utf8(busy)}, {"title", "新名字"}});
+    });
+    CHECK(r.status == 409);
+    CHECK(models::ProjectStore(busy).load_project().title == "在跑的");
+
+    // 别的项目照样能改
+    r = http::guard([&] {
+        return http::post_project_rename(
+            json{{"project", paths::to_utf8(idle)}, {"title", "改成功了"}});
+    });
+    CHECK(r.status == 200);
+
+    release = true;
+    pipeline::jobs().cancel(pipeline::JobKind::Run);
+    pipeline::jobs().wait_idle();
+}
+
+TEST_CASE("正在跑的项目在删除目标底下也要挡：remove_all 是递归的") {
+    Workspace ws("套娃");
+    const fs::path outer = make_project(ws, "外层");
+    const fs::path inner = outer / paths::from_utf8("试拍");
+    models::ProjectStore::create(inner, "shipai", "试拍");
+
+    pipeline::jobs().cancel(pipeline::JobKind::Run);
+    pipeline::jobs().wait_idle();
+    std::atomic<bool> release{false};
+    pipeline::jobs().start(
+        pipeline::JobKind::Run, "ep01",
+        [&release](pipeline::JobProgress& p) {
+            while (!release.load() && !p.cancelled()) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            }
+        },
+        "", paths::to_utf8(inner));
+
+    // 删外层会把正在跑的内层一起 remove_all 掉
+    const auto r = http::guard([&] {
+        return http::post_delete_project(
+            json{{"path", paths::to_utf8(outer)}, {"confirm_name", "外层"}},
+            ws.settings);
+    });
+    CHECK(r.status == 409);
+    CHECK(fs::is_directory(inner));
+
+    release = true;
+    pipeline::jobs().cancel(pipeline::JobKind::Run);
+    pipeline::jobs().wait_idle();
+}
+
 TEST_CASE("改梗概") {
     Workspace ws("梗概");
     const fs::path proj = make_project(ws, "改梗概的");

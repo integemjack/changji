@@ -51,9 +51,20 @@ const modelKey = ref('') // 打开的是哪一组的弹窗，空串是没开
 /** 项目库里这一条。统计和阶段都从它来，和右边那条栏读的是同一份。 */
 const me = computed(() => store.byPath(session.projectPath))
 const stage = computed(() => (me.value ? projectStage(me.value) : null))
-const title = computed(
-  () => session.project?.title || session.project?.project_id || '',
-)
+/**
+ * 目录名。删除确认按它——见模板里那段。
+ *
+ * ⚠️ **不能回落到 project_id。** 那是个 slug（`text::project_slug` 生成），
+ * 和目录名是两个字段，语料里就有不相等的例子（目录「项目_雨夜天台」、
+ * project_id「yuye-tiantai」）。拿它冒充目录名，等于把刚修好的那个死结
+ * 挪到 fallback 分支上：照着提示打完，引擎照样 400。
+ * 列表还没读到时（me 为空）就从路径末段取。
+ */
+const dirName = computed(() => {
+  if (me.value?.dir) return me.value.dir
+  const path = session.projectPath || ''
+  return path.split(/[\\/]+/).filter(Boolean).pop() || ''
+})
 
 /** 「这部片子」那一行的答案：画幅 · 尺寸 · 画风开头一句。 */
 const show = ref(null)
@@ -79,7 +90,7 @@ async function loadShow() {
 async function remove() {
   const path = session.projectPath
   const done = await run(
-    () => api.deleteProject({ path, confirm_name: confirmName.value }),
+    () => api.deleteProject({ path, confirm_name: dirName.value }),
     { key: 'delete', success: '已删除' },
   )
   if (!done) return
@@ -124,7 +135,10 @@ watch(() => session.projectPath, loadShow, { immediate: true })
     <template v-if="session.hasProject">
       <!-- 这是哪部剧 -->
       <div class="head">
-        <p class="lead" :class="{ dim: !me?.logline }">{{ me?.logline || '还没写故事' }}</p>
+        <!-- 没写故事时这一行直接不渲染。原来兜底印一句「还没写故事」，
+             而栏里那条和下面进度条说的是同一件事，空话不占一行。 -->
+        <p v-if="me?.logline" class="lead">{{ me.logline }}</p>
+        <span v-else class="spacer" />
         <button class="btn btn--ghost btn--sm" type="button" title="抄走路径" @click="copyPath">
           <AppIcon name="folder" :size="14" />
         </button>
@@ -139,24 +153,33 @@ watch(() => session.projectPath, loadShow, { immediate: true })
       </div>
 
       <div v-if="removing" class="row row--wrap confirm-row">
+        <!-- ⚠️ **要打的是目录名，不是剧名。** 引擎比的是目录名
+             （post_delete_project 的闸三），而这儿原来比的是 title——
+             一个目录叫 convenience-store、剧名叫「深夜便利店」的项目，
+             按钮要你打剧名才解锁，打完提交引擎回 400 要目录名，这条路
+             彻底堵死。引擎现在两个都收，界面统一说目录名：它是磁盘上的
+             身份，也是唯一不会被改名改掉的那个串。 -->
         <input
           v-model="confirmName"
           class="input confirm"
-          :placeholder="'照着打一遍「' + title + '」'"
+          :placeholder="'照着打一遍目录名「' + dirName + '」'"
         />
         <button
           class="btn btn--danger btn--sm"
           type="button"
-          :disabled="confirmName !== title || isBusy('delete')"
+          :disabled="confirmName !== dirName || isBusy('delete')"
           @click="remove"
         >
           永久删除
         </button>
       </div>
 
-      <!-- 到哪一步了 -->
-      <div v-if="stage" class="progress">
-        <span class="stage tiny" :class="`stage--${stage.tone}`">{{ stage.label }}</span>
+      <!-- 到哪一步了。
+           **只剩进度条，那句话删了**：项目库那条栏里高亮的这一条写的是
+           同一个函数、同一份数据算出来的同一句，两处在 /project 上左右
+           并排。空壳项目上更难看——栏里四行「还没写故事」，这儿一句，
+           logline 兜底再一句，一屏三遍。 -->
+      <div v-if="stage" class="progress" :title="stage.label">
         <div class="bar">
           <div
             class="bar__fill"
@@ -203,7 +226,7 @@ watch(() => session.projectPath, loadShow, { immediate: true })
       icon="folder"
       tone="warn"
       title="还没选项目"
-      hint="在右边项目库里点一个，或者新建一个"
+      hint="在项目库那条栏里点一个，或者点栏头的加号建一个"
     />
 
     <ShowDialog :open="showOpen" @close="showOpen = false" @saved="loadShow" />
@@ -257,6 +280,22 @@ watch(() => session.projectPath, loadShow, { immediate: true })
 .bar__fill {
   height: 100%;
   background: var(--accent);
+}
+/* ⚠️ **四个 tone 都得有类。** 模板里拼的是 `bar__fill--${stage.tone}`，
+   而这四个 modifier 2026-09-14 之前一个都没定义——拼出来是不存在的选择器，
+   全落回上面那条橙。阶段那句话删掉之后（栏里已经写着同一句），颜色是这条
+   进度条**唯一**还能区分"跑完了"和"读不了"的通道，不能再是同一个橙。 */
+.bar__fill--ok {
+  background: var(--ok);
+}
+.bar__fill--warn {
+  background: var(--warn);
+}
+.bar__fill--bad {
+  background: var(--danger);
+}
+.bar__fill--dim {
+  background: var(--text-3);
 }
 
 /* 一行答案。整行可点——点哪儿都是"我要改这个"。 */

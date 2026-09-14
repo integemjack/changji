@@ -114,6 +114,8 @@ export const api = {
   project: (path) => get('/api/project', { path }),
   newProject: (payload) => post('/api/new', payload),
   deleteProject: (payload) => post('/api/project/delete', payload),
+  /** 改剧名。只动 project.json 的 title，目录不搬——目录名是项目的身份。 */
+  renameProject: (payload) => post('/api/project/rename', payload),
   savePremise: (payload) => post('/api/project/premise', payload),
 
   // ---- 引擎：剧本 ----

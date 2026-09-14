@@ -1480,6 +1480,12 @@ void run(const config::Settings& settings, const Options& opts) {
             return json_response(r.body, r.status);
         });
 
+    CROW_ROUTE(app, "/api/project/rename").methods("POST"_method)(
+        [](const crow::request& req) {
+            auto r = guard([&] { return post_project_rename(parse_body(req.body)); });
+            return json_response(r.body, r.status);
+        });
+
     CROW_ROUTE(app, "/api/project/delete").methods("POST"_method)(
         [](const crow::request& req) {
             auto r = guard([&] {

@@ -108,11 +108,15 @@ function cycleTheme() {
         <span class="brand__mark">场</span>
       </RouterLink>
 
+      <!-- **写「这一部剧」不写「换个项目」。** 它去的是 /project，而那一页
+           是这一部剧的进度和设置（画幅、模型、删除），根本没有项目列表——
+           换项目唯一的地方是项目库那条栏。标签指错地方的后果：想删项目的
+           人不会点它，想换项目的人点进去连提示都看不到。 -->
       <button
         v-if="session.hasProject"
         class="proj"
         type="button"
-        title="换个项目"
+        title="这一部剧的进度和设置"
         @click="router.push('/project')"
       >
         <AppIcon name="folder" :size="14" />

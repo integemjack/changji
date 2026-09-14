@@ -267,6 +267,13 @@ public:
     nlohmann::json running_jobs() const;
 
     bool running(JobKind kind) const;
+
+    /// 这个槽此刻在跑哪个项目（目录绝对路径）。没在跑返回空串。
+    ///
+    /// ⚠️ **空串有歧义**：既可能是「没在跑」，也可能是「在跑但发起方没告诉
+    /// 我们是哪个项目」（start 的 project 是尾参，默认空串）。调用方拿它做
+    /// 闸的时候必须 fail-closed——见 post_delete_project。
+    std::string running_project(JobKind kind) const;
     /// 这一轮还没落定的镜头。见 JobState::pending。
     std::vector<std::string> pending(JobKind kind) const;
     std::string job_id(JobKind kind) const;

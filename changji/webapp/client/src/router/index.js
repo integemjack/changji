@@ -39,8 +39,6 @@ export const STEP_ROUTES = [
     name: 'project',
     phase: 'series',
     title: '项目',
-    // 别在这儿写「右边」——项目库能拖到左边去，写死了就有一半时候是错的
-    tagline: '这一部剧的进度和设置。换一部在项目库里点',
     icon: 'folder',
     component: () => import('@/views/ProjectView.vue'),
   },
@@ -53,7 +51,6 @@ export const STEP_ROUTES = [
     name: 'story',
     phase: 'series',
     title: '故事',
-    tagline: '原稿。选中一段就能让 AI 改它',
     icon: 'script',
     // **宽页**：页面本身不滚，滚的是编辑器那一格；外壳不加最大宽度和内边距。
     // 这一页自己排三栏（章节、正文、对话），边距是它自己的事。
@@ -74,7 +71,6 @@ export const STEP_ROUTES = [
     name: 'assets',
     phase: 'series',
     title: '设定',
-    tagline: '谁、哪儿、怎么切。全剧共用一套',
     icon: 'user',
     component: () => import('@/views/AssetsView.vue'),
   },
@@ -97,7 +93,6 @@ export const STEP_ROUTES = [
     name: 'episode',
     phase: 'episode',
     title: '这一集',
-    tagline: '剧本、镜头、成片、发布，都在这一集上',
     icon: 'board',
     component: () => import('@/views/EpisodeView.vue'),
   },

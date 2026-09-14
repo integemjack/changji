@@ -64,6 +64,39 @@ describe('projectStage', () => {
     expect(s.key).toBe('film')
   })
 
+  it('十二集只出了一条片，不该跟全出完了长得一样', () => {
+    // 原来 outputs > 0 就判 100%，进度条上两种都是满格
+    const few = projectStage(P({ episodes: 12, shots: 100, done_shots: 100, outputs: 1 }))
+    const all = projectStage(P({ episodes: 12, shots: 100, done_shots: 100, outputs: 12 }))
+    expect(few.key).toBe('film')
+    expect(few.percent).toBeLessThan(all.percent)
+    expect(few.label).toBe('1/12 集已出片')
+    expect(all.label).toBe('12 集已出片')
+    expect(all.percent).toBe(100)
+    expect(few.tone).toBe('accent')
+    expect(all.tone).toBe('ok')
+  })
+
+  it('分集表算了几集、真落成了几集，是两个数', () => {
+    // planned_episodes 引擎一直在算，2026-09-14 之前前端一处都没读
+    const s = projectStage(P({ episodes: 3, planned_episodes: 10 }))
+    expect(s.key).toBe('planned')
+    expect(s.label).toBe('10 集里落成 3 集，还没分镜')
+    // 两个数一样时不啰嗦
+    expect(projectStage(P({ episodes: 3, planned_episodes: 3 })).label).toBe('3 集，还没分镜')
+  })
+
+  it('故事文件坏了，不能说成还没写故事', () => {
+    // 一个正文全写完、只是 JSON 崩了的项目，原来和空壳长得一模一样，
+    // 顺手删掉的正是投入最多的那一个
+    const s = projectStage(P({ story_broken: 'parse error at line 3' }))
+    expect(s.key).toBe('story-broken')
+    expect(s.tone).toBe('bad')
+    expect(s.label).not.toBe('还没写故事')
+    // 但只是故事那一份坏了：有分镜有成片的照常报进度，别盖掉真实进度
+    expect(projectStage(P({ story_broken: 'x', episodes: 2, shots: 9 })).key).toBe('ready')
+  })
+
   it('坏项目优先说读不了', () => {
     expect(projectStage({ broken: '文件损坏', outputs: 5 }).key).toBe('broken')
   })

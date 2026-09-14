@@ -128,16 +128,51 @@ ApiResult post_new_project(const json& body, const config::Settings& settings) {
     }
 }
 
+namespace {
+
+/// 正在跑就别动这个项目的 project.json。
+///
+/// 跑到一半删项目，工作线程下一次写盘会写到一个不存在的目录上，报的错和
+/// "删项目"八竿子打不着；改名更阴——rename 读一份快照改一个字段写回去，
+/// 而工作线程手里那份整份快照几十秒后照样落盘，**新名字被静默盖回旧的**，
+/// 全程 200，界面上看着像"改名没生效"。
+///
+/// 2026-09-14 之前这道闸只在删除那条路上，而且不看路径、只问「有没有 Run
+/// 在跑」：单卡上一集要跑很久，而「趁着在跑顺手把测试残留清了」恰恰是这段
+/// 时间最想干的事，人会收到一句和自己的操作对不上的 409；同时它**漏了
+/// Write**（写整季、批量排分镜），那类任务照样往项目目录里写盘。
+///
+/// ⚠️ **三种"不确定"一律按挡处理**（fail-closed）：
+///   · 发起方没说在跑哪个（start 的 project 是尾参，默认空串）；
+///   · 那条路径规范化失败（权限、盘符掉线、超长路径）；
+///   · 正在跑的项目在目标**底下**——删除是 remove_all，递归的。
+/// 放行的代价是弄坏正在跑的那一趟，比误挡严重得多。
+void guard_not_running(const fs::path& canon, const char* verb) {
+    for (const auto kind : {pipeline::JobKind::Run, pipeline::JobKind::Write}) {
+        if (!pipeline::jobs().running(kind)) continue;
+        const std::string busy = pipeline::jobs().running_project(kind);
+        if (busy.empty()) {
+            throw ApiError(409, std::string("正在跑，") + verb +
+                                    "了会把跑到一半的东西弄坏");
+        }
+        std::error_code bec;
+        const fs::path busy_path =
+            fs::weakly_canonical(paths::from_utf8(busy), bec);
+        const bool same_or_inside =
+            bec || busy_path == canon || strictly_inside(busy_path, canon);
+        if (same_or_inside) {
+            throw ApiError(409, std::string("这个项目正在跑，") + verb +
+                                    "了会把跑到一半的东西弄坏");
+        }
+    }
+}
+
+}  // namespace
+
 ApiResult post_delete_project(const json& body,
                               const config::Settings& settings) {
     const std::string raw = need_str(body, "path");
     const std::string confirm = need_str(body, "confirm_name");
-
-    // 跑到一半删项目，工作线程下一次写盘会写到一个不存在的目录上，
-    // 报的错和"删项目"八竿子打不着。
-    if (pipeline::jobs().running(pipeline::JobKind::Run)) {
-        throw ApiError(409, "正在跑，删项目会把跑到一半的东西弄坏");
-    }
 
     std::error_code ec;
     const fs::path root = fs::weakly_canonical(settings.workspace_path(), ec);
@@ -160,18 +195,32 @@ ApiResult post_delete_project(const json& body,
     const ProjectStore store(target);
     if (!store.exists()) throw ApiError(404, "这个目录不是一个项目");
 
+    // 闸二点五：**正在跑的是不是这一个**。
+    const fs::path canon = fs::weakly_canonical(target, ec);
+    if (ec) throw ApiError(400, "路径不对：" + ec.message());
+    guard_not_running(canon, "删");
+
     // 闸三：名字一字不差。防的是"选错了一行然后顺手点了确认"。
-    const std::string name = paths::to_utf8(
-        fs::weakly_canonical(target, ec).filename());
-    if (confirm != name) {
-        throw ApiError(400, "确认名字对不上，要一字不差地填 " + name);
+    //
+    // **目录名和剧名都认。** 2026-09-14 之前只认目录名，而界面上到处显示
+    // 的是剧名（/api/projects 的 name 就是 `title.empty() ? dir : title`）：
+    // 一个目录叫 convenience-store、剧名叫「深夜便利店」的项目，确认框要
+    // 你打「深夜便利店」才解锁，打完提交引擎回 400 要目录名——**界面上
+    // 唯一给你的那个名字正是引擎唯一不收的那个**，这条路彻底堵死。
+    const std::string dir_name = paths::to_utf8(canon.filename());
+    std::string title;
+    try {
+        title = store.load_project().title;
+    } catch (const std::exception&) {
+        // 读不了就只认目录名。坏项目照样要能删掉。
+    }
+    if (confirm != dir_name && (title.empty() || confirm != title)) {
+        throw ApiError(400, "确认名字对不上，要一字不差地填 " + dir_name);
     }
 
-    const fs::path resolved = fs::weakly_canonical(target, ec);
-    if (ec) throw ApiError(400, "路径不对：" + ec.message());
-    fs::remove_all(resolved, ec);
+    fs::remove_all(canon, ec);
     if (ec) throw ApiError(500, "删不掉：" + ec.message());
-    return {200, {{"deleted", paths::to_utf8(resolved)}}};
+    return {200, {{"deleted", paths::to_utf8(canon)}}};
 }
 
 ApiResult post_project_premise(const json& body) {
@@ -189,6 +238,37 @@ ApiResult post_project_premise(const json& body) {
     project.premise = text::truncate_utf8(text::strip_ws(premise), 2000);
     store.save_project(project);
     return {200, {{"premise", project.premise}}};
+}
+
+ApiResult post_project_rename(const json& body) {
+    const std::string path = need_str(body, "project");
+    if (path.empty()) throw ApiError(400, "没有指定项目目录");
+    const std::string raw = need_str(body, "title");
+
+    std::error_code ec;
+    const fs::path canon = fs::weakly_canonical(paths::from_utf8(path), ec);
+    if (ec) throw ApiError(400, "路径不对：" + ec.message());
+    // 正在跑的话改了也白改：工作线程手里那份整份快照会把 title 盖回去。
+    // 详见 guard_not_running。
+    guard_not_running(canon, "改");
+
+    ProjectStore store(canon);
+    Project project;
+    try {
+        project = store.load_project();
+    } catch (const std::exception& e) {
+        throw ApiError(400, e.what());
+    }
+
+    // 空名字会让列表回落到目录名（readonly.cpp 的 name 字段），看起来像
+    // "改名没生效"。直接拦住，让人知道这一步没做成。
+    const std::string title = text::truncate_utf8(text::strip_ws(raw), 200);
+    if (title.empty()) throw ApiError(400, "剧名不能是空的");
+
+    project.title = title;
+    store.save_project(project);
+    return {200, {{"title", project.title},
+                  {"project_id", project.project_id}}};
 }
 
 }  // namespace changji::http

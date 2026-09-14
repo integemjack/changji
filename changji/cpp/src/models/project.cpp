@@ -419,4 +419,11 @@ std::string ProjectStore::copy_into(const fs::path& src,
     return paths_.rel(target);
 }
 
+bool is_regular_episode(const std::string& episode_id) {
+    if (episode_id.size() <= 2) return false;
+    if (episode_id.compare(0, 2, "ep") != 0) return false;
+    return std::all_of(episode_id.begin() + 2, episode_id.end(),
+                       [](unsigned char c) { return c >= '0' && c <= '9'; });
+}
+
 }  // namespace changji::models

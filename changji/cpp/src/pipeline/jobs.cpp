@@ -385,6 +385,12 @@ bool JobTable::running(JobKind kind) const {
     return slot(kind).state.running;
 }
 
+std::string JobTable::running_project(JobKind kind) const {
+    std::lock_guard lg(mu_);
+    const Slot& s = slot(kind);
+    return s.state.running ? s.state.project : std::string();
+}
+
 std::string JobTable::job_id(JobKind kind) const {
     std::lock_guard lg(mu_);
     return slot(kind).state.job_id;

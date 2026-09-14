@@ -162,6 +162,13 @@ private:
     std::filesystem::path root_;
 };
 
+/// 这个 id 是不是一集正片（`ep` 加纯数字）。
+///
+/// **预告片和正片同住 `Project::episodes`。** 于是「这部剧有几集」这种话
+/// 一不留神就把预告数进去：一部只剪了预告的剧会显示成「1 集」。
+/// 判据和 next_episode_id 里那段是同一条，提出来免得两处各写一遍。
+bool is_regular_episode(const std::string& episode_id);
+
 /// 项目的读写。写入用原子替换，避免中途断电留下半个文件。
 class ProjectStore {
 public:
