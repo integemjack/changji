@@ -194,12 +194,29 @@ function onEsc(e) {
   // 抽屉盖着半个屏幕，而鼠标多半正停在里面——Esc 是唯一不用先瞄准的出口。
   if (e.key === 'Escape' && openId.value) openId.value = ''
 }
+
+/**
+ * 刷新之前拦一下：抽屉里改了还没存的那几条。
+ *
+ * 这一页没有自动保存（外观描述改完要自己点保存），而 `edits` 里可以同时
+ * 挂着好几条改动——按 Esc 收抽屉是**不还原**的（有意的：那一下只是收起来，
+ * 不是放弃）。收起来之后刷新一下，改了半天的外观描述一声不吭地没了。
+ *
+ * 收抽屉那条路早就会问一句（见 toggle），唯独刷新和关标签页不会。
+ */
+function beforeUnload(e) {
+  if (!Object.keys(edits.value).some((id) => changed(id))) return
+  e.preventDefault()
+  e.returnValue = ''
+}
 onMounted(() => {
   document.addEventListener('keydown', onEsc)
+  window.addEventListener('beforeunload', beforeUnload)
   loadPresets()
 })
 onUnmounted(() => {
   document.removeEventListener('keydown', onEsc)
+  window.removeEventListener('beforeunload', beforeUnload)
   // 走开就别响了
   player?.pause()
   player = null

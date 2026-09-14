@@ -191,8 +191,21 @@ const totalChars = computed(() =>
   ),
 )
 /** 还没存回去的章。**页面走开之前要拦一下**，不然改的字就没了。 */
+/**
+ * 手里这几章和服务端那份对不上——也就是"走开会丢的"。只有 beforeUnload 用它。
+ *
+ * **AI 正在往里写的那一章不算。** 那一章的 buf 和 c.text 确实对不上（字是
+ * 一个个流进来的，落库要等这一章写完），但它不是人改的，也不该由这一页来
+ * 存——`saveChapter` 开头就明写着"AI 正往这一章写：写完那份由引擎落库，
+ * 这里存的是半截"，直接 return。
+ *
+ * 不排掉的话，批量展开那一个多小时里刷新一下，浏览器就弹一句"你的改动可能
+ * 不会被保存"——而那时候什么都不会丢（引擎每写完一章就落库，重开页面还能
+ * 接着看）。拦一件根本不会丢的事，只会让人以后连真该拦的那次也照样点掉。
+ */
 const dirtyIds = computed(() =>
   chapters.value
+    .filter((c) => c.chapter_id !== streaming.value?.chapter_id)
     .filter((c) => (buf[c.chapter_id] ?? '') !== (c.text ?? ''))
     .map((c) => c.chapter_id),
 )
