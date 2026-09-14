@@ -116,22 +116,20 @@ const okChecks = computed(() =>
 )
 
 /**
- * 两节各自要提交的那几项，和"读回来之后动过没有"。
+ * 「配音」那一节要提交的那几项，和"读回来之后动过没有"。
  *
  * 摆出「未存」那个角标是有用的：这一页上每一节的保存都是独立的，
  * 改了一节去点另一节的保存按钮，什么都不会发生，而页面上原来没有任何
  * 迹象说明这件事。
+ *
+ * **llmPatch / savedLlm 2026-09-15 删了**：「大模型」那一节 09-14 整个
+ * 搬去了项目页（点模型名弹出来那个窗口），这两个跟着成了死代码——
+ * savedLlm 只被赋值、没有任何一处读它，llmPatch 只为了算 savedLlm 存在。
  */
-const llmPatch = computed(() => ({
-  llm_base_url: conn.value.llm_base_url,
-  llm_model: conn.value.llm_model,
-  llm_temperature: Number(conn.value.llm_temperature),
-}))
 const ttsPatch = computed(() => ({
   tts_backend: conn.value.tts_backend,
   tts_base_url: conn.value.tts_base_url ?? '',
 }))
-const savedLlm = ref('')
 const savedTts = ref('')
 const ttsDirty = computed(() => JSON.stringify(ttsPatch.value) !== savedTts.value)
 
@@ -184,7 +182,6 @@ async function load() {
     conn.value = { ...(data.connections ?? {}) }
     // 基准线：这两句之后「未存」才说得准。放在这儿而不是保存成功那一下，
     // 是因为引擎可能没照单全收（被环境变量顶着的项就不会变）。
-    savedLlm.value = JSON.stringify(llmPatch.value)
     savedTts.value = JSON.stringify(ttsPatch.value)
     // 引擎把参数分了组，界面上摊平成一层，提交时再拆回去
     const s = data.settings
@@ -233,8 +230,10 @@ async function saveNode() {
  * 整节上没有一个能点的东西，只能靠标题里那句"大模型和配音一起保存"猜。
  * 分开之后还有一个好处：改配音不会把大模型那几项也重写一遍。
  *
- * 密钥仍然不在这儿提交，它有自己的按钮（saveApiKey）——捎带着提交的话，
- * "改个温度"会顺手把密钥也写一遍。
+ * **密钥根本不经过这一页**：它和服务、模型、接口地址一起在项目页那个
+ * 模型弹窗里填（ModelDialog 自己发 /api/connections）。这儿原来写的是
+ * "它有自己的按钮（saveApiKey）"，而那个函数随「大模型」那一节一起
+ * 09-14 删了——指着一个不存在的东西。
  */
 async function saveConn(patch, key) {
   const result = await run(() => api.saveConnections({ patch, persist: persist.value }), {
