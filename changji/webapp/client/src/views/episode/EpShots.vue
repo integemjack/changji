@@ -1429,17 +1429,9 @@ onDeactivated(() => window.removeEventListener('keydown', onKey))
 .tl--warn { background: color-mix(in srgb, var(--warn) 45%, transparent); }
 .tl--ok   { background: color-mix(in srgb, var(--ok) 45%, transparent); }
 .tl--on   { outline: 2px solid var(--accent); }
-.swatch {
-  display: inline-block;
-  width: 9px;
-  height: 9px;
-  border-radius: 2px;
-  background: var(--bg-sunken);
-  margin-right: 3px;
-}
-.swatch--info { background: color-mix(in srgb, var(--info) 45%, transparent); }
-.swatch--warn { background: color-mix(in srgb, var(--warn) 45%, transparent); }
-.swatch--ok   { background: color-mix(in srgb, var(--ok) 45%, transparent); }
+/* 这儿原来还有 .swatch 和它三个 modifier：时间线那条色带的图例，
+   那一小排 2026-09-14 从模板里撤了，样式留了下来——模板里一处都没有
+   `swatch`，这四条规则谁也命中不了。 */
 /* ---- 筛选片 ---- */
 .chips {
   display: flex;
@@ -1474,9 +1466,13 @@ onDeactivated(() => window.removeEventListener('keydown', onKey))
   overflow: hidden;
   background: var(--surface);
 }
+/* ⚠️ **这里的 modifier 要和 SHOT_STATUS 那张表里的 tone 对齐**：
+   neutral / info / warn / ok，一共就这四个，没有 bad——`shotTone` 只会
+   返回它们（未知状态回落 neutral）。原来还有一条 `.cell--bad`，拼不出来，
+   谁也命中不了。info 那几档（配音完成、首帧完成、草稿完成）故意不描边：
+   它们是"还在路上"，边框留给终态（ok）和出了问题（warn）。 */
 .cell--ok   { border-color: color-mix(in srgb, var(--ok) 35%, transparent); }
 .cell--warn { border-color: color-mix(in srgb, var(--warn) 40%, transparent); }
-.cell--bad  { border-color: color-mix(in srgb, var(--danger) 45%, transparent); }
 .cell--live { border-color: var(--accent); }
 .cell--open { outline: 2px solid var(--accent); }
 .cell--drag { opacity: 0.4; }

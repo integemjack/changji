@@ -1457,13 +1457,10 @@ async function clearRef(charId, slot) {
     grid-template-columns: 1fr;
     gap: var(--s5);
   }
-  .chr__desc {
-    display: none;
-  }
 }
-@media (max-width: 640px) {
-  .chr__head .pill {
-    display: none;
-  }
-}
+/* 这儿原来还有两条窄屏规则，指着 .chr__desc（900px 以下收起描述那一栏）
+   和 .chr__head .pill（640px 以下收起牌子）。抽屉 2026-09-14 重排之后这
+   两个类名在模板里都没有了——规则还在，但一个元素也命中不了，等于那两档
+   窄屏什么都没做。要收东西得照着现在的结构（.chr__cols / .chr__foot）
+   重写，而不是留着两条空转的。 */
 </style>

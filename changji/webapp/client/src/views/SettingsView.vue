@@ -819,34 +819,15 @@ function scrollTo(id) {
 .grid--2 {
   grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
 }
-/* 平台选择器独占一行：选完地址和模型都跟着变。 */
-.field--wide {
-  grid-column: 1 / -1;
-  max-width: 420px;
-}
-.field--narrow {
-  max-width: 230px;
-}
+/* 这儿原来有 .field--wide（平台选择器独占一行）和 .field--narrow。
+   那个选择器 2026-09-14 随「大模型」整节搬去了项目页那个模型弹窗，
+   这一页的模板里再没有哪个元素带这两个类。 */
 .grid--3 {
   grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
 }
 
-/* 标签栏里那种「重新拉一次」的小动作。做成按钮但长得像链接。 */
-.linkbtn {
-  border: none;
-  background: none;
-  padding: 0;
-  color: var(--accent);
-  cursor: pointer;
-  font-weight: 500;
-}
-.linkbtn:hover:not(:disabled) {
-  text-decoration: underline;
-}
-.linkbtn:disabled {
-  color: var(--text-3);
-  cursor: default;
-}
+/* 这儿原来有 .linkbtn（长得像链接的小按钮，给「重新拉一次」那种动作用）。
+   这一页现在只剩体检那颗「重新体检」，它是正经的 .btn--ghost。 */
 
 .alert {
   display: flex;
@@ -918,11 +899,9 @@ function scrollTo(id) {
   min-width: 12ch;
 }
 
-/* 外观那三个：选中的那个点亮。 */
-.is-on {
-  color: var(--accent);
-  background: var(--accent-soft);
-}
+/* 这儿原来有 .is-on（「外观」那三个主题按钮里选中的那个点亮）。
+   「外观」那一节 2026-09-14 删了——顶栏那个月亮图标就是主题切换，
+   见文件开头那份砍掉清单。 */
 
 .spin {
   animation: spin 0.9s linear infinite;

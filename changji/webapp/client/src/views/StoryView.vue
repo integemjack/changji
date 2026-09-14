@@ -2743,13 +2743,8 @@ async function stopWriting() {
 .list__foot .btn {
   justify-content: flex-start;
 }
-.list__run {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 4px var(--s2);
-  color: var(--accent);
-}
+/* 这儿原来有 .list__run：章节栏底下那行「正在写…」。现在那句话画在
+   每一章自己那一行上（.doc__live / .status__ai），模板里没有 list__run。 */
 
 /* ---------- 中：正文 ---------- */
 .ed__main {
@@ -2823,8 +2818,7 @@ async function stopWriting() {
   font-size: var(--fs-sm);
 }
 .doc__live .dot,
-.status__ai .dot,
-.list__run .dot {
+.status__ai .dot {
   animation: pulse 0.9s infinite alternate;
 }
 @keyframes pulse {
@@ -3062,7 +3056,8 @@ async function stopWriting() {
 .status__item.is-dirty {
   color: var(--warn);
 }
-.status__item.is-writing,
+/* is-writing 那个类跟着 .list__run 一起没了——状态行上"正在写"现在是
+   .status__ai 那一段自己。 */
 .status__ai {
   color: var(--accent);
 }
