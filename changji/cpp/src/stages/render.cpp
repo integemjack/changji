@@ -35,9 +35,6 @@ double now_seconds() {
     return duration<double>(steady_clock::now().time_since_epoch()).count();
 }
 
-/// Python 的 round()：银行家舍入。
-long py_round(double v) { return static_cast<long>(std::nearbyint(v)); }
-
 /// 把闸门给的几条理由拼成一句。分隔符照抄 gates 那边的全角分号——
 /// 这句会原样进 gate_notes，人在界面上读的就是它。
 std::string join_reasons(const std::vector<std::string>& v) {

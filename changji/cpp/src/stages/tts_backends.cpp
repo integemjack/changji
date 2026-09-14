@@ -1,6 +1,5 @@
 #include "stages/tts_backends.hpp"
 
-#include <array>
 #include <cstdint>
 #include <cstdio>
 #include <filesystem>
@@ -47,15 +46,6 @@ std::shared_ptr<infer::LlamaTts>& tts_engine() {
 }  // namespace
 
 namespace {
-
-/// 常见 TTS 节点里放文本的键名。不同引擎叫法不同，逐个试。
-constexpr std::array<const char*, 5> kTextKeys = {
-    "text", "prompt", "input_text", "tts_text", "content"};
-constexpr std::array<const char*, 6> kVoiceKeys = {
-    "narrator_voice", "voice", "voice_id", "speaker", "reference_audio",
-    "speaker_id"};
-constexpr std::array<const char*, 4> kEmotionKeys = {"emotion", "emo", "style",
-                                                     "instruct"};
 
 std::string fmt(const char* spec, double v) {
     char buf[64];

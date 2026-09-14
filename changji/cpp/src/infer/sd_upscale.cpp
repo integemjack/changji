@@ -66,7 +66,7 @@ Probe probe_video(const fs::path& in, const config::AssemblyConfig& assembly) {
 ///
 /// 一段三秒的 960×544 是 73 帧 × 1.5 MB ≈ 115 MB，整块读进来没问题；
 /// 换成成片长度的片子要改成流式。
-std::vector<unsigned char> decode_to_raw(const fs::path& in, const Probe& p,
+std::vector<unsigned char> decode_to_raw(const fs::path& in,
                                         const config::AssemblyConfig& assembly,
                                         const fs::path& tmp) {
     const auto exe = proc::which(assembly.ffmpeg_path);
@@ -147,7 +147,7 @@ void upscale_video(const fs::path& in, const fs::path& out,
     const fs::path raw_up = fs::path(paths::to_utf8(out) + ".up.raw");
 
     const std::vector<unsigned char> raw =
-        decode_to_raw(in, p, assembly, raw_in);
+        decode_to_raw(in, assembly, raw_in);
     const std::size_t frame_bytes =
         static_cast<std::size_t>(p.width) * p.height * 3;
     const std::size_t frames = frame_bytes ? raw.size() / frame_bytes : 0;

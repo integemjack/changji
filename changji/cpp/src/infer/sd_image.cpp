@@ -1231,8 +1231,12 @@ void register_sd_slots(SettingsProvider raw_provider,
     // 是 "cpu"，走 `budget`（按 vram_gb_override = 20 算出 18 GB），而图像
     // 上下文拿的是常驻放置——20 GB 权重配 18 GB 上限，sd.cpp 在第 34/62 段
     // 报 "failed during weight preparation"，六镜首帧全废。
-    const auto budget_for = [budget, physical, whole](const config::Settings& s,
-                                                      ModelRole role) {
+    // 捕获里**没有 `budget`**：下面三条分支全都返回 physical 或 whole 了
+    // （"cpu" 那条 2026-09-13 从 budget 改成 physical，理由就在它自己那段
+    // 注释里）。捕获了不用，-Wall 每次编译报一条 unused-lambda-capture。
+    // `budget` 本身还在用——physical / whole 探不到卡时退回的就是它。
+    const auto budget_for = [physical, whole](const config::Settings& s,
+                                              ModelRole role) {
         const std::string& w =
             role == ModelRole::Video ? s.models.weights : s.models.image_weights;
         if (w == "auto") return physical;

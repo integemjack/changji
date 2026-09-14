@@ -29,7 +29,11 @@ RunDeps default_run_deps() {
     RunDeps d;
     d.settings = [] { return config::runtime().snapshot(); };
     d.profile = [] { return config::runtime().profile(); };
-    d.backends = [](const config::Settings& s, const ProjectStore& store) {
+    // 第二个形参（项目目录）**故意不接名字**：RunDeps 的签名要求它在，而
+    // 这一套后端一个字都没用到——`s` 已经是这一集自己的设置了（出片那条路
+    // 每跑一集都 load_settings(项目目录) 重读）。接了名字不用，-Wall 每次
+    // 编译报一条 unused-parameter。
+    d.backends = [](const config::Settings& s, const ProjectStore&) {
         pipeline::Backends b;
         // 默认这一套：进程内 sd.cpp。
         // 两边都拿 `s`：这是**这一集**的设置（出片那条路每跑一集
