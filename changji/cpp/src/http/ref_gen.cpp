@@ -218,12 +218,27 @@ json character_ref_job(const std::string& project_path,
         stages::build_character_ref_prompt(c, assets.style, slot),
         stages::ref_negative(assets.style), seed, stream_id);
 
-    if (slot == "front")              c.ref_front = out.rel;
-    else if (slot == "three_quarter") c.ref_three_quarter = out.rel;
-    else                              c.ref_back = out.rel;
     // **先出图再存盘。** 反过来的话出图失败会留下一条指向不存在的文件的
     // 路径，而界面上那个位置会显示成"已有参考图"——比没有更糟。
-    store.save_assets(assets);
+    //
+    // ⚠️ **存的是"重新读一份、只把这一格的路径填上去"，不是手里这份整份
+    // 写回。** 上面那张图要几十秒（头一张还要先把出图模型读进显存，可能是
+    // 几分钟），而 `assets` 是那之前读的。整份写回去的话，这期间在设定页
+    // 改的外观、提示词、别的格子刚画好的图全被静默盖掉——而"一边出图一边
+    // 在抽屉里改字"正是这一页的日常：界面那边专门为它写过"只刷新没改过的
+    // 那几条"，结果引擎这头把人改的东西吞了。
+    AssetLibrary latest = store.load_assets();
+    const auto dst = latest.characters.find(char_id);
+    if (dst == latest.characters.end()) {
+        // 这一格的主人在出图的这几十秒里被删了（重新定妆会收掉重名的）。
+        // 图还在磁盘上，但没有地方记它了。
+        throw ApiError(409, "角色 " + char_id + " 在出图的这几十秒里没了，"
+                            "这张图没记进资产库");
+    }
+    if (slot == "front")              dst->second.ref_front = out.rel;
+    else if (slot == "three_quarter") dst->second.ref_three_quarter = out.rel;
+    else                              dst->second.ref_back = out.rel;
+    store.save_assets(latest);
 
     // 和上传那条一样**无条件重跑**：参考图直接决定画面长什么样。
     return {
@@ -310,8 +325,15 @@ json location_ref_job(const std::string& project_path,
         stages::build_location_ref_prompt(l, assets.style),
         stages::ref_negative(assets.style), seed, stream_id);
 
-    l.ref_empty = out.rel;
-    store.save_assets(assets);
+    // 同 character_ref_job：重新读一份，只填这一格。理由见那儿。
+    AssetLibrary latest = store.load_assets();
+    const auto dst = latest.locations.find(location_id);
+    if (dst == latest.locations.end()) {
+        throw ApiError(409, "场景 " + location_id + " 在出图的这几十秒里没了，"
+                            "这张图没记进资产库");
+    }
+    dst->second.ref_empty = out.rel;
+    store.save_assets(latest);
 
     return {
         {"saved", out.rel},
