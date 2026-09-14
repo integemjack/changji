@@ -314,7 +314,20 @@ function stateClass(id) {
   return ''
 }
 
-function setStory(payload) {
+/**
+ * 把一份故事装进这一页。
+ *
+ * `forProject` 是"这一份是哪部剧的"。**给了就认**：那几条改完故事回一份
+ * 新全文的接口（删章、加章、存梗概、直接开写、反推、采用）都是几百毫秒的
+ * 来回，而这几百毫秒里在项目库点一下别的剧，回来这一装就是**上一部的整本
+ * 书装进了新这一部的编辑器**——接着敲字，自动存按当前项目写回去，两部剧
+ * 里都有 ch01。和这一页上那几条长活（写正文、提人物）防的是同一件事，只是
+ * 窗口短得多。
+ *
+ * 不给就是老样子（load 和自动存那两条自己判过了）。
+ */
+function setStory(payload, forProject) {
+  if (forProject !== undefined && forProject !== session.projectPath) return
   story.value = payload?.story ?? null
   premise.value = story.value?.premise ?? ''
   savedPremise.value = premise.value.trim()
@@ -389,8 +402,9 @@ async function deleteChapter() {
   // clearTimeout 是静默无效的，那次存照样会在 1.5 秒后把这一章写回去。
   clearTimeout(timers[c.chapter_id]?.t)
   delete timers[c.chapter_id]
+  const project = session.projectPath
   const result = await run(
-    () => api.deleteChapter({ project: session.projectPath, chapter_id: c.chapter_id }),
+    () => api.deleteChapter({ project, chapter_id: c.chapter_id }),
     // 反方向的同一件事：删掉最后一章之后 done.story 该灭，不重拉的话
     // 导航上会给一部已经没有故事的剧一直打着勾。
     { key: 'delch', refresh: true },
@@ -399,7 +413,7 @@ async function deleteChapter() {
   const i = index.value
   delete buf[c.chapter_id]
   dirtySnapshot.delete(c.chapter_id)
-  setStory(result)
+  setStory(result, project)
   const rest = chapters.value
   current.value = rest.length ? rest[Math.min(i, rest.length - 1)].chapter_id : ''
   const touched = (result.plan_dropped ?? 0) + (result.plan_moved ?? 0)
@@ -1269,12 +1283,12 @@ async function readAloud() {
 
 async function savePremise() {
   if (!premiseDirty.value || !session.projectPath) return
+  const project = session.projectPath
   const result = await run(
-    () =>
-      api.saveStory({ project: session.projectPath, premise: premise.value.trim() }),
+    () => api.saveStory({ project, premise: premise.value.trim() }),
     { key: 'premise', success: '梗概已存下' },
   )
-  if (result) setStory(result)
+  if (result) setStory(result, project)
 }
 
 /**
@@ -1582,10 +1596,11 @@ async function importPasted() {
  * 「提人物」，人物关系地点就出来了。先写后理，本来就是很多人写东西的顺序。
  */
 async function startBlank() {
+  const project = session.projectPath
   const result = await run(
     () =>
       api.adoptStory({
-        project: session.projectPath,
+        project,
         story: {
           premise: premise.value.trim(),
           scale: scale.value,
@@ -1601,27 +1616,28 @@ async function startBlank() {
     { key: 'blank', refresh: true },
   )
   if (!result) return
-  setStory(result)
+  setStory(result, project)
   await nextTick()
   boxes[current.value]?.focus()
 }
 
 /** 加一章。空的，接着写。 */
 async function addChapter() {
+  const project = session.projectPath
   const next = chapters.value.map((c) => ({ ...c }))
   const id = 'ch' + String(next.length + 1).padStart(2, '0')
   next.push({ chapter_id: id, title: `第 ${next.length + 1} 章`, summary: '', text: '' })
   const result = await run(
     () =>
       api.adoptStory({
-        project: session.projectPath,
+        project,
         story: { ...story.value, chapters: next },
         overwrite: true,
       }),
     { key: 'addch' },
   )
   if (!result) return
-  setStory(result)
+  setStory(result, project)
   current.value = id
   await nextTick()
   boxes[id]?.focus()
@@ -1629,13 +1645,14 @@ async function addChapter() {
 
 /** 老项目：把已经写好的那几集反推成故事骨架。不碰大模型，也不重新分集。 */
 async function reverseFromEpisodes() {
+  const project = session.projectPath
   const result = await run(
-    () => api.storyFromEpisodes({ project: session.projectPath, overwrite: true }),
+    () => api.storyFromEpisodes({ project, overwrite: true }),
     // 同 startBlank：这一下也是从无到有地长出章节，对勾要跟着亮。
     { key: 'reverse', refresh: true },
   )
   if (!result) return
-  setStory(result)
+  setStory(result, project)
   ui.ok(`反推出 ${result.chapters} 章。接着点左边「提人物」把人物提出来`)
 }
 
@@ -1685,6 +1702,7 @@ async function dropDraft() {
 
 async function adoptDraft() {
   if (!draft.value) return
+  const project = session.projectPath
   // 重出的大纲会把现在这几章整份换掉。提人物那种草稿正文不变，不用问。
   const replacing =
     hasStory.value &&
@@ -1693,7 +1711,7 @@ async function adoptDraft() {
   const result = await run(
     () =>
       api.adoptStory({
-        project: session.projectPath,
+        project,
         story: draft.value.story,
         overwrite: true,
       }),
@@ -1716,7 +1734,7 @@ async function adoptDraft() {
     )
     for (const k of Object.keys(buf)) delete buf[k]
     dirtySnapshot.clear()
-    setStory(result)
+    setStory(result, project)
     draft.value = null
   }
 }
