@@ -83,6 +83,8 @@ export function useShots() {
   const writeStore = useWriter()
 
   const shots = ref([])
+  /** 这一趟读砸了的话，那句话。空串 = 没砸（包括"还没出分镜"那个 404）。 */
+  const loadError = ref('')
   /**
    * 这一集真正会出多长（秒），由引擎给。
    *
@@ -121,10 +123,22 @@ export function useShots() {
       if (!mine()) return
       shots.value = data.shots ?? []
       episodeDuration.value = data.duration_s ?? null
+      loadError.value = ''
     } catch (err) {
       if (!mine()) return
       // 还没出分镜时引擎会 404。这不是错，是流程还没走到。
       if (err.status !== 404) ui.error(err.message)
+      // **读砸了和"还没出"是两件事，界面上要分得开。**
+      //
+      // 下面这句清空是必须的：换集时这一趟要是砸了，手里那份还是**上一集**
+      // 的镜头墙，而每个格子的按钮都按 shot_id 发请求。但清空之后，光看
+      // `!shots.length` 的话两件事长得一模一样，于是读砸了也摆出「还没有
+      // 分镜 · AI 出分镜」——那一屏说的是"这一集还没分镜"，而这会儿到底有
+      // 没有根本不知道。按下去就是拿一份新的盖掉可能还在的那份。
+      //
+      // 和 StoryView 上那段是同一条道理（「读不出来的时候不能摆"开始写"
+      // 那一屏」），AssetCharacters / AssetLocations 也各有一份。
+      loadError.value = err.status === 404 ? '' : err.message
       shots.value = []
       episodeDuration.value = null
     } finally {
@@ -706,7 +720,7 @@ export function useShots() {
     bust.value + (runStore.settledBy.get(shotId) ?? 0)
 
   return {
-    shots, episodeDuration, loading, load, bust, bustOf, previewOf,
+    shots, episodeDuration, loading, loadError, load, bust, bustOf, previewOf,
     inflightBy, pct, shotState, busy, shotRunning, isWaiting,
     start, starting, stop, shotAction, stepBtn, shotTone,
     running: computed(() => runStore.running),

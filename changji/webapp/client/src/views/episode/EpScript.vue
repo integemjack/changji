@@ -88,6 +88,8 @@ const draft = computed({
  */
 let owner = null
 
+/** 这一趟读砸、而且手里那份也清掉了的话，那句话。 */
+const loadError = ref('')
 const dirty = computed(() => script.value !== savedScript.value)
 /** 「现在在看哪部剧的哪一集」。异步那几趟拿它认自己有没有过期。 */
 const ctxKey = () => `${session.projectPath}\u0000${session.episodeId}`
@@ -143,6 +145,7 @@ async function load() {
     savedScript.value = script.value
     ctx.value = context
     mode.value = 'read'
+    loadError.value = ''
     owner = {
       project: session.projectPath,
       episode: session.episodeId,
@@ -166,6 +169,14 @@ async function load() {
       ctx.value = null
       owner = null
       mode.value = 'read'
+      // **清空之后不能摆"还没有剧本"那一屏。** 手里既然一个字都没有，
+      // 「这一集还没有剧本 · AI 写这一集」和"读砸了"长得一模一样——而
+      // 这会儿到底有没有根本不知道。按下去就是拿新写的盖掉可能还在的
+      // 那篇。同 StoryView 上那段（「读不出来的时候不能摆"开始写"那一屏」）。
+      //
+      // 只在**清了**的那一支记：owner 还对得上说明手里那份就是这一集的，
+      // 它照样显示，弹一句就够了——那时候摆个错误框反而把稿子挡住。
+      loadError.value = err.message
     }
     ui.error(err.message)
   } finally {
@@ -329,7 +340,10 @@ async function save() {
 
 <template>
   <div class="scr">
-    <div class="toolbar">
+    <!-- 读砸了整条都不摆。两个理由：左边那个字数这会儿是 0，而那不是
+         "没写"是"不知道"；「AI 写这一集」按下去就是拿新写的盖掉可能还在
+         的那篇。 -->
+    <div v-if="!loadError" class="toolbar">
       <span class="tiny dim numeric">{{ wordCount }} 字 · 目标 {{ durationS }} 秒</span>
       <span v-if="dirty" class="pill pill--warn">未存</span>
       <span class="spacer" />
@@ -438,6 +452,14 @@ async function save() {
     </section>
 
     <div v-if="loading" class="tiny dim">读取中…</div>
+
+    <EmptyState
+      v-else-if="loadError"
+      icon="warn"
+      tone="warn"
+      title="读不到这一集的剧本"
+      :hint="loadError"
+    />
 
     <EmptyState
       v-else-if="!script.trim() && !draft && mode !== 'edit'"

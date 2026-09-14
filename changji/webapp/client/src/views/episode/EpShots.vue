@@ -66,7 +66,8 @@ const { run, isBusy, error } = useAction()
 // 镜头表、每镜进度、重出队列，全在这儿。见 useShots。
 const {
   shots,
-  episodeDuration, loading, load, bustOf, previewOf,
+  episodeDuration, loading,
+  loadError, load, bustOf, previewOf,
   pct, shotState, busy,
   start, starting, stop, shotAction, stepBtn, shotTone, running,
 } = useShots()
@@ -943,7 +944,9 @@ onDeactivated(() => window.removeEventListener('keydown', onKey))
 
 <template>
   <div class="stack stack--lg">
-    <div class="toolbar">
+    <!-- 读砸了整条都不摆：下面每颗按钮做的事都得先知道"现在有哪些镜头"，
+         而这会儿手里一个都没有。尤其「AI 出分镜」——见下面那段。 -->
+    <div v-if="!loadError" class="toolbar">
       <span v-if="tagline" class="tiny dim nowrap">{{ tagline }}</span>
       <span class="spacer" />
       <button
@@ -1060,8 +1063,19 @@ onDeactivated(() => window.removeEventListener('keydown', onKey))
          那时候"有没有剧本"还不知道。镜头表和剧本字数是两趟请求，镜头表
          先落地是常有的事——拿假值判的话，有剧本的集也会闪一下「还没有
          剧本」。不知道就走下面那个通用的空状态。 -->
+    <!-- **读砸了不能摆"还没有"那一屏。** 那一屏说的是"这一集还没分镜"，
+         而读砸的时候到底有没有根本不知道——按下「AI 出分镜」就是拿一份
+         新的盖掉可能还在的那份。同 StoryView 上那段。 -->
     <EmptyState
-      v-if="!loading && !shots.length && props.scriptChars === 0"
+      v-if="!loading && loadError"
+      icon="warn"
+      tone="warn"
+      title="读不到这一集的分镜"
+      :hint="loadError"
+    />
+
+    <EmptyState
+      v-else-if="!loading && !shots.length && props.scriptChars === 0"
       icon="script"
       title="这一集还没有剧本"
       hint="分镜是照着剧本一场一场拆的，先把剧本写出来"
