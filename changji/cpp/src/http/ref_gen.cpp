@@ -147,7 +147,17 @@ Rendered render_ref(const ProjectStore& store, const std::string& stem,
         });
 
     const auto t0 = std::chrono::steady_clock::now();
-    pipeline::CancelToken tok;
+    // **拿这条 stream 自己的令牌。**
+    //
+    // 这儿原来是就地建一个，谁也够不着它——而 sd_image.cpp 一路上查了五处
+    // `tok.cancelled()`，也就是说"停一张图"这件事引擎本来就做得到，只是没
+    // 人接上。表现是：顶栏那块「正在思考」上按「停下」，`/api/job/cancel`
+    // 在表里找不到这条 stream，回 {stopped:false}，界面照着说一句「这一步
+    // 已经结束了」——而它明明还在跑，跑完那几十秒照样把图写进去。
+    //
+    // `current_cancel()` 没有 JobScope 时回的是哑元（见 job_stream.hpp），
+    // 所以同步那条路（老客户端、curl、对拍）一个字没变。
+    pipeline::CancelToken& tok = current_cancel();
     try {
         ctx->generate(req, dest, tok,
                       [&act, &stream_id, &stem](int step, int steps, double,
@@ -163,6 +173,10 @@ Rendered render_ref(const ProjectStore& store, const std::string& stem,
                           ref_progress(stem, step, steps);
                       });
     } catch (const infer::SdError& e) {
+        // **人按的停不是失败。** 报成「出图失败：已取消」的话，人会去找哪
+        // 儿出错了。和大模型那一族一致：取消回 400（见 planning.cpp 里
+        // stage_guard 那段，LlmError 的「已取消」也是 400）。
+        if (tok.cancelled()) throw ApiError(400, "已停下这一张");
         throw ApiError(500, std::string("出图失败：") + e.what());
     }
     const double seconds =
@@ -290,6 +304,10 @@ ApiResult post_character_reference_generate(const json& body) {
         const std::string target = char_id + "_" + slot;
         Offload::instance().post([project_path, char_id, slot, seed, stream_id,
                                   target] {
+            // **挂上 JobScope。** 这条后台线程要能被 /api/job/cancel 找到
+            // ——render_ref 里那个令牌就是从这儿拿的（current_cancel）。
+            // 别的异步接口走的 start_async 里挂的也是它。
+            const JobScope scope{stream_id};
             try {
                 job_done(stream_id, character_ref_job(project_path, char_id,
                                                       slot, seed, stream_id));
@@ -364,6 +382,7 @@ ApiResult post_location_reference_generate(const json& body) {
         const std::string target = location_id + "_empty";
         Offload::instance().post([project_path, location_id, seed, stream_id,
                                   target] {
+            const JobScope scope{stream_id};   // 同角色那条，见上面
             try {
                 job_done(stream_id, location_ref_job(project_path, location_id,
                                                      seed, stream_id));
