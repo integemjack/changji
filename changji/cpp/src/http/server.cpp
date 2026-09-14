@@ -919,15 +919,18 @@ void run(const config::Settings& settings, const Options& opts) {
             {"engineBaseUrl", ""},
             {"engineTimeoutMs", 0},
             {"configFile", changji::paths::to_utf8(config::user_config_path())},
-            // **这两条走 bff 而不是 /api/connections。** 那个接口在对拍
-            // 覆盖范围内，Python 没有这两个字段，加进去就是一处破契约。
-            // bff 这一层是我们自己的，前端要拿它决定哪些输入框该显示——
-            // backend = local 时"API 地址/模型名/密钥"三项一个都不读，
-            // 摆着只会让人调了没反应。
-            {"llmBackend", s.llm.backend},
-            {"ttsBackend", s.tts.backend},
             // 「大模型装着没有 / 量到多少显存」那两项 2026-09-14 去掉了：
             // 进程内那条后端删了，编剧只走外接 API，本机显存上根本没有它。
+            //
+            // **后端名也不在这儿发。** 这儿原来还有 llmBackend / ttsBackend
+            // 两条，注释写着"前端要拿它决定哪些输入框该显示——backend =
+            // local 时 API 地址/模型名/密钥三项一个都不读"。那件事是真的
+            // 该做，但**从来不是这两条在做**：前端一处都没读过它们。
+            // 真正在管的是同一个回包里的 `connections.tts_backend`
+            // （snake_case，来自 get_connections），设置页那句
+            // `v-if="conn.tts_backend === 'http'"` 用的就是它。
+            // llmBackend 则是从头就不可能有用——settings.cpp 只认
+            // `llm.backend = remote`，别的值当场报错，没有第二种情况可分。
             {"envLocked", locked}};
         // 由引擎自己答就说明它活着，再 ping 自己一次没有意义。
         out["engine"] = {{"online", true},
