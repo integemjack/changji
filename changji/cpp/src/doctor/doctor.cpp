@@ -386,8 +386,18 @@ Check check_local_tts(const config::Settings& settings) {
                 ""};
     }
     // 缺哪一份要分别点名：只填一个是最常见的配错法。
-    const std::string missing =
-        std::string(has_b ? "" : "[models].tts ") + (has_d ? "" : "[models].tts_decoder");
+    //
+    // **分隔符跟着有没有第二项走。** 原来是
+    // `(has_b ? "" : "[models].tts ") + (has_d ? "" : "…tts_decoder")`——
+    // 只缺 backbone（解码器填了）时，第一段自带的那个尾空格后面什么都没接
+    // 上，出来就是「缺模型：[models].tts ，配音会退回估算后端」，空格夹在
+    // 字和全角逗号中间。而"只填一个"恰恰是这条注释说的最常见的配错法。
+    std::string missing;
+    if (!has_b) missing = "[models].tts";
+    if (!has_d) {
+        if (!missing.empty()) missing += " ";
+        missing += "[models].tts_decoder";
+    }
     return {"进程内配音", selected ? Level::FAIL : Level::OK,
             probe.detail + "；缺模型：" + missing +
                 (selected ? "，配音会退回估算后端（出静音）" : "（当前没选它）"),
