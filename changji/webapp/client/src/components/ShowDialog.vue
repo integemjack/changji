@@ -81,10 +81,21 @@ async function load() {
     finish.value = null
     loadedFor = want
   }
+  // **回来晚了的那一趟不许写。** 上面 `loadedFor` 挡的是"开窗那一刻画的
+  // 是谁"，挡不住"读回来那一刻"：这一个 load 里串着三个来回，而关掉再开
+  // 会再起一趟——在 A 上开这个窗、Esc 关掉、换到 B、再开，A 那趟的后两个
+  // 来回照样往同一组 ref 上写。
+  //
+  // 落到的正好是最难发现的那种：save() 用的是 `loadedFor`（B），而框里
+  // 的值是 A 的——按一下保存，A 的画幅、画风、成片工序整份写进了 B，
+  // 界面上只说一句「存好了」。
+  const mine = () => want === session.projectPath
   try {
     const d = await api.projectVideo(want)
+    if (!mine()) return
     video.value = { ...d }
   } catch (err) {
+    if (!mine()) return
     // 读不到不该让弹窗开不了——项目可能是老的，还没有这一节。
     // 按默认显示，用户存一次就写进去了。
     video.value = { orientation: 'portrait', quality: '720p', width: 544, height: 928 }
@@ -94,12 +105,14 @@ async function load() {
 
   try {
     const data = await api.assets(want)
+    if (!mine()) return
     styleLine.value = data.style?.style_line ?? ''
     style.value = {
       global_style: data.style?.global_style ?? '',
       negative_prompt: data.style?.negative_prompt ?? '',
     }
   } catch {
+    if (!mine()) return
     // 刚建好还没有资产库。两个空框，存一次就有了。
     style.value = { global_style: '', negative_prompt: '' }
     // 这一句也要跟着清：不清的话，上一部剧读到的「动漫线 / 写实线」
@@ -111,6 +124,7 @@ async function load() {
 
   try {
     const f = await api.projectFinish(want)
+    if (!mine()) return
     finish.value = {
       preset: f.look?.preset ?? 'film',
       ambient: f.sound?.ambient ?? true,
@@ -118,6 +132,7 @@ async function load() {
       music_ready: !!f.sound?.music_ready,
     }
   } catch {
+    if (!mine()) return
     // 老引擎没有这条接口。不显示这一块，别拦着改画幅。
     finish.value = null
   }
