@@ -74,7 +74,11 @@
   --fs-3xl: 34px;
 
   /* 布局 */
-  --rail-w: 232px;
+  /* 这儿原来还有一条 `--rail-w: 232px`。**删了**：项目库那条栏的宽度写在
+     ProjectRail 自己的 scoped 样式里（`width: 14rem`，窄屏那条 media 里
+     换成 10rem），全仓没有一处 var(--rail-w)。留着有两重害处——改它不会有
+     任何效果，而且 232px 和真实的 224px 还对不上，照它算布局会算错。
+     一条响应式的宽度本来也塞不进一个 token。 */
   --topbar-h: 56px;
 
   --font: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC',
