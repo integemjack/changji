@@ -835,9 +835,14 @@ function toggleFollow() {
 // 的话，排队那 1.5 秒里换了项目，这一存就写进**新打开的那部剧**里去了——
 // 换项目走的是 watch，组件不卸载，定时器原样留着。
 const timers = {} // chapter_id -> { t, project }
-function scheduleSave(id, delay = 1500, project = session.projectPath) {
+/**
+ * @param {string} [text] 要存的那份字。**只有"上一次还没存完"那条分支会传**
+ *   ——见 saveChapter 里那段。平时不传：正常排队要的是到点那一刻 buf 里
+ *   最新的字，而不是排队那一刻的。
+ */
+function scheduleSave(id, delay = 1500, project = session.projectPath, text) {
   clearTimeout(timers[id]?.t)
-  timers[id] = { project, t: setTimeout(() => saveChapter(id, project), delay) }
+  timers[id] = { project, t: setTimeout(() => saveChapter(id, project, text), delay) }
 }
 /** 立刻存，不等那 1.5 秒。没排过队就按当前项目算（失焦那一下就是这样）。 */
 function flushSave(id) {
@@ -858,10 +863,11 @@ function flushAll() {
  * 存的那一会儿又敲了字的话，这一章仍算脏、再排一次；不然 setStory 会拿
  * 服务端那份（旧的）把刚敲的字盖掉。
  */
-async function saveChapter(id, project = session.projectPath) {
+async function saveChapter(id, project = session.projectPath, text) {
   const c = chapters.value.find((x) => x.chapter_id === id)
   if (!c) return
-  const sent = buf[id] ?? ''
+  // `text` 只有下面那条"排在后面"的分支会带过来，理由见那儿。
+  const sent = text ?? buf[id] ?? ''
   if (sent === (c.text ?? '')) return
   // AI 正往这一章写：写完那份由引擎落库，这里存的是半截
   if (streaming.value?.chapter_id === id) return
@@ -869,8 +875,14 @@ async function saveChapter(id, project = session.projectPath) {
   if (!sent.trim()) return
   // 上一章还在存，排在后面
   if (saver.busy.value) {
-    // 重排也要带着原来那部剧，不然这 400 毫秒里换了项目就存错地方
-    scheduleSave(id, 400, project)
+    // 重排要带着两样东西：
+    //
+    //   · **原来那部剧** —— 这 400 毫秒里换了项目的话，不带就存错地方；
+    //   · **手里这份字** —— 换项目那一下 `load()` 会同步把 buf 整个清空
+    //     （它就在 flushAll 后面一行），400 毫秒后再读 `buf[id]` 读到的是
+    //     空串，而空串这个函数开头就 return 了——那几个字**一声不吭地没了**。
+    //     上面的 `sent` 是同步读到的，把它原样带过去。
+    scheduleSave(id, 400, project, sent)
     return
   }
   // **存的是一个区间：[0, 服务端那份有多长)。** 所以"服务端那份有多长"
