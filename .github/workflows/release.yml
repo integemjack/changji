@@ -669,7 +669,26 @@ jobs:
             | sudo tee /etc/apt/sources.list.d/amdgpu.list
           echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/rocm.gpg] https://repo.radeon.com/rocm/apt/${ROCM_VER} jammy main" \
             | sudo tee /etc/apt/sources.list.d/rocm.list
+          # **必须给 repo.radeon.com 提优先级，否则 apt 会挑 Ubuntu 自带的
+          # 那套五年前的 ROCm。** jammy 的 universe 里有 rocminfo /
+          # rocm-device-libs / rocm-cmake，版本号写作 `5.0.0-1`；AMD 打的
+          # 同名包是 `1.0.0.60401-83~22.04`。apt 按版本号比大小，`5 > 1`，
+          # 于是选中 Ubuntu 那份，而 rocm-hip-runtime 要的是
+          # `(= 1.0.0.60401-83~22.04)`——一句
+          #     rocm-hip-runtime : Depends: rocminfo (= 1.0.0.60401-83~22.04)
+          #                        but 5.0.0-1 is to be installed
+          # 就是这么来的。Origin 取自那两个仓库 Release 文件里的
+          # `Origin: repo.radeon.com`，两个仓库同一个值，一条就够。
+          printf 'Package: *\nPin: release o=repo.radeon.com\nPin-Priority: 600\n' \
+            | sudo tee /etc/apt/preferences.d/rocm-pin-600
           sudo apt-get update -qq
+          # **libc6 那三个要一起升。** runner 镜像里装的是 2.35-0ubuntu3.14，
+          # 而源上已经是 .15；上面装 ROCm 会把 libc6 拖上去，libc6-dev 和
+          # libc6-i386 却钉着 `(= …3.14)`，apt 解不开就整单失败：
+          #     libc6-dev : Depends: libc6 (= 2.35-0ubuntu3.14)
+          #                 but 2.35-0ubuntu3.15 is to be installed
+          # 这跟 ROCm 没关系，是镜像里的包比源上旧半步。先把这三个升齐。
+          sudo apt-get install -y --no-install-recommends libc6 libc6-dev libc6-i386
           # **这一句不加 -qq。** 上面那句报错的全部内容就是"有包装不上"，
           # 而真正有用的「谁依赖谁、差哪一个版本」全被 -qq 吞了，
           # 于是日志里只剩一行没法追的话。装不上时那几十行才是线索。
@@ -875,13 +894,22 @@ jobs:
       # enable_language(HIP)，而是把那批 .cu 当普通 C++ 交给当前的 C++
       # 编译器——所以那个编译器必须是认识 HIP 的那一个，MSVC 不行。
       # 也因此这一格只能用 Ninja：VS 生成器换不掉编译器。
-      # ⚠️ **OpenSSL 那四行不能只写 OPENSSL_ROOT_DIR。**
-      # 这一格的编译器是 HIP SDK 里的 clang++（GNU 风格的驱动），CMake 的
-      # FindOpenSSL 是**按编译器分叉**去猜库文件名的：MSVC 那条找
-      # libssl.lib，非 MSVC 那条找 libssl.a / libssl.dll.a。而 openssl 那个
-      # job 是拿 MSVC 编的，出来的就是 .lib——于是这一格配置期报
-      # 「找不到 OpenSSL ≥ 3.0」，而 openssl/ 目录明明就在旁边。
-      # 直接把两个库和头目录点名给它，绕开那套猜名字的逻辑。
+      # ⚠️ **这一格给 OpenSSL 的变量名和别处不一样：LIB_EAY / SSL_EAY。**
+      #
+      # 编译器是 HIP SDK 里的 clang++（"Clang 20.0.0 with GNU-like
+      # command-line"），于是 CMake 的 MSVC 为假，FindOpenSSL 走的是
+      # Windows 下那条"既不是 MSVC 也不是 MinGW"的兜底分支。那条分支里：
+      #
+      #     find_library(LIB_EAY NAMES libcrypto libeay32 …)
+      #     find_library(SSL_EAY NAMES libssl ssleay32 …)
+      #     set(OPENSSL_SSL_LIBRARY    ${SSL_EAY})   # ← 无条件覆盖
+      #     set(OPENSSL_CRYPTO_LIBRARY ${LIB_EAY})   # ←
+      #
+      # 也就是说 `-DOPENSSL_SSL_LIBRARY=…` 传了也白传，**会被这两行盖掉**
+      # （2026-09-14 就是这么试了一轮才发现的）。要点名就得点 find_library
+      # 真正用的那两个缓存变量。头目录那个没这毛病，照旧给。
+      # 顺手把目录列出来：万一还是找不到，日志里能一眼看出是路径不对
+      # 还是文件名不对，不用再猜一轮。
       - name: 配置 + 编（Windows：ROCm）
         if: runner.os == 'Windows' && matrix.gpu == 'rocm'
         shell: pwsh
@@ -889,6 +917,11 @@ jobs:
           $hip = $env:HIP_PATH -replace '\\','/'
           $out = ((Get-Location).Path -replace '\\','/') + "/out"
           $ssl = ((Get-Location).Path -replace '\\','/') + "/openssl"
+          Write-Host "openssl 目录："
+          Get-ChildItem "$ssl/lib" -ErrorAction SilentlyContinue |
+            Select-Object Name, Length | Format-Table | Out-String | Write-Host
+          Write-Host ("opensslv.h 在不在：" +
+            (Test-Path "$ssl/include/openssl/opensslv.h"))
           cmake -S changji/cpp -B build -G Ninja `
             -DCMAKE_BUILD_TYPE=Release `
             -DCMAKE_C_COMPILER="$hip/bin/clang.exe" `
@@ -903,10 +936,9 @@ jobs:
             -DCMAKE_RUNTIME_OUTPUT_DIRECTORY="$out" `
             -DCMAKE_RUNTIME_OUTPUT_DIRECTORY_RELEASE="$out" `
             -DOPENSSL_ROOT_DIR="$ssl" `
-            -DOPENSSL_USE_STATIC_LIBS=ON `
             -DOPENSSL_INCLUDE_DIR="$ssl/include" `
-            -DOPENSSL_SSL_LIBRARY="$ssl/lib/libssl.lib" `
-            -DOPENSSL_CRYPTO_LIBRARY="$ssl/lib/libcrypto.lib"
+            -DLIB_EAY="$ssl/lib/libcrypto.lib" `
+            -DSSL_EAY="$ssl/lib/libssl.lib"
           if ($LASTEXITCODE -ne 0) { throw "配置失败" }
           cmake --build build --target changji --parallel
           if ($LASTEXITCODE -ne 0) { throw "编译失败" }
