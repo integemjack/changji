@@ -23,6 +23,26 @@ MediaTarget resolve_media(const std::string& project_path, const std::string& re
     const models::ProjectPaths paths(paths::from_utf8(project_path));
     std::error_code ec;
 
+    // **先确认这是个项目目录。**
+    //
+    // 下面那道越界检查防的是"从根跳出去"（rel 里的 `..` 和符号链接），
+    // 防不了"把根指到别处"——`?path=/etc&rel=passwd` 算出来的 root 就是
+    // /etc，passwd 正好在它之下，检查一路放行。
+    //
+    // 别的接口没有这个口子，是因为它们都要先 `load_project()`：读不到
+    // project.json 就 400 了，顺带把目录管住。这一条不读项目文件，
+    // 所以要自己管一次。
+    //
+    // 默认只监听 127.0.0.1，所以这不是敞着的洞；但 `--host` 放到局域网上
+    // （文档里"电脑和手机都能开"就是这么用）之后，同网段的人本来只能看
+    // 这一部剧的图和片，不该顺手能读这台机器上任何一个文件。
+    //
+    // 界面上每一次 mediaUrl 都是拿 session.projectPath 拼的，那必然是个
+    // 已经打开过的项目，这一道不会挡到正常用法。
+    if (!fs::is_regular_file(paths.project_file(), ec)) {
+        return {400, "这不是一个项目目录", {}};
+    }
+
     // 先拼再规范化。weakly_canonical 会把 .. 和符号链接都解开，
     // 这是越界检查能成立的前提——只做字符串前缀比较的话，
     // rel 传 "../../etc/passwd" 就穿出去了。
