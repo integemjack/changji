@@ -6,7 +6,7 @@
  * 对用户是同一件事——「我要多一个项目」，分成两张卡摆在页面上时，
  * 那两张卡常年占着位置而一年点不了两次。
  */
-import { computed, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 
 import AppIcon from '@/components/AppIcon.vue'
 import { api } from '@/api'
@@ -17,6 +17,21 @@ import { useUi } from '@/stores/ui'
 
 const props = defineProps({ open: { type: Boolean, default: false } })
 const emit = defineEmits(['close', 'added'])
+/**
+ * Esc 关掉。
+ *
+ * 抽屉那几处早就有（「Esc 是唯一不用先瞄准的出口」），而**弹窗比抽屉更该
+ * 有**——它盖住整屏，除了右上角那个 ✕ 和点外面，没别的出路。三个弹窗原来
+ * 一个都不认 Esc。
+ *
+ * 判 `props.open`：这个组件是**一直挂着**的（`v-if` 在模板里面），不判的话
+ * 它在窗口关着的时候也吃 Esc。
+ */
+function onEsc(e) {
+  if (e.key === 'Escape' && props.open) emit('close')
+}
+onMounted(() => window.addEventListener('keydown', onEsc))
+onUnmounted(() => window.removeEventListener('keydown', onEsc))
 
 const session = useSession()
 const store = useProjects()

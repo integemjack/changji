@@ -60,6 +60,24 @@ const writtenCount = computed(
 /** 停在有说法的钩子上的集数。剩下的收在段落边界——到点了，不是悬念。 */
 const hooked = computed(() => plan.value.filter((p) => p.hook).length)
 
+/**
+ * 回车/空格也能展开这一章。
+ *
+ * 那一行是个 div，键盘那条路得自己补——这一页上"看这一章讲什么"只有这一个
+ * 入口（摘要只画在展开之后），Tab 走不到就等于键盘用户看不到。
+ *
+ * ⚠️ **只认落在行本身上的那一下。** 行里还有一个「去展开正文」的链接，
+ * 不判的话在它上面按回车会既跳去故事页、又把这一行展开。项目库那条
+ * （ProjectRail 的 onKey）栽过同一个坑，判据照抄它。
+ */
+function onChapKey(id, event) {
+  if (event.target !== event.currentTarget) return
+  if (event.key === 'Enter' || event.key === ' ') {
+    event.preventDefault()
+    openChapter.value = openChapter.value === id ? '' : id
+  }
+}
+
 /** 这一章之后要画的那几条分集线（在这一章结束的集）。 */
 function cutsAfter(chapterId) {
   return plan.value.filter((p) => p.to_chapter === chapterId)
@@ -395,7 +413,11 @@ async function planAll() {
         <div
           class="chap"
           :class="{ 'is-open': openChapter === c.chapter_id }"
+          role="button"
+          tabindex="0"
+          :aria-expanded="openChapter === c.chapter_id"
           @click="openChapter = openChapter === c.chapter_id ? '' : c.chapter_id"
+          @keydown="onChapKey(c.chapter_id, $event)"
         >
           <span class="chap__no numeric">{{ i + 1 }}</span>
           <div class="chap__text">

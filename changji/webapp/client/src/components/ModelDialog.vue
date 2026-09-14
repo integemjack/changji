@@ -23,7 +23,7 @@
  * 改不了，比不显示更别扭**。所以这一组多两样：模型名（服务上真有的 +
  * 我们那本小抄）和密钥（只在没填时露出来）。
  */
-import { computed, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 
 import AppIcon from '@/components/AppIcon.vue'
 import ProgressBar from '@/components/ProgressBar.vue'
@@ -37,6 +37,21 @@ const props = defineProps({
   groupKey: { type: String, default: '' },
 })
 const emit = defineEmits(['close'])
+/**
+ * Esc 关掉。
+ *
+ * 抽屉那几处早就有（「Esc 是唯一不用先瞄准的出口」），而**弹窗比抽屉更该
+ * 有**——它盖住整屏，除了右上角那个 ✕ 和点外面，没别的出路。三个弹窗原来
+ * 一个都不认 Esc。
+ *
+ * 判 `props.open`：这个组件是**一直挂着**的（`v-if` 在模板里面），不判的话
+ * 它在窗口关着的时候也吃 Esc。
+ */
+function onEsc(e) {
+  if (e.key === 'Escape' && props.open) emit('close')
+}
+onMounted(() => window.addEventListener('keydown', onEsc))
+onUnmounted(() => window.removeEventListener('keydown', onEsc))
 
 const models = useModels()
 const ui = useUi()

@@ -19,7 +19,7 @@
  * （见 config::VideoConfig::aspect_ratio）。`/api/style` 现在**不收**
  * aspect_ratio，发过去是 422。
  */
-import { computed, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 
 import AppIcon from '@/components/AppIcon.vue'
 import { api } from '@/api'
@@ -107,6 +107,21 @@ async function load() {
 }
 
 watch(() => props.open, (now) => now && load())
+/**
+ * Esc 关掉。
+ *
+ * 抽屉那几处早就有（「Esc 是唯一不用先瞄准的出口」），而**弹窗比抽屉更该
+ * 有**——它盖住整屏，除了右上角那个 ✕ 和点外面，没别的出路。三个弹窗原来
+ * 一个都不认 Esc。
+ *
+ * 判 `props.open`：这个组件是**一直挂着**的（`v-if` 在模板里面），不判的话
+ * 它在窗口关着的时候也吃 Esc。
+ */
+function onEsc(e) {
+  if (e.key === 'Escape' && props.open) tryClose()
+}
+onMounted(() => window.addEventListener('keydown', onEsc))
+onUnmounted(() => window.removeEventListener('keydown', onEsc))
 
 /**
  * 关掉之前问一句。
