@@ -45,6 +45,26 @@ const currentRel = ref('')
 const shots = ref([])
 const videoEl = ref(null)
 const playhead = ref(0)
+/** 这部剧的画面规格。只用来定跳转条上那排格子的长宽比，见 stripRatio。 */
+const spec = ref(null)
+
+/**
+ * 跳转条每格的长宽比跟项目的 [video] 走，不是写死竖屏。
+ *
+ * 格子里是 `object-fit: cover` 的首帧：槽的比例和首帧对得上就一个像素都
+ * 不裁，对不上是**裁**，不是留黑边。竖屏项目（默认那一种）正好对上，所以
+ * 写死的 9:16 一直没露馅；**横屏项目整条就废了**——16:9 的首帧塞进 9:16
+ * 的槽，左右各切掉三分之一还多，条上剩下一溜画面正中间的竖条，认不出哪
+ * 一镜是哪一镜。而这条跳转条存在的全部意义就是"看着缩略图跳到那一镜"。
+ *
+ * 镜头墙那一页早就为同一件事改过（EpShots 的 cellRatio：「写死 9:16 的
+ * 话，横屏项目的每张牌都是上下两条黑、中间一小条画面」），做法照它。
+ */
+const stripRatio = computed(() => {
+  const v = spec.value
+  if (!v?.width || !v?.height) return '9 / 16'
+  return `${v.width} / ${v.height}`
+})
 
 /**
  * 镜头在成片里的起止时间。
@@ -140,7 +160,24 @@ async function load() {
   } finally {
     if (want === session.projectPath) loading.value = false
   }
-  await loadShots()
+  await Promise.all([loadShots(), loadSpec()])
+}
+
+/** 画面规格。读不到就退回竖屏——这一页不该因为它打不开。 */
+async function loadSpec() {
+  if (!session.projectPath) {
+    spec.value = null
+    return
+  }
+  // 换剧时两趟会叠，慢的那趟后落地就是拿上一部的画幅去排这一部的格子
+  const want = session.projectPath
+  try {
+    const got = await api.projectVideo(want)
+    if (want !== session.projectPath) return
+    spec.value = got
+  } catch {
+    if (want === session.projectPath) spec.value = null
+  }
 }
 
 async function loadShots() {
@@ -273,7 +310,7 @@ watch(currentRel, () => {
           </div>
 
           <!-- 分镜跳转条 -->
-          <div v-if="chapters.length && isMine" class="strip">
+          <div v-if="chapters.length && isMine" class="strip" :style="{ '--cell-ratio': stripRatio }">
             <button
               v-for="c in chapters"
               :key="c.shot_id"
@@ -394,7 +431,8 @@ watch(currentRel, () => {
   position: relative;
   flex: none;
   width: 46px;
-  aspect-ratio: 9 / 16;
+  /* 跟项目的画幅走，不写死竖屏。见 stripRatio 那段。 */
+  aspect-ratio: var(--cell-ratio, 9 / 16);
   padding: 0;
   border: 1px solid var(--line);
   border-radius: var(--r-sm);
