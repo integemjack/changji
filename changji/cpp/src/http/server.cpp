@@ -1358,9 +1358,10 @@ void run(const config::Settings& settings, const Options& opts) {
         return [field] {
             json body{{field, json::array()},
                       {"error",
-                       "投递功能要起 webapp 那层 Node 服务（webapp/server）。"
-                       "这个二进制自带的是制作那七步，投递没搬进来——"
-                       "它要存投递记录和各平台的凭据，是另一套东西。"}};
+                       "投递这一套 2026-09-12 随 Node 那层一起删了，现在没有"
+                       "任何部署能跑它——别去找 webapp/server，那个目录已经"
+                       "不在仓库里了。成片就在项目的 output 目录下，"
+                       "自己拿去传；要把它做回来的话是在引擎里重做一遍。"}};
             return json_response(body);
         };
     };
@@ -1373,8 +1374,8 @@ void run(const config::Settings& settings, const Options& opts) {
     const auto publish_write = [](const crow::request&) {
         return json_response(
             {{"detail",
-              "投递要起 webapp 那层 Node 服务（webapp/server），"
-              "这个二进制没带这一套。"}},
+              "投递这一套 2026-09-12 随 Node 那层一起删了，没有任何部署"
+              "能跑它。成片在项目的 output 目录下，自己拿去传。"}},
             501);
     };
     CROW_ROUTE(app, "/bff/publish/targets").methods("POST"_method)(publish_write);
