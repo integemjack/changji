@@ -352,12 +352,15 @@ watch(view, load)
         </button>
       </div>
 
-      <!-- keep-alive：切回镜头那一屏时轮询、选中和抽屉都还在。 -->
+      <!-- keep-alive：切回镜头那一屏时轮询、选中和抽屉都还在。
+           `script-chars` 在读完之前给 null，不是 0——镜头页拿它分辨"这一集
+           还没有剧本"和"还不知道"，理由见那边那个空状态。 -->
       <KeepAlive>
         <component
           :is="current.comp"
           :key="current.key"
           :can-publish="publishOk"
+          :script-chars="loaded ? scriptChars : null"
           @go="go"
         />
       </KeepAlive>

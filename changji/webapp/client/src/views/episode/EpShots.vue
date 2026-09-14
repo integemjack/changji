@@ -47,6 +47,19 @@ import { STEPS, useShots } from '@/composables/useShots'
 import { useSession } from '@/stores/session'
 import { useUi } from '@/stores/ui'
 
+/**
+ * **「这一集」那一层给的两样东西，原来一样都没接。**
+ *
+ * `@go` 和 `:can-publish` 是 EpisodeView 给每个子视图都绑上的（成片页那边
+ * 声明了、用着）。这一页两个都没声明，于是 `@go` 变成一个没人听的属性——
+ * 底下那个空状态想把人送去剧本页也送不了。
+ *
+ * `scriptChars` 是顺手要来的：那一层为了 tab 上那个「N 字」本来就读过剧本，
+ * 这一页拿它分辨"还没有剧本"和"有剧本还没拆镜头"，不用再问一趟。
+ */
+const emit = defineEmits(['go'])
+const props = defineProps({ scriptChars: { type: Number, default: null } })
+
 const session = useSession()
 const ui = useUi()
 const { run, isBusy, error } = useAction()
@@ -869,7 +882,27 @@ onDeactivated(() => window.removeEventListener('keydown', onKey))
 
     <!-- 「还没选到某一集」那个空状态挪到父页面了：进不到这一页就没有这一集，
          每个子视图各判一遍是三份同样的话。 -->
-    <EmptyState v-if="!loading && !shots.length" icon="board" title="还没有分镜">
+    <!-- **没有剧本时不要请人按「AI 出分镜」。** 那颗按钮第一件事就是去取
+         剧本，取不到就弹一句「这一集还没有剧本，先回第二步写」——把人请进
+         一条死路，还不给去路。分镜是照着剧本拆的，这时候该说的是这件事，
+         并且直接送过去（成片页那个空状态早就是这么做的）。
+
+         **判的是 `=== 0` 不是假值**：那一层还没读完时传过来的是 null，
+         那时候"有没有剧本"还不知道。镜头表和剧本字数是两趟请求，镜头表
+         先落地是常有的事——拿假值判的话，有剧本的集也会闪一下「还没有
+         剧本」。不知道就走下面那个通用的空状态。 -->
+    <EmptyState
+      v-if="!loading && !shots.length && props.scriptChars === 0"
+      icon="script"
+      title="这一集还没有剧本"
+      hint="分镜是照着剧本一场一场拆的，先把剧本写出来"
+    >
+      <button class="btn btn--primary btn--sm" type="button" @click="emit('go', 'script')">
+        去写剧本
+      </button>
+    </EmptyState>
+
+    <EmptyState v-else-if="!loading && !shots.length" icon="board" title="还没有分镜">
       <button
         class="btn btn--ghost btn--sm"
         type="button"
