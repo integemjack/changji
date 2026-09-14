@@ -385,12 +385,23 @@ async function save(id) {
   for (const key of ['name', ...FIELDS.map((f) => f.key)]) {
     if (draft[key] !== undefined && draft[key] !== null) patch[key] = draft[key]
   }
+  // 改名字要多说一句，和角色那一页同一件事：引擎只改资产库里这一条，而
+  // 故事那头每一章记的地点是**名字**（chapter.locations，不是 id），分集
+  // 线上那一排空景图正是拿章里的名字去查的（AssetEpisodes 的 castOf）。
+  // 镜头表不受影响：那里存的是 location_id。
+  const was = locations.value.find((l) => l.location_id === id)
+  const renamed = was && patch.name !== undefined && patch.name !== was.name
   const result = await run(
     () => api.saveLocation({ project: session.projectPath, location_id: id, patch }),
     { key: 'save:' + id, refresh: true },
   )
   if (!result) return
-  ui.ok(result.reset_shots ? `已保存，${result.reset_shots} 个镜头退回重跑` : '已保存')
+  const note = renamed
+    ? '；故事里那几章记的还是旧名字，分集线上这个地方会认不出来——去故事页点「提人物」重读一遍就对上了'
+    : ''
+  ui.ok(
+    (result.reset_shots ? `已保存，${result.reset_shots} 个镜头退回重跑` : '已保存') + note,
+  )
   await load()
 }
 
