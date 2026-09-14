@@ -343,7 +343,10 @@ defineExpose({ load })
 
     <div v-if="loading" class="tiny dim">读取中…</div>
 
-    <EmptyState v-else-if="!hasStory" icon="book" title="还没有故事">
+    <!-- 图标名要在 AppIcon 的 PATHS 里有。`book` 没有，拼不到就落回 ⓘ——
+         一个说「还没有故事」的空状态顶着信息图标。`script` 是故事那一步在
+         侧边栏用的同一个，指过去的也正是那一页。 -->
+    <EmptyState v-else-if="!hasStory" icon="script" title="还没有故事">
       <RouterLink to="/story" class="btn btn--sm">去写故事</RouterLink>
     </EmptyState>
 
