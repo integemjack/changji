@@ -297,7 +297,27 @@ export function useShots() {
     )
   }
 
+  /**
+   * `/api/run` 这一发还在路上。
+   *
+   * **界面上那三个按钮本来就想拿它变灰**（`:disabled="...isBusy('start')"`），
+   * 但 useShots 整个不走 useAction——没有任何人登记过 `start` 这个 key，
+   * 那三处判断永远是假。连点两下的后果：第二发撞 409，弹一句「已经在跑了」；
+   * 整集那条还会连着弹两个 confirm。
+   */
+  const starting = ref(false)
+
   async function start(ids = [], stages = null, force = null) {
+    if (starting.value) return { ok: false, error: null }
+    starting.value = true
+    try {
+      return await startInner(ids, stages, force)
+    } finally {
+      starting.value = false
+    }
+  }
+
+  async function startInner(ids, stages, force) {
     const one = ids.length > 0
     // **点下去立刻点亮，别等引擎。**
     //
@@ -544,7 +564,7 @@ export function useShots() {
   return {
     shots, episodeDuration, loading, load, bust, previewOf,
     inflightBy, pct, shotState, busy, shotRunning, isWaiting,
-    start, stop, shotAction, stepBtn, shotTone,
+    start, starting, stop, shotAction, stepBtn, shotTone,
     running: computed(() => runStore.running),
   }
 }

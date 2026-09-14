@@ -47,7 +47,7 @@ const {
   shots,
   episodeDuration, loading, load, bust, previewOf,
   pct, shotState, busy,
-  start, stop, shotAction, stepBtn, shotTone, running,
+  start, starting, stop, shotAction, stepBtn, shotTone, running,
 } = useShots()
 
 const openId = ref('')
@@ -484,7 +484,9 @@ async function startAll() {
   // 409 = 已经在跑了（多半是另一个浏览器、或者另一个标签页点的）。
   // **那不是错误**，跟着看进度就行——轮询和 WebSocket 进页面就开着了。
   if (r.error?.status === 409) ui.info('已经在跑了，下面跟着看进度就行')
-  else ui.error('起不来：' + (r.error?.message ?? '未知原因'))
+  // r.error 是空的那种：上一发还在路上，start() 直接挡住了——什么都没发生，
+  // 就别报错。见 useShots 里的 starting。
+  else if (r.error) ui.error('起不来：' + r.error.message)
 }
 
 /**
@@ -510,7 +512,9 @@ async function startFrames() {
     : await start([], ['frames'], true)
   if (r.ok) return
   if (r.error?.status === 409) ui.info('已经在跑了，下面跟着看进度就行')
-  else ui.error('起不来：' + (r.error?.message ?? '未知原因'))
+  // r.error 是空的那种：上一发还在路上，start() 直接挡住了——什么都没发生，
+  // 就别报错。见 useShots 里的 starting。
+  else if (r.error) ui.error('起不来：' + r.error.message)
 }
 
 /** 选中的那几镜一起重出某一段。挑十几个要重做的，一次交出去。 */
@@ -519,7 +523,7 @@ async function batchRerun(step) {
   if (!ids.length) return
   selected.value = new Set()
   const r = await start(ids, [step.id])
-  if (!r.ok) ui.error('起不来：' + (r.error?.message ?? '未知原因'))
+  if (!r.ok && r.error) ui.error('起不来：' + r.error.message)
 }
 
 // ---- 体检和画幅 ----
@@ -627,7 +631,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
           :title="pendingFrames
             ? '先把缺的首帧铺开，不出视频'
             : '每一镜都有首帧了；点了会全部重出（视频不动）'"
-          :disabled="blocked || isBusy('start')"
+          :disabled="blocked || starting"
           @click="startFrames"
         >
           <AppIcon name="image" :size="14" />
@@ -640,7 +644,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
           v-if="shots.length"
           class="btn btn--primary"
           type="button"
-          :disabled="blocked || isBusy('start')"
+          :disabled="blocked || starting"
           @click="startAll"
         >
           <AppIcon name="film" :size="15" />
@@ -764,7 +768,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
             :key="step.id"
             class="btn btn--ghost btn--sm"
             type="button"
-            :disabled="isBusy('start')"
+            :disabled="starting"
             @click="batchRerun(step)"
           >
             <AppIcon :name="step.icon" :size="13" />
