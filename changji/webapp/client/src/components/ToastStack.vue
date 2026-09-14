@@ -67,9 +67,17 @@ onUnmounted(() => window.removeEventListener('changji:error', onGlobalError))
 .toast__icon {
   margin-top: 3px;
 }
+/* **换行要留住。** 引擎那边好几句最要紧的话是分行写的：大模型连不上时
+   「连不上…（原因）\n当前模型：X\n服务说：…」、密钥不对时那句「密钥本身
+   多半没问题——…」、体检的「怎么办」（Windows: winget…/macOS: brew…）。
+   默认的 `white-space: normal` 会把 \n 折成一个空格，那几句挤成一长条，
+   而它们正是照着做的步骤。镜头页那条体检提示早就是 pre-wrap 了
+   （.alert__fix），提示条这儿漏了。
+   用 pre-line 不用 pre-wrap：只留换行，行首那些对齐用的空格照旧折掉。 */
 .toast__text {
   flex: 1;
   min-width: 0;
+  white-space: pre-line;
   word-break: break-word;
 }
 .toast__close {
