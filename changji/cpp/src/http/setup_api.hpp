@@ -70,6 +70,18 @@ bool group_satisfied(const setup::Group& g, const config::Settings& settings);
 /// 只认这一页会写的那些键，别的忽略。
 void apply_setup_patch(config::Settings& settings, const nlohmann::json& patch);
 
+/// 这一组现在配的是哪个选项。认不出来返回空串。
+///
+/// 判据是**主角色那个文件名对得上**（video 组就是 `[models].video`）。
+/// 拿"文件都在盘上"当判据是不行的：两档量化的配套文件可以都下过，
+/// 那时候分不出配置里用的是哪一档。大模型走外接服务时按**地址**认，
+/// 见实现里那段注释。
+///
+/// 导出是为了能测：认错的表现不是一句报错，而是下一次保存把用户自己
+/// 挑的模型名冲掉（2026-09-14 的那个 bug）。
+std::string current_option(const setup::Group& g,
+                           const config::Settings& settings);
+
 /// `[models]` 里那个角色对应的字段。角色名不认识返回 nullptr。
 ///
 /// 导出是为了能测：漏一个角色的表现是"下完了但配置里没写上"，

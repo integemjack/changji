@@ -107,21 +107,37 @@ json option_json(const Option& o, const fs::path& models_dir, double vram_gb) {
             {"files", files}};
 }
 
-/// 这一组现在配的是哪个选项。认不出来返回空串。
-///
-/// 判据是**主角色那个文件名对得上**（video 组就是 `[models].video`）。
-/// 拿"文件都在盘上"当判据是不行的：两档量化的配套文件可以都下过，
-/// 那时候分不出配置里用的是哪一档。
+/// 两个接口地址是不是同一家。只差结尾的斜杠不算两家。
+std::string same_service_key(std::string url) {
+    while (!url.empty() && url.back() == '/') url.pop_back();
+    return url;
+}
+
+}  // namespace
+
 std::string current_option(const Group& g, const config::Settings& s) {
     // **远端那条路不按文件认。** 切到云端时我们特意没清 [models].llm
     // （见 catalog.cpp 的 config_patch），所以上次下的那个权重还在配置里；
     // 按文件认的话这一页会选中本地那一档，而实际跑的是云端——界面说的
     // 和真跑的不是一回事，比不显示更糟。
+    //
+    // ⚠️ **按地址认这一家，不是按模型名。** 2026-09-14 用户报「智谱的
+    // 模型名保存不了」，根子就在这儿：原来是拿 `llm.model` 和每一项写死
+    // 的那个名字比，而模型名恰恰是用户在设置页自己挑的东西。他把
+    // glm-4.7-flash 换成 glm-5.3 那一刻，这一组就"认不出是哪一家"了，
+    // 于是
+    //   * 这一页显示成「不下载 · 用别的外接服务」——他明明在用智谱；
+    //   * 更糟的是下面 post_setup_download 的判据跟着塌：选中项从
+    //     `zhipu-free` 变成 `none`，页面上摆着的还是 `zhipu-free`，
+    //     一保存就被当成"换了一家"，把那一项写死的 glm-4.7-flash
+    //     冲回配置文件。
+    // 一家服务 = 一个地址。模型名归用户，这一页不拿它当身份证。
     if (g.key == "llm" && s.llm.backend != "local") {
+        const auto here = same_service_key(s.llm.base_url);
         for (const auto& o : g.options) {
             for (const auto& [key, value] : o.settings) {
-                if (key == "llm.model" && value.is_string() &&
-                    value.get<std::string>() == s.llm.model) {
+                if (key == "llm.base_url" && value.is_string() &&
+                    same_service_key(value.get<std::string>()) == here) {
                     return o.id;
                 }
             }
@@ -140,6 +156,8 @@ std::string current_option(const Group& g, const config::Settings& s) {
     }
     return {};
 }
+
+namespace {
 
 /// 写回配置并让内存里那份跟上。
 void persist(const json& patch) {
@@ -242,9 +260,22 @@ void apply_setup_patch(config::Settings& s, const json& patch) {
             s.tiers.draft_steps = t["draft_steps"].get<int>();
         }
     }
-    if (patch.contains("llm") && patch["llm"].is_object() &&
-        patch["llm"].contains("backend") && patch["llm"]["backend"].is_string()) {
-        s.llm.backend = patch["llm"]["backend"].get<std::string>();
+    // **这三项要一起落。** 原来只落 backend，于是选了云端那一项之后，
+    // 文件里是智谱的地址和模型，内存里还是上一家的——写剧本仍然发往
+    // 上一家，而且要等到重启才"自己好了"。反过来同样难查：2026-09-14
+    // 那个 bug 里，这一页把 llm.model 冲回默认只改了文件没改内存，
+    // 于是界面上一切正常，下次开机才跳回去。
+    if (patch.contains("llm") && patch["llm"].is_object()) {
+        const auto& l = patch["llm"];
+        if (l.contains("backend") && l["backend"].is_string()) {
+            s.llm.backend = l["backend"].get<std::string>();
+        }
+        if (l.contains("base_url") && l["base_url"].is_string()) {
+            s.llm.base_url = l["base_url"].get<std::string>();
+        }
+        if (l.contains("model") && l["model"].is_string()) {
+            s.llm.model = l["model"].get<std::string>();
+        }
     }
     if (patch.contains("tts") && patch["tts"].is_object() &&
         patch["tts"].contains("backend") && patch["tts"]["backend"].is_string()) {
@@ -426,12 +457,24 @@ ApiResult post_setup_download(const config::Settings& settings, const json& body
         immediate["models"]["dir"] = paths::to_utf8(models_dir);
     }
 
+    // **有没有哪一组真的换了。** 下面用它决定"写哪些组"，理由见那段注释。
+    bool any_changed = false;
+    for (const auto& g : catalog()) {
+        const auto pick = selections.find(g.key);
+        if (pick == selections.end()) continue;
+        if (current_option(g, settings) != pick->second) {
+            any_changed = true;
+            break;
+        }
+    }
+
     std::vector<Item> items;
     for (const auto& g : catalog()) {
         const auto pick = selections.find(g.key);
         if (pick == selections.end()) continue;
         const Option* opt = g.find(pick->second);
         if (opt == nullptr) throw ApiError(400, "不认识的选项：" + pick->second);
+        const bool changed = current_option(g, settings) != pick->second;
 
         // **每一组选中的配置都立刻写，不管它要不要下文件。**
         //
@@ -446,8 +489,37 @@ ApiResult post_setup_download(const config::Settings& settings, const json& body
         // 盘上没有的文件是个**说得出口**的状态：体检里那条"配了 N 项、
         // 其中 M 项缺"会直接点出来（doctor.cpp 的 configured/missing）。
         // 静默的花屏和明说的缺文件，不是一码事。
-        if (!opt->settings.empty()) {
-            const json patch = setup::config_patch({{g.key, opt->id}});
+        //
+        // ⚠️ **没动过的组不要重写。** 2026-09-14 用户报「智谱的模型名又
+        // 保存不了了」——真相是：他在「大模型」那一节把 llm.model 改成
+        // glm-5.3 存好了，接着点了这一页的保存，而 llm 这一组的选中项
+        // 仍然是 `zhipu-free`，那一项的 settings 里**写死着
+        // `llm.model = glm-4.7-flash`**，于是把他刚存的模型名冲回默认。
+        // 运行时内存里还是新值，所以当场看不出来，**下次读配置文件才跳
+        // 回去**——最难查的那种。
+        //
+        // 判据是"这一组的选中项变了没有"，不是"这一页点没点保存"：
+        // 他压根没碰这一组，我们就不该动它写下的任何一项。
+        // （这条判据本身还要 current_option 认得出这一家才算数——
+        //  那正是它按地址认、不按模型名认的原因，见上面那段。）
+        //
+        // **一组都没变时反而全写**：那正是按钮显示「重写配置」的那一下，
+        // 用途就是配置手改坏了拿它修回来。少了这一支，那个功能会变成
+        // 一个什么都不做的按钮。
+        if (!opt->settings.empty() && (changed || !any_changed)) {
+            json patch = setup::config_patch({{g.key, opt->id}});
+            // **已经在这家了就别动模型名。** 上面那条「一组都没变时全写」
+            // 是留给「重写配置」的，但它会连 `llm.model` 一起重写成这一项
+            // 写死的那个默认值——而模型名恰恰是用户在「大模型」那一节自己
+            // 挑的，不是这一页管的东西。判据是地址没变：地址一样就说明他
+            // 还在这家，没换服务商，那模型名归他。
+            if (!changed && patch.contains("llm") && patch["llm"].is_object() &&
+                patch["llm"].contains("base_url") &&
+                patch["llm"]["base_url"].is_string() &&
+                same_service_key(patch["llm"]["base_url"].get<std::string>()) ==
+                    same_service_key(settings.llm.base_url)) {
+                patch["llm"].erase("model");
+            }
             for (const auto& [section, values] : patch.items()) {
                 if (!values.is_object()) {
                     immediate[section] = values;  // 不在任何小节里的顶层项

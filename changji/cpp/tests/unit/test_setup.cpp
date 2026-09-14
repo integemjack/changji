@@ -356,6 +356,52 @@ TEST_CASE("apply_setup_patch 把 patch 落到内存里那份配置上") {
 
     http::apply_setup_patch(s, json{{"llm", {{"backend", "remote"}}}});
     CHECK(s.llm.backend == "remote");
+
+    // **地址和模型名也要落进内存，不能只写文件。** 只落 backend 的话，
+    // 选了云端那一项之后文件里是智谱、内存里还是上一家，写剧本仍然发往
+    // 上一家，要等重启才"自己好了"。
+    http::apply_setup_patch(s, setup::config_patch({{"llm", "zhipu-free"}}));
+    CHECK(s.llm.base_url == "https://open.bigmodel.cn/api/paas/v4");
+    CHECK(s.llm.model == "glm-4.7-flash");
+}
+
+TEST_CASE("现在用的是哪一项：外接大模型按地址认，不按模型名") {
+    // 2026-09-14 的 bug 就在这条判据上。按模型名认的话，用户在设置页把
+    // glm-4.7-flash 换成 glm-5.3 那一刻，这一组就"认不出是哪一家"：
+    // 初始化页显示成「不下载 · 用别的外接服务」，而下一次保存会把
+    // zhipu-free 那一项写死的 glm-4.7-flash 冲回配置文件——
+    // **他自己挑的模型名存不住**。
+    const auto* llm = &setup::catalog().front();
+    REQUIRE(llm->key == "llm");
+
+    config::Settings s;
+    s.llm.backend = "remote";
+    s.llm.base_url = "https://open.bigmodel.cn/api/paas/v4";
+
+    SUBCASE("就是那一项默认的模型名") {
+        s.llm.model = "glm-4.7-flash";
+        CHECK(http::current_option(*llm, s) == "zhipu-free");
+    }
+    SUBCASE("换成这家别的模型，还是这一家") {
+        s.llm.model = "glm-5.3";
+        CHECK(http::current_option(*llm, s) == "zhipu-free");
+    }
+    SUBCASE("地址结尾多个斜杠不算两家") {
+        s.llm.base_url = "https://open.bigmodel.cn/api/paas/v4/";
+        s.llm.model = "glm-5.3";
+        CHECK(http::current_option(*llm, s) == "zhipu-free");
+    }
+    SUBCASE("别处的服务：认不出是哪一家，那就是「用别的外接服务」") {
+        s.llm.base_url = "http://127.0.0.1:11434/v1";
+        // 模型名碰巧和清单里那个一样也不算——地址才是身份证
+        s.llm.model = "glm-4.7-flash";
+        CHECK(http::current_option(*llm, s) == setup::kNoneOption);
+    }
+    SUBCASE("进程内那条路还是按文件认") {
+        s.llm.backend = "local";
+        s.models.llm = "llm/Qwen3-14B-Q4_K_M.gguf";
+        CHECK(http::current_option(*llm, s) == "qwen3-14b-q4_k_m");
+    }
 }
 
 TEST_CASE("配齐了没有：接外面的服务也算配齐") {
