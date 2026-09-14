@@ -544,7 +544,49 @@ async function loadVideo() {
   }
 }
 
+// ---- 按下去之前先说清楚 ----
+//
+// `/api/run/preview` 的头注释写着它存在的理由：「以前只能按下开始再看，
+// 一按就是几十分钟。哪些镜头会重做、总共要等多久，这两件事应该在按下去
+// 之前就知道。」——接口写好了，界面上却一直没有一处调它。
+//
+// **不做成一个「预演」按钮。** 要人先点一下才知道要等多久，等于多一道
+// 关卡，而多数人不会点；这是一句话的信息量，直接摆在按钮旁边。GET 很便宜
+// （不碰模型，只数镜头状态），跑起来之后就不显示了——那时候进度条说的
+// 是同一件事，而且更准。
+//
+// **参数要和真按下去的那一下一致**：`force` 跟着主按钮走（都出完了时它
+// 是「全部重出」），`skip_draft` 两边都默认真。不一致的预览比没有更糟：
+// 它报的是另一件事，而人按它安排时间。
+
+const preview = ref(null)
+
+async function loadPreview() {
+  if (!session.projectPath || !session.episodeId || !shots.value.length ||
+      running.value) {
+    preview.value = null
+    return
+  }
+  try {
+    preview.value = await api.runPreview({
+      path: session.projectPath,
+      episode_id: session.episodeId,
+      force: !pending.value,
+    })
+  } catch {
+    // 读不到就不显示。这一行是锦上添花，不该因为它整页红。
+    preview.value = null
+  }
+}
+
 watch(() => session.projectPath, loadVideo, { immediate: true })
+// 镜头数、还差几镜、跑没跑完——任何一个变了，这句话就该重算。
+// 跑的过程中不算（上面那个卫语句挡着），停下来那一刻会算一次。
+watch(
+  () => [session.episodeId, shots.value.length, pending.value, running.value],
+  loadPreview,
+  { immediate: true },
+)
 
 onMounted(() => {
   loadDoctor()
@@ -606,6 +648,19 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
         </button>
       </template>
     </div>
+
+    <!-- 按下去之前的那一句。**跑起来就不显示**——那时候进度条说的是同一
+         件事，而且更准。 -->
+    <p v-if="preview && !running && !blocked" class="tiny dim prev">
+      <template v-if="preview.idle">
+        这一集每一镜都出到头了，点「全部重出」才会动。
+      </template>
+      <template v-else>
+        这一次要跑：<template v-for="(st, i) in preview.stages" :key="st.stage"
+          ><template v-if="i"> · </template><b>{{ st.label }} {{ st.shots }}</b></template
+        ><template v-if="preview.estimate_text">，约 {{ preview.estimate_text }}</template>
+      </template>
+    </p>
 
     <p v-if="session.hasProject && missingAssets.length" class="alert alert--warn">
       <AppIcon name="warn" :size="15" />
@@ -1027,6 +1082,17 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
 </template>
 
 <style scoped>
+/* 按下去之前那一句。**比提醒行轻一档**——它不是坏消息，是一个数。
+   `b` 只加重那几个数字，整句不加粗：加粗的是要扫的，不是要读的。 */
+.prev {
+  margin: calc(var(--s2) * -1) 0 0;
+  line-height: 1.5;
+}
+.prev b {
+  color: var(--text);
+  font-weight: 600;
+}
+
 /* ---- 提醒行（只在坏状态下出现） ---- */
 .alert {
   display: flex;
