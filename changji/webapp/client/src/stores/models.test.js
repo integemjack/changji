@@ -16,7 +16,6 @@ vi.mock('@/api', () => ({
     connections: () => Promise.resolve({}),
     llmModels: () => Promise.resolve({ models: [] }),
     llmProviders: () => Promise.resolve({ providers: [] }),
-    hardware: () => Promise.resolve({}),
   },
 }))
 

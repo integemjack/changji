@@ -111,10 +111,15 @@ export const api = {
   // ---- /bff：给界面拼好的那几条 ----
   //
   // 名字是历史（原来在 Node 那层），现在和 /api 一样由引擎答。
-  nodeHealth: () => get('/bff/health'),
   engineStatus: () => get('/bff/settings/status'),
   settingsOverview: () => get('/bff/settings/overview'),
-  nodeConfig: () => get('/bff/settings/config'),
+  // **`/bff/settings/overview` 一条就够。** 它里面已经嵌了 node（就是
+  // /bff/settings/config 那份）、engine、connections、settings、hardware
+  // 五块，引擎那边是进程内直接取、不发 HTTP（见 server.cpp 那段注释）。
+  // 单独再包 `nodeHealth` `nodeConfig` `engineSettings` `hardware` 四个
+  // 函数的话，同一份数据有两条取法，而设置页走的是 overview 这条——
+  // 另一条只会被将来某个人捡起来用，然后两处显示的东西开始不一样。
+  // 四个都没人叫，删掉；接口本身留着（curl 排查、别的客户端）。
   // 这部剧的画面规格。**一部剧一份**，不是全局设置——一台机器上可以
   // 同时有竖屏短剧和横屏片子。
   projectVideo: (project) => get('/bff/project/video', { path: project }),
@@ -280,7 +285,6 @@ export const api = {
    */
   cancelJob: (stream) => post('/api/job/cancel', { stream }),
   outputs: (path) => get('/api/outputs', { path }),
-  hardware: () => get('/api/hardware'),
   // 此刻的负载，一次性的。顶栏那三个小表走 WebSocket（订 "system"），
   // 这个留给排查用。
   system: () => get('/api/system'),
@@ -296,6 +300,5 @@ export const api = {
   doctor: (project) => get('/api/doctor', { path: project }),
   connections: () => get('/api/connections'),
   saveConnections: (payload) => post('/api/connections', payload),
-  engineSettings: () => get('/api/settings'),
   saveEngineSettings: (payload) => post('/api/settings', payload),
 }
