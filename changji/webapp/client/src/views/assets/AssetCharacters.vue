@@ -95,6 +95,16 @@ const panel = ref(null)
 watch(panel, (el) => el?.focus())
 let opener = null
 watch(openId, (now, before) => {
+  // **换了一个人，刚摇出来那一把要松开。**
+  //
+  // `take` 是"摇了一个、还没起名存下来"的那一段，而它是整页共用的一个
+  // ref：在老王那儿摇了三把，去点陈默，陈默的抽屉里照旧摆着那一把加一个
+  // 「存成音色」——那一下会把它挂到陈默身上，而人以为自己还在给老王挑。
+  // 名字框也一起清：那是给那一把起的名。
+  if (now !== before) {
+    take.value = null
+    takeName.value = ''
+  }
   if (now && !before) {
     opener = document.activeElement
     return
@@ -529,8 +539,12 @@ async function clearVoice(charId) {
 /**
  * 试听：拿这个角色当前的音色念一句。
  *
- * **念的是这个角色自己的台词**（找不到就用一句通用的）——听"某某某"念
- * 一段和剧本无关的话，判断不出这个音色配不配得上这个人。
+ * 念的是一句现拼的自我介绍，**带着这个角色的名字**——要听的是"这把嗓子
+ * 配不配得上这个人"，而名字是这一页上手边唯一和这个人有关的字。
+ *
+ * （这段注释原来写着"念的是这个角色自己的台词（找不到就用一句通用的）"，
+ *  而代码从来没去找过台词：这一页根本不读分镜表，手边没有台词。真要念
+ *  他自己的词，得先拉一趟 /api/shots 再从里面挑一句。）
  */
 async function tryVoice(charId) {
   const voice = edits[charId]?.voice_id || ''
