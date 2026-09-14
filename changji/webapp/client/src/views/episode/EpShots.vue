@@ -732,7 +732,13 @@ onDeactivated(() => window.removeEventListener('keydown', onKey))
     </div>
 
     <!-- 按下去之前的那一句。**跑起来就不显示**——那时候进度条说的是同一
-         件事，而且更准。 -->
+         件事，而且更准。
+         ⚠️ **时长走前端的 humanTime，不用引擎回的 `estimate_text`。**
+         两边的格式不一样（引擎是「1.5 小时」「2 分钟」，前端是
+         「1 小时 30 分」「1 分 30 秒」，见 cpp 那边的 human_time 语料），
+         而这一页别处的时长——上面那行「18 镜 · 1 分 2 秒」、出完分镜那句
+         「共 X」——全是前端这一套。混着用就是同一屏里两种写法。
+         引擎两样都回，`estimate_s` 是秒数，直接拿它格式化。 -->
     <p v-if="preview && !running && !blocked" class="tiny dim prev">
       <template v-if="preview.idle">
         这一集每一镜都出到头了，点「全部重出」才会动。
@@ -740,7 +746,7 @@ onDeactivated(() => window.removeEventListener('keydown', onKey))
       <template v-else>
         这一次要跑：<template v-for="(st, i) in preview.stages" :key="st.stage"
           ><template v-if="i"> · </template><b>{{ st.label }} {{ st.shots }}</b></template
-        ><template v-if="preview.estimate_text">，约 {{ preview.estimate_text }}</template>
+        ><template v-if="preview.estimate_s > 0">，约 {{ humanTime(preview.estimate_s) }}</template>
       </template>
     </p>
 
