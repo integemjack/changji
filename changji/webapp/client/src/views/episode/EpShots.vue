@@ -268,6 +268,12 @@ function openDraft(shot) {
   }
 }
 
+/** 抽屉真收起来的那两行。**已经问过的地方别再走 close()**，见下面。 */
+function shut() {
+  openId.value = ''
+  draft.value = null
+}
+
 /** 点一格。开着同一镜就收起，否则换过去。 */
 function toggle(shot) {
   // 换镜头之前先问一句。改了提示词直接切走，改动就无声无息没了，
@@ -275,8 +281,11 @@ function toggle(shot) {
   if (draftDirty.value && !confirm('这一镜有改动还没保存，切走就没了。确定？')) {
     return
   }
+  // **这儿原来调的是 close()，而它自己也要问一次**——点开着那一镜的牌子
+  // 收抽屉，同一件事连弹两个一模一样的框：答应了第一个才看得到第二个，
+  // 第二个上按「取消」抽屉还留着。问过了就直接收。
   if (openId.value === shot.shot_id) {
-    close()
+    shut()
     return
   }
   openDraft(shot)
@@ -286,8 +295,7 @@ function close() {
   if (draftDirty.value && !confirm('这一镜有改动还没保存，关掉就没了。确定？')) {
     return
   }
-  openId.value = ''
-  draft.value = null
+  shut()
 }
 
 /** 抽屉开着的时候，↑↓ 换镜头、Esc 收起。 */
