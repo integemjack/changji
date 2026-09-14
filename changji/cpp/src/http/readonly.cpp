@@ -338,7 +338,12 @@ ApiResult get_assets(const std::string& path) {
         {"reference_hint", refs_honored ? "" :
             "参考图会传给出图模型，但当前这个是纯文生图的，它不会照着画——"
             "画面靠的是下面那段拼出来的提示词。要让参考图真生效，"
-            "去项目页的「模型」那一节换一个图像编辑模型"
+            // 项目页上那是**一行**（`line__k` 写着「模型」，后面四个名字
+            // 各是一个按钮），不是一节；而且要换的是四个里的哪一个也得说
+            // 出来——参考图归首帧那一组（catalog.cpp 里 g.title =
+            // 「首帧模型（文生图）」）。只说"那一节"的人会在项目页上找一个
+            // 不存在的小标题。
+            "去项目页「模型」那一行点一下首帧模型的名字，换一个图像编辑模型"
             "（Qwen-Image-Edit、Flux Kontext 这类）。"},
         {"characters", characters},
         {"locations", locations},
