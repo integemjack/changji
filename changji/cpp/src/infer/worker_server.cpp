@@ -110,7 +110,13 @@ std::string cannot_do(const Task& t, const config::Settings& s) {
 }
 
 crow::response json_res(const json& body, int code = 200) {
-    crow::response res(code, body.dump());
+    // dump 用 replace 不用默认的 strict，理由同 http/server.cpp 的
+    // `json_response`：这里回的 body 里带着 sd.cpp 抛上来的那句错误原文，
+    // 而那是一个原生库拼出来的字符串——夹一个非法字节进去，strict 就在这
+    // 一行抛，整条 /task 变成一个没有 body 的 500，主进程那头只看得到
+    // 「这一镜失败了」，真正的原因反而丢了。合法输入逐字节不变。
+    crow::response res(code, body.dump(-1, ' ', false,
+                                       json::error_handler_t::replace));
     res.set_header("Content-Type", "application/json; charset=utf-8");
     return res;
 }

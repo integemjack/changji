@@ -80,7 +80,24 @@ namespace {
 /// Crow 自带 crow::json，但整个项目其它地方用的是 nlohmann——
 /// 混用两套 JSON 库是长期的麻烦源。这里统一序列化成字符串再交给 Crow。
 crow::response json_response(const json& body, int status = 200) {
-    crow::response res(status, body.dump());
+    // **dump 用 replace，不用默认的 strict。**
+    //
+    // nlohmann 默认在碰到非法 UTF-8 时**抛异常**（type_error.316），而这个
+    // 函数是所有响应的最后一步——抛在这儿就是整条接口 500，消息是一句
+    // 「invalid UTF-8 byte at index …」，指不到是哪个字段带进来的。
+    //
+    // 非法字节进得来的路不止一条：磁盘上的文件名（`/api/outputs` 列的是
+    // 整个 output 目录，谁往里扔一个别处拷来的文件就够了）、外部服务回的
+    // 字段、模型输出里被截断的一段。这一族 2026-09-11 咬过一次，症状写在
+    // `extract_json` 末尾那段注释里：「字节截断落在半个汉字上时整个
+    // /api/script/series 都回 500，进度就看不见了」——那次是去修了源头，
+    // 而源头不止一处。
+    //
+    // `replace` 把非法字节换成 U+FFFD（）。**合法输入逐字节不变**，所以
+    // 对拍不受影响；换来的是"一个字显示成方块"而不是"整页打不开"。
+    // 其余三个参数就是默认值（不缩进、空格、不转义非 ASCII）。
+    crow::response res(status, body.dump(-1, ' ', false,
+                                         json::error_handler_t::replace));
     // **不带 charset。** FastAPI 发的就是这个，对拍比响应头时发现
     // 两边差一个 "; charset=utf-8"。JSON 按 RFC 8259 本来就必须是 UTF-8，
     // 这个参数在 application/json 上是没注册的，加了不算更对。

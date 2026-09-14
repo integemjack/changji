@@ -163,13 +163,18 @@ void Hub::broadcast(const std::string& job_id, const json& msg) {
     if (targets.empty()) return;
 
     // 用 set 去重：同一个连接既订了具体 id 又订了类别时只该收一条。
-    std::string payload = msg.dump();
+    //
+    // **dump 用 replace**，理由同 server.cpp 的 json_response：默认的
+    // strict 碰上非法 UTF-8 会抛，而这儿是在**干活那条线程**上、还持着
+    // 这把锁——抛出去就是那件活整个断掉，而进度消息本来只是给人看的。
+    std::string payload = msg.dump(-1, ' ', false, json::error_handler_t::replace);
     for (auto* c : targets) c->send_text(payload);
 }
 
 void Hub::broadcast_all(const json& msg) {
     std::lock_guard<std::mutex> lk(mu_);
-    std::string payload = msg.dump();
+    // replace 的理由同上。
+    std::string payload = msg.dump(-1, ' ', false, json::error_handler_t::replace);
     for (auto* c : conns_) c->send_text(payload);
 }
 
