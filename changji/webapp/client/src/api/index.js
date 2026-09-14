@@ -272,7 +272,16 @@ export const api = {
   // 此刻的负载，一次性的。顶栏那三个小表走 WebSocket（订 "system"），
   // 这个留给排查用。
   system: () => get('/api/system'),
-  doctor: () => get('/api/doctor'),
+  /**
+   * 体检。**把项目路径带上。**
+   *
+   * 其中「出片画布」那一项查的是 `[video].quality` 算出来的宽高，而画幅是
+   * **每部剧自己的**。不带 path 的话引擎查的是全局默认（竖屏 720p，
+   * 544×928），那个数永远不会超上限——项目切到 2K 之后体检照样说没问题，
+   * 这条检查等于没有。引擎那头 2026-09-14 就收这个参数了（见
+   * `/api/doctor` 路由上那段注释：「实测撞到过」），界面一直没给。
+   */
+  doctor: (project) => get('/api/doctor', { path: project }),
   connections: () => get('/api/connections'),
   saveConnections: (payload) => post('/api/connections', payload),
   engineSettings: () => get('/api/settings'),

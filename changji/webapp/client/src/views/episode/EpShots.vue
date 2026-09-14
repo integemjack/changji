@@ -744,7 +744,8 @@ async function batchRerun(step) {
 
 async function loadDoctor() {
   try {
-    doctor.value = await api.doctor()
+    // 带上这部剧：「出片画布」查的是这部剧的画幅（见 api.doctor 那段）。
+    doctor.value = await api.doctor(session.projectPath)
   } catch (err) {
     doctor.value = {
       can_run: false,
@@ -836,7 +837,16 @@ watch(shots, () => {
   if (JSON.stringify(next) !== JSON.stringify(draft.value)) draft.value = next
 })
 
-watch(() => session.projectPath, loadVideo, { immediate: true })
+watch(
+  () => session.projectPath,
+  () => {
+    loadVideo()
+    // 体检里有一项跟着这部剧的画幅走，换剧要重查。这一格被 KeepAlive
+    // 冻着，onMounted 只跑一次——不重查的话那一项一直是上一部的答案。
+    loadDoctor()
+  },
+  { immediate: true },
+)
 // 镜头数、还差几镜、跑没跑完——任何一个变了，这句话就该重算。
 // 跑的过程中不算（上面那个卫语句挡着），停下来那一刻会算一次。
 watch(
@@ -858,7 +868,8 @@ function beforeUnload(e) {
 }
 
 onMounted(() => {
-  loadDoctor()
+  // 体检那一趟上面那个 watch 已经带着 immediate 跑过了，这儿不用再来一遍
+  // ——一趟体检里有三项要发网络请求，最坏二十多秒。
   window.addEventListener('keydown', onKey)
   // **这一条不跟着 onActivated 走。** 人切到剧本格去了，抽屉里那份改动
   // 还在（组件只是停用，draft 没清），刷新照样丢。
