@@ -444,6 +444,10 @@ async function download() {
           去设置页换个模型目录，或者先删掉一些。
         </p>
 
+        <!-- 轮询断了之后那句话。`models.error` 之前只有项目页那一行读，
+             而下载正跑着的时候人盯的是这个窗。 -->
+        <p v-if="models.pollError" class="tiny danger-text">{{ models.pollError }}</p>
+
         <div v-if="stat" class="stack stack--sm">
           <!-- **总大小还不知道的时候，别画一条停在 0% 的进度条。**
                `stat.percent` 是 `total ? done/total : 0`——下载刚起步（文件

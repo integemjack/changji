@@ -44,6 +44,13 @@ export const useModels = defineStore('models', () => {
   const progress = ref(null)
   const loading = ref(false)
   const error = ref('')
+  /**
+   * 下载进度那条轮询断掉之后的那句话。**和 `error` 分开**：那一个说的是
+   * "模型清单读不到"（项目页那一行读它），而这一条说的是"清单好好的，只是
+   * 下载进度看不到了"——共用一个字段的话，项目页会写出「读不到模型清单：
+   * 和引擎断了，下载进度看不到了」这种前后不搭的话。
+   */
+  const pollError = ref('')
 
   let timer = null
   /** 连着拉不回来几拍了。见 poll()。 */
@@ -226,6 +233,7 @@ export const useModels = defineStore('models', () => {
   function poll() {
     if (timer) return
     misses = 0
+    pollError.value = ''
     timer = setInterval(async () => {
       try {
         progress.value = await api.setupProgress()
@@ -247,7 +255,15 @@ export const useModels = defineStore('models', () => {
         // 出片那条 store 早就是这个写法：「引擎重启时会连着失败几次。
         // 立刻报错太吵，连丢三次再说。」这儿跟上。
         misses += 1
-        if (misses >= 3) stopPoll()
+        if (misses >= 3) {
+          stopPoll()
+          // **停了要说出来。** 这一条停下之后没有任何东西会把它重开（只有
+          // load() 会，而下载期间调它的只有"关掉这个窗再打开"）。不说的话
+          // 弹窗上那条进度冻在最后一帧、旁边还写着「正在下」，而下载其实
+          // 在引擎那头好好跑着——又是一个"一动不动"的画面。
+          pollError.value =
+            '和引擎断了，下载进度看不到了。下载本身在引擎那头，没有停；关掉这个窗再打开一次就接着看得到'
+        }
       }
     }, 1000)
   }
@@ -293,7 +309,8 @@ export const useModels = defineStore('models', () => {
   }
 
   return {
-    state, picks, progress, loading, error, llmModel, llmKeyNeeded, llmKeySet, llmBaseUrl, llmTemperature,
+    state, picks, progress, loading, error, pollError,
+    llmModel, llmKeyNeeded, llmKeySet, llmBaseUrl, llmTemperature,
     groups, running, inUse,
     group, pickedOption, needOf, familyChoices, currentFamily, currentFamilyChoice,
     selectFamily, verdict, optionLine,
