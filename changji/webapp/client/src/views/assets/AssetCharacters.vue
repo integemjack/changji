@@ -1051,7 +1051,24 @@ async function clearRef(charId, slot) {
               <label class="field">
                 <span class="field__label">
                   音色
-                  <span v-if="openChar.voice_gender" class="pill pill--neutral tiny">
+                  <!-- **这个猜测是一次性的，得说出来。** 它只在「照故事
+                       定妆」那一下算一次（引擎 bible.cpp 里
+                       `guess_gender(identity)`），之后**改身份那一栏不会
+                       重猜**——`/api/character` 的白名单里根本没有
+                       voice_gender。于是：模型把男主写成「二十七岁女性」，
+                       用户在上面把身份改对了，这个牌子还挂着「女」，配音
+                       那一步照样按它挑一把女声（audio.cpp 的 pick_voice），
+                       全程不报错。
+                       牌子上写着「猜的」已经说清了它是什么，这条 title 补
+                       的是"什么时候猜的、改了身份为什么不变、怎么才算改掉
+                       它"——真正的出路是下面那一栏填个音色，填了就不看它。
+                       （取值只有 female / male / 空三种，空的话上面那个
+                       v-if 直接不渲染，所以三元式那一支不会画错。） -->
+                  <span
+                    v-if="openChar.voice_gender"
+                    class="pill pill--neutral tiny"
+                    title="「照故事定妆」那一下照身份那段文字猜的，之后改身份不会重猜。音色留空时按它挑一把嗓子；猜错了就在下面填一个音色，填了就不看它。"
+                  >
                     猜的性别：{{ openChar.voice_gender === 'female' ? '女' : '男' }}
                   </span>
                 </span>
