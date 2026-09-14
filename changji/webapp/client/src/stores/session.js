@@ -60,10 +60,30 @@ export const useSession = defineStore('session', () => {
       flow.value = null
       return
     }
+    /**
+     * **这一趟是替谁问的。**
+     *
+     * 这个函数是全应用被叫得最勤的一个：App 上那个 watch（换项目、换集）、
+     * `useAction` 里每个带 `refresh: true` 的动作、还有好几处手动调。两趟
+     * 叠在一起太容易了，而 `/bff/flow` 恰恰是最慢的一条——它要读
+     * project.json、story.json（引擎注释写着"可能有几百 KB"）、这一集的
+     * 分镜和产物目录。
+     *
+     * 叠上之后，后落地的那一份会把**上一部剧**的 flow 装进来：侧栏的对勾、
+     * 顶栏的集号、每一页读的 done 全是上一部的。更糟的是下面那句
+     * `selectEpisode(data.episodeId)`——它会把集号切回上一部那一集，还写进
+     * localStorage，于是新这一部的每一页都拿着一个不属于它的集号去问引擎。
+     *
+     * 判据要把集号也算进去：删一集那条路先 `selectEpisode('')` 再 refresh，
+     * 靠引擎回落到第一集，那一趟的参数和上一趟不一样。
+     */
+    const want = `${projectPath.value}\u0000${episodeId.value}`
+    const mine = () => want === `${projectPath.value}\u0000${episodeId.value}`
     loading.value = true
     error.value = ''
     try {
       const data = await api.flow(projectPath.value, episodeId.value)
+      if (!mine()) return
       flow.value = data
       project.value = data.project
       // 引擎挑了哪一集就跟着它，省得前端自己再判一遍第一集是谁
@@ -72,6 +92,9 @@ export const useSession = defineStore('session', () => {
       }
       if (!data.episodeId) selectEpisode('')
     } catch (err) {
+      // 过期那一趟的报错也不能算数：上一部剧被删了回的 404，会把这一部
+      // 的 project / flow 一起清掉，还弹一句莫名其妙的红字。
+      if (!mine()) return
       error.value = err.message
       // **说出来。** 这一条原来只写进 error 就完了，而 `session.error`
       // 界面上一处都没读——于是这条路整个是哑的：
@@ -100,7 +123,8 @@ export const useSession = defineStore('session', () => {
         flow.value = null
       }
     } finally {
-      loading.value = false
+      // 同理：过期那一趟的 finally 会在新那趟还读着的时候把转圈关掉
+      if (mine()) loading.value = false
     }
   }
 

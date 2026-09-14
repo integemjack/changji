@@ -174,11 +174,25 @@ export const useModels = defineStore('models', () => {
     return marks.length ? `${head} · ${marks.join('、')}` : head
   }
 
+  /**
+   * 重读一遍"这台机器拿哪几个模型跑"。
+   *
+   * 同项目库那条：触发点有好几个（项目页挂载、每次打开模型弹窗、存完一组、
+   * 下载开始和结束），而这一趟要探显卡、量硬盘、逐个文件对大小，慢得足以
+   * 叠上。没有参数可比，用自增号：旧的那一趟回来直接扔。
+   *
+   * 叠上不扔的后果很具体：刚在弹窗里挑完一档存下，紧接着旧那趟回来，
+   * `picks` 被按旧的 selected 重算一遍——人看到自己刚挑的那一档弹回去了。
+   */
+  let seq = 0
+
   async function load() {
+    const mine = ++seq
     loading.value = true
     error.value = ''
     try {
       const data = await api.setupState()
+      if (mine !== seq) return
       state.value = data
       progress.value = data.download
       // **已经配着的优先，没有才用推荐的。顺序不能反**——反了的话，
@@ -202,9 +216,10 @@ export const useModels = defineStore('models', () => {
       }
       if (data.download?.state === 'running') poll()
     } catch (err) {
+      if (mine !== seq) return
       error.value = err.message
     } finally {
-      loading.value = false
+      if (mine === seq) loading.value = false
     }
   }
 
