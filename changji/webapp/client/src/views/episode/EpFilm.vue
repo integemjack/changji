@@ -88,18 +88,23 @@ async function load() {
     files.value = []
     return
   }
+  // 这一趟是给哪部剧读的。换剧时两趟会叠在一起，慢的那趟后落地就把上
+  // 一部的片单摆在这一部下面——而这一页是"审完再发出去"用的。
+  const want = session.projectPath
   loading.value = true
   try {
     const data = await api.outputs(session.projectPath)
+    if (want !== session.projectPath) return
     files.value = data.files ?? []
     // 默认选当前这一集的成片，没有就选最新的一条
     const mine = forThisEpisode.value[0] ?? files.value[0]
     currentRel.value = mine?.rel ?? ''
   } catch (err) {
+    if (want !== session.projectPath) return
     ui.error(err.message)
     files.value = []
   } finally {
-    loading.value = false
+    if (want === session.projectPath) loading.value = false
   }
   await loadShots()
 }
@@ -109,11 +114,14 @@ async function loadShots() {
     shots.value = []
     return
   }
+  const want = `${session.projectPath}::${session.episodeId}`
+  const mine = () => want === `${session.projectPath}::${session.episodeId}`
   try {
     const data = await api.shots(session.projectPath, session.episodeId)
+    if (!mine()) return
     shots.value = data.shots ?? []
   } catch {
-    shots.value = []
+    if (mine()) shots.value = []
   }
 }
 

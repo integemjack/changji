@@ -98,18 +98,29 @@ export function useShots() {
       episodeDuration.value = null
       return
     }
+    // **这一趟是给哪一集读的。**
+    //
+    // 顶栏连着换两集，两趟请求都在路上，回来的顺序不保证——慢的那趟后
+    // 落地，ep02 的标题下面摆的就是 ep01 的镜头墙。而这一页上每个格子的
+    // 按钮都按 `shot_id` 发请求：点「重出」送的是 ep01 的镜头号配 ep02 的
+    // 集号，轻则 404，重则那一集里正好有同号的镜头，重出的是另一集的东西。
+    const want = `${session.projectPath}::${session.episodeId}`
+    const mine = () => want === `${session.projectPath}::${session.episodeId}`
     loading.value = true
     try {
       const data = await api.shots(session.projectPath, session.episodeId)
+      if (!mine()) return
       shots.value = data.shots ?? []
       episodeDuration.value = data.duration_s ?? null
     } catch (err) {
+      if (!mine()) return
       // 还没出分镜时引擎会 404。这不是错，是流程还没走到。
       if (err.status !== 404) ui.error(err.message)
       shots.value = []
       episodeDuration.value = null
     } finally {
-      loading.value = false
+      // 过期那一趟的 finally 会在新那趟还读着的时候把转圈关掉
+      if (mine()) loading.value = false
     }
   }
 

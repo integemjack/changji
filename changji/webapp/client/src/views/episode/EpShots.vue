@@ -571,10 +571,15 @@ async function loadDoctor() {
 
 async function loadVideo() {
   if (!session.projectPath) return
+  // 换剧时慢的那趟后落地，画幅就是上一部的——而它决定这一页每个格子的
+  // 长宽比和"竖屏/横屏"那句话
+  const want = session.projectPath
   try {
-    video.value = await api.projectVideo(session.projectPath)
+    const got = await api.projectVideo(session.projectPath)
+    if (want !== session.projectPath) return
+    video.value = got
   } catch {
-    video.value = null
+    if (want === session.projectPath) video.value = null
   }
 }
 
@@ -601,15 +606,20 @@ async function loadPreview() {
     preview.value = null
     return
   }
+  const want = `${session.projectPath}::${session.episodeId}`
+  const mine = () => want === `${session.projectPath}::${session.episodeId}`
   try {
-    preview.value = await api.runPreview({
+    const got = await api.runPreview({
       path: session.projectPath,
       episode_id: session.episodeId,
       force: !pending.value,
     })
+    // 人按这一行安排时间（「要等 24 分钟」），报的是别的集就更糟
+    if (!mine()) return
+    preview.value = got
   } catch {
     // 读不到就不显示。这一行是锦上添花，不该因为它整页红。
-    preview.value = null
+    if (mine()) preview.value = null
   }
 }
 

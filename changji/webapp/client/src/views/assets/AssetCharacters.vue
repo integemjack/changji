@@ -129,10 +129,14 @@ const refsUsed = computed(() => assets.value?.reference_images_used)
 
 async function load() {
   if (!session.projectPath) return
+  // 换剧时两趟会叠在一起，慢的那趟后落地就把上一部的角色摆在这一部下面
+  const want = session.projectPath
   loading.value = true
   try {
     const before = edits.value
-    assets.value = await api.assets(session.projectPath)
+    const got = await api.assets(session.projectPath)
+    if (want !== session.projectPath) return
+    assets.value = got
     // ⚠️ **改了还没存的那一条不能被盖掉。**
     //
     // 这个 load 不只在换项目时跑：`watch(finished, load)` 让它在**每画完
@@ -153,9 +157,9 @@ async function load() {
       ]),
     )
   } catch (err) {
-    ui.error(err.message)
+    if (want === session.projectPath) ui.error(err.message)
   } finally {
-    loading.value = false
+    if (want === session.projectPath) loading.value = false
   }
 }
 
