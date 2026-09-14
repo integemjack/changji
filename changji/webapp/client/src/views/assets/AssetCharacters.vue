@@ -256,8 +256,7 @@ onUnmounted(() => {
   document.removeEventListener('keydown', onEsc)
   window.removeEventListener('beforeunload', beforeUnload)
   // 走开就别响了
-  player?.pause()
-  player = null
+  stopAudio()
 })
 
 /**
@@ -272,7 +271,23 @@ onUnmounted(() => {
  * 引用是安全的（DOM 去重），首次挂载时两个钩子都跑一遍没关系。
  */
 onActivated(() => document.addEventListener('keydown', onEsc))
-onDeactivated(() => document.removeEventListener('keydown', onEsc))
+onDeactivated(() => {
+  document.removeEventListener('keydown', onEsc)
+  // **试听那一段也要按停。** 同一条理由的另一半：切到「场景」格是停用不是
+  // 卸载，上面 onUnmounted 里那句 `player?.pause()` 不跑——于是一段人声在
+  // 一个已经看不见的格子里继续响，而停它的那两个按钮（「试听」「摇一个」）
+  // 都在这一格里，屏幕上找不到任何能让它闭嘴的东西。playAudio 头上那段
+  // 注释说的「试听完走开也停不下来」，说的就是这件事。
+  stopAudio()
+})
+
+// 下面这三样**必须声明在换项目那个 watch 之前**：那个 watch 带
+// `immediate: true`，setup 期间就会跑一遍，而它要清 take / takeName、
+// 还要叫 stopAudio（读的是 player）。留在原来的位置（文件后半段）的话，
+// 第一次挂载就撞 TDZ，整页白屏。它们各自的说明在原来那两段注释里。
+const take = ref(null)        // { rel, seed, seconds, hz }
+const takeName = ref('')
+let player = null
 
 /**
  * **换项目要先把手里那份编辑清掉。**
@@ -295,6 +310,13 @@ watch(
   () => {
     edits.value = {}
     openId.value = ''
+    // 摇出来还没存的那一段是**上一部**的：它落在上一部的 voices/ 下，而
+    // 「存成音色」只发种子号，引擎照着种子在当前这一部里找文件。留着它，
+    // 新这一部的抽屉里就摆着一段听不了也存不进去的试听。
+    take.value = null
+    takeName.value = ''
+    // 正在响的那一段同理——它是上一部的声音，而这一页已经换人了。
+    stopAudio()
     // 「正在画」那几格也松开：它们按 char_id_slot 记，而两部剧里撞同一个
     // id 不稀奇。见 useRefStream 的 forgetAll。
     forgetAll()
@@ -455,9 +477,6 @@ async function upload(charId, slot, event) {
 // 所以流程是：摇一个 → 试听 → 不满意再摇 → 满意了起个名存下来。存下来的
 // 是一段音频，从此这个角色被克隆锁死，再也不会变。
 const presets = ref([])
-const take = ref(null)        // { rel, seed, seconds, hz }
-const takeName = ref('')
-
 async function loadPresets() {
   try {
     presets.value = (await api.voicePresets()).presets ?? []
@@ -474,30 +493,46 @@ async function loadPresets() {
  * 是「摇一个 → 试听 → 不满意再摇」，连点是常态；试听完走开也停不下来，
  * 组件卸了它还在响。留一个句柄，放下一段之前先把上一段按停。
  */
-let player = null
+function stopAudio() {
+  player?.pause()
+  player = null
+}
 
 function playAudio(rel, url) {
-  player?.pause()
+  stopAudio()
   player = new Audio(url)
   player.play().catch(() => {
     ui.info('浏览器挡住了自动播放，音频存在 ' + rel)
   })
 }
 
-/** 播一段刚摇出来的。加时间戳绕开缓存——落点是固定的那个 .take.wav。 */
-function playRel(rel) {
-  playAudio(rel, mediaUrl(session.projectPath, rel) + '&_=' + Date.now())
+/**
+ * 播一段刚摇出来的。加时间戳绕开缓存——落点是固定的那个 .take.wav。
+ *
+ * **项目路径是传进来的，不在这儿现读。** 叫它的两处都在 await 之后
+ * （合成要几秒到几十秒），现读的话换过剧就是拿**新这一部**的路径去拼
+ * 上一部那个 rel：两边的落点都是固定名字（`.take_<seed>.wav`、
+ * `audio/say.wav`），于是不报 404，直接播出新这一部里那一段——听上去
+ * 就是"这个角色的音色试听"，而它根本不是。
+ */
+function playRel(rel, project) {
+  playAudio(rel, mediaUrl(project, rel) + '&_=' + Date.now())
 }
 
 /** 摇一个。不给种子就让引擎随机，回包里带着它——喜欢这一摇才存得下来。 */
 async function rollVoice(seed = null) {
+  const project = session.projectPath
   const result = await run(
-    () => api.voiceTake({ project: session.projectPath, ...(seed === null ? {} : { seed }) }),
+    () => api.voiceTake({ project, ...(seed === null ? {} : { seed }) }),
     { key: 'take' },
   )
   if (!result) return
+  // 摇一段要跑一趟配音模型。中途换了剧的话这一段属于**上一部**：它落在
+  // 上一部的 voices/ 下，而「存成音色」发的是种子号、引擎照着种子去**当前
+  // 这一部**找那个文件——找不到就是一句莫名其妙的报错。
+  if (project !== session.projectPath) return
   take.value = result
-  playRel(result.rel)
+  playRel(result.rel, project)
 }
 
 /**
@@ -585,18 +620,22 @@ async function tryVoice(charId) {
   const voice = edits[charId]?.voice_id || ''
   const c = characters.value.find((x) => x.char_id === charId)
   const text = `你好，我是${c?.name || charId}。这是我说话的样子。`
+  const project = session.projectPath
   const result = await run(
-    () => api.say({ project: session.projectPath, text, voice }),
+    () => api.say({ project, text, voice }),
     { key: 'say:' + charId },
   )
   if (!result) return
+  // 人已经走了就别放：落点是固定的 audio/say.wav，现读路径会播出新这一部
+  // 里上一次朗读的那一段，而界面说的是"这个角色的音色"。
+  if (project !== session.projectPath) return
   // **estimate 后端出来的是静音。** 不说的话，用户对着一段没声音的音频
   // 会以为是自己音箱坏了——引擎照实回了 backend，这里照实说。
   if (result.backend === 'estimate') {
     ui.warn('现在的配音后端只算时长不出声（estimate），听不到东西是正常的')
   }
   // 字段是 `rel` 不是 audio_path，见 tts_api.cpp 的返回体。
-  playAudio(result.rel, mediaUrl(session.projectPath, result.rel) + '&_=' + Date.now())
+  playRel(result.rel, project)
 }
 
 /**
