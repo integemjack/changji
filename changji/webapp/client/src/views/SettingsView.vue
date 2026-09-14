@@ -132,6 +132,19 @@ const ttsPatch = computed(() => ({
 }))
 const savedTts = ref('')
 const ttsDirty = computed(() => JSON.stringify(ttsPatch.value) !== savedTts.value)
+/**
+ * 「引擎」和「装配与闸门」那两节改过没有。
+ *
+ * 加它们不是为了再摆两个角标，是为了**重读的时候别把人正在改的东西抹掉**
+ * ——见 load() 里那段。配音那节本来就有 `ttsDirty`（它还撑着页面上那个
+ * 「未存」角标），这两节原来没有基准线，重读一下就没声不响地回去了。
+ */
+const savedNode = ref('')
+const savedParams = ref('')
+const nodeDirty = computed(() => JSON.stringify(node.value) !== savedNode.value)
+const paramsDirty = computed(() => JSON.stringify(params.value) !== savedParams.value)
+/** 第一次读之前，上面那三个"改过没有"都不作数（基准线还是空的）。 */
+let loadedOnce = false
 
 const nodeLocked = computed(() => node.value?.envLocked ?? {})
 
@@ -178,11 +191,26 @@ async function load() {
   try {
     const data = await api.settingsOverview()
     overview.value = data
-    node.value = { ...data.node }
-    conn.value = { ...(data.connections ?? {}) }
-    // 基准线：这两句之后「未存」才说得准。放在这儿而不是保存成功那一下，
-    // 是因为引擎可能没照单全收（被环境变量顶着的项就不会变）。
-    savedTts.value = JSON.stringify(ttsPatch.value)
+    // ⚠️ **改了还没存的那一节不要盖掉。**
+    //
+    // 这个 load 不只在进页面时跑：**体检那一节的「重新体检」按的就是它**，
+    // 而那是这一页上最顺手的一个按钮。原来它三节一起整份覆盖——在「配音」
+    // 里改了地址、顺手点一下重新体检，改的东西连同旁边那个「未存」角标
+    // 一起没了，一句话都没有。而那个角标存在的全部理由（见 ttsPatch 上面
+    // 那段）就是"这一页每节各存各的，别让人以为已经存上了"。
+    //
+    // 判据用各节自己的基准线；第一次读的时候基准线还是空的，所以要
+    // `loadedOnce` 挡一下，否则首次进页面反而什么都装不进来。
+    if (!loadedOnce || !nodeDirty.value) {
+      node.value = { ...data.node }
+      savedNode.value = JSON.stringify(node.value)
+    }
+    if (!loadedOnce || !ttsDirty.value) {
+      conn.value = { ...(data.connections ?? {}) }
+      // 基准线：这两句之后「未存」才说得准。放在这儿而不是保存成功那一下，
+      // 是因为引擎可能没照单全收（被环境变量顶着的项就不会变）。
+      savedTts.value = JSON.stringify(ttsPatch.value)
+    }
     // 引擎把参数分了组，界面上摊平成一层，提交时再拆回去
     const s = data.settings
     if (s) {
@@ -192,11 +220,15 @@ async function load() {
       // `[tiers].final_steps` 一旦有值，出片时的 Turbo 6 步就不再生效
       // （run.cpp 只在它是 0 时才动），每一镜悄悄变回 28 步、慢四倍，
       // 而界面上只说了一句"参数已保存到配置文件"。
-      params.value = {
-        ...s.assembly,
-        ...s.gates,
+      if (!loadedOnce || !paramsDirty.value) {
+        params.value = {
+          ...s.assembly,
+          ...s.gates,
+        }
+        savedParams.value = JSON.stringify(params.value)
       }
     }
+    loadedOnce = true
     for (const [key, message] of Object.entries(data.errors ?? {})) {
       ui.warn(`${key} 读不到：${message}`)
     }
@@ -219,6 +251,9 @@ async function saveNode() {
   })
   if (result) {
     node.value = { ...result }
+  // **存成功了就把基准线推平**，否则下面那次 load 会以为这一节
+  // 还改着、跳过刷新，角标就永远挂在那儿了。见 load() 里那段。
+    savedNode.value = JSON.stringify(node.value)
     await load()
   }
 }
@@ -248,6 +283,9 @@ async function saveConn(patch, key) {
   if (result.env_locked?.length) {
     ui.warn(`${result.env_locked.join('、')} 被环境变量顶着，重启还是环境变量那一套`)
   }
+  // **存成功了就把基准线推平**，否则下面那次 load 会以为这一节
+  // 还改着、跳过刷新，角标就永远挂在那儿了。见 load() 里那段。
+  savedTts.value = JSON.stringify(ttsPatch.value)
   await load()
 }
 
@@ -270,7 +308,12 @@ async function saveParams() {
     key: 'params',
     success: persist.value ? '参数已保存到配置文件' : '参数已生效（重启后失效）',
   })
-  if (result) await load()
+  if (result) {
+  // **存成功了就把基准线推平**，否则下面那次 load 会以为这一节
+  // 还改着、跳过刷新，角标就永远挂在那儿了。见 load() 里那段。
+    savedParams.value = JSON.stringify(params.value)
+    await load()
+  }
 }
 
 function scrollTo(id) {
