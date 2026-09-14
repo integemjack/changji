@@ -733,18 +733,16 @@ function scrollTo(id) {
                     title="拦纯色和噪点。调高会误杀暗场"
                   />
                 </label>
-                <label class="field">
-                  <span class="field__label">首帧相似度下限</span>
-                  <input
-                    v-model.number="params.min_frame_similarity"
-                    class="input numeric"
-                    type="number"
-                    step="0.05"
-                    min="0"
-                    max="1"
-                    title="拦画面跑飞。运动大的片子要调低"
-                  />
-                </label>
+                <!-- **这里原来还有「首帧相似度下限」一个输入框，2026-09-15
+                     删了。** 和下面那两个（「时长容差」「变速安全区」）一模
+                     一样：有校验、有持久化、能改，而**引擎里没有任何一处读过
+                     `gates.min_frame_similarity`**——gates/checks.cpp 里根本
+                     没有"拿某一帧和首帧比"这回事，那儿唯一沾边的是「片中亮度
+                     剧烈跳变」，比的是相邻取样点，阈值还是写死的 60。
+                     而那个框的提示写着「拦画面跑飞。运动大的片子要调低」，
+                     人调完只会以为生效了。一个能改却什么都不做的旋钮比没有
+                     更糟。字段留着（老配置里有、接口白名单还收），从接口改
+                     它的话回执的 notes 里会说一句"存下来了但不生效"。 -->
                 <label class="field">
                   <span class="field__label">台词偏差上限（秒）</span>
                   <input

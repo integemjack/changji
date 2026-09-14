@@ -557,6 +557,16 @@ ApiResult post_settings(const json& body) {
             "装配是 -f concat -c copy 直接拼，全程硬切，引擎里一处转场"
             "都没渲染。改这个数不会有任何变化。");
     }
+    // 同上：闸门那一组里也有一个只写不读的。**没有「与首帧比相似度」这道
+    // 闸门**——gates/checks.cpp 里读 `min_frame_similarity` 的一处都没有
+    // （见 settings.hpp 那个字段头上那段）。设置页上那个输入框 2026-09-15
+    // 撤了，但白名单还收它（老客户端、curl、老配置），收到就说一句。
+    if (data.find("min_frame_similarity") != data.end()) {
+        notes.push_back(
+            "[gates].min_frame_similarity 存下来了，但它现在不生效："
+            "引擎里没有「和首帧比相似度」这道闸门，一处都没读过这个数。"
+            "拦画面跑飞的是「片中亮度剧烈跳变」那一条，它有自己写死的阈值。");
+    }
 
     // 校验不过就整体回滚——半套改动比不改更糟，用户看到"已应用"
     // 但配置是残的。
