@@ -1237,15 +1237,19 @@ async function readAloud() {
   }
   if (!picked.trim()) picked = full
 
+  // 合成那一下也钉住项目：这一段字是这一部剧的，音频也该落在它的目录里
+  // （下面那条 mediaUrl 同理）。
+  const project = session.projectPath
   const result = await run(
     () =>
       runAsyncJob(
-        (extra) => api.say({ project: session.projectPath, text: picked, ...extra }),
+        (extra) => api.say({ project, text: picked, ...extra }),
         { prefix: 'say' },
       ),
     { key: 'say' },
   )
   if (!result) return
+  if (project !== session.projectPath) return
   if (result.backend === 'estimate') {
     // 估算后端出来的是等长静音。不说的话用户会对着一段没声音的音频
     // 以为是自己音箱坏了。
@@ -1254,7 +1258,7 @@ async function readAloud() {
     ui.ok(`念了前 ${result.chars} 字（一次最多这么多）`)
   }
   // 加个时间戳绕开浏览器缓存：落点是固定名字，不加的话第二次点还是老那段
-  audio.value = mediaUrl(session.projectPath, result.rel) + '&t=' + Date.now()
+  audio.value = mediaUrl(project, result.rel) + '&t=' + Date.now()
   await nextTick()
   document.querySelector('audio.say')?.play?.()
 }
@@ -1637,15 +1641,27 @@ async function reverseFromEpisodes() {
 
 /** 让 AI 读一遍正文，把人物关系地点提出来。**正文一个字不动。** */
 async function analyzeStory() {
+  // 读一遍整本书要几分钟。中途换了剧的话：请求本身会带着新那一部的路径
+  // （runAsyncJob 要等 socket 开才发），而更要紧的是回包落地那一下——
+  // `draft.value = result` 会把**上一部剧的骨架**摆进新这一部的草稿位，
+  // 而「采用」是按当前项目写的。换剧那个 watch 清过一次 draft，但清在回
+  // 包之前，挡不住。
+  const project = session.projectPath
   const result = await run(
     () =>
       runAsyncJob(
-        (extra) => api.analyzeStory({ project: session.projectPath, ...extra }),
+        (extra) => api.analyzeStory({ project, ...extra }),
         { prefix: 'analyze' },
       ),
     { key: 'analyze' },
   )
-  if (result) draft.value = result
+  if (!result) return
+  if (project !== session.projectPath) {
+    // 这一份只在内存里（analyze 不落盘），所以要说一句，别当没发生过。
+    ui.info('那一部剧的人物地点提出来了，但你已经切走了——回去再点一次')
+    return
+  }
+  draft.value = result
 }
 
 /**
