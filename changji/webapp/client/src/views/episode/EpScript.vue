@@ -122,7 +122,25 @@ async function load() {
       duration: durationS.value,
     }
   } catch (err) {
-    if (want === ctxKey()) ui.error(err.message)
+    if (want !== ctxKey()) return
+    // **读砸了就得把编辑器空出来。**
+    //
+    // 这儿原来只弹一句错，编辑器一个字不动——而这一趟只在换集/换剧时跑，
+    // 于是砸了之后 ep02 的标签下面**摆着 ep01 的整篇剧本**，`savedScript`
+    // 也还是它，所以连「未存」都不亮：看上去就是 ep02 本来就有这么一篇。
+    // 接着敲两个字按保存，写进去的是 ep02（save 用的是当前的集号）——
+    // 上面 owner 那段防的正是这件事，只是防住了乱序那条路，没防住这条。
+    //
+    // 引擎那头"这一集还没写剧本"回的是 200 加一个空串，不是错；能走到这儿
+    // 的是这一集根本不在了（404）、项目读不出来、或者引擎连不上。
+    if (owner?.project !== session.projectPath || owner?.episode !== session.episodeId) {
+      script.value = ''
+      savedScript.value = ''
+      ctx.value = null
+      owner = null
+      mode.value = 'read'
+    }
+    ui.error(err.message)
   } finally {
     // 也要认一次：过期那一趟的 finally 会在新那趟还读着的时候把转圈关掉。
     if (want === ctxKey()) loading.value = false
