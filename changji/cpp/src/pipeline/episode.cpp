@@ -493,7 +493,40 @@ RunReport run_episode(const ProjectStore& store,
     // 每个阶段跑完立刻存盘。不存的话中途断电或者点了停止，
     // 前面几十分钟的产出全部作废——文件还在磁盘上，但项目文件里没记，
     // 下次跑会当成没跑过。
-    const auto save = [&] { store.save_project(project); };
+    //
+    // ⚠️ **存的是"重新读一份、只把这一集的镜头换上去"，不是手里这份整份
+    // 写回。**
+    //
+    // 手里这份 `project` 是**开跑那一刻**读的，而一轮要几十分钟到几小时。
+    // 整份写回去的话，这期间界面上改的东西全被静默盖掉：另一集的镜头抽屉
+    // 存的那一笔、改过的集名、手动加的一集、写好的剧本。全程 200，屏幕上
+    // 什么都不会说——http 那边 guard_not_running 的注释描述的就是这个形状
+    // （「新名字被静默盖回旧的，界面上看着像改名没生效」），只是那道闸只
+    // 拦了删项目和改项目名两条路，别的写接口一条没拦。
+    //
+    // 这一轮真正拥有的只有这一集的 shots（状态、产出路径、重试次数、拆出
+    // 来的新镜头、重排过的时长），所以只换这一格。
+    //
+    // 同一集的镜头在跑的过程中被人改了，仍然会被这一轮盖掉——那是真冲突，
+    // 不在这儿解决。
+    bool gone_said = false;
+    const auto save = [&] {
+        Project latest = store.load_project();
+        Episode* target = latest.episode_by_id(opts.episode_id);
+        if (target == nullptr) {
+            // 跑着跑着这一集被删了。**不能照旧那份写回去**——那等于把用户
+            // 的删除撤销掉，而且撤销出来的是一份几十分钟前的快照。
+            if (!gone_said) {
+                gone_said = true;
+                report.errors.push_back(
+                    "这一集在跑的过程中被删掉了，这一轮的进度没有写回项目文件"
+                    "（已经出来的文件还在磁盘上）");
+            }
+            return;
+        }
+        target->shots = ep->shots;
+        store.save_project(latest);
+    };
 
     // 渲染一个档位。草稿和成片只差三个东西：入口状态、档位参数、事件名。
     const auto render_tier = [&](Tier tier, bool force) {
