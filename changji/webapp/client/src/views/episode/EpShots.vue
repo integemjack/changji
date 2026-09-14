@@ -39,7 +39,6 @@ import {
   CAMERA_MOVES,
   SHOT_SIZES,
   TRANSITIONS,
-  qualityLabel,
   sizeLabel,
 } from '@/api/labels'
 import { humanTime, useAction } from '@/composables/useAction'
@@ -174,17 +173,16 @@ const missingAssets = computed(() => {
   return gaps
 })
 
-/** 工具行左边那行读数：几镜、多长、多大的画面——按下去之前该知道。 */
+/**
+ * 工具行左边那行读数。**只剩这一集多长**：镜数在 tab 上，画幅在项目页
+ * 「这部片子」那一行，三处说同一件事的时候留最不重复的那一份。
+ *
+ * （这儿原来还算一个 `size`（「竖屏 高清 · 704×1280」）然后 `void size`
+ * 扔掉，注释说"留着算，格子比例还要它"——不对：`cellRatio` 自己从
+ * `video` 算，一个字都没用到它。算完就丢的东西删掉，别让下一个人以为
+ * 那行字还有别的用处。）
+ */
 const tagline = computed(() => {
-  const v = video.value
-  const size = v
-    ? `${v.orientation === 'landscape' ? '横屏' : '竖屏'} ${qualityLabel(
-        v.quality,
-      )} · ${v.width}×${v.height}`
-    : ''
-  // 镜数在 tab 上，画幅在项目页「这部片子」那一行——这儿只剩这一集多长。
-  // size 留着算，抽屉和格子比例还要它（cellRatio）。
-  void size
   if (!shots.value.length) return ''
   return humanTime(totalDuration.value)
 })
