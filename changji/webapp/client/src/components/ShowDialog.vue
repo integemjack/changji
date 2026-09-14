@@ -39,13 +39,22 @@ const video = ref(null)
 const style = ref({ global_style: '', negative_prompt: '' })
 const styleLine = ref('')
 const resetOnStyle = ref(false)
+/**
+ * 成片工序：后期链（胶片 / 干净 / 关）和声音几层（环境声、配乐）。
+ * 剧的属性，存在项目的 changji.toml 的 [look] / [sound]。
+ * 配乐还要机器上配了生成命令（music_ready），没配的话勾了也出不来，
+ * 所以那个勾旁边要说清。
+ */
+const finish = ref(null)
 
 const savedVideo = ref('')
 const savedStyle = ref('')
+const savedFinish = ref('')
 const dirty = computed(
   () =>
     (video.value && JSON.stringify(video.value) !== savedVideo.value) ||
-    JSON.stringify(style.value) !== savedStyle.value,
+    JSON.stringify(style.value) !== savedStyle.value ||
+    (finish.value && JSON.stringify(finish.value) !== savedFinish.value),
 )
 
 const sizeText = computed(() =>
@@ -78,6 +87,20 @@ async function load() {
   }
   savedStyle.value = JSON.stringify(style.value)
   resetOnStyle.value = false
+
+  try {
+    const f = await api.projectFinish(session.projectPath)
+    finish.value = {
+      preset: f.look?.preset ?? 'film',
+      ambient: f.sound?.ambient ?? true,
+      music: f.sound?.music ?? true,
+      music_ready: !!f.sound?.music_ready,
+    }
+  } catch {
+    // 老引擎没有这条接口。不显示这一块，别拦着改画幅。
+    finish.value = null
+  }
+  savedFinish.value = JSON.stringify(finish.value)
 }
 
 watch(() => props.open, (now) => now && load())
@@ -107,6 +130,20 @@ async function save() {
     { key: 'style', refresh: true },
   )
   if (!r) return
+
+  if (finish.value && JSON.stringify(finish.value) !== savedFinish.value) {
+    const f = await run(
+      () =>
+        api.saveProjectFinish({
+          path: session.projectPath,
+          look: { preset: finish.value.preset },
+          sound: { ambient: finish.value.ambient, music: finish.value.music },
+        }),
+      { key: 'finish' },
+    )
+    if (!f) return
+  }
+
   ui.ok(r.reset_shots ? `存好了，${r.reset_shots} 个镜头退回重跑` : '存好了')
   emit('saved')
   emit('close')
@@ -172,6 +209,34 @@ async function save() {
           <input v-model="resetOnStyle" type="checkbox" />
           <span>已出的镜头退回重跑</span>
         </label>
+
+        <!-- 成片工序：装配时做的那几道。改了下一次装配就生效，不用重出镜头。 -->
+        <template v-if="finish">
+          <div class="two">
+            <label class="field">
+              <span class="field__label">后期</span>
+              <select v-model="finish.preset" class="select" title="装配时逐镜做：柔化、调色、颗粒">
+                <option value="film">胶片 · 柔化、调色、颗粒</option>
+                <option value="clean">干净 · 只柔化和颗粒</option>
+                <option value="off">关 · 一个滤镜都不加</option>
+              </select>
+            </label>
+            <div class="field">
+              <span class="field__label">声音</span>
+              <label class="switch" title="出片模型自己出的环境声和动效，压在台词底下">
+                <input v-model="finish.ambient" type="checkbox" />
+                <span>环境声</span>
+              </label>
+              <label
+                class="switch"
+                :title="finish.music_ready ? '一集一条器乐，压在台词底下' : '这台机器还没配配乐命令（全局配置 [sound].music_command），勾了也出不来'"
+              >
+                <input v-model="finish.music" type="checkbox" />
+                <span>配乐<span v-if="!finish.music_ready" class="warn">（机器上没配）</span></span>
+              </label>
+            </div>
+          </div>
+        </template>
       </div>
 
       <footer class="dlg__foot">

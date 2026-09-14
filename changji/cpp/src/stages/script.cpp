@@ -621,6 +621,50 @@ bool is_act_header(const std::string& line) {
     return parse_act_header(line, nullptr, nullptr, nullptr);
 }
 
+std::string scene_header(int index, const std::string& body) {
+    std::string out = "【第" + std::to_string(index) + "场";
+    const std::string b = strip_ascii(body);
+    if (!b.empty()) out += " · " + b;
+    return out + "】";
+}
+
+bool parse_scene_header(const std::string& line_in, int* index,
+                        std::string* body) {
+    const std::string line = strip_ascii(line_in);
+    const std::string left = "【第", right = "】";
+    if (!starts_with(line, left) || !ends_with(line, right)) return false;
+    if (line.size() <= left.size() + right.size()) return false;
+    const std::string inner =
+        line.substr(left.size(), line.size() - left.size() - right.size());
+    if (inner.find("【") != std::string::npos ||
+        inner.find("】") != std::string::npos) {
+        return false;
+    }
+    // 「1场 · 夜 · 内 · 天台」：数字到「场」为止
+    std::size_t k = 0;
+    while (k < inner.size() && inner[k] >= '0' && inner[k] <= '9') ++k;
+    if (k == 0) return false;
+    const std::string unit = "场";
+    if (inner.compare(k, unit.size(), unit) != 0) return false;
+    std::string rest = strip_ascii(inner.substr(k + unit.size()));
+    // 序号和正文之间那个分隔符：我们渲染的是「 · 」，人手打的可能是
+    // 「：」「，」「、」或者只空一格
+    for (const char* sep : {"·", "：", "，", "、", ":", ",", "-"}) {
+        const std::string s = sep;
+        if (starts_with(rest, s)) {
+            rest = strip_ascii(rest.substr(s.size()));
+            break;
+        }
+    }
+    if (index) *index = std::stoi(inner.substr(0, k));
+    if (body) *body = rest;
+    return true;
+}
+
+bool is_scene_header(const std::string& line) {
+    return parse_scene_header(line, nullptr, nullptr);
+}
+
 std::string strip_act_headers(const std::string& script) {
     std::vector<std::string> kept;
     std::size_t start = 0;
@@ -659,8 +703,15 @@ std::size_t ScriptDraft::dialogue_chars() const {
 
 std::string ScriptDraft::render() const {
     std::vector<std::string> lines;
+    int scenes = 0;
     const auto push = [&](const Beat& b) {
         const std::string t = strip_ascii(b.text);
+        if (b.kind == "scene") {
+            // 场次头：序号是渲染时数出来的，模型不用管编号。空的也要占一行
+            // ——「【第2场】」仍然是一个切点，只是没说在哪。
+            lines.push_back(scene_header(++scenes, t));
+            return;
+        }
         if (t.empty()) return;
         if (b.kind == "dialogue") {
             const std::string name = strip_ascii(b.speaker);
@@ -794,8 +845,10 @@ ordered beat_item_schema(bool with_floor,
     ordered beat_props = ordered::object();
     beat_props["kind"] = {
         {"type", "string"},
-        {"enum", ordered::array({"action", "dialogue"})},
-        {"description", "action 是动作或环境描写，dialogue 是有人说话"}};
+        {"enum", ordered::array({"action", "dialogue", "scene"})},
+        {"description",
+         "action 是动作或环境描写，dialogue 是有人说话，"
+         "scene 是换了地方或时间时起的新一场"}};
     beat_props["speaker"] = {
         {"type", "string"},
         {"description", "说话的人。kind 是 action 时填空字符串"}};
@@ -812,6 +865,8 @@ ordered beat_item_schema(bool with_floor,
          "kind=dialogue：只写说出口的话，不带引号，不重复人名。\n"
          "kind=action：写**画面上看得见的东西**——谁在哪、身体在做"
          "什么、碰到什么物件。换了地方或时间就把光线一并交代。\n"
+         "kind=scene：只写「日/夜 · 内/外 · 地点」三样，地点用清单里的名字。"
+         "第一拍就得是一场的 scene；同一个地方连着几拍不用重复。\n"
          "不要写心里怎么想（「她很生气」画不出来），也不要一拍塞"
          "三个动作（分镜只能挑一个画，剩下的就丢了）。"}};
     // 空拍凑数在语法层就过不去。两个字是「走。」这种最短的台词。
@@ -938,8 +993,17 @@ void parse_beats_into(const json& arr, std::vector<Beat>& out) {
     if (!arr.is_array()) return;
     for (const auto& item : arr) {
         if (!item.is_object()) continue;
-        std::string kind = get_str(item, "kind") == "dialogue" ? "dialogue"
-                                                               : "action";
+        const std::string kind_raw = get_str(item, "kind");
+        std::string kind = kind_raw == "dialogue" ? "dialogue"
+                           : kind_raw == "scene"  ? "scene"
+                                                  : "action";
+        // 场次头：只留「日/夜 · 内/外 · 地点」那一截，空的也留——它是切点。
+        if (kind == "scene") {
+            out.push_back(Beat{kind, "",
+                               strip_wrapper(strip_leading_timecode(
+                                   strip_list_marker(get_str(item, "text"))))});
+            continue;
+        }
         const std::string speaker = normalize_speaker(get_str(item, "speaker"));
         if (kind == "dialogue" && speaker.empty()) {
             // 说了话却没说是谁说的，当**动作行**。

@@ -42,16 +42,22 @@ stages::VideoRenderer sd_video_renderer_with_seed(
 /// 单独暴露是为了能测：编码参数拼错了不会当场报错，
 /// 只会让产出的 mp4 在某些播放器上打不开，或者拼接时被重编码。
 ///
-/// raw_path 里是连续的 RGB24 帧。
+/// raw_path 里是连续的 RGB24 帧。`audio` 给了就把那条 wav 一起封进去
+/// （模型自己出的原生音轨，见 SdContext::generate_video），按视频的
+/// 时长截齐——`duration_s` 就是帧数 / 帧率，声音多出来的尾巴不要。
 void encode_raw_to_mp4(const std::filesystem::path& raw_path, int width,
                        int height, int fps,
                        const config::AssemblyConfig& assembly,
-                       const std::filesystem::path& dest);
+                       const std::filesystem::path& dest,
+                       const std::optional<std::filesystem::path>& audio = std::nullopt,
+                       double duration_s = 0.0);
 
 /// 拼给 ffmpeg 的参数。测试拿它检查规格，不用真跑 ffmpeg。
 std::vector<std::string> encode_args(const std::filesystem::path& raw_path,
                                      int width, int height, int fps,
                                      const config::AssemblyConfig& assembly,
-                                     const std::filesystem::path& dest);
+                                     const std::filesystem::path& dest,
+                                     const std::optional<std::filesystem::path>& audio = std::nullopt,
+                                     double duration_s = 0.0);
 
 }  // namespace changji::infer

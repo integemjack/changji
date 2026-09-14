@@ -156,8 +156,15 @@ struct PremiseIdea {
 
 /// 一拍。动作或者一句台词。
 struct Beat {
-    std::string kind;     ///< action 或 dialogue
-    std::string speaker;  ///< kind 是 action 时是空串
+    /// action / dialogue / scene。
+    ///
+    /// **scene 是 2026-09-15 加的场次头**：换地方或换时间时起的新一场，
+    /// text 是「日/夜 · 内/外 · 地点」三样。它不是拍出来的画面，渲染成
+    /// 「【第N场 · 夜 · 内 · 天台】」一行，分镜那一步按它把一集切成几场、
+    /// 一场一次拆镜（docs/电影质感方案.md：长视频最要紧的是连贯，而连贯
+    /// 的单位是场——同一场里同一个地方、同一个时段）。
+    std::string kind;
+    std::string speaker;  ///< kind 是 action / scene 时是空串
     std::string text;
 };
 
@@ -244,6 +251,17 @@ bool is_act_header(const std::string& line);
 
 /// 去掉段头，只留拍子。老项目反推故事时用：段头进了"小说正文"是噪音。
 std::string strip_act_headers(const std::string& script);
+
+/// 场次头那一行：「【第1场 · 夜 · 内 · 天台】」。index 从 1 起。
+///
+/// 和段头一样留在正文里而不是另存一份结构：分镜、页面、人手改，认的都是
+/// 这段文本。和段头分得开——段头的名字在形状表里，场次头以「第N场」开头。
+std::string scene_header(int index, const std::string& body);
+
+/// 这一行是不是场次头。是的话把序号和「夜 · 内 · 天台」那一截填回去
+/// （body 可能是空的：「【第2场】」也认）。
+bool parse_scene_header(const std::string& line, int* index, std::string* body);
+bool is_scene_header(const std::string& line);
 
 /// 写出来的一段。
 struct Act {

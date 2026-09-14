@@ -9,6 +9,7 @@
 // 和 bible 一样，这里**不碰网络也不碰 llama.cpp**，只有纯函数。
 
 #include <map>
+#include <optional>
 #include <set>
 #include <stdexcept>
 #include <string>
@@ -69,8 +70,69 @@ struct ShotCountBounds {
     int max_items = 0;
 };
 
-/// 数剧本里有几拍：非空行数，段头（「【开场钩子 0–5 秒】」）不算。
+/// 数剧本里有几拍：非空行数，段头（「【开场钩子 0–5 秒】」）和场次头
+/// （「【第1场 · 夜 · 内 · 天台】」）不算。
 int count_beats(const std::string& script);
+
+// ---- 按场拆镜（2026-09-15）----
+//
+// 长视频最要紧的是连贯，连贯的单位是场：同一场里同一个地方、同一个时段。
+// 整集一次拆时模型顾不过来（实跑 12 镜里 8 镜没填场景），而且十分钟的集
+// 一百多镜一次响应装不下。所以剧本里有两场以上时，一场一次拆：这一场的
+// 地点、时段钉死传进去，所有镜头的 location_id 由引擎盖成这一场的。
+// 只有一场（老剧本没有场次头）时走整集那条路，一个字不变。
+
+/// 剧本里的一场戏。
+struct SceneBlock {
+    /// 场次头上的序号，从 1 起。**0 = 剧本里没有场次头**，整集就是一场。
+    int index = 0;
+    std::string time;   ///< 时段：日 / 夜 / 黄昏…，可能空
+    std::string inout;  ///< 内 / 外，可能空
+    std::string place;  ///< 地点名，可能空
+    std::string body;   ///< 场次头里那一截原文，「夜 · 内 · 天台」
+    /// 这一场的剧本，**不含场次头那一行**（段头留着，它说明这一段占几秒）。
+    std::string text;
+    /// 按地点名接到资产库的场景 id。接不上就空，让模型自己填（同整集那条路）。
+    std::optional<std::string> location_id;
+    /// 分到的时长（秒），assign_scene_seconds 填。
+    double seconds = 0.0;
+};
+
+/// 按场次头把剧本切成几场。没有场次头就是一场（index 0，text 是整份剧本）。
+/// 第一个场次头之前的行（比如段头）归到第一场。
+std::vector<SceneBlock> split_scenes(const std::string& script,
+                                     const models::AssetLibrary& assets);
+
+/// 把场次头那一截「夜 · 内 · 天台」拆成时段、内外、地点。
+/// 分隔符认 ·、/、，、、；认不出类别的那一截当地点。
+void parse_scene_body(const std::string& body, SceneBlock& out);
+
+/// 地点名接到资产库：先按名字全等，再按互相包含（「天台」⊂「夜晚天台」），
+/// 多个命中取名字最长的那个。接不上返回空。
+std::optional<std::string> resolve_scene_location(
+    const std::string& place, const models::AssetLibrary& assets);
+
+/// 把一集的时长按各场的拍数分给各场，每场至少最短那一档。
+void assign_scene_seconds(std::vector<SceneBlock>& scenes, double target_s);
+
+/// 一场的分镜提示词（prompts.toml [storyboard_scene]）。
+/// `prev_tail` 是上一场最后一镜的画面，空的就不写那一段。
+std::string build_scene_storyboard_prompt(const SceneBlock& scene,
+                                          int total_scenes,
+                                          const models::AssetLibrary& assets,
+                                          const DurationQuota& quota,
+                                          const std::string& episode_id,
+                                          const std::string& prev_tail);
+
+/// 一场的 schema：整集那份之上把 location_id 钉成这一场的（接上了的话），
+/// 而且进 required——这一场所有镜头都在这个地方，模型没得选。
+nlohmann::ordered_json llm_scene_shot_schema(
+    const models::AssetLibrary& assets, ShotCountBounds bounds,
+    const std::optional<std::string>& location_id);
+
+/// 拆出来的镜头盖上这一场的印：scene_id = "sN"、location_id 统一、
+/// 第一镜不接上一场的帧。
+void stamp_scene(std::vector<models::Shot>& shots, const SceneBlock& scene);
 
 /// 从目标时长和剧本的拍数推分镜数的上下限。
 ///

@@ -38,6 +38,10 @@ public:
 struct PromptBundle {
     std::string positive;
     std::string negative;
+    /// 视频模型的负向词：镜头自己的 + [style].negative_video。和 `negative`
+    /// 分开是因为图像那份（「多余的手指」）对出片模型没意义，而出片模型真会
+    /// 犯的错（溶解、形变、片中硬切）图像那份一个字没提。
+    std::string negative_video;
     /// 角色定妆图和场景空景图的相对路径。图像模型那条路会用，
     /// 视频模型那条路忽略。
     std::vector<std::string> reference_images;
@@ -50,9 +54,18 @@ public:
 
     PromptBundle compose(const models::Shot& shot) const;
 
+    /// 尾帧的提示词：和 compose 一样的分层，只是画面描述换成
+    /// `last_frame_prompt`。没填尾帧时和 compose 结果相同。
+    PromptBundle compose_end(const models::Shot& shot) const;
+
     /// 给视频模型的运动描述。**它只管动作，不重复外观**——
     /// 重复的话运动模型会试图重新"画"一遍角色，
     /// 而首帧已经把长相定死了，两者打架的结果是脸在动的过程中变形。
+    ///
+    /// **按 MiniMax-H3 的时间码格式**（2026-09-14 起）：官方的提示词改写器
+    /// 就是把整镜写成 `[0-2秒] …… [2-5秒] ……` 这样的段。分镜模型照规则
+    /// 写了时间码的话，运镜词并进第一段；没写的话整镜当一段，前面补上
+    /// `[0-时长秒]`。角色的动作接在最后。
     std::string motion_prompt(const models::Shot& shot) const;
 
     /// 这条片子是写实线还是动画线。
@@ -63,6 +76,10 @@ public:
     models::StyleLine style_line() const { return style_line_; }
 
 private:
+    /// compose / compose_end 的公共实现，`picture` 是画面描述那一层。
+    PromptBundle compose_with(const models::Shot& shot,
+                              const std::string& picture) const;
+
     models::AssetLibrary assets_;
     models::StyleLine style_line_;
     std::string sep_;
@@ -75,5 +92,7 @@ private:
 const std::string& shot_size_zh(models::ShotSize v);
 const std::string& angle_zh(models::CameraAngle v);
 const std::string& move_zh(models::CameraMove v);
+/// 焦段。AUTO 是空串（没填就一个字不加）。
+const std::string& lens_zh(models::Lens v);
 
 }  // namespace changji::stages

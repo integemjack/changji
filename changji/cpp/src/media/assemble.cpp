@@ -1,12 +1,15 @@
 #include "media/assemble.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <fstream>
+#include <map>
 #include <sstream>
 
 // 时间轴按真正生成得出来的帧数算，不按分镜表里的名义时长
 #include "stages/limits.hpp"
+#include "util/cmdline.hpp"
 #include "util/paths.hpp"
 #include "util/text.hpp"
 
@@ -131,28 +134,138 @@ std::vector<std::string> normalize_args(const fs::path& src, int target_w,
                                         int target_h,
                                         const config::AssemblyConfig& config,
                                         const fs::path& dest) {
+    return normalize_args(src, target_w, target_h, config, dest,
+                          NormalizeOptions{});
+}
+
+std::vector<std::string> normalize_args(const fs::path& src, int target_w,
+                                        int target_h,
+                                        const config::AssemblyConfig& config,
+                                        const fs::path& dest,
+                                        const NormalizeOptions& opt) {
     const std::string w = std::to_string(target_w);
     const std::string h = std::to_string(target_h);
     // 先按比例缩到框内，再补边到目标尺寸。直接 scale 到目标尺寸会拉伸，
     // 而竖屏短剧里混进一个横屏镜头时，拉伸出来的人脸一眼就不对。
-    const std::string vf = "scale=" + w + ":" + h +
-                           ":force_original_aspect_ratio=decrease,"
-                           "pad=" + w + ":" + h + ":(ow-iw)/2:(oh-ih)/2,"
-                           "setsar=1,fps=" + std::to_string(config.fps);
-    return {
-        "-y",
-        "-i", paths::to_utf8(src),
-        "-vf", vf,
-        "-an",   // 音频统一在后面处理
+    std::string vf = "scale=" + w + ":" + h +
+                     ":force_original_aspect_ratio=decrease,"
+                     "pad=" + w + ":" + h + ":(ow-iw)/2:(oh-ih)/2,"
+                     "setsar=1,fps=" + std::to_string(config.fps);
+    // 后期链接在缩放补边**后面**：遮幅、颗粒都要按最终尺寸算。
+    if (!opt.extra_vf.empty()) vf += "," + opt.extra_vf;
+
+    std::vector<std::string> args = {"-y", "-i", paths::to_utf8(src)};
+    if (opt.keep_audio && !opt.source_has_audio) {
+        // 源里没声音就铺一条静音，让每一镜都有同样规格的音轨。
+        // concat 碰到一镜有音轨一镜没有会丢同步，而且不报错。
+        args.insert(args.end(),
+                    {"-f", "lavfi", "-i",
+                     "anullsrc=r=" + std::to_string(config.audio_sample_rate) +
+                         ":cl=stereo"});
+    }
+    args.insert(args.end(), {"-vf", vf});
+    if (opt.keep_audio) {
+        args.insert(args.end(), {"-map", "0:v", "-map",
+                                 opt.source_has_audio ? "0:a" : "1:a",
+                                 "-c:a", config.audio_codec,
+                                 "-b:a", config.audio_bitrate,
+                                 "-ar", std::to_string(config.audio_sample_rate),
+                                 "-ac", std::to_string(config.audio_channels)});
+        // 静音源是无限长的，截到视频长度正是要的。
+        if (!opt.source_has_audio) args.push_back("-shortest");
+    } else {
+        args.push_back("-an");   // 音频统一在后面处理
+    }
+    args.insert(args.end(), {
         "-c:v", config.video_codec,
         "-crf", std::to_string(config.crf),
         "-pix_fmt", config.pix_fmt,
         "-preset", "medium",
+    });
+    if (opt.tune_grain) args.insert(args.end(), {"-tune", "grain"});
+    args.insert(args.end(), {
         // 时基也要统一。不统一的话 concat 会在拼接处丢帧，
         // 表现是每一镜的开头卡一下。
         "-video_track_timescale", "90000",
         paths::to_utf8(dest),
+    });
+    return args;
+}
+
+std::string look_filters(const config::LookConfig& look, int target_w,
+                         int target_h, const fs::path& project_root) {
+    if (!look.enabled()) return {};
+
+    // 调色前的线性一段：遮幅、柔化。
+    std::vector<std::string> pre;
+    if (look.letterbox > 0.0 && target_w > target_h) {
+        // 横屏才遮。裁到比例再补回原高，容器还是 16:9，上下是黑边。
+        int lb = static_cast<int>(std::lround(target_w / look.letterbox));
+        lb -= lb % 2;
+        if (lb > 0 && lb < target_h) {
+            const std::string W = std::to_string(target_w);
+            const std::string H = std::to_string(target_h);
+            const std::string L = std::to_string(lb);
+            const std::string y = std::to_string((target_h - lb) / 2);
+            pre.push_back("crop=" + W + ":" + L + ":0:" + y);
+            pre.push_back("pad=" + W + ":" + H + ":0:" + y);
+        }
+    }
+    if (look.soften > 0.0) {
+        pre.push_back("gblur=sigma=" + fmt("%.3g", look.soften));
+    }
+
+    // 颗粒最后加：加在柔化前会被柔化抹掉，加在调色前会被曲线改形。
+    // 只在亮度通道（c0），逐帧随机（t）、均匀分布（u）。
+    std::vector<std::string> post;
+    if (look.grain > 0.0) {
+        post.push_back("noise=c0s=" + fmt("%.3g", look.grain) + ":c0f=t+u");
+    }
+
+    const auto join = [](const std::vector<std::string>& v) {
+        std::string out;
+        for (const auto& x : v) {
+            if (!out.empty()) out += ",";
+            out += x;
+        }
+        return out;
     };
+
+    if (!look.color() || look.lut_strength <= 0.0) {
+        std::vector<std::string> all = pre;
+        all.insert(all.end(), post.begin(), post.end());
+        return join(all);
+    }
+
+    // 调色本体：有 LUT 用 LUT，没有用内置曲线。
+    std::string grade;
+    if (!look.lut.empty()) {
+        fs::path lut = paths::from_utf8(look.lut);
+        if (lut.is_relative()) lut = project_root / lut;
+        grade = "lut3d=file='" + escape_filter_path(lut) + "':interp=tetrahedral";
+    } else {
+        // 内置的「胶片」：S 形曲线（暗部压一点、亮部柔和滚落到 0.97，
+        // 不顶到 1）、暗部往青、亮部往暖、饱和略降。这不是哪一款胶片，
+        // 是行业说的那几样共性——AI 画面缺的就是这几样。
+        grade =
+            "curves=m='0/0 0.25/0.22 0.5/0.5 0.75/0.78 1/0.97',"
+            "colorbalance=rs=-0.05:gs=0:bs=0.06:rm=0.02:gm=0:bm=-0.02:"
+            "rh=0.05:gh=0.02:bh=-0.06,"
+            "eq=saturation=0.92";
+    }
+
+    std::string out = join(pre);
+    if (look.lut_strength >= 1.0) {
+        if (!out.empty()) out += ",";
+        out += grade;
+    } else {
+        // 分两路：一路调色，再按强度混回原图。blend 的第一路是上层。
+        if (!out.empty()) out += ",";
+        out += "split[o][g];[g]" + grade + "[g2];[g2][o]blend=all_mode=normal:all_opacity=" +
+               fmt("%.3g", look.lut_strength);
+    }
+    if (!post.empty()) out += "," + join(post);
+    return out;
 }
 
 /// 清单里那条路径要按 ffmpeg concat 解析器的规矩转义。
@@ -219,8 +332,24 @@ std::vector<std::string> mix_args(const fs::path& video,
                                   const config::AssemblyConfig& config,
                                   double target_lufs, double max_true_peak_db,
                                   double video_duration_s, const fs::path& dest) {
+    return mix_args(video, segments, config, target_lufs, max_true_peak_db,
+                    video_duration_s, dest, MixOptions{});
+}
+
+std::vector<std::string> mix_args(const fs::path& video,
+                                  const std::vector<AudioSegment>& segments,
+                                  const config::AssemblyConfig& config,
+                                  double target_lufs, double max_true_peak_db,
+                                  double video_duration_s, const fs::path& dest,
+                                  const MixOptions& opt) {
     std::vector<std::string> args = {"-y", "-i", paths::to_utf8(video)};
     for (const auto& s : segments) args.insert(args.end(), {"-i", paths::to_utf8(s.path)});
+    // 配乐排在台词后面，下标 = 1 + 台词数。
+    const std::size_t music_index = 1 + segments.size();
+    if (opt.music.has_value()) {
+        args.insert(args.end(), {"-i", paths::to_utf8(*opt.music)});
+    }
+    const std::string rate = std::to_string(config.audio_sample_rate);
 
     // 每条配音延迟到自己的位置，然后混在一起。
     std::vector<std::string> filters;
@@ -241,21 +370,72 @@ std::vector<std::string> mix_args(const fs::path& video,
     }
     // loudnorm 之后必须再 aresample 一次：这个滤镜内部按 192k 工作，
     // 不收回来的话编码器会挑个 96k 之类的采样率，文件白白变大。
-    filters.push_back(
-        mix_inputs + "amix=inputs=" + std::to_string(segments.size()) +
-        // %.12g 而不是 %g。**这里和 storyboard.cpp 的 format_g 不是一回事**：
-        // 那边对的是 Python 的 f"{x:g}"（也是 6 位有效数字，两边同一套规则），
-        // 这边对的是 Python 的 f"{self.target_lufs}"，也就是 str(float)，
-        // 不截位。%g 默认 6 位有效数字，target_lufs 填 -16.123456 时
-        // C++ 会写出 -16.1235——**响度目标真的变了**，不是显示问题。
-        //
-        // 剩下一处对不齐是有意留着的：整数值 Python 写 "-16.0"，
-        // 这里写 "-16"。ffmpeg 两个都当 -16 解析，成片一模一样；
-        // 要逐字节一样得照搬 Python 的 repr 规则（整数浮点补 ".0"），
-        // 为一个解析结果相同的字符串背那套算法不值。
-        ":dropout_transition=0:normalize=0,loudnorm=I=" + fmt("%.12g", target_lufs) +
+    //
+    // %.12g 而不是 %g。**这里和 storyboard.cpp 的 format_g 不是一回事**：
+    // 那边对的是 Python 的 f"{x:g}"（也是 6 位有效数字，两边同一套规则），
+    // 这边对的是 Python 的 f"{self.target_lufs}"，也就是 str(float)，
+    // 不截位。%g 默认 6 位有效数字，target_lufs 填 -16.123456 时
+    // C++ 会写出 -16.1235——**响度目标真的变了**，不是显示问题。
+    //
+    // 剩下一处对不齐是有意留着的：整数值 Python 写 "-16.0"，
+    // 这里写 "-16"。ffmpeg 两个都当 -16 解析，成片一模一样；
+    // 要逐字节一样得照搬 Python 的 repr 规则（整数浮点补 ".0"），
+    // 为一个解析结果相同的字符串背那套算法不值。
+    const std::string finish =
+        "loudnorm=I=" + fmt("%.12g", target_lufs) +
         ":TP=" + fmt("%.12g", max_true_peak_db) + ":LRA=11,aresample=" +
-        std::to_string(config.audio_sample_rate) + "[amixed]");
+        rate + "[amixed]";
+    const std::string amix_tail = ":dropout_transition=0:normalize=0";
+
+    const bool has_bg = opt.bed || opt.music.has_value();
+    if (!has_bg) {
+        // 只有台词：和以前逐字节一样的那条链。
+        filters.push_back(mix_inputs + "amix=inputs=" +
+                          std::to_string(segments.size()) + amix_tail + "," +
+                          finish);
+    } else {
+        // ---- 台词之外的几层 ----
+        //
+        // 环境声（各镜原生音轨 concat 出来的那条）和配乐先各自压到台词
+        // 底下，合成一条底子；有台词时底子再被台词侧链压一道（人一开口
+        // 环境声和配乐往下让，说完回来），最后和台词混、归一响度。
+        std::vector<std::string> bg_labels;
+        if (opt.bed) {
+            filters.push_back("[0:a]aresample=" + rate + ",volume=" +
+                              fmt("%.12g", opt.bed_db) + "dB[bed]");
+            bg_labels.push_back("[bed]");
+        }
+        if (opt.music.has_value()) {
+            filters.push_back("[" + std::to_string(music_index) +
+                              ":a]aresample=" + rate + ",volume=" +
+                              fmt("%.12g", opt.music_db) + "dB[mus]");
+            bg_labels.push_back("[mus]");
+        }
+        std::string bg = bg_labels.front();
+        if (bg_labels.size() == 2) {
+            filters.push_back("[bed][mus]amix=inputs=2" + amix_tail + "[bg]");
+            bg = "[bg]";
+        }
+        if (segments.empty()) {
+            filters.push_back(bg + finish);
+        } else {
+            filters.push_back(mix_inputs + "amix=inputs=" +
+                              std::to_string(segments.size()) + amix_tail +
+                              "[dlg]");
+            if (opt.duck) {
+                // sidechaincompress 会吃掉侧链那一路，所以台词要分两份：
+                // 一份当侧链，一份进最后的混音。
+                filters.push_back("[dlg]asplit[dlg1][dlg2]");
+                filters.push_back(bg + "[dlg2]sidechaincompress=threshold=0.03:"
+                                       "ratio=8:attack=20:release=400[bgd]");
+                filters.push_back("[bgd][dlg1]amix=inputs=2" + amix_tail + "," +
+                                  finish);
+            } else {
+                filters.push_back(bg + "[dlg]amix=inputs=2" + amix_tail + "," +
+                                  finish);
+            }
+        }
+    }
     // 音轨补静音到视频长度。
     filters.push_back("[amixed]apad[aout]");
 
@@ -387,14 +567,77 @@ fs::path Assembler::assemble(const Timeline& timeline,
         }
     } cleanup{work};
 
-    const auto [tw, th] = target_size(timeline);
+    auto [tw, th] = target_size(timeline);
+
+    const auto warn = [this](const std::string& msg) {
+        if (finish_ && finish_->warn) finish_->warn(msg);
+    };
+
+    // ---- 放大 ----
+    //
+    // 放大在调色和颗粒**之前**（行业顺序：放大 → 校正 → LUT → 颗粒），
+    // 所以目标尺寸先按倍数放大，每一镜先过放大命令再进 normalize。
+    const bool upscaling = finish_ && finish_->upscale.enabled();
+    if (upscaling) {
+        tw *= finish_->upscale.scale;
+        th *= finish_->upscale.scale;
+        tw -= tw % 2;
+        th -= th % 2;
+    }
+
+    // ---- 后期链 ----
+    std::string extra_vf;
+    if (finish_) {
+        extra_vf = look_filters(finish_->look, tw, th, finish_->project_root);
+    }
 
     std::vector<fs::path> normalized;
     for (std::size_t i = 0; i < timeline.entries.size(); ++i) {
         char name[32];
         std::snprintf(name, sizeof(name), "norm_%04zu.mp4", i);
         const fs::path out = work / name;
-        ff_.run(normalize_args(timeline.entries[i].video_path, tw, th, config_, out));
+        const TimelineEntry& entry = timeline.entries[i];
+
+        fs::path src = entry.video_path;
+        if (upscaling) {
+            char up_name[32];
+            std::snprintf(up_name, sizeof(up_name), "up_%04zu.mp4", i);
+            const fs::path up = work / up_name;
+            const std::map<std::string, std::string> vars = {
+                {"in", paths::to_utf8(src)},
+                {"out", paths::to_utf8(up)},
+                {"width", std::to_string(tw)},
+                {"height", std::to_string(th)},
+                {"short", std::to_string(std::min(tw, th))},
+                {"scale", std::to_string(finish_->upscale.scale)},
+            };
+            const auto argv = util::expand_command(finish_->upscale.command, vars);
+            const auto r = util::run_command(argv, finish_->upscale.timeout_s);
+            std::error_code up_ec;
+            if (r.ok && fs::is_regular_file(up, up_ec)) {
+                src = up;
+            } else {
+                // 放大失败不拦装配：这一镜用原片，normalize 会把它拉到
+                // 目标尺寸（糊一点，但片子在）。说一声是必须的。
+                warn("镜头 " + entry.shot_id + " 放大失败，用原片顶上：" +
+                     (r.ok ? "命令跑完了但没有产出文件" : r.error));
+            }
+        }
+
+        NormalizeOptions opt;
+        if (finish_) {
+            opt.extra_vf = extra_vf;
+            opt.keep_audio = finish_->sound.ambient;
+            opt.tune_grain = finish_->look.enabled() && finish_->look.grain > 0.0;
+            if (opt.keep_audio) {
+                try {
+                    opt.source_has_audio = ff_.probe(src).has_audio;
+                } catch (const FFmpegError&) {
+                    opt.source_has_audio = false;
+                }
+            }
+        }
+        ff_.run(normalize_args(src, tw, th, config_, out, opt));
         normalized.push_back(out);
     }
 
@@ -417,13 +660,34 @@ fs::path Assembler::assemble(const Timeline& timeline,
         }
     }
 
+    // ---- 环境声和配乐 ----
+    MixOptions mo;
+    if (finish_) {
+        const MediaInfo joined = ff_.probe(silent);
+        // 每一镜 normalize 时都带了音轨（没有的铺了静音），所以拼出来的
+        // 那条就是环境声底子。探一下是为了保险：探不到就当没有。
+        mo.bed = finish_->sound.ambient && joined.has_audio;
+        mo.bed_db = finish_->sound.ambient_db;
+        mo.duck = finish_->sound.duck;
+        if (finish_->sound.music && finish_->music.has_value()) {
+            std::error_code m_ec;
+            if (fs::is_regular_file(*finish_->music, m_ec)) {
+                mo.music = *finish_->music;
+                mo.music_db = finish_->sound.music_db;
+            } else {
+                warn("配乐文件不在，这一集没有配乐：" +
+                     paths::to_utf8(*finish_->music));
+            }
+        }
+    }
+
     const fs::path with_audio = work / "with_audio.mp4";
-    if (segments.empty()) {
+    if (segments.empty() && !mo.bed && !mo.music.has_value()) {
         ff_.run(silent_audio_args(silent, config_, with_audio));
     } else {
         const double dur = ff_.probe(silent).duration_s;
         ff_.run(mix_args(silent, segments, config_, target_lufs_,
-                         max_true_peak_db_, dur, with_audio));
+                         max_true_peak_db_, dur, with_audio, mo));
     }
 
     const fs::path final_path = paths_.output() / paths::from_utf8(out_name);

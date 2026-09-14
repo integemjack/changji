@@ -1,6 +1,7 @@
 #include "infer/sd_image.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <atomic>
 #include <cstdint>
 #include <cstring>
@@ -134,6 +135,12 @@ int add_preview_sink(PreviewSink sink) {
 void remove_preview_sink(int token) {
     std::lock_guard lg(preview_mu());
     preview_sinks().erase(token);
+}
+
+fs::path audio_path_for(const fs::path& raw_dest) {
+    fs::path p = raw_dest;
+    p.replace_extension(".wav");
+    return p;
 }
 
 // 这个也在 #ifdef 外面，理由同 sd_model_problem：纯算术，没它测不到。
@@ -917,6 +924,19 @@ void SdContext::generate_video(const VideoRequest& req, const fs::path& raw_dest
         }
     } sguard{start, has_start};
 
+    // 尾帧同首帧：裁到画幅。**只有首帧时才认尾帧**——H3 的 FL2VA 权重
+    // 把两张都当条件，没有首帧只给尾帧不是它训练过的用法。
+    sd_image_t end{};
+    bool has_end = false;
+    if (has_start && req.end_image.has_value()) {
+        end = load_image(*req.end_image);
+        has_end = true;
+        crop_in_place(end, center_crop_box(static_cast<int>(end.width),
+                                           static_cast<int>(end.height),
+                                           req.width, req.height));
+    }
+    StartGuard eguard{end, has_end};
+
     sd_vid_gen_params_t g{};
     ::sd_vid_gen_params_init(&g);
     g.prompt = req.positive.c_str();
@@ -962,6 +982,7 @@ void SdContext::generate_video(const VideoRequest& req, const fs::path& raw_dest
     }
 
     if (has_start) g.init_image = start;
+    if (has_end) g.end_image = end;
 
     // VAE 分块。**不设的话默认是关的**，而关着在 6GB 卡上解码要 11.7GB，
     // 直接失败。见 VideoRequest 里那张实测表。
@@ -1026,6 +1047,13 @@ void SdContext::generate_video(const VideoRequest& req, const fs::path& raw_dest
             if (f) ::free_sd_images(f, n);
         }
     } fguard{frames, count};
+    // 声音那份也要还。2026-09-13 记过：以前这里从不 free，每镜约 1.3 MB。
+    struct AudioGuard {
+        sd_audio_t*& a;
+        ~AudioGuard() {
+            if (a) ::free_sd_audio(a);
+        }
+    } aguard{audio};
 
     if (tok.cancelled()) throw SdError("已取消");
     if (!ok || frames == nullptr || count <= 0) {
@@ -1053,6 +1081,58 @@ void SdContext::generate_video(const VideoRequest& req, const fs::path& raw_dest
     }
     f.close();
     if (!f) throw SdError("写 " + paths::to_utf8(raw_dest) + " 时出错");
+
+    // ---- 声音 ----
+    //
+    // 模型出了就写成 16 位 PCM 的 wav 放在裸帧旁边（sd.cpp 给的是交错的
+    // float，和它自己 CLI 的 write_wav_to_file 同一套换算）。**没出就不写**：
+    // 上层按文件在不在判，别写一个空 wav 让 ffmpeg 去猜。
+    const fs::path wav = audio_path_for(raw_dest);
+    fs::remove(wav, ec);
+    if (audio != nullptr && audio->data != nullptr && audio->sample_count > 0 &&
+        audio->channels > 0 && audio->sample_rate > 0) {
+        const std::uint64_t n = audio->sample_count * audio->channels;
+        const std::uint32_t data_bytes = static_cast<std::uint32_t>(n * 2);
+        std::ofstream w(wav, std::ios::binary | std::ios::trunc);
+        if (!w) throw SdError("写不了 " + paths::to_utf8(wav));
+        const auto u32 = [&w](std::uint32_t v) {
+            const unsigned char b[4] = {
+                static_cast<unsigned char>(v & 0xFF),
+                static_cast<unsigned char>((v >> 8) & 0xFF),
+                static_cast<unsigned char>((v >> 16) & 0xFF),
+                static_cast<unsigned char>((v >> 24) & 0xFF)};
+            w.write(reinterpret_cast<const char*>(b), 4);
+        };
+        const auto u16 = [&w](std::uint16_t v) {
+            const unsigned char b[2] = {
+                static_cast<unsigned char>(v & 0xFF),
+                static_cast<unsigned char>((v >> 8) & 0xFF)};
+            w.write(reinterpret_cast<const char*>(b), 2);
+        };
+        const std::uint16_t ch = static_cast<std::uint16_t>(audio->channels);
+        w.write("RIFF", 4);
+        u32(36 + data_bytes);
+        w.write("WAVE", 4);
+        w.write("fmt ", 4);
+        u32(16);
+        u16(1);  // PCM
+        u16(ch);
+        u32(audio->sample_rate);
+        u32(audio->sample_rate * ch * 2);
+        u16(static_cast<std::uint16_t>(ch * 2));
+        u16(16);
+        w.write("data", 4);
+        u32(data_bytes);
+        std::vector<std::int16_t> pcm(static_cast<std::size_t>(n));
+        for (std::size_t i = 0; i < pcm.size(); ++i) {
+            const float s = std::max(-1.0f, std::min(1.0f, audio->data[i]));
+            pcm[i] = static_cast<std::int16_t>(std::lrint(s * 32767.0f));
+        }
+        w.write(reinterpret_cast<const char*>(pcm.data()),
+                static_cast<std::streamsize>(pcm.size() * sizeof(std::int16_t)));
+        w.close();
+        if (!w) throw SdError("写 " + paths::to_utf8(wav) + " 时出错");
+    }
 }
 
 #else   // 没链 sd.cpp

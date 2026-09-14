@@ -98,6 +98,9 @@ export const api = {
   setupProgress: () => get('/bff/setup/progress'),
   cancelSetupDownload: () => post('/bff/setup/cancel', {}),
   saveProjectVideo: (payload) => post('/bff/project/video', payload),
+  /** 成片工序：后期链（[look]）和声音几层（[sound]）。剧的属性。 */
+  projectFinish: (project) => get('/bff/project/finish', { path: project }),
+  saveProjectFinish: (payload) => post('/bff/project/finish', payload),
   saveNodeConfig: (patch) => post('/bff/settings/config', patch),
   flow: (project, episodeId) =>
     get('/bff/flow', { path: project, episode_id: episodeId }),

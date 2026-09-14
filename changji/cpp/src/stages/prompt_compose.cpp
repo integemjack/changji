@@ -1,5 +1,6 @@
 #include "stages/prompt_compose.hpp"
 
+#include <cstdio>
 #include <map>
 #include <utility>
 
@@ -89,6 +90,11 @@ const std::string& move_zh(CameraMove v) {
     return lookup(m, std::string(to_string(v)));
 }
 
+const std::string& lens_zh(Lens v) {
+    static const auto m = zh_table(prompt::compose::kLens);
+    return lookup(m, std::string(to_string(v)));
+}
+
 PromptComposer::PromptComposer(AssetLibrary assets)
     : assets_(std::move(assets)), style_line_(assets_.style.style_line) {
     // 动漫线是 Danbooru 标签串，用英文逗号加空格；写实线是自然语言，
@@ -98,6 +104,19 @@ PromptComposer::PromptComposer(AssetLibrary assets)
 }
 
 PromptBundle PromptComposer::compose(const Shot& shot) const {
+    return compose_with(shot, shot.first_frame_prompt);
+}
+
+PromptBundle PromptComposer::compose_end(const Shot& shot) const {
+    if (!shot.last_frame_prompt.has_value() ||
+        text::strip_ws(*shot.last_frame_prompt).empty()) {
+        return compose(shot);
+    }
+    return compose_with(shot, *shot.last_frame_prompt);
+}
+
+PromptBundle PromptComposer::compose_with(const Shot& shot,
+                                          const std::string& picture) const {
     std::vector<std::string> layers;
     std::vector<std::string> refs;
 
@@ -157,10 +176,18 @@ PromptBundle PromptComposer::compose(const Shot& shot) const {
     }
 
     // ---- 镜头层 ----
+    //
+    // 景别、机位、焦段一句；然后是这一镜的光；然后是画面描述。
+    // 焦段和光是 2026-09-14 加的（docs/电影质感方案.md）：没填时
+    // （老分镜表）一个字不加，语料照旧。光排在场景层之后是有意的——
+    // 场景资产那句 lighting 是一场戏的基调，这一句是这一镜的，要盖过它。
     layers.push_back(join_nonempty(
-        {shot_size_zh(shot.shot_size), angle_zh(shot.camera_angle)}, sep_));
-    if (!shot.first_frame_prompt.empty()) {
-        layers.push_back(shot.first_frame_prompt);
+        {shot_size_zh(shot.shot_size), angle_zh(shot.camera_angle),
+         lens_zh(shot.lens)},
+        sep_));
+    if (!text::strip_ws(shot.lighting).empty()) layers.push_back(shot.lighting);
+    if (!picture.empty()) {
+        layers.push_back(picture);
     }
 
     // ---- 风格层 ----
@@ -210,17 +237,44 @@ PromptBundle PromptComposer::compose(const Shot& shot) const {
     // 它是针对这一镜的具体问题加的，权重该更高。
     out.negative = join_nonempty(
         {shot.negative_prompt, assets_.style.negative_prompt}, sep_);
+    // 视频那份：镜头自己的 + 全剧的视频负向词（prompts.toml [style]）。
+    // 图像那份不带过去，理由见 PromptBundle::negative_video。
+    out.negative_video = join_nonempty(
+        {shot.negative_prompt, prompt::style::kNegativeVideo}, sep_);
     out.reference_images = std::move(refs);
     return out;
 }
 
 std::string PromptComposer::motion_prompt(const Shot& shot) const {
-    std::vector<std::string> parts = {move_zh(shot.camera_move)};
-    if (!shot.motion_prompt.empty()) parts.push_back(shot.motion_prompt);
+    std::vector<std::string> actions;
     for (const CharacterInShot& in_shot : shot.characters) {
-        if (!in_shot.action.empty()) parts.push_back(in_shot.action);
+        if (!in_shot.action.empty()) actions.push_back(in_shot.action);
     }
-    return join_nonempty(parts, sep_);
+    const std::string motion = text::strip_ws(shot.motion_prompt);
+
+    // 分镜模型已经按时间码分段：运镜词并进第一段（紧跟第一个「]」），
+    // 角色动作接在最后。
+    if (!motion.empty() && motion.front() == '[') {
+        const std::size_t close = motion.find(']');
+        if (close != std::string::npos) {
+            std::string head = motion.substr(0, close + 1);
+            std::string rest = text::strip_ws(motion.substr(close + 1));
+            std::vector<std::string> first = {move_zh(shot.camera_move), rest};
+            std::string out = head + " " + join_nonempty(first, sep_);
+            if (!actions.empty()) out += sep_ + join_nonempty(actions, sep_);
+            return out;
+        }
+    }
+
+    // 没分段：整镜当一段。
+    std::vector<std::string> parts = {move_zh(shot.camera_move)};
+    if (!motion.empty()) parts.push_back(motion);
+    parts.insert(parts.end(), actions.begin(), actions.end());
+    const std::string body = join_nonempty(parts, sep_);
+    if (body.empty()) return body;
+    char dur[32];
+    std::snprintf(dur, sizeof(dur), "%g", shot.duration_s);
+    return std::string("[0-") + dur + "秒] " + body;
 }
 
 }  // namespace changji::stages

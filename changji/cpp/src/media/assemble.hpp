@@ -15,6 +15,8 @@
 // 所以每一步的参数都是一个纯函数，Assembler 只负责按顺序调它们。
 
 #include <filesystem>
+#include <functional>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -71,6 +73,36 @@ std::vector<std::string> normalize_args(const std::filesystem::path& src,
                                         const config::AssemblyConfig& config,
                                         const std::filesystem::path& dest);
 
+/// 后期链的滤镜串（柔化 → 调色 → 颗粒，横屏还有遮幅），接在缩放补边后面。
+///
+/// 空串 = 什么都不加（preset = off）。`target_w/h` 是补边后的尺寸，遮幅
+/// 按它算；`project_root` 用来解析相对的 LUT 路径。
+///
+/// 内置调色是一组 ffmpeg 原生滤镜（S 形曲线、暗部偏青亮部偏暖、略去饱和），
+/// 不是哪个牌子的胶片——想要 Kodak 2383 那种就填 `lut`。两条路都按
+/// `lut_strength` 和原图混（split → 调色 → blend）。
+std::string look_filters(const config::LookConfig& look, int target_w,
+                         int target_h,
+                         const std::filesystem::path& project_root);
+
+/// 统一规格那一步的可选项。默认值 = 2026-09-14 之前的行为，逐字节一样。
+struct NormalizeOptions {
+    /// look_filters 的结果。
+    std::string extra_vf;
+    /// 带上源里的音轨（模型自己出的环境声）。源里没有就铺一条静音——
+    /// 每一镜都得有音轨，不然 concat 拼到没有的那镜会丢同步。
+    bool keep_audio = false;
+    bool source_has_audio = false;
+    /// 编码时 `-tune grain`：不加的话 x264 把颗粒当噪声抹掉，白做。
+    bool tune_grain = false;
+};
+
+std::vector<std::string> normalize_args(const std::filesystem::path& src,
+                                        int target_w, int target_h,
+                                        const config::AssemblyConfig& config,
+                                        const std::filesystem::path& dest,
+                                        const NormalizeOptions& opt);
+
 /// concat 清单文件的内容。路径一律正斜杠。
 std::string concat_listing(const std::vector<std::filesystem::path>& clips);
 
@@ -101,6 +133,27 @@ std::vector<std::string> mix_args(const std::filesystem::path& video,
                                   double video_duration_s,
                                   const std::filesystem::path& dest);
 
+/// 台词之外的几层。默认值 = 只混台词，滤镜链和以前逐字节一样。
+struct MixOptions {
+    /// 视频自带的音轨当环境声底子（各镜的原生音轨 concat 起来的那条）。
+    bool bed = false;
+    double bed_db = -12.0;
+    /// 一条配乐。
+    std::optional<std::filesystem::path> music;
+    double music_db = -20.0;
+    /// 台词处把底子再压一道（sidechaincompress）。
+    bool duck = true;
+};
+
+/// 同上，多了环境声和配乐两层。台词那几路的处理一个字没变。
+std::vector<std::string> mix_args(const std::filesystem::path& video,
+                                  const std::vector<AudioSegment>& segments,
+                                  const config::AssemblyConfig& config,
+                                  double target_lufs, double max_true_peak_db,
+                                  double video_duration_s,
+                                  const std::filesystem::path& dest,
+                                  const MixOptions& opt);
+
 /// 烧字幕。
 std::vector<std::string> burn_args(const std::filesystem::path& video,
                                    const std::filesystem::path& ass_path,
@@ -118,12 +171,30 @@ std::string escape_filter_path(const std::filesystem::path& path);
 std::vector<std::string> subtitle_problems(const Timeline& timeline,
                                            const config::AssemblyConfig& config);
 
+/// 成片那几道「让它像电影」的工序：放大、后期链、声音几层。
+///
+/// **不给就是老行为**（`concat -c copy`、只混台词）。给了按各自的开关来。
+struct FinishOptions {
+    config::LookConfig look;
+    config::SoundConfig sound;
+    config::UpscaleConfig upscale;
+    /// 解析相对路径（LUT）用。
+    std::filesystem::path project_root;
+    /// 这一集的配乐文件，没有就不混。
+    std::optional<std::filesystem::path> music;
+    /// 放大失败、配乐文件不在这类**不该拦装配**的事从这儿说出去。
+    std::function<void(const std::string&)> warn;
+};
+
 /// 把镜头拼成一集。
 class Assembler {
 public:
     Assembler(const FFmpeg& ff, config::AssemblyConfig config,
               models::ProjectPaths paths, double target_lufs = -16.0,
               double max_true_peak_db = -1.5);
+
+    /// 装配时做后期链、放大、环境声和配乐。见 FinishOptions。
+    void set_finish(FinishOptions finish) { finish_ = std::move(finish); }
 
     /// 装配成片，返回成片路径。
     std::filesystem::path assemble(const Timeline& timeline,
@@ -143,6 +214,7 @@ private:
     /// 成片还是老样子——一个只写不读的开关，和 _TIER_OVERRIDES 同一类问题。
     double target_lufs_;
     double max_true_peak_db_;
+    std::optional<FinishOptions> finish_;
 };
 
 }  // namespace changji::media

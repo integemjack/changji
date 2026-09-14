@@ -95,6 +95,17 @@ const char* to_string(CameraMove v) {
     return "?";
 }
 
+const char* to_string(Lens v) {
+    switch (v) {
+        case Lens::AUTO:     return "auto";
+        case Lens::WIDE:     return "wide";
+        case Lens::NORMAL:   return "normal";
+        case Lens::PORTRAIT: return "portrait";
+        case Lens::TELE:     return "tele";
+    }
+    return "?";
+}
+
 const char* to_string(FacePose v) {
     switch (v) {
         case FacePose::FRONT:         return "front";
@@ -233,6 +244,7 @@ std::vector<std::string> Shot::validate() const {
         check_len(*last_frame_prompt, 1200, "last_frame_prompt", errs);
     }
     check_len(motion_prompt, 400, "motion_prompt", errs);
+    check_len(lighting, 80, "lighting", errs);
     check_len(beat, 20, "beat", errs);
     check_len(continuity_notes, 200, "continuity_notes", errs);
 

@@ -135,6 +135,8 @@ std::vector<FrameOutcome> run_frames(std::vector<Shot*>& shots,
         bool ok = false;
         std::string error;
         std::string rel_path;
+        /// 尾帧（`last_frame_prompt` 出的那张）的相对路径，没有就空。
+        std::string end_rel;
         double elapsed_s = 0.0;
         bool skipped = false;     ///< 取消了，没跑
         bool committed = false;   ///< 已经写回 Shot 了，收尾时别再写一遍
@@ -149,6 +151,13 @@ std::vector<FrameOutcome> run_frames(std::vector<Shot*>& shots,
         if (done[i].ok) {
             shot->frame_path = done[i].rel_path;
             shot->status = ShotStatus::FRAME_DONE;
+            // 尾帧每次重出首帧都跟着重算：没填 last_frame_prompt 就清掉，
+            // 别让一张旧的尾帧把新首帧拽回老构图。
+            if (done[i].end_rel.empty()) {
+                shot->end_frame_path.reset();
+            } else {
+                shot->end_frame_path = done[i].end_rel;
+            }
         } else {
             // attempts 加一是给闸门的重试计数用的：超限之后流水线会
             // 留着最后那一版接着往下走，保证整集能出片。
@@ -256,6 +265,38 @@ std::vector<FrameOutcome> run_frames(std::vector<Shot*>& shots,
                 render(*shot, prompts, scaled, dest, tok, on_step);
                 done[i].ok = true;
                 done[i].rel_path = paths.rel(dest);
+
+                // ---- 尾帧 ----
+                //
+                // 分镜填了 last_frame_prompt 的镜头再出一张，出片时当
+                // end_image 走首尾帧。出不来不算这一镜失败：首帧在，
+                // 退回单帧图生视频，说一声。
+                if (shot->last_frame_prompt.has_value() &&
+                    !text::strip_ws(*shot->last_frame_prompt).empty()) {
+                    try {
+                        PromptBundle end_prompts = composer.compose_end(*shot);
+                        for (std::string& r : end_prompts.reference_images) {
+                            r = paths::to_utf8(paths.abs(r));
+                        }
+                        const fs::path edest =
+                            paths.frames() /
+                            paths::from_utf8(shot->shot_id + "_end.png");
+                        // id 加后缀：种子和首帧那张错开，预览也不会盖掉
+                        // 墙上首帧那一格。
+                        Shot end_shot = *shot;
+                        end_shot.shot_id = shot->shot_id + "_end";
+                        render(end_shot, end_prompts, scaled, edest, tok, on_step);
+                        done[i].end_rel = paths.rel(edest);
+                    } catch (const std::exception& e) {
+                        pipeline::Event ev;
+                        ev.stage = "frames";
+                        ev.kind = "warn";
+                        ev.shot_id = shot->shot_id;
+                        ev.message = shot->shot_id + " 的尾帧没出来，这一镜走单帧：" +
+                                     e.what();
+                        progress.report(ev);
+                    }
+                }
             } catch (const std::exception& e) {
                 // 一镜失败不拖垮后面几镜。跑一晚上，早上发现第三镜挂了
                 // 导致后面三十镜都没动，那这一晚上就白熬了。

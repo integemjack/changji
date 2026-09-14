@@ -147,6 +147,10 @@ struct VideoRequest {
     SamplingKnobs knobs;
     /// 首帧。跨镜头一致性全靠它，没有的话退化成纯文生视频。
     std::optional<std::filesystem::path> start_image;
+    /// 尾帧。给了就走首尾帧（FL2VA）：片子从首帧出发、落在这一张上。
+    /// 只有首帧没有尾帧是老行为。MiniMax-H3 的 fl2va 权重原生支持，
+    /// Wan 那一族不认、sd.cpp 会忽略——所以给了也不会坏，只是没用。
+    std::optional<std::filesystem::path> end_image;
 
     /// VAE 分块解码。**6GB 卡上出视频的必要条件**，不是可选的优化。
     ///
@@ -325,6 +329,12 @@ public:
     ///
     /// 不在这里编码成 mp4：编码是 ffmpeg 的事，而这一层不该知道
     /// 编码参数从哪儿来。见 sd_video.hpp。
+    ///
+    /// **模型出了声音的话，同时写一个 wav**，路径是 raw_dest 换成 .wav 后缀
+    /// （`audio_path_for(raw_dest)`）。MiniMax-H3 每镜都出一条立体声
+    /// （环境声、动效，有时还有人声），2026-09-14 之前它被原地丢掉，成片
+    /// 里台词之间是数字静音。没出声音（Wan、没配音频 VAE）就没有这个文件，
+    /// 调用方按文件在不在判。
     void generate_video(const VideoRequest& req,
                         const std::filesystem::path& raw_dest,
                         pipeline::CancelToken& tok,
@@ -363,5 +373,9 @@ void register_sd_slots(const config::Settings& settings,
 /// 拿它之前要先 acquire 对应的槽，否则可能拿到一个正要被卸掉的。
 std::shared_ptr<SdContext> current_image_context();
 std::shared_ptr<SdContext> current_video_context();
+
+/// 出片那一步的裸帧文件对应的 wav 路径（换个后缀）。纯路径算术，
+/// 没链 sd.cpp 也在——sd_video.cpp 要靠它判"这一镜出没出声音"。
+std::filesystem::path audio_path_for(const std::filesystem::path& raw_dest);
 
 }  // namespace changji::infer

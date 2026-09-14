@@ -429,11 +429,269 @@ int count_beats(const std::string& script) {
         std::size_t end = script.find('\n', start);
         if (end == std::string::npos) end = script.size();
         const std::string line = text::strip_ws(script.substr(start, end - start));
-        if (!line.empty() && !is_act_header(line)) ++n;
+        if (!line.empty() && !is_act_header(line) && !is_scene_header(line)) ++n;
         if (end == script.size()) break;
         start = end + 1;
     }
     return n;
+}
+
+// ---- 按场拆镜 ----
+
+namespace {
+
+std::vector<std::string> split_lines(const std::string& s) {
+    std::vector<std::string> out;
+    std::size_t start = 0;
+    while (start <= s.size()) {
+        std::size_t end = s.find('\n', start);
+        if (end == std::string::npos) end = s.size();
+        out.push_back(s.substr(start, end - start));
+        if (end == s.size()) break;
+        start = end + 1;
+    }
+    return out;
+}
+
+/// 角色名单和场景名单那两段，整集那条路和按场那条路共用；
+/// 整集那条路的输出是逐字节对拍的，这两段就是从它里面抽出来的。
+std::string roster_text(const AssetLibrary& assets) {
+    std::vector<std::string> lines;
+    for (const std::string& cid : assets.character_ids()) {
+        lines.push_back("  " + cid + "：" + assets.characters.at(cid).name);
+    }
+    return join_lines(lines);
+}
+
+std::string places_text(const AssetLibrary& assets) {
+    std::vector<std::string> lines;
+    for (const std::string& lid : assets.location_ids()) {
+        lines.push_back("  " + lid + "：" + assets.locations.at(lid).name);
+    }
+    // 对应 Python 的 "..." or "  （未定义场景，location_id 留空）"
+    return lines.empty() ? "  （未定义场景，location_id 留空）" : join_lines(lines);
+}
+
+}  // namespace
+
+void parse_scene_body(const std::string& body, SceneBlock& out) {
+    out.body = text::strip_ws(body);
+    out.time.clear();
+    out.inout.clear();
+    out.place.clear();
+    // 切分隔符：· / ， 、 | ／ ，都当成同一种
+    std::vector<std::string> tokens;
+    std::string cur;
+    std::size_t i = 0;
+    const std::string& b = out.body;
+    while (i < b.size()) {
+        bool hit = false;
+        for (const char* sep : {"·", "／", "，", "、", "|", "/"}) {
+            const std::string s = sep;
+            if (b.compare(i, s.size(), s) == 0) {
+                tokens.push_back(text::strip_ws(cur));
+                cur.clear();
+                i += s.size();
+                hit = true;
+                break;
+            }
+        }
+        if (!hit) cur += b[i++];
+    }
+    tokens.push_back(text::strip_ws(cur));
+
+    std::vector<std::string> rest;
+    for (const std::string& t : tokens) {
+        if (t.empty()) continue;
+        if (t == "内" || t == "外" || t == "室内" || t == "室外" || t == "内景" ||
+            t == "外景") {
+            if (out.inout.empty()) out.inout = t;
+            continue;
+        }
+        bool timey = false;
+        if (text::utf8_len(t) <= 4) {
+            for (const char* w : {"日", "夜", "晨", "昏", "晚", "午", "黎明", "凌晨",
+                                  "白天", "深夜", "傍晚"}) {
+                if (t.find(w) != std::string::npos) {
+                    timey = true;
+                    break;
+                }
+            }
+        }
+        if (timey && out.time.empty()) {
+            out.time = t;
+            continue;
+        }
+        rest.push_back(t);
+    }
+    // 剩下的就是地点。多于一截的话拼起来，「咖啡馆 · 靠窗」这种也算一个地点。
+    std::string place;
+    for (const std::string& r : rest) {
+        if (!place.empty()) place += " ";
+        place += r;
+    }
+    out.place = place;
+}
+
+std::optional<std::string> resolve_scene_location(const std::string& place_in,
+                                                  const AssetLibrary& assets) {
+    const std::string place = text::strip_ws(place_in);
+    if (place.empty()) return std::nullopt;
+    for (const auto& [id, loc] : assets.locations) {
+        if (text::strip_ws(loc.name) == place) return id;
+    }
+    std::optional<std::string> best;
+    std::size_t best_len = 0;
+    for (const auto& [id, loc] : assets.locations) {
+        const std::string name = text::strip_ws(loc.name);
+        if (name.empty()) continue;
+        const bool hit = name.find(place) != std::string::npos ||
+                         place.find(name) != std::string::npos;
+        if (hit && name.size() > best_len) {
+            best = id;
+            best_len = name.size();
+        }
+    }
+    return best;
+}
+
+std::vector<SceneBlock> split_scenes(const std::string& script,
+                                     const AssetLibrary& assets) {
+    std::vector<SceneBlock> scenes;
+    std::vector<std::string> pending;   // 第一个场次头之前的行
+    SceneBlock* cur = nullptr;
+    std::vector<std::vector<std::string>> texts;
+    int running = 0;
+    for (const std::string& raw : split_lines(script)) {
+        int idx = 0;
+        std::string body;
+        if (parse_scene_header(raw, &idx, &body)) {
+            SceneBlock sb;
+            sb.index = ++running;   // 序号按出现次序数，模型编的号不作数
+            parse_scene_body(body, sb);
+            sb.location_id = resolve_scene_location(sb.place, assets);
+            scenes.push_back(std::move(sb));
+            texts.emplace_back();
+            if (scenes.size() == 1) {
+                texts.back() = pending;
+                pending.clear();
+            }
+            cur = &scenes.back();
+            continue;
+        }
+        if (cur == nullptr) {
+            pending.push_back(raw);
+        } else {
+            texts.back().push_back(raw);
+        }
+    }
+    if (scenes.empty()) {
+        SceneBlock whole;
+        whole.index = 0;
+        whole.text = script;
+        return {whole};
+    }
+    for (std::size_t i = 0; i < scenes.size(); ++i) {
+        // 去掉首尾的空行，中间的留着
+        auto& lines = texts[i];
+        while (!lines.empty() && text::strip_ws(lines.front()).empty()) {
+            lines.erase(lines.begin());
+        }
+        while (!lines.empty() && text::strip_ws(lines.back()).empty()) {
+            lines.pop_back();
+        }
+        scenes[i].text = join_lines(lines);
+    }
+    return scenes;
+}
+
+void assign_scene_seconds(std::vector<SceneBlock>& scenes, double target_s) {
+    if (scenes.empty()) return;
+    const double floor_s = duration_slots().front();
+    double total_w = 0.0;
+    std::vector<double> w(scenes.size());
+    for (std::size_t i = 0; i < scenes.size(); ++i) {
+        w[i] = static_cast<double>(std::max(1, count_beats(scenes[i].text)));
+        total_w += w[i];
+    }
+    for (std::size_t i = 0; i < scenes.size(); ++i) {
+        scenes[i].seconds = std::max(floor_s, target_s * w[i] / total_w);
+    }
+}
+
+std::string build_scene_storyboard_prompt(const SceneBlock& scene,
+                                          int total_scenes,
+                                          const AssetLibrary& assets,
+                                          const DurationQuota& quota,
+                                          const std::string& episode_id,
+                                          const std::string& prev_tail) {
+    std::string out;
+    out += prompt::storyboard_scene::kSeg0;
+    out += std::to_string(total_scenes);
+    out += prompt::storyboard_scene::kSeg1;
+    out += std::to_string(scene.index);
+    out += prompt::storyboard_scene::kSeg2;
+    out += scene.body.empty() ? std::string("（场次头没写地点）") : scene.body;
+    out += prompt::storyboard_scene::kSeg3;
+    if (scene.location_id.has_value()) {
+        out += prompt::storyboard_scene::kLocKnown;
+        out += *scene.location_id;
+        out += prompt::storyboard_scene::kLocKnownTail;
+    } else {
+        out += prompt::storyboard_scene::kLocUnknown;
+    }
+    out += prompt::storyboard_scene::kSeg4;
+    const std::string tail = text::strip_ws(prev_tail);
+    if (!tail.empty()) {
+        out += prompt::storyboard_scene::kPrevPre;
+        out += tail;
+        out += prompt::storyboard_scene::kPrevPost;
+    }
+    out += prompt::storyboard_scene::kSeg5;
+    out += roster_text(assets);
+    out += prompt::storyboard_scene::kSeg6;
+    out += places_text(assets);
+    out += prompt::storyboard_scene::kSeg7;
+    out += quota.describe();
+    out += prompt::storyboard_scene::kSeg8;
+    out += std::to_string(quota.shot_count());
+    out += prompt::storyboard_scene::kSeg9;
+    out += format_g(quota.total_s());
+    out += prompt::storyboard_scene::kSeg10;
+    out += episode_id;
+    out += prompt::storyboard_scene::kSeg11;
+    out += scene.text;
+    out += prompt::storyboard_scene::kSeg12;
+    return out;
+}
+
+ordered llm_scene_shot_schema(const AssetLibrary& assets, ShotCountBounds bounds,
+                              const std::optional<std::string>& location_id) {
+    ordered s = llm_shot_schema(assets, bounds);
+    if (!location_id.has_value() || location_id->empty()) return s;
+    ordered& item = s["properties"]["shots"]["items"];
+    item["properties"]["location_id"] = {
+        {"type", "string"},
+        {"enum", ordered::array({*location_id})},
+        {"description", "这一场的场景，一律填它"}};
+    ordered& req = item["required"];
+    bool present = false;
+    for (const auto& v : req) {
+        if (v == "location_id") present = true;
+    }
+    if (!present) req.push_back("location_id");
+    return s;
+}
+
+void stamp_scene(std::vector<Shot>& shots, const SceneBlock& scene) {
+    for (Shot& s : shots) {
+        s.scene_id = "s" + std::to_string(std::max(1, scene.index));
+        if (scene.location_id.has_value() && !scene.location_id->empty()) {
+            s.location_id = *scene.location_id;
+        }
+    }
+    // 跨场不接帧：上一场的最后一帧是另一个地方。
+    if (!shots.empty()) shots.front().continuous_with_prev = false;
 }
 
 ShotCountBounds shot_count_bounds(const DurationQuota& quota, double target_s,
@@ -535,6 +793,58 @@ ordered llm_shot_schema(const AssetLibrary& assets, ShotCountBounds bounds) {
         {"description",
          "这一镜的运镜。只有定格的物件特写、静止的空镜才填 static"}};
 
+    // ---- 机位、焦段、光：同样必填（2026-09-14）----
+    //
+    // 上面那一轮故意留了 `camera_angle` 当对照组：同一次生成里，进了
+    // required 的两栏活了（camera_move 六种取值），没进的那栏 51/51 还是
+    // eye_level。机制坐实，而且那轮凑数率是 0，所以这轮把机位和另外两样
+    // 「电影质感」的字段一起放进来：焦段（写实模型对字面焦段有反应）和
+    // 这一镜的光（行业说光是真实感最强的锚）。
+    //
+    // ⚠️ 一次进三个必填字段，凑数率要在真实项目上再看一眼：`lighting`
+    // 的 minLength 10 是一句「时段 + 光源 + 方向 + 软硬」的下限，别抬。
+    ordered angle_enum = ordered::array({"eye_level"});
+    if (defs.contains("CameraAngle") && defs["CameraAngle"].contains("enum")) {
+        angle_enum = defs["CameraAngle"]["enum"];
+    }
+    kept["camera_angle"] = {
+        {"type", "string"},
+        {"enum", angle_enum},
+        {"description",
+         "这一镜的机位。压迫用 low，脆弱用 high，失衡用 dutch，"
+         "交代全局用 overhead；eye_level 只给平静的对话"}};
+    // 焦段的枚举去掉 auto：那是「没填」，不该让模型选。
+    ordered lens_enum = ordered::array();
+    if (defs.contains("Lens") && defs["Lens"].contains("enum")) {
+        for (const auto& v : defs["Lens"]["enum"]) {
+            if (v != "auto") lens_enum.push_back(v);
+        }
+    }
+    if (lens_enum.empty()) lens_enum = ordered::array({"normal"});
+    kept["lens"] = {
+        {"type", "string"},
+        {"enum", lens_enum},
+        {"description",
+         "焦段。交代环境和空间用 wide，对话和日常用 normal，"
+         "脸的特写和情绪用 portrait，远处的人和压扁的背景用 tele"}};
+    kept["lighting"] = {
+        {"type", "string"},
+        {"minLength", 10},
+        {"maxLength", 80},
+        {"description",
+         "这一镜的光，一句话四样都要有：什么时段、光从哪儿来、"
+         "朝哪个方向打、硬还是软"}};
+    kept["continuous_with_prev"] = {
+        {"type", "boolean"},
+        {"description",
+         "紧接上一镜的动作（同一场景、同一时刻、动作连着）才填 true"}};
+    kept["last_frame_prompt"] = {
+        {"anyOf", ordered::array({ordered{{"type", "string"}, {"maxLength", 1200}},
+                                  ordered{{"type", "null"}}})},
+        {"description",
+         "只有这一镜必须落在一个明确的画面上时才填（比如推到某个物件上停住），"
+         "否则留空"}};
+
     // characters 和 dialogue 必须是必填并且带说明。
     // 只给一个 $ref 而不说要填什么，模型会整个略过这两个字段，
     // 结果是分镜里一句台词都没有，配音和口型全部落空。
@@ -556,6 +866,7 @@ ordered llm_shot_schema(const AssetLibrary& assets, ShotCountBounds bounds) {
     // 的字段，模型会整个略过，然后我们拿结构体默认值当成它的选择。
     shots_item["required"] = {"shot_id", "scene_id", "order", "first_frame_prompt",
                               "motion_prompt", "shot_size", "camera_move",
+                              "camera_angle", "lens", "lighting",
                               "duration_s", "characters", "dialogue"};
     shots_item["additionalProperties"] = false;
 

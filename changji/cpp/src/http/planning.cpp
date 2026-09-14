@@ -11,6 +11,7 @@
 #include "http/reset.hpp"
 #include "models/project.hpp"
 #include "pipeline/activity.hpp"
+#include "pipeline/storyboard_run.hpp"
 #include "stages/bible.hpp"
 #include "stages/storyboard.hpp"
 #include "util/paths.hpp"
@@ -484,42 +485,20 @@ ApiResult post_plan(const json& body, llm::Client& client,
     // 单镜的时长档位是这部剧的属性（[video].max_shot_s），按项目那份设置
     // 算一遍再拆镜头。见 config::apply_video_limits。
     config::apply_video_limits(config::load_settings(store.root()));
-    const stages::DurationQuota quota = stages::DurationQuota::for_duration(duration_s);
-    llm::Request req;
-    req.prompt = stages::build_storyboard_prompt(script, assets, quota, episode_id);
-    // 镜头数写进 schema。配额那句话模型不一定听——实测 60 秒的集出过
-    // 两镜六秒，提示词里"合计 16 个镜头"一个字没少。
-    req.schema = stages::llm_shot_schema(
-        assets, stages::shot_count_bounds(quota, duration_s,
-                                          stages::count_beats(script)));
-    req.schema_name = "storyboard";
-    req.on_thinking = thinking_sink();
+    // 切场、拆镜、补台词、查覆盖、重编号、拉回时长，都在 run_storyboard 里
+    // ——三处调用共用那一份，按场拆镜（2026-09-15）就是在那儿分的岔。
+    pipeline::StoryboardRunOptions sb;
+    sb.script = script;
+    sb.assets = assets;
+    sb.episode_id = episode_id;
+    sb.duration_s = duration_s;
+    sb.on_thinking = thinking_sink();
+    sb.on_progress = [&act](const std::string& m) { act.set_message(m); };
 
     std::vector<Shot> shots = stage_guard([&] {
-        std::vector<Shot> s = stages::parse_storyboard(client.complete(req, tok),
-                                                       assets);
-        // **先把剧本里漏掉的台词补进去，再查。** 分镜模型不搬台词——实跑
-        // 九句只写两句，dump 出来看是压根没生成。台词本来就在剧本里，
-        // 有顺序有说话人，引擎自己放比指望模型重打一遍靠谱。
-        //
-        // 放在 check_coverage 之前：一句台词都没写的那种「哑剧」，本来就
-        // 是这一步能救回来的，不该先报错退出。
-        placed_lines = stages::place_missing_dialogue(s, script, assets);
-        // 口型要在补完台词之后推，否则补进去的那几镜不会做口型。
-        const auto gaps = stages::check_coverage(script, s);
-        if (!gaps.empty()) {
-            std::string msg = "分镜表不完整：";
-            for (const auto& g : gaps) msg += "\n" + g;
-            msg += "\n\n换一个更强的模型，或者手工补齐这些字段后再跑。";
-            throw stages::StoryboardError(msg);
-        }
-        apply_lipsync_rules(s);
-        // 编号和顺序按引擎的来。模型编出来的 id 有错集号、没补零、打错字的。
-        stages::renumber_shots(s, episode_id);
-        // 总时长拉回目标。只动没台词的镜头，有台词的由配音定。
-        // 这个函数写好之后一直没人调，分镜排多短都原样存下去。
-        stages::rebalance_durations(s, duration_s);
-        return s;
+        pipeline::StoryboardRunResult r = pipeline::run_storyboard(sb, client, tok);
+        placed_lines = r.placed_lines;
+        return std::move(r.shots);
     });
 
     Episode* ep = project.episode_by_id(episode_id);

@@ -12,8 +12,10 @@
 #include "media/assemble.hpp"
 #include "stages/audio_plan.hpp"
 #include "stages/storyboard.hpp"
+#include "stages/music.hpp"
 #include "stages/tts_backends.hpp"
 #include "util/human_time.hpp"
+#include "util/text.hpp"
 
 namespace fs = std::filesystem;
 
@@ -307,9 +309,65 @@ std::string run_assemble(const ProjectStore& store,
         progress.report(e);
     }
 
+    // ---- 配乐 ----
+    //
+    // 一集一条器乐，装配时压在台词底下。文件在就沿用（想重出就删掉它）。
+    // 没配命令只说一声，不拦装配。
+    std::optional<fs::path> music;
+    if (settings.sound.music) {
+        if (text::strip_ws(settings.sound.music_command).empty()) {
+            emit(progress, "assemble", "info",
+                 "配乐开着，但全局配置里没有 [sound].music_command，"
+                 "这一集没有配乐。ACE-Step 的包装脚本在 tools/music_ace_step.py");
+        } else {
+            const fs::path want =
+                stages::music_path_for(store.paths(), ep.episode_id);
+            std::error_code mec;
+            if (!fs::is_regular_file(want, mec)) {
+                emit(progress, "assemble", "progress", "生成这一集的配乐");
+            }
+            const auto m = stages::ensure_music(settings, store.paths(), ep,
+                                                timeline.total_duration_s());
+            if (m.ok) {
+                music = m.path;
+                emit(progress, "assemble", "info",
+                     m.reused ? "沿用已有的配乐 " + paths::to_utf8(m.path.filename())
+                              : "配乐已生成 " + paths::to_utf8(m.path.filename()));
+            } else {
+                emit(progress, "assemble", "warn", "这一集没有配乐：" + m.error);
+            }
+        }
+    }
+
     media::Assembler assembler(ff, settings.assembly, store.paths(),
                                settings.gates.target_lufs,
                                settings.gates.max_true_peak_db);
+    // 后期链（柔化、调色、颗粒）、环境声（各镜的原生音轨）、配乐、放大。
+    // 全是 2026-09-14 加的，见 docs/电影质感方案.md；开关在项目的
+    // changji.toml 的 [look] / [sound]，放大和配乐命令在全局 [upscale] /
+    // [sound]。
+    media::FinishOptions finish;
+    finish.look = settings.look;
+    finish.sound = settings.sound;
+    finish.upscale = settings.upscale;
+    finish.project_root = store.root();
+    finish.music = music;
+    finish.warn = [&progress](const std::string& msg) {
+        emit(progress, "assemble", "warn", msg);
+    };
+    assembler.set_finish(finish);
+    {
+        std::string how = "后期：";
+        how += settings.look.preset == "off"   ? "不调色"
+               : settings.look.preset == "clean" ? "柔化加颗粒"
+                                                 : "胶片（柔化、调色、颗粒）";
+        how += settings.sound.ambient ? "；环境声：各镜原生音轨" : "；环境声：关";
+        how += music.has_value() ? "；配乐：有" : "；配乐：无";
+        if (settings.upscale.enabled()) {
+            how += "；放大 " + std::to_string(settings.upscale.scale) + "×";
+        }
+        emit(progress, "assemble", "info", how);
+    }
     const auto output = assembler.assemble(timeline, ep.episode_id + ".mp4");
 
     // 成片检查同样只报不拦：片子已经出来了，人可以自己看一眼再决定。
@@ -510,6 +568,50 @@ RunReport run_episode(const ProjectStore& store,
             }
         }
 
+        // ---- 关键镜头多出几条、尾帧串镜 ----
+        //
+        // 都是剧的属性（[video].hero_takes / chain_frames）。串镜要抽上一镜
+        // 的最后一帧，没有 ffmpeg 就不串；上一镜按剧集顺序找，不按这一批
+        // 的顺序——单跑几镜时前一镜不在这一批里。
+        stages::RenderExtras extras;
+        extras.hero_takes = settings.video.hero_takes;
+        extras.chain_frames = settings.video.chain_frames;
+        if (backends.ffmpeg) {
+            const media::FFmpeg& ff = *backends.ffmpeg;
+            const int fps = settings.assembly.fps;
+            extras.last_frame = [&ff, fps](const std::filesystem::path& video,
+                                           const std::filesystem::path& dest) {
+                try {
+                    const double dur = ff.probe(video).duration_s;
+                    // 最后一帧的时间点：片尾往回一帧半，`-ss` 落在最后
+                    // 一帧之后会抽不到东西。
+                    const double at =
+                        std::max(0.0, dur - 1.5 / std::max(1, fps));
+                    ff.extract_frame(video, dest, at);
+                    std::error_code ec;
+                    return std::filesystem::is_regular_file(dest, ec);
+                } catch (const std::exception&) {
+                    return false;
+                }
+            };
+        }
+        {
+            Episode* episode = ep;
+            const models::ProjectPaths ppaths = store.paths();
+            extras.prev_video =
+                [episode, ppaths](const Shot& s)
+                -> std::optional<std::filesystem::path> {
+                for (const Shot& other : episode->shots) {
+                    if (other.order != s.order - 1) continue;
+                    if (!other.video_path.has_value() || other.video_path->empty()) {
+                        return std::nullopt;
+                    }
+                    return ppaths.abs(*other.video_path);
+                }
+                return std::nullopt;
+            };
+        }
+
         // fps 走配置，不是写死的 24。Python 那边是
         // `RenderStage(..., fps=self.settings.assembly.fps)`；这儿以前
         // 漏了这个参数吃了默认值，`[assembly].fps = 30` 时两边算出来的
@@ -517,7 +619,7 @@ RunReport run_episode(const ProjectStore& store,
         return stages::render_batch(todo, assets, spec, store.paths(),
                                     backends.video, progress, tok,
                                     settings.assembly.fps,
-                                    backends.render_lanes, gate, save);
+                                    backends.render_lanes, gate, save, extras);
     };
 
     try {

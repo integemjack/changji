@@ -1,7 +1,9 @@
 #include "infer/sd_video.hpp"
 
 #include <algorithm>
+#include <cstdio>
 #include <fstream>
+#include <optional>
 #include <random>
 
 #include "infer/scheduler.hpp"
@@ -40,15 +42,24 @@ struct TempFile {
 std::vector<std::string> encode_args(const fs::path& raw_path, int width,
                                      int height, int fps,
                                      const config::AssemblyConfig& assembly,
-                                     const fs::path& dest) {
-    return {
+                                     const fs::path& dest,
+                                     const std::optional<fs::path>& audio,
+                                     double duration_s) {
+    std::vector<std::string> args = {
         "-y",                       // 覆盖。重跑一镜时不该卡在"要覆盖吗"上
         "-f", "rawvideo",
         "-pixel_format", "rgb24",   // sd.cpp 吐的就是 RGB24
         "-video_size", std::to_string(width) + "x" + std::to_string(height),
         "-framerate", std::to_string(fps),
         "-i", paths::to_utf8(raw_path),
-        "-an",                      // 这一步不带声音，配音是后面的阶段
+    };
+    if (audio.has_value()) {
+        // 模型自己出的原生音轨（H3 的环境声和动效）。以前这里是 `-an`，
+        // 那条声音在这一步被原地丢掉，成片里台词之间是数字静音。
+        // 装配那边按 [sound].ambient 决定用不用它——这里只负责别丢。
+        args.insert(args.end(), {"-i", paths::to_utf8(*audio)});
+    }
+    args.insert(args.end(), {
         "-c:v", assembly.video_codec,
         "-crf", std::to_string(assembly.crf),
         // **像素格式必须显式给。** 不给的话 ffmpeg 会保留 rgb24，
@@ -58,13 +69,32 @@ std::vector<std::string> encode_args(const fs::path& raw_path, int width,
         // 拼接环节要求各镜头规格一致。这里和成片用同一套参数，
         // 拼的时候才能直接 concat 而不是重编码——重编码是白白多一次有损压缩。
         "-r", std::to_string(fps),
-        paths::to_utf8(dest),
-    };
+    });
+    if (audio.has_value()) {
+        args.insert(args.end(), {
+            "-c:a", assembly.audio_codec,
+            "-b:a", assembly.audio_bitrate,
+            "-ar", std::to_string(assembly.audio_sample_rate),
+            "-ac", std::to_string(assembly.audio_channels),
+        });
+        // 按画面截齐，**不用 -shortest**：那个会在音轨略短时把画面也截掉。
+        if (duration_s > 0.0) {
+            char buf[32];
+            std::snprintf(buf, sizeof(buf), "%.3f", duration_s);
+            args.insert(args.end(), {"-t", buf});
+        }
+    } else {
+        args.push_back("-an");      // 没有声音就明说没有，别让 ffmpeg 猜
+    }
+    args.push_back(paths::to_utf8(dest));
+    return args;
 }
 
 void encode_raw_to_mp4(const fs::path& raw_path, int width, int height, int fps,
                        const config::AssemblyConfig& assembly,
-                       const fs::path& dest) {
+                       const fs::path& dest,
+                       const std::optional<fs::path>& audio,
+                       double duration_s) {
     std::error_code ec;
     fs::create_directories(dest.parent_path(), ec);
 
@@ -78,7 +108,10 @@ void encode_raw_to_mp4(const fs::path& raw_path, int width, int height, int fps,
     // 不限时。一镜的编码在低配机器上可能要几十秒，
     // 而超时把它杀掉留下的是一个半截的 mp4——比慢更糟。
     const proc::Result r = proc::run(
-        *exe, encode_args(raw_path, width, height, fps, assembly, dest), 0);
+        *exe,
+        encode_args(raw_path, width, height, fps, assembly, dest, audio,
+                    duration_s),
+        0);
     if (!r.launched || r.exit_code != 0) {
         throw SdError("ffmpeg 编码失败（退出码 " + std::to_string(r.exit_code) +
                       "）：\n" + r.out);
@@ -100,7 +133,9 @@ stages::VideoRenderer make_video_renderer(
     // 重读一遍），而建 SD 上下文用的是全局那份。采样旋钮跟着请求走才对得上，
     // 见 SamplingKnobs。
     const SamplingKnobs knobs = sampling_knobs_for(settings, ModelRole::Video);
-    return [assembly, seed_override, lora_tiers, knobs](
+    // 留不留模型自己出的声音是剧的属性（[sound].ambient）。
+    const bool keep_ambient = settings.sound.ambient;
+    return [assembly, seed_override, lora_tiers, knobs, keep_ambient](
                const models::Shot& shot, const stages::RenderPlan& plan,
                       const std::optional<fs::path>& start_image,
                       const fs::path& dest, pipeline::CancelToken& tok,
@@ -128,7 +163,7 @@ stages::VideoRenderer make_video_renderer(
 
         VideoRequest req;
         req.positive = stages::video_positive(plan);
-        req.negative = plan.prompts.negative;
+        req.negative = plan.prompts.negative_video;
         req.width = plan.spec.width;
         req.height = plan.spec.height;
         req.steps = plan.spec.steps;
@@ -141,6 +176,7 @@ stages::VideoRenderer make_video_renderer(
                        ? *seed_override
                        : stages::render_seed(shot.shot_id, shot.attempts);
         req.start_image = start_image;
+        req.end_image = plan.end_image;
         // LoRA 按档位挂。上下文是草稿和成片共用的，所以这个决定只能
         // 落在每次请求上——建上下文的时候还不知道这一镜跑哪一档。
         const std::string& tiers = lora_tiers;
@@ -151,8 +187,17 @@ stages::VideoRenderer make_video_renderer(
 
         const fs::path raw = raw_temp_for(dest);
         TempFile guard{raw};
+        // 声音那份 wav 和裸帧同名不同后缀，用完一起删。
+        const fs::path wav = audio_path_for(raw);
+        TempFile wguard{wav};
         ctx->generate_video(req, raw, tok, on_step);
-        encode_raw_to_mp4(raw, req.width, req.height, req.fps, assembly, dest);
+        std::optional<fs::path> audio;
+        std::error_code ec;
+        if (keep_ambient && fs::is_regular_file(wav, ec)) audio = wav;
+        encode_raw_to_mp4(raw, req.width, req.height, req.fps, assembly, dest,
+                          audio,
+                          static_cast<double>(req.frames) /
+                              static_cast<double>(std::max(1, req.fps)));
     };
 }
 

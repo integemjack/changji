@@ -683,6 +683,7 @@ add_executable(changji
     src/main.cpp
     src/util/paths.cpp
     src/util/proc.cpp
+    src/util/cmdline.cpp
     src/util/sysstat.cpp
     src/net/ws_client.cpp
     src/config/settings.cpp
@@ -719,6 +720,7 @@ add_executable(changji
     src/stages/render.cpp
     src/stages/audio_plan.cpp
     src/stages/audio.cpp
+    src/stages/music.cpp
     src/stages/tts_backends.cpp
     src/infer/ggml_abi.cpp
     src/infer/llama_tts.cpp
@@ -743,6 +745,7 @@ add_executable(changji
     src/pipeline/jobs.cpp
     src/pipeline/activity.cpp
     src/pipeline/episode.cpp
+    src/pipeline/storyboard_run.cpp
     src/media/ffmpeg.cpp
     src/media/subtitles.cpp
     src/gates/checks.cpp
@@ -1078,6 +1081,8 @@ if(CHANGJI_BUILD_TESTS)
         tests/unit/test_subtitles.cpp
         tests/unit/test_gates.cpp
         tests/unit/test_assemble.cpp
+        tests/unit/test_finish.cpp
+        tests/unit/test_scenes.cpp
         tests/unit/test_upscale.cpp
         tests/unit/test_audio_plan.cpp
         tests/unit/test_audio.cpp
@@ -1112,6 +1117,7 @@ if(CHANGJI_BUILD_TESTS)
         ${CHANGJI_METAL_SOURCES}
         src/util/paths.cpp
         src/util/proc.cpp
+        src/util/cmdline.cpp
         src/util/sysstat.cpp
         src/net/ws_client.cpp
         src/util/text.cpp
@@ -1138,6 +1144,7 @@ if(CHANGJI_BUILD_TESTS)
         src/stages/render.cpp
         src/stages/audio_plan.cpp
         src/stages/audio.cpp
+        src/stages/music.cpp
         src/stages/tts_backends.cpp
         # 测试目标编的是没开 CHANGJI_LLAMA 的那份存根（返回"没编进来"）。
         # 少了它 tts_backends.cpp 里的 local_tts_backend 会链不上。
@@ -1163,6 +1170,7 @@ if(CHANGJI_BUILD_TESTS)
         src/pipeline/jobs.cpp
         src/pipeline/activity.cpp
         src/pipeline/episode.cpp
+        src/pipeline/storyboard_run.cpp
         src/media/ffmpeg.cpp
         src/media/subtitles.cpp
         src/gates/checks.cpp

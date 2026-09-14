@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <functional>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -48,6 +49,8 @@ struct RenderPlan {
     int frames = 0;
     PromptBundle prompts;
     std::string motion;
+    /// 尾帧（绝对路径）。有就走首尾帧，没有就是单帧图生视频。
+    std::optional<std::filesystem::path> end_image;
 
     /// 拼提示词要用的分隔符由它决定（动画线 ", "，写实线 "，"）。
     ///
@@ -106,6 +109,32 @@ struct GateHooks {
     int max_attempts = 3;
 };
 
+/// 出片那几样「像电影」的做法（docs/电影质感方案.md）。默认全关 = 老行为。
+struct RenderExtras {
+    /// 关键镜头出几条换种子挑最好的。1 = 不多出。见 is_hero_shot / pick_take。
+    int hero_takes = 1;
+    /// 标了 `continuous_with_prev` 的镜头拿上一镜的最后一帧当首帧。
+    /// 只在串行（concurrency = 1）时生效——并行时上一镜可能还没出来。
+    bool chain_frames = false;
+    /// 抽一段视频的最后一帧存成图。空 = 没有 ffmpeg，不串镜。
+    std::function<bool(const std::filesystem::path& video,
+                       const std::filesystem::path& dest)>
+        last_frame;
+    /// 按剧集顺序找上一镜的视频（绝对路径）。空 = 用这一批里的前一镜。
+    /// 单跑几镜时前一镜不在这一批里，得回剧集里找。
+    std::function<std::optional<std::filesystem::path>(const models::Shot&)>
+        prev_video;
+};
+
+/// 这一镜算不算关键镜头：第一镜、最后一镜，以及 beat 里写着钩子、留扣、
+/// 反转、高潮这类词的。关键镜多出几条挑，是行业里「关键镜多出 20～30%」
+/// 那条的落法。
+bool is_hero_shot(const models::Shot& shot, bool first, bool last);
+
+/// 从几条 take 的闸门结果里挑一条：先要过闸门的，再罚片中硬切，再看运动量
+/// 像不像回事（几乎不动的扣分，太猛的少加分）。返回下标，平手取先出的。
+std::size_t pick_take(const std::vector<gates::GateResult>& results);
+
 /// 渲染一批镜头。
 ///
 /// `concurrency` 是同时在跑的镜头数。**1 就是逐镜串行**——单卡就该是 1，
@@ -135,6 +164,8 @@ std::vector<RenderOutcome> render_batch(
     const GateHooks& gate = {},
     /// 每出完一镜调一次（写回之后）。见 pipeline::ShotCommit。
     /// **不给就是老行为**：整批跑完再统一写回。
-    const pipeline::ShotCommit& commit = {});
+    const pipeline::ShotCommit& commit = {},
+    /// 多条 take、尾帧串镜。**不给就是老行为。**
+    const RenderExtras& extras = {});
 
 }  // namespace changji::stages

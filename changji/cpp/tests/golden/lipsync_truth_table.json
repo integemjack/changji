@@ -9,6 +9,9 @@
       "camera_angle": "eye_level",
       "camera_id": null,
       "camera_move": "static",
+      "lens": "auto",
+      "lighting": "",
+      "continuous_with_prev": false,
       "characters": [
         {
           "action": "",
@@ -25,6 +28,7 @@
       "duration_s": 5.0,
       "first_frame_prompt": "",
       "frame_path": null,
+      "end_frame_path": null,
       "gate_notes": [],
       "last_frame_prompt": null,
       "location_id": null,
@@ -56,6 +60,9 @@
       "camera_angle": "eye_level",
       "camera_id": null,
       "camera_move": "static",
+      "lens": "auto",
+      "lighting": "",
+      "continuous_with_prev": false,
       "characters": [
         {
           "action": "",
@@ -82,6 +89,7 @@
       "duration_s": 5.0,
       "first_frame_prompt": "",
       "frame_path": null,
+      "end_frame_path": null,
       "gate_notes": [],
       "last_frame_prompt": null,
       "location_id": null,
@@ -113,6 +121,9 @@
       "camera_angle": "eye_level",
       "camera_id": null,
       "camera_move": "static",
+      "lens": "auto",
+      "lighting": "",
+      "continuous_with_prev": false,
       "characters": [
         {
           "action": "",
@@ -139,6 +150,7 @@
       "duration_s": 5.0,
       "first_frame_prompt": "",
       "frame_path": null,
+      "end_frame_path": null,
       "gate_notes": [],
       "last_frame_prompt": null,
       "location_id": null,
@@ -170,6 +182,9 @@
       "camera_angle": "eye_level",
       "camera_id": null,
       "camera_move": "static",
+      "lens": "auto",
+      "lighting": "",
+      "continuous_with_prev": false,
       "characters": [
         {
           "action": "",
@@ -196,6 +211,7 @@
       "duration_s": 5.0,
       "first_frame_prompt": "",
       "frame_path": null,
+      "end_frame_path": null,
       "gate_notes": [],
       "last_frame_prompt": null,
       "location_id": null,
@@ -227,6 +243,9 @@
       "camera_angle": "eye_level",
       "camera_id": null,
       "camera_move": "static",
+      "lens": "auto",
+      "lighting": "",
+      "continuous_with_prev": false,
       "characters": [
         {
           "action": "",
@@ -253,6 +272,7 @@
       "duration_s": 5.0,
       "first_frame_prompt": "",
       "frame_path": null,
+      "end_frame_path": null,
       "gate_notes": [],
       "last_frame_prompt": null,
       "location_id": null,
@@ -284,6 +304,9 @@
       "camera_angle": "eye_level",
       "camera_id": null,
       "camera_move": "static",
+      "lens": "auto",
+      "lighting": "",
+      "continuous_with_prev": false,
       "characters": [
         {
           "action": "",
@@ -310,6 +333,7 @@
       "duration_s": 5.0,
       "first_frame_prompt": "",
       "frame_path": null,
+      "end_frame_path": null,
       "gate_notes": [],
       "last_frame_prompt": null,
       "location_id": null,
@@ -341,6 +365,9 @@
       "camera_angle": "eye_level",
       "camera_id": null,
       "camera_move": "static",
+      "lens": "auto",
+      "lighting": "",
+      "continuous_with_prev": false,
       "characters": [
         {
           "action": "",
@@ -367,6 +394,7 @@
       "duration_s": 5.0,
       "first_frame_prompt": "",
       "frame_path": null,
+      "end_frame_path": null,
       "gate_notes": [],
       "last_frame_prompt": null,
       "location_id": null,
@@ -398,6 +426,9 @@
       "camera_angle": "overhead",
       "camera_id": null,
       "camera_move": "static",
+      "lens": "auto",
+      "lighting": "",
+      "continuous_with_prev": false,
       "characters": [
         {
           "action": "",
@@ -424,6 +455,7 @@
       "duration_s": 5.0,
       "first_frame_prompt": "",
       "frame_path": null,
+      "end_frame_path": null,
       "gate_notes": [],
       "last_frame_prompt": null,
       "location_id": null,
@@ -455,6 +487,9 @@
       "camera_angle": "high",
       "camera_id": null,
       "camera_move": "static",
+      "lens": "auto",
+      "lighting": "",
+      "continuous_with_prev": false,
       "characters": [
         {
           "action": "",
@@ -481,6 +516,7 @@
       "duration_s": 5.0,
       "first_frame_prompt": "",
       "frame_path": null,
+      "end_frame_path": null,
       "gate_notes": [],
       "last_frame_prompt": null,
       "location_id": null,
@@ -512,6 +548,9 @@
       "camera_angle": "eye_level",
       "camera_id": null,
       "camera_move": "static",
+      "lens": "auto",
+      "lighting": "",
+      "continuous_with_prev": false,
       "characters": [
         {
           "action": "",
@@ -538,6 +577,7 @@
       "duration_s": 5.0,
       "first_frame_prompt": "",
       "frame_path": null,
+      "end_frame_path": null,
       "gate_notes": [],
       "last_frame_prompt": null,
       "location_id": null,

@@ -5,6 +5,9 @@
   "camera_angle": "low",
   "camera_id": "cam_rooftop_a",
   "camera_move": "push_in",
+  "lens": "auto",
+  "lighting": "",
+  "continuous_with_prev": false,
   "characters": [
     {
       "action": "握紧栏杆，指节发白",
@@ -48,6 +51,7 @@
   "duration_s": 6.5,
   "first_frame_prompt": "cinematic, rooftop at night, heavy rain, neon bokeh, back view",
   "frame_path": "frames/ep01_s03_sh007.png",
+  "end_frame_path": null,
   "gate_notes": [
     "草稿档画面偏暗，已调高曝光重跑"
   ],

@@ -20,6 +20,7 @@
 #include "stages/json_stream.hpp"
 #include "stages/script.hpp"
 #include "stages/story_plan.hpp"
+#include "pipeline/storyboard_run.hpp"
 #include "stages/storyboard.hpp"
 #include "util/paths.hpp"
 #include "util/text.hpp"
@@ -530,34 +531,18 @@ ApiResult post_plan_all(const json& body, std::shared_ptr<llm::Client> client) {
                     // 单镜的时长档位是这部剧的属性（[video].max_shot_s），
                     // 按项目那份设置算一遍再拆镜头。见 config::apply_video_limits。
                     config::apply_video_limits(config::load_settings(store.root()));
-                    const stages::DurationQuota quota =
-                        stages::DurationQuota::for_duration(ep->target_duration_s);
-                    llm::Request sreq;
-                    sreq.prompt = stages::build_storyboard_prompt(
-                        ep->script, assets, quota, episode_id);
-                    // 镜头数写进 schema，和 post_plan 那边一样。
-                    sreq.schema = stages::llm_shot_schema(
-                        assets, stages::shot_count_bounds(
-                                    quota, ep->target_duration_s,
-                                    stages::count_beats(ep->script)));
-                    sreq.schema_name = "storyboard";
-                    sreq.on_thinking = thinking_sink();
-
-                    std::vector<Shot> shots = stages::parse_storyboard(
-                        client->complete(sreq, tok), assets);
-                    // 同 post_plan：台词由引擎照剧本放，模型只管画面。
-                    stages::place_missing_dialogue(shots, ep->script, assets);
-                    const auto gaps = stages::check_coverage(ep->script, shots);
-                    if (!gaps.empty()) {
-                        std::string msg = "分镜表不完整：";
-                        for (const auto& g : gaps) msg += "\n" + g;
-                        msg += "\n\n换一个更强的模型，或者手工补齐这些字段后再跑。";
-                        throw stages::StoryboardError(msg);
-                    }
-                    apply_lipsync_rules(shots);
-                    stages::renumber_shots(shots, episode_id);
-                    stages::rebalance_durations(shots, ep->target_duration_s);
-                    ep->shots = std::move(shots);
+                    // 切场、拆镜、补台词、查覆盖、重编号、拉回时长都在
+                    // run_storyboard 里，和 post_plan 是同一份。
+                    pipeline::StoryboardRunOptions sb;
+                    sb.script = ep->script;
+                    sb.assets = assets;
+                    sb.episode_id = episode_id;
+                    sb.duration_s = ep->target_duration_s;
+                    sb.on_thinking = thinking_sink();
+                    sb.on_progress = [&p, &episode_id](const std::string& m) {
+                        p.set_message(episode_id + "：" + m);
+                    };
+                    ep->shots = pipeline::run_storyboard(sb, *client, tok).shots;
                     store.save_project(project);
                 } catch (const std::exception& e) {
                     // 一集出错不拖垮后面几集。跑一晚上，早上发现第二集挂了

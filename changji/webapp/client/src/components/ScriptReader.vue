@@ -32,6 +32,9 @@ const HUES = [28, 200, 145, 320, 265, 95, 355, 175]
 // 只认这四个名字，免得把「【字幕】三年后」「【倒计时 10 秒】」当成段头——
 // 和引擎 parse_act_header 的判法一样。
 const HEADER = /^【(开场钩子|冲突推进|情绪回报|集尾留扣)(?:\s+(\d+)[–-](\d+)\s*秒)?】$/
+// 场次头：「【第1场 · 夜 · 内 · 天台】」，序号后面那一截可有可无。
+// 和引擎 parse_scene_header 的判法一样：只认阿拉伯数字，渲染的就是它。
+const SCENE = /^【第(\d+)场(?:\s*[·：:，、/-]\s*(.*?))?】$/
 
 const parsed = computed(() => {
   const speakers = new Map()
@@ -52,6 +55,12 @@ const parsed = computed(() => {
     if (h) {
       cur = { label: h[1], from: Number(h[2] ?? 0), to: Number(h[3] ?? 0), blocks: [] }
       sections.push(cur)
+      continue
+    }
+    // 场次头是内容不是段：留在段里，单独一种块，页面上画成一条分场线
+    const sc = SCENE.exec(line)
+    if (sc) {
+      section().blocks.push({ kind: 'scene', index: Number(sc[1]), text: (sc[2] ?? '').trim() })
       continue
     }
     // 全角冒号是引擎渲染时固定用的；半角一并认，手改的剧本常打成半角
@@ -142,7 +151,8 @@ const secondsOf = (text) => Math.max(1, Math.round(text.length / props.charsPerS
           </span>
         </div>
         <template v-for="(b, i) in sec.blocks" :key="si + '-' + i">
-          <p v-if="b.kind === 'action'" class="action">{{ b.text }}</p>
+          <p v-if="b.kind === 'scene'" class="scene">第{{ b.index }}场<template v-if="b.text"> · {{ b.text }}</template></p>
+          <p v-else-if="b.kind === 'action'" class="action">{{ b.text }}</p>
           <div v-else class="line" :style="{ '--hue': hueOf(b.name) }">
             <span class="line__who">{{ b.name }}</span>
             <span class="line__text">{{ b.text }}</span>
@@ -218,6 +228,16 @@ const secondsOf = (text) => Math.max(1, Math.round(text.length / props.charsPerS
 }
 .act--thin .act__label {
   color: var(--warn);
+}
+
+.scene {
+  margin: var(--s2) 0 var(--s1);
+  padding-top: var(--s1);
+  border-top: 1px dashed var(--line);
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  color: var(--fg-dim);
+  letter-spacing: 0.02em;
 }
 
 .action {

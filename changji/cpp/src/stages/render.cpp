@@ -83,6 +83,43 @@ RenderPlan make_plan(const Shot& shot, const TierSpec& spec,
     return p;
 }
 
+bool is_hero_shot(const Shot& shot, bool first, bool last) {
+    if (first || last) return true;
+    for (const char* w : {"钩", "扣", "反转", "高潮", "揭", "真相"}) {
+        if (shot.beat.find(w) != std::string::npos) return true;
+    }
+    return false;
+}
+
+std::size_t pick_take(const std::vector<gates::GateResult>& results) {
+    const auto score = [](const gates::GateResult& r) {
+        double s = r.ok() ? 100.0 : 0.0;
+        if (r.metrics.count("cut_inside") != 0) s -= 60.0;
+        const auto it = r.metrics.find("motion_mean");
+        if (it != r.metrics.end()) {
+            const double v = it->second;
+            if (v < 0.8) {
+                s -= 15.0;                       // 几乎不动
+            } else if (v <= 15.0) {
+                s += 20.0 + std::min(v, 10.0);   // 像回事
+            } else {
+                s += 5.0;                        // 太猛，多半是乱动
+            }
+        }
+        return s;
+    };
+    std::size_t best = 0;
+    double best_score = -1e9;
+    for (std::size_t i = 0; i < results.size(); ++i) {
+        const double s = score(results[i]);
+        if (s > best_score) {
+            best_score = s;
+            best = i;
+        }
+    }
+    return best;
+}
+
 std::string video_positive(const RenderPlan& plan) {
     const std::string sep = plan.style_line == StyleLine::ANIME ? ", " : "，";
     if (plan.motion.empty()) return plan.prompts.positive;
@@ -98,7 +135,8 @@ std::vector<RenderOutcome> render_batch(std::vector<Shot*>& shots,
                                         pipeline::JobProgress& progress,
                                         pipeline::CancelToken& tok, int fps,
                                         int concurrency, const GateHooks& gate,
-                                        const pipeline::ShotCommit& commit) {
+                                        const pipeline::ShotCommit& commit,
+                                        const RenderExtras& extras) {
     const PromptComposer composer(assets);
     const std::string stage_name =
         spec.tier == Tier::FINAL ? "final" : "draft";
@@ -205,6 +243,8 @@ std::vector<RenderOutcome> render_batch(std::vector<Shot*>& shots,
 
                 fs::path dest;
                 RenderPlan plan;
+                // 多条 take 时闸门已经在挑的时候过了一遍，结果留在这儿。
+                std::optional<gates::GateResult> picked;
                 try {
                     plan = make_plan(local, spec, composer,
                                      assets.style.aspect_ratio, fps);
@@ -257,7 +297,92 @@ std::vector<RenderOutcome> render_batch(std::vector<Shot*>& shots,
                             step, steps, loading);
                     };
 
-                    render(local, plan, start, dest, tok, on_step);
+                    // ---- 尾帧串镜 ----
+                    //
+                    // 标了紧接上一镜的，拿上一镜真出来的最后一帧当首帧，动作
+                    // 才接得上（行业标准做法）。只在串行时做：并行时上一镜
+                    // 可能还在跑。抽不到就用自己的首帧，说一声。
+                    if (extras.chain_frames && local.continuous_with_prev &&
+                        lanes == 1 && extras.last_frame) {
+                        std::optional<fs::path> prev_video;
+                        std::string prev_id;
+                        if (extras.prev_video) {
+                            prev_video = extras.prev_video(local);
+                        } else if (i > 0 && done[i - 1].ok &&
+                                   done[i - 1].shot.video_path.has_value()) {
+                            prev_video = paths.abs(*done[i - 1].shot.video_path);
+                            prev_id = done[i - 1].shot.shot_id;
+                        }
+                        std::error_code cec;
+                        if (prev_video.has_value() &&
+                            fs::is_regular_file(*prev_video, cec)) {
+                            const fs::path chained =
+                                paths.frames() /
+                                paths::from_utf8(local.shot_id + "_chain.png");
+                            if (extras.last_frame(*prev_video, chained)) {
+                                start = chained;
+                                say("info", local.shot_id +
+                                                " 接着上一镜的最后一帧起拍");
+                            } else {
+                                say("warn", local.shot_id +
+                                                " 标了紧接上一镜，但抽不到上一镜"
+                                                "的最后一帧，用自己的首帧");
+                            }
+                        }
+                    }
+
+                    // ---- 尾帧 ----
+                    if (local.end_frame_path.has_value() &&
+                        !local.end_frame_path->empty()) {
+                        const fs::path ef = paths.abs(*local.end_frame_path);
+                        std::error_code eec;
+                        if (fs::is_regular_file(ef, eec)) plan.end_image = ef;
+                    }
+
+                    // ---- 关键镜头多出几条挑 ----
+                    //
+                    // 每条换一个种子（attempts 拉开 100，别和重试的 +1 撞上），
+                    // 各过一遍闸门，按 pick_take 留一条。要闸门在才有依据挑。
+                    const int takes =
+                        (gate.check &&
+                         is_hero_shot(local, i == 0, i == total - 1))
+                            ? std::max(1, extras.hero_takes)
+                            : 1;
+                    if (takes > 1) {
+                        std::vector<gates::GateResult> results;
+                        std::vector<fs::path> files;
+                        for (int k = 0; k < takes; ++k) {
+                            Shot take = local;
+                            take.attempts = local.attempts + k * 100;
+                            const fs::path d =
+                                dest.parent_path() /
+                                paths::from_utf8(local.shot_id + "_take" +
+                                                 std::to_string(k + 1) + ".mp4");
+                            say("progress", "出视频 " + local.shot_id + "（第 " +
+                                                std::to_string(k + 1) + "/" +
+                                                std::to_string(takes) + " 条）");
+                            render(take, plan, start, d, tok, on_step);
+                            files.push_back(d);
+                            results.push_back(gate.check(take, d, plan));
+                        }
+                        const std::size_t best = pick_take(results);
+                        std::error_code rec;
+                        fs::remove(dest, rec);
+                        fs::rename(files[best], dest, rec);
+                        if (rec) {
+                            fs::copy_file(files[best], dest,
+                                          fs::copy_options::overwrite_existing,
+                                          rec);
+                        }
+                        for (const fs::path& f : files) fs::remove(f, rec);
+                        picked = results[best];
+                        say("info", local.shot_id + " 出了 " +
+                                        std::to_string(takes) + " 条，留第 " +
+                                        std::to_string(best + 1) + " 条" +
+                                        gates::motion_note(*picked));
+                    } else {
+                        render(local, plan, start, dest, tok, on_step);
+                    }
                     local.video_path = paths.rel(dest);
                 } catch (const std::exception& e) {
                     // 一镜失败不拖垮后面几镜。跑一晚上，早上发现第三镜挂了
@@ -281,7 +406,8 @@ std::vector<RenderOutcome> render_batch(std::vector<Shot*>& shots,
                     break;
                 }
 
-                const gates::GateResult res = gate.check(local, dest, plan);
+                const gates::GateResult res =
+                    picked.has_value() ? *picked : gate.check(local, dest, plan);
                 if (res.ok()) {
                     local.status = want_after;
                     local.gate_notes.clear();

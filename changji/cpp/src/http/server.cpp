@@ -1222,6 +1222,131 @@ void run(const config::Settings& settings, const Options& opts) {
             return json_response(r.body, r.status);
         });
 
+    // ---- 这部剧的成片工序：后期链和声音 ----
+    //
+    // 剧的属性，住在项目的 changji.toml 的 [look] / [sound]。放大和配乐
+    // 命令是机器属性，不在这儿（全局 [upscale] / [sound].music_command）。
+    // 同 /bff/project/video：C++ 独有，所以在 /bff。
+    const auto finish_json = [](const config::Settings& s) {
+        return json{{"look",
+                     {{"preset", s.look.preset},
+                      {"lut", s.look.lut},
+                      {"lut_strength", s.look.lut_strength},
+                      {"grain", s.look.grain},
+                      {"soften", s.look.soften},
+                      {"letterbox", s.look.letterbox}}},
+                    {"sound",
+                     {{"ambient", s.sound.ambient},
+                      {"ambient_db", s.sound.ambient_db},
+                      {"music", s.sound.music},
+                      {"music_db", s.sound.music_db},
+                      {"duck", s.sound.duck},
+                      {"music_style", s.sound.music_style},
+                      // 机器上配没配配乐命令：页面上「配乐」那个勾要靠它
+                      // 说清「勾了也出不来」。
+                      {"music_ready", !s.sound.music_command.empty()}}},
+                    {"upscale", s.upscale.enabled()}};
+    };
+
+    CROW_ROUTE(app, "/bff/project/finish")([finish_json](const crow::request& req) {
+        auto r = guard([&] {
+            const auto root =
+                changji::paths::from_utf8(required_query(req, "path"));
+            return ApiResult{200, finish_json(config::load_settings(root))};
+        });
+        return json_response(r.body, r.status);
+    });
+
+    CROW_ROUTE(app, "/bff/project/finish")
+        .methods("POST"_method)([finish_json](const crow::request& req) {
+            auto r = guard([&] {
+                const auto body = parse_body(req.body);
+                const auto it = body.find("path");
+                if (it == body.end() || !it->is_string()) {
+                    throw ApiError(400, "缺 path");
+                }
+                const auto root = changji::paths::from_utf8(it->get<std::string>());
+
+                // 先按现在的读出来、盖上改动、校验，再写。写进去一个非法值
+                // 的话下一次加载整个项目都打不开。
+                config::Settings s = config::load_settings(root);
+                json patch = json::object();
+                const auto take_look = body.find("look");
+                if (take_look != body.end() && take_look->is_object()) {
+                    const json& l = *take_look;
+                    if (l.contains("preset") && l["preset"].is_string()) {
+                        s.look.preset = l["preset"].get<std::string>();
+                    }
+                    if (l.contains("lut") && l["lut"].is_string()) {
+                        s.look.lut = l["lut"].get<std::string>();
+                    }
+                    if (l.contains("lut_strength") && l["lut_strength"].is_number()) {
+                        s.look.lut_strength = l["lut_strength"].get<double>();
+                    }
+                    if (l.contains("grain") && l["grain"].is_number()) {
+                        s.look.grain = l["grain"].get<double>();
+                    }
+                    if (l.contains("soften") && l["soften"].is_number()) {
+                        s.look.soften = l["soften"].get<double>();
+                    }
+                    if (l.contains("letterbox") && l["letterbox"].is_number()) {
+                        s.look.letterbox = l["letterbox"].get<double>();
+                    }
+                    patch["look"] = {{"preset", s.look.preset},
+                                     {"lut", s.look.lut},
+                                     {"lut_strength", s.look.lut_strength},
+                                     {"grain", s.look.grain},
+                                     {"soften", s.look.soften},
+                                     {"letterbox", s.look.letterbox}};
+                }
+                const auto take_sound = body.find("sound");
+                if (take_sound != body.end() && take_sound->is_object()) {
+                    const json& d = *take_sound;
+                    if (d.contains("ambient") && d["ambient"].is_boolean()) {
+                        s.sound.ambient = d["ambient"].get<bool>();
+                    }
+                    if (d.contains("ambient_db") && d["ambient_db"].is_number()) {
+                        s.sound.ambient_db = d["ambient_db"].get<double>();
+                    }
+                    if (d.contains("music") && d["music"].is_boolean()) {
+                        s.sound.music = d["music"].get<bool>();
+                    }
+                    if (d.contains("music_db") && d["music_db"].is_number()) {
+                        s.sound.music_db = d["music_db"].get<double>();
+                    }
+                    if (d.contains("duck") && d["duck"].is_boolean()) {
+                        s.sound.duck = d["duck"].get<bool>();
+                    }
+                    if (d.contains("music_style") && d["music_style"].is_string()) {
+                        s.sound.music_style = d["music_style"].get<std::string>();
+                    }
+                    patch["sound"] = {{"ambient", s.sound.ambient},
+                                      {"ambient_db", s.sound.ambient_db},
+                                      {"music", s.sound.music},
+                                      {"music_db", s.sound.music_db},
+                                      {"duck", s.sound.duck},
+                                      {"music_style", s.sound.music_style}};
+                }
+                std::vector<std::string> errs = s.look.validate();
+                for (const auto& e : s.sound.validate()) errs.push_back(e);
+                if (!errs.empty()) {
+                    std::string msg;
+                    for (const auto& e : errs) {
+                        if (!msg.empty()) msg += "；";
+                        msg += e;
+                    }
+                    throw ApiError(400, msg);
+                }
+                if (!patch.empty()) {
+                    // 老项目没有这份文件时先按项目模板起底（同 /bff/project/video）。
+                    config::write_project_config(root, s.video);
+                    config::save_user_config(patch, root / "changji.toml");
+                }
+                return ApiResult{200, finish_json(config::load_settings(root))};
+            });
+            return json_response(r.body, r.status);
+        });
+
     // ---- 投递（第八步）：这一套没搬进来 ----
     //
     // 它要存投递记录、要平台配置和凭据，是另一套东西。**但不能就这么

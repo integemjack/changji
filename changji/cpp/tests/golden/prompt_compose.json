@@ -43,6 +43,9 @@
     "shot_size": "MS",
     "camera_angle": "eye_level",
     "camera_move": "static",
+    "lens": "auto",
+    "lighting": "",
+    "continuous_with_prev": false,
     "camera_id": null,
     "characters": [],
     "location_id": null,
@@ -62,6 +65,7 @@
     "status": "planned",
     "attempts": 0,
     "frame_path": null,
+    "end_frame_path": null,
     "video_path": null,
     "gate_notes": []
    },
@@ -69,8 +73,8 @@
    "positive": "中景，平视，雨夜天台，女子背对镜头，电影感，浅景深，冷色调",
    "negative": "低质量，模糊",
    "reference_images": [],
-   "motion": "固定镜头",
-   "video_positive": "中景，平视，雨夜天台，女子背对镜头，电影感，浅景深，冷色调，固定镜头"
+   "motion": "[0-5秒] 固定镜头",
+   "video_positive": "中景，平视，雨夜天台，女子背对镜头，电影感，浅景深，冷色调，[0-5秒] 固定镜头"
   },
   {
    "name": "一个角色",
@@ -87,6 +91,9 @@
     "shot_size": "MS",
     "camera_angle": "eye_level",
     "camera_move": "static",
+    "lens": "auto",
+    "lighting": "",
+    "continuous_with_prev": false,
     "camera_id": null,
     "characters": [
      {
@@ -115,6 +122,7 @@
     "status": "planned",
     "attempts": 0,
     "frame_path": null,
+    "end_frame_path": null,
     "video_path": null,
     "gate_notes": []
    },
@@ -124,8 +132,8 @@
    "reference_images": [
     "refs/c_lin_wan_front.png"
    ],
-   "motion": "固定镜头，扶着护栏",
-   "video_positive": "二十七岁女性，外表冷静，偏瘦，中等身高，黑色长直发，鹅蛋脸，杏眼，白色衬衫，深色西装裤，落寞，扶着护栏，中景，平视，雨夜天台，女子背对镜头，电影感，浅景深，冷色调，固定镜头，扶着护栏"
+   "motion": "[0-5秒] 固定镜头，扶着护栏",
+   "video_positive": "二十七岁女性，外表冷静，偏瘦，中等身高，黑色长直发，鹅蛋脸，杏眼，白色衬衫，深色西装裤，落寞，扶着护栏，中景，平视，雨夜天台，女子背对镜头，电影感，浅景深，冷色调，[0-5秒] 固定镜头，扶着护栏"
   },
   {
    "name": "两个角色",
@@ -142,6 +150,9 @@
     "shot_size": "MS",
     "camera_angle": "eye_level",
     "camera_move": "static",
+    "lens": "auto",
+    "lighting": "",
+    "continuous_with_prev": false,
     "camera_id": null,
     "characters": [
      {
@@ -178,6 +189,7 @@
     "status": "planned",
     "attempts": 0,
     "frame_path": null,
+    "end_frame_path": null,
     "video_path": null,
     "gate_notes": []
    },
@@ -187,8 +199,8 @@
    "reference_images": [
     "refs/c_lin_wan_front.png"
    ],
-   "motion": "固定镜头，扶着护栏，握伞",
-   "video_positive": "二十七岁女性，外表冷静，偏瘦，中等身高，黑色长直发，鹅蛋脸，杏眼，白色衬衫，深色西装裤，落寞，扶着护栏，三十出头男性，高瘦，短寸黑发，方脸，黑色风衣，克制，握伞，中景，平视，雨夜天台，女子背对镜头，电影感，浅景深，冷色调，固定镜头，扶着护栏，握伞"
+   "motion": "[0-5秒] 固定镜头，扶着护栏，握伞",
+   "video_positive": "二十七岁女性，外表冷静，偏瘦，中等身高，黑色长直发，鹅蛋脸，杏眼，白色衬衫，深色西装裤，落寞，扶着护栏，三十出头男性，高瘦，短寸黑发，方脸，黑色风衣，克制，握伞，中景，平视，雨夜天台，女子背对镜头，电影感，浅景深，冷色调，[0-5秒] 固定镜头，扶着护栏，握伞"
   },
   {
    "name": "带场景",
@@ -205,6 +217,9 @@
     "shot_size": "MS",
     "camera_angle": "eye_level",
     "camera_move": "static",
+    "lens": "auto",
+    "lighting": "",
+    "continuous_with_prev": false,
     "camera_id": null,
     "characters": [
      {
@@ -233,6 +248,7 @@
     "status": "planned",
     "attempts": 0,
     "frame_path": null,
+    "end_frame_path": null,
     "video_path": null,
     "gate_notes": []
    },
@@ -243,8 +259,8 @@
     "refs/c_lin_wan_front.png",
     "refs/loc_rooftop_empty.png"
    ],
-   "motion": "固定镜头",
-   "video_positive": "二十七岁女性，外表冷静，偏瘦，中等身高，黑色长直发，鹅蛋脸，杏眼，白色衬衫，深色西装裤，水泥地面，锈蚀护栏，夜间冷调顶光，冷蓝，中景，平视，雨夜天台，女子背对镜头，电影感，浅景深，冷色调，固定镜头"
+   "motion": "[0-5秒] 固定镜头",
+   "video_positive": "二十七岁女性，外表冷静，偏瘦，中等身高，黑色长直发，鹅蛋脸，杏眼，白色衬衫，深色西装裤，水泥地面，锈蚀护栏，夜间冷调顶光，冷蓝，中景，平视，雨夜天台，女子背对镜头，电影感，浅景深，冷色调，[0-5秒] 固定镜头"
   },
   {
    "name": "场景没有空景图",
@@ -261,6 +277,9 @@
     "shot_size": "MS",
     "camera_angle": "eye_level",
     "camera_move": "static",
+    "lens": "auto",
+    "lighting": "",
+    "continuous_with_prev": false,
     "camera_id": null,
     "characters": [],
     "location_id": "loc_alley",
@@ -280,6 +299,7 @@
     "status": "planned",
     "attempts": 0,
     "frame_path": null,
+    "end_frame_path": null,
     "video_path": null,
     "gate_notes": []
    },
@@ -287,8 +307,8 @@
    "positive": "狭窄砖墙，路灯昏黄，中景，平视，雨夜天台，女子背对镜头，电影感，浅景深，冷色调",
    "negative": "低质量，模糊",
    "reference_images": [],
-   "motion": "固定镜头",
-   "video_positive": "狭窄砖墙，路灯昏黄，中景，平视，雨夜天台，女子背对镜头，电影感，浅景深，冷色调，固定镜头"
+   "motion": "[0-5秒] 固定镜头",
+   "video_positive": "狭窄砖墙，路灯昏黄，中景，平视，雨夜天台，女子背对镜头，电影感，浅景深，冷色调，[0-5秒] 固定镜头"
   },
   {
    "name": "角色没有参考图",
@@ -305,6 +325,9 @@
     "shot_size": "MS",
     "camera_angle": "eye_level",
     "camera_move": "static",
+    "lens": "auto",
+    "lighting": "",
+    "continuous_with_prev": false,
     "camera_id": null,
     "characters": [
      {
@@ -333,6 +356,7 @@
     "status": "planned",
     "attempts": 0,
     "frame_path": null,
+    "end_frame_path": null,
     "video_path": null,
     "gate_notes": []
    },
@@ -340,8 +364,8 @@
    "positive": "中年男性，圆脸，工装，中景，平视，雨夜天台，女子背对镜头，电影感，浅景深，冷色调",
    "negative": "低质量，模糊",
    "reference_images": [],
-   "motion": "固定镜头",
-   "video_positive": "中年男性，圆脸，工装，中景，平视，雨夜天台，女子背对镜头，电影感，浅景深，冷色调，固定镜头"
+   "motion": "[0-5秒] 固定镜头",
+   "video_positive": "中年男性，圆脸，工装，中景，平视，雨夜天台，女子背对镜头，电影感，浅景深，冷色调，[0-5秒] 固定镜头"
   },
   {
    "name": "换装状态",
@@ -358,6 +382,9 @@
     "shot_size": "MS",
     "camera_angle": "eye_level",
     "camera_move": "static",
+    "lens": "auto",
+    "lighting": "",
+    "continuous_with_prev": false,
     "camera_id": null,
     "characters": [
      {
@@ -386,6 +413,7 @@
     "status": "planned",
     "attempts": 0,
     "frame_path": null,
+    "end_frame_path": null,
     "video_path": null,
     "gate_notes": []
    },
@@ -395,8 +423,8 @@
    "reference_images": [
     "refs/c_lin_wan_front.png"
    ],
-   "motion": "固定镜头",
-   "video_positive": "二十七岁女性，外表冷静，偏瘦，中等身高，黑色长直发，鹅蛋脸，杏眼，湿透的白衬衫，中景，平视，雨夜天台，女子背对镜头，电影感，浅景深，冷色调，固定镜头"
+   "motion": "[0-5秒] 固定镜头",
+   "video_positive": "二十七岁女性，外表冷静，偏瘦，中等身高，黑色长直发，鹅蛋脸，杏眼，湿透的白衬衫，中景，平视，雨夜天台，女子背对镜头，电影感，浅景深，冷色调，[0-5秒] 固定镜头"
   },
   {
    "name": "换装状态不存在时退回默认",
@@ -413,6 +441,9 @@
     "shot_size": "MS",
     "camera_angle": "eye_level",
     "camera_move": "static",
+    "lens": "auto",
+    "lighting": "",
+    "continuous_with_prev": false,
     "camera_id": null,
     "characters": [
      {
@@ -441,6 +472,7 @@
     "status": "planned",
     "attempts": 0,
     "frame_path": null,
+    "end_frame_path": null,
     "video_path": null,
     "gate_notes": []
    },
@@ -450,8 +482,8 @@
    "reference_images": [
     "refs/c_lin_wan_front.png"
    ],
-   "motion": "固定镜头",
-   "video_positive": "二十七岁女性，外表冷静，偏瘦，中等身高，黑色长直发，鹅蛋脸，杏眼，白色衬衫，深色西装裤，中景，平视，雨夜天台，女子背对镜头，电影感，浅景深，冷色调，固定镜头"
+   "motion": "[0-5秒] 固定镜头",
+   "video_positive": "二十七岁女性，外表冷静，偏瘦，中等身高，黑色长直发，鹅蛋脸，杏眼，白色衬衫，深色西装裤，中景，平视，雨夜天台，女子背对镜头，电影感，浅景深，冷色调，[0-5秒] 固定镜头"
   },
   {
    "name": "面向 front",
@@ -468,6 +500,9 @@
     "shot_size": "MS",
     "camera_angle": "eye_level",
     "camera_move": "static",
+    "lens": "auto",
+    "lighting": "",
+    "continuous_with_prev": false,
     "camera_id": null,
     "characters": [
      {
@@ -496,6 +531,7 @@
     "status": "planned",
     "attempts": 0,
     "frame_path": null,
+    "end_frame_path": null,
     "video_path": null,
     "gate_notes": []
    },
@@ -505,8 +541,8 @@
    "reference_images": [
     "refs/c_lin_wan_front.png"
    ],
-   "motion": "固定镜头",
-   "video_positive": "二十七岁女性，外表冷静，偏瘦，中等身高，黑色长直发，鹅蛋脸，杏眼，白色衬衫，深色西装裤，中景，平视，雨夜天台，女子背对镜头，电影感，浅景深，冷色调，固定镜头"
+   "motion": "[0-5秒] 固定镜头",
+   "video_positive": "二十七岁女性，外表冷静，偏瘦，中等身高，黑色长直发，鹅蛋脸，杏眼，白色衬衫，深色西装裤，中景，平视，雨夜天台，女子背对镜头，电影感，浅景深，冷色调，[0-5秒] 固定镜头"
   },
   {
    "name": "面向 three_quarter",
@@ -523,6 +559,9 @@
     "shot_size": "MS",
     "camera_angle": "eye_level",
     "camera_move": "static",
+    "lens": "auto",
+    "lighting": "",
+    "continuous_with_prev": false,
     "camera_id": null,
     "characters": [
      {
@@ -551,6 +590,7 @@
     "status": "planned",
     "attempts": 0,
     "frame_path": null,
+    "end_frame_path": null,
     "video_path": null,
     "gate_notes": []
    },
@@ -560,8 +600,8 @@
    "reference_images": [
     "refs/c_lin_wan_three_quarter.png"
    ],
-   "motion": "固定镜头",
-   "video_positive": "二十七岁女性，外表冷静，偏瘦，中等身高，黑色长直发，鹅蛋脸，杏眼，白色衬衫，深色西装裤，中景，平视，雨夜天台，女子背对镜头，电影感，浅景深，冷色调，固定镜头"
+   "motion": "[0-5秒] 固定镜头",
+   "video_positive": "二十七岁女性，外表冷静，偏瘦，中等身高，黑色长直发，鹅蛋脸，杏眼，白色衬衫，深色西装裤，中景，平视，雨夜天台，女子背对镜头，电影感，浅景深，冷色调，[0-5秒] 固定镜头"
   },
   {
    "name": "面向 profile",
@@ -578,6 +618,9 @@
     "shot_size": "MS",
     "camera_angle": "eye_level",
     "camera_move": "static",
+    "lens": "auto",
+    "lighting": "",
+    "continuous_with_prev": false,
     "camera_id": null,
     "characters": [
      {
@@ -606,6 +649,7 @@
     "status": "planned",
     "attempts": 0,
     "frame_path": null,
+    "end_frame_path": null,
     "video_path": null,
     "gate_notes": []
    },
@@ -615,8 +659,8 @@
    "reference_images": [
     "refs/c_lin_wan_three_quarter.png"
    ],
-   "motion": "固定镜头",
-   "video_positive": "二十七岁女性，外表冷静，偏瘦，中等身高，黑色长直发，鹅蛋脸，杏眼，白色衬衫，深色西装裤，中景，平视，雨夜天台，女子背对镜头，电影感，浅景深，冷色调，固定镜头"
+   "motion": "[0-5秒] 固定镜头",
+   "video_positive": "二十七岁女性，外表冷静，偏瘦，中等身高，黑色长直发，鹅蛋脸，杏眼，白色衬衫，深色西装裤，中景，平视，雨夜天台，女子背对镜头，电影感，浅景深，冷色调，[0-5秒] 固定镜头"
   },
   {
    "name": "面向 back",
@@ -633,6 +677,9 @@
     "shot_size": "MS",
     "camera_angle": "eye_level",
     "camera_move": "static",
+    "lens": "auto",
+    "lighting": "",
+    "continuous_with_prev": false,
     "camera_id": null,
     "characters": [
      {
@@ -661,6 +708,7 @@
     "status": "planned",
     "attempts": 0,
     "frame_path": null,
+    "end_frame_path": null,
     "video_path": null,
     "gate_notes": []
    },
@@ -670,8 +718,8 @@
    "reference_images": [
     "refs/c_lin_wan_three_quarter.png"
    ],
-   "motion": "固定镜头",
-   "video_positive": "二十七岁女性，外表冷静，偏瘦，中等身高，黑色长直发，鹅蛋脸，杏眼，白色衬衫，深色西装裤，中景，平视，雨夜天台，女子背对镜头，电影感，浅景深，冷色调，固定镜头"
+   "motion": "[0-5秒] 固定镜头",
+   "video_positive": "二十七岁女性，外表冷静，偏瘦，中等身高，黑色长直发，鹅蛋脸，杏眼，白色衬衫，深色西装裤，中景，平视，雨夜天台，女子背对镜头，电影感，浅景深，冷色调，[0-5秒] 固定镜头"
   },
   {
    "name": "面向 off_screen",
@@ -688,6 +736,9 @@
     "shot_size": "MS",
     "camera_angle": "eye_level",
     "camera_move": "static",
+    "lens": "auto",
+    "lighting": "",
+    "continuous_with_prev": false,
     "camera_id": null,
     "characters": [
      {
@@ -716,6 +767,7 @@
     "status": "planned",
     "attempts": 0,
     "frame_path": null,
+    "end_frame_path": null,
     "video_path": null,
     "gate_notes": []
    },
@@ -725,8 +777,8 @@
    "reference_images": [
     "refs/c_lin_wan_front.png"
    ],
-   "motion": "固定镜头",
-   "video_positive": "二十七岁女性，外表冷静，偏瘦，中等身高，黑色长直发，鹅蛋脸，杏眼，白色衬衫，深色西装裤，中景，平视，雨夜天台，女子背对镜头，电影感，浅景深，冷色调，固定镜头"
+   "motion": "[0-5秒] 固定镜头",
+   "video_positive": "二十七岁女性，外表冷静，偏瘦，中等身高，黑色长直发，鹅蛋脸，杏眼，白色衬衫，深色西装裤，中景，平视，雨夜天台，女子背对镜头，电影感，浅景深，冷色调，[0-5秒] 固定镜头"
   },
   {
    "name": "景别 ECU",
@@ -743,6 +795,9 @@
     "shot_size": "ECU",
     "camera_angle": "eye_level",
     "camera_move": "static",
+    "lens": "auto",
+    "lighting": "",
+    "continuous_with_prev": false,
     "camera_id": null,
     "characters": [],
     "location_id": null,
@@ -762,6 +817,7 @@
     "status": "planned",
     "attempts": 0,
     "frame_path": null,
+    "end_frame_path": null,
     "video_path": null,
     "gate_notes": []
    },
@@ -769,8 +825,8 @@
    "positive": "大特写，平视，雨夜天台，女子背对镜头，电影感，浅景深，冷色调",
    "negative": "低质量，模糊",
    "reference_images": [],
-   "motion": "固定镜头",
-   "video_positive": "大特写，平视，雨夜天台，女子背对镜头，电影感，浅景深，冷色调，固定镜头"
+   "motion": "[0-5秒] 固定镜头",
+   "video_positive": "大特写，平视，雨夜天台，女子背对镜头，电影感，浅景深，冷色调，[0-5秒] 固定镜头"
   },
   {
    "name": "景别 CU",
@@ -787,6 +843,9 @@
     "shot_size": "CU",
     "camera_angle": "eye_level",
     "camera_move": "static",
+    "lens": "auto",
+    "lighting": "",
+    "continuous_with_prev": false,
     "camera_id": null,
     "characters": [],
     "location_id": null,
@@ -806,6 +865,7 @@
     "status": "planned",
     "attempts": 0,
     "frame_path": null,
+    "end_frame_path": null,
     "video_path": null,
     "gate_notes": []
    },
@@ -813,8 +873,8 @@
    "positive": "特写，平视，雨夜天台，女子背对镜头，电影感，浅景深，冷色调",
    "negative": "低质量，模糊",
    "reference_images": [],
-   "motion": "固定镜头",
-   "video_positive": "特写，平视，雨夜天台，女子背对镜头，电影感，浅景深，冷色调，固定镜头"
+   "motion": "[0-5秒] 固定镜头",
+   "video_positive": "特写，平视，雨夜天台，女子背对镜头，电影感，浅景深，冷色调，[0-5秒] 固定镜头"
   },
   {
    "name": "景别 MCU",
@@ -831,6 +891,9 @@
     "shot_size": "MCU",
     "camera_angle": "eye_level",
     "camera_move": "static",
+    "lens": "auto",
+    "lighting": "",
+    "continuous_with_prev": false,
     "camera_id": null,
     "characters": [],
     "location_id": null,
@@ -850,6 +913,7 @@
     "status": "planned",
     "attempts": 0,
     "frame_path": null,
+    "end_frame_path": null,
     "video_path": null,
     "gate_notes": []
    },
@@ -857,8 +921,8 @@
    "positive": "近景，平视，雨夜天台，女子背对镜头，电影感，浅景深，冷色调",
    "negative": "低质量，模糊",
    "reference_images": [],
-   "motion": "固定镜头",
-   "video_positive": "近景，平视，雨夜天台，女子背对镜头，电影感，浅景深，冷色调，固定镜头"
+   "motion": "[0-5秒] 固定镜头",
+   "video_positive": "近景，平视，雨夜天台，女子背对镜头，电影感，浅景深，冷色调，[0-5秒] 固定镜头"
   },
   {
    "name": "景别 MS",
@@ -875,6 +939,9 @@
     "shot_size": "MS",
     "camera_angle": "eye_level",
     "camera_move": "static",
+    "lens": "auto",
+    "lighting": "",
+    "continuous_with_prev": false,
     "camera_id": null,
     "characters": [],
     "location_id": null,
@@ -894,6 +961,7 @@
     "status": "planned",
     "attempts": 0,
     "frame_path": null,
+    "end_frame_path": null,
     "video_path": null,
     "gate_notes": []
    },
@@ -901,8 +969,8 @@
    "positive": "中景，平视，雨夜天台，女子背对镜头，电影感，浅景深，冷色调",
    "negative": "低质量，模糊",
    "reference_images": [],
-   "motion": "固定镜头",
-   "video_positive": "中景，平视，雨夜天台，女子背对镜头，电影感，浅景深，冷色调，固定镜头"
+   "motion": "[0-5秒] 固定镜头",
+   "video_positive": "中景，平视，雨夜天台，女子背对镜头，电影感，浅景深，冷色调，[0-5秒] 固定镜头"
   },
   {
    "name": "景别 MLS",
@@ -919,6 +987,9 @@
     "shot_size": "MLS",
     "camera_angle": "eye_level",
     "camera_move": "static",
+    "lens": "auto",
+    "lighting": "",
+    "continuous_with_prev": false,
     "camera_id": null,
     "characters": [],
     "location_id": null,
@@ -938,6 +1009,7 @@
     "status": "planned",
     "attempts": 0,
     "frame_path": null,
+    "end_frame_path": null,
     "video_path": null,
     "gate_notes": []
    },
@@ -945,8 +1017,8 @@
    "positive": "中远景，平视，雨夜天台，女子背对镜头，电影感，浅景深，冷色调",
    "negative": "低质量，模糊",
    "reference_images": [],
-   "motion": "固定镜头",
-   "video_positive": "中远景，平视，雨夜天台，女子背对镜头，电影感，浅景深，冷色调，固定镜头"
+   "motion": "[0-5秒] 固定镜头",
+   "video_positive": "中远景，平视，雨夜天台，女子背对镜头，电影感，浅景深，冷色调，[0-5秒] 固定镜头"
   },
   {
    "name": "景别 LS",
@@ -963,6 +1035,9 @@
     "shot_size": "LS",
     "camera_angle": "eye_level",
     "camera_move": "static",
+    "lens": "auto",
+    "lighting": "",
+    "continuous_with_prev": false,
     "camera_id": null,
     "characters": [],
     "location_id": null,
@@ -982,6 +1057,7 @@
     "status": "planned",
     "attempts": 0,
     "frame_path": null,
+    "end_frame_path": null,
     "video_path": null,
     "gate_notes": []
    },
@@ -989,8 +1065,8 @@
    "positive": "远景，平视，雨夜天台，女子背对镜头，电影感，浅景深，冷色调",
    "negative": "低质量，模糊",
    "reference_images": [],
-   "motion": "固定镜头",
-   "video_positive": "远景，平视，雨夜天台，女子背对镜头，电影感，浅景深，冷色调，固定镜头"
+   "motion": "[0-5秒] 固定镜头",
+   "video_positive": "远景，平视，雨夜天台，女子背对镜头，电影感，浅景深，冷色调，[0-5秒] 固定镜头"
   },
   {
    "name": "景别 ELS",
@@ -1007,6 +1083,9 @@
     "shot_size": "ELS",
     "camera_angle": "eye_level",
     "camera_move": "static",
+    "lens": "auto",
+    "lighting": "",
+    "continuous_with_prev": false,
     "camera_id": null,
     "characters": [],
     "location_id": null,
@@ -1026,6 +1105,7 @@
     "status": "planned",
     "attempts": 0,
     "frame_path": null,
+    "end_frame_path": null,
     "video_path": null,
     "gate_notes": []
    },
@@ -1033,8 +1113,8 @@
    "positive": "大远景，平视，雨夜天台，女子背对镜头，电影感，浅景深，冷色调",
    "negative": "低质量，模糊",
    "reference_images": [],
-   "motion": "固定镜头",
-   "video_positive": "大远景，平视，雨夜天台，女子背对镜头，电影感，浅景深，冷色调，固定镜头"
+   "motion": "[0-5秒] 固定镜头",
+   "video_positive": "大远景，平视，雨夜天台，女子背对镜头，电影感，浅景深，冷色调，[0-5秒] 固定镜头"
   },
   {
    "name": "机位 low",
@@ -1051,6 +1131,9 @@
     "shot_size": "MS",
     "camera_angle": "low",
     "camera_move": "static",
+    "lens": "auto",
+    "lighting": "",
+    "continuous_with_prev": false,
     "camera_id": null,
     "characters": [],
     "location_id": null,
@@ -1070,6 +1153,7 @@
     "status": "planned",
     "attempts": 0,
     "frame_path": null,
+    "end_frame_path": null,
     "video_path": null,
     "gate_notes": []
    },
@@ -1077,8 +1161,8 @@
    "positive": "中景，仰拍，雨夜天台，女子背对镜头，电影感，浅景深，冷色调",
    "negative": "低质量，模糊",
    "reference_images": [],
-   "motion": "固定镜头",
-   "video_positive": "中景，仰拍，雨夜天台，女子背对镜头，电影感，浅景深，冷色调，固定镜头"
+   "motion": "[0-5秒] 固定镜头",
+   "video_positive": "中景，仰拍，雨夜天台，女子背对镜头，电影感，浅景深，冷色调，[0-5秒] 固定镜头"
   },
   {
    "name": "机位 eye_level",
@@ -1095,6 +1179,9 @@
     "shot_size": "MS",
     "camera_angle": "eye_level",
     "camera_move": "static",
+    "lens": "auto",
+    "lighting": "",
+    "continuous_with_prev": false,
     "camera_id": null,
     "characters": [],
     "location_id": null,
@@ -1114,6 +1201,7 @@
     "status": "planned",
     "attempts": 0,
     "frame_path": null,
+    "end_frame_path": null,
     "video_path": null,
     "gate_notes": []
    },
@@ -1121,8 +1209,8 @@
    "positive": "中景，平视，雨夜天台，女子背对镜头，电影感，浅景深，冷色调",
    "negative": "低质量，模糊",
    "reference_images": [],
-   "motion": "固定镜头",
-   "video_positive": "中景，平视，雨夜天台，女子背对镜头，电影感，浅景深，冷色调，固定镜头"
+   "motion": "[0-5秒] 固定镜头",
+   "video_positive": "中景，平视，雨夜天台，女子背对镜头，电影感，浅景深，冷色调，[0-5秒] 固定镜头"
   },
   {
    "name": "机位 high",
@@ -1139,6 +1227,9 @@
     "shot_size": "MS",
     "camera_angle": "high",
     "camera_move": "static",
+    "lens": "auto",
+    "lighting": "",
+    "continuous_with_prev": false,
     "camera_id": null,
     "characters": [],
     "location_id": null,
@@ -1158,6 +1249,7 @@
     "status": "planned",
     "attempts": 0,
     "frame_path": null,
+    "end_frame_path": null,
     "video_path": null,
     "gate_notes": []
    },
@@ -1165,8 +1257,8 @@
    "positive": "中景，俯拍，雨夜天台，女子背对镜头，电影感，浅景深，冷色调",
    "negative": "低质量，模糊",
    "reference_images": [],
-   "motion": "固定镜头",
-   "video_positive": "中景，俯拍，雨夜天台，女子背对镜头，电影感，浅景深，冷色调，固定镜头"
+   "motion": "[0-5秒] 固定镜头",
+   "video_positive": "中景，俯拍，雨夜天台，女子背对镜头，电影感，浅景深，冷色调，[0-5秒] 固定镜头"
   },
   {
    "name": "机位 overhead",
@@ -1183,6 +1275,9 @@
     "shot_size": "MS",
     "camera_angle": "overhead",
     "camera_move": "static",
+    "lens": "auto",
+    "lighting": "",
+    "continuous_with_prev": false,
     "camera_id": null,
     "characters": [],
     "location_id": null,
@@ -1202,6 +1297,7 @@
     "status": "planned",
     "attempts": 0,
     "frame_path": null,
+    "end_frame_path": null,
     "video_path": null,
     "gate_notes": []
    },
@@ -1209,8 +1305,8 @@
    "positive": "中景，顶拍，雨夜天台，女子背对镜头，电影感，浅景深，冷色调",
    "negative": "低质量，模糊",
    "reference_images": [],
-   "motion": "固定镜头",
-   "video_positive": "中景，顶拍，雨夜天台，女子背对镜头，电影感，浅景深，冷色调，固定镜头"
+   "motion": "[0-5秒] 固定镜头",
+   "video_positive": "中景，顶拍，雨夜天台，女子背对镜头，电影感，浅景深，冷色调，[0-5秒] 固定镜头"
   },
   {
    "name": "机位 dutch",
@@ -1227,6 +1323,9 @@
     "shot_size": "MS",
     "camera_angle": "dutch",
     "camera_move": "static",
+    "lens": "auto",
+    "lighting": "",
+    "continuous_with_prev": false,
     "camera_id": null,
     "characters": [],
     "location_id": null,
@@ -1246,6 +1345,7 @@
     "status": "planned",
     "attempts": 0,
     "frame_path": null,
+    "end_frame_path": null,
     "video_path": null,
     "gate_notes": []
    },
@@ -1253,8 +1353,8 @@
    "positive": "中景，斜角构图，雨夜天台，女子背对镜头，电影感，浅景深，冷色调",
    "negative": "低质量，模糊",
    "reference_images": [],
-   "motion": "固定镜头",
-   "video_positive": "中景，斜角构图，雨夜天台，女子背对镜头，电影感，浅景深，冷色调，固定镜头"
+   "motion": "[0-5秒] 固定镜头",
+   "video_positive": "中景，斜角构图，雨夜天台，女子背对镜头，电影感，浅景深，冷色调，[0-5秒] 固定镜头"
   },
   {
    "name": "运镜 static",
@@ -1271,6 +1371,9 @@
     "shot_size": "MS",
     "camera_angle": "eye_level",
     "camera_move": "static",
+    "lens": "auto",
+    "lighting": "",
+    "continuous_with_prev": false,
     "camera_id": null,
     "characters": [
      {
@@ -1299,6 +1402,7 @@
     "status": "planned",
     "attempts": 0,
     "frame_path": null,
+    "end_frame_path": null,
     "video_path": null,
     "gate_notes": []
    },
@@ -1308,8 +1412,8 @@
    "reference_images": [
     "refs/c_lin_wan_front.png"
    ],
-   "motion": "固定镜头，雨丝斜掠，转身",
-   "video_positive": "二十七岁女性，外表冷静，偏瘦，中等身高，黑色长直发，鹅蛋脸，杏眼，白色衬衫，深色西装裤，转身，中景，平视，雨夜天台，女子背对镜头，电影感，浅景深，冷色调，固定镜头，雨丝斜掠，转身"
+   "motion": "[0-5秒] 固定镜头，雨丝斜掠，转身",
+   "video_positive": "二十七岁女性，外表冷静，偏瘦，中等身高，黑色长直发，鹅蛋脸，杏眼，白色衬衫，深色西装裤，转身，中景，平视，雨夜天台，女子背对镜头，电影感，浅景深，冷色调，[0-5秒] 固定镜头，雨丝斜掠，转身"
   },
   {
    "name": "运镜 pan_left",
@@ -1326,6 +1430,9 @@
     "shot_size": "MS",
     "camera_angle": "eye_level",
     "camera_move": "pan_left",
+    "lens": "auto",
+    "lighting": "",
+    "continuous_with_prev": false,
     "camera_id": null,
     "characters": [
      {
@@ -1354,6 +1461,7 @@
     "status": "planned",
     "attempts": 0,
     "frame_path": null,
+    "end_frame_path": null,
     "video_path": null,
     "gate_notes": []
    },
@@ -1363,8 +1471,8 @@
    "reference_images": [
     "refs/c_lin_wan_front.png"
    ],
-   "motion": "向左横摇，雨丝斜掠，转身",
-   "video_positive": "二十七岁女性，外表冷静，偏瘦，中等身高，黑色长直发，鹅蛋脸，杏眼，白色衬衫，深色西装裤，转身，中景，平视，雨夜天台，女子背对镜头，电影感，浅景深，冷色调，向左横摇，雨丝斜掠，转身"
+   "motion": "[0-5秒] 向左横摇，雨丝斜掠，转身",
+   "video_positive": "二十七岁女性，外表冷静，偏瘦，中等身高，黑色长直发，鹅蛋脸，杏眼，白色衬衫，深色西装裤，转身，中景，平视，雨夜天台，女子背对镜头，电影感，浅景深，冷色调，[0-5秒] 向左横摇，雨丝斜掠，转身"
   },
   {
    "name": "运镜 pan_right",
@@ -1381,6 +1489,9 @@
     "shot_size": "MS",
     "camera_angle": "eye_level",
     "camera_move": "pan_right",
+    "lens": "auto",
+    "lighting": "",
+    "continuous_with_prev": false,
     "camera_id": null,
     "characters": [
      {
@@ -1409,6 +1520,7 @@
     "status": "planned",
     "attempts": 0,
     "frame_path": null,
+    "end_frame_path": null,
     "video_path": null,
     "gate_notes": []
    },
@@ -1418,8 +1530,8 @@
    "reference_images": [
     "refs/c_lin_wan_front.png"
    ],
-   "motion": "向右横摇，雨丝斜掠，转身",
-   "video_positive": "二十七岁女性，外表冷静，偏瘦，中等身高，黑色长直发，鹅蛋脸，杏眼，白色衬衫，深色西装裤，转身，中景，平视，雨夜天台，女子背对镜头，电影感，浅景深，冷色调，向右横摇，雨丝斜掠，转身"
+   "motion": "[0-5秒] 向右横摇，雨丝斜掠，转身",
+   "video_positive": "二十七岁女性，外表冷静，偏瘦，中等身高，黑色长直发，鹅蛋脸，杏眼，白色衬衫，深色西装裤，转身，中景，平视，雨夜天台，女子背对镜头，电影感，浅景深，冷色调，[0-5秒] 向右横摇，雨丝斜掠，转身"
   },
   {
    "name": "运镜 tilt_up",
@@ -1436,6 +1548,9 @@
     "shot_size": "MS",
     "camera_angle": "eye_level",
     "camera_move": "tilt_up",
+    "lens": "auto",
+    "lighting": "",
+    "continuous_with_prev": false,
     "camera_id": null,
     "characters": [
      {
@@ -1464,6 +1579,7 @@
     "status": "planned",
     "attempts": 0,
     "frame_path": null,
+    "end_frame_path": null,
     "video_path": null,
     "gate_notes": []
    },
@@ -1473,8 +1589,8 @@
    "reference_images": [
     "refs/c_lin_wan_front.png"
    ],
-   "motion": "上摇，雨丝斜掠，转身",
-   "video_positive": "二十七岁女性，外表冷静，偏瘦，中等身高，黑色长直发，鹅蛋脸，杏眼，白色衬衫，深色西装裤，转身，中景，平视，雨夜天台，女子背对镜头，电影感，浅景深，冷色调，上摇，雨丝斜掠，转身"
+   "motion": "[0-5秒] 上摇，雨丝斜掠，转身",
+   "video_positive": "二十七岁女性，外表冷静，偏瘦，中等身高，黑色长直发，鹅蛋脸，杏眼，白色衬衫，深色西装裤，转身，中景，平视，雨夜天台，女子背对镜头，电影感，浅景深，冷色调，[0-5秒] 上摇，雨丝斜掠，转身"
   },
   {
    "name": "运镜 tilt_down",
@@ -1491,6 +1607,9 @@
     "shot_size": "MS",
     "camera_angle": "eye_level",
     "camera_move": "tilt_down",
+    "lens": "auto",
+    "lighting": "",
+    "continuous_with_prev": false,
     "camera_id": null,
     "characters": [
      {
@@ -1519,6 +1638,7 @@
     "status": "planned",
     "attempts": 0,
     "frame_path": null,
+    "end_frame_path": null,
     "video_path": null,
     "gate_notes": []
    },
@@ -1528,8 +1648,8 @@
    "reference_images": [
     "refs/c_lin_wan_front.png"
    ],
-   "motion": "下摇，雨丝斜掠，转身",
-   "video_positive": "二十七岁女性，外表冷静，偏瘦，中等身高，黑色长直发，鹅蛋脸，杏眼，白色衬衫，深色西装裤，转身，中景，平视，雨夜天台，女子背对镜头，电影感，浅景深，冷色调，下摇，雨丝斜掠，转身"
+   "motion": "[0-5秒] 下摇，雨丝斜掠，转身",
+   "video_positive": "二十七岁女性，外表冷静，偏瘦，中等身高，黑色长直发，鹅蛋脸，杏眼，白色衬衫，深色西装裤，转身，中景，平视，雨夜天台，女子背对镜头，电影感，浅景深，冷色调，[0-5秒] 下摇，雨丝斜掠，转身"
   },
   {
    "name": "运镜 push_in",
@@ -1546,6 +1666,9 @@
     "shot_size": "MS",
     "camera_angle": "eye_level",
     "camera_move": "push_in",
+    "lens": "auto",
+    "lighting": "",
+    "continuous_with_prev": false,
     "camera_id": null,
     "characters": [
      {
@@ -1574,6 +1697,7 @@
     "status": "planned",
     "attempts": 0,
     "frame_path": null,
+    "end_frame_path": null,
     "video_path": null,
     "gate_notes": []
    },
@@ -1583,8 +1707,8 @@
    "reference_images": [
     "refs/c_lin_wan_front.png"
    ],
-   "motion": "镜头缓慢推近，雨丝斜掠，转身",
-   "video_positive": "二十七岁女性，外表冷静，偏瘦，中等身高，黑色长直发，鹅蛋脸，杏眼，白色衬衫，深色西装裤，转身，中景，平视，雨夜天台，女子背对镜头，电影感，浅景深，冷色调，镜头缓慢推近，雨丝斜掠，转身"
+   "motion": "[0-5秒] 镜头缓慢推近，雨丝斜掠，转身",
+   "video_positive": "二十七岁女性，外表冷静，偏瘦，中等身高，黑色长直发，鹅蛋脸，杏眼，白色衬衫，深色西装裤，转身，中景，平视，雨夜天台，女子背对镜头，电影感，浅景深，冷色调，[0-5秒] 镜头缓慢推近，雨丝斜掠，转身"
   },
   {
    "name": "运镜 pull_out",
@@ -1601,6 +1725,9 @@
     "shot_size": "MS",
     "camera_angle": "eye_level",
     "camera_move": "pull_out",
+    "lens": "auto",
+    "lighting": "",
+    "continuous_with_prev": false,
     "camera_id": null,
     "characters": [
      {
@@ -1629,6 +1756,7 @@
     "status": "planned",
     "attempts": 0,
     "frame_path": null,
+    "end_frame_path": null,
     "video_path": null,
     "gate_notes": []
    },
@@ -1638,8 +1766,8 @@
    "reference_images": [
     "refs/c_lin_wan_front.png"
    ],
-   "motion": "镜头缓慢拉远，雨丝斜掠，转身",
-   "video_positive": "二十七岁女性，外表冷静，偏瘦，中等身高，黑色长直发，鹅蛋脸，杏眼，白色衬衫，深色西装裤，转身，中景，平视，雨夜天台，女子背对镜头，电影感，浅景深，冷色调，镜头缓慢拉远，雨丝斜掠，转身"
+   "motion": "[0-5秒] 镜头缓慢拉远，雨丝斜掠，转身",
+   "video_positive": "二十七岁女性，外表冷静，偏瘦，中等身高，黑色长直发，鹅蛋脸，杏眼，白色衬衫，深色西装裤，转身，中景，平视，雨夜天台，女子背对镜头，电影感，浅景深，冷色调，[0-5秒] 镜头缓慢拉远，雨丝斜掠，转身"
   },
   {
    "name": "运镜 handheld",
@@ -1656,6 +1784,9 @@
     "shot_size": "MS",
     "camera_angle": "eye_level",
     "camera_move": "handheld",
+    "lens": "auto",
+    "lighting": "",
+    "continuous_with_prev": false,
     "camera_id": null,
     "characters": [
      {
@@ -1684,6 +1815,7 @@
     "status": "planned",
     "attempts": 0,
     "frame_path": null,
+    "end_frame_path": null,
     "video_path": null,
     "gate_notes": []
    },
@@ -1693,8 +1825,8 @@
    "reference_images": [
     "refs/c_lin_wan_front.png"
    ],
-   "motion": "手持轻微晃动，雨丝斜掠，转身",
-   "video_positive": "二十七岁女性，外表冷静，偏瘦，中等身高，黑色长直发，鹅蛋脸，杏眼，白色衬衫，深色西装裤，转身，中景，平视，雨夜天台，女子背对镜头，电影感，浅景深，冷色调，手持轻微晃动，雨丝斜掠，转身"
+   "motion": "[0-5秒] 手持轻微晃动，雨丝斜掠，转身",
+   "video_positive": "二十七岁女性，外表冷静，偏瘦，中等身高，黑色长直发，鹅蛋脸，杏眼，白色衬衫，深色西装裤，转身，中景，平视，雨夜天台，女子背对镜头，电影感，浅景深，冷色调，[0-5秒] 手持轻微晃动，雨丝斜掠，转身"
   },
   {
    "name": "运镜 orbit",
@@ -1711,6 +1843,9 @@
     "shot_size": "MS",
     "camera_angle": "eye_level",
     "camera_move": "orbit",
+    "lens": "auto",
+    "lighting": "",
+    "continuous_with_prev": false,
     "camera_id": null,
     "characters": [
      {
@@ -1739,6 +1874,7 @@
     "status": "planned",
     "attempts": 0,
     "frame_path": null,
+    "end_frame_path": null,
     "video_path": null,
     "gate_notes": []
    },
@@ -1748,8 +1884,8 @@
    "reference_images": [
     "refs/c_lin_wan_front.png"
    ],
-   "motion": "环绕运镜，雨丝斜掠，转身",
-   "video_positive": "二十七岁女性，外表冷静，偏瘦，中等身高，黑色长直发，鹅蛋脸，杏眼，白色衬衫，深色西装裤，转身，中景，平视，雨夜天台，女子背对镜头，电影感，浅景深，冷色调，环绕运镜，雨丝斜掠，转身"
+   "motion": "[0-5秒] 环绕运镜，雨丝斜掠，转身",
+   "video_positive": "二十七岁女性，外表冷静，偏瘦，中等身高，黑色长直发，鹅蛋脸，杏眼，白色衬衫，深色西装裤，转身，中景，平视，雨夜天台，女子背对镜头，电影感，浅景深，冷色调，[0-5秒] 环绕运镜，雨丝斜掠，转身"
   },
   {
    "name": "没有首帧描述",
@@ -1766,6 +1902,9 @@
     "shot_size": "MS",
     "camera_angle": "eye_level",
     "camera_move": "static",
+    "lens": "auto",
+    "lighting": "",
+    "continuous_with_prev": false,
     "camera_id": null,
     "characters": [],
     "location_id": null,
@@ -1785,6 +1924,7 @@
     "status": "planned",
     "attempts": 0,
     "frame_path": null,
+    "end_frame_path": null,
     "video_path": null,
     "gate_notes": []
    },
@@ -1792,8 +1932,8 @@
    "positive": "中景，平视，电影感，浅景深，冷色调",
    "negative": "低质量，模糊",
    "reference_images": [],
-   "motion": "固定镜头",
-   "video_positive": "中景，平视，电影感，浅景深，冷色调，固定镜头"
+   "motion": "[0-5秒] 固定镜头",
+   "video_positive": "中景，平视，电影感，浅景深，冷色调，[0-5秒] 固定镜头"
   },
   {
    "name": "镜头级负向提示词",
@@ -1810,6 +1950,9 @@
     "shot_size": "MS",
     "camera_angle": "eye_level",
     "camera_move": "static",
+    "lens": "auto",
+    "lighting": "",
+    "continuous_with_prev": false,
     "camera_id": null,
     "characters": [],
     "location_id": null,
@@ -1829,6 +1972,7 @@
     "status": "planned",
     "attempts": 0,
     "frame_path": null,
+    "end_frame_path": null,
     "video_path": null,
     "gate_notes": []
    },
@@ -1836,8 +1980,8 @@
    "positive": "中景，平视，雨夜天台，女子背对镜头，电影感，浅景深，冷色调",
    "negative": "不要有手，低质量，模糊",
    "reference_images": [],
-   "motion": "固定镜头",
-   "video_positive": "中景，平视，雨夜天台，女子背对镜头，电影感，浅景深，冷色调，固定镜头"
+   "motion": "[0-5秒] 固定镜头",
+   "video_positive": "中景，平视，雨夜天台，女子背对镜头，电影感，浅景深，冷色调，[0-5秒] 固定镜头"
   },
   {
    "name": "表情和动作都空",
@@ -1854,6 +1998,9 @@
     "shot_size": "MS",
     "camera_angle": "eye_level",
     "camera_move": "static",
+    "lens": "auto",
+    "lighting": "",
+    "continuous_with_prev": false,
     "camera_id": null,
     "characters": [
      {
@@ -1882,6 +2029,7 @@
     "status": "planned",
     "attempts": 0,
     "frame_path": null,
+    "end_frame_path": null,
     "video_path": null,
     "gate_notes": []
    },
@@ -1891,8 +2039,8 @@
    "reference_images": [
     "refs/c_lin_wan_front.png"
    ],
-   "motion": "固定镜头",
-   "video_positive": "二十七岁女性，外表冷静，偏瘦，中等身高，黑色长直发，鹅蛋脸，杏眼，白色衬衫，深色西装裤，中景，平视，雨夜天台，女子背对镜头，电影感，浅景深，冷色调，固定镜头"
+   "motion": "[0-5秒] 固定镜头",
+   "video_positive": "二十七岁女性，外表冷静，偏瘦，中等身高，黑色长直发，鹅蛋脸，杏眼，白色衬衫，深色西装裤，中景，平视，雨夜天台，女子背对镜头，电影感，浅景深，冷色调，[0-5秒] 固定镜头"
   },
   {
    "name": "全剧风格为空",
@@ -1909,6 +2057,9 @@
     "shot_size": "MS",
     "camera_angle": "eye_level",
     "camera_move": "static",
+    "lens": "auto",
+    "lighting": "",
+    "continuous_with_prev": false,
     "camera_id": null,
     "characters": [
      {
@@ -1937,6 +2088,7 @@
     "status": "planned",
     "attempts": 0,
     "frame_path": null,
+    "end_frame_path": null,
     "video_path": null,
     "gate_notes": []
    },
@@ -1946,8 +2098,8 @@
    "reference_images": [
     "refs/c_lin_wan_front.png"
    ],
-   "motion": "固定镜头",
-   "video_positive": "二十七岁女性，外表冷静，偏瘦，中等身高，黑色长直发，鹅蛋脸，杏眼，白色衬衫，深色西装裤，中景，平视，雨夜天台，女子背对镜头，固定镜头"
+   "motion": "[0-5秒] 固定镜头",
+   "video_positive": "二十七岁女性，外表冷静，偏瘦，中等身高，黑色长直发，鹅蛋脸，杏眼，白色衬衫，深色西装裤，中景，平视，雨夜天台，女子背对镜头，[0-5秒] 固定镜头"
   },
   {
    "name": "动漫线：一个角色",
@@ -1964,6 +2116,9 @@
     "shot_size": "MS",
     "camera_angle": "eye_level",
     "camera_move": "static",
+    "lens": "auto",
+    "lighting": "",
+    "continuous_with_prev": false,
     "camera_id": null,
     "characters": [
      {
@@ -1992,6 +2147,7 @@
     "status": "planned",
     "attempts": 0,
     "frame_path": null,
+    "end_frame_path": null,
     "video_path": null,
     "gate_notes": []
    },
@@ -2001,8 +2157,8 @@
    "reference_images": [
     "refs/c_lin_wan_front.png"
    ],
-   "motion": "固定镜头",
-   "video_positive": "二十七岁女性，外表冷静, 偏瘦，中等身高, 黑色长直发，鹅蛋脸，杏眼, 白色衬衫，深色西装裤, 落寞, 中景, 平视, 雨夜天台，女子背对镜头, 电影感，浅景深，冷色调, 固定镜头"
+   "motion": "[0-5秒] 固定镜头",
+   "video_positive": "二十七岁女性，外表冷静, 偏瘦，中等身高, 黑色长直发，鹅蛋脸，杏眼, 白色衬衫，深色西装裤, 落寞, 中景, 平视, 雨夜天台，女子背对镜头, 电影感，浅景深，冷色调, [0-5秒] 固定镜头"
   },
   {
    "name": "动漫线：带场景",
@@ -2019,6 +2175,9 @@
     "shot_size": "MS",
     "camera_angle": "eye_level",
     "camera_move": "static",
+    "lens": "auto",
+    "lighting": "",
+    "continuous_with_prev": false,
     "camera_id": null,
     "characters": [
      {
@@ -2047,6 +2206,7 @@
     "status": "planned",
     "attempts": 0,
     "frame_path": null,
+    "end_frame_path": null,
     "video_path": null,
     "gate_notes": []
    },
@@ -2056,8 +2216,8 @@
    "reference_images": [
     "refs/loc_rooftop_empty.png"
    ],
-   "motion": "固定镜头",
-   "video_positive": "三十出头男性, 高瘦, 短寸黑发，方脸, 黑色风衣, 水泥地面，锈蚀护栏, 夜间冷调顶光, 冷蓝, 中景, 平视, 雨夜天台，女子背对镜头, 电影感，浅景深，冷色调, 固定镜头"
+   "motion": "[0-5秒] 固定镜头",
+   "video_positive": "三十出头男性, 高瘦, 短寸黑发，方脸, 黑色风衣, 水泥地面，锈蚀护栏, 夜间冷调顶光, 冷蓝, 中景, 平视, 雨夜天台，女子背对镜头, 电影感，浅景深，冷色调, [0-5秒] 固定镜头"
   },
   {
    "name": "动漫线：运镜",
@@ -2074,6 +2234,9 @@
     "shot_size": "MS",
     "camera_angle": "eye_level",
     "camera_move": "push_in",
+    "lens": "auto",
+    "lighting": "",
+    "continuous_with_prev": false,
     "camera_id": null,
     "characters": [],
     "location_id": null,
@@ -2093,6 +2256,7 @@
     "status": "planned",
     "attempts": 0,
     "frame_path": null,
+    "end_frame_path": null,
     "video_path": null,
     "gate_notes": []
    },
@@ -2100,8 +2264,8 @@
    "positive": "中景, 平视, 雨夜天台，女子背对镜头, 电影感，浅景深，冷色调",
    "negative": "低质量，模糊",
    "reference_images": [],
-   "motion": "镜头缓慢推近, 缓慢推近",
-   "video_positive": "中景, 平视, 雨夜天台，女子背对镜头, 电影感，浅景深，冷色调, 镜头缓慢推近, 缓慢推近"
+   "motion": "[0-5秒] 镜头缓慢推近, 缓慢推近",
+   "video_positive": "中景, 平视, 雨夜天台，女子背对镜头, 电影感，浅景深，冷色调, [0-5秒] 镜头缓慢推近, 缓慢推近"
   },
   {
    "name": "引用了未注册角色",
@@ -2118,6 +2282,9 @@
     "shot_size": "MS",
     "camera_angle": "eye_level",
     "camera_move": "static",
+    "lens": "auto",
+    "lighting": "",
+    "continuous_with_prev": false,
     "camera_id": null,
     "characters": [
      {
@@ -2146,6 +2313,7 @@
     "status": "planned",
     "attempts": 0,
     "frame_path": null,
+    "end_frame_path": null,
     "video_path": null,
     "gate_notes": []
    },
@@ -2167,6 +2335,9 @@
     "shot_size": "MS",
     "camera_angle": "eye_level",
     "camera_move": "static",
+    "lens": "auto",
+    "lighting": "",
+    "continuous_with_prev": false,
     "camera_id": null,
     "characters": [],
     "location_id": "loc_nobody",
@@ -2186,6 +2357,7 @@
     "status": "planned",
     "attempts": 0,
     "frame_path": null,
+    "end_frame_path": null,
     "video_path": null,
     "gate_notes": []
    },

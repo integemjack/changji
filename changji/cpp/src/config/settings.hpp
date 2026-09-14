@@ -73,6 +73,17 @@ struct VideoConfig {
     /// 不会报错，只是分镜的时长档位里没有它。
     double max_shot_s = 0.0;
 
+    /// 关键镜头多出几条换种子挑最好的（1..4，1 = 不多出）。
+    ///
+    /// 行业做法：10～15% 的镜头会漂，关键镜多出 20～30% 挑。哪些算关键
+    /// 见 stages::is_hero_shot（开场钩子、集尾留扣、反转，加上第一镜和
+    /// 最后一镜）。挑的依据是闸门量出来的数（过没过、运动量、有没有
+    /// 片中硬切），见 stages::pick_take。
+    int hero_takes = 2;
+    /// 连续动作的两镜，拿上一镜真出来的最后一帧当下一镜的首帧。
+    /// 只对分镜里标了 `continuous_with_prev` 的镜头生效。
+    bool chain_frames = true;
+
     std::vector<std::string> validate() const;
 
     /// 算出宽高。两边都是 32 的倍数。
@@ -347,6 +358,105 @@ struct AssemblyConfig {
     std::string ffprobe_path = "ffprobe";
 
     std::vector<std::string> validate() const;
+};
+
+/// 成片的后期链：柔化 → 调色 → 颗粒（→ 横屏遮幅）。**一部剧一份**，
+/// 写在项目目录的 changji.toml 里。
+///
+/// **为什么要有它。** 2026-09-14 查「电影质感由什么构成」（docs/电影质感
+/// 方案.md）：行业里成片的「完成度」大半来自调色和胶片伪影，而我们的装配
+/// 是 `-f concat -c copy`，一帧没碰过。AI 画面有三样一眼认得出来的东西——
+/// 过锐的表面、偏高的饱和和对比、没有颗粒——三样都在这条链上治：
+///
+///   * `soften`：不到一个像素的高斯柔化，只压微锐化，看不出「糊」；
+///   * 调色：胶片打印 LUT 按 `lut_strength` 套（行业给的区间 50–70%，
+///     全强度会压死暗部）。没有 LUT 文件时用内置的一组曲线（S 形、暗部
+///     偏青、亮部偏暖、略去饱和），同样按强度混回原图；
+///   * `grain`：只在亮度通道加、逐帧随机的均匀噪声，编码时 `-tune grain`
+///     ——不加这一项 x264 会把颗粒当噪声抹掉，白做。
+///
+/// **加在装配的 normalize 那一步**（media/assemble.cpp）：那一步本来就在
+/// 逐镜重编码（缩放、补边、统一帧率），滤镜挂在同一条 `-vf` 上，额外成本
+/// 是零。闸门在每镜出片后量、在装配前，清晰度指标不受它影响。
+struct LookConfig {
+    /// `film`（默认：柔化 + 调色 + 颗粒）/ `clean`（只柔化 + 颗粒，不调色）
+    /// / `off`（一个滤镜都不加，和 2026-09-14 之前逐字节一样）。
+    std::string preset = "film";
+    /// 胶片 LUT（.cube）。相对路径相对项目根。**空 = 用内置曲线。**
+    /// 用 Rec.709 输入的版本——模型直出就是 709 SDR；DaVinci Wide Gamut /
+    /// log 输入的那些是给摄影机素材的，套上去颜色全错。
+    std::string lut;
+    /// 调色套多少（0..1）。0.6 是行业给 AI 素材的区间中点。
+    double lut_strength = 0.6;
+    /// 颗粒强度（ffmpeg noise 滤镜的 c0s，0..100）。0 = 关。10 大概对应
+    /// 行业说的「35mm 颗粒 8–15% 不透明度」那一档，肉眼调。
+    double grain = 10.0;
+    /// 柔化（gblur 的 sigma，像素）。0 = 关。**别超过 1**：那就真糊了。
+    double soften = 0.4;
+    /// 横屏项目遮幅到这个比例（2.39 = 宽银幕），容器还是 16:9，上下黑边。
+    /// 0 = 关。**竖屏项目忽略这一项**——短剧不做遮幅。
+    double letterbox = 0.0;
+
+    std::vector<std::string> validate() const;
+
+    bool enabled() const { return preset != "off"; }
+    /// 这一档要不要调色。clean 只做柔化和颗粒。
+    bool color() const { return preset == "film"; }
+};
+
+/// 声音的几层。台词之外的三层原来一层都没有——成片里台词之间是**数字
+/// 静音**，那是最一眼「AI」的地方，比画面还明显。
+///
+/// 四层：台词（配音阶段）/ 环境和动效（出片模型自己出的原生音轨）/
+/// 配乐（外部命令生成一条器乐）/ 房间音（环境那层顺带就有了）。
+/// 混音在装配那一步（media/assemble.cpp 的 mix_args）。
+struct SoundConfig {
+    /// 留下出片模型的原生音轨当环境声和动效。MiniMax-H3 每镜都出一条立体声，
+    /// 以前在出片那步被 `-an` 丢掉了。**有没有台词都留**（用户 2026-09-14
+    /// 定的）：有台词的镜头它压在台词底下，台词处再侧链压一道。
+    bool ambient = true;
+    /// 环境声压在台词下多少 dB（负数）。
+    double ambient_db = -12.0;
+    /// 要不要配乐。要的话得有 `music_command`（机器属性，见下）。
+    bool music = true;
+    /// 配乐压在台词下多少 dB（负数）。
+    double music_db = -20.0;
+    /// 台词处把环境声和配乐再压一道（sidechaincompress）。
+    bool duck = true;
+    /// 配乐的风格提示，会拼进给配乐模型的描述里。空 = 只按剧本的拍子推。
+    std::string music_style;
+    /// **机器属性**，写在全局配置里：生成一条配乐的命令模板。
+    /// 占位符：`{prompt}` 描述、`{seconds}` 时长、`{out}` 输出 wav 路径。
+    /// 空 = 不生成配乐（`music` 开着也只是说一声）。
+    /// 例（ACE-Step 1.5，见 tools/music_ace_step.py）：
+    ///   music_command = "/root/miniconda3/bin/python /root/changji/cpp/tools/music_ace_step.py --prompt {prompt} --seconds {seconds} --out {out}"
+    std::string music_command;
+    /// 配乐命令最多跑多久（秒）。
+    double music_timeout_s = 600.0;
+
+    std::vector<std::string> validate() const;
+};
+
+/// 时序放大（成片前把每一镜放大一倍）。**机器属性**，写在全局配置里。
+///
+/// 本地的 MiniMax-H3 只到 768p（2K 是 API 独占的 Regenerate-2K，没开源），
+/// 要 1080p 以上只能放大。逐帧的 ESRGAN 没有帧间一致性，细纹理会闪；
+/// 时序放大器（SeedVR2 / RTX VSR）都在 Python 生态里，所以做成一条命令：
+/// 占位符 `{in}` `{out}` `{width}` `{height}` `{scale}`。空 = 不放大。
+/// 例（SeedVR2 3B fp8，见 docs/电影质感方案.md）：
+///   command = "/root/seedvr2/.venv/bin/python /root/seedvr2/inference_cli.py {in} --output {out} --resolution {short} --batch_size 5"
+/// 放大**在调色和颗粒之前**做（行业顺序：放大 → 校正 → LUT → 颗粒）。
+struct UpscaleConfig {
+    std::string command;
+    /// 放大倍数。2 是安全的；540p 底子放 2× 看不出差别，270p 放 4× 出来的
+    /// 是合成的纹理。
+    int scale = 2;
+    /// 命令最多跑多久（秒）。一集十几镜、每镜一两分钟。
+    double timeout_s = 1800.0;
+
+    std::vector<std::string> validate() const;
+
+    bool enabled() const { return !command.empty(); }
 };
 
 /// 本地推理要用的模型文件。
@@ -861,6 +971,9 @@ struct Settings {
     TTSConfig tts;
     GateConfig gates;
     AssemblyConfig assembly;
+    LookConfig look;
+    SoundConfig sound;
+    UpscaleConfig upscale;
     ModelsConfig models;
     WorkersConfig workers;
 

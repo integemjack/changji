@@ -35,6 +35,11 @@ enum class CameraMove {
     PUSH_IN, PULL_OUT, HANDHELD, ORBIT
 };
 
+/// 焦段。**电影感里最便宜的一个词**（docs/电影质感方案.md）：写实模型对
+/// 「85mm 人像，背景压缩，浅景深」这种字面焦段有反应，而我们的镜头层原来
+/// 只有景别和机位。AUTO = 没填，拼提示词时一个字不加（老分镜表就是这样）。
+enum class Lens { AUTO, WIDE, NORMAL, PORTRAIT, TELE };
+
 /// 角色面部朝向。口型判定用。
 enum class FacePose { FRONT, THREE_QUARTER, PROFILE, BACK, OFF_SCREEN };
 
@@ -79,6 +84,11 @@ NLOHMANN_JSON_SERIALIZE_ENUM(CameraMove, {
     {CameraMove::ORBIT, "orbit"},
 })
 
+NLOHMANN_JSON_SERIALIZE_ENUM(Lens, {
+    {Lens::AUTO, "auto"}, {Lens::WIDE, "wide"}, {Lens::NORMAL, "normal"},
+    {Lens::PORTRAIT, "portrait"}, {Lens::TELE, "tele"},
+})
+
 NLOHMANN_JSON_SERIALIZE_ENUM(FacePose, {
     {FacePose::FRONT, "front"}, {FacePose::THREE_QUARTER, "three_quarter"},
     {FacePose::PROFILE, "profile"}, {FacePose::BACK, "back"},
@@ -104,6 +114,7 @@ NLOHMANN_JSON_SERIALIZE_ENUM(ShotStatus, {
 const char* to_string(ShotSize v);
 const char* to_string(CameraAngle v);
 const char* to_string(CameraMove v);
+const char* to_string(Lens v);
 const char* to_string(FacePose v);
 const char* to_string(Transition v);
 const char* to_string(ShotStatus v);
@@ -175,6 +186,15 @@ struct Shot {
     ShotSize    shot_size    = ShotSize::MS;
     CameraAngle camera_angle = CameraAngle::EYE_LEVEL;
     CameraMove  camera_move  = CameraMove::STATIC;
+    /// 焦段。AUTO = 没填。
+    Lens        lens         = Lens::AUTO;
+    /// 这一镜的光：时段、光源、方向、软硬（≤80）。空 = 没填。
+    /// 场景资产里那句 `lighting` 是一场戏的基调，这一句是这一镜的，
+    /// 拼在场景层之后、镜头层里——镜头级的光要盖过基调。
+    std::string lighting;
+    /// 紧接上一镜的动作（同一场景、同一时刻、动作连续）。出片时拿上一镜
+    /// 真出来的最后一帧当这一镜的首帧，动作接得上。见 [video].chain_frames。
+    bool continuous_with_prev = false;
     std::optional<std::string> camera_id; ///< 复用机位 id。同场景同机位保证不越轴
 
     // ---- 引用（只放 id，不放描述）----
@@ -206,19 +226,23 @@ struct Shot {
     ShotStatus status = ShotStatus::PLANNED;
     int attempts = 0; ///< ≥0
     std::optional<std::string> frame_path;
+    /// 尾帧（`last_frame_prompt` 出的那张），出片时当 end_image 传给
+    /// 首尾帧模型。没有就是单帧图生视频。
+    std::optional<std::string> end_frame_path;
     std::optional<std::string> video_path;
     std::vector<std::string> gate_notes;
 
     NLOHMANN_DEFINE_TYPE_INTRUSIVE_WITH_DEFAULT(
         Shot, shot_id, scene_id, order,
         visual_desc, first_frame_prompt, last_frame_prompt, motion_prompt,
-        negative_prompt, shot_size, camera_angle, camera_move, camera_id,
+        negative_prompt, shot_size, camera_angle, camera_move, lens, lighting,
+        continuous_with_prev, camera_id,
         characters, location_id, prop_ids,
         duration_s, duration_locked,
         dialogue, sfx, bgm_cue, needs_lipsync,
         transition_in, transition_dur_s, subtitle_text,
         beat, continuity_notes, missing_info,
-        status, attempts, frame_path, video_path, gate_notes)
+        status, attempts, frame_path, end_frame_path, video_path, gate_notes)
 
     /// 校验。返回错误列表而不是抛异常。
     ///

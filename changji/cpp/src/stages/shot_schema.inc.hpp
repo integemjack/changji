@@ -167,6 +167,18 @@ inline constexpr const char* kShotSchemaJson =
    "title": "DialogueLine",
    "type": "object"
   },
+  "Lens": {
+   "description": "焦段。auto = 没填。",
+   "enum": [
+    "auto",
+    "wide",
+    "normal",
+    "portrait",
+    "tele"
+   ],
+   "title": "Lens",
+   "type": "string"
+  },
   "FacePose": {
    "description": "角色面部朝向。口型判定用。",
    "enum": [
@@ -291,6 +303,23 @@ inline constexpr const char* kShotSchemaJson =
   "camera_move": {
    "$ref": "#/$defs/CameraMove",
    "default": "static"
+  },
+  "lens": {
+   "$ref": "#/$defs/Lens",
+   "default": "auto"
+  },
+  "lighting": {
+   "default": "",
+   "description": "这一镜的光：时段、光源、方向、软硬",
+   "maxLength": 80,
+   "title": "Lighting",
+   "type": "string"
+  },
+  "continuous_with_prev": {
+   "default": false,
+   "description": "紧接上一镜的动作（同一场景、同一时刻、动作连续）",
+   "title": "Continuous With Prev",
+   "type": "boolean"
   },
   "camera_id": {
    "anyOf": [
@@ -436,6 +465,18 @@ inline constexpr const char* kShotSchemaJson =
    "default": null,
    "title": "Frame Path"
   },
+  "end_frame_path": {
+   "anyOf": [
+    {
+     "type": "string"
+    },
+    {
+     "type": "null"
+    }
+   ],
+   "default": null,
+   "title": "End Frame Path"
+  },
   "video_path": {
    "anyOf": [
     {
@@ -472,10 +513,14 @@ inline constexpr const char* kLlmShotFields[] = {
     "order",
     "visual_desc",
     "first_frame_prompt",
+    "last_frame_prompt",
     "motion_prompt",
     "shot_size",
     "camera_angle",
     "camera_move",
+    "lens",
+    "lighting",
+    "continuous_with_prev",
     "camera_id",
     "characters",
     "location_id",

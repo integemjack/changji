@@ -27,6 +27,7 @@ inline constexpr std::string_view kBffRoutes[] = {
     "/bff/settings/overview",
     "/bff/flow",
     "/bff/project/video",
+    "/bff/project/finish",
     "/bff/settings/llm",
     "/bff/run/pending",
     // 首次运行那一页。漏一条的表现和当年漏 overview 一样难看：

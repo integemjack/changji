@@ -144,6 +144,9 @@
         "shot_size": "MCU",
         "camera_angle": "low",
         "camera_move": "push_in",
+        "lens": "auto",
+        "lighting": "",
+        "continuous_with_prev": false,
         "camera_id": "cam_rooftop_a",
         "characters": [
          {
@@ -207,6 +210,7 @@
         "status": "audio_done",
         "attempts": 2,
         "frame_path": "frames/ep01_s03_sh007.png",
+        "end_frame_path": null,
         "video_path": null,
         "gate_notes": [
          "草稿档画面偏暗，已调高曝光重跑"
@@ -224,6 +228,9 @@
         "shot_size": "MS",
         "camera_angle": "eye_level",
         "camera_move": "static",
+        "lens": "auto",
+        "lighting": "",
+        "continuous_with_prev": false,
         "camera_id": null,
         "characters": [],
         "location_id": null,
@@ -243,6 +250,7 @@
         "status": "planned",
         "attempts": 0,
         "frame_path": null,
+        "end_frame_path": null,
         "video_path": null,
         "gate_notes": []
        }
@@ -307,6 +315,9 @@
         "shot_size": "MCU",
         "camera_angle": "low",
         "camera_move": "push_in",
+        "lens": "auto",
+        "lighting": "",
+        "continuous_with_prev": false,
         "camera_id": "cam_rooftop_a",
         "characters": [
          {
@@ -370,6 +381,7 @@
         "status": "audio_done",
         "attempts": 2,
         "frame_path": "frames/ep01_s03_sh007.png",
+        "end_frame_path": null,
         "video_path": null,
         "gate_notes": [
          "草稿档画面偏暗，已调高曝光重跑"
@@ -387,6 +399,9 @@
         "shot_size": "MS",
         "camera_angle": "eye_level",
         "camera_move": "static",
+        "lens": "auto",
+        "lighting": "",
+        "continuous_with_prev": false,
         "camera_id": null,
         "characters": [],
         "location_id": null,
@@ -406,6 +421,7 @@
         "status": "planned",
         "attempts": 0,
         "frame_path": null,
+        "end_frame_path": null,
         "video_path": null,
         "gate_notes": []
        }
@@ -470,6 +486,9 @@
         "shot_size": "MCU",
         "camera_angle": "low",
         "camera_move": "push_in",
+        "lens": "auto",
+        "lighting": "",
+        "continuous_with_prev": false,
         "camera_id": "cam_rooftop_a",
         "characters": [
          {
@@ -533,6 +552,7 @@
         "status": "audio_done",
         "attempts": 2,
         "frame_path": "frames/ep01_s03_sh007.png",
+        "end_frame_path": null,
         "video_path": null,
         "gate_notes": [
          "草稿档画面偏暗，已调高曝光重跑"
@@ -550,6 +570,9 @@
         "shot_size": "MS",
         "camera_angle": "eye_level",
         "camera_move": "static",
+        "lens": "auto",
+        "lighting": "",
+        "continuous_with_prev": false,
         "camera_id": null,
         "characters": [],
         "location_id": null,
@@ -569,6 +592,7 @@
         "status": "planned",
         "attempts": 0,
         "frame_path": null,
+        "end_frame_path": null,
         "video_path": null,
         "gate_notes": []
        }
@@ -681,6 +705,9 @@
         "shot_size": "MCU",
         "camera_angle": "low",
         "camera_move": "push_in",
+        "lens": "auto",
+        "lighting": "",
+        "continuous_with_prev": false,
         "camera_id": "cam_rooftop_a",
         "characters": [
          {
@@ -744,6 +771,7 @@
         "status": "audio_done",
         "attempts": 2,
         "frame_path": "frames/ep01_s03_sh007.png",
+        "end_frame_path": null,
         "video_path": null,
         "gate_notes": [
          "草稿档画面偏暗，已调高曝光重跑"
@@ -761,6 +789,9 @@
         "shot_size": "MS",
         "camera_angle": "eye_level",
         "camera_move": "static",
+        "lens": "auto",
+        "lighting": "",
+        "continuous_with_prev": false,
         "camera_id": null,
         "characters": [],
         "location_id": null,
@@ -780,6 +811,7 @@
         "status": "planned",
         "attempts": 0,
         "frame_path": null,
+        "end_frame_path": null,
         "video_path": null,
         "gate_notes": []
        }
@@ -842,6 +874,9 @@
         "shot_size": "MCU",
         "camera_angle": "low",
         "camera_move": "push_in",
+        "lens": "auto",
+        "lighting": "",
+        "continuous_with_prev": false,
         "camera_id": "cam_rooftop_a",
         "characters": [
          {
@@ -905,6 +940,7 @@
         "status": "audio_done",
         "attempts": 2,
         "frame_path": "frames/ep01_s03_sh007.png",
+        "end_frame_path": null,
         "video_path": null,
         "gate_notes": [
          "草稿档画面偏暗，已调高曝光重跑"
@@ -922,6 +958,9 @@
         "shot_size": "MS",
         "camera_angle": "eye_level",
         "camera_move": "static",
+        "lens": "auto",
+        "lighting": "",
+        "continuous_with_prev": false,
         "camera_id": null,
         "characters": [],
         "location_id": null,
@@ -941,6 +980,7 @@
         "status": "planned",
         "attempts": 0,
         "frame_path": null,
+        "end_frame_path": null,
         "video_path": null,
         "gate_notes": []
        }
@@ -1013,6 +1053,9 @@
         "shot_size": "MCU",
         "camera_angle": "low",
         "camera_move": "push_in",
+        "lens": "auto",
+        "lighting": "",
+        "continuous_with_prev": false,
         "camera_id": "cam_rooftop_a",
         "characters": [
          {
@@ -1076,6 +1119,7 @@
         "status": "audio_done",
         "attempts": 2,
         "frame_path": "frames/ep01_s03_sh007.png",
+        "end_frame_path": null,
         "video_path": null,
         "gate_notes": [
          "草稿档画面偏暗，已调高曝光重跑"
@@ -1093,6 +1137,9 @@
         "shot_size": "MS",
         "camera_angle": "eye_level",
         "camera_move": "static",
+        "lens": "auto",
+        "lighting": "",
+        "continuous_with_prev": false,
         "camera_id": null,
         "characters": [],
         "location_id": null,
@@ -1112,6 +1159,7 @@
         "status": "planned",
         "attempts": 0,
         "frame_path": null,
+        "end_frame_path": null,
         "video_path": null,
         "gate_notes": []
        }
@@ -1217,6 +1265,9 @@
         "shot_size": "MCU",
         "camera_angle": "low",
         "camera_move": "push_in",
+        "lens": "auto",
+        "lighting": "",
+        "continuous_with_prev": false,
         "camera_id": "cam_rooftop_a",
         "characters": [
          {
@@ -1280,6 +1331,7 @@
         "status": "audio_done",
         "attempts": 2,
         "frame_path": "frames/ep01_s03_sh007.png",
+        "end_frame_path": null,
         "video_path": null,
         "gate_notes": [
          "草稿档画面偏暗，已调高曝光重跑"
@@ -1297,6 +1349,9 @@
         "shot_size": "MS",
         "camera_angle": "eye_level",
         "camera_move": "static",
+        "lens": "auto",
+        "lighting": "",
+        "continuous_with_prev": false,
         "camera_id": null,
         "characters": [],
         "location_id": null,
@@ -1316,6 +1371,7 @@
         "status": "planned",
         "attempts": 0,
         "frame_path": null,
+        "end_frame_path": null,
         "video_path": null,
         "gate_notes": []
        }
@@ -1386,6 +1442,9 @@
         "shot_size": "MCU",
         "camera_angle": "low",
         "camera_move": "push_in",
+        "lens": "auto",
+        "lighting": "",
+        "continuous_with_prev": false,
         "camera_id": "cam_rooftop_a",
         "characters": [
          {
@@ -1449,6 +1508,7 @@
         "status": "audio_done",
         "attempts": 2,
         "frame_path": "frames/ep01_s03_sh007.png",
+        "end_frame_path": null,
         "video_path": null,
         "gate_notes": [
          "草稿档画面偏暗，已调高曝光重跑"
@@ -1466,6 +1526,9 @@
         "shot_size": "MS",
         "camera_angle": "eye_level",
         "camera_move": "static",
+        "lens": "auto",
+        "lighting": "",
+        "continuous_with_prev": false,
         "camera_id": null,
         "characters": [],
         "location_id": null,
@@ -1485,6 +1548,7 @@
         "status": "planned",
         "attempts": 0,
         "frame_path": null,
+        "end_frame_path": null,
         "video_path": null,
         "gate_notes": []
        }
@@ -1565,6 +1629,9 @@
         "shot_size": "MCU",
         "camera_angle": "low",
         "camera_move": "push_in",
+        "lens": "auto",
+        "lighting": "",
+        "continuous_with_prev": false,
         "camera_id": "cam_rooftop_a",
         "characters": [
          {
@@ -1628,6 +1695,7 @@
         "status": "audio_done",
         "attempts": 2,
         "frame_path": "frames/ep01_s03_sh007.png",
+        "end_frame_path": null,
         "video_path": null,
         "gate_notes": [
          "草稿档画面偏暗，已调高曝光重跑"
@@ -1645,6 +1713,9 @@
         "shot_size": "MS",
         "camera_angle": "eye_level",
         "camera_move": "static",
+        "lens": "auto",
+        "lighting": "",
+        "continuous_with_prev": false,
         "camera_id": null,
         "characters": [],
         "location_id": null,
@@ -1664,6 +1735,7 @@
         "status": "planned",
         "attempts": 0,
         "frame_path": null,
+        "end_frame_path": null,
         "video_path": null,
         "gate_notes": []
        }
@@ -1719,6 +1791,9 @@
         "shot_size": "MCU",
         "camera_angle": "low",
         "camera_move": "push_in",
+        "lens": "auto",
+        "lighting": "",
+        "continuous_with_prev": false,
         "camera_id": "cam_rooftop_a",
         "characters": [
          {
@@ -1782,6 +1857,7 @@
         "status": "audio_done",
         "attempts": 2,
         "frame_path": "frames/ep01_s03_sh007.png",
+        "end_frame_path": null,
         "video_path": null,
         "gate_notes": [
          "草稿档画面偏暗，已调高曝光重跑"
@@ -1799,6 +1875,9 @@
         "shot_size": "MS",
         "camera_angle": "eye_level",
         "camera_move": "static",
+        "lens": "auto",
+        "lighting": "",
+        "continuous_with_prev": false,
         "camera_id": null,
         "characters": [],
         "location_id": null,
@@ -1818,6 +1897,7 @@
         "status": "planned",
         "attempts": 0,
         "frame_path": null,
+        "end_frame_path": null,
         "video_path": null,
         "gate_notes": []
        }
@@ -1881,6 +1961,9 @@
         "shot_size": "MCU",
         "camera_angle": "low",
         "camera_move": "push_in",
+        "lens": "auto",
+        "lighting": "",
+        "continuous_with_prev": false,
         "camera_id": "cam_rooftop_a",
         "characters": [
          {
@@ -1944,6 +2027,7 @@
         "status": "audio_done",
         "attempts": 2,
         "frame_path": "frames/ep01_s03_sh007.png",
+        "end_frame_path": null,
         "video_path": null,
         "gate_notes": [
          "草稿档画面偏暗，已调高曝光重跑"
@@ -1961,6 +2045,9 @@
         "shot_size": "MS",
         "camera_angle": "eye_level",
         "camera_move": "static",
+        "lens": "auto",
+        "lighting": "",
+        "continuous_with_prev": false,
         "camera_id": null,
         "characters": [],
         "location_id": null,
@@ -1980,6 +2067,7 @@
         "status": "planned",
         "attempts": 0,
         "frame_path": null,
+        "end_frame_path": null,
         "video_path": null,
         "gate_notes": []
        }
@@ -2043,6 +2131,9 @@
         "shot_size": "MCU",
         "camera_angle": "low",
         "camera_move": "push_in",
+        "lens": "auto",
+        "lighting": "",
+        "continuous_with_prev": false,
         "camera_id": "cam_rooftop_a",
         "characters": [
          {
@@ -2106,6 +2197,7 @@
         "status": "audio_done",
         "attempts": 2,
         "frame_path": "frames/ep01_s03_sh007.png",
+        "end_frame_path": null,
         "video_path": null,
         "gate_notes": [
          "草稿档画面偏暗，已调高曝光重跑"
@@ -2123,6 +2215,9 @@
         "shot_size": "MS",
         "camera_angle": "eye_level",
         "camera_move": "static",
+        "lens": "auto",
+        "lighting": "",
+        "continuous_with_prev": false,
         "camera_id": null,
         "characters": [],
         "location_id": null,
@@ -2142,6 +2237,7 @@
         "status": "planned",
         "attempts": 0,
         "frame_path": null,
+        "end_frame_path": null,
         "video_path": null,
         "gate_notes": []
        }
@@ -2176,6 +2272,9 @@
         "shot_size": "MS",
         "camera_angle": "eye_level",
         "camera_move": "static",
+        "lens": "auto",
+        "lighting": "",
+        "continuous_with_prev": false,
         "camera_id": null,
         "characters": [],
         "location_id": null,
@@ -2195,6 +2294,7 @@
         "status": "planned",
         "attempts": 0,
         "frame_path": null,
+        "end_frame_path": null,
         "video_path": null,
         "gate_notes": []
        },
@@ -2210,6 +2310,9 @@
         "shot_size": "MCU",
         "camera_angle": "low",
         "camera_move": "push_in",
+        "lens": "auto",
+        "lighting": "",
+        "continuous_with_prev": false,
         "camera_id": "cam_rooftop_a",
         "characters": [
          {
@@ -2273,6 +2376,7 @@
         "status": "planned",
         "attempts": 0,
         "frame_path": null,
+        "end_frame_path": null,
         "video_path": null,
         "gate_notes": []
        }
@@ -2327,6 +2431,9 @@
         "shot_size": "MCU",
         "camera_angle": "low",
         "camera_move": "push_in",
+        "lens": "auto",
+        "lighting": "",
+        "continuous_with_prev": false,
         "camera_id": "cam_rooftop_a",
         "characters": [
          {
@@ -2390,6 +2497,7 @@
         "status": "audio_done",
         "attempts": 2,
         "frame_path": "frames/ep01_s03_sh007.png",
+        "end_frame_path": null,
         "video_path": null,
         "gate_notes": [
          "草稿档画面偏暗，已调高曝光重跑"
@@ -2407,6 +2515,9 @@
         "shot_size": "MS",
         "camera_angle": "eye_level",
         "camera_move": "static",
+        "lens": "auto",
+        "lighting": "",
+        "continuous_with_prev": false,
         "camera_id": null,
         "characters": [],
         "location_id": null,
@@ -2426,6 +2537,7 @@
         "status": "planned",
         "attempts": 0,
         "frame_path": null,
+        "end_frame_path": null,
         "video_path": null,
         "gate_notes": []
        }
@@ -2469,6 +2581,9 @@
         "shot_size": "MS",
         "camera_angle": "eye_level",
         "camera_move": "static",
+        "lens": "auto",
+        "lighting": "",
+        "continuous_with_prev": false,
         "camera_id": null,
         "characters": [],
         "location_id": null,
@@ -2488,6 +2603,7 @@
         "status": "planned",
         "attempts": 0,
         "frame_path": null,
+        "end_frame_path": null,
         "video_path": null,
         "gate_notes": []
        },
@@ -2503,6 +2619,9 @@
         "shot_size": "MCU",
         "camera_angle": "low",
         "camera_move": "push_in",
+        "lens": "auto",
+        "lighting": "",
+        "continuous_with_prev": false,
         "camera_id": "cam_rooftop_a",
         "characters": [
          {
@@ -2566,6 +2685,7 @@
         "status": "planned",
         "attempts": 0,
         "frame_path": null,
+        "end_frame_path": null,
         "video_path": null,
         "gate_notes": []
        }

@@ -79,6 +79,8 @@ std::vector<std::string> VideoConfig::validate() const {
         errs.push_back("video.max_shot_s 要么是 0（按模型和显卡自己定），"
                        "要么至少 2 秒，现在是 " + std::to_string(max_shot_s));
     }
+    // 上限 4：每多一条就是多一镜的显卡时间，关键镜头两三条够挑了。
+    check_range(errs, "video.hero_takes", hero_takes, 1, 4);
     return errs;
 }
 
@@ -237,6 +239,39 @@ std::vector<std::string> AssemblyConfig::validate() const {
     check_range(errs, "assembly.subtitle_max_chars_per_line",
                 subtitle_max_chars_per_line, 6, 30);
     check_range(errs, "assembly.subtitle_max_lines", subtitle_max_lines, 1, 3);
+    return errs;
+}
+
+std::vector<std::string> LookConfig::validate() const {
+    std::vector<std::string> errs;
+    if (preset != "film" && preset != "clean" && preset != "off") {
+        errs.push_back("look.preset 只能是 film / clean / off，现在是 " + preset);
+    }
+    check_range(errs, "look.lut_strength", lut_strength, 0.0, 1.0);
+    check_range(errs, "look.grain", grain, 0.0, 100.0);
+    // 超过 1 像素就真糊了，这一项的意义只是压掉 AI 的微锐化。
+    check_range(errs, "look.soften", soften, 0.0, 1.0);
+    if (letterbox != 0.0 && (letterbox < 1.34 || letterbox > 3.0)) {
+        errs.push_back("look.letterbox 要么是 0（不遮幅），要么在 1.34～3.0 之间"
+                       "（1.85、2.39 这种），现在是 " + std::to_string(letterbox));
+    }
+    return errs;
+}
+
+std::vector<std::string> SoundConfig::validate() const {
+    std::vector<std::string> errs;
+    // 「压在台词下」只能是往下压。填正数等于把环境声顶到台词上面，
+    // 而那不会报错，只是成片里听不清人说话。
+    check_range(errs, "sound.ambient_db", ambient_db, -60.0, 0.0);
+    check_range(errs, "sound.music_db", music_db, -60.0, 0.0);
+    check_gt(errs, "sound.music_timeout_s", music_timeout_s, 0.0);
+    return errs;
+}
+
+std::vector<std::string> UpscaleConfig::validate() const {
+    std::vector<std::string> errs;
+    check_range(errs, "upscale.scale", scale, 1, 4);
+    check_gt(errs, "upscale.timeout_s", timeout_s, 0.0);
     return errs;
 }
 
@@ -445,6 +480,9 @@ std::vector<std::string> Settings::validate() const {
     merge(tts.validate());
     merge(gates.validate());
     merge(assembly.validate());
+    merge(look.validate());
+    merge(sound.validate());
+    merge(upscale.validate());
     merge(models.validate());
     if (vram_gb_override && *vram_gb_override <= 0) {
         errs.push_back("vram_gb_override 必须大于 0");
@@ -639,6 +677,8 @@ void apply_table(const toml::table& doc, Settings& s) {
         take(t, "orientation", s.video.orientation);
         take(t, "quality", s.video.quality);
         take(t, "max_shot_s", s.video.max_shot_s);
+        take(t, "hero_takes", s.video.hero_takes);
+        take(t, "chain_frames", s.video.chain_frames);
     }
     if (auto t = doc["tiers"].as_table()) {
         take(t, "draft_width", s.tiers.draft_width);
@@ -717,6 +757,29 @@ void apply_table(const toml::table& doc, Settings& s) {
         take(t, "subtitle_font", s.assembly.subtitle_font);
         take(t, "ffmpeg_path", s.assembly.ffmpeg_path);
         take(t, "ffprobe_path", s.assembly.ffprobe_path);
+    }
+    if (auto t = doc["look"].as_table()) {
+        take(t, "preset", s.look.preset);
+        take(t, "lut", s.look.lut);
+        take(t, "lut_strength", s.look.lut_strength);
+        take(t, "grain", s.look.grain);
+        take(t, "soften", s.look.soften);
+        take(t, "letterbox", s.look.letterbox);
+    }
+    if (auto t = doc["sound"].as_table()) {
+        take(t, "ambient", s.sound.ambient);
+        take(t, "ambient_db", s.sound.ambient_db);
+        take(t, "music", s.sound.music);
+        take(t, "music_db", s.sound.music_db);
+        take(t, "duck", s.sound.duck);
+        take(t, "music_style", s.sound.music_style);
+        take(t, "music_command", s.sound.music_command);
+        take(t, "music_timeout_s", s.sound.music_timeout_s);
+    }
+    if (auto t = doc["upscale"].as_table()) {
+        take(t, "command", s.upscale.command);
+        take(t, "scale", s.upscale.scale);
+        take(t, "timeout_s", s.upscale.timeout_s);
     }
     if (auto t = doc["models"].as_table()) {
         take(t, "engine", s.models.engine);
@@ -1193,6 +1256,23 @@ scene_transition_s = 0.4
 subtitle_max_chars_per_line = 15
 subtitle_font = "Source Han Sans SC"
 
+[sound]
+# 声音那几层里**机器属性**的那一项：生成一条配乐的命令。别的（环境声、
+# 配乐开关、压多少 dB）是剧的属性，在项目目录的 changji.toml 里。
+# 占位符：{prompt} 描述、{seconds} 时长、{out} 输出 wav。空 = 不生成配乐。
+# ACE-Step 1.5 的包装脚本在 cpp/tools/music_ace_step.py（<4 GB 显存，几秒一条）。
+# music_command = "python /path/to/changji/cpp/tools/music_ace_step.py --prompt {prompt} --seconds {seconds} --out {out}"
+# music_timeout_s = 600
+
+[upscale]
+# 时序放大（机器属性）。本地 MiniMax-H3 只到 768p，要 1080p 只能放大；
+# 逐帧 ESRGAN 会闪，SeedVR2 / RTX VSR 这类时序放大器都在 Python 里，所以
+# 做成一条命令，装配时每一镜先过它再调色加颗粒。
+# 占位符：{in} {out} {width} {height} {short}（目标短边） {scale}。空 = 不放大。
+# command = "/path/to/seedvr2/.venv/bin/python /path/to/seedvr2/inference_cli.py {in} --output {out} --resolution {short} --batch_size 5"
+# scale = 2
+# timeout_s = 1800
+
 # ⚠️ **迁移期间这一整节默认是注释掉的。**
 #
 # Python 引擎的 Settings 是 extra="forbid"，只要这份配置里出现 [models]，
@@ -1377,6 +1457,12 @@ quality = "@QUALITY@"
 # 8 秒的镜头会中途硬切成另一场戏。横屏片子想要长镜头就往上调。
 # 0 = 按模型和这张卡自己定。
 max_shot_s = 5.0
+# 关键镜头（开场钩子、集尾留扣、反转，以及第一镜和最后一镜）多出几条换种子、
+# 按闸门的数挑最好的一条。行业做法是关键镜多出 20～30%。1 = 不多出。
+hero_takes = 2
+# 连续动作的两镜（分镜里标了 continuous_with_prev 的），拿上一镜的最后一帧
+# 当下一镜的首帧，动作接得上。
+chain_frames = true
 
 [assembly]
 # 帧率不在这里：它跟着出片模型走（MiniMax-H3 只出 24 fps），写了也会被纠正。
@@ -1386,6 +1472,35 @@ scene_transition_s = 0.4
 # 中文字幕单行上限（全角字符数）和字体。
 subtitle_max_chars_per_line = 15
 subtitle_font = "Source Han Sans SC"
+
+[look]
+# 成片的后期链，装配时逐镜加：柔化 → 调色 → 颗粒。这是「电影质感」里最便宜
+# 的一段（docs/电影质感方案.md）。
+#   preset = "film"   柔化 + 调色 + 颗粒（默认）
+#          = "clean"  只柔化和颗粒，不调色
+#          = "off"    一个滤镜都不加
+# 调色默认用内置曲线（S 形、暗部偏青、亮部偏暖）；有胶片 LUT 就填路径，
+# 要 Rec.709 输入的版本（模型直出就是 709）。强度 0.5～0.7 是 AI 素材的区间。
+preset = "film"
+# lut = "luts/kodak2383_rec709.cube"
+lut_strength = 0.6
+# 颗粒 0～100（0 关）；柔化是像素，别超过 1。
+grain = 10
+soften = 0.4
+# 横屏项目遮幅到 2.39（宽银幕）。竖屏忽略。0 = 关。
+letterbox = 0
+
+[sound]
+# 台词之外的三层。环境声来自出片模型自己出的原生音轨（H3 每镜都有），
+# 有没有台词都留着，压在台词底下；配乐要全局配了 music_command 才会生成。
+ambient = true
+ambient_db = -12
+music = true
+music_db = -20
+# 台词处把环境声和配乐再压一道。
+duck = true
+# 配乐风格提示，空 = 只按剧本的拍子推。
+music_style = ""
 
 [gates]
 # 质量闸门。全自动模式下这些阈值决定废片能不能被拦住。
@@ -1402,6 +1517,11 @@ fallback_on_exhausted = true
 # video_lora_strength = 1.0
 # image_cfg = 2.5
 # image_flow_shift = 0.0
+#
+# 分档：草稿档挂 Turbo 跑 6 步看叙事，成片档不挂 LoRA 跑满步数（30 是手和
+# 纹理的甜点）。默认 both = 两档都挂 Turbo，最快；要成片质量就改成 draft，
+# 然后成片档只对留下的镜头跑（单集页上按镜头重跑）。
+# video_lora_tiers = "draft"
 )";
 
 void replace_all_in(std::string& s, const std::string& from,
