@@ -366,10 +366,30 @@ export function useShots() {
     return { ok: true }
   }
 
+  /**
+   * 人自己按的停。下降沿那条提示据此闭嘴——理由见那儿。
+   *
+   * 只在**确实有活在跑**的时候立这个旗：没在跑时按停不会有下降沿，旗留着
+   * 会把下一轮真正跑完的那句提示吃掉。
+   */
+  let stoppedByHand = false
+
   async function stop() {
+    if (runStore.running) stoppedByHand = true
+    // **排着的那几镜也一起取消。**
+    //
+    // 出队是挂在 `running` 的下降沿上的（见下面那个 watch：这一轮完了就把
+    // 攒下的交出去），而**按「停下」走的是同一个下降沿**。不清队列的话，
+    // 人按停、这一轮一停，排着的那几镜立刻又交出去开跑——「停」停不干净，
+    // 而且下一轮开跑时屏幕上还写着一句「这一轮跑完了」。
+    //
+    // 清掉而不是留着：这一页没有"接着跑排队的"那个入口，留着的话它们要等
+    // 到某一轮**不相干的**运行结束时才突然开跑，那比现在更莫名其妙。
+    const queued = waiting.value.size
+    waiting.value = new Map()
     try {
       await api.stopRun()
-      ui.ok('已停，跑完的镜头留着')
+      ui.ok(queued ? `已停，跑完的镜头留着；排着的 ${queued} 镜也取消了` : '已停，跑完的镜头留着')
     } catch (err) {
       ui.error(err.message)
     }
@@ -551,7 +571,13 @@ export function useShots() {
       // 刚跑完，磁盘上那几个 mp4 换过了但路径没变。见 bust 的注释。
       bust.value += 1
       session.refresh()
-      if (runStore.state?.error) ui.error(runStore.state.error)
+      // **自己按的停，别再红一次。**
+      //
+      // 引擎把「已手动停止」写进 `state.error`（jobs.cpp 里 cancel 那段），
+      // 而 stop() 已经用一句绿的说过了。不判的话按一次停弹两条，其中一条
+      // 是红的——人会去找哪里出错了，而什么都没错。
+      if (stoppedByHand) stoppedByHand = false
+      else if (runStore.state?.error) ui.error(runStore.state.error)
       else ui.ok('这一轮跑完了')
       // 跑的过程中攒下的那几镜，现在交出去。
       flushWaiting()
