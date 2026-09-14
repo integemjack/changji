@@ -164,7 +164,21 @@ std::string Character::render_prompt(StyleLine style_line,
 
 std::optional<std::string> Character::ref_for_pose(
     const std::string& face_pose) const {
-    // 对应 Python 的那张字典：拿不到就逐级退回，最后退到正面图。
+    // 对应 Python 的那张字典。**退回不是逐级退到底的**，原来这儿写着
+    // 「拿不到就逐级退回，最后退到正面图」，而实际的链子是：
+    //
+    //   front                     → 正面（没有就是没有）
+    //   three_quarter / profile   → 侧面 → 正面
+    //   back                      → 背面 → 侧面 ✕ 到此为止
+    //   其它（off_screen、认不出来的）→ 正面
+    //
+    // 差别落在**只画了正面**的角色上（三视图那一格停在 1/3 是常事）：
+    // 背面的镜头一张参考图都拿不到，而参考图正是跨镜头认脸的唯一手段。
+    // 不报错，表现是那几镜的人长得不太像。
+    //
+    // 这一条**是照 Python 那张字典抄的**（golden/character_render.json 的
+    // ref_for_pose 钉着它），所以要改成"背面也退到正面"是一个产品决定
+    // ——拿正面图去锚一个背身镜头是好是坏，得先有人拍板——不是顺手清理。
     if (face_pose == "front") return ref_front;
     if (face_pose == "three_quarter" || face_pose == "profile") {
         return ref_three_quarter.has_value() ? ref_three_quarter : ref_front;
