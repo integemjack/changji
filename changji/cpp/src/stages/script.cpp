@@ -478,6 +478,25 @@ double pick(std::uint32_t seed, int k, double lo, double hi) {
 
 }  // namespace
 
+// prompts.toml 里那四张表必须互相对得上——下面 `shape * 4 + i` 取的就是
+// 它们，对不上就是**越界读一个 constexpr 数组**：表现是提示词里混进一段
+// 不相干的字（运气好），或者进程当场没了（运气不好），而两种都指不到这儿。
+//
+// 这不是假想：act_labels 已经从四个（一组）长到二十个（五组走法）了一次，
+// 那次前端那份抄件没跟上，十份剧本里八份的段头认不出来。数据文件改一行、
+// 代码一个字不动就能出事的地方，就该让它在**编译期**说话——升级 Crow 那
+// 处的注释写的是同一件事：「这里会编译报错，那是好事」。
+static_assert(std::size(prompt::script::kActKeys) == 4,
+              "act_keys 必须正好四段：下面是按 shape * 4 + i 取的");
+static_assert(std::size(prompt::script::kActLabels) % 4 == 0,
+              "act_labels 的条数要是 4 的整数倍：一组走法四段");
+static_assert(std::size(prompt::script::kActLabels) ==
+                  std::size(prompt::script::kActBriefs),
+              "act_labels 和 act_briefs 一一对应：加一组走法两张表都要加");
+static_assert(std::size(prompt::script::kShapeNames) ==
+                  std::size(prompt::script::kActLabels) / 4,
+              "shape_names 一组走法一个名字");
+
 std::vector<ActSpec> act_plan(double duration_s, std::uint32_t variation) {
     // 秒数取整了再分。时长再短也按 4 秒排，每段至少 1 秒——
     // 银行家舍入那几条用例会传 0.5 进来，不能在这儿除出负数。
