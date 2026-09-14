@@ -231,7 +231,17 @@ async function bible() {
   //     （只提真的发生了的重置）。
   if (result.remapped_shots) parts.push(`${result.remapped_shots} 个镜头跟着改了指向`)
   if (result.reset_shots) parts.push(`${result.reset_shots} 个镜头退回重跑`)
-  ui.ok(parts.length ? parts.join('；') : '故事里的人和地方库里都有了，没补新的')
+  // 定妆要叫一趟模型，几十秒到几分钟；中途在项目库里点别的剧很自然。
+  // 活儿是替钉住的 `project` 干的、结果也写在它身上，所以这句话要说清是
+  // 替谁干的——照 genAll 和 AssetEpisodes 那几条现成的说法。
+  const summary = parts.length
+    ? parts.join('；')
+    : '故事里的人和地方库里都有了，没补新的'
+  if (project !== session.projectPath) {
+    ui.info(`那一部剧定完妆了（${summary}），但你已经切走了——回去就能看到`)
+  } else {
+    ui.ok(summary)
+  }
   touch() // 三个格子和这儿的数一起重拉
 }
 
