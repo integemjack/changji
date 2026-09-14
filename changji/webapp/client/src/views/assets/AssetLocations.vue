@@ -38,6 +38,18 @@ const openLoc = computed(
 )
 
 function toggle(id) {
+  // 改了描述直接收起来，改动就没了。先问一句。
+  //
+  // **角色格那边早就是这个规矩**（「这个角色有改动还没保存，收起就没了」），
+  // 而这两页是同一副骨架：同样的 edits、同样的 changed()、同样的「未保存」
+  // 角标、同样的放弃按钮——独独收抽屉这一下少了拦截。点开一个场景把空间、
+  // 光线、色彩三段重写一遍，再点一下那一行（或者点开别的场景）就全没了。
+  if (openId.value && changed(openId.value)) {
+    if (!confirm('这个场景有改动还没保存，收起就没了。确定？')) return
+    // 放弃的那一份要还原，否则「未保存」的角标会一直挂在列表上
+    const was = locations.value.find((l) => l.location_id === openId.value)
+    if (was) edits.value[openId.value] = { ...was }
+  }
   openId.value = openId.value === id ? '' : id
 }
 
