@@ -30,8 +30,6 @@
 #include "http/story_api.hpp"
 #include "http/setup_api.hpp"
 #include "llm/client.hpp"
-#include "infer/llama_chat.hpp"
-#include "llm/local_client.hpp"
 #include "http/flow.hpp"
 #include "util/paths.hpp"
 #include "util/sysstat.hpp"
@@ -122,6 +120,9 @@ std::string stream_of(const json& body) {
 template <typename Work>
 ApiResult start_async(const std::string& stream_id, Work work) {
     Offload::instance().post([stream_id, work] {
+        // 挂上"这条线程在给谁干活"，里面每一步的思考流就不用各自去捞
+        // stream 了（见 job_stream.hpp 的 current_stream）。
+        const JobScope scope{stream_id};
         try {
             const ApiResult r = work();
             // 处理函数自己回了个错状态码（不抛，直接回）也要算砸了，
@@ -221,10 +222,6 @@ void run(const config::Settings& settings, const Options& opts) {
     infer::sd_log_to_stderr();
     infer::register_sd_slots([] { return config::runtime().snapshot(); },
                              config::runtime().profile());
-    // [llm].backend = "local" 时把大模型也挂上调度器。远端那条不注册——
-    // 没有本地权重，注册一个装不上的槽只会在借它时抛没意义的错。
-    llm::register_llm_slot([] { return config::runtime().snapshot(); },
-                           config::runtime().profile());
     // **不在这儿预装大模型。** 注册不等于加载，调度器是**借出时**才装的
     // ——用户 2026-09-11 重申："用的时候才加载是对的，不做启动预载"。
     //
@@ -637,10 +634,12 @@ void run(const config::Settings& settings, const Options& opts) {
                 const std::string stream_id = stream_of(body);
                 if (want_async && !stream_id.empty()) {
                     return start_async(stream_id, [handler, body] {
-                        // **后台这条自己一个令牌。** 同步那条用的是
-                        // thread_local 的，而这儿换了条线程。
-                        pipeline::CancelToken own;
-                        return handler(body, *script_client, own);
+                        // **令牌从 JobScope 拿**（start_async 里挂的那个）。
+                        // 原来这儿是就地 new 一个，谁也够不着它——那句
+                        // "取消令牌是个不会被触发的哑元，等接进 job 表之后
+                        // 换成真的"就是说这件事。现在它按 stream_id 登记着，
+                        // 界面上那个「停下」按的就是它。
+                        return handler(body, *script_client, current_cancel());
                     });
                 }
                 // 这几个接口没有自己的 job，取消令牌是个不会被触发的哑元。
@@ -866,19 +865,8 @@ void run(const config::Settings& settings, const Options& opts) {
             // 摆着只会让人调了没反应。
             {"llmBackend", s.llm.backend},
             {"ttsBackend", s.tts.backend},
-            // **大模型现在到底装着没有。** "默认加载 llm，点击出片清理掉
-            // 大模型"——这两句描述的都是一个状态，而用户在界面上一直看不到
-            // 它。设置页那句"出片要显存时它会自动让开"是句空话，除非能看到
-            // 让没让开。量到多少一并给出来：没量过是 null。
-            {"llmLoaded", infer::scheduler().loaded(infer::Slot::LLM)},
-            {"llmMeasuredVramGb",
-             [] {
-                 const std::size_t b =
-                     infer::scheduler().measured_vram(infer::Slot::LLM);
-                 return b == 0 ? json(nullptr)
-                               : json(static_cast<double>(b) /
-                                      (1024.0 * 1024 * 1024));
-             }()},
+            // 「大模型装着没有 / 量到多少显存」那两项 2026-09-14 去掉了：
+            // 进程内那条后端删了，编剧只走外接 API，本机显存上根本没有它。
             {"envLocked", locked}};
         // 由引擎自己答就说明它活着，再 ping 自己一次没有意义。
         out["engine"] = {{"online", true},
@@ -1011,15 +999,9 @@ void run(const config::Settings& settings, const Options& opts) {
         // 由显存说了算（第一个开不出来才算失败，后面的开不出来只是并发度低
         // 一档）。只显示配置的话，用户配了 4 会以为就是 4 路，而实际可能
         // 只有 1 路——那时候「同时编两个项目会互相等」就成了没法解释的怪事。
-        {
-            const auto st = llm::local_llm_status();
-            out["effective"]["llm"] = {
-                {"backend", s.llm.backend},
-                {"parallelWanted", s.llm.parallel},
-                {"loaded", st.loaded},
-                {"slots", st.slots},
-                {"contextTokens", st.context_tokens}};
-        }
+        // 进程内那条 2026-09-14 删了，只剩远端。这几项原来报的是本地
+        // 上下文开出来几路、装没装上，现在没有对应物了。
+        out["effective"]["llm"] = {{"backend", s.llm.backend}};
         // **体检要发网络请求，最坏二十多秒。** Node 那份也是同步等的，
         // 形状要一致就只能照做；Crow 是线程池，占住一个工作线程不影响别的请求。
         out["doctor"] = to_json(doctor::run_checks(s));
@@ -1043,17 +1025,14 @@ void run(const config::Settings& settings, const Options& opts) {
                     throw ApiError(400, "缺 backend");
                 }
                 const auto backend = it->get<std::string>();
-                if (backend != "local" && backend != "remote") {
-                    throw ApiError(400, "backend 只能是 local 或 remote");
-                }
-                if (backend == "local" && !infer::llama_chat_available()) {
-                    // **说清是构建选项，不是配置写错了。** 只说"不支持"
-                    // 的话用户会去翻配置文件找哪里填错了。
-                    throw ApiError(
-                        400,
-                        "这个二进制没编进程内大模型（构建时 "
-                        "CHANGJI_LLAMA=OFF）。用外接：backend = remote "
-                        "并填 [llm].base_url");
+                // **进程内那条 2026-09-14 删了，只剩 remote。**
+                // 报错要说清是"这条路没有了"，不是"你写错了"——
+                // 只说"只能是 remote"的话，用过旧版的人会去翻配置找哪儿错了。
+                if (backend != "remote") {
+                    throw ApiError(400,
+                                   "只有外接 API 这一条路了（进程内跑已经"
+                                   "删掉）。backend 填 remote，再填 "
+                                   "[llm].base_url 和 api_key");
                 }
                 config::save_user_config(json{{"llm", {{"backend", backend}}}});
                 auto s = config::runtime().snapshot();
@@ -1075,11 +1054,9 @@ void run(const config::Settings& settings, const Options& opts) {
                 // 先看它装着没有再动手：evict 的语义是"事后不装着就算成功"
                 // ——槽压根没装也返回 true。直接拿它当回答的话，这个字段
                 // 在"本来就没装"的时候会说成"卸掉了"。
-                bool unloaded = false;
-                if (backend == "remote" &&
-                    infer::scheduler().loaded(infer::Slot::LLM)) {
-                    unloaded = infer::scheduler().evict(infer::Slot::LLM);
-                }
+                // 原来这儿会在切到远端时把本地大模型从显存里卸掉。
+                // 进程内那条后端删了之后没有可卸的东西，恒为 false。
+                const bool unloaded = false;
                 return ApiResult{200,
                                  {{"backend", backend}, {"unloaded", unloaded}}};
             });
@@ -1647,6 +1624,23 @@ void run(const config::Settings& settings, const Options& opts) {
             auto r = guard([&] {
                 return post_run(parse_body(req.body),
                                 default_run_deps());
+            });
+            return json_response(r.body, r.status);
+        });
+
+    // 把某一件正在后台跑的活停掉。**按 stream 停，不按种类停。**
+    //
+    // 上面 /api/stop 和 /api/script/series/stop 停的是"出片"和"写整季"那两个
+    // 长跑任务，一种只有一个槽。而写大纲、写正文、拆分镜这一族是按请求起的，
+    // 同时可以有好几件——只能按它自己那条 stream 认。
+    CROW_ROUTE(app, "/api/job/cancel").methods("POST"_method)(
+        [](const crow::request& req) {
+            auto r = guard([&]() -> ApiResult {
+                const json body = parse_body(req.body);
+                const std::string id = stream_of(body);
+                if (id.empty()) throw ApiError(400, "要给 stream");
+                // 找不到不报错：按下去那一刻可能刚好干完，重复点也不该弹框。
+                return ApiResult{200, {{"stopped", cancel_job(id)}}};
             });
             return json_response(r.body, r.status);
         });

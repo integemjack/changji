@@ -1,5 +1,7 @@
 #include "http/job_stream.hpp"
 
+#include <map>
+#include <mutex>
 #include <utility>
 
 #include "http/ws.hpp"
@@ -28,6 +30,94 @@ void job_progress(const std::string& stream_id, int current, int total,
                                     {"current", current},
                                     {"total", total},
                                     {"message", message}});
+}
+
+void job_thinking(const std::string& stream_id, const std::string& piece) {
+    if (stream_id.empty() || piece.empty()) return;
+    ws::hub().broadcast(stream_id, {{"type", "job_thinking"},
+                                    {"job_id", stream_id},
+                                    {"text", piece}});
+}
+
+namespace {
+/// 当前线程在给哪条 stream 干活。见 JobScope。
+thread_local std::string g_stream;
+/// 当前线程这件活的取消令牌。指向那个 JobScope 里的。
+thread_local pipeline::CancelToken* g_cancel = nullptr;
+
+/// 在跑的那几件活：stream_id → 它的令牌。
+///
+/// **不存 JobScope 本身，只存令牌的地址。** 令牌活在那条后台线程的栈上
+/// （JobScope 的成员），生命周期严格包住这件活；表里那一条也是 JobScope
+/// 的构造/析构成对加减的，所以不会出现"活干完了还能按停"的悬空指针。
+std::mutex g_mu;
+std::map<std::string, pipeline::CancelToken*> g_live;
+
+/// 同步那条路上没人能按停，给个不会被触发的。
+pipeline::CancelToken& dummy_token() {
+    static pipeline::CancelToken t;
+    return t;
+}
+}  // namespace
+
+std::string current_stream() { return g_stream; }
+
+pipeline::CancelToken& current_cancel() {
+    return g_cancel != nullptr ? *g_cancel : dummy_token();
+}
+
+bool cancel_job(const std::string& stream_id) {
+    if (stream_id.empty()) return false;
+    std::lock_guard<std::mutex> g(g_mu);
+    const auto it = g_live.find(stream_id);
+    if (it == g_live.end()) return false;
+    it->second->request();
+    return true;
+}
+
+JobScope::JobScope(std::string stream_id)
+    : id_(std::move(stream_id)),
+      prev_(g_stream),
+      prev_token_(nullptr),
+      prev_cancel_(g_cancel) {
+    g_stream = id_;
+    g_cancel = &token_;
+    if (!id_.empty()) {
+        std::lock_guard<std::mutex> g(g_mu);
+        // **记下同一个 id 上一层登记的那个，出去时还原。** 同一个 stream id
+        // 被重用时（用户连点两下、前一件还没退干净）直接 erase 的话，
+        // 外层那件活就再也停不了了——而它还在跑。
+        const auto it = g_live.find(id_);
+        if (it != g_live.end()) prev_token_ = it->second;
+        g_live[id_] = &token_;
+    }
+}
+
+JobScope::~JobScope() {
+    if (!id_.empty()) {
+        std::lock_guard<std::mutex> g(g_mu);
+        // 按地址比一次再动：不是我登记的那条就别碰（同名的下一层还在跑）。
+        const auto it = g_live.find(id_);
+        if (it != g_live.end() && it->second == &token_) {
+            if (prev_token_ != nullptr) {
+                it->second = prev_token_;
+            } else {
+                g_live.erase(it);
+            }
+        }
+    }
+    // **还原上一层，不是置空。** 嵌套时置空的话，外层那件活的 current_cancel()
+    // 会变成哑元——它还在跑，而按停就没反应了。和 g_stream 一个道理。
+    g_cancel = prev_cancel_;
+    g_stream = std::move(prev_);
+}
+
+std::function<void(const std::string&)> thinking_sink(std::string stream_id) {
+    if (stream_id.empty()) stream_id = current_stream();
+    if (stream_id.empty()) return {};
+    return [stream_id](const std::string& piece) {
+        job_thinking(stream_id, piece);
+    };
 }
 
 void job_preview(const std::string& stream_id, int step,

@@ -18,31 +18,6 @@ namespace changji::http {
 
 namespace {
 
-/// 目录里的 gguf 文件，按名字排序。
-///
-/// 只扫一层，不递归。模型文件几个 G，用户不会把它们塞进深层目录树；
-/// 而递归扫一个指错的目录（比如整个 C 盘）会卡住这个请求几十秒。
-std::vector<std::string> list_gguf(const fs::path& dir) {
-    std::vector<std::string> out;
-    std::error_code ec;
-    if (!fs::is_directory(dir, ec)) return out;
-    for (const auto& e : fs::directory_iterator(dir, ec)) {
-        if (ec) break;
-        if (!e.is_regular_file(ec)) continue;
-        const std::string name = paths::to_utf8(e.path().filename());
-        // 大小写都收：Windows 上文件名大小写不敏感，用户可能存成 .GGUF
-        std::string lower = name;
-        for (char& c : lower) {
-            const unsigned char u = static_cast<unsigned char>(c);
-            if (u >= 'A' && u <= 'Z') c = static_cast<char>(u - 'A' + 'a');
-        }
-        if (lower.size() > 5 && lower.compare(lower.size() - 5, 5, ".gguf") == 0) {
-            out.push_back(name);
-        }
-    }
-    std::sort(out.begin(), out.end());
-    return out;
-}
 
 }  // namespace
 
@@ -56,14 +31,11 @@ ApiResult get_llm_models(const config::Settings& settings, const HttpGet& fetch)
     const std::map<std::string, std::string> headers = {
         {"Authorization", "Bearer " + settings.llm.api_key}};
 
-    // 本机的 gguf 先列出来。这一段和远端问不问得通无关——
-    // 用户可能压根没配远端服务，那时候这个列表就是他唯一能选的东西。
-    const fs::path dir = settings.models.dir_path(settings.workspace_path());
-    json local = {
-        {"dir", paths::to_utf8(dir)},
-        {"files", list_gguf(dir)},
-        {"current", settings.models.llm},
-    };
+    // **本机 gguf 那一段 2026-09-14 去掉了。** 进程内后端删了之后，
+    // 列出来的文件一个都选不了——摆着只会让人以为还能在本机跑。
+    // 字段留着是给前端的：少一个键会让老页面在取值时炸，而这一层
+    // 没法知道对面是不是新版。
+    json local = {{"dir", ""}, {"files", json::array()}, {"current", ""}};
 
     // 我们认识的这家有什么，见 known_models。**四条返回路径都带上它**，
     // 尤其是失败那三条：刚装好还没填密钥时 `/models` 必然 401，而那正是

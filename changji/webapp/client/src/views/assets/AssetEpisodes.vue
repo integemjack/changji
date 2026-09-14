@@ -17,6 +17,7 @@ import { computed, ref, watch } from 'vue'
 import AppIcon from '@/components/AppIcon.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import { api, mediaUrl } from '@/api'
+import { runAsyncJob } from '@/composables/useAsyncJob'
 import { useAction } from '@/composables/useAction'
 import { useSession } from '@/stores/session'
 import { useUi } from '@/stores/ui'
@@ -224,10 +225,15 @@ const TRAILER_ID = 'trailer'
 async function writeTrailer() {
   const result = await run(
     () =>
-      api.writeTrailer({
-        project: session.projectPath,
-        duration_s: trailerDurationS.value,
-      }),
+      runAsyncJob(
+        (extra) =>
+          api.writeTrailer({
+            project: session.projectPath,
+            duration_s: trailerDurationS.value,
+            ...extra,
+          }),
+        { prefix: 'trailer', label: '剪预告片' },
+      ),
     { key: 'trailer' },
   )
   if (result) trailerDraft.value = result

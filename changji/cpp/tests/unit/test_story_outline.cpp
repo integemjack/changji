@@ -17,6 +17,8 @@
 #include <chrono>
 #include <condition_variable>
 #include <mutex>
+#include <set>
+#include <vector>
 #include <filesystem>
 #include <memory>
 #include <string>
@@ -2803,11 +2805,117 @@ TEST_CASE("复读摘的是句，不是段") {
     CHECK(d.text.find("门开了又合上") != std::string::npos);
 }
 
+TEST_CASE("大纲提示词：每按一次都换一批姓") {
+    // **治的是用户那句「角色的名字也都差不多」。** 根子是
+    // build_outline_prompt 原来是个纯函数：同一个入口点十次，模型拿到的是
+    // 同一串字节十次，于是十次都给你陈默和林晚（story_analyze.cpp 的注释里
+    // 记着一次真实输出：['陈默','林景明','陈默','林景明','苏婉']）。
+    using changji::stages::build_outline_names;
+
+    SUBCASE("variation = 0 不拼——语料和别的用例靠这一档") {
+        CHECK(build_outline_names(0).empty());
+    }
+
+    SUBCASE("给够几个姓，而且不重样") {
+        // **不去比对词表本身。** 词表是构建期生成的（prompts.inc.hpp 在
+        // build 目录里，测试目标没有那条 include 路径），而这里要问的也不是
+        // "有没有照抄那张表"，是"给出来的东西能不能用"：几个、重不重。
+        const std::string head = "姓从这几个里挑：";
+        for (std::uint32_t v : {1u, 7u, 999u, 0x1234abcdu, 0xffffffffu}) {
+            CAPTURE(v);
+            const std::string got = build_outline_names(v);
+            const auto at = got.find(head);
+            REQUIRE(at != std::string::npos);
+            const auto from = at + head.size();
+            const std::string line = got.substr(from, got.find('\n', from) - from);
+
+            std::vector<std::string> parts;
+            for (std::size_t i = 0, j; ; i = j + 3) {   // 「、」是 3 个字节
+                j = line.find("、", i);
+                parts.push_back(line.substr(i, j == std::string::npos
+                                                   ? std::string::npos
+                                                   : j - i));
+                if (j == std::string::npos) break;
+            }
+            CHECK(parts.size() == 6);   // kSurnamesPick
+            std::set<std::string> seen(parts.begin(), parts.end());
+            CHECK(seen.size() == parts.size());   // 同一个姓不能给两遍
+            for (const auto& x : parts) CHECK_FALSE(x.empty());
+        }
+    }
+
+    SUBCASE("换个种子就换一批——这是它存在的全部理由") {
+        // 三十个种子里至少要抽出二十种不同的组合。要求不高，但足以抓住
+        // "种子没接上"和"哈希把低位摊平了"这两种坏法——它们的表现都是
+        // 几十个种子只出三四种结果。
+        std::set<std::string> combos;
+        for (std::uint32_t v = 1; v <= 30; ++v) combos.insert(build_outline_names(v));
+        CHECK(combos.size() >= 20);
+    }
+}
+
+TEST_CASE("大纲提示词：选题空间只在什么都没填时才拼") {
+    // **用户给了方向就不能再塞随机的场域。** 他写「外卖员和程序员」，
+    // 我们塞「远洋渔船」，出来的东西他认不出是自己要的。
+    //
+    // 而"什么都没有，你来一个"那条路是雷同最重的一条：提示词里一个变量
+    // 都没有。选题空间正是补在那儿。
+    using changji::stages::build_outline_prompt;
+    using changji::models::StoryScale;
+    using changji::models::StyleLine;
+    const std::string mark = "这一次从下面这几样里起手";
+    const std::string names = "【这个故事里的人怎么取名】";
+    const std::uint32_t v = 0x5eed1234;
+
+    SUBCASE("梗概和关键词都空：拼") {
+        const std::string got =
+            build_outline_prompt("", StoryScale::SHORT, StyleLine::REALISTIC, "", v);
+        CHECK(got.find(mark) != std::string::npos);
+    }
+
+    SUBCASE("有梗概：不拼") {
+        const std::string got = build_outline_prompt(
+            "外卖员和程序员", StoryScale::SHORT, StyleLine::REALISTIC, "", v);
+        CHECK(got.find(mark) == std::string::npos);
+    }
+
+    SUBCASE("只有关键词：也不拼，关键词就是他给的方向") {
+        const std::string got = build_outline_prompt(
+            "", StoryScale::SHORT, StyleLine::REALISTIC, "重生 复仇", v);
+        CHECK(got.find(mark) == std::string::npos);
+    }
+
+    SUBCASE("姓氏那一段三条路都拼——名字和他给的方向不冲突") {
+        for (const char* pre : {"", "外卖员和程序员"}) {
+            for (const char* kw : {"", "重生 复仇"}) {
+                CAPTURE(pre);
+                CAPTURE(kw);
+                const std::string got = build_outline_prompt(
+                    pre, StoryScale::SHORT, StyleLine::REALISTIC, kw, v);
+                CHECK(got.find(names) != std::string::npos);
+            }
+        }
+    }
+
+    SUBCASE("variation = 0 时两段都不拼，提示词回到老样子") {
+        const std::string got =
+            build_outline_prompt("", StoryScale::SHORT, StyleLine::REALISTIC, "", 0);
+        CHECK(got.find(mark) == std::string::npos);
+        CHECK(got.find(names) == std::string::npos);
+    }
+}
+
 TEST_CASE("写正文用的温度比默认低") {
     // **默认 0.7 太散。** 2026-09-12 把同一份代码连跑两组三遍，四章里对白
     // 最低那一章，一组是 21%（19~27），另一组是 1%（0~32）——同样的提示词、
     // 同样的 schema，一章能写成 35% 也能写成 0%。0% 的章切出来就是一集
     // 默片，对成片是坏掉的交付物。
+    //
+    // ⚠️ **这条用例只问这个常量是几，不问它有没有发出去。** 事实上它有很长
+    // 一段时间根本没发出去：远端那条路的 build_payload 读的是
+    // cfg.temperature，req 里那个没人看，而远端是默认后端——用例一直绿着，
+    // 旋钮一直空转。"发出去了"由 test_llm_client.cpp 的
+    // 「温度：req 没意见就用配置里的，有意见就听它的」钉着，两条缺一不可。
     CHECK(changji::stages::kChapterTemperature < 0.7);
     CHECK(changji::stages::kChapterTemperature >= 0.3);  // 太低会写成说明书
 }
@@ -3320,6 +3428,56 @@ TEST_CASE("大纲流式：半份 JSON 里挑得出东西，而且不许抛") {
     CHECK(msg.at("chapters")[0].at("title") == "");
 }
 
+TEST_CASE("POST /api/story/outline：body 里给了 variation 就用给的") {
+    // **这一条是「对照组」成立的前提。** 量"改完到底有没有变得不一样"时，
+    // 得先有一组"和改之前一模一样"的跑法——送 variation = 0，两段随机的
+    // 底子都不拼，提示词逐字节还是老样子。没有这一档的话，十次都不一样也
+    // 说明不了是这次改的功劳。
+    const fs::path root = fresh_project("对照组");
+    pipeline::CancelToken tok;
+    const json base{{"project", p_str(root)}, {"premise", "深夜便利店"}};
+
+    llm::ReplayClient a({good_outline().dump()});
+    json ba = base;
+    ba["variation"] = 0;
+    CHECK(http::post_story_outline(ba, a, tok).status == 200);
+
+    llm::ReplayClient b({good_outline().dump()});
+    CHECK(http::post_story_outline(ba, b, tok).status == 200);
+
+    REQUIRE(a.calls().size() == 1);
+    REQUIRE(b.calls().size() == 1);
+    // 同一个 variation 两次调用，提示词一个字节都不差
+    CHECK(a.calls()[0].prompt == b.calls()[0].prompt);
+    CHECK(a.calls()[0].prompt.find("【这个故事里的人怎么取名】") ==
+          std::string::npos);
+
+    SUBCASE("不给这个字段就现摇一个，两次不一样") {
+        llm::ReplayClient c({good_outline().dump()});
+        llm::ReplayClient d({good_outline().dump()});
+        CHECK(http::post_story_outline(base, c, tok).status == 200);
+        CHECK(http::post_story_outline(base, d, tok).status == 200);
+        CHECK(c.calls()[0].prompt != d.calls()[0].prompt);
+        CHECK(c.calls()[0].prompt.find("【这个故事里的人怎么取名】") !=
+              std::string::npos);
+    }
+
+    SUBCASE("给个非零的数，两次还是一样") {
+        json bv = base;
+        bv["variation"] = 987654;
+        llm::ReplayClient c({good_outline().dump()});
+        llm::ReplayClient d({good_outline().dump()});
+        CHECK(http::post_story_outline(bv, c, tok).status == 200);
+        CHECK(http::post_story_outline(bv, d, tok).status == 200);
+        CHECK(c.calls()[0].prompt == d.calls()[0].prompt);
+        CHECK(c.calls()[0].prompt.find("【这个故事里的人怎么取名】") !=
+              std::string::npos);
+    }
+
+    std::error_code ec;
+    fs::remove_all(root, ec);
+}
+
 TEST_CASE("POST /api/story/outline：带 stream 也照样回那份草稿") {
     // 流式是**加的一条路**，不是换一条：不带 stream 的老客户端、curl、
     // 对拍脚本走的还是原来那条，一个字没变；带了 stream 也只是多推几帧，
@@ -3340,9 +3498,28 @@ TEST_CASE("POST /api/story/outline：带 stream 也照样回那份草稿") {
     CHECK(a.status == 200);
     CHECK(b.status == 200);
     CHECK(a.body == b.body);
-    // 提示词也不该因为流式而变
+
+    // 提示词也不该因为流式而变。
+    //
+    // **不能直接比整串了。** 2026-09-14 起每按一次「写大纲」都会摇一个新的
+    // 底子（几个姓 + 一种名字形状），两次调用抽到的必然不同——那正是它存在
+    // 的理由，见 stages::build_outline_names。所以把那一段摘掉再比：
+    // 摘掉之后还一模一样，才说明流式没动别的地方。
     REQUIRE(streamed.calls().size() == 1);
-    CHECK(streamed.calls()[0].prompt == plain.calls()[0].prompt);
+    const auto without_names = [](std::string t) {
+        const std::string head = "【这个故事里的人怎么取名】";
+        const std::string tail = "梗概里已经出现过的人名照用，一个字不要改。";
+        const auto i = t.find(head);
+        const auto j = t.find(tail);
+        REQUIRE(i != std::string::npos);
+        REQUIRE(j != std::string::npos);
+        t.erase(i, j + tail.size() - i);
+        return t;
+    };
+    CHECK(without_names(streamed.calls()[0].prompt) ==
+          without_names(plain.calls()[0].prompt));
+    // 摘之前是不一样的——不然上面那一下就等于什么都没验
+    CHECK(streamed.calls()[0].prompt != plain.calls()[0].prompt);
 
     std::error_code ec;
     fs::remove_all(root, ec);

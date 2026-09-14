@@ -7,6 +7,7 @@
 #include <string>
 #include <vector>
 
+#include "http/job_stream.hpp"
 #include "http/reset.hpp"
 #include "models/project.hpp"
 #include "pipeline/activity.hpp"
@@ -26,6 +27,18 @@ using namespace changji::models;
 void forbid_extra(const json& body, const std::set<std::string>& allowed) {
     if (!body.is_object()) throw ApiError(400, "请求体要是一个对象");
     for (const auto& kv : body.items()) {
+        // **`stream` 一律放行。** 它是传输层的信封字段，不是业务字段：
+        // 路由那一层（script_route / batch_route）拿它决定这件活挪不挪到
+        // 后台、结果往哪条 WebSocket 送，处理函数多半根本不看它。
+        //
+        // 原来是各家自己往白名单里加，2026-09-14 栽了：给「照故事定妆」
+        // 接上思考流之后前端开始发 stream，而 post_bible 的白名单里没有，
+        // 一按就是 422 `Extra inputs are not permitted`。十几个处理函数
+        // 挨个加，漏一个的表现就是那一步整个不能用。
+        //
+        // `async` 不在这儿放行是因为它在更上面就被 take_async 摘掉了
+        // （见 server.cpp），到这儿本来就没有。
+        if (kv.key() == "stream") continue;
         if (allowed.count(kv.key()) == 0) {
             throw unprocessable_top(kv.key(), "Extra inputs are not permitted",
                                     kv.value(), "extra_forbidden");
@@ -114,6 +127,7 @@ AssetLibrary generate_bible(const std::string& script, StyleLine style_line,
     req.prompt = stages::build_bible_prompt(script, style_line);
     req.schema = stages::bible_schema();
     req.schema_name = "bible";
+    req.on_thinking = thinking_sink();
     return stage_guard([&] {
         return stages::parse_bible(client.complete(req, tok), style_line);
     });
@@ -130,6 +144,7 @@ AssetLibrary generate_bible_from_story(const Story& story, StyleLine style_line,
     req.prompt = stages::build_bible_prompt_from_story(story, style_line);
     req.schema = stages::bible_schema();
     req.schema_name = "bible";
+    req.on_thinking = thinking_sink();
     return stage_guard([&] {
         return stages::parse_bible(client.complete(req, tok), style_line);
     });
@@ -332,6 +347,7 @@ ApiResult post_plan(const json& body, llm::Client& client,
         assets, stages::shot_count_bounds(quota, duration_s,
                                           stages::count_beats(script)));
     req.schema_name = "storyboard";
+    req.on_thinking = thinking_sink();
 
     std::vector<Shot> shots = stage_guard([&] {
         std::vector<Shot> s = stages::parse_storyboard(client.complete(req, tok),

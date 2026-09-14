@@ -97,59 +97,6 @@ Option none_option(const std::string& label, const std::string& note,
 }
 
 // ---------------------------------------------------------------------------
-// 编剧模型：Qwen3 四个尺寸 × 五档量化
-// ---------------------------------------------------------------------------
-
-struct LlmSpec {
-    const char* size;  // "14B"
-    const char* quant;
-    std::uint64_t bytes;
-};
-
-// 全部来自 Qwen 官方的 GGUF 仓库，2026-09-10 用 ?blobs=true 核过。
-constexpr LlmSpec kLlm[] = {
-    {"32B", "Q8_0", 34817718912ULL},   {"32B", "Q6_K", 26883306112ULL},
-    {"32B", "Q5_K_M", 23214831232ULL}, {"32B", "Q5_0", 22635493024ULL},
-    {"32B", "Q4_K_M", 19762149024ULL},
-    {"14B", "Q8_0", 15698533728ULL},   {"14B", "Q6_K", 12121937248ULL},
-    {"14B", "Q5_K_M", 10514569568ULL}, {"14B", "Q5_0", 10263894400ULL},
-    {"14B", "Q4_K_M", 9001752960ULL},
-    {"8B", "Q8_0", 8709518112ULL},     {"8B", "Q6_K", 6725899040ULL},
-    {"8B", "Q5_K_M", 5851112224ULL},   {"8B", "Q5_0", 5720761152ULL},
-    {"8B", "Q4_K_M", 5027783488ULL},
-    {"4B", "Q8_0", 4280404704ULL},     {"4B", "Q6_K", 3306260704ULL},
-    {"4B", "Q5_K_M", 2889513184ULL},   {"4B", "Q5_0", 2823710976ULL},
-    {"4B", "Q4_K_M", 2497280256ULL},
-};
-
-/// 参数量越大写得越好，同尺寸里量化越高越好。rank 按这个排。
-///
-/// **尺寸的权重压过量化**：14B 的 Q4_K_M 写得比 8B 的 Q8_0 好。
-/// 反过来排的话，24 GB 的卡会被推荐一个 8B Q8_0，而那台机器装得下 14B。
-int llm_rank(const std::string& size, const std::string& quant) {
-    const int by_size = size == "32B" ? 400 : size == "14B" ? 300
-                        : size == "8B" ? 200 : 100;
-    const int by_quant = quant == "Q8_0" ? 5 : quant == "Q6_K" ? 4
-                         : quant == "Q5_K_M" ? 3 : quant == "Q5_0" ? 2 : 1;
-    return by_size + by_quant;
-}
-
-std::string llm_family_note(const std::string& family) {
-    if (family == "Qwen3-32B") {
-        return "写得最好的一档。代价是它和出图模型抢显存：40 GB 以下的卡"
-               "每次写剧本都要把出图那套整个卸掉再装回来。";
-    }
-    if (family == "Qwen3-14B") {
-        return "5090 上实测的一档：Q4_K_M 载进显存 15.4 GB，一次调用约 10 秒；"
-               "出片时被驱逐，重载多花 4.6 秒。";
-    }
-    if (family == "Qwen3-8B") {
-        return "小卡上的折中。剧本会短一些，人物关系容易写扁。";
-    }
-    return "什么卡都跑得动。只建议拿来验流程，写不出能用的剧本。";
-}
-
-// ---------------------------------------------------------------------------
 // 出片：MiniMax-H3 / Wan 2.2 TI2V-5B
 // ---------------------------------------------------------------------------
 
@@ -350,35 +297,15 @@ std::vector<Group> build() {
         g.required = true;
         g.owned_roles = {"llm"};
 
-        for (const auto& spec : kLlm) {
-            const std::string size = spec.size;
-            const std::string quant = spec.quant;
-            const std::string file = "Qwen3-" + size + "-" + quant + ".gguf";
-            Option o;
-            o.id = lower_id("qwen3-" + size + "-" + quant);
-            o.family = "Qwen3-" + size;
-            o.label = "Qwen3-" + size + " · " + quant;
-            o.quant = quant;
-            o.family_note = llm_family_note(o.family);
-            o.note = quant_note(quant);
-            // **和出图出片不一样：这条路没有"权重放内存"那一档。**
-            // llama.cpp 是整个载进显存的，装不下就是载不进去。
-            o.min_vram_gb = llm_vram(gb(spec.bytes));
-            o.rank = llm_rank(size, quant);
-            o.files.push_back({"llm/" + file, "Qwen/Qwen3-" + size + "-GGUF", file,
-                               spec.bytes, "llm", "编剧模型本体"});
-            // 下了模型就该用进程内那条路，否则下完还得自己去设置页切一下，
-            // 而不切的表现是「写剧本」按钮报连不上 127.0.0.1:11434。
-            o.settings.push_back({"llm.backend", "local"});
-            g.options.push_back(std::move(o));
-        }
-
-        // **默认这一项，不是上面任何一个本地权重。**
+        // **这一组里没有本地权重了。** 2026-09-14 把进程内那条后端整个
+        // 删了（见 llm::make_client），于是"下一份 Qwen3 GGUF"这件事没有
+        // 任何东西会去用它——留着只会让人下二十个 G 然后发现用不上。
         //
-        // rank 比最大的本地档（32B Q8_0 = 405）还高，min_vram_gb 是 0，
-        // 所以 recommend() 在任何一张卡上都会挑它。理由在
-        // config::LLMConfig::backend 的注释里，一句话是：本地那一档写作
-        // 最高 59 分而它要占走整张卡，云上这一档不要钱。
+        // 这一组照样是 required：编剧模型是流水线第一步，只是现在它
+        // 一定是外接的，用户要选的是"哪一家"而不是"下哪一份"。
+
+        // **默认这一项。** min_vram_gb 是 0、rank 最高，所以 recommend()
+        // 在任何一张卡上都挑它。
         //
         // 它不是 kNoneOption——「什么都不装」和「装好了，用这个」是两件事。
         // 前者在 recommend() 里被跳过（那是这一页要解决的状态），

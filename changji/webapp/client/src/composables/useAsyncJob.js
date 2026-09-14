@@ -10,6 +10,7 @@
  * 所以接口只回一句"开始了"，结果走这条 socket：
  *
  *     job_progress   干到哪儿了
+ *     job_thinking   模型"先想再写"的那一段（**每一步都有**）
  *     job_preview    采样到一半的那张小图（出图才有）
  *     job_done       干完了，result 就是同步那条会回的那份 body
  *     job_error      砸了
@@ -19,6 +20,7 @@
  * 没有 socket 的话异步那条根本没地方把结果送回来。
  */
 import { openJobSocket } from '@/composables/useJobSocket'
+import { useThinking } from '@/stores/thinking'
 
 /**
  * @param {(extra: object) => Promise<any>} send
@@ -27,14 +29,22 @@ import { openJobSocket } from '@/composables/useJobSocket'
  * @param {object}   [opts]
  * @param {string}   [opts.prefix='job']  stream id 的前缀，只为了日志好认
  * @param {(cur:number,total:number,msg:string)=>void} [opts.onProgress]
+ * @param {string}   [opts.label]
+ *        给人看的活名（"写大纲"这种），显示在思考浮层里。不给就只显示内容。
  * @param {(dataUrl:string, step:number)=>void} [opts.onPreview]
  *        采样到一半那张小图。**一张几十 KB，别存**——下一步马上又有一张，
  *        攒起来只会把这条通道变成主要流量。
  * @returns {Promise<any|null>} 干完的那份结果；砸了或者断了回 null
  * @throws 把 send 抛出来的东西原样抛出去（400/404 这些还是同步回的）
  */
-export async function runAsyncJob(send, { prefix = 'job', onProgress, onPreview } = {}) {
+export async function runAsyncJob(
+  send,
+  { prefix = 'job', label = '', onProgress, onPreview } = {},
+) {
   const streamId = prefix + '-' + Math.random().toString(36).slice(2, 10)
+  // **思考流统一在这儿接，不让每个视图各接一遍。** 会思考的步骤有十几个，
+  // 散在五六个视图里；漏掉的那几个的表现是"这一步没有思考显示"，不报错。
+  const thinking = useThinking()
 
   let settle = null
   const finished = new Promise((r) => {
@@ -49,7 +59,9 @@ export async function runAsyncJob(send, { prefix = 'job', onProgress, onPreview 
       streamId,
       (msg) => {
         if (msg.job_id !== streamId) return
-        if (msg.type === 'job_progress') {
+        if (msg.type === 'job_thinking') {
+          thinking.push(streamId, msg.text ?? '')
+        } else if (msg.type === 'job_progress') {
           onProgress?.(msg.current ?? 0, msg.total ?? 0, msg.message ?? '')
         } else if (msg.type === 'job_preview') {
           onPreview?.(msg.image ?? '', msg.current ?? 0)
@@ -74,6 +86,7 @@ export async function runAsyncJob(send, { prefix = 'job', onProgress, onPreview 
     setTimeout(resolve, 2000)
   })
 
+  if (opened) thinking.start(streamId, label)
   try {
     const started = await send(opened ? { stream: streamId, async: true } : {})
     // 同步那条（socket 没开）直接就是结果了。
@@ -82,6 +95,9 @@ export async function runAsyncJob(send, { prefix = 'job', onProgress, onPreview 
     if (!fin.ok) throw new Error(fin.message || '这件事没干成')
     return fin.result
   } finally {
+    // **成了、砸了、抛了都要清。** 漏一条的话顶栏会永远显示"正在思考"，
+    // 而那比不显示难受得多。
+    thinking.finish(streamId)
     sock?.close()
   }
 }

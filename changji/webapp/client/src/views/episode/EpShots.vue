@@ -24,6 +24,7 @@ import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import AppIcon from '@/components/AppIcon.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import { api, mediaUrl } from '@/api'
+import { runAsyncJob } from '@/composables/useAsyncJob'
 import {
   CAMERA_ANGLES,
   CAMERA_MOVES,
@@ -265,12 +266,17 @@ async function generate() {
   }
   const result = await run(
     () =>
-      api.plan({
-        project: session.projectPath,
-        script: scriptData.script,
-        episode_id: session.episodeId,
-        duration_s: scriptData.target_duration_s || 60,
-      }),
+      runAsyncJob(
+        (extra) =>
+          api.plan({
+            project: session.projectPath,
+            script: scriptData.script,
+            episode_id: session.episodeId,
+            duration_s: scriptData.target_duration_s || 60,
+            ...extra,
+          }),
+        { prefix: 'plan', label: '拆分镜' },
+      ),
     { key: 'plan', refresh: true },
   )
   if (result) {

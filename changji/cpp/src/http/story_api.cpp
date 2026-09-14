@@ -11,6 +11,7 @@
 #include "models/project.hpp"
 #include "models/story.hpp"
 #include "stages/chapter_write.hpp"
+#include "stages/script.hpp"   // random_shape
 #include "stages/story_analyze.hpp"
 #include "stages/story_import.hpp"
 #include "stages/story_outline.hpp"
@@ -40,6 +41,18 @@ using namespace changji::models;
 void forbid_extra(const json& body, const std::set<std::string>& allowed) {
     if (!body.is_object()) throw ApiError(400, "请求体要是一个对象");
     for (const auto& kv : body.items()) {
+        // **`stream` 一律放行。** 它是传输层的信封字段，不是业务字段：
+        // 路由那一层（script_route / batch_route）拿它决定这件活挪不挪到
+        // 后台、结果往哪条 WebSocket 送，处理函数多半根本不看它。
+        //
+        // 原来是各家自己往白名单里加，2026-09-14 栽了：给「照故事定妆」
+        // 接上思考流之后前端开始发 stream，而 post_bible 的白名单里没有，
+        // 一按就是 422 `Extra inputs are not permitted`。十几个处理函数
+        // 挨个加，漏一个的表现就是那一步整个不能用。
+        //
+        // `async` 不在这儿放行是因为它在更上面就被 take_async 摘掉了
+        // （见 server.cpp），到这儿本来就没有。
+        if (kv.key() == "stream") continue;
         if (allowed.count(kv.key()) == 0) {
             throw unprocessable_top(kv.key(), "Extra inputs are not permitted",
                                     kv.value(), "extra_forbidden");
@@ -332,7 +345,8 @@ json outline_progress_payload(const json& snap) {
 json write_outline(ProjectStore& store, const Project& project,
                    const Story& existing, std::string premise, StoryScale scale,
                    const std::string& keywords, const std::string& stream_id,
-                   llm::Client& client, pipeline::CancelToken& tok) {
+                   std::uint32_t variation, llm::Client& client,
+                   pipeline::CancelToken& tok) {
     pipeline::Activity act{"outline", paths::to_utf8(store.root()), "",
                            "正在出大纲"};
 
@@ -356,10 +370,14 @@ json write_outline(ProjectStore& store, const Project& project,
     } book{paths::to_utf8(store.root()), stream_id};
 
     llm::Request req;
-    req.prompt =
-        stages::build_outline_prompt(premise, scale, project.style_line, keywords);
+    // 这一次的底子由调用方定（见 post_story_outline 里那段）：不给就现摇，
+    // 给了就用给的，0 等于回到改之前。**同步和异步两条路都从这儿过**，
+    // 所以两边摇的是同一个数——摇两次的话页面上看到的和存下来的对不上。
+    req.prompt = stages::build_outline_prompt(premise, scale, project.style_line,
+                                              keywords, variation);
     req.schema = stages::outline_schema();
     req.schema_name = "story_outline";
+    req.on_thinking = thinking_sink();
 
     Story draft;
     try {
@@ -445,8 +463,8 @@ json write_outline(ProjectStore& store, const Project& project,
 
 ApiResult post_story_outline(const json& body, llm::Client& client,
                              pipeline::CancelToken& tok) {
-    forbid_extra(body,
-                 {"project", "premise", "scale", "keywords", "stream", "async"});
+    forbid_extra(body, {"project", "premise", "scale", "keywords", "stream",
+                        "async", "variation"});
     ProjectStore store = open_project(body);
     const Project project = load_or_400(store);
     const Story existing = load_story_or_400(store);
@@ -463,6 +481,25 @@ ApiResult post_story_outline(const json& body, llm::Client& client,
     const std::string keywords = opt_str(body, "keywords", "");
     const std::string stream_id = text::strip_ws(opt_str(body, "stream"));
 
+    // 这一次的底子：几个姓、一种名字形状，什么都没填时再加一组
+    // 场域/关系/压力/调子（见 stages::build_outline_names / _spark）。
+    //
+    // **不给就现摇一个**，给了就用给的——和 /api/script/write 的 variation、
+    // 出图那边的 seed 同一规矩（见 ref_gen.hpp）。界面上"再来一个"就是不送
+    // 这个字段，"还要刚才那一版的底子"就是把上次的数送回来。
+    //
+    // **送 0 等于回到改之前**：两段都不拼，提示词逐字节还是老样子。
+    // 量"改完到底有没有变"时那就是对照组——没有对照的话，十次都不一样也
+    // 说明不了是这次改的功劳。
+    //
+    // 下界写 -1 不是 0：num_in_range 的下界是开区间（`v <= gt` 就报 422），
+    // 而 0 是合法值。
+    const std::uint32_t variation =
+        body.is_object() && body.contains("variation")
+            ? static_cast<std::uint32_t>(
+                  num_in_range(body, "variation", 0.0, -1.0, 4294967295.0))
+            : stages::random_shape();
+
     // 异步那条，理由和写一章一模一样（见 post_story_chapter 里那段）：
     // 这个 handler 占着 Crow 的一条 I/O 线程，而出一份大纲要三四十秒，
     // 落在同一条线程上的连接会跟着冻住——顶栏那块表首当其冲。
@@ -473,15 +510,15 @@ ApiResult post_story_outline(const json& body, llm::Client& client,
         // 还没跑到 write_outline。擦账和记错都在 write_outline 里，这儿不管。
         OutlineRegistry::instance().started(project_path, stream_id);
         Offload::instance().post([project_path, premise, scale, keywords,
-                                  stream_id, &client] {
+                                  stream_id, variation, &client] {
             try {
                 ProjectStore st = open_project(project_path);
                 const Project pj = load_or_400(st);
                 const Story ex = load_story_or_400(st);
                 pipeline::CancelToken own;
                 job_done(stream_id, write_outline(st, pj, ex, premise, scale,
-                                                  keywords, stream_id, client,
-                                                  own));
+                                                  keywords, stream_id, variation,
+                                                  client, own));
             } catch (const ApiError& e) {
                 job_error(stream_id, e.what());
             } catch (const std::exception& e) {
@@ -492,7 +529,7 @@ ApiResult post_story_outline(const json& body, llm::Client& client,
     }
 
     return {200, write_outline(store, project, existing, premise, scale,
-                               keywords, stream_id, client, tok)};
+                               keywords, stream_id, variation, client, tok)};
 }
 
 /// 丢掉还没采用的那份大纲。
@@ -609,6 +646,7 @@ ApiResult post_story_analyze(const json& body, llm::Client& client,
     req.prompt = stages::build_analyze_prompt(story, project.style_line);
     req.schema = stages::analyze_schema();
     req.schema_name = "story_analysis";
+    req.on_thinking = thinking_sink();
 
     Story draft;
     try {
@@ -653,6 +691,7 @@ json write_one_chapter(ProjectStore& store, const Project& project, Story story,
     req.schema = stages::chapter_schema(stages::chapter_target_scenes(story),
                                        stages::chapter_scene_paras(story));
     req.schema_name = "chapter";
+    req.on_thinking = thinking_sink();
     req.temperature = stages::kChapterTemperature;
 
     // 给了 stream_id 就**边写边推**。写一章要一两分钟，攒齐了再蹦出来的话
@@ -890,6 +929,7 @@ ApiResult post_story_revise(const json& body, llm::Client& client,
     if (!streaming) {
         req.schema = stages::revise_schema();
         req.schema_name = "story_revision";
+        req.on_thinking = thinking_sink();
     }
 
     stages::Revision rev;

@@ -29,6 +29,7 @@ import AppIcon from '@/components/AppIcon.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import ScriptReader from '@/components/ScriptReader.vue'
 import { api } from '@/api'
+import { runAsyncJob } from '@/composables/useAsyncJob'
 import { useAction } from '@/composables/useAction'
 import { useSession } from '@/stores/session'
 import { useUi } from '@/stores/ui'
@@ -94,12 +95,17 @@ watch(() => [session.projectPath, session.episodeId], load, { immediate: true })
 async function write() {
   const result = await run(
     () =>
-      api.writeScript({
-        project: session.projectPath,
-        episode_id: session.episodeId,
-        premise: session.project?.premise ?? '',
-        duration_s: durationS.value,
-      }),
+      runAsyncJob(
+        (extra) =>
+          api.writeScript({
+            project: session.projectPath,
+            episode_id: session.episodeId,
+            premise: session.project?.premise ?? '',
+            duration_s: durationS.value,
+            ...extra,
+          }),
+        { prefix: 'script', label: '写剧本' },
+      ),
     { key: 'write' },
   )
   if (result) draft.value = result

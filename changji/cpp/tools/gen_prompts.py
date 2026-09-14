@@ -378,6 +378,81 @@ def parse_toml(text: str) -> dict:
     return doc
 
 
+_SHARED_REF = re.compile(r"\{\{\s*shared\.([A-Za-z0-9_-]+)\s*\}\}")
+
+
+def expand_shared(doc: dict) -> dict:
+    """把 `{{shared.键}}` 换成 `[shared]` 表里那段文字，然后把 `[shared]` 拿掉。
+
+    ---- 为什么要有这个 ----
+
+    同一条规矩在好几张表里各抄一遍是这份文件最容易出错的地方：「只输出
+    JSON，不要任何解释文字。」有九处，画风那两句各四处，「必须沿用这些已有
+    角色」三处。改一处忘了另外两处，出来的东西不一致，而**没有任何地方会
+    报错**——提示词差一句话，模型只是写得不一样，接口照样返回 200。
+
+    ---- 为什么在生成期展开，而不是让 C++ 去拼 ----
+
+    展开之后生成出来的头**一个字节都没变**。这很要紧：[script] [bible]
+    [storyboard] 这几张表被「和 Python 逐字节一样」的语料钉着，任何"顺手
+    整理一下"都会把那几条用例弄红，然后人就会去改语料——而改语料是应该
+    留给"真的想改提示词"那一刻的动作。让 C++ 去拼的话，拼接顺序就成了第二
+    个要维护的地方，而它没有任何东西钉着。
+
+    ---- 规矩 ----
+
+    · `[shared]` 里只能放字符串，而且**不能再引用别的共用段**：一层就够用，
+      两层之后"这句话到底长什么样"要跳三个地方才看得出来。
+    · 引用了不存在的键当场报错。写错一个字就静默留下 `{{shared.jsno_only}}`
+      在提示词里的话，模型会把它当正文读。
+    · 定义了没人用的键也报错。多半是改名时漏了一处，而留着的那份会让下一个
+      人以为它还在生效。
+    """
+    shared = doc.get("shared")
+    if shared is None:
+        return doc
+    if not isinstance(shared, dict):
+        raise TomlError("[shared] 要是一张表")
+    for k, v in shared.items():
+        if not isinstance(v, str):
+            raise TomlError(f"[shared] {k}：只能放字符串，共用段是文字不是旋钮")
+        if _SHARED_REF.search(v):
+            raise TomlError(f"[shared] {k}：共用段里不能再引用共用段")
+
+    used: set[str] = set()
+
+    def sub(text: str, where: str) -> str:
+        def one(m: "re.Match[str]") -> str:
+            k = m.group(1)
+            if k not in shared:
+                raise TomlError(f"{where}：[shared] 里没有 {k}")
+            used.add(k)
+            return shared[k]
+
+        return _SHARED_REF.sub(one, text)
+
+    def walk(value, where: str):
+        if isinstance(value, str):
+            return sub(value, where)
+        if isinstance(value, list):
+            return [walk(x, where) for x in value]
+        if isinstance(value, dict):
+            return {k: walk(v, f"{where} {k}") for k, v in value.items()}
+        return value
+
+    out = {}
+    for tname, table in doc.items():
+        if tname == "shared":
+            continue
+        out[tname] = walk(table, f"[{tname}]")
+
+    dead = sorted(set(shared) - used)
+    if dead:
+        raise TomlError("[shared] 里这几条没人引用，是不是改名时漏了："
+                        + "、".join(dead))
+    return out
+
+
 def _first_diff(a, b, path: str = "") -> str:
     if isinstance(a, dict) and isinstance(b, dict):
         for k in sorted(set(a) | set(b)):
@@ -518,7 +593,7 @@ def main(argv: list[str]) -> int:
     src = Path(argv[1])
     dest = Path(argv[2])
     try:
-        doc = parse_toml(src.read_text(encoding="utf-8"))
+        doc = expand_shared(parse_toml(src.read_text(encoding="utf-8")))
         out = generate(doc, src.name)
     except TomlError as e:
         print(f"{src}: {e}", file=sys.stderr)

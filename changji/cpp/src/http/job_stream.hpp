@@ -23,9 +23,12 @@
 // 什么，但那一步正好是用户等得最久的一步，"写完了"和"看到"之间再插一段
 // 空白很难受。
 
+#include <functional>
 #include <string>
 
 #include <nlohmann/json.hpp>
+
+#include "pipeline/jobs.hpp"
 
 namespace changji::http {
 
@@ -38,6 +41,66 @@ void job_error(const std::string& stream_id, const std::string& message);
 /// 干到哪儿了。`total` 为 0 表示"不知道一共几步"，界面就不画进度条。
 void job_progress(const std::string& stream_id, int current, int total,
                   const std::string& message = "");
+
+/// 模型"先想再写"的那一段，边想边推。
+///
+/// **每一步都该有这个**——写大纲、写正文、写剧本、拆分镜。现在的模型都要
+/// 思考，而思考少则十几秒、多则十几分钟：不推的话用户面对的是一个一动不动
+/// 的进度条，分不清是在想还是卡死了。
+///
+/// 只推增量，不推累计：一段思考能有几千字，每次重发全文的话这条通道就
+/// 被它占满了。攒成整段是界面的事。
+void job_thinking(const std::string& stream_id, const std::string& piece);
+
+/// 这条后台线程正在给哪条 stream 干活。没有就是空串。
+///
+/// **为什么要有它。** 思考流要接到每一步上（写大纲、写正文、写剧本、
+/// 拆分镜），而那些处理函数散在五个文件里、十五个调用点。让每一个都自己
+/// 从请求体里把 `stream` 捞出来的话，还得挨个去改它们的 `forbid_extra`
+/// 白名单——十五处里漏一处的表现是"那一步没有思考显示"，而且不报错。
+///
+/// 后台那条活本来就是一个线程干一件事（见 start_async），所以"当前这条
+/// 线程在给谁干活"是个准确的说法，不是投机取巧。
+std::string current_stream();
+
+/// 进后台线程时挂上，出去时摘掉。**一定要用 RAII**：中途抛异常的路径
+/// 有好几条，手动清的话总有一条会漏，而漏掉的后果是下一件活把思考推到
+/// 上一件活的频道上。
+///
+/// 它顺带持有**这件活的取消令牌**，并按 stream_id 登记进一张表——
+/// 这样界面上那个「停下」才有东西可以按。见 cancel_job。
+class JobScope {
+public:
+    explicit JobScope(std::string stream_id);
+    ~JobScope();
+    JobScope(const JobScope&) = delete;
+    JobScope& operator=(const JobScope&) = delete;
+
+private:
+    std::string id_;
+    std::string prev_;                    ///< 上一层的 stream id
+    pipeline::CancelToken* prev_token_;   ///< 同一个 id 上一层登记的那个
+    pipeline::CancelToken* prev_cancel_;  ///< 上一层这条线程的令牌
+    pipeline::CancelToken token_;
+};
+
+/// 这条后台线程这件活的取消令牌。
+///
+/// **没有 JobScope 时返回一个哑元**（同步那条路、单测直接调）：那儿没人
+/// 能按停，给个永远不会被触发的令牌比让调用方各自 new 一个干净。
+pipeline::CancelToken& current_cancel();
+
+/// 按 stream_id 把那件活停掉。找不到（早干完了、id 写错了）返回 false。
+///
+/// **找不到不是错。** 界面上那个按钮是无条件可点的：用户按下去的那一刻
+/// 活可能刚好干完，重复点也不该弹错误框。
+bool cancel_job(const std::string& stream_id);
+
+/// 给 `llm::Request::on_thinking` 用的那个回调，已经接好这条通道。
+///
+/// 不给 `stream_id` 就用 `current_stream()`——绝大多数调用点该用这个。
+/// 空 stream 时返回一个空的 function，同步那条路什么都不发生。
+std::function<void(const std::string&)> thinking_sink(std::string stream_id = {});
 
 /// 采样到一半的那张小图（`data:image/png;base64,…`）。
 ///

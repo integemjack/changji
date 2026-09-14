@@ -22,6 +22,7 @@ import ToastStack from '@/components/ToastStack.vue'
 import EngineLamp from '@/components/EngineLamp.vue'
 import ProjectRail from '@/components/ProjectRail.vue'
 import JobBadge from '@/components/JobBadge.vue'
+import ThinkingBadge from '@/components/ThinkingBadge.vue'
 import SysMeter from '@/components/SysMeter.vue'
 import { STEP_ROUTES } from '@/router'
 import { useSession } from '@/stores/session'
@@ -153,6 +154,7 @@ function cycleTheme() {
 
       <!-- GPU / CPU / 内存三个小表，引擎走 WebSocket 推过来 -->
       <!-- 有活在跑才出现；鼠标放上去列出来，点一行直接过去。 -->
+      <ThinkingBadge />
       <JobBadge />
 
       <SysMeter />

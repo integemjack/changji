@@ -722,7 +722,6 @@ add_executable(changji
     src/stages/tts_backends.cpp
     src/infer/ggml_abi.cpp
     src/infer/llama_tts.cpp
-    src/infer/llama_chat.cpp
     src/infer/scheduler.cpp
     src/infer/sd_backend.cpp
     src/infer/lora_names.cpp
@@ -731,7 +730,6 @@ add_executable(changji
     src/infer/sd_upscale.cpp
     src/llm/client.cpp
     src/llm/sse.cpp
-    src/llm/local_client.cpp
     src/llm/client_http.cpp
     src/infer/worker_pool.cpp
     src/infer/worker_farm.cpp
@@ -1069,6 +1067,7 @@ if(CHANGJI_BUILD_TESTS)
         tests/unit/test_episode.cpp
         tests/unit/test_run.cpp
         tests/unit/test_ws_client.cpp
+        tests/unit/test_job_scope.cpp
         tests/unit/test_ws_hub.cpp
         tests/unit/test_util_time.cpp
         tests/unit/test_proc.cpp
@@ -1155,8 +1154,7 @@ if(CHANGJI_BUILD_TESTS)
         # test_facades.cpp 验的就是那一支的行为。
         src/infer/ggml_abi.cpp
         src/infer/llama_tts.cpp
-        src/infer/llama_chat.cpp
-        src/infer/scheduler.cpp
+            src/infer/scheduler.cpp
         src/infer/sd_backend.cpp
         src/infer/lora_names.cpp
         src/infer/sd_image.cpp
@@ -1171,8 +1169,7 @@ if(CHANGJI_BUILD_TESTS)
         src/media/assemble.cpp
         src/llm/client.cpp
         src/llm/sse.cpp
-        src/llm/local_client.cpp
-        src/config/settings.cpp
+            src/config/settings.cpp
         src/config/writeback.cpp
         src/config/runtime.cpp
         src/http/readonly.cpp

@@ -48,12 +48,14 @@ import { api, mediaUrl } from '@/api'
 import { useAction } from '@/composables/useAction'
 import { runAsyncJob } from '@/composables/useAsyncJob'
 import { openJobSocket } from '@/composables/useJobSocket'
+import { useThinking } from '@/stores/thinking'
 import { useSession } from '@/stores/session'
 import { useUi } from '@/stores/ui'
 import { useWriter } from '@/stores/run'
 
 const session = useSession()
 const ui = useUi()
+const thinking = useThinking()
 const writer = useWriter()
 const { run, isBusy } = useAction()
 // **存稿走自己的一条线。** useAction 一次只跑一件事，而改一段要跑一分钟——
@@ -877,6 +879,7 @@ async function revise() {
   }
 
   const finish = () => {
+    thinking.finish(streamId)
     sock?.close()
     sock = null
     streaming.value = null
@@ -915,6 +918,9 @@ async function revise() {
       streamId,
       (msg) => {
         if (msg.job_id !== streamId) return
+        // 思考流。**这三步（写大纲 / 写正文 / 改一段）没走 runAsyncJob**，
+        // 所以要在这儿自己接一下——而它们恰恰是思考最久的三步。
+        if (msg.type === 'job_thinking') return thinking.push(streamId, msg.text ?? '')
         if (msg.type === 'story_token') {
           acc += msg.text ?? ''
           // 改一段是插在中间的，所以是选区起点加上已经流出来的长度
@@ -940,6 +946,10 @@ async function revise() {
     // 连不上也别卡着。两秒够本机的 WebSocket 握完手了。
     setTimeout(resolve, 2000)
   })
+  // 顶栏那块「正在思考」。**开在这儿、清在 finally 里**——这三步都有
+  // 好几条提前 return 的路，手动清总会漏一条，而漏掉的后果是顶栏
+  // 永远显示在想。
+  if (opened) thinking.start(streamId)
 
   const started = await run(post, { key: 'revise' })
   let result = started
@@ -1203,6 +1213,9 @@ async function writeStory() {
       streamId,
       (msg) => {
         if (msg.job_id !== streamId) return
+        // 思考流。**这三步（写大纲 / 写正文 / 改一段）没走 runAsyncJob**，
+        // 所以要在这儿自己接一下——而它们恰恰是思考最久的三步。
+        if (msg.type === 'job_thinking') return thinking.push(streamId, msg.text ?? '')
         // 正在长出来的那份大纲。**整份换掉，不是往上累加**——那一头推的
         // 是"到此为止解出来的全份"，累加会把每一帧的前缀叠成一团。
         if (msg.type === 'outline_progress') {
@@ -1229,6 +1242,10 @@ async function writeStory() {
     )
     setTimeout(resolve, 2000)
   })
+  // 顶栏那块「正在思考」。**开在这儿、清在 finally 里**——这三步都有
+  // 好几条提前 return 的路，手动清总会漏一条，而漏掉的后果是顶栏
+  // 永远显示在想。
+  if (opened) thinking.start(streamId)
 
   const started = await run(
     () =>
@@ -1250,6 +1267,7 @@ async function writeStory() {
     if (!fin.ok) ui.error(fin.message || '这份大纲没写成')
   }
 
+  thinking.finish(streamId)
   sock?.close()
   outlineLive.value = null
   if (result) {
@@ -1435,6 +1453,9 @@ async function writeChapter(chapterId, overwrite = false) {
       streamId,
       async (msg) => {
         if (msg.job_id !== streamId) return
+        // 思考流。**这三步（写大纲 / 写正文 / 改一段）没走 runAsyncJob**，
+        // 所以要在这儿自己接一下——而它们恰恰是思考最久的三步。
+        if (msg.type === 'job_thinking') return thinking.push(streamId, msg.text ?? '')
         // job_done / job_error 是"这件活完了"的通用信号（见 job_stream.hpp）。
         // story_token 和 story_error 是这条路独有的：前者是正在长出来的
         // 正文，后者是"把流了一半的字撤掉"——**撤字归撤字，完事归完事**，
@@ -1468,6 +1489,10 @@ async function writeChapter(chapterId, overwrite = false) {
     )
     setTimeout(resolve, 2000)
   })
+  // 顶栏那块「正在思考」。**开在这儿、清在 finally 里**——这三步都有
+  // 好几条提前 return 的路，手动清总会漏一条，而漏掉的后果是顶栏
+  // 永远显示在想。
+  if (opened) thinking.start(streamId)
 
   const started = await run(
     () =>
@@ -1490,6 +1515,7 @@ async function writeChapter(chapterId, overwrite = false) {
     if (!fin.ok) ui.error(fin.message || '这一章没写成')
   }
 
+  thinking.finish(streamId)
   sock?.close()
   streaming.value = null
   if (!result) {

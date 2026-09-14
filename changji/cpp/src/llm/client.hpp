@@ -19,6 +19,7 @@
 // 一是分层，二是很实际：请求怎么拼、错误怎么翻成人话、返回怎么抽内容，
 // 这三件事全是纯逻辑，能测死；混进真实网络之后就只能靠手工验了。
 
+#include <cstdint>
 #include <functional>
 #include <map>
 #include <memory>
@@ -47,8 +48,36 @@ struct Request {
     nlohmann::ordered_json schema;
     /// schema 的名字，走 response_format 时要填。
     std::string schema_name;
-    double temperature = 0.7;
+
+    /// 这一步专用的温度。**不填就用 `[llm].temperature`**，也就是用户在
+    /// 设置页上定的那个全局值。
+    ///
+    /// ⚠️ **做成 optional 而不是给个默认数。** 原来是 `double = 0.7`，
+    /// 而远端那条路 build_payload 根本没读它（发的一直是 cfg.temperature）——
+    /// 于是 kChapterTemperature 那个"写正文用 0.5"在默认后端上空转了很久，
+    /// 谁也没发现，因为两条路都返回 200。接上线之后要是还留着默认数，
+    /// 病就换个方向犯：**任何一个忘了填的调用点都会悄悄盖掉用户的设置**，
+    /// 他把温度调到 0.3，写分镜那一步照样跑 0.7，而界面上显示的是 0.3。
+    /// 空的才是"没意见"，有值才是"这一步我有意见"。
+    std::optional<double> temperature;
+
+    /// 模型"先想再写"的那一段，每收到一点回调一次。
+    ///
+    /// **和正文分两路，这是有意的。** 现在的模型都要思考，而各家都把思考
+    /// 放在单独的字段里（智谱 reasoning_content、OpenRouter reasoning）。
+    /// 并进正文的话，思考稿会直接流进用户的编辑器。
+    ///
+    /// 放在 Request 上而不是给 complete 多加一个参数：这条流是**每一步**
+    /// 都要有的（写大纲、写正文、写剧本、拆分镜），而那些调用点散在六七个
+    /// 文件里。放在这儿的话，有 stream_id 的调用点加一行就接上了，
+    /// 没有的（对拍、回放、后台批处理）留空什么都不发生。
+    ///
+    /// ⚠️ 回调跑在**收流那条线程**上，每来一小段就一次。别在里面做慢活，
+    /// 也别在里面碰界面状态以外的东西。
+    std::function<void(const std::string& piece)> on_thinking;
+
 };
+
 
 /// HTTP 响应。刻意只留用得上的三样。
 struct HttpResponse {
@@ -109,38 +138,18 @@ public:
                                  const OnToken& on_token);
 };
 
-/// 拼请求体。对应 Python 三个阶段里那份 payload。
+/// 拼请求体。
 ///
-/// 三个阶段的 payload 是同一个形状，Python 那边抄了三遍。这里合成一处——
-/// 这不算破契约：契约是"发给大模型服务的东西"，形状一致就行。
+/// **schema 不走 response_format，以文字贴在提示词后面**（见
+/// schema_as_prompt）。2026-09-14 起只有这一种发法，没有档位、没有退路——
+/// 理由写在 client.cpp 的 build_payload 里，一句话是：那层"硬约束"各家
+/// 支持得七零八落，而为了兜住差异挂的退档梯子会被别的 400 误触发，
+/// 悄悄把结构退没。
 ///
-/// **它原样用 `req` 里的东西，不做任何加工。** 远端那条路上要做的两处
-/// 加工（削 schema、把 schema 写进提示词）在 RemoteClient 里先改 Request，
-/// 见 remote_schema / schema_as_prompt。分开是因为这个函数被一条
-/// 「和 Python 逐字段一样」的语料钉着，加工混进来就分不清差异是谁造成的。
+/// 两处"没填"的兜底：`req.temperature` 空着落到 `cfg.temperature`；
+/// 空 schema 就只发提示词本身。
 nlohmann::ordered_json build_payload(const config::LLMConfig& cfg,
-                                     const Request& req,
-                                     bool json_schema_mode);
-
-/// 把 schema 削成 OpenAI 兼容接口吃得下的样子。
-///
-/// **不削的话，我们最管用的那几条约束会把整个 schema 一起带走。**
-/// 兼容接口的 `json_schema` 严格模式**不支持**这些校验关键字：
-/// minItems / maxItems / uniqueItems / minLength / maxLength / pattern /
-/// format / minimum / maximum / multipleOf / minProperties / maxProperties
-/// / patternProperties / propertyNames——**不是忽略，是整份 schema 退回
-/// 400**。而 400 会触发下面那条退路：不带 schema 再发一次。于是「加了
-/// minItems 让它没得选」变成「这一次调用连字段名都没有约束」，而且不报错。
-///
-/// 所以这里把它们摘掉，**顺手折进 `description`**：
-/// `{"type":"array","minItems":2}` → 描述末尾多一句「（至少 2 项）」。
-/// 折而不是丢，是因为**远端那条路上模型是看得见 description 的**
-/// （整份 schema 进请求体），而本地那条看不见（GBNF 只留结构，
-/// 见 stages/chapter_write.cpp 那段注释）。两条路上这些数都还在起作用，
-/// 只是一条靠语法、一条靠读。
-///
-/// 本地那条**不要调用它**：GBNF 认这些关键字，削了就真的没了。
-nlohmann::ordered_json remote_schema(const nlohmann::ordered_json& schema);
+                                     const Request& req);
 
 /// 把 schema 抄进提示词里。退回 `json_object` 那一下用。
 ///
@@ -154,16 +163,6 @@ nlohmann::ordered_json remote_schema(const nlohmann::ordered_json& schema);
 /// minItems 那些数读得懂就有用。
 std::string schema_as_prompt(const std::string& prompt,
                              const nlohmann::ordered_json& schema);
-
-/// 忘掉"哪些服务不支持 json_schema"那笔账。
-///
-/// 那笔账是**进程级**的（见 client.cpp 的 SchemaSupport）：一个地址上的一个
-/// 模型被验明不吃 json_schema 之后，往后就直接走退路，省下每次白花的那一整
-/// 次生成。进程级是对的——同一个服务在一次运行里不会忽然支持起来——但它也
-/// 意味着**测试之间会互相串**：前一个用例验出"这个假服务不支持"，后一个用例
-/// 就再也发不出 json_schema 了，而它断言的正是那一下。所以测试的 fixture 要
-/// 调它。生产代码没有理由调。
-void reset_schema_support();
 
 /// 从返回里抽出内容。抽不到抛 LlmError。
 ///
@@ -258,5 +257,18 @@ HttpPost default_http_post();
 
 /// 同上，但响应边到边给。SSE 那条走它。
 HttpPostStream default_http_post_stream();
+
+/// 造一个大模型客户端。
+///
+/// **只有远端一条路。** 2026-09-14 把进程内那条删了，理由见
+/// client.cpp 里这个函数的实现。
+///
+/// `post` 是发送函数，由调用方注入（生产里传 `default_http_post()`）。
+/// **做成参数而不是在这里直接调**：那个函数只链进主目标，测试目标里没有，
+/// 写死会让测试链不过。
+///
+/// `stream_post` 是走 SSE 用的。不给的话仍然能用，只是"边写边看"退回整段
+/// 到——写一章、写大纲在界面上就是干等到最后一下子出来。
+std::shared_ptr<Client> make_client(HttpPost post, HttpPostStream stream_post = {});
 
 }  // namespace changji::llm

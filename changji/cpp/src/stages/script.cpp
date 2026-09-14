@@ -486,6 +486,17 @@ std::vector<ActSpec> act_plan(double duration_s, std::uint32_t variation) {
     // **形状不写死。** 写死的话 60 秒永远是 5/28/21/6，连着看几集一个样。
     // 非零种子就在这几个区间里挑一组：有的集开场慢、后半段炸，有的集从头
     // 压到尾。总拍数还是按时长来，所以「撑不满时长」那个毛病不会回来。
+    // **戏的走法也换，不只是秒数。** 只浮动秒数的话，十集看下来是同一出戏
+    // 演快一点演慢一点。第 0 组是老的那一套，variation = 0 时就走它。
+    const std::size_t shapes = std::size(prompt::script::kActKeys) == 0
+                                   ? 1
+                                   : std::size(prompt::script::kActLabels) /
+                                         std::size(prompt::script::kActKeys);
+    const std::size_t shape =
+        variation ? static_cast<std::size_t>(frac(variation, 3) *
+                                             static_cast<double>(shapes)) % shapes
+                  : 0;
+
     const double open_r = variation ? pick(variation, 0, 0.05, 0.14) : 0.08;
     const double cliff_r = variation ? pick(variation, 1, 0.07, 0.17) : 0.10;
     const double esc_share = variation ? pick(variation, 2, 0.45, 0.68) : 0.57;
@@ -512,7 +523,8 @@ std::vector<ActSpec> act_plan(double duration_s, std::uint32_t variation) {
     for (int i = 0; i < 4; ++i) {
         ActSpec a;
         a.key = prompt::script::kActKeys[i];
-        a.label = prompt::script::kActLabels[i];
+        a.label = prompt::script::kActLabels[shape * 4 + i];
+        a.brief = prompt::script::kActBriefs[shape * 4 + i];
         a.from_s = at;
         a.to_s = at + seconds[i];
         at = a.to_s;
@@ -532,7 +544,7 @@ std::string render_act_brief(const std::vector<ActSpec>& specs) {
     for (std::size_t i = 0; i < specs.size(); ++i) {
         const ActSpec& s = specs[i];
         out += "  " + s.label + "（" + std::to_string(s.from_s) + "–" +
-               std::to_string(s.to_s) + " 秒）：" + prompt::script::kActBriefs[i] +
+               std::to_string(s.to_s) + " 秒）：" + s.brief +
                "。至少 " + std::to_string(s.min_beats) + " 拍。\n";
     }
     out += prompt::script::kActBlockTail;
@@ -674,7 +686,8 @@ std::string ScriptDraft::render() const {
 std::string build_script_prompt(const std::string& premise, double duration_s,
                                 StyleLine style_line,
                                 const std::string& previous,
-                                const std::vector<std::string>& characters) {
+                                const std::vector<std::string>& characters,
+                                std::uint32_t variation) {
     std::string out;
     out += prompt::script::kSeg0;
     out += format_f0(duration_s);
@@ -684,7 +697,7 @@ std::string build_script_prompt(const std::string& premise, double duration_s,
     out += prompt::script::kSeg2;
     out += std::to_string(budget_chars(duration_s));
     out += prompt::script::kRules;
-    out += render_act_brief(act_plan(duration_s));
+    out += render_act_brief(act_plan(duration_s, variation));
 
     if (!characters.empty()) {
         out += prompt::script::kCharsPre;
@@ -857,8 +870,7 @@ ordered script_schema(double duration_s,
         beats["minItems"] = s.min_beats;
         beats["maxItems"] = s.max_beats;
         beats["description"] = s.label + "，" + std::to_string(s.from_s) + "–" +
-                               std::to_string(s.to_s) + " 秒。" +
-                               prompt::script::kActBriefs[i];
+                               std::to_string(s.to_s) + " 秒。" + s.brief;
         beats["items"] = beat_item_schema(true, characters);
 
         ordered act = ordered::object();

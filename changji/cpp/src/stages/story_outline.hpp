@@ -16,6 +16,7 @@
 // 给 schema、解析返回三个纯函数。怎么把提示词送给模型是调用方的事。
 
 #include <stdexcept>
+#include <cstdint>
 #include <string>
 
 #include <nlohmann/json.hpp>
@@ -41,10 +42,39 @@ const nlohmann::ordered_json& outline_schema();
 ///
 /// 章数由体量推（models::suggested_chapters），**不由用户填集数**——
 /// 集数是后面按每集时长算出来的。
+///
+/// `variation` 非零时往提示词里拼两段随机的底子（见 build_outline_names /
+/// build_outline_spark）。**0 是不拼**，提示词回到老样子——语料和单测拿的
+/// 就是这一档，否则每跑一次对不上一次。生产里由 HTTP 层传
+/// `stages::random_shape()`。
 std::string build_outline_prompt(const std::string& premise,
                                  models::StoryScale scale,
                                  models::StyleLine style_line,
-                                 const std::string& keywords = "");
+                                 const std::string& keywords = "",
+                                 std::uint32_t variation = 0);
+
+/// 「这个故事里的人怎么取名」那一段：几个姓 + 一种名字的形状。
+///
+/// **这一段每条路都拼**，有没有梗概都拼。治的是用户那句「角色的名字也都
+/// 差不多」——实测反复出现的是陈默、林晚、苏婉这一批，而名字和用户给的
+/// 方向不冲突：他写的是故事，不是花名册。
+///
+/// 不列黑名单。写「不要用林晚」等于把林晚送进上下文，那是同一个病
+/// （见 prompts.toml 开头「别在提示词里举具体的例子」）。给一池姓让它挑，
+/// 是正向的约束。
+///
+/// variation = 0 时返回空串。
+std::string build_outline_names(std::uint32_t variation);
+
+/// 「这一次从下面这几样起手」那一段：场域 + 关系 + 压力 + 调子，各抽一个。
+///
+/// **只在既没梗概也没关键词时才该拼**（调用方负责判断）。用户给了方向的话
+/// 再塞一组随机的场域是跟他对着干；而"什么都没有，你来一个"那条路是雷同
+/// 最严重的一条——提示词里一个变量都没有，同一个按钮按十次，模型拿到的是
+/// 同一串字节十次。
+///
+/// variation = 0 时返回空串。
+std::string build_outline_spark(std::uint32_t variation);
 
 /// 解析模型返回，产出 Story。
 ///

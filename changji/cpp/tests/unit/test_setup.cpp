@@ -197,11 +197,18 @@ TEST_CASE("推荐：卡越大挑得越好，而且不会推荐装不下的") {
         CAPTURE(vram);
         CHECK(setup::recommend(vram).at("llm") == "zhipu-free");
     }
-    // 本地那几档**没有被删掉**，只是不当默认值：想自己跑照样点得动。
+    // **本地那几档 2026-09-14 整个去掉了。** 进程内后端删了之后没有任何
+    // 东西会去用那份 GGUF——留在清单里只会让人下二十个 G 然后发现用不上。
     const auto* llm_group = &setup::catalog().front();
     REQUIRE(llm_group->key == "llm");
-    CHECK(llm_group->find("qwen3-14b-q4_k_m") != nullptr);
-    CHECK(llm_group->find("qwen3-32b-q8_0") != nullptr);
+    CHECK(llm_group->find("qwen3-14b-q4_k_m") == nullptr);
+    CHECK(llm_group->find("qwen3-32b-q8_0") == nullptr);
+    // 这一组照样是必选：编剧模型是流水线第一步，只是现在一定是外接的
+    CHECK(llm_group->required);
+    for (const auto& o : llm_group->options) {
+        CAPTURE(o.id);
+        CHECK(o.files.empty());        // 一个字节都不用下
+    }
 }
 
 TEST_CASE("显存门槛是从引擎那两个函数反推的，不是手填的") {
@@ -262,11 +269,8 @@ TEST_CASE("每个家族的每一档精度都在表里") {
     CHECK(by_family.at("Qwen-Image").size() == 15);
     // QuantStack 的 13 档量化 + Comfy 的 fp16
     CHECK(by_family.at("Wan 2.2 TI2V-5B").size() == 14);
-    // Qwen 官方 GGUF 仓库每个尺寸五档
-    for (const char* f : {"Qwen3-32B", "Qwen3-14B", "Qwen3-8B", "Qwen3-4B"}) {
-        CAPTURE(f);
-        CHECK(by_family.at(f).size() == 5);
-    }
+    // 编剧模型那一组现在一个权重都不下（进程内后端删了），所以这儿
+    // 不再有 Qwen3-* 那几家。
 }
 
 TEST_CASE("写回配置：选中的键填上，同一组没用到的键清空") {
@@ -397,11 +401,7 @@ TEST_CASE("现在用的是哪一项：外接大模型按地址认，不按模型
         s.llm.model = "glm-4.7-flash";
         CHECK(http::current_option(*llm, s) == setup::kNoneOption);
     }
-    SUBCASE("进程内那条路还是按文件认") {
-        s.llm.backend = "local";
-        s.models.llm = "llm/Qwen3-14B-Q4_K_M.gguf";
-        CHECK(http::current_option(*llm, s) == "qwen3-14b-q4_k_m");
-    }
+    // 「进程内那条路按文件认」那一支去掉了：那条后端已经没有了。
 }
 
 TEST_CASE("配齐了没有：接外面的服务也算配齐") {
@@ -409,8 +409,9 @@ TEST_CASE("配齐了没有：接外面的服务也算配齐") {
     REQUIRE(llm->key == "llm");
 
     config::Settings s;
+    // **进程内那条删了，配着 local 的老配置一律不算配齐**——让人回到
+    // 这一页把它改成外接，比放他过去然后第一次写剧本才炸要好。
     s.llm.backend = "local";
-    s.models.llm = "";
     CHECK_FALSE(http::group_satisfied(*llm, s));
 
     // **这一条挡住的是"用云端大模型的人被永远关在初始化页上"。**
@@ -428,10 +429,8 @@ TEST_CASE("配齐了没有：接外面的服务也算配齐") {
     s.llm.api_key = "sk-or-v1-填了";
     CHECK(http::group_satisfied(*llm, s));
 
-    // 配了一个不存在的文件不算配齐：手抄配置抄错、模型没下完都是这种，
-    // 而只看"配没配"的话，出片会在跑到一半时炸。
+    // 改回 local 照样不算配齐，不管别的填成什么样
     s.llm.backend = "local";
-    s.models.llm = "llm/根本没有这个文件.gguf";
     CHECK_FALSE(http::group_satisfied(*llm, s));
 }
 

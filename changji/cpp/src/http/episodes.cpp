@@ -1,4 +1,5 @@
 #include "http/episodes.hpp"
+#include "http/job_stream.hpp"
 #include "config/runtime.hpp"
 
 #include <algorithm>
@@ -238,6 +239,7 @@ ApiResult post_script(const json& body, llm::Client& client,
             assets, stages::shot_count_bounds(quota, ep->target_duration_s,
                                               stages::count_beats(script)));
         req.schema_name = "storyboard";
+        req.on_thinking = thinking_sink();
 
         // 同步接口也要在顶栏露面，理由见 pipeline/activity.hpp 开头那段：
         // 它占着 LLM 槽，不露面的话别人挂在「显存不够」上而挡路的是谁查不到。

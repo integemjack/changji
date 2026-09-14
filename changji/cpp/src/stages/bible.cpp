@@ -36,8 +36,13 @@ const ordered& bible_schema() {
     // 请求体逐行 diff。
     static const ordered schema = [] {
         ordered character_props = ordered::object();
-        character_props["key"] = {{"type", "string"},
-                                  {"description", "英文小写下划线短标识，如 lin_wan"}};
+        // ⚠️ **这儿不要举人名当例子。** 原来写的是"如 lin_wan"，而 lin_wan
+        // 就是林晚——模型会连着把这个名字用到 name 上去，于是十个项目里
+        // 有八个女主角叫林晚。同一个形状在 prompts.toml 的 [bible]
+        // [bible_story] 里也各有一份，一起拆掉了。
+        character_props["key"] = {
+            {"type", "string"},
+            {"description", "英文小写下划线短标识，按这个角色的中文名音译"}};
         character_props["name"] = {{"type", "string"},
                                    {"description", "剧本里的中文称呼"}};
         character_props["identity"] = {{"type", "string"},

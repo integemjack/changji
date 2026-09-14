@@ -712,6 +712,82 @@ TEST_CASE("形状不写死：同一个时长能摇出不一样的节奏") {
     CHECK(shapes.size() >= 5);
 }
 
+TEST_CASE("戏的走法也换，不只是秒数") {
+    // **只浮动秒数不够。** 上一条只问了"开场占几秒"，而十集下来仍然是同一出
+    // 戏演快一点演慢一点：钩子 → 推进 → 回报 → 留扣，一集不落。用户的判词
+    // 「提取出来剧本时间线也都差不多」说的正是这个。
+    SUBCASE("variation = 0 还是老那一套，一个字没改") {
+        const auto a = stages::act_plan(60.0);
+        REQUIRE(a.size() == 4);
+        CHECK(a[0].label == "开场钩子");
+        CHECK(a[1].label == "冲突推进");
+        CHECK(a[2].label == "情绪回报");
+        CHECK(a[3].label == "集尾留扣");
+        CHECK(a[0].brief == "一句冲突台词或一个反常画面，三秒内有事发生，不铺垫");
+    }
+
+    SUBCASE("摇得出好几出不一样的戏") {
+        std::set<std::string> kinds;
+        for (std::uint32_t v = 1; v <= 60; ++v) {
+            const auto a = stages::act_plan(60.0, v);
+            REQUIRE(a.size() == 4);
+            std::string sig;
+            for (const auto& x : a) {
+                CHECK_FALSE(x.label.empty());
+                CHECK_FALSE(x.brief.empty());   // 说法必填，提示词和 schema 都要用
+                sig += x.label + "|";
+            }
+            kinds.insert(sig);
+        }
+        // 表里现在是五组。六十个种子摇不满五组的话，多半是种子没接上，
+        // 或者取模那一下把低位摊平了——两种坏法的表现都是"只出一两组"。
+        CHECK(kinds.size() >= 4);
+    }
+
+    SUBCASE("槽位名不跟着变——那是 schema 的键，换了老项目就读不出来") {
+        for (std::uint32_t v : {0u, 1u, 7u, 12345u, 0xffffffffu}) {
+            CAPTURE(v);
+            const auto a = stages::act_plan(60.0, v);
+            CHECK(a[0].key == "opening");
+            CHECK(a[1].key == "escalation");
+            CHECK(a[2].key == "payoff");
+            CHECK(a[3].key == "cliff");
+        }
+    }
+
+    SUBCASE("提示词和 schema 说的是同一出戏") {
+        // 三处（提示词、schema 描述、解析）各查各的词表迟早会错开一处，
+        // 而错开的表现是模型看到的段和我们解析的段对不上，**不报错**。
+        // 所以说法统一从 ActSpec::brief 来。
+        const std::uint32_t seed = 0xabcdef01;
+        const auto acts = stages::act_plan(60.0, seed);
+        const std::string brief = stages::render_act_brief(acts);
+        const json sc = json(stages::script_schema(60.0, {}, seed));
+        for (const auto& a : acts) {
+            CAPTURE(a.key);
+            CHECK(brief.find(a.brief) != std::string::npos);
+            CHECK(brief.find(a.label) != std::string::npos);
+            const std::string desc = sc.at("properties").at(a.key).at("properties")
+                                       .at("beats").at("description").get<std::string>();
+            CHECK(desc.find(a.brief) != std::string::npos);
+            CHECK(desc.find(a.label) != std::string::npos);
+        }
+    }
+
+    SUBCASE("段头识别认得所有形状的标签") {
+        // 剧本正文里那行「【当头一击 0–6 秒】」也得认出来，否则老项目
+        // 反推故事时那一行会当成正文混进小说里。
+        for (std::uint32_t v = 1; v <= 60; ++v) {
+            const auto a = stages::act_plan(60.0, v);
+            for (const auto& x : a) {
+                CAPTURE(x.label);
+                CHECK(stages::is_act_header(
+                    stages::act_header(x.label, x.from_s, x.to_s)));
+            }
+        }
+    }
+}
+
 TEST_CASE("摇出来的形状要和 schema、解析用的是同一个") {
     // 种子对不上的话，段头上的秒数和模型看到的不是一回事
     const std::uint32_t seed = stages::random_shape();

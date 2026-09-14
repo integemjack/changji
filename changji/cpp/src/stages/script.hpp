@@ -168,7 +168,13 @@ struct Beat {
 /// 按这一集的时长等比缩放，开场不超过 8 秒、留扣不超过 10 秒。
 struct ActSpec {
     std::string key;    ///< opening / escalation / payoff / cliff，JSON 里的键
-    std::string label;  ///< 开场钩子 / 冲突推进 / 情绪回报 / 集尾留扣
+    std::string label;  ///< 段头上那个名字，**随形状变**（见 act_plan）
+    /// 这一段该写什么，一句话。给提示词和 schema 描述共用。
+    ///
+    /// **放在 spec 里而不是让调用方自己去查词表**：提示词、schema、解析
+    /// 三处都得用同一组说法，各查各的迟早会错开一处——而错开的表现是
+    /// 模型看到的段和我们解析的段对不上，不报错。
+    std::string brief;
     int from_s = 0;
     int to_s = 0;
     /// 这一段至少几拍、至多几拍。**地板是 schema 里唯一管用的东西**——
@@ -199,11 +205,21 @@ std::uint32_t random_shape();
 /// 开场 5%~14%、留扣 7%~17%、推进占中段的 45%~68%。有的集从头压到尾，
 /// 有的集开场慢、后半段炸，总拍数还是那么多。
 ///
-/// variation = 0 是**不浮动**，走那组固定比例（8%/10%/57%）。老路径和
-/// 语料里的调用都不传，行为和以前一字不差。
+/// **秒数浮动还不够，戏的走法也得换。** 只浮动秒数的话，十集看下来是
+/// 同一出戏演快一点演慢一点——钩子 → 推进 → 回报 → 留扣，一集不落。
+/// 用户的判词「提取出来剧本时间线也都差不多」说的正是这个。所以
+/// variation 非零时还从 prompts.toml 的形状表里挑一组（开门见山 / 中途
+/// 翻盘 / 一路下坠 / 两头并进…），换掉每一段的标签和说法。槽位名
+/// （opening…）不变——那是 schema 的键。
+///
+/// variation = 0 是**不浮动**：固定比例（8%/10%/57%）加第 0 组形状，
+/// 和以前一字不差。语料和单测走的就是这一档。
 std::vector<ActSpec> act_plan(double duration_s, std::uint32_t variation = 0);
 
 /// 给提示词看的那一段：四段各占几秒、各干什么、至少几拍。
+///
+/// 说法从 `specs[i].brief` 来，不查词表——形状是 act_plan 挑的，
+/// 这儿再查一次就可能和它错开。
 ///
 /// 一定要写进提示词，不能只放在 schema 的 description 里——**GBNF 里只有
 /// 结构，描述模型从来没看见过**（见 chapter_write.cpp 那段注释）。
@@ -215,8 +231,13 @@ std::string render_act_brief(const std::vector<ActSpec>& specs);
 /// 看得到这一段占几秒，页面按它分块显示，人在文本框里改也改得动。
 std::string act_header(const std::string& label, int from_s, int to_s);
 
-/// 这一行是不是段头。只认那四个名字，「【字幕】三年后」「【倒计时 10 秒】」
-/// 都不是。认出来的话把名字和秒数填进去（秒数没写就是 0）。
+/// 这一行是不是段头。认的是**形状表里所有的段名**（现在五组共二十条，
+/// 去重后十来个），「【字幕】三年后」「【倒计时 10 秒】」都不是。
+/// 认出来的话把名字和秒数填进去（秒数没写就是 0）。
+///
+/// ⚠️ 名单变长之后这道判断比以前松：往形状表里加标签时挑一看就是**段名**
+/// 的词。挑了能当舞台提示写的词，用户自己写的那一行会被 strip_act_headers
+/// 当段头摘掉。
 bool parse_act_header(const std::string& line, std::string* label,
                       int* from_s, int* to_s);
 bool is_act_header(const std::string& line);
@@ -263,7 +284,8 @@ struct ScriptDraft {
 std::string build_script_prompt(const std::string& premise, double duration_s,
                                 models::StyleLine style_line,
                                 const std::string& previous = "",
-                                const std::vector<std::string>& characters = {});
+                                const std::vector<std::string>& characters = {},
+                                std::uint32_t variation = 0);
 
 std::string build_premise_prompt(const std::string& keywords,
                                  models::StyleLine style_line, int count = 3,

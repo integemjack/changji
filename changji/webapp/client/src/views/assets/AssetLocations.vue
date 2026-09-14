@@ -184,11 +184,16 @@ async function generate(overwrite) {
   }
   const result = await run(
     () =>
-      api.makeBible({
-        project: session.projectPath,
-        episode_id: session.episodeId,
-        overwrite,
-      }),
+      runAsyncJob(
+        (extra) =>
+          api.makeBible({
+            project: session.projectPath,
+            episode_id: session.episodeId,
+            overwrite,
+            ...extra,
+          }),
+        { prefix: 'bible', label: '给场景定妆' },
+      ),
     { key: 'bible', refresh: true },
   )
   if (!result) return

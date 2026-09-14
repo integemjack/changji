@@ -29,11 +29,26 @@
 namespace changji::llm {
 
 /// 边收边解的 SSE 流。喂字节，拿这一段里新解出来的**正文增量**。
+///
+/// **正文和思考分两路。** 现在的模型都要"先想再写"，而各家都把思考放在
+/// 单独的字段里（智谱 `reasoning_content`、OpenRouter `reasoning`），
+/// 不混进 `content`。混着收的话，思考稿会被当成正文流进编辑器。
 class SseDeltas {
 public:
-    /// 收一段字节，返回这一段解出来的新文字（可能是空串）。
+    /// 收一段字节，返回这一段解出来的新**正文**（可能是空串）。
     std::string feed(const char* data, std::size_t len);
     std::string feed(const std::string& s) { return feed(s.data(), s.size()); }
+
+    /// 取走攒着的**思考**增量，取完清空。
+    ///
+    /// 和正文分开是因为两者去向不同：正文进编辑器，思考只给界面上那个
+    /// "正在想什么"的浮层看。做成 take 而不是让 feed 多返回一个值，
+    /// 是为了不动 feed 的签名——它被一批用例钉着。
+    std::string take_thinking() {
+        std::string out;
+        out.swap(thinking_);
+        return out;
+    }
 
     /// 收到 `data: [DONE]` 了。
     bool done() const { return done_; }
@@ -47,7 +62,8 @@ public:
 private:
     void take_line(std::string line, std::string& out);
 
-    std::string buf_;     ///< 还没凑够一行的那半截
+    std::string buf_;       ///< 还没凑够一行的那半截
+    std::string thinking_;  ///< 攒着的思考增量，等人来取
     std::string error_;
     bool done_ = false;
 };

@@ -86,6 +86,48 @@ TEST_CASE("SSE：delta 里没有 content 的那些条不算数") {
     CHECK(all.empty());
 }
 
+TEST_CASE("SSE：思考走另一路，不许混进正文") {
+    // **现在的模型都要"先想再写"。** 各家把思考放在单独的字段里，混着收的话
+    // 思考稿会直接流进用户的编辑器——那是这一条要挡住的东西。
+    SUBCASE("智谱：reasoning_content") {
+        SseDeltas d;
+        std::string body;
+        body += d.feed(
+            "data: {\"choices\":[{\"delta\":{\"reasoning_content\":\"先想想\"}}]}\n\n");
+        body += d.feed(
+            "data: {\"choices\":[{\"delta\":{\"reasoning_content\":\"这一章\"}}]}\n\n");
+        body += d.feed("data: {\"choices\":[{\"delta\":{\"content\":\"第一章\"}}]}\n\n");
+        CHECK(body == "第一章");                    // 正文里一个思考的字都没有
+        CHECK(d.take_thinking() == "先想想这一章");   // 攒着的思考一次取走
+        CHECK(d.take_thinking().empty());            // 取完就清空
+    }
+
+    SUBCASE("OpenRouter 那些：reasoning") {
+        SseDeltas d;
+        const std::string body =
+            d.feed("data: {\"choices\":[{\"delta\":{\"reasoning\":\"嗯\",\"content\":\"甲\"}}]}\n\n");
+        CHECK(body == "甲");
+        CHECK(d.take_thinking() == "嗯");
+    }
+
+    SUBCASE("同一条里两个字段都有，只收一次") {
+        // 网关转发时偶尔两个名字都带上。收两遍的话浮层里每句都是双份。
+        SseDeltas d;
+        d.feed(
+            "data: {\"choices\":[{\"delta\":{\"reasoning_content\":\"啊\",\"reasoning\":\"啊\"}}]}\n\n");
+        CHECK(d.take_thinking() == "啊");
+    }
+
+    SUBCASE("只有思考、一个正文字都没有也不算错") {
+        // 想了十分钟还没开始写，是常态，不是故障。
+        SseDeltas d;
+        CHECK(d.feed("data: {\"choices\":[{\"delta\":{\"reasoning_content\":\"…\"}}]}\n\n")
+                  .empty());
+        CHECK(d.error().empty());
+        CHECK(d.take_thinking() == "…");
+    }
+}
+
 TEST_CASE("SSE：坏行跳过，不掀翻整段") {
     SseDeltas sse;
     std::string all;

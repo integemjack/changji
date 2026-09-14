@@ -21,8 +21,6 @@
 
 #include "config/settings.hpp"
 #include "llm/client.hpp"
-#include "infer/llama_chat.hpp"
-#include "llm/local_client.hpp"
 #include "pipeline/jobs.hpp"
 
 #include "scoped_env.hpp"
@@ -33,12 +31,6 @@ using json = nlohmann::json;
 namespace {
 
 config::LLMConfig test_cfg() {
-    // **每次取 fixture 都把那笔账清掉。** "哪个服务不支持 json_schema" 是
-    // 进程级的记忆（见 llm::reset_schema_support）：前一个用例刚验出这个假
-    // 服务不支持，后一个用例就再也发不出 json_schema 了，而它断言的正是
-    // 那一下——两个用例单跑都绿，一起跑才挂，最难查的那种。
-    llm::reset_schema_support();
-
     config::LLMConfig c;
     c.base_url = "http://127.0.0.1:11434/v1";
     c.model = "qwen3:14b";
@@ -54,7 +46,6 @@ config::LLMConfig test_cfg() {
 /// **地址不写死在这儿**，跟着 `LLMConfig` 的默认走：这个 fixture 要问的
 /// 一直是"默认配置下发出去的是什么"，换家的时候该跟着变的正是它。
 config::LLMConfig test_cfg_cloud() {
-    llm::reset_schema_support();
     config::LLMConfig c;
     c.api_key = "测试密钥";
     return c;
@@ -100,47 +91,128 @@ llm::Request simple_req() {
 
 }  // namespace
 
-TEST_CASE("请求体的形状") {
+TEST_CASE("请求体的形状：schema 贴在提示词里，不发 response_format") {
+    // **2026-09-14 起只有这一种发法。** 原来挂着一部四档退档梯子
+    // （json_schema → 削过的 schema → json_object → 什么都不发），为的是
+    // 兜住各家对 response_format 支持得七零八落。它的代价一直很实在：
+    // 任何一个别的 400（比如 glm-5.3 不收 thinking 的关闭值）都会被它读成
+    // "这家不支持 json_schema"，于是**悄悄**退到最宽那一档接着生成，
+    // 日志上看一切正常——实跑十次全中。
     const auto cfg = test_cfg();
-    const json p = json(llm::build_payload(cfg, simple_req(), true));
+    const json p = json(llm::build_payload(cfg, simple_req()));
 
     CHECK(p.at("model") == "qwen3:14b");
     CHECK(p.at("temperature") == 0.7);
     REQUIRE(p.at("messages").is_array());
     REQUIRE(p.at("messages").size() == 1);
     CHECK(p.at("messages")[0].at("role") == "user");
-    CHECK(p.at("messages")[0].at("content") == "写一集短剧");
+    // 一个字段都不发
+    CHECK_FALSE(p.contains("response_format"));
 
-    const json& rf = p.at("response_format");
-    CHECK(rf.at("type") == "json_schema");
-    CHECK(rf.at("json_schema").at("name") == "script");
-    CHECK(rf.at("json_schema").at("strict") == true);
-    CHECK(rf.at("json_schema").at("schema").at("type") == "object");
-
-    SUBCASE("退回普通 JSON 模式") {
-        const json q = json(llm::build_payload(cfg, simple_req(), false));
-        CHECK(q.at("response_format").at("type") == "json_object");
-        CHECK_FALSE(q.at("response_format").contains("json_schema"));
+    SUBCASE("schema 以文字接在提示词后面") {
+        const std::string content =
+            p.at("messages")[0].at("content").get<std::string>();
+        CHECK(content.rfind("写一集短剧", 0) == 0);   // 提示词本身在最前面
+        CHECK(content.find("\"type\": \"object\"") != std::string::npos);
+        CHECK(content.size() > std::string("写一集短剧").size());
     }
 
-    SUBCASE("没给 schema 就不加 response_format") {
-        // 加一个空的会被某些服务直接拒掉
+    SUBCASE("没给 schema 就只发提示词本身") {
         llm::Request r = simple_req();
         r.schema = nlohmann::ordered_json();
-        const json q = json(llm::build_payload(cfg, r, true));
+        const json q = json(llm::build_payload(cfg, r));
+        CHECK(q.at("messages")[0].at("content") == "写一集短剧");
         CHECK_FALSE(q.contains("response_format"));
     }
 }
 
-// ---------------------------------------------------------------------------
-// 削 schema
-//
-// **这一条钉的是"我们最管用的那几条约束不会把整份 schema 一起带走"。**
-// 兼容接口的 json_schema 严格模式碰到 minItems / minLength / pattern
-// 这些校验关键字是**整份退回 400**，而 400 会触发"不带 schema 再发一次"
-// 那条退路——于是「加了 minItems 让它没得选」变成这一次连字段名都没约束，
-// 并且全程不报错。见 llm::remote_schema。
-// ---------------------------------------------------------------------------
+TEST_CASE("温度：req 没意见就用配置里的，有意见就听它的") {
+    // **这一条钉的是一个真空转过的旋钮。** build_payload 原来发的是
+    // cfg.temperature，req 里那个从来没人读——于是 kChapterTemperature
+    // （写正文 0.5）在远端那条路上一直没生效，而远端正是现在的默认后端。
+    // 两条路都返回 200，所以这件事只能靠读代码发现。
+    config::LLMConfig cfg = test_cfg();
+    cfg.temperature = 0.35;
+
+    SUBCASE("空着：用用户在设置页上定的那个") {
+        llm::Request r = simple_req();
+        r.temperature.reset();
+        const json p = json(llm::build_payload(cfg, r));
+        CHECK(p.at("temperature") == doctest::Approx(0.35));
+    }
+
+    SUBCASE("填了：这一步说了算") {
+        llm::Request r = simple_req();
+        r.temperature = 0.5;
+        const json p = json(llm::build_payload(cfg, r));
+        CHECK(p.at("temperature") == doctest::Approx(0.5));
+    }
+}
+
+TEST_CASE("温度按任务分档：编东西的放开，拆结构的收紧") {
+    // **不是每一步都该跑同一个温度。** 大纲和选题是从无到有编东西，温度低了
+    // 永远是那几个套路（用户的判词「每次写文章的内容都差不多」）；分镜和定妆
+    // 是把已有的东西转成结构，发挥在那儿一律是错——编一个剧本里没有的道具，
+    // 后面每一镜都得跟着它错下去。
+    //
+    // 做成相对偏移而不是绝对值表：绝对值表会把设置页那个旋钮架空。
+    config::LLMConfig cfg;
+    cfg.temperature = 0.7;
+
+    CHECK(cfg.temperature_for("story_outline") == doctest::Approx(0.95));
+    CHECK(cfg.temperature_for("premises") == doctest::Approx(0.95));
+    CHECK(cfg.temperature_for("trailer") == doctest::Approx(0.95));
+    CHECK(cfg.temperature_for("storyboard") == doctest::Approx(0.28));
+    CHECK(cfg.temperature_for("bible") == doctest::Approx(0.28));
+    CHECK(cfg.temperature_for("story_analysis") == doctest::Approx(0.28));
+    // 认不出的、以及写剧本写正文那几步，跟着基准走
+    CHECK(cfg.temperature_for("script") == doctest::Approx(0.7));
+    CHECK(cfg.temperature_for("chapter") == doctest::Approx(0.7));
+    CHECK(cfg.temperature_for("") == doctest::Approx(0.7));
+
+    SUBCASE("用户那个旋钮还推得动所有档") {
+        cfg.temperature = 0.3;
+        CHECK(cfg.temperature_for("story_outline") == doctest::Approx(0.55));
+        CHECK(cfg.temperature_for("storyboard") == doctest::Approx(0.12));
+        CHECK(cfg.temperature_for("script") == doctest::Approx(0.3));
+    }
+
+    SUBCASE("发散那档封在 1.1：再高多数服务开始吐坏 JSON") {
+        cfg.temperature = 1.4;
+        CHECK(cfg.temperature_for("story_outline") == doctest::Approx(1.1));
+    }
+
+    SUBCASE("真发出去的就是这个数") {
+        FakeHttp http;
+        http.responses.push_back(ok("{\"ok\":1}"));
+        config::LLMConfig c = test_cfg();
+        c.temperature = 0.7;
+        llm::RemoteClient rc(c, http.fn());
+        pipeline::CancelToken tok;
+        llm::Request r = simple_req();
+        r.temperature.reset();
+        r.schema_name = "story_outline";
+        rc.complete(r, tok);
+        REQUIRE(http.calls.size() == 1);
+        CHECK(http.calls[0].body.at("temperature").get<double>() ==
+              doctest::Approx(0.95));
+    }
+
+    SUBCASE("这一步自己填了温度的，分档管不着它") {
+        // 写正文那步有自己测出来的数（kChapterTemperature），别被档位盖掉。
+        FakeHttp http;
+        http.responses.push_back(ok("{\"ok\":1}"));
+        llm::RemoteClient rc(test_cfg(), http.fn());
+        pipeline::CancelToken tok;
+        llm::Request r = simple_req();
+        r.temperature = 0.5;
+        r.schema_name = "storyboard";
+        rc.complete(r, tok);
+        REQUIRE(http.calls.size() == 1);
+        CHECK(http.calls[0].body.at("temperature").get<double>() ==
+              doctest::Approx(0.5));
+    }
+}
 
 TEST_CASE("哪些地址要 API Key") {
     // 判错的代价不对称：把云当成本机，用户会被初始化页放过去、体检也报绿，
@@ -245,74 +317,6 @@ TEST_CASE("密钥单独一个文件，不混进 config.toml") {
     }
 }
 
-TEST_CASE("关掉「先想再写」：字段名每家不一样，按地址挑") {
-    // **2026-09-13 实测出来的，不关它这条流水线在长任务上全军覆没。**
-    // nemotron-3-super：6000 token 烧掉 5288 在思考上，content 字段装的
-    // 和 reasoning 字段一模一样的 12962 字英文思考稿，JSON 一个字解不出；
-    // nex-n2.5 和 ling-3.0 干脆回一个空的 content。
-    // 同一个模型关掉之后：正文字数翻倍（507→955）、快 2.5 倍。
-    //
-    // 短提示词上试不出来——思考几句就够了，正文照样出得来。
-    //
-    // ⚠️ **2026-09-14 换到智谱之后这件事多了一层**：关它的字段每家名字
-    // 不一样，而 GLM-4.5 起的智谱模型**全是混合推理、默认开着思考**。
-    // 要是换家的时候忘了这一处，这一整条防线会**静悄悄失效**——症状还是
-    // 上面那两条，照样不报错。所以这个用例覆盖三种家，一种都不能少。
-    config::LLMConfig c = test_cfg_cloud();   // 默认那家 = 智谱
-    FakeHttp http;
-    http.responses.push_back(ok("{\"ok\":1}"));
-    llm::RemoteClient rc(c, http.fn());
-    pipeline::CancelToken tok;
-    rc.complete(simple_req(), tok);
-
-    REQUIRE(http.calls.size() == 1);
-    const json body = http.calls[0].body;
-    REQUIRE(body.contains("thinking"));
-    CHECK(body.at("thinking").at("type") == "disabled");
-    // 别家的字段一个都不能捎带着发，理由见下面那个 SUBCASE。
-    CHECK_FALSE(body.contains("reasoning"));
-
-    SUBCASE("想开就开得回来") {
-        c.reasoning = true;
-        FakeHttp h;
-        h.responses.push_back(ok("{\"ok\":1}"));
-        llm::RemoteClient rc2(c, h.fn());
-        pipeline::CancelToken t2;
-        rc2.complete(simple_req(), t2);
-        REQUIRE(h.calls.size() == 1);
-        CHECK_FALSE(h.calls[0].body.contains("thinking"));
-        CHECK_FALSE(h.calls[0].body.contains("reasoning"));
-    }
-
-    SUBCASE("OpenRouter 用的是它自己那个名字") {
-        c.base_url = "https://openrouter.ai/api/v1";
-        FakeHttp h;
-        h.responses.push_back(ok("{\"ok\":1}"));
-        llm::RemoteClient rc2(c, h.fn());
-        pipeline::CancelToken t2;
-        rc2.complete(simple_req(), t2);
-        REQUIRE(h.calls.size() == 1);
-        REQUIRE(h.calls[0].body.contains("reasoning"));
-        CHECK(h.calls[0].body.at("reasoning").at("enabled") == false);
-        CHECK_FALSE(h.calls[0].body.contains("thinking"));
-    }
-
-    SUBCASE("认不出的家一个字都不发") {
-        // 这两个字段都是各家自己的参数，别家不认。发过去被当成非法字段
-        // 整个打回的话，会被我们的退路误判成"这家不支持 json_schema"，
-        // 白白退两档，而这一轮的结构就全靠提示词了——**还不报错**。
-        // 宁可漏关也不要乱发。
-        FakeHttp h;
-        h.responses.push_back(ok("{\"ok\":1}"));
-        llm::RemoteClient rc3(test_cfg(), h.fn());   // 本机 Ollama 那套
-        pipeline::CancelToken t3;
-        rc3.complete(simple_req(), t3);
-        REQUIRE(h.calls.size() == 1);
-        CHECK_FALSE(h.calls[0].body.contains("reasoning"));
-        CHECK_FALSE(h.calls[0].body.contains("thinking"));
-    }
-}
-
 TEST_CASE("按任务分流：哪一步用哪个模型") {
     // 用户 2026-09-13 定的方向："发挥各自的优势，不同功能使用不同的模型"。
     // 这条流水线要两种本事：写正文要文采，拆分镜要听话（分镜那份 schema
@@ -363,95 +367,6 @@ TEST_CASE("按任务分流：哪一步用哪个模型") {
         REQUIRE(http.calls.size() == 1);
         CHECK(http.calls[0].body.at("model") == "glm-5.3");
         CHECK(http.calls[0].body.at("model") != cfg.model);
-    }
-}
-
-TEST_CASE("远端的 schema 要削掉严格模式不认的校验关键字") {
-    const auto schema = nlohmann::ordered_json::parse(R"({
-      "type": "object",
-      "properties": {
-        "beats": {
-          "type": "array",
-          "description": "四拍",
-          "minItems": 4,
-          "maxItems": 4,
-          "uniqueItems": true,
-          "items": {"type": "string", "minLength": 2, "maxLength": 80}
-        },
-        "score": {"type": "integer", "minimum": 0, "maximum": 10},
-        "id": {"type": "string", "pattern": "^[a-z_]+$", "minLength": 3},
-        "angle": {"type": "string", "enum": ["low", "eye_level"]}
-      },
-      "required": ["beats", "score"],
-      "additionalProperties": false
-    })");
-
-    const auto out = llm::remote_schema(schema);
-    const std::string dumped = json(out).dump();
-    for (const char* kw : {"minItems", "maxItems", "uniqueItems", "minLength",
-                           "maxLength", "pattern", "minimum", "maximum"}) {
-        CAPTURE(kw);
-        CHECK(dumped.find(std::string("\"") + kw + "\"") == std::string::npos);
-    }
-
-    // 结构、枚举、required、additionalProperties 一个都不能少——
-    // 这些是严格模式**认**的，削过头等于自废武功。
-    CHECK(out.at("required") == json::array({"beats", "score"}));
-    CHECK(out.at("additionalProperties") == false);
-    CHECK(out.at("properties").at("angle").at("enum") ==
-          json::array({"low", "eye_level"}));
-    CHECK(out.at("properties").at("beats").at("items").at("type") == "string");
-
-    SUBCASE("那些数折进 description，不是丢掉") {
-        // **远端这条路上模型是看得见 description 的**（整份 schema 进请求体），
-        // 本地那条看不见（GBNF 只留结构）。所以折进描述之后这些数还在起
-        // 作用，只是从"语法不让它少写"变成"它读得到"。
-        const std::string beats =
-            out.at("properties").at("beats").at("description").get<std::string>();
-        CHECK(beats.find("四拍") == 0);          // 原来的描述还在最前面
-        CHECK(beats.find("4~4 项") != std::string::npos);
-        CHECK(beats.find("不要重复") != std::string::npos);
-
-        // 本来没有描述的字段，折出来的那句就是它的描述
-        CHECK(out.at("properties").at("score").at("description") == "（0~10）");
-        CHECK(out.at("properties").at("beats").at("items").at("description") ==
-              "（2~80 字）");
-        // 一头有一头没有
-        CHECK(out.at("properties").at("id").at("description") == "（至少 3 字）");
-    }
-
-    SUBCASE("叫 pattern 的字段不是关键字，不许摘") {
-        // properties 下面挂的是属性名。不分这一支的话，一个真叫
-        // pattern / format 的字段会被当成关键字整个摘掉，而表现是
-        // 模型再也不填这个字段——不报错。
-        const auto s = nlohmann::ordered_json::parse(R"({
-          "type": "object",
-          "properties": {
-            "pattern": {"type": "string"},
-            "format":  {"type": "string", "minLength": 1}
-          }
-        })");
-        const auto r = llm::remote_schema(s);
-        CHECK(r.at("properties").contains("pattern"));
-        CHECK(r.at("properties").contains("format"));
-        CHECK(r.at("properties").at("format").at("type") == "string");
-        CHECK_FALSE(r.at("properties").at("format").contains("minLength"));
-    }
-
-    SUBCASE("$defs 里的也要削，$ref 不能动") {
-        const auto s = nlohmann::ordered_json::parse(R"({
-          "$defs": {"Line": {"type": "string", "maxLength": 12}},
-          "type": "object",
-          "properties": {"a": {"$ref": "#/$defs/Line"}}
-        })");
-        const auto r = llm::remote_schema(s);
-        CHECK_FALSE(r.at("$defs").at("Line").contains("maxLength"));
-        CHECK(r.at("$defs").at("Line").at("description") == "（最多 12 字）");
-        CHECK(r.at("properties").at("a").at("$ref") == "#/$defs/Line");
-    }
-
-    SUBCASE("空 schema 原样回，别塞个空对象出去") {
-        CHECK(llm::remote_schema(nlohmann::ordered_json()).is_null());
     }
 }
 
@@ -645,232 +560,10 @@ TEST_CASE("远端客户端跑通一次") {
     CHECK(http.calls[0].url == "http://127.0.0.1:11434/v1/chat/completions");
     CHECK(http.calls[0].headers.at("Authorization") == "Bearer ollama");
     CHECK(http.calls[0].timeout_s == 300.0);
-    CHECK(http.calls[0].body.at("response_format").at("type") == "json_schema");
-}
-
-TEST_CASE("服务不收原样的 schema 时，先削一遍再说") {
-    // 各家服务对"不支持这个 response_format"回的码五花八门，400、404、422
-    // 都见过。判断哪个是"不支持"哪个是"真错了"不现实，所以一律往下退一档。
-    //
-    // **退的第一步是削 schema，不是直接丢掉 response_format。**
-    // 会退 400 的多半是 OpenAI 那种严格模式——它拒的是 minItems 这类校验
-    // 关键字，不是 json_schema 本身。削掉就过了，而结构约束还在。
-    for (const int code : {400, 404, 422, 500}) {
-        CAPTURE(code);
-        FakeHttp http;
-        http.responses.push_back(llm::HttpResponse{code, "{}", std::nullopt});
-        http.responses.push_back(ok("{\"ok\":1}"));
-        llm::RemoteClient c(test_cfg(), http.fn());
-        pipeline::CancelToken tok;
-
-        CHECK(c.complete(simple_req(), tok) == "{\"ok\":1}");
-        REQUIRE(http.calls.size() == 2);
-        CHECK(http.calls[0].body.at("response_format").at("type") == "json_schema");
-        CHECK(http.calls[1].body.at("response_format").at("type") == "json_schema");
-    }
-}
-
-TEST_CASE("远端两条路各自的加工：第一次削 schema，退回那次把 schema 写进提示词") {
-    llm::Request r = simple_req();
-    r.schema = nlohmann::ordered_json::parse(
-        R"({"type":"object",
-            "properties":{"beats":{"type":"array","minItems":4,
-                                   "items":{"type":"string"}}}})");
-
-    FakeHttp http;
-    http.responses.push_back(llm::HttpResponse{400, "{}", std::nullopt});
-    http.responses.push_back(llm::HttpResponse{400, "{}", std::nullopt});
-    http.responses.push_back(ok("{\"beats\":[]}"));
-    llm::RemoteClient c(test_cfg(), http.fn());
-    pipeline::CancelToken tok;
-    CHECK(c.complete(r, tok) == "{\"beats\":[]}");
-    REQUIRE(http.calls.size() == 3);
-
-    // **第一下 schema 一个字不动**，minItems 照发。OpenRouter 这类网关
-    // 根本不拒它，削早了等于白丢我们最管用的那根杠杆。
-    const json zeroth = http.calls[0].body;
-    CHECK(zeroth.at("response_format").at("json_schema").at("schema")
-              .dump().find("minItems") != std::string::npos);
-    CHECK(zeroth.at("messages")[0].at("content") == "写一集短剧");
-
-    // 第二次：被拒了才削，minItems 摘掉、折进描述。
-    const json first = http.calls[1].body;
-    const json sent = first.at("response_format").at("json_schema").at("schema");
-    CHECK(sent.dump().find("minItems") == std::string::npos);
-    CHECK(sent.at("properties").at("beats").at("description") == "（至少 4 项）");
-    // 提示词这两次都没被动过
-    CHECK(first.at("messages")[0].at("content") == "写一集短剧");
-
-    // 第三次：response_format 退成 json_object，schema 改从提示词里带过去。
-    const json second = http.calls[2].body;
-    CHECK(second.at("response_format").at("type") == "json_object");
-    const std::string prompt =
-        second.at("messages")[0].at("content").get<std::string>();
-    CHECK(prompt.find("写一集短剧") == 0);
-    CHECK(prompt.find("\"beats\"") != std::string::npos);
-    CHECK(prompt.find("minItems") != std::string::npos);
-}
-
-TEST_CASE("回了 200 但不是 JSON，也要退一步重来") {
-    // **2026-09-13 在 glm-4.7-flash 上实测到的，比 400 那条阴得多。**
-    // 它对 response_format: json_schema 既不报错也不照做——回 200，内容是
-    // 一段 markdown 散文。只按状态码判的话退路永远不触发：这一层把散文
-    // 原样交出去，炸在调用方的 JSON 解析上，而真正的原因在日志里看不见。
-    FakeHttp http;
-    const std::string prose = "1. **暴风雨中，他独自伫立在天台边缘。**\n2. 她冲上天台。";
-    http.responses.push_back(ok(prose));   // 第 0 档：原样的 schema
-    http.responses.push_back(ok(prose));   // 第 1 档：削过的
-    http.responses.push_back(ok("{\"beats\": [\"一\", \"二\", \"三\", \"四\"]}"));
-    llm::RemoteClient c(test_cfg(), http.fn());
-    pipeline::CancelToken tok;
-
-    CHECK(c.complete(simple_req(), tok) == "{\"beats\": [\"一\", \"二\", \"三\", \"四\"]}");
-    REQUIRE(http.calls.size() == 3);
-    CHECK(http.calls[0].body.at("response_format").at("type") == "json_schema");
-    CHECK(http.calls[1].body.at("response_format").at("type") == "json_schema");
-    CHECK(http.calls[2].body.at("response_format").at("type") == "json_object");
-    // 退到 json_object 那一下才把 schema 写进提示词——不然这一下模型
-    // 连字段名都不知道
-    CHECK(http.calls[2].body.at("messages")[0].at("content")
-              .get<std::string>()
-              .find("JSON Schema") != std::string::npos);
-
-    SUBCASE("本来就没要 JSON 的，散文是正常结果，不许重发") {
-        FakeHttp h2;
-        h2.responses.push_back(ok("就是一段话"));
-        llm::Request r = simple_req();
-        r.schema = nlohmann::ordered_json();   // 没 schema
-        llm::RemoteClient c2(test_cfg(), h2.fn());
-        pipeline::CancelToken t2;
-        CHECK(c2.complete(r, t2) == "就是一段话");
-        CHECK(h2.calls.size() == 1);
-    }
-
-    SUBCASE("验明之后不再白发第一下") {
-        // **这一笔省的不是一点点。** glm-4.7-flash 实测：json_schema 那一下
-        // 78.6 秒（吐一篇散文），退路那一下 12.4 秒（吐的是合规 JSON）。
-        // 不记的话每次调用都要先白花那 78 秒，而免费档本来就限流。
-        FakeHttp h;
-        h.responses.push_back(ok("散文，不是 JSON"));   // 第 0 档
-        h.responses.push_back(ok("散文，不是 JSON"));   // 第 1 档
-        h.responses.push_back(ok("{\"a\":1}"));        // 第 2 档，成了
-        h.responses.push_back(ok("{\"b\":2}"));        // 第 2 次调用：直奔第 2 档
-        llm::RemoteClient c2(test_cfg(), h.fn());
-        pipeline::CancelToken t2;
-
-        CHECK(c2.complete(simple_req(), t2) == "{\"a\":1}");
-        CHECK(c2.complete(simple_req(), t2) == "{\"b\":2}");
-        // 4 而不是 6：第二轮没再白发前两档
-        REQUIRE(h.calls.size() == 4);
-        CHECK(h.calls[3].body.at("response_format").at("type") == "json_object");
-    }
-
-    SUBCASE("包在 ```json 里的不算不是 JSON") {
-        // 解析阶段的括号扫描本来就兜着这种。为它多发一次请求是白花钱，
-        // 在限流很紧的免费档上更是白白多等三十秒。
-        FakeHttp h3;
-        h3.responses.push_back(ok("{\"a\":1}"));
-        llm::RemoteClient c3(test_cfg(), h3.fn());
-        pipeline::CancelToken t3;
-        CHECK(c3.complete(simple_req(), t3) == "{\"a\":1}");
-        CHECK(h3.calls.size() == 1);
-    }
-}
-
-TEST_CASE("连 response_format 都不收的服务，退到第三档") {
-    // **OpenRouter 上一大半模型是这样的**（2026-09-13 查的清单）：
-    // supported_parameters 里压根没有 response_format——Inkling、
-    // Nemotron 3 Ultra、Ling 3.0、Laguna、North 都没有。只有两档的话，
-    // 这些模型上两次请求都会被网关打回来，而它们其实只要把 schema 写在
-    // 提示词里就写得出 JSON。
-    FakeHttp http;
-    for (int i = 0; i < 3; ++i) {
-        http.responses.push_back(llm::HttpResponse{400, "{}", std::nullopt});
-    }
-    http.responses.push_back(ok("{\"ok\":1}"));
-    llm::RemoteClient c(test_cfg(), http.fn());
-    pipeline::CancelToken tok;
-
-    CHECK(c.complete(simple_req(), tok) == "{\"ok\":1}");
-    REQUIRE(http.calls.size() == 4);
-    CHECK(http.calls[0].body.at("response_format").at("type") == "json_schema");
-    CHECK(http.calls[1].body.at("response_format").at("type") == "json_schema");
-    CHECK(http.calls[2].body.at("response_format").at("type") == "json_object");
-    // 最后一档：**整个 response_format 都不发**
-    CHECK_FALSE(http.calls[3].body.contains("response_format"));
-    // schema 还在，只是改走提示词
-    CHECK(http.calls[3].body.at("messages")[0].at("content")
-              .get<std::string>()
-              .find("JSON Schema") != std::string::npos);
-
-    SUBCASE("验明之后直接从最后一档起，不再白发前三次") {
-        // **不能再调 test_cfg()**：那个 fixture 会把刚记下的那笔账清掉
-        // （见它开头的 reset_schema_support）。这里要的正是"账还在"。
-        config::LLMConfig same;
-        same.base_url = "http://127.0.0.1:11434/v1";
-        same.model = "qwen3:14b";
-        same.api_key = "ollama";
-
-        FakeHttp h;
-        h.responses.push_back(ok("{\"again\":1}"));
-        llm::RemoteClient c2(same, h.fn());
-        pipeline::CancelToken t2;
-        CHECK(c2.complete(simple_req(), t2) == "{\"again\":1}");
-        REQUIRE(h.calls.size() == 1);
-        CHECK_FALSE(h.calls[0].body.contains("response_format"));
-    }
-}
-
-TEST_CASE("限流和认证错不该被当成「不支持 json_schema」") {
-    // **2026-09-13 实测撞上的。** 智谱那个免费模型限流很勤，连发三次全是
-    // 429 / code 1305「该模型当前请求量较大」。按"无条件退"的老规矩，
-    // 每一次限流都会变成一次去掉 schema 的重发——**而第二次多半会成功**，
-    // 于是这一集的分镜在没有任何结构约束的情况下生成完了，日志上一切正常。
-    for (const int code : {401, 403, 408, 429}) {
-        CAPTURE(code);
-        FakeHttp http;
-        http.responses.push_back(llm::HttpResponse{code, "{}", std::nullopt});
-        http.responses.push_back(ok("这一条不该被发出去"));
-        llm::RemoteClient c(test_cfg(), http.fn());
-        pipeline::CancelToken tok;
-
-        CHECK_THROWS_AS(c.complete(simple_req(), tok), llm::LlmError);
-        CHECK(http.calls.size() == 1);   // 只发了一次，没有第二次
-    }
-
-    SUBCASE("剩下的照退不误") {
-        for (const int code : {400, 404, 422, 500, 503}) {
-            CAPTURE(code);
-            FakeHttp http;
-            http.responses.push_back(llm::HttpResponse{code, "{}", std::nullopt});
-            http.responses.push_back(ok("{\"ok\":1}"));
-            llm::RemoteClient c(test_cfg(), http.fn());
-            pipeline::CancelToken tok;
-            CHECK(c.complete(simple_req(), tok) == "{\"ok\":1}");
-            CHECK(http.calls.size() == 2);
-        }
-    }
-}
-
-TEST_CASE("四档都失败就报错，带上人话") {
-    // 退路是四档（原样 schema / 削过的 schema / json_object / 什么都不发），
-    // 全撞墙才轮到报错。报的是最后那一下的状态码。
-    FakeHttp http;
-    const std::string err = R"({"error": "model 'qwen3:14b' not found"})";
-    for (int i = 0; i < 4; ++i) {
-        http.responses.push_back(llm::HttpResponse{404, err, std::nullopt});
-    }
-    llm::RemoteClient c(test_cfg(), http.fn());
-    pipeline::CancelToken tok;
-
-    try {
-        c.complete(simple_req(), tok);
-        FAIL("该抛异常");
-    } catch (const llm::LlmError& e) {
-        const std::string msg = e.what();
-        CHECK(msg.find("ollama pull") != std::string::npos);
-    }
-    CHECK(http.calls.size() == 4);
+    // 只发一次，而且一个 response_format 都不带——schema 在提示词里
+    CHECK_FALSE(http.calls[0].body.contains("response_format"));
+    CHECK(http.calls[0].body.at("messages")[0].at("content").get<std::string>().find(
+              "\"type\": \"object\"") != std::string::npos);
 }
 
 TEST_CASE("连不上的时候不重试") {
@@ -944,58 +637,13 @@ TEST_CASE("回放客户端") {
     CHECK(c.calls()[0].prompt == "写一集短剧");
 }
 
-// ---------------------------------------------------------------------------
-// 发给大模型服务的请求体，和 Python 逐字段比。
-//
-// 上面那条「请求体的形状」钉的是我们自己的意图。请求体是**真的发到外部
-// 服务上的东西**：temperature 差一点、response_format 少一层、strict 没
-// 带上，模型回来的就是另一种东西——而两边都会"成功"，差异要到成片里
-// 才看得出来。
-//
-// **一处结构差异**：Python 是三个阶段各拼各的（bible.py / script.py /
-// storyboard.py 里各有一份 _complete），C++ 是一个 build_payload 三处共用。
-// 所以语料按阶段导，这边用同样的输入调那一个函数——共用的那份要是漏了
-// 某个阶段的特殊处理，就在这里露出来。
-// ---------------------------------------------------------------------------
-
-TEST_CASE("请求体和 Python 逐字段一样") {
-    const std::string path =
-        std::string(CHANGJI_GOLDEN_DIR) + "/llm_payload.json";
-    std::ifstream in(path, std::ios::binary);
-    REQUIRE_MESSAGE(in.good(), "读不到语料 " << path);
-    nlohmann::json g;
-    in >> g;
-
-    const auto cases = g.at("cases");
-    // 语料读空了循环一次都不转，而用例照样绿。
-    REQUIRE(cases.size() == 9);
-
-    config::LLMConfig cfg;
-    cfg.model = g.at("model").get<std::string>();
-    cfg.temperature = g.at("temperature").get<double>();
-
-    for (const auto& c : cases) {
-        const std::string name = c.at("name").get<std::string>();
-        CAPTURE(name);
-
-        llm::Request req;
-        req.prompt = g.at("prompt").get<std::string>();
-        req.schema_name = c.at("schema_name").get<std::string>();
-        if (!c.at("schema").is_null()) {
-            req.schema = nlohmann::ordered_json::parse(c.at("schema").dump());
-        }
-
-        const auto got = llm::build_payload(
-            cfg, req, c.at("json_schema_mode").get<bool>());
-
-        // 键的顺序不算契约（JSON 对象无序），值要一模一样。
-        CHECK(nlohmann::json::parse(got.dump()) == c.at("payload"));
-    }
-}
-
-TEST_CASE("[llm].backend 选哪条后端") {
-    // 没编进程内大模型的构建里，配 local 也要能跑——退回远端，
-    // 别抛。用户多半只是拿了个不带 llama 的构建，而远端只要地址填了就能用。
+TEST_CASE("只有远端这一条后端了") {
+    // **2026-09-14 把进程内那条（LocalClient + LlamaChat）整个删了。**
+    // 现在的模型都要思考，而本地那条唯一的独门武器是 GBNF 语法采样——
+    // 它和思考是冲突的（思考被语法堵在 JSON 里之后会挤进键名和字符串），
+    // 而结构约束已经整个交给提示词了。
+    //
+    // llama.cpp 本身还在链：进程内配音用的是它。
     auto dummy_post = [](const std::string&, const std::string&,
                          const std::map<std::string, std::string>&, double) {
         llm::HttpResponse r;
@@ -1005,11 +653,8 @@ TEST_CASE("[llm].backend 选哪条后端") {
     };
     const auto c = llm::make_client(dummy_post);
     REQUIRE(c != nullptr);
-
-    // 这个测试目标是不带 llama 编的，所以拿到的一定是远端那条。
-    // 真装了 llama 的构建里 backend=local 才会给 LocalClient——
-    // 那条要真模型才跑得动，不在单元测试里验。
-    CHECK_FALSE(infer::llama_chat_available());
+    pipeline::CancelToken tok;
+    CHECK(c->complete(simple_req(), tok) == "好");
 }
 
 // ---- 起服务时不预热 ----
@@ -1114,27 +759,6 @@ TEST_CASE("远端 SSE：不给 stream_post 就还是整段那条") {
     // 默认实现会把整段回调一次——**不是不回调**，否则流式那条路上
     // 什么都收不到，而且不报错，只是编辑器里一直空着。
     CHECK(pieces == std::vector<std::string>{"{\"ch\":\"整段回来的\"}"});
-}
-
-TEST_CASE("远端 SSE：服务不认 json_schema 就不带 schema 再来一次") {
-    FakeHttp http;
-    FakeStream stream;
-    stream.statuses = {400, 400, 200};
-    stream.error_body = R"({"error":{"message":"response_format not supported"}})";
-    stream.chunks = {{}, {}, {sse_chunk("{\\\"ok\\\":1}"), "data: [DONE]\n\n"}};
-
-    llm::RemoteClient c(test_cfg(), http.fn(), stream.fn());
-    pipeline::CancelToken tok;
-    const std::string out = c.complete(simple_req(), tok, [](const std::string&) {});
-
-    CHECK(out == "{\"ok\":1}");
-    REQUIRE(stream.calls.size() == 3);
-    // 前两次都是 json_schema（原样的、削过的），第三次才退回 json_object
-    //（不是把 response_format 整个去掉——那是再下一档。退到这儿结构已经
-    // 没保证了，全靠提示词里那份 schema 和解析阶段的括号扫描兜底）
-    CHECK(stream.calls[0].body.at("response_format").at("type") == "json_schema");
-    CHECK(stream.calls[1].body.at("response_format").at("type") == "json_schema");
-    CHECK(stream.calls[2].body.at("response_format").at("type") == "json_object");
 }
 
 TEST_CASE("远端 SSE：服务端压根不认 stream，回了一份普通 JSON") {

@@ -1,6 +1,5 @@
 #include "doctor/doctor.hpp"
 
-#include "infer/llama_chat.hpp"
 
 
 #include <algorithm>
@@ -164,33 +163,13 @@ Check check_tts(const config::Settings& s) {
 }
 
 Check check_llm(const config::Settings& s) {
-    // **选了进程内就不该去问那个远端地址。**
-    // 不分这一支的话，配了 backend = "local" 的人会看到
-    // "大模型：连不上 http://127.0.0.1:8081/v1" 加一句"用 Docker 起 ollama"
-    // ——而那个服务他根本没打算起。这和拆 ComfyUI 之前体检无条件报
-    // "推理服务连不上"是同一类错：**报告说错了比不说更糟**，
-    // 它把人支去解决一个不存在的问题。
-    // 权重在不在由「本地模型」那一项查。
+    // **进程内那条 2026-09-14 删了。** 配着 backend = "local" 的老机器
+    // 落到这儿不该静默走远端体检——那样报的是一个他没打算起的服务连不上。
     if (s.llm.backend == "local") {
-        if (!infer::llama_chat_available()) {
-            return {"大模型", Level::FAIL,
-                    "配了进程内跑，但这个二进制没编进来",
-                    "构建时要 CHANGJI_LLAMA=ON；"
-                    "或者把 [llm].backend 改回 remote 并填 base_url"};
-        }
-        // **没填权重就不是 OK。** 特意切到进程内、却没填权重的机器上，
-        // [models].llm 是空的——那时候写剧本和出分镜一步都走不了。
-        // 报绿的后果是用户点了「写剧本」才撞上一个运行期错误，
-        // 而他刚看过一份全绿的体检报告。
-        //
-        // 是 WARN 不是 FAIL：出片那条路不用大模型，分镜表也可以手写。
-        // FAIL 会把制作页的开工按钮一起锁掉。
-        if (s.models.llm.empty()) {
-            return {"大模型", Level::WARN, "进程内跑，但 [models].llm 没填",
-                    "下一份 GGUF 放进模型目录，在 [models].llm 填文件名。\n"
-                    "不想在本机跑就去设置页把「跑在哪」改成外接 API。"};
-        }
-        return {"大模型", Level::OK, "进程内跑（" + s.models.llm + "）", ""};
+        return {"大模型", Level::FAIL,
+                "配的是进程内跑，而这条路已经没有了",
+                "把 [llm].backend 改成 remote，填上 base_url 和 api_key。\n"
+                "默认走智谱（bigmodel.cn），glm-4.7-flash 不要钱。"};
     }
 
     const std::string& url = s.llm.base_url;
@@ -205,7 +184,7 @@ Check check_llm(const config::Settings& s) {
         return {"大模型", Level::WARN, "还没填 API Key（" + url + "）",
                 "去设置页的「大模型」那一节填上。\n"
                 "默认走智谱：去 bigmodel.cn 控制台领一把，默认挑的 glm-4.7-flash 本身不要钱。\n"
-                "想在本机跑就把「跑在哪」改成内置，并填 [models].llm。"};
+                "只有远端这一条路了。"};
     }
 
     httplib::Headers h{{"Authorization", "Bearer " + s.llm.api_key}};

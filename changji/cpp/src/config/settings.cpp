@@ -1,8 +1,10 @@
 #include "config/settings.hpp"
 
+#include <algorithm>
 #include <cstdio>
 #include <fstream>
 #include <iterator>
+#include <set>
 #include <sstream>
 #include <stdexcept>
 
@@ -149,6 +151,18 @@ std::vector<std::string> TiersConfig::validate() const {
 std::string LLMConfig::model_for(const std::string& task) const {
     const auto it = task_models.find(task);
     return it == task_models.end() || it->second.empty() ? model : it->second;
+}
+
+double LLMConfig::temperature_for(const std::string& task) const {
+    // 要发散的：编东西那几步。往上推一档。
+    static const std::set<std::string> kLoose = {"story_outline", "premises",
+                                                 "trailer"};
+    // 要听话的：把已有的东西转成结构那几步。压到基准的四成上下。
+    static const std::set<std::string> kTight = {"bible", "storyboard",
+                                                 "story_analysis"};
+    if (kLoose.count(task) != 0) return std::min(temperature + 0.25, 1.1);
+    if (kTight.count(task) != 0) return temperature * 0.4;
+    return temperature;
 }
 
 bool LLMConfig::needs_api_key() const {
@@ -643,7 +657,6 @@ void apply_table(const toml::table& doc, Settings& s) {
         take(t, "temperature", s.llm.temperature);
         take(t, "parallel", s.llm.parallel);
         take(t, "context_tokens", s.llm.context_tokens);
-        take(t, "reasoning", s.llm.reasoning);
         // [llm.models] —— 按任务分流。**只覆盖写了的键**，没写的留着默认，
         // 否则用户想单独换一个任务就得把九个键全抄一遍。
         if (auto mt = (*t)["models"].as_table()) {
@@ -1112,26 +1125,21 @@ constexpr const char* kDefaultToml = R"(# 场记配置文件
 #             同一套后端、同一把密钥、同一份模型清单。
 #             换 DeepSeek、硅基流动、火山方舟，或者局域网里另一台
 #             机器上的 Ollama / vLLM，改这两行就是。
-#   local  —— 进程内跑，不用另起 llama-server。权重填 [models].llm，
-#             输出按 JSON Schema 约束（走语法采样，minItems 这类限制
-#             是硬的，远端那条做不到）。归调度器管：出片要显存时按实时
-#             空闲显存决定要不要让开。断网、不想让本子出境时走它。
+# **只有 remote 这一个值了。** 进程内跑（backend = "local"）2026-09-14
+# 整个删掉：现在的模型都要思考，而本地那条唯一的独门武器是语法采样，
+# 它和思考是冲突的——思考被语法堵在 JSON 里之后会挤进键名和字符串。
+# 结构约束现在整个交给提示词。
 backend = "remote"
 base_url = "https://open.bigmodel.cn/api/paas/v4"
 # api_key = "去 bigmodel.cn 控制台领"
 
-# 让模型「先想再写」吗。**默认 false，而且这一项很要紧。**
-# GLM-4.5 起的智谱模型全是混合推理、默认开着思考，而开着的话长任务上
-# 这类模型要么把思考稿当正文交上来、要么回一个空的 content——短提示词
-# 试不出来，真实长度的提示词上全军覆没。实测同一个模型关掉之后：
-# 正文字数翻倍、快 2.5 倍。
-# 关它的字段每家名字不一样（智谱 thinking、OpenRouter reasoning），
-# 程序按地址自己挑，认不出的家一个字都不发。
-# reasoning = false
+# 「先想再写」这一项 2026-09-14 去掉了：**现在的模型都要思考**，
+# 关不掉的越来越多（glm-5.3 / 5.3-flash 发关闭值直接回 400），
+# 而智谱把思考放在 reasoning_content 里、不混进正文，所以也不用关。
 
 # 兜底模型：下面 [llm.models] 里没点名的任务用它。
-# glm-4.7-flash 是这家唯一免费的模型，也是默认——代价是限流很紧，
-# 而且它对 json_schema 回 200 但给散文（程序有退档兜底，日志里会说）。
+# glm-4.7-flash 是这家唯一免费的模型，也是默认——代价是限流很紧
+# （撞上回的是 1305「该模型当前访问量过大」）。
 model = "glm-4.7-flash"
 
 # **按任务分流：哪一步用哪个模型。** 键是内部的 schema 名。

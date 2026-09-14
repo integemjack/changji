@@ -8,6 +8,7 @@
 #include <string>
 #include <vector>
 
+#include "http/job_stream.hpp"
 #include "http/episodes.hpp"
 #include "http/scripting.hpp"
 #include "models/project.hpp"
@@ -34,6 +35,18 @@ using namespace changji::models;
 void forbid_extra(const json& body, const std::set<std::string>& allowed) {
     if (!body.is_object()) throw ApiError(400, "请求体要是一个对象");
     for (const auto& kv : body.items()) {
+        // **`stream` 一律放行。** 它是传输层的信封字段，不是业务字段：
+        // 路由那一层（script_route / batch_route）拿它决定这件活挪不挪到
+        // 后台、结果往哪条 WebSocket 送，处理函数多半根本不看它。
+        //
+        // 原来是各家自己往白名单里加，2026-09-14 栽了：给「照故事定妆」
+        // 接上思考流之后前端开始发 stream，而 post_bible 的白名单里没有，
+        // 一按就是 422 `Extra inputs are not permitted`。十几个处理函数
+        // 挨个加，漏一个的表现就是那一步整个不能用。
+        //
+        // `async` 不在这儿放行是因为它在更上面就被 take_async 摘掉了
+        // （见 server.cpp），到这儿本来就没有。
+        if (kv.key() == "stream") continue;
         if (allowed.count(kv.key()) == 0) {
             throw unprocessable_top(kv.key(), "Extra inputs are not permitted",
                                     kv.value(), "extra_forbidden");
@@ -191,6 +204,7 @@ ApiResult post_story_chapters(const json& body,
             // 得到类名——具体 id 从来不从任何接口暴露出去。
             const std::string job_id =
                 pipeline::jobs().job_id(pipeline::JobKind::Write);
+            const JobScope scope{job_id};   // 思考流挂到这条 job 的频道上
             int done = 0;
             for (const auto& id : todo) {
                 if (p.cancelled()) return;
@@ -217,6 +231,7 @@ ApiResult post_story_chapters(const json& body,
                 req.schema = stages::chapter_schema(stages::chapter_target_scenes(cur),
                                                      stages::chapter_scene_paras(cur));
                 req.schema_name = "chapter";
+                req.on_thinking = thinking_sink();
                 req.temperature = stages::kChapterTemperature;
 
                 // **砸了就再要一次。**
@@ -349,6 +364,13 @@ ApiResult post_script_series(const json& body,
         [store, client, premise, episodes, duration_s,
          reuse_chars](pipeline::JobProgress& p) {
             p.set_total(episodes);
+            // **思考流挂到这条 job 的频道上。** 批量这几条是全流水线上跑得
+            // 最久的（一整季几十分钟），最需要"它到底在想还是卡死了"这个
+            // 信号；而它们不走 start_async，所以要自己挂一次。
+            // 停这一族仍然走 /api/script/series/stop（JobKind::Write 那个槽），
+            // 不是按 stream——这条 job 本来就只有一个。
+            const JobScope scope{pipeline::jobs().job_id(pipeline::JobKind::Write)};
+
 
             // 梗概先存下来。下次打开界面时回填，不用凭记忆重打。
             Project first = store.load_project();
@@ -386,17 +408,22 @@ ApiResult post_script_series(const json& body,
                 //
                 // 形状每集重摇一个（random_shape，ComfyUI 的 randomize 那个
                 // 意思）：写死比例的话整季每集都是同一个模子，连着看就露馅。
-                // 解析也要带上同一个 variation，否则段头上的秒数和 schema
-                // 里那份对不上。
+                //
+                // **三处都要带上同一个 variation：提示词、schema、解析。**
+                // 2026-09-14 发现提示词那一处漏了——它当时还不收这个参数，
+                // 于是提示词里写着「开场钩子（0–5 秒）」（固定的 8%），
+                // schema 里写的却是摇出来的秒数。模型照提示词写、我们照
+                // schema 解析，两边差几秒，**而且不报错**。
                 const std::uint32_t variation = stages::random_shape();
 
                 llm::Request req;
                 req.prompt = stages::build_script_prompt(
                     premise, duration_s, project.style_line,
-                    previous_context(project), names);
+                    previous_context(project), names, variation);
                 req.schema =
                     stages::script_schema(duration_s, names, variation);
                 req.schema_name = "script";
+                req.on_thinking = thinking_sink();
 
                 stages::ScriptDraft draft;
                 try {
@@ -464,6 +491,12 @@ ApiResult post_plan_all(const json& body, std::shared_ptr<llm::Client> client) {
         pipeline::JobKind::Write, "",
         [store, client, todo](pipeline::JobProgress& p) {
             p.set_total(static_cast<int>(todo.size()));
+            // **思考流挂到这条 job 的频道上。** 批量这几条是全流水线上跑得
+            // 最久的（一整季几十分钟），最需要"它到底在想还是卡死了"这个
+            // 信号；而它们不走 start_async，所以要自己挂一次。
+            // 停这一族仍然走 /api/script/series/stop（JobKind::Write 那个槽），
+            // 不是按 stream——这条 job 本来就只有一个。
+            const JobScope scope{pipeline::jobs().job_id(pipeline::JobKind::Write)};
             int done = 0;
             for (const std::string& episode_id : todo) {
                 if (p.cancelled()) return;
@@ -486,6 +519,7 @@ ApiResult post_plan_all(const json& body, std::shared_ptr<llm::Client> client) {
                             ep->script, project.style_line);
                         breq.schema = stages::bible_schema();
                         breq.schema_name = "bible";
+                        breq.on_thinking = thinking_sink();
                         assets = stages::parse_bible(client->complete(breq, tok),
                                                      project.style_line);
                         store.save_assets(assets);
@@ -505,6 +539,7 @@ ApiResult post_plan_all(const json& body, std::shared_ptr<llm::Client> client) {
                                     quota, ep->target_duration_s,
                                     stages::count_beats(ep->script)));
                     sreq.schema_name = "storyboard";
+                    sreq.on_thinking = thinking_sink();
 
                     std::vector<Shot> shots = stages::parse_storyboard(
                         client->complete(sreq, tok), assets);

@@ -5,6 +5,7 @@
 #include <string>
 #include <vector>
 
+#include "http/job_stream.hpp"
 #include "models/project.hpp"
 #include "models/story.hpp"
 #include "pipeline/activity.hpp"
@@ -29,6 +30,18 @@ using namespace changji::models;
 void forbid_extra(const json& body, const std::set<std::string>& allowed) {
     if (!body.is_object()) throw ApiError(400, "请求体要是一个对象");
     for (const auto& kv : body.items()) {
+        // **`stream` 一律放行。** 它是传输层的信封字段，不是业务字段：
+        // 路由那一层（script_route / batch_route）拿它决定这件活挪不挪到
+        // 后台、结果往哪条 WebSocket 送，处理函数多半根本不看它。
+        //
+        // 原来是各家自己往白名单里加，2026-09-14 栽了：给「照故事定妆」
+        // 接上思考流之后前端开始发 stream，而 post_bible 的白名单里没有，
+        // 一按就是 422 `Extra inputs are not permitted`。十几个处理函数
+        // 挨个加，漏一个的表现就是那一步整个不能用。
+        //
+        // `async` 不在这儿放行是因为它在更上面就被 take_async 摘掉了
+        // （见 server.cpp），到这儿本来就没有。
+        if (kv.key() == "stream") continue;
         if (allowed.count(kv.key()) == 0) {
             throw unprocessable_top(kv.key(), "Extra inputs are not permitted",
                                     kv.value(), "extra_forbidden");
@@ -203,6 +216,7 @@ ApiResult post_script_premise(const json& body, llm::Client& client,
     req.prompt = prompt;
     req.schema = stages::premise_schema();
     req.schema_name = "premises";
+    req.on_thinking = thinking_sink();
 
     // **顶栏那本账要记上。** 这几个接口是同步的，没有任务表那一套，
     // 2026-09-13 之前它们在界面上整个不可见：用户点了「重新改编」，
@@ -226,7 +240,8 @@ ApiResult post_script_premise(const json& body, llm::Client& client,
 ApiResult post_script_write(const json& body, llm::Client& client,
                             pipeline::CancelToken& tok) {
     forbid_extra(body, {"project", "episode_id", "premise", "duration_s",
-                        "continue_from_previous", "reuse_characters"});
+                        "continue_from_previous", "reuse_characters",
+                        "variation"});
     const std::string premise = need_str(body, "premise");
     const std::string episode_id = opt_str(body, "episode_id");
     const double duration_s =
@@ -285,8 +300,26 @@ ApiResult post_script_write(const json& body, llm::Client& client,
 
     std::string prompt;
     const char* source = "premise";
-    // 0 表示不浮动。照梗概续写那条老路子保持原样。
-    std::uint32_t variation = 0;
+    // 这一集四段的形状（占几秒、每段是什么戏）。
+    //
+    // **两条路都摇。** 原来这儿写死 0，注释是「照梗概续写那条老路子保持
+    // 原样」——那条路于是永远是 8%/10%/57% 加同一出戏（钩子 → 推进 →
+    // 回报 → 留扣）。保持原样保住的是"每集一个模子"，而那正是用户说的
+    // 「剧本时间线也都差不多」。
+    //
+    // 摇一个就够：提示词、schema、解析三处共用这一个变量，形状和秒数
+    // 自然对得上（对不上的表现是段头的秒数和模型看到的不一样，不报错）。
+    //
+    // **body 里给了就用给的**，和出图那边的 seed 一个规矩（见 ref_gen.hpp）：
+    // 界面上的"再摇一次"就是不送这个字段，"还要刚才那个节奏"就是把上次的
+    // 数送回来。对拍语料送的是 0，那一档和以前一字不差。
+    const std::uint32_t variation =
+        body.is_object() && body.contains("variation")
+            // 下界写 -1 不是 0：num_in_range 的下界是**开区间**
+            // （`v <= gt` 就报 422），而 0 是合法值——它正是"不浮动"那一档。
+            ? static_cast<std::uint32_t>(
+                  num_in_range(body, "variation", 0.0, -1.0, 4294967295.0))
+            : stages::random_shape();
     if (plan != nullptr) {
         // 上一集的结尾拿来接语气。**按分集表的顺序取上一条**，不是按
         // project.episodes 的顺序——后者可能被手动加过集、插过预告片。
@@ -301,19 +334,15 @@ ApiResult post_script_write(const json& body, llm::Client& client,
             }
             break;
         }
-        // 这一集的形状。**四段的比例不写死**：写死的话 60 秒永远是
-        // 5/28/21/6，连着看几集是一个模子。
-        //
-        // 每写一次摇一个新的（ComfyUI 的 randomize 那个意思）——**不是按集号
-        // 哈希**，那样同一集永远是同一个形状，人不喜欢这一集的节奏也换不掉。
-        // 不满意就再点一次「重新改编」，满意了点采用，形状就跟着剧本定下来。
-        variation = stages::random_shape();
+        // 形状每写一次摇一个新的（ComfyUI 的 randomize 那个意思）——**不是
+        // 按集号哈希**，那样同一集永远是同一个形状，人不喜欢这一集的节奏也
+        // 换不掉。不满意就再点一次「重新改编」，满意了点采用，形状跟着定下来。
         prompt = stages::build_script_prompt_from_story(
             story, *plan, project.style_line, names, prev_tail, variation);
         source = "story";
     } else {
-        prompt = stages::build_script_prompt(premise, duration_s,
-                                             project.style_line, previous, names);
+        prompt = stages::build_script_prompt(
+            premise, duration_s, project.style_line, previous, names, variation);
     }
 
     // 走故事那条时时长以分集表为准：那份表是按每集时长算出来的，
@@ -331,6 +360,7 @@ ApiResult post_script_write(const json& body, llm::Client& client,
     // LinHao / Su Wan 四种。收成枚举，和分镜那边收 char_id 是一个道理。
     req.schema = stages::script_schema(used_duration, names, variation);
     req.schema_name = "script";
+    req.on_thinking = thinking_sink();
 
     // 走故事那条叫「改编」，照梗概写叫「写」——按钮上的字就是这么分的
     // （EpScript.vue 里那个 writeLabel），这儿跟着它说，不然顶栏说的和
@@ -416,6 +446,7 @@ ApiResult post_script_trailer(const json& body, llm::Client& client,
     req.prompt = prompt;
     req.schema = stages::script_schema();  // 平的那份：预告片是蒙太奇，不分四段
     req.schema_name = "trailer";
+    req.on_thinking = thinking_sink();
 
     pipeline::Activity act{"trailer", paths::to_utf8(store.root()), "",
                            "正在剪预告"};

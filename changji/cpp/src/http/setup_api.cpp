@@ -132,7 +132,7 @@ std::string current_option(const Group& g, const config::Settings& s) {
     //     一保存就被当成"换了一家"，把那一项写死的 glm-4.7-flash
     //     冲回配置文件。
     // 一家服务 = 一个地址。模型名归用户，这一页不拿它当身份证。
-    if (g.key == "llm" && s.llm.backend != "local") {
+    if (g.key == "llm") {
         const auto here = same_service_key(s.llm.base_url);
         for (const auto& o : g.options) {
             for (const auto& [key, value] : o.settings) {
@@ -208,7 +208,10 @@ bool group_satisfied(const Group& g, const config::Settings& s) {
     // glm-4.7-flash，装完就是"backend=remote、api_key 空"这个状态；
     // 只看 backend 的话这一页会说"配好了"放人过去，然后第一次写剧本
     // 401。本机/局域网的服务不要求——Ollama 那些根本不校验。
-    if (g.key == "llm" && s.llm.backend != "local") {
+    // **进程内那条 2026-09-14 删了。** 配着 local 的老配置一律不算配齐：
+    // 让人回到这一页把它改成外接，比放他过去、第一次写剧本才炸要好。
+    if (g.key == "llm") {
+        if (s.llm.backend == "local") return false;
         return !s.llm.needs_api_key() || !s.llm.api_key.empty();
     }
     if (g.key == "tts" && s.tts.backend != "local") return true;

@@ -65,6 +65,20 @@ void SseDeltas::take_line(std::string line, std::string& out) {
     // message 那条是累计的，取了会把全文再加一遍。
     const auto delta = first.find("delta");
     if (delta == first.end() || !delta->is_object()) return;
+
+    // **思考单独收，不并进正文。** 各家的字段名不一样：
+    //   智谱（bigmodel.cn / z.ai）  reasoning_content
+    //   OpenRouter / 一批兼容网关   reasoning
+    // 两个都认——认错了的代价只是这一段思考没显示出来，而把它并进正文的
+    // 代价是思考稿直接流进用户的编辑器。
+    for (const char* k : {"reasoning_content", "reasoning"}) {
+        const auto r = delta->find(k);
+        if (r != delta->end() && r->is_string()) {
+            thinking_ += r->get<std::string>();
+            break;
+        }
+    }
+
     const auto content = delta->find("content");
     if (content == delta->end() || !content->is_string()) return;
     out += content->get<std::string>();

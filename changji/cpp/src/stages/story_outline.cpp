@@ -1,6 +1,9 @@
 #include "stages/story_outline.hpp"
 
+#include <algorithm>
+#include <cstdint>
 #include <cstdio>
+#include <iterator>
 #include <set>
 #include <string>
 #include <vector>
@@ -213,9 +216,83 @@ const ordered& outline_schema() {
     return schema;
 }
 
+namespace {
+
+/// 从种子里取第 k 个 0~1 之间的数。
+///
+/// 和 script.cpp 里那个 frac 是同一个（xorshift 混一道再取模）。**没有合成
+/// 一处**：那边混的理由是"集号只差一个字"，这边是"一次抽四五样，相邻的 k
+/// 不能给出相邻的结果"，两边的需求将来会各自变。两份十行的纯函数比一个
+/// 两处都要迁就的公共函数好维护。
+double frac(std::uint32_t seed, int k) {
+    std::uint32_t x = seed + static_cast<std::uint32_t>(k) * 0x9E3779B9u;
+    x ^= x << 13;
+    x ^= x >> 17;
+    x ^= x << 5;
+    return static_cast<double>(x % 10000u) / 10000.0;
+}
+
+/// 按种子从一张词表里挑一项。
+template <std::size_t N>
+const char* pick(const char* const (&table)[N], std::uint32_t seed, int k) {
+    return table[static_cast<std::size_t>(frac(seed, k) * static_cast<double>(N)) % N];
+}
+
+/// 按种子挑 `want` 个**不重复**的姓。
+///
+/// 不用 shuffle：要的只是几个，而 shuffle 要把九十项全排一遍。
+/// 撞上重复就往后挪一格——池子比要的数大一个数量级，挪不了几次。
+std::vector<std::string> pick_surnames(std::uint32_t seed, std::size_t want) {
+    const auto& pool = prompt::story_outline_spark::kSurnames;
+    const std::size_t n = std::size(pool);
+    want = std::min(want, n);
+    std::vector<std::string> out;
+    std::set<std::size_t> used;
+    for (std::size_t i = 0; out.size() < want; ++i) {
+        std::size_t at =
+            static_cast<std::size_t>(frac(seed, 100 + static_cast<int>(i)) *
+                                     static_cast<double>(n)) % n;
+        while (used.count(at) != 0) at = (at + 1) % n;
+        used.insert(at);
+        out.emplace_back(pool[at]);
+    }
+    return out;
+}
+
+}  // namespace
+
+std::string build_outline_names(std::uint32_t variation) {
+    if (variation == 0) return "";
+    namespace sp = prompt::story_outline_spark;
+    std::string out = sp::kNamesPre;
+    const auto names = pick_surnames(variation, sp::kSurnamesPick);
+    for (std::size_t i = 0; i < names.size(); ++i) {
+        if (i != 0) out += "、";
+        out += names[i];
+    }
+    out += sp::kNamesMid;
+    out += pick(sp::kNameShapes, variation, 7);
+    out += "。\n";
+    out += sp::kNamesPost;
+    return out;
+}
+
+std::string build_outline_spark(std::uint32_t variation) {
+    if (variation == 0) return "";
+    namespace sp = prompt::story_outline_spark;
+    std::string out = sp::kSparkHead;
+    out += std::string(sp::kSparkField) + pick(sp::kFields, variation, 1) + "\n";
+    out += std::string(sp::kSparkBond) + pick(sp::kBonds, variation, 2) + "\n";
+    out += std::string(sp::kSparkPressure) + pick(sp::kPressures, variation, 3) + "\n";
+    out += std::string(sp::kSparkTone) + pick(sp::kTones, variation, 4);
+    out += sp::kSparkTail;
+    return out;
+}
+
 std::string build_outline_prompt(const std::string& premise, StoryScale scale,
                                  StyleLine style_line,
-                                 const std::string& keywords) {
+                                 const std::string& keywords,
+                                 std::uint32_t variation) {
     const char* hint = style_line == StyleLine::ANIME
                            ? prompt::story_outline::kHintAnime
                            : prompt::story_outline::kHintRealistic;
@@ -226,6 +303,10 @@ std::string build_outline_prompt(const std::string& premise, StoryScale scale,
     out += std::to_string(suggested_chapters(scale));
     out += prompt::story_outline::kSeg2;
     out += prompt::story_outline::kRules;
+
+    // 姓氏池：**每条路都拼**。名字和用户给的方向不冲突——他写的是故事，
+    // 不是花名册；梗概里真提到了名字，拼进去那段话里写着"照用，一个字不改"。
+    out += build_outline_names(variation);
 
     const std::string kw = text::strip_ws(keywords);
     if (!kw.empty()) {
@@ -238,6 +319,13 @@ std::string build_outline_prompt(const std::string& premise, StoryScale scale,
     // 那条是从手写的一句话开始的，把它做成硬门槛等于又把人摁回空白框前面。
     const std::string p = text::strip_ws(premise);
     if (p.empty()) {
+        // 选题空间：**只在这儿拼，而且得连关键词也没有。** 用户已经给了方向
+        // 的话，再塞一组随机的场域和关系是跟他对着干——他写"外卖员和程序员"，
+        // 我们塞"远洋渔船"，出来的东西他认不出是自己要的。
+        //
+        // 而这条路正是雷同最严重的一条：提示词里一个变量都没有，同一个按钮
+        // 按十次，模型拿到的是同一串字节十次。
+        if (kw.empty()) out += build_outline_spark(variation);
         out += prompt::story_outline::kNoPremise;
     } else {
         out += prompt::story_outline::kTailHead;

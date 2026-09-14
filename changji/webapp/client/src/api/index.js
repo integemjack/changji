@@ -215,6 +215,17 @@ export const api = {
   runStatus: () => get('/api/run'),
   run: (payload) => post('/api/run', payload),
   stopRun: () => post('/api/stop', {}),
+
+  /**
+   * 把某一件正在后台跑的活停掉（写大纲、写正文、写剧本、拆分镜这一族）。
+   *
+   * **按 stream 停，不按种类停。** stopRun / stopSeries 停的是"出片"和
+   * "写整季"那两个长跑任务，一种只有一个槽；这一族是按请求起的，同时可以
+   * 有好几件，只能按它自己那条 stream 认。
+   *
+   * 找不到不是错（按下去那一刻可能刚好干完），回的是 {stopped: false}。
+   */
+  cancelJob: (stream) => post('/api/job/cancel', { stream }),
   outputs: (path) => get('/api/outputs', { path }),
   hardware: () => get('/api/hardware'),
   // 此刻的负载，一次性的。顶栏那三个小表走 WebSocket（订 "system"），

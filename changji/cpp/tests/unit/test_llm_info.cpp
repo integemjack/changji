@@ -180,10 +180,12 @@ TEST_CASE("模型列表能认几种返回形状") {
     CHECK(names(json{{"whatever", 1}}) == json::array());
 }
 
-TEST_CASE("本机 gguf 列表是新增字段，不替换原来的") {
-    // 方案原本写的是"改成列本地 gguf"。**那会真的破契约**——
-    // 设置页那个下拉框会突然从"远端服务上的模型"变成"本机文件"，
-    // 而用户配的是远端服务。加字段前端不看，是向后兼容的。
+TEST_CASE("本机 gguf 列表已经空了，但字段还在") {
+    // **2026-09-14 把进程内后端整个删了**，本机那份 gguf 一个都选不了，
+    // 所以这一段不再去扫目录——摆出来只会让人以为还能在本机跑。
+    //
+    // **字段本身留着**：少一个键会让还没更新的页面在取值时炸，
+    // 而这一层没法知道对面是新版还是旧版。
     const fs::path dir = make_models_dir(
         "列表", {"Qwen3-14B-Q4_K_M.gguf", "llama3.gguf", "readme.txt",
                  "Wan2.2.GGUF", "不是模型.safetensors"});
@@ -196,20 +198,18 @@ TEST_CASE("本机 gguf 列表是新增字段，不替换原来的") {
     CHECK(r.body.at("models") == json::array({"远端模型"}));
     CHECK(r.body.at("current") == "qwen3:14b");
 
-    // 本机那份在新字段里
+    // 本机那份是空的，但三个键都在——目录里明明有 gguf 也不列
     const json& local = r.body.at("local");
-    CHECK(local.at("dir") == paths::to_utf8(dir));
-    CHECK(local.at("current") == "Qwen3-14B-Q4_K_M.gguf");
-    // 只收 .gguf，大小写都认；别的扩展名不要
-    CHECK(local.at("files") ==
-          json::array({"Qwen3-14B-Q4_K_M.gguf", "Wan2.2.GGUF", "llama3.gguf"}));
+    CHECK(local.at("dir") == "");
+    CHECK(local.at("current") == "");
+    CHECK(local.at("files") == json::array());
 
     std::error_code ec;
     fs::remove_all(dir, ec);
 }
 
-TEST_CASE("远端连不上时本机列表照样给") {
-    // 用户可能压根没配远端服务，那时候本机这份就是他唯一能选的东西。
+TEST_CASE("远端连不上时 local 字段照样在") {
+    // 键少一个会让页面在取值时炸，所以连不上也要把这个空壳给出去。
     const fs::path dir = make_models_dir("离线", {"a.gguf"});
     FakeGet get;
     get.reply.status = 0;
@@ -218,7 +218,7 @@ TEST_CASE("远端连不上时本机列表照样给") {
     const auto r = http::get_llm_models(test_settings(dir), get.fn());
     CHECK(r.body.at("models") == json::array());
     CHECK(r.body.contains("error"));
-    CHECK(r.body.at("local").at("files") == json::array({"a.gguf"}));
+    CHECK(r.body.at("local").at("files") == json::array());
 
     std::error_code ec;
     fs::remove_all(dir, ec);
