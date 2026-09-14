@@ -33,19 +33,30 @@ onUnmounted(() => clearInterval(timer))
 </script>
 
 <template>
+  <!-- **「还不知道」不是「离线」。**
+       `status` 初值是 null，而原来那三行判的都是 `status?.online`——于是
+       每次打开页面，这盏灯先写着「引擎离线」加一个警告图标，直到第一次
+       探测回来。平时那是一瞬间，可引擎正忙时一个请求卡十几秒是常事
+       （长任务占着 Crow 的一条 I/O 线程，见 server.cpp 那段），那就是
+       十几秒的假离线——而这盏灯是整屏唯一一处回答"引擎在不在"的地方。
+       第三种状态：没探过就说「检查中」，点不亮也不报警。 -->
   <RouterLink
     to="/settings"
     class="lamp"
-    :class="status?.online ? 'lamp--on' : 'lamp--off'"
+    :class="status ? (status.online ? 'lamp--on' : 'lamp--off') : ''"
     :title="
-      status?.online
-        ? `引擎已连接 ${status.baseUrl}（${status.latencyMs}ms）`
-        : `引擎连不上：${status?.error || '检查中'}`
+      status
+        ? status.online
+          ? `引擎已连接 ${status.baseUrl}（${status.latencyMs}ms）`
+          : `引擎连不上：${status.error || '没说原因'}`
+        : '正在看引擎在不在'
     "
   >
     <span class="lamp__dot" :class="{ 'lamp__dot--pulse': checking }" />
-    <span class="lamp__text">{{ status?.online ? '引擎已连接' : '引擎离线' }}</span>
-    <AppIcon v-if="!status?.online" name="warn" :size="13" />
+    <span class="lamp__text">
+      {{ status ? (status.online ? '引擎已连接' : '引擎离线') : '检查中' }}
+    </span>
+    <AppIcon v-if="status && !status.online" name="warn" :size="13" />
   </RouterLink>
 </template>
 

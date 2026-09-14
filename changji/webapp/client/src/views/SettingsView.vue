@@ -358,7 +358,11 @@ function scrollTo(id) {
             >
               {{ overview.doctor.can_run ? '可以开工' : '还不能跑' }}
             </span>
-            <span v-else-if="!engineOnline" class="pill pill--danger">引擎连不上</span>
+            <!-- **没读回来之前不能说"连不上"。** `engineOnline` 是
+                 `overview?.engine?.online`，而 overview 一开始是 null——
+                 这一份要跑一遍体检（探 ffmpeg、扫字体、问显卡），一秒以上
+                 是常事。不判 overview 的话，每次进这一页都先红一下。 -->
+            <span v-else-if="overview && !engineOnline" class="pill pill--danger">引擎连不上</span>
             <span class="spacer" />
             <!-- 这一页不会自己更新（配置文件能在外面改），这是少数该有刷新的地方 -->
             <button class="btn btn--ghost btn--sm" type="button" :disabled="loading" @click="load">
@@ -470,8 +474,11 @@ function scrollTo(id) {
         <section id="sec-engine" class="sec">
           <div class="sec__head">
             <h2 class="sec__t">引擎</h2>
-            <span class="pill" :class="engineOnline ? 'pill--ok' : 'pill--danger'">
-              {{ engineOnline ? `已连接 ${overview?.engine?.latencyMs}ms` : '连不上' }}
+            <span
+              class="pill"
+              :class="!overview ? 'pill--neutral' : engineOnline ? 'pill--ok' : 'pill--danger'"
+            >
+              {{ !overview ? '检查中' : engineOnline ? `已连接 ${overview.engine?.latencyMs}ms` : '连不上' }}
             </span>
             <span class="spacer" />
             <div v-if="!embedded" class="sec__acts">
@@ -486,7 +493,7 @@ function scrollTo(id) {
             </div>
           </div>
           <div class="stack">
-            <p v-if="!engineOnline" class="alert alert--bad">
+            <p v-if="overview && !engineOnline" class="alert alert--bad">
               <AppIcon name="warn" :size="15" />
               {{ overview?.engine?.error || '引擎离线' }}
             </p>
