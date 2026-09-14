@@ -29,6 +29,8 @@ import { openJobSocket } from '@/composables/useJobSocket'
 
 /** 轮询兜底的间隔。和原来一样，用户对这个节奏已经有预期。 */
 const POLL_MS = 1200
+/** 连丢三拍之后的慢轮询间隔。见 useRun 里的 sleepAndRetry。 */
+const SLOW_POLL_MS = 8000
 
 export const useRun = defineStore('run', () => {
   const state = ref(null)
@@ -147,8 +149,35 @@ export const useRun = defineStore('run', () => {
     } catch {
       // 引擎重启时会连着失败几次。立刻报错太吵，连丢三次再说。
       missCount += 1
-      if (missCount >= 3) stop()
+      if (missCount >= 3) sleepAndRetry()
     }
+  }
+
+  /**
+   * 连丢三拍之后：**慢下来，但别睡死。**
+   *
+   * 这儿原来是 `stop()`——而 stop 把 polling 置假、定时器清掉、socket 也关掉，
+   * **连 socket 那条 5 秒重连都跟着断了**（它判的就是 polling）。之后没有
+   * 任何东西会把这条线叫醒：能叫醒它的只有用户再点一次开始，或者切走标签页
+   * 再切回来（useShots 的 onVisible）。
+   *
+   * 于是引擎重启一下——出片跑到一半，镜头墙就冻在那一帧；而顶栏那块负载表、
+   * 「AI 作业中」、参考图那条流各有各的 5 秒重连，都自己回来了。屏幕上一半
+   * 活着一半死着，看着最像"这一页坏了"。
+   *
+   * 慢轮询而不是继续 1.2 秒一拍：引擎真下线时别把请求打满。拉回来一拍就换回
+   * 常速，并把 socket 接上——poll 成功那一支会把 missCount 归零，这儿据此判。
+   */
+  function sleepAndRetry() {
+    if (!polling.value) return
+    if (timer) clearInterval(timer)
+    timer = setInterval(async () => {
+      await poll()
+      if (missCount !== 0) return
+      clearInterval(timer)
+      timer = setInterval(poll, POLL_MS)
+      openSocket()
+    }, SLOW_POLL_MS)
   }
 
   /** 把推上来的一条增量并进当前状态。 */
@@ -330,8 +359,26 @@ export const useWriter = defineStore('writer', () => {
       // 分寸抄流水线那条 store：连丢几次再停。引擎重启时会连着失败几次，
       // 立刻停太急。
       missCount += 1
-      if (missCount >= 5) stop()
+      if (missCount >= 5) sleepAndRetry()
     }
+  }
+
+  /**
+   * 连丢五拍之后：**慢下来，但别睡死。** 理由和 useRun 里那一个一字不差
+   * ——stop() 会把 socket 那条 5 秒重连一起掐掉（它判的是 polling），
+   * 而之后能把这条线叫醒的只有"重新进一次故事页"。批量展开一跑一个多小时，
+   * 引擎中途重启一下，底栏那个「AI 展开中 3/16」就再也不动了。
+   */
+  function sleepAndRetry() {
+    if (!polling.value) return
+    if (timer) clearInterval(timer)
+    timer = setInterval(async () => {
+      await poll()
+      if (missCount !== 0) return
+      clearInterval(timer)
+      timer = setInterval(poll, 1500)
+      openSocket()
+    }, SLOW_POLL_MS)
   }
 
   /**

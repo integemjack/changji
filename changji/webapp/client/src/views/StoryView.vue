@@ -451,8 +451,11 @@ function beforeUnload(e) {
  * 变真再连的话，头几章的字已经过去了。
  */
 let batchSock = null
+let batchRetry = null
 function watchBatch() {
   if (batchSock) return
+  clearTimeout(batchRetry)
+  batchRetry = null
   batchSock = openJobSocket(
     'write',
     async (msg) => {
@@ -518,7 +521,14 @@ function watchBatch() {
       keepEndVisible(msg.chapter_id)
     },
     () => {
+      // **断了要接回来。** 这条是常驻的（批量可能是上一次离开页面前起的），
+      // 而它原来断了就 null 掉、没人再开——引擎中途重启一下，正文就再也不
+      // 长了，而底栏的进度、顶栏的角标各自重连之后照常走：屏幕上一半活着
+      // 一半死着。别的几条流（顶栏负载表、作业角标、参考图）都是 5 秒重连，
+      // 这条跟上。
       batchSock = null
+      clearTimeout(batchRetry)
+      batchRetry = setTimeout(watchBatch, 5000)
     },
   )
 }
@@ -589,6 +599,8 @@ onUnmounted(() => {
   writer.stop()
   batchSock?.close()
   batchSock = null
+  clearTimeout(batchRetry)
+  batchRetry = null
   sizer?.disconnect()
   // ⚠️ **这儿原来是 clearTimeout，那等于把刚敲的字丢掉。**
   //
