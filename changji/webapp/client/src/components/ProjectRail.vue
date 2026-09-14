@@ -77,21 +77,42 @@ const confirmName = ref('')
  *
  * 开 ⋯ 菜单那一下问一次，不轮询：这个答案只在人要动手的那一刻有用。
  */
+/**
+ * 正在跑的是哪几个项目。
+ *
+ * ⚠️ **三种情况要分开，不能都用空集表示。**
+ *   `null`  —— 问不到（请求砸了）。真·不确定，下面那道闸 fail-closed。
+ *   空 Set  —— 问过了，**谁都没在跑**。
+ *   有内容  —— 问过了，就这几个在跑。
+ *
+ * 原来后两种都写成 `new Set()`，而 `busyProject` 拿"集合是空的"当"不确定"
+ * 一律返回真。于是只要 `runner.running || writer.running` 是真、而
+ * `/api/system` 回的 jobs 是空的，**项目库里每一条的改名和删除全部变灰**，
+ * 提示还写着「正在跑，跑完再删」——而根本没有东西在跑。
+ *
+ * 这不是边角情形，`runner.running` 会实打实地卡在真上：`useRun` 只有
+ * `useShots` 在驱动（也就是只有镜头页），而 `stop()`（镜头页卸载时调）
+ * 只停轮询和 socket，**不清 `state`**——于是 `running` 保持着离开那一刻
+ * 的值。在镜头页起一轮、走到项目页，这一整页从此每一条都是"正在跑"，
+ * 回镜头页转一圈才会解开。
+ */
 const busyPaths = ref(new Set())
 
 async function refreshBusy() {
+  // 两个旗子都不亮，那肯定没在跑，省一次请求
   if (!(runner.running || writer.running)) {
     busyPaths.value = new Set()
     return
   }
   try {
     const sys = await api.system()
+    // 空数组是个**确定**的答案：这一刻谁都没在跑。
     busyPaths.value = new Set(
       (sys.jobs ?? []).map((j) => j.project).filter(Boolean),
     )
   } catch {
-    // 问不到就退回"不确定"，下面那道闸会一律挡住。
-    busyPaths.value = new Set()
+    // 问不到才是"不确定"，下面那道闸会一律挡住。
+    busyPaths.value = null
   }
 }
 
@@ -303,9 +324,9 @@ async function remove(p) {
  * 才弹一条红字。
  */
 function busyProject(p) {
-  if (!(runner.running || writer.running)) return false
-  // 不知道在跑哪个就一律当成"可能是它"——和引擎那道闸同一个方向（fail-closed）
-  if (!busyPaths.value.size) return true
+  // 不知道在跑哪个就一律当成"可能是它"——和引擎那道闸同一个方向（fail-closed）。
+  // **只有真·问不到才算不知道**，问出来是空的不算，见 busyPaths 上面那段。
+  if (busyPaths.value === null) return true
   return busyPaths.value.has(p.path)
 }
 </script>
