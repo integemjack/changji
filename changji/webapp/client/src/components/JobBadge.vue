@@ -249,7 +249,16 @@ async function go(row) {
         <AppIcon :name="r.icon" :size="13" />
         <span class="jb__kind">{{ r.label }}</span>
         <span class="jb__name truncate">{{ r.name }}</span>
+        <!-- **没有集号也要占住这一格。** `.jb__row` 是写死的七列网格
+             （auto auto 1fr auto 56px auto 1.2fr），少一个子元素后面就
+             全体左移一列：项目级的那些作业（照故事定妆、参考图）本来就
+             没有 episode_id，于是进度条落进 auto 那一列——它没有内容撑，
+             直接塌成零宽，而那正是跑十几分钟、最需要看进度的几件活；
+             消息那一格也跟着挪到 auto 上，长消息不缩，把整行顶出弹层。
+             下面那对空 <span/> 是同一件事（没有步数可报时补齐两格），
+             这儿漏了。 -->
         <span v-if="r.episode_id" class="jb__ep">{{ r.episode_id }}</span>
+        <span v-else />
         <!-- 短活多半没有进度（出图头十几秒在读权重，一次回调都没有）。
              那时候不画空进度条、也不写"0/—"：一个永远停在 0 的进度条
              看着像卡住了，而它只是没有步数可报。 -->
