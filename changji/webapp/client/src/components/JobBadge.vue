@@ -174,9 +174,15 @@ const KIND = {
   // 点了「重新改编」顶栏一片安静，而那一刻 LLM 槽正被它占着。
   // 梗概在故事页那个框里想（`/story` 的「想几个给我挑」），不在这一集里。
   // 原来指着 /episode 是照着"剧本大纲"那一页写的，那一页 2026-09-11 删了。
+  //
+  // **预告片同样不在 /episode 上。** 整份界面里只有设定页「分集」那一格的
+  // 折叠区（标题「预告片 · 手动加一集」）有它：剪的按钮、时长下拉、以及
+  // 剪完那份**只活在内存里**的草稿和它的「存成 trailer 这一集」。跳去
+  // /episode 的话，落在的是当前这一集的镜头屏——那儿一个预告片的字都没有，
+  // 而草稿就在你没去的那一页上等着按「采用」，退出去就没了。
   premise: { label: '想梗概', page: '/story', icon: 'sparkle' },
   script: { label: '写剧本', page: '/episode', icon: 'sparkle' },
-  trailer: { label: '剪预告', page: '/episode', icon: 'film' },
+  trailer: { label: '剪预告', page: '/assets?tab=episodes', icon: 'film' },
   bible: { label: '定角色场景', page: '/assets', icon: 'sparkle' },
   plan: { label: '拆镜头', page: '/episode', icon: 'board' },
 }
