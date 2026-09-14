@@ -1312,8 +1312,14 @@ onDeactivated(() => window.removeEventListener('keydown', onKey))
             <span class="field__label">台词</span>
             <div v-if="draft.dialogue_texts?.length" class="stack stack--sm">
               <div v-for="(line, i) in draft.dialogue_texts" :key="i" class="dialogue">
+                <!-- **说话人要翻成人话。** 这儿原来直接印 char_id，于是
+                     台词行上是一列 `c_lin_wan`，而三行以上那排牌子写的是
+                     「林晚」——同一个人在同一个抽屉里两种叫法，而这一块正
+                     是要盯着"谁说了什么"改字的地方。charName 就在这一页
+                     上（它旁边的注释写着"界面负责把 id 翻回人话"），认不
+                     出来的 id 它原样回，比空着强。 -->
                 <span class="dialogue__who tiny dim nowrap">
-                  {{ draft.dialogue[i]?.char_id || '旁白' }}
+                  {{ charName(draft.dialogue[i]?.char_id) || '旁白' }}
                 </span>
                 <input v-model="draft.dialogue_texts[i]" class="input" />
                 <span v-if="draft.dialogue[i]?.duration_s" class="tiny dim numeric nowrap">
