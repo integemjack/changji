@@ -995,6 +995,43 @@ void clean_dialogue_text(json& item) {
     }
 }
 
+/// 只留下**允许大模型填**的那些字段，台词行里那三项也一并剥掉。
+///
+/// 上面 `llm_shot_schema` 已经把 schema 裁到 `kLlmShotFields` 了，但那只管
+/// "我们要它填什么"——**管不住它实际填了什么**。那份 schema 走的是各家
+/// provider 的 response_format，支持得好不好各不相同；不支持的那几家，它
+/// 就只是提示词里的一段字。而下面 `item.get<Shot>()` 是照单全收的。
+///
+/// 漏进来的后果按字段分等级，最重的那几个都不报错：
+///
+///   · `status` = final_done / locked —— 出片那一步整镜跳过（这两个不在
+///     `render_entry_states` 里），表现是"跑完了，这一镜什么都没出"，而侧
+///     边栏还会把这一集打上勾；
+///   · `frame_path` / `video_path` —— 墙上是破图，装配还会去拼一个根本不
+///     存在的文件（`assembly_usable` 只看这个字段非空加状态）；
+///   · `duration_locked` = true —— 配音回填的真实时长被挡在外面，画面按一个
+///     猜出来的秒数出。
+///
+/// 台词行里那三项（audio_path / actual_duration_s / voice_id）是同一条规矩
+/// 落到输入上：schema 那边已经 erase 过一次（「时长由配音阶段回填，不让模型
+/// 猜」），这儿补上它管不到的那一半。voice_id 尤其要剥——它决定这一句用谁
+/// 的嗓子，模型编一个出来，配音那边只会在"这个音色服务端没有"时才提一句。
+void keep_llm_fields(json& item) {
+    if (!item.is_object()) return;
+    for (auto it = item.begin(); it != item.end();) {
+        it = llm_shot_fields().count(it.key()) != 0 ? std::next(it)
+                                                    : item.erase(it);
+    }
+    const auto dit = item.find("dialogue");
+    if (dit == item.end() || !dit->is_array()) return;
+    for (auto& line : *dit) {
+        if (!line.is_object()) continue;
+        for (const char* gone : {"audio_path", "actual_duration_s", "voice_id"}) {
+            line.erase(gone);
+        }
+    }
+}
+
 }  // namespace
 
 void add_missing_speakers(json& item, const std::set<std::string>& known) {
@@ -1093,6 +1130,9 @@ std::vector<Shot> parse_storyboard(const std::string& raw,
         clean_dialogue_text(item);
         add_missing_speakers(item, known_chars);
         link_location(item, known_locs);
+
+        // **最后一道：只认允许它填的那些字段。** 见 keep_llm_fields。
+        keep_llm_fields(item);
 
         try {
             Shot s = item.get<Shot>();

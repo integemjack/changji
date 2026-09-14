@@ -384,6 +384,62 @@ TEST_CASE("覆盖检查") {
     }
 }
 
+TEST_CASE("模型多填的状态字段一律剥掉") {
+    // schema 那边已经把字段裁到 kLlmShotFields 了，但 schema 走的是各家
+    // provider 的 response_format——支持得好不好各不相同，不支持的那几家
+    // 它只是提示词里的一段字。所以**解析这一头也要拦一道**。
+    //
+    // 最重的是 status：填成 final_done / locked，出片那一步整镜跳过
+    // （这两个不在 render_entry_states 里），表现是"跑完了，这一镜什么都
+    // 没出"，而侧边栏还会把这一集打上勾。frame_path / video_path 会让装配
+    // 去拼一个不存在的文件；台词行里的 voice_id 会让这一句换个人说话。
+    // 这一类全都不报错。
+    const models::AssetLibrary a = test_assets();
+    json doc = json::parse(golden().at("parses").at(0).at("raw").get<std::string>());
+    json& items = (doc.is_object() && doc.contains("shots")) ? doc["shots"] : doc;
+    REQUIRE(items.is_array());
+    REQUIRE_FALSE(items.empty());
+    for (auto& sh : items) {
+        sh["status"] = "final_done";
+        sh["frame_path"] = "frames/编出来的.png";
+        sh["video_path"] = "shots/编出来的.mp4";
+        sh["attempts"] = 7;
+        sh["gate_notes"] = json::array({"模型自己写的一条"});
+        sh["duration_locked"] = true;
+        sh["needs_lipsync"] = true;
+        sh["negative_prompt"] = "模型自己加的负向";
+        if (sh.contains("dialogue") && sh["dialogue"].is_array()) {
+            for (auto& dl : sh["dialogue"]) {
+                dl["voice_id"] = "编出来的音色";
+                dl["audio_path"] = "audio/编出来的.wav";
+                dl["actual_duration_s"] = 99.0;
+            }
+        }
+    }
+
+    const std::vector<models::Shot> shots = stages::parse_storyboard(doc.dump(), a);
+    REQUIRE_FALSE(shots.empty());
+    bool saw_dialogue = false;
+    for (const models::Shot& s : shots) {
+        CHECK(s.status == models::ShotStatus::PLANNED);
+        CHECK_FALSE(s.frame_path.has_value());
+        CHECK_FALSE(s.video_path.has_value());
+        CHECK(s.attempts == 0);
+        CHECK(s.gate_notes.empty());
+        CHECK_FALSE(s.duration_locked);
+        CHECK_FALSE(s.needs_lipsync);
+        CHECK(s.negative_prompt.empty());
+        for (const models::DialogueLine& d : s.dialogue) {
+            saw_dialogue = true;
+            CHECK_FALSE(d.voice_id.has_value());
+            CHECK_FALSE(d.audio_path.has_value());
+            CHECK_FALSE(d.actual_duration_s.has_value());
+        }
+    }
+    // 台词那三项要真的被测到，不然这一条只测了镜头级的那几个
+    CHECK(saw_dialogue);
+}
+
 TEST_CASE("时长再平衡和 Python 一致") {
     const models::AssetLibrary a = test_assets();
     const std::string raw = golden().at("parses").at(0).at("raw").get<std::string>();
