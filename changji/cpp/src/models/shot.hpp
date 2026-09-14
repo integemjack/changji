@@ -142,7 +142,14 @@ struct CharacterInShot {
     std::string action;                     ///< 本镜动作，如 后退半步（≤80）
     std::string wardrobe_state = "default"; ///< 服装状态 id，如 suit_torn（≤40）
     FacePose face_pose = FacePose::FRONT;   ///< 面部朝向
-    std::string screen_pos = "center";      ///< 画面位置：left / center / right
+    /// 画面位置：left / center / right。
+    ///
+    /// ⚠️ **只写不读。** `CharacterInShot` 这一层 `llm_shot_schema()` 不裁
+    /// （它只把 `char_id` 收成枚举），所以这一栏照样发给模型、模型照样填、
+    /// 照样存进 shots.json——而全仓库读它的一处都没有：`prompt_compose`
+    /// 拼首帧提示词时不看，`/api/shots` 不回，界面上没有。
+    /// 想让它生效，得在 prompt_compose 那边把它拼进去。
+    std::string screen_pos = "center";
 
     NLOHMANN_DEFINE_TYPE_INTRUSIVE_WITH_DEFAULT(
         CharacterInShot, char_id, expression, action, wardrobe_state,
@@ -195,7 +202,15 @@ struct Shot {
     /// 紧接上一镜的动作（同一场景、同一时刻、动作连续）。出片时拿上一镜
     /// 真出来的最后一帧当这一镜的首帧，动作接得上。见 [video].chain_frames。
     bool continuous_with_prev = false;
-    std::optional<std::string> camera_id; ///< 复用机位 id。同场景同机位保证不越轴
+    /// 复用机位 id。
+    ///
+    /// ⚠️ **原来这行末尾写着「同场景同机位保证不越轴」——没有谁在保证。**
+    /// 提示词那头确实在教模型填（prompts.toml 第 12 条「同一场景内连续镜头
+    /// 尽量复用 camera_id，避免越轴」），字段也在 `kLlmShotFields` 里、存得
+    /// 下来，但**读它的一处都没有**：没有任何校验比对过同一 camera_id 的两
+    /// 镜是否真在轴的同一侧，`/api/shots` 也不回它。今天它能起的作用只有一
+    /// 个——模型自己写的时候顺带上了点心。"越轴"这件事没人查。
+    std::optional<std::string> camera_id;
 
     // ---- 引用（只放 id，不放描述）----
     std::vector<CharacterInShot> characters;
@@ -208,6 +223,12 @@ struct Shot {
 
     // ---- 声音 ----
     std::vector<DialogueLine> dialogue;
+    /// ⚠️ `sfx` / `bgm_cue`（以及上面的 `prop_ids`）三个是**彻底的死字段**，
+    /// 和 screen_pos / camera_id / missing_info 那三个还不一样：它们连模型
+    /// 都见不到——`kLlmShotFields` 里没有，`llm_shot_schema()` 裁 schema 时
+    /// 就删掉了，`keep_llm_fields()` 解析时再删一遍。于是永远是空的，也永远
+    /// 没人读。留着只是因为它们在 `NLOHMANN_DEFINE_TYPE` 那一行里，动了就是
+    /// 改盘上格式。
     std::vector<std::string> sfx;
     std::optional<std::string> bgm_cue;
     bool needs_lipsync = false; ///< 由 derive_needs_lipsync 规则推导，不要让模型填
@@ -220,7 +241,15 @@ struct Shot {
     // ---- 质控 ----
     std::string beat;             ///< 叙事功能，如 反转、铺垫（≤20）
     std::string continuity_notes; ///< ≤200
-    std::vector<std::string> missing_info; ///< 模型自报的信息缺口，供校验阶段检查
+    /// 模型自报的信息缺口。
+    ///
+    /// ⚠️ **原来这行末尾写着「供校验阶段检查」——没有这个校验阶段。**
+    /// 提示词第 17 条叫模型"剧本里信息不足的地方写进 missing_info，不要自己
+    /// 编"，模型照做了，字段也留在 `kLlmShotFields` 里存了下来，然后
+    /// **就没有然后了**：没有一处读它，`/api/shots` 不回它，界面上看不到。
+    /// 模型老老实实说"我不知道她手里拿的是什么"，这句话直接埋进 shots.json。
+    /// 要让它有用，得先让 `/api/shots` 带上它。
+    std::vector<std::string> missing_info;
 
     // ---- 运行时状态（大模型不填）----
     ShotStatus status = ShotStatus::PLANNED;
