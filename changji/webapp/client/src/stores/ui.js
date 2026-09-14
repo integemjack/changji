@@ -10,7 +10,7 @@ export const useUi = defineStore('ui', () => {
   const theme = ref(localStorage.getItem('changji.theme') || 'system')
 
   /**
-   * 项目栏靠哪边。可以拖到另一边去，**记在这台机器上**。
+   * 项目栏靠哪边。在设置页的「界面」里换（没有拖拽），**记在这台机器上**。
    *
    * 左右手习惯、外接屏幕的摆法、和别的工具的对齐方式，每个人不一样，
    * 而这是个一旦选定就不再动的偏好——不记住的话每次打开都要重拖一次。

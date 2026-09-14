@@ -52,6 +52,23 @@ function onEsc(e) {
 }
 onMounted(() => window.addEventListener('keydown', onEsc))
 onUnmounted(() => window.removeEventListener('keydown', onEsc))
+/**
+ * 打开之后把焦点放进来。
+ *
+ * **不然键盘上这个弹窗基本没法用。** 用 Tab 走到那颗按钮、回车打开，焦点
+ * 还停在**遮罩后面**那颗按钮上：按 Tab 是在看不见的页面里一格格走，走到
+ * 弹窗里之前，屏幕上一个焦点框都看不见。
+ *
+ * 焦点落在面板本身（tabindex="-1"），不猜第一个该聚焦的控件——猜错了会把
+ * 人直接丢进某个输入框，而读屏也该先听见这是个什么窗。再按 Tab 就顺着进
+ * 里面的控件了。
+ */
+const panel = ref(null)
+// **盯着面板出现，不是盯着 open 变真。** 面板挂在内容上（拍摄那个是
+// `v-if="video"`，模型那个是 `v-if="g"`），而内容是打开之后异步读回来的
+// ——按 open 那一刻去聚焦会扑空，而扑空的表现正是这条要修的：焦点留在
+// 遮罩后面。模板 ref 本身是响应式的，元素挂上来就聚焦，卸了就是 null。
+watch(panel, (el) => el?.focus())
 
 const models = useModels()
 const ui = useUi()
@@ -279,7 +296,7 @@ async function download() {
 
 <template>
   <div v-if="open" class="mask" @click.self="emit('close')">
-    <section v-if="g" class="dlg">
+    <section v-if="g" ref="panel" class="dlg" tabindex="-1">
       <header class="dlg__head">
         <div class="dlg__title">
           <h2 class="dlg__t">{{ g.title }}</h2>
