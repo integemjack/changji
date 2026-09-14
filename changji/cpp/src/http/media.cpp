@@ -176,6 +176,13 @@ std::string content_type_for(const fs::path& p) {
     if (ext == ".webp") return "image/webp";
     if (ext == ".wav")  return "audio/wav";
     if (ext == ".mp3")  return "audio/mpeg";
+    // **这两个是上传那头收进来的。** upload.cpp 的 voice_types() 收
+    // wav / mp3 / m4a / flac 四种，而这张表原来只认前两种——后两种发出去
+    // 是 application/octet-stream。今天界面不直接播它（试听走的是 TTS 现
+    // 生成的 wav），所以没人撞上；但"一头收得进、另一头发不对"这种两张表
+    // 不同步的事，迟早在某个新入口上露出来。
+    if (ext == ".m4a")  return "audio/mp4";
+    if (ext == ".flac") return "audio/flac";
     if (ext == ".srt")  return "application/x-subrip";
     if (ext == ".ass")  return "text/x-ssa";
     if (ext == ".json") return "application/json";
