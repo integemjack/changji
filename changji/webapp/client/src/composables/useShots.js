@@ -342,25 +342,6 @@ export function useShots() {
     // 那一格挂着「排队中」直到整轮结束，而引擎根本没打算碰它。
     const lit = one ? ids : willRun(stages, force).map((s) => s.shot_id)
 
-    // **整集这条路上一镜都不会跑的话，别发。**
-    //
-    // 引擎不自动重跑已降级的镜头（run.cpp 里 entry_of 的 default 分支：
-    // FALLBACK / LOCKED / FINAL_DONE 一律 -1，不带 force 就跳过）。而
-    // 「差 N 视频」那个数是按 `!video_path` 算的——降级又没留下视频的镜头
-    // 算在里面。于是这条路是通的：屏幕写着「差 2 视频」，按钮是「接着跑」，
-    // 按下去引擎空跑一轮，跑完弹一句「这一轮跑完了」，而一个字都没变。
-    //
-    // 前端本来就算得出来（willRun 就是干这个的）。与其发出去空跑一轮，
-    // 不如当场说清剩下那几镜为什么不动、该按哪儿。
-    if (!one && !lit.length) {
-      const stuck = shots.value.filter((s) => s.status === 'fallback').length
-      ui.warn(
-        stuck
-          ? `没有要跑的镜头：还差的那 ${stuck} 镜已经降级，不会自动重跑。在「有问题」里选中它们，按「退回重跑」`
-          : '没有要跑的镜头：这一集的镜头要么跑完了、要么锁着',
-      )
-      return { ok: false }
-    }
     // **同步先记上**，在 await 之前。紧接着再点别的镜头时，判据
     // （`sent` 非空）才来得及生效，否则那一下会走提交那条路撞 409。
     const before = sent.value

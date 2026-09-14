@@ -64,6 +64,19 @@ const activeShotId = computed(
 const current = computed(
   () => files.value.find((f) => f.rel === currentRel.value) ?? null,
 )
+
+/**
+ * 这一集还差几镜没出视频。空状态那句话按它分两种说法。
+ *
+ * 一律说「镜头还没跑出来」是不对的：镜头全跑完、只差装配那一步的情况真实
+ * 存在（装配要 ffmpeg，缺了引擎会跳过并明说"各镜头的视频已经在 shots/ 下"；
+ * 装配自己也可能失败，比如某一镜降级了没留下视频）。那时候把人送去镜头页
+ * 是送到一个没事可做的地方——项目库那条栏早就分得清，它写的是「镜头出完了，
+ * 还没装配」（见 project-stage.js 里 assemble 那一档）。
+ */
+const shotsLeft = computed(
+  () => shots.value.filter((s) => !s.video_path).length,
+)
 const forThisEpisode = computed(() =>
   session.episodeId ? files.value.filter((f) => f.name.includes(session.episodeId)) : [],
 )
@@ -188,7 +201,24 @@ watch(currentRel, () => {
       <RouterLink to="/project" class="btn btn--primary">去项目页</RouterLink>
     </EmptyState>
 
-    <EmptyState v-else-if="!loading && !files.length" icon="film" title="还没有成片" hint="这一集的镜头还没跑出来，跑完自动装配成片">
+    <EmptyState
+      v-else-if="!loading && !files.length && shots.length && !shotsLeft"
+      icon="film"
+      tone="warn"
+      title="镜头都出完了，还没装配成片"
+      hint="装配跟在出片那一轮后面做。缺 ffmpeg 的话设置页的体检会说；装好之后回镜头页跑一轮（哪怕只重出一镜），那一轮末尾就会把成片拼出来"
+    >
+      <button class="btn btn--primary" type="button" @click="emit('go', 'shots')">
+        去镜头页
+      </button>
+    </EmptyState>
+
+    <EmptyState
+      v-else-if="!loading && !files.length"
+      icon="film"
+      title="还没有成片"
+      :hint="shotsLeft ? `这一集还差 ${shotsLeft} 镜没出视频，跑完自动装配成片` : '这一集的镜头还没跑出来，跑完自动装配成片'"
+    >
       <button class="btn btn--primary" type="button" @click="emit('go', 'shots')">
         去做镜头
       </button>
