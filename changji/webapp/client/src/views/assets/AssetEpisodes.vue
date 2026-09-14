@@ -39,7 +39,7 @@ const { run, isBusy } = useAction()
  * 但 AssetsView 用的是 `<AssetEpisodes v-else />`——没有 ref，那个口子
  * 从来没接上过。改成订同一条线，和另外两格一致。）
  */
-const { finished } = useRefStream()
+const { finished, bustOf } = useRefStream()
 
 const story = ref(null)
 const assets = ref(null)
@@ -174,11 +174,19 @@ function castOf(ep, listKey, lookup, refKey) {
 
   return names.map((name) => {
     const hit = lookup.get(name)
+    // 地址后面挂一个换代号：参考图重画是原地覆盖、路径不变，不挂的话这一排
+    // 脸会一直是缓存里的老样子（理由见 useRefStream 的 bustOf）。
+    // target 和引擎那条 refs 频道上用的一样：`<id>_<slot>`——refKey 是
+    // `ref_front` / `ref_empty`，去掉 `ref_` 正好是 slot 那一段。
+    const id = hit?.char_id ?? hit?.location_id ?? ''
+    const target = id ? `${id}_${refKey.slice(4)}` : ''
     return {
       name,
       // 没有图就只给名字，界面上退成一个字的小牌子——**比不显示强**：
       // 这一栏存在的理由就是让人一眼分清哪一集是哪一集，而名字也分得清。
-      url: hit?.[refKey] ? mediaUrl(session.projectPath, hit[refKey]) : '',
+      url: hit?.[refKey]
+        ? mediaUrl(session.projectPath, hit[refKey]) + '&_=' + bustOf(target)
+        : '',
     }
   })
 }

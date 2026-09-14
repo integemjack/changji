@@ -42,7 +42,7 @@ const { run, isBusy } = useAction()
  *
  * key 是 `char_id_slot`——**和引擎那边的 target 逐字一样**，不然对不上。
  */
-const { pct: genPct, preview, live, finished, touch } = useRefStream()
+const { pct: genPct, preview, live, finished, touch, bustOf } = useRefStream()
 
 /** 引擎那边怎么叫这一格。改这里就得改 ref_gen.cpp 里拼 stem 那一行。 */
 const targetOf = (charId, slot) => `${charId}_${slot}`
@@ -782,7 +782,7 @@ async function clearRef(charId, slot) {
             >
               <img
                 v-if="c['ref_' + s.key]"
-                :src="mediaUrl(session.projectPath, c['ref_' + s.key])"
+                :src="mediaUrl(session.projectPath, c['ref_' + s.key]) + '&_=' + bustOf(targetOf(c.char_id, s.key))"
                 :alt="s.label"
                 loading="lazy"
               />
@@ -902,7 +902,10 @@ async function clearRef(charId, slot) {
                     <div class="ref__frame">
                       <img
                         v-if="openChar['ref_' + s.key]"
-                        :src="mediaUrl(session.projectPath, openChar['ref_' + s.key])"
+                        :src="
+                          mediaUrl(session.projectPath, openChar['ref_' + s.key]) +
+                            '&_=' + bustOf(targetOf(openChar.char_id, s.key))
+                        "
                         :alt="s.label"
                       />
                       <AppIcon v-else name="image" :size="18" />

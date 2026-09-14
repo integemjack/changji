@@ -30,7 +30,7 @@ const ui = useUi()
 const { run, isBusy } = useAction()
 
 /** 进度、预览、在不在跑——都从那条固定频道来。见 useRefStream。 */
-const { pct: genPct, preview, live, finished, touch } = useRefStream()
+const { pct: genPct, preview, live, finished, touch, bustOf } = useRefStream()
 
 /** 引擎那边怎么叫这一格。改这里就得改 ref_gen.cpp 里拼 stem 那一行。 */
 const targetOf = (id) => `${id}_empty`
@@ -580,7 +580,7 @@ async function clearEmpty(locationId) {
               <div class="cell__frame" @click="toggle(l.location_id)">
                 <img
                   v-if="l.ref_empty"
-                  :src="mediaUrl(session.projectPath, l.ref_empty)"
+                  :src="mediaUrl(session.projectPath, l.ref_empty) + '&_=' + bustOf(targetOf(l.location_id))"
                   :alt="`${l.name} 空景图`"
                   loading="lazy"
                 />
@@ -647,7 +647,10 @@ async function clearEmpty(locationId) {
               <div class="loc__shot">
                 <img
                   v-if="openLoc.ref_empty"
-                  :src="mediaUrl(session.projectPath, openLoc.ref_empty)"
+                  :src="
+                    mediaUrl(session.projectPath, openLoc.ref_empty) +
+                      '&_=' + bustOf(targetOf(openLoc.location_id))
+                  "
                   :alt="`${openLoc.name} 空景图`"
                 />
                 <div v-else class="loc__blank">
@@ -769,7 +772,7 @@ async function clearEmpty(locationId) {
               <div class="loc__shot loc__shot--slim">
                 <img
                   v-if="l.ref_empty"
-                  :src="mediaUrl(session.projectPath, l.ref_empty)"
+                  :src="mediaUrl(session.projectPath, l.ref_empty) + '&_=' + bustOf(targetOf(l.location_id))"
                   :alt="l.name"
                   loading="lazy"
                 />

@@ -27,6 +27,28 @@ const preview = reactive({})
 const live = reactive({})
 /** 画完一张加一。页面 watch 它去重新拉图。 */
 const finished = ref(0)
+/**
+ * target → 这一格重画过几次。**缩略图的换代号。**
+ *
+ * 参考图写在固定路径上（`refs/<char_id>_<slot>.png`），重画是原地覆盖、
+ * 地址一个字不变——而 `/api/media` 一个缓存头都不发，浏览器于是照旧拿缓存
+ * 里那张。表现是：点了「重画」，等了几十秒，提示条说画好了，**墙上那张
+ * 脸一点没变**，除非整页刷新。这一页的产出就是图，这一下等于功能没生效。
+ *
+ * 镜头墙早就为同一件事记了换代号（useShots 的 bust / bustOf），朗读和试听
+ * 音色也各自加了时间戳，只有参考图这一族漏了。
+ *
+ * 按 target 记，不是记一个全局的：一键出图是一张接一张十几张，全局的话
+ * 每画完一张就要把满墙的图全重拉一遍。
+ */
+const drawn = reactive({})
+/**
+ * 不走 ref_done 的那几下（传图、撤图、重新定妆）改过之后加一。
+ *
+ * 那几下可能一次换掉好多张（定妆会把整份资产库换掉），而且是人自己按的、
+ * 一次一下，所以这里用一个全局的数，让所有图一起换代。
+ */
+const touched = ref(0)
 
 let sock = null
 let retry = null
@@ -66,6 +88,7 @@ function connect() {
         preview[t] = msg.image ?? ''
       } else if (msg.type === 'ref_done') {
         forget(t)
+        drawn[t] = (drawn[t] ?? 0) + 1
         finished.value += 1
       } else if (msg.type === 'ref_error') {
         forget(t)
@@ -88,11 +111,20 @@ function connect() {
  * "资产库有变化去重拉"对它们来说是同一件事。
  */
 function touch() {
+  touched.value += 1
   finished.value += 1
+}
+
+/**
+ * 这一格的图该用哪一代。地址后面挂上它，浏览器才会真去要新的那张。
+ * 用法见角色墙和场景墙上的 `<img :src>`。
+ */
+function bustOf(target) {
+  return touched.value + (drawn[target] ?? 0)
 }
 
 export function useRefStream() {
   // **只连一次。** 两个 tab（角色、场景）都要用，而它们会来回切。
   if (!sock) connect()
-  return { pct, preview, live, finished, touch }
+  return { pct, preview, live, finished, touch, bustOf }
 }
