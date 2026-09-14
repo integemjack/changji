@@ -639,7 +639,8 @@ function scrollTo(id) {
             <div class="grid grid--3">
               <label class="field">
                 <span class="field__label">帧率</span>
-                <input v-model.number="params.fps" class="input numeric" type="number" />
+                <input v-model.number="params.fps" class="input numeric" type="number"
+                min="1" max="120" />
               </label>
               <label class="field">
                 <span class="field__label">CRF</span>
@@ -665,11 +666,13 @@ function scrollTo(id) {
                   v-model.number="params.subtitle_max_chars_per_line"
                   class="input numeric"
                   type="number"
+                min="6" max="30"
                 />
               </label>
               <label class="field">
                 <span class="field__label">最多几行</span>
-                <input v-model.number="params.subtitle_max_lines" class="input numeric" type="number" />
+                <input v-model.number="params.subtitle_max_lines" class="input numeric" type="number"
+                min="1" max="3" />
               </label>
             </div>
             <div class="stack">
@@ -693,6 +696,7 @@ function scrollTo(id) {
                     v-model.number="params.min_pixel_std"
                     class="input numeric"
                     type="number"
+                min="0"
                     step="0.5"
                     title="拦纯色和噪点。调高会误杀暗场"
                   />
@@ -715,6 +719,7 @@ function scrollTo(id) {
                     v-model.number="params.max_audio_drift_s"
                     class="input numeric"
                     type="number"
+                min="0.05"
                     step="0.05"
                   />
                 </label>
