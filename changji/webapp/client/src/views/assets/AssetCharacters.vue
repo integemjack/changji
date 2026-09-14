@@ -42,7 +42,7 @@ const { run, isBusy } = useAction()
  *
  * key 是 `char_id_slot`——**和引擎那边的 target 逐字一样**，不然对不上。
  */
-const { pct: genPct, preview, live, finished, touch, bustOf } = useRefStream()
+const { pct: genPct, preview, live, finished, touch, bustOf, forgetAll } = useRefStream()
 
 /** 引擎那边怎么叫这一格。改这里就得改 ref_gen.cpp 里拼 stem 那一行。 */
 const targetOf = (charId, slot) => `${charId}_${slot}`
@@ -295,6 +295,9 @@ watch(
   () => {
     edits.value = {}
     openId.value = ''
+    // 「正在画」那几格也松开：它们按 char_id_slot 记，而两部剧里撞同一个
+    // id 不稀奇。见 useRefStream 的 forgetAll。
+    forgetAll()
     load()
   },
   { immediate: true },

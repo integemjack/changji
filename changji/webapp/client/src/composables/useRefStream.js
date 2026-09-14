@@ -110,6 +110,26 @@ function connect() {
  * 复用同一个计数器而不是再开一个：三个格子都已经 watch 着它，
  * "资产库有变化去重拉"对它们来说是同一件事。
  */
+/**
+ * 把"正在画"那三张表全松开。**换项目时叫一次。**
+ *
+ * 它们按 target 索引，而 target 是 `char_id_slot`——**两部剧里出现同一个
+ * id 不稀奇**（id 照名字生成，续集、复制出来的项目、同名角色都会撞，项目
+ * 库那条栏的注释里也写着这件事）。不清的话，新这一部里同名那一格顶着上一
+ * 部的「画着…」和那张采样中的小图，而这一部根本没在画。
+ *
+ * `drawn`（换代号）**不在这儿清**：它是单调加一的，清了之后回到上一部，
+ * 那几张重画过的图会退回旧地址、又从缓存里拿到老图。撞上同名 id 至多多拉
+ * 一次图，比那个便宜。
+ *
+ * 真正干净的做法是引擎在 refs 那条频道上带一个项目路径、界面按它过滤
+ * （批量写作那条 `story_token` 就是这么修的）——那要动 ref_progress /
+ * ref_preview / ref_done / ref_error 四处签名。先把这一半修了。
+ */
+function forgetAll() {
+  for (const t of Object.keys(live)) forget(t)
+}
+
 function touch() {
   touched.value += 1
   finished.value += 1
@@ -126,5 +146,5 @@ function bustOf(target) {
 export function useRefStream() {
   // **只连一次。** 两个 tab（角色、场景）都要用，而它们会来回切。
   if (!sock) connect()
-  return { pct, preview, live, finished, touch, bustOf }
+  return { pct, preview, live, finished, touch, bustOf, forgetAll }
 }

@@ -30,7 +30,7 @@ const ui = useUi()
 const { run, isBusy } = useAction()
 
 /** 进度、预览、在不在跑——都从那条固定频道来。见 useRefStream。 */
-const { pct: genPct, preview, live, finished, touch, bustOf } = useRefStream()
+const { pct: genPct, preview, live, finished, touch, bustOf, forgetAll } = useRefStream()
 
 /** 引擎那边怎么叫这一格。改这里就得改 ref_gen.cpp 里拼 stem 那一行。 */
 const targetOf = (id) => `${id}_empty`
@@ -350,6 +350,9 @@ watch(
     if (old && project !== old[0]) {
       edits.value = {}
       openId.value = ''
+      // 「正在画」那几格也松开：它们按 location_id_empty 记，而两部剧里撞
+      // 同一个 id 不稀奇。见 useRefStream 的 forgetAll。
+      forgetAll()
     }
     load()
   },
