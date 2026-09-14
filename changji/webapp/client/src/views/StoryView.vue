@@ -1815,10 +1815,14 @@ async function writeChapter(chapterId, overwrite = false) {
         // 思考流。**这三步（写大纲 / 写正文 / 改一段）没走 runAsyncJob**，
         // 所以要在这儿自己接一下——而它们恰恰是思考最久的三步。
         if (msg.type === 'job_thinking') return thinking.push(streamId, msg.text ?? '')
-        // job_done / job_error 是"这件活完了"的通用信号（见 job_stream.hpp）。
-        // story_token 和 story_error 是这条路独有的：前者是正在长出来的
-        // 正文，后者是"把流了一半的字撤掉"——**撤字归撤字，完事归完事**，
-        // 砸了的时候两条都会来。
+        // job_done / job_error 是"这件活完了"的通用信号（见 job_stream.hpp），
+        // story_token 是这条路独有的、正在长出来的正文。
+        //
+        // **story_error 故意不在这儿接。** 引擎写砸的时候两条都会广播
+        // （story_api.cpp 那两个 catch 里先播 story_error，再由 start_async
+        // 播 job_error），而"把流了一半的字撤掉"这件事底下已经做了：
+        // `if (!result)` 那一支把这一章放回 `chapters` 里原来那份。接一下
+        // story_error 等于同一件事做两遍，还得多想一次谁先到。
         if (msg.type === 'job_done') {
           settle({ ok: true, result: msg.result })
           return
