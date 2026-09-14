@@ -750,7 +750,14 @@ async function clearEmpty(locationId) {
               <!-- **折起来。** 这是排障用的——出来的图不对时，翻开看一眼
                    真正发给画图模型的那一串。平时它是一整段灰字，白占抽屉里
                    三分之一的高度，而抽屉是用来改描述的。 -->
-              <details class="fold" title="每个镜头拿到的都是这一串">
+              <!-- ⚠️ 同角色页那一折：大特写（ECU）那一档连场景层带空景图整个
+                   不拼（prompt_compose 的 `insert_shot`）。实跑记着理由：只去
+                   掉身份层还不够，"场景层那句「豪华卧室，柔和自然光……」把整个
+                   房间拉了进来，出片模型在 1.7 秒处又切到真正的手机大特写"。 -->
+              <details
+                class="fold"
+                title="每个镜头拿到的都是这一串。只有大特写（ECU）那一档例外：那一档连这段空间描述带空景图整个不拼，不然半个房间会被拉进一个特写里。"
+              >
                 <summary class="fold__t">拼出来的提示词</summary>
                 <p class="rendered mono">{{ openLoc.rendered }}</p>
               </details>
