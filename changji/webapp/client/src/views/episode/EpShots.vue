@@ -782,11 +782,29 @@ watch(
   { immediate: true },
 )
 
+/**
+ * 刷新之前拦一下：抽屉里改了没存的那一镜。
+ *
+ * 切走和关抽屉都会问一句（见 toggle / close），唯独刷新和关标签页不会——
+ * 而那两下丢的是同样的东西：提示词、台词、时长，改了半天一下没了。
+ */
+function beforeUnload(e) {
+  if (!draftDirty.value) return
+  e.preventDefault()
+  e.returnValue = ''
+}
+
 onMounted(() => {
   loadDoctor()
   window.addEventListener('keydown', onKey)
+  // **这一条不跟着 onActivated 走。** 人切到剧本格去了，抽屉里那份改动
+  // 还在（组件只是停用，draft 没清），刷新照样丢。
+  window.addEventListener('beforeunload', beforeUnload)
 })
-onUnmounted(() => window.removeEventListener('keydown', onKey))
+onUnmounted(() => {
+  window.removeEventListener('keydown', onKey)
+  window.removeEventListener('beforeunload', beforeUnload)
+})
 
 /**
  * **切到别的格子就把键盘让出去。**

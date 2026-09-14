@@ -151,9 +151,24 @@ function flush() {
     .catch((err) => ui.error(`${from.episode} 那篇没存进去：${err.message}`))
 }
 
-/** 关标签页和刷新只能拦这一下——存是异步的，这儿等不了。 */
+/**
+ * 关标签页和刷新只能拦这一下——存是异步的，这儿等不了。
+ *
+ * 拦三种东西，而后两种是**这一页独有的**：
+ *
+ *   · 编辑器里改了还没存的字；
+ *   · **AI 写着的那一份**（`isBusy('write')`）。活儿在引擎那头，关了标签页
+ *     它照样跑完——但跑完的结果只从那条 socket 送回来一次，没人接就没了。
+ *   · **写出来还没采用的那一份**（`draft`）。同样只活在这一次回包里。
+ *
+ * 大纲那条不一样：引擎把它落了盘（save_story_draft），刷新回来还在，所以
+ * 故事页不用拦这一类。剧本这条没有落盘的地方——一份剧本要跑一两分钟，
+ * 刷新一下就得重跑一遍，而屏幕上什么都不会说。
+ */
 function beforeUnload(e) {
-  if (!dirty.value || !script.value.trim()) return
+  const unsaved = dirty.value && script.value.trim()
+  const inFlight = isBusy('write')
+  if (!unsaved && !inFlight && !draft.value) return
   e.preventDefault()
   e.returnValue = ''
 }

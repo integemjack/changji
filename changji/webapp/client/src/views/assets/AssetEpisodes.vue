@@ -12,7 +12,7 @@
  * 分集是**章节之间那条线**，不是另一张表。单独列一张「第 3 集覆盖第 5~6
  * 章」的表，人看不见线画在哪，还得回去翻第 5 章是什么。
  */
-import { computed, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 
 import AppIcon from '@/components/AppIcon.vue'
 import EmptyState from '@/components/EmptyState.vue'
@@ -322,6 +322,24 @@ async function adoptTrailer() {
     { key: 'adoptTrailer', success: '预告片存下了', refresh: true },
   )
 }
+
+/**
+ * 刷新之前拦一下：预告片那份草稿**只活在内存里**。
+ *
+ * 剪一条要跑几分钟，而回包里那份稿子这一页没有任何落盘的地方（故事页那份
+ * 大纲不一样，引擎把它存了，见 save_story_draft）。刷新、关标签页、点错一
+ * 个链接，那几分钟就得重来一遍，而屏幕上什么都不会说。
+ *
+ * 正在剪的时候同理：活儿在引擎那头照样跑完，但结果只从那条 socket 送回来
+ * 一次，没人接就没了。
+ */
+function beforeUnload(e) {
+  if (!trailerDraft.value && !isBusy('trailer')) return
+  e.preventDefault()
+  e.returnValue = ''
+}
+onMounted(() => window.addEventListener('beforeunload', beforeUnload))
+onUnmounted(() => window.removeEventListener('beforeunload', beforeUnload))
 
 /** 手动加一集。没走故事那条路的老项目还得有这个口子。 */
 async function addEpisode() {
