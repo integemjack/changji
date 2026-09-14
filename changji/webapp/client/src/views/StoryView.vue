@@ -1109,7 +1109,9 @@ async function revise() {
 
   const post = () =>
     api.reviseStory({
-      project: session.projectPath,
+      // 用上面记下的 owner，不是现读：这一行发出去的时候 socket 那两下
+      // 已经过去了，而 owner 才是这段字、这个章号、这个区间的主人。
+      project: owner,
       chapter_id: id,
       from_char: at.from,
       to_char: at.to,
@@ -1534,7 +1536,7 @@ async function writeStory() {
     const started = await run(
       () =>
         api.writeOutline({
-          project: session.projectPath,
+          project: owner,
           premise: premise.value.trim(),
           scale: scale.value,
           keywords: keywords.value.trim(),
@@ -1834,7 +1836,7 @@ async function writeChapter(chapterId, overwrite = false) {
     const started = await run(
       () =>
         api.writeChapter({
-          project: session.projectPath,
+          project: owner,
           chapter_id: chapterId,
           overwrite,
           // socket 没开就退回老路：让 HTTP 那个请求一直等到写完。慢，但至少
