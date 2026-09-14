@@ -99,6 +99,26 @@ async function loadShots() {
 
 watch(() => [session.projectPath, session.episodeId], load, { immediate: true })
 
+/**
+ * 成片的地址，**带上这个文件的 mtime**。
+ *
+ * `/api/media` 一个 `Cache-Control` / `ETag` / `Last-Modified` 都不发，而
+ * 装配出来的片子**每次都落在同一个路径上**（output/ep01.mp4）。地址一个字
+ * 不变的话，重出一版之后在这一页看到的还是浏览器缓存里的上一版——而这一页
+ * 存在的全部意义就是"让人真的看一遍再发出去"。
+ *
+ * 镜头墙早就在做这件事（useShots 的 bust：「刚跑完，磁盘上那几个 mp4 换过了
+ * 但路径没变」），朗读和试听音色也各自加了时间戳。只有审片这一屏漏了。
+ *
+ * **用 mtime 不用 Date.now()**：随机数每次 load 都换一次地址，正在看的片子
+ * 会被打回开头重新缓冲；mtime 只在文件真换过之后才变。
+ */
+function srcOf(f) {
+  if (!f?.rel) return ''
+  const u = mediaUrl(session.projectPath, f.rel)
+  return f.mtime ? `${u}&v=${f.mtime}` : u
+}
+
 function seekTo(chapter) {
   const el = videoEl.value
   if (!el) return
@@ -141,10 +161,10 @@ function onTimeUpdate(event) {
           <div class="player__stage">
             <video
               v-if="current"
-              :key="current.rel"
+              :key="current.rel + ':' + (current.mtime ?? '')"
               ref="videoEl"
               class="player__video"
-              :src="mediaUrl(session.projectPath, current.rel)"
+              :src="srcOf(current)"
               controls
               preload="metadata"
               playsinline
@@ -207,7 +227,7 @@ function onTimeUpdate(event) {
             <span class="reelrow__icon">
               <video
                 class="reelrow__thumb"
-                :src="mediaUrl(session.projectPath, f.rel) + '#t=0.5'"
+                :src="srcOf(f) + '#t=0.5'"
                 preload="metadata"
                 muted
                 playsinline
