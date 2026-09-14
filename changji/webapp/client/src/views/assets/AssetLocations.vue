@@ -246,7 +246,11 @@ async function uploadEmpty(locationId, event) {
   })
   event.target.value = ''
   if (!result) return
-  ui.ok(`空景图已存（${result.size_kb} KB），${result.reset_shots} 个镜头退回重跑`)
+  // 同角色参考图那处：没退就别提退，0 在这一页是常态。
+  ui.ok(
+    `空景图已存（${result.size_kb} KB）` +
+      (result.reset_shots ? `，${result.reset_shots} 个镜头退回重跑` : ''),
+  )
   await load()
 }
 

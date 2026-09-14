@@ -249,7 +249,13 @@ async function upload(charId, slot, event) {
   const result = await run(() => api.uploadReference(form), { key: 'up:' + charId + slot })
   event.target.value = ''
   if (!result) return
-  ui.ok(`参考图已存（${result.size_kb} KB），${result.reset_shots} 个镜头退回重跑`)
+  // **没退就别提退。** 这一页正常是在分镜之前用的，`reset_shots` 是 0 才是
+  // 常态——不判的话它写「0 个镜头退回重跑」，报一件没发生的事。同一份判断
+  // 在 saveCharacter、改画风、关联场景那几处都有，这儿和空景图那儿漏了。
+  ui.ok(
+    `参考图已存（${result.size_kb} KB）` +
+      (result.reset_shots ? `，${result.reset_shots} 个镜头退回重跑` : ''),
+  )
   await load()
 }
 
