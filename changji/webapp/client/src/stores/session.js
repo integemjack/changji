@@ -18,8 +18,16 @@ export const useSession = defineStore('session', () => {
 
   const project = ref(null) // /api/project 的返回
   const flow = ref(null) // /bff/flow 的返回
-  const loading = ref(false)
-  const error = ref('')
+  // **这儿原来还有 loading 和 error 两个 ref，2026-09-15 删了。**
+  //
+  // 两个都是只写不读：全仓没有一处读 `session.loading` 或 `session.error`
+  // （每一页的转圈是自己那一趟的，报错走下面那条 changji:error）。
+  // 而只写不读的状态不是没用，是**会骗人**——`loading` 那一个还正好是错的：
+  // 它的 finally 判的是 `mine()`，而 refresh 自己在成功那一支里会
+  // `selectEpisode(data.episodeId)` 把集号换掉（引擎回落到第一集这条路很常
+  // 走），换完 mine() 当场变假，那句 `loading.value = false` 就不执行了。
+  // 今天没人看得见，是因为 App 上那个 watch 会因为集号变了再 refresh 一趟、
+  // 顺手把它抹平——一个只写不读的值，靠另一处的副作用碰巧擦干净。
 
   const episodes = computed(() => project.value?.episodes ?? [])
   const episode = computed(
@@ -79,8 +87,6 @@ export const useSession = defineStore('session', () => {
      */
     const want = `${projectPath.value}\u0000${episodeId.value}`
     const mine = () => want === `${projectPath.value}\u0000${episodeId.value}`
-    loading.value = true
-    error.value = ''
     try {
       const data = await api.flow(projectPath.value, episodeId.value)
       if (!mine()) return
@@ -95,7 +101,6 @@ export const useSession = defineStore('session', () => {
       // 过期那一趟的报错也不能算数：上一部剧被删了回的 404，会把这一部
       // 的 project / flow 一起清掉，还弹一句莫名其妙的红字。
       if (!mine()) return
-      error.value = err.message
       // **说出来。** 这一条原来只写进 error 就完了，而 `session.error`
       // 界面上一处都没读——于是这条路整个是哑的：
       //
@@ -122,9 +127,6 @@ export const useSession = defineStore('session', () => {
         project.value = null
         flow.value = null
       }
-    } finally {
-      // 同理：过期那一趟的 finally 会在新那趟还读着的时候把转圈关掉
-      if (mine()) loading.value = false
     }
   }
 
@@ -133,8 +135,6 @@ export const useSession = defineStore('session', () => {
     episodeId,
     project,
     flow,
-    loading,
-    error,
     episodes,
     episode,
     characters,
