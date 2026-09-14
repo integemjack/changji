@@ -429,14 +429,23 @@ async function clearEmpty(locationId) {
         <span>分镜引用了 {{ missing.join('、') }}，场景库里没有</span>
       </p>
 
+      <!-- 同角色格：故事已经有了的时候，差的那一步在这一页右上角，
+           不该再把人支回故事页。判据用侧栏那个对勾同一份（done.story）。 -->
       <EmptyState
-        v-if="!loading && !locations.length"
+        v-if="!loading && !locations.length && !session.done.story"
         icon="scene"
         title="场景库还是空的"
         hint="先写故事，再点右上角「照故事定妆」"
       >
         <RouterLink to="/story" class="btn btn--sm">去写故事</RouterLink>
       </EmptyState>
+
+      <EmptyState
+        v-else-if="!loading && !locations.length"
+        icon="scene"
+        title="场景库还是空的"
+        hint="故事写好了，点右上角「照故事定妆」，让 AI 读一遍把人和地方定下来"
+      />
 
       <EmptyState
         v-else-if="!loading && !mine.length && !others.length"

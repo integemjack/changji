@@ -630,14 +630,24 @@ async function clearRef(charId, slot) {
         hint="换个词试试"
       />
 
+      <!-- **故事已经写了的时候别再说「先写故事」。** 那句话把人支去一个
+           他刚来的地方，而真正差的一步就在这一页右上角。两种状态两句话：
+           判据用侧栏那个对勾同一份（done.story = 有章节）。 -->
       <EmptyState
-        v-else-if="!loading && !characters.length"
+        v-else-if="!loading && !characters.length && !session.done.story"
         icon="user"
         title="还没有角色"
         hint="先写故事，再点右上角「照故事定妆」"
       >
         <RouterLink to="/story" class="btn btn--sm">去写故事</RouterLink>
       </EmptyState>
+
+      <EmptyState
+        v-else-if="!loading && !characters.length"
+        icon="user"
+        title="还没有角色"
+        hint="故事写好了，点右上角「照故事定妆」，让 AI 读一遍把人和地方定下来"
+      />
 
       <!-- **一人一张牌，和「这一集」那面镜头墙一个样子。**
            用户 2026-09-12：「角色，场景的展示方式和这一集一样」。
