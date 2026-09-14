@@ -46,6 +46,8 @@ const mode = ref('read')
 const draft = ref(null)
 
 const dirty = computed(() => script.value !== savedScript.value)
+/** 「现在在看哪部剧的哪一集」。异步那几趟拿它认自己有没有过期。 */
+const ctxKey = () => `${session.projectPath}\u0000${session.episodeId}`
 const wordCount = computed(() => script.value.replace(/\s/g, '').length)
 // 时长和引擎写剧本时用的同源：有分集表按分集表，没有按这一集自己的
 const durationS = computed(
@@ -71,6 +73,14 @@ const writeLabel = computed(() => {
 
 async function load() {
   if (!session.projectPath || !session.episodeId) return
+  // **这一趟是给哪一集读的。**
+  //
+  // 顶栏连着换两集，两趟请求都在路上，回来的顺序不保证——慢的那一趟后落地
+  // 就把上一集的剧本装进当前这一集的编辑器里。而 savedScript 也一起被设成
+  // 它，于是"有没有改过"显示的是没改过，人接着敲两个字一存，**上一集的
+  // 整篇剧本就写进这一集了**。原料那一份（story.json 可能几百 KB）比剧本
+  // 本身慢，顺序反过来是真会发生的。
+  const want = ctxKey()
   loading.value = true
   draft.value = null
   try {
@@ -79,14 +89,16 @@ async function load() {
       // 原料读不到不该挡住剧本本身：老项目没有 story.json，这一格就是空的
       api.getScriptContext(session.projectPath, session.episodeId).catch(() => null),
     ])
+    if (want !== ctxKey()) return
     script.value = data.script ?? ''
     savedScript.value = script.value
     ctx.value = context
     mode.value = 'read'
   } catch (err) {
-    ui.error(err.message)
+    if (want === ctxKey()) ui.error(err.message)
   } finally {
-    loading.value = false
+    // 也要认一次：过期那一趟的 finally 会在新那趟还读着的时候把转圈关掉。
+    if (want === ctxKey()) loading.value = false
   }
 }
 

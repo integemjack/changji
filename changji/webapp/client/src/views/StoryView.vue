@@ -401,15 +401,21 @@ async function load() {
     story.value = null
     return
   }
+  // 换项目那一下会连着起两趟，回来的顺序不保证。慢的那一趟后落地就是
+  // **上一部剧的正文装进了这一部的编辑器**——而接着敲字触发的自动存用的是
+  // 当前这部剧的路径，等于把上一部的章节内容写进这一部。
+  const want = session.projectPath
   loading.value = true
   try {
     for (const k of Object.keys(buf)) delete buf[k]
     dirtySnapshot.clear()
-    setStory(await api.getStory(session.projectPath))
+    const data = await api.getStory(session.projectPath)
+    if (want !== session.projectPath) return
+    setStory(data)
   } catch (err) {
-    ui.error(err.message)
+    if (want === session.projectPath) ui.error(err.message)
   } finally {
-    loading.value = false
+    if (want === session.projectPath) loading.value = false
   }
 }
 
