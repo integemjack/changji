@@ -64,6 +64,10 @@ const saver = useAction()
 
 const story = ref(null)
 const loading = ref(false)
+/** 手里这本书是哪部剧读回来的。null = 手上没有。 */
+let loadedFor = null
+/** 上一趟为什么没读回来。空 = 没出事。提示条八秒就没，这一行不会。 */
+const loadError = ref('')
 const draft = ref(null) // AI 写完、还没采用的那一份大纲
 const keywords = ref('')
 const pasting = ref(false)
@@ -424,11 +428,29 @@ async function load() {
   try {
     for (const k of Object.keys(buf)) delete buf[k]
     dirtySnapshot.clear()
-    const data = await api.getStory(session.projectPath)
+    const data = await api.getStory(want)
     if (want !== session.projectPath) return
     setStory(data)
+    loadedFor = want
+    loadError.value = ''
   } catch (err) {
-    if (want === session.projectPath) ui.error(err.message)
+    if (want !== session.projectPath) return
+    // **手里这份要是上一部剧的，就得倒掉。**
+    //
+    // 这儿原来只弹一句错，`story` 一个字不动。而这一趟在换剧那条路上跑，
+    // 砸了的话新这一部的编辑器里**摆着上一部的正文**——接着敲字，自动存
+    // 用的是当前这部剧的路径加上那一章的章号，两部剧里都有 ch01，于是
+    // 上一部的整章文字落进了这一部。这一页为这件事清过 draft / sel /
+    // chat / streaming / pending（见换剧那个 watch），唯独 story 本身没清。
+    //
+    // 同一部剧自己重读失败（批量写完那条也叫 load）不倒——那时候屏幕上
+    // 的就是这一部自己的字，为一次抖动清空整本书更糟。
+    if (loadedFor !== session.projectPath) {
+      story.value = null
+      loadedFor = null
+      loadError.value = err.message
+    }
+    ui.error(err.message)
   } finally {
     if (want === session.projectPath) loading.value = false
   }
@@ -1852,6 +1874,18 @@ async function stopWriting() {
       hint="故事挂在项目上。在项目库那条栏里点一个。"
     />
     <div v-else-if="loading && !hasStory" class="ed__center tiny dim">读取中…</div>
+    <!-- **读不出来的时候不能摆"开始写"那一屏。** 那一屏说的是「这部剧还
+         没有故事」，而读砸了的时候有没有根本不知道——按下「直接开写」，
+         要是刚才只是 story.json 一时读不出来（文件坏了引擎回 400），那
+         一下就把它盖掉了。 -->
+    <EmptyState
+      v-else-if="loadError"
+      class="ed__center"
+      icon="warn"
+      tone="warn"
+      title="读不到这部剧的故事"
+      :hint="loadError"
+    />
 
     <template v-else>
       <!-- ================= 左：章节 ================= -->
