@@ -334,15 +334,32 @@ async function generate() {
     ui.warn('先选一集')
     return
   }
+  // **开工那一刻把项目和集号钉死。**
+  //
+  // 这一趟分三段：先取剧本，再等那条 socket 开（runAsyncJob 最多等两秒），
+  // 然后才把请求发出去。而下面原来每一段都现读一次 session——中间在顶栏
+  // 换一集的话，发出去的是**上一集的剧本配这一集的集号**，整张分镜表就是
+  // 照着别人的剧本拆的，而且一个字都不会报错：长度、台词、场景看着都对，
+  // 只是不是这一集的故事。设定页那条「一键出图」早就这么钉了，理由一样。
+  const project = session.projectPath
+  const episodeId = session.episodeId
   if (shots.value.length && !confirm('重出分镜会覆盖整张表，手改过的镜头会丢。继续？')) {
     return
   }
   const scriptData = await run(
-    () => api.getScript(session.projectPath, session.episodeId),
+    () => api.getScript(project, episodeId),
     { key: 'plan', quiet: true },
   )
   if (!scriptData?.script?.trim()) {
-    ui.warn('这一集还没有剧本，先回第二步写')
+    // **"读不到"和"还没写"是两回事。** quiet 把提示条压住了，这儿要是一律
+    // 说「还没有剧本」，人就会去写一篇已经写过的——而真正的原因（引擎连
+    // 不上、这一集不在了）一个字都没有。run() 每次进来先把 error 清空，
+    // 所以这会儿它装的就是这一趟的。
+    ui.warn(
+      error.value
+        ? `读不到这一集的剧本：${error.value}`
+        : '这一集还没有剧本，先回第二步写',
+    )
     return
   }
   const result = await run(
@@ -350,9 +367,9 @@ async function generate() {
       runAsyncJob(
         (extra) =>
           api.plan({
-            project: session.projectPath,
+            project,
             script: scriptData.script,
-            episode_id: session.episodeId,
+            episode_id: episodeId,
             duration_s: scriptData.target_duration_s || 60,
             ...extra,
           }),
