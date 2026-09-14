@@ -1,6 +1,8 @@
 // ffmpeg / ffprobe 输出解析的对拍。
 //
 // 语料由 tools/gen_ffmpeg_golden.py 生成，期望值由 Python 侧的真函数算出来。
+// **那个脚本随 Python 引擎一起删了**，所以这份语料是冻住的：跑挂了的正确
+// 反应是改 C++，不是重导语料（重导不了）。
 //
 // 这几个解析器错了的表现都很隐蔽：
 //   帧率算成 0 会让时长校验永远通过；
@@ -30,7 +32,8 @@ json load_corpus() {
     const fs::path p = fs::path(CHANGJI_GOLDEN_DIR) / "ffmpeg" / "parsers.json";
     std::ifstream in(p, std::ios::binary);
     REQUIRE_MESSAGE(in.good(), "语料不在：" << paths::to_utf8(p)
-                                            << "，跑一遍 tools/gen_ffmpeg_golden.py");
+                                            << "。这份语料生不出来了——导它的 Python 引擎"
+                                               "已经删了；它在版本库里，从 git 取回来。");
     std::ostringstream buf;
     buf << in.rdbuf();
     json doc = json::parse(buf.str(), nullptr, false);

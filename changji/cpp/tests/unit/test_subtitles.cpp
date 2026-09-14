@@ -1,6 +1,8 @@
 // 字幕断行与 ASS 输出的对拍。
 //
 // 语料由 tools/gen_subtitles_golden.py 生成，期望值由 Python 的真函数算出来。
+// **那个脚本随 Python 引擎一起删了**，所以这份语料是冻住的：跑挂了的正确
+// 反应是改 C++，不是重导语料（重导不了）。
 //
 // ASS 的**整份文件内容**都比对：它要喂给 libass，多一个空格少一个逗号
 // 都可能让整条字幕轨不渲染，而那要到成片出来才看得见。
@@ -35,7 +37,8 @@ json load_corpus() {
     std::ifstream in(p, std::ios::binary);
     REQUIRE_MESSAGE(in.good(),
                     "语料不在：" << paths::to_utf8(p)
-                                 << "，跑一遍 tools/gen_subtitles_golden.py");
+                                 << "。这份语料生不出来了——导它的 Python 引擎已经删了；"
+                                    "它在版本库里，从 git 取回来。");
     std::ostringstream buf;
     buf << in.rdbuf();
     json doc = json::parse(buf.str(), nullptr, false);

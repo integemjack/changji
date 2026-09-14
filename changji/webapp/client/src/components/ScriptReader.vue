@@ -18,9 +18,11 @@ import { ACT_LABELS } from '@/api/labels'
 
 const props = defineProps({
   text: { type: String, default: '' },
-  // 一句台词大概几秒。**和引擎的预算一个数**（stages/script_prompt.inc.hpp
-  // 的 kCharsPerSecond = 4.6）——两边不一样的话，这里说"约 13 秒"、
-  // 后端说"偏短"，对不上。
+  // 一句台词大概几秒。**和引擎的预算一个数**——真身是 `cpp/prompts.toml`
+  // 的 `chars_per_second`（构建期生成到 stages/prompts.inc.hpp 的
+  // `prompt::script::kCharsPerSecond`，今天 = 4.6）。两边不一样的话，
+  // 这里说"约 13 秒"、后端说"偏短"，对不上。
+  // 落后了当场红：api/speech-rate.test.js 直接读那个 toml 比。
   charsPerSecond: { type: Number, default: 4.6 },
   // 目标时长和对白字数预算。给了就在顶栏画出"够不够"。
   targetSeconds: { type: Number, default: 0 },

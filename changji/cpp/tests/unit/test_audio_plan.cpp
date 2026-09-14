@@ -1,6 +1,9 @@
 // 配音时长估算与拆分的对拍。
 //
 // 语料由 tools/gen_audio_golden.py 生成，期望值由 Python 的真函数算出来。
+// **那个脚本随 Python 引擎一起删了**，所以这份语料是冻住的：它不再是"随时
+// 能重导一遍的对拍答案"，而是回归夹具。跑挂了的正确反应是**改 C++**；
+// 只有确实有意改了形状，才照着改语料，并在提交信息里说清改了哪一项、为什么。
 //
 // **这一层错了的后果是成片里两个人同时说话。** 一个镜头装不下自己的台词，
 // 混音时后面的声音盖到下一镜上去。而这件事在装配之前没有任何迹象——
@@ -32,7 +35,8 @@ json load_corpus() {
     const fs::path p = fs::path(CHANGJI_GOLDEN_DIR) / "audio" / "audio_plan.json";
     std::ifstream in(p, std::ios::binary);
     REQUIRE_MESSAGE(in.good(), "语料不在：" << paths::to_utf8(p)
-                                            << "，跑一遍 tools/gen_audio_golden.py");
+                                            << "。这份语料生不出来了——导它的 Python 引擎"
+                                               "已经删了；它在版本库里，从 git 取回来。");
     std::ostringstream buf;
     buf << in.rdbuf();
     json doc = json::parse(buf.str(), nullptr, false);
