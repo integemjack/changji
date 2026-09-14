@@ -23,7 +23,7 @@
  * 以前 fit 只在「写好了还没存」那个面板里闪一下，点采用就没了，人带着一个
  * 13 秒的剧本走到镜头页，直到出片才发现。
  */
-import { computed, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 
 import AppIcon from '@/components/AppIcon.vue'
 import EmptyState from '@/components/EmptyState.vue'
@@ -44,6 +44,25 @@ const ctx = ref(null)
 const loading = ref(false)
 const mode = ref('read')
 const draft = ref(null)
+
+/**
+ * 手里这份稿子是**哪一集**的。
+ *
+ * 这一页是手动保存——敲完得自己点「保存」。有三条路能把没存的字弄丢，
+ * 而且一声不吭：
+ *
+ *   · 顶栏换一集：下面那个 watch 直接 load()，把编辑器里的字盖掉；
+ *   · 走到别的页（故事 / 设定）：这一格连同「这一集」整个卸掉；
+ *   · 刷新或者关标签页。
+ *
+ * 一集的剧本是几百上千字。故事页那边早就是「先冲再读」（见 StoryView 的
+ * flushAll 和它 onUnmounted 上那段），这一页漏了，照它办。
+ *
+ * **换集之后 session 里的路径和集号已经是新的那一集了**，所以得记着这份
+ * 稿子原来是谁的，存的时候用记下的这一份——不然就把 ep01 的剧本写进
+ * ep02 了。目标时长一起记：它是从 ctx 推出来的，而 ctx 也会被 load 换掉。
+ */
+let owner = null
 
 const dirty = computed(() => script.value !== savedScript.value)
 /** 「现在在看哪部剧的哪一集」。异步那几趟拿它认自己有没有过期。 */
@@ -94,6 +113,11 @@ async function load() {
     savedScript.value = script.value
     ctx.value = context
     mode.value = 'read'
+    owner = {
+      project: session.projectPath,
+      episode: session.episodeId,
+      duration: durationS.value,
+    }
   } catch (err) {
     if (want === ctxKey()) ui.error(err.message)
   } finally {
@@ -102,7 +126,53 @@ async function load() {
   }
 }
 
-watch(() => [session.projectPath, session.episodeId], load, { immediate: true })
+/**
+ * 把手里这份没存的稿子冲出去，落在**它自己那一集**上。
+ *
+ * 不等它回来：请求发出去闭包就还活着，这一页该卸卸、该换换。
+ *
+ * 空白不冲。清空编辑器多半是打算重写，没存过就走开不该把原来那篇删掉；
+ * 真要清空，「保存」按钮还在那儿。
+ */
+function flush() {
+  if (!owner || !dirty.value) return
+  const text = script.value
+  if (!text.trim()) return
+  const from = owner
+  owner = null // 换集和卸载可能接连来，别存两遍
+  api
+    .saveScript({
+      project: from.project,
+      episode_id: from.episode,
+      script: text,
+      duration_s: from.duration,
+    })
+    .then(() => ui.ok(`${from.episode} 的剧本还没存，先存下了`))
+    .catch((err) => ui.error(`${from.episode} 那篇没存进去：${err.message}`))
+}
+
+/** 关标签页和刷新只能拦这一下——存是异步的，这儿等不了。 */
+function beforeUnload(e) {
+  if (!dirty.value || !script.value.trim()) return
+  e.preventDefault()
+  e.returnValue = ''
+}
+
+onMounted(() => window.addEventListener('beforeunload', beforeUnload))
+onUnmounted(() => {
+  window.removeEventListener('beforeunload', beforeUnload)
+  flush()
+})
+
+watch(
+  () => [session.projectPath, session.episodeId],
+  () => {
+    // **先冲再读。** load() 会把编辑器整个盖掉，理由见 owner 上面那段。
+    flush()
+    load()
+  },
+  { immediate: true },
+)
 
 async function write() {
   const result = await run(

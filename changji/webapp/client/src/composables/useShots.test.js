@@ -47,6 +47,11 @@ vi.stubGlobal('window', {
   location: { protocol: 'http:', host: 'x' },
   addEventListener() {},
   removeEventListener() {},
+  // useShots 跑完会 session.refresh()，这一趟在测试里必然失败（api 那边
+  // 没桩 flow），而 session 的 catch 会广播 changji:error 给 ToastStack。
+  // 少这一个方法，vitest 报「2 unhandled errors」——用例还是绿的，噪声
+  // 却盖在真失败上面。
+  dispatchEvent() {},
 })
 
 const { useShots } = await import('./useShots.js')
