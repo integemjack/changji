@@ -112,7 +112,19 @@ export const api = {
   //
   // 名字是历史（原来在 Node 那层），现在和 /api 一样由引擎答。
   engineStatus: () => get('/bff/settings/status'),
-  settingsOverview: () => get('/bff/settings/overview'),
+  /**
+   * 设置页那一整页。里面嵌着 node / engine / connections / settings /
+   * hardware / doctor 六块。
+   *
+   * **把项目路径带上**，理由和下面 `doctor` 那条一模一样：这份里的体检
+   * 有一项是「出片画布」，而画幅是每部剧自己的（项目目录的 changji.toml
+   * 里那个 [video]）。不带的话引擎查的是全局默认（竖屏 720p，544×928），
+   * 那个数永远不会超上限——项目切到 2K 之后，设置页第一节照样说没问题、
+   * 上面那颗牌子照样写「可以开工」，而镜头页开跑前的那次体检
+   * （走 /api/doctor，带了 path）会说超了。同一条检查两个答案。
+   */
+  settingsOverview: (project) =>
+    get('/bff/settings/overview', project ? { path: project } : {}),
   // **`/bff/settings/overview` 一条就够。** 它里面已经嵌了 node（就是
   // /bff/settings/config 那份）、engine、connections、settings、hardware
   // 五块，引擎那边是进程内直接取、不发 HTTP（见 server.cpp 那段注释）。

@@ -177,6 +177,46 @@ json to_json(const doctor::Report& report) {
     return {{"can_run", report.can_run()}, {"checks", checks}};
 }
 
+/// 跑一遍体检。给了项目路径就按**这部剧**的配置跑。
+///
+/// **画面规格是每部剧自己的**（项目目录的 changji.toml 里那个 [video]）。
+/// 不读它的话「出片画布」那一项查的是全局默认、而出片用的是这部剧的那个
+/// ——项目切到 2k 之后体检照样说 544×928 没问题，这条检查等于没有。
+/// 实测撞到过。
+///
+/// ⚠️ **那一份读不了不能把整份报告带走。** `load_settings` 在项目的
+/// changji.toml 语法坏了时会抛（read_toml_into 里那个 runtime_error，
+/// 消息里带着文件名和行号）。原来这一句是裸着的：一抛就穿出处理函数，
+/// Crow 回一个光秃秃的 500，前端拿到的是「请求失败（500）」——
+/// **而"你的配置文件坏了"正是体检存在的理由**，偏偏这时候它整个不见了，
+/// 连带「出片画布」「显卡」这些和那份配置无关的项也一起没了。
+///
+/// 现在退回全局那份接着跑，把原因当成一条 FAIL 摆在最前面：`can_run()`
+/// 看见 FAIL 就是假，该拦的照样拦，而那句带行号的话终于送得到人眼前。
+/// 这也和 doctor.cpp 里 `guarded()` 的规矩一致：单项炸了降级成一条，
+/// 其余照跑。
+doctor::Report doctor_for(const char* raw_path) {
+    auto settings = config::runtime().snapshot();
+    std::string broken;
+    if (raw_path != nullptr && *raw_path != '\0') {
+        try {
+            settings = config::load_settings(changji::paths::from_utf8(raw_path));
+        } catch (const std::exception& e) {
+            broken = e.what();
+        }
+    }
+    doctor::Report r = doctor::run_checks(settings);
+    if (!broken.empty()) {
+        r.checks.insert(
+            r.checks.begin(),
+            doctor::Check{"这部剧的配置", doctor::Level::FAIL, broken,
+                          "改掉那个文件里的语法错误再刷新。在修好之前，"
+                          "下面这些项查的是全局配置（用户目录那份），"
+                          "和这部剧真正会用的不是一回事。"});
+    }
+    return r;
+}
+
 /// 取布尔查询参数。
 ///
 /// 认的取值抄 FastAPI：true/1/on/yes/y/t，大小写不论。别的一律 false——
@@ -305,18 +345,10 @@ void run(const config::Settings& settings, const Options& opts) {
     // 用捕获的那份的话，改完之后体检和硬件画像还是老的，
     // 用户会以为改动没生效。
     CROW_ROUTE(app, "/api/doctor")([](const crow::request& req) {
-        auto settings = config::runtime().snapshot();
-        // **画面规格是每部剧自己的**（项目目录的 changji.toml 里那个
-        // [video]），给了 path 就把它读进来。不读的话「出片画布」那一项
-        // 查的是全局默认、而出片用的是这部剧的那个——项目切到 2k 之后体检
-        // 照样说 544×928 没问题，这条检查等于没有。实测撞到过。
-        const char* path = req.url_params.get("path");
-        if (path != nullptr && *path != '\0') {
-            settings = config::load_settings(changji::paths::from_utf8(path));
-        }
         // 体检里有三项要发网络请求，最坏情况阻塞二十多秒。
         // Crow 是线程池模型，这只占住一个工作线程，不影响其它请求。
-        return json_response(to_json(doctor::run_checks(settings)));
+        return json_response(
+            to_json(doctor_for(req.url_params.get("path"))));
     });
 
     // ---- 阶段 2：只读接口 ----
@@ -876,7 +908,7 @@ void run(const config::Settings& settings, const Options& opts) {
     // 形状照抄 Node 那份（webapp/server/src/routes/settings.js）：它要去
     // 发四次 HTTP，我们在进程内直接取。errors 留空对象——那几项是它
     // 转发失败时填的，我们没有转发这一层。
-    CROW_ROUTE(app, "/bff/settings/overview")([] {
+    CROW_ROUTE(app, "/bff/settings/overview")([](const crow::request& req) {
         json locked = json::object();
         for (const auto& [k, v] : config::env_overridden()) locked[k] = v;
         const auto s = config::runtime().snapshot();
@@ -1033,7 +1065,18 @@ void run(const config::Settings& settings, const Options& opts) {
         out["effective"]["llm"] = {{"backend", s.llm.backend}};
         // **体检要发网络请求，最坏二十多秒。** Node 那份也是同步等的，
         // 形状要一致就只能照做；Crow 是线程池，占住一个工作线程不影响别的请求。
-        out["doctor"] = to_json(doctor::run_checks(s));
+        //
+        // ⚠️ **这里也要带项目路径。** 原来是 `run_checks(s)`——全局那份配置。
+        // 于是同一条「出片画布」在两处给出两个答案：镜头页那个开跑前的体检
+        // 走 `/api/doctor?path=…`（查的是这部剧的 [video]，能说出"2K 超了
+        // 模型上限"），而设置页这一节查的是全局默认的 544×928，永远说没问题
+        // ——**而设置页正是产品把体检摆在第一节的那一页**，上面还挂着一颗
+        // 「可以开工 / 还不能跑」的牌子。一个照着全局配置发的"可以开工"，
+        // 在当前这部剧上可能根本跑不出东西来。
+        //
+        // 前端把顶栏选中的那部剧的路径带上来（api.settingsOverview(project)）。
+        // 没带就还是全局那份，和以前一样。
+        out["doctor"] = to_json(doctor_for(req.url_params.get("path")));
         out["errors"] = json::object();
         return json_response(out);
     });

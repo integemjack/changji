@@ -21,15 +21,17 @@
  *     09-13 删的「时长容差」同一类。
  * 装配和闸门合成一节：它们本来就是一个按钮一起存的。
  */
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 
 import AppIcon from '@/components/AppIcon.vue'
 import { api } from '@/api'
 import { useAction } from '@/composables/useAction'
+import { useSession } from '@/stores/session'
 import { useUi } from '@/stores/ui'
 import { describeRoomDecision } from '@/composables/room-decision'
 import { placementRows as buildPlacementRows } from '@/composables/placement-rows'
 
+const session = useSession()
 const ui = useUi()
 const { run, isBusy } = useAction()
 
@@ -189,7 +191,11 @@ const roomDecision = computed(() =>
 async function load() {
   loading.value = true
   try {
-    const data = await api.settingsOverview()
+    // **带上顶栏选中的那部剧。** 这一份里的体检有一项是「出片画布」，
+    // 而画幅是每部剧自己的——不带的话查的是全局默认，2K 的项目上这一节
+    // 会说没问题、上面那颗牌子会写「可以开工」，而镜头页开跑前的体检
+    // （走 /api/doctor，带了 path）会说超了。见 api.settingsOverview。
+    const data = await api.settingsOverview(session.projectPath)
     overview.value = data
     // ⚠️ **改了还没存的那一节不要盖掉。**
     //
@@ -243,6 +249,11 @@ onMounted(() => {
   loadModelsDir()
   load()
 })
+
+// 换一部剧，体检里那条「出片画布」的答案就变了（画幅是每部剧自己的）。
+// 不重拉的话这一节停在上一部那份上——而这一页没有任何地方写着它是给
+// 哪部剧看的，停着的那份看上去就是当前这部的。
+watch(() => session.projectPath, load)
 
 async function saveNode() {
   const result = await run(() => api.saveNodeConfig(node.value), {
