@@ -2650,7 +2650,16 @@ async function stopWriting() {
   width: 7px;
   height: 7px;
   border-radius: 50%;
-  background: var(--ai, #7c5cff);
+  /* ⚠️ 原来这儿是 `var(--ai, #7c5cff)`——**`--ai` 这个变量全仓没有**，
+     于是一直走的是那个写死的紫。和上面 --bg-soft 那条是同一种错，只是
+     这条有兜底值，不作废、改成另一个颜色，所以更难看出来。
+
+     后果：同一页上两个「AI 正在写」的呼吸点是两个颜色。下面
+     `.doc__live .dot`（每一章那一行上的那个）用的是 --accent，
+     而按钮那一族 `.btn--ai` 也是 --accent 起头的渐变——base.css 里那句
+     注释写着「整套流程里每一步都有一个，**样子必须统一**」。这个紫是
+     唯一一处例外，还是个写死的十六进制：深浅两套主题下都不跟着变。 */
+  background: var(--accent);
   margin-right: 0.4rem;
   animation: live-pulse 1.1s ease-in-out infinite;
 }
