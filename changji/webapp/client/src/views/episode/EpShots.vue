@@ -480,6 +480,39 @@ function toggleSelect(shotId) {
   selected.value = next
 }
 
+/**
+ * 选中的那几镜，什么时候该作废。
+ *
+ * `selected` 装的是 shot_id，而批量那几颗按钮（退回重跑、锁定、解锁、清备注，
+ * 还有「选中的一起重出」）直接把它整份交出去。它原来从不清空：
+ *
+ *   · **换了筛选**：在「全部」里挑了三镜，切到「有问题」——那三镜多半已经
+ *     不在屏幕上了，而顶上仍写着「选中 3」，一按就是对看不见的东西动手。
+ *     「退回重跑」会把已经渲染好的成片丢掉，这种事不能发生在看不见的行上。
+ *   · **换了集**：shot_id 是 `ep01_s03_sh007` 这种、带着集号前缀（见引擎
+ *     storyboard.cpp 里 `shot_id = episode_id + buf`），所以交到 ep02 上是
+ *     404 而不是改错东西——但人看到的是「选中 3」配一句莫名其妙的报错。
+ *   · **整张表换了**（重出分镜）：老 id 全成了幽灵。
+ *
+ * 前两条各清一次；第三条按"还在不在表里"剪一遍，这样重出之后留下的是交集
+ * 而不是一堆死 id。
+ */
+watch(filter, () => {
+  selected.value = new Set()
+})
+watch(
+  () => [session.projectPath, session.episodeId],
+  () => {
+    selected.value = new Set()
+  },
+)
+watch(shots, (list) => {
+  if (!selected.value.size) return
+  const alive = new Set(list.map((s) => s.shot_id))
+  const next = new Set([...selected.value].filter((id) => alive.has(id)))
+  if (next.size !== selected.value.size) selected.value = next
+})
+
 function selectAllShown() {
   if (selected.value.size === shown.value.length && shown.value.length) {
     selected.value = new Set()
