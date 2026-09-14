@@ -1,7 +1,12 @@
 /**
  * 接口客户端。
  *
- * 两个前缀：/bff 是 Node 自己的，/api 是转发给 Python 引擎的。
+ * 两个前缀，**今天是同一个进程在答**：`/api` 是引擎自己的接口，`/bff` 是
+ * 给界面拼好的那几条（一次问完一屏要的东西）。`/bff` 这个名字是历史：
+ * webapp 原来跑在 Node 那层后面，那几条是那层的；2026-09-12 把前端嵌进
+ * 二进制之后由 C++ 自己答（清单在 cpp/src/http/bff_routes.hpp，
+ * test_webapp.cpp 拿打包进来的前端代码里出现的 /bff/ 路径查那份清单）。
+ *
  * 前端不关心谁在后面，只关心报错时能拿到一句人能看懂的话。
  */
 
@@ -46,7 +51,9 @@ async function request(url, { method = 'GET', body, signal, raw } = {}) {
     }
   }
   if (!res.ok) {
-    // FastAPI 的报错在 detail 里，Node 这层也统一用 detail
+    // 报错一律在 detail 里。**这是照着 Python 那版的形状定的**，引擎
+    // 现在也照发（见下面 fieldError 那段说的 pydantic 形状），对拍语料
+    // 把它钉住了。
     const detail = data?.detail
     const message =
       typeof detail === 'string'
@@ -101,7 +108,9 @@ export function mediaUrl(project, rel) {
 }
 
 export const api = {
-  // ---- Node 侧 ----
+  // ---- /bff：给界面拼好的那几条 ----
+  //
+  // 名字是历史（原来在 Node 那层），现在和 /api 一样由引擎答。
   nodeHealth: () => get('/bff/health'),
   engineStatus: () => get('/bff/settings/status'),
   settingsOverview: () => get('/bff/settings/overview'),
