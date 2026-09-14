@@ -613,7 +613,11 @@ function scrollTo(id) {
             </div>
             <!-- **没有下载器才提示怎么装。** 原来这两行安装命令是无条件印在
                  页面上的，而装了 aria2 的机器上它一年也用不着。 -->
-            <p v-if="!modelsTool" class="tiny bad">
+            <!-- `bad` 这个类只在 ModelDialog 自己的 scoped 里有定义，
+                 scoped 跨不过组件——这一行在这儿是**不红的**，和旁边的
+                 说明文字一个样。而它正是"为什么模型下不下来"的唯一答案。
+                 换成 base.css 里那个全局的。 -->
+            <p v-if="!modelsTool" class="tiny danger-text">
               这台机器上没找到下载器（aria2c 或 curl），下不了模型。
               Debian/Ubuntu 装：apt-get install -y aria2；Windows：winget install aria2.aria2
             </p>

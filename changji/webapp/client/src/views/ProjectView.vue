@@ -74,10 +74,16 @@ async function loadShow() {
     show.value = null
     return
   }
+  // 这一趟是给哪部剧读的。在项目库里连着点两部，两趟都在路上，回来的顺序
+  // 不保证——资产库（style 从那儿来）比 video 那一趟大得多，慢的那趟后
+  // 落地就把**上一部**的画幅和画风写在这一部的行上，而这一行是这一页仅剩
+  // 的五件东西之一，错了没有别处对得出来。
+  const want = session.projectPath
   const [v, a] = await Promise.allSettled([
     api.projectVideo(session.projectPath),
     api.assets(session.projectPath),
   ])
+  if (want !== session.projectPath) return
   const video = v.status === 'fulfilled' ? v.value : null
   const style = a.status === 'fulfilled' ? a.value.style : null
   show.value = {
@@ -230,7 +236,15 @@ watch(() => session.projectPath, loadShow, { immediate: true })
         >
           {{ m.name }}<span v-if="m.missing" class="warn">⚠</span>
         </button>
-        <span v-if="!models.inUse.length" class="dim tiny">读取中…</span>
+        <!-- **读不到就得说读不到。** `models.error` 一直没人读（和早先
+             `session.error` 同一个毛病），于是 /bff/setup/state 一挂——引擎
+             在重启、端口不对、回了 500——这一行就永远停在「读取中…」上，
+             一个字都不解释。而没有项目时整页只有这一行（见文件开头：它是
+             初始化页删掉之后的替代品），一台刚装好的机器上正好撞见。 -->
+        <span v-if="models.error" class="tiny danger-text truncate" :title="models.error">
+          读不到模型清单：{{ models.error }}
+        </span>
+        <span v-else-if="!models.inUse.length" class="dim tiny">读取中…</span>
       </span>
     </div>
 
