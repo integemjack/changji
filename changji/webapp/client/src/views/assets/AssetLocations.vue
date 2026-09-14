@@ -396,12 +396,23 @@ async function save(id) {
     { key: 'save:' + id, refresh: true },
   )
   if (!result) return
-  const note = renamed
-    ? '；故事里那几章记的还是旧名字，分集线上这个地方会认不出来——去故事页点「提人物」重读一遍就对上了'
-    : ''
-  ui.ok(
-    (result.reset_shots ? `已保存，${result.reset_shots} 个镜头退回重跑` : '已保存') + note,
-  )
+  const saved = result.reset_shots
+    ? `已保存，${result.reset_shots} 个镜头退回重跑。`
+    : '已保存。'
+  if (renamed) {
+    // 同角色那一页：分集线按 chapter.locations 的名字认地方，而重出分镜时
+    // 场次头「【第1场 · 夜 · 内 · 天台】」里那个地名也是按名字认回 id 的
+    // （storyboard.cpp 的 resolve_scene_location）。改名只动这一条。
+    ui.push(
+      'warn',
+      saved +
+        '改的只是设定库这一条——故事和已经写好的剧本里还是旧名字：分集线上这个地方会认不出来，' +
+        '重出分镜时场次头里的地名也认不回来。去故事页点「提人物」能把故事那半对上。',
+      12000,
+    )
+  } else {
+    ui.ok(saved)
+  }
   await load()
 }
 

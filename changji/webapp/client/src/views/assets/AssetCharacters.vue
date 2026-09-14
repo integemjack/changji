@@ -393,12 +393,29 @@ async function save(charId) {
     { key: 'save:' + charId, refresh: true },
   )
   if (!result) return
-  const note = renamed
-    ? '；故事里记的还是旧名字，分集线上这个人和抽屉里那几条关系都会认不出来——去故事页点「提人物」重读一遍就对上了'
-    : ''
-  ui.ok(
-    (result.reset_shots ? `已保存，${result.reset_shots} 个镜头退回重跑` : '已保存') + note,
-  )
+  const saved = result.reset_shots
+    ? `已保存，${result.reset_shots} 个镜头退回重跑。`
+    : '已保存。'
+  if (renamed) {
+    // **改名这一下的后果得说全，而且要留得住。**
+    //
+    // 三处都是按名字认人的：分集线上那一排脸（chapter.characters）、这个
+    // 抽屉里那几条关系（story.relations 的 a/b）、还有重出分镜时把剧本里
+    // 的台词认回到这个人身上（storyboard.cpp 的 `id_of[name] = char_id`）。
+    // 改名只动资产库这一条，那三处全指着旧名字。
+    //
+    // 用 warn 加长停留时间：这句话比一条绿提示长，3.2 秒读不完。
+    ui.push(
+      'warn',
+      saved +
+        '改的只是设定库这一条——故事和已经写好的剧本里还是旧名字：分集线上这个人、' +
+        '抽屉里那几条关系都会认不出来，重出分镜时他的台词也认不回来。' +
+        '去故事页点「提人物」能把故事那半对上。',
+      12000,
+    )
+  } else {
+    ui.ok(saved)
+  }
   await load()
 }
 
