@@ -23,7 +23,7 @@
  *     那层），原来它照样占一个 tab，点进去是一段道歉、一个灰掉的按钮和一个
  *     空态；成片格里还有两处「去上传」指着它。
  */
-import { computed, ref, watch } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
 import EmptyState from '@/components/EmptyState.vue'
@@ -32,11 +32,15 @@ import EpPublish from '@/views/episode/EpPublish.vue'
 import EpScript from '@/views/episode/EpScript.vue'
 import EpShots from '@/views/episode/EpShots.vue'
 import { api } from '@/api'
+import { useAction } from '@/composables/useAction'
 import { useSession } from '@/stores/session'
+import { useUi } from '@/stores/ui'
 
 const session = useSession()
+const ui = useUi()
 const route = useRoute()
 const router = useRouter()
+const { run, isBusy } = useAction()
 
 // ---- tab 上的数 ----
 //
@@ -119,6 +123,112 @@ function go(key) {
   router.replace({ query: { ...route.query, view: key } })
 }
 
+// ---------------------------------------------------------------------------
+// 这一集自己的那几件事：改名、复制一份、删掉
+// ---------------------------------------------------------------------------
+//
+// 引擎那头一直有（`/api/episode/action` 收 delete / duplicate / rename），
+// 界面上却只有「手动加一集」——**能建不能删**。手滑多建一集、试拍一版想
+// 留个副本、把「第 3 集」改叫「第 3 集 · 天台」，三件事以前都只能去改
+// project.json。
+//
+// **放在这一页而不是分集那一格**：分集那一格画的是故事切在哪儿（计划），
+// 这三件事动的是剧集本身（已经落下来的那份），而"哪一集"正是这一页的主语。
+
+const menuOpen = ref(false)
+const renaming = ref(false)
+const newTitle = ref('')
+const removing = ref(false)
+const titleBox = ref(null)
+
+/** 顶栏挑中的那一集。改名和删除的确认文案都要它。 */
+const ep = computed(() => session.episode)
+const epName = computed(() => ep.value?.title || session.episodeId)
+
+function closeMenu() {
+  menuOpen.value = false
+}
+
+async function startRename() {
+  menuOpen.value = false
+  removing.value = false
+  renaming.value = true
+  newTitle.value = ep.value?.title ?? ''
+  await nextTick()
+  titleBox.value?.focus()
+  titleBox.value?.select()
+}
+
+async function commitRename() {
+  const title = newTitle.value.trim()
+  if (!renaming.value) return
+  renaming.value = false
+  if (title === (ep.value?.title ?? '')) return
+  const done = await run(
+    () =>
+      api.episodeAction({
+        project: session.projectPath,
+        episode_id: session.episodeId,
+        action: 'rename',
+        new_title: title,
+      }),
+    { key: 'epRename', success: '改好了' },
+  )
+  if (done) await session.refresh()
+}
+
+/**
+ * 复制一份。**产出物和状态不跟过去**（引擎那边就是这么做的）——复制出来的
+ * 一集是要重跑的，带着状态过去会显示成已完成而点播放是黑的。
+ */
+async function duplicate() {
+  menuOpen.value = false
+  const made = await run(
+    () =>
+      api.episodeAction({
+        project: session.projectPath,
+        episode_id: session.episodeId,
+        action: 'duplicate',
+      }),
+    { key: 'epDup' },
+  )
+  if (!made) return
+  await session.refresh()
+  session.selectEpisode(made.episode_id)
+  ui.ok(`复制成 ${made.episode_id}，${made.shots} 个镜头都要重跑`)
+}
+
+function askRemove() {
+  menuOpen.value = false
+  renaming.value = false
+  removing.value = true
+}
+
+/**
+ * 删掉这一集。
+ *
+ * **删完必须先把集号清空再 refresh。** `/bff/flow` 只在没给 episode_id 时
+ * 才回落到第一集；给了一个已经不存在的，它照样把这个 id 回给前端，而
+ * `session.refresh()` 看见 id 没变就不换——页面会停在一个空壳上，tab 上
+ * 全是 0，人以为东西都没了。
+ */
+async function remove() {
+  const gone = session.episodeId
+  const done = await run(
+    () =>
+      api.episodeAction({
+        project: session.projectPath,
+        episode_id: gone,
+        action: 'delete',
+      }),
+    { key: 'epDelete', success: `${gone} 删掉了` },
+  )
+  if (!done) return
+  removing.value = false
+  session.selectEpisode('')
+  await session.refresh()
+}
+
 // 旧路径 /shots /film /publish 直接进来时，把视图对上
 const LEGACY = { '/shots': 'shots', '/film': 'film', '/publish': 'publish' }
 watch(
@@ -173,7 +283,74 @@ watch(view, load)
           <span v-if="v.n" class="tab__n">{{ v.n }}</span>
           <span v-if="v.gap" class="tab__gap">· {{ v.gap }}</span>
         </button>
+
+        <span class="spacer" />
+
+        <!-- 这一集自己的那几件事。收在 ⋯ 里：三件都是偶尔才做一次的，
+             摆成三个按钮会和左边四个 tab 抢同一条横线上的注意力。 -->
+        <input
+          v-if="renaming"
+          ref="titleBox"
+          v-model="newTitle"
+          class="input ep__rename"
+          :placeholder="session.episodeId"
+          @keydown.stop.enter="commitRename"
+          @keydown.stop.esc="renaming = false"
+          @blur="commitRename"
+        />
+        <div v-else class="ep__more">
+          <button class="tab tab--more" type="button" title="改名、复制、删掉" @click="menuOpen = !menuOpen">
+            ⋯
+          </button>
+          <template v-if="menuOpen">
+            <div class="menu__veil" @click="closeMenu" />
+            <div class="menu__pop">
+              <button class="menu__item" type="button" @click="startRename">改名</button>
+              <button
+                class="menu__item"
+                type="button"
+                :disabled="isBusy('epDup')"
+                @click="duplicate"
+              >
+                {{ isBusy('epDup') ? '复制中…' : '复制一份' }}
+              </button>
+              <button
+                class="menu__item menu__item--danger"
+                type="button"
+                :disabled="session.episodes.length <= 1"
+                :title="session.episodes.length <= 1 ? '至少要留一集' : ''"
+                @click="askRemove"
+              >
+                删掉
+              </button>
+            </div>
+          </template>
+        </div>
       </nav>
+
+      <!-- 就地确认。**把要丢的东西按数说出来**——这一页正好已经拿着这三个
+           数（tab 上写着的就是它们），比"确定要删除吗"有用得多。 -->
+      <div v-if="removing" class="ep__confirm">
+        <span class="small">
+          删掉「{{ epName }}」？
+          <template v-if="scriptChars || shots.length">
+            <b>{{ scriptChars }} 字剧本</b>、<b>{{ shots.length }} 个镜头</b>一起没了，
+          </template>
+          已经出好的成片文件留在磁盘上，不会被删。
+        </span>
+        <span class="spacer" />
+        <button
+          class="btn btn--danger btn--sm"
+          type="button"
+          :disabled="isBusy('epDelete')"
+          @click="remove"
+        >
+          永久删除
+        </button>
+        <button class="btn btn--ghost btn--sm" type="button" @click="removing = false">
+          算了
+        </button>
+      </div>
 
       <!-- keep-alive：切回镜头那一屏时轮询、选中和抽屉都还在。 -->
       <KeepAlive>
@@ -203,5 +380,75 @@ watch(view, load)
 }
 .tab.is-on .tab__gap {
   color: var(--warn, #f5a524);
+}
+
+/* ⋯ 那一颗和它的浮层 */
+.ep__more {
+  position: relative;
+}
+
+.tab--more {
+  letter-spacing: 2px;
+}
+
+.ep__rename {
+  max-width: 14rem;
+}
+
+.menu__veil {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+}
+
+.menu__pop {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  z-index: 41;
+  display: flex;
+  flex-direction: column;
+  min-width: 7rem;
+  margin-top: 4px;
+  padding: 4px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  box-shadow: 0 6px 20px rgb(0 0 0 / 28%);
+}
+
+.menu__item {
+  padding: 6px 10px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text);
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.menu__item:hover:not(:disabled) {
+  background: var(--surface-2);
+}
+
+.menu__item:disabled {
+  color: var(--text-3);
+  cursor: not-allowed;
+}
+
+.menu__item--danger {
+  color: var(--danger);
+}
+
+/* 就地确认那一条。跨整行，别挤在 tab 那条线上 */
+.ep__confirm {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s2);
+  padding: 8px 10px;
+  border: 1px solid var(--danger);
+  border-radius: 8px;
 }
 </style>
