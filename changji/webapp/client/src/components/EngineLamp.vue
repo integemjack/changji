@@ -6,12 +6,31 @@
  * 顶栏常驻一盏灯，出问题时一眼就知道该去哪儿改，
  * 而不是在某个按钮上点出一句看不懂的超时。
  */
-import { onMounted, onUnmounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import AppIcon from '@/components/AppIcon.vue'
 import { api } from '@/api'
 
 const status = ref(null)
 const checking = ref(false)
+
+/**
+ * 鼠标停上去那句话。
+ *
+ * **自带 webapp 的二进制上，地址和延迟是两个占位的空值**：引擎就是发这个
+ * 页面的那个进程，`/bff/settings/status` 回的是 `baseUrl: ""` 加
+ * `latencyMs: 0`（没有一趟网络往返可量）。原来那句话不判，于是鼠标停上去
+ * 写的是「引擎已连接 （0ms）」——一个空地址和一个没意义的 0。
+ * 起 Node 那层转发时那两个值才是真的，那时照常显示。
+ * （同一件事设置页那两个输入框早判过：embedded 时整块不摆出来。）
+ */
+const hint = computed(() => {
+  const s = status.value
+  if (!s) return '正在看引擎在不在'
+  if (!s.online) return `引擎连不上：${s.error || '没说原因'}`
+  const where = s.baseUrl ? ` ${s.baseUrl}` : ''
+  const ms = s.latencyMs ? `（${s.latencyMs}ms）` : ''
+  return where || ms ? `引擎已连接${where}${ms}` : '引擎已连接：就是发这个页面的那个进程'
+})
 let timer = null
 
 async function check() {
@@ -44,13 +63,7 @@ onUnmounted(() => clearInterval(timer))
     to="/settings"
     class="lamp"
     :class="status ? (status.online ? 'lamp--on' : 'lamp--off') : ''"
-    :title="
-      status
-        ? status.online
-          ? `引擎已连接 ${status.baseUrl}（${status.latencyMs}ms）`
-          : `引擎连不上：${status.error || '没说原因'}`
-        : '正在看引擎在不在'
-    "
+    :title="hint"
   >
     <span class="lamp__dot" :class="{ 'lamp__dot--pulse': checking }" />
     <span class="lamp__text">
