@@ -5,6 +5,7 @@
 #include <string>
 
 #include "config/runtime.hpp"
+#include "http/job_stream.hpp"
 #include "llm/client.hpp"
 #include "media/ffmpeg.hpp"
 #include "models/project.hpp"
@@ -75,6 +76,28 @@ ApiResult post_tts_say(const json& body) {
     // 顶栏那本账上要看得见，否则别的活被它挡住时没人知道是谁挡的。
     pipeline::Activity act{"say", paths::to_utf8(store.root()), "", "正在朗读"};
 
+    // **按了停就真的别再念出来。**
+    //
+    // 朗读走 start_async（server.cpp 里 /api/tts/say 那条），于是顶栏那块
+    // 「正在思考」上有一个「停下」——按下去 `/api/job/cancel` 在表里**找得
+    // 到**这条 stream（JobScope 是 start_async 挂的），回 {stopped:true}，
+    // 按钮跟着变成「停着…」。而这儿原来一处都没查过令牌：几十秒后那段音频
+    // 照样冒出来、还自动播。**按了停还响，比压根没有那个按钮更糟。**
+    //
+    // 合成是一次阻塞调用（后端可能是本机模型，也可能是一条 HTTP 请求），
+    // 中途插不进检查点，所以只能卡两头：
+    //   · 进来先看一眼——排在 Offload 队列里、以及下面借槽读权重那一段，
+    //     可能几十秒，而人正是在这一段里按的停；
+    //   · 出来再看一眼——念完了也别把结果送回去，不然前一句白查。文件已经
+    //     落盘不要紧：say.wav 是个固定名字（见上面那段），下次朗读就盖掉。
+    //
+    // 同步那条路（老客户端、curl、对拍）一个字没变：没有 JobScope 时
+    // `current_cancel()` 回的是哑元，永远不是 cancelled。
+    pipeline::CancelToken& tok = current_cancel();
+    // 取消回 400，和出图、大模型那两族一致（「已停下这一张」）——人按的停
+    // 不是失败，报成 5xx 会让人去找哪儿出错了。
+    if (tok.cancelled()) throw ApiError(400, "已停下，这一段没念");
+
     stages::SynthesisResult res;
     try {
         const std::string voice = opt_str(body, "voice");
@@ -88,6 +111,7 @@ ApiResult post_tts_say(const json& body) {
     } catch (const std::exception& e) {
         throw ApiError(502, std::string("念不出来：") + e.what());
     }
+    if (tok.cancelled()) throw ApiError(400, "已停下，这一段没念");
 
     return {200, {
         {"rel", store.paths().rel(out)},
