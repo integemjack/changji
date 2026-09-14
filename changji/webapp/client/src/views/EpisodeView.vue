@@ -55,8 +55,25 @@ const outputs = ref(0)
 const publishOk = ref(false)
 const loaded = ref(false)
 
+/**
+ * 第几趟。**回来晚了的那趟不许写。**
+ *
+ * 这一层四个请求一起发，而叫它的地方有四个：换项目、换集、切 tab、跑完
+ * 一轮。顶上连着点两集（`session.refresh()` 之后集号会跳），两趟都在路上
+ * ——outputs 那一趟扫的是整个成片目录，比另外三趟慢得多，慢的那趟后落地
+ * 就把**上一集**的字数、镜头数、缺几张首帧写在这一集的标签上。而这行数正
+ * 是"站在剧本格也知道镜头到哪一步"的全部依据，错了没有别处对得出来。
+ *
+ * 清空那一支也要占一个号：不占的话，删完集清空之后，在路上的那趟回来又把
+ * 数写回去了。
+ */
+let loadSeq = 0
+
 async function load() {
-  if (!session.projectPath || !session.episodeId) {
+  const mine = ++loadSeq
+  const proj = session.projectPath
+  const epId = session.episodeId
+  if (!proj || !epId) {
     scriptChars.value = 0
     shots.value = []
     outputs.value = 0
@@ -64,16 +81,17 @@ async function load() {
     return
   }
   const [sc, sh, out, ps] = await Promise.allSettled([
-    api.getScript(session.projectPath, session.episodeId),
-    api.shots(session.projectPath, session.episodeId),
-    api.outputs(session.projectPath),
+    api.getScript(proj, epId),
+    api.shots(proj, epId),
+    api.outputs(proj),
     api.platforms(),
   ])
+  if (mine !== loadSeq) return
   scriptChars.value =
     sc.status === 'fulfilled' ? [...String(sc.value?.script ?? '').trim()].length : 0
   shots.value = sh.status === 'fulfilled' ? (sh.value?.shots ?? []) : []
   const files = out.status === 'fulfilled' ? (out.value?.files ?? []) : []
-  outputs.value = files.filter((f) => String(f.name ?? '').includes(session.episodeId)).length
+  outputs.value = files.filter((f) => String(f.name ?? '').includes(epId)).length
   // 投递那层不在时 platforms 回的是 {error: "…"}，不是抛异常（见 EpPublish）
   publishOk.value = ps.status === 'fulfilled' && !ps.value?.error
   loaded.value = true
