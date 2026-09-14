@@ -265,14 +265,17 @@ watch(
 
 async function pickDuration(event) {
   const seconds = Number(event.target.value)
+  const project = session.projectPath
   // **改时长就是重新分集。** 存一个数然后等人再按一次「重算」，那一下
   // 之间界面上写的集数是旧的，而用户以为已经改了。
   const result = await run(
     () =>
-      api.planEpisodes({ project: session.projectPath, duration_s: seconds }),
+      api.planEpisodes({ project, duration_s: seconds }),
     { key: 'duration' },
   )
   if (!result) return
+  // 换剧了就别把这一份分集表装进新那一部（它是上一部算出来的）。
+  if (project !== session.projectPath) return
   story.value = result.story ?? story.value
   ui.ok(`每集 ${seconds} 秒 → ${plan.value.length} 集`)
 }
@@ -324,7 +327,21 @@ async function writeTrailer() {
       ),
     { key: 'trailer' },
   )
-  if (result) trailerDraft.value = result
+  if (!result) return
+  // **人已经走了就别把它摆在这一部上。**
+  //
+  // 剪一条要一两分钟。换剧那个 watch 会把 `trailerDraft` 清掉（注释写着
+  // 理由：草稿是上一部剧的字，而 adoptTrailer 写的是现在这一部），但清空
+  // 发生在**回包之前**——落地这一下会把它又摆回来，摆在新这一部的折叠区
+  // 里，按一下「存成 trailer 这一集」就写进去了。和剧本页那个草稿是同一
+  // 个坑。
+  //
+  // 这一份不落盘（引擎不存预告片草稿），所以要说一句，别当没发生过。
+  if (project !== session.projectPath) {
+    ui.info('那一部剧的预告片剪好了，但你已经切走了——回去再剪一次')
+    return
+  }
+  trailerDraft.value = result
 }
 
 async function adoptTrailer() {
