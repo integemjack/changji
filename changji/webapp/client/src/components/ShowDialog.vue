@@ -193,10 +193,14 @@ function tryClose() {
 }
 
 async function save() {
+  // **三趟写在同一部剧上。** 画面、风格、成片工序是串着发的，中间隔两个
+  // 来回；路径现读的话，这中间换了剧（遮罩挡着鼠标，但键盘 Tab 得到项目
+  // 库那几行）后两趟就落到新那一部上——画面存在这一部，画风存到了另一部。
+  const project = loadedFor
   const v = await run(
     () =>
       api.saveProjectVideo({
-        path: session.projectPath,
+        path: project,
         orientation: video.value.orientation,
         quality: video.value.quality,
       }),
@@ -210,7 +214,7 @@ async function save() {
   const r = await run(
     () =>
       api.saveStyle({
-        project: session.projectPath,
+        project,
         patch: style.value,
         reset_shots: resetOnStyle.value,
       }),
@@ -222,7 +226,7 @@ async function save() {
     const f = await run(
       () =>
         api.saveProjectFinish({
-          path: session.projectPath,
+          path: project,
           look: { preset: finish.value.preset },
           sound: { ambient: finish.value.ambient, music: finish.value.music },
         }),

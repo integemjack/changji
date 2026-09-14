@@ -310,12 +310,16 @@ async function writeTrailer() {
 
 async function adoptTrailer() {
   if (!trailerDraft.value) return
+  // 三趟请求（建集 / 改名 / 存剧本）串着发，中间隔两个来回。项目路径现读
+  // 的话，这中间在项目库点一下别的剧，后面那两趟就落到新那一部上——建集
+  // 建在这一部、剧本存到了另一部。整件事钉在开工那一刻这一部上。
+  const project = session.projectPath
   await run(
     async () => {
       const exists = session.episodes.some((e) => e.episode_id === TRAILER_ID)
       if (!exists) {
         await api.newEpisode({
-          project: session.projectPath,
+          project,
           episode_id: TRAILER_ID,
           title: trailerDraft.value.title,
           target_duration_s: trailerDurationS.value,
@@ -325,14 +329,14 @@ async function adoptTrailer() {
         // 顶栏的集号选择器上挂的还是**上一条**预告片的名字，而底下的
         // 剧本已经换了——存剧本那一趟只写 script / 时长 / 梗概。
         await api.episodeAction({
-          project: session.projectPath,
+          project,
           episode_id: TRAILER_ID,
           action: 'rename',
           new_title: trailerDraft.value.title,
         })
       }
       await api.saveScript({
-        project: session.projectPath,
+        project,
         episode_id: TRAILER_ID,
         script: trailerDraft.value.script,
         duration_s: trailerDurationS.value,
