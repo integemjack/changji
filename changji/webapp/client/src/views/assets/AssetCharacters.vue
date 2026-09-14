@@ -171,7 +171,12 @@ onMounted(() => {
   document.addEventListener('keydown', onEsc)
   loadPresets()
 })
-onUnmounted(() => document.removeEventListener('keydown', onEsc))
+onUnmounted(() => {
+  document.removeEventListener('keydown', onEsc)
+  // 走开就别响了
+  player?.pause()
+  player = null
+})
 
 watch(() => session.projectPath, load, { immediate: true })
 // 频道上说哪一张画完了就重拉——**刷新过页面的人只剩这条路**：
@@ -306,12 +311,27 @@ async function loadPresets() {
   }
 }
 
-/** 播一段刚摇出来的。加时间戳绕开缓存——落点是固定的那个 .take.wav。 */
-function playRel(rel) {
-  const url = mediaUrl(session.projectPath, rel) + '&_=' + Date.now()
-  new Audio(url).play().catch(() => {
+/**
+ * 试听用的播放器。**整页只留一个。**
+ *
+ * 原来两处试听都是 `new Audio(url).play()`——每一下都新建一个谁也抓不住的
+ * 播放器。连点两下「试听」就是两段声音叠着放，而摇音色这件事的流程本来就
+ * 是「摇一个 → 试听 → 不满意再摇」，连点是常态；试听完走开也停不下来，
+ * 组件卸了它还在响。留一个句柄，放下一段之前先把上一段按停。
+ */
+let player = null
+
+function playAudio(rel, url) {
+  player?.pause()
+  player = new Audio(url)
+  player.play().catch(() => {
     ui.info('浏览器挡住了自动播放，音频存在 ' + rel)
   })
+}
+
+/** 播一段刚摇出来的。加时间戳绕开缓存——落点是固定的那个 .take.wav。 */
+function playRel(rel) {
+  playAudio(rel, mediaUrl(session.projectPath, rel) + '&_=' + Date.now())
 }
 
 /** 摇一个。不给种子就让引擎随机，回包里带着它——喜欢这一摇才存得下来。 */
@@ -417,10 +437,7 @@ async function tryVoice(charId) {
     ui.warn('现在的配音后端只算时长不出声（estimate），听不到东西是正常的')
   }
   // 字段是 `rel` 不是 audio_path，见 tts_api.cpp 的返回体。
-  const url = mediaUrl(session.projectPath, result.rel) + '&_=' + Date.now()
-  new Audio(url).play().catch(() => {
-    ui.info('浏览器挡住了自动播放，音频存在 ' + result.rel)
-  })
+  playAudio(result.rel, mediaUrl(session.projectPath, result.rel) + '&_=' + Date.now())
 }
 
 /**
