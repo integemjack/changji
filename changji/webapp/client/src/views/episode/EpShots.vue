@@ -140,6 +140,18 @@ const problemCount = computed(
 const pending = computed(() => shots.value.filter((s) => !s.video_path).length)
 /** 还没有首帧的镜头数。「只出首帧」那个按钮按它显示。 */
 const pendingFrames = computed(() => shots.value.filter((s) => !s.frame_path).length)
+/**
+ * 锁着的有几镜。**「全部重出」要把这个数说出来。**
+ *
+ * 锁是人工确认过的意思，而批量那几颗按钮教给人的正是"锁着的动不了"——
+ * 「退回重跑」会跳过它们并报一句「N 个锁定的没动」。可 force 那条路不认锁
+ * （引擎 pick_for_frames 里 `if (force) { todo.push_back(s); continue; }`），
+ * 「全部重出」会连锁着的一起重渲染。那一下也许正是人想要的（改了画风），
+ * 但得在按之前说出来，不能让"锁"在两个按钮上是两个意思。
+ */
+const lockedCount = computed(
+  () => shots.value.filter((s) => s.status === 'locked').length,
+)
 
 /**
  * id 到名字。
@@ -689,9 +701,13 @@ async function batch(action) {
  * 跑完什么都没变而且不报错，按钮点了像是没反应。
  */
 async function startAll() {
-  if (!pending.value &&
-      !confirm('这一集已经全部出完了。重出会把每一镜从头再跑一遍，确定？')) {
-    return
+  if (!pending.value) {
+    const locked = lockedCount.value
+    // 锁着的也会跟着重跑——见 lockedCount 上面那段。
+    const note = locked ? `（含锁定的 ${locked} 镜）` : ''
+    if (!confirm(`这一集已经全部出完了。重出会把每一镜${note}从头再跑一遍，确定？`)) {
+      return
+    }
   }
   const r = await start([], null, !pending.value)
   if (r.ok) return
@@ -717,9 +733,14 @@ async function startAll() {
  */
 async function startFrames() {
   const missing = pendingFrames.value
-  if (!missing &&
-      !confirm('每一镜都已经有首帧了。重出会把它们全部换掉（视频不动），确定？')) {
-    return
+  if (!missing) {
+    const locked = lockedCount.value
+    const note = locked ? `（含锁定的 ${locked} 镜）` : ''
+    if (
+      !confirm(`每一镜都已经有首帧了。重出会把它们${note}全部换掉（视频不动），确定？`)
+    ) {
+      return
+    }
   }
   const r = missing
     ? await start([], ['audio', 'frames'], false)
