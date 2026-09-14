@@ -1362,6 +1362,15 @@ onDeactivated(() => window.removeEventListener('keydown', onKey))
                 时长（秒）
                 <span v-if="draft.duration_locked" class="tiny dim">配音已锁</span>
               </span>
+              <!-- **`max="30"` 是接口的上限，不是模型的。**
+                   引擎 `Shot::validate` 收 0~30 秒，所以填 20 存得进去；可真
+                   正出多长由出片模型定——帧数要落在它的格子上（Wan 是 4n+1，
+                   H3 是 17k+5），还会被它自己的帧数上限和显存压住，
+                   `frames_for` 会往下夹。夹完的那个数就是 `real_duration_s`，
+                   墙上牌子的 title 和成片页的时间轴用的都是它。
+                   这儿不把上限改小：那个数前端拿不到（/bff/project/video 不
+                   回 max_shot_s），照一个猜的数去拦反而会拦掉本来能出的。
+                   所以是说清楚，让人知道去哪儿看真数。 -->
               <input
                 v-model.number="draft.duration_s"
                 class="input numeric"
@@ -1369,6 +1378,7 @@ onDeactivated(() => window.removeEventListener('keydown', onKey))
                 step="0.5"
                 min="0.5"
                 max="30"
+                title="填的是名义时长。真正出多长由出片模型定：帧数要落在它的格子上，还会被它自己的上限压住（有的模型五秒就封顶）。牌子上那个秒数和成片页的时间轴用的都是真出来的那个数。"
                 :disabled="draft.duration_locked"
               />
             </label>
