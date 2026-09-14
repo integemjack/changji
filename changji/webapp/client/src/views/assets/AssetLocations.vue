@@ -140,6 +140,11 @@ const FIELDS = [
   { key: 'palette', label: '色彩', hint: '主色和点缀色，可留空', rows: 2 },
 ]
 
+/** 手里这份场景是哪部剧读回来的。null = 手上没有。 */
+let loadedFor = null
+/** 上一趟为什么没读回来。空 = 没出事。提示条会消失，这一行不会。 */
+const loadError = ref('')
+
 const locations = computed(() => assets.value?.locations ?? [])
 
 const knownIds = computed(() => new Set(locations.value.map((l) => l.location_id)))
@@ -217,6 +222,8 @@ async function load() {
     const got = await api.assets(session.projectPath)
     if (want !== session.projectPath) return
     assets.value = got
+    loadedFor = want
+    loadError.value = ''
     // ⚠️ **改了还没存的那一条不能被盖掉。**
     //
     // 这个 load 不只在换项目时跑：`watch(finished, load)` 让它在**每画完
@@ -237,7 +244,25 @@ async function load() {
       ]),
     )
   } catch (err) {
-    if (want === session.projectPath) ui.error(err.message)
+    if (want !== session.projectPath) return
+    // **墙上这份要是上一部剧的，就得撤下来。**
+    //
+    // 这儿原来只弹一句错。而换剧这条路是先清 edits 再 load 的，load 砸了
+    // 的话 `assets` 一个字没动——新这一部的页面上摆着**上一部的场景墙**，
+    // 点开一张，抽屉里是空的（edits 刚清过），而右上角那几个按钮按的是
+    // 现在这一部。八秒之后提示条自己消失，剩下一面对不上号的墙。
+    //
+    // 只在手里这份属于别的项目时撤。同一部剧自己刷新失败（画完一张图那条
+    // 订阅每几十秒就来一趟）不撤——那时候屏幕上的就是这一部自己的东西，
+    // 为一次网络抖动把整面墙清掉更糟。
+    if (loadedFor !== session.projectPath) {
+      assets.value = null
+      edits.value = {}
+      openId.value = ''
+      loadedFor = null
+      loadError.value = err.message
+    }
+    ui.error(err.message)
   } finally {
     if (want === session.projectPath) loading.value = false
   }
@@ -491,8 +516,19 @@ async function clearEmpty(locationId) {
 
       <!-- 同角色格：故事已经有了的时候，差的那一步在这一页右上角，
            不该再把人支回故事页。判据用侧栏那个对勾同一份（done.story）。 -->
+      <!-- **读不出来就说读不出来。** 下面那几条空状态说的是「库里没有」，
+           而读砸了的时候库里有没有根本不知道——提示条八秒就没了，剩一句
+           「场景库还是空的」挂在那儿，看着像东西丢了。 -->
       <EmptyState
-        v-if="!loading && !locations.length && !session.done.story"
+        v-if="!loading && loadError"
+        icon="warn"
+        tone="warn"
+        title="读不到这部剧的设定"
+        :hint="loadError"
+      />
+
+      <EmptyState
+        v-else-if="!loading && !locations.length && !session.done.story"
         icon="scene"
         title="场景库还是空的"
         hint="先写故事，再点右上角「照故事定妆」"
