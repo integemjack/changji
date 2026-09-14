@@ -374,15 +374,28 @@ async function save(charId) {
   for (const key of [...FIELDS.map((f) => f.key), 'name', 'voice_id', 'lora_trigger']) {
     if (draft[key] !== undefined && draft[key] !== null) patch[key] = draft[key]
   }
+  // **改名字要多说一句。**
+  //
+  // 引擎这一下只改资产库里这一条（editing_assets.cpp 的 post_character），
+  // 而故事那头每一章记的出场人物是**名字**（chapter.characters，不是 id）。
+  // 于是改完之后分集线上那一排脸认不出他了——那儿是拿章里的名字去资产库
+  // 里查的（AssetEpisodes 的 castOf），查不到就退成一个光名字的小牌子，
+  // 而且写的还是旧名字。镜头表不受影响：那里存的是 char_id。
+  //
+  // 不在这儿替用户改故事：正文里那个名字也还是旧的，只改结构化那几处会让
+  // 两边对不上；「提人物」重读一遍正文才是把两边对齐的那条路。
+  const was = characters.value.find((c) => c.char_id === charId)
+  const renamed = was && patch.name !== undefined && patch.name !== was.name
   const result = await run(
     () => api.saveCharacter({ project: session.projectPath, char_id: charId, patch }),
     { key: 'save:' + charId, refresh: true },
   )
   if (!result) return
+  const note = renamed
+    ? '；故事里那几章记的还是旧名字，分集线上这个人会认不出来——去故事页点「提人物」重读一遍就对上了'
+    : ''
   ui.ok(
-    result.reset_shots
-      ? `已保存，${result.reset_shots} 个镜头退回重跑`
-      : '已保存',
+    (result.reset_shots ? `已保存，${result.reset_shots} 个镜头退回重跑` : '已保存') + note,
   )
   await load()
 }
