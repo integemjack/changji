@@ -206,8 +206,16 @@ async function openExisting() {
                 <option value="realistic">真人写实</option>
                 <option value="anime">动漫</option>
               </select>
+              <!-- **「建好之后还能改」是假话，改掉。**
+                   `style_line` 全仓只有一处在写：建项目那一下
+                   （http/projects.cpp 的 post_new_project）。改资产库的
+                   `/api/style` 白名单里只有 global_style 和 negative_prompt，
+                   项目页那个窗上它是个只读的牌子——也就是说这一栏一旦选定，
+                   界面上再没有任何地方能动它。照着原来那句话随手选的人，
+                   发现要换时只剩"新建一个项目重做一遍"。 -->
               <span class="field__hint">
-                决定用哪套出图基座。建好之后在项目页还能改。
+                决定用哪套出图基座。建好之后改不了：人物参考图和每一镜的
+                提示词都是按它拼的（连分隔符都不一样）。想换只能新建一个项目。
               </span>
             </label>
           </template>
