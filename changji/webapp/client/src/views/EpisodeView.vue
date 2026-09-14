@@ -33,10 +33,12 @@ import EpScript from '@/views/episode/EpScript.vue'
 import EpShots from '@/views/episode/EpShots.vue'
 import { api } from '@/api'
 import { useAction } from '@/composables/useAction'
+import { useRun } from '@/stores/run'
 import { useSession } from '@/stores/session'
 import { useUi } from '@/stores/ui'
 
 const session = useSession()
+const runner = useRun()
 const ui = useUi()
 const route = useRoute()
 const router = useRouter()
@@ -244,6 +246,28 @@ watch(() => [session.projectPath, session.episodeId], load, { immediate: true })
 // 切 tab 的时候顺手重拉一次：子视图在自己格子里干完的活（采用剧本、出了
 // 分镜、出完片）这儿才看得到。切 tab 正是人要看另一格答案的那一刻。
 watch(view, load)
+
+/**
+ * 跑完一轮也要重拉。
+ *
+ * tab 上那几个数（「差 3 首帧」「差 12 视频」「成片 2」）用的是**这一层
+ * 自己拉的那份镜头表**——`useShots` 的状态是每次调用新建的，镜头页里那份
+ * 和这儿这份是两个。而这儿原来只在换项目、换集、切 tab 时重拉。
+ *
+ * 于是出片那十几二十分钟里，底下的墙一格一格亮起来，上面那行始终写着
+ * 「差 12 视频」；跑完了也不动，非得切一下 tab 才对。同一屏上两个数说
+ * 同一件事，而其中一个是二十分钟前的。
+ *
+ * 只订"跑完那一下"，不跟着每一镜刷——这一层一次要发四个请求，而跑的过程
+ * 中真正要看的是墙，不是标签。出片写盘也正好发生在这一刻，「成片」那个数
+ * 跟着一起对上。写整季那条（writer）不订：它动的是故事页那边的东西。
+ */
+watch(
+  () => runner.running,
+  (now, before) => {
+    if (before && !now) load()
+  },
+)
 </script>
 
 <template>
