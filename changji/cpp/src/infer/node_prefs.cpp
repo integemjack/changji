@@ -77,10 +77,19 @@ void save_node_prefs(const fs::path& workspace, const NodePrefs& prefs) {
             throw std::runtime_error("写坏了 " + paths::to_utf8(tmp));
         }
     }
-    fs::remove(p, ec);
+    // ⚠️ **别先删目标。** 这儿原来是 `fs::remove(p, ec)` 再 rename，两条
+    // 都不必要而且有害：`fs::rename` 在标准里就要求目标存在时替换掉它
+    // （POSIX 语义，MSVC 底层是 MoveFileEx 加 MOVEFILE_REPLACE_EXISTING
+    // ——项目存盘那条走的就是这个，见 models/project.cpp）。先删的话，
+    // **rename 一旦失败，用户关掉的那些格子就全没了**：下次读回来是
+    // "一个都没关"，而这一函数整个存在的理由就是别静悄悄丢掉这份设置
+    // （上面那段注释说的正是这件事）。
     fs::rename(tmp, p, ec);
     if (ec) {
-        throw std::runtime_error("改名失败：" + paths::to_utf8(p));
+        // 那份半成品别留在盘上碍事——下一趟会重写它。
+        std::error_code rm;
+        fs::remove(tmp, rm);
+        throw std::runtime_error("替换文件失败：" + paths::to_utf8(p));
     }
 }
 
