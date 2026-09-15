@@ -429,7 +429,26 @@ double AudioStage::lock_duration(models::Shot& shot, double speech_s) const {
     if (shot.dialogue.empty()) return shot.duration_s;
     // 有台词的向上吸附到可生成档位并锁定。**宁长勿短**：
     // 短了会截断台词，长了尾巴上留一点表演余韵反而自然。
-    const double locked = ceil_duration(speech_s + kTailS);
+    //
+    double locked = ceil_duration(speech_s + kTailS);
+    // **分镜明确规划了多段动作的，不许压短。**
+    //
+    // 上面那句「宁长勿短」说的是吸附方向（ceil 不是 floor），原来没拿结果
+    // 和分镜计划的那个数比——于是一句两秒的台词能把一个计划 15 秒的长镜头
+    // 压成 3 秒，而分镜里为那 15 秒写好的三段动作
+    // （`[0-5秒] / [5-10秒] / [10-15秒]`）连同镜头本身一起没了。
+    // 2026-09-16 实测：ep05_sh007 计划 15 秒、配音锁成 3 秒。
+    //
+    // **判据是「运动描述分了几段」，不是一律不许压。** 一段的镜头（绝大
+    // 多数对话镜）照旧跟着台词收紧，节奏不变；分了两段以上的，说明分镜
+    // 为这一镜安排了好几件事要演，那个时长是它的判断，配音只知道"话有
+    // 多长"，不该替它决定。这样改动只落在真正的长镜头上，别的一个不碰。
+    //
+    // 整集时长超了由配音之后那次 rebalance 去收，而它动的正是没有台词的
+    // 那些镜头。
+    if (count_motion_segments(shot.motion_prompt) >= 2) {
+        locked = std::max(locked, shot.duration_s);
+    }
     shot.duration_s = locked;
     shot.duration_locked = true;
     // **改了时长就把运动描述跟着改。** 和 rebalance_durations 末尾那段同一

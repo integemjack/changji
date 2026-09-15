@@ -220,6 +220,12 @@ std::string motion_covering(const std::string& motion_prompt, double dur);
 /// 所以摘掉它再重出：镜头少演一个动作，比整镜半路换成另一场戏强得多。
 std::string defuse_motion(const std::string& motion_prompt);
 
+/// 运动描述里有几段 `[a-b秒]`。0 = 没按格式写。
+///
+/// **判「这一镜是不是规划了好几件事要演」用的**：分了两段以上的，那个时长
+/// 是分镜的判断，配音不该拿一句短台词把它压回去（见 AudioStage::lock_duration）。
+int count_motion_segments(const std::string& motion_prompt);
+
 std::vector<models::Shot> parse_storyboard(const std::string& raw,
                                            const models::AssetLibrary& assets);
 

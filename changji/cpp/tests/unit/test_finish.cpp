@@ -930,3 +930,31 @@ TEST_CASE("时段对不上就别喂那张空景图") {
     CHECK_FALSE(lighting_clashes("白天，自然光", ""));
     CHECK_FALSE(lighting_clashes("侧逆光，硬", "顶光，软"));
 }
+
+TEST_CASE("配音锁时长：分了多段动作的长镜头不许压短，一段的照旧收紧") {
+    // 2026-09-16 实测：ep05_sh007 计划 15 秒、运动描述写了三段
+    // （[0-5秒] / [5-10秒] / [10-15秒]），而它只有一句两秒的台词——
+    // 配音把它锁成了 3 秒，那三段动作连同镜头本身一起没了。
+    //
+    // **判据是「分了几段」，不是一律不许压**：一段的镜头（绝大多数对话镜）
+    // 照旧跟着台词收紧，节奏不变；分了两段以上的，说明分镜为这一镜安排了
+    // 好几件事要演，那个时长是它的判断。
+    using stages::count_motion_segments;
+    CHECK(count_motion_segments("[0-5秒] 他爬进灌木丛 [5-10秒] 手电扫过 [10-15秒] 他跑") == 3);
+    CHECK(count_motion_segments("[0-3秒] 他抬头") == 1);
+    CHECK(count_motion_segments("他抬头") == 0);
+
+    // 锁出来的时长：多段的取 max（保住长镜头），一段的跟着台词走
+    const auto locked = [](const std::string& mp, double planned, double speech) {
+        double v = stages::ceil_duration(speech + 0.3);
+        if (count_motion_segments(mp) >= 2) v = std::max(v, planned);
+        return v;
+    };
+    const std::string multi = "[0-5秒] a [5-10秒] b [10-15秒] c";
+    const std::string one = "[0-5秒] a";
+    CHECK(locked(multi, 15.0, 2.0) == doctest::Approx(15.0));   // 长镜头保住
+    CHECK(locked(one, 5.0, 2.0) < 5.0);                          // 对话镜照旧收紧
+    // 话比计划还长时照旧跟着台词涨（用例环境的档位上限是 5 秒，取 5 秒以内的值）
+    CHECK(locked(multi, 2.0, 3.5) == doctest::Approx(stages::ceil_duration(3.8)));
+    CHECK(locked(multi, 2.0, 3.5) > 2.0);
+}

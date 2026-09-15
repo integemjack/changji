@@ -1093,6 +1093,14 @@ void cover_full_duration(json& item) {
 
 }  // namespace
 
+int count_motion_segments(const std::string& motion_prompt) {
+    static const std::regex seg(
+        R"(\[\s*[0-9]+(?:\.[0-9]+)?\s*-\s*[0-9]+(?:\.[0-9]+)?\s*秒\s*\])");
+    return static_cast<int>(std::distance(
+        std::sregex_iterator(motion_prompt.begin(), motion_prompt.end(), seg),
+        std::sregex_iterator()));
+}
+
 std::string defuse_motion(const std::string& in) {
     if (in.empty()) return in;
     // 会把主体带出画、或者要求模型去编第一帧看不见的空间的那些词。
