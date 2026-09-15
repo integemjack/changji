@@ -2027,10 +2027,17 @@ async function writeAllChapters() {
 }
 
 async function stopWriting() {
+  // 连点两下的话第二下什么都不做。**不能靠 run() 自己那道去重闸**：它挡住
+  // 之后回的也是 undefined，和"请求砸了"分不出来，而下面正要拿这个回值判。
+  if (isBusy('stopWrite')) return
   // 先打招呼再发请求：引擎把「已手动停止」写进 job 级 error，而下一拍的
   // announceFatal 看见 error 就会弹红字——自己按的停不该再红一次。
   writer.markStopped()
-  await run(() => api.stopSeries(), { key: 'stopWrite', success: '已停' })
+  const ok = await run(() => api.stopSeries(), { key: 'stopWrite', success: '已停' })
+  // **没停成就把那面旗收回来。** 留着的话，接下来那趟真的炸了的时候
+  // （盘满了、引擎半路重启）announceFatal 会拿它当"自己按的停"吃掉，
+  // 屏幕上一个字都没有——而这一刻活儿压根没停，还在写。
+  if (!ok) writer.markStopped(false)
   writer.poll()
 }
 </script>

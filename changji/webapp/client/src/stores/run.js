@@ -391,8 +391,15 @@ export const useWriter = defineStore('writer', () => {
   }
 
   let stoppedByHand = false
-  function markStopped() {
-    stoppedByHand = true
+  /**
+   * 「这一趟的停是人自己按的」。`announceFatal` 靠它把那一条不该红的错吃掉。
+   *
+   * **停没发出去的话要收回来**（传 false）：留着的话，接下来那趟**真的**
+   * 炸了的时候（盘满了、引擎半路重启）它会被当成"自己按的停"吃掉，屏幕上
+   * 一个字都不会有——而那一刻活儿压根没停，还在写。
+   */
+  function markStopped(on = true) {
+    stoppedByHand = on
   }
 
   /**
