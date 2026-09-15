@@ -234,9 +234,22 @@ watch(() => session.projectPath, loadShow, { immediate: true })
       </button>
     </template>
 
-    <!-- 拿哪几个模型跑。**没有项目也显示**，理由见文件开头。 -->
+    <!-- 拿哪几个模型跑。**没有项目也显示**，理由见文件开头。
+
+         ⚠️ **这一行是「这台机器」的，不是「这部剧」的。** 它上面那两行
+         （「这部片子」「片尾」）确实是剧的属性，写进项目里的 changji.toml；
+         而模型是机器的属性，改它写的是全局配置——项目模板里那句话说得很
+         直白：「机器的属性（模型文件、显存、端口、大模型地址）在全局配置
+         里，不要写到这儿——否则项目目录拷到另一台机器就跑不起来」。
+         这一行原来只写「模型」两个字，摆在一排剧属性中间，谁都会当成是
+         这部剧的设置。而这个误会在跨机那套里代价很实：派到别的机器上的
+         活，用的是**那台**自己的模型配置，和这儿挑的没关系。 -->
     <div class="line line--static">
-      <span class="line__k">模型</span>
+      <span
+        class="line__k"
+        title="这一行是这台机器的设置，对所有项目生效（改的是全局配置，不是项目里的 changji.toml）。派到别的机器上的活，用的是那台自己的模型配置"
+        >模型<span class="tiny dim scope">（本机）</span></span
+      >
       <span class="line__v names">
         <button
           v-for="m in models.inUse"
@@ -376,6 +389,11 @@ watch(() => session.projectPath, loadShow, { immediate: true })
   border-color: var(--line);
 }
 
+/* 「（本机）」这种范围标记：比键名淡一档，别抢它的位置。 */
+.scope {
+  margin-left: 2px;
+  font-weight: 400;
+}
 .line__k {
   flex: 0 0 4.5rem;
   /* 没有 --text-dim（是 --text-2 / --text-3）。别处的 .field__label 用的

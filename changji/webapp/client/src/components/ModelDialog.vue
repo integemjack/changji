@@ -193,6 +193,16 @@ const fam = computed(() => models.currentFamilyChoice(g.value))
 const hasQuants = computed(() => (fam.value?.options?.length ?? 0) > 1)
 
 const diskFree = computed(() => Number(models.state?.diskFreeBytes ?? 0))
+/** 那句「本机设置」的悬停。把配置文件的真实路径摆出来最省口舌。 */
+const scopeHint = computed(() => {
+  const f = models.state?.configFile
+  return (
+    '挑的是这台机器用哪一份模型，不是这部剧的设置——对所有项目生效。' +
+    '派到别的机器上的活，用的是那台自己的模型配置。' +
+    (f ? `\n写进：${f}` : '')
+  )
+})
+
 const gpu = computed(() => models.state?.gpu ?? null)
 
 /** 盘装不装得下这一次要下的。装不下是**红字**，因为下到一半才发现最难受。 */
@@ -443,6 +453,13 @@ async function download() {
           <p class="tiny dim purpose">{{ g.purpose }}</p>
         </div>
         <span class="spacer" />
+        <!-- ⚠️ **挑的是「这台机器」用哪一份，不是「这部剧」用哪一份。**
+             这个弹窗是从项目页那一行点开的，而那一行紧挨着「这部片子」
+             ——不说一声的话，人会当成是这部剧的设置。改它写的是全局配置
+             （`configFile` 就是它的路径），对所有项目生效；而派到别的
+             机器上的活，用的是**那台**自己的模型配置，和这儿挑的没关系。
+             显卡和盘剩余那两个读数说的也是这台。 -->
+        <span class="tiny dim nowrap scope" :title="scopeHint">本机设置 · 对所有项目生效</span>
         <span class="tiny dim nowrap">
           <template v-if="gpu">{{ gpu.name }} · {{ gpu.vramGb.toFixed(1) }} GB</template>
           <template v-else>没探测到显卡</template>
