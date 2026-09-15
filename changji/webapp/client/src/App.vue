@@ -138,8 +138,25 @@ const projectName = computed(() => {
   return dir || '未命名项目'
 })
 
+/**
+ * 流程这会儿**读不出来**，不是"一件都没做"。
+ *
+ * `session.done` 是 `flow.done ?? {}`——读砸了之后它是个空对象，而空对象
+ * 和"真的一步都没做"在导航上长得一模一样：没有一个对勾，那个「下一步」
+ * 的点落在第一步上。于是一部写完了故事、出完了设定的剧，在引擎抽一下的
+ * 时候看着像刚建。**这条规矩仓库里写了好几处**（EpShots、StoryView：
+ * 「读不出来」和「还没有」是两回事），导航上漏了。
+ *
+ * 只认"什么都没有"这一种：5xx 之后上一份 flow 是留着的（见 session.js
+ * 那段注释），那时候导航说的是上一次那一集的实情，有 `useRetryWhenBack`
+ * 去把它换新，不该顺手压暗。
+ */
+const stepsUnknown = computed(() => session.failed && !session.flow)
+
 /** 第一个还没做完的那一步。导航上给它一个点，代替原来那条 stepbar。 */
 const nextKey = computed(() => {
+  // 不知道做到哪儿了，就别指路——指错的那一下会把人支回第一步。
+  if (stepsUnknown.value) return ''
   const step = STEP_ROUTES.find((s) => !session.done[s.key])
   return step ? step.key : ''
 })
@@ -184,7 +201,13 @@ function cycleTheme() {
         <span class="proj__name truncate">{{ projectName }}</span>
       </button>
 
-      <nav ref="navEl" class="nav">
+      <!-- 读不出来的时候整条压暗：那几个对勾这会儿什么都不代表。 -->
+      <nav
+        ref="navEl"
+        class="nav"
+        :class="{ 'nav--unknown': stepsUnknown }"
+        :title="stepsUnknown ? '流程这会儿读不出来，这几个对勾说明不了什么' : ''"
+      >
         <RouterLink
           v-for="s in STEP_ROUTES"
           :key="s.key"
@@ -369,6 +392,11 @@ function cycleTheme() {
 }
 .nav::-webkit-scrollbar {
   display: none;
+}
+/* 流程读不出来：整条压暗，别让一排"没对勾"被当成"一步都没做"。
+   **不是藏起来**——那几个链接照样要能点，人正是要靠它们去看个究竟。 */
+.nav--unknown {
+  opacity: 0.5;
 }
 .nav__item {
   display: flex;

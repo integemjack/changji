@@ -19,6 +19,14 @@ import { describe, expect, it } from 'vitest'
 
 const APP = fs.readFileSync(fileURLToPath(new URL('./App.vue', import.meta.url)), 'utf8')
 
+/** 去掉注释再比对——不然断言会被解释这个坑的那段注释本身骗过去。 */
+function code(text) {
+  return text
+    .replace(/<!--[\s\S]*?-->/g, '')
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/^\s*\/\/.*$/gm, '')
+}
+
 /** 窄屏那一段 media query 的正文。 */
 function narrowBlock() {
   const at = APP.indexOf('@media (max-width: 860px)')
@@ -54,5 +62,44 @@ describe('窄屏顶栏', () => {
     const body = APP.slice(at, at + 700)
     expect(body).toContain('scrollLeft')
     expect(body).not.toContain('scrollIntoView')
+  })
+})
+
+describe('流程读不出来的时候，导航别装作"一步都没做"', () => {
+  /**
+   * `session.done` 是 `flow.done ?? {}`。读砸了之后它是个空对象——而空对象
+   * 和"真的一步都没做"在导航上长得一模一样：一个对勾都没有，那个「下一步」
+   * 的点落回第一步。一部写完了故事、出完了设定的剧，在引擎抽一下的时候
+   * 看着像刚建。
+   *
+   * 「读不出来」和「还没有」是两回事，这条规矩仓库里写了好几处
+   * （EpShots、StoryView），导航上漏了。
+   */
+  const body = code(APP)
+
+  it('有一个"不知道"的判据，而且只认什么都没有那一种', () => {
+    expect(body).toMatch(/const stepsUnknown = computed/)
+    const at = body.indexOf('const stepsUnknown = computed')
+    const line = body.slice(at, at + 160)
+    expect(line).toContain('session.failed')
+    // 5xx 之后上一份 flow 是留着的，那时候导航说的是实情，不该压暗
+    expect(line, '没挡住"还留着上一份"那种').toContain('!session.flow')
+  })
+
+  it('不知道做到哪儿了就不指路', () => {
+    const at = body.indexOf('const nextKey = computed')
+    expect(at).toBeGreaterThan(0)
+    const fn = body.slice(at, at + 300)
+    expect(fn, 'nextKey 还是会指回第一步').toContain('stepsUnknown')
+  })
+
+  it('整条压暗，但链接照样能点', () => {
+    expect(body).toContain("'nav--unknown': stepsUnknown")
+    // 压暗，不是藏起来：人正要靠这几个链接去看个究竟
+    const at = body.indexOf('.nav--unknown')
+    expect(at, '.nav--unknown 没有样式').toBeGreaterThan(0)
+    const rule = body.slice(at, at + 80)
+    expect(rule).toMatch(/opacity/)
+    expect(rule).not.toMatch(/display:\s*none|visibility:\s*hidden|pointer-events/)
   })
 })
