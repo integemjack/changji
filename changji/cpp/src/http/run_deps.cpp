@@ -23,6 +23,7 @@
 #include "infer/task_run.hpp"
 #include "infer/worker_farm.hpp"
 #include "infer/worker_pool.hpp"
+#include "setup/catalog.hpp"
 #include "stages/frames.hpp"
 
 namespace changji::http {
@@ -37,7 +38,17 @@ RunDeps default_run_deps() {
     // 这一套后端一个字都没用到——`s` 已经是这一集自己的设置了（出片那条路
     // 每跑一集都 load_settings(项目目录) 重读）。接了名字不用，-Wall 每次
     // 编译报一条 unused-parameter。
-    d.backends = [](const config::Settings& s, const ProjectStore&) {
+    d.backends = [](const config::Settings& machine, const ProjectStore&) {
+        // **先把这部剧挑的那几档盖上去。** `machine` 是这台自己的配置
+        // （模型目录、ffmpeg 在哪），`[models.pick]` 是这部剧要哪一档——
+        // 后者跟着项目目录走，机器换了也还是它。
+        //
+        // 盖在这一句上、而不是每条后端各盖一遍：进程内、本机工作进程、
+        // 跨机三条路都从这个 `s` 长出去，漏掉哪一条的表现都是"同一集里
+        // 有的镜头用了这一档、有的用了上一档"——出来都是能看的画面，
+        // 没有哪一层会去比。
+        const config::Settings s = setup::with_selections(machine,
+                                                          machine.models.pick);
         pipeline::Backends b;
         // 默认这一套：进程内 sd.cpp。
         // 两边都拿 `s`：这是**这一集**的设置（出片那条路每跑一集
@@ -128,14 +139,19 @@ RunDeps default_run_deps() {
         // 不查，跨机那头要。
         const auto frame_eps = eps_for(infer::Capability::Frame);
         const auto video_eps = eps_for(infer::Capability::Video);
-        auto frame_pool =
-            worth_pooling(frame_eps)
-                ? infer::make_worker_pool(frame_eps, s.peer.token, local_runner)
-                : nullptr;
-        auto video_pool =
-            worth_pooling(video_eps)
-                ? infer::make_worker_pool(video_eps, s.peer.token, local_runner)
-                : nullptr;
+        // **档位也要带上。** 上面盖的那一层只改了本机这份配置里的文件名，
+        // 而别的机器的模型目录在别处、盘符都可能不一样，路径带过去没有
+        // 意义。带 id 过去，那台自己去解析（见 infer/task_run.cpp）。
+        auto frame_pool = worth_pooling(frame_eps)
+                              ? infer::make_worker_pool(frame_eps, s.peer.token,
+                                                        local_runner,
+                                                        s.models.pick)
+                              : nullptr;
+        auto video_pool = worth_pooling(video_eps)
+                              ? infer::make_worker_pool(video_eps, s.peer.token,
+                                                        local_runner,
+                                                        s.models.pick)
+                              : nullptr;
 
         if (frame_pool) {
             b.frame = frame_pool->frame_renderer();
@@ -183,7 +199,7 @@ RunDeps default_run_deps() {
                 if (u != infer::kLocalEndpoint) remote_tts.push_back(u);
             }
             if (auto tts_pool = infer::make_worker_pool(
-                    remote_tts, s.peer.token, local_runner)) {
+                    remote_tts, s.peer.token, local_runner, s.models.pick)) {
                 b.tts = stages::TTSBackend{"peer", tts_pool->tts_synthesizer(),
                                            {}};
                 b.keepalive.push_back(tts_pool);

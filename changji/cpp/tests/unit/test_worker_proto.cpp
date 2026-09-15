@@ -271,3 +271,33 @@ TEST_CASE("非法 UTF-8 在入口就被判掉") {
     j["text"] = "雨夜";
     CHECK_NOTHROW(infer::task_from_json(j));
 }
+
+TEST_CASE("这部剧挑的档位要跟着任务过去") {
+    // **跨机时这是唯一一条让对面用对模型的路**：那台的模型目录在别处，
+    // 路径带过去没有意义，只能带 id 让它自己解析。
+    auto t = sample_frame();
+    t.pick = {{"image", "qwen-image-edit-2509-q4_k_m"}, {"video", "h3-full-q8_0"}};
+    const auto back = infer::task_from_json(infer::to_json(t));
+    CHECK(back.pick == t.pick);
+}
+
+TEST_CASE("没挑过就别在请求体里留一个空对象") {
+    // 日志里一个 "pick": {} 读着像"挑了、挑空了"，而这两件事后面要分。
+    const auto j = infer::to_json(sample_frame());
+    CHECK_FALSE(j.contains("pick"));
+}
+
+TEST_CASE("老派活方不带 pick，那时候要的就是老行为") {
+    // 对面版本比这台老时根本没有这个键。当"没挑"——每台按自己 [models]
+    // 里写的文件名跑，和以前一模一样。形状不对（不是对象）时同理。
+    auto j = infer::to_json(sample_frame());
+    CHECK(infer::task_from_json(j).pick.empty());
+
+    j["pick"] = "不是对象";
+    CHECK(infer::task_from_json(j).pick.empty());
+
+    j["pick"] = {{"image", 42}, {"video", "这个是好的"}};
+    const auto back = infer::task_from_json(j);
+    CHECK(back.pick.count("image") == 0);
+    CHECK(back.pick.at("video") == "这个是好的");
+}

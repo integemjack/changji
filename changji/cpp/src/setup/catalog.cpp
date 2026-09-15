@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 
+#include "config/model_patch.hpp"
 #include "config/settings.hpp"
 
 namespace changji::setup {
@@ -698,6 +699,21 @@ json config_patch(const std::map<std::string, std::string>& selections) {
     }
 
     return patch;
+}
+
+config::Settings with_selections(
+    const config::Settings& base,
+    const std::map<std::string, std::string>& selections) {
+    if (selections.empty()) return base;
+    const json patch = config_patch(selections);
+    const auto models = patch.find("models");
+    // 一档都没认出来（选项 id 全过时了）就原样退回去。**不是错**：
+    // 那时候配置里的文件名还是上一次设置页写的，照旧能跑；界面上
+    // `pickProblem` 会说这一档认不出来，修它是那一页的事。
+    if (models == patch.end() || !models->is_object()) return base;
+    config::Settings out = base;
+    config::apply_setup_patch(out, json{{"models", *models}});
+    return out;
 }
 
 }  // namespace changji::setup

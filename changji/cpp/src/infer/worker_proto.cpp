@@ -61,6 +61,9 @@ json to_json(const Task& t) {
         {"intensity", t.intensity},
     };
     if (t.start_image) j["start_image"] = *t.start_image;
+    // **空的就不发。** 老版本的工作进程会把认不得的键原样忽略，
+    // 但请求体里多一个空对象这件事在日志里读着像"挑了、挑空了"。
+    if (!t.pick.empty()) j["pick"] = t.pick;
     return j;
 }
 
@@ -98,6 +101,13 @@ Task task_from_json(const json& j) {
     // **默认假**：老版本的派活方不带这个字段，那时候它要的就是老行为
     // （直接写 dest，两头共享文件系统）。
     t.return_artifact = j.value("return_artifact", false);
+    // **没有、或者形状不对，都当"没挑"。** 派活那头版本比这台老时就没有
+    // 这个键，那时候它要的就是老行为：这台按自己 `[models]` 里的文件名跑。
+    if (const auto it = j.find("pick"); it != j.end() && it->is_object()) {
+        for (const auto& [group, id] : it->items()) {
+            if (id.is_string()) t.pick[group] = id.get<std::string>();
+        }
+    }
     t.text = j.value("text", std::string());
     t.voice_id = j.value("voice_id", std::string());
     t.emotion = j.value("emotion", std::string());

@@ -38,6 +38,8 @@
 
 #include <nlohmann/json.hpp>
 
+#include "config/settings.hpp"
+
 namespace changji::setup {
 
 /// 一个要下的文件。
@@ -136,6 +138,22 @@ std::map<std::string, std::string> recommend(double vram_gb);
 /// 它自己的 `settings`，`owned_roles` 一概不动——用户可能本来就手配了
 /// 一套模型，只是这次不想重下。
 nlohmann::json config_patch(const std::map<std::string, std::string>& selections);
+
+/// 按这几档在内存里覆一层，回一份新的配置。**不落盘、不动 `base`。**
+///
+/// **只落 `models` 那一节。** 一个选项的 `settings` 里还带着 `llm.model`、
+/// `tts.backend`、`tiers.final_steps` 这些——那些是设置页那一趟写盘时才该
+/// 动的东西，而且那一趟有它自己的"别冲掉用户手挑的"规矩
+/// （见 setup_api.cpp 里 `same_service_key` 那一段）。这儿每跑一个任务就
+/// 覆一遍，照单全收的话，用户在设置页手改的大模型型号会被每一次出片
+/// 悄悄改回去。这儿要的只有一件事：**这部剧用哪几个模型文件**。
+///
+/// 两个调用方，两头都要：跑一集时把这部剧挑的档位覆到本机配置上，
+/// 以及工作进程拿到派来的活之后覆到**它自己**那份上——它的模型目录和
+/// 派活那台不是同一个，所以带过去的只能是档位 id，不能是路径。
+config::Settings with_selections(
+    const config::Settings& base,
+    const std::map<std::string, std::string>& selections);
 
 /// 这一组里那个"不下载"的选项 id。约定值，别处也用它比较。
 inline constexpr const char* kNoneOption = "none";

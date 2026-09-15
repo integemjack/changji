@@ -14,6 +14,7 @@
 #include "stages/tts_backends.hpp"
 #include "media/ffmpeg.hpp"
 #include "models/shot.hpp"
+#include "setup/catalog.hpp"
 #include "stages/frames.hpp"
 #include "stages/render.hpp"
 #include "util/paths.hpp"
@@ -44,7 +45,23 @@ std::optional<stages::TTSBackend> make_tts_backend(
     return std::nullopt;
 }
 
-std::string cannot_do(const Task& t, const config::Settings& s) {
+namespace {
+
+/// 这一趟活按哪份配置跑。
+///
+/// **放在这一层、而不是让调用方各覆各的。** 覆这一层的地方只能有一个：
+/// `cannot_do` 按 A 判、`run_task_locally` 按 B 跑的话，表现是"自检说能干、
+/// 真跑起来说模型没配"——而那时候用户看到的是一镜失败，他会去查网络和
+/// 模型，最后才想到是两处各覆了一份。这和这个文件头上那条
+/// "抄一遍的话两边迟早走散"是同一件事。
+config::Settings settings_for(const Task& t, const config::Settings& s) {
+    return setup::with_selections(s, t.pick);
+}
+
+}  // namespace
+
+std::string cannot_do(const Task& t, const config::Settings& base) {
+    const config::Settings s = settings_for(t, base);
     // **判据和那张「机器 × 能力」的表共用一份**（infer/capability.hpp）。
     // 两处各写一份的话，迟早出现"表上说能干，派过去却被拒"——而那时候
     // 用户看到的是一镜失败，他会先去查网络和模型，最后才想到是两份规则
@@ -53,7 +70,22 @@ std::string cannot_do(const Task& t, const config::Settings& s) {
     const Capability cap = t.kind == TaskKind::Video  ? Capability::Video
                            : t.kind == TaskKind::Tts  ? Capability::Tts
                                                       : Capability::Frame;
-    if (const auto why = missing_for(cap, facts); !why.empty()) return why;
+    if (const auto why = missing_for(cap, facts); !why.empty()) {
+        // **这台可能装着模型，只是不是这部剧要的那一档。**
+        // 不分开说的话，用户看到的是"这台没配模型"——而他明明在那台上
+        // 装过、`/status` 上那一格也是亮的，接着就会去查网络和口令。
+        // 判据是「不盖这部剧那一层就干得成」。
+        const auto group = cap == Capability::Video  ? "video"
+                           : cap == Capability::Tts  ? "tts"
+                                                     : "image";
+        const auto want = t.pick.find(group);
+        if (want != t.pick.end() && !want->second.empty() &&
+            missing_for(cap, probe_facts(base)).empty()) {
+            return why + "。这台装的是别的档——这部剧挑的是「" + want->second +
+                   "」，去设置页给这台补上这一档，或者给这部剧换一档";
+        }
+        return why;
+    }
 
     // 产物目录得写得进去。
     //
@@ -71,10 +103,13 @@ std::string cannot_do(const Task& t, const config::Settings& s) {
     return {};
 }
 
-TaskResult run_task_locally(const Task& t, const config::Settings& s,
+TaskResult run_task_locally(const Task& t, const config::Settings& base,
                             Origin origin, const std::string& task_id,
                             const StepCallback& on_step,
                             pipeline::CancelToken& tok) {
+    // 这部剧挑的档位盖在这台自己的配置上。**盖的是文件名，不是路径**——
+    // 模型目录仍然是这台的（见 setup::with_selections）。
+    const config::Settings s = settings_for(t, base);
     TaskResult result;
     const auto cache = cache_root_of(s.workspace_path());
     const auto sandbox = task_sandbox(cache, task_id);

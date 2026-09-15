@@ -62,6 +62,8 @@ struct WorkerPool::Impl {
     std::vector<Worker> workers;
     /// 本机那个槽怎么跑。空 = 池里没有本机这一档。
     LocalRunner local_runner;
+    /// 这部剧挑的档位。每个派出去的任务都盖上，见 WorkerPool 的构造函数。
+    std::map<std::string, std::string> pick;
     /// 谁忙着、谁坏了。策略在 worker_roster.hpp，那份不含网络代码、能测。
     std::unique_ptr<WorkerRoster> roster;
     std::mutex mu;
@@ -294,8 +296,13 @@ struct WorkerPool::Impl {
     /// 8×L20 上真发生过：一个工作进程 OOM 崩了、systemd 正在重启它，
     /// 十一个镜头连着挑中它，每个 attempts 加到 3 直接降级——
     /// 而池子里另外七个好好的，一个都没被试过。
-    TaskResult run_task(const Task& task, pipeline::CancelToken& tok,
+    TaskResult run_task(const Task& raw, pipeline::CancelToken& tok,
                         const StepCallback& on_step) {
+        // **在这一个口子上盖档位**，不在三个 renderer 里各盖一遍：漏掉
+        // 一个的表现是"出图用对了模型、出片用错了"，而两者出来都是能看
+        // 的东西，没有哪一层会去比。
+        Task task = raw;
+        task.pick = pick;
         std::set<std::size_t> tried;
         std::string last_error;
         for (;;) {
@@ -327,9 +334,11 @@ struct WorkerPool::Impl {
 };
 
 WorkerPool::WorkerPool(std::vector<WorkerEndpoint> endpoints,
-                       LocalRunner local_runner)
+                       LocalRunner local_runner,
+                       std::map<std::string, std::string> pick)
     : impl_(std::make_unique<Impl>()) {
     impl_->local_runner = std::move(local_runner);
+    impl_->pick = std::move(pick);
     for (auto& e : endpoints) impl_->workers.push_back({std::move(e)});
     impl_->roster = std::make_unique<WorkerRoster>(impl_->workers.size());
 }
@@ -433,12 +442,13 @@ stages::Synthesizer WorkerPool::tts_synthesizer() {
 
 std::shared_ptr<WorkerPool> make_worker_pool(
     const std::vector<std::string>& endpoints, const std::string& token,
-    LocalRunner local_runner) {
+    LocalRunner local_runner, std::map<std::string, std::string> pick) {
     if (endpoints.empty()) return nullptr;
     std::vector<WorkerEndpoint> eps;
     eps.reserve(endpoints.size());
     for (const auto& u : endpoints) eps.push_back(WorkerEndpoint{u, token});
-    return std::make_shared<WorkerPool>(std::move(eps), std::move(local_runner));
+    return std::make_shared<WorkerPool>(std::move(eps), std::move(local_runner),
+                                        std::move(pick));
 }
 
 }  // namespace changji::infer

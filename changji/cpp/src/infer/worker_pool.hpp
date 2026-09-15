@@ -14,6 +14,7 @@
 // `Shot` 仍然由阶段那一层在协调者的线程上顺序改、顺序存盘。
 // 并行的是推理，不是状态改动——这条守住了，单一写者就不破。
 
+#include <map>
 #include <memory>
 #include <string>
 #include <vector>
@@ -56,8 +57,14 @@ struct WorkerEndpoint {
 /// 池。**线程安全**：阶段那一层会从多个线程同时借。
 class WorkerPool {
 public:
+    /// `pick` 是这部剧挑的档位（项目的 `[models.pick]`，{组: 选项 id}）。
+    /// 池给每个派出去的任务都盖上它——**跨机时这是唯一一条能让对面用对
+    /// 模型的路**：那台的模型目录在别处，路径带过去没有意义，只能带 id
+    /// 让它自己去解析。空 = 这部剧没挑过，每台按自己 `[models]` 里的
+    /// 文件名跑（老行为）。
     explicit WorkerPool(std::vector<WorkerEndpoint> endpoints,
-                        LocalRunner local_runner = {});
+                        LocalRunner local_runner = {},
+                        std::map<std::string, std::string> pick = {});
     ~WorkerPool();
 
     WorkerPool(const WorkerPool&) = delete;
@@ -97,6 +104,7 @@ private:
 /// 当成一台连不上的机器——所以两者要一起给。
 std::shared_ptr<WorkerPool> make_worker_pool(
     const std::vector<std::string>& endpoints, const std::string& token = {},
-    LocalRunner local_runner = {});
+    LocalRunner local_runner = {},
+    std::map<std::string, std::string> pick = {});
 
 }  // namespace changji::infer

@@ -18,6 +18,7 @@
 // 协议层的 bug 就没法反复撞了。这和 `scheduler.hpp` 把加载卸载做成
 // 注入回调是同一个理由。
 
+#include <map>
 #include <optional>
 #include <string>
 #include <vector>
@@ -72,6 +73,17 @@ struct Task {
     /// 随机种子。协调者算好传下来，**不能让工作进程自己算**：
     /// 它不知道 attempts，算出来的图和串行跑的会不一样。
     std::int64_t seed = 0;
+
+    /// 这部剧挑的档位：{组: 选项 id}，来自项目的 `[models.pick]`。
+    ///
+    /// **带 id，不带路径。** 别的机器的模型目录在别处、盘符都可能不一样，
+    /// 而"这部剧要 h3-full-q4_k_m"这件事是跟着剧走的、跟机器无关。
+    /// 那台拿到之后照这个 id 去**自己的**模型目录里找文件
+    /// （`setup::with_selections`）。
+    ///
+    /// 空 = 这部剧没挑过（老项目），那时候每台按自己 `[models]` 里写的
+    /// 文件名跑，和以前一模一样。
+    std::map<std::string, std::string> pick;
 
     // ---- 配音专用。别的 kind 忽略 ----
 

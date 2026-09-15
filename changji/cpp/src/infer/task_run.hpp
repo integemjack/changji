@@ -44,7 +44,10 @@ std::optional<stages::TTSBackend> make_tts_backend(
 /// **这条是实机烧出来的**：第一次跑出片，扩散 8 步全跑完，到最后编码
 /// 那一步才报"找不到 ffmpeg"。本机上 doctor 会在起跑前拦，但直接派任务
 /// 进来绕过了那道检查。八张卡上，"跑几十秒再失败"乘以八就是几分钟白烧。
-std::string cannot_do(const Task& t, const config::Settings& s);
+///
+/// `base` 是**这台自己**的配置。`Task::pick` 里那几档会先盖上去再判——
+/// 和 `run_task_locally` 盖的是同一份，两处不能各覆各的。
+std::string cannot_do(const Task& t, const config::Settings& base);
 
 /// 在本机把一个任务跑完。**同步**，跑完才返回。
 ///
@@ -55,7 +58,11 @@ std::string cannot_do(const Task& t, const config::Settings& s);
 /// 本机自己拉起的工作进程传 `Local`，别的机器派来的传 `Peer`。
 /// `task_id` 只用来给沙箱起名（`<cache>/tasks/<id>`），
 /// `Task::return_artifact` 为假时用不上。
-TaskResult run_task_locally(const Task& t, const config::Settings& s,
+///
+/// `base` 是**这台自己**的配置：模型目录、ffmpeg 在哪、显卡几张。
+/// 这部剧挑的档位由 `Task::pick` 带过来，在这儿盖上去（只盖模型那几个
+/// 文件名，见 `setup::with_selections`）。**不落盘**——下一趟可能是另一部剧。
+TaskResult run_task_locally(const Task& t, const config::Settings& base,
                             Origin origin, const std::string& task_id,
                             const StepCallback& on_step,
                             pipeline::CancelToken& tok);
