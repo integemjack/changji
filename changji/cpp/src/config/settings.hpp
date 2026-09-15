@@ -132,13 +132,22 @@ struct LLMConfig {
     ///     输入 20 万 / 输出 15 万 token 估，glm-5.3-flash 四毛，
     ///     写作榜 81.8 的 glm-5.3 也就五块。
     ///
-    /// **local 那条一直留着**，不是被淘汰了：断网、不想让本子出境、
-    /// 手上正好有卡的，都走它。设置页上能切，权重路径在 `[models].llm`。
-    /// 它还有一样远端给不了的东西——schema 走 GBNF 是**硬约束**
-    /// （minItems / minLength 那些），远端那条只能削掉再写进提示词，
-    /// 见 llm::remote_schema。
+    /// ⚠️ **能填的只有 `remote` 一个。** 这段上面算的三笔账是当初为什么
+    /// 默认走远端；2026-09-14 进程内那条干脆整个删了（`llama_chat` 连同
+    /// 头文件一起），`local` 现在是条死路：
     ///
-    /// 编译时没带 llama.cpp 的话 local 会自动退回 remote 并在日志里说一声。
+    ///   * `validate()` 仍然放 `local` 过——**只为了让老机器还能起来**。
+    ///     起不来的话人只看到一行 stderr；起得来才能在设置页的体检里读到
+    ///     那条写清楚了改哪一行的话（doctor.cpp 的 `check_llm`，报 FAIL）。
+    ///   * `needs_api_key()` 对 `local` 返回 false，所以配着它的机器连
+    ///     "没填密钥"都不会被提醒，然后每一次叫模型都失败。
+    ///   * `[models].llm` 那个权重路径**已经没有任何东西会去读**。
+    ///   * 跨机那张表上「写文」这一格也只认远端了
+    ///     （capability.cpp 的 `Capability::Llm`）。
+    ///
+    /// 一起没的还有 GBNF 那个硬约束（minItems / minLength 走 schema 直接
+    /// 拦住）。远端只能把 schema 削掉再写进提示词，见 llm::remote_schema
+    /// ——**这是删掉那条路真实付出的代价**，不是没代价。
     std::string backend = "remote";
 
     /// 默认走智谱国内站（用户 2026-09-14 指定：「去掉 openrouter 换成
