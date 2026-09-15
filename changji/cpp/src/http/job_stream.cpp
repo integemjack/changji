@@ -75,6 +75,10 @@ void job_send(const std::string& stream_id, nlohmann::json msg) {
 
 }  // namespace
 
+void job_relay(const std::string& stream_id, nlohmann::json msg) {
+    job_send(stream_id, std::move(msg));
+}
+
 void mail_open(const std::string& stream_id) {
     if (stream_id.empty()) return;
     std::lock_guard<std::mutex> g(g_mail_mu);

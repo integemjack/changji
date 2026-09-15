@@ -241,3 +241,24 @@ TEST_CASE("信箱：攒太多从前面丢，但结果那条一定留着") {
     CHECK(r2.at("events").size() <= http::kMailMaxEvents);
     CHECK(r2.at("next").get<std::size_t>() == http::kMailMaxEvents + 10);
 }
+
+TEST_CASE("信箱：各步自己那几种消息（story_token 这些）也要留底") {
+    // 写大纲 / 写正文 / 改一段那三步有自己的消息形状，原来是直接
+    // `ws::hub().broadcast` 的——也就是说没有 socket 的时候一个字都到不了，
+    // 而它们恰恰是思考最久、最需要看见"它在动"的三步。
+    http::mail_open("box-story");
+    http::job_relay("box-story", {{"type", "story_token"},
+                                  {"job_id", "box-story"},
+                                  {"seq", 0},
+                                  {"text", "雨砸在天台上。"}});
+    http::job_relay("box-story", {{"type", "outline_progress"},
+                                  {"job_id", "box-story"},
+                                  {"raw_chars", 12}});
+    const auto r = http::mail_take("box-story", 0);
+    CHECK(r.at("events").size() == 2);
+    CHECK(r.at("events")[0].at("text") == "雨砸在天台上。");
+    CHECK(r.at("events")[1].at("raw_chars") == 12);
+    // 这两种都不是收尾消息，别把信箱销早了——后面还有 job_done 要送。
+    CHECK_FALSE(r.at("done").get<bool>());
+    CHECK(http::mail_take("box-story", 2).at("exists").get<bool>());
+}

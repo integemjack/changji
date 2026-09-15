@@ -19,7 +19,6 @@
 #include "stages/story_reverse.hpp"
 #include "http/job_stream.hpp"
 #include "http/offload.hpp"
-#include "http/ws.hpp"
 #include "pipeline/activity.hpp"
 #include "stages/json_partial.hpp"
 #include "stages/json_stream.hpp"
@@ -427,7 +426,7 @@ json write_outline(ProjectStore& store, const Project& project,
                 msg["type"] = "outline_progress";
                 msg["job_id"] = stream_id;
                 msg["seq"] = seq++;
-                ws::hub().broadcast(stream_id, std::move(msg));
+                job_relay(stream_id, std::move(msg));
             });
         }
         draft = stages::parse_outline(raw, premise, scale);
@@ -763,10 +762,10 @@ json write_one_chapter(ProjectStore& store, const Project& project, Story story,
             raw = client.complete(req, tok, [&](const std::string& piece) {
                 const std::string fresh = field.feed(piece);
                 if (fresh.empty()) return;  // JSON 外壳和 hooks 那一串不推
-                ws::hub().broadcast(stream_id, {{"type", "story_token"},
-                                                {"job_id", stream_id},
-                                                {"seq", seq++},
-                                                {"text", fresh}});
+                job_relay(stream_id, {{"type", "story_token"},
+                                      {"job_id", stream_id},
+                                      {"seq", seq++},
+                                      {"text", fresh}});
             });
         }
         const stages::ChapterDraft d = stages::parse_chapter(raw, floor_chars);
@@ -795,16 +794,16 @@ json write_one_chapter(ProjectStore& store, const Project& project, Story story,
         // 还有个人在等最终结果，那条 job_error 由 server.cpp 的 start_async
         // 播——两条各管各的，别合并。
         if (!stream_id.empty()) {
-            ws::hub().broadcast(stream_id, {{"type", "story_error"},
-                                            {"job_id", stream_id},
-                                            {"message", e.what()}});
+            job_relay(stream_id, {{"type", "story_error"},
+                                  {"job_id", stream_id},
+                                  {"message", e.what()}});
         }
         throw ApiError(502, std::string("大模型没写出能用的正文：") + e.what());
     } catch (const std::exception& e) {
         if (!stream_id.empty()) {
-            ws::hub().broadcast(stream_id, {{"type", "story_error"},
-                                            {"job_id", stream_id},
-                                            {"message", e.what()}});
+            job_relay(stream_id, {{"type", "story_error"},
+                                  {"job_id", stream_id},
+                                  {"message", e.what()}});
         }
         throw ApiError(502, e.what());
     }
@@ -1012,11 +1011,10 @@ ApiResult post_story_revise(const json& body, llm::Client& client,
                     // **不节流。** 逐字推正是这件事的全部意义；而 Hub 的
                     // 节流是按 (job, type) 分桶的，type 用 progress 的话
                     // 会被 200ms 一桶压掉九成。
-                    ws::hub().broadcast(stream_id,
-                                        {{"type", "story_token"},
-                                         {"job_id", stream_id},
-                                         {"seq", seq++},
-                                         {"text", piece}});
+                    job_relay(stream_id, {{"type", "story_token"},
+                                          {"job_id", stream_id},
+                                          {"seq", seq++},
+                                          {"text", piece}});
                 });
             rev = stages::parse_plain_revision(raw, span_chars, whole_chars);
         } else {
@@ -1026,16 +1024,16 @@ ApiResult post_story_revise(const json& body, llm::Client& client,
     } catch (const std::exception& e) {
         if (streaming) {
             // 报错也要推一条：前端那边正等着字，不推的话它一直显示"改着…"
-            ws::hub().broadcast(stream_id, {{"type", "story_error"},
-                                            {"job_id", stream_id},
-                                            {"message", e.what()}});
+            job_relay(stream_id, {{"type", "story_error"},
+                                  {"job_id", stream_id},
+                                  {"message", e.what()}});
         }
         throw ApiError(502, std::string("改稿没改出能用的东西：") + e.what());
     }
     if (streaming) {
-        ws::hub().broadcast(stream_id, {{"type", "story_done"},
-                                        {"job_id", stream_id},
-                                        {"text", rev.text}});
+        job_relay(stream_id, {{"type", "story_done"},
+                              {"job_id", stream_id},
+                              {"text", rev.text}});
     }
 
     // **只回草稿，不落库。** 和写大纲同一条规矩，而且这里更要紧：大纲落错了

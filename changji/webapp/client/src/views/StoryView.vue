@@ -47,6 +47,7 @@ import EmptyState from '@/components/EmptyState.vue'
 import { api, mediaUrl } from '@/api'
 import { useAction } from '@/composables/useAction'
 import { runAsyncJob } from '@/composables/useAsyncJob'
+import { openJobFeed } from '@/composables/useJobFeed'
 import { openJobSocket } from '@/composables/useJobSocket'
 import { useThinking } from '@/stores/thinking'
 import { readLocal, writeLocal } from '@/composables/local-storage'
@@ -1116,8 +1117,8 @@ async function revise() {
 
   const streamId = 'story-' + Math.random().toString(36).slice(2, 10)
   let acc = ''
-  let sock = null
-  let opened = false
+  let feed = null
+  let live = false
 
   const paint = async (text) => {
     if (!mine()) return // 换剧了，别往新这一部的编辑器上画
@@ -1129,8 +1130,8 @@ async function revise() {
 
   const finish = () => {
     thinking.finish(streamId)
-    sock?.close()
-    sock = null
+    feed?.close()
+    feed = null
     streaming.value = null
   }
 
@@ -1152,10 +1153,10 @@ async function revise() {
       to_char: at.to,
       instruction: want,
       history: chat.value,
-      // 订阅没发出去就别开流：头几个字推出来时没人听，而漏掉的那几个字
+      // 回传通道没接上就别开流：头几个字推出来时没人听，而漏掉的那几个字
       // 不会有任何提示，只是那段话缺了个开头。**也别走异步**：结果没地方
-      // 送回来。
-      ...(opened ? { stream: streamId, async: true } : {}),
+      // 送回来。socket 连不上还有信箱轮询那条，见 useJobFeed。
+      ...(live ? { stream: streamId, async: true } : {}),
     })
 
   // 先把选中那段清掉，字就从那个位置长出来——这一下就是"开始写了"
@@ -1164,43 +1165,33 @@ async function revise() {
   pending.value = { chapter_id: id, prev, origin: at, after: null }
   await paint('')
 
-  await new Promise((resolve) => {
-    sock = openJobSocket(
-      streamId,
-      (msg) => {
-        if (msg.job_id !== streamId) return
-        // 思考流。**这三步（写大纲 / 写正文 / 改一段）没走 runAsyncJob**，
-        // 所以要在这儿自己接一下——而它们恰恰是思考最久的三步。
-        if (msg.type === 'job_thinking') return thinking.push(streamId, msg.text ?? '')
-        if (msg.type === 'story_token') {
-          acc += msg.text ?? ''
-          // 改一段是插在中间的，所以是选区起点加上已经流出来的长度
-          streaming.value = { chapter_id: id, from: at.from, at: at.from + acc.length }
-          paint(acc)
-          return
-        }
-        // job_done / job_error 才是权威的那一份（story_done 是老名字，
-        // 它带的是流完的那段字，不是整份结果）。
-        if (msg.type === 'job_done') settle({ ok: true, result: msg.result })
-        else if (msg.type === 'job_error') settle({ ok: false, message: msg.message })
-      },
-      () => {
-        // 连接没了：把等的人放出来，否则这一段会永远显示"改着…"
-        settle?.({ ok: false, message: '和引擎的连接断了，这一段改没改完不好说' })
-        resolve()
-      },
-      () => {
-        opened = true
-        resolve()
-      },
-    )
-    // 连不上也别卡着。两秒够本机的 WebSocket 握完手了。
-    setTimeout(resolve, 2000)
-  })
+  feed = await openJobFeed(
+    streamId,
+    (msg) => {
+      // 思考流。**这三步（写大纲 / 写正文 / 改一段）没走 runAsyncJob**，
+      // 所以要在这儿自己接一下——而它们恰恰是思考最久的三步。
+      if (msg.type === 'job_thinking') return thinking.push(streamId, msg.text ?? '')
+      if (msg.type === 'story_token') {
+        acc += msg.text ?? ''
+        // 改一段是插在中间的，所以是选区起点加上已经流出来的长度
+        streaming.value = { chapter_id: id, from: at.from, at: at.from + acc.length }
+        paint(acc)
+        return
+      }
+      // job_done / job_error 才是权威的那一份（story_done 是老名字，
+      // 它带的是流完的那段字，不是整份结果）。
+      if (msg.type === 'job_done') settle({ ok: true, result: msg.result })
+      else if (msg.type === 'job_error') settle({ ok: false, message: msg.message })
+    },
+    // 这条路断了：把等的人放出来，否则这一段会永远显示"改着…"
+    (message) => settle?.({ ok: false, message }),
+    { lost: '和引擎的连接断了，这一段改没改完不好说' },
+  )
+  live = feed.mode !== 'none'
   // 顶栏那块「正在思考」。**开在这儿、清在 finally 里**——这三步都有
   // 好几条提前 return 的路，手动清总会漏一条，而漏掉的后果是顶栏
-  // 永远显示在想。
-  if (opened) thinking.start(streamId)
+  // 永远显示在想。**轮询那条也要开**：没有它就没有「停下」可按。
+  if (live) thinking.start(streamId, '改这一段')
 
   let result = null
   try {
@@ -1441,7 +1432,7 @@ let shownOutlineError = ''
  * 过了、没人听见——那这一页会永远显示"正在写…"。所以每五秒问一次
  * /api/story：账上没它了就收工，草稿会随那一次响应回来。
  */
-function attachOutline(streamId) {
+async function attachOutline(streamId) {
   if (outlineLive.value) return // 自己正在写，或者已经接上了
   if (attached?.id === streamId) return
   detachOutline()
@@ -1469,21 +1460,8 @@ function attachOutline(streamId) {
     }
   }
 
-  const sock = openJobSocket(
-    streamId,
-    (msg) => {
-      if (msg.job_id !== streamId) return
-      if (msg.type === 'outline_progress') outlineLive.value = msg
-      else if (msg.type === 'job_done') finish(msg.result)
-      else if (msg.type === 'job_error') {
-        ui.error(msg.message || '这份大纲没写成')
-        finish(null)
-      }
-    },
-    () => {
-      /* 断了就靠下面的轮询 */
-    },
-  )
+  // **先占上位再去接。** 下面那句 await 里人可能已经换了项目（`load()` 会
+  // 调 detachOutline），占了位才知道自己该不该退场。
   const timer = setInterval(async () => {
     if (!session.projectPath) return
     try {
@@ -1493,13 +1471,41 @@ function attachOutline(streamId) {
       /* 下一轮再问 */
     }
   }, 5000)
-  attached = { id: streamId, sock, timer, project: session.projectPath }
+  attached = { id: streamId, feed: null, timer, project: session.projectPath }
+
+  const feed = await openJobFeed(
+    streamId,
+    (msg) => {
+      // **思考也要接。** 刷新之前那一页接着，刷新之后这一页不接，于是
+      // 同一件活刷一下就没了思考、也没了顶栏那个「停下」——而这份大纲
+      // 还要写十几分钟。
+      if (msg.type === 'job_thinking') return thinking.push(streamId, msg.text ?? '')
+      if (msg.type === 'outline_progress') outlineLive.value = msg
+      else if (msg.type === 'job_done') finish(msg.result)
+      else if (msg.type === 'job_error') {
+        ui.error(msg.message || '这份大纲没写成')
+        finish(null)
+      }
+    },
+    () => {
+      /* 断了就靠上面那条五秒一次的轮询 */
+    },
+  )
+  if (attached?.id !== streamId) {
+    // 这一趟 await 期间人已经走了，别把这条留下
+    feed.close()
+    return
+  }
+  attached.feed = feed
+  if (feed.mode !== 'none') thinking.start(streamId, '写大纲')
 }
 
 function detachOutline() {
   if (!attached) return
   clearInterval(attached.timer)
-  attached.sock?.close()
+  attached.feed?.close()
+  // 顶栏那块也要收：漏一条的话它会永远显示"正在思考"。
+  thinking.finish(attached.id)
   attached = null
 }
 
@@ -1515,8 +1521,8 @@ onUnmounted(detachOutline)
  */
 async function writeStory() {
   const streamId = 'outline-' + Math.random().toString(36).slice(2, 10)
-  let sock = null
-  let opened = false
+  let feed = null
+  let live = false
 
   // 那一头写完（或者写砸了）从这条 socket 上说一声。理由同 writeChapter：
   // 出一份大纲三四十秒，HTTP 请求占着 Crow 的一条 I/O 线程那么久，落在
@@ -1534,44 +1540,36 @@ async function writeStory() {
   // 从这一刻起就摆出那块"正在写"的板子，不等第一帧到。
   outlineLive.value = emptyOutlineLive()
 
-  await new Promise((resolve) => {
-    sock = openJobSocket(
-      streamId,
-      (msg) => {
-        if (msg.job_id !== streamId) return
-        // 思考流。**这三步（写大纲 / 写正文 / 改一段）没走 runAsyncJob**，
-        // 所以要在这儿自己接一下——而它们恰恰是思考最久的三步。
-        if (msg.type === 'job_thinking') return thinking.push(streamId, msg.text ?? '')
-        // 正在长出来的那份大纲。**整份换掉，不是往上累加**——那一头推的
-        // 是"到此为止解出来的全份"，累加会把每一帧的前缀叠成一团。
-        if (msg.type === 'outline_progress') {
-          outlineLive.value = msg
-          return
-        }
-        if (msg.type === 'job_done') {
-          settle({ ok: true, result: msg.result })
-          return
-        }
-        if (msg.type === 'job_error') {
-          settle({ ok: false, message: msg.message })
-        }
-      },
-      () => {
-        // 连接没了也一定要把等的人放出来，否则这一页会一直显示"正在写…"。
-        settle({ ok: false, message: '和引擎的连接断了，这份大纲写没写完不好说' })
-        resolve()
-      },
-      () => {
-        opened = true
-        resolve()
-      },
-    )
-    setTimeout(resolve, 2000)
-  })
+  feed = await openJobFeed(
+    streamId,
+    (msg) => {
+      // 思考流。**这三步（写大纲 / 写正文 / 改一段）没走 runAsyncJob**，
+      // 所以要在这儿自己接一下——而它们恰恰是思考最久的三步。
+      if (msg.type === 'job_thinking') return thinking.push(streamId, msg.text ?? '')
+      // 正在长出来的那份大纲。**整份换掉，不是往上累加**——那一头推的
+      // 是"到此为止解出来的全份"，累加会把每一帧的前缀叠成一团。
+      // （这也是轮询那条路上丢掉旧帧无所谓的原因，见 job_stream.hpp。）
+      if (msg.type === 'outline_progress') {
+        outlineLive.value = msg
+        return
+      }
+      if (msg.type === 'job_done') {
+        settle({ ok: true, result: msg.result })
+        return
+      }
+      if (msg.type === 'job_error') {
+        settle({ ok: false, message: msg.message })
+      }
+    },
+    // 这条路断了也一定要把等的人放出来，否则这一页会一直显示"正在写…"。
+    (message) => settle({ ok: false, message }),
+    { lost: '和引擎的连接断了，这份大纲写没写完不好说' },
+  )
+  live = feed.mode !== 'none'
   // 顶栏那块「正在思考」。**开在这儿、清在 finally 里**——这三步都有
   // 好几条提前 return 的路，手动清总会漏一条，而漏掉的后果是顶栏
-  // 永远显示在想。
-  if (opened) thinking.start(streamId)
+  // 永远显示在想。**轮询那条也要开**：没有它就没有「停下」可按。
+  if (live) thinking.start(streamId, '写大纲')
 
   let result = null
   try {
@@ -1582,8 +1580,9 @@ async function writeStory() {
           premise: premise.value.trim(),
           scale: scale.value,
           keywords: keywords.value.trim(),
-          // socket 没开就退回老路：HTTP 一直等到写完。慢，但至少拿得到结果。
-          ...(opened ? { stream: streamId, async: true } : {}),
+          // 两条回传路都没有才退回老路：HTTP 一直等到写完。慢，但至少
+          // 拿得到结果。见 useJobFeed。
+          ...(live ? { stream: streamId, async: true } : {}),
         }),
       { key: 'write' },
     )
@@ -1601,7 +1600,7 @@ async function writeStory() {
     // 一条提前 return，顶栏就会永远显示「正在思考」，还漏一条 WebSocket。
     // 隔壁 useAsyncJob 用的就是真 finally。
     thinking.finish(streamId)
-    sock?.close()
+    feed?.close()
   }
   outlineLive.value = null
   if (!mine()) {
@@ -1829,8 +1828,8 @@ async function writeChapter(chapterId, overwrite = false) {
   const mine = () => owner === session.projectPath
   const streamId = 'chapter-' + Math.random().toString(36).slice(2, 10)
   let acc = ''
-  let sock = null
-  let opened = false
+  let feed = null
+  let live = false
 
   // 那一头写完（或者写砸了）会从这条 socket 上说一声。
   //
@@ -1850,56 +1849,47 @@ async function writeChapter(chapterId, overwrite = false) {
   // 新起一轮就重新跟上：上一轮里人滚上去看过，不该影响这一轮。
   stuck.value = true
 
-  await new Promise((resolve) => {
-    sock = openJobSocket(
-      streamId,
-      async (msg) => {
-        if (msg.job_id !== streamId) return
-        // 思考流。**这三步（写大纲 / 写正文 / 改一段）没走 runAsyncJob**，
-        // 所以要在这儿自己接一下——而它们恰恰是思考最久的三步。
-        if (msg.type === 'job_thinking') return thinking.push(streamId, msg.text ?? '')
-        // job_done / job_error 是"这件活完了"的通用信号（见 job_stream.hpp），
-        // story_token 是这条路独有的、正在长出来的正文。
-        //
-        // **story_error 故意不在这儿接。** 引擎写砸的时候两条都会广播
-        // （story_api.cpp 那两个 catch 里先播 story_error，再由 start_async
-        // 播 job_error），而"把流了一半的字撤掉"这件事底下已经做了：
-        // `if (!result)` 那一支把这一章放回 `chapters` 里原来那份。接一下
-        // story_error 等于同一件事做两遍，还得多想一次谁先到。
-        if (msg.type === 'job_done') {
-          settle({ ok: true, result: msg.result })
-          return
-        }
-        if (msg.type === 'job_error') {
-          settle({ ok: false, message: msg.message })
-          return
-        }
-        if (msg.type !== 'story_token') return
-        acc += msg.text ?? ''
-        if (!mine()) return // 换剧了，别往新这一部的编辑器上画
-        buf[chapterId] = acc
-        streaming.value = { chapter_id: chapterId, from: 0, at: acc.length }
-        await nextTick()
-        fit(boxes[chapterId])
-        keepEndVisible(chapterId)
-      },
-      () => {
-        // 连接没了。**一定要把等的人放出来**，否则这一章会永远显示"写着…"，
-        // 而那比报个错难受得多。
-        settle({ ok: false, message: '和引擎的连接断了，这一章写没写完不好说' })
-        resolve()
-      },
-      () => {
-        opened = true
-        resolve()
-      },
-    )
-    setTimeout(resolve, 2000)
-  })
+  feed = await openJobFeed(
+    streamId,
+    async (msg) => {
+      // 思考流。**这三步（写大纲 / 写正文 / 改一段）没走 runAsyncJob**，
+      // 所以要在这儿自己接一下——而它们恰恰是思考最久的三步。
+      if (msg.type === 'job_thinking') return thinking.push(streamId, msg.text ?? '')
+      // job_done / job_error 是"这件活完了"的通用信号（见 job_stream.hpp），
+      // story_token 是这条路独有的、正在长出来的正文。
+      //
+      // **story_error 故意不在这儿接。** 引擎写砸的时候两条都会广播
+      // （story_api.cpp 那两个 catch 里先播 story_error，再由 start_async
+      // 播 job_error），而"把流了一半的字撤掉"这件事底下已经做了：
+      // `if (!result)` 那一支把这一章放回 `chapters` 里原来那份。接一下
+      // story_error 等于同一件事做两遍，还得多想一次谁先到。
+      if (msg.type === 'job_done') {
+        settle({ ok: true, result: msg.result })
+        return
+      }
+      if (msg.type === 'job_error') {
+        settle({ ok: false, message: msg.message })
+        return
+      }
+      if (msg.type !== 'story_token') return
+      acc += msg.text ?? ''
+      if (!mine()) return // 换剧了，别往新这一部的编辑器上画
+      buf[chapterId] = acc
+      streaming.value = { chapter_id: chapterId, from: 0, at: acc.length }
+      await nextTick()
+      fit(boxes[chapterId])
+      keepEndVisible(chapterId)
+    },
+    // 这条路断了。**一定要把等的人放出来**，否则这一章会永远显示"写着…"，
+    // 而那比报个错难受得多。
+    (message) => settle({ ok: false, message }),
+    { lost: '和引擎的连接断了，这一章写没写完不好说' },
+  )
+  live = feed.mode !== 'none'
   // 顶栏那块「正在思考」。**开在这儿、清在 finally 里**——这三步都有
   // 好几条提前 return 的路，手动清总会漏一条，而漏掉的后果是顶栏
-  // 永远显示在想。
-  if (opened) thinking.start(streamId)
+  // 永远显示在想。**轮询那条也要开**：没有它就没有「停下」可按。
+  if (live) thinking.start(streamId, '写正文')
 
   let result = null
   try {
@@ -1909,16 +1899,16 @@ async function writeChapter(chapterId, overwrite = false) {
           project: owner,
           chapter_id: chapterId,
           overwrite,
-          // socket 没开就退回老路：让 HTTP 那个请求一直等到写完。慢，但至少
-          // 拿得到结果——没有 socket 的话异步那条根本没地方把结果送回来。
-          ...(opened ? { stream: streamId, async: true } : {}),
+          // 两条回传路都没有才退回老路：让 HTTP 那个请求一直等到写完。慢，
+          // 但至少拿得到结果——没有回传通道的话异步那条根本没地方送结果。
+          ...(live ? { stream: streamId, async: true } : {}),
         }),
       { key: 'chapter:' + chapterId },
     )
 
     result = started
     if (started && started.started) {
-      // 异步那条：HTTP 只说了"开始了"，真正的结果在 socket 上。
+      // 异步那条：HTTP 只说了"开始了"，真正的结果从那条回传路上来。
       const fin = await finished
       result = fin.ok ? fin.result : null
       if (!fin.ok) ui.error(fin.message || '这一章没写成')
@@ -1926,7 +1916,7 @@ async function writeChapter(chapterId, overwrite = false) {
   } finally {
     // 理由同 writeStory 里那段：注释一直说"清在 finally 里"，而它原来不在。
     thinking.finish(streamId)
-    sock?.close()
+    feed?.close()
     // **锁也清在这儿。** 它原来在 finally 后面一行——只要中间有任何一条
     // 路把异常抛出去，这一章就永远锁着（`locked` 判的就是 streaming），
     // 人只能换个项目或者重开页面。而这一页为同一件事已经加过一层兜底

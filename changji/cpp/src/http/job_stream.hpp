@@ -141,6 +141,25 @@ pipeline::CancelToken& current_cancel();
 // 主要流量——理由和 job_preview 头上那句"只广播，不留底"是同一条。
 // 退到轮询时没有半成品小图，进度条照旧走。
 
+/// 播一条自定义消息出去，**并且存一份进信箱**。
+///
+/// 上面那四个（progress/thinking/done/error）是所有活共用的；有几步还有
+/// 自己的消息，形状不一样：
+///
+///     outline_progress   到此为止解出来的那份大纲（**整份**，不是增量）
+///     story_token        正文/改稿逐字推出来的那一段
+///     story_error        流到一半砸了，编辑器据此把半截字撤掉
+///
+/// 它们原来是直接 `ws::hub().broadcast` 的——也就是说没有 socket 的时候
+/// 一个字都到不了。走这条就跟着进信箱了。
+///
+/// `msg` 要自带 `type` 和 `job_id`，和 broadcast 的规矩一样。
+///
+/// ⚠️ **增量那种（story_token）攒爆了会从前面丢**，界面上表现为那段字
+/// 缺了个开头。不要紧：`job_done` 带的才是权威的那一份，界面拿它换掉手上
+/// 那份。整份那种（outline_progress）更省事——丢掉旧帧本来就无所谓。
+void job_relay(const std::string& stream_id, nlohmann::json msg);
+
 /// 开一个信箱。已经有了就只是把它的过期时间往后推。
 ///
 /// **要在发请求之前开。** 反过来的话，开之前那几条（第一段思考往往就在
