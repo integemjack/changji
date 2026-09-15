@@ -213,7 +213,11 @@ ApiResult post_story_chapters(const json& body,
             // 得到类名——具体 id 从来不从任何接口暴露出去。
             const std::string job_id =
                 pipeline::jobs().job_id(pipeline::JobKind::Write);
-            const JobScope scope{job_id};   // 思考流挂到这条 job 的频道上
+            // 思考流挂到这条 job 的频道上。**令牌借 p 那个，不能让
+            // JobScope 自带一个**：循环查的是 `p.cancelled()`、给大模型的
+            // 是 `p.token()`，自带那个没人读——顶栏「停下」按下去接口回
+            // `{"stopped": true}`，活一秒没停。见 JobScope 第二个构造函数。
+            const JobScope scope{job_id, p.token()};
             int done = 0;
             for (const auto& id : todo) {
                 if (p.cancelled()) return;
@@ -397,8 +401,9 @@ ApiResult post_script_series(const json& body,
             // 信号；而它们不走 start_async，所以要自己挂一次。
             // 停这一族仍然走 /api/script/series/stop（JobKind::Write 那个槽），
             // 不是按 stream——这条 job 本来就只有一个。
-            const JobScope scope{pipeline::jobs().job_id(pipeline::JobKind::Write)};
-
+            // 令牌借 p 那个，理由同上面展开正文那条。
+            const JobScope scope{pipeline::jobs().job_id(pipeline::JobKind::Write),
+                                 p.token()};
 
             // 梗概先存下来。下次打开界面时回填，不用凭记忆重打。
             Project first = store.load_project();
@@ -534,7 +539,12 @@ ApiResult post_plan_all(const json& body, std::shared_ptr<llm::Client> client) {
             // 信号；而它们不走 start_async，所以要自己挂一次。
             // 停这一族仍然走 /api/script/series/stop（JobKind::Write 那个槽），
             // 不是按 stream——这条 job 本来就只有一个。
-            const JobScope scope{pipeline::jobs().job_id(pipeline::JobKind::Write)};
+            // 令牌借 p 那个，理由同上面展开正文那条。**这一条尤其要紧**：
+            // 批量补分镜是从设定页「分集」那一格按的，而那一页自己的提示
+            // 写着「顶栏那块「AI 作业中」里看进度」——顶栏那个「停下」是
+            // 它唯一看得见的出口。
+            const JobScope scope{pipeline::jobs().job_id(pipeline::JobKind::Write),
+                                 p.token()};
             int done = 0;
             for (const std::string& episode_id : todo) {
                 if (p.cancelled()) return;

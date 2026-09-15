@@ -79,9 +79,23 @@ JobScope::JobScope(std::string stream_id)
     : id_(std::move(stream_id)),
       prev_(g_stream),
       prev_token_(nullptr),
-      prev_cancel_(g_cancel) {
+      prev_cancel_(g_cancel),
+      use_(&token_) {
+    enter();
+}
+
+JobScope::JobScope(std::string stream_id, pipeline::CancelToken& token)
+    : id_(std::move(stream_id)),
+      prev_(g_stream),
+      prev_token_(nullptr),
+      prev_cancel_(g_cancel),
+      use_(&token) {
+    enter();
+}
+
+void JobScope::enter() {
     g_stream = id_;
-    g_cancel = &token_;
+    g_cancel = use_;
     if (!id_.empty()) {
         std::lock_guard<std::mutex> g(g_mu);
         // **记下同一个 id 上一层登记的那个，出去时还原。** 同一个 stream id
@@ -89,7 +103,7 @@ JobScope::JobScope(std::string stream_id)
         // 外层那件活就再也停不了了——而它还在跑。
         const auto it = g_live.find(id_);
         if (it != g_live.end()) prev_token_ = it->second;
-        g_live[id_] = &token_;
+        g_live[id_] = use_;
     }
 }
 
@@ -98,7 +112,7 @@ JobScope::~JobScope() {
         std::lock_guard<std::mutex> g(g_mu);
         // 按地址比一次再动：不是我登记的那条就别碰（同名的下一层还在跑）。
         const auto it = g_live.find(id_);
-        if (it != g_live.end() && it->second == &token_) {
+        if (it != g_live.end() && it->second == use_) {
             if (prev_token_ != nullptr) {
                 it->second = prev_token_;
             } else {

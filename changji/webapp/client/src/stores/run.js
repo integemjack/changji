@@ -26,6 +26,7 @@ import { api } from '@/api'
 // 一边「装配成片」——同一个阶段在不同组件里显示成不同的名字。
 import { STAGE_LABELS } from '@/api/labels'
 import { openJobSocket } from '@/composables/useJobSocket'
+import { useThinking } from '@/stores/thinking'
 
 /** 轮询兜底的间隔。和原来一样，用户对这个节奏已经有预期。 */
 const POLL_MS = 1200
@@ -365,6 +366,20 @@ export const useWriter = defineStore('writer', () => {
    * 人自己按的停。**按一下之后下一拍的 error 是"已手动停止"，不是出事了。**
    * 见下面 announceFatal——和镜头那边 `stoppedByHand` 同一个办法。
    */
+  const thinking = useThinking()
+  /**
+   * 这一趟挂在哪条频道上（就是 job id）。
+   *
+   * 顶栏那个「停下」按的是它（`/api/job/cancel` 认 stream），而思考条目也
+   * 按它存——所以收尾时要拿它去销号，不然徽章会一直挂着「正在思考」。
+   */
+  let stream = ''
+  function clearThinking() {
+    if (!stream) return
+    thinking.finish(stream)
+    stream = ''
+  }
+
   let stoppedByHand = false
   function markStopped() {
     stoppedByHand = true
@@ -468,7 +483,28 @@ export const useWriter = defineStore('writer', () => {
   function applyMessage(msg) {
     if (!msg || typeof msg !== 'object') return
     if (msg.type === 'hello') return
+    // **批量这几条的思考流原来落在地上。**
+    //
+    // 引擎那头是特意挂的（batch.cpp：「思考流挂到这条 job 的频道上。批量
+    // 这几条是全流水线上跑得最久的（一整季几十分钟），最需要"它到底在想
+    // 还是卡死了"这个信号」），可这条 store 的 applyMessage 只认进度，
+    // `job_thinking` 一路掉进下面那个合并分支里当成空进度。
+    //
+    // 丢的不只是显示。**顶栏那块「AI 作业中」是它唯一的停止按钮**——
+    // 那个按钮挂在思考徽章上（ThinkingBadge：「放这块不是随便挑的：它是
+    // 这几分钟里唯一一直在屏幕上的东西」），而徽章只在 thinking 里有条目
+    // 时才出现。没人 push，徽章就不出现，于是从设定页点「批量补分镜」
+    // 之后——那一页的提示恰恰写着「顶栏那块「AI 作业中」里看进度」——
+    // 屏幕上一个能按的停都没有。
+    if (msg.type === 'job_thinking') {
+      if (msg.job_id) {
+        stream = msg.job_id
+        thinking.push(msg.job_id, msg.text ?? '')
+      }
+      return
+    }
     if (msg.type === 'done' || msg.type === 'error') {
+      clearThinking()
       poll() // episodes 和 error 只有全量里有
       return
     }
@@ -519,6 +555,10 @@ export const useWriter = defineStore('writer', () => {
       sock.close()
     }
     live.value = false
+    // **思考条目也要销号。** 不销的话顶栏那块「正在思考」会一直挂着——
+    // 而它上面还有一个按下去没有对象的「停下」。走到这儿的路有三条：
+    // 推上来的终止消息、轮询看见 running 变假、以及人自己按停。
+    clearThinking()
   }
 
   return {

@@ -108,3 +108,40 @@ TEST_CASE("两条线程各记各的，不串") {
     CHECK(ok_b);
     CHECK(http::current_stream().empty());
 }
+
+TEST_CASE("借外面那个令牌：批量那几条真正管事的是 JobProgress::token()") {
+    // **这条钉的是"停下按了没反应"那一类。**
+    //
+    // 批量（写整季、展开正文、批量补分镜）的形状是：JobTable 起一条 job，
+    // 循环里查 `p.cancelled()`、给大模型的是 `p.token()`；而 JobScope 是
+    // 挂上去让思考流和顶栏那个「停下」找得到它的。
+    //
+    // 两者原来不是同一个令牌：`cancel_job` 点亮的是 JobScope 自带的那个，
+    // 而循环和大模型读的是 job 的那个——**接口照回 {"stopped": true}，活
+    // 一秒没停**。顶栏那块「AI 作业中」是从设定页点「批量补分镜」之后唯一
+    // 看得见的出口（那一页自己的提示就写着去那儿看），按下去没反应就是
+    // "点了运行之后取消不掉"。
+    pipeline::CancelToken job;      // 相当于 JobProgress::token()
+    {
+        const http::JobScope scope{"write-batch", job};
+        CHECK_FALSE(job.cancelled());
+        CHECK(http::cancel_job("write-batch"));
+        CHECK(job.cancelled());     // 点亮的必须是这一个
+        // 借来的时候，线程上那个 current_cancel() 也要是同一个，
+        // 不然大模型那条路（server.cpp 那几个 handler 读的就是它）
+        // 和循环这条又分成两个。
+        CHECK(http::current_cancel().cancelled());
+    }
+    // 出去之后表里不该还留着它
+    CHECK_FALSE(http::cancel_job("write-batch"));
+
+    // **对照组：自带令牌那个构造函数点的是它自己那个。** 这正是批量原来
+    // 的样子——外面那个（循环和大模型真正在读的）一动不动。
+    pipeline::CancelToken outside;
+    {
+        const http::JobScope own{"own-token"};
+        CHECK(http::cancel_job("own-token"));
+        CHECK(http::current_cancel().cancelled());   // 自带那个亮了
+        CHECK_FALSE(outside.cancelled());            // 而外面那个没人碰
+    }
+}

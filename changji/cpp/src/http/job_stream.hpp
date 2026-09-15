@@ -71,17 +71,40 @@ std::string current_stream();
 /// 这样界面上那个「停下」才有东西可以按。见 cancel_job。
 class JobScope {
 public:
+    /// 自己开一个令牌。**同步那条路和 `start_async` 用这个**：那几条活
+    /// 读的就是 `current_cancel()`，登记自带的那个正好对上。
     explicit JobScope(std::string stream_id);
+
+    /// **借外面那个令牌。批量那几条必须用这个。**
+    ///
+    /// 批量（写整季、展开正文、批量补分镜）的形状不一样：活跑在 JobTable
+    /// 起的那条 job 上，循环查的是 `JobProgress::cancelled()`、给大模型的
+    /// 是 `JobProgress::token()`——**那才是真正管事的令牌**。而 JobScope
+    /// 挂上去只是为了让思考流和顶栏那个「停下」找得到它。
+    ///
+    /// 用上面那个构造函数的话，两者是两个不相干的令牌：`cancel_job` 点亮
+    /// JobScope 自带的那个，循环和大模型读的却是 job 的那个——接口照回
+    /// `{"stopped": true}`，而活一秒没停。而顶栏那块「AI 作业中」是从设定页
+    /// 点完「批量补分镜」之后**唯一**看得见的出口（那一页自己的提示就写着
+    /// 去那儿看进度），按下去没反应就是"点了运行之后取消不掉"。
+    ///
+    /// `token` 要活得比这个作用域长——批量那几处传的是 `p.token()`，
+    /// 它属于这条 job，生命周期本来就包着整件活。
+    JobScope(std::string stream_id, pipeline::CancelToken& token);
+
     ~JobScope();
     JobScope(const JobScope&) = delete;
     JobScope& operator=(const JobScope&) = delete;
 
 private:
+    void enter();   ///< 两个构造函数共用的那一段
+
     std::string id_;
     std::string prev_;                    ///< 上一层的 stream id
     pipeline::CancelToken* prev_token_;   ///< 同一个 id 上一层登记的那个
     pipeline::CancelToken* prev_cancel_;  ///< 上一层这条线程的令牌
-    pipeline::CancelToken token_;
+    pipeline::CancelToken token_;         ///< 自带的那个；借外面的时候不用它
+    pipeline::CancelToken* use_;          ///< 真正登记、真正给 current_cancel 的
 };
 
 /// 这条后台线程这件活的取消令牌。
