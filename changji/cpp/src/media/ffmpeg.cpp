@@ -1,6 +1,8 @@
 #include "media/ffmpeg.hpp"
 
 #include <algorithm>
+#include <map>
+#include <mutex>
 #include <array>
 #include <cstdio>
 #include <sstream>
@@ -215,7 +217,8 @@ Runner default_runner() {
 FFmpeg::FFmpeg(std::string ffmpeg_exe, std::string ffprobe_exe, Runner runner)
     : ffmpeg_(std::move(ffmpeg_exe)),
       ffprobe_(std::move(ffprobe_exe)),
-      runner_(std::move(runner)) {}
+      runner_(std::move(runner)),
+      filters_(std::make_shared<FilterCache>()) {}
 
 void FFmpeg::check() const {
     std::vector<std::string> missing;
@@ -252,6 +255,31 @@ void FFmpeg::check() const {
         "macOS 用 brew install ffmpeg，\n"
         "Linux 用包管理器安装。\n"
         "装好后如果仍然找不到，在配置里填 " + keys + " 指定完整路径。");
+}
+
+bool FFmpeg::has_filter(const std::string& name) const {
+    if (!filters_) return false;
+    {
+        std::lock_guard lg(filters_->mu);
+        const auto it = filters_->known.find(name);
+        if (it != filters_->known.end()) return it->second;
+    }
+    bool ok = false;
+    try {
+        // 认不得的滤镜 ffmpeg 回 "Unknown filter 'xxx'."，**退出码却是 0**，
+        // 所以看的是输出而不是退出码。
+        const std::string out = run_exe(ffmpeg_, {"-hide_banner", "-h",
+                                                  "filter=" + name}, 20.0);
+        ok = out.find("Unknown filter") == std::string::npos &&
+             out.find("Filter " + name) != std::string::npos;
+    } catch (const std::exception&) {
+        ok = false;   // 问不出来就当没有：退回外挂字幕，片子照出
+    }
+    {
+        std::lock_guard lg(filters_->mu);
+        filters_->known[name] = ok;
+    }
+    return ok;
 }
 
 bool FFmpeg::available() const {

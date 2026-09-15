@@ -1193,6 +1193,18 @@ TEST_CASE("景别塌成一个值时按戏重排，认真分过的不碰") {
         CHECK(shots[3].shot_size == models::ShotSize::MCU);
     }
 
+    SUBCASE("ECU 过半也算塌：大特写整档不带参考图，半集这么干就是丢一致性") {
+        // 2026-09-16：17 镜全 ECU 时没有一张图拿到过定妆参考，
+        // 而「缺参考图」那道闸门专门跳过 ECU，一声不吭。
+        json j = json::parse(build("MS", 8));
+        for (int i = 0; i < 5; ++i) j["shots"][i]["shot_size"] = "ECU";  // 5/8 过半
+        const auto shots = stages::parse_storyboard(j.dump(), a);
+        REQUIRE(shots.size() == 8);
+        int ecu = 0;
+        for (const auto& s : shots) if (s.shot_size == models::ShotSize::ECU) ++ecu;
+        CHECK(ecu * 2 <= static_cast<int>(shots.size()));   // 重排后不再过半
+    }
+
     SUBCASE("三两镜看不出塌没塌，不动") {
         const auto shots = stages::parse_storyboard(build("ECU", 3), a);
         REQUIRE(shots.size() == 3);

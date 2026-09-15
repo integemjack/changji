@@ -818,3 +818,35 @@ TEST_CASE("[look] [sound] [upscale] 从 toml 读出来，非法值拦住") {
         CHECK_FALSE(v.validate().empty());
     }
 }
+
+TEST_CASE("查这台的 ffmpeg 有没有某个滤镜") {
+    // 2026-09-16 实撞：brew 出来的 ffmpeg 9.0.1 没编 libass，没有 subtitles
+    // 滤镜。原来这条让整集装配失败，十七镜全渲完而输出目录是空的——
+    // 为了一条可选的烧录把整集扔了。而 ffmpeg 报的还是一句误导的
+    // 「No option name near '/Users/…'」，人会去查路径里的空格。
+    //
+    // **认不得的滤镜 ffmpeg 退出码是 0**，所以判据必须看输出。
+    const auto ff_with = [](const std::string& out, int code = 0) {
+        return media::FFmpeg("ffmpeg", "ffprobe",
+                             [out, code](const std::string&,
+                                         const std::vector<std::string>&, double) {
+                                 media::ProcResult r;
+                                 r.launched = true;
+                                 r.exit_code = code;
+                                 r.out = out;
+                                 return r;
+                             });
+    };
+    CHECK(ff_with("Filter subtitles\n  Render text subtitles onto input video "
+                  "using the libass library.\n")
+              .has_filter("subtitles"));
+    // 退出码 0 但说不认得：没有
+    CHECK_FALSE(ff_with("Unknown filter 'subtitles'.\n").has_filter("subtitles"));
+    // 起不来也算没有——退回外挂字幕，片子照出，别把整集扔了
+    CHECK_FALSE(media::FFmpeg("ffmpeg", "ffprobe",
+                              [](const std::string&,
+                                 const std::vector<std::string>&, double) {
+                                  return media::ProcResult{};   // launched=false
+                              })
+                    .has_filter("subtitles"));
+}

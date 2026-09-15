@@ -694,7 +694,13 @@ fs::path Assembler::assemble(const Timeline& timeline,
     fs::create_directories(final_path.parent_path(), ec);
 
     const auto cues = timeline.cues();
-    if (burn_subtitles && !cues.empty()) {
+    // **有字幕就先写出 .ass，不管烧不烧。**
+    //
+    // 烧不了的时候（这台的 ffmpeg 没编 libass，见 run_assemble 里那一段）
+    // 外挂字幕是唯一的出路——那时候更需要这个文件。原来它写在「要烧」
+    // 这个分支里，不烧就连文件都没有，等于字幕整个丢了。
+    bool burn = false;
+    if (!cues.empty()) {
         const MediaInfo info = ff_.probe(with_audio);
         AssOptions opt;
         opt.width = info.width > 0 ? info.width : 1080;
@@ -707,8 +713,12 @@ fs::path Assembler::assemble(const Timeline& timeline,
             paths_.subtitles() / paths::from_utf8(
                 paths::to_utf8(final_path.stem()) + ".ass");
         write_ass(ass, cues, opt);
-        ff_.run(burn_args(with_audio, ass, config_, final_path));
-    } else {
+        if (burn_subtitles) {
+            ff_.run(burn_args(with_audio, ass, config_, final_path));
+            burn = true;
+        }
+    }
+    if (!burn) {
         // 没字幕就直接搬过去，不重编码一遍——那是白白多一次有损压缩。
         fs::remove(final_path, ec);
         fs::rename(with_audio, final_path, ec);

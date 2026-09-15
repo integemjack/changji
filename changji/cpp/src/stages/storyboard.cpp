@@ -1185,7 +1185,16 @@ void diversify_shot_sizes(std::vector<Shot>& shots) {
     for (const Shot& s : shots) ++hist[s.shot_size];
     int most = 0;
     for (const auto& [sz, n] : hist) most = std::max(most, n);
-    if (most * 10 < static_cast<int>(shots.size()) * 8) return;   // 没塌
+    const int n = static_cast<int>(shots.size());
+    const bool collapsed = most * 10 >= n * 8;
+    // **ECU 单独过半也算塌。** 大特写在 PromptComposer 里整个不带身份层和
+    // 场景层（那一条是对的，2026-09-13 实测：带了就画成全身人像），也就是
+    // **不带参考图**。偶尔一个两秒的插入镜头这么干没问题，半集都这么干就是
+    // 整集丢掉角色一致性——而「缺参考图」那道闸门专门跳过 ECU，一声不吭。
+    // 2026-09-16 那一集 17 镜全 ECU，没有一张图拿到过定妆参考，远程日志里
+    // 十几条「是图像编辑模型，而这一镜一张参考图都没有」。
+    const bool too_many_ecu = hist[ShotSize::ECU] * 2 > n;
+    if (!collapsed && !too_many_ecu) return;
 
     const auto emotional = [](const Shot& s) {
         for (const char* w : {"钩", "扣", "反转", "高潮", "揭", "真相", "爆发"}) {

@@ -376,7 +376,25 @@ std::string run_assemble(const ProjectStore& store,
         }
         emit(progress, "assemble", "info", how);
     }
-    const auto output = assembler.assemble(timeline, ep.episode_id + ".mp4");
+    // **这台的 ffmpeg 没编 libass 就别烧字幕，片子照出。**
+    //
+    // 2026-09-16 实撞：`brew install ffmpeg` 出来的 9.0.1 没有 `subtitles`
+    // 滤镜，于是一集十七镜全渲完、装配整个失败、输出目录空的——为了一条
+    // 可选的烧录，把整集扔了。而 ffmpeg 报的还是一句误导的
+    // 「No option name near '/Users/…'」，人会去查路径里的空格
+    // （macOS 默认目录里那个 "Application Support" 永远带空格）。
+    //
+    // 字幕本来就有外挂这条路：.ass 仍然写在 subtitles/ 下，播放器挂上就能看。
+    // 说一句就够了，不用拦。
+    const bool can_burn = ff.has_filter("subtitles");
+    if (!can_burn) {
+        emit(progress, "assemble", "info",
+             "这台的 ffmpeg 没编 libass（没有 subtitles 滤镜），字幕没烧进画面。"
+             "片子照常出，字幕另存在 subtitles/ 下，播放器里挂上就能看。"
+             "要烧进画面的话装一个带 libass 的 ffmpeg。");
+    }
+    const auto output =
+        assembler.assemble(timeline, ep.episode_id + ".mp4", can_burn);
 
     // 成片检查同样只报不拦：片子已经出来了，人可以自己看一眼再决定。
     const auto result = gates::gate_episode(output, ff, settings.gates,
@@ -971,6 +989,7 @@ RunReport run_episode(const ProjectStore& store,
             } else {
                 report.output = run_assemble(store, settings, *ep,
                                              *backends.ffmpeg, progress);
+                ran = true;   // 见末尾那句「全部跳过」
             }
         }
     } catch (const std::exception& e) {

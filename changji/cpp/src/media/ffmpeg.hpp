@@ -17,6 +17,8 @@
 #include <filesystem>
 #include <functional>
 #include <map>
+#include <memory>
+#include <mutex>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -172,6 +174,22 @@ public:
     void check() const;
     bool available() const;
 
+    /// 这个 ffmpeg 有没有编进某个滤镜。
+    ///
+    /// **2026-09-16 实测撞到：`brew install ffmpeg` 出来的 9.0.1 没有 libass**，
+    /// 也就没有 `subtitles` 滤镜。而整集装配的最后一步是烧字幕，于是一集画面
+    /// 全出好了、装配却整个失败，输出目录空的。报的还是一句误导的
+    /// 「No option name near '/Users/…'」——人会以为是路径里的空格。
+    ///
+    /// 有就烧，没有就把字幕留成外挂 .ass，片子照出。查一次缓存住：
+    /// `-h filter=xxx` 一次几十毫秒，而装配里每一集都要问。
+    ///
+    /// **缓存跟着这个实例走，不是全局静态。** 全局的话「换一个 ffmpeg 路径
+    /// 再问」拿到的是上一个的答案——单元测试里两个桩 runner 就撞上了，
+    /// 而真实场景是用户在设置页改了 assembly.ffmpeg_path。拷贝共享同一份
+    /// （拷的是同一个二进制），所以放在 shared_ptr 里。
+    bool has_filter(const std::string& name) const;
+
     MediaInfo probe(const std::filesystem::path& p) const;
 
     /// 取一帧的亮度统计。
@@ -218,6 +236,13 @@ private:
 
     std::string ffmpeg_;
     std::string ffprobe_;
+    /// 见 has_filter。shared_ptr 是为了让拷贝共享同一份，同时保住可拷贝性
+    /// （mutex 不可拷贝，直接当成员会让整个 FFmpeg 不能拷）。
+    struct FilterCache {
+        std::mutex mu;
+        std::map<std::string, bool> known;
+    };
+    std::shared_ptr<FilterCache> filters_;
     Runner runner_;
 };
 
