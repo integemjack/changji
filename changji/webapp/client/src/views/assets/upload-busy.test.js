@@ -51,8 +51,14 @@ describe('传文件那几颗按钮', () => {
   })
 
   it('角色的人声：传和撤都认 voice:', () => {
-    expect(ch).toMatch(/'is-off': isBusy\('voice:' \+ openChar\.char_id\)/)
-    expect(ch).toMatch(/:disabled="isBusy\('voice:' \+ openChar\.char_id\)"/)
+    // 传那颗的 is-off 上还叠着一条「这个项目走外部配音服务」（voice-kind
+    // 那个用例管它），所以只钉「忙的时候得灰」这一半，别把整条表达式写死。
+    expect(ch, '传那颗没认 voice:').toMatch(
+      /'is-off':[^\n]*isBusy\('voice:' \+ openChar\.char_id\)/,
+    )
+    expect(ch, '撤那颗没认 voice:').toMatch(
+      /:disabled="isBusy\('voice:' \+ openChar\.char_id\)"/,
+    )
   })
 
   it('场景的空景图：传和撤一样', () => {

@@ -121,6 +121,20 @@ const edits = ref({}) // char_id -> 编辑中的副本
 const voices = ref([])
 const voicesError = ref('')
 const voicesLoading = ref(false)
+/**
+ * 这一栏该画成什么：`clip` = 从项目里那几段里挑、也能传新的；
+ * `name` = 手填一个**外部服务认的音色名**。引擎按 `[tts].backend` 算好了
+ * 发过来（`/api/voices` 的 kind），前端不该自己靠 backend 猜。
+ *
+ * **不读它的后果不是少个样式。** 走外部服务时（kind = name）传上去的那段
+ * 参考音频落在项目的 voices/ 下，voice_id 变成 `voices/xxx.wav`——而那个
+ * 名字对面根本不认，配音直接失败。而这一栏下面此刻正印着引擎给的那句
+ * 「外部配音服务的音色由那个服务自己管」。
+ *
+ * 默认按 clip：老引擎不发这个字段，那时候的行为就是这一套。
+ */
+const voiceKind = ref('clip')
+const byName = computed(() => voiceKind.value === 'name')
 // 「三张一起画」画到哪一张了。三张各要几十秒，不报的话按钮上就是一句
 // 不动的「画着…」，用户分不清是在画还是卡住了。
 const genStep = ref(null)
@@ -358,6 +372,7 @@ watch(
     // 和上面 take 那条是同一件事，只是那条是"摇出来的"、这条是"已经存过的"。
     voices.value = []
     voicesError.value = ''
+    voiceKind.value = 'clip'
     load()
   },
   { immediate: true },
@@ -386,6 +401,7 @@ async function loadVoices() {
     const data = await api.voices(want)
     if (!mine()) return
     voices.value = data.voices ?? []
+    voiceKind.value = data.kind === 'name' ? 'name' : 'clip'
     if (data.error) voicesError.value = data.error
   } catch (err) {
     if (!mine()) return
@@ -1167,7 +1183,14 @@ async function clearRef(charId, slot) {
                        disabled，用 .is-off。 -->
                   <label
                     class="btn btn--sm btn--ghost"
-                    :class="{ 'is-off': isBusy('voice:' + openChar.char_id) }"
+                    :class="{
+                      'is-off': byName || isBusy('voice:' + openChar.char_id),
+                    }"
+                    :title="
+                      byName
+                        ? '这个项目走外部配音服务，音色由那个服务自己管——传上去的片段它不认，配音会直接失败。在上面的框里填那个服务认的音色名'
+                        : '传一段几秒的干净人声，模型照着它的音色念'
+                    "
                   >
                     {{
                       isBusy('voice:' + openChar.char_id)
@@ -1228,8 +1251,13 @@ async function clearRef(charId, slot) {
                   {{ voicesError }}
                 </span>
 
-                <!-- 制作音色。**摇不是描述**，理由见脚本里那一段。 -->
-                <details class="voice-make">
+                <!-- 制作音色。**摇不是描述**，理由见脚本里那一段。
+                     **走外部服务时整块不摆。** 摇出来的是进程内那个模型的
+                     说话人，存下来是项目 voices/ 下的一个文件名——对面根本
+                     不认这个名字。留着一个点不动的折叠块，比不摆更像"这儿
+                     应该能做点什么"。为什么不能做，上面那句 voicesError
+                     已经说了。 -->
+                <details v-if="!byName" class="voice-make">
                   <summary class="tiny">制作一个新音色</summary>
                   <p class="tiny dim">
                     不给参考音频时，说话人是随机摇出来的——摇到喜欢的存下来，
