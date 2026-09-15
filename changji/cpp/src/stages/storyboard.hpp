@@ -197,6 +197,15 @@ void add_missing_speakers(nlohmann::json& item,
                           const std::set<std::string>& known);
 
 /// 解析模型返回，产出镜头列表。
+/// 把运动描述里那几段 `[a-b秒]` 的末段夹到 `dur`——短了补满，长了截回。
+///
+/// **两个地方要用**，所以是纯函数：解析分镜时（模型写短/写长了），以及
+/// 时长被改过之后（rebalance_durations 为了凑总时长换档，motion_prompt
+/// 不跟着改就成了陈的——2026-09-16 实测一个 6 秒的镜头挂着 `[0-15秒]`）。
+///
+/// 一段都没有的（模型没按格式写）整句包成 `[0-N秒]`：至少时间轴是满的。
+std::string motion_covering(const std::string& motion_prompt, double dur);
+
 std::vector<models::Shot> parse_storyboard(const std::string& raw,
                                            const models::AssetLibrary& assets);
 

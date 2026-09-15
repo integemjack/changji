@@ -1087,8 +1087,15 @@ void cover_full_duration(json& item) {
     if (!item.contains("duration_s") || !item["duration_s"].is_number()) return;
     const double dur = item["duration_s"].get<double>();
     if (!(dur > 0)) return;
-    std::string mp = item["motion_prompt"].get<std::string>();
-    if (mp.empty()) return;
+    item["motion_prompt"] =
+        motion_covering(item["motion_prompt"].get<std::string>(), dur);
+}
+
+}  // namespace
+
+std::string motion_covering(const std::string& in, double dur) {
+    std::string mp = in;
+    if (mp.empty() || !(dur > 0)) return mp;
 
     // 找最后一个 `[数字-数字秒]`。数字可能带小数点。
     static const std::regex seg(R"(\[\s*([0-9]+(?:\.[0-9]+)?)\s*-\s*([0-9]+(?:\.[0-9]+)?)\s*秒\s*\])");
@@ -1107,16 +1114,17 @@ void cover_full_duration(json& item) {
     const std::string want = format_g(dur);
     if (last_at == std::string::npos) {
         // 一段都没有：整句包起来，时间轴至少是满的
-        item["motion_prompt"] = "[0-" + want + "秒] " + mp;
-        return;
+        return "[0-" + want + "秒] " + mp;
     }
-    if (std::fabs(last_end - dur) < 1e-6) return;   // 正好盖满
+    if (std::fabs(last_end - dur) < 1e-6) return mp;   // 正好盖满
     const std::string head = mp.substr(last_at, last_len);
     const auto dash = head.find('-');
-    if (dash == std::string::npos) return;
+    if (dash == std::string::npos) return mp;
     const std::string fixed = head.substr(0, dash + 1) + want + "秒]";
-    item["motion_prompt"] = mp.substr(0, last_at) + fixed + mp.substr(last_at + last_len);
+    return mp.substr(0, last_at) + fixed + mp.substr(last_at + last_len);
 }
+
+namespace {
 
 void keep_llm_fields(json& item) {
     if (!item.is_object()) return;
@@ -1720,6 +1728,19 @@ std::vector<Shot>& rebalance_durations(std::vector<Shot>& shots, double target_s
             }
         }
         if (!moved) break;
+    }
+    // **换完档要把运动描述跟着改。**
+    //
+    // 上面这个循环为了凑总时长把镜头从 5 秒换成 2 秒，而 motion_prompt 还
+    // 写着 `[0-5秒]`——解析时 cover_full_duration 对的是换档**之前**那个数。
+    // 2026-09-16 实测：新排的一集里 18 镜有 9 镜对不上，最离谱的一个 6 秒
+    // 镜头挂着 `[0-15秒]`。多出来那截没人描述，出片模型自由发挥，而它发挥
+    // 的方式就是把主体丢掉（见 cover_full_duration 上面那段）。
+    //
+    // 放在这儿而不是各调用方各写一遍：改时长的是这个函数，忘不掉。
+    for (Shot& s : shots) {
+        if (s.motion_prompt.empty()) continue;
+        s.motion_prompt = motion_covering(s.motion_prompt, s.duration_s);
     }
     return shots;
 }

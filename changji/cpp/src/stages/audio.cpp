@@ -432,6 +432,12 @@ double AudioStage::lock_duration(models::Shot& shot, double speech_s) const {
     const double locked = ceil_duration(speech_s + kTailS);
     shot.duration_s = locked;
     shot.duration_locked = true;
+    // **改了时长就把运动描述跟着改。** 和 rebalance_durations 末尾那段同一
+    // 件事：分镜写的是 `[0-3秒]`，配音把这一镜锁到 5 秒，多出来那两秒没人
+    // 描述，出片模型自由发挥——而它发挥的方式是把主体丢掉。
+    if (!shot.motion_prompt.empty()) {
+        shot.motion_prompt = motion_covering(shot.motion_prompt, locked);
+    }
     return locked;
 }
 

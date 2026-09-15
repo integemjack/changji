@@ -11,6 +11,7 @@
 
 #include <fstream>
 #include <set>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -1225,4 +1226,47 @@ TEST_CASE("景别塌成一个值时按戏重排，认真分过的不碰") {
         REQUIRE(shots.size() == 3);
         for (const auto& s : shots) CHECK(s.shot_size == models::ShotSize::ECU);
     }
+}
+
+TEST_CASE("换档之后运动描述跟着改：rebalance 改了时长，motion_prompt 不能是陈的") {
+    // 2026-09-16 实测：新排的一集 18 镜里有 9 镜对不上，最离谱的一个 6 秒
+    // 镜头挂着 [0-15秒]——解析时对的是换档**之前**那个数，rebalance 为了
+    // 凑总时长又把档换了。多出来那截没人描述，出片模型自由发挥。
+    const auto mk = [](const char* id, double dur, const char* mp) {
+        models::Shot s;
+        s.shot_id = id;
+        s.duration_s = dur;
+        s.motion_prompt = mp;
+        return s;
+    };
+    // 都没有台词 = 都可调；目标压到很短，逼它换档
+    std::vector<models::Shot> shots{
+        mk("s1", 5.0, "[0-5秒] 他慢慢站起来"),
+        mk("s2", 5.0, "[0-2秒] 他抬头 [2-5秒] 他转身"),
+        mk("s3", 5.0, ""),                       // 空的不碰
+    };
+    stages::rebalance_durations(shots, 6.0, 0.5);
+    for (const auto& s : shots) {
+        if (s.motion_prompt.empty()) continue;
+        CAPTURE(s.shot_id);
+        // 末段的上界必须正好等于这一镜的时长
+        const std::string want = "-" + [&] {
+            std::ostringstream o;
+            o << s.duration_s;
+            std::string t = o.str();
+            return t;
+        }() + "秒]";
+        CHECK_MESSAGE(s.motion_prompt.find(want) != std::string::npos,
+                      s.motion_prompt << " 对不上 " << s.duration_s << " 秒");
+    }
+    CHECK(shots[2].motion_prompt.empty());   // 空的还是空的
+}
+
+TEST_CASE("motion_covering 两头都夹，空的和没格式的都不炸") {
+    CHECK(stages::motion_covering("[0-2秒] 他抬头", 4.0) == "[0-4秒] 他抬头");
+    CHECK(stages::motion_covering("[0-5秒] 他抬头", 4.0) == "[0-4秒] 他抬头");
+    CHECK(stages::motion_covering("[0-4秒] 他抬头", 4.0) == "[0-4秒] 他抬头");
+    CHECK(stages::motion_covering("他抬头", 3.0) == "[0-3秒] 他抬头");
+    CHECK(stages::motion_covering("", 3.0).empty());
+    CHECK(stages::motion_covering("他抬头", 0.0) == "他抬头");   // 时长不合法就别动
 }
