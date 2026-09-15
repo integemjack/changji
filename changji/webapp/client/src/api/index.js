@@ -187,6 +187,20 @@ export const api = {
   suggestPremises: (payload) => post('/api/script/premise', payload),
   writeTrailer: (payload) => post('/api/script/trailer', payload),
   seriesStatus: () => get('/api/script/series'),
+  /**
+   * 一次把所有集的剧本写出来。
+   *
+   * ⚠️ **界面上今天没有入口——这是全仓库两个"包了没人叫"之一**（另一个是
+   * 下面的 `dedupeAssets`；90 个包装里就这两个）。引擎那一头是齐的
+   * （`POST /api/script/series`，状态和停都在下面两条上，而那两条**有人
+   * 叫**：故事页的「展开」走的是 `/api/story/chapters`，和这条共用「写」
+   * 那个作业槽，所以停和轮询顺带就通了）。
+   *
+   * 也就是说今天的状态是：**能停、能看进度，就是起不来。** 留着不删——
+   * 删了将来要接回去得连引擎那侧一起重新对一遍；而 index.js 上面那次删
+   * 四个包装（`nodeHealth` 那几个）是另一回事，那四个和 overview 重复，
+   * 这个不重复，它是这个功能唯一的客户端路径。
+   */
   writeSeries: (payload) => post('/api/script/series', payload),
   stopSeries: () => post('/api/script/series/stop', {}),
   getScript: (path, episodeId) =>
@@ -274,7 +288,15 @@ export const api = {
   saveShot: (payload) => post('/api/shot', payload),
   batchShots: (payload) => post('/api/shots/batch', payload),
   linkLocations: (payload) => post('/api/shots/link_locations', payload),
-  /** 把同名的场景/角色收成一条。不叫模型，秒回。 */
+  /**
+   * 把同名的场景/角色收成一条。不叫模型，秒回。
+   *
+   * ⚠️ **界面上今天没有入口**，同 `writeSeries`（全仓 90 个包装里只有这
+   * 两个没人叫）。设定页那两格能看出重复——`character.hpp` 里那段就记着
+   * 实测撞到的例子：一部剧里三个 id 指着同一个后台
+   * （`loc_..._auditorium_backstage` / `..._old_stage_backstage` /
+   * `loc_old_stage_backstage_daytime`）——但收不了。
+   */
   dedupeAssets: (payload) => post('/api/assets/dedupe', payload),
   reorderShots: (payload) => post('/api/shots/reorder', payload),
   newEpisode: (payload) => post('/api/episode', payload),
