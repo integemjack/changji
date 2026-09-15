@@ -370,6 +370,14 @@ export const api = {
    * `/api/doctor` 路由上那段注释：「实测撞到过」），界面一直没给。
    */
   doctor: (project) => get('/api/doctor', { path: project }),
+  /**
+   * 列一个目录下面的子目录。**只回目录**——这条唯一的用处是挑一个放模型
+   * 的文件夹，把几百个权重文件一起列出来只会把目录淹掉。
+   *
+   * 走的是**引擎那台**的文件系统。引擎跑在别的机器上时，浏览器里看到的
+   * 自然也是那台的盘——这正是要的：模型下到哪儿是那台说了算。
+   */
+  listDirs: (path) => get('/api/fs/dirs', { path }),
   connections: () => get('/api/connections'),
   saveConnections: (payload) => post('/api/connections', payload),
   saveEngineSettings: (payload) => post('/api/settings', payload),

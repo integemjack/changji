@@ -261,6 +261,76 @@ ApiResult get_shots(const std::string& path, const std::string& episode_id) {
                   {"duration_s", round1(stages::real_total_s(ep->shots))}}};
 }
 
+namespace {
+
+/// 一条起点。`why` 是给人看的那一行小字。
+json dir_entry(const fs::path& p, std::string why = {}) {
+    json j{{"path", paths::to_utf8(p)},
+           {"name", paths::to_utf8(p.filename().empty() ? p : p.filename())}};
+    if (!why.empty()) j["why"] = std::move(why);
+    return j;
+}
+
+}  // namespace
+
+ApiResult get_dirs(const std::string& path, const config::Settings& settings) {
+    std::error_code ec;
+    json roots = json::array();
+
+    // 没给路径：给几个起点。**空手起步是这条接口存在的理由**——人要是
+    // 知道路径，他就直接敲进那个框了。
+    const fs::path home = paths::home_dir();
+    const fs::path ws = settings.workspace_path();
+    const fs::path models = settings.models.dir_path(ws);
+    if (fs::is_directory(home, ec)) roots.push_back(dir_entry(home, "用户目录"));
+    if (fs::is_directory(ws, ec) && ws != home) {
+        roots.push_back(dir_entry(ws, "项目库"));
+    }
+    if (fs::is_directory(models, ec) && models != ws && models != home) {
+        roots.push_back(dir_entry(models, "现在的模型目录"));
+    }
+
+    if (text::strip_ws(path).empty()) {
+        return {200, {{"path", ""}, {"parent", nullptr},
+                      {"entries", json::array()}, {"roots", roots}}};
+    }
+
+    const fs::path here = fs::absolute(paths::expand_user(path), ec);
+    if (!fs::is_directory(here, ec)) {
+        // **说清是"不在"还是"不是目录"**：前者多半是敲错了，后者是选了
+        // 一个文件，两种要做的事不一样。
+        throw ApiError(400, fs::exists(here, ec)
+                                ? "这不是一个目录：" + paths::to_utf8(here)
+                                : "这个目录不在：" + paths::to_utf8(here));
+    }
+
+    json entries = json::array();
+    std::vector<fs::path> children;
+    for (const auto& e : fs::directory_iterator(
+             here, fs::directory_options::skip_permission_denied, ec)) {
+        children.push_back(e.path());
+    }
+    std::sort(children.begin(), children.end());
+    for (const auto& child : children) {
+        if (!fs::is_directory(child, ec)) continue;
+        const std::string name = paths::to_utf8(child.filename());
+        // 点开头的一律不列：`.git` `.venv` 这些在模型目录旁边到处都是，
+        // 而没有人会把模型放进去。
+        if (name.empty() || name.front() == '.') continue;
+        entries.push_back(dir_entry(child));
+    }
+
+    const fs::path up = here.parent_path();
+    return {200,
+            {{"path", paths::to_utf8(here)},
+             // 到根了就没有上一级。别回一个指向自己的 parent——界面上那个
+             // 「上一级」会变成点了没反应。
+             {"parent", up.empty() || up == here ? json(nullptr)
+                                                 : json(paths::to_utf8(up))},
+             {"entries", entries},
+             {"roots", roots}}};
+}
+
 ApiResult get_assets(const std::string& path) {
     ProjectStore store = store_for(path);
     AssetLibrary assets;

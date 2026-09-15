@@ -444,6 +444,15 @@ void run(const config::Settings& settings, const Options& opts) {
         return json_response(r.body, r.status);
     });
 
+    // 挑一个放模型的文件夹。**只读、只回目录**，见 get_dirs。
+    CROW_ROUTE(app, "/api/fs/dirs")([](const crow::request& req) {
+        auto r = guard([&] {
+            return get_dirs(query(req, "path"),
+                            config::runtime().snapshot());
+        });
+        return json_response(r.body, r.status);
+    });
+
     CROW_ROUTE(app, "/api/projects")([] {
         auto r = guard([] {
             return get_projects(config::runtime().snapshot());

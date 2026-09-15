@@ -24,6 +24,7 @@
 import { computed, onMounted, ref, watch } from 'vue'
 
 import AppIcon from '@/components/AppIcon.vue'
+import DirPicker from '@/components/DirPicker.vue'
 import NodeMatrix from '@/components/NodeMatrix.vue'
 import { api } from '@/api'
 import { useAction } from '@/composables/useAction'
@@ -58,6 +59,20 @@ const persist = ref(true)
 
 // 模型往哪儿下。整台机器一套，和"挑哪个模型"（在项目页）是两件事。
 const modelsDir = ref('')
+/** 「浏览」那个弹窗开着没有。 */
+const browsing = ref(false)
+function openBrowse() {
+  browsing.value = true
+}
+/**
+ * 挑好了。**只填进输入框，不直接存**——这一节有自己的「保存」，而它上面
+ * 还有一个「写回配置文件」的勾管着存到哪儿。挑完就存的话，那个勾就被绕过
+ * 去了（这一节 2026-09-15 之前正好栽过这个）。
+ */
+function pickDir(path) {
+  modelsDir.value = path
+  browsing.value = false
+}
 const modelsSource = ref('')
 const modelsSources = ref([])
 const modelsTool = ref('')
@@ -714,7 +729,20 @@ function scrollTo(id) {
             <div class="grid grid--2">
               <label class="field">
                 <span class="field__label">模型目录</span>
-                <input v-model="modelsDir" class="input mono" placeholder="留空用默认位置" />
+                <!-- **敲路径这件事本来就不该靠记。** 模型动辄几十 GB，人挑的
+                     是"哪块盘还装得下"，而那个路径多半在别的窗口里。旁边这
+                     颗「浏览」把目录树摆出来，点进去、点「用这个」。 -->
+                <div class="row">
+                  <input v-model="modelsDir" class="input mono" placeholder="留空用默认位置" />
+                  <button
+                    class="btn btn--ghost btn--sm"
+                    type="button"
+                    title="翻一翻，挑个文件夹"
+                    @click="openBrowse"
+                  >
+                    浏览
+                  </button>
+                </div>
               </label>
               <label class="field">
                 <span class="field__label">下载源</span>
@@ -868,6 +896,14 @@ function scrollTo(id) {
       </div>
     </div>
   </div>
+  <!-- 挑模型目录。挂在最外层：它是个遮罩弹窗，嵌在某一节里的话
+       会被那一节的 overflow 裁掉。 -->
+  <DirPicker
+    :open="browsing"
+    :start="modelsDir"
+    @close="browsing = false"
+    @pick="pickDir"
+  />
 </template>
 
 <style scoped>

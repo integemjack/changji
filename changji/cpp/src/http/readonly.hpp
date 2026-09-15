@@ -171,6 +171,17 @@ ApiResult get_project(const std::string& path);
 ApiResult get_shots(const std::string& path, const std::string& episode_id);
 ApiResult get_assets(const std::string& path);
 
+/// 列一个目录下面有哪些子目录。**给"挑一个文件夹"用的，所以只回目录。**
+///
+/// `path` 留空时回几个起点（用户目录、项目库、当前模型目录），不然人得
+/// 自己先敲一段路径才能开始点——而"不知道从哪儿开始"正是要浏览器的理由。
+///
+/// **不列文件**：这条接口唯一的用处是选一个放模型的地方，把几百个 .gguf
+/// 也列出来只会把目录淹掉。
+///
+/// 只读。写在这个文件里是因为它和别的 get_* 一样不碰任何状态。
+ApiResult get_dirs(const std::string& path, const config::Settings& settings);
+
 /// 请求体解析不动时，按 **Python 真实行为** 分四种情况回。
 ///
 /// 之前这里是 `json::parse(body, nullptr, false)`，失败回一个 discarded 值，
