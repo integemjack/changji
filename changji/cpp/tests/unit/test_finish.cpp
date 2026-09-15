@@ -31,6 +31,7 @@
 #include "stages/storyboard.hpp"
 #include "util/cmdline.hpp"
 #include "util/paths.hpp"
+#include <regex>
 
 using namespace changji;
 using json = nlohmann::json;
@@ -929,6 +930,78 @@ TEST_CASE("时段对不上就别喂那张空景图") {
     CHECK_FALSE(lighting_clashes("", "夜晚，硬光"));
     CHECK_FALSE(lighting_clashes("白天，自然光", ""));
     CHECK_FALSE(lighting_clashes("侧逆光，硬", "顶光，软"));
+}
+
+TEST_CASE("镜头改短时，演不完的那几拍整段摘掉，不许把时间轴写反") {
+    // 2026-09-16 实测：ep05_sh007 计划 15 秒、被锁成 3 秒，运动描述变成
+    // `[0-5秒] … [5-10秒] … [10-3秒] …`——最后那一段的止点被往回拉到 3，
+    // 时间轴倒着走，就这么进了出片提示词。
+    const std::string three =
+        "[0-5秒] 爬进灌木丛 [5-10秒] 手电扫过 [10-15秒] 跑向仓库";
+
+    const std::string cut = stages::motion_covering(three, 3.0);
+    CHECK(cut.find("[10-3秒]") == std::string::npos);
+    CHECK(cut.find("10-") == std::string::npos);        // 那两拍整段没了
+    CHECK(cut.find("手电扫过") == std::string::npos);
+    CHECK(cut.find("爬进灌木丛") != std::string::npos);  // 第一拍留着
+    CHECK(cut.find("[0-3秒]") != std::string::npos);     // 盖满新时长
+
+    // 任何一段都不许起点晚于止点
+    for (double d : {1.0, 2.5, 3.0, 4.0, 7.0, 12.0, 15.0, 20.0}) {
+        const std::string got = stages::motion_covering(three, d);
+        std::smatch m;
+        std::string rest = got;
+        const std::regex seg(
+            R"(\[\s*([0-9]+(?:\.[0-9]+)?)\s*-\s*([0-9]+(?:\.[0-9]+)?)\s*秒\s*\])");
+        while (std::regex_search(rest, m, seg)) {
+            CHECK(std::stod(m[1].str()) <= std::stod(m[2].str()));
+            rest = m.suffix().str();
+        }
+        // 最后一段的止点正好是新时长
+        CHECK(stages::motion_covering(got, d) == got);
+    }
+
+    // 拉长照旧只改最后一段
+    const std::string longer = stages::motion_covering(three, 20.0);
+    CHECK(longer.find("[10-20秒]") != std::string::npos);
+    CHECK(longer.find("[0-5秒]") != std::string::npos);
+}
+
+TEST_CASE("一镜拆成几镜时，运动描述跟着分段，不许每一镜挂同一条时间轴") {
+    // 2026-09-16 实测：ep05_sh019 和 ep05_sh019_b 的 motion_prompt 一字
+    // 不差——深拷贝把整条 15 秒时间轴原样带给了两镜，出来两条几乎一样的
+    // 视频接在一起，而且每一镜的时间轴都比它自己的时长长一倍。
+    const std::string three =
+        "[0-5秒] 握紧拳头 [5-10秒] 一问一答 [10-15秒] 灰尘飘浮";
+
+    const auto two = stages::split_motion(three, {6.0, 6.0});
+    REQUIRE(two.size() == 2);
+    CHECK(two[0] != two[1]);                              // 这就是那条 bug
+    CHECK(two[0].rfind("[0-", 0) == 0);                   // 两份都从 0 起算
+    CHECK(two[1].rfind("[0-", 0) == 0);
+    CHECK(two[0].find("握紧拳头") != std::string::npos);
+    CHECK(two[1].find("灰尘飘浮") != std::string::npos);
+    CHECK(two[0].find("灰尘飘浮") == std::string::npos);  // 不重叠
+    CHECK(two[1].find("握紧拳头") == std::string::npos);
+
+    // 三份：一份一段，谁也不空
+    const auto three_ways = stages::split_motion(three, {1.0, 1.0, 1.0});
+    REQUIRE(three_ways.size() == 3);
+    for (const auto& piece : three_ways) CHECK(!piece.empty());
+    CHECK(three_ways[0] != three_ways[1]);
+    CHECK(three_ways[1] != three_ways[2]);
+
+    // 段数不够分就每份都给原文——同一个动作跨一刀接着演，说得过去；
+    // 硬分会让后半段一点运动描述都没有。
+    const auto short_one = stages::split_motion("[0-5秒] 翻动卷宗", {1.0, 1.0});
+    REQUIRE(short_one.size() == 2);
+    CHECK(short_one[0] == "[0-5秒] 翻动卷宗");
+    CHECK(short_one[1] == "[0-5秒] 翻动卷宗");
+
+    // 没写时间轴的照样不会崩
+    const auto plain = stages::split_motion("他抬头", {1.0, 1.0});
+    REQUIRE(plain.size() == 2);
+    CHECK(plain[0] == "他抬头");
 }
 
 TEST_CASE("配音锁时长：分了多段动作的长镜头不许压短，一段的照旧收紧") {

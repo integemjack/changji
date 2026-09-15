@@ -6,6 +6,7 @@
 #include <set>
 
 #include "stages/render.hpp"
+#include "stages/storyboard.hpp"   // split_motion
 #include "util/text.hpp"
 
 namespace changji::stages {
@@ -214,16 +215,18 @@ std::string free_shot_id(const std::string& base,
     return base + "_" + std::to_string(n);
 }
 
+/// 已经配过音的用真实时长，没配过的用估算。混着用是对的：
+/// 拆分发生在配音之后，但重跑时可能有几句还没配。
+double dur_of(const models::DialogueLine& line) {
+    if (line.actual_duration_s.has_value()) return *line.actual_duration_s;
+    return estimate_speech_duration(line.text);
+}
+
 std::vector<std::vector<models::DialogueLine>> group_lines(
     const models::Shot& shot, double max_seconds) {
     if (shot.dialogue.size() <= 1) return {shot.dialogue};
 
-    const auto dur = [](const models::DialogueLine& line) {
-        // 已经配过音的用真实时长，没配过的用估算。混着用是对的：
-        // 拆分发生在配音之后，但重跑时可能有几句还没配。
-        if (line.actual_duration_s.has_value()) return *line.actual_duration_s;
-        return estimate_speech_duration(line.text);
-    };
+    const auto& dur = dur_of;
 
     const double budget = std::max(0.5, max_seconds - kTailS);
     std::vector<std::vector<models::DialogueLine>> groups;
@@ -267,7 +270,27 @@ std::vector<models::Shot> split_overlong_shots(std::vector<models::Shot> shots,
             out.push_back(shot);
             continue;
         }
+        // **运动描述要跟着一起拆。**
+        //
+        // 深拷贝把整条时间轴原样带给了每一份：ep05 那一镜三段
+        // （`[0-5秒] / [5-10秒] / [10-15秒]`）拆成两镜之后，两镜挂着
+        // 一模一样的十五秒时间轴，出来的就是两条几乎一样的视频接在一起，
+        // 而且每一镜的时间轴都比它自己的时长长一倍。2026-09-16 实测：
+        // ep05_sh019 和 ep05_sh019_b 的 motion_prompt 一字不差。
+        //
+        // 按各份台词的长短分段，分完每份的时间轴重新从 0 起算。
+        std::vector<double> weights;
+        weights.reserve(groups.size());
+        for (const auto& g : groups) {
+            double d = 0.0;
+            for (const auto& line : g) d += dur_of(line);
+            weights.push_back(d);
+        }
+        const std::vector<std::string> motions =
+            split_motion(shot.motion_prompt, weights);
+
         shot.dialogue = groups[0];
+        if (!motions.empty()) shot.motion_prompt = motions[0];
         out.push_back(shot);
 
         for (std::size_t g = 1; g < groups.size(); ++g) {
@@ -275,6 +298,7 @@ std::vector<models::Shot> split_overlong_shots(std::vector<models::Shot> shots,
             extra.shot_id = free_shot_id(shot.shot_id, used);
             used.insert(extra.shot_id);
             extra.dialogue = groups[g];
+            if (g < motions.size()) extra.motion_prompt = motions[g];
             // **新镜是全新的画面，之前那一镜的产物一概不能继承。**
             // 继承的话，新镜会带着原镜的 frame_path 和 video_path，
             // 流水线看到"已经有产物"就跳过它，成片里那一段是重复的画面。

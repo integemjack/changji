@@ -226,6 +226,13 @@ std::string defuse_motion(const std::string& motion_prompt);
 /// 是分镜的判断，配音不该拿一句短台词把它压回去（见 AudioStage::lock_duration）。
 int count_motion_segments(const std::string& motion_prompt);
 
+/// 把带时间轴的运动描述按 `weights` 的比重切成几份，每一份的时间轴重新从
+/// 0 起算。台词装不下、一镜拆成几镜时用它——不切的话每一镜都挂着同一条
+/// 完整时间轴，拆出来的几镜会演出一模一样的画面。
+/// 段数不够分（或者原文没写时间轴）时，每一份都是原文。
+std::vector<std::string> split_motion(const std::string& motion_prompt,
+                                      const std::vector<double>& weights);
+
 std::vector<models::Shot> parse_storyboard(const std::string& raw,
                                            const models::AssetLibrary& assets);
 

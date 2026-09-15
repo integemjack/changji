@@ -1176,35 +1176,117 @@ std::string defuse_motion(const std::string& in) {
     return out;
 }
 
+namespace {
+
+/// 运动描述里的一段：`[起-止秒] 正文`。
+struct MotionSeg {
+    double start = 0.0;
+    double end = 0.0;
+    std::string body;   // 这一段标记后面、下一段标记之前的正文
+};
+
+const std::regex& motion_seg_re() {
+    static const std::regex re(
+        R"(\[\s*([0-9]+(?:\.[0-9]+)?)\s*-\s*([0-9]+(?:\.[0-9]+)?)\s*秒\s*\])");
+    return re;
+}
+
+std::vector<MotionSeg> parse_motion_segs(const std::string& mp) {
+    std::vector<MotionSeg> out;
+    std::vector<std::size_t> body_at;   // 每段正文的起点
+    auto it = std::sregex_iterator(mp.begin(), mp.end(), motion_seg_re());
+    const auto stop = std::sregex_iterator();
+    for (; it != stop; ++it) {
+        const std::smatch& m = *it;
+        MotionSeg seg;
+        seg.start = std::stod(m[1].str());
+        seg.end = std::stod(m[2].str());
+        out.push_back(seg);
+        body_at.push_back(static_cast<std::size_t>(m.position(0) + m.length(0)));
+        // 上一段的正文到这一段标记为止
+        if (out.size() >= 2) {
+            const std::size_t from = body_at[out.size() - 2];
+            out[out.size() - 2].body = text::strip_ws(
+                mp.substr(from, static_cast<std::size_t>(m.position(0)) - from));
+        }
+    }
+    if (!out.empty()) out.back().body = text::strip_ws(mp.substr(body_at.back()));
+    return out;
+}
+
+std::string join_motion(const std::vector<MotionSeg>& segs, double offset) {
+    std::string out;
+    for (const MotionSeg& g : segs) {
+        if (!out.empty()) out += " ";
+        out += "[" + format_g(g.start - offset) + "-" + format_g(g.end - offset) +
+               "秒] " + g.body;
+    }
+    return text::strip_ws(out);
+}
+
+}  // namespace
+
 std::string motion_covering(const std::string& in, double dur) {
     std::string mp = in;
     if (mp.empty() || !(dur > 0)) return mp;
 
-    // 找最后一个 `[数字-数字秒]`。数字可能带小数点。
-    static const std::regex seg(R"(\[\s*([0-9]+(?:\.[0-9]+)?)\s*-\s*([0-9]+(?:\.[0-9]+)?)\s*秒\s*\])");
-    std::smatch m;
-    std::string tail = mp;
-    std::size_t last_at = std::string::npos, last_len = 0;
-    double last_end = -1.0;
-    std::size_t base = 0;
-    while (std::regex_search(tail, m, seg)) {
-        last_at = base + static_cast<std::size_t>(m.position(0));
-        last_len = static_cast<std::size_t>(m.length(0));
-        last_end = std::stod(m[2].str());
-        base = last_at + last_len;
-        tail = mp.substr(base);
-    }
-    const std::string want = format_g(dur);
-    if (last_at == std::string::npos) {
+    std::vector<MotionSeg> segs = parse_motion_segs(mp);
+    if (segs.empty()) {
         // 一段都没有：整句包起来，时间轴至少是满的
-        return "[0-" + want + "秒] " + mp;
+        return "[0-" + format_g(dur) + "秒] " + mp;
     }
-    if (std::fabs(last_end - dur) < 1e-6) return mp;   // 正好盖满
-    const std::string head = mp.substr(last_at, last_len);
-    const auto dash = head.find('-');
-    if (dash == std::string::npos) return mp;
-    const std::string fixed = head.substr(0, dash + 1) + want + "秒]";
-    return mp.substr(0, last_at) + fixed + mp.substr(last_at + last_len);
+    if (std::fabs(segs.back().end - dur) < 1e-6) return mp;   // 正好盖满
+
+    // **镜头被改短到某一段的起点之前时，那一段要整段摘掉，不能把止点往回
+    // 拉。** 原来只改最后一段的止点，于是 15 秒的镜头锁成 3 秒会写出
+    // `[10-3秒]` —— 一个倒着走的时间轴，直接进了出片提示词。
+    // 2026-09-16 实测：ep05_sh007 的运动描述就是 `… [10-3秒] …`。
+    //
+    // 演不完的那几拍本来也塞不进缩短后的时长，连正文一起摘掉才对：
+    // 留着等于让模型把三拍挤进三秒。
+    while (segs.size() > 1 && segs.back().start >= dur - 1e-6) segs.pop_back();
+    segs.back().end = std::max(dur, segs.back().start);
+    // 第一段就比新时长还晚（整条时间轴都在窗口外）：那就让它从 0 起算，
+    // 正文留着，总比没有运动描述强。
+    if (segs.size() == 1 && segs.front().start >= dur - 1e-6) {
+        segs.front().start = 0.0;
+        segs.front().end = dur;
+    }
+    return join_motion(segs, 0.0);
+}
+
+std::vector<std::string> split_motion(const std::string& in,
+                                      const std::vector<double>& weights) {
+    if (weights.size() < 2) return {in};
+    std::vector<MotionSeg> segs = parse_motion_segs(in);
+    // 段数不够分（或者压根没写时间轴）：只能每份都给原文。同一个动作跨
+    // 一刀接着演，说得过去；硬分会让后半段没有任何运动描述。
+    if (segs.size() < weights.size()) {
+        return std::vector<std::string>(weights.size(), in);
+    }
+
+    double total = 0.0;
+    for (const double w : weights) total += std::max(0.0, w);
+    if (!(total > 0)) total = static_cast<double>(weights.size());
+
+    std::vector<std::string> out;
+    const double n = static_cast<double>(segs.size());
+    double acc = 0.0;
+    std::size_t from = 0;
+    for (std::size_t i = 0; i < weights.size(); ++i) {
+        acc += std::max(0.0, weights[i]) > 0 ? std::max(0.0, weights[i]) : 1.0;
+        std::size_t to = (i + 1 == weights.size())
+                             ? segs.size()
+                             : static_cast<std::size_t>(acc / total * n + 0.5);
+        // 每份至少拿一段，而且要给后面留够
+        to = std::max(to, from + 1);
+        to = std::min(to, segs.size() - (weights.size() - 1 - i));
+        const std::vector<MotionSeg> mine(segs.begin() + static_cast<long>(from),
+                                          segs.begin() + static_cast<long>(to));
+        out.push_back(join_motion(mine, mine.front().start));
+        from = to;
+    }
+    return out;
 }
 
 namespace {
