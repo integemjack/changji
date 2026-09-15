@@ -469,10 +469,24 @@ async function download() {
              同一个窗口里发生，不说一声的话没人分得出来。显卡和盘剩余那两
              个读数说的是这台机器。 -->
         <span class="tiny dim nowrap scope" :title="scopeHint">{{ scopeLabel }}</span>
-        <span class="tiny dim nowrap">
-          <template v-if="gpu">{{ gpu.name }} · {{ gpu.vramGb.toFixed(1) }} GB</template>
-          <template v-else>没探测到显卡</template>
-          <template v-if="diskFree"> ｜ 盘剩 {{ humanBytes(diskFree) }}</template>
+        <!-- **整行不能再 nowrap 了。** 统一内存那一句把这行拉长了一倍，
+             钉死不换行的话窄一点的窗口上它直接顶出去。改成每一小节各自
+             nowrap（"107.5 GB" 不许断在中间），整行可以折。 -->
+        <span class="tiny dim rig">
+          <template v-if="gpu">
+            <span class="nowrap">{{ gpu.name }} · {{ gpu.vramGb.toFixed(1) }} GB</span>
+            <!-- **统一内存上这两个数都要写。** vramGb 是 Metal 肯给的那一
+                 份（128 GB 的机器上是 107.5），不是整机内存。只写前一个，
+                 用户看到的是"我买的明明是 128"——而这一页正是他决定要不要
+                 下 91 GB 那一档的地方。只写后一个也不行：这一页所有门槛都
+                 是拿 vramGb 比的，按 128 算会挑中一档超过 Metal 那条线的，
+                 然后系统开始压缩换页。措辞照体检那边（doctor.cpp）。 -->
+            <span v-if="gpu.unifiedGb" class="nowrap">
+              （整机 {{ gpu.unifiedGb.toFixed(1) }} GB，其余留给系统）
+            </span>
+          </template>
+          <span v-else class="nowrap">没探测到显卡</span>
+          <span v-if="diskFree" class="nowrap"> ｜ 盘剩 {{ humanBytes(diskFree) }}</span>
         </span>
         <button
           class="btn btn--ghost btn--sm"
@@ -711,6 +725,12 @@ async function download() {
 
 .dlg__title {
   min-width: 0;
+}
+
+/* 右上角那行读数。**右对齐**：它折行之后，两行的左边缘对不齐比右边缘
+   对不齐难看得多——右边就是窗口边。 */
+.rig {
+  text-align: right;
 }
 
 .purpose {

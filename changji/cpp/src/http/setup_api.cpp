@@ -314,15 +314,9 @@ ApiResult get_setup_state(const config::Settings& settings,
         // 苹果芯片上那是 Metal 肯给的那一份（128 GB 的机器上 107.5 GB），
         // 不是整机内存。只报前者，用户看到的是"我买的明明是 128"——
         // 而这一页正是他决定要不要下 91 GB 那一档的地方。
-        // 不是统一内存时这一项是 null。
-        //
-        // ⚠️ **原来这行末尾写着"界面就只显示一个数"——今天永远只显示一个数。**
-        // 模型页一处都没读 `unifiedGb`，所以上面那段想解决的事（苹果芯片上
-        // 只报 Metal 那一份，用户看到的是"我买的明明是 128"）在这一页仍然
-        // 存在。体检那边是做了的（doctor.cpp 里那句「整机 X GB」），两处
-        // 不一致。
-        //
-        // 留着，理由同下面的 `sourceHow` / `probe`：不额外花钱，形状是对的。
+        // 不是统一内存时这一项是 null，界面就只显示一个数。
+        // 措辞和体检那边对齐（doctor.cpp 那句「整机 X GB，其余留给系统」）：
+        // 同一件事在两处说成两样，用户会以为它们讲的是两个数。
         gpu["unifiedGb"] = profile.gpu->unified()
                                ? json(static_cast<double>(profile.gpu->unified_mb) / 1024.0)
                                : json(nullptr);

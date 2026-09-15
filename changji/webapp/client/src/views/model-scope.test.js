@@ -85,3 +85,22 @@ describe('模型这一行归谁管', () => {
     expect(SETUP, '不写项目那份了？那标签就成了错的').toMatch(/"models\.pick"/)
   })
 })
+
+describe('统一内存那台机器上，整机多大也要说', () => {
+  // `vramGb` 在苹果芯片上是 **Metal 肯给的那一份**（128 GB 的机器上是
+  // 107.5），不是整机内存。这一页所有门槛都拿它比，所以它必须显示；
+  // 但只显示它，用户看到的是「我买的明明是 128」——而这一页正是他决定
+  // 要不要下 91 GB 那一档的地方。
+  //
+  // 引擎老早就把 `unifiedGb` 发过来了，setup_api.cpp 里还专门写了一段
+  // 注释说界面为什么需要它，界面却一个字都没读——这条断言钉的是那件事。
+  it('两个数都摆出来，措辞跟体检那边一致', () => {
+    expect(DLG, '没读 unifiedGb').toMatch(/gpu\.unifiedGb/)
+    expect(DLG, '措辞和 doctor.cpp 对不上').toMatch(/整机[^<]*其余留给系统/)
+  })
+
+  it('这行不能再钉死不换行', () => {
+    // 加上那一句之后整行长了一倍，nowrap 会让它在窄窗口上直接顶出去。
+    expect(DLG).not.toMatch(/class="tiny dim nowrap">\s*\n?\s*<template v-if="gpu"/)
+  })
+})
