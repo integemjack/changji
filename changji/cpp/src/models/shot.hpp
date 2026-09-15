@@ -240,6 +240,22 @@ struct Shot {
 
     // ---- 质控 ----
     std::string beat;             ///< 叙事功能，如 反转、铺垫（≤20）
+    /// 需要和前后镜保持一致的细节。
+    ///
+    /// ⚠️ **模型填了，没人看。** 提示词第 16 条在教它写（prompts.toml：
+    /// 「记录需要与前后镜保持一致的细节，比如道具在哪只手」），schema 里
+    /// 有、`kLlmShotFields` 里有、`validate()` 还查它不超 200 字，最后
+    /// 存进 shots.json。
+    ///
+    /// **它和 camera_id / missing_info 那几个不一样的地方，恰恰最容易骗人：
+    /// 它出现在 `/api/shots` 的回包里**（readonly.cpp）。在引擎里 grep 一下
+    /// 会看到"有人读"，于是以为这条链是通的——而界面那头一个字都没接：
+    /// 全前端没有任何一处读 `continuity_notes`。也就是说它一路传到浏览器，
+    /// 在那儿被丢掉。
+    ///
+    /// 留着不动有个硬理由：**它在对拍语料里**（endpoints_readonly /
+    /// endpoints_episodes / endpoints_planning 三份都有），从回包里拿掉就是
+    /// 破契约。要让它真正起作用得在界面上给它一个位置，那是另一件事。
     std::string continuity_notes; ///< ≤200
     /// 模型自报的信息缺口。
     ///
