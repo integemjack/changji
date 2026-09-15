@@ -265,8 +265,10 @@ TEST_CASE("每个家族的每一档精度都在表里") {
             by_family[o.family].insert(o.quant);
         }
     }
-    // city96 那个仓库有 14 档，加上 Comfy 的 fp8 一共 15 档
-    CHECK(by_family.at("Qwen-Image").size() == 15);
+    // QuantStack 那个仓库的 13 档。**这一族没有 BF16 也没有 fp8**——
+    // 上游只放了 GGUF 梯队，2026-09-15 从基础版 Qwen-Image 换过来时
+    // 那两档就没了（基础版在 city96 有 14 档 + Comfy 的 fp8）。
+    CHECK(by_family.at("Qwen-Image-Edit 2509").size() == 13);
     // QuantStack 的 13 档量化 + Comfy 的 fp16
     CHECK(by_family.at("Wan 2.2 TI2V-5B").size() == 14);
     // 编剧模型那一组现在一个权重都不下（进程内后端删了），所以这儿
