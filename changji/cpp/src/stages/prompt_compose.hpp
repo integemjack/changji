@@ -58,6 +58,12 @@ struct PromptBundle {
     std::optional<std::int64_t> seed_override;
 };
 
+/// 这两句光说的是不是同一个时段。空串一律算「说不准」，返回 false。
+///
+/// **给"要不要喂那张空景图"用的**，见 PromptComposer::compose_with。
+bool lighting_clashes(const std::string& location_light,
+                      const std::string& shot_light);
+
 /// 把分镜表和资产库拼成提示词。
 class PromptComposer {
 public:

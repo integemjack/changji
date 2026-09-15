@@ -172,7 +172,24 @@ PromptBundle PromptComposer::compose_with(const Shot& shot,
     if (!insert_shot && shot.location_id.has_value() && !shot.location_id->empty()) {
         const auto it = assets_.locations.find(*shot.location_id);
         layers.push_back(it->second.render_prompt(style_line_));
-        if (it->second.ref_empty.has_value() && !it->second.ref_empty->empty()) {
+        // **时段对不上就别喂那张空景图。**
+        //
+        // 空景图一个场景只有一张，而同一个场景会有日夜两场戏。
+        // 2026-09-16 实测 ep04_sh001：场景资产写着「白天，散射光从窗户来」、
+        // 空景图是大白天的，而这一镜的光是「夜晚，光从窗户来，朝内打，硬光」
+        // ——Edit 模型拿参考图压过文字，首帧出来是大白天；出片模型再拿这张
+        // 白天首帧配上「夜晚」的提示词，两秒里把画面从白天拉成了夜晚。
+        // 闸门那句「首帧和提示词对不上，模型半路切到了提示词要的画面」
+        // 说的正是这件事。
+        //
+        // 这时候宁可只靠文字描述环境：一张白天的照片会把整场戏拽错时段，
+        // 而文字至少和这一镜的光是一致的。人物参考图不受影响——脸不分昼夜。
+        // 判据只认「明说了而且不是同一个时段」，说不准的一律照喂（见
+        // lighting_clashes）。
+        const bool clash =
+            lighting_clashes(it->second.lighting, shot.lighting);
+        if (!clash && it->second.ref_empty.has_value() &&
+            !it->second.ref_empty->empty()) {
             refs.push_back(*it->second.ref_empty);
         }
     }
@@ -245,6 +262,28 @@ PromptBundle PromptComposer::compose_with(const Shot& shot,
         {shot.negative_prompt, prompt::style::kNegativeVideo}, sep_);
     out.reference_images = std::move(refs);
     return out;
+}
+
+bool lighting_clashes(const std::string& location_light,
+                      const std::string& shot_light) {
+    // 只认明写出来的时段词。**说不准的一律算不冲突**：宁可喂一张可能
+    // 不对的参考图，也不要因为一句没写时段的光把场景的样子整个丢掉。
+    const auto era = [](const std::string& s) -> int {
+        static const char* kNight[] = {"夜", "晚", "凌晨", "深夜", "午夜"};
+        static const char* kDay[] = {"白天", "日间", "上午", "下午", "中午", "正午"};
+        bool night = false, day = false;
+        for (const char* w : kNight) {
+            if (s.find(w) != std::string::npos) { night = true; break; }
+        }
+        for (const char* w : kDay) {
+            if (s.find(w) != std::string::npos) { day = true; break; }
+        }
+        if (night == day) return 0;   // 都没有、或者两样都提了：说不准
+        return night ? 1 : 2;
+    };
+    const int a = era(location_light);
+    const int b = era(shot_light);
+    return a != 0 && b != 0 && a != b;
 }
 
 std::string PromptComposer::motion_prompt(const Shot& shot) const {

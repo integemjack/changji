@@ -911,3 +911,22 @@ TEST_CASE("出片那条也要把参考图还原成绝对路径") {
         CHECK(fs::is_regular_file(paths::from_utf8(r)));
     }
 }
+
+TEST_CASE("时段对不上就别喂那张空景图") {
+    // 2026-09-16 实测 ep04_sh001：场景资产写着「白天，散射光从窗户来」、
+    // 空景图是大白天的，而这一镜的光是「夜晚」——Edit 模型拿参考图压过文字，
+    // 首帧出来是大白天；出片模型再拿这张白天首帧配「夜晚」的提示词，两秒里
+    // 把画面从白天拉成了夜晚。
+    using stages::lighting_clashes;
+    CHECK(lighting_clashes("白天，散射光从窗户来，冷色调，软光",
+                           "夜晚，光从窗户来，朝内打，硬光"));
+    CHECK(lighting_clashes("夜晚，酒吧灯光昏暗", "下午，自然光"));
+    // 同一个时段不算冲突
+    CHECK_FALSE(lighting_clashes("白天，自然光", "上午，侧光，软"));
+    CHECK_FALSE(lighting_clashes("夜晚，霓虹", "深夜，路灯，硬光"));
+    // **说不准的一律照喂**：宁可喂一张可能不对的参考图，也不要因为一句
+    // 没写时段的光把场景的样子整个丢掉
+    CHECK_FALSE(lighting_clashes("", "夜晚，硬光"));
+    CHECK_FALSE(lighting_clashes("白天，自然光", ""));
+    CHECK_FALSE(lighting_clashes("侧逆光，硬", "顶光，软"));
+}
