@@ -50,7 +50,10 @@ async function load() {
     data.value = await api.nodes()
     error.value = ''
   } catch (err) {
-    error.value = err.message
+    // 说清是"问这几台机器"这一趟砸了。光一句原始报错的话，它孤零零挂在
+    // 标题底下，看着像整个设置页出了问题——这一块的别的动作（开关一个
+    // 格子、装模型）共用同一行，那几条自己带上下文。
+    error.value = `问不到这几台机器：${err.message}`
   } finally {
     loading.value = false
   }
@@ -369,7 +372,9 @@ function cellTitle(cap, node) {
       </li>
     </ul>
 
-    <p class="tiny dim">
+    <!-- 这是那张表的读法。**表不在就别摆**——读不出来的时候它孤零零挂在
+         一句报错底下，讲的是一个屏幕上根本没有的东西。 -->
+    <p v-if="data" class="tiny dim">
       点格子关掉或打开。<b>虚线的都点不动</b>：淡的那种是那台干不了——
       <b>能不能干是它自己量出来的</b>，要去装模型或者换一份编进了 sd.cpp
       的二进制；深的那种是配置文件里关掉的（<code>[[peer.nodes]]</code>

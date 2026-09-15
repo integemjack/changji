@@ -77,6 +77,20 @@ describe('那张表上的徽章', () => {
     expect(body).toMatch(/\.cell--locked\s*\{/)
   })
 
+  it('表读不出来的时候，底下那段读法也别摆', () => {
+    // 它讲的是屏幕上根本没有的东西。表、汇总、读法三块同进同出。
+    const at = body.indexOf('点格子关掉或打开')
+    expect(at, '底下那段挪走了？').toBeGreaterThan(0)
+    const open = body.lastIndexOf('<p', at)
+    expect(body.slice(open, at), '那段读法没跟着表一起藏').toContain('v-if="data"')
+  })
+
+  it('问不到那几台机器时，那句报错要说清是哪一趟砸了', () => {
+    const at = body.indexOf('async function load(')
+    const fn = body.slice(at, body.indexOf('onMounted('))
+    expect(fn).toMatch(/error\.value = `问不到这几台机器/)
+  })
+
   it('忙不忙是引擎算的，界面不自己推', () => {
     // 界面这头没有任何"根据别的字段推出忙"的算法：只认 n.busy。
     expect(body).not.toMatch(/busy\s*=\s*computed/)
