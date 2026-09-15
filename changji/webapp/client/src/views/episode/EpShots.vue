@@ -205,7 +205,16 @@ function locationOf(shot) {
 
 // 出分镜要先有角色和场景：分镜表里只能填已注册的 id，
 // 库是空的话大模型编不出来，直接报「引用了未注册的资产」。
+//
+// ⚠️ **项目那一份没读回来的时候一个字都别说。** `session.characters` 是
+// `project?.characters ?? []`——`/bff/flow` 砸了（引擎在重启、项目 JSON 坏了）
+// 它就是空的，而 `hasProject` 看的是路径、照样为真。于是这一行会写出
+// 「还没有角色和场景 · 先去出角色」，而真正的原因是读不到这个项目。
+// session store 自己那段注释点的就是这件事（「一个指着用户去做一件做不到
+// 的事的提示，真正的原因一个字没有」），这一处漏了。读砸了那句话由
+// `changji:error` 那条弹出来说。
 const missingAssets = computed(() => {
+  if (!session.project) return []
   const gaps = []
   if (!session.characters.length) gaps.push('角色')
   if (!session.locations.length) gaps.push('场景')

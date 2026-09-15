@@ -124,3 +124,26 @@ describe('镜头页：开工前那趟预检读砸了', () => {
     expect(view).toContain('@click="recheck"')
   })
 })
+
+/**
+ * 项目那一份没读回来的时候，别替它说"还没有"。
+ *
+ * `session.characters` 是 `project?.characters ?? []`——`/bff/flow` 砸了
+ * （引擎在重启、项目 JSON 坏了）它就是空的，而 `hasProject` 看的是路径、
+ * 照样为真。镜头页那一行于是写出「还没有角色和场景 · 先去出角色」，
+ * 而真正的原因是读不到这个项目。session store 自己那段注释点的就是这件事：
+ * 「一个指着用户去做一件做不到的事的提示，真正的原因一个字没有」。
+ */
+describe('镜头页：项目没读回来时那行「还没有角色和场景」', () => {
+  const view = read('views/episode/EpShots.vue')
+
+  it('先看项目那一份在不在', () => {
+    const at = view.indexOf('const missingAssets = computed(')
+    expect(at).toBeGreaterThan(0)
+    const body = view.slice(at, at + 260)
+    expect(body).toContain('if (!session.project) return []')
+    // 真的空着还是要说
+    expect(body).toContain('session.characters.length')
+    expect(body).toContain('session.locations.length')
+  })
+})
