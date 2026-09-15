@@ -248,12 +248,28 @@ const stat = computed(() => {
   }
 })
 
-// 每次打开都重读一遍。别的地方（另一个弹窗、设置页）可能刚改过。
+/**
+ * 每次打开都重读一遍。别的地方（另一个弹窗、设置页）可能刚改过。
+ *
+ * ⚠️ **这一趟要等回来再抄。** 原来是 `models.load()` 不等，紧接着
+ * `baseUrl.value = models.llmBaseUrl`——而那个值不是同一趟里最先回来的：
+ * `load()` 先拿 `/bff/setup/state`（`state.value = data`，项目页上那几个
+ * 模型名就是这时候冒出来的），**再**去问 `/api/connections`，地址、密钥
+ * 填没填、温度都在后面那一趟里。
+ *
+ * 也就是说按钮一出现就能点，而那会儿 `llmBaseUrl` 还是空串。点进去抄到
+ * 的就是空的——而这三个是 `ref`，不是 computed：后面那趟回来把 store 填
+ * 好了，框里**永远是空的**，直到关掉重开。
+ *
+ * 屏幕上是：接口地址空着、密钥提示写「本机服务一般不用填」（keyHint 拿
+ * 不到地址就落到这一支），而实际配着的是智谱这种非填密钥不可的云服务。
+ * 人看见的是"这台机器上什么都没配"，而它配得好好的。
+ */
 watch(
   () => props.open,
   async (now) => {
     if (!now) return
-    models.load()
+    await models.load()
     if (!isLlm.value) return
     apiKey.value = ''
     baseUrl.value = models.llmBaseUrl
