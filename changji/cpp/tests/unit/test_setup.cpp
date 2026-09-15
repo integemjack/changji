@@ -45,7 +45,7 @@ TEST_CASE("清单里每个角色名都要能落到 [models] 的某个字段上")
         for (const auto& role : g.owned_roles) {
             CAPTURE(g.key);
             CAPTURE(role);
-            CHECK(http::models_field(m, role) != nullptr);
+            CHECK(config::models_field(m, role) != nullptr);
         }
         for (const auto& o : g.options) {
             for (const auto& f : o.files) {
@@ -58,7 +58,7 @@ TEST_CASE("清单里每个角色名都要能落到 [models] 的某个字段上")
                                              g.owned_roles.end(),
                                              f.role) != g.owned_roles.end();
                 CHECK(owned);
-                CHECK(http::models_field(m, f.role) != nullptr);
+                CHECK(config::models_field(m, f.role) != nullptr);
             }
         }
     }
@@ -346,7 +346,7 @@ TEST_CASE("写回配置：认不出的选项跳过那一组，不炸") {
 
 TEST_CASE("apply_setup_patch 把 patch 落到内存里那份配置上") {
     config::Settings s;
-    http::apply_setup_patch(s, setup::config_patch({{"video", "h3-full-q4_k_m"}}));
+    config::apply_setup_patch(s, setup::config_patch({{"video", "h3-full-q4_k_m"}}));
     CHECK(s.models.video == "minimax_h3_fl2va-Q4_K_M.gguf");
     CHECK(s.models.video_llm == "qwen3vl_32b_minimax_h3-Q4_K_M.gguf");
     CHECK(s.models.video_rng == "cpu");
@@ -356,18 +356,18 @@ TEST_CASE("apply_setup_patch 把 patch 落到内存里那份配置上") {
 
     // 再换成 Wan，上一家的键必须真的被清掉——只清 patch 不清内存的话，
     // 界面显示的是新的、跑的是旧的。
-    http::apply_setup_patch(s, setup::config_patch({{"video", "wan22-ti2v-5b-fp16"}}));
+    config::apply_setup_patch(s, setup::config_patch({{"video", "wan22-ti2v-5b-fp16"}}));
     CHECK(s.models.video_llm.empty());
     CHECK(s.models.video_lora.empty());
     CHECK(s.models.video_cfg == doctest::Approx(6.0));
 
-    http::apply_setup_patch(s, json{{"llm", {{"backend", "remote"}}}});
+    config::apply_setup_patch(s, json{{"llm", {{"backend", "remote"}}}});
     CHECK(s.llm.backend == "remote");
 
     // **地址和模型名也要落进内存，不能只写文件。** 只落 backend 的话，
     // 选了云端那一项之后文件里是智谱、内存里还是上一家，写剧本仍然发往
     // 上一家，要等重启才"自己好了"。
-    http::apply_setup_patch(s, setup::config_patch({{"llm", "zhipu-free"}}));
+    config::apply_setup_patch(s, setup::config_patch({{"llm", "zhipu-free"}}));
     CHECK(s.llm.base_url == "https://open.bigmodel.cn/api/paas/v4");
     CHECK(s.llm.model == "glm-4.7-flash");
 }

@@ -687,6 +687,7 @@ add_executable(changji
     src/util/sysstat.cpp
     src/net/ws_client.cpp
     src/config/settings.cpp
+    src/config/model_patch.cpp
     src/config/writeback.cpp
     src/config/runtime.cpp
     src/doctor/doctor.cpp
@@ -1203,7 +1204,8 @@ if(CHANGJI_BUILD_TESTS)
         src/media/assemble.cpp
         src/llm/client.cpp
         src/llm/sse.cpp
-            src/config/settings.cpp
+        src/config/settings.cpp
+        src/config/model_patch.cpp
         src/config/writeback.cpp
         src/config/runtime.cpp
         src/http/readonly.cpp

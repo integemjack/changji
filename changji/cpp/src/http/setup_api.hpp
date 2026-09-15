@@ -31,6 +31,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include "config/model_patch.hpp"   // models_field / apply_setup_patch 搬到 config 层了
 #include "config/settings.hpp"
 #include "http/readonly.hpp"
 #include "models/hardware.hpp"
@@ -73,13 +74,6 @@ bool download_in_progress(const std::filesystem::path& model_file);
 
 bool group_satisfied(const setup::Group& g, const config::Settings& settings);
 
-/// 把 `config_patch` 那种 patch 应用到内存里的配置。
-///
-/// **单独一个函数是因为不能重新读盘。** 重读会丢掉项目那一层的覆盖
-/// （画幅写在项目的 changji.toml 里），而这个请求不知道当前是哪个项目。
-/// 只认这一页会写的那些键，别的忽略。
-void apply_setup_patch(config::Settings& settings, const nlohmann::json& patch);
-
 /// 这一组现在配的是哪个选项。认不出来返回空串。
 ///
 /// 判据是**主角色那个文件名对得上**（video 组就是 `[models].video`）。
@@ -91,11 +85,5 @@ void apply_setup_patch(config::Settings& settings, const nlohmann::json& patch);
 /// 挑的模型名冲掉（2026-09-14 的那个 bug）。
 std::string current_option(const setup::Group& g,
                            const config::Settings& settings);
-
-/// `[models]` 里那个角色对应的字段。角色名不认识返回 nullptr。
-///
-/// 导出是为了能测：漏一个角色的表现是"下完了但配置里没写上"，
-/// 而那要到出片时才报"模型没配"。
-std::string* models_field(config::ModelsConfig& m, const std::string& role);
 
 }  // namespace changji::http
