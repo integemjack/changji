@@ -69,12 +69,31 @@ ApiResult get_hardware(const config::Settings& settings) {
 
 ApiResult get_hardware(const config::Settings& settings,
                        const HardwareProfile& p) {
-    (void)settings;
+    // **单镜最长能出多久，要看得见。** 2026-09-16 撞到：用户说「分镜时间改到
+    // 最大 15 秒」，而这个数是四道夹子连乘出来的——模型能出多少帧、这张卡的
+    // 显存、内核的像素×帧上限、这部剧的 [video].max_shot_s，再加上帧数必须
+    // 落在 17k+5 的格子上。中间任何一道把它压回 5 秒，界面上一个字都没有，
+    // 只能靠翻源码倒推。摆出来之后，「为什么排不出长镜头」是一眼的事。
+    const auto& limits = stages::video_limits();
+    const int fps = stages::effective_fps(limits, settings.assembly.fps);
+    json slots = json::array();
+    for (const double s : limits.duration_slots(fps)) slots.push_back(s);
     return {200, {
         {"gpu", p.gpu.has_value() ? json(p.gpu->name) : json(nullptr)},
         {"vram_gb", round1(p.vram_gb)},
         {"detected", p.detected},
         {"tiers", tiers_json(p.tiers, /*with_seconds=*/true)},
+        {"shot", {
+            {"max_frames", limits.max_frames},
+            // 落在格子上、真正生成得出来的那个帧数。和 max_frames 差一截是
+            // 常态（360 → 345），差的那一截正是「排了却出不来」的来源。
+            {"max_frames_on_grid", limits.max_frames_on_grid()},
+            {"frame_grid", std::to_string(limits.frame_step) + "k+" +
+                               std::to_string(limits.frame_base)},
+            {"fps", fps},
+            {"max_shot_s", round1(limits.max_duration_s(fps))},
+            {"duration_slots", slots},
+        }},
     }};
 }
 

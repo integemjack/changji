@@ -4,6 +4,19 @@
       "body": {
         "detected": false,
         "gpu": "NVIDIA GeForce RTX 2060",
+        "shot": {
+          "duration_slots": [
+            2.0,
+            3.0,
+            4.0,
+            5.0
+          ],
+          "fps": 24,
+          "frame_grid": "4k+1",
+          "max_frames": 121,
+          "max_frames_on_grid": 121,
+          "max_shot_s": 5.0
+        },
         "tiers": {
           "draft": {
             "height": 352,

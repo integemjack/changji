@@ -560,8 +560,11 @@ TEST_CASE("新建项目时落一份标准的项目配置") {
     const config::Settings s = config::load_settings(made);
     CHECK(s.video.orientation == "portrait");
     CHECK(s.video.quality == "720p");
-    // 单镜上限按短剧的标准单位钉成 5 秒——这是剧的属性，见 VideoConfig::max_shot_s
-    CHECK(s.video.max_shot_s == doctest::Approx(5.0));
+
+    // 2026-09-16 从 5.0 抬到 15.0：原来那个数的理由是「8 秒的镜头会中途
+    // 硬切」，而同一天查出来中途硬切的根因是运动描述没盖满时长、以及写了
+    // 进画出画的动作。上限不该替内容做决定。见 settings.cpp 里那份模板。
+    CHECK(s.video.max_shot_s == doctest::Approx(15.0));
     CHECK(s.assembly.crf == config::AssemblyConfig{}.crf);
     CHECK(s.gates.max_attempts_per_shot ==
           config::GateConfig{}.max_attempts_per_shot);

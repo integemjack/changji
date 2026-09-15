@@ -617,8 +617,19 @@ void run(const config::Settings& settings, const Options& opts) {
     // 处理逻辑放在 readonly.cpp 里的纯函数，这里只负责取查询参数和转响应。
     // 那些函数不碰 crow 类型，单元测试能不起服务就把它们跑一遍。
 
-    CROW_ROUTE(app, "/api/hardware")([] {
-        auto r = guard([] {
+    CROW_ROUTE(app, "/api/hardware")([](const crow::request& req) {
+        auto r = guard([&] {
+            // **给了项目就按这部剧算。** 单镜最长是四道夹子连乘出来的，
+            // 其中一道（[video].max_shot_s）是剧的属性——不按项目算的话，
+            // 这一栏报的是全局默认，而排分镜用的是项目那一份，两个数对不上。
+            const char* raw = req.url_params.get("path");
+            const std::string path = raw ? raw : "";
+            if (!path.empty()) {
+                const config::Settings s =
+                    config::load_settings(paths::from_utf8(path));
+                config::apply_video_limits(s);
+                return get_hardware(s, config::runtime().profile());
+            }
             return get_hardware(config::runtime().snapshot(),
                                 config::runtime().profile());
         });
