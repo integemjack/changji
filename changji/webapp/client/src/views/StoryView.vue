@@ -2524,6 +2524,39 @@ async function stopWriting() {
               <h1 v-else class="doc__title">{{ chapterLabel(chapter, index) }}</h1>
               <span class="spacer" />
 
+              <!-- **整本书那两件事，窄屏下没有别的入口。**
+                   它们长在左栏底下（`.list__foot`），而窄屏（≤1100px）
+                   `.ed__list` 整个不渲染——上面那条注释记的是同一件事，
+                   当时只把那颗点了没反应的「章节列表」按钮关掉了，这两件
+                   事却没给窝。后果是整条流水线走不下去：**「提人物」够不着
+                   的话，人物和地点永远是空的**，设定页空着、拆分镜没人可
+                   引用，而「反推」「采用大纲」之后那两句提示还在说「接着点
+                   左边「提人物」」——左边什么都没有。
+                   条件和左栏底下那一组逐字一样，只是多一个 `!listShown`：
+                   两边同时出现就是同一件事摆了两遍。 -->
+              <template v-if="!listShown && !draft && !writer.running">
+                <button
+                  v-if="unwritten"
+                  class="btn btn--ai btn--sm"
+                  type="button"
+                  :disabled="isBusy('chapters')"
+                  @click="writeAllChapters"
+                >
+                  <AppIcon name="sparkle" :size="13" />
+                  展开剩下 {{ unwritten }} 章
+                </button>
+                <button
+                  v-if="needsAnalysis"
+                  class="btn btn--ghost btn--sm"
+                  type="button"
+                  :disabled="isBusy('analyze')"
+                  title="让 AI 读一遍正文，把人物、关系、地点提出来。正文一个字不动"
+                  @click="analyzeStory"
+                >
+                  {{ isBusy('analyze') ? '正在读…' : '提人物' }}
+                </button>
+              </template>
+
               <span v-if="locked" class="doc__live"><span class="dot" /> AI 正在写</span>
               <button
                 v-if="locked && writer.running"
@@ -3065,6 +3098,9 @@ async function stopWriting() {
   align-items: center;
   gap: var(--s2);
   min-height: 32px;
+  /* 窄屏下这一行还要多摆「展开剩下 N 章」「提人物」，挤不下就折行——
+     钉死不折的话它们顶出屏幕外，等于还是够不着。 */
+  flex-wrap: wrap;
 }
 .doc__title {
   margin: 0;
