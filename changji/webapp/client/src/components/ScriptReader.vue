@@ -40,6 +40,21 @@ const props = defineProps({
    * 传进来就以它为准。
    */
   fit: { type: String, default: '' },
+  /**
+   * 现成的对白字数。给了就用它，不自己数。**和 `fit` 是一对**。
+   *
+   * 上面那段说清了两边的分子不是一回事：引擎数的是结构化拍子
+   * （`ScriptDraft::dialogue_chars`，只累加 `kind == "dialogue"` 那几条的
+   * `utf8_len`），而这一页是把渲染好的文本再解析回来猜。当初只把**裁决**
+   * （fit）接过来了，**数字还是这边猜的**——于是草稿面板上会出现
+   * 「对白 210 / 171 字」旁边挂着一颗绿的「合适」：数说超了，丸子说正好，
+   * 并排站着自相矛盾。碰上「字幕：三年后」「画外音：他没回头」这类带冒号
+   * 的描写行就会这样，猜法把它算成了台词。
+   *
+   * 引擎只给整篇这一个数，所以下面每一段那行「N 句 · 对白约 N 秒」照旧是
+   * 这边猜的——那儿本来就写着「约」，而且分段的数引擎没有。
+   */
+  dialogueChars: { type: Number, default: 0 },
 })
 
 /** 台词说话人的配色。同一个人从头到尾同一个颜色，扫一眼就认得出。 */
@@ -141,7 +156,10 @@ const parsed = computed(() => {
 
 function statsOf(blocks) {
   const lines = blocks.filter((b) => b.kind === 'dialogue')
-  const chars = lines.reduce((a, b) => a + b.text.length, 0)
+  // **按字数，不按 `.length`。** `.length` 数的是 UTF-16 码元，一个 emoji
+  // 或者生僻字算两个；引擎那边是 `text::utf8_len`（码位），api/labels.js 的
+  // `countScriptChars` 也是 `[...s]`。三处要同一个口径。
+  const chars = lines.reduce((a, b) => a + [...b.text].length, 0)
   return {
     dialogueLines: lines.length,
     actionLines: blocks.length - lines.length,
@@ -150,7 +168,17 @@ function statsOf(blocks) {
   }
 }
 
-const stats = computed(() => statsOf(parsed.value.sections.flatMap((s) => s.blocks)))
+const stats = computed(() => {
+  const own = statsOf(parsed.value.sections.flatMap((s) => s.blocks))
+  if (!props.dialogueChars) return own
+  // 引擎给了就用引擎的，「约 x 秒」也跟着它走——那两个数是同一个分子算出来的，
+  // 只换一个的话顶栏自己先打架。
+  return {
+    ...own,
+    chars: props.dialogueChars,
+    seconds: Math.round(props.dialogueChars / props.charsPerSecond),
+  }
+})
 const empty = computed(() => parsed.value.sections.every((s) => !s.blocks.length))
 
 /** 够不够。阈值和后端 post_script_write 的 fit 一样：0.6 以下偏短，1.35 以上偏长。 */
