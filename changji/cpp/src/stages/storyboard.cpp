@@ -1101,6 +1101,34 @@ int count_motion_segments(const std::string& motion_prompt) {
         std::sregex_iterator()));
 }
 
+namespace {
+
+/// 这一句是不是在开门关窗。
+///
+/// **不能只靠列词。** 原来 kRisky 里列着「开门」「门打开」「推开门」，
+/// 而模型写的是「门缓慢打开」——中间插一个副词，三条全都不匹配，于是
+/// 2026-09-16 那版 ep06 的第 1 镜和第 7 镜都是「门缓慢打开」。用户报的
+/// 「开门关门都有 bug」就是这个。
+///
+/// 门窗帘抽屉这几样东西一开，模型就得去编第一帧看不见的那半边空间，
+/// 那是它编不出来的。所以按「这几样东西 + 开合动作」成对地认，中间
+/// 隔着几个字也认。分句已经在外面切好了，只在一句之内找。
+bool door_opens(const std::string& clause) {
+    // 中间那一段按**字节**数，一个汉字三字节：24 字节 ≈ 八个字，
+    // 用 `.` 不用 `[^]]`——std::regex 的 ECMAScript 语法里空字符类是合法的，
+    // `[^]]` 会被读成「任意一个字符，后面跟一个右方括号」，于是整条规则
+    // 只在后面正好有个 `]` 时才命中，等于没写。
+    // 「门在身后缓缓关上」这种插了四个字的也够得着。分句已经在外面按
+    // 逗号句号切好了，一句之内出现「门…关上」，那就是在关门。
+    static const std::regex re(
+        "(门|窗|帘|抽屉).{0,24}?"
+        "(打开|开启|推开|拉开|关上|关闭|合上|带上|敞开|开了|关了)"
+        "|(打开|开启|推开|拉开|关上|关闭|合上|敞开).{0,12}?(门|窗|帘|抽屉)");
+    return std::regex_search(clause, re);
+}
+
+}  // namespace
+
 std::string defuse_motion(const std::string& in) {
     if (in.empty()) return in;
     // 会把主体带出画、或者要求模型去编第一帧看不见的空间的那些词。
@@ -1123,21 +1151,28 @@ std::string defuse_motion(const std::string& in) {
         const std::string clause = text::strip_ws(cur);
         cur.clear();
         if (clause.empty()) return;
-        for (const char* w : kRisky) {
-            if (clause.find(w) != std::string::npos) {
-                dropped_any = true;
-                // **摘正文，别把开头那个时间码一起摘走。**
-                // `[0-5秒] 曾老板走向门口` 整句丢掉的话时间轴就从
-                // `[0-5秒]` 变成没有，motion_covering 只好整句重包，
-                // 后面那几段的分段也跟着错位。
-                if (!clause.empty() && clause.front() == '[') {
-                    const auto close = clause.find(']');
-                    if (close != std::string::npos) {
-                        kept.push_back(clause.substr(0, close + 1));
-                    }
+        bool risky = door_opens(clause);
+        if (!risky) {
+            for (const char* w : kRisky) {
+                if (clause.find(w) != std::string::npos) {
+                    risky = true;
+                    break;
                 }
-                return;
             }
+        }
+        if (risky) {
+            dropped_any = true;
+            // **摘正文，别把开头那个时间码一起摘走。**
+            // `[0-5秒] 曾老板走向门口` 整句丢掉的话时间轴就从
+            // `[0-5秒]` 变成没有，motion_covering 只好整句重包，
+            // 后面那几段的分段也跟着错位。
+            if (clause.front() == '[') {
+                const auto close = clause.find(']');
+                if (close != std::string::npos) {
+                    kept.push_back(clause.substr(0, close + 1));
+                }
+            }
+            return;
         }
         // 只剩时间码、没有正文的不算正文（下面判"摘完就空了"要用）
         if (clause.find_first_not_of(" \t") != std::string::npos &&

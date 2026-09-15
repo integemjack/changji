@@ -932,6 +932,41 @@ TEST_CASE("时段对不上就别喂那张空景图") {
     CHECK_FALSE(lighting_clashes("侧逆光，硬", "顶光，软"));
 }
 
+TEST_CASE("开门关门：中间插一个副词也要认出来") {
+    // 用户 2026-09-16 报的「开门关门都有 bug」。kRisky 里列着「开门」
+    // 「门打开」「推开门」，而模型写的是「门缓慢打开」——中间插一个副词，
+    // 三条全不匹配。那一版 ep06 的第 1 镜和第 7 镜都是「门缓慢打开」。
+    const auto gone = [](const std::string& s) {
+        const std::string out = stages::defuse_motion(s);
+        for (const char* w : {"打开", "推开", "拉开", "关上", "关闭", "合上",
+                              "敞开", "开启"}) {
+            if (out.find(w) != std::string::npos) return false;
+        }
+        return true;
+    };
+    CHECK(gone("[0-2秒] 门缓慢打开，门铃叮当响，酒吧内部光线渐亮"));
+    CHECK(gone("[0-2秒] 门缓缓打开，光线从门缝射入，纸张味弥漫"));
+    CHECK(gone("[0-3秒] 他伸手，门被轻轻推开，灰尘扬起"));
+    CHECK(gone("[0-3秒] 窗户忽然打开，风灌进来"));
+    CHECK(gone("[0-3秒] 他把抽屉慢慢拉开，里面是一沓照片"));
+    CHECK(gone("[0-3秒] 门在身后缓缓关上，屋里暗下来"));
+
+    // 摘掉的是那一句，别的照旧留着，时间码也留着
+    const std::string got =
+        stages::defuse_motion("[0-2秒] 门缓慢打开，门铃叮当响，酒吧内部光线渐亮");
+    CHECK(got.find("[0-2秒]") != std::string::npos);
+    CHECK(got.find("门铃叮当响") != std::string::npos);
+    CHECK(got.find("光线渐亮") != std::string::npos);
+
+    // **别错杀。** 门铃、门口、门缝这些只是提了一句，没有人去开它。
+    for (const char* ok : {"[0-2秒] 门铃叮当响后消失，光线渐暗",
+                           "[0-2秒] 他站在门口，手里攥着照片",
+                           "[0-2秒] 光线从门缝射入，灰尘浮动",
+                           "[0-3秒] 他打开卷宗，纸张哗啦响"}) {
+        CHECK(stages::defuse_motion(ok) == std::string(ok));
+    }
+}
+
 TEST_CASE("镜头改短时，演不完的那几拍整段摘掉，不许把时间轴写反") {
     // 2026-09-16 实测：ep05_sh007 计划 15 秒、被锁成 3 秒，运动描述变成
     // `[0-5秒] … [5-10秒] … [10-3秒] …`——最后那一段的止点被往回拉到 3，
