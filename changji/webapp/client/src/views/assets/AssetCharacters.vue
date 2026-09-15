@@ -1063,7 +1063,7 @@ async function clearRef(charId, slot) {
                         {{ openChar['ref_' + s.key] ? '换' : '传' }}
                         <input
                           type="file"
-                          accept="image/png,image/jpeg,image/webp"
+                          accept="image/png,image/jpeg"
                           hidden
                           @change="upload(openChar.char_id, s.key, $event)"
                         />

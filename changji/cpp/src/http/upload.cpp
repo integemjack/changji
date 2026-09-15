@@ -18,14 +18,37 @@ namespace {
 
 using namespace changji::models;
 
-/// 三种格式对应的扩展名。顺序固定，清理旧文件时要按这个表遍历。
-const std::array<std::pair<const char*, const char*>, 3>& ref_types() {
-    static const std::array<std::pair<const char*, const char*>, 3> kTypes = {{
+/// 参考图收哪几种。
+///
+/// ⚠️ **这张表要和出图那头真读得了的对上。** 上一版还收 `image/webp`，
+/// 而参考图最后是 `infer/sd_image.cpp` 的 `load_image()` 拿
+/// `stbi_load_from_memory` 读的——stb_image **一行 webp 的代码都没有**
+/// （它自己那份格式清单里是 JPEG / PNG / TGA / BMP / PSD / GIF / HDR /
+/// PIC / PNM，没有 webp）。
+///
+/// 那句"也只认这几种"当年指的是 ComfyUI 的 LoadImage（PIL，读得了 webp），
+/// 而 comfy 那一档 2026-09-10 就随 ComfyUI 一起拆了。依据没了，表还留着。
+///
+/// 于是传一张 webp：这儿收下、卡片上也显示得出来（浏览器读得了 webp，
+/// media.cpp 也照发），而**每一个用到这个角色的镜头**开渲染时才抛
+/// 「参考图解不开」。收的时候就该说不。
+const std::array<std::pair<const char*, const char*>, 2>& ref_types() {
+    static const std::array<std::pair<const char*, const char*>, 2> kTypes = {{
         {"image/png", ".png"},
         {"image/jpeg", ".jpg"},
-        {"image/webp", ".webp"},
     }};
     return kTypes;
+}
+
+/// 清同名旧图时要扫的扩展名。**比上面那张收件表多一个 `.webp`。**
+///
+/// 两张表管的是两件事：上面那张是"往后还收不收"，这张是"盘上可能躺着
+/// 什么"。2026-09-15 之前收过 webp，那些文件还在；同一个槽位后来传了
+/// 一张 jpg，不扫 .webp 的话旧那张就永远留在 refs 里——正是
+/// `claim_ref_path` 上面那段要防的「留一张永远用不上的，而且用户看不到」。
+const std::array<const char*, 3>& ref_stale_exts() {
+    static const std::array<const char*, 3> kExts = {".png", ".jpg", ".webp"};
+    return kExts;
 }
 
 std::string need_str(const json& body, const char* key) {
@@ -44,7 +67,7 @@ ProjectStore open_project(const std::string& path) {
 std::string check_upload(const std::string& content_type, const std::string& data) {
     const std::string suffix = ref_suffix_for(content_type);
     if (suffix.empty()) {
-        throw ApiError(400, "只收 png、jpg、webp，收到的是 " +
+        throw ApiError(400, "只收 png、jpg，收到的是 " +
                                 (content_type.empty() ? std::string("(空)")
                                                       : content_type));
     }
@@ -97,6 +120,14 @@ const std::array<std::pair<const char*, const char*>, 4>& voice_types() {
     return kTypes;
 }
 
+/// 清同名旧片段时要扫的扩展名。**比上面那张收件表多一个 `.m4a`**，
+/// 理由同 `ref_stale_exts`：收过的格式盘上还躺着，收不收和扫不扫是两件事。
+const std::array<const char*, 4>& voice_stale_exts() {
+    static const std::array<const char*, 4> kExts = {".wav", ".mp3", ".m4a",
+                                                     ".flac"};
+    return kExts;
+}
+
 /// 对应 Python 的 round(len(data)/1024)。
 int size_kb(const std::string& data) {
     return static_cast<int>(std::nearbyint(static_cast<double>(data.size()) / 1024.0));
@@ -111,8 +142,8 @@ fs::path claim_ref_path(const ProjectStore& store, const std::string& stem,
     fs::create_directories(refs, ec);
 
     const fs::path dest = refs / paths::from_utf8(stem + suffix);
-    for (const auto& kv : ref_types()) {
-        const fs::path stale = refs / paths::from_utf8(stem + kv.second);
+    for (const char* ext : ref_stale_exts()) {
+        const fs::path stale = refs / paths::from_utf8(stem + ext);
         if (stale != dest && fs::is_regular_file(stale, ec)) {
             fs::remove(stale, ec);
         }
@@ -200,8 +231,8 @@ ApiResult post_character_voice(const std::string& project_path,
     // 同名不同扩展名的旧片段要清掉，理由同 claim_ref_path：
     // 留着的话目录里躺一段永远用不上的，而用户看不到。
     const fs::path dest = dir / paths::from_utf8(char_id + suffix);
-    for (const auto& kv : voice_types()) {
-        const fs::path stale = dir / paths::from_utf8(char_id + kv.second);
+    for (const char* ext : voice_stale_exts()) {
+        const fs::path stale = dir / paths::from_utf8(char_id + ext);
         if (stale != dest && fs::is_regular_file(stale, ec)) fs::remove(stale, ec);
     }
 

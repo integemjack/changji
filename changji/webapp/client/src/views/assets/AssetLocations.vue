@@ -716,7 +716,7 @@ async function clearEmpty(locationId) {
                     {{ openLoc.ref_empty ? '换一张' : '传空景图' }}
                     <input
                       type="file"
-                      accept="image/png,image/jpeg,image/webp"
+                      accept="image/png,image/jpeg"
                       hidden
                       @change="uploadEmpty(openLoc.location_id, $event)"
                     />

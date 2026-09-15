@@ -93,3 +93,89 @@ describe('参考音色收哪几种', () => {
     expect(pickerTypes()).toEqual([...new Set(uploadTypes().map((t) => t.mime))].sort())
   })
 })
+
+/**
+ * 参考图那一边，同一把尺子。
+ *
+ * 这边没法像音色那样从源码里读出"真身"——`sd_image.cpp` 的 `load_image()`
+ * 走 `stbi_load_from_memory`，而 stb_image 支持哪几种写在它自己的头文件
+ * 注释里，不在我们仓库。所以这条直接把答案钉死：**png 和 jpg，没有 webp**。
+ *
+ * stb_image 那份格式清单是 JPEG / PNG / TGA / BMP / PSD / GIF / HDR / PIC /
+ * PNM——整份文件里 "webp" 出现 0 次。上一版收 webp 的依据是 ComfyUI 的
+ * LoadImage（PIL，读得了），而 comfy 那一档 2026-09-10 就拆了。
+ *
+ * 要是哪天真给参考图接了别的解码器，这条会红——那时候连着把上面那段依据
+ * 一起改，而不是把它删掉了事。
+ */
+function refTypes() {
+  const src = read(UPLOAD)
+  const block = src.match(/ref_types\(\)\s*\{[\s\S]*?\{\{([\s\S]*?)\}\}/)
+  if (!block) throw new Error('upload.cpp 里找不到 ref_types 那张表')
+  const pairs = [...block[1].matchAll(/\{"([^"]+)",\s*"\.([a-z0-9]+)"\}/g)]
+  if (!pairs.length) throw new Error('ref_types 那张表是空的？')
+  return pairs.map(([, mime, ext]) => ({ mime, ext }))
+}
+
+/** 清同名旧文件时要扫的那张表。 */
+function staleExts(name) {
+  const src = read(UPLOAD)
+  const block = src.match(new RegExp(`${name}\\(\\)\\s*\\{[\\s\\S]*?\\{([\\s\\S]*?)\\}`))
+  if (!block) throw new Error(`upload.cpp 里找不到 ${name}`)
+  return [...block[1].matchAll(/"\.([a-z0-9]+)"/g)].map((m) => m[1]).sort()
+}
+
+/** 某个 .vue 里那个图片 accept。 */
+function imagePicker(rel) {
+  const m = read(rel).match(/accept="((?:image\/[^",]+,?)+)"/)
+  if (!m) throw new Error(`${rel} 里找不到那个图片 accept`)
+  return m[1].split(',').map((s) => s.trim()).filter(Boolean).sort()
+}
+
+describe('参考图收哪几种', () => {
+  it('只收 png 和 jpg——出图那头拿 stb_image 读，它不认 webp', () => {
+    expect([...new Set(refTypes().map((t) => t.ext))].sort()).toEqual(['jpg', 'png'])
+  })
+
+  it('那句 400 报的和真收的是同一批', () => {
+    const src = read(UPLOAD)
+    const at = src.indexOf('check_upload')
+    const m = src.slice(at).match(/"只收 ([^"]+?)，收到的是/)
+    if (!m) throw new Error('check_upload 里找不到那句「只收 …」')
+    expect(m[1].split('、').map((s) => s.trim()).sort()).toEqual(
+      [...new Set(refTypes().map((t) => t.ext))].sort(),
+    )
+  })
+
+  it('两页的文件选择器亮的都和接口收的是同一批', () => {
+    const want = [...new Set(refTypes().map((t) => t.mime))].sort()
+    expect(imagePicker('../views/assets/AssetCharacters.vue')).toEqual(want)
+    expect(imagePicker('../views/assets/AssetLocations.vue')).toEqual(want)
+  })
+})
+
+/**
+ * **收件表和清理表是两件事。**
+ *
+ * 收件表说的是"往后还收不收"，清理表说的是"盘上可能躺着什么"。收窄收件表
+ * 的时候顺手把清理表也削了的话，同一个槽位后来传了张新的，旧那份就永远留
+ * 在目录里——`claim_ref_path` 上面那段要防的正是这个：「留一张永远用不上的，
+ * 而且用户看不到」。
+ *
+ * 所以清理表只能比收件表大，不能小。
+ */
+describe('清理旧文件那两张表', () => {
+  it('参考图：扫的扩展名盖得住收的', () => {
+    const stale = new Set(staleExts('ref_stale_exts'))
+    for (const { ext } of refTypes()) expect(stale.has(ext)).toBe(true)
+    // 收过 webp 的项目盘上还躺着，得接着扫
+    expect(stale.has('webp')).toBe(true)
+  })
+
+  it('参考音色：扫的扩展名盖得住收的', () => {
+    const stale = new Set(staleExts('voice_stale_exts'))
+    for (const { ext } of uploadTypes()) expect(stale.has(ext)).toBe(true)
+    // 同上：收过 m4a 的项目盘上还躺着
+    expect(stale.has('m4a')).toBe(true)
+  })
+})

@@ -22,8 +22,13 @@ namespace changji::http {
 
 /// 参考图能传哪些格式。
 ///
-/// 不是随便什么文件都往项目目录里塞，而且 ComfyUI 那边的 LoadImage
-/// 也只认这几种。返回扩展名，认不出来返回空串。
+/// 不是随便什么文件都往项目目录里塞，而且**出图那头只读得了这几种**
+/// （`sd_image.cpp` 的 `load_image()` 走 stb_image）。返回扩展名，
+/// 认不出来返回空串。
+///
+/// 原来这句写的是「ComfyUI 那边的 LoadImage 也只认这几种」——而 comfy
+/// 那一档 2026-09-10 就随 ComfyUI 一起拆了，剩下的只有进程内这一条。
+/// 两者能读的还不一样：PIL 读得了 webp，stb_image 读不了。
 std::string ref_suffix_for(const std::string& content_type);
 
 /// 单张上限 20MB。
