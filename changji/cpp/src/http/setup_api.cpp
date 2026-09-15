@@ -159,10 +159,17 @@ std::string current_option(const Group& g, const config::Settings& s) {
 
 namespace {
 
-/// 写回配置并让内存里那份跟上。
-void persist(const json& patch) {
+/// 让内存里那份跟上，`to_file` 为真时顺带写回配置文件。
+///
+/// **两件事要分开。** 设置页顶上那个「写回配置文件」勾（不勾就是"只对
+/// 本次进程生效，重启就没了"）原来只管得到那一页的「引擎」「配音」
+/// 「装配与闸门」三节——它们走的是 `/api/settings` / `/api/connections`，
+/// 那两条一直收 `persist`。而同一页的「模型目录和下载」走的是这儿，
+/// 无论勾没勾都往盘上写，回一句「存好了」。勾在那一排的最右边、就在
+/// 那颗保存按钮上方，说的却不是同一件事。
+void persist(const json& patch, bool to_file = true) {
     if (patch.empty()) return;
-    config::save_user_config(patch);
+    if (to_file) config::save_user_config(patch);
     auto s = config::runtime().snapshot();
     apply_setup_patch(s, patch);
     config::runtime().replace(s);
@@ -438,6 +445,21 @@ ApiResult post_setup_download(const config::Settings& settings, const json& body
         return it == body.end() || !it->is_boolean() || it->get<bool>();
     }();
 
+    // 要不要写回配置文件。设置页顶上那个勾就是它，默认真——项目页那个
+    // 模型窗口和别的调用方一个字都不用改。见上面 persist() 那段。
+    const bool want_persist = [&] {
+        const auto it = body.find("persist");
+        return it == body.end() || !it->is_boolean() || it->get<bool>();
+    }();
+    // **真要下文件就不能"只对本次进程生效"。** 下完那一下 `on_item_done`
+    // 会把这一组写回配置文件（它必须写：配置指着老模型而文件是新的，
+    // sd.cpp 不报错，只出一段花屏）。收下这个要求再反悔，比当场说清楚糟。
+    if (!want_persist && want_download) {
+        throw ApiError(400,
+                       "要下模型就得写回配置文件：文件下完之后配置得指过去，"
+                       "不然出图会拿着老模型跑。先勾上「写回配置文件」。");
+    }
+
     if (setup::Downloader::instance().running()) {
         // 409 而不是静默忽略：用户点了第二次而界面什么都没变的话，
         // 他会以为第一次没点上。
@@ -576,7 +598,7 @@ ApiResult post_setup_download(const config::Settings& settings, const json& body
     }
 
     try {
-        persist(immediate);
+        persist(immediate, want_persist);
     } catch (const std::exception& e) {
         throw ApiError(500, std::string("配置写不进去：") + e.what());
     }

@@ -83,6 +83,11 @@ async function loadModelsDir() {
 async function saveModelsDir() {
   // **一组模型都不选**：这一节只管往哪儿下，不管下什么。引擎那边
   // `download: false` 加空 selections 就是"只存设置"（见 post_setup_download）。
+  //
+  // **`persist` 也要带上。** 这一页顶上那个「写回配置文件」勾原来管不到这
+  // 一节：不勾着改模型目录，照样写进配置文件，还回一句「存好了」——而那个
+  // 勾就在这颗按钮正上方，写着"不勾就是只对本次进程生效，重启就没了"。
+  // 另外三节（引擎 / 配音 / 装配与闸门）走的 /api/settings 一直收它。
   const ok = await run(
     () =>
       api.startSetupDownload({
@@ -90,8 +95,12 @@ async function saveModelsDir() {
         dir: modelsDir.value.trim() || undefined,
         source: modelsSource.value || undefined,
         download: false,
+        persist: persist.value,
       }),
-    { key: 'modelsDir', success: '存好了' },
+    {
+      key: 'modelsDir',
+      success: persist.value ? '存好了' : '已生效（重启后失效）',
+    },
   )
   if (!ok) return
   await loadModelsDir()
