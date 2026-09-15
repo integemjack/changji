@@ -58,6 +58,12 @@ describe('那张表上的徽章', () => {
     expect(line).toContain('v-else-if')
   })
 
+  it('第一次还没问回来的时候，说一声「问着」', () => {
+    // 挨个去连，每台最多等 3 秒。这段时间里整块只剩标题和底下那句说明，
+    // 看着像"就本机一台"——而真是那样的话，表里至少还有本机那一行。
+    expect(body).toMatch(/v-if="loading && !data"/)
+  })
+
   it('忙不忙是引擎算的，界面不自己推', () => {
     // 界面这头没有任何"根据别的字段推出忙"的算法：只认 n.busy。
     expect(body).not.toMatch(/busy\s*=\s*computed/)

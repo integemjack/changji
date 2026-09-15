@@ -209,6 +209,12 @@ function cellTitle(cap, node) {
       {{ error }}
     </p>
 
+    <!-- **「还没问完」和「没有别的机器」是两回事。** 这一问要挨个去连，
+         每台最多等 3 秒，几台加起来十几秒是常事；这段时间里原来整块只剩
+         一个标题和底下那句说明，看着就像"就本机一台、没别的"。而真到了
+         那种时候，表里至少还有本机那一行。 -->
+    <p v-if="loading && !data" class="tiny dim">问着…（每台最多等 3 秒）</p>
+
     <table v-if="data" class="matrix__grid">
       <thead>
         <tr>
