@@ -98,7 +98,7 @@
             "name": "林渊",
             "ref_back": null,
             "ref_front": "refs/c_lin_yuan_front.png",
-            "ref_three_quarter": "refs/c_lin_yuan_three_quarter.webp",
+            "ref_three_quarter": "refs/c_lin_yuan_three_quarter.jpg",
             "voice_gender": "male",
             "voice_id": null,
             "voice_order": 1,
@@ -142,20 +142,20 @@
       },
       "body": {
         "reset_shots": 1,
-        "saved": "refs/c_lin_yuan_three_quarter.webp",
+        "saved": "refs/c_lin_yuan_three_quarter.jpg",
         "size_kb": 0,
         "slot": "three_quarter"
       },
-      "content_type": "image/webp",
-      "file_b64": "UklGRhoAAABXRUJQVlA4TA0AAAAvAAAAEAcQERGIiP4HAA==",
-      "file_name": "a.webp",
+      "content_type": "image/jpeg",
+      "file_b64": "/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==",
+      "file_name": "a.jpg",
       "form": {
         "char_id": "c_lin_yuan",
         "slot": "three_quarter"
       },
-      "name": "传角色侧面图_webp",
+      "name": "传角色侧面图_jpg",
       "refs_listing": [
-        "c_lin_yuan_three_quarter.webp"
+        "c_lin_yuan_three_quarter.jpg"
       ],
       "status": 200,
       "url": "/api/character/reference"
@@ -197,7 +197,7 @@
     {
       "assets_after": null,
       "body": {
-        "detail": "只收 png、jpg、webp，收到的是 image/gif"
+        "detail": "只收 png、jpg，收到的是 image/gif"
       },
       "content_type": "image/gif",
       "file_b64": "R0lGODlh",
@@ -339,7 +339,7 @@
             "lora_trigger": "linyuan_v3",
             "name": "林渊",
             "ref_back": null,
-            "ref_front": "refs/c_lin_yuan_front.webp",
+            "ref_front": "refs/c_lin_yuan_front.jpg",
             "ref_three_quarter": "refs/c_lin_yuan_tq.png",
             "voice_gender": "male",
             "voice_id": null,
@@ -384,13 +384,13 @@
       },
       "body": {
         "reset_shots": 0,
-        "saved": "refs/c_lin_yuan_front.webp",
+        "saved": "refs/c_lin_yuan_front.jpg",
         "size_kb": 0,
         "slot": "front"
       },
-      "content_type": "image/webp",
-      "file_b64": "UklGRhoAAABXRUJQVlA4TA0AAAAvAAAAEAcQERGIiP4HAA==",
-      "file_name": "a.webp",
+      "content_type": "image/jpeg",
+      "file_b64": "/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==",
+      "file_name": "a.jpg",
       "first_png_b64": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
       "form": {
         "char_id": "c_lin_yuan",
@@ -398,7 +398,7 @@
       },
       "name": "换格式重传_旧文件要被清掉",
       "refs_listing": [
-        "c_lin_yuan_front.webp"
+        "c_lin_yuan_front.jpg"
       ],
       "status": 200,
       "url": "/api/character/reference"

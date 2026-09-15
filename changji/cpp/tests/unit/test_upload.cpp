@@ -155,15 +155,18 @@ TEST_CASE("换格式重传要把旧文件清掉") {
     const std::string project = paths::to_utf8(root);
     const json g = load_golden("endpoints_upload");
 
-    std::string png, webp;
+    // **换格式重传用的是 jpg，不是 webp。** 2026-09-15 起收件表只剩
+    // png / jpg——出图那头拿 stb_image 读，它一行 webp 的代码都没有。
+    // 这一条要的只是"换一个扩展名"，png ↔ jpg 照样是它。
+    std::string png, jpg;
     for (const auto& c : g.at("cases")) {
         if (c.contains("first_png_b64")) {
             png = b64_decode(c.at("first_png_b64").get<std::string>());
-            webp = b64_decode(c.at("file_b64").get<std::string>());
+            jpg = b64_decode(c.at("file_b64").get<std::string>());
         }
     }
     REQUIRE_FALSE(png.empty());
-    REQUIRE_FALSE(webp.empty());
+    REQUIRE_FALSE(jpg.empty());
 
     http::guard([&] {
         return http::post_character_reference(project, "c_lin_yuan", "front",
@@ -173,10 +176,10 @@ TEST_CASE("换格式重传要把旧文件清掉") {
 
     http::guard([&] {
         return http::post_character_reference(project, "c_lin_yuan", "front",
-                                              "image/webp", webp);
+                                              "image/jpeg", jpg);
     });
     // .png 必须没了
-    CHECK(list_refs(root) == std::vector<std::string>{"c_lin_yuan_front.webp"});
+    CHECK(list_refs(root) == std::vector<std::string>{"c_lin_yuan_front.jpg"});
 
     std::error_code ec;
     fs::remove_all(root, ec);
@@ -253,8 +256,14 @@ TEST_CASE("撤掉参考图，文件留着") {
 TEST_CASE("格式判断") {
     CHECK(http::ref_suffix_for("image/png") == ".png");
     CHECK(http::ref_suffix_for("image/jpeg") == ".jpg");
-    CHECK(http::ref_suffix_for("image/webp") == ".webp");
     // 这几个都不收
+    //
+    // **webp 2026-09-15 起也不收了。** 参考图最后是 sd_image.cpp 的
+    // `load_image()` 拿 stbi_load_from_memory 读的，而 stb_image 一行
+    // webp 的代码都没有——收下只会在每一个用到这个角色的镜头开渲染时
+    // 抛「参考图解不开」。盘上已经有的 .webp 照旧清得掉（清理那张表
+    // `ref_stale_exts` 比收件表多留着它），只是不再收新的。
+    CHECK(http::ref_suffix_for("image/webp").empty());
     CHECK(http::ref_suffix_for("image/gif").empty());
     CHECK(http::ref_suffix_for("image/jpg").empty());   // 注意不是 image/jpeg
     CHECK(http::ref_suffix_for("application/octet-stream").empty());

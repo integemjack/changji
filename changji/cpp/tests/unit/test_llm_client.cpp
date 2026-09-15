@@ -427,11 +427,15 @@ TEST_CASE("状态码翻成人话") {
         CHECK(no_route.find("ollama pull") == std::string::npos);
     }
 
-    SUBCASE("认证失败指向设置页") {
+    SUBCASE("认证失败要指出去哪儿填密钥") {
+        // **指的是项目页那个模型弹窗，不是设置页。** 大模型的地址、模型名、
+        // 密钥、温度 2026-09-14 全搬进了项目页「模型」那一行点开的窗；设置页
+        // 那一节整个删了（SettingsView 里那段注释：「密钥根本不经过这一页」）。
+        // 这条用例原来钉着「设置页」，把人支去一个没有那个框的页面。
         for (const int code : {401, 403}) {
             const std::string s = llm::explain_status(cfg, code, "{}");
             CHECK(s.find("API Key") != std::string::npos);
-            CHECK(s.find("设置页") != std::string::npos);
+            CHECK(s.find("项目页") != std::string::npos);
             CHECK(s.find(std::to_string(code)) != std::string::npos);
         }
     }
