@@ -47,7 +47,7 @@ import EmptyState from '@/components/EmptyState.vue'
 import { api, mediaUrl } from '@/api'
 import { useAction } from '@/composables/useAction'
 import { runAsyncJob } from '@/composables/useAsyncJob'
-import { openJobFeed } from '@/composables/useJobFeed'
+import { openJobFeed, stoppedByHand } from '@/composables/useJobFeed'
 import { openJobSocket } from '@/composables/useJobSocket'
 import { useThinking } from '@/stores/thinking'
 import { readLocal, writeLocal } from '@/composables/local-storage'
@@ -1194,13 +1194,17 @@ async function revise() {
   if (live) thinking.start(streamId, '改这一段')
 
   let result = null
+  /** 这一趟是被人按停的，不是砸了。 */
+  let byHand = false
   try {
     const started = await run(post, { key: 'revise' })
     result = started
     if (started && started.started) {
       const fin = await finished
       result = fin.ok ? fin.result : null
-      if (!fin.ok) ui.error(fin.message || '这一段没改成')
+      // 自己按的停别再红一次，理由同 writeChapter 那处。
+      byHand = !fin.ok && stoppedByHand(fin.message)
+      if (!fin.ok && !byHand) ui.error(fin.message || '这一段没改成')
     }
   } finally {
     // 上面那句注释说的就是这一下。理由同 writeStory / writeChapter 那两处：
@@ -1213,11 +1217,21 @@ async function revise() {
     return
   }
   if (!result) {
+    if (byHand && acc.trim()) {
+      // **人按停之前改出来的那一段要留着**，理由同 writeChapter 那处。
+      // 这一条比那边省事：改稿本来就有「撤销」（pending / Ctrl+Z），
+      // 摆上底稿就是成功那条路的收尾，只是少了剥包装那一下。
+      pending.value = { chapter_id: id, prev, origin: at, after: buf[id] }
+      scheduleSave(id, 800)
+      ui.info(`停下了，改出来的 ${[...acc].length} 字留着（不要就按撤销）`)
+      return
+    }
     // 改砸了，把清掉的那一段放回去
     buf[id] = prev
     pending.value = null
     await nextTick()
     fit(boxes[id])
+    if (byHand) ui.info('停下了，这一段还没改出东西来')
     return
   }
 
@@ -1254,7 +1268,8 @@ function undoRevision() {
   if (!p) return
   buf[p.chapter_id] = p.prev
   dirtySnapshot.add(p.chapter_id)
-  sel.value = { ...p.origin }
+  // 写正文那条按停之后也摆底稿，它没有"改的是哪一段"——那时候别动选区。
+  if (p.origin) sel.value = { ...p.origin }
   pending.value = null
   scheduleSave(p.chapter_id, 800)
   nextTick(() => fit(boxes[p.chapter_id]))
@@ -1483,7 +1498,9 @@ async function attachOutline(streamId) {
       if (msg.type === 'outline_progress') outlineLive.value = msg
       else if (msg.type === 'job_done') finish(msg.result)
       else if (msg.type === 'job_error') {
-        ui.error(msg.message || '这份大纲没写成')
+        // 顶栏那个「停下」按下去走的也是这条（刷新之后接上的那一份）。
+        if (stoppedByHand(msg.message)) ui.info('停下了，这份大纲没有留下')
+        else ui.error(msg.message || '这份大纲没写成')
         finish(null)
       }
     },
@@ -1591,7 +1608,14 @@ async function writeStory() {
     if (started && started.started) {
       const fin = await finished
       result = fin.ok ? fin.result : null
-      if (!fin.ok) ui.error(fin.message || '这份大纲没写成')
+      if (!fin.ok) {
+        // 自己按的停别再红一次。**但这一条没有"留下写了一半的"可说**：
+        // 大纲是整份 JSON 解出来才算数的，半份里的章节没有摘要也没有钩子，
+        // 摆成草稿等着人按「采用」比不留更糟。正文和改稿那两条留，理由
+        // 在它们各自那儿。
+        if (stoppedByHand(fin.message)) ui.info('停下了，这份大纲没有留下')
+        else ui.error(fin.message || '这份大纲没写成')
+      }
     }
   } finally {
     // 上面那句注释说的就是这两行。它原来**不在 finally 里**——今天不漏是
@@ -1892,6 +1916,8 @@ async function writeChapter(chapterId, overwrite = false) {
   if (live) thinking.start(streamId, '写正文')
 
   let result = null
+  /** 这一趟是被人按停的，不是砸了。两者的收尾完全不一样。 */
+  let byHand = false
   try {
     const started = await run(
       () =>
@@ -1911,7 +1937,9 @@ async function writeChapter(chapterId, overwrite = false) {
       // 异步那条：HTTP 只说了"开始了"，真正的结果从那条回传路上来。
       const fin = await finished
       result = fin.ok ? fin.result : null
-      if (!fin.ok) ui.error(fin.message || '这一章没写成')
+      // **自己按的停别再红一次。** 下面那一段负责说停在哪儿、留下了什么。
+      byHand = !fin.ok && stoppedByHand(fin.message)
+      if (!fin.ok && !byHand) ui.error(fin.message || '这一章没写成')
     }
   } finally {
     // 理由同 writeStory 里那段：注释一直说"清在 finally 里"，而它原来不在。
@@ -1931,12 +1959,41 @@ async function writeChapter(chapterId, overwrite = false) {
     return
   }
   if (!result) {
+    const was = chapters.value.find((c) => c.chapter_id === chapterId)
+    const had = was?.text ?? ''
+    const wrote = [...acc].length
+    if (byHand && acc.trim()) {
+      // **人按停之前写出来的那些字要留着。** 用户 2026-09-15：「ai 写文章
+      // 点击停下来之前写的内容应该保留」。它原来和"写砸了"走同一条路，
+      // 一起被清掉——盯着它写了一两分钟、看够了按停，结果一个字不剩。
+      //
+      // 留的是 `acc`（流出来那一份），不是 buf：这两个本来就相等，
+      // 但写清楚谁是源头。
+      buf[chapterId] = acc
+      dirtySnapshot.add(chapterId)
+      // **原来那一章有字的话，摆一份底稿。** 「AI 重写」按下去那一刻人是
+      // 认了"要换掉"的，可换上来的是半截——Ctrl+Z（和改稿面板里那颗
+      // 「撤销」）能把原来那份放回去，不用人自己去找。
+      pending.value = had
+        ? { chapter_id: chapterId, prev: had, origin: null, after: acc }
+        : null
+      await nextTick()
+      fit(boxes[chapterId])
+      // 存下来，不然刷一下就没了——"保留"要经得起关标签页。
+      scheduleSave(chapterId, 0)
+      ui.info(
+        had
+          ? `停下了，写出来的 ${wrote} 字留着（按 Ctrl+Z 退回原来那份）`
+          : `停下了，写出来的 ${wrote} 字留着`,
+      )
+      return
+    }
     // 写砸了：把流出来那半截清掉，别在稿子里留一段没头没尾的东西。
     // **重写失败要放回原来那份**，不是清空——原来那一章是好好的。
-    const was = chapters.value.find((c) => c.chapter_id === chapterId)
-    buf[chapterId] = was?.text ?? ''
+    buf[chapterId] = had
     await nextTick()
     fit(boxes[chapterId])
+    if (byHand) ui.info('停下了，这一章还一个字都没写出来')
     return
   }
   // 落库那份才是权威的（解析、守卫、钩子都在那边）

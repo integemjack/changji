@@ -39,6 +39,7 @@ import AssetLocations from '@/views/assets/AssetLocations.vue'
 import { api } from '@/api'
 import { useAction } from '@/composables/useAction'
 import { runAsyncJob } from '@/composables/useAsyncJob'
+import { stoppedByHand } from '@/composables/useJobFeed'
 import { useRefStream } from '@/composables/useRefStream'
 import { useWriter } from '@/stores/run'
 import { useSession } from '@/stores/session'
@@ -357,7 +358,7 @@ async function genAll() {
     if (!ok) {
       stoppedAt = i
       // 引擎给取消留的是 400「已停下这一张」；别的都算真砸了。
-      byHand = /已停下|已取消/.test(actionError.value || '')
+      byHand = stoppedByHand(actionError.value)
       break
     }
     made += 1
