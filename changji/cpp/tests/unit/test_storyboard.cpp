@@ -1144,6 +1144,21 @@ TEST_CASE("运动描述短一截的自动补满整镜时长") {
     CHECK(shots[2].motion_prompt == "[0-3秒] 雨点砸在窗上，越来越密");
 }
 
+TEST_CASE("运动描述写得比镜头长的截回去") {
+    // sh015 是个 4 秒的镜头，运动写到 [0-5秒]：模型按五秒的节奏演，
+    // 画面到四秒被截断，动作没走完。和"短一截"是同一个判据的两头。
+    const models::AssetLibrary a = test_assets();
+    const std::string raw = R"({"shots":[
+      {"shot_id":"ep01_sh001","scene_id":"s1","order":0,"duration_s":4,
+       "first_frame_prompt":"画面","motion_prompt":"[0-2秒] 他抬头 [2-5秒] 他站起来",
+       "shot_size":"MS","camera_move":"push_in","camera_angle":"eye_level",
+       "lens":"normal","lighting":"夜里，窗外霓虹侧后方打过来，硬",
+       "characters":[{"char_id":"c_lin_wan"}],"dialogue":[]}]})";
+    const auto shots = stages::parse_storyboard(raw, a);
+    REQUIRE(shots.size() == 1);
+    CHECK(shots[0].motion_prompt == "[0-2秒] 他抬头 [2-4秒] 他站起来");
+}
+
 TEST_CASE("景别塌成一个值时按戏重排，认真分过的不碰") {
     // 2026-09-16 实测 17 镜全是 ECU——和 camera_move 全 static、
     // camera_angle 全 low 一样，都是各自枚举的第一个值。

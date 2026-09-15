@@ -1067,7 +1067,7 @@ void drop_unknown_enums(json& item) {
 /// 落到输入上：schema 那边已经 erase 过一次（「时长由配音阶段回填，不让模型
 /// 猜」），这儿补上它管不到的那一半。voice_id 尤其要剥——它决定这一句用谁
 /// 的嗓子，模型编一个出来，配音那边只会在"这个音色服务端没有"时才提一句。
-/// 把 `motion_prompt` 里那几段 `[a-b秒]` 的末段补到整镜时长。
+/// 把 `motion_prompt` 里那几段 `[a-b秒]` 的末段夹到整镜时长——短了补满，长了截回。
 ///
 /// **2026-09-16 从三条崩掉的成片查出来的。** 提示词第 6 条写着「段要连起来
 /// 盖满整镜的时长」，模型照样短一截：4 秒的镜头只写到 `[0-2秒]`，5 秒的只写
@@ -1076,8 +1076,11 @@ void drop_unknown_enums(json& item) {
 /// sh007 前四秒人还在，最后一秒整幅只剩地板和一条椅子腿。崩的位置和缺口
 /// 位置一格不差。
 ///
+/// **写长了同样要夹。** sh015 是个 4 秒的镜头，运动写到 `[0-5秒]`：模型按
+/// 五秒的节奏演，画面到四秒被截断，动作没走完。两头都错，判据是同一个。
+///
 /// 措辞救不了这一条（同 camera_move 那一段的结论），而这件事引擎自己算得出来：
-/// 末段的结束秒数 < 这一镜的时长，就把末段的上界改成整镜时长。一个字不用问人。
+/// 末段的结束秒数对不上这一镜的时长，就把末段的上界改成整镜时长。一个字不用问人。
 /// 一段都没有的（模型没按格式写）整句包成 `[0-N秒]`：至少时间轴是满的。
 void cover_full_duration(json& item) {
     if (!item.contains("motion_prompt") || !item["motion_prompt"].is_string()) return;
@@ -1107,7 +1110,7 @@ void cover_full_duration(json& item) {
         item["motion_prompt"] = "[0-" + want + "秒] " + mp;
         return;
     }
-    if (last_end >= dur - 1e-6) return;   // 已经盖满
+    if (std::fabs(last_end - dur) < 1e-6) return;   // 正好盖满
     const std::string head = mp.substr(last_at, last_len);
     const auto dash = head.find('-');
     if (dash == std::string::npos) return;
