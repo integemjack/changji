@@ -1050,6 +1050,7 @@ if(CHANGJI_BUILD_TESTS)
         tests/unit/test_node_prefs.cpp
         tests/unit/test_assets_shape.cpp
         tests/unit/test_fs_dirs.cpp
+        tests/unit/test_models_pick.cpp
         tests/unit/test_flow.cpp
         tests/unit/test_webapp.cpp
         tests/unit/test_shot.cpp

@@ -826,6 +826,20 @@ void apply_table(const toml::table& doc, Settings& s) {
         take(t, "image_text_encoder_vision", s.models.image_text_encoder_vision);
         take(t, "tts", s.models.tts);
         take(t, "tts_decoder", s.models.tts_decoder);
+
+        // `[models.pick]`：这部剧要哪一档。**按键盖，不整份替换。**
+        //
+        // 这个函数会被调两次（先全局、后项目里那份），而项目多半只写了
+        // 一两组。整份替换的话，项目里写一个 image 就等于把全局挑好的
+        // llm / tts / video 全清空——而那三组清空之后走的是"从文件名反推"
+        // 那条老路，表面上还能跑，直到某一组的文件名恰好不在目录里。
+        if (auto pk = (*t)["pick"].as_table()) {
+            for (const auto& [k, v] : *pk) {
+                if (auto str = v.value<std::string>()) {
+                    s.models.pick[std::string(k.str())] = *str;
+                }
+            }
+        }
         take(t, "diffusion_flash_attn", s.models.diffusion_flash_attn);
         take(t, "weights", s.models.weights);
         take(t, "image_weights", s.models.image_weights);
@@ -1571,7 +1585,20 @@ max_attempts_per_shot = 3
 fallback_on_exhausted = true
 
 [models]
-# **模型文件不要写在这里**，那是机器的属性。这一节只放按剧调的采样旋钮，
+# **模型文件名不要写在这里**，那是机器的属性——每台的目录和文件名都不一样，
+# 写进来的话项目目录拷到另一台就跑不起来。
+#
+# 但**"这部剧要哪一档"可以**，那是剧的属性，而且机器无关：档位 id 来自内置
+# 目录，每台都认得，各自去自己的模型目录里找对应的文件。写在下面的
+# [models.pick] 里，项目这一份盖全局（按键盖，没写的那几组照旧跟全局走）。
+#
+#   [models.pick]
+#   llm   = "zhipu-free"
+#   image = "qwen-image-q4"
+#
+# 不写 = 没挑过，那时候"选了哪一档"从全局配置里的文件名反推，和以前一样。
+#
+# 这一节剩下的只放按剧调的采样旋钮，
 # 全部注释掉 = 跟全局走。flow_shift 的 0 = 自动（按模型架构挑）。
 # video_cfg = 1.0
 # video_flow_shift = 0.0

@@ -115,7 +115,32 @@ std::string same_service_key(std::string url) {
 
 }  // namespace
 
+/// 这一组挑的那个 id 认不认得。认不出时回那句给人看的话，认得回空串。
+///
+/// **认不出不能当成"没挑"。** `[models.pick]` 是手写得到的（项目目录拷来
+/// 拷去、或者人直接改 changji.toml），写错一个字母的话，悄悄退回"从文件名
+/// 反推"就成了：界面上显示的是另一档、跑的也是另一档，而没有任何一处说过
+/// 这件事。这个函数把话交出去，由 get_setup_state 摆到那一组上。
+std::string pick_problem(const Group& g, const config::Settings& s) {
+    const auto it = s.models.pick.find(g.key);
+    if (it == s.models.pick.end() || it->second.empty()) return {};
+    if (g.find(it->second) != nullptr) return {};
+    return "配置里 [models.pick]." + g.key + " 写的是「" + it->second +
+           "」，这一组里没有这一档——这次按配置里的文件名算";
+}
+
 std::string current_option(const Group& g, const config::Settings& s) {
+    // **挑过的优先。** `[models.pick]` 记的是"这部剧要哪一档"，机器无关，
+    // 项目里的 changji.toml 能盖全局（用户 2026-09-15 定的：项目优先）。
+    // 认不出的 id 不在这儿处理，见 pick_problem——**别悄悄退回去**。
+    if (const auto it = s.models.pick.find(g.key); it != s.models.pick.end()) {
+        if (!it->second.empty() && g.find(it->second) != nullptr) {
+            return it->second;
+        }
+    }
+
+    // 没挑过（老项目、或者刚装完）就从文件名反推。
+    //
     // **远端那条路不按文件认。** 切到云端时我们特意没清 [models].llm
     // （见 catalog.cpp 的 config_patch），所以上次下的那个权重还在配置里；
     // 按文件认的话这一页会选中本地那一档，而实际跑的是云端——界面说的
@@ -348,12 +373,18 @@ ApiResult get_setup_state(const config::Settings& settings,
                               ? current
                               : (rec == recommended.end() ? std::string() : rec->second);
 
-        groups.push_back({{"key", g.key},
-                          {"title", g.title},
-                          {"purpose", g.purpose},
-                          {"required", g.required},
-                          {"satisfied", ok},
-                          {"options", options}});
+        json grp{{"key", g.key},
+                 {"title", g.title},
+                 {"purpose", g.purpose},
+                 {"required", g.required},
+                 {"satisfied", ok},
+                 {"options", options}};
+        // 挑的那个 id 认不出来时**要说话**，别悄悄退回按文件名反推——
+        // 那样界面上显示的和跑的是另一档，而没有一处提过这件事。
+        if (const auto why = pick_problem(g, settings); !why.empty()) {
+            grp["pickProblem"] = why;
+        }
+        groups.push_back(std::move(grp));
     }
 
     const auto [free_bytes, total_bytes] = disk_space(models_dir);
