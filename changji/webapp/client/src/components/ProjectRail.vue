@@ -44,7 +44,6 @@ import { api } from '@/api'
 import { useAction } from '@/composables/useAction'
 import { useProjects } from '@/stores/projects'
 import { readLocal, writeLocal } from '@/composables/local-storage'
-import { useRun, useWriter } from '@/stores/run'
 import { useSystemFeed } from '@/composables/useSystemFeed'
 import { useSession } from '@/stores/session'
 import { useUi } from '@/stores/ui'
@@ -52,10 +51,14 @@ import { useUi } from '@/stores/ui'
 const store = useProjects()
 const session = useSession()
 const ui = useUi()
-const runner = useRun()
-/** 顶栏那份系统表：两秒一拍，每一行带着 project。见下面 busyPaths。 */
+/**
+ * 顶栏那份系统表：两秒一拍，每一行带着 project 和 kind。
+ *
+ * **这条栏该问的两件事（谁在跑、跑完了没有）都从它读。** 原来读的是
+ * `useRun` / `useWriter` 那两个 store，而它们在这一页上没有人驱动——
+ * 两处都栽过，理由分别写在 busyPaths 和 longRunning 上面。
+ */
 const sysFeed = useSystemFeed()
-const writer = useWriter()
 const { run, isBusy } = useAction()
 
 const route = useRoute()
@@ -188,12 +191,29 @@ onUnmounted(() => narrowQuery.removeEventListener('change', onNarrow))
  * 写着 story.json「可能有几百 KB」）。建项目那条路 AddProjectDialog 已经
  * 自己 load 过，再 watch 一次就是连读两遍。
  */
-watch(
-  () => runner.running || writer.running,
-  (now, before) => {
-    if (before && !now) store.load()
-  },
-)
+/**
+ * 长跑任务有没有在跑。**从那份系统表读，不看 `runner` / `writer` 那两个旗子。**
+ *
+ * ⚠️ 这一条原来写的是 `watch(() => runner.running || writer.running, …)`，
+ * **而那两个 store 在这一页上没有人驱动**：`useRun` 只有镜头页在轮询、
+ * `useWriter` 只有故事页和设定页那一格。这条栏却在每一页上——于是"跑完了
+ * 重拉一次"这件事，恰恰在**卡片就摆在眼前的项目页**上一次都不会发生。
+ * 实测：引擎那头一轮批量跑完，`/api/projects` 一次都没重拉，卡上那句
+ * 「1/2 集已出片」原样挂着。上面那段话说的正是这个症状，它只是没等到人。
+ *
+ * 只认 run / write 两种（就是原来那两个槽的语义）：出参考图那种短活也在
+ * 这份表里，一键出图一跑就是十几条，跟着它重拉等于把每个项目的
+ * project.json + story.json 重读十几遍。
+ */
+const longRunning = computed(() => {
+  const jobs = sysFeed.stat.value?.jobs
+  if (!jobs) return null // 还不知道，别当成"刚跑完"
+  return jobs.some((j) => j.kind === 'run' || j.kind === 'write')
+})
+
+watch(longRunning, (now, before) => {
+  if (before === true && now === false) store.load()
+})
 
 /**
  * 换项目时也补一次，**但只在离开一个项目之后**。
