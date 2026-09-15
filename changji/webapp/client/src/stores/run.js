@@ -366,6 +366,16 @@ export const useWriter = defineStore('writer', () => {
    * 人自己按的停。**按一下之后下一拍的 error 是"已手动停止"，不是出事了。**
    * 见下面 announceFatal——和镜头那边 `stoppedByHand` 同一个办法。
    */
+  /**
+   * **这儿是直接 import 另一个 store，和上面 `changji:error` 那条不一样。**
+   *
+   * 那一条走自定义事件是为了不跟 ui store 互相认识——报错这件事全库到处
+   * 都要用，而 ToastStack 本来就订着那个口子。这儿不同：thinking 是这条
+   * store 自己要往里记的一份数据（谁在想、想了什么、按哪个 id 停），
+   * 只有这一处推、只有这一处销号；绕一层事件反而要再找个地方去订。
+   *
+   * 也不会转圈：`stores/thinking.js` 一个 store 都不 import。
+   */
   const thinking = useThinking()
   /**
    * 这一趟挂在哪条频道上（就是 job id）。
