@@ -1022,17 +1022,17 @@ function scrollTo(id) {
   .set {
     grid-template-columns: 1fr;
   }
+  /* **换行，不是横着滚。** 这一排最后挂着「写回配置文件」那个勾，而它
+     管着下面每一颗保存（勾掉就是"只对本次进程生效"）。原来这儿是
+     `nowrap` 加一条不画滚动条的横滚——375px 上实测那个勾整个落在容器外
+     8px 处，屏幕上看不见，也没有任何东西说这一排还能滑。
+     上面那几个是小节跳转，换到第二行照样点得到；那个勾必须点得到。 */
   .secnav {
     position: static;
     flex-direction: row;
-    flex-wrap: nowrap;
-    overflow-x: auto;
+    flex-wrap: wrap;
     gap: var(--s3);
     padding-bottom: var(--s2);
-    scrollbar-width: none;
-  }
-  .secnav::-webkit-scrollbar {
-    display: none;
   }
   .secnav__item {
     white-space: nowrap;

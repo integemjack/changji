@@ -2968,6 +2968,14 @@ async function stopWriting() {
 .doc__pick {
   width: auto;
   max-width: 22em;
+  /* **挤的时候要让得动。** `<select>` 的固有宽度按最长那个选项算，而
+     flex 子项默认 `min-width: auto`——也就是一步都不让。375px 上这一行
+     （章号 182px + 「让 AI 写这一章」126px + 「…」28px）摆不下，溢出的
+     那两个落到项目库那条栏底下：**「…」整个够不着**，而重写整章、
+     从光标处朗读、删这一章只有那一个入口。
+     让它先让位：章号让掉几个字还看得懂，按钮少一截就没法按了。 */
+  min-width: 0;
+  flex: 0 1 auto;
 }
 .doc__sum {
   margin: var(--s2) 0 0;
