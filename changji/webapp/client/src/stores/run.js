@@ -361,10 +361,47 @@ export const useWriter = defineStore('writer', () => {
   let retry = null
   let missCount = 0
 
+  /**
+   * 人自己按的停。**按一下之后下一拍的 error 是"已手动停止"，不是出事了。**
+   * 见下面 announceFatal——和镜头那边 `stoppedByHand` 同一个办法。
+   */
+  let stoppedByHand = false
+  function markStopped() {
+    stoppedByHand = true
+  }
+
+  /**
+   * 整批炸了要说出来。
+   *
+   * **单章写砸不走这儿**：那种引擎记在 `episodes[]` 里（batch.cpp
+   * 「一章写砸了不该让前面几章白写，记下来接着往下写」），故事页左栏那条
+   * 会把它标出来。走这儿的是**整趟活儿**挂掉——`store.load_story()` 就读
+   * 不出来、盘满了写不回去、引擎半路重启——引擎把它写进 job 级的 `error`。
+   *
+   * 而在这之前**一处都没人读它**。实测过：让这一趟回
+   * `{running:false, error:"…磁盘满了…"}`，界面上一个字都没有——章节列表
+   * 照常重读一遍、看着一切正常，而十六章一章都没写。人点了「展开」等了
+   * 半天，得到的是"像是没反应"。
+   *
+   * 走 `changji:error` 这个自定义事件而不是直接叫 ui store，理由同
+   * session.js 那处：不让这两个 store 互相认识。ToastStack 订着它。
+   */
+  function announceFatal(before) {
+    if (!before || running.value) return          // 不是"跑着→停了"那一下
+    const err = state.value?.error
+    if (!err) return
+    if (stoppedByHand) { stoppedByHand = false; return }  // 停是自己按的，已经绿字说过
+    window.dispatchEvent(
+      new CustomEvent('changji:error', { detail: `批量那一趟没跑完：${err}` }),
+    )
+  }
+
   async function poll() {
+    const was = running.value
     try {
       state.value = await api.seriesStatus()
       missCount = 0
+      announceFatal(was)
       if (!state.value.running) stop()
     } catch {
       // **一次取不到不等于活儿结束了。** 原来这里是 catch 就 stop()，
@@ -467,6 +504,6 @@ export const useWriter = defineStore('writer', () => {
 
   return {
     state, running, percent, polling, live,
-    poll, start, stop, applyMessage,
+    poll, start, stop, applyMessage, markStopped,
   }
 })

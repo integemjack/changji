@@ -1969,6 +1969,9 @@ async function writeAllChapters() {
 }
 
 async function stopWriting() {
+  // 先打招呼再发请求：引擎把「已手动停止」写进 job 级 error，而下一拍的
+  // announceFatal 看见 error 就会弹红字——自己按的停不该再红一次。
+  writer.markStopped()
   await run(() => api.stopSeries(), { key: 'stopWrite', success: '已停' })
   writer.poll()
 }
