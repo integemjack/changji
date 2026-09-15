@@ -6,6 +6,7 @@
 #include <cmath>
 #include <cstdio>
 #include <numeric>
+#include <regex>
 #include <string>
 #include <vector>
 
@@ -1066,6 +1067,54 @@ void drop_unknown_enums(json& item) {
 /// 落到输入上：schema 那边已经 erase 过一次（「时长由配音阶段回填，不让模型
 /// 猜」），这儿补上它管不到的那一半。voice_id 尤其要剥——它决定这一句用谁
 /// 的嗓子，模型编一个出来，配音那边只会在"这个音色服务端没有"时才提一句。
+/// 把 `motion_prompt` 里那几段 `[a-b秒]` 的末段补到整镜时长。
+///
+/// **2026-09-16 从三条崩掉的成片查出来的。** 提示词第 6 条写着「段要连起来
+/// 盖满整镜的时长」，模型照样短一截：4 秒的镜头只写到 `[0-2秒]`，5 秒的只写
+/// 到 `[0-4秒]`。没写到的那一段视频模型自由发挥，而它发挥的方式是**把主体丢
+/// 掉**——实测 sh001 前两秒好好的、后两秒屏幕上的「0元」变成「2元」；
+/// sh007 前四秒人还在，最后一秒整幅只剩地板和一条椅子腿。崩的位置和缺口
+/// 位置一格不差。
+///
+/// 措辞救不了这一条（同 camera_move 那一段的结论），而这件事引擎自己算得出来：
+/// 末段的结束秒数 < 这一镜的时长，就把末段的上界改成整镜时长。一个字不用问人。
+/// 一段都没有的（模型没按格式写）整句包成 `[0-N秒]`：至少时间轴是满的。
+void cover_full_duration(json& item) {
+    if (!item.contains("motion_prompt") || !item["motion_prompt"].is_string()) return;
+    if (!item.contains("duration_s") || !item["duration_s"].is_number()) return;
+    const double dur = item["duration_s"].get<double>();
+    if (!(dur > 0)) return;
+    std::string mp = item["motion_prompt"].get<std::string>();
+    if (mp.empty()) return;
+
+    // 找最后一个 `[数字-数字秒]`。数字可能带小数点。
+    static const std::regex seg(R"(\[\s*([0-9]+(?:\.[0-9]+)?)\s*-\s*([0-9]+(?:\.[0-9]+)?)\s*秒\s*\])");
+    std::smatch m;
+    std::string tail = mp;
+    std::size_t last_at = std::string::npos, last_len = 0;
+    double last_end = -1.0;
+    std::size_t base = 0;
+    while (std::regex_search(tail, m, seg)) {
+        last_at = base + static_cast<std::size_t>(m.position(0));
+        last_len = static_cast<std::size_t>(m.length(0));
+        last_end = std::stod(m[2].str());
+        base = last_at + last_len;
+        tail = mp.substr(base);
+    }
+    const std::string want = format_g(dur);
+    if (last_at == std::string::npos) {
+        // 一段都没有：整句包起来，时间轴至少是满的
+        item["motion_prompt"] = "[0-" + want + "秒] " + mp;
+        return;
+    }
+    if (last_end >= dur - 1e-6) return;   // 已经盖满
+    const std::string head = mp.substr(last_at, last_len);
+    const auto dash = head.find('-');
+    if (dash == std::string::npos) return;
+    const std::string fixed = head.substr(0, dash + 1) + want + "秒]";
+    item["motion_prompt"] = mp.substr(0, last_at) + fixed + mp.substr(last_at + last_len);
+}
+
 void keep_llm_fields(json& item) {
     if (!item.is_object()) return;
     for (auto it = item.begin(); it != item.end();) {
@@ -1109,6 +1158,64 @@ void add_missing_speakers(json& item, const std::set<std::string>& known) {
         if (known.count(speaker) && !present.count(speaker)) {
             chars.push_back(json{{"char_id", speaker}});
             present.insert(speaker);
+        }
+    }
+}
+
+/// 整批镜头的景别塌成一个值时，按戏本身重排一遍。
+///
+/// **2026-09-16 实测：17 镜全是 ECU（大特写）。** 同一张表里 camera_move 全是
+/// static、camera_angle 全是 low——三个都恰好是各自枚举的**第一个值**。上一轮
+/// （camera_move 那一段）治的是「填不填」，这一条治的是「填什么」：进了 required
+/// 之后模型确实每栏都填了，但挨个挑 enum[0] 交差。
+///
+/// 后果不只是单调。大特写起幅本来就没有余地，视频模型再按运动描述一动，主体
+/// 直接出画：那一集里第 3 镜五秒钟从「人推门进来」漂成「一只手和一个文件袋悬在
+/// 楼梯间」，第 7 镜最后只剩地板和一条椅子腿。**景别塌了，成片就跟着塌。**
+///
+/// 所以枚举顺序也换了（MS 打头），提示词第 14 条也重写了——但那两样都是
+/// 「劝」。这一条是兜底：劝不住的时候，按这一镜真有的内容重排，让它没得选。
+///
+/// **只在真塌了的时候动手**（八成以上是同一个值）。模型认真分过景别的表
+/// 一个字不碰——它比这几行 if 懂戏。
+void diversify_shot_sizes(std::vector<Shot>& shots) {
+    if (shots.size() < 4) return;   // 三两镜看不出塌没塌
+
+    std::map<ShotSize, int> hist;
+    for (const Shot& s : shots) ++hist[s.shot_size];
+    int most = 0;
+    for (const auto& [sz, n] : hist) most = std::max(most, n);
+    if (most * 10 < static_cast<int>(shots.size()) * 8) return;   // 没塌
+
+    const auto emotional = [](const Shot& s) {
+        for (const char* w : {"钩", "扣", "反转", "高潮", "揭", "真相", "爆发"}) {
+            if (s.beat.find(w) != std::string::npos) return true;
+        }
+        return false;
+    };
+
+    const std::size_t last = shots.size() - 1;
+    for (std::size_t i = 0; i < shots.size(); ++i) {
+        Shot& s = shots[i];
+        const bool has_line = !s.dialogue.empty();
+        const int people = static_cast<int>(s.characters.size());
+
+        if (i == 0) {
+            // 开场先交代这是哪儿。观众不知道人站在哪儿的时候，
+            // 后面所有的特写都是悬空的。
+            s.shot_size = ShotSize::LS;
+        } else if (people == 0) {
+            s.shot_size = ShotSize::MLS;          // 空镜：环境
+        } else if (emotional(s)) {
+            s.shot_size = ShotSize::CU;           // 情绪那一下才给脸
+        } else if (i == last) {
+            s.shot_size = ShotSize::MLS;          // 收尾拉开，把情绪放掉
+        } else if (has_line && people >= 2) {
+            s.shot_size = ShotSize::MS;           // 对手戏要看得见两个人
+        } else if (has_line) {
+            s.shot_size = ShotSize::MCU;          // 一个人说话
+        } else {
+            s.shot_size = ShotSize::MS;
         }
     }
 }
@@ -1181,6 +1288,9 @@ std::vector<Shot> parse_storyboard(const std::string& raw,
 
         // **先删占位台词再补说话人。** 反过来的话，「（无台词）」那一句
         // 会先把一个角色补进 characters，于是这一镜凭空多了个在场的人。
+        // 运动描述短一截的补满，理由见 cover_full_duration。
+        // **要在 duration_s 吸附之后**：补的是吸附后那个真时长。
+        cover_full_duration(item);
         drop_placeholder_dialogue(item);
         // 剥旁白要在删占位之后：「（无台词）」不带引号，两步互不干扰，
         // 但顺序反过来会让剥出来的空串被当成一句真台词留下。
@@ -1229,6 +1339,8 @@ std::vector<Shot> parse_storyboard(const std::string& raw,
     if (!ref_problems.empty()) {
         throw StoryboardError("分镜引用了未注册的资产：\n" + join_lines(ref_problems));
     }
+    // 景别塌成一个值的兜底，见 diversify_shot_sizes。
+    diversify_shot_sizes(shots);
     return shots;
 }
 

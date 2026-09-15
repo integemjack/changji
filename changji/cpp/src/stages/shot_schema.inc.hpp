@@ -192,12 +192,12 @@ inline constexpr const char* kShotSchemaJson =
    "type": "string"
   },
   "ShotSize": {
-   "description": "景别。取值顺序由近到远。",
+   "description": "景别。中景打头，其余由近到远。",
    "enum": [
+    "MS",
     "ECU",
     "CU",
     "MCU",
-    "MS",
     "MLS",
     "LS",
     "ELS"

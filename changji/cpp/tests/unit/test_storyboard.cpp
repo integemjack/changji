@@ -1112,3 +1112,90 @@ TEST_CASE("按画布夹内核跑得动的帧数上限：不是显存，是序列
     wan.max_frames = 121;
     CHECK(stages::cap_by_kernel_limit(wan, 704, 1280).max_frames == 121);
 }
+
+TEST_CASE("运动描述短一截的自动补满整镜时长") {
+    // 2026-09-16 从三条崩掉的成片查出来的：4 秒的镜头只写到 [0-2秒]，
+    // 没写到的那两秒视频模型自由发挥，主体直接漂走——屏幕上的「0元」
+    // 变成「2元」，人整个出画只剩地板。措辞救不了，引擎自己算得出来。
+    const models::AssetLibrary a = test_assets();
+    const std::string raw = R"({"shots":[
+      {"shot_id":"ep01_sh001","scene_id":"s1","order":0,"duration_s":4,
+       "first_frame_prompt":"画面","motion_prompt":"[0-2秒] 他敲键盘，呼吸急促",
+       "shot_size":"MS","camera_move":"push_in","camera_angle":"eye_level",
+       "lens":"normal","lighting":"夜里，窗外霓虹侧后方打过来，硬",
+       "characters":[{"char_id":"c_lin_wan"}],"dialogue":[]},
+      {"shot_id":"ep01_sh002","scene_id":"s1","order":1,"duration_s":3,
+       "first_frame_prompt":"画面","motion_prompt":"他抬头看向门口，慢慢站起身",
+       "shot_size":"MS","camera_move":"static","camera_angle":"eye_level",
+       "lens":"normal","lighting":"夜里，窗外霓虹侧后方打过来，硬",
+       "characters":[{"char_id":"c_chen_mo"}],"dialogue":[]},
+      {"shot_id":"ep01_sh003","scene_id":"s1","order":2,"duration_s":3,
+       "first_frame_prompt":"画面","motion_prompt":"[0-3秒] 雨点砸在窗上，越来越密",
+       "shot_size":"MS","camera_move":"static","camera_angle":"eye_level",
+       "lens":"normal","lighting":"夜里，窗外霓虹侧后方打过来，硬",
+       "characters":[],"dialogue":[]}]})";
+    const auto shots = stages::parse_storyboard(raw, a);
+    REQUIRE(shots.size() == 3);
+    // 一，末段的上界改成整镜时长，前面的字一个不动
+    CHECK(shots[0].motion_prompt == "[0-4秒] 他敲键盘，呼吸急促");
+    // 二，压根没按格式写的整句包起来，时间轴至少是满的
+    CHECK(shots[1].motion_prompt == "[0-3秒] 他抬头看向门口，慢慢站起身");
+    // 三，已经盖满的一个字都不碰
+    CHECK(shots[2].motion_prompt == "[0-3秒] 雨点砸在窗上，越来越密");
+}
+
+TEST_CASE("景别塌成一个值时按戏重排，认真分过的不碰") {
+    // 2026-09-16 实测 17 镜全是 ECU——和 camera_move 全 static、
+    // camera_angle 全 low 一样，都是各自枚举的第一个值。
+    const models::AssetLibrary a = test_assets();
+    const auto build = [](const char* size, int n) {
+        json shots = json::array();
+        for (int i = 0; i < n; ++i) {
+            shots.push_back(json{
+                {"shot_id", "ep01_sh00" + std::to_string(i + 1)},
+                {"scene_id", "s1"}, {"order", i}, {"duration_s", 3},
+                {"first_frame_prompt", "画面"},
+                {"motion_prompt", "[0-3秒] 他往前走了两步"},
+                {"shot_size", size}, {"camera_move", "static"},
+                {"camera_angle", "eye_level"}, {"lens", "normal"},
+                {"lighting", "夜里，窗外霓虹侧后方打过来，硬"},
+                // 中间几镜有人有台词，最后一镜是空镜
+                {"characters", i == n - 2 ? json::array()
+                                          : json::array({json{{"char_id", "c_lin_wan"}}})},
+                {"dialogue", json::array()}});
+        }
+        return json{{"shots", shots}}.dump();
+    };
+
+    SUBCASE("全塌成 ECU：重排") {
+        const auto shots = stages::parse_storyboard(build("ECU", 6), a);
+        REQUIRE(shots.size() == 6);
+        // 开场先交代这是哪儿
+        CHECK(shots[0].shot_size == models::ShotSize::LS);
+        // 空镜给环境
+        CHECK(shots[4].shot_size == models::ShotSize::MLS);
+        // 收尾拉开
+        CHECK(shots[5].shot_size == models::ShotSize::MLS);
+        // 不再是一种值
+        std::set<models::ShotSize> kinds;
+        for (const auto& s : shots) kinds.insert(s.shot_size);
+        CHECK(kinds.size() >= 3);
+    }
+
+    SUBCASE("模型认真分过的：一个字不碰") {
+        json j = json::parse(build("ECU", 6));
+        const char* want[] = {"LS", "MS", "CU", "MCU", "MLS", "MS"};
+        for (int i = 0; i < 6; ++i) j["shots"][i]["shot_size"] = want[i];
+        const auto shots = stages::parse_storyboard(j.dump(), a);
+        REQUIRE(shots.size() == 6);
+        CHECK(shots[1].shot_size == models::ShotSize::MS);
+        CHECK(shots[2].shot_size == models::ShotSize::CU);
+        CHECK(shots[3].shot_size == models::ShotSize::MCU);
+    }
+
+    SUBCASE("三两镜看不出塌没塌，不动") {
+        const auto shots = stages::parse_storyboard(build("ECU", 3), a);
+        REQUIRE(shots.size() == 3);
+        for (const auto& s : shots) CHECK(s.shot_size == models::ShotSize::ECU);
+    }
+}
