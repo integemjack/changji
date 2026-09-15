@@ -407,7 +407,7 @@ TEST_CASE("拆句不能留下只有标点的碎片") {
     auto no_punct_only = [](const std::vector<std::string>& parts) {
         static const std::string marks =
             "。，、；：！？…—～「」『』“”‘’（）《》【】·"
-            ".,;:!?-~\"'()[]{}<>/\|*_+= \t\n\r";
+            ".,;:!?-~\"'()[]{}<>/\\|*_+= \t\n\r";
         for (const auto& p : parts) {
             CAPTURE(p);
             bool speakable = false;
