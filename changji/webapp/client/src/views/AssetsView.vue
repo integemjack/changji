@@ -410,6 +410,9 @@ async function genAll() {
   }
 }
 
+/** `/api/assets` 那一趟读砸了的那句话。空串 = 没砸。见 loadAssets。 */
+const assetsError = ref('')
+
 async function loadStory() {
   if (!session.projectPath) {
     story.value = null
@@ -432,6 +435,7 @@ async function loadStory() {
 async function loadAssets() {
   if (!session.projectPath) {
     assets.value = null
+    assetsError.value = ''
     return
   }
   const want = session.projectPath
@@ -439,9 +443,24 @@ async function loadAssets() {
     const got = await api.assets(session.projectPath)
     if (want !== session.projectPath) return
     assets.value = got
-  } catch {
-    // 刚建的项目还没有资产库。tab 上就只有名字，不该整页红。
+    assetsError.value = ''
+  } catch (err) {
+    // 过期那一趟的报错不算数：在项目库里连着点两部，慢的那趟后落地会把
+    // 这一部刚读好的清掉，还挂一句上一部的报错。同上面 loadStory 那处。
+    if (want !== session.projectPath) return
     assets.value = null
+    // ⚠️ **这儿原来是吞掉的**，理由写的是「刚建的项目还没有资产库。tab 上
+    // 就只有名字，不该整页红」——而那句话早就不成立了：`load_assets` 见
+    // 文件不在**回一份空的**（project.cpp 那三行），200。也就是说走到这个
+    // catch 的只剩真读砸了：文件在、但坏了（引擎回 400 带着行号），或者
+    // 那一下连不上。
+    //
+    // 吞掉的后果不是"少一个数"：`characters` 空着，于是「照故事定妆」
+    // 摆成一颗带星星的主按钮——**和刚建好的新项目长得一模一样**，而这一刻
+    // 到底有没有设定根本不知道。镜头页和故事页都为同一件事留过话
+    // （「读砸了不能摆"还没有"那一屏……按下去就是拿一份新的盖掉可能还在
+    // 的那份」），设定页这一处漏了。
+    assetsError.value = err?.message || '读不出来'
   }
 }
 
@@ -554,12 +573,18 @@ watch(
             <span>覆盖已有</span>
           </label>
 
+          <!-- **读砸了就别摆成"新项目那颗主按钮"。** 见 loadAssets 里那段：
+               这一刻有没有设定根本不知道，而定妆是往库里写。 -->
           <button
             class="btn btn--sm"
-            :class="characters.length ? 'btn--ghost' : 'btn--ai'"
+            :class="characters.length || assetsError ? 'btn--ghost' : 'btn--ai'"
             type="button"
-            :disabled="isBusy('bible') || !!bulk"
-            title="让 AI 读一遍故事，把人和地方定下来"
+            :disabled="isBusy('bible') || !!bulk || !!assetsError"
+            :title="
+              assetsError
+                ? `这部剧的设定读不出来，先别往里写：${assetsError}`
+                : '让 AI 读一遍故事，把人和地方定下来'
+            "
             @click="bible"
           >
             <AppIcon v-if="!characters.length" name="sparkle" :size="13" />
@@ -569,11 +594,18 @@ watch(
           <button
             class="btn btn--sm btn--ai"
             type="button"
-            :disabled="isBusy('genall') || isBusy('bible') || (!characters.length && !locations.length)"
+            :disabled="
+              isBusy('genall') ||
+              isBusy('bible') ||
+              !!assetsError ||
+              (!characters.length && !locations.length)
+            "
             :title="
-              overwrite
-                ? '连已经有的一起重画。改了画风之后用——已有的图还是老提示词出的'
-                : '把还缺的参考图一次画完。已经有的不动——那些多半是挑过的'
+              assetsError
+                ? `这部剧的设定读不出来：${assetsError}`
+                : overwrite
+                  ? '连已经有的一起重画。改了画风之后用——已有的图还是老提示词出的'
+                  : '把还缺的参考图一次画完。已经有的不动——那些多半是挑过的'
             "
             @click="genAll"
           >
