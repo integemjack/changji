@@ -23,7 +23,7 @@ import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 
 import { api } from '@/api'
 import { STAGE_LABELS, statusOf } from '@/api/labels'
-import { useLongRunning } from '@/composables/useSystemFeed'
+import { useLongRunning, useRetryWhenBack } from '@/composables/useSystemFeed'
 import { useRun } from '@/stores/run'
 import { useSession } from '@/stores/session'
 import { useUi } from '@/stores/ui'
@@ -652,6 +652,10 @@ export function useShots() {
     runStore.poll()
     syncPending()
   }
+  // 引擎重启之后自己回来：这一页停在「读不到这一集的分镜」上时，
+  // 那份表一回来就重读一趟。见 useRetryWhenBack。
+  useRetryWhenBack(() => loadError.value, load)
+
   // 批量那条跑完也重拉一次。只订下降沿：跑的过程中它一章一集地写，
   // 而这一页要的是"这一集的分镜出来了没有"。
   //

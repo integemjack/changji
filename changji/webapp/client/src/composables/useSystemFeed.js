@@ -17,7 +17,7 @@
  *
  * 只在 socket 没有的时候拉：连上之后这条就停，不为同一个节奏做两遍功。
  */
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 
 import { api } from '@/api'
 import { openJobSocket } from '@/composables/useJobSocket'
@@ -168,4 +168,34 @@ export function useLongRunning(kinds = ['run', 'write']) {
     if (!jobs) return null
     return jobs.some((j) => kinds.includes(j.kind))
   })
+}
+
+/**
+ * 引擎回来之后，把那一页上"读砸了"的那一趟重来一次。
+ *
+ * **引擎重启是这套东西里最常见的一种断。** 仓库里三处注释都写着「引擎重启
+ * 时会连着失败几次」，而那几处说的都是**轮询**那一层（它们自己会慢下来再
+ * 接着试）。真正卡住的是**页面那一趟读**：进页面时引擎正好没起来，那一页
+ * 就停在「读不到这一集的分镜 · 网络请求发不出去」上，而引擎两秒之后就回来了
+ * ——顶栏那盏灯自己变回「引擎已连接」，系统表和「AI 作业中」也自己回来了，
+ * 唯独那一页的正文一直是那句报错。人只能刷新，或者切一下集号 / 标签把它
+ * 骗回来。实测过，那一屏在引擎回来之后又停了十几秒一动不动。
+ *
+ * 判据就用这份表在不在：它两秒一拍，拉不到时 `stat` 是 null（见 pull 的
+ * catch），回来那一拍就非空了。
+ *
+ * **只在那一页真的挂着错的时候重来。** 不然每开一页都要白读一趟——
+ * 第一次拿到表也是一次 null → 非空的跳变。
+ *
+ * @param {() => unknown} hasError 这一页现在是不是停在报错上
+ * @param {() => void}    retry    重来那一趟
+ */
+export function useRetryWhenBack(hasError, retry) {
+  const { stat } = useSystemFeed()
+  watch(
+    () => stat.value != null,
+    (up) => {
+      if (up && hasError()) retry()
+    },
+  )
 }

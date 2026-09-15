@@ -32,6 +32,7 @@ import ScriptReader from '@/components/ScriptReader.vue'
 import { api } from '@/api'
 import { countScriptChars } from '@/api/labels'
 import { runAsyncJob } from '@/composables/useAsyncJob'
+import { useRetryWhenBack } from '@/composables/useSystemFeed'
 import { useAction } from '@/composables/useAction'
 import { useSession } from '@/stores/session'
 import { useUi } from '@/stores/ui'
@@ -234,6 +235,11 @@ function beforeUnload(e) {
   e.preventDefault()
   e.returnValue = ''
 }
+
+
+// 引擎重启之后自己回来：这一页停在「读不到…」上时，那份表一回来就重读一趟。
+// 见 useRetryWhenBack。
+useRetryWhenBack(() => loadError.value, load)
 
 onMounted(() => window.addEventListener('beforeunload', beforeUnload))
 onUnmounted(() => {

@@ -48,6 +48,7 @@ import { api, mediaUrl } from '@/api'
 import { useAction } from '@/composables/useAction'
 import { runAsyncJob } from '@/composables/useAsyncJob'
 import { openJobFeed } from '@/composables/useJobFeed'
+import { useRetryWhenBack } from '@/composables/useSystemFeed'
 import { stoppedByHand } from '@/composables/stopped-by-hand'
 import { openJobSocket } from '@/composables/useJobSocket'
 import { useThinking } from '@/stores/thinking'
@@ -488,6 +489,11 @@ async function load() {
     if (want === session.projectPath) loading.value = false
   }
 }
+
+
+// 引擎重启之后自己回来：这一页停在「读不到…」上时，那份表一回来就重读一趟。
+// 见 useRetryWhenBack。
+useRetryWhenBack(() => loadError.value, load)
 
 function beforeUnload(e) {
   if (!dirtyIds.value.length) return

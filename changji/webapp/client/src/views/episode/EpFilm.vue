@@ -12,7 +12,7 @@ import EmptyState from '@/components/EmptyState.vue'
 import { api, mediaUrl } from '@/api'
 import { isFilmOf } from '@/api/labels'
 import { humanAgo } from '@/composables/useAction'
-import { useLongRunning } from '@/composables/useSystemFeed'
+import { useLongRunning, useRetryWhenBack } from '@/composables/useSystemFeed'
 import { useRun } from '@/stores/run'
 import { useSession } from '@/stores/session'
 import { useUi } from '@/stores/ui'
@@ -254,6 +254,10 @@ watch(() => [session.projectPath, session.episodeId], load)
 watch(useLongRunning(['run']), (now, before) => {
   if (before === true && now === false) load()
 })
+
+// 引擎重启之后自己回来：这一页停在「读不到…」上时，表一回来就重读一趟。
+// 见 useRetryWhenBack。
+useRetryWhenBack(() => loadError.value, load)
 
 /**
  * 成片的地址，**带上这个文件的 mtime**。
