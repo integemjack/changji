@@ -439,7 +439,29 @@ export function useShots() {
   let stoppedByHand = false
 
   async function stop() {
-    if (runStore.running) stoppedByHand = true
+    // **要不要立那个旗，得在发请求之前看。** 等回来再看的话引擎可能已经停
+    // 了，`running` 变成假，旗就立不上——于是底下那个下降沿照样弹一句
+    // 「这一轮跑完了」，而这一轮是人按停的。
+    const wasRunning = runStore.running
+    const queued = waiting.value.size
+
+    try {
+      await api.stopRun()
+    } catch (err) {
+      // ⚠️ **没停成就什么都别动。** 这儿原来是先把 `waiting` 清空、先立
+      // `stoppedByHand`，再发请求——请求砸了的话：
+      //
+      //   · 排着的那几镜**凭空没了**。它们只活在这个 Map 里，一个字都没
+      //     发给引擎；而屏幕上只有一句原始报错，不会说"顺手把 5 镜也扔了"。
+      //   · `stoppedByHand` 还立着，会把下一轮**真正跑完**的那句提示吃掉
+      //     ——这正是这个旗上面那段注释在防的事。
+      //
+      // 而那一刻引擎压根没停，还在跑。
+      ui.error(`没停下来：${err.message}`)
+      runStore.poll()
+      return
+    }
+
     // **排着的那几镜也一起取消。**
     //
     // 出队是挂在 `running` 的下降沿上的（见下面那个 watch：这一轮完了就把
@@ -449,14 +471,9 @@ export function useShots() {
     //
     // 清掉而不是留着：这一页没有"接着跑排队的"那个入口，留着的话它们要等
     // 到某一轮**不相干的**运行结束时才突然开跑，那比现在更莫名其妙。
-    const queued = waiting.value.size
+    if (wasRunning) stoppedByHand = true
     waiting.value = new Map()
-    try {
-      await api.stopRun()
-      ui.ok(queued ? `已停，跑完的镜头留着；排着的 ${queued} 镜也取消了` : '已停，跑完的镜头留着')
-    } catch (err) {
-      ui.error(err.message)
-    }
+    ui.ok(queued ? `已停，跑完的镜头留着；排着的 ${queued} 镜也取消了` : '已停，跑完的镜头留着')
     runStore.poll()
   }
 
