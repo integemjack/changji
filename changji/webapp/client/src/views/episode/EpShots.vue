@@ -1443,10 +1443,27 @@ onDeactivated(() => window.removeEventListener('keydown', onKey))
             </div>
             <p v-else class="tiny dim">无台词</p>
           </div>
+          <!-- **这一栏不出片。** `subtitle_text` 全引擎一处都没人读：成片上
+               烧进去的字幕是 assemble.cpp 的 build_timeline 按**每一句台词**
+               排的（`cue.text = line.text`，起止跟着那句配音的实测时长），
+               这一栏从头到尾只是存着。分镜模型照 schema 填它，填出来的就是
+               台词原句——golden 里 43 条全是空的、或者和某一句台词一字不差。
+
+               转场和口型那两样一样是"记下来的意图"，它们各自的 title 里都
+               写着这件事；独独这一栏什么都没说，而它比那两样更容易让人当
+               真：标签就叫「字幕」，紧挨着上面那排台词框，人想改字幕第一眼
+               看见的就是它。改完保存还成功——只是成片上一个字都没变。 -->
           <label class="field">
             <span class="field__label">字幕</span>
-            <input v-model="draft.subtitle_text" class="input" />
+            <input
+              v-model="draft.subtitle_text"
+              class="input"
+              title="记下来的意图；成片烧进去的字幕来自上面每一句台词，不读这一栏"
+            />
           </label>
+          <p class="tiny dim">
+            成片上的字幕按上面每句台词排，跟着配音的实际时长走；这一栏只是分镜里记的一句，暂时不参与出片。
+          </p>
 
           <!-- **折起来的三样：两样流水线还不做，一样很少改。**
                转场：装配走的是 `-f concat -c copy` 纯硬切，全树没有一处
