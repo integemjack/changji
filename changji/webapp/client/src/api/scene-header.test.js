@@ -25,10 +25,13 @@ function frontend() {
   if (!rm) throw new Error('ScriptReader 里找不到 SCENE 那条正则')
   const tm = src.match(/^const asciiTrim = \(s\) => s\.replace\((\/.*\/g), ''\)$/m)
   if (!tm) throw new Error('ScriptReader 里找不到 asciiTrim')
-  // eslint-disable-next-line no-eval
-  const re = eval(rm[1])
-  // eslint-disable-next-line no-eval
-  const trimRe = eval(tm[1])
+  // 从字面量文本造 RegExp，不用 eval：`/…/g` → source 和 flags 分开
+  const lit = (text) => {
+    const at = text.lastIndexOf('/')
+    return new RegExp(text.slice(1, at), text.slice(at + 1))
+  }
+  const re = lit(rm[1])
+  const trimRe = lit(tm[1])
   /** 回 null（不是场次头）或者 { index, body }，和引擎那个函数一个形状。 */
   return (line) => {
     const m = re.exec(line.replace(trimRe, ''))
