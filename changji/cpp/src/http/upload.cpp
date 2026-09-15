@@ -74,14 +74,24 @@ std::string write_ref(const ProjectStore& store, const std::string& stem,
     return store.paths().rel(dest);
 }
 
-/// 参考音色收哪几种。**wav 放第一个**：进程内那条路最稳的就是它，
-/// 别的格式要看 ggml 那边的解码器编没编进去。
-const std::array<std::pair<const char*, const char*>, 5>& voice_types() {
-    static const std::array<std::pair<const char*, const char*>, 5> kTypes = {{
+/// 参考音色收哪几种。**wav 放第一个**：进程内那条路最稳的就是它。
+///
+/// ⚠️ **这张表要和进程内那条路真能读的对上。** 上一版还收 `audio/mp4`
+/// （.m4a），而 mtmd 那边走的是 miniaudio，只认 wav / mp3 / flac
+/// ——`infer/llama_tts.cpp` 里那句 `mtmd_helper_bitmap_init_from_file`
+/// 失败时说的就是「只认 wav / mp3 / flac」，注释里还专门写着「拿一个
+/// m4a 或者 ogg 过来是很常见的事」。
+///
+/// 于是传一段 m4a：这儿收下、回一句「参考音色已存」、角色也配上了，
+/// 而第一句台词开配才炸——那时候人已经在跑整集了。收的时候就该说不。
+///
+/// （这张表原来那句「别的格式要看 ggml 那边的解码器编没编进去」是在答案
+/// 还不知道的时候写的。答案现在在 llama_tts.cpp 里。）
+const std::array<std::pair<const char*, const char*>, 4>& voice_types() {
+    static const std::array<std::pair<const char*, const char*>, 4> kTypes = {{
         {"audio/wav", ".wav"},
         {"audio/x-wav", ".wav"},
         {"audio/mpeg", ".mp3"},
-        {"audio/mp4", ".m4a"},
         {"audio/flac", ".flac"},
     }};
     return kTypes;
@@ -169,7 +179,7 @@ ApiResult post_character_voice(const std::string& project_path,
 
     const std::string suffix = voice_suffix_for(content_type);
     if (suffix.empty()) {
-        throw ApiError(400, "只收 wav、mp3、m4a、flac，收到的是 " +
+        throw ApiError(400, "只收 wav、mp3、flac，收到的是 " +
                                 (content_type.empty() ? std::string("(空)")
                                                       : content_type));
     }

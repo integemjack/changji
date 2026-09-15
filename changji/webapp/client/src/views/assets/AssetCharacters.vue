@@ -1127,7 +1127,7 @@ async function clearRef(charId, slot) {
                     {{ edits[openChar.char_id].voice_id ? '换一段' : '传一段人声' }}
                     <input
                       type="file"
-                      accept="audio/wav,audio/x-wav,audio/mpeg,audio/mp4,audio/flac"
+                      accept="audio/wav,audio/x-wav,audio/mpeg,audio/flac"
                       hidden
                       @change="uploadVoice(openChar.char_id, $event)"
                     />
