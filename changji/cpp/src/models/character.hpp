@@ -94,6 +94,22 @@ struct Character {
     double lora_strength = 1.0; ///< 0..2
 
     // 配音
+    //
+    // ⚠️ **名字和实际干的事是反的，别照着名字挑。**
+    //
+    // 干活的是 `voice_id`——它虽然叫 id，进程内配音**把它当一段人声片段的
+    // 路径用**（tts_backends.cpp 里拿它 `is_regular_file` 一查就直接
+    // `speaker_ref`，见 http/upload.hpp 上那段：「"选音色"这件事在这一版
+    // 等于"给一段参考音频"」）。
+    //
+    // 而 `voice_ref_audio`——这个名字正好就是"参考音频"——**是死的**：
+    // 没有任何地方能写进去（`POST /api/character` 的白名单里没有它，
+    // bible 那份 schema 也不让模型填），也没有任何地方读它。全仓库只有
+    // 两处提到它：这一行，和 character.cpp 里合并重复角色时那句
+    // `fill_gaps` 顺手搬一下。
+    //
+    // 留着是因为它在 assets.json 里（删了等于改盘上格式），理由同上面的
+    // `lora_path`。找"怎么给这个角色一段参考声音"的人，要动的是 voice_id。
     std::optional<std::string> voice_id;
     std::optional<std::string> voice_ref_audio;
     /// 猜出来的性别和角色序号。配音时拿它们从服务端的音色列表里挑。
