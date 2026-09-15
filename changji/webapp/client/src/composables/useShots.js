@@ -23,7 +23,8 @@ import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 
 import { api } from '@/api'
 import { STAGE_LABELS, statusOf } from '@/api/labels'
-import { useRun, useWriter } from '@/stores/run'
+import { useLongRunning } from '@/composables/useSystemFeed'
+import { useRun } from '@/stores/run'
 import { useSession } from '@/stores/session'
 import { useUi } from '@/stores/ui'
 
@@ -81,7 +82,6 @@ export function useShots() {
   // 批量补分镜（/api/plan/all）跑在"写"那个槽上，不是"出片"那个。
   // 不订它的话，那一轮给这一集补完分镜，墙上还是空的——人要切一次 tab
   // 或者刷新才看得到，而那一轮正是他在这一页上点着「去补」起的。
-  const writeStore = useWriter()
 
   const shots = ref([])
   /** 这一趟读砸了的话，那句话。空串 = 没砸（包括"还没出分镜"那个 404）。 */
@@ -658,14 +658,16 @@ export function useShots() {
   // `session.refresh()` 也要跟着叫，理由同下面出片那条：顶栏那个集号下拉
   // 上写着每一集多少镜、侧边那几个对勾也按分镜算，而批量补分镜正好把这两
   // 样都改了。不叫的话它们停在开跑之前，直到下一次换集或者干完点别的。
-  watch(
-    () => writeStore.running,
-    (now, before) => {
-      if (!(before && !now)) return
-      load()
-      session.refresh()
-    },
-  )
+  // ⚠️ **这儿原来盯的是 `writeStore.running`，而这一页没有人驱动它。**
+  // `useWriter` 的轮询只有故事页和设定页「分集」那一格会开；在那一格点完
+  // 「批量补分镜」，人多半直接过来这一页等——而这一页上那个旗子从头到尾
+  // 是假的，下降沿一次都不来。上面那段话说的正是这件事。
+  // 换成那份系统表（每一页都在拉），只认「写」那个槽。见 useLongRunning。
+  watch(useLongRunning(['write']), (now, before) => {
+    if (!(before === true && now === false)) return
+    load()
+    session.refresh()
+  })
   watch(
     () => runStore.running,
     (now, before) => {

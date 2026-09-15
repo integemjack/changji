@@ -45,7 +45,16 @@ const EDGES = [
   ['views/AssetsView.vue', undefined],
   // 片子只有出片那个槽会出，写整季跑完不该让这一页白拉一趟
   ['views/episode/EpFilm.vue', "['run']"],
+  // 镜头页：在设定页点完「批量补分镜」，人多半直接过来这一页等
+  ['composables/useShots.js', "['write']"],
 ]
+
+/**
+ * **`useShots` 里盯 `runStore.running` 那一条是对的，别顺手也改了。**
+ * 它自己就是 `useRun` 的驱动者（`start()` / `stop()` 都在它的挂载卸载里），
+ * 而且那条回调还要读 `runStore.state?.error` 和那个「自己按的停」的闩——
+ * 那些只有 run store 有。
+ */
 
 describe('跑完了重拉一次', () => {
   it('四处都从那份系统表认下降沿', () => {
@@ -59,6 +68,8 @@ describe('跑完了重拉一次', () => {
   it('**不许再盯那两个旗子**', () => {
     for (const [rel] of EDGES) {
       const src = code(rel)
+      // 认的是 `runner.` / `writer.` 那两个实例名。`runStore.running` 不算
+      // ——useShots 自己就是 run store 的驱动者，见上面那段。
       expect(src, `${rel} 又在 watch 那两个旗子了`).not.toMatch(
         /watch\(\s*\(\) => \[?(runner|writer)\.running/,
       )
