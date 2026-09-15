@@ -532,11 +532,16 @@ function playAudio(rel, url) {
 /**
  * 播一段刚摇出来的。加时间戳绕开缓存——落点是固定的那个 .take.wav。
  *
- * **项目路径是传进来的，不在这儿现读。** 叫它的两处都在 await 之后
+ * **项目路径是传进来的，不在这儿现读。** 摇和试听那两处都在 await 之后
  * （合成要几秒到几十秒），现读的话换过剧就是拿**新这一部**的路径去拼
  * 上一部那个 rel：两边的落点都是固定名字（`.take_<seed>.wav`、
  * `audio/say.wav`），于是不报 404，直接播出新这一部里那一段——听上去
  * 就是"这个角色的音色试听"，而它根本不是。
+ *
+ * ⚠️ **两个参数都得给。** 模板里「再听一遍」那处原来只传了 rel，于是
+ * `mediaUrl` 提前返回空串、`new Audio('&_=…')` 指向一个相对当前页面的
+ * 地址，404；`play()` 一拒就落到下面 catch 里那句「浏览器挡住了自动
+ * 播放」——按钮从来没响过，而屏幕上怪的是浏览器。
  */
 function playRel(rel, project) {
   playAudio(rel, mediaUrl(project, rel) + '&_=' + Date.now())
@@ -1192,11 +1197,19 @@ async function clearRef(charId, slot) {
                     >
                       {{ isBusy('take') ? '摇着…' : take ? '再摇一个' : '摇一个' }}
                     </button>
+                    <!-- **项目路径要给。** `playRel(rel, project)` 少传第二个
+                         的话 `mediaUrl` 提前返回空串，`new Audio('&_=…')` 拿到
+                         的是一个相对当前页面的地址，404；`play()` 一拒，catch
+                         里那句话就出来了——「浏览器挡住了自动播放」。于是这颗
+                         按钮从来没响过，而屏幕上怪的是浏览器。
+                         这儿现读 session 是对的（和摇、试听那两处不一样）：
+                         它不在 await 之后，而且 `take` 在换剧和换人时都清掉了
+                         （上面那两个 watch），点得到的那一把一定属于眼下这一部。 -->
                     <button
                       v-if="take"
                       class="btn btn--sm btn--ghost"
                       type="button"
-                      @click="playRel(take.rel)"
+                      @click="playRel(take.rel, session.projectPath)"
                     >
                       再听一遍
                     </button>
