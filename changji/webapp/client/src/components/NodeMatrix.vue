@@ -224,8 +224,13 @@ function cellTitle(cap, node) {
           <tr :class="{ off: !n.online }">
             <td class="col-name">
               <span class="nm">{{ n.name }}</span>
+              <!-- 「本机」是身份，「连不上／忙」是状态，**两件事各走各的**。
+                   原来三个串在一条 v-if/v-else-if 上，本机那一行永远停在第
+                   一个分支——于是本机的「忙」一次都没亮过，而本机恰恰是最
+                   常在跑的那一台（`local_exec().busy()`，引擎每次都算了给
+                   过来）。 -->
               <span v-if="n.local" class="pill pill--neutral tiny">本机</span>
-              <span v-else-if="!n.online" class="pill pill--warn tiny">连不上</span>
+              <span v-if="!n.online" class="pill pill--warn tiny">连不上</span>
               <span v-else-if="n.busy" class="pill pill--ok tiny">忙</span>
               <span class="url mono tiny">{{ n.url }}</span>
               <span v-if="n.error" class="err tiny">{{ n.error }}</span>
