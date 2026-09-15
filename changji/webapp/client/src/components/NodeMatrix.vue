@@ -170,6 +170,59 @@ const matchHint = computed(() =>
     : '没开项目，照的是本机全局配着的那一档。同一套模型是画风一致的前提',
 )
 
+/**
+ * 加一台别的机器。
+ *
+ * **在这之前这件事只能手改配置文件**——而这张表就摆在这儿，上面每台机器
+ * 每个能力都能点，唯独"这张表从哪儿来"得去翻文档、找到配置文件、记住
+ * `[[peer.nodes]]` 这个写法（用户 2026-09-15 提的）。
+ */
+const adding = ref(false)
+const newUrl = ref('')
+const newToken = ref('')
+
+function openAdd() {
+  adding.value = true
+  newUrl.value = ''
+  newToken.value = ''
+  error.value = ''
+}
+
+async function addNode() {
+  const url = newUrl.value.trim()
+  if (!url) return
+  busyNode.value = 'add'
+  try {
+    // 引擎那头加完会**当场问一遍**这台在不在、能干什么，回的就是整张表。
+    // 所以这儿直接换上，不用再 load() 一次。
+    data.value = await api.addNode(url, newToken.value.trim())
+    error.value = ''
+    adding.value = false
+  } catch (err) {
+    // **不关那个框。** 地址填错是最常见的一种失败，关掉的话人得从头再敲
+    // 一遍——而他要改的可能只是一个字符。
+    error.value = err.message
+  } finally {
+    busyNode.value = ''
+  }
+}
+
+async function removeNode(node) {
+  if (!confirm(`不再用 ${node.name || node.url} 这台？配置里那一段会删掉。`)) {
+    return
+  }
+  busyNode.value = node.url
+  try {
+    data.value = await api.removeNode(node.url)
+    if (opened.value === node.url) opened.value = ''
+    error.value = ''
+  } catch (err) {
+    error.value = err.message
+  } finally {
+    busyNode.value = ''
+  }
+}
+
 async function cancel(url) {
   try {
     await api.nodeSetupCancel(url)
@@ -257,6 +310,16 @@ function cellTitle(cap, node) {
     <div class="matrix__head">
       <h3 class="matrix__t">这几台机器能产什么</h3>
       <span class="spacer" />
+      <!-- **这件事以前只能手改配置文件。** 表就在这儿，每台每个能力都能
+           点，唯独"这张表从哪儿来"得去翻文档。 -->
+      <button
+        class="btn btn--ghost btn--sm"
+        type="button"
+        :disabled="loading || adding"
+        @click="openAdd"
+      >
+        加一台机器
+      </button>
       <button
         class="iconbtn"
         type="button"
@@ -267,6 +330,36 @@ function cellTitle(cap, node) {
         <AppIcon name="refresh" :size="14" />
       </button>
     </div>
+
+    <!-- 加一台。**摆在表上面而不是弹窗**：填完之后立刻要看那一行亮没亮，
+         中间隔一层遮罩就得关掉再看。 -->
+    <form v-if="adding" class="add" @submit.prevent="addNode">
+      <input
+        v-model="newUrl"
+        class="input mono add__url"
+        placeholder="http://192.168.1.20:9101"
+        autofocus
+      />
+      <!-- 口令**不是必填**：对面 `[peer].token` 空着（只听回环）或者和本机
+           那台配的是同一个时都不用填。填了就只给这一台用。 -->
+      <input
+        v-model="newToken"
+        class="input mono add__token"
+        type="password"
+        placeholder="口令（对面 [peer].token；留空 = 用全局那个）"
+      />
+      <button class="btn btn--sm btn--primary" type="submit" :disabled="!newUrl.trim() || busyNode === 'add'">
+        {{ busyNode === 'add' ? '连着…' : '加上' }}
+      </button>
+      <button class="btn btn--sm btn--ghost" type="button" @click="adding = false">
+        算了
+      </button>
+      <p class="add__hint tiny dim">
+        对面要以 <code>--worker --host 0.0.0.0</code> 起着，并且设了
+        <code>[peer].token</code>。加上之后这张表会立刻去问它一遍，连不上也
+        先记下来——那台开机之后自己就亮了。
+      </p>
+    </form>
 
     <p v-if="error" class="alert alert--bad">
       <AppIcon name="warn" :size="15" />
@@ -332,6 +425,17 @@ function cellTitle(cap, node) {
                 @click="openRow(n)"
               >
                 {{ opened === n.url ? '收起' : '模型' }}
+              </button>
+              <!-- **本机没有这一颗**：它不是配置里加进来的一台，删不掉。 -->
+              <button
+                v-if="!n.local"
+                class="btn btn--ghost btn--sm"
+                type="button"
+                :disabled="busyNode === n.url"
+                title="从配置里去掉这台"
+                @click="removeNode(n)"
+              >
+                {{ busyNode === n.url ? '删着…' : '不用了' }}
               </button>
             </td>
           </tr>
@@ -440,6 +544,35 @@ function cellTitle(cap, node) {
   align-items: center;
   gap: 8px;
 }
+/* 加一台那一行。挤不下就折——地址框本来就长，再加口令和两颗按钮，
+   窄一点的设置页上一行放不下。 */
+.add {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s2);
+  padding: var(--s3);
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--r);
+  background: var(--bg-sunken);
+}
+
+.add__url {
+  flex: 2 1 15rem;
+  min-width: 0;
+}
+
+.add__token {
+  flex: 1 1 11rem;
+  min-width: 0;
+}
+
+.add__hint {
+  flex-basis: 100%;
+  margin: 0;
+  line-height: 1.6;
+}
+
 .matrix__t {
   font-size: 14px;
   margin: 0;

@@ -346,3 +346,131 @@ TEST_CASE("改完的文件再改一次还是对的") {
     std::error_code ec;
     fs::remove_all(dir, ec);
 }
+
+// ---- 别的机器那一份（`[[peer.nodes]]`）----
+//
+// 这一段单独一条路：`save_user_config` 的形状是 {节: {键: 值}}，写不了
+// 数组表。而把它写成 `[peer]` 下的内联数组更糟——文件里要是已经有手写的
+// `[[peer.nodes]]`，那就是同一个键定义了两遍，toml++ 当场拒绝整份配置，
+// 一次「加一台机器」把配置写坏，下次连界面都起不来。
+
+TEST_CASE("加一台：追加在末尾，前面的东西一个字不动") {
+    const fs::path dir = tmp_dir("加机器");
+    const fs::path cfg = dir / "changji.toml";
+    put(cfg,
+        "[llm]\n# 这行注释要活着\nmodel = \"a\"\n\n[peer]\ntoken = \"t0\"\n");
+
+    config::save_peer_nodes(
+        json::array({{{"url", "http://gpu-box:9001"}, {"token", "abc"}}}), cfg);
+
+    const std::string after = slurp(cfg);
+    CHECK(after.find("# 这行注释要活着") != std::string::npos);
+    CHECK(after.find("token = \"t0\"") != std::string::npos);
+    CHECK(after.find("[[peer.nodes]]") != std::string::npos);
+    // **`[peer]` 必须排在数组表前面。** 反过来的话 TOML 那条"不能重复
+    // 定义"就可能踩上——数组表会隐式建出 peer 这张表。
+    CHECK(after.find("[peer]") < after.find("[[peer.nodes]]"));
+
+    const auto s = reload(dir);
+    REQUIRE(s.peer.nodes.size() == 1);
+    CHECK(s.peer.nodes[0].url == "http://gpu-box:9001");
+    CHECK(s.peer.nodes[0].token == "abc");
+
+    std::error_code ec;
+    fs::remove_all(dir, ec);
+}
+
+TEST_CASE("整份替换：旧的几块全删掉，不会越写越多") {
+    const fs::path dir = tmp_dir("替换机器");
+    const fs::path cfg = dir / "changji.toml";
+    put(cfg, "[peer]\ntoken = \"t0\"\n");
+
+    for (int i = 0; i < 4; ++i) {
+        config::save_peer_nodes(
+            json::array({{{"url", "http://a:1"}}, {{"url", "http://b:2"}}}),
+            cfg);
+    }
+    const std::string after = slurp(cfg);
+    std::size_t count = 0, pos = 0;
+    while ((pos = after.find("[[peer.nodes]]", pos)) != std::string::npos) {
+        ++count;
+        ++pos;
+    }
+    CHECK(count == 2);
+    CHECK(reload(dir).peer.nodes.size() == 2);
+
+    std::error_code ec;
+    fs::remove_all(dir, ec);
+}
+
+TEST_CASE("删光了就一块都不剩") {
+    const fs::path dir = tmp_dir("删空机器");
+    const fs::path cfg = dir / "changji.toml";
+    put(cfg,
+        "[peer]\ntoken = \"t0\"\n\n[[peer.nodes]]\nurl = \"http://a:1\"\n"
+        "off = [\"llm\"]\n\n[[peer.nodes]]\nurl = \"http://b:2\"\n");
+
+    config::save_peer_nodes(json::array(), cfg);
+    const std::string after = slurp(cfg);
+    CHECK(after.find("[[peer.nodes]]") == std::string::npos);
+    CHECK(after.find("token = \"t0\"") != std::string::npos);
+    CHECK(reload(dir).peer.nodes.empty());
+
+    std::error_code ec;
+    fs::remove_all(dir, ec);
+}
+
+TEST_CASE("注释掉的示例块不算数，不许删它") {
+    // 内置模板里那段 `# [[peer.nodes]]` 是在教人怎么写。删块那一趟要是
+    // 把它也当成块，用户下次打开配置文件就找不到这一节的说明了。
+    const fs::path dir = tmp_dir("注释块");
+    const fs::path cfg = dir / "changji.toml";
+    put(cfg,
+        "[peer]\n# [[peer.nodes]]\n# url = \"http://gpu-box:9001\"\n"
+        "# off = [\"llm\"]\n");
+
+    config::save_peer_nodes(json::array({{{"url", "http://real:1"}}}), cfg);
+    const std::string after = slurp(cfg);
+    CHECK(after.find("# [[peer.nodes]]") != std::string::npos);
+    CHECK(after.find("# url = \"http://gpu-box:9001\"") != std::string::npos);
+    CHECK(reload(dir).peer.nodes.size() == 1);
+
+    std::error_code ec;
+    fs::remove_all(dir, ec);
+}
+
+TEST_CASE("off 那个数组要写成 TOML 的数组，不是 JSON 的") {
+    // `to_toml_literal` 以前把数组 dump 成 JSON——形状巧了也能读，
+    // 真正会炸的是 `["a"]` 里带中文或转义时。这儿钉住它走 TOML 那条。
+    CHECK(config::to_toml_literal(json::array({"llm", "video"})) ==
+          "[\"llm\", \"video\"]");
+    CHECK(config::to_toml_literal(json::array()) == "[]");
+
+    const fs::path dir = tmp_dir("关能力");
+    const fs::path cfg = dir / "changji.toml";
+    put(cfg, "[peer]\n");
+    config::save_peer_nodes(
+        json::array({{{"url", "http://a:1"},
+                      {"off", json::array({"llm", "video"})}}}),
+        cfg);
+    const auto s = reload(dir);
+    REQUIRE(s.peer.nodes.size() == 1);
+    CHECK(s.peer.nodes[0].off.size() == 2);
+
+    std::error_code ec;
+    fs::remove_all(dir, ec);
+}
+
+TEST_CASE("口令空着就不写那一行") {
+    // 写 `token = ""` 和不写是一个意思（留空就用 [peer].token），而文件里
+    // 多一行空值，下次人来读会以为这台特意设了个空口令。
+    const fs::path dir = tmp_dir("空口令");
+    const fs::path cfg = dir / "changji.toml";
+    put(cfg, "[peer]\n");
+    config::save_peer_nodes(
+        json::array({{{"url", "http://a:1"}, {"token", ""}}}), cfg);
+    CHECK(slurp(cfg).find("token") == std::string::npos);
+
+    std::error_code ec;
+    fs::remove_all(dir, ec);
+}

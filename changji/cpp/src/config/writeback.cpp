@@ -122,9 +122,118 @@ std::string to_toml_literal(const json& v) {
         // TOML 没有 null。Python 那边写回时把 None 换成空串，照抄。
         return "\"\"";
     }
-    // 数组和对象这里用不到。真传进来了就 dump 成 JSON——
-    // 那不是合法 TOML，下次加载会报错，但比静默写一个空值强。
+    if (v.is_array()) {
+        // `off = ["llm", "video"]` 就是这一种。
+        std::string out = "[";
+        bool first = true;
+        for (const auto& e : v) {
+            if (!first) out += ", ";
+            first = false;
+            out += to_toml_literal(e);
+        }
+        return out + "]";
+    }
+    // 对象这里用不到（内联表 `{a = 1}` 全仓一处都不写）。真传进来了就
+    // dump 成 JSON——那不是合法 TOML，下次加载会报错，但比静默写一个空值强。
     return v.dump();
+}
+
+namespace {
+
+/// 一行是不是**没被注释掉的**数组表头 `[[xxx]]`，是的话返回里面那个名字。
+bool array_header(const std::string& line, std::string& name) {
+    const std::string t = text::strip_ws(line);
+    if (t.size() < 5 || t.compare(0, 2, "[[") != 0) return false;
+    const auto close = t.find("]]");
+    if (close == std::string::npos) return false;
+    name = text::strip_ws(t.substr(2, close - 2));
+    return !name.empty();
+}
+
+/// 一行是不是任意一种节头（`[x]` 或 `[[x]]`）。删块时用它找块的结尾。
+bool any_header(const std::string& line) {
+    const std::string t = text::strip_ws(line);
+    return t.size() >= 3 && t.front() == '[' && t.find(']') != std::string::npos;
+}
+
+}  // namespace
+
+fs::path save_peer_nodes(const json& nodes,
+                         const std::optional<fs::path>& path) {
+    const fs::path target = path ? *path : user_config_path();
+    std::error_code ec;
+    fs::create_directories(target.parent_path(), ec);
+
+    std::string original = read_file(target);
+    if (original.empty()) {
+        // 同 save_user_config：文件不在就从内置模板起步，注释也一起有了。
+        const fs::path tmp = target.parent_path() /
+                             paths::from_utf8(".changji_peers_seed.toml");
+        write_default_config(tmp);
+        original = read_file(tmp);
+        fs::remove(tmp, ec);
+    }
+
+    bool final_nl = true;
+    const std::vector<std::string> lines = split_lines(original, final_nl);
+    // 文件本来是 CRLF 的话，新写的几行也要跟着——同一份文件里混着两种
+    // 换行，git 和编辑器都会闹。判据取第一行（空文件时按 LF）。
+    const bool crlf = !lines.empty() && is_crlf(lines.front());
+    const std::string eol = crlf ? "\r" : "";
+
+    // **先把已有的块整段删掉。** 一个块从 `[[peer.nodes]]` 那一行起，
+    // 到下一个节头（任意一种）之前为止。注释掉的示例块以 `#` 开头，
+    // array_header 认不出它，所以原样留着。
+    std::vector<std::string> kept;
+    kept.reserve(lines.size());
+    for (std::size_t i = 0; i < lines.size();) {
+        std::string name;
+        if (array_header(lines[i], name) && name == "peer.nodes") {
+            ++i;
+            while (i < lines.size() && !any_header(lines[i])) ++i;
+            continue;
+        }
+        kept.push_back(lines[i]);
+        ++i;
+    }
+    // 删完之后末尾多半留着一串空行（原来那几个块之间的），收掉。
+    while (!kept.empty() && text::strip_ws(kept.back()).empty()) kept.pop_back();
+
+    const auto emit = [&](const std::string& key, const json& v) {
+        kept.push_back(key + " = " + to_toml_literal(v) + eol);
+    };
+    if (nodes.is_array()) {
+        for (const auto& n : nodes) {
+            if (!n.is_object()) continue;
+            const std::string url = n.value("url", std::string());
+            if (url.empty()) continue;   // 没地址的一行写出去也没用
+            kept.push_back(eol);
+            kept.push_back("[[peer.nodes]]" + eol);
+            emit("url", url);
+            // **口令空着就不写这一行。** 写 `token = ""` 和不写是一个意思
+            // （留空就用 `[peer].token`），而文件里多一行空值，下次人来读
+            // 会以为这台特意设了个空口令。
+            if (const auto t = n.value("token", std::string()); !t.empty()) {
+                emit("token", t);
+            }
+            if (const auto it = n.find("off");
+                it != n.end() && it->is_array() && !it->empty()) {
+                emit("off", *it);
+            }
+        }
+    }
+
+    const std::string text = join_lines(kept, true);
+    std::ofstream f(target, std::ios::binary | std::ios::trunc);
+    if (!f) {
+        throw std::runtime_error("配置写不进去：" + paths::to_utf8(target));
+    }
+    f << text;
+    f.close();
+    if (!f) {
+        throw std::runtime_error("配置写不进去：" + paths::to_utf8(target));
+    }
+    return target;
 }
 
 fs::path save_user_config(const json& patch,

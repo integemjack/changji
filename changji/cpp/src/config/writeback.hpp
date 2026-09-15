@@ -37,6 +37,28 @@ std::filesystem::path save_user_config(
     const nlohmann::json& patch,
     const std::optional<std::filesystem::path>& path = std::nullopt);
 
+/// 把「有哪些别的机器」整份写回 `[[peer.nodes]]`。
+///
+/// **单独一个函数，不走上面那条。** `save_user_config` 的形状是
+/// {节: {键: 值}}，写不了数组表；而把这几台写成 `[peer]` 下的内联数组
+/// （`nodes = [{url=…}]`）更糟：文件里要是已经有手写的 `[[peer.nodes]]`，
+/// 那就是**同一个键定义了两遍**，toml++ 当场拒绝整份配置——一次「加一台
+/// 机器」把配置写坏，程序下次连界面都起不来。数组表重复只是多几台，
+/// 坏不到那个份上。
+///
+/// `nodes` 是个数组，每项 `{"url":…, "token":…, "off":[…]}`。**整份替换**：
+/// 文件里所有**没被注释掉的** `[[peer.nodes]]` 块先删掉，再把这一份追加到
+/// 末尾。模板里那段注释掉的示例不动（它以 `#` 开头，不算块）。
+///
+/// 追加在末尾是刻意的：`[[peer.nodes]]` 会隐式建出 `peer` 这张表，而显式
+/// 的 `[peer]` 节头要是排在它后面，TOML 那条「不能重复定义」就可能踩上。
+/// 摆在最后，`[peer]` 永远在前面。
+///
+/// 返回写到了哪个文件。写不进去抛 std::runtime_error。
+std::filesystem::path save_peer_nodes(
+    const nlohmann::json& nodes,
+    const std::optional<std::filesystem::path>& path = std::nullopt);
+
 /// 把一个 JSON 值转成 TOML 的字面量写法。
 ///
 /// 单独暴露是为了能测：字符串要加引号并转义，浮点要保证带小数点

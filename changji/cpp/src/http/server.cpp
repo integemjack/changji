@@ -20,6 +20,7 @@
 #include "http/readonly.hpp"
 #include "config/runtime.hpp"
 #include "config/writeback.hpp"
+#include "util/text.hpp"
 #include "http/batch.hpp"
 #include "http/config_api.hpp"
 #include "http/episodes.hpp"
@@ -354,6 +355,126 @@ void run(const config::Settings& settings, const Options& opts) {
     CROW_ROUTE(app, "/api/nodes")([] {
         return json_response(infer::nodes_json(config::runtime().snapshot()));
     });
+
+    // 加一台别的机器 / 去掉一台。**写进全局配置的 `[[peer.nodes]]`。**
+    //
+    // 在这之前这件事只能手改配置文件——而那张表就摆在设置页上，上面每台
+    // 机器每个能力都能点，唯独"这张表从哪儿来"得去翻文档、找配置文件、
+    // 记住 `[[peer.nodes]]` 这个写法（用户 2026-09-15 提的：远程服务器应该
+    // 在设置里直接加）。
+    //
+    // 和上面那条 `/off` 不一样，这条**改的是机器的属性**，所以落 config.toml
+    // 而不是项目库里那份 nodes.json：换个项目不该换一套机器。
+    const auto peer_nodes_json = [](const config::Settings& s) {
+        nlohmann::json arr = nlohmann::json::array();
+        for (const auto& n : s.peer.nodes) {
+            nlohmann::json one{{"url", n.url}, {"token", n.token}};
+            nlohmann::json off = nlohmann::json::array();
+            for (const auto& c : n.off) off.push_back(c);
+            one["off"] = off;
+            arr.push_back(std::move(one));
+        }
+        return arr;
+    };
+
+    /// 地址长得像不像一台机器。**只挡明显不对的**：能不能连上由那张表说，
+    /// 这儿挡的是"填了个明显不是地址的东西"——那种错误在表上显示成
+    /// "连不上"，用户会去查网络，而问题在他自己刚敲的那一行。
+    const auto bad_peer_url = [](const std::string& url) -> std::string {
+        if (url.empty()) return "要填地址";
+        if (url == infer::kLocalEndpoint) return "local 是本机，不用加";
+        if (url.rfind("http://", 0) != 0 && url.rfind("https://", 0) != 0) {
+            return "地址要以 http:// 或 https:// 开头，比如 "
+                   "http://192.168.1.20:9101";
+        }
+        const auto rest = url.substr(url.find("//") + 2);
+        if (rest.empty() || rest.front() == '/') return "地址里没有主机名";
+        if (rest.find(' ') != std::string::npos) return "地址里不能有空格";
+        return {};
+    };
+
+    CROW_ROUTE(app, "/api/nodes/add")
+        .methods("POST"_method)([peer_nodes_json,
+                                 bad_peer_url](const crow::request& req) {
+            const auto body = nlohmann::json::parse(req.body, nullptr, false);
+            if (body.is_discarded() || !body.is_object()) {
+                return json_response({{"detail", "请求体不是一个 JSON 对象"}},
+                                     400);
+            }
+            std::string url = changji::text::strip_ws(
+                body.value("url", std::string()));
+            // 末尾的斜杠去掉：`http://x:9101/` 和 `http://x:9101` 是同一台，
+            // 留着的话查重查不出来，表上就出现两行一模一样的机器。
+            while (url.size() > 8 && url.back() == '/') url.pop_back();
+            if (const auto why = bad_peer_url(url); !why.empty()) {
+                return json_response({{"detail", why}}, 422);
+            }
+            // **正在跑的时候不许改。** 同 /api/nodes/off：半集换机器会让
+            // 前后画风对不上。
+            if (pipeline::jobs().running(pipeline::JobKind::Run)) {
+                return json_response(
+                    {{"detail", "正在跑，这时候改派活的机器会把这一集跑坏"}},
+                    409);
+            }
+
+            auto s = config::runtime().snapshot();
+            for (const auto& n : s.peer.nodes) {
+                if (n.url == url) {
+                    return json_response(
+                        {{"detail", "这台已经在表上了：" + url}}, 409);
+                }
+            }
+            auto arr = peer_nodes_json(s);
+            arr.push_back({{"url", url},
+                           {"token", body.value("token", std::string())},
+                           {"off", nlohmann::json::array()}});
+            try {
+                config::save_peer_nodes(arr);
+            } catch (const std::exception& e) {
+                return json_response({{"detail", e.what()}}, 500);
+            }
+            // 写完要让这个进程也跟着变：不重读的话，表上是新的、
+            // 真派活时用的还是旧的那一份。
+            s = config::load_settings();
+            config::runtime().replace(s);
+            infer::node_registry().refresh(s);
+            return json_response(infer::nodes_json(s));
+        });
+
+    CROW_ROUTE(app, "/api/nodes/remove")
+        .methods("POST"_method)([peer_nodes_json](const crow::request& req) {
+            const auto body = nlohmann::json::parse(req.body, nullptr, false);
+            if (body.is_discarded() || !body.is_object()) {
+                return json_response({{"detail", "请求体不是一个 JSON 对象"}},
+                                     400);
+            }
+            const std::string url = body.value("url", std::string());
+            if (url.empty()) return json_response({{"detail", "要 url"}}, 422);
+            if (pipeline::jobs().running(pipeline::JobKind::Run)) {
+                return json_response(
+                    {{"detail", "正在跑，这时候改派活的机器会把这一集跑坏"}},
+                    409);
+            }
+
+            auto s = config::runtime().snapshot();
+            auto arr = peer_nodes_json(s);
+            nlohmann::json left = nlohmann::json::array();
+            for (const auto& n : arr) {
+                if (n.value("url", std::string()) != url) left.push_back(n);
+            }
+            if (left.size() == arr.size()) {
+                return json_response({{"detail", "表上没有这台：" + url}}, 404);
+            }
+            try {
+                config::save_peer_nodes(left);
+            } catch (const std::exception& e) {
+                return json_response({{"detail", e.what()}}, 500);
+            }
+            s = config::load_settings();
+            config::runtime().replace(s);
+            infer::node_registry().refresh(s);
+            return json_response(infer::nodes_json(s));
+        });
 
     // 点那张表上的一个格子：关掉／打开某台的某个能力。
     //
