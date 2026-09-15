@@ -14,8 +14,15 @@ import { describe, expect, it, vi } from 'vitest'
 // 而真的 ui store 一开张就要读 localStorage、动 document.documentElement，
 // 在 node 环境下直接抛。为这个去装 jsdom 是拿一个几十兆的浏览器实现，
 // 去换两个用不上的字段。
+/** 屏幕上弹过的那几条，按颜色记下来。 */
+const said = []
 vi.mock('@/stores/ui', () => ({
-  useUi: () => ({ ok() {}, info() {}, warn() {}, error() {} }),
+  useUi: () => ({
+    ok(m) { said.push(['ok', m]) },
+    info(m) { said.push(['info', m]) },
+    warn(m) { said.push(['warn', m]) },
+    error(m) { said.push(['error', m]) },
+  }),
 }))
 vi.mock('@/stores/session', () => ({
   useSession: () => ({ async refresh() {} }),
@@ -128,5 +135,48 @@ describe('useAction', () => {
     expect(fn).not.toHaveBeenCalled()
     a.resolve('第一件')
     expect(await first).toBe('第一件')
+  })
+})
+
+/**
+ * 自己按的停不该红。
+ *
+ * 顶栏那颗「停下」管着十几个步骤（写剧本、拆分镜、定妆、剪预告、念一段…），
+ * 按下去之后引擎抛的是「已取消」，一路穿到 run() 的 catch 里。原来这儿
+ * 见错就红——于是主动按下的停在屏幕上是一条红的报错，人会去找哪儿出错了。
+ *
+ * 判在 run() 里，因为这是**唯一一处"把异常变成屏幕上那句话"的地方**；
+ * 散到十几个调用点去判的话，漏掉的那几处就是这个样子，而且不报错。
+ */
+describe('run() 见到"人按的停"', () => {
+  it('弹的是蓝的，不是红的', async () => {
+    said.length = 0
+    const { run, error } = useAction()
+    const r = await run(() => Promise.reject(new Error('已取消')))
+    expect(r).toBeUndefined()
+    expect(said).toEqual([['info', '停下了']])
+    // error 照旧记着：自己判过的那几处（一键出图走 quiet）读的就是它
+    expect(error.value).toBe('已取消')
+  })
+
+  it('出参考图那条的说法也认', async () => {
+    said.length = 0
+    const { run } = useAction()
+    await run(() => Promise.reject(new Error('已停下这一张')))
+    expect(said).toEqual([['info', '停下了']])
+  })
+
+  it('真砸了还是红的', async () => {
+    said.length = 0
+    const { run } = useAction()
+    await run(() => Promise.reject(new Error('显存不够加载 LLM')))
+    expect(said).toEqual([['error', '显存不够加载 LLM']])
+  })
+
+  it('quiet 的那几处一句都不弹——它们自己说', async () => {
+    said.length = 0
+    const { run } = useAction()
+    await run(() => Promise.reject(new Error('已取消')), { quiet: true })
+    expect(said).toEqual([])
   })
 })

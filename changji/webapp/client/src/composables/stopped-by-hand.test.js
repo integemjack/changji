@@ -18,7 +18,7 @@ import { fileURLToPath } from 'node:url'
 
 import { describe, expect, it } from 'vitest'
 
-import { stoppedByHand } from './useJobFeed'
+import { stoppedByHand } from './stopped-by-hand'
 
 const read = (rel) => fs.readFileSync(fileURLToPath(new URL(rel, import.meta.url)), 'utf8')
 

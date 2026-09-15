@@ -6,6 +6,7 @@
  */
 
 import { computed, reactive, ref } from 'vue'
+import { stoppedByHand } from '@/composables/stopped-by-hand'
 import { useSession } from '@/stores/session'
 import { useUi } from '@/stores/ui'
 
@@ -53,7 +54,20 @@ export function useAction() {
       return result
     } catch (err) {
       error.value = err.message || String(err)
-      if (!quiet) ui.error(error.value)
+      // **自己按的停不是失败，别弹红的。**
+      //
+      // 引擎那头分得很清（`ref_gen.cpp`：「报成「出图失败：已取消」的话，
+      // 人会去找哪儿出错了」），取消留下的是「已取消」/「已停下这一张」。
+      // 而这儿原来是见错就红——于是顶栏那颗「停下」按下去，屏幕上是一条
+      // 红的报错。那颗按钮管着十几个步骤（写剧本、拆分镜、定妆、剪预告、
+      // 念一段…），每一处都自己判一遍的话，漏掉的那几处就是这个样子。
+      //
+      // 判在这儿，因为**这儿是唯一一处"把异常变成屏幕上那句话"的地方**。
+      // 已经自己判过的（一键出图那条）走的是 quiet，不受影响。
+      if (!quiet) {
+        if (stoppedByHand(error.value)) ui.info('停下了')
+        else ui.error(error.value)
+      }
       return undefined
     } finally {
       running.delete(key)
