@@ -616,10 +616,30 @@ TEST_CASE("片中硬切判 REGRESS：最大帧差又高又孤，问题在首帧�
         CHECK(r.ok());
         CHECK(r.metrics.count("cut_inside") == 0);
     }
-    SUBCASE("最大值不够高（27 那种真在动的镜头）：放行") {
+    SUBCASE("27 那种真在动的镜头：放行") {
+        // 地板 2026-09-16 降到 25 之后，这一条靠的是"孤不孤"：
+        // 27 / 2.5 只差 10.8 倍，够不着 13。
         f.motion_out = "lavfi.signalstats.YAVG=2.0\nlavfi.signalstats.YAVG=27.0\n"
                        "lavfi.signalstats.YAVG=2.5\n";
         const auto r = gates::gate_video(shot, fake_video("真动"), f.ff(), cfg);
+        CHECK(r.ok());
+    }
+    SUBCASE("几乎不动的空镜中途切黑：34 / 0.13，也要抓住") {
+        // 2026-09-16 实测 ep04_sh010：一段几乎不动的空镜，第 114 帧整个
+        // 切黑。最大 34、中位 0.13——孤得不能再孤，却因为原来的地板是 40
+        // 判了通过，带着那一刀进了成片。
+        f.motion_out = "lavfi.signalstats.YAVG=0.1\nlavfi.signalstats.YAVG=0.13\n"
+                       "lavfi.signalstats.YAVG=34.0\nlavfi.signalstats.YAVG=0.12\n"
+                       "lavfi.signalstats.YAVG=0.13\n";
+        const auto r = gates::gate_video(shot, fake_video("切黑"), f.ff(), cfg);
+        CHECK(r.verdict == gates::Verdict::Regress);
+        CHECK(r.metrics.count("cut_inside") == 1);
+    }
+    SUBCASE("一只手带着纸快速划过：51 / 9.7，整段都在动，放行") {
+        // ep01_sh006。最大值比上面那条切黑的还高，但中位跟着高，不孤。
+        f.motion_out = "lavfi.signalstats.YAVG=9.0\nlavfi.signalstats.YAVG=51.3\n"
+                       "lavfi.signalstats.YAVG=9.713\nlavfi.signalstats.YAVG=10.4\n";
+        const auto r = gates::gate_video(shot, fake_video("挥手"), f.ff(), cfg);
         CHECK(r.ok());
     }
 }

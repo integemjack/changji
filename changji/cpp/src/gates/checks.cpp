@@ -237,8 +237,20 @@ GateResult gate_video(const models::Shot& shot, const fs::path& video_path,
             // **判成 REGRESS 不是 RETRY**：首帧没变的话换种子重出视频还是
             // 那张首帧，还是得切。要回首帧阶段换个种子重出（render.cpp 里
             // 认 cut_inside 这个标记把状态退回去）。
-            constexpr double kCutMaxDiff = 40.0;
-            constexpr double kCutRatio = 10.0;
+            //
+            // **2026-09-16 调了一次：40 太高，一条真硬切从底下漏过去了。**
+            // ep04_sh010 是一段几乎不动的空镜，中途整个切黑：最大 34、
+            // 中位 0.13——差了 261 倍，孤得不能再孤，却因为 34 < 40 判了
+            // 通过，带着那一刀进了成片（attempts 跑到 3，gate_notes 全空）。
+            //
+            // 把地板降到 25、倍数从 10 提到 13，分辨的活交给"孤不孤"。
+            // 在手上这 26 个有人眼核对过的样本上：5 条真硬切全抓到
+            // （81/4.8、34/0.13，加上原来那三条 89/3.3、45/2.2、77/2），
+            // 21 条正常镜头一条不误报——包括下面用例里钉着的 27/2.5
+            // （倍数只有 10.8）、一只手带着纸快速划过的 51/9.7、
+            // 和整段在动的 29/3.5。
+            constexpr double kCutMaxDiff = 25.0;
+            constexpr double kCutRatio = 13.0;
             if (motion.max >= kCutMaxDiff &&
                 motion.max >= kCutRatio * std::max(motion.median, 0.1)) {
                 metrics["cut_inside"] = 1.0;
