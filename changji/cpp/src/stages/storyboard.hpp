@@ -319,6 +319,12 @@ std::vector<std::string> missing_dialogue_lines(
 /// 差 0.042 秒（1%），藏得住；换 H3 之后单镜最多差 0.583 秒，就露出来了。
 double real_total_s(const std::vector<models::Shot>& shots, int fps = 24);
 
+/// 同上，但用**指定的**那份格子，不读进程里那一份全局的。
+/// 只读接口要用它：那些接口从来不设全局的那份，读到的是"上一次跑的是
+/// 哪部剧"。见 http/readonly.cpp 的 limits_for_project。
+double real_total_s(const std::vector<models::Shot>& shots,
+                    const VideoLimits& limits, int fps);
+
 /// 把总时长拉回目标值。
 ///
 /// 偏差优先摊到无对白的过渡镜上，有台词的镜头不动，

@@ -1898,11 +1898,15 @@ std::vector<std::string> missing_dialogue_lines(const std::string& script,
     return missing;
 }
 
-double real_total_s(const std::vector<Shot>& shots, int fps) {
-    const VideoLimits& limits = video_limits();
+double real_total_s(const std::vector<Shot>& shots, const VideoLimits& limits,
+                    int fps) {
     double total = 0.0;
     for (const Shot& s : shots) total += limits.real_duration_s(s.duration_s, fps);
     return total;
+}
+
+double real_total_s(const std::vector<Shot>& shots, int fps) {
+    return real_total_s(shots, video_limits(), fps);
 }
 
 std::vector<Shot>& rebalance_durations(std::vector<Shot>& shots, double target_s,

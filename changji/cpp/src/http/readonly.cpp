@@ -4,8 +4,11 @@
 #include <cctype>
 #include <cmath>
 #include <filesystem>
+#include <map>
+#include <mutex>
 #include <set>
 
+#include "config/runtime.hpp"
 #include "config/settings.hpp"
 #include "models/hardware.hpp"
 #include "models/project.hpp"
@@ -18,6 +21,53 @@ namespace fs = std::filesystem;
 using json = nlohmann::json;
 
 namespace changji::http {
+
+namespace {
+
+/// 这部剧自己的帧数格子。
+///
+/// `stages::video_limits()` 是进程里那**一份**全局的，只有出片和拆分镜
+/// 那两条路会按项目重算（见 config::apply_video_limits）。这几个只读接口
+/// 从来不设它，读到的于是是「上一次跑的是哪部剧」——同一张分镜表，出片
+/// 前后报出来的时长能差三倍：本机那份上限是 124 帧，一个 15 秒的镜头在
+/// 镜头墙上写着 5.2 秒，整集时长跟着一起错，成片页那条跳转条也偏。
+/// 2026-09-16 实测：hulian-test 的 ep06_sh019 计划 15 秒，接口报 5.2 秒。
+///
+/// 这个接口跑得勤（出片时每 6 秒一次），所以按 changji.toml 的修改时间
+/// 缓存——没改就不重读 TOML。
+const stages::VideoLimits& limits_for_project(const std::filesystem::path& root) {
+    struct Entry {
+        std::filesystem::file_time_type stamp{};
+        stages::VideoLimits limits;
+    };
+    static std::mutex mu;
+    static std::map<std::string, Entry> cache;
+
+    const std::filesystem::path toml = root / "changji.toml";
+    std::filesystem::file_time_type stamp{};
+    std::error_code ec;
+    const auto t = std::filesystem::last_write_time(toml, ec);
+    if (!ec) stamp = t;
+
+    const std::string key = paths::to_utf8(root);
+    std::lock_guard lg(mu);
+    auto it = cache.find(key);
+    if (it != cache.end() && it->second.stamp == stamp) return it->second.limits;
+
+    Entry e;
+    e.stamp = stamp;
+    // 读不出来（目录刚没了、TOML 语法坏了）不能让只读接口整个塌掉：
+    // 退回进程里那一份，和改之前一样，至少还能看。
+    try {
+        e.limits = config::video_limits_for(config::load_settings(root));
+    } catch (const std::exception&) {
+        e.limits = stages::video_limits();
+    }
+    return cache.insert_or_assign(key, std::move(e)).first->second.limits;
+}
+
+}  // namespace
+
 
 namespace {
 
@@ -171,7 +221,9 @@ ApiResult get_project(const std::string& path) {
             // 夹低，同一个项目报出来的时长会短一些。那是实话——在这台机器
             // 上渲出来就是那么长——但别拿它当项目的固有属性。要看人当初
             // 要的是多长，看 target_duration_s。
-            {"duration_s", round1(stages::real_total_s(e.shots))},
+            {"duration_s",
+             round1(stages::real_total_s(
+                 e.shots, limits_for_project(store.root()), 24))},
             {"status", status},
         });
     }
@@ -271,13 +323,17 @@ ApiResult get_shots(const std::string& path, const std::string& episode_id) {
             // 偏，而全程不报错。那时候要把项目的 fps 传进来（注意这个接口
             // 跑得很勤：出片时每 6 秒一次，别顺手在里面读 TOML；而且对拍
             // 语料按现在这样钉着）。
-            {"real_duration_s", round1(stages::video_limits().real_duration_s(
-                                    s.duration_s))},
+            {"real_duration_s",
+             round1(limits_for_project(store.root()).real_duration_s(
+                 s.duration_s))},
         });
     }
     // 整集多长。前端别自己加：单镜是四舍五入过的，逐镜加会带累积误差。
-    return {200, {{"shots", shots},
-                  {"duration_s", round1(stages::real_total_s(ep->shots))}}};
+    return {200,
+            {{"shots", shots},
+             {"duration_s",
+              round1(stages::real_total_s(
+                  ep->shots, limits_for_project(store.root()), 24))}}};
 }
 
 namespace {
