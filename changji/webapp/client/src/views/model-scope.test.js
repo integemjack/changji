@@ -42,35 +42,46 @@ function code(text) {
 }
 
 describe('模型这一行归谁管', () => {
-  it('项目页那一行上写着「本机」', () => {
+  /**
+   * ⚠️ **这几条 2026-09-15 当天翻过一次面。**
+   *
+   * 最早那一版写的是「（本机）」——那时候挑哪一档确实只写全局，标签是对的。
+   * 同一天用户定下「模型配置跟项目走」，挑的那一半搬进了项目的
+   * changji.toml，标签跟着改成「（这部剧）」。
+   *
+   * 留着这段话是因为**两件事现在挤在同一行里**：挑哪一档跟项目走，那一档
+   * 的文件在这台机器的哪儿跟机器走。谁要是只看见一半，很容易又把标签改回
+   * 去，或者干脆把另一半也搬走。
+   */
+  it('项目页那一行标的是「这部剧」', () => {
     const body = code(VIEW)
     const at = body.indexOf('>模型')
     expect(at, '那一行的键名改了？').toBeGreaterThan(0)
-    expect(body.slice(at, at + 80)).toMatch(/本机/)
+    expect(body.slice(at, at + 80)).toMatch(/这部剧/)
   })
 
-  it('那一行的悬停说清是全局、而且跨机时不算数', () => {
+  it('那一行的悬停要把两半都说清', () => {
     const body = code(VIEW)
     const at = body.indexOf('>模型')
-    const near = body.slice(Math.max(0, at - 400), at)
-    expect(near, '没说对所有项目生效').toMatch(/所有项目/)
-    expect(near, '没说别的机器用它自己那份').toMatch(/别的机器/)
+    const near = body.slice(Math.max(0, at - 500), at)
+    expect(near, '没说挑哪一档跟项目走').toMatch(/这部剧的设置/)
+    expect(near, '没说文件在哪儿跟机器走').toMatch(/这台机器/)
   })
 
-  it('弹窗里也说一次，并且把配置文件路径摆出来', () => {
+  it('弹窗里也说一次，并且把两个文件都摆出来', () => {
     const body = code(DLG)
-    expect(body).toMatch(/本机设置/)
     expect(body, '没有 scopeHint').toMatch(/const scopeHint = computed/)
-    expect(body, '没把 configFile 摆出来').toMatch(/configFile/)
+    expect(body, '没把全局那份的路径摆出来').toMatch(/configFile/)
+    expect(body, '没把项目那份摆出来').toMatch(/changji\.toml/)
+    // 没选项目时只写全局，那也要说
+    expect(body).toMatch(/还没选项目/)
   })
 
-  it('引擎那头确实写的是全局配置——标签才站得住', () => {
-    // 哪天它改成写项目里的 changji.toml，上面那两处就成了错的。
-    expect(SETUP, 'post_setup_download 不再写用户配置了？').toMatch(
-      /save_user_config/,
-    )
+  it('引擎那头两份都写：文件名进全局，挑的那一档进项目', () => {
+    expect(SETUP, '不写全局那份了？').toMatch(/save_user_config/)
     expect(SETUP, 'configFile 报的不再是全局那份了？').toMatch(
       /user_config_path\(\)/,
     )
+    expect(SETUP, '不写项目那份了？那标签就成了错的').toMatch(/"models\.pick"/)
   })
 })

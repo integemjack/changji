@@ -1,0 +1,80 @@
+/**
+ * 挑哪一档模型 = **这部剧**的设置，记进项目的 changji.toml。
+ *
+ * 用户 2026-09-15 定的：模型配置跟项目走，派到远端也照这份来，冲突时项目
+ * 优先。这个文件钉住前端这一半——**两条路都得把项目带上**：
+ *
+ *   · 存这一档（`saveGroup`，「只存不下」那条）
+ *   · 下这一档（`downloadGroup`）
+ *   · 读回来（`setupState`）
+ *
+ * 少了最后一条尤其阴：挑完写进了项目，再打开那个窗口读的却是全局那一份
+ * ——**看着像没保存上**，而人多半会再挑一次。
+ */
+import fs from 'node:fs'
+import { fileURLToPath } from 'node:url'
+
+import { describe, expect, it } from 'vitest'
+
+const STORE = fs.readFileSync(
+  fileURLToPath(new URL('./models.js', import.meta.url)),
+  'utf8',
+)
+const API = fs.readFileSync(
+  fileURLToPath(new URL('../api/index.js', import.meta.url)),
+  'utf8',
+)
+/** 引擎那一头：项目那份到底写没写。 */
+const SETUP = fs.readFileSync(
+  fileURLToPath(new URL('../../../../cpp/src/http/setup_api.cpp', import.meta.url)),
+  'utf8',
+)
+
+/** 去掉注释再比对——不然断言会被解释这个坑的那段注释本身骗过去。 */
+function code(text) {
+  return text.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
+}
+
+const store = code(STORE)
+
+describe('挑哪一档归这部剧', () => {
+  it('有一个统一的"这趟属于哪部剧"，不是每处各写一遍', () => {
+    expect(store).toMatch(/function owner\(\)/)
+    const at = store.indexOf('function owner()')
+    const fn = store.slice(at, at + 200)
+    expect(fn).toContain('projectPath')
+    // 没有项目时不带——设置页那一节和给对等机装模型都不属于任何一部剧
+    expect(fn).toMatch(/\?\s*\{ project: p \}\s*:\s*\{\}/)
+  })
+
+  it('存和下两条路都带上项目', () => {
+    for (const fnName of ['saveGroup', 'downloadGroup']) {
+      const at = store.indexOf(`async function ${fnName}(`)
+      expect(at, `${fnName} 挪走了？`).toBeGreaterThan(0)
+      const body = store.slice(at, at + 400)
+      expect(body, `${fnName} 没带项目`).toContain('...owner()')
+    }
+  })
+
+  it('读回来那一趟也要带，不然看着像没保存上', () => {
+    expect(store).toMatch(/api\.setupState\(useSession\(\)\.projectPath\)/)
+    expect(code(API), 'setupState 不收项目参数').toMatch(
+      /setupState:\s*\(project\)\s*=>/,
+    )
+  })
+
+  it('引擎那头确实把它写进项目，而不是全局', () => {
+    // 哪天这条改回只写全局，前端这几处就成了摆设。
+    expect(SETUP, '不再写 models.pick 了？').toMatch(/"models\.pick"/)
+    expect(SETUP, '不再认 body 里的 project 了？').toMatch(
+      /body\.find\("project"\)/,
+    )
+  })
+
+  it('认不出的档位 id 要说话，不许悄悄退回按文件名反推', () => {
+    // 这一节是手写得到的（拷项目、直接改 toml）。写错一个字母时悄悄退回，
+    // 界面显示的和跑的就是另一档，而没有任何一处提过。
+    expect(SETUP).toMatch(/pick_problem/)
+    expect(SETUP).toMatch(/pickProblem/)
+  })
+})

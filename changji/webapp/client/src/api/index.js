@@ -145,7 +145,14 @@ export const api = {
 
   // 首次运行那一页。**四条都在 /bff**：下模型这件事引擎独有，
   // /api 那一套在和 Python 的对拍范围内，加进去就是一处破契约。
-  setupState: () => get('/bff/setup/state'),
+  /**
+   * 首次运行那一页、以及项目页那个模型窗口读的都是它。
+   *
+   * **带上项目**：挑了哪一档记在项目的 changji.toml 里（`[models.pick]`），
+   * 不带的话这条只看全局——人在项目页挑完，再打开那个窗口看到的还是全局
+   * 那一档，看着像没保存上。没有项目时不带，行为和以前一样。
+   */
+  setupState: (project) => get('/bff/setup/state', project ? { path: project } : {}),
   startSetupDownload: (payload) => post('/bff/setup/download', payload),
   setupProgress: () => get('/bff/setup/progress'),
   cancelSetupDownload: () => post('/bff/setup/cancel', {}),

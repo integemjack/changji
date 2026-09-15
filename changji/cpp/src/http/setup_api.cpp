@@ -634,14 +634,50 @@ ApiResult post_setup_download(const config::Settings& settings, const json& body
         throw ApiError(500, std::string("配置写不进去：") + e.what());
     }
 
+    // ---- 「这部剧要哪一档」写进项目 ----
+    //
+    // 上面那一趟写的是**文件名**（`[models].image = "…gguf"`），那是这台
+    // 机器的属性。而"要哪一档"是剧的属性、机器无关，写进项目里的
+    // changji.toml，跟着项目目录走——派到别的机器上时那台照这个 id 去自己
+    // 的模型目录里找（用户 2026-09-15：模型配置跟项目走，项目优先）。
+    //
+    // **不给 project 就只写全局**，和以前一模一样：设置页那一节、以及给
+    // 对等机装模型那条路都不属于任何一部剧。
+    std::string wrote_pick;
+    if (const auto pj = body.find("project");
+        pj != body.end() && pj->is_string() && !pj->get<std::string>().empty()) {
+        json pick = json::object();
+        for (const auto& [group, id] : selections) pick[group] = id;
+        if (!pick.empty()) {
+            const fs::path toml =
+                paths::expand_user(pj->get<std::string>()) / "changji.toml";
+            try {
+                // 节名直接写 `models.pick`——写回那一层是按整串认节头的，
+                // 于是文件里出现的就是 `[models.pick]`。
+                wrote_pick = paths::to_utf8(
+                    config::save_user_config(json{{"models.pick", pick}}, toml));
+            } catch (const std::exception& e) {
+                // **只是这一半没写成，别把整趟算失败**：文件已经下了（或者
+                // 正要下），全局那份路径也写进去了。说清楚哪一半没成，
+                // 比整个回 500 让人重来一遍强。
+                throw ApiError(500,
+                               std::string("这一档记不进项目里：") + e.what() +
+                                   "。文件和本机配置都已经写好了，"
+                                   "下次打开这部剧会退回按文件名认");
+            }
+        }
+    }
+
     if (!want_download || items.empty()) {
         // 两种情况回同一个形状，因为对调用方来说是同一件事：**没起下载**。
         //   * `download:false` —— 只保存。配置上面那次 persist 已经写进去
         //     了，要下什么由前端问过用户再说。
         //   * items 为空 —— 全选了"不下载"，或者选的都已经在盘上。
         // 两者都不算错。
-        return {200, {{"started", false},
-                      {"progress", setup::Downloader::instance().snapshot().to_json()}}};
+        json out{{"started", false},
+                 {"progress", setup::Downloader::instance().snapshot().to_json()}};
+        if (!wrote_pick.empty()) out["pickWrittenTo"] = wrote_pick;
+        return {200, std::move(out)};
     }
 
     // 每下完一个文件回来一次。**一组的文件全齐了才写那一组的配置**：

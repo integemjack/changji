@@ -23,6 +23,7 @@ import { computed, ref } from 'vue'
 
 import { api } from '@/api'
 import { humanBytes } from '@/composables/useAction'
+import { useSession } from '@/stores/session'
 
 export const useModels = defineStore('models', () => {
   const state = ref(null)
@@ -208,7 +209,9 @@ export const useModels = defineStore('models', () => {
     loading.value = true
     error.value = ''
     try {
-      const data = await api.setupState()
+      // 带上项目：挑了哪一档记在它的 changji.toml 里。不带的话这一份
+      // 只看全局，人挑完再打开看到的还是旧的——看着像没保存上。
+      const data = await api.setupState(useSession().projectPath)
       if (mine !== seq) return
       state.value = data
       progress.value = data.download
@@ -305,10 +308,26 @@ export const useModels = defineStore('models', () => {
    * 写实（见 post_setup_download）；把整份 picks 都发过去的话，别的组里
    * 改了还没保存的选择会被一起写进配置——而用户按的只是这一个弹窗的保存。
    */
+  /**
+   * 这一趟属于哪部剧。
+   *
+   * **挑的那一档要记进这部剧的 changji.toml**（引擎那头写
+   * `[models.pick]`）——用户 2026-09-15 定的：模型配置跟项目走，派到远端
+   * 也照这份来。而下载和文件名照旧是这台机器的事，走全局配置。
+   *
+   * 没有项目时不带，那条路一个字都没变：设置页那一节、以及给对等机装模型
+   * 都不属于任何一部剧。
+   */
+  function owner() {
+    const p = useSession().projectPath
+    return p ? { project: p } : {}
+  }
+
   async function saveGroup(key) {
     const res = await api.startSetupDownload({
       selections: { [key]: picks.value[key] },
       download: false,
+      ...owner(),
     })
     progress.value = res.progress
     await load()
@@ -317,7 +336,10 @@ export const useModels = defineStore('models', () => {
 
   /** 下这一组缺的。理由同上：只报这一组。 */
   async function downloadGroup(key) {
-    const res = await api.startSetupDownload({ selections: { [key]: picks.value[key] } })
+    const res = await api.startSetupDownload({
+      selections: { [key]: picks.value[key] },
+      ...owner(),
+    })
     progress.value = res.progress
     if (res.started) {
       poll()

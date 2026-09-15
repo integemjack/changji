@@ -34,6 +34,7 @@ import ProgressBar from '@/components/ProgressBar.vue'
 import { api } from '@/api'
 import { humanBytes, humanRate, humanTime } from '@/composables/useAction'
 import { useModels } from '@/stores/models'
+import { useSession } from '@/stores/session'
 import { useUi } from '@/stores/ui'
 
 const props = defineProps({
@@ -97,6 +98,7 @@ watch(
 )
 
 const models = useModels()
+const session = useSession()
 const ui = useUi()
 const busy = ref(false)
 
@@ -193,15 +195,25 @@ const fam = computed(() => models.currentFamilyChoice(g.value))
 const hasQuants = computed(() => (fam.value?.options?.length ?? 0) > 1)
 
 const diskFree = computed(() => Number(models.state?.diskFreeBytes ?? 0))
-/** 那句「本机设置」的悬停。把配置文件的真实路径摆出来最省口舌。 */
+/**
+ * 那句范围说明的悬停。**把两个文件都摆出来最省口舌**：挑哪一档写项目那份，
+ * 文件名写全局那份，而这两件事在同一个窗口里发生。
+ */
 const scopeHint = computed(() => {
   const f = models.state?.configFile
+  const p = session.projectPath
   return (
-    '挑的是这台机器用哪一份模型，不是这部剧的设置——对所有项目生效。' +
-    '派到别的机器上的活，用的是那台自己的模型配置。' +
-    (f ? `\n写进：${f}` : '')
+    '挑哪一档是这部剧的设置，跟着项目目录走，派到别的机器上也照这份来。' +
+    '那一档的文件放在这台机器的哪儿，走全局配置。' +
+    (p ? `\n这一档记进：${p}/changji.toml` : '\n还没选项目，这次只写全局那份') +
+    (f ? `\n文件名写进：${f}` : '')
   )
 })
+
+/** 标题栏那一小行。没选项目时只写全局，得说出来。 */
+const scopeLabel = computed(() =>
+  session.projectPath ? '这一档记在这部剧里' : '还没选项目 · 这次只写全局',
+)
 
 const gpu = computed(() => models.state?.gpu ?? null)
 
@@ -453,13 +465,10 @@ async function download() {
           <p class="tiny dim purpose">{{ g.purpose }}</p>
         </div>
         <span class="spacer" />
-        <!-- ⚠️ **挑的是「这台机器」用哪一份，不是「这部剧」用哪一份。**
-             这个弹窗是从项目页那一行点开的，而那一行紧挨着「这部片子」
-             ——不说一声的话，人会当成是这部剧的设置。改它写的是全局配置
-             （`configFile` 就是它的路径），对所有项目生效；而派到别的
-             机器上的活，用的是**那台**自己的模型配置，和这儿挑的没关系。
-             显卡和盘剩余那两个读数说的也是这台。 -->
-        <span class="tiny dim nowrap scope" :title="scopeHint">本机设置 · 对所有项目生效</span>
+        <!-- **挑哪一档 = 这部剧的；文件在哪儿 = 这台机器的。** 两件事在
+             同一个窗口里发生，不说一声的话没人分得出来。显卡和盘剩余那两
+             个读数说的是这台机器。 -->
+        <span class="tiny dim nowrap scope" :title="scopeHint">{{ scopeLabel }}</span>
         <span class="tiny dim nowrap">
           <template v-if="gpu">{{ gpu.name }} · {{ gpu.vramGb.toFixed(1) }} GB</template>
           <template v-else>没探测到显卡</template>

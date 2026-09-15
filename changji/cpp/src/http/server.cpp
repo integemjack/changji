@@ -1238,10 +1238,22 @@ void run(const config::Settings& settings, const Options& opts) {
     // 才发现什么都跑不了——那时候用户手上只有一句"本地模型一个都没配"
     // 和一个配置文件路径。这四条接口把那段路变成"看推荐、点下载、等"。
 
-    CROW_ROUTE(app, "/bff/setup/state")([] {
+    // `path` 给了就**带上那部剧的 changji.toml**。
+    //
+    // 「挑了哪一档」记在项目里（`[models.pick]`），而这条接口正是那个模型
+    // 窗口读的。不带项目的话它只看全局——于是人在项目页挑完、写进了项目，
+    // 再打开那个窗口看到的还是全局那一档，**看着像没保存上**。
+    //
+    // 不给 path 照旧只看全局：设置页那一节和给对等机装模型都不属于任何
+    // 一部剧。
+    CROW_ROUTE(app, "/bff/setup/state")([](const crow::request& req) {
         auto r = guard([&] {
-            return get_setup_state(config::runtime().snapshot(),
-                                   config::runtime().profile());
+            const std::string project = query(req, "path");
+            const auto s = project.empty()
+                               ? config::runtime().snapshot()
+                               : config::load_settings(
+                                     paths::expand_user(project));
+            return get_setup_state(s, config::runtime().profile());
         });
         return json_response(r.body, r.status);
     });
