@@ -127,8 +127,21 @@ export function useShots() {
       loadError.value = ''
     } catch (err) {
       if (!mine()) return
-      // 还没出分镜时引擎会 404。这不是错，是流程还没走到。
-      if (err.status !== 404) ui.error(err.message)
+      // ⚠️ **404 不是"还没出分镜"。**
+      //
+      // 这儿原来写着「还没出分镜时引擎会 404。这不是错，是流程还没走到」
+      // 并据此把 404 整个吞掉。查了引擎那一侧（readonly.cpp 的 `get_shots`）
+      // ——**还没出分镜回的是 200 加一个空数组**；那里唯一的 404 是
+      // `没有剧集 <id>`，也就是这个集号根本不存在。
+      //
+      // 于是吞掉 404 等于：集号对不上（localStorage 里记着一个已经被删的
+      // 集、或者别的标签页刚删掉它）时，界面和"这一集还没分镜"长得一模一样，
+      // 一声不吭，底下还摆着「AI 出分镜」——点下去是给一个不存在的剧集排
+      // 分镜，再撞一次错。实跑对照过：200 空表和 404 两种情形，屏幕上一个
+      // 字都不差。
+      //
+      // 现在 404 和别的错一样处理：上面那句提示 + 下面的 loadError。
+      ui.error(err.message)
       // **读砸了和"还没出"是两件事，界面上要分得开。**
       //
       // 下面这句清空是必须的：换集时这一趟要是砸了，手里那份还是**上一集**
@@ -139,7 +152,7 @@ export function useShots() {
       //
       // 和 StoryView 上那段是同一条道理（「读不出来的时候不能摆"开始写"
       // 那一屏」），AssetCharacters / AssetLocations 也各有一份。
-      loadError.value = err.status === 404 ? '' : err.message
+      loadError.value = err.message
       shots.value = []
       episodeDuration.value = null
     } finally {
