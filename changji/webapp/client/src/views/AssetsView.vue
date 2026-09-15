@@ -89,6 +89,22 @@ const chapters = computed(() => story.value?.chapters ?? [])
 const plan = computed(() => story.value?.plan ?? [])
 const relations = computed(() => story.value?.relations ?? [])
 
+/**
+ * 定妆有没有料可读。
+ *
+ * **判据要和引擎那条一模一样。** `post_bible` 的 `source=auto` 是：有故事
+ * 就照故事出，没有就退回"第一集有内容的剧本"，两样都没有才
+ * `throw 400 "还没有剧本，先去写一集"`。而新项目缺的是**故事**——那句话
+ * 把人支去一个更靠后的步骤（剧本是分完集才有的），而这一页自己的空状态
+ * 说的是「先写故事」。两句话对不上，按钮又按得动，人就在两头之间来回跑。
+ *
+ * 用的是流程那份（每一页都在读、两秒一拍），不是这一页自己的 story：
+ * 老项目可能只有剧本没有故事，那时候 `chapters` 是空的而定妆照样能跑。
+ */
+const hasSource = computed(
+  () => !!session.done.story || (session.counters.writtenEpisodes ?? 0) > 0,
+)
+
 /** 还差几张脸。三视图一人三张，缺一张算一张。 */
 const charMissing = computed(() =>
   characters.value.reduce(
@@ -580,16 +596,24 @@ watch(longRunning, (now, before) => {
           </label>
 
           <!-- **读砸了就别摆成"新项目那颗主按钮"。** 见 loadAssets 里那段：
-               这一刻有没有设定根本不知道，而定妆是往库里写。 -->
+               这一刻有没有设定根本不知道，而定妆是往库里写。
+
+               **没料的时候按不动**：定妆要么读故事、要么读某一集的剧本
+               （引擎 post_bible 的 source=auto 就是这个顺序），两样都没有
+               时它回 400「还没有剧本，先去写一集」——而新项目缺的是**故事**，
+               那句话把人支去一个更靠后的步骤。底下那个空状态说的才对
+               （「先写故事」），按钮得和它一致。 -->
           <button
             class="btn btn--sm"
             :class="characters.length || assetsError ? 'btn--ghost' : 'btn--ai'"
             type="button"
-            :disabled="isBusy('bible') || !!bulk || !!assetsError"
+            :disabled="isBusy('bible') || !!bulk || !!assetsError || !hasSource"
             :title="
               assetsError
                 ? `这部剧的设定读不出来，先别往里写：${assetsError}`
-                : '让 AI 读一遍故事，把人和地方定下来'
+                : !hasSource
+                  ? '还没有故事，也没有写好的剧本——定妆要照着其中一样来。先去写故事'
+                  : '让 AI 读一遍故事，把人和地方定下来'
             "
             @click="bible"
           >
