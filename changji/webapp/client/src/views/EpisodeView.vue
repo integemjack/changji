@@ -35,7 +35,7 @@ import { api } from '@/api'
 import { countScriptChars, isFilmOf } from '@/api/labels'
 import { useAction } from '@/composables/useAction'
 import { pickProjectHint } from '@/composables/pick-project-hint'
-import { useLongRunning } from '@/composables/useSystemFeed'
+import { useLongRunning, useRetryWhenBack } from '@/composables/useSystemFeed'
 import { useProjects } from '@/stores/projects'
 import { useSession } from '@/stores/session'
 import { useUi } from '@/stores/ui'
@@ -57,6 +57,8 @@ const shots = ref([])
 const outputs = ref(0)
 /** 投递这一层在不在。不在就没有那个 tab，成片格里的「去上传」也不显示。 */
 const publishOk = ref(false)
+/** 上一趟读砸了没有。只给「引擎回来之后重来」用，见 load 末尾。 */
+const loadFailed = ref(false)
 const loaded = ref(false)
 
 /**
@@ -113,8 +115,16 @@ async function load() {
   outputs.value = files.filter((f) => isFilmOf(f.name, epId)).length
   // 投递那层不在时 platforms 回的是 {error: "…"}，不是抛异常（见 EpPublish）
   publishOk.value = ps.status === 'fulfilled' && !ps.value?.error
+  // **记一笔，等引擎回来重来一趟。** 这一行标签上的数（剧本几字、镜头几镜、
+  // 差几首帧、成片几条）读砸了就退成没有数字——而这一行正是这一页自己的
+  // 进度条。引擎重启那几秒里进来，它会一直空着，直到换集或者换项目。
+  // 界面上不显示这个旗子：真正的报错各格自己会说。
+  loadFailed.value = [sc, sh, out, ps].some((r) => r.status === 'rejected')
   loaded.value = true
 }
+
+// 引擎回来之后自己重来一趟。见 useRetryWhenBack。
+useRetryWhenBack(() => loadFailed.value, load)
 
 const pendingFrames = computed(() => shots.value.filter((s) => !s.frame_path).length)
 const pendingVideos = computed(() => shots.value.filter((s) => !s.video_path).length)

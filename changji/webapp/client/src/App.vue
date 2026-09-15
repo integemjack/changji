@@ -24,6 +24,7 @@ import ProjectRail from '@/components/ProjectRail.vue'
 import JobBadge from '@/components/JobBadge.vue'
 import ThinkingBadge from '@/components/ThinkingBadge.vue'
 import SysMeter from '@/components/SysMeter.vue'
+import { useRetryWhenBack } from '@/composables/useSystemFeed'
 import { STEP_ROUTES } from '@/router'
 import { useSession } from '@/stores/session'
 import { useUi } from '@/stores/ui'
@@ -81,6 +82,16 @@ onMounted(() => {
   window.addEventListener('resize', revealStep)
 })
 onUnmounted(() => window.removeEventListener('resize', revealStep))
+
+/**
+ * 引擎回来之后，把那一趟砸了的 `session.refresh()` 重来一次。
+ *
+ * **挂在外壳上，一处管全应用。** `session` 是个 store，用不了组件那套
+ * 挂载钩子；而这一份（项目、集号、侧边那几个对勾、每一集多少镜）是**每一页
+ * 都在读**的，砸了之后停在上一次那一集的样子上，要等下一次换项目 / 换集 /
+ * 干完点带 refresh 的事才更新。引擎重启两秒就回来了，不该让人等那么久。
+ */
+useRetryWhenBack(() => session.failed, () => session.refresh())
 
 const canFocus = computed(() => stepKey.value === 'story')
 const focused = computed(() => canFocus.value && ui.focusMode)

@@ -21,6 +21,8 @@ export const useSession = defineStore('session', () => {
   // 见 composables/local-storage.js 开头那段。
   const projectPath = ref(readLocal(KEY_PROJECT) || '')
   const episodeId = ref(readLocal(KEY_EPISODE) || '')
+  /** 上一趟 refresh 读砸了没有。**只给"引擎回来之后重来一趟"用**，界面不读。 */
+  const failed = ref(false)
 
   const project = ref(null) // /api/project 的返回
   const flow = ref(null) // /bff/flow 的返回
@@ -103,6 +105,7 @@ export const useSession = defineStore('session', () => {
         selectEpisode(data.episodeId)
       }
       if (!data.episodeId) selectEpisode('')
+      failed.value = false
     } catch (err) {
       // 过期那一趟的报错也不能算数：上一部剧被删了回的 404，会把这一部
       // 的 project / flow 一起清掉，还弹一句莫名其妙的红字。
@@ -133,12 +136,21 @@ export const useSession = defineStore('session', () => {
         project.value = null
         flow.value = null
       }
+      // **记一笔，等引擎回来重来一趟。**
+      //
+      // 5xx / 连不上那条上面留着上一份数据（见上面那段），所以顶栏和侧边
+      // 看着还是好的——但它是**上一次那一集**的那份：对勾、集号、每一集
+      // 多少镜都停在那儿。而引擎重启是最常见的一种断，它两秒就回来了，
+      // 这一份却要等到下一次换项目 / 换集 / 干完点带 refresh 的事才更新。
+      // 谁来重来见 App.vue 里那句 useRetryWhenBack。
+      failed.value = true
     }
   }
 
   return {
     projectPath,
     episodeId,
+    failed,
     project,
     flow,
     episodes,
