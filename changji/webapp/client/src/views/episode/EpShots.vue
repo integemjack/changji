@@ -106,7 +106,29 @@ const filter = ref('all')
 const doctor = ref(null)
 const video = ref(null)
 
-const blocked = computed(() => doctor.value && doctor.value.can_run === false)
+/**
+ * 这几镜一张参考图都拿不到——引擎算的，不是这一页猜的。
+ *
+ * **规则只在引擎那一份**（`stages::shots_without_refs`，它直接调 compose
+ * 本身）：每个在场角色按 face_pose 取一张、场景取空景图、大特写整个不带、
+ * 只画了正面的人背身镜头会回退到侧面……前端复刻一遍就是第四份拷贝，
+ * 而漂开的那一天它会**放行本该拦住的**。
+ */
+const bareShots = computed(() => preview.value?.shots_without_refs ?? [])
+
+/**
+ * 还不能开工。两个来源：
+ *
+ *   · 机器层面的体检（`doctor.can_run`）——缺 ffmpeg、ggml ABI 对不上这些；
+ *   · **这一集有镜头拿不到参考图**。出图模型是图像编辑模型时，没有编辑源
+ *     它会退化成文生图、出来是彩色噪点，而闸门那条「不是空图」拦不住
+ *     （方差比真图还大）。一镜两分钟，跑完再说就是一集雪花加一个钟头。
+ *     `post_run` 见到它直接 400，这儿先关掉按钮、把原因写在下面那一块里
+ *     ——按下去才被拒和按不下去，是两种体验。
+ */
+const blocked = computed(
+  () => (doctor.value && doctor.value.can_run === false) || bareShots.value.length > 0,
+)
 const failedChecks = computed(() =>
   (doctor.value?.checks ?? []).filter((x) => x.level === 'fail' || x.level === 'error'),
 )
@@ -1055,6 +1077,24 @@ onDeactivated(() => window.removeEventListener('keydown', onKey))
         </div>
       </div>
       <div class="stack stack--sm">
+        <!-- **拿不到参考图的那几镜。** 引擎算的（stages::shots_without_refs），
+             按下去 post_run 也会 400——这儿先说，省得人等一个钟头拿到一集
+             雪花。补救的地方不在这一页，所以直接给一条去设定页的路。 -->
+        <p v-if="bareShots.length" class="alert alert--bad">
+          <AppIcon name="warn" :size="14" />
+          <strong>参考图</strong>
+          <span class="alert__detail">
+            有 {{ bareShots.length }} 镜一张参考图都拿不到（{{
+              bareShots.slice(0, 5).join('、')
+            }}{{ bareShots.length > 5 ? '…' : '' }}）。出图模型是图像编辑模型，
+            没有参考图它会退化成文生图、出来是噪点，而闸门拦不住。
+          </span>
+          <span class="alert__fix tiny dim">
+            去设定页把这几镜用到的角色定妆、给场景出空景图（「照故事定妆」+
+            「一键出图」）
+          </span>
+          <RouterLink to="/assets" class="btn btn--sm">去设定页</RouterLink>
+        </p>
         <p v-for="c in failedChecks" :key="c.name" class="alert alert--bad">
           <AppIcon name="warn" :size="14" />
           <strong>{{ c.name }}</strong>

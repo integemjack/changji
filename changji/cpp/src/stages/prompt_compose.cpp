@@ -277,4 +277,25 @@ std::string PromptComposer::motion_prompt(const Shot& shot) const {
     return std::string("[0-") + dur + "秒] " + body;
 }
 
+std::vector<std::string> shots_without_refs(
+    const std::vector<models::Shot>& shots,
+    const models::AssetLibrary& assets) {
+    // **走 compose 本身，不另写一份判断。** 参考图怎么挑（每个在场角色按
+    // face_pose 取一张、场景取空景图、大特写整个不带）全在 compose 里，
+    // 照着再写一遍就是第二份，而两份漂开的时候这一条会**放行本该拦住的**。
+    const PromptComposer composer(assets);
+    std::vector<std::string> out;
+    for (const models::Shot& shot : shots) {
+        if (shot.shot_size == models::ShotSize::ECU) continue;
+        try {
+            if (composer.compose(shot).reference_images.empty()) {
+                out.push_back(shot.shot_id);
+            }
+        } catch (const RenderError&) {
+            // 引用了没注册的角色/场景。那是另一条错，让出图那一步去说。
+        }
+    }
+    return out;
+}
+
 }  // namespace changji::stages

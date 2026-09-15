@@ -416,3 +416,99 @@ TEST_CASE("大特写不带身份层：物件特写里塞角色全身描述，出
         CHECK_THROWS(stages::PromptComposer(a).compose(s));
     }
 }
+
+TEST_CASE("哪几镜一张参考图都拿不到") {
+    // **这一条挡的是"跑完一个钟头才发现是一集雪花"。**
+    //
+    // 首帧那一族是图像编辑模型，手上没有编辑源时退化成文生图，出来是彩色
+    // 噪点；而闸门那条「不是空图」拦不住它（方差比真图还大）。所以 post_run
+    // 在按下去那一刻就得拦，而拦的判据必须和 compose 真正挑参考图的那一套
+    // 一模一样——`shots_without_refs` 因此是**调 compose 本身**，不另写一份。
+    const models::AssetLibrary a = make_assets(models::StyleLine::REALISTIC);
+
+    const auto shot = [](const std::string& id, const std::string& who,
+                         const std::string& where, models::ShotSize size,
+                         models::FacePose pose) {
+        models::Shot s;
+        s.shot_id = id;
+        s.shot_size = size;
+        if (!where.empty()) s.location_id = where;
+        if (!who.empty()) {
+            models::CharacterInShot in_shot;
+            in_shot.char_id = who;
+            in_shot.face_pose = pose;
+            s.characters.push_back(in_shot);
+        }
+        return s;
+    };
+
+    const auto bare = [&](const std::vector<models::Shot>& v) {
+        return stages::shots_without_refs(v, a);
+    };
+
+    SUBCASE("人没定妆、场景也没空景图 —— 拦") {
+        // c_plain 一张参考图都没有，loc_alley 也没有空景图
+        const auto out = bare({shot("s1", "c_plain", "loc_alley",
+                                    models::ShotSize::MS,
+                                    models::FacePose::FRONT)});
+        CHECK(out == std::vector<std::string>{"s1"});
+    }
+
+    SUBCASE("人有定妆图 —— 放行") {
+        const auto out = bare({shot("s1", "c_lin_wan", "loc_alley",
+                                    models::ShotSize::MS,
+                                    models::FacePose::FRONT)});
+        CHECK(out.empty());
+    }
+
+    SUBCASE("人没有、但场景有空景图 —— 放行") {
+        // 一张就够：编辑模型有编辑源就不会退化成文生图
+        const auto out = bare({shot("s1", "c_plain", "loc_rooftop",
+                                    models::ShotSize::MS,
+                                    models::FacePose::FRONT)});
+        CHECK(out.empty());
+    }
+
+    SUBCASE("只画了正面和侧面，背身镜头靠回退拿到侧面 —— 放行") {
+        // ref_for_pose：back → ref_back（没有）→ ref_three_quarter（有）
+        const auto out = bare({shot("s1", "c_lin_wan", "loc_alley",
+                                    models::ShotSize::MS,
+                                    models::FacePose::BACK)});
+        CHECK(out.empty());
+    }
+
+    SUBCASE("一张都没画的人，背身镜头回退也拿不到 —— 拦") {
+        const auto out = bare({shot("s1", "c_chen_mo", "loc_alley",
+                                    models::ShotSize::MS,
+                                    models::FacePose::BACK)});
+        CHECK(out == std::vector<std::string>{"s1"});
+    }
+
+    SUBCASE("大特写不算 —— 那一档是故意不带参考图的") {
+        // compose 里 insert_shot 那段：带上的话半个房间会被拉进一个特写里。
+        // 算进来等于让有大特写的那一集永远出不来，而它没有"补一张图"的解法。
+        const auto out = bare({shot("s1", "c_plain", "loc_alley",
+                                    models::ShotSize::ECU,
+                                    models::FacePose::FRONT)});
+        CHECK(out.empty());
+    }
+
+    SUBCASE("引用了没注册的角色 —— 不算这一条，让出图那步去说") {
+        const auto out = bare({shot("s1", "c_no_such", "loc_alley",
+                                    models::ShotSize::MS,
+                                    models::FacePose::FRONT)});
+        CHECK(out.empty());
+    }
+
+    SUBCASE("按分镜表的顺序回，一次报全") {
+        const auto out = bare({
+            shot("s1", "c_lin_wan", "loc_rooftop", models::ShotSize::MS,
+                 models::FacePose::FRONT),
+            shot("s2", "c_plain", "loc_alley", models::ShotSize::MS,
+                 models::FacePose::FRONT),
+            shot("s3", "c_chen_mo", "loc_alley", models::ShotSize::CU,
+                 models::FacePose::FRONT),
+        });
+        CHECK(out == std::vector<std::string>{"s2", "s3"});
+    }
+}

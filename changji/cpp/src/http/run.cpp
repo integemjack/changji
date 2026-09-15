@@ -13,6 +13,7 @@
 #include "config/runtime.hpp"
 #include "config/settings.hpp"
 #include "infer/sd_image.hpp"
+#include "stages/prompt_compose.hpp"
 #include "models/project.hpp"
 #include "pipeline/jobs.hpp"
 #include "util/fs_time.hpp"
@@ -201,6 +202,54 @@ ApiResult post_run(const json& body, const RunDeps& deps) {
         if (queue.empty()) throw ApiError(400, "这个项目还没有任何一集有分镜表");
     } else {
         queue.push_back(episode_id);
+    }
+
+    // ---- 一张参考图都拿不到的镜头，不许开跑 ----
+    //
+    // 首帧那一族是图像**编辑**模型，手上没有编辑源时退化成文生图，出来的
+    // 是彩色噪点——而闸门拦不住（方差比真图还大，「不是空图」那条一路绿灯）。
+    // 一镜两分钟、一集二十几镜，跑完再说就太晚了：那时候人已经等了一个钟头，
+    // 拿到的是一集雪花。
+    //
+    // **只在收参考图的模型上判**：纯文生图的本来就不传参考图，缺不缺一样跑。
+    // 判据和出图那头是同一个函数（`accepts_reference_images`，认文件名）。
+    {
+        const config::Settings s = config::load_settings(store.root());
+        if (config::ModelsConfig::accepts_reference_images(s.models.image)) {
+            const models::AssetLibrary assets = store.load_assets();
+            for (const std::string& id : queue) {
+                const models::Episode* ep = project.episode_by_id(id);
+                if (ep == nullptr) continue;
+                // **只看这一趟真要跑的那几镜。**
+                //
+                // 抽屉里「重出这一镜」发的是 `shot_ids`。拿整集去判的话，
+                // 同一集里另有一镜缺图就把它也挡了——而那一镜自己的参考图
+                // 好好的，人想重出的也只有它。挡错的代价比漏挡大：漏挡最多
+                // 是那一镜出张噪点，挡错是**这一镜再也重出不了**，而屏幕上
+                // 说的还是另一镜的事。
+                std::vector<models::Shot> todo;
+                for (const auto& sh : ep->shots) {
+                    if (only_shots.empty() || only_shots.count(sh.shot_id)) {
+                        todo.push_back(sh);
+                    }
+                }
+                const auto bare = stages::shots_without_refs(todo, assets);
+                if (bare.empty()) continue;
+                // 名字列前几个就够，二十几个 id 糊一屏没人读。
+                std::string ids;
+                for (std::size_t i = 0; i < bare.size() && i < 5; ++i) {
+                    ids += (i ? "、" : "") + bare[i];
+                }
+                if (bare.size() > 5) ids += "…";
+                throw ApiError(
+                    400, id + " 有 " + std::to_string(bare.size()) +
+                             " 镜一张参考图都拿不到（" + ids +
+                             "）。当前出图模型是图像编辑模型，没有参考图它会"
+                             "退化成文生图、出来是噪点，而闸门拦不住。先去"
+                             "设定页把这几镜用到的角色定妆、给场景出空景图"
+                             "（「照故事定妆」+「一键出图」），再回来跑。");
+            }
+        }
     }
 
     const bool started = pipeline::jobs().start(
@@ -452,10 +501,25 @@ ApiResult get_run_preview(const std::string& path,
     json ids = json::array();
     for (const Episode* ep : episodes) ids.push_back(ep->episode_id);
 
+    // 拿不到参考图的那几镜。**预览要和真按下去那一下说同一件事**——
+    // `post_run` 见到它就 400，这儿先报出来，界面才能在按之前就把按钮关掉、
+    // 把原因写清楚。判据同那边：只在收参考图的模型上算。
+    json bare_shots = json::array();
+    if (config::ModelsConfig::accepts_reference_images(proj_settings.models.image)) {
+        const models::AssetLibrary assets = store.load_assets();
+        for (const Episode* ep : episodes) {
+            for (const auto& id : stages::shots_without_refs(ep->shots, assets)) {
+                bare_shots.push_back(id);
+            }
+        }
+    }
+
     return {200, {
         {"episodes", ids},
         {"shots", total_shots},
         {"stages", stages},
+        // 这几镜拿不到参考图，按下去会被 post_run 挡住。空数组 = 没有这回事。
+        {"shots_without_refs", bare_shots},
         {"idle", !any},
         // Python 的 round() 回的是 int，不是保留零位小数的浮点。
         // 回成 12.0 的话前端拿到的是 "12" 还是 "12.0" 取决于序列化，

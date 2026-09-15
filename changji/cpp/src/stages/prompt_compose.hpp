@@ -95,4 +95,25 @@ const std::string& move_zh(models::CameraMove v);
 /// 焦段。AUTO 是空串（没填就一个字不加）。
 const std::string& lens_zh(models::Lens v);
 
+/// 这一集里哪几镜**一张参考图都拿不到**。按 shot_id 回，顺序照分镜表。
+///
+/// **为什么要在开跑之前问这一句。** 首帧那一族 2026-09-15 起是
+/// Qwen-Image-Edit——图像**编辑**模型，手上没有编辑源时退化成文生图，出来
+/// 的是彩色噪点。而闸门拦不住它：那东西的方差比真图还大，「不是空图」那条
+/// 判据一路绿灯（tools/fetch_models.sh 上记着这台机器上栽过的那次）。
+/// 一镜两分钟、一集二十几镜——跑完再说就太晚了。
+///
+/// **只有收参考图的模型才在乎**（`ModelsConfig::accepts_reference_images`）：
+/// 纯文生图的本来就不传，缺不缺都一样。调用方先判那一条再来问这个。
+///
+/// **大特写（ECU）不算在内。** 那一档是**故意**不带参考图的——见 compose
+/// 里 insert_shot 那段：带上的话半个房间会被拉进一个特写里。它没有"补一张
+/// 图就能解决"的办法，算进来等于让有大特写的那一集永远出不来。
+///
+/// 角色或场景没注册的镜头也不算：那是另一条错，出图那一步会原样抛
+/// `RenderError`，说的话也不一样。
+std::vector<std::string> shots_without_refs(
+    const std::vector<models::Shot>& shots,
+    const models::AssetLibrary& assets);
+
 }  // namespace changji::stages
