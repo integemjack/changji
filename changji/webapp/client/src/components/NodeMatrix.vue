@@ -134,6 +134,12 @@ async function matchLocal(url) {
 async function cancel(url) {
   try {
     await api.nodeSetupCancel(url)
+    error.value = ''
+    // **停完要再问一遍**，别让那一块继续写着「正在下 3 个文件」。
+    // 轮询这会儿可能已经不在了——问不到三次就会放手（见 pollProgress）
+    // ——那样的话点完停下什么都不会变。重新起一趟，它会拿到 cancelled
+    // 然后自己收尾。
+    pollProgress(url)
   } catch (err) {
     error.value = err.message
   }

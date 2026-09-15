@@ -70,6 +70,17 @@ describe('下载进度这一问', () => {
     expect(poll.slice(at)).toContain('error.value =')
   })
 
+  it('点了「停下」要重新问一遍，别让那一块还写着「正在下」', () => {
+    // 轮询这会儿可能已经放手了（连着三次问不到）。不重新起一趟的话，
+    // 点完停下那一块一动不动，看着像没点上。
+    const at = body.indexOf('async function cancel(')
+    expect(at, 'cancel 挪走了？').toBeGreaterThan(0)
+    const fn = body.slice(at, body.indexOf('function pollProgress('))
+    expect(fn).toContain('pollProgress(url)')
+    // 停成了要把上一条错误收掉，和这个文件里别的几处一致
+    expect(fn).toContain("error.value = ''")
+  })
+
   it('计数是每一趟自己的，不跨机器攒', () => {
     // 模块级的一个 misses 会让 A 机器攒的次数算到 B 头上。
     expect(body).not.toMatch(/^let misses/m)
