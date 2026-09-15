@@ -24,7 +24,7 @@
  * **同一套是要紧的**：种子跨机一致这件事挡不住模型不同——种子相同、
  * 模型不同，出来的就是两张脸，而那表现为一集里画风在某几镜跳一下。
  */
-import { onMounted, onUnmounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import AppIcon from '@/components/AppIcon.vue'
 import { api } from '@/api'
 // 「这部剧挑了哪一档」记在项目里。下面那几处问模型状态都要带上它，
@@ -153,6 +153,22 @@ async function matchLocal(url) {
     busyNode.value = ''
   }
 }
+
+/**
+ * 那颗按钮到底照谁装。**同一颗按钮有两个意思，得说出来是哪一个。**
+ *
+ * 开着项目时照的是这部剧挑的那一档（`[models.pick]`，也正是派活时带给
+ * 对面的那一档）；没开项目时照的是本机全局配着的那一档。两者可以不同，
+ * 而装错了的表现要到那一镜被对面拒了才看得出来。
+ */
+const matchLabel = computed(() =>
+  session.projectPath ? '装成这部剧要的那一套' : '装成和本机同一套',
+)
+const matchHint = computed(() =>
+  session.projectPath
+    ? '拿这部剧挑的那一档原样装过去——派活时带给对面的就是它。同一套模型是画风一致的前提'
+    : '没开项目，照的是本机全局配着的那一档。同一套模型是画风一致的前提',
+)
 
 async function cancel(url) {
   try {
@@ -366,10 +382,10 @@ function cellTitle(cap, node) {
                     class="btn btn--sm"
                     type="button"
                     :disabled="busyNode === n.url"
-                    title="拿本机选定的那一套原样装过去。同一套模型是画风一致的前提"
+                    :title="matchHint"
                     @click="matchLocal(n.url)"
                   >
-                    装成和本机同一套
+                    {{ matchLabel }}
                   </button>
                   <span v-if="progress[n.url]?.state === 'failed'" class="tiny warn-text">
                     上次下载失败：{{ progress[n.url].error }}

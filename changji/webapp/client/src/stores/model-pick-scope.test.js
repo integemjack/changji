@@ -120,6 +120,14 @@ describe('给别的机器装模型，标准是这部剧挑的那一档', () => {
     )
   })
 
+  it('那颗按钮要说清照的是谁', () => {
+    // 开着项目照这部剧那一档、没开照本机全局那一档——同一颗按钮两个意思。
+    // 不说的话，用户以为一直照的是"本机"，而派活带过去的是项目那一档。
+    expect(code(MATRIX), '按钮文案写死了').toMatch(/matchLabel/)
+    expect(code(MATRIX)).toMatch(/装成这部剧要的那一套/)
+    expect(code(MATRIX)).toMatch(/装成和本机同一套/)
+  })
+
   it('引擎那条接口认 path', () => {
     const route = SERVER.slice(SERVER.indexOf('"/api/nodes/setup")'))
     expect(route.slice(0, 900), '/api/nodes/setup 不读 path 了？').toMatch(
