@@ -29,6 +29,11 @@ const SETUP = fs.readFileSync(
   fileURLToPath(new URL('../../../../cpp/src/http/setup_api.cpp', import.meta.url)),
   'utf8',
 )
+/** 挑档位的那个窗口。引擎算出来的话得有人摆出来。 */
+const DIALOG = fs.readFileSync(
+  fileURLToPath(new URL('../components/ModelDialog.vue', import.meta.url)),
+  'utf8',
+)
 
 /** 去掉注释再比对——不然断言会被解释这个坑的那段注释本身骗过去。 */
 function code(text) {
@@ -76,5 +81,15 @@ describe('挑哪一档归这部剧', () => {
     // 界面显示的和跑的就是另一档，而没有任何一处提过。
     expect(SETUP).toMatch(/pick_problem/)
     expect(SETUP).toMatch(/pickProblem/)
+  })
+
+  it('那句话要真摆在挑档位的那个窗口上', () => {
+    // 引擎算了、发了、界面一个字都不读——这条断言就是为那件事加的：
+    // 那时候「显示的是一档、跑的是另一档」这件事仍然没有任何一处提过，
+    // 只不过现在连排查的人翻接口返回都能看见它，界面上还是看不见。
+    expect(code(DIALOG), 'ModelDialog 没把 pickProblem 摆出来').toMatch(
+      /v-if="g\.pickProblem"/,
+    )
+    expect(code(DIALOG), '摆出来了却不显示内容').toMatch(/{{ g\.pickProblem }}/)
   })
 })

@@ -579,6 +579,12 @@ async function download() {
              下权重那三组留着，那一句是挑精度的唯一依据。 -->
         <p v-if="!isLlm && opt?.note" class="tiny dim note">{{ opt.note }}</p>
 
+        <!-- **这部剧挑的那一档认不出来。** 引擎那边不会悄悄退回"按文件名
+             反推"就算了（见 setup_api.cpp 的 pick_problem）：那样界面上显示
+             的是一档、真跑的是另一档，而没有任何一处提过。摆在选择器下面、
+             读数上面——它说的正是"你上面看到的选中项不是配置里写的那个"。 -->
+        <p v-if="g.pickProblem" class="tiny bad">{{ g.pickProblem }}</p>
+
         <p v-if="diskShort" class="tiny bad">
           要下 {{ humanBytes(need) }}，而盘只剩 {{ humanBytes(diskFree) }}，装不下。
           去设置页换个模型目录，或者先删掉一些。
