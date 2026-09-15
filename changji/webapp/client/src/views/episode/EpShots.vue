@@ -244,9 +244,21 @@ const shown = computed(() => {
  * 「改了还没保存」看不见这一项，改完点外面就没了；只加进判脏那份，角标
  * 亮着而保存不发它，那一项永远回不到"已保存"。
  *
- * 台词（`dialogue_texts`）不在这张表里：它是个数组，两处都另外按值比。
- * 引擎那边的白名单见 editing.cpp 的 `allowed_keys()`——那儿还多一个
- * `status`，改状态走的是批量那条路（锁定/解锁），不从抽屉发。
+ * 台词（`dialogue_texts`）不在这张表里：它是个数组，两处都另外按值比
+ * （引擎那边也单拎出来处理：post_shot 里先校验再 `patch.erase`，
+ * 所以下面说的那条链根本见不到它）。
+ *
+ * ⚠️ **引擎那侧不是白名单，是一条 if/else 链**（editing.cpp 的
+ * `apply_patch`），认得的键就赋值，**认不得的一声不吭地跳过**——回的还是
+ * `saved: true`。也就是说往这张表里加一个引擎还没支持的键，界面上看不出
+ * 任何异常：角标灭了、提示说存好了，而那一项没写进去。
+ *
+ * 这一点和隔壁两个接口**不一样**：`/api/character` 和 `/api/location` 走
+ * `open_for_patch` → `reject_extra`，多一个键当场 400。改这张表时别指望
+ * 镜头这条也会拦你。
+ *
+ * 那条链比这张表多一个 `status`，改状态走的是批量那条路（锁定/解锁），
+ * 不从抽屉发。
  */
 const DRAFT_KEYS = [
   'visual_desc', 'first_frame_prompt', 'motion_prompt', 'negative_prompt',
