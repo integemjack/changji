@@ -109,7 +109,9 @@ const parsed = computed(() => {
   for (const raw of String(props.text).split('\n')) {
     const line = raw.trim()
     if (!line) continue
-    const h = HEADER.exec(line)
+    // 段头和场次头一样，按引擎那套空白规则判：`parse_act_header` 第一步
+    // 也是 `strip_ascii`。见下面 SCENE 上那段第四条。
+    const h = HEADER.exec(asciiTrim(raw))
     if (h) {
       cur = { label: h[1], from: Number(h[2] ?? 0), to: Number(h[3] ?? 0), blocks: [] }
       sections.push(cur)

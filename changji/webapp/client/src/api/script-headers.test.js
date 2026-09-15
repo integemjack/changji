@@ -39,6 +39,21 @@ function frontend() {
   }
 }
 
+/** 段头那条正则同理。引擎 `parse_act_header` 第一步也是 `strip_ascii`。 */
+function frontendHeader() {
+  const src = fs.readFileSync(VUE, 'utf8')
+  const rm = src.match(/^const HEADER = new RegExp\(\n\s*`([^`]*)`,?\n\)$/m)
+  if (!rm) throw new Error('ScriptReader 里找不到 HEADER 那条正则')
+  const tm = src.match(/^const asciiTrim = \(s\) => s\.replace\((\/.*\/g), ''\)$/m)
+  if (!tm) throw new Error('ScriptReader 里找不到 asciiTrim')
+  const at = tm[1].lastIndexOf('/')
+  const trimRe = new RegExp(tm[1].slice(1, at), tm[1].slice(at + 1))
+  // 模板串里 ${ACT_LABELS.join('|')} 这一段用一个真标签替掉就够判空白了
+  const body = rm[1].replace(/\$\{[^}]*\}/, '开场钩子').replace(/\\\\/g, '\\')
+  const re = new RegExp(body)
+  return (line) => re.test(line.replace(trimRe, ''))
+}
+
 /** 引擎 parse_scene_header 认的那几个分隔符。 */
 function engineSeparators() {
   const src = fs.readFileSync(CPP, 'utf8')
@@ -96,5 +111,52 @@ describe('场次头判据', () => {
     expect(hit('【第场 · 天台】')).toBe(null)
     expect(hit('【第1幕 · 天台】')).toBe(null)
     expect(hit('【天台】')).toBe(null)
+  })
+})
+
+describe('段头判据', () => {
+  const hit = frontendHeader()
+
+  it('我们自己渲染的那种认得出', () => {
+    expect(hit('【开场钩子 0–5 秒】')).toBe(true)
+    expect(hit('【开场钩子 0-5 秒】')).toBe(true) // 半角短横，手打的
+    expect(hit('【开场钩子】')).toBe(true) // 没有秒数
+    expect(hit('【 开场钩子 0–5 秒 】')).toBe(true) // 引擎 strip 过括号内
+  })
+
+  it('秒前面必须有一个空格——引擎就是这么要求的', () => {
+    expect(hit('【开场钩子 0–5秒】')).toBe(false)
+  })
+
+  it('**首尾空白只按 ASCII 算**——和场次头同一条，引擎那边也是 strip_ascii', () => {
+    // 段头这条原来漏了：只给场次头改了，段头还在用 .trim()。
+    // 后果同理——页面上从这儿起一段新的，而引擎不认这一行是段头。
+    const wide = '　'
+    expect(hit('  【开场钩子 0–5 秒】  ')).toBe(true)
+    expect(hit(wide + '【开场钩子 0–5 秒】')).toBe(false)
+    expect(hit('【开场钩子 0–5 秒】' + wide)).toBe(false)
+  })
+})
+
+/**
+ * 上面两组比的是"正则 + asciiTrim 这套组合对不对"，**比不出组件到底用没用
+ * 它**——`asciiTrim(raw)` 换回 `.trim()` 过的 `line`，那两组照样全绿
+ * （写这条用例时实测过）。所以再钉一道调用点。
+ */
+describe('两处调用点确实走 asciiTrim', () => {
+  const src = () => fs.readFileSync(VUE, 'utf8')
+
+  it('段头和场次头都拿 asciiTrim(raw) 判，不是 .trim() 过的 line', () => {
+    expect(src()).toContain('HEADER.exec(asciiTrim(raw))')
+    expect(src()).toContain('SCENE.exec(asciiTrim(raw))')
+  })
+
+  it('那两条 exec 全仓只有这两处，没有别的漏网调用', () => {
+    // 括号要配平一层，不然 `exec(asciiTrim(raw))` 会在第一个 ) 上截断
+    const all = src().match(/(?:HEADER|SCENE)\.exec\((?:[^()]|\([^()]*\))*\)/g) ?? []
+    expect(all.sort()).toEqual([
+      'HEADER.exec(asciiTrim(raw))',
+      'SCENE.exec(asciiTrim(raw))',
+    ])
   })
 })
