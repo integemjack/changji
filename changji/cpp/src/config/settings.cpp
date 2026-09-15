@@ -1172,7 +1172,7 @@ std::map<std::string, std::string> env_overridden() {
 namespace {
 
 // 与 Python 的 _DEFAULT_TOML 保持一致。注释是给人看的，不能省。
-constexpr const char* kDefaultToml = R"(# 场记配置文件
+constexpr const char* kDefaultTomlHead = R"(# 场记配置文件
 # 优先级：环境变量 > 项目目录下的 changji.toml > 本文件 > 内置默认值
 
 # 项目库根目录。留空则用系统标准数据目录。
@@ -1332,7 +1332,16 @@ subtitle_font = "Source Han Sans SC"
 # ACE-Step 1.5 的包装脚本在 cpp/tools/music_ace_step.py（<4 GB 显存，几秒一条）。
 # music_command = "python /path/to/changji/cpp/tools/music_ace_step.py --prompt {prompt} --seconds {seconds} --out {out}"
 # music_timeout_s = 600
+)";
 
+// **模板从这里断成两截，别接回去。** MSVC 的单条字符串字面量上限是 16380
+// 字节（C2026），这份模板整个 17 KB；接成一条的表现是 **Windows 上整个编
+// 不过**，而 clang/gcc 一点事没有——2026-09-15 在那台 Windows 上实撞，报的
+// 是 `settings.cpp(1469): error C2026`，指着模板中间某一行，看不出一点跟
+// 长度有关。下面那两条 static_assert 把这件事挪到**每个平台都编不过**：
+// 往模板里加内容加到超限时，Mac 上就会当场说清楚是哪一截、差多少。
+// （拼完之后那条 65535 的上限离得还远，同一件事见 cpp/tools/gen_webapp.py。）
+constexpr const char* kDefaultTomlTail = R"(
 [upscale]
 # 时序放大（机器属性）。本地 MiniMax-H3 只到 768p，要 1080p 只能放大；
 # 逐帧 ESRGAN 会闪，SeedVR2 / RTX VSR 这类时序放大器都在 Python 里，所以
@@ -1479,9 +1488,19 @@ subtitle_font = "Source Han Sans SC"
 # vram_reserve_gb = 6.0
 )";
 
+// 见上面那段：超了就在下一个小节处再断一截出来，别把限额调大。
+constexpr std::size_t kMsvcLiteralMax = 16380;
+static_assert(std::char_traits<char>::length(kDefaultTomlHead) <
+                  kMsvcLiteralMax,
+              "配置模板的上半截超了 MSVC 的字符串字面量上限，Windows 上会编不过");
+static_assert(std::char_traits<char>::length(kDefaultTomlTail) <
+                  kMsvcLiteralMax,
+              "配置模板的下半截超了 MSVC 的字符串字面量上限，Windows 上会编不过");
 }  // namespace
 
-std::string default_config_template() { return kDefaultToml; }
+std::string default_config_template() {
+    return std::string(kDefaultTomlHead) + kDefaultTomlTail;
+}
 
 fs::path write_default_config(const std::optional<fs::path>& path) {
     fs::path target = path ? *path : user_config_path();
@@ -1489,7 +1508,7 @@ fs::path write_default_config(const std::optional<fs::path>& path) {
     fs::create_directories(target.parent_path(), ec);
     std::ofstream out(target, std::ios::binary);
     if (!out) throw std::runtime_error("写不了配置文件：" + paths::to_utf8(target));
-    out << kDefaultToml;
+    out << kDefaultTomlHead << kDefaultTomlTail;
     return target;
 }
 
@@ -1611,6 +1630,10 @@ fallback_on_exhausted = true
 # 然后成片档只对留下的镜头跑（单集页上按镜头重跑）。
 # video_lora_tiers = "draft"
 )";
+
+// 理由同上面那两条：这一份现在才 5 KB，但它也是只增不减的。
+static_assert(std::char_traits<char>::length(kProjectToml) < kMsvcLiteralMax,
+              "项目模板超了 MSVC 的字符串字面量上限，Windows 上会编不过");
 
 void replace_all_in(std::string& s, const std::string& from,
                     const std::string& to) {
