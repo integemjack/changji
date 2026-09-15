@@ -52,7 +52,7 @@ const emit = defineEmits(['close'])
  * 它在窗口关着的时候也吃 Esc。
  */
 function onEsc(e) {
-  if (e.key === 'Escape' && props.open) emit('close')
+  if (e.key === 'Escape' && props.open) tryClose()
 }
 onMounted(() => window.addEventListener('keydown', onEsc))
 onUnmounted(() => window.removeEventListener('keydown', onEsc))
@@ -249,6 +249,50 @@ const stat = computed(() => {
 })
 
 /**
+ * 打开那一刻这一组挑的是哪一档。
+ *
+ * 不能拿 `models.state.selected` 当底：`picks` 是
+ * `{...recommended, ...selected}`——一台还没配过的机器上 selected 是空的、
+ * picks 已经是推荐档，人一个字没动也算"改过"，于是每次关都弹一句。
+ * null = 还没读回来，那就不算改过。
+ */
+const pickedAtOpen = ref(null)
+
+/**
+ * 有没有改了还没存的。**判据要和 save() 里那几条一字不差**——两边漂开的话，
+ * 要么关的时候拦了却没东西可存，要么反过来。
+ */
+const dirty = computed(() => {
+  if (isLlm.value) {
+    const url = baseUrl.value.trim()
+    return (
+      (!!url && url !== models.llmBaseUrl) ||
+      (!!llmPick.value && llmPick.value !== models.llmModel) ||
+      !!apiKey.value.trim() ||
+      Number(temp.value) !== models.llmTemperature
+    )
+  }
+  return pickedAtOpen.value !== null && models.picks[props.groupKey] !== pickedAtOpen.value
+})
+
+/**
+ * 关掉之前问一句。
+ *
+ * 这个窗里攒着的东西比隔壁那几个重：接口地址、**手贴进来的密钥**、模型名、
+ * 温度，或者下权重那几组挑的档。而三条出路（Esc、点外面、右上角那个 ✕）
+ * 原来都是直接 `emit('close')`，一声不吭全丢。
+ *
+ * 密钥尤其——它多半是从服务商后台复制过来的，丢了要再跑一趟。
+ *
+ * 镜头抽屉、角色抽屉、场景抽屉、以及「这部片子」那个窗早就有这道拦截，
+ * 措辞照它们（「…有改动还没保存，关掉就没了」）。
+ */
+function tryClose() {
+  if (dirty.value && !confirm('这一组有改动还没保存，关掉就没了。确定？')) return
+  emit('close')
+}
+
+/**
  * 每次打开都重读一遍。别的地方（另一个弹窗、设置页）可能刚改过。
  *
  * ⚠️ **这一趟要等回来再抄。** 原来是 `models.load()` 不等，紧接着
@@ -269,7 +313,9 @@ watch(
   () => props.open,
   async (now) => {
     if (!now) return
+    pickedAtOpen.value = null
     await models.load()
+    pickedAtOpen.value = models.picks[props.groupKey] ?? ''
     if (!isLlm.value) return
     apiKey.value = ''
     baseUrl.value = models.llmBaseUrl
@@ -387,7 +433,7 @@ async function download() {
 </script>
 
 <template>
-  <div v-if="open" class="mask" @click.self="emit('close')">
+  <div v-if="open" class="mask" @click.self="tryClose">
     <section v-if="g" ref="panel" class="dlg" tabindex="-1">
       <header class="dlg__head">
         <div class="dlg__title">
@@ -406,7 +452,7 @@ async function download() {
           class="btn btn--ghost btn--sm"
           type="button"
           aria-label="关闭"
-          @click="emit('close')"
+          @click="tryClose"
         >
           <AppIcon name="close" :size="14" />
         </button>
