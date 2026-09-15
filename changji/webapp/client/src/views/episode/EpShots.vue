@@ -117,6 +117,9 @@ const video = ref(null)
  */
 const bareShots = computed(() => preview.value?.shots_without_refs ?? [])
 
+/** 开工前那趟预检读砸了的那句话。空串 = 没砸。见 loadPreview。 */
+const previewError = ref('')
+
 /**
  * 还不能开工。两个来源：
  *
@@ -808,6 +811,11 @@ async function batchRerun(step) {
 
 // ---- 体检和画幅 ----
 
+/** 「重新体检」按的是这个：体检和开工前那趟预检一起重来。 */
+async function recheck() {
+  await Promise.all([loadDoctor(), loadPreview()])
+}
+
 async function loadDoctor() {
   // **和下面 loadVideo 同一道闸。** 两条是同一个 watch 里一前一后发的，
   // 而这一条**更慢**：体检里有三项要发网络请求、各自 8 秒超时，最坏
@@ -866,6 +874,7 @@ async function loadPreview() {
   if (!session.projectPath || !session.episodeId || !shots.value.length ||
       running.value) {
     preview.value = null
+    previewError.value = ''
     return
   }
   const want = `${session.projectPath}::${session.episodeId}`
@@ -879,9 +888,19 @@ async function loadPreview() {
     // 人按这一行安排时间（「要等 24 分钟」），报的是别的集就更糟
     if (!mine()) return
     preview.value = got
-  } catch {
-    // 读不到就不显示。这一行是锦上添花，不该因为它整页红。
-    if (mine()) preview.value = null
+    previewError.value = ''
+  } catch (err) {
+    if (!mine()) return
+    preview.value = null
+    // ⚠️ **这儿原来是吞掉的**，理由写的是「这一行是锦上添花」——那时候它
+    // 确实只带一个时间估算。现在它还带着 `shots_without_refs`（见上面
+    // bareShots），也就是"这一集能不能开工"的一半判据：读不到的时候
+    // `blocked` 静悄悄变成假，两颗开跑的按钮照常亮着，屏幕上一个字不说。
+    //
+    // **不跟着关按钮**（体检那条是关的，理由不一样）：预检没查成不等于
+    // 不能跑，而 `post_run` 按下去会拿同一条规则再查一遍、该 400 照样
+    // 400。代价是一个来回，不是一个钟头。所以放行，但把话说出来。
+    previewError.value = err?.message || '读不出来'
   }
 }
 
@@ -1083,18 +1102,30 @@ onDeactivated(() => window.removeEventListener('keydown', onKey))
 
     <!-- **只在拦路时出现。** 全绿的时候一行都不占——
          体检的细节在设置页，这里只管"能不能开工"。 -->
-    <section v-if="blocked && shots.length" class="sec">
+    <section v-if="(blocked || previewError) && shots.length" class="sec">
       <div class="sec__head">
-        <h2 class="sec__t">还不能开工</h2>
+        <!-- 两种状态：真拦住了，和"查不出来"。后者别写成前者——按钮还亮着，
+             标题却说不能开工，人会去找那颗灰的按钮在哪儿。 -->
+        <h2 class="sec__t">{{ blocked ? '还不能开工' : '开工前那趟预检没查成' }}</h2>
         <span class="spacer" />
         <div class="sec__acts">
-          <button class="btn btn--ghost btn--sm" type="button" @click="loadDoctor">
+          <!-- 体检和预检一起重来：这颗按钮上的字是「重新体检」，而人按它
+               的意思是"再查一遍"，两趟都该跟着。 -->
+          <button class="btn btn--ghost btn--sm" type="button" @click="recheck">
             <AppIcon name="refresh" :size="14" />
             重新体检
           </button>
         </div>
       </div>
       <div class="stack stack--sm">
+        <p v-if="previewError" class="alert alert--warn">
+          <AppIcon name="warn" :size="14" />
+          <strong>预检</strong>
+          <span class="alert__detail">
+            这一趟没查成：{{ previewError }}。开跑那两颗按钮没关——按下去
+            引擎会拿同一条规则再查一遍，该拦的照样拦得住，只是要多等一个来回。
+          </span>
+        </p>
         <!-- **拿不到参考图的那几镜。** 引擎算的（stages::shots_without_refs），
              按下去 post_run 也会 400——这儿先说，省得人等一个钟头拿到一集
              雪花。补救的地方不在这一页，所以直接给一条去设定页的路。 -->

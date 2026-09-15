@@ -80,3 +80,47 @@ describe('镜头页和故事页：那一屏的先后不能反', () => {
     expect(bad).toBeLessThan(start)
   })
 })
+
+/**
+ * 开工前那趟预检（`/api/run/preview`）读砸了。
+ *
+ * 它原来是吞掉的，注释写着「这一行是锦上添花」——那时候它确实只带一个
+ * 时间估算。现在它还带着 `shots_without_refs`，也就是"这一集能不能开工"的
+ * 一半判据：读不到的时候 `blocked` 静悄悄变成假，两颗开跑的按钮照常亮着，
+ * 屏幕上一个字不说。
+ *
+ * **但不该跟着关按钮**（体检那条是关的，理由不一样）：预检没查成不等于
+ * 不能跑，`post_run` 按下去会拿同一条规则再查一遍、该 400 照样 400。
+ * 代价是一个来回，不是一个钟头。所以这两条都要钉：要说出来，也不要乱关。
+ */
+describe('镜头页：开工前那趟预检读砸了', () => {
+  const view = read('views/episode/EpShots.vue')
+
+  it('要记下来，不是吞掉', () => {
+    const at = view.indexOf('async function loadPreview()')
+    expect(at).toBeGreaterThan(0)
+    const body = view.slice(at, at + 2200)
+    expect(body).toContain('previewError.value =')
+    // 成功和早退那两支也要清，不然会挂着上一次的报错
+    expect(body.match(/previewError\.value = ''/g)?.length ?? 0).toBeGreaterThanOrEqual(2)
+  })
+
+  it('那一块要跟着出现', () => {
+    expect(view).toContain('v-if="(blocked || previewError) && shots.length"')
+    // 标题别写死成「还不能开工」：按钮还亮着，人会去找那颗灰的在哪儿
+    expect(view).toMatch(/blocked \? '还不能开工' :/)
+  })
+
+  it('**不许**因为它去关开跑那两颗按钮', () => {
+    // blocked 才关按钮；预检没查成只是说一句
+    const at = view.indexOf('const blocked = computed(')
+    expect(at).toBeGreaterThan(0)
+    expect(view.slice(at, at + 300)).not.toContain('previewError')
+  })
+
+  it('「重新体检」两趟一起重来', () => {
+    expect(view).toContain('async function recheck()')
+    expect(view).toMatch(/recheck[\s\S]{0,120}loadPreview\(\)/)
+    expect(view).toContain('@click="recheck"')
+  })
+})
