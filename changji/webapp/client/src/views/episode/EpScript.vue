@@ -104,6 +104,17 @@ const fromStory = computed(() => ctx.value?.source === 'story')
 const scenes = computed(() => ctx.value?.scenes ?? [])
 const sourceText = computed(() => ctx.value?.text ?? '')
 const sourceChars = computed(() => [...sourceText.value].length)
+/**
+ * 上一集是怎么收的（按分集表的顺序取上一条，最多 300 字）。
+ *
+ * **和喂给模型的是同一段**：引擎写这一集剧本时把它拼进提示词里
+ * （`render_script_context` 的 previous_tail），这儿显示的就是那一段本身，
+ * 不另算一份——两边各取各的话，人照着屏幕上这段判断"接得上不上"，而模型
+ * 看的是另一段。
+ *
+ * 第一集、或者这一集不在分集表上时是空的，那时候整块不显示。
+ */
+const previousTail = computed(() => ctx.value?.previous_tail ?? '')
 const chapterNames = computed(() =>
   (ctx.value?.chapters ?? []).map((c) => c.title || c.chapter_id).join('、'),
 )
@@ -459,6 +470,17 @@ async function save() {
         <span v-if="ctx.hook">· 停在「{{ ctx.hook }}」</span>
         <span v-if="!fromStory">这一集不在分集表上，照梗概写</span>
       </div>
+    </details>
+
+    <!-- 上一集怎么收的。**摆在原文前面**：时间上它在前，而"接得上接不上"
+         是读这一集原文时心里带着的那个问题。
+         默认收着——它是背景，不是这一页要读的正文（那是下面的原文）。 -->
+    <details v-if="previousTail" class="source">
+      <summary class="source__sum">
+        <span>上一集结尾</span>
+        <span class="tiny dim">写这一集时模型看的就是这一段</span>
+      </summary>
+      <div class="source__body">{{ previousTail }}</div>
     </details>
 
     <!-- 原文：这一集要拍的那段小说。没剧本时默认展开，人读的就是它 -->
