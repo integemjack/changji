@@ -176,11 +176,15 @@ std::string content_type_for(const fs::path& p) {
     if (ext == ".webp") return "image/webp";
     if (ext == ".wav")  return "audio/wav";
     if (ext == ".mp3")  return "audio/mpeg";
-    // **这两个是上传那头收进来的。** upload.cpp 的 voice_types() 收
-    // wav / mp3 / m4a / flac 四种，而这张表原来只认前两种——后两种发出去
-    // 是 application/octet-stream。今天界面不直接播它（试听走的是 TTS 现
-    // 生成的 wav），所以没人撞上；但"一头收得进、另一头发不对"这种两张表
-    // 不同步的事，迟早在某个新入口上露出来。
+    // **这两个是盘上可能躺着的。** flac 今天还收（upload.cpp 的
+    // `voice_types()`）；m4a 2026-09-15 起不收了——进程内那条配音走
+    // miniaudio，只认 wav / mp3 / flac，收下只会在第一句台词那儿炸。
+    //
+    // **但这张表不跟着删 m4a**：管的是两件不同的事。那边是"往后还收不
+    // 收"，这边是"已经在盘上的还发不发得对"。在那之前传过 m4a 的项目，
+    // voices/ 里那一段还在，试听它的时候浏览器读得了（读不了的是配音那
+    // 条路）——发成 application/octet-stream 的话它连播都播不出来。
+    // 同一个道理写在 upload.cpp 的 `voice_stale_exts` 上。
     if (ext == ".m4a")  return "audio/mp4";
     if (ext == ".flac") return "audio/flac";
     if (ext == ".srt")  return "application/x-subrip";
