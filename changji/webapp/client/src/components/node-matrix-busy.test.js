@@ -64,6 +64,19 @@ describe('那张表上的徽章', () => {
     expect(body).toMatch(/v-if="loading && !data"/)
   })
 
+  it('配置关的格子和你关的格子，长得要不一样', () => {
+    // 引擎特意分了这两种（NodeState::off_locked 的注释：「两种显示成一样
+    // 的话，用户会在一个点不动的格子上反复点」）。原来这儿只拿 locked 去
+    // disable 按钮——屏幕上两种一模一样，差别只有鼠标形状和悬停提示。
+    const at = body.indexOf('function cellClass(')
+    expect(at, 'cellClass 挪走了？').toBeGreaterThan(0)
+    const fn = body.slice(at, body.indexOf('function cellTitle('))
+    expect(fn, 'cellClass 没看 locked').toContain('cap.locked')
+    expect(fn).toContain('cell--locked')
+    // 样式真的存在，不是个没人定义的类名
+    expect(body).toMatch(/\.cell--locked\s*\{/)
+  })
+
   it('忙不忙是引擎算的，界面不自己推', () => {
     // 界面这头没有任何"根据别的字段推出忙"的算法：只认 n.busy。
     expect(body).not.toMatch(/busy\s*=\s*computed/)

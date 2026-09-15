@@ -2,11 +2,16 @@
 /**
  * 「机器 × 能力」那张表。
  *
- * 一行一台机器（**本机也是一行，不是特例**），一列一个能力，格子三态：
+ * 一行一台机器（**本机也是一行，不是特例**），一列一个能力，格子四样：
  *
- *   灰   干不了——缺模型、没编进去、没有 ffmpeg。悬停看原因
- *   空心 能干，但关着
- *   实心 参与自动调度
+ *   淡虚框 干不了——缺模型、没编进去、没有 ffmpeg。悬停看原因
+ *   深虚圈 能干，但**配置文件**里关掉的（`[[peer.nodes]]` 的 off），点不动
+ *   深实圈 能干，你在这儿关的。点一下打开
+ *   实心   参与自动调度
+ *
+ * 虚线一律是"点不动"，深浅分的是"能不能干"。**点得动和点不动必须一眼
+ * 分得出**：长得一样的话，用户会在一个点不动的格子上反复点（引擎那头
+ * `NodeState::off_locked` 的注释写的就是这句）。
  *
  * **三态是引擎算好的，界面不自己推。** 推的话迟早和调度器的判断对不上，
  * 而那种对不上表现为"表上说能派，跑起来说没有可用节点"。
@@ -192,10 +197,14 @@ function gb(bytes) {
   return `${(bytes / 1024 / 1024 / 1024).toFixed(1)} GB`
 }
 
-/** 格子的样子。三态之外，离线那台整行压暗。 */
+/** 格子的样子。四样之外，离线那台整行压暗。 */
 function cellClass(cap, node) {
   if (!cap.able) return 'cell cell--cant'
-  if (cap.off) return 'cell cell--off'
+  // **配置关的和你关的要长得不一样。** 引擎特意分了这两种（NodeState 的
+  // `off_locked`：「两种显示成一样的话，用户会在一个点不动的格子上反复
+  // 点」），而这儿原来只拿它去 disable 按钮——屏幕上两种一模一样，差别
+  // 只有鼠标形状和一句要等一会儿才冒出来的悬停提示。
+  if (cap.off) return cap.locked ? 'cell cell--off cell--locked' : 'cell cell--off'
   if (!node.online) return 'cell cell--cant'
   return 'cell cell--on'
 }
@@ -361,9 +370,10 @@ function cellTitle(cap, node) {
     </ul>
 
     <p class="tiny dim">
-      点格子关掉或打开。<b>能不能干是那台自己量出来的</b>，灰的点不动——
-      那要去装模型或者换一份编进了 sd.cpp 的二进制。配置文件里关掉的
-      （<code>[[peer.nodes]]</code> 的 <code>off</code>）也点不动。
+      点格子关掉或打开。<b>虚线的都点不动</b>：淡的那种是那台干不了——
+      <b>能不能干是它自己量出来的</b>，要去装模型或者换一份编进了 sd.cpp
+      的二进制；深的那种是配置文件里关掉的（<code>[[peer.nodes]]</code>
+      的 <code>off</code>），改它得去动那个文件。
     </p>
   </div>
 </template>
@@ -453,6 +463,12 @@ function cellTitle(cap, node) {
 .cell--off {
   border: 1.5px solid var(--fg, #555);
   opacity: 0.6;
+}
+/* 同上，但是**配置文件**关的，点不动：改成虚线。
+   这张表里虚线一律是"点不动"（干不了那一档也是虚线），深浅分的是
+   "能不能干"——所以配置关的是**深色虚线**：能干，但你在这儿改不了它。 */
+.cell--locked {
+  border-style: dashed;
 }
 /* 参与调度：实心 */
 .cell--on {
