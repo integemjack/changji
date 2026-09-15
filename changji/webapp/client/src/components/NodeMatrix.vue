@@ -139,9 +139,16 @@ async function cancel(url) {
   }
 }
 
+/**
+ * 连着问不到几次才算真断了。**一次不算**：那头在下几十 GB 的模型，
+ * 一趟几分钟到几十分钟，中间引擎重启一下、网络抖一下都很正常。
+ */
+const kProgressMisses = 3
+
 /** 下载进度。两秒一次，下完就停——**别一直问**，那几台正在出片。 */
 function pollProgress(url) {
   clearInterval(pollTimer)
+  let misses = 0
   const tick = async () => {
     if (opened.value !== url) {
       clearInterval(pollTimer)
@@ -150,6 +157,7 @@ function pollProgress(url) {
     try {
       const p = await api.nodeSetupProgress(url)
       progress.value = { ...progress.value, [url]: p }
+      misses = 0
       if (p?.state !== 'running') {
         clearInterval(pollTimer)
         // 下完了模型就变了，那台能干什么也跟着变
@@ -158,8 +166,15 @@ function pollProgress(url) {
           await load()
         }
       }
-    } catch {
+    } catch (err) {
+      // **一次问不到不等于下载停了。** 这儿原来是一次失败就
+      // `clearInterval` 而且一个字不说——之后那一格永远停在最后一次
+      // 的进度上（「正在下 3 个文件 41%」），不动、不报错，看着像卡死，
+      // 而那头多半还在好好地下。
+      misses += 1
+      if (misses < kProgressMisses) return
       clearInterval(pollTimer)
+      error.value = `问不到这台的下载进度了：${err.message}。那头可能还在下，收起这一行再展开一次就重新问`
     }
   }
   tick()
