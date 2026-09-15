@@ -628,6 +628,33 @@ Check check_canvas(const config::Settings& s) {
                          static_cast<double>(limits.max_pixels);
     char ratio[32];
     std::snprintf(ratio, sizeof(ratio), "%.2f", times);
+
+    // **建议里那两个尺寸现算，不写死。**
+    //
+    // 这儿原来写的是「hd（704×1280）」和「--upscale-size 1440x2560」——
+    // 两个都是**竖屏**的写法。横屏项目（[video].orientation = landscape）
+    // 上 hd 是 1280×704、2K 是 2560×1440，于是这条建议给的数是转置过的，
+    // 而上面 `got` 印的又是这个项目真实的画幅——两个数并排摆着对不上，
+    // 而人正是在排查画布超限时读到它的。界面那边早就踩过同一条：
+    // ShowDialog 里那句注释写着「按当前画幅算——写死的话横屏项目看到的
+    // 数全是反的」。
+    //
+    // 顺带这也是第三、第四份拷贝：真身是 VideoConfig::size()，界面那份在
+    // api/labels.js 的 VIDEO_QUALITIES（有用例钉着）。档位改过两回
+    // （标准档 2026-09-10 换掉、hd 2026-09-11 加回来），写死的迟早对不上。
+    auto size_of = [&](const char* quality) {
+        config::VideoConfig v = s.video;
+        v.quality = quality;
+        return v.size();
+    };
+    const auto [hd_w, hd_h] = size_of("hd");
+    const auto [k2_w, k2_h] = size_of("2k");
+    const std::string hd_size =
+        std::to_string(hd_w) + "×" + std::to_string(hd_h);
+    // `--upscale-size` 收的是 `<WxH>`，小写 x，见 main.cpp 的用法说明
+    const std::string k2_arg =
+        std::to_string(k2_w) + "x" + std::to_string(k2_h);
+
     return {"出片画布", Level::WARN,
             got + " 超出这个模型的画布上限 " +
                 std::to_string(limits.max_pixels) + " 像素（" + ratio + " 倍）",
@@ -637,11 +664,11 @@ Check check_canvas(const config::Settings& s) {
             // 照着做的人会卡在"--upscale 还要 --upscale-model"这句上，
             // 而它没说该去下哪个文件。
             "模型在训练分布之外跑，出来多半是伪影，不是糊一点。\n"
-            "把 [video].quality 调回 hd（704×1280）。要 2K 就先出标准档，"
+            "把 [video].quality 调回 hd（" + hd_size + "）。要 2K 就先出标准档，"
             "再单独超分：\n"
             "  changji --upscale 成片.mp4 出来的.mp4 \\\n"
             "    --upscale-model <RealESRGAN_x4plus.pth 的路径> \\\n"
-            "    --upscale-size 1440x2560\n"
+            "    --upscale-size " + k2_arg + "\n"
             "那个权重要自己下（Real-ESRGAN 的 v0.1.0 release，67 MB），"
             "清单里没有。逐帧超分没有帧间一致性，做完要看片子。"};
 }
