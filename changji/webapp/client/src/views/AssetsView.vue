@@ -48,7 +48,7 @@ const session = useSession()
 const route = useRoute()
 const router = useRouter()
 const ui = useUi()
-const { run, isBusy } = useAction()
+const { run, isBusy, error: actionError } = useAction()
 const { finished, touch } = useRefStream()
 const writer = useWriter()
 
@@ -314,6 +314,8 @@ async function genAll() {
   let made = 0
   /** 半路停在第几件上。-1 = 一件不落地跑完了。 */
   let stoppedAt = -1
+  /** 停在那一件上是人按的「停下」，不是砸了。两种说法不一样。 */
+  let byHand = false
   for (let i = 0; i < jobs.length; i += 1) {
     const j = jobs[i]
     bulk.value = { at: i + 1, total: jobs.length, name: j.name, pct: 0 }
@@ -340,12 +342,22 @@ async function genAll() {
             },
           },
         ),
-      { key: 'genall' },
+      // **这一圈不自己弹红条**（quiet）：人按「停下」也会走到这儿，而
+      // 「停」不是失败。引擎那头分得很清——ref_gen.cpp 里专门写着「**人按
+      // 的停不是失败。** 报成「出图失败：已取消」的话，人会去找哪儿出错
+      // 了」，取消回的是 400「已停下这一张」。而 run() 见到抛错一律
+      // ui.error，于是主动按的停在屏幕上是一条红的，底下还跟一句橙的
+      // 「还差 N 张没画」——两条都在说出事了，而什么都没出事。
+      //
+      // 所以这儿收住，到下面按「是停的还是砸的」分两种说法。
+      { key: 'genall', quiet: true },
     )
     // 中间砸了就停：后面那些多半栽在同一件事上（模型没配、显存不够），
     // 接着画只是让人多等十几分钟再看到同一句报错。
     if (!ok) {
       stoppedAt = i
+      // 引擎给取消留的是 400「已停下这一张」；别的都算真砸了。
+      byHand = /已停下|已取消/.test(actionError.value || '')
       break
     }
     made += 1
@@ -369,7 +381,17 @@ async function genAll() {
   const left = stoppedAt >= 0 ? jobs.length - made : 0
   const where = project !== session.projectPath ? '那一部剧' : ''
   const tail = project !== session.projectPath ? '，但你已经切走了——回去就能看到' : ''
-  if (left) {
+  if (left && byHand) {
+    // **人自己按的停。** 说清停在哪儿、剩多少就够，不报错——他知道自己
+    // 按了什么。同 useShots / useWriter 里那条（「自己按的停，别再红一次」）。
+    ui.info(
+      made
+        ? `${where}停下了，已经画好 ${made} 张，还剩 ${left} 张没画${tail}`
+        : `${where}停下了，一张都还没画完`,
+    )
+  } else if (left) {
+    // 真砸了。上面那一圈是 quiet 的，报错这件事得自己来——原话照引擎给的。
+    if (actionError.value) ui.error(actionError.value)
     // 一张都没画成时也要说——原来 `if (made)` 把这种整个吞了，屏幕上只有
     // `run` 那句红的，而那句话不提"这一轮一共要画几张、停在哪儿"。
     const head = made ? `${where}画好了 ${made} 张，还差 ${left} 张没画` : `${where}一张都没画成，排着的 ${left} 张都还在`
