@@ -290,11 +290,18 @@ ApiResult get_setup_state(const config::Settings& settings,
                           const models::HardwareProfile& profile) {
     // **探源放在这儿而不是下载那一步。** 探一次要两个 HEAD，最坏 12 秒；
     // 放在下载请求里的话，用户点了「开始下载」之后要愣十几秒才看到动静，
-    // 而那时候他不知道程序在干什么。放在这儿是页面打开时顺手探的，
-    // 而且探完的结果要显示出来。进程内只探一次，见 detect_source()。
+    // 而那时候他不知道程序在干什么。放在这儿是页面打开时顺手探的。
+    // 进程内只探一次，见 detect_source()。
+    //
+    // （这段原来还写着"而且探完的结果要显示出来"——那件事没做成，
+    //   见下面 `sourceHow` 那条上的说明：界面一处都没读。）
     const setup::SourceProbe probe = setup::probe_sources();
     // 探测结果单独一个字段，别拼进说明里——拼的话"连不上"后面会跟一个
-    // "秒"，成了「连不上 秒」。前端只负责把它排出来。
+    // "秒"，成了「连不上 秒」。
+    //
+    // ⚠️ 这儿原来跟着一句"前端只负责把它排出来"，**而前端一处都没读**
+    // （同 `sourceHow`）。下面这个 lambda 格出来的字今天谁也看不见；
+    // 留着是因为它不额外花钱，真要显示时形状就是对的。
     const auto probe_label = [&probe](double v) {
         if (probe.how != "probed") return std::string();
         if (v < 0) return std::string("连不上");
@@ -354,7 +361,15 @@ ApiResult get_setup_state(const config::Settings& settings,
         // 苹果芯片上那是 Metal 肯给的那一份（128 GB 的机器上 107.5 GB），
         // 不是整机内存。只报前者，用户看到的是"我买的明明是 128"——
         // 而这一页正是他决定要不要下 91 GB 那一档的地方。
-        // 不是统一内存时这一项是 null，界面就只显示一个数。
+        // 不是统一内存时这一项是 null。
+        //
+        // ⚠️ **原来这行末尾写着"界面就只显示一个数"——今天永远只显示一个数。**
+        // 模型页一处都没读 `unifiedGb`，所以上面那段想解决的事（苹果芯片上
+        // 只报 Metal 那一份，用户看到的是"我买的明明是 128"）在这一页仍然
+        // 存在。体检那边是做了的（doctor.cpp 里那句「整机 X GB」），两处
+        // 不一致。
+        //
+        // 留着，理由同下面的 `sourceHow` / `probe`：不额外花钱，形状是对的。
         gpu["unifiedGb"] = profile.gpu->unified()
                                ? json(static_cast<double>(profile.gpu->unified_mb) / 1024.0)
                                : json(nullptr);
