@@ -224,10 +224,25 @@ export const useModels = defineStore('models', () => {
         llmKeySet.value = Boolean(c?.llm_api_key_set)
         llmBaseUrl.value = c?.llm_base_url || ''
         llmTemperature.value = Number(c?.llm_temperature ?? 0.7)
-        // 本机/局域网的服务不校验密钥（Ollama 那些），云端才要
-        llmKeyNeeded.value = !/\/\/(127\.0\.0\.1|localhost|0\.0\.0\.0|192\.168\.|10\.)/.test(
-          c?.llm_base_url || '',
-        )
+        // 本机/局域网的服务不校验密钥（Ollama 那些），云端才要。
+        //
+        // ⚠️ **这张表要和引擎 `LLMConfig::needs_api_key()` 一模一样**
+        // （config/settings.cpp）。少列一个的后果：那个地址上的本机服务
+        // 会被这儿判成"云端"，于是弹一句「这家要密钥」，让人去给自己的
+        // Ollama 申请 API Key——而引擎那边压根不要。
+        //
+        // 原来这儿只有五条，漏了 `[::1]`（IPv6 本机）和整段 `172.16.`～
+        // `172.19.` / `172.30.` / `172.31.`。**`172.17.0.1` 正是 Docker
+        // 默认网桥的网关**，而体检那条出路自己写着「用 Docker:
+        // docker compose up -d ollama」——照着做的人第一眼就会撞上。
+        //
+        // 172.2x 那几段引擎也没列（它的注释写着"写不全的那几个落到当云
+        // 那一侧，代价只是多提示一句"）。这儿**照抄，不自作主张补全**：
+        // 两边一致比两边都"更对"要紧。
+        llmKeyNeeded.value =
+          !/\/\/(127\.0\.0\.1|localhost|0\.0\.0\.0|\[::1\]|192\.168\.|10\.|172\.(?:16|17|18|19|30|31)\.)/.test(
+            c?.llm_base_url || '',
+          )
       } catch {
         llmModel.value = '' // 问不到就退回预设名，不该让整页红
       }
