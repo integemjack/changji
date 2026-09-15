@@ -15,6 +15,7 @@
  * 实际引用的 id 分成「本集用到」和「其他集的」两组。
  */
 import { computed, onActivated, onDeactivated, onMounted, onUnmounted, ref, watch } from 'vue'
+import { onBeforeRouteLeave } from 'vue-router'
 
 import AppIcon from '@/components/AppIcon.vue'
 import EmptyState from '@/components/EmptyState.vue'
@@ -299,10 +300,31 @@ async function loadShots() {
  * 收抽屉那条路早就会问一句（见 toggle），唯独刷新和关标签页不会。
  */
 function beforeUnload(e) {
-  if (!Object.keys(edits.value).some((id) => changed(id))) return
+  if (!dirtyIds().length) return
   e.preventDefault()
   e.returnValue = ''
 }
+
+/** 改了还没存的那几个场景。 */
+function dirtyIds() {
+  return Object.keys(edits.value).filter((id) => changed(id))
+}
+
+/**
+ * **站内换页也要拦。** 上面那段注释里点了刷新和关标签页，漏的是第三种：
+ * 点顶栏那排「项目 / 故事 / 设定 / 这一集」。
+ *
+ * 那一下 `<KeepAlive>` 连同冻在里头的另外两格一起卸掉——AssetsView 那句
+ * 注释写着「三格各自都有一堆展开状态和没保存的编辑，切一下就丢的话没人
+ * 敢切」，说的就是这些东西，而它只保到了切格子那一层。`beforeunload`
+ * 管不到站内换页（浏览器只在真的要离开这个文档时才问）。
+ */
+onBeforeRouteLeave(() => {
+  const n = dirtyIds().length
+  if (!n) return true
+  return confirm(`有 ${n} 个场景改了还没保存，走了就没了。确定？`)
+})
+
 onMounted(() => {
   document.addEventListener('keydown', onEsc)
   window.addEventListener('beforeunload', beforeUnload)

@@ -29,6 +29,7 @@ import {
   ref,
   watch,
 } from 'vue'
+import { onBeforeRouteLeave } from 'vue-router'
 
 import AppIcon from '@/components/AppIcon.vue'
 import EmptyState from '@/components/EmptyState.vue'
@@ -942,6 +943,23 @@ function beforeUnload(e) {
   e.preventDefault()
   e.returnValue = ''
 }
+
+/**
+ * **后退键也要拦。**
+ *
+ * 上面那段注释里的「切走」说的是换一镜，「关抽屉」说的是 Esc 和那个叉，
+ * 两条都问过了；而**浏览器的后退键一条都碰不着**：它不经过页面上的任何
+ * 按钮，`beforeunload` 也管不到（那个只在真的要离开这个文档时才问）。
+ * 一按就是整页卸掉，抽屉里改了半天的提示词、台词、时长一起没。
+ *
+ * 顶栏那排在这儿反而拦得住：抽屉是一张铺满视口的遮罩（`.drawer` 是
+ * `position: fixed; inset: 0`，`@click.self` 收起），点顶栏先撞上它，
+ * 走的是已经会问的 `close()`。所以这条守卫实际管的就是前进/后退。
+ */
+onBeforeRouteLeave(() => {
+  if (!draftDirty.value) return true
+  return confirm('这一镜有改动还没保存，走了就没了。确定？')
+})
 
 onMounted(() => {
   // 体检那一趟上面那个 watch 已经带着 immediate 跑过了，这儿不用再来一遍
