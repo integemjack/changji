@@ -312,6 +312,8 @@ async function genAll() {
   }
 
   let made = 0
+  /** 半路停在第几件上。-1 = 一件不落地跑完了。 */
+  let stoppedAt = -1
   for (let i = 0; i < jobs.length; i += 1) {
     const j = jobs[i]
     bulk.value = { at: i + 1, total: jobs.length, name: j.name, pct: 0 }
@@ -342,7 +344,10 @@ async function genAll() {
     )
     // 中间砸了就停：后面那些多半栽在同一件事上（模型没配、显存不够），
     // 接着画只是让人多等十几分钟再看到同一句报错。
-    if (!ok) break
+    if (!ok) {
+      stoppedAt = i
+      break
+    }
     made += 1
     // 不用在这儿招呼两格重拉：引擎画完每一张都会往 refs 频道播一条
     // ref_done，那两格和这儿的数都订着它。见 useRefStream。
@@ -352,9 +357,26 @@ async function genAll() {
   // 排的、也一直替它跑完（上面那段把项目钉死了）。所以这句话要说清是替谁
   // 画的，不然它落在新这一部的屏幕上，而这一部一张新图都没有。
   // 照 AssetEpisodes / EpisodeView 那几条现成的说法。
-  if (made) {
+  // **半路停了就别报一句绿的。**
+  //
+  // 上面那句 `if (!ok) break` 是对的（后面那些多半栽在同一件事上），可
+  // 报出来的一直是「画好了 2 张」——绿的、句号。`run` 那头确实先弹了一句
+  // 红的说为什么，但最后落在屏幕上的是那句绿的，而它读起来像"这一轮完了"。
+  // 排了 12 张只画了 2 张，剩下 10 张一个字没提。
+  //
+  // 说法照投递那一页现成的（「投了 N 条，M 条失败，看下面的记录」）：
+  // 数字要齐，还要指一句去哪儿看原因。
+  const left = stoppedAt >= 0 ? jobs.length - made : 0
+  const where = project !== session.projectPath ? '那一部剧' : ''
+  const tail = project !== session.projectPath ? '，但你已经切走了——回去就能看到' : ''
+  if (left) {
+    // 一张都没画成时也要说——原来 `if (made)` 把这种整个吞了，屏幕上只有
+    // `run` 那句红的，而那句话不提"这一轮一共要画几张、停在哪儿"。
+    const head = made ? `${where}画好了 ${made} 张，还差 ${left} 张没画` : `${where}一张都没画成，排着的 ${left} 张都还在`
+    ui.warn(`${head}——上面那句说了为什么${tail}`)
+  } else if (made) {
     if (project !== session.projectPath) {
-      ui.info(`那一部剧画好了 ${made} 张，但你已经切走了——回去就能看到`)
+      ui.info(`那一部剧画好了 ${made} 张${tail}`)
     } else {
       ui.ok(`画好了 ${made} 张`)
     }
