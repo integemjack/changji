@@ -721,9 +721,11 @@ function busyProject(p) {
 .menu__item--danger:not(:disabled) {
   color: var(--danger);
 }
+/* 禁用就变灰，别只是调淡——调淡的那一版看着像"能点，只是颜色浅"。
+   和这一条菜单里「删掉」那种红字拉开距离靠的也是它。 */
 .menu__item:disabled {
-  opacity: 0.5;
-  cursor: default;
+  color: var(--text-3);
+  cursor: not-allowed;
 }
 
 /* 窄屏上收窄，但**不能 display:none**。

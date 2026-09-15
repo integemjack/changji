@@ -105,9 +105,36 @@ textarea {
 .btn:active:not(:disabled) {
   transform: translateY(1px);
 }
-.btn:disabled {
-  opacity: 0.45;
+/* 禁用：**变灰，不是调淡。**
+ *
+ * 这儿原来只有一句 `opacity: .45`——颜色全留着。于是一颗禁用的「出片」
+ * 还是那身主色，「删掉」还是红的，「一键出图」还是那道橙紫渐变，看上去
+ * 就是一颗**淡一点的、能点的**按钮。设定页读不出来的时候实测过：那颗
+ * 「一键出图」确实是禁用的（`opacity:.45` 加 `not-allowed`），可它照样
+ * 亮着一道渐变，人只会去点它。
+ *
+ * 所以不靠透明度，直接换成中性色——底、字、边框一起换，并且把各变体
+ * 自己的背景盖掉（`background-image: none` 是给 `--ai` 那道渐变的，
+ * `filter: none` 是给 hover 那句 brightness 的）。
+ *
+ * 写在 `.btn` 上而不是每个变体各写一份：变体有六个，漏一个就是又一颗
+ * 看着能点的死按钮。下面只为 `--ghost` 补一句——它本来就是透明的，
+ * 给它填一块灰底反而凭空多出个方块。 */
+.btn:disabled,
+.btn[disabled] {
+  opacity: 1;
+  background: var(--surface-3);
+  background-image: none;
+  border-color: var(--line);
+  color: var(--text-3);
   cursor: not-allowed;
+  filter: none;
+  box-shadow: none;
+}
+.btn--ghost:disabled,
+.btn--ghost[disabled] {
+  background: transparent;
+  border-color: transparent;
 }
 
 .btn--primary {
@@ -331,10 +358,15 @@ textarea {
 .textarea::placeholder {
   color: var(--text-3);
 }
+/* 输入框同理：调淡的话，一个禁用的下拉框和一个能改的长得几乎一样，
+   人会点开它、发现点不动，再点两下。换成灰底灰字，一眼看出是死的。 */
 .input:disabled,
 .textarea:disabled,
 .select:disabled {
-  opacity: 0.55;
+  opacity: 1;
+  background: var(--surface-3);
+  border-color: var(--line);
+  color: var(--text-3);
   cursor: not-allowed;
 }
 .select {

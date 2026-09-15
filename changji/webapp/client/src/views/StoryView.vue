@@ -3071,8 +3071,10 @@ async function stopWriting() {
 .menu__item--danger:not(:disabled) {
   color: var(--danger);
 }
+/* 禁用就变灰，别只是调淡。**和「删掉」那种红字尤其要分得开**——
+   淡红还是红，看着只是"颜色浅一点的能点的那一项"。 */
 .menu__item:disabled {
-  opacity: 0.45;
+  color: var(--text-3);
   cursor: not-allowed;
 }
 
