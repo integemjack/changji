@@ -32,6 +32,7 @@
 #include "http/scripting.hpp"
 #include "http/story_api.hpp"
 #include "http/setup_api.hpp"
+#include "setup/downloader.hpp"
 #include "llm/client.hpp"
 #include "http/flow.hpp"
 #include "util/paths.hpp"
@@ -269,6 +270,22 @@ void run(const config::Settings& settings, const Options& opts) {
     // /api/connections 和 /api/settings 能在运行期改它，
     // 各处捕获一份的话，改完之后有的地方是新的有的是旧的。
     config::runtime().replace(settings);
+    // 上一轮被杀时孤儿 curl 下全的 `.part` 收编进来，见 adopt_finished_parts。
+    setup::adopt_finished_parts(settings.models.dir_path(settings.workspace_path()));
+    // 画参考图和出首帧走同一条后端——本机没出图模型时能派给别的机器。
+    // 见 RefRendererProvider。
+    set_ref_renderer([](const config::Settings& s, const models::ProjectStore& store) {
+        // **整份 Backends 要活到画完。** 池那条 FrameRenderer 捕的是裸指针，
+        // 池本身由 Backends::keepalive 持有——只取 `.frame` 的话临时对象一析构
+        // 池就没了，下一步就是段错误（2026-09-16 一键出图当场把引擎打崩）。
+        auto b = std::make_shared<pipeline::Backends>(default_run_deps().backends(s, store));
+        return stages::FrameRenderer(
+            [b](const models::Shot& shot, const stages::PromptBundle& prompts,
+                const models::TierSpec& spec, const std::filesystem::path& dest,
+                pipeline::CancelToken& tok, const infer::StepCallback& on_step) {
+                b->frame(shot, prompts, spec, dest, tok, on_step);
+            });
+    });
 
     // job 表往 WebSocket 推消息，但它不认识 WebSocket——中间靠这个回调接上。
     // 分层的好处很实在：jobs.cpp 因此不用链 Crow，单元测试才编得动。
@@ -467,6 +484,70 @@ void run(const config::Settings& settings, const Options& opts) {
             }
             try {
                 config::save_peer_nodes(left);
+            } catch (const std::exception& e) {
+                return json_response({{"detail", e.what()}}, 500);
+            }
+            s = config::load_settings();
+            config::runtime().replace(s);
+            infer::node_registry().refresh(s);
+            return json_response(infer::nodes_json(s));
+        });
+
+    // 改一台：换地址、换口令。
+    //
+    // **不做成"先删再加"**：那是两次写配置，中间任何一步失败（地址不合法、
+    // 新地址和别人撞了、写盘失败）都会把这台机器整个丢掉，而用户以为
+    // 自己只是改了个端口。这条一次算完再落一次盘。
+    CROW_ROUTE(app, "/api/nodes/update")
+        .methods("POST"_method)([peer_nodes_json,
+                                 bad_peer_url](const crow::request& req) {
+            const auto body = nlohmann::json::parse(req.body, nullptr, false);
+            if (body.is_discarded() || !body.is_object()) {
+                return json_response({{"detail", "请求体不是一个 JSON 对象"}},
+                                     400);
+            }
+            const std::string url = body.value("url", std::string());
+            if (url.empty()) return json_response({{"detail", "要 url"}}, 422);
+
+            // 新地址不给就是不改地址，只改口令。
+            std::string next = changji::text::strip_ws(
+                body.value("new_url", url));
+            while (next.size() > 8 && next.back() == '/') next.pop_back();
+            if (const auto why = bad_peer_url(next); !why.empty()) {
+                return json_response({{"detail", why}}, 422);
+            }
+            if (pipeline::jobs().running(pipeline::JobKind::Run)) {
+                return json_response(
+                    {{"detail", "正在跑，这时候改派活的机器会把这一集跑坏"}},
+                    409);
+            }
+
+            auto s = config::runtime().snapshot();
+            auto arr = peer_nodes_json(s);
+            bool found = false;
+            for (auto& n : arr) {
+                if (n.value("url", std::string()) != url) {
+                    // 换到一个别人已经占着的地址上，和 /add 撞车一个意思。
+                    if (n.value("url", std::string()) == next) {
+                        return json_response(
+                            {{"detail", "这台已经在表上了：" + next}}, 409);
+                    }
+                    continue;
+                }
+                found = true;
+                n["url"] = next;
+                // **口令这个键不给就不动它。** 给空串才是"清掉"——
+                // 界面上那一格留空时用户想的是"不改"还是"删掉"分不出来，
+                // 所以由前端明确传，这边只照做。
+                if (body.contains("token")) {
+                    n["token"] = body.value("token", std::string());
+                }
+            }
+            if (!found) {
+                return json_response({{"detail", "表上没有这台：" + url}}, 404);
+            }
+            try {
+                config::save_peer_nodes(arr);
             } catch (const std::exception& e) {
                 return json_response({{"detail", e.what()}}, 500);
             }

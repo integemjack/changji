@@ -46,14 +46,111 @@ const setup = ref({})
 /** 那台的下载进度，key 是节点地址。 */
 const progress = ref({})
 const busyNode = ref('')
+/** 正在改的那一行（节点地址），空 = 没在改。 */
+const editing = ref('')
+const editUrl = ref('')
+const editToken = ref('')
+/** 点了删、还没确认的那一台（地址）。空 = 没在问。 */
+const confirming = ref('')
+/** 那一台的完整信息，弹窗里要拿它的名字。 */
+const confirmNode = computed(
+  () => (data.value?.nodes ?? []).find((n) => n.url === confirming.value) ?? null,
+)
 let timer = null
 let pollTimer = null
+
+/**
+ * 顺手问一遍每台在不在下模型。
+ *
+ * **不能只在抽屉展开时问。** 原来的 pollProgress 第一句就是
+ * `if (opened.value !== url) return`，而 `opened` 每次挂载都归零——
+ * 于是刷新一下页面，那台正在下的 82 GB 就彻底没了踪影：行上不显示，
+ * 汇总那几句也只说"一台都派不出去"，人没有任何办法知道它在下、下到哪儿了，
+ * 除非恰好想起来去点那一行的「模型」。一趟下载是按小时算的，这中间
+ * 任何一次刷新都会把它藏起来。
+ *
+ * 搭在 15 秒那一趟上，不另起轮询：那几台可能正在出片（见 onMounted 里
+ * 那句注释），多一条读内存状态的请求是它能承受的，多一个 2 秒的轮询不是。
+ */
+async function refreshProgress(nodes) {
+  await Promise.all(
+    (nodes ?? [])
+      .filter((n) => !n.local && n.online)
+      .map(async (n) => {
+        try {
+          const p = await api.nodeSetupProgress(n.url)
+          progress.value = { ...progress.value, [n.url]: p }
+        } catch {
+          // 问不到就当这台没在下，15 秒后再问。这一趟不该因为它报错——
+          // 机器表本身是好的。
+        }
+      }),
+  )
+}
+
+/** 下载的总进度。行上那颗小标和抽屉里那行读数共用一份算法。 */
+function dlSummary(p) {
+  if (p?.state !== 'running') return null
+  const done = p.downloaded ?? 0
+  const total = p.total ?? 0
+  const mb = (n) => n / 1024 / 1024
+  // **速度掉到近零时那个 eta 不能照印。**
+  //
+  // 引擎算的是 剩余字节 / 当前速度。速度是瞬时值，重启引擎、网络抖一下、
+  // 一个文件刚下完还没接上下一个，它都会短暂地掉到接近 0——而分母一小，
+  // 商就炸了。实测截到过一屏「还要 533374 小时 59 分」，那时速度显示
+  // 0.0 MB/s。数字本身没算错，是这一格不该把它当成一句话说出来。
+  //
+  // 两道闸：速度小到没意义就不提剩余时间；算出来超过一天也不提——
+  // 这套流水线的模型最大的一档也就几十 GB，真要下一天以上，那句
+  // 「还要 N 小时」帮不上任何忙，只会让人以为程序算错了（它确实像）。
+  const kSlow = 64 * 1024        // 64 KB/s 以下当作"这会儿没在动"
+  const kTooLong = 24 * 3600     // 超过一天就不报了
+  const usable =
+    p.speedBps > kSlow && p.etaSeconds > 0 && p.etaSeconds < kTooLong
+  const eta = usable ? Math.round(p.etaSeconds / 60) : 0
+  return {
+    pct: total ? Math.round((done / total) * 100) : 0,
+    size: total ? `${(done / 1024 ** 3).toFixed(1)} / ${(total / 1024 ** 3).toFixed(1)} GB` : '',
+    speed: p.speedBps > kSlow ? `${mb(p.speedBps).toFixed(1)} MB/s` : '',
+    eta: !eta ? '' : eta < 60 ? `还要 ${eta} 分钟` : `还要 ${Math.floor(eta / 60)} 小时 ${eta % 60} 分`,
+  }
+}
+
+/**
+ * 装下这张新表，**形状不对就不装**。
+ *
+ * 引擎正常时这五条路（问一遍、点格子、加、改、删）回的都是整张表。而
+ * api 那层在拿到 200 + 空响应体时回的是 `{}`（`return data ?? {}`，给不看
+ * 返回值的调用方兜底）——引擎重启那一下正好撞得上。直接装进去的话，
+ * 屏幕上那张表会凭空消失一轮；更早以前是整页崩掉（见模板里 `v-if` 那段）。
+ *
+ * 装不下就当这一趟没发生：上一份还摆在那儿，下一轮 15 秒后自己就对了。
+ */
+function setTable(next) {
+  if (next?.nodes) data.value = next
+}
+
+/**
+ * 每台那份读数，算一次。
+ *
+ * **不要在模板里到处写 `dlSummary(progress[n.url])`**：那样同一个对象
+ * 每次渲染要重算九遍（行上那颗标三次、抽屉里那行六次），而它还要走
+ * 除法和字符串拼接。进度是两秒一变的，这九遍每两秒重来一次。
+ * 算在这儿，progress 不变就不重算。
+ */
+const dl = computed(() => {
+  const out = {}
+  for (const [url, p] of Object.entries(progress.value)) out[url] = dlSummary(p)
+  return out
+})
 
 async function load() {
   loading.value = true
   try {
-    data.value = await api.nodes()
+    setTable(await api.nodes())
     error.value = ''
+    await refreshProgress(data.value?.nodes)
   } catch (err) {
     // 说清是"问这几台机器"这一趟砸了。光一句原始报错的话，它孤零零挂在
     // 标题底下，看着像整个设置页出了问题——这一块的别的动作（开关一个
@@ -86,7 +183,7 @@ async function toggle(node, cap) {
   if (pending.value) return
   pending.value = `${node.url}|${cap.cap}`
   try {
-    data.value = await api.setNodeOff(node.url, cap.cap, !cap.off)
+    setTable(await api.setNodeOff(node.url, cap.cap, !cap.off))
     error.value = ''
   } catch (err) {
     error.value = err.message
@@ -195,7 +292,7 @@ async function addNode() {
   try {
     // 引擎那头加完会**当场问一遍**这台在不在、能干什么，回的就是整张表。
     // 所以这儿直接换上，不用再 load() 一次。
-    data.value = await api.addNode(url, newToken.value.trim())
+    setTable(await api.addNode(url, newToken.value.trim()))
     error.value = ''
     adding.value = false
   } catch (err) {
@@ -207,14 +304,45 @@ async function addNode() {
   }
 }
 
-async function removeNode(node) {
-  if (!confirm(`不再用 ${node.name || node.url} 这台？配置里那一段会删掉。`)) {
+function startEdit(node) {
+  confirming.value = ''
+  if (editing.value === node.url) {
+    editing.value = ''
     return
   }
+  editing.value = node.url
+  editUrl.value = node.url
+  // **口令不回填。** 引擎不会把它发到前端来（它在配置里，见
+  // /api/nodes 那边只回 url），这里拿不到明文；留空提交时也不动它，
+  // 想换才填。下面那句 placeholder 说的就是这件事。
+  editToken.value = ''
+}
+
+async function saveEdit(node) {
+  const next = { new_url: editUrl.value.trim() }
+  // 只有真填了才带 token 这个键过去——不带就是"不动"，见 api/index.js。
+  if (editToken.value.trim()) next.token = editToken.value.trim()
   busyNode.value = node.url
   try {
-    data.value = await api.removeNode(node.url)
+    setTable(await api.updateNode(node.url, next))
     if (opened.value === node.url) opened.value = ''
+    editing.value = ''
+    editToken.value = ''
+    error.value = ''
+  } catch (err) {
+    error.value = err.message
+  } finally {
+    busyNode.value = ''
+  }
+}
+
+async function removeNode(node) {
+  busyNode.value = node.url
+  try {
+    setTable(await api.removeNode(node.url))
+    if (opened.value === node.url) opened.value = ''
+    if (editing.value === node.url) editing.value = ''
+    confirming.value = ''
     error.value = ''
   } catch (err) {
     error.value = err.message
@@ -377,7 +505,15 @@ function cellTitle(cap, node) {
          只有 282。溢出的部分被外层 `.main__scroll` 那个 overflow-x 吞掉：
          页面横着能推，屏幕上什么都不说，而「重新体检」「保存」这些都被推到
          侧边那条栏底下。 -->
-    <div v-if="data" class="matrix__scroll">
+    <!-- **判据是"有没有这份机器列表"，不是"有没有拿到响应对象"。**
+         api 那层拿到一个 200 + 空响应体时回的是 `{}`（见 api/index.js 的
+         `return data ?? {}`，那是给不看返回值的调用方兜底的）。`{}` 是真值，
+         原来这儿写 `v-if="data"` 就放行，底下 `data.nodes[0]` 当场抛
+         「Cannot read properties of undefined (reading '0')」，整张设置页
+         被 ErrorBoundary 换成一张崩溃卡。
+         **空响应不是假想的**：设置页每 15 秒问一次，引擎重启那一下正好
+         落在这个窗口里，实测撞到过。 -->
+    <div v-if="data?.nodes" class="matrix__scroll">
       <table class="matrix__grid">
       <thead>
         <tr>
@@ -392,7 +528,12 @@ function cellTitle(cap, node) {
         <template v-for="n in data.nodes" :key="n.url">
           <tr :class="{ off: !n.online }">
             <td class="col-name">
-              <span class="nm">{{ n.name }}</span>
+              <!-- **名字和地址一样就不印两遍。** 连不上的那一行，引擎那边
+                   `n.name` 回落成配置里的 url（连上了才换成它自报的名字），
+                   于是同一格里地址上下各一份，下面那句真正要看的报错反而
+                   被挤到第三行去。 -->
+              <span class="nmrow">
+                <span v-if="n.name && n.name !== n.url" class="nm">{{ n.name }}</span>
               <!-- 「本机」是身份，「连不上／忙」是状态，**两件事各走各的**。
                    原来三个串在一条 v-if/v-else-if 上，本机那一行永远停在第
                    一个分支——于是本机的「忙」一次都没亮过，而本机恰恰是最
@@ -401,7 +542,11 @@ function cellTitle(cap, node) {
               <span v-if="n.local" class="pill pill--neutral tiny">本机</span>
               <span v-if="!n.online" class="pill pill--warn tiny">连不上</span>
               <span v-else-if="n.busy" class="pill pill--ok tiny">忙</span>
-              <span class="url mono tiny">{{ n.url }}</span>
+              </span>
+              <!-- **地址单独一行。** 和名字挤在一行的时候，机器名一长
+                   （真主机名二十几个字符是常事）这一列就把右边那几颗
+                   按钮顶出可视区，而地址本身也只能省略号收尾。 -->
+              <span class="url mono tiny" :title="n.url">{{ n.url }}</span>
               <span v-if="n.error" class="err tiny">{{ n.error }}</span>
             </td>
             <td v-for="c in n.capabilities" :key="c.cap" class="col-cap">
@@ -418,25 +563,112 @@ function cellTitle(cap, node) {
             </td>
             <td class="col-act">
               <button
-                class="btn btn--ghost btn--sm"
+                class="btn btn--ghost btn--sm icon"
+                :class="{ 'is-on': opened === n.url }"
                 type="button"
                 :disabled="!n.online"
-                :title="n.online ? '看这台装了哪些模型' : '连不上，看不了'"
+                :title="
+                  !n.online
+                    ? '连不上，看不了'
+                    : opened === n.url
+                      ? '收起'
+                      : '看这台装了哪些模型，也从这儿装'
+                "
                 @click="openRow(n)"
               >
-                {{ opened === n.url ? '收起' : '模型' }}
+                <AppIcon name="download" :size="15" />
               </button>
-              <!-- **本机没有这一颗**：它不是配置里加进来的一台，删不掉。 -->
+              <!-- **收着的时候也要看得见它在下。** 见 refreshProgress 上面
+                   那段：一趟下载按小时算，而抽屉默认是收着的。 -->
+              <span
+                v-if="dl[n.url]"
+                class="pill pill--warn tiny"
+                :title="`正在下模型：${dl[n.url].size} · ${dl[n.url].speed} · ${dl[n.url].eta}`"
+              >
+                下 {{ dl[n.url].pct }}%
+              </span>
+              <!-- **下砸了也要在这一行看得见。**
+                   「正在下」那颗 2026-09-15 加了，失败这一档当时漏了——
+                   提示只写在抽屉里，而抽屉默认是收着的。实测：Qwen-Image
+                   基础版下到 102 GB 报 failed，这一行什么都不显示，
+                   `下 99%` 那颗也一起消失了，屏幕上看起来就像下完了。
+
+                   **怎么办那句不要自己再写一遍**：引擎那条 error 里已经带了
+                   （「重来一次会从断点接着下」），拼上去就是同一句话在一个
+                   气泡里出现两次，中间还多一个句号。这儿只补引擎不知道的
+                   那一半——去哪儿看明细。 -->
+              <span
+                v-else-if="progress[n.url]?.state === 'failed'"
+                class="pill pill--bad tiny"
+                :title="`下载失败：${progress[n.url].error || ''} 点「模型」那一格看是哪几个文件。`"
+              >
+                下载失败
+              </span>
+              <!-- **本机没有这两颗**：它不是配置里加进来的一台，改不了也删不掉。 -->
               <button
                 v-if="!n.local"
-                class="btn btn--ghost btn--sm"
+                class="btn btn--ghost btn--sm icon"
+                :class="{ 'is-on': editing === n.url }"
                 type="button"
                 :disabled="busyNode === n.url"
-                title="从配置里去掉这台"
-                @click="removeNode(n)"
+                title="改这台的地址或口令"
+                @click="startEdit(n)"
               >
-                {{ busyNode === n.url ? '删着…' : '不用了' }}
+                <AppIcon name="pencil" :size="15" />
               </button>
+              <!-- **删要二次确认，而且确认就在这一行里问。** 删掉之后这台
+                   的地址和口令都要重填一遍，而这颗按钮就挨着「改」——
+                   点错一格的代价不该是"没了"。 -->
+              <button
+                v-if="!n.local"
+                class="btn btn--ghost btn--sm icon icon--danger"
+                type="button"
+                :disabled="busyNode === n.url"
+                title="从配置里删掉这台"
+                @click="confirming = n.url"
+              >
+                <AppIcon name="trash" :size="15" />
+              </button>
+            </td>
+          </tr>
+
+          <!-- 改地址／口令。**摆在这一行底下而不是弹窗**，理由同上面那个
+               「加一台」：改完要立刻看这一行亮没亮。 -->
+          <tr v-if="editing === n.url" class="drawer">
+            <td :colspan="(n.capabilities?.length ?? 5) + 2">
+              <form class="edit" @submit.prevent="saveEdit(n)">
+                <label class="edit__f">
+                  <span class="tiny dim">地址</span>
+                  <input
+                    v-model="editUrl"
+                    class="input mono"
+                    placeholder="http://192.168.1.20:9101"
+                  />
+                </label>
+                <label class="edit__f">
+                  <span class="tiny dim">口令</span>
+                  <input
+                    v-model="editToken"
+                    class="input mono"
+                    type="password"
+                    placeholder="留空 = 不改"
+                  />
+                </label>
+                <button
+                  class="btn btn--primary btn--sm"
+                  type="submit"
+                  :disabled="busyNode === n.url || !editUrl.trim()"
+                >
+                  {{ busyNode === n.url ? '存着…' : '存下' }}
+                </button>
+                <button
+                  class="btn btn--ghost btn--sm"
+                  type="button"
+                  @click="editing = ''"
+                >
+                  取消
+                </button>
+              </form>
             </td>
           </tr>
 
@@ -464,6 +696,20 @@ function cellTitle(cap, node) {
                     正在下
                     {{ (progress[n.url].items ?? []).filter((i) => i.state === 'running').length }}
                     个文件
+                  </span>
+                  <!-- **总数、速度、还要多久。** 引擎一直在发
+                       downloaded / total / speedBps / etaSeconds 这四个，
+                       而这儿原来一个都没读——只有每个文件各自的百分比，
+                       于是"还要多久"这个唯一真正想知道的事，屏幕上没有答案。 -->
+                  <span class="tiny dim">
+                    {{ dl[n.url].size }}
+                    （{{ dl[n.url].pct }}%）
+                    <template v-if="dl[n.url].speed">
+                      · {{ dl[n.url].speed }}
+                    </template>
+                    <template v-if="dl[n.url].eta">
+                      · {{ dl[n.url].eta }}
+                    </template>
                   </span>
                   <button class="btn btn--ghost btn--sm" type="button" @click="cancel(n.url)">
                     停下
@@ -506,7 +752,7 @@ function cellTitle(cap, node) {
       </table>
     </div>
 
-    <ul v-if="data" class="sum">
+    <ul v-if="data?.summary" class="sum">
       <li v-for="s in data.summary" :key="s.cap" :class="{ bad: s.count === 0 }">
         <b>{{ s.label }}</b>
         <span v-if="s.count > 0">{{ s.count }} 台可用</span>
@@ -516,12 +762,53 @@ function cellTitle(cap, node) {
 
     <!-- 这是那张表的读法。**表不在就别摆**——读不出来的时候它孤零零挂在
          一句报错底下，讲的是一个屏幕上根本没有的东西。 -->
-    <p v-if="data" class="tiny dim">
-      点格子关掉或打开。<b>虚线的都点不动</b>：淡的那种是那台干不了——
+    <!-- **图例要跟着格子的样子改。** 2026-09-15 把「干不了」从一个几乎
+         看不见的淡虚线圈换成了一道短横，这段话原来写的是"虚线的都点不动、
+         淡的那种是干不了"——照着找的人会在屏幕上找不到那种圈。 -->
+    <p v-if="data?.nodes" class="tiny dim">
+      点格子关掉或打开。<b>一道短横</b>是那台干不了这一步——
       <b>能不能干是它自己量出来的</b>，要去装模型或者换一份编进了 sd.cpp
-      的二进制；深的那种是配置文件里关掉的（<code>[[peer.nodes]]</code>
-      的 <code>off</code>），改它得去动那个文件。
+      的二进制；<b>虚线圈</b>是配置文件里关掉的（<code>[[peer.nodes]]</code>
+      的 <code>off</code>），改它得去动那个文件。这两种都点不动。
+      实心是参与调度，空心圈是你在这儿关掉的。
     </p>
+  </div>
+
+  <!-- 删之前问一句。**做成弹窗而不是行内**：这一行里已经有五个能点的
+       格子加三颗按钮，确认条塞进去会把「机器」那一列挤窄、整张表横着
+       溢出去；而删掉之后地址和口令都得重填一遍，值得盖住别的东西问一次。 -->
+  <div v-if="confirmNode" class="mask" @click.self="confirming = ''">
+    <section class="dlg dlg--ask" role="alertdialog" aria-modal="true">
+      <header class="dlg__head">
+        <h2 class="dlg__t">删掉这台机器？</h2>
+      </header>
+      <div class="dlg__body">
+        <p class="ask__who">
+          <b>{{
+            confirmNode.name && confirmNode.name !== confirmNode.url
+              ? confirmNode.name
+              : '这台'
+          }}</b>
+          <span class="mono tiny dim">{{ confirmNode.url }}</span>
+        </p>
+        <p class="tiny dim">
+          它会从配置里去掉，地址和口令都不再留着——再要用得重新加一遍。
+          那台上已经下好的模型不会动。
+        </p>
+      </div>
+      <footer class="dlg__foot">
+        <span class="spacer" />
+        <button class="btn btn--ghost" type="button" @click="confirming = ''">取消</button>
+        <button
+          class="btn btn--danger"
+          type="button"
+          :disabled="busyNode === confirmNode.url"
+          @click="removeNode(confirmNode)"
+        >
+          {{ busyNode === confirmNode.url ? '删着…' : '删除' }}
+        </button>
+      </footer>
+    </section>
   </div>
 </template>
 
@@ -587,6 +874,12 @@ function cellTitle(cap, node) {
   font-weight: 500;
   padding: 4px 6px;
   opacity: 0.7;
+  /* **两个字的表头不许折。** 表格是 auto 布局，而「机器」那一格里的地址
+     不可断行——机器名一长（2026-09-15 起那里放的是真主机名，不再是
+     一律「未命名」），这一列就撑到 349px，五个能力列各剩 32px，
+     于是「写文」竖着排成「写／文」，整排表头高一倍。
+     钉住不折之后，让位的是「机器」那一列，它底下本来就能换行。 */
+  white-space: nowrap;
 }
 .matrix__grid th.col-name,
 .matrix__grid td.col-name {
@@ -608,13 +901,108 @@ function cellTitle(cap, node) {
   text-align: right;
   white-space: nowrap;
 }
+/* 名字那一行：名字 + 「本机」「连不上」「忙」几个标，地址另起一行。 */
+.nmrow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
 .nm {
   font-weight: 500;
-  margin-right: 6px;
+}
+/* 三颗图标按钮。**只留图标**，说明走 title。 */
+.icon {
+  width: 30px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.icon--danger:hover:not(:disabled) {
+  color: var(--danger);
+  border-color: color-mix(in srgb, var(--danger) 40%, transparent);
+}
+.pill--bad {
+  color: var(--danger);
+  border-color: color-mix(in srgb, var(--danger) 45%, transparent);
+  background: var(--danger-soft);
+}
+.mask {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: grid;
+  place-items: center;
+  padding: var(--s3, 10px);
+  background: rgb(0 0 0 / 45%);
+}
+.dlg--ask {
+  width: min(420px, 100%);
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+  box-shadow: 0 20px 60px rgb(0 0 0 / 35%);
+}
+.dlg--ask .dlg__head,
+.dlg--ask .dlg__foot {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+}
+.dlg--ask .dlg__head {
+  border-bottom: 1px solid var(--line);
+}
+.dlg--ask .dlg__foot {
+  border-top: 1px solid var(--line);
+}
+.dlg--ask .dlg__t {
+  margin: 0;
+  font-size: var(--fs-md);
+  font-weight: 600;
+}
+.dlg--ask .dlg__body {
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.ask__who {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.edit {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--s3, 10px);
+  flex-wrap: wrap;
+}
+.edit__f {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 12rem;
+  flex: 1 1 12rem;
 }
 .url {
   opacity: 0.5;
   margin-left: 6px;
+  /* **挤的时候让地址先省略，别把右边那两颗按钮顶出去。** 地址不可断行，
+     而机器名从 2026-09-15 起是真主机名（可能二十几个字符），两个加起来
+     把「机器」那一列撑到把「模型」「不用了」推出可视区——那两颗是这一行
+     仅有的操作，而外面那层是 overflow-x，推出去就得先横滚才点得到。
+     名字本身留全：现在它才是认人的那一半，地址鼠标悬停看得到。 */
+  display: block;
+  margin-left: 0;
+  margin-top: 1px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .err {
   display: block;
@@ -638,15 +1026,25 @@ function cellTitle(cap, node) {
   height: 12px;
   border-radius: 50%;
 }
-/* 干不了：一个空框，连轮廓都淡 */
+/* 干不了：一道短横，就是"这一格没有这回事"。
+   **原来是 `1px dashed var(--line)` 再加 opacity .5 的空圈，看不见。**
+   `--line` 本来就是整套里最淡的那个分隔线色，再打对折，12px 的圈落在
+   深色底上几乎是一片空白——而这一格要说的是一件正经事（这台干不了这一步），
+   一整列都这样的时候，人看到的是"这里什么都没有"，不是"都干不了"。
+   靠深浅区分没有余量了（再淡就没有，再深就和下面那两档撞），所以改成
+   **换形状**：横杠=没这回事，圈=有这回事但关着。虚线这个语汇于是只剩
+   「配置文件关的、你点不动」一个意思，比原来清楚。 */
 .cell--cant {
-  border: 1px dashed var(--line, #ccc);
-  opacity: 0.5;
+  width: 10px;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--text-3, #888);
+  opacity: 0.75;
 }
-/* 能干但关着：空心 */
+/* 能干但关着：空心圈 */
 .cell--off {
-  border: 1.5px solid var(--fg, #555);
-  opacity: 0.6;
+  border: 1.5px solid var(--text-2, #555);
+  opacity: 0.85;
 }
 /* 同上，但是**配置文件**关的，点不动：改成虚线。
    这张表里虚线一律是"点不动"（干不了那一档也是虚线），深浅分的是

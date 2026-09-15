@@ -230,6 +230,48 @@ watch(
   },
 )
 
+/**
+ * 当前这部剧的「走到哪一步」有没有变。
+ *
+ * **上面那两条都盖不住留在同一部剧里干活的情况。** 下降沿那条只认 Run /
+ * Write 两个作业槽；换项目那条要真的换走一次。而改动进度的路大多是同步
+ * POST、一个槽都不占——落成剧集、提人物、写一章、删章、存分镜。人就待在
+ * 这一部剧上点完，卡片上那句话原样挂着。
+ *
+ * 实测（2026-09-15）：点「落成剧集」，引擎 `POST /api/story/episodes` 回
+ * 200、9 集都建好了，而右边卡片仍写着「正文 4/8 章，还没落成剧集」，那颗
+ * 按钮也还亮着——**看上去像没按上**，人会再按一次。刷新页面才对。
+ *
+ * 判据用 `session.flow` 里那几个决定档位的数：`refresh: true` 的动作本来就
+ * 会把 flow 重新问一遍（useAction → session.refresh），所以这儿不额外发
+ * 请求；只有在这几个数真的动了、也就是卡片上那句话真的会变的时候，才去
+ * 重拉一次列表。签名没变就一次都不拉——`/api/projects` 要把每个项目的
+ * project.json 和 story.json 都重读一遍，不能挂在每次保存上。
+ *
+ * 只取决定档位的那几个（见 project-stage.js 的判断顺序），别把
+ * characters / locations 这类也算进来：它们变了档位不变，白拉一趟。
+ */
+const stageSig = computed(() => {
+  const c = session.flow?.counters
+  if (!c) return ''
+  return [
+    session.projectPath,
+    c.outputs,
+    c.shots,
+    c.writtenEpisodes,
+    c.plannedEpisodes,
+    c.chapters,
+  ].join('|')
+})
+
+watch(stageSig, (now, before) => {
+  // 第一次读到（before 是空串）不算变化：那趟列表刚加载过。
+  // 换项目也不走这儿——上面那条 watch 专管，不要连读两遍。
+  if (!before || !now) return
+  if (before.split('|')[0] !== now.split('|')[0]) return
+  store.load()
+})
+
 function pick(p) {
   // 别的行开着菜单/确认框时点这一行，先把那些收掉——留着的话列表下面
   // 会挂着一个和当前操作无关的输入框

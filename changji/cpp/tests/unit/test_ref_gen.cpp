@@ -18,6 +18,8 @@
 #include <nlohmann/json.hpp>
 
 #include "http/ref_gen.hpp"
+#include "infer/sd_image.hpp"
+#include "stages/frames.hpp"
 #include "models/project.hpp"
 #include "util/paths.hpp"
 
@@ -126,4 +128,41 @@ TEST_CASE("给了 seed 就用它，负数和超范围的折回来") {
     // 不是整数就当没给：按名字算，而不是把 1.5 截成 1
     CHECK(http::ref_seed({{"seed", 1.5}}, "随便") ==
           http::ref_seed(json::object(), "随便"));
+}
+
+TEST_CASE("画参考图走首帧那条后端：要基础权重、种子定死、图落在 refs/") {
+    // 2026-09-16 之前参考图只在本机进程内画，本机没出图模型时「一键出图」
+    // 整个不可用，而首帧却能派给别的机器。现在两条路是同一个 FrameRenderer。
+    const fs::path root = fresh_copy("走后端");
+    const models::ProjectStore store{root};
+    const auto assets = store.load_assets();
+    REQUIRE(!assets.characters.empty());
+    const std::string char_id = assets.characters.begin()->first;
+
+    stages::PromptBundle seen;
+    std::string seen_shot;
+    http::set_ref_renderer([&](const config::Settings&, const models::ProjectStore&) {
+        return [&](const models::Shot& shot, const stages::PromptBundle& prompts,
+                   const models::TierSpec&, const fs::path& dest,
+                   pipeline::CancelToken&, const infer::StepCallback&) {
+            seen = prompts;
+            seen_shot = shot.shot_id;
+            std::ofstream(dest, std::ios::binary) << "png";
+        };
+    });
+
+    const auto r = http::post_character_reference_generate(
+        {{"project", paths::to_utf8(root)}, {"char_id", char_id}, {"seed", 77}});
+    http::set_ref_renderer({});
+
+    CHECK(r.status == 200);
+    CHECK(seen.base_model);                 // 不是 Edit 那一份
+    REQUIRE(seen.seed_override.has_value());
+    CHECK(*seen.seed_override == 77);       // 接口定的种子原样到后端
+    CHECK(seen.reference_images.empty());   // 纯文字画
+    CHECK(seen_shot == char_id + "_front");
+    CHECK(r.body.at("saved").get<std::string>().rfind("refs/", 0) == 0);
+
+    std::error_code ec;
+    fs::remove_all(root, ec);
 }

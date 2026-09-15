@@ -846,6 +846,27 @@ async function recheck() {
   await Promise.all([loadDoctor(), loadPreview()])
 }
 
+/**
+ * **体检没过就自己再查，不用人去按「重新体检」。**
+ *
+ * 没过的原因十有八九是外面的事：那台配音的机器还没起来、模型还在下。
+ * 2026-09-15 实测：远程 worker 重启那几十秒里点进这一页，两颗按钮灰着，
+ * worker 起来了它们也不会自己亮——人得知道有颗「重新体检」在下面。
+ * 灰着的时候每 15 秒问一次，亮了就停；这一格停用（切到别的格子）也停。
+ */
+const RECHECK_MS = 15000
+let recheckTimer = null
+function stopRecheck() {
+  if (recheckTimer) clearInterval(recheckTimer)
+  recheckTimer = null
+}
+function syncRecheck() {
+  const need = doctor.value?.can_run === false
+  if (need && !recheckTimer) recheckTimer = setInterval(loadDoctor, RECHECK_MS)
+  if (!need) stopRecheck()
+}
+watch(() => doctor.value?.can_run, syncRecheck)
+
 async function loadDoctor() {
   // **和下面 loadVideo 同一道闸。** 两条是同一个 watch 里一前一后发的，
   // 而这一条**更慢**：体检里有三项要发网络请求、各自 8 秒超时，最坏
@@ -1021,6 +1042,7 @@ onMounted(() => {
 onUnmounted(() => {
   window.removeEventListener('keydown', onKey)
   window.removeEventListener('beforeunload', beforeUnload)
+  stopRecheck()
 })
 
 /**
@@ -1039,8 +1061,16 @@ onUnmounted(() => {
  * 重复 add 同一个函数引用是安全的（DOM 会去重），所以首次挂载时
  * onMounted 和 onActivated 都跑一遍也没关系。
  */
-onActivated(() => window.addEventListener('keydown', onKey))
-onDeactivated(() => window.removeEventListener('keydown', onKey))
+onActivated(() => {
+  window.addEventListener('keydown', onKey)
+  // 停用期间没在查；回来先查一遍，灰着就接着按节奏查。
+  if (doctor.value?.can_run === false) loadDoctor()
+  syncRecheck()
+})
+onDeactivated(() => {
+  window.removeEventListener('keydown', onKey)
+  stopRecheck()
+})
 </script>
 
 <template>

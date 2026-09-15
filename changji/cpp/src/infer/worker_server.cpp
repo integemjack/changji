@@ -17,10 +17,12 @@
 
 #include <crow.h>
 
+#include "config/runtime.hpp"
 #include "http/setup_api.hpp"
 #include "infer/blob.hpp"
 #include "infer/node_status.hpp"
 #include "infer/peer_auth.hpp"
+#include "setup/downloader.hpp"
 #include "infer/task_run.hpp"
 #include "infer/scheduler.hpp"
 #include "infer/sd_backend.hpp"
@@ -101,11 +103,40 @@ bool run_worker(const config::Settings& settings, const WorkerOptions& opts) {
     // /status 每次重探的话，别的机器轮询一下就是白白拖慢这台。
     const auto profile =
         models::HardwareProfile::detect(settings.vram_gb_override);
-    register_sd_slots(settings, profile);
+
+    // **把启动时这一份装进 runtime，工作进程里原来没人做这件事。**
+    //
+    // `config::runtime()` 是个单例，完整服务在 server.cpp 起来时会
+    // `replace(settings)`，工作进程这条路一处都没有——于是它一直是默认
+    // 构造的空配置。后果有两层，都指向同一个症状：
+    //
+    // 一，从界面把模型下到这台机器上，下完那一下 `on_item_done` 会调
+    //     setup_api 的 `persist()`。那个函数写文件之外还要
+    //     `runtime().snapshot()` → 打补丁 → `replace()`，而它拿到的是空配置，
+    //     于是内存里那份变成"默认值 + 这一组"，别的键全丢了。
+    // 二，下面 `/status` 和出图槽读的都是**启动那一刻**的拷贝，配置文件
+    //     后来写对了也看不见。
+    //
+    // 实测（2026-09-15）：Qwen-Image-Edit 20 GB 下完、config.toml 里
+    // `image` 也写上了、文件就在盘上，这台仍然一直报「[models].image
+    // 没配，或者文件不在」，派活那头永远不会把首帧派过来——除非重启它。
+    // 而整个「在界面上给远程机器装模型」就是为了不用去碰那台机器。
+    config::runtime().replace(settings);
+    // 上一轮被杀时孤儿 curl 下全的 `.part` 收编进来，见 adopt_finished_parts。
+    setup::adopt_finished_parts(settings.models.dir_path(settings.workspace_path()));
+
+    // 槽也读活的那一份，理由同上：下完模型不重启就该能用。
+    register_sd_slots([] { return config::runtime().snapshot(); }, profile);
 
     auto state = std::make_shared<State>();
     crow::SimpleApp app;
     app.loglevel(crow::LogLevel::Warning);
+    // 连接计时器放宽到 60 秒：一段 blob 在 10 KB/s 的链路上也要二十多秒，
+    // 默认 5 秒会把它切断（见上面 /blob 那条）。
+    app.timeout(60);
+    // 几个 io_service：一条慢连接（往外发 blob、收 blob）只占住一个，
+    // 别的连接上的 /task、轮询照常有人接。
+    app.concurrency(4);
 
     // **这台的自我介绍。** 别的机器靠它决定派不派活过来：能力齐不齐、
     // 卡多大、模型目录还剩多少。拼的地方只有一处（node_status.cpp），
@@ -127,9 +158,13 @@ bool run_worker(const config::Settings& settings, const WorkerOptions& opts) {
                         401);
     };
 
-    CROW_ROUTE(app, "/status")([settings, profile, gate](const crow::request& req) {
+    // **读活的那一份，不是启动时捕获的拷贝。** 见上面 runtime().replace
+    // 那段：这台自己下完模型之后，这份自我介绍必须跟着变，否则派活那头
+    // 看到的永远是"干不了"。
+    CROW_ROUTE(app, "/status")([profile, gate](const crow::request& req) {
         if (auto deny = gate(req)) return std::move(*deny);
-        return json_res(node_status_json(settings, profile));
+        return json_res(
+            node_status_json(config::runtime().snapshot(), profile));
     });
 
     CROW_ROUTE(app, "/health")([opts, state] {
@@ -215,12 +250,33 @@ bool run_worker(const config::Settings& settings, const WorkerOptions& opts) {
         if (p.empty() || !std::filesystem::is_regular_file(p, ec)) {
             return json_res({{"detail", "没有这个 blob：" + id}}, 404);
         }
+        // **按段给，不一口气发整个文件。** 跨境公网实测 20～30 KB/s：
+        //   · 一次发整个：Crow 对 1 MB 以下的 body 是异步写完就开连接
+        //     计时器（默认 5 秒），字节没发完计时器先到，对面收到半截
+        //     （curl 每次都在 33 万字节处断，2026-09-15 实撞）；
+        //   · 走静态文件那条路是**同步**分块写，一条连接把整个
+        //     io_service 堵 30 秒，落在同一个 io_service 上的 /task、
+        //     轮询全等着——下一镜派不出去，显卡白闲 25 秒。
+        // 派活方按 off/len 一段一段地取（见 worker_pool.cpp 的
+        // pull_artifact），每段几秒钟就完，走异步写、不堵别人；
+        // 不带 off/len 的老客户端照样拿整份。
+        std::error_code ec2;
+        const auto total = static_cast<std::uint64_t>(std::filesystem::file_size(p, ec2));
+        std::uint64_t off = 0;
+        std::uint64_t len = total;
+        if (const char* o = req.url_params.get("off")) off = std::strtoull(o, nullptr, 10);
+        if (const char* l = req.url_params.get("len")) len = std::strtoull(l, nullptr, 10);
+        if (off > total) return json_res({{"detail", "off 超出文件"}}, 416);
+        len = std::min(len, total - off);
         std::ifstream in(p, std::ios::binary);
         if (!in) return json_res({{"detail", "读不了：" + id}}, 500);
-        std::ostringstream ss;
-        ss << in.rdbuf();
-        crow::response res(200, ss.str());
+        std::string body(static_cast<std::size_t>(len), '\0');
+        in.seekg(static_cast<std::streamoff>(off));
+        in.read(body.data(), static_cast<std::streamsize>(len));
+        body.resize(static_cast<std::size_t>(in.gcount()));
+        crow::response res(200, std::move(body));
         res.set_header("Content-Type", "application/octet-stream");
+        res.set_header("X-Blob-Size", std::to_string(total));
         return res;
     });
 
@@ -271,12 +327,22 @@ bool run_worker(const config::Settings& settings, const WorkerOptions& opts) {
             // id 也捕一份：跨机时沙箱按它起名（<cache>/tasks/<id>）。
             std::thread([state, live, task, settings, id] {
                 const auto on_step = [state, live](int step, int steps,
-                                                  double, bool loading) {
+                                                  double, Phase phase) {
                     std::lock_guard lg(state->mu);
                     live->progress.step = step;
                     live->progress.steps = steps;
-                    live->progress.loading = loading;
+                    live->progress.phase = phase_name(phase);
                 };
+                // 采样中途的预览存进进度里，派活方轮询时按需带走
+                // （见 TaskProgress::preview）。只认这件活自己的 tag。
+                const PreviewSinkHandle preview_sink(
+                    [state, live, tag = task.shot_id](const std::string& t, int step,
+                                                      std::string url) {
+                        if (t != tag) return;
+                        std::lock_guard lg(state->mu);
+                        live->progress.preview_step = step;
+                        live->progress.preview = std::move(url);
+                    });
                 // 怎么跑在 task_run.cpp 里，那一层不碰网络。
                 // **origin 是 Local**：这些工作进程是本机自己按显卡数
                 // 拉起来的（见 worker_farm.hpp），它们干的就是本机的活。
@@ -305,12 +371,16 @@ bool run_worker(const config::Settings& settings, const WorkerOptions& opts) {
         if (!state->current || state->current_id != id) {
             return json_res({{"detail", "没有这个任务"}}, 404);
         }
-        const auto p = state->current->progress;
+        auto p = state->current->progress;
         if (p.state == "done" || p.state == "failed") {
             // 收完就放，好接下一个
             state->current.reset();
             state->current_id.clear();
         }
+        // 预览只在问了、而且比它手里那张新时才带（几十 KB 一张，见
+        // TaskProgress::preview）。没问的轮询一个字节都不多。
+        const char* after = req.url_params.get("preview_after");
+        if (!after || p.preview_step <= std::atoi(after)) p.preview.clear();
         return json_res(to_json(p));
     });
 
@@ -328,7 +398,24 @@ bool run_worker(const config::Settings& settings, const WorkerOptions& opts) {
 
     CROW_LOG_INFO << "工作进程 gpu=" << opts.gpu << " 听 " << opts.host << ":"
                   << opts.port;
-    app.bindaddr(opts.host).port(static_cast<std::uint16_t>(opts.port)).run();
+    // **端口还被上一个进程占着就等它，别当场退出。** 重启工作进程时上一个
+    // 可能正在出片、几秒才退干净；这时 bind 报 Address already in use，新的
+    // 一退，机器上就没有工作进程了，派活方那头整台变灰（2026-09-16 实撞）。
+    // 等最多一分钟，每两秒试一次；别的错照样抛。
+    for (int attempt = 1;; ++attempt) {
+        try {
+            app.bindaddr(opts.host).port(static_cast<std::uint16_t>(opts.port)).run();
+            break;
+        } catch (const std::exception& e) {
+            const std::string what = e.what();
+            if (what.find("Address already in use") == std::string::npos || attempt >= 30) {
+                throw;
+            }
+            CROW_LOG_WARNING << "端口 " << opts.port << " 还被占着（多半是上一个"
+                             << "工作进程还没退干净），两秒后再试（" << attempt << "/30）";
+            std::this_thread::sleep_for(std::chrono::seconds(2));
+        }
+    }
 
     // ---- 收到信号，run() 返回了 ----
     //

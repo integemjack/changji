@@ -95,12 +95,28 @@ struct ImageRequest {
 /// 用户分不清是在跑还是卡死了。
 /// 出图过程中的进度回调。
 ///
-/// `loading = true` 表示这一下报的是**加载权重**，不是采样。
-/// sd.cpp 那个回调两件事都会调，不分开的话用户会看到
-/// "第 1927/1927 步"（加载 1927 个张量）紧接着"第 1/8 步"（真的采样），
-/// 像是跑到头又倒回去了——而 1927 这个数对他没有任何意义。
+/// sd.cpp 拿同一个回调报三种阶段，总数各不相同：
+///   - **Prep**：采样前——分段搬权重、首次从磁盘载权重、腾显存；
+///   - **Sample**：真的采样，总数等于请求的步数；
+///   - **Decode**：采样后 VAE 分块解码，一块一格。
+/// 不分开的话用户会看到"第 1927/1927 步"紧接着"第 1/8 步"再接着
+/// "第 78/78 步"，像是跑到头又倒回去两次——而 1927、78 这两个数对他
+/// 没有任何意义。**解码不是准备**：它在采样之后，VAE 放显存时只要
+/// 两三秒、放内存时二十几秒，牌子上写"准备"用户会以为模型又在重载
+/// （2026-09-15 报的）。
+enum class Phase { Prep, Sample, Decode };
+
+/// 进 JSON / 事件用的名字："prep" / "sample" / "decode"。
+const char* phase_name(Phase p);
+/// 反过来；认不出的一律按 Sample（老进程不带这个字段）。
+Phase phase_from(const std::string& name);
+/// 牌子上跟在"出首帧 sh3"后面的那一截："（第 3/8 步）"、"（准备 6/28）"、
+/// "（解码 12/78）"；还没进采样也没步数时是"（正在准备模型，可能要先腾出
+/// 显存）"——写"准备 0/0"只会让人以为出错了。
+std::string phase_note(Phase p, int step, int steps);
+
 using StepCallback =
-    std::function<void(int step, int total, double seconds, bool loading)>;
+    std::function<void(int step, int total, double seconds, Phase phase)>;
 
 /// 采样中途的预览图。
 ///
@@ -119,6 +135,11 @@ using PreviewSink =
 /// 挂多个之后各收各的：每个落点看 tag 是不是自己那件事，不是就不管。
 int add_preview_sink(PreviewSink sink);
 void remove_preview_sink(int token);
+
+/// 把一张预览发给所有挂着的落点。sd.cpp 的回调（进程内采样）和工作进程
+/// 池（活派在别的机器上、预览随轮询带回来）都走这一个口子——
+/// 页面上的小图不该知道活是在哪台机器上跑的。
+void publish_preview(const std::string& tag, int step, std::string data_url);
 
 /// 挂上、出作用域自动摘。
 class PreviewSinkHandle {
@@ -200,7 +221,11 @@ struct VideoRequest {
 /// 各自一个 sd_ctx、各自一个调度槽。合成一个的话，跑首帧时视频模型
 /// 也占着显存，而 6GB 卡上那意味着两个都装不下。
 enum class ModelRole {
+    /// 首帧：Edit 权重，要收参考图。
     Image,
+    /// 从零出图（角色三视图、空景图）：基础文生图权重，一张参考图都不传。
+    /// `[models].image_base` 留空时和 Image 取同一个文件，也就是老行为。
+    ImageBase,
     Video,
 };
 
@@ -354,6 +379,33 @@ private:
 /// 而"不生效"的表现是加载出来的还是上一个模型，不报任何错。
 using SettingsProvider = std::function<config::Settings()>;
 
+/// **这一趟活按哪份配置装模型。**
+///
+/// 工作进程接活时，槽的 provider 读的是这台的 runtime 配置；而派活那部剧挑的
+/// 档位（Edit 还是基础、哪个量化）只盖在任务自己那份 settings 上
+/// （task_run.cpp 的 settings_for）。不盖到槽上的话，定妆图要基础权重、
+/// 槽却按 runtime 里的 `image` 装了 Edit——2026-09-16 实测：L20 上
+/// Qwen_Image-Q8_0 明明在盘上，一键出图跑的还是 Edit，日志里一行
+/// "是图像编辑模型，而这一镜一张参考图都没有"。
+///
+/// **线程局部**：槽的 load 就在借槽的这条线程上同步跑，所以只要在
+/// run_task_locally 这一层套一个作用域，load 看到的就是这份。别的线程
+/// （比如另一边在借 LLM 槽时估这个槽的占用）看到的仍是 runtime 那份，
+/// 那只是估算，无妨。
+class ScopedTaskSettings {
+public:
+    explicit ScopedTaskSettings(const config::Settings& s);
+    ~ScopedTaskSettings();
+    ScopedTaskSettings(const ScopedTaskSettings&) = delete;
+    ScopedTaskSettings& operator=(const ScopedTaskSettings&) = delete;
+
+private:
+    const config::Settings* prev_;
+};
+
+/// 当前线程上套着的那份；没有就是 nullptr。register_sd_slots 的 provider 先看它。
+const config::Settings* task_settings_override();
+
 /// 把 sd.cpp 的上下文注册到调度器的图像槽和视频槽上。
 ///
 /// 注册之后调用方只管 `scheduler().acquire(Slot::Image)`，
@@ -367,6 +419,15 @@ void register_sd_slots(SettingsProvider provider,
 /// 同上，配置固定不变的那种。测试和命令行用。
 void register_sd_slots(const config::Settings& settings,
                        const models::HardwareProfile& profile);
+
+/// 借图像槽，**并保证槽上装的是这个变体**（Edit 还是基础文生图）。
+///
+/// 直接 `scheduler().acquire(Slot::Image, …)` 的问题是：槽已经加载时调度器
+/// 不会再调 load，于是要基础模型的那一步会拿到还挂在槽上的 Edit 权重。
+/// 这条先看已装的是哪个，不对就卸掉再借。
+///
+/// `ModelRole::Video` 传进来按 Image 处理——图像槽上不该出现视频模型。
+Lease acquire_image(ModelRole role, const Scheduler::AcquireOptions& opt);
 
 /// 当前挂在图像槽 / 视频槽上的上下文。没加载时返回空。
 ///

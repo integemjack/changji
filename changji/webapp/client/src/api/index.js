@@ -137,11 +137,20 @@ export const api = {
   projectVideo: (project) => get('/bff/project/video', { path: project }),
   /** 这一轮引擎还没落定的镜头。页面一进来靠它把「排队中」重新点亮。 */
   runPending: () => get('/bff/run/pending'),
-  // 「大模型跑在哪：内置还是外接」那条（POST /bff/settings/llm）**没有了**。
-  // 进程内那条 2026-09-14 删掉之后引擎只收 remote 一个值，这个函数也就一直
-  // 没人叫——而它头上那段注释还写着"两条都留着，都要能切"，读代码的人会
-  // 去界面上找那个开关。引擎那条路线留着（老机器上 backend = "local" 的配置
-  // 靠它改回来，见 server.cpp 那段），界面这边不留一个没人用的入口。
+  /**
+   * 把 `[llm].backend` 改成 remote。
+   *
+   * **这个入口 2026-09-15 加回来了。** 之前的判断是"引擎只收 remote 一个
+   * 值，界面不留一个没人用的开关"——可老机器上配着 `backend = "local"`
+   * 的那份配置正是靠这条改回来的，入口一删就**没有任何界面办法修它**：
+   * 密钥填了、模型挑了、地址也在，写文那一格照样是灰的，而屏幕上唯一的
+   * 线索是体检里一句"配置里把 [llm].backend 改成 remote"——叫人去手改
+   * 配置文件。实测就是这么撞上的。
+   *
+   * 引擎那头只认 remote（传别的值回 400 并说清这条路没有了），所以这里
+   * 不做成开关，就是一颗"改过去"。
+   */
+  useRemoteLlm: () => post('/bff/settings/llm', { backend: 'remote' }),
 
   // 首次运行那一页。**四条都在 /bff**：下模型这件事引擎独有，
   // /api 那一套在和 Python 的对拍范围内，加进去就是一处破契约。
@@ -357,6 +366,9 @@ export const api = {
   // 两条回的都是**整张表**（引擎加完当场问了一遍），直接换上就行。
   addNode: (url, token) => post('/api/nodes/add', { url, token }),
   removeNode: (url) => post('/api/nodes/remove', { url }),
+  // token 这个键**不给就是不动它**，给空串才是清掉——见 server.cpp 里
+  // /api/nodes/update 上那段注释。
+  updateNode: (url, next) => post('/api/nodes/update', { url, ...next }),
   // 任意一台机器的模型：本机走本地那份，别的机器由引擎转发过去。
   // **浏览器连不上那几台**（地址可能只有引擎这边通，口令也不该发到前端），
   // 所以这几条都带一个 url 参数走引擎。

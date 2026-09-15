@@ -26,6 +26,35 @@ namespace fs = std::filesystem;
 
 namespace {
 
+#ifndef _WIN32
+/// fork 之后、execv 之前，把**继承来的其余 fd 全关掉**。
+///
+/// 不关的话，子进程会拿着父进程当时开着的一切——其中要命的是那张
+/// **监听套接字**。实测撞到的：worker 正在下 82 GB 模型（四个 curl 子
+/// 进程），把 worker 本身杀掉之后，端口仍然被占着——
+///
+///   LISTEN 127.0.0.1:9101 users:(("curl",pid=16500,fd=19),…)
+///
+/// 于是 worker 重启不起来，报的是 `bind: Address already in use`，
+/// 而真凶是它自己派生的下载进程，还要等几十分钟下完才肯松手。
+/// 那句报错完全指不到这上面，人只会去找"谁占了 9101"。
+///
+/// 上界在 fork 之前算好：`sysconf` 不在 async-signal-safe 那张表上，
+/// 而 fork 和 exec 之间只能调表上的函数。`close` 在表上。
+int fd_upper_bound() {
+    const long n = ::sysconf(_SC_OPEN_MAX);
+    // 取不到就按 POSIX 的下限兜底；上限钉住，免得在 _SC_OPEN_MAX 是
+    // 一百万的机器上空转一百万次 close。真实的 fd 都挤在最小的那几十个里。
+    if (n <= 0) return 256;
+    return static_cast<int>(n > 4096 ? 4096 : n);
+}
+
+void close_inherited_fds(int upper) {
+    for (int fd = STDERR_FILENO + 1; fd < upper; ++fd) ::close(fd);
+}
+#endif
+
+
 /// 给参数加引号，按 **CommandLineToArgvW 的规则**。
 ///
 /// 从 2026-09-08 起 `run` 不再经过 cmd.exe（改走 CreateProcessW），
@@ -231,6 +260,9 @@ Result run(const std::string& exe, const std::vector<std::string>& args, int tim
     int fds[2];
     if (::pipe(fds) != 0) return r;
 
+    // fork 之前算好，见 close_inherited_fds 上面那段。
+    const int fd_max = fd_upper_bound();
+
     const pid_t pid = ::fork();
     if (pid < 0) {
         ::close(fds[0]);
@@ -242,6 +274,7 @@ Result run(const std::string& exe, const std::vector<std::string>& args, int tim
         ::dup2(fds[1], STDOUT_FILENO);
         ::dup2(fds[1], STDERR_FILENO);
         ::close(fds[1]);
+        close_inherited_fds(fd_max);
         std::vector<char*> argv;
         argv.push_back(const_cast<char*>(resolved->c_str()));
         for (const auto& a : args) argv.push_back(const_cast<char*>(a.c_str()));
@@ -337,6 +370,9 @@ ProcHandle spawn(const std::string& exe, const std::vector<std::string>& args,
     ::CloseHandle(pi.hProcess);
     return static_cast<ProcHandle>(pi.dwProcessId);
 #else
+    // 同上：fork 之前算好。
+    const int fd_max = fd_upper_bound();
+
     const pid_t pid = ::fork();
     if (pid < 0) return 0;
     if (pid == 0) {
@@ -359,6 +395,9 @@ ProcHandle spawn(const std::string& exe, const std::vector<std::string>& args,
             ::dup2(devnull, STDIN_FILENO);
             ::close(devnull);
         }
+        // **这一句是给下载进程的。** 它们一跑就是几十分钟，而在此之前
+        // 每一个都攥着 worker 的监听套接字不放，见上面那段注释。
+        close_inherited_fds(fd_max);
         std::vector<char*> argv;
         argv.push_back(const_cast<char*>(resolved->c_str()));
         for (const auto& a : args) argv.push_back(const_cast<char*>(a.c_str()));

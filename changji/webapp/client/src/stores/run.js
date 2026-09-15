@@ -143,11 +143,12 @@ export const useRun = defineStore('run', () => {
           typeof msg.shot_step === 'number' ? msg.shot_step : (prev?.shotStep ?? null),
         shotSteps:
           typeof msg.shot_steps === 'number' ? msg.shot_steps : (prev?.shotSteps ?? null),
-        // 这一对数说的是"准备"（搬权重、VAE 分块解码）还是真在采样。
-        // 两件事量级差很远：准备可能 26/28 段，而挂了 Turbo 的采样只有 6 步。
-        // 不分的话牌子上写"成片 26/28"，看着就是跑了 28 步。
-        shotPrep:
-          typeof msg.shot_prep === 'boolean' ? msg.shot_prep : (prev?.shotPrep ?? false),
+        // 这一对数说的是哪个阶段：'prep'（搬权重、腾显存）、'sample'（采样）
+        // 还是 'decode'（VAE 分块解码）。三件事量级差很远：准备可能 26/28 段、
+        // 解码 78 块，而挂了 Turbo 的采样只有 6 步。不分的话牌子上写
+        // "成片 26/28"，看着就是跑了 28 步；解码写成"准备"，看着像模型又在重载。
+        shotPhase:
+          typeof msg.shot_phase === 'string' ? msg.shot_phase : (prev?.shotPhase ?? 'sample'),
         since: prev?.since ?? Date.now(),
       })
     } else {

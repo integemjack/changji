@@ -91,7 +91,7 @@ stages::VideoRenderer fake_ok(
                pipeline::CancelToken&, const infer::StepCallback& on_step) {
         if (seen_starts) seen_starts->push_back(start);
         if (seen_frames) seen_frames->push_back(plan.frames);
-        on_step(1, 2, 0.1, false);
+        on_step(1, 2, 0.1, infer::Phase::Sample);
         std::error_code ec;
         fs::create_directories(dest.parent_path(), ec);
         std::ofstream(dest, std::ios::binary) << "假的 mp4";
@@ -889,4 +889,26 @@ TEST_CASE("每出完一镜就落一次盘，不是整批跑完才落") {
         CHECK_FALSE(s.video_path->empty());
         CHECK(s.status == models::ShotStatus::DRAFT_DONE);
     }
+}
+
+TEST_CASE("关键镜头：第一条干净就不再多出") {
+    // 2026-09-16 用户问"为什么要进行两次"：每个关键镜无条件出两条，
+    // 整集时间翻倍，而多数时候第一条就是好的。
+    gates::GateResult r;
+    r.verdict = gates::Verdict::Pass;
+    r.metrics["motion_mean"] = 6.8;
+    CHECK(stages::take_good_enough(r));
+    // 闸门没量运动量：过了就算
+    gates::GateResult plain;
+    plain.verdict = gates::Verdict::Pass;
+    CHECK(stages::take_good_enough(plain));
+    // 几乎不动 / 乱动 / 片中硬切 / 没过闸门：再出一条来挑
+    gates::GateResult still = r;  still.metrics["motion_mean"] = 0.3;
+    CHECK_FALSE(stages::take_good_enough(still));
+    gates::GateResult wild = r;   wild.metrics["motion_mean"] = 40.0;
+    CHECK_FALSE(stages::take_good_enough(wild));
+    gates::GateResult cut = r;    cut.metrics["cut_inside"] = 1.0;
+    CHECK_FALSE(stages::take_good_enough(cut));
+    gates::GateResult bad = r;    bad.verdict = gates::Verdict::Retry;
+    CHECK_FALSE(stages::take_good_enough(bad));
 }

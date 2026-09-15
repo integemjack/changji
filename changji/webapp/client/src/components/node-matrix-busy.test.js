@@ -79,10 +79,20 @@ describe('那张表上的徽章', () => {
 
   it('表读不出来的时候，底下那段读法也别摆', () => {
     // 它讲的是屏幕上根本没有的东西。表、汇总、读法三块同进同出。
+    //
+    // **判据是"和表用同一个条件"，不是某个字面量。** 这条原来写死
+    // `toContain('v-if="data"')`，2026-09-15 那个判据收紧成 `data?.nodes`
+    // 之后就红了——而收紧恰恰是为了修一个真 bug（200 + 空响应体让
+    // `data` 是 `{}`，表照画，`data.nodes[0]` 当场把整页崩掉）。
+    // 钉字面量会让"把判据改对"这件事看起来像破坏。
+    const table = /<div v-if="([^"]+)" class="matrix__scroll"/.exec(body)
+    expect(table, '表那一块挪走了？').toBeTruthy()
     const at = body.indexOf('点格子关掉或打开')
     expect(at, '底下那段挪走了？').toBeGreaterThan(0)
     const open = body.lastIndexOf('<p', at)
-    expect(body.slice(open, at), '那段读法没跟着表一起藏').toContain('v-if="data"')
+    expect(body.slice(open, at), '那段读法没跟着表用同一个判据').toContain(
+      `v-if="${table[1]}"`,
+    )
   })
 
   it('问不到那几台机器时，那句报错要说清是哪一趟砸了', () => {

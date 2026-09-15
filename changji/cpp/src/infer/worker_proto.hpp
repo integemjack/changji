@@ -133,8 +133,14 @@ struct TaskProgress {
     std::string state = "queued";
     int step = 0;
     int steps = 0;
-    /// 这一下报的是加载权重还是采样。
-    bool loading = false;
+    /// 这一下报的是哪个阶段：prep / sample / decode，见 infer::Phase。
+    std::string phase = "sample";
+    /// 采样中途最新的那张预览（`data:image/png;base64,…`）和它是第几步的。
+    /// **只在派活方问的时候带**（`GET /task/<id>?preview_after=N`，且比 N
+    /// 新）：一张几十 KB，跨境公网 25 KB/s，每次轮询都带会把链路吃光。
+    /// 没有就是 -1 / 空。
+    int preview_step = -1;
+    std::string preview;
     std::optional<TaskResult> result;
 };
 

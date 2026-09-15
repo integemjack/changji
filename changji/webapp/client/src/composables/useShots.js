@@ -231,8 +231,8 @@ export function useShots() {
    * 别用 inflight 里的 step/total：那是整集的位置（第 21 镜 / 共 22 镜），
    * 拿它画单镜的条，正在跑的那一镜一出现就是 95%，跑完还是 95%。
    *
-   * **准备段返回 null，走马灯。** 那一段的分母不是一个，它会一轮一轮地
-   * 重来：出片一镜实测 0→28 跑满三遍（扩散模型、编码器、VAE 各一遍），
+   * **准备段和解码段返回 null，走马灯。** 那两段的分母不是一个，它会一轮
+   * 一轮地重来：出片一镜实测 0→28 跑满三遍（扩散模型、编码器、VAE 各一遍），
    * 采样完了 VAE 分块解码又是一轮 0→351。拿它画条的话，进度条在一镜里
    * **倒退四次**——比不动更像出了事。
    *
@@ -243,7 +243,7 @@ export function useShots() {
   function pct(shotId) {
     const x = inflightBy.value[shotId]
     if (!x || typeof x.shotStep !== 'number' || !x.shotSteps) return null
-    if (x.shotPrep) return null
+    if (x.shotPhase !== 'sample') return null
     return Math.min(100, Math.round((x.shotStep / x.shotSteps) * 100))
   }
 
@@ -253,21 +253,23 @@ export function useShots() {
    * 只有阶段名（"首帧"）的话，一条几十秒不动的进度条和卡死了看着一样。
    * 带上步数就有了在走的证据。
    *
-   * **准备和采样要分开说**：准备（搬权重、VAE 分块解码）可能是 282/351 段，
-   * 而挂了 Turbo 的采样只有 6 步。都写成"成片 282/351"的话，看着就是跑了
-   * 几百步——用户会以为 Turbo 没生效，已经问过一次了。
+   * **准备、采样、解码要分开说**：准备（搬权重）可能是 26/28 段，解码
+   * （VAE 分块）282/351 块，而挂了 Turbo 的采样只有 6 步。都写成
+   * "成片 282/351"的话，看着就是跑了几百步——用户会以为 Turbo 没生效，
+   * 已经问过一次了；解码写成"准备"，用户会以为模型又在重载（2026-09-15）。
    */
   function shotState(shot) {
     const x = inflightBy.value[shot.shot_id]
     if (x) {
       const stage = STAGE_LABELS[x.stage] || x.stage || ''
       if (typeof x.shotStep === 'number' && x.shotSteps) {
-        if (x.shotPrep) return `${stage}·准备 ${x.shotStep}/${x.shotSteps}`
+        if (x.shotPhase === 'prep') return `${stage}·准备 ${x.shotStep}/${x.shotSteps}`
+        if (x.shotPhase === 'decode') return `${stage}·解码 ${x.shotStep}/${x.shotSteps}`
         return `${stage} ${x.shotStep}/${x.shotSteps} 步`
       }
-      // 有准备标志但没步数：正在腾显存 / 从磁盘读模型，还没进采样。
+      // 在准备但没步数：正在腾显存 / 从磁盘读模型，还没进采样。
       // 这一段几十秒起，只写阶段名的话和卡死了看着一样。
-      if (x.shotPrep) return `${stage}·正在准备模型`
+      if (x.shotPhase === 'prep') return `${stage}·正在准备模型`
       return stage || '跑着'
     }
     // **排的队盖不住已经出来的东西。**
@@ -639,8 +641,31 @@ export function useShots() {
   let settleTimer = null
   watch(() => runStore.settled, () => {
     if (settleTimer) clearTimeout(settleTimer)
-    settleTimer = setTimeout(load, 250)
+    settleTimer = setTimeout(() => {
+      load()
+      // 每落定一镜，队列就短一截——跟着对一次账，后面排着的那些才
+      // 一直是「排队中」。见下面 syncPending 上那段。
+      syncPending()
+    }, 250)
   })
+
+  /**
+   * **开跑那一刻就把队列点亮，别等切走再切回来。**
+   *
+   * `syncPending()` 原来只有两个调用点：切回前台时，和挂载时发现已经在跑。
+   * 于是最常见的那条路——人就待在这一页上点「只出首帧」——一次都不会调：
+   * 引擎那边 16 镜排得好好的（`/bff/run/pending` 返回它们），页面上却只有
+   * 正在跑的那一两格有状态，其余全写着「还没出画面」，看上去像只跑了一镜。
+   *
+   * 2026-09-15 实测：接口回 16 个排队 id，墙上只有第 6 格显示「排队中」
+   * ——而那一格是更早某次操作残留在本地 `sent` 里的，和这一轮无关。
+   */
+  watch(
+    () => runStore.running,
+    (now) => {
+      if (now) syncPending()
+    },
+  )
 
   /**
    * 问引擎这一轮还有哪几镜没落定，把它们点亮。
@@ -653,9 +678,25 @@ export function useShots() {
   async function syncPending() {
     try {
       const d = await api.runPending()
-      if (!d?.running || !d.shot_ids?.length) return
-      const add = d.shot_ids.filter((id) => !inflightBy.value[id])
-      if (add.length) sent.value = new Set([...sent.value, ...add])
+      if (!d?.running) return
+      // **照抄引擎那份名单，不做并集。**
+      //
+      // 原来是 `new Set([...sent, ...add])`——只增不减。摘掉一个的唯一时机
+      // 是它进 inflight 被那个 watch 看见，而页面没赶上那一瞬间的（切走了、
+      // 那一镜跑得太快、连着两条 settled 合并成一次）就永远挂着「排队中」。
+      //
+      // 2026-09-15 实测这个症状：引擎只剩 2 镜没落定，墙上却有 7 格写着
+      // 排队中，而且是跳着的——7 排、8 不排、9 10 排、11~13 不排、14~17 排。
+      // 排队本该是连续的一截尾巴，跳着排本身就说明这份是攒出来的垃圾。
+      //
+      // 引擎那份是完整的（每阶段开工登记一批、每落定一镜划掉一个），
+      // 照抄它页面就永远对得上；inflight 里的不算排队，那是更具体的状态。
+      const next = new Set(
+        (d.shot_ids ?? []).filter((id) => !inflightBy.value[id]),
+      )
+      const same =
+        next.size === sent.value.size && [...next].every((id) => sent.value.has(id))
+      if (!same) sent.value = next
     } catch {
       // 老引擎没有这条。那就退回浏览器自己记的那份。
     }

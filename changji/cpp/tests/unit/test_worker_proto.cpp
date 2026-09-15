@@ -31,6 +31,9 @@ infer::Task sample_frame() {
     t.spec.width = 448;
     t.spec.height = 256;
     t.spec.steps = 8;
+    t.spec.steps_pinned = true;
+    t.prompts.base_model = true;
+    t.prompts.seed_override = 4242;
     t.dest = R"(C:\项目\frames\ep01_sh001.png)";
     t.seed = 1234567890123LL;
     return t;
@@ -50,6 +53,12 @@ TEST_CASE("任务往返一圈不丢东西") {
     CHECK(back.spec.width == t.spec.width);
     CHECK(back.spec.height == t.spec.height);
     CHECK(back.spec.steps == t.spec.steps);
+    // 跨机时干活那台按这个决定动不动步数，丢了就会把人钉死的 28 压成 6
+    CHECK(back.spec.steps_pinned);
+    // 定妆图派出去：要基础文生图权重、种子是发起方定死的
+    CHECK(back.prompts.base_model);
+    REQUIRE(back.prompts.seed_override.has_value());
+    CHECK(*back.prompts.seed_override == 4242);
     // **中文路径和反斜杠**。这个项目在这上面栽过好几次，
     // 而任务是要跨进程传的，路径错了产物就写到别处去了。
     CHECK(back.dest == t.dest);
@@ -125,13 +134,23 @@ TEST_CASE("结果和进度也往返得回来") {
     p.state = "running";
     p.step = 3;
     p.steps = 8;
-    p.loading = true;
+    p.phase = "decode";
+    p.preview_step = 3;
+    p.preview = "data:image/png;base64,AAAA";
     const auto pb = infer::task_progress_from_json(infer::to_json(p));
     CHECK(pb.state == "running");
     CHECK(pb.step == 3);
     CHECK(pb.steps == 8);
-    // 加载和采样要分得开，不然进度会从 1927/1927 跳回 1/8
-    CHECK(pb.loading);
+    // 准备、采样、解码要分得开，不然进度会从 1927/1927 跳回 1/8 再跳到 78/78
+    CHECK(pb.phase == "decode");
+    // 预览随进度带回来，镜头墙上才有活在别的机器上跑时的小图
+    CHECK(pb.preview_step == 3);
+    CHECK(pb.preview == "data:image/png;base64,AAAA");
+    // 没带就是"没有"，别把空串当一张图
+    infer::TaskProgress bare;
+    const auto bb = infer::task_progress_from_json(infer::to_json(bare));
+    CHECK(bb.preview_step == -1);
+    CHECK(bb.preview.empty());
     CHECK_FALSE(pb.result.has_value());
 }
 

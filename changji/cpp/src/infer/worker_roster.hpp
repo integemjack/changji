@@ -14,6 +14,7 @@
 //
 // 这里管三件事：借一个能用的、把连不上的标坏、坏的过一阵放回来。
 
+#include <algorithm>
 #include <chrono>
 #include <cstddef>
 #include <optional>
@@ -103,5 +104,16 @@ private:
     };
     std::vector<Slot> slots_;
 };
+
+/// 阶段那一层给一个池开几路并发。
+///
+/// 每个工作进程一路是底线：一路对一个槽，借不到就等。**跨机的每台再
+/// 加一路**：跨机那条路上一镜跑完还要把产物拉回来，跨境公网实测
+/// 30 KB/s、一张首帧二三十秒，这段时间那台的显卡是闲的。多出来的那
+/// 一路在槽刚还回来的那一刻就把下一镜派出去，传输和采样叠着走；同机
+/// 的不用——同一个文件系统，没有传输这回事。
+inline std::size_t pool_lanes(std::size_t workers, std::size_t remote) {
+    return workers + std::min(workers, remote);
+}
 
 }  // namespace changji::infer

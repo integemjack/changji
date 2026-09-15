@@ -177,4 +177,17 @@ private:
     std::atomic<bool> running_{false};
 };
 
+/// 把目录里**已经下全、只是没来得及改名**的 `<名字>.part` 摆到正式名字上，
+/// 返回收编了几个。
+///
+/// 怎么会有这种文件：下载是 curl 子进程写 `.part`、父进程等它退出再核
+/// 字节数改名；父进程（worker）中途被杀，`setsid` 派生的 curl 是孤儿、
+/// 照样把文件写完，就没人改名了。2026-09-15 实测：Qwen_Image-Q8_0.gguf.part
+/// 20 GB 一个字节不差地躺在盘上，这台却一直报"缺 image_base"，人得再点
+/// 一次下载才收编。启动时扫一遍，就不用人再点。
+///
+/// 只认清单里有、字节数**恰好**对上的；多了少了都不碰（那是续传和
+/// "写过头重下"的事，见 Downloader::fetch_one）。
+std::size_t adopt_finished_parts(const std::filesystem::path& models_dir);
+
 }  // namespace changji::setup

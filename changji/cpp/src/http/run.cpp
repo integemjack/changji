@@ -190,6 +190,24 @@ ApiResult post_run(const json& body, const RunDeps& deps) {
     if (pipeline::jobs().running(pipeline::JobKind::Run)) {
         throw ApiError(409, "已经在跑 " + running_episode() + " 了");
     }
+
+    // **开工前那趟体检要在这儿判，不能只长在界面上。**
+    //
+    // 镜头页那两颗按钮按 `doctor.can_run` 决定灰不灰，而这条接口原来
+    // 一道闸都没有——于是同一件事，页面上点不动、`curl` 一发就跑起来了。
+    // 两边不一致的代价不是"高级用户能绕过"，是**这条规则根本没有一个
+    // 权威的地方**：改了界面那份判据，别的客户端（脚本、老版本前端、
+    // 另一个界面）照旧我行我素；而界面那份还可能因为读不到体检而放行。
+    //
+    // 判在引擎里，界面那份就退化成"提前把按钮变灰"的提示，两边同源。
+    // 2026-09-15 实测到这个不一致：页面写着「还不能开工：缺 [models].tts」
+    // 把按钮锁死，同一时刻 `POST /api/run` 回 200 照跑。
+    //
+    // 判据本身在 RunDeps::blocked 里（默认那套是体检，认远程机器）。
+    if (deps.blocked) {
+        const std::string why = deps.blocked();
+        if (!why.empty()) throw ApiError(409, "还不能开工。" + why);
+    }
     const ProjectStore store = open_project(project_path);
     const Project project = load_or_400(store);
 

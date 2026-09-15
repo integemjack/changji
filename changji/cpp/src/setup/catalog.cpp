@@ -237,6 +237,46 @@ constexpr ImageSpec kImage[] = {
     {"Q2_K", "Qwen-Image-Edit-2509-Q2_K.gguf", 7147452960ULL, 2},
 };
 
+/// 定妆和空景那一族的仓库：**基础版 Qwen-Image，不带 edit**。
+///
+/// 为什么要单独一族，见 config/settings.hpp 上 `image_base` 那段：三视图和
+/// 空景图是从纯文字生成的（`ref_gen.cpp` 一张参考图都不传），而上面那一族
+/// 是图像**编辑**模型，自己的说明里就写着「没有任何参考图的镜头会退化成
+/// 文生图，那时候它出的东西不能看」。
+///
+/// **和 Edit 族同一个发布者、同样 13 档**，落盘名是 `Qwen_Image-*.gguf`
+/// ——名字里没有 "edit"，所以 `accepts_reference_images()` 会正确判定它
+/// 不收参考图（那条判据认的就是文件名里那四个字母）。
+constexpr const char* kImageBaseRepo = "QuantStack/Qwen-Image-GGUF";
+
+/// 字节数 2026-09-15 在 HuggingFace 和魔搭上各查一遍对过，两边一字不差。
+/// **不要照抄上面 Edit 那张表**：同架构同量化多数档位确实一样，但 Q4_0
+/// （11852773920 vs 11928271392）和 Q3_K_M（9679567392 vs 9764502048）
+/// 这几档不一样，抄了就会让"下完了没有"的判据永远不成立。
+constexpr ImageSpec kImageBase[] = {
+    {"Q8_0", "Qwen_Image-Q8_0.gguf", 21761817120ULL, 15},
+    {"Q6_K", "Qwen_Image-Q6_K.gguf", 16824990240ULL, 13},
+    {"Q5_1", "Qwen_Image-Q5_1.gguf", 15391717920ULL, 12},
+    {"Q5_K_M", "Qwen_Image-Q5_K_M.gguf", 14934899232ULL, 11},
+    {"Q5_0", "Qwen_Image-Q5_0.gguf", 14400813600ULL, 10},
+    {"Q5_K_S", "Qwen_Image-Q5_K_S.gguf", 14117698080ULL, 9},
+    {"Q4_K_M", "Qwen_Image-Q4_K_M.gguf", 13065746976ULL, 8},
+    {"Q4_1", "Qwen_Image-Q4_1.gguf", 12843678240ULL, 7},
+    {"Q4_K_S", "Qwen_Image-Q4_K_S.gguf", 12140608032ULL, 6},
+    {"Q4_0", "Qwen_Image-Q4_0.gguf", 11852773920ULL, 5},
+    {"Q3_K_M", "Qwen_Image-Q3_K_M.gguf", 9679567392ULL, 4},
+    {"Q3_K_S", "Qwen_Image-Q3_K_S.gguf", 8952609312ULL, 3},
+    {"Q2_K", "Qwen_Image-Q2_K.gguf", 7062518304ULL, 2},
+};
+
+constexpr const char* kQwenImageBaseFamilyNote =
+    "角色三视图和空景图是从一句话画出来的，没有任何参考图可编辑——那是"
+    "**文生图**，要基础权重。首帧那一族是图像编辑模型，拿它做这一步会"
+    "落在它自己说明里写的那条退化路径上。"
+    "这一族和首帧那一族共用 VAE 和文本编码器（同一个 Qwen2.5-VL），"
+    "所以只多下一份扩散权重。"
+    "留空不下也能跑：那时定妆和空景仍旧用首帧那一份，也就是老行为。";
+
 /// Qwen-Image 的文本编码器（Qwen2.5-VL-7B）按扩散模型那一档配。
 ///
 /// **别用 Comfy 那份 fp8_scaled**：那种格式带 scale 张量，sd.cpp 的加载器里
@@ -549,6 +589,47 @@ std::vector<Group> build() {
         g.options.push_back(none_option(
             "不下载 · 之后再说",
             "跳过这一组的话出不了首帧，出片那一步也就没有起始图。"));
+
+        gs.push_back(std::move(g));
+    }
+
+    // ---------------- 定妆和空景：基础 Qwen-Image ----------------
+    //
+    // **只管一个键。** 这一组和上面那一组共用 VAE 和文本编码器（同一个
+    // Qwen2.5-VL，上面那组已经下了），所以 owned_roles 里只有 image_base
+    // ——多写一个键的后果是"选了基础版"会把上面那组写好的 VAE 路径清掉
+    // （见本文件头上第三条：换组要清空上一组的键，每个键都写）。
+    {
+        Group g;
+        g.key = "image_base";
+        g.title = "定妆和空景模型（文生图）";
+        g.purpose =
+            "角色三视图和空景图从一句话画出来。它们是首帧那一步的参考图，"
+            "脸和地方跨镜头对不对得上，全看这一步。";
+        g.required = false;
+        g.owned_roles = {"image_base"};
+
+        for (const auto& spec : kImageBase) {
+            Option o;
+            o.id = lower_id(std::string("qwen-image-") + spec.quant);
+            o.family = "Qwen-Image 基础版";
+            o.label = std::string("Qwen-Image · ") + spec.quant;
+            o.quant = spec.quant;
+            o.family_note = kQwenImageBaseFamilyNote;
+            o.note = quant_note(spec.quant);
+            o.min_vram_gb = resident_vram(true, gb(spec.bytes));
+            o.rank = spec.rank;
+            // 落盘名照仓库那个（`Qwen_Image-*`）：`accepts_reference_images`
+            // 认的是文件名里有没有 "edit"，改名就等于把这一族伪装成 Edit。
+            o.files.push_back({spec.file, kImageBaseRepo, spec.file, spec.bytes,
+                               "image_base", "扩散模型（基础版，文生图）"});
+            g.options.push_back(std::move(o));
+        }
+
+        g.options.push_back(none_option(
+            "不下载 · 用首帧那一份顶着",
+            "定妆和空景会拿图像编辑模型做文生图——能出图，但那一族的说明"
+            "自己写着这条路出来的东西不能看。省一份权重，代价在画质上。"));
 
         gs.push_back(std::move(g));
     }

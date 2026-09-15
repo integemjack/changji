@@ -11,13 +11,12 @@
 #include "http/offload.hpp"
 #include "http/reset.hpp"
 #include "http/upload.hpp"
-#include "infer/local_exec.hpp"
-#include "infer/scheduler.hpp"
 #include "infer/sd_image.hpp"
 #include "models/project.hpp"
 #include "pipeline/episode.hpp"  // frame_spec
 #include "pipeline/activity.hpp"
 #include "pipeline/jobs.hpp"
+#include "stages/frames.hpp"
 #include "stages/ref_images.hpp"
 #include "util/paths.hpp"
 #include "util/text.hpp"
@@ -48,6 +47,11 @@ std::string opt_str(const json& body, const char* key) {
 bool opt_bool(const json& body, const char* key) {
     return body.is_object() && body.contains(key) && body.at(key).is_boolean() &&
            body.at(key).get<bool>();
+}
+
+RefRendererProvider& ref_renderer() {
+    static RefRendererProvider provider;
+    return provider;
 }
 
 ProjectStore open_project(const std::string& path) {
@@ -89,13 +93,13 @@ Rendered render_ref(const ProjectStore& store, const std::string& stem,
 
     const fs::path dest = claim_ref_path(store, stem, ".png");
 
-    // **登记到"在干的活"里去，登记在借槽之前。** 这个接口是同步的，
+    // **登记到"在干的活"里去，登记在出图之前。** 这个接口是同步的，
     // 没有任务表那一套，所以它以前在界面上整个不可见——2026-09-11 撞上过：
     // 用户这边正出着参考图（占着图像槽），另一头的批量写作四章全挂在
     // 「显存不够加载 LLM：「图像」正用着」，而顶栏一片安静、GPU 占用 0%，
     // 挡路的那件事只能登服务器翻日志才查得到。
     //
-    // 登记在 acquire 之前，是因为**等显存也是在忙**：头一张要先把出图模型
+    // 登记在出图之前，是因为**等显存也是在忙**：头一张要先把出图模型
     // 读进显存（十几秒到一分钟），这段时间 sd.cpp 的回调一次都不触发，
     // 界面上就是一个不动的转圈——那正是最需要顶栏说句话的时候。
     pipeline::Activity act{"image", paths::to_utf8(store.root()), "",
@@ -105,56 +109,29 @@ Rendered render_ref(const ProjectStore& store, const std::string& stem,
     // `/api/system` 那份表里认这一格，见 Activity::set_target。
     act.set_target(stem);
 
-    // 执行位也要排。这条路和流水线是两个来源，撞上过一次：用户这边
-    // 正画参考图，另一头的批量写作全挂在「显存不够」上。那次挡路的是
-    // 显存槽，而执行位这一层挡的是更前面那件事——两个生成同时进 sd.cpp。
-    //
-    // 这儿没有真正的取消令牌（同步接口，下面那个 tok 从不被点亮），
-    // 所以传 nullptr：排上了就等着，挡在前面的最长就是一镜。
-    auto hold = infer::local_exec().enter(infer::Origin::Local,
-                                          pipeline::note_queued, nullptr);
-
-    // **借不到就排队等**，不当场抛。撞车的常态是"另一边正在写一章"
-    // （一两分钟），当场抛的话用户得到一个 500，而他唯一能做的就是过会儿
-    // 再点一次——那正是机器该替他做的事。排队的时候顶栏那句话会变成
-    // 「排队中，等「LLM」用完」。
-    infer::Scheduler::AcquireOptions opt;
-    opt.work = static_cast<std::size_t>(spec.width) * spec.height;
-    opt.wait = infer::kAcquireWait;
-    opt.on_queued = pipeline::note_queued;
-    auto lease = infer::scheduler().acquire(infer::Slot::Image, opt);
-    auto ctx = infer::current_image_context();
-    if (!ctx) throw ApiError(503, "出图后端没准备好，这个版本大概没链 sd.cpp");
-
-    infer::ImageRequest req;
-    req.positive = positive;
-    req.negative = negative;
-    req.width = spec.width;
-    req.height = spec.height;
-    req.steps = spec.steps;
-    req.seed = seed;
-    // 采样旋钮跟着请求走（见 infer::SamplingKnobs）。这里的 settings 是
-    // load_settings(store.root()) 来的，也就是这个项目那一份。
-    req.knobs = infer::sampling_knobs_for(settings, infer::ModelRole::Image);
-    // **打上 tag，采样中途那张小图才推得出来。**
-    //
-    // 用户 2026-09-12：「画图方式也要实时返回步数图」。一张几十秒，头
-    // 十几秒还在读权重，一个百分比数字撑不住这段等待——而那张小图是从
-    // 潜空间线性投影来的（不走 VAE，几乎不花时间），第五步就看得出构图
-    // 对不对，不对当场撤掉重来，不用等它画完。
-    //
-    // tag 就用 stream_id：这条路上它本来就是"这件活"的身份。
-    //
-    // **没有 stream 时退回 stem。** 同步那条路上（老客户端、curl）本来
-    // 没人接 job_preview，但固定频道那份是给"刷新过页面的人"的——那时候
-    // 谁发起的已经不重要了，只要有人在看这一格就该推。
-    req.tag = stream_id.empty() ? stem : stream_id;
+    // **和出首帧走同一条后端**（见 RefRendererProvider）：进程内的话，
+    // 排执行位、借显存槽、排队等都在 frames.cpp 那一份里；派出去的话，
+    // 工作进程那头照样。这一路要的是基础文生图权重，不是 Edit：三视图和
+    // 空景图是从纯文字生成的，一张 reference_images 都没有，而 Edit 权重
+    // 没有编辑源会退化成文生图（catalog.cpp 上写着「那时候它出的东西
+    // 不能看」）。`[models].image_base` 没配时退回 Edit，不会跑不起来。
+    stages::PromptBundle prompts;
+    prompts.positive = positive;
+    prompts.negative = negative;
+    prompts.base_model = true;
+    prompts.seed_override = seed;
+    // 首帧那条路认的是"一镜"；这儿没有镜头，拿 stem 当它的名字——
+    // 预览小图也靠这个 tag 挂到设定页对的那一格。
+    Shot fake;
+    fake.shot_id = stem;
+    const stages::FrameRenderer render =
+        ref_renderer() ? ref_renderer()(settings, store)
+                       : stages::sd_renderer(settings);
 
     // 只认自己那件活的预览。**同时可以有别人挂着**（出片那条就挂着一个），
     // 不认 tag 的话镜头墙的小图会飘到参考图这边来。
     infer::PreviewSinkHandle preview_sink(
         [&stream_id, &stem](const std::string& tag, int step, std::string url) {
-            // 认自己那件活：同步那条路上 tag 是 stem。
             if (tag != stream_id && tag != stem) return;
             ref_preview(stem, step, url);       // 固定频道那份
             job_preview(stream_id, step, std::move(url));
@@ -173,23 +150,24 @@ Rendered render_ref(const ProjectStore& store, const std::string& stem,
     // 所以同步那条路（老客户端、curl、对拍）一个字没变。
     pipeline::CancelToken& tok = current_cancel();
     try {
-        ctx->generate(req, dest, tok,
-                      [&act, &stream_id, &stem](int step, int steps, double,
-                                                bool loading) {
-                          // 读权重和采样不是一个量级（1927 个张量 vs 8 步），
-                          // 画在同一条进度条上会像"跑到头又倒回去了"。
-                          // 顶栏只有一行，就只画采样那一段。
-                          if (loading) return;
-                          act.set_progress(step, steps);
-                          // 异步那条路上，点了按钮的人也在等这个数。
-                          job_progress(stream_id, step, steps);
-                          // 再往固定频道播一份：**刷新过页面的人只剩这条路**。
-                          ref_progress(stem, step, steps);
-                      });
-    } catch (const infer::SdError& e) {
+        render(fake, prompts, spec, dest, tok,
+               [&act, &stream_id, &stem](int step, int steps, double,
+                                         infer::Phase phase) {
+                   // 读权重、解码和采样不是一个量级（1927 个张量、78 块
+                   // vs 8 步），画在同一条进度条上会像"跑到头又倒回去了"。
+                   // 顶栏只有一行，就只画采样那一段。
+                   if (phase != infer::Phase::Sample) return;
+                   act.set_progress(step, steps);
+                   // 异步那条路上，点了按钮的人也在等这个数。
+                   job_progress(stream_id, step, steps);
+                   // 再往固定频道播一份：**刷新过页面的人只剩这条路**。
+                   ref_progress(stem, step, steps);
+               });
+    } catch (const std::exception& e) {
         // **人按的停不是失败。** 报成「出图失败：已取消」的话，人会去找哪
         // 儿出错了。和大模型那一族一致：取消回 400（见 planning.cpp 里
         // stage_guard 那段，LlmError 的「已取消」也是 400）。
+        // 派出去那条路抛的是 runtime_error，进程内是 SdError，都在这儿接。
         if (tok.cancelled()) throw ApiError(400, "已停下这一张");
         throw ApiError(500, std::string("出图失败：") + e.what());
     }
@@ -208,6 +186,10 @@ Rendered render_ref(const ProjectStore& store, const std::string& stem,
 }
 
 }  // namespace
+
+void set_ref_renderer(RefRendererProvider provider) {
+    ref_renderer() = std::move(provider);
+}
 
 std::int64_t ref_seed(const json& body, const std::string& stem) {
     if (body.is_object() && body.contains("seed") &&

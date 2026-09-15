@@ -623,7 +623,7 @@ async function saveTake(charId) {
     { key: 'savetake' },
   )
   if (!result) return
-  if (edits[charId]) edits[charId].voice_id = result.saved
+  if (edits.value[charId]) edits.value[charId].voice_id = result.saved
   ui.ok(`音色「${result.name}」存好了，已挂到这个角色上。去镜头墙点「配音」让它生效`)
   take.value = null
   takeName.value = ''
@@ -654,7 +654,7 @@ async function uploadVoice(charId, event) {
   })
   event.target.value = ''
   if (!result) return
-  if (edits[charId]) edits[charId].voice_id = result.saved
+  if (edits.value[charId]) edits.value[charId].voice_id = result.saved
   ui.ok(`参考音色已存（${result.size_kb} KB）。去镜头墙点「配音」让它生效`)
   await loadVoices()
   await load()
@@ -666,7 +666,7 @@ async function clearVoice(charId) {
     { key: 'voice:' + charId },
   )
   if (!result) return
-  if (edits[charId]) edits[charId].voice_id = ''
+  if (edits.value[charId]) edits.value[charId].voice_id = ''
   ui.ok('参考音色已撤，配音会退回自动挑')
   await loadVoices()
   await load()
@@ -683,7 +683,7 @@ async function clearVoice(charId) {
  *  他自己的词，得先拉一趟 /api/shots 再从里面挑一句。）
  */
 async function tryVoice(charId) {
-  const voice = edits[charId]?.voice_id || ''
+  const voice = edits.value[charId]?.voice_id || ''
   const c = characters.value.find((x) => x.char_id === charId)
   const text = `你好，我是${c?.name || charId}。这是我说话的样子。`
   const project = session.projectPath
@@ -1377,7 +1377,7 @@ async function clearRef(charId, slot) {
               class="btn btn--ghost btn--sm"
               type="button"
               :disabled="!changed(openChar.char_id)"
-              @click="edits[openChar.char_id] = { ...c }"
+              @click="edits[openChar.char_id] = { ...openChar }"
             >
               撤销
             </button>

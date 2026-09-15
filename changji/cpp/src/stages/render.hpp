@@ -135,6 +135,12 @@ bool is_hero_shot(const models::Shot& shot, bool first, bool last);
 /// 像不像回事（几乎不动的扣分，太猛的少加分）。返回下标，平手取先出的。
 std::size_t pick_take(const std::vector<gates::GateResult>& results);
 
+/// 这一条已经干净了，不用再多出一条来挑：过了闸门、片中没硬切、运动量
+/// 在"像回事"那一档（0.8～15）。关键镜头的多出几条只在第一条不干净时才
+/// 接着出——每镜都无条件出两条，等于整集时间翻倍，而多数时候第一条就
+/// 是好的（2026-09-16 用户问"为什么要进行两次"）。
+bool take_good_enough(const gates::GateResult& r);
+
 /// 渲染一批镜头。
 ///
 /// `concurrency` 是同时在跑的镜头数。**1 就是逐镜串行**——单卡就该是 1，

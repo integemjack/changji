@@ -73,12 +73,13 @@ struct VideoConfig {
     /// 不会报错，只是分镜的时长档位里没有它。
     double max_shot_s = 0.0;
 
-    /// 关键镜头多出几条换种子挑最好的（1..4，1 = 不多出）。
+    /// 关键镜头**第一条不干净时**最多出几条换种子挑最好的（1..4，1 = 不多出）。
     ///
     /// 行业做法：10～15% 的镜头会漂，关键镜多出 20～30% 挑。哪些算关键
     /// 见 stages::is_hero_shot（开场钩子、集尾留扣、反转，加上第一镜和
     /// 最后一镜）。挑的依据是闸门量出来的数（过没过、运动量、有没有
-    /// 片中硬切），见 stages::pick_take。
+    /// 片中硬切），见 stages::pick_take。第一条就过了闸门、运动量正常的
+    /// 不再多出（stages::take_good_enough）——无条件出两条是整集翻倍。
     int hero_takes = 2;
     /// 连续动作的两镜，拿上一镜真出来的最后一帧当下一镜的首帧。
     /// 只对分镜里标了 `continuous_with_prev` 的镜头生效。
@@ -530,8 +531,21 @@ struct ModelsConfig {
     std::string video_vae;
     /// 文本编码器（UMT5-XXL 之类）。
     std::string video_text_encoder;
-    /// 首帧生成与图像编辑。
+    /// 首帧生成与图像编辑。**这一族是 Edit 权重**，见 image_base。
     std::string image;
+    /// 从零出图那一路用的**基础**图像模型（文生图，不带 edit）。
+    ///
+    /// **和 `image` 分开，是因为它们是两种活，不是一个模型的两种用法。**
+    /// 首帧那一步会把在场角色的三视图和这个场景的空景图当参考图一起喂进去
+    /// （frames.cpp 里 `req.reference_images`），要的是 Edit 权重。
+    /// 而**三视图和空景图自己是从纯文字生成的**——`ref_gen.cpp` 一张参考图
+    /// 都不传——那是文生图。catalog.cpp 上那段注释自己写着这条路的结果：
+    /// 「没有任何参考图的镜头会退化成文生图，那时候它出的东西不能看」，
+    /// 而定妆和空景恰恰每一张都走在那条路上。
+    ///
+    /// 留空就退回 `image`（也就是 2026-09-15 之前的行为：两件事共用一个
+    /// 模型）。只用 Edit 那一份的人不必被迫再下 20 GB。
+    std::string image_base;
     /// 图像模型的 VAE。
     ///
     /// **不能复用 `video_vae`。** 之前这里就是复用的，因为图像那条路一直没
@@ -1135,6 +1149,14 @@ struct EffectiveSpec {
 /// 这一层不认识 HardwareProfile——config 不该反过来依赖 models。
 EffectiveSpec effective_spec(const Settings& s, int table_final_steps);
 
+/// **干活那台**出片到底跑几步。
+///
+/// 派活那台按自己盘上有没有 Turbo LoRA 算了一遍（effective_spec），可
+/// LoRA 在干活那台——两台不一样时以干活那台为准：这台挂得上 Turbo 就压到
+/// 6 步，挂不上就照派来的跑。人钉死的（`steps_pinned`）一律不动。
+/// 同机、或两边都有 LoRA 时这一步是幂等的。
+int steps_on_node(const Settings& node, int dispatched_steps, bool steps_pinned);
+
 /// 档位表标定出来的单镜耗时，乘上这个数就是**项目真正会跑的那一档**的耗时。
 ///
 /// 档位表里那个 `measured_seconds` 是按**表里的**画幅和步数标定的（这台机器
@@ -1189,6 +1211,14 @@ struct PlacementInfo {
 /// 从展开后的 Settings 里读出两个模型各自的放置结果。
 PlacementInfo video_placement(const Settings& expanded);
 PlacementInfo image_placement(const Settings& expanded);
+/// 同上，但**指定按哪一份扩散权重算**。
+///
+/// 图像那一路有两份：`image`（Edit，出首帧）和 `image_base`（基础，出定妆
+/// 和空景），共用一个槽换进换出。调度器判断"腾不腾得下"时要按**这一刻
+/// 真正要装的那一份**算——一律按 `image` 算的话，装基础那一份时估的是
+/// 另一个文件的大小，估小了是 OOM，估大了是白卸别的槽。
+PlacementInfo image_placement_of(const Settings& expanded,
+                                 const std::string& diffusion_file);
 
 /// 把已经拆掉的老取值换成现在的，返回每一处换了什么。
 ///

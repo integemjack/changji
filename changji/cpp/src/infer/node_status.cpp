@@ -3,6 +3,10 @@
 #include <filesystem>
 #include <system_error>
 
+#ifndef _WIN32
+#include <unistd.h>  // gethostname
+#endif
+
 #include "infer/llama_tts.hpp"
 #include "infer/local_exec.hpp"
 #include "infer/sd_backend.hpp"
@@ -36,6 +40,23 @@ std::string node_name() {
         const std::string v = paths::env(key);
         if (!v.empty()) return v;
     }
+#ifndef _WIN32
+    // **`HOSTNAME` 在 Linux 和 macOS 上是个 shell 变量，不是导出的环境变量**
+    // ——bash 自己设它，但不 export；`COMPUTERNAME` 又只有 Windows 有。
+    // 所以上面那一圈在非 Windows 上几乎必然一个都取不到，这张表里每一台
+    // 都叫「未命名」：一列专门用来区分机器的东西，一台也区分不了。
+    // 离线时还更难看——node_registry 那边 `n.name` 回落成 cfg.url，
+    // 于是同一行把地址印两遍。
+    //
+    // 实测：本机 `wangchaos-iMac.local`、远程 `iZrj9iklf7dusoa3eh8qi4Z`，
+    // 两台的主机名都好好的，两个进程的 environ 里却都没有 HOSTNAME。
+    // 主机名要用 gethostname 问，不能指望环境变量。
+    char host[256];
+    if (::gethostname(host, sizeof host) == 0) {
+        host[sizeof host - 1] = '\0';
+        if (host[0] != '\0') return host;
+    }
+#endif
     return "未命名";
 }
 

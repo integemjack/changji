@@ -152,6 +152,7 @@ void apply_project_spec(config::Settings& settings,
     it->second.width = eff.width;
     it->second.height = eff.height;
     it->second.steps = eff.final_steps;
+    it->second.steps_pinned = eff.steps_pinned;
     settings.models.frame_steps = eff.frame_steps;
 }
 
@@ -217,6 +218,13 @@ double now_seconds() {
 bool wants(const RunOptions& o, Stage s) {
     if (!o.only.has_value()) return true;   // 没给就是全跑
     return std::find(o.only->begin(), o.only->end(), s) != o.only->end();
+}
+
+/// 「全部跳过」那句挂在哪个阶段名下：只跑了某几段就是最后那一段，
+/// 全流程就是装配。顶栏按阶段名写标签，挂错了会写成「出片」。
+const char* last_stage_name(const RunOptions& o) {
+    if (!o.only.has_value() || o.only->empty()) return "assemble";
+    return to_string(o.only->back());
 }
 
 void emit(JobProgress& p, const char* stage, const char* kind,
@@ -528,27 +536,29 @@ RunReport run_episode(const ProjectStore& store,
         store.save_project(latest);
     };
 
+    // 这一轮到底跑了东西没有。见末尾那句「全部跳过」。
+    bool ran = false;
+
     // 渲染一个档位。草稿和成片只差三个东西：入口状态、档位参数、事件名。
     const auto render_tier = [&](Tier tier, bool force) {
         const char* stage_name = tier == Tier::FINAL ? "final" : "draft";
         auto todo = pick(*ep, render_entry_states(tier, opts.skip_draft), force,
                          opts.only_shots);
         progress.set_pending(ids_of(todo));
-        if (todo.empty()) {
-            emit(progress, stage_name, "done",
-                 std::string(models::to_string(tier)) + " 档已完成，跳过");
-            return std::vector<stages::RenderOutcome>{};
-        }
+        if (todo.empty()) return std::vector<stages::RenderOutcome>{};
+        ran = true;
 
         // 消息里报的是**表里的**分辨率，不是按画幅缩放后的。
         // Python 就是这样，而且这样才对得上设置页上显示的数字——
         // 用户在那儿填的是 640x352，看到日志里写 448x768 会以为设置没生效。
         const TierSpec& spec = profile.tiers.at(tier);
+        // 步数不写在这儿：跨机时由干活那台按自己有没有 Turbo 定
+        // （config::steps_on_node），这台算的数可能是错的——2026-09-16
+        // 这句写着"20 步"、远程实际跑 6 步。每镜的进度条上有真数。
         std::string msg = std::string(models::to_string(tier)) + " 档渲染 " +
                           std::to_string(todo.size()) + " 个镜头，" +
                           std::to_string(spec.width) + "x" +
-                          std::to_string(spec.height) + " " +
-                          std::to_string(spec.steps) + " 步";
+                          std::to_string(spec.height);
         if (const auto est = profile.estimate_episode(
                 static_cast<int>(todo.size()), tier)) {
             msg += "，粗估 " + util::human_time(*est);
@@ -663,9 +673,8 @@ RunReport run_episode(const ProjectStore& store,
         if (wants(opts, Stage::Audio) && !tok.cancelled()) {
             auto todo = pick(*ep, {ShotStatus::PLANNED}, opts.force, opts.only_shots);
             progress.set_pending(ids_of(todo));
-            if (todo.empty()) {
-                emit(progress, "audio", "done", "配音已完成，跳过");
-            } else {
+            if (!todo.empty()) {
+                ran = true;
                 const stages::TTSBackend backend =
                     backends.tts.value_or(stages::estimate_backend());
                 // **后端名字对用户没有意义，要说清楚这次到底出不出声音。**
@@ -838,9 +847,8 @@ RunReport run_episode(const ProjectStore& store,
             auto todo = pick_for_frames(*ep, store.paths(), opts.force,
                                         opts.only_shots);
             progress.set_pending(ids_of(todo));
-            if (todo.empty()) {
-                emit(progress, "frames", "done", "首帧已完成，跳过");
-            } else {
+            if (!todo.empty()) {
+                ran = true;
                 // **已经出过片的那几镜要说一声。**
                 //
                 // 它们会因为重出首帧退回 FRAME_DONE——那几条视频不是照这张
@@ -968,6 +976,16 @@ RunReport run_episode(const ProjectStore& store,
     } catch (const std::exception& e) {
         report.errors.push_back(e.what());
         emit(progress, "assemble", "error", e.what());
+    }
+
+    // **什么都没跑到才说一声。** 以前是每一段各说一句「配音已完成，跳过」
+    // 「首帧已完成，跳过」——只出首帧时顶栏先冒出来的是「配音已完成」，
+    // 用户问"配音完成是什么鬼"（2026-09-15）。跑了东西的，那些东西自己
+    // 会说话；一样都没跑的，才需要这一句，不然看着像"点了开始，立刻就完成
+    // 了"，分不清是续跑跳过了还是根本没跑起来。
+    if (!ran && !tok.cancelled() && report.errors.empty()) {
+        emit(progress, last_stage_name(opts), "done",
+             "这一集要的都已经出好了，这次没有要跑的，全部跳过");
     }
 
     // 对齐 Python 的 finally：无论成功、失败还是中途停止都存一次。

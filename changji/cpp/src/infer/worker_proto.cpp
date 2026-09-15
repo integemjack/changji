@@ -46,7 +46,8 @@ json to_json(const Task& t) {
         {"prompts",
          json{{"positive", t.prompts.positive},
               {"negative", t.prompts.negative},
-              {"reference_images", t.prompts.reference_images}}},
+              {"reference_images", t.prompts.reference_images},
+              {"base_model", t.prompts.base_model}}},
         {"spec", t.spec},
         {"frames", t.frames},
         {"motion", t.motion},
@@ -61,6 +62,7 @@ json to_json(const Task& t) {
         {"intensity", t.intensity},
     };
     if (t.start_image) j["start_image"] = *t.start_image;
+    if (t.prompts.seed_override) j["prompts"]["seed_override"] = *t.prompts.seed_override;
     // **空的就不发。** 老版本的工作进程会把认不得的键原样忽略，
     // 但请求体里多一个空对象这件事在日志里读着像"挑了、挑空了"。
     if (!t.pick.empty()) j["pick"] = t.pick;
@@ -83,6 +85,11 @@ Task task_from_json(const json& j) {
     if (p.contains("reference_images") && p["reference_images"].is_array()) {
         t.prompts.reference_images =
             p["reference_images"].get<std::vector<std::string>>();
+    }
+    // 老版本的派活方不带：那时候没有"画参考图派出去"这回事，按首帧走
+    t.prompts.base_model = p.value("base_model", false);
+    if (p.contains("seed_override") && p["seed_override"].is_number_integer()) {
+        t.prompts.seed_override = p["seed_override"].get<std::int64_t>();
     }
 
     t.spec = need(j, "spec").get<models::TierSpec>();
@@ -159,7 +166,9 @@ json to_json(const TaskProgress& p) {
     json j{{"state", p.state},
            {"step", p.step},
            {"steps", p.steps},
-           {"loading", p.loading}};
+           {"phase", p.phase}};
+    if (p.preview_step >= 0) j["preview_step"] = p.preview_step;
+    if (!p.preview.empty()) j["preview"] = p.preview;
     if (p.result) j["result"] = to_json(*p.result);
     return j;
 }
@@ -169,7 +178,9 @@ TaskProgress task_progress_from_json(const json& j) {
     p.state = j.value("state", std::string("queued"));
     p.step = j.value("step", 0);
     p.steps = j.value("steps", 0);
-    p.loading = j.value("loading", false);
+    p.phase = j.value("phase", std::string("sample"));
+    p.preview_step = j.value("preview_step", -1);
+    p.preview = j.value("preview", std::string());
     if (j.contains("result") && j["result"].is_object()) {
         p.result = task_result_from_json(j["result"]);
     }

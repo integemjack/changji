@@ -440,3 +440,45 @@ TEST_CASE("实测显存：一条坏的不该带垮整份") {
     CHECK(m.size() == 1);
     CHECK(m.at(infer::Slot::Video).bytes == 85899345920ull);
 }
+
+TEST_CASE("接活的线程上套着任务那份配置，出了作用域就还原") {
+    // 工作进程接活：槽装模型要看派活方挑的档位（定妆图要基础权重），
+    // 不看这台 runtime 里的。见 infer::ScopedTaskSettings。
+    CHECK(infer::task_settings_override() == nullptr);
+    config::Settings a;
+    a.models.image_base = "Qwen_Image-Q8_0.gguf";
+    {
+        const infer::ScopedTaskSettings scope(a);
+        REQUIRE(infer::task_settings_override() == &a);
+        config::Settings b;
+        {
+            const infer::ScopedTaskSettings inner(b);   // 嵌套：里面的赢
+            CHECK(infer::task_settings_override() == &b);
+        }
+        CHECK(infer::task_settings_override() == &a);    // 出来还原到外层
+    }
+    CHECK(infer::task_settings_override() == nullptr);
+}
+
+TEST_CASE("publish_preview 发给每个挂着的落点，各认各的 tag") {
+    // 活派在别的机器上时预览随轮询带回来，走的和进程内采样同一个口子——
+    // run.cpp 上挂的那个落点因此不用知道活在哪台跑。
+    std::vector<std::pair<std::string, int>> got_a, got_b;
+    {
+        const infer::PreviewSinkHandle a([&](const std::string& tag, int step, std::string) {
+            if (tag == "sh1") got_a.emplace_back(tag, step);
+        });
+        const infer::PreviewSinkHandle b([&](const std::string& tag, int step, std::string) {
+            got_b.emplace_back(tag, step);
+        });
+        infer::publish_preview("sh1", 4, "data:image/png;base64,AAAA");
+        infer::publish_preview("sh2", 1, "data:image/png;base64,BBBB");
+        infer::publish_preview("", 9, "x");   // 没 tag 的丢掉
+    }
+    REQUIRE(got_a.size() == 1);
+    CHECK(got_a[0].second == 4);
+    CHECK(got_b.size() == 2);
+    // 摘掉之后再发没人收
+    infer::publish_preview("sh1", 5, "x");
+    CHECK(got_a.size() == 1);
+}

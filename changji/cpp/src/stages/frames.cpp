@@ -83,7 +83,7 @@ FrameRenderer make_sd_renderer(const config::Settings& settings,
         //
         // steps 传 0 表示"还没进入采样，没有步数可报"，文案由上层按这个分支写。
         if (!infer::scheduler().loaded(infer::Slot::Image)) {
-            on_step(0, 0, 0.0, /*loading=*/true);
+            on_step(0, 0, 0.0, infer::Phase::Prep);
         }
         // **借之前先说这一镜多大。** 以前量到的显存只在"量过的活不小于
         // 这次要干的活"时才算数——在 720p 量到的数不能拿去给 2K 背书。
@@ -93,7 +93,15 @@ FrameRenderer make_sd_renderer(const config::Settings& settings,
         opt.work = static_cast<std::size_t>(spec.width) * spec.height;
         opt.wait = infer::kAcquireWait;
         opt.on_queued = pipeline::note_queued;
-        auto lease = infer::scheduler().acquire(infer::Slot::Image, opt);
+        // 首帧走 Edit 那一份：下面会把在场角色的三视图和这个场景的空景图
+        // 当参考图喂进去（`req.reference_images`），那正是 Edit 权重的活。
+        // 定妆图 / 空景图（ref_gen.cpp）也走这条路，只是 base_model 为真：
+        // 它们一张参考图都没有，要的是基础文生图权重。两份共用同一个槽，
+        // 由 acquire_image 换进换出。`[models].image_base` 没配时退回 Edit。
+        auto lease = infer::acquire_image(prompts.base_model
+                                              ? infer::ModelRole::ImageBase
+                                              : infer::ModelRole::Image,
+                                          opt);
         auto ctx = infer::current_image_context();
         if (!ctx) throw infer::SdError("出图上下文没准备好");
 
@@ -106,8 +114,11 @@ FrameRenderer make_sd_renderer(const config::Settings& settings,
         // 预览要挂到墙上哪一格，靠这个。见 ImageRequest::tag。
         req.tag = shot.shot_id;
         req.knobs = knobs;
-        req.seed = seed_override ? *seed_override
-                                 : frame_seed(shot.shot_id, shot.attempts);
+        // 种子：工作进程接活时派活方已经算好（seed_override）；发起方定死的
+        // （定妆图，prompts.seed_override）其次；首帧按 shot_id + attempts。
+        req.seed = seed_override           ? *seed_override
+                   : prompts.seed_override ? *prompts.seed_override
+                                           : frame_seed(shot.shot_id, shot.attempts);
         for (const auto& r : prompts.reference_images) {
             req.reference_images.push_back(paths::from_utf8(r));
         }
@@ -234,7 +245,7 @@ std::vector<FrameOutcome> run_frames(std::vector<Shot*>& shots,
                 // **并发时几镜同时报**，靠 Event 里的 shot_id 分得开；
                 // JobProgress::report 自己有锁。
                 const auto on_step = [&](int step, int steps, double,
-                                         bool loading) {
+                                         infer::Phase phase) {
                     pipeline::Event e;
                     e.stage = "frames";
                     e.kind = "progress";
@@ -245,32 +256,20 @@ std::vector<FrameOutcome> run_frames(std::vector<Shot*>& shots,
                     // 镜头墙上那条进度条要的是这个。见 Event::shot_steps。
                     e.shot_step = step;
                     e.shot_steps = steps;
-                    e.shot_prep = loading;
-                    e.message =
-                        // 同 render.cpp：这一支不只是"加载模型"，
-                        // 也可能是搬权重或 VAE 分块解码，分不开。
-                        // steps == 0：还没开始采样，正在腾显存 / 装模型。
-                        // 这一支没有步数可报，写"准备 0/0"只会让人以为出错了。
-                        (loading && steps == 0)
-                            ? "出首帧 " + shot->shot_id + "（正在准备模型，可能要先腾出显存）"
-                        : loading ? "出首帧 " + shot->shot_id + "（准备 " +
-                                      std::to_string(step) + "/" +
-                                      std::to_string(steps) + "）"
-                                : "出首帧 " + shot->shot_id + "（第 " +
-                                      std::to_string(step) + "/" +
-                                      std::to_string(steps) + " 步）" +
-                                      // **第一步上把腾显存的结论带出来。**
-                                      // 用户点完出片盯的是进度条，而"卸没卸
-                                      // 大模型"的结论只在设置页上。挂在第一
-                                      // 步是因为那时候刚借完槽，结论是新的；
-                                      // 每一步都挂只是重复刷屏。
-                                      //
-                                      // 几镜并发时这条可能是同一个槽上兄弟镜
-                                      // 头留下的判断——同一个槽、同一时刻的
-                                      // 状态，内容一样，不会说错。
-                                      (step == 1 ? room_note_suffix(
-                                                       infer::Slot::Image)
-                                                 : std::string{});
+                    e.shot_phase = infer::phase_name(phase);
+                    // 三种阶段的文案在 infer::phase_note 里，和 render.cpp 共用。
+                    // **第一个采样步上把腾显存的结论带出来。**
+                    // 用户点完出片盯的是进度条，而"卸没卸大模型"的结论只在
+                    // 设置页上。挂在第一步是因为那时候刚借完槽，结论是新的；
+                    // 每一步都挂只是重复刷屏。
+                    //
+                    // 几镜并发时这条可能是同一个槽上兄弟镜头留下的判断——
+                    // 同一个槽、同一时刻的状态，内容一样，不会说错。
+                    e.message = "出首帧 " + shot->shot_id +
+                                infer::phase_note(phase, step, steps) +
+                                (phase == infer::Phase::Sample && step == 1
+                                     ? room_note_suffix(infer::Slot::Image)
+                                     : std::string{});
                     progress.report(e);
                 };
 

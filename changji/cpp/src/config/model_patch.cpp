@@ -25,6 +25,7 @@ std::string* models_field(ModelsConfig& m, const std::string& role) {
         {"video_audio_vae", &ModelsConfig::video_audio_vae},
         {"video_lora", &ModelsConfig::video_lora},
         {"image", &ModelsConfig::image},
+        {"image_base", &ModelsConfig::image_base},
         {"image_vae", &ModelsConfig::image_vae},
         {"image_text_encoder", &ModelsConfig::image_text_encoder},
         {"image_text_encoder_vision",

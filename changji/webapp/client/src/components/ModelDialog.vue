@@ -721,15 +721,26 @@ async function download() {
 .dlg__head {
   align-items: flex-start;
   border-bottom: 1px solid var(--line);
+  /* **必须能折。** 2026-09-15 加了「整机 X GB，其余留给系统」之后右上角
+     那行长了一倍，而这一行钉死不折：flex 于是去挤左边的标题，把
+     「首帧模型（图像编辑）」压成**一列一个字**，窗口整个没法看。
+     `min-width: 0` 只是允许被挤，不挡这件事。 */
+  flex-wrap: wrap;
 }
 
 .dlg__title {
-  min-width: 0;
+  /* 挤到这个宽度就不再让了，剩下的让右边那行自己折下去。
+     没有下限的话 flex 会一直挤到一个字宽——上面那段说的就是它。 */
+  flex: 1 1 14rem;
+  min-width: 12rem;
 }
 
 /* 右上角那行读数。**右对齐**：它折行之后，两行的左边缘对不齐比右边缘
-   对不齐难看得多——右边就是窗口边。 */
+   对不齐难看得多——右边就是窗口边。
+   `flex: 1 1 auto` 让它在标题占住下限之后自己去折，而不是顶出去。 */
 .rig {
+  flex: 1 1 auto;
+  min-width: 0;
   text-align: right;
 }
 

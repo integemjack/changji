@@ -330,6 +330,27 @@ onMounted(() => {
 // 哪部剧看的，停着的那份看上去就是当前这部的。
 watch(() => session.projectPath, load)
 
+/**
+ * 「大模型」那条体检项上那颗一键改。
+ *
+ * 配着 `[llm].backend = "local"` 的机器，密钥填了、模型挑了、地址也在，
+ * 写文那一格照样是灰的——而那条路 2026-09-14 就删了，只剩把 backend
+ * 改成 remote 这一个正确答案。原来界面上没有任何地方能改它，体检那句
+ * 「配置里把 [llm].backend 改成 remote」是叫人去手改配置文件。
+ */
+async function useRemoteLlm() {
+  const ok = await run(() => api.useRemoteLlm(), {
+    key: 'llmbackend',
+    success: '改成外接了。写文这一步现在按你填的地址和密钥走',
+  })
+  if (ok) await load()
+}
+
+/** 这一条体检项是不是"配的是进程内跑"那一条。 */
+function isDeadLlmBackend(c) {
+  return c.name === '大模型' && c.detail.includes('进程内跑')
+}
+
 async function saveNode() {
   const result = await run(() => api.saveNodeConfig(node.value), {
     key: 'node',
@@ -477,6 +498,18 @@ function scrollTo(id) {
               <span class="check__name nowrap">{{ c.name }}</span>
               <span class="check__detail">{{ c.detail }}</span>
               <span v-if="c.fix" class="check__fix tiny dim">{{ c.fix }}</span>
+              <!-- **能一键改的就别只写一句"去改配置文件"。** 这一条只有
+                   一个正确答案（backend → remote），引擎那头也一直收着
+                   这个请求，缺的只是界面上这颗按钮。 -->
+              <button
+                v-if="isDeadLlmBackend(c)"
+                class="btn btn--primary btn--sm check__act"
+                type="button"
+                :disabled="isBusy('llmbackend')"
+                @click="useRemoteLlm"
+              >
+                {{ isBusy('llmbackend') ? '改着…' : '改成外接' }}
+              </button>
             </div>
             <details class="fold">
               <summary class="fold__t">

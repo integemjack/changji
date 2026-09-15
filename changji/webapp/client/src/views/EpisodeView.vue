@@ -160,10 +160,18 @@ const VIEWS = computed(() => {
  * query 里没写时落在第一个没做完的：没剧本去剧本，其余去镜头。
  * 数还没拉回来那一瞬先按镜头，拉回来发现没剧本再换——不会闪，只是首帧。
  */
+// **没写 view 时落在哪一格，记住上一次的答案。** 原来是"数没回来先按镜头，
+// 回来发现没剧本再换"——换集那一下 loaded 归零，这个值就先跳回镜头、再
+// 跳回剧本，下面 `watch(view, load)` 跟着多跑两趟，KeepAlive 里的镜头墙
+// 也被白白激活一次。换集期间沿用上一集落定的那一格，数回来了再定。
+const defaultView = ref('shots')
+watch([loaded, scriptChars], ([ok, n]) => {
+  if (ok) defaultView.value = n ? 'shots' : 'script'
+})
 const view = computed(() => {
   const want = String(route.query.view ?? '')
   if (VIEWS.value.some((v) => v.key === want)) return want
-  return loaded.value && !scriptChars.value ? 'script' : 'shots'
+  return defaultView.value
 })
 const current = computed(() => VIEWS.value.find((v) => v.key === view.value) ?? VIEWS.value[1])
 

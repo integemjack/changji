@@ -55,7 +55,27 @@ namespace {
 /// 模型，最后才想到是两处各覆了一份。这和这个文件头上那条
 /// "抄一遍的话两边迟早走散"是同一件事。
 config::Settings settings_for(const Task& t, const config::Settings& s) {
-    return setup::with_selections(s, t.pick);
+    const config::Settings picked = setup::with_selections(s, t.pick);
+
+    // **盖不上就用这台自己装的那一档，别把活退回去。**
+    //
+    // `t.pick` 是派活方那部剧挑的档位 id，这台按自己的模型目录解析。
+    // 解析不出来（这台装的是同一族的另一个量化档）时，原来是把这一镜
+    // 拒掉，回一句"去设置页给这台补上这一档"——于是整条流水线停在那儿，
+    // 而这台机器明明装着一份能用的权重。
+    //
+    // 一致性的代价是真的（同一族不同量化档，画面会有细微差别），但
+    // **一镜用邻近档位渲出来，比一镜空着强得多**；而且不补这一句的话，
+    // 用户看到的是一个把失败原因解释得很清楚、却一张图都出不来的程序。
+    //
+    // 只在"盖了跑不成、不盖跑得成"时退回，其余情况原样用盖过的那份——
+    // 无条件退回会让派活方的选择彻底失效。
+    for (const Capability cap :
+         {Capability::Video, Capability::Frame, Capability::Tts}) {
+        if (missing_for(cap, probe_facts(picked)).empty()) continue;
+        if (missing_for(cap, probe_facts(s)).empty()) return s;
+    }
+    return picked;
 }
 
 }  // namespace
@@ -110,6 +130,8 @@ TaskResult run_task_locally(const Task& t, const config::Settings& base,
     // 这部剧挑的档位盖在这台自己的配置上。**盖的是文件名，不是路径**——
     // 模型目录仍然是这台的（见 setup::with_selections）。
     const config::Settings s = settings_for(t, base);
+    // 槽装模型时看这份（盖了派活方挑的档位），不看 runtime 那份。
+    const ScopedTaskSettings scoped(s);
     TaskResult result;
     const auto cache = cache_root_of(s.workspace_path());
     const auto sandbox = task_sandbox(cache, task_id);
@@ -170,6 +192,9 @@ TaskResult run_task_locally(const Task& t, const config::Settings& base,
             plan.shot_id = t.shot_id;
             plan.tier = t.tier;
             plan.spec = t.spec;
+            // 步数由这台按自己有没有 Turbo LoRA 重定，见 steps_on_node。
+            plan.spec.steps =
+                config::steps_on_node(s, t.spec.steps, t.spec.steps_pinned);
             plan.frames = t.frames;
             plan.prompts = t.prompts;
             plan.motion = t.motion;

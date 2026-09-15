@@ -10,6 +10,11 @@ import vue from '@vitejs/plugin-vue'
 // 引擎起在别的端口上（`changji --port`）时改这两行。
 //
 // 两个接口前缀都转过去，前端代码里就不用区分开发和部署。
+// 引擎在别的机器上（比如拿一台带显卡的服务器做全套测试）时不用改文件：
+//   CHANGJI_ENGINE=http://43.110.148.239:8080 npm run dev
+// 不给就是本机 8080。
+const ENGINE = process.env.CHANGJI_ENGINE || 'http://127.0.0.1:8080'
+
 export default defineConfig({
   plugins: [vue()],
   resolve: {
@@ -21,8 +26,8 @@ export default defineConfig({
     proxy: {
       // ws: true——/api/ws 那条 WebSocket 也要经过代理，不然开发时顶栏的
       // 负载表和编辑器的流式写入都连不上，只能退回一次性返回。
-      '/api': { target: 'http://127.0.0.1:8080', changeOrigin: true, ws: true },
-      '/bff': { target: 'http://127.0.0.1:8080', changeOrigin: true },
+      '/api': { target: ENGINE, changeOrigin: true, ws: true },
+      '/bff': { target: ENGINE, changeOrigin: true },
     },
   },
   build: { outDir: 'dist', chunkSizeWarningLimit: 900 },

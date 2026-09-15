@@ -572,7 +572,11 @@ TEST_CASE("统一内存：装得下就一个组件都不往内存放") {
     config::ModelsConfig im;
     im.image_weights = "smart";
     CHECK(im.image_weights_for(107.5, 20.0, true) == "gpu");
-    CHECK(im.image_weights_for(107.5, 20.0, false) == "te=cpu,vae=cpu");
+    // 独显装得下：只把编码器放内存，**VAE 留在显存**。VAE 才 0.24 GB，
+    // 放内存的代价是每镜采样完的分块解码全在 CPU 上跑：L20 上实测一镜
+    // 42 秒里 GPU 只忙 9 秒，「解码 N/78」那一段卡满 20 多秒
+    // （2026-09-15）；留显存 2.7 秒。
+    CHECK(im.image_weights_for(107.5, 20.0, false) == "te=cpu");
     // 装不下：独显退到"全放内存"，统一内存退到"编码器和 VAE 放内存"——
     // 那一档在统一内存上仍然有用（少占 Metal 的额度），而全放内存不是。
     CHECK(im.image_weights_for(32.6, 20.0, true) == "te=cpu,vae=cpu");
@@ -1050,8 +1054,9 @@ TEST_CASE("[models].image_weights：图像模型的权重放哪，不跟 weights
     //   fp8 20 GB → 20 + 6.6 + 4 = 30.6 > 29.3，装不下→cpu（实测第 34/62 段 OOM）
     //   Q6_K 16 GB → 26.6 ≤ 29.3，装得下→常驻
     CHECK(m.image_weights_for(32.6, 20.0) == "cpu");
-    CHECK(m.image_weights_for(32.6, 16.0) == "te=cpu,vae=cpu");
-    CHECK(m.image_weights_for(32.6, 12.0) == "te=cpu,vae=cpu");
+    // 装得下：编码器放内存，VAE 留显存（理由见上面统一内存那一条）
+    CHECK(m.image_weights_for(32.6, 16.0) == "te=cpu");
+    CHECK(m.image_weights_for(32.6, 12.0) == "te=cpu");
     // 小卡：全放内存，不然加载就 OOM
     CHECK(m.image_weights_for(6.0, 12.0) == "cpu");
     // 拿不到模型大小：按装不下处理——猜错是六镜全废，放内存只是慢
@@ -1405,4 +1410,29 @@ TEST_CASE("cfg / rng 的默认按出片模型家族给，别再默认 Wan 的 6.
         CHECK(s.models.video_rng == "cpu");
         fs::remove_all(tmp, ec);
     }
+}
+
+TEST_CASE("干活那台按自己有没有 Turbo 定步数，人钉死的不动") {
+    // 2026-09-15 实测：Mac（没 LoRA）按 20 步派给 L20（有 LoRA），
+    // 那边挂着 Turbo 跑 20 步，一段 462 秒还过锐。
+    const auto dir = std::filesystem::temp_directory_path() / "changji_node_steps";
+    std::filesystem::create_directories(dir / "loras");
+    { std::ofstream f(dir / "loras" / "turbo.safetensors"); f << "x"; }
+    config::Settings node;
+    node.models.dir = paths::to_utf8(dir);
+    node.models.video_lora = "loras/turbo.safetensors";
+
+    // 这台有 Turbo：派来 20 压成 6；派来 6 还是 6（幂等）
+    CHECK(config::steps_on_node(node, 20, false) == 6);
+    CHECK(config::steps_on_node(node, 6, false) == 6);
+    // 人钉死的一律不动
+    CHECK(config::steps_on_node(node, 28, true) == 28);
+    // 这台自己的 final_steps 不算数——派来的活听派活那部剧的
+    node.tiers.final_steps = 12;
+    CHECK(config::steps_on_node(node, 20, false) == 6);
+    // 这台没 Turbo：照派来的跑
+    config::Settings bare;
+    bare.models.video_lora = "";
+    CHECK(config::steps_on_node(bare, 20, false) == 20);
+    std::filesystem::remove_all(dir);
 }

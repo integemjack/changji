@@ -66,9 +66,17 @@ struct TierSpec {
     int steps = 0;
     /// 本机实测的单镜耗时，未标定时为空
     std::optional<double> measured_seconds;
+    /// 步数是人在 [tiers].final_steps 里钉死的，不是表推的。
+    ///
+    /// 跟着 spec 走是因为它要**跨机**：派活那台按自己盘上有没有 Turbo
+    /// LoRA 定步数，而 LoRA 在干活那台——2026-09-15 实测，Mac 上没有
+    /// LoRA 就按 20 步派给 L20，那边挂着 Turbo 跑 20 步，一段 462 秒还
+    /// 过锐。干活那台要自己重定（config::steps_on_node），而"人钉死的
+    /// 别动"这条它得知道。
+    bool steps_pinned = false;
 
     NLOHMANN_DEFINE_TYPE_INTRUSIVE_WITH_DEFAULT(
-        TierSpec, tier, width, height, steps, measured_seconds)
+        TierSpec, tier, width, height, steps, measured_seconds, steps_pinned)
 
     /// 按画幅调整。分辨率必须是 32 的倍数，否则 Wan 的潜空间对不齐。
     TierSpec scaled_to(const std::string& aspect_ratio) const;

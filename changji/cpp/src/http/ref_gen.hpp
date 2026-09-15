@@ -17,13 +17,29 @@
 // 本来就会排队，再加一层槽只会让"为什么点不动"更难说清。
 
 #include <cstdint>
+#include <functional>
 #include <string>
 
 #include <nlohmann/json.hpp>
 
+#include "config/settings.hpp"
 #include "http/readonly.hpp"  // ApiResult / ApiError / guard
+#include "models/project.hpp"
+#include "stages/frames.hpp"  // FrameRenderer
 
 namespace changji::http {
+
+/// 画参考图用哪条出图后端。
+///
+/// **和出首帧同一条 FrameRenderer**——进程内的 sd.cpp，或者派给别的机器的
+/// 工作进程池（run_deps.cpp 里搭的那套）。2026-09-16 之前参考图只会在
+/// 本机进程内画，本机没有出图模型（比如 Mac 上配了一台 L20 干活）时
+/// 「一键出图」整个不可用，而首帧却能派出去。server.cpp 启动时把
+/// default_run_deps().backends(...).frame 装进来；测试塞假的；没装时
+/// 退回进程内的 sd_renderer。
+using RefRendererProvider = std::function<stages::FrameRenderer(
+    const config::Settings&, const models::ProjectStore&)>;
+void set_ref_renderer(RefRendererProvider provider);
 
 /// 这一张用哪个种子。
 ///

@@ -739,6 +739,7 @@ add_executable(changji
     src/infer/node_pick.cpp
     src/infer/node_prefs.cpp
     src/infer/node_proxy.cpp
+    src/infer/node_json.cpp
     src/infer/node_registry.cpp
     src/infer/peer_auth.cpp
     src/infer/node_status.cpp
@@ -861,6 +862,10 @@ if(CHANGJI_LLAMA)
     # mtmd.h 在 tools/mtmd 下。mtmd 目标自己 PUBLIC 了这个目录，
     # 这一行是为了万一以后改成别的链接方式时不至于悄悄编不到。
     target_include_directories(changji PRIVATE "${llama_SOURCE_DIR}/tools/mtmd")
+    # common.h 里那个 common_cpu_get_num_math()：配音要按真实核数定线程，
+    # 见 llama_tts.cpp 上那段。库（llama-common）本来就链着，这里只是把
+    # 头目录补上，不新增依赖。
+    target_include_directories(changji PRIVATE "${llama_SOURCE_DIR}/common")
 endif()
 
 if(CHANGJI_SD)
@@ -1134,6 +1139,16 @@ if(CHANGJI_BUILD_TESTS)
         src/infer/peer_auth.cpp
         src/infer/blob.cpp
         src/infer/node_pick.cpp
+        # **这两个是 test_node_table / test_node_prefs 要的。**
+        # 缺了它们 changji_tests 链不起来（undefined reference 到
+        # `nodes_json` / `load_node_prefs` / `save_node_prefs` /
+        # `node_prefs_path`）——三个 test_node_*.cpp 都在上面的列表里编，
+        # 实现却只带了 node_pick.cpp 一个。
+        # node_registry.cpp **不能加进来**：它 include 了 httplib，
+        # 而这一列上面那句话是「一个网络库都不链」。表怎么画那一半
+        # 已经拆到 node_json.cpp 去了，测试要的就是它。
+        src/infer/node_json.cpp
+        src/infer/node_prefs.cpp
         src/http/flow.cpp
         src/http/webapp.cpp
         src/models/shot.cpp

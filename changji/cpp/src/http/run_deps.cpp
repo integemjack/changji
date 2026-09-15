@@ -15,6 +15,7 @@
 #include "media/ffmpeg.hpp"
 #include "stages/tts_backends.hpp"
 #include "config/runtime.hpp"
+#include "doctor/doctor.hpp"
 #include "http/run.hpp"
 #include "infer/sd_image.hpp"
 #include "infer/sd_video.hpp"
@@ -34,6 +35,18 @@ RunDeps default_run_deps() {
     RunDeps d;
     d.settings = [] { return config::runtime().snapshot(); };
     d.profile = [] { return config::runtime().profile(); };
+    // 开工前那道闸，见 RunDeps::blocked。
+    d.blocked = [] {
+        const auto report = doctor::run_checks(config::runtime().snapshot());
+        if (report.can_run()) return std::string{};
+        std::string why;
+        for (const auto& c : report.checks) {
+            if (c.level != doctor::Level::FAIL) continue;
+            if (!why.empty()) why += "；";
+            why += c.name + "：" + c.detail;
+        }
+        return why.empty() ? std::string("去设置页看体检那一节") : why;
+    };
     // 第二个形参（项目目录）**故意不接名字**：RunDeps 的签名要求它在，而
     // 这一套后端一个字都没用到——`s` 已经是这一集自己的设置了（出片那条路
     // 每跑一集都 load_settings(项目目录) 重读）。接了名字不用，-Wall 每次
@@ -100,6 +113,17 @@ RunDeps default_run_deps() {
                                                tok);
             };
 
+        // **每台带自己的口令。** 配置格式里每台可以单独写
+        // （`[[peer.nodes]].token`），探活那条一直是"先用这台自己的、没有才
+        // 退回全局"（node_registry.cpp），界面上「加一台机器」收的也是这台
+        // 自己的。派活这条原来只发全局那个，于是单独设了口令的机器在表上
+        // 在线、一派活就 401——看得见、永远派不动。
+        const auto token_of = [&](const std::string& url) {
+            for (const auto& n : s.peer.nodes) {
+                if (n.url == url) return n.token.empty() ? s.peer.token : n.token;
+            }
+            return s.peer.token;   // 本机自己拉起的那几个走这儿；它们不查
+        };
         const auto eps_for = [&](infer::Capability cap) {
             std::vector<std::string> out;
             // 本机这一档：多卡时是自己拉起的那几个子进程，单卡时是
@@ -142,13 +166,19 @@ RunDeps default_run_deps() {
         // **档位也要带上。** 上面盖的那一层只改了本机这份配置里的文件名，
         // 而别的机器的模型目录在别处、盘符都可能不一样，路径带过去没有
         // 意义。带 id 过去，那台自己去解析（见 infer/task_run.cpp）。
+        const auto with_tokens = [&](const std::vector<std::string>& urls) {
+            std::vector<infer::WorkerEndpoint> out;
+            out.reserve(urls.size());
+            for (const auto& u : urls) out.push_back({u, token_of(u)});
+            return out;
+        };
         auto frame_pool = worth_pooling(frame_eps)
-                              ? infer::make_worker_pool(frame_eps, s.peer.token,
+                              ? infer::make_worker_pool(with_tokens(frame_eps),
                                                         local_runner,
                                                         s.models.pick)
                               : nullptr;
         auto video_pool = worth_pooling(video_eps)
-                              ? infer::make_worker_pool(video_eps, s.peer.token,
+                              ? infer::make_worker_pool(with_tokens(video_eps),
                                                         local_runner,
                                                         s.models.pick)
                               : nullptr;
@@ -168,8 +198,11 @@ RunDeps default_run_deps() {
             b.frame_backend_name = "sd.cpp（" + std::to_string(n) + " 处算力）";
             // **并发上限取大的那个。** 两个池不一样大时，小的那一阶段
             // 靠池自己挡住（借不到就等），而把上限压到小的那个会让
-            // 大的那一阶段白白少跑几路。
-            b.render_lanes = static_cast<int>(n);
+            // 大的那一阶段白白少跑几路。路数不等于机器数：跨机的多一路
+            // 拉产物，见 WorkerPool::lanes。
+            b.render_lanes = static_cast<int>(
+                std::max(frame_pool ? frame_pool->lanes() : 0,
+                         video_pool ? video_pool->lanes() : 0));
             if (farm) b.keepalive.push_back(farm);
         }
 
@@ -198,8 +231,10 @@ RunDeps default_run_deps() {
             for (const auto& u : eps_for(infer::Capability::Tts)) {
                 if (u != infer::kLocalEndpoint) remote_tts.push_back(u);
             }
+            // 口令同上：每台带自己的。实测 401 就是从这条路上报出来的
+            // （「给 1 个镜头配音，peer」→「工作进程拒了这个任务（401）」）。
             if (auto tts_pool = infer::make_worker_pool(
-                    remote_tts, s.peer.token, local_runner, s.models.pick)) {
+                    with_tokens(remote_tts), local_runner, s.models.pick)) {
                 b.tts = stages::TTSBackend{"peer", tts_pool->tts_synthesizer(),
                                            {}};
                 b.keepalive.push_back(tts_pool);

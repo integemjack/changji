@@ -178,6 +178,7 @@ models::HardwareProfile Runtime::profile() const {
             workload_scale(spec.width, spec.height, spec.steps, eff);
         if (spec.measured_seconds.has_value()) *spec.measured_seconds *= scale;
         if (eff.final_steps > 0) spec.steps = eff.final_steps;
+        spec.steps_pinned = eff.steps_pinned;
         if (eff.width > 0 && eff.height > 0) {
             spec.width = eff.width;
             spec.height = eff.height;

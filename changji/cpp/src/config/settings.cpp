@@ -442,7 +442,22 @@ std::string ModelsConfig::image_weights_for(double vram_gb, double model_gb,
     // 统一内存上理由同 weights_for：装得下就全常驻，把编码器和 VAE 赶去
     // CPU 换不来任何地方。装不下才退回原来那条阶梯。
     if (unified) return vram_gb * 0.9 >= need ? "gpu" : "te=cpu,vae=cpu";
-    return vram_gb * 0.9 >= need ? "te=cpu,vae=cpu" : "cpu";
+    // **装得下就放显存——VAE 也是。**
+    //
+    // 这一支原来返回 `te=cpu,vae=cpu`：扩散常驻，文本编码器和 VAE 都赶去
+    // 内存。文本编码器（Qwen2.5-VL bf16 16.5 GB）赶走是对的，它大；
+    // **VAE 只有 0.24 GB**，把它也赶走省不出任何东西，却把解码整段
+    // 搬到了 CPU 上。
+    //
+    // 代价实测出来了（2026-09-15，L20 45 GB）：一镜 544×928 要 78 块
+    // VAE 解码，这一段在 CPU 上跑，屏幕上是「准备 6/78 → 78/78」，
+    // 而 `nvidia-smi` 每秒采样 40 次里 31 次是 0%——卡干等着。一镜墙钟
+    // 42 秒，GPU 只动了 9 秒。
+    //
+    // 判据不变（还是"扩散 + 缓冲装不装得下"）：VAE 那 0.24 GB 和缓冲的
+    // 10.6 GB 比可以忽略，装得下扩散就一定装得下它。所以这里不需要多要
+    // 一个参数，只是把本来就该留在显存里的那一份留下。
+    return vram_gb * 0.9 >= need ? "te=cpu" : "cpu";
 }
 
 // 常驻权重：规格里写了 vae=cpu 就只有扩散那份，写了整个 "cpu" 就一份都不常驻。
@@ -647,6 +662,7 @@ const std::vector<std::pair<const char*, const char*>>& env_mapping() {
         {"MODELS_VIDEO_VAE", "models_video_vae"},
         {"MODELS_VIDEO_TEXT_ENCODER", "models_video_text_encoder"},
         {"MODELS_IMAGE", "models_image"},
+        {"MODELS_IMAGE_BASE", "models_image_base"},
         // **engine 原来漏了。** 别的 [models] 键都有环境变量，
         // 偏偏这个开关没有——而它决定出图出片走进程内还是走 ComfyUI，
         // 正是容器里和对拍时最需要临时翻的一个。
@@ -821,6 +837,7 @@ void apply_table(const toml::table& doc, Settings& s) {
         take(t, "video_vae", s.models.video_vae);
         take(t, "video_text_encoder", s.models.video_text_encoder);
         take(t, "image", s.models.image);
+        take(t, "image_base", s.models.image_base);
         take(t, "image_vae", s.models.image_vae);
         take(t, "image_text_encoder", s.models.image_text_encoder);
         take(t, "image_text_encoder_vision", s.models.image_text_encoder_vision);
@@ -920,6 +937,7 @@ void apply_env(Settings& s) {
         s.models.video_text_encoder = v;
     }
     if (!(v = get("MODELS_IMAGE")).empty()) s.models.image = v;
+    if (!(v = get("MODELS_IMAGE_BASE")).empty()) s.models.image_base = v;
     // engine 只认那两个取值。写错了不静默接受——那会让整条出片的路
     // 悄悄走岔，而表现是"连不上 ComfyUI"或者"没编进出图后端"，
     // 两句话都指不到真正的原因（环境变量拼错了）。
@@ -1053,13 +1071,26 @@ PlacementInfo video_placement(const Settings& expanded) {
     return p;
 }
 
-PlacementInfo image_placement(const Settings& expanded) {
+PlacementInfo image_placement_of(const Settings& expanded,
+                                 const std::string& diffusion_file) {
     PlacementInfo p;
     p.weights = expanded.models.image_weights;
-    p.model_gb = model_size_gb(expanded, expanded.models.image);
+    p.model_gb = model_size_gb(expanded, diffusion_file);
     p.live_vram_gb = expanded.models.image_live_vram_gb(p.weights, p.model_gb);
     p.resident = p.weights != "cpu";
     return p;
+}
+
+PlacementInfo image_placement(const Settings& expanded) {
+    return image_placement_of(expanded, expanded.models.image);
+}
+
+int steps_on_node(const Settings& node, int dispatched_steps, bool steps_pinned) {
+    if (steps_pinned || dispatched_steps <= 0) return dispatched_steps;
+    const auto eff = effective_spec(node, dispatched_steps);
+    // 这台自己的 [tiers].final_steps 不算数：那是它本地跑时的偏好，
+    // 派来的活听派活那部剧的。只拿"挂没挂上 Turbo"这一个结论。
+    return eff.turbo ? 6 : dispatched_steps;
 }
 
 EffectiveSpec effective_spec(const Settings& s, int table_final_steps) {

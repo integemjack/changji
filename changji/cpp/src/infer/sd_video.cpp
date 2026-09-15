@@ -151,7 +151,7 @@ stages::VideoRenderer make_video_renderer(
         // 同 frames.cpp：借之前先说一句。视频模型更大，卸大模型 + 读盘
         // 这一段更长，而 sd.cpp 的进度回调要等它跑起来才有。
         if (!scheduler().loaded(Slot::Video)) {
-            on_step(0, 0, 0.0, /*loading=*/true);
+            on_step(0, 0, 0.0, Phase::Prep);
         }
         // **借之前先说这一镜多大。** 画幅从 544×928 到 2560×1440 差七倍多，
         // 帧数也不一样，而以前量到的显存是不带这个的——在 720p 量到的数

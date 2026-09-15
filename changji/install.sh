@@ -153,7 +153,15 @@ fetch_release() {
   fi
 
   tmp="$(mktemp -d)"
-  trap 'rm -rf "$tmp"' EXIT
+  # **路径要在装 trap 的这一刻就展开进去，所以是双引号。** 原来写的是
+  # `trap 'rm -rf "$tmp"' EXIT`——单引号把 $tmp 留到 EXIT 真正触发时才展开，
+  # 而那时 fetch_release 早已返回、局部的 tmp 出了作用域。`set -u` 于是当场
+  # 报 "tmp: unbound variable"：trap 体失败，**脚本打完「安装完成」还返回 1**。
+  # 表现是装明明成功了，`curl … | bash && changji --doctor` 这类链路、CI、
+  # Dockerfile 全在这儿断掉，而错误信息指的是 install.sh 的第 1 行——trap 体
+  # 是当独立的一行脚本求值的，看着和安装过程没有任何关系。
+  # 顺带的第二件事：那 100 多 MB 的临时目录**一次都没删掉过**，每装一遍留一份。
+  trap "rm -rf '$tmp'" EXIT
 
   info "下载 $asset（$VERSION）"
   download "${base}/${asset}" "$tmp/$asset" \

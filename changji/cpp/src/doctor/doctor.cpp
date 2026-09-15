@@ -2,6 +2,8 @@
 
 
 // 能力自检那一段要它（probe_facts / can_produce_line），见文件末尾。
+#include "infer/node_pick.hpp"
+#include "infer/node_registry.hpp"
 #include "infer/node_status.hpp"
 
 
@@ -379,6 +381,27 @@ Check check_ggml() {
 /// **不是 WARN 也不是 FAIL。** 没编进来是完全正常的形态——配音走独立
 /// HTTP 服务是相当长一段时间的实际形态（ComfyUI 那条 2026-09-10 拆了）。
 /// 报警告等于让报告长期挂一条永远不会去处理的黄字。
+/// 这一步有没有**别的机器**能接。
+///
+/// **体检查的是这台机器，而能不能开工看的是整个集群。** 两者原来是一个数：
+/// `Report::can_run()` 就是"本机没有 FAIL"，镜头页那两颗按钮直接用它。
+/// 于是加了一台五项全绿的远程机器之后，本机因为没装配音模型仍然判 FAIL，
+/// 按钮一直是灰的——而那台机器存在的全部理由，就是本机不用装这些。
+/// 2026-09-15 实测：远程 `llm/tts/frame/video/assemble` 全 able，页面上
+/// 「只出首帧」「出片」两颗都点不动，提示写着本机缺 [models].tts。
+///
+/// 走缓存的 snapshot，不额外发探活请求（机器表本来就每 15 秒刷一次）。
+bool dispatchable_elsewhere(const config::Settings& s, infer::Capability cap) {
+    if (s.peer.nodes.empty()) return false;   // 没登记别的机器，省掉这一趟
+    const auto nodes = infer::node_registry().snapshot(s);
+    for (const auto* n : infer::candidates_for(nodes, cap)) {
+        // "local" 就是 infer::kLocalEndpoint 那个字面量（worker_pool.hpp）。
+        // 不 include 那个头：它带着整套 worker 池的声明，而这里只要比一个串。
+        if (n->url != "local") return true;
+    }
+    return false;
+}
+
 Check check_local_tts(const config::Settings& settings) {
     const auto probe = infer::probe_llama_tts();
     if (!probe.ok) return {"进程内配音", Level::WARN, probe.detail, ""};
@@ -419,6 +442,19 @@ Check check_local_tts(const config::Settings& settings) {
         if (!missing.empty()) missing += " ";
         missing += "[models].tts_decoder";
     }
+    // **别的机器能配音的话，本机缺模型就不是"不能开工"。**
+    // 见 dispatchable_elsewhere 上那段：判 FAIL 会把镜头页那两颗按钮锁死，
+    // 而这一步根本不在本机跑。降成 WARN——仍然说出来（本机确实没有），
+    // 但不再挡着开工。
+    const bool elsewhere = selected && dispatchable_elsewhere(
+                                           settings, infer::Capability::Tts);
+    if (elsewhere) {
+        return {"进程内配音", Level::WARN,
+                probe.detail + "；本机缺模型：" + missing +
+                    "。这一步会派给别的机器（机器表里有能配音的）",
+                "本机也想跑的话，填 [models].tts 和 [models].tts_decoder；"
+                "只靠别的机器就不用管这条。"};
+    }
     return {"进程内配音", selected ? Level::FAIL : Level::OK,
             probe.detail + "；缺模型：" + missing +
                 (selected ? "，配音会退回估算后端（出静音）" : "（当前没选它）"),
@@ -454,6 +490,40 @@ Check check_sd() {
     return {"出图后端", Level::OK, detail, ""};
 }
 
+/// 定妆和空景那一步用的是哪一份权重。
+///
+/// **`image_base` 留空时会静默退回 `image`**，而 `image` 那一族是图像
+/// **编辑**模型。三视图和空景图是从纯文字画出来的（`ref_gen.cpp` 一张
+/// 参考图都不传），拿 Edit 权重做这件事，落在 catalog.cpp 自己那段说明
+/// 写的退化路径上：「没有任何参考图的镜头会退化成文生图，那时候它出的
+/// 东西不能看」。
+///
+/// 退回这件事本身是对的——不能因为没配就跑不起来。但它不该**不出声**：
+/// 出来的图只是难看，不报任何错，人只会以为"这模型就这水平"。
+Check check_image_base(const config::Settings& s) {
+    const auto& m = s.models;
+    if (m.image.empty()) {
+        // 首帧那一份都没配，由「本地模型」那条去说，这儿不重复。
+        return {"定妆和空景", Level::OK, "首帧模型还没配，这一项先不论", ""};
+    }
+    if (!m.image_base.empty()) {
+        return {"定妆和空景", Level::OK,
+                "走基础模型 " + m.image_base + "（文生图）", ""};
+    }
+    if (!config::ModelsConfig::accepts_reference_images(m.image)) {
+        // 首帧那一份本来就是基础权重，两件事用同一个是对的。
+        return {"定妆和空景", Level::OK,
+                "和首帧共用 " + m.image + "（它本来就是基础权重）", ""};
+    }
+    return {"定妆和空景", Level::WARN,
+            "没配 [models].image_base，这一步会拿首帧那份图像编辑模型"
+            "（" + m.image + "）做文生图",
+            "三视图和空景图没有参考图可编辑——那是文生图，要基础权重。"
+            "用编辑权重做这件事出来的图不报错，只是不能看，"
+            "而它们又是后面每一镜的参考图。\n"
+            "去项目页「模型」那一行点「定妆和空景模型（文生图）」挑一档下下来。"};
+}
+
 /// 本地模型文件。
 ///
 /// **一项都没配现在是 WARN。** 以前是 OK，理由是"走 ComfyUI 那条路的用户
@@ -471,6 +541,7 @@ Check check_models(const config::Settings& s) {
         {"video_vae", &m.video_vae},
         {"video_text_encoder", &m.video_text_encoder},
         {"image", &m.image},
+        {"image_base", &m.image_base},
     };
 
     std::vector<std::string> configured, missing;
@@ -714,6 +785,8 @@ Report run_checks(const config::Settings& settings) {
     r.checks.push_back(guarded("进程内配音", [&] { return check_local_tts(settings); }));
     r.checks.push_back(guarded("出图后端", [&] { return check_sd(); }));
     r.checks.push_back(guarded("本地模型", [&] { return check_models(settings); }));
+    r.checks.push_back(
+        guarded("定妆和空景", [&] { return check_image_base(settings); }));
     r.checks.push_back(guarded("显卡", [&] { return check_gpu(settings); }));
     r.checks.push_back(guarded("权重放哪", [&] { return check_weights(settings); }));
     r.checks.push_back(guarded("出片画布", [&] { return check_canvas(settings); }));

@@ -20,6 +20,15 @@ using nlohmann::json;
 /// 自我介绍，多半也接不了活。
 constexpr int kProbeTimeoutS = 3;
 
+/// 这段回包是不是场记自己的网页界面。
+///
+/// 只认嵌进二进制的那张 index.html 的两个固定标记，不做宽松匹配：
+/// 宽松了就会把别人家的 HTML 也说成"你起错模式了"，那比原来那句还糟。
+bool looks_like_webapp(const std::string& body) {
+    return body.find("<div id=\"app\">") != std::string::npos &&
+           body.find("场记") != std::string::npos;
+}
+
 std::pair<std::string, std::string> split_url(const std::string& url) {
     const auto pos = url.find("://");
     const std::string rest =
@@ -133,7 +142,23 @@ void NodeRegistry::refresh(const config::Settings& s) {
             const auto js = json::parse(res->body, nullptr, false);
             if (js.is_discarded()) {
                 n.online = false;
-                n.error = "答的不是 JSON，那头多半不是 changji";
+                // **最常犯的那个错要单独认出来。** 理由同上面 401 那一条。
+                //
+                // 用户手上刚装好、刚在浏览器里打开的那一个，就是完整服务
+                // （`changji --port 8080`）。把它的地址填到这张表里是第一
+                // 反应——而完整服务的 `/status` 落在前端的兜底路由上，
+                // 回的是 200 + 那张 index.html。于是这里解析失败，原来一律
+                // 说「那头多半不是 changji」：**结论正好说反了**，对面正是
+                // changji，只是起错了模式。用户照这句话去查地址、查端口、
+                // 查防火墙，而要改的是那台的起法。
+                if (looks_like_webapp(res->body)) {
+                    n.error =
+                        "这台起的是完整服务，不是工作进程。派活要的是 "
+                        "`changji --worker --port 9101`（只算不发界面）；"
+                        "现在这个端口上是网页界面，填它没用";
+                } else {
+                    n.error = "答的不是 JSON，那头多半不是 changji";
+                }
             } else {
                 n.online = true;
                 n.name = js.value("name", cfg.url);
@@ -175,58 +200,11 @@ json nodes_json(const config::Settings& s) {
     return nodes_json(node_registry().snapshot(s));
 }
 
-json nodes_json(const std::vector<NodeState>& nodes) {
-    json rows = json::array();
-    for (const NodeState& n : nodes) {
-        json caps = json::array();
-        for (const Capability c : all_capabilities()) {
-            const bool able = n.able.count(c) != 0;
-            const bool off = n.off.count(c) != 0;
-            // 三态：干不了（灰）／能干但你关了（空心）／参与调度（实心）。
-            // 界面照这个画，不自己推。
-            const bool locked = n.off_locked.count(c) != 0;
-            // 干不了时那句话。整台连不上的时候每一格都是那句连接错误
-            // ——那台自己没能开口，问不出更细的。
-            std::string why;
-            if (!able) {
-                const auto it = n.why.find(c);
-                why = it != n.why.end() && !it->second.empty() ? it->second
-                      : !n.online                             ? n.error
-                                                              : std::string();
-            }
-            caps.push_back({{"cap", to_string(c)},
-                            {"label", label_of(c)},
-                            {"able", able},
-                            {"off", off},
-                            // 干不了时为什么。**界面上那个灰格子除了"灰"
-                            // 以外什么都不说，这句话是用户唯一的线索。**
-                            {"why", why},
-                            // 配置文件关的，界面上点不动
-                            {"locked", locked},
-                            {"on", able && off == false && n.online}});
-        }
-        rows.push_back({{"url", n.url},
-                        {"name", n.name},
-                        {"online", n.online},
-                        {"busy", n.busy},
-                        {"error", n.error},
-                        {"local", n.url == "local"},
-                        {"capabilities", caps}});
-    }
+// `nodes_json(const std::vector<NodeState>&)` **搬到 node_json.cpp 去了**。
+// 它是纯的（NodeState → JSON，不碰网络），而这个文件因为 node_registry()
+// 要去问每一台的 /status 而 include 了 httplib——测试目标那一列上面写着
+// 「一个网络库都不链」，所以只要它留在这儿，test_node_table.cpp 就永远
+// 链不起来（实测：undefined reference 到 nodes_json）。
 
-    // 每个能力现在有几台能接。界面上那句"出片：2 台可用"用它，
-    // 派不出去时那句话也在这儿拼好——两边各算一次迟早对不上。
-    json summary = json::array();
-    for (const Capability c : all_capabilities()) {
-        const auto cands = candidates_for(nodes, c);
-        summary.push_back(
-            {{"cap", to_string(c)},
-             {"label", label_of(c)},
-             {"count", static_cast<int>(cands.size())},
-             {"why", cands.empty() ? why_no_node(nodes, c) : std::string()}});
-    }
-
-    return json{{"nodes", rows}, {"summary", summary}};
-}
 
 }  // namespace changji::infer

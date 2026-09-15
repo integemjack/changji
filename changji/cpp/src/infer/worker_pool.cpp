@@ -17,6 +17,9 @@
 #include <nlohmann/json.hpp>
 
 #include "infer/blob.hpp"
+#include <cstdint>
+#include <cstdlib>
+
 #include "infer/peer_auth.hpp"
 #include "infer/worker_proto.hpp"
 #include "util/httplib.hpp"
@@ -149,22 +152,44 @@ struct WorkerPool::Impl {
                 "对面说跑成了，却没给产物指纹——多半是那台的版本还不认 "
                 "return_artifact");
         }
-        auto res = cli.Get(prefix + "/blob/" + artifact_id);
-        if (!res) {
-            throw Unreachable("取不回产物 " + url + "：" +
-                              httplib::to_string(res.error()));
-        }
-        if (res->status != 200) {
-            throw std::runtime_error(
-                worker_rejected_message(res->status, res->body));
+        // **一段一段地取。** 跨境公网实测 20～30 KB/s，一张首帧 650 KB
+        // 要二三十秒、一段 mp4 上百秒。整个一次取，对面要么被连接计时器
+        // 切断，要么同步发送把它的 io_service 堵住、下一镜派不出去
+        // （见 worker_server.cpp 的 /blob）。每段 256 KB，慢链路上也就
+        // 十几秒；对面回的 X-Blob-Size 说总共多大。
+        constexpr std::uint64_t kChunk = 256 * 1024;
+        std::string body;
+        std::uint64_t total = 0;
+        for (std::uint64_t off = 0;;) {
+            auto res = cli.Get(prefix + "/blob/" + artifact_id +
+                               "?off=" + std::to_string(off) +
+                               "&len=" + std::to_string(kChunk));
+            if (!res) {
+                throw Unreachable("取不回产物 " + url + "：" +
+                                  httplib::to_string(res.error()));
+            }
+            if (res->status != 200) {
+                throw std::runtime_error(
+                    worker_rejected_message(res->status, res->body));
+            }
+            if (res->has_header("X-Blob-Size")) {
+                total = std::strtoull(res->get_header_value("X-Blob-Size").c_str(),
+                                      nullptr, 10);
+            } else {
+                // 老版本的工作进程不认 off/len，回的就是整份。
+                total = res->body.size();
+            }
+            body += res->body;
+            off += res->body.size();
+            if (off >= total || res->body.empty()) break;
         }
         // **落地之前核一遍指纹。** 少几个字节的 png 照样能写下去，
         // 之后报的是一张半截图或者"权重读不对"，指向完全错误的方向。
-        const std::string real = text::sha1_hex(res->body);
+        const std::string real = text::sha1_hex(body);
         if (real != artifact_id) {
             throw std::runtime_error("产物传坏了：说好的是 " + artifact_id +
                                      "，收到的是 " + real + "（" +
-                                     std::to_string(res->body.size()) +
+                                     std::to_string(body.size()) +
                                      " 字节）");
         }
         const auto out = paths::from_utf8(dest);
@@ -172,16 +197,18 @@ struct WorkerPool::Impl {
         std::filesystem::create_directories(out.parent_path(), ec);
         std::ofstream f(out, std::ios::binary | std::ios::trunc);
         if (!f) throw std::runtime_error("写不了产物：" + dest);
-        f.write(res->body.data(),
-                static_cast<std::streamsize>(res->body.size()));
+        f.write(body.data(), static_cast<std::streamsize>(body.size()));
         if (!f) throw std::runtime_error("产物写坏了：" + dest);
     }
 
     /// 跑完回结果。**要这个返回值是为了配音**：出来多长（秒）只有跑活
     /// 那台知道（它顺手就量了），而配音先行那条线靠它反推镜头时长。
+    /// `before_pull` 在对面报"跑完了"、开始取产物之前调一次：把槽先还
+    /// 回去，好让下一镜马上派出去，取产物那几十秒和它的采样叠着走。
     TaskResult run_on(std::size_t idx, const Task& task,
                       pipeline::CancelToken& tok,
-                      const StepCallback& on_step) {
+                      const StepCallback& on_step,
+                      const std::function<void()>& before_pull) {
         // 本机那个槽：进程内跑，不发 HTTP，也不搬文件（同一个文件系统）。
         // 排队由执行位管（见 exec_queue.hpp），这儿不用再判忙不忙。
         if (workers[idx].ep.url == kLocalEndpoint) {
@@ -248,7 +275,13 @@ struct WorkerPool::Impl {
         // 出现三四遍：快照只留最后 200 条，几镜并行时全被这种重复填满，
         // 真正的 warn / gate 被挤出去；WebSocket 那头每秒收十几条一样的。
         int last_step = -1, last_steps = -1;
-        bool last_loading = false;
+        std::string last_phase;
+        constexpr int kPollMisses = 12;   // 12 × 5 秒 = 一分钟
+        int misses = 0;
+        // 预览：最多每 3 秒要一张。一张几十 KB，跨境链路 25 KB/s，每次轮询
+        // 都要会把取产物的带宽吃光。只要比手里那张新的。
+        int last_preview = -1;
+        auto last_preview_at = std::chrono::steady_clock::now() - std::chrono::seconds(3);
         for (;;) {
             if (tok.cancelled()) {
                 cli.Post(prefix + "/task/" + id + "/cancel", "",
@@ -257,30 +290,55 @@ struct WorkerPool::Impl {
             }
             std::this_thread::sleep_for(std::chrono::milliseconds(500));
 
-            auto st = cli.Get(prefix + "/task/" + id);
+            const bool want_preview =
+                std::chrono::steady_clock::now() - last_preview_at >= std::chrono::seconds(3);
+            auto st = cli.Get(prefix + "/task/" + id +
+                              (want_preview ? "?preview_after=" + std::to_string(last_preview)
+                                            : std::string{}));
             if (!st) {
-                // 跑到一半断的。**也是 Unreachable**：这一镜在别的机器上
-                // 从头跑一遍就行，不该记到镜头的重试次数上。
+                // **公网抖一下不算它死了。** 跨境链路实测隔几分钟就掉一次
+                // 连接，而那边的活还在好好地跑（2026-09-15：一镜跑到第二
+                // 段、GPU 100%，这边一句"断了"就把整镜判失败）。httplib
+                // 下一次 Get 会自己重连，所以隔几秒再问；连着一分钟都问
+                // 不到才算它真没了——那时候才是 Unreachable，这一镜换台
+                // 机器从头跑，不记到镜头的重试次数上。
+                if (++misses <= kPollMisses) {
+                    std::this_thread::sleep_for(std::chrono::seconds(5));
+                    continue;
+                }
                 throw Unreachable("工作进程 " + workers[idx].ep.url + " 断了：" +
                                   httplib::to_string(st.error()));
             }
+            misses = 0;
             const auto body = json::parse(st->body, nullptr, false);
             if (body.is_discarded()) {
                 throw std::runtime_error("工作进程回的进度不是 JSON");
             }
             const auto p = task_progress_from_json(body);
+            if (!p.preview.empty() && p.preview_step > last_preview) {
+                // 和进程内采样走同一个口子，镜头墙上的小图就不用管活在哪台跑
+                last_preview = p.preview_step;
+                last_preview_at = std::chrono::steady_clock::now();
+                publish_preview(task.shot_id, p.preview_step, p.preview);
+            }
             const bool changed = p.step != last_step || p.steps != last_steps ||
-                                 p.loading != last_loading;
+                                 p.phase != last_phase;
             if (p.steps > 0 && on_step && changed) {
-                on_step(p.step, p.steps, 0.0, p.loading);
+                on_step(p.step, p.steps, 0.0, phase_from(p.phase));
                 last_step = p.step;
                 last_steps = p.steps;
-                last_loading = p.loading;
+                last_phase = p.phase;
             }
             if (p.state == "done" || p.state == "failed") {
                 if (!p.result) throw std::runtime_error("跑完了却没有结果");
                 if (!p.result->ok) throw std::runtime_error(p.result->error);
                 if (remote) {
+                    // **对面已经空了，先把槽还回去再取产物。** 取一张
+                    // 650 KB 的首帧在跨境公网上要二三十秒（30 KB/s），
+                    // 而那台的显卡这期间闲着；先还槽，下一镜的采样就和
+                    // 这一镜的传输叠在一起——L20 上一镜 47 秒变 24 秒。
+                    // 取砸了照样抛，只是那时槽已经在别人手里，不影响。
+                    before_pull();
                     pull_artifact(cli, prefix, workers[idx].ep.url,
                                   p.result->artifact_id, task.dest);
                 }
@@ -313,14 +371,23 @@ struct WorkerPool::Impl {
                     std::to_string(tried.size()) + " 个）：" + last_error);
             }
             const std::size_t idx = *got;
+            // 还槽只还一次：正常路上在取产物前就还了（见 run_on），
+            // 抛出来的路上靠析构兜底。
             struct Release {
                 Impl* self;
                 std::size_t i;
-                ~Release() { self->give_back(i); }
+                bool done = false;
+                void now() {
+                    if (done) return;
+                    done = true;
+                    self->give_back(i);
+                }
+                ~Release() { now(); }
             } release{this, idx};
 
             try {
-                const TaskResult r = run_on(idx, task, tok, on_step);
+                const TaskResult r =
+                    run_on(idx, task, tok, on_step, [&] { release.now(); });
                 mark_ok(idx);
                 return r;
             } catch (const Unreachable& e) {
@@ -346,6 +413,14 @@ WorkerPool::WorkerPool(std::vector<WorkerEndpoint> endpoints,
 WorkerPool::~WorkerPool() = default;
 
 std::size_t WorkerPool::size() const { return impl_->workers.size(); }
+
+std::size_t WorkerPool::lanes() const {
+    std::size_t remote = 0;
+    for (const auto& w : impl_->workers) {
+        if (!endpoint_is_local(w.ep.url)) ++remote;
+    }
+    return pool_lanes(impl_->workers.size(), remote);
+}
 
 std::size_t WorkerPool::alive() const {
     std::size_t n = 0;
@@ -378,7 +453,10 @@ stages::FrameRenderer WorkerPool::frame_renderer() {
         t.spec = spec;
         t.dest = paths::to_utf8(dest);
         // **种子在这儿算，不让工作进程算**：它不知道 attempts。
-        t.seed = stages::frame_seed(shot.shot_id, shot.attempts);
+        // 发起方定死的（定妆图）优先，见 PromptBundle::seed_override。
+        t.seed = prompts.seed_override
+                     ? *prompts.seed_override
+                     : stages::frame_seed(shot.shot_id, shot.attempts);
         impl->run_task(t, tok, on_step);
     };
 }
@@ -449,6 +527,14 @@ std::shared_ptr<WorkerPool> make_worker_pool(
     for (const auto& u : endpoints) eps.push_back(WorkerEndpoint{u, token});
     return std::make_shared<WorkerPool>(std::move(eps), std::move(local_runner),
                                         std::move(pick));
+}
+
+std::shared_ptr<WorkerPool> make_worker_pool(
+    std::vector<WorkerEndpoint> endpoints, LocalRunner local_runner,
+    std::map<std::string, std::string> pick) {
+    if (endpoints.empty()) return nullptr;
+    return std::make_shared<WorkerPool>(
+        std::move(endpoints), std::move(local_runner), std::move(pick));
 }
 
 }  // namespace changji::infer

@@ -552,15 +552,12 @@ TEST_CASE("关键镜头出几条，按闸门的数留一条，别的删掉") {
         gates::GateResult r;
         r.shot_id = s.shot_id;
         const std::string name = paths::to_utf8(video.filename());
-        // 第二条像回事，第一条几乎不动，第三条中途硬切
+        // 第一条几乎不动，第二条乱动，第三条才像回事——前两条都不干净，
+        // 所以三条都要出（take_good_enough 只在干净的那一条上停）
         if (has(name, "_take1")) r.metrics["motion_mean"] = 0.3;
-        else if (has(name, "_take2")) r.metrics["motion_mean"] = 4.0;
-        else if (has(name, "_take3")) {
-            r.metrics["motion_mean"] = 6.0;
-            r.metrics["cut_inside"] = 1.0;
-        } else {
-            r.metrics["motion_mean"] = 2.0;
-        }
+        else if (has(name, "_take2")) r.metrics["motion_mean"] = 40.0;
+        else if (has(name, "_take3")) r.metrics["motion_mean"] = 6.0;
+        else r.metrics["motion_mean"] = 2.0;
         return r;
     };
     gate.decide = [](const gates::GateResult&, const models::Shot&) {
@@ -594,6 +591,30 @@ TEST_CASE("关键镜头出几条，按闸门的数留一条，别的删掉") {
     CHECK_FALSE(fs::exists(paths.shots("draft") / "ep01_sh001_take1.mp4"));
     CHECK_FALSE(fs::exists(paths.shots("draft") / "ep01_sh001_take2.mp4"));
     CHECK_FALSE(fs::exists(paths.shots("draft") / "ep01_sh001_take3.mp4"));
+
+    SUBCASE("第一条就干净：不再多出，只有一条") {
+        // 2026-09-16 用户问"为什么要进行两次"：无条件出两条是整集翻倍
+        rendered.clear();
+        gate.check = [](const models::Shot& s, const fs::path&,
+                        const stages::RenderPlan&) {
+            gates::GateResult r;
+            r.shot_id = s.shot_id;
+            r.metrics["motion_mean"] = 4.0;   // 像回事
+            return r;
+        };
+        auto one = std::vector<models::Shot>{make_shot("ep01_sh011", 0)};
+        std::vector<models::Shot*> ptrs = {&one[0]};
+        pipeline::JobTable t3;
+        pipeline::CancelToken tok3;
+        t3.start(pipeline::JobKind::Run, "ep01", [&](pipeline::JobProgress& p) {
+            stages::render_batch(ptrs, make_assets(), make_spec(), paths, render,
+                                 p, tok3, 24, 1, gate, {}, extras);
+        });
+        t3.wait_idle();
+        CHECK(rendered.size() == 1);
+        REQUIRE(one[0].video_path.has_value());
+        CHECK(fs::is_regular_file(paths.abs(*one[0].video_path)));
+    }
 
     SUBCASE("没有闸门就没有依据挑，出一条") {
         rendered.clear();

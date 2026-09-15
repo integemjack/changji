@@ -155,6 +155,10 @@ onMounted(() => {
 })
 
 watch(() => session.projectPath, loadShow, { immediate: true })
+// **「模型（这部剧）」那一行也要跟着项目换。** 挑哪一档是记在项目目录里的
+// （/bff/setup/state 按 path 回），只在挂载时读一次的话，在项目库里点到
+// 另一部剧，这一行还挂着上一部的四个名字和缺件标记，而标题写的是"这部剧"。
+watch(() => session.projectPath, () => models.load())
 </script>
 
 <template>

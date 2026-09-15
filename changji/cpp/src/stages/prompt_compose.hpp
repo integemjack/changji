@@ -20,6 +20,8 @@
 // 这一层和出图后端无关：ComfyUI 也好、进程内 sd.cpp 也好，
 // 拿到的是同一份提示词。所以它属于**契约**，要和 Python 逐字节一致。
 
+#include <cstdint>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -45,6 +47,15 @@ struct PromptBundle {
     /// 角色定妆图和场景空景图的相对路径。图像模型那条路会用，
     /// 视频模型那条路忽略。
     std::vector<std::string> reference_images;
+    /// **这一张要基础文生图权重（[models].image_base），不是 Edit。**
+    /// 定妆图和空景图是从纯文字画的，一张参考图都没有；Edit 权重没有编辑
+    /// 源会退化成文生图，出来的不能看。首帧不填（它喂参考图，正是 Edit
+    /// 的活）。跟着提示词走是为了**跨机**：画参考图和出首帧走同一条
+    /// FrameRenderer（进程内或派给别的机器），这条路上只有它能带东西。
+    bool base_model = false;
+    /// 种子由发起方定死时填这个；不填的话首帧按 shot_id + attempts 算。
+    /// 定妆图那条路填：同一个角色重出还是那张脸（http::ref_seed）。
+    std::optional<std::int64_t> seed_override;
 };
 
 /// 把分镜表和资产库拼成提示词。

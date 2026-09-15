@@ -43,6 +43,47 @@ namespace fs = std::filesystem;
 
 namespace changji::infer {
 
+namespace {
+thread_local const config::Settings* t_task_settings = nullptr;
+}
+
+ScopedTaskSettings::ScopedTaskSettings(const config::Settings& s)
+    : prev_(t_task_settings) {
+    t_task_settings = &s;
+}
+
+ScopedTaskSettings::~ScopedTaskSettings() { t_task_settings = prev_; }
+
+const config::Settings* task_settings_override() { return t_task_settings; }
+
+const char* phase_name(Phase p) {
+    switch (p) {
+        case Phase::Prep: return "prep";
+        case Phase::Decode: return "decode";
+        case Phase::Sample: break;
+    }
+    return "sample";
+}
+
+Phase phase_from(const std::string& name) {
+    if (name == "prep") return Phase::Prep;
+    if (name == "decode") return Phase::Decode;
+    return Phase::Sample;
+}
+
+std::string phase_note(Phase p, int step, int steps) {
+    const std::string n = std::to_string(step) + "/" + std::to_string(steps);
+    switch (p) {
+        case Phase::Prep:
+            // steps == 0：还没开始采样，正在腾显存 / 装模型。
+            return steps == 0 ? "（正在准备模型，可能要先腾出显存）"
+                              : "（准备 " + n + "）";
+        case Phase::Decode: return "（解码 " + n + "）";
+        case Phase::Sample: break;
+    }
+    return "（第 " + n + " 步）";
+}
+
 // **这一段在 #ifdef 外面**：它只看配置，和有没有链上 sd.cpp 无关，
 // 而测试目标编的是没链上游那一支。写在 #ifdef 里面就测不到了。
 std::string sd_model_problem(const config::Settings& settings, ModelRole role) {
@@ -66,6 +107,21 @@ std::string sd_model_problem(const config::Settings& settings, ModelRole role) {
     }
     return "没配出图模型。在 changji.toml 的 [models] 里填 image，"
            "或者把出图交给推理服务";
+}
+
+/// 这个角色要哪一份扩散权重。
+///
+/// **基础那一档留空就退回 Edit 那一份**，也就是 2026-09-15 之前的行为：
+/// 定妆和空景照旧拿 Edit 权重做文生图。老配置不会因为这次改动跑不起来，
+/// 只是仍然落在 catalog.cpp 那段注释说的"不能看"的退化路径上——体检里
+/// 会单独说这一条。
+const std::string& diffusion_for(const config::ModelsConfig& m,
+                                 ModelRole role) {
+    if (role == ModelRole::Video) return m.video;
+    if (role == ModelRole::ImageBase && !m.image_base.empty()) {
+        return m.image_base;
+    }
+    return m.image;
 }
 
 // 同样在 #ifdef 外面，理由见头文件。
@@ -135,6 +191,16 @@ int add_preview_sink(PreviewSink sink) {
 void remove_preview_sink(int token) {
     std::lock_guard lg(preview_mu());
     preview_sinks().erase(token);
+}
+
+void publish_preview(const std::string& tag, int step, std::string data_url) {
+    std::vector<PreviewSink> sinks;
+    {
+        std::lock_guard lg(preview_mu());
+        for (const auto& [token, s] : preview_sinks()) sinks.push_back(s);
+    }
+    if (sinks.empty() || tag.empty()) return;
+    for (const auto& sink : sinks) sink(tag, step, data_url);
 }
 
 fs::path audio_path_for(const fs::path& raw_dest) {
@@ -278,6 +344,9 @@ struct ActiveGeneration {
     /// 这一轮量过了没有。**一次生成只量一次**：问一次 nvidia-smi 要
     /// 一百毫秒上下，每一步都问的话出图那种几十步的会明显变慢。
     bool sampled = false;
+    /// 最后一个采样步报过了没有。报过之后再来的、总数不等于步数的
+    /// 回调就是 VAE 解码，不是准备。见 progress_trampoline。
+    bool sample_done = false;
     /// 这一次生成期间**整张卡被占掉的峰值**（GB），每次回调都刷一遍，
     /// 生成结束再记给调度器。只在 NVML 那条路可用时这么量（进程内一次
     /// 查询不到一毫秒）；退回 nvidia-smi 那条路时还是老办法量一次。
@@ -331,12 +400,11 @@ void preview_trampoline(int step, int frame_count, sd_image_t* frames,
         std::lock_guard lg(active().mu);
         tag = active().tag;
     }
-    std::vector<PreviewSink> sinks;
+    if (tag.empty()) return;
     {
         std::lock_guard lg(preview_mu());
-        for (const auto& [token, s] : preview_sinks()) sinks.push_back(s);
+        if (preview_sinks().empty()) return;   // 没人看就别编码
     }
-    if (sinks.empty() || tag.empty()) return;
 
     const sd_image_t& img = frames[0];
     std::vector<unsigned char> buf;
@@ -352,8 +420,7 @@ void preview_trampoline(int step, int frame_count, sd_image_t* frames,
         return;
     }
     // **编一次，发给所有人。** 编码是这条路上唯一花时间的一步。
-    const std::string url = "data:image/png;base64," + base64(buf);
-    for (const auto& sink : sinks) sink(tag, step, url);
+    publish_preview(tag, step, "data:image/png;base64," + base64(buf));
 }
 
 /// 生成结束把这一轮的峰值记给调度器。失败的那一轮也记：OOM 之前占到
@@ -393,14 +460,25 @@ void progress_trampoline(int step, int steps, float time, void* /*data*/) {
     }
     // 总数对不上我们要的步数，就说明这一轮回调不是采样。
     //
-    // **但它不一定是"加载模型"。** sd.cpp 拿同一个回调报好几种阶段，
-    // 总数各不相同：分段搬权重（权重放内存时每镜都要搬一遍）、
-    // VAE 分块解码（每块一格）、首次从磁盘载权重。上层只看得到
-    // (step, steps)，分不出是哪一种，所以文案不能写死成"加载模型"——
-    // 写死之后每镜都冒出来，看着像"模型被重载了 22 次"，
+    // 采样之前的那些（分段搬权重、首次从磁盘载权重）上层只看得到
+    // (step, steps)，分不出是哪一种，所以只叫 Prep，文案不能写死成
+    // "加载模型"——写死之后每镜都冒出来，看着像"模型被重载了 22 次"，
     // 而实际整轮只从磁盘载过一次。
-    const bool loading = want > 0 && steps != want;
-    if (cb) cb(step, steps, static_cast<double>(time), loading);
+    //
+    // **采样跑到最后一步之后再来的，就是 VAE 分块解码。** 它和准备
+    // 是两回事：VAE 在显存里两三秒、在内存里二十几秒，牌子上写"准备"
+    // 用户会以为模型又在重载。靠"最后一个采样步见过没有"分开。
+    Phase phase = Phase::Sample;
+    {
+        std::lock_guard lg(a.mu);
+        if (want > 0 && steps != want) {
+            phase = a.sample_done ? Phase::Decode : Phase::Prep;
+        } else if (step >= steps && steps > 0) {
+            a.sample_done = true;
+        }
+    }
+    const bool loading = phase != Phase::Sample;
+    if (cb) cb(step, steps, static_cast<double>(time), phase);
 
     // **在这儿量一次真实占用。**
     //
@@ -616,7 +694,7 @@ std::shared_ptr<SdContext> SdContext::create(const config::Settings& settings,
     // 上面那个 throw 里记了为什么（sd.cpp 的 generate_image 没有帧数参数，
     // 拿视频模型进去整个进程崩）。走到这里时 image 一定非空。
     const bool is_video = role == ModelRole::Video;
-    const std::string& which = is_video ? m.video : m.image;
+    const std::string& which = diffusion_for(m, role);
     impl.diffusion = paths::to_utf8(m.resolve(which, ws));
     // 双专家的高噪声那一份。只有视频那条路有——Qwen-Image 不是 MoE。
     if (is_video && !m.video_high_noise.empty()) {
@@ -682,7 +760,12 @@ std::shared_ptr<SdContext> SdContext::create(const config::Settings& settings,
         }
     } else if (!is_video && !m.image_text_encoder.empty()) {
         impl.llm = paths::to_utf8(m.resolve(m.image_text_encoder, ws));
-        if (!m.image_text_encoder_vision.empty()) {
+        // **视觉塔只给 Edit 那一路挂。** 它的用处是让编码器"看见"参考图
+        // （2509 起要它，不挂的话 sd.cpp 只在日志里说一句 vision disabled
+        // 就照常出图）。基础那一路一张参考图都不传，挂上去没有输入可看，
+        // 白占一份显存。
+        if (role != ModelRole::ImageBase &&
+            !m.image_text_encoder_vision.empty()) {
             impl.llm_vision =
                 paths::to_utf8(m.resolve(m.image_text_encoder_vision, ws));
         }
@@ -879,6 +962,7 @@ void SdContext::generate(const ImageRequest& req, const fs::path& dest,
         a.slot = Slot::Image;
         a.work = static_cast<std::size_t>(req.width) * req.height;
         a.sampled = false;   // 每次生成重新量一遍，见 progress_trampoline
+        a.sample_done = false;
         a.peak_used_gb = 0.0;
         // 只在这个槽是唯一装着的时候量，理由见 peak_used_gb。
         const auto loaded = scheduler().loaded_slots();
@@ -1040,6 +1124,7 @@ void SdContext::generate_video(const VideoRequest& req, const fs::path& raw_dest
         a.work = static_cast<std::size_t>(req.width) * req.height *
                  std::max(1, req.frames);
         a.sampled = false;
+        a.sample_done = false;
         a.peak_used_gb = 0.0;
         const auto loaded = scheduler().loaded_slots();
         a.measure_alone = loaded.size() == 1 && loaded.front() == Slot::Video;
@@ -1196,6 +1281,20 @@ std::mutex g_ctx_mu;
 std::shared_ptr<SdContext> g_image_ctx;
 std::shared_ptr<SdContext> g_video_ctx;
 
+/// 图像槽这一刻**要装**哪个变体，和**已经装着**哪个。
+///
+/// 两个图像模型（Edit 和基础）各 20 GB 上下，同一张卡上不该并存——而且
+/// 它们也从不同时用：先把三视图和空景图铺开（基础），再一镜一镜出首帧
+/// （Edit）。所以共用 `Slot::Image` 这一个槽，由调度器换进换出，而不是
+/// 再开一个槽把显存预算劈成两半。
+///
+/// `spec.load` 是注册时定下的闭包、一个进程只跑这一份，所以要装哪一个
+/// 得从外面递进去：`acquire_image()` 先把 want 摆好，必要时把装错的那个
+/// 卸掉，再去借槽。
+std::atomic<ModelRole> g_image_want{ModelRole::Image};
+std::atomic<bool> g_image_loaded_valid{false};
+std::atomic<ModelRole> g_image_loaded{ModelRole::Image};
+
 }  // namespace
 
 void register_sd_slots(const config::Settings& settings,
@@ -1222,7 +1321,10 @@ void register_sd_slots(SettingsProvider raw_provider,
         //
         // **展开逻辑不写在这儿**：设置页也要拿同一份结果显示给用户看，
         // 各写一遍就会分叉。见 config::expand_placement。
-        return config::expand_placement(raw_provider(), card_gb, unified);
+        // 正在接活的线程上有派活方那份（盖了档位的）就用它，见 ScopedTaskSettings。
+        const config::Settings* task = task_settings_override();
+        return config::expand_placement(task ? *task : raw_provider(), card_gb,
+                                        unified);
     };
     // 预算取探测到的显存，留一成给驱动上下文和别的程序。
     //
@@ -1472,21 +1574,30 @@ void register_sd_slots(SettingsProvider raw_provider,
         // 而槽一个进程只注册一次。见 SlotSpec::live_vram。
         spec.live_vram = [provider, live_bytes] {
             const config::Settings s = provider();
-            return live_bytes(config::image_placement(s).live_vram_gb);
+            // **按这一刻要装的那一份算**：图像槽上换着两个模型
+            // （Edit 出首帧、基础出定妆和空景），一律按 image 算的话，
+            // 装基础那一份时估的是另一个文件。
+            return live_bytes(
+                config::image_placement_of(s, diffusion_for(s.models,
+                                                            g_image_want.load()))
+                    .live_vram_gb);
         };
         // 视频模型重新加载更贵（文件大得多），所以图像的优先级更低，
         // 腾地方时先卸它。
         spec.evict_priority = 5;
         spec.load = [provider, budget_for] {
             const config::Settings s = provider();
-            auto ctx = SdContext::create(s, budget_for(s, ModelRole::Image),
-                                         ModelRole::Image);
+            const ModelRole want = g_image_want.load();
+            auto ctx = SdContext::create(s, budget_for(s, want), want);
             std::lock_guard lg(g_ctx_mu);
             g_image_ctx = std::move(ctx);
+            g_image_loaded.store(want);
+            g_image_loaded_valid.store(true);
         };
         spec.unload = [] {
             std::lock_guard lg(g_ctx_mu);
             g_image_ctx.reset();   // 析构里 free_sd_ctx
+            g_image_loaded_valid.store(false);
         };
         scheduler().register_slot(std::move(spec));
     }
@@ -1528,6 +1639,20 @@ void register_sd_slots(SettingsProvider raw_provider,
         };
         scheduler().register_slot(std::move(spec));
     }
+}
+
+Lease acquire_image(ModelRole role, const Scheduler::AcquireOptions& opt) {
+    // 出片那一档不该走这条路，走了也按 Edit 处理，别让它把图像槽换成视频。
+    const ModelRole want =
+        role == ModelRole::ImageBase ? ModelRole::ImageBase : ModelRole::Image;
+    // **装错了就先卸。** 调度器看到槽"已经加载"就不会再调 load，
+    // 于是不卸的话，要基础模型的那一步会拿到还挂在槽上的 Edit 权重——
+    // 而那正是这次要治的病（定妆拿 Edit 做文生图）。
+    if (g_image_loaded_valid.load() && g_image_loaded.load() != want) {
+        scheduler().evict(Slot::Image);
+    }
+    g_image_want.store(want);
+    return scheduler().acquire(Slot::Image, opt);
 }
 
 std::shared_ptr<SdContext> current_image_context() {

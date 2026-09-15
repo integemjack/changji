@@ -9,6 +9,7 @@
 #include <system_error>
 #include <vector>
 
+#include "setup/catalog.hpp"
 #include "util/paths.hpp"
 #include "util/proc.hpp"
 
@@ -240,6 +241,31 @@ json Snapshot::to_json() const {
             {"etaSeconds", eta_seconds}};
 }
 
+std::size_t adopt_finished_parts(const fs::path& models_dir) {
+    std::size_t n = 0;
+    for (const auto& g : catalog()) {
+        for (const auto& o : g.options) {
+            for (const auto& f : o.files) {
+                if (f.bytes == 0) continue;
+                const fs::path dest = models_dir / paths::from_utf8(f.name);
+                const fs::path part =
+                    dest.parent_path() / (paths::to_utf8(dest.filename()) + ".part");
+                if (file_size_or_zero(part) != f.bytes) continue;
+                if (file_size_or_zero(dest) == f.bytes) {
+                    // 正式的那份也全：`.part` 是多余的，扔掉
+                    std::error_code rm;
+                    fs::remove(part, rm);
+                    continue;
+                }
+                std::error_code mv;
+                fs::rename(part, dest, mv);
+                if (!mv) ++n;
+            }
+        }
+    }
+    return n;
+}
+
 Downloader& Downloader::instance() {
     static Downloader d;
     return d;
@@ -402,6 +428,38 @@ bool Downloader::fetch_one(const Item& item, const fs::path& dest, std::size_t i
     }
 
     std::error_code ec;
+    // **下载途中不占正式的文件名，先写 `<名字>.part`，校验过了再改名。**
+    //
+    // 原来是直接 `-o dest`：curl 创建文件的那一瞬间，盘上就有了一个叫
+    // 最终名字的文件。而"这台能不能出片"判的是
+    // `std::filesystem::exists`（node_status.cpp → capability.cpp 的
+    // `has()`），**只问在不在、不问全不全**——于是一个 17.5 GB 的权重
+    // 刚下了几十兆，这台就开始对外宣称自己会出片，调度器照着派真镜头
+    // 过来，加载时炸在"读不对"上，而人看到的是"模型坏了"。
+    //
+    // 实测：MiniMax-H3 那一组下到 15%（fl2va 2.6 GB / 17.5 GB），
+    // /api/nodes 里这台的 able 已经是 ['llm','video','assemble']。
+    //
+    // 改名是同一个目录内的 rename，原子的；`.part` 留着也照样能续传
+    // （curl -C - 接着它写），断一次不会重头来。
+    const fs::path part =
+        dest.parent_path() / (paths::to_utf8(dest.filename()) + ".part");
+
+    // `.part` 已经下全了、只差改名（上一轮父进程被杀，见
+    // adopt_finished_parts）：改个名就是了，一个字节都不用再下。
+    if (want > 0 && file_size_or_zero(part) == want) {
+        std::error_code mv;
+        fs::rename(part, dest, mv);
+        if (!mv) {
+            set([&](ItemProgress& p) {
+                p.state = ItemState::Present;
+                p.downloaded = want;
+                p.speed_bps = 0.0;
+            });
+            return true;
+        }
+    }
+
     fs::create_directories(dest.parent_path(), ec);
     if (ec) {
         set([&](ItemProgress& p) {
@@ -431,6 +489,37 @@ bool Downloader::fetch_one(const Item& item, const fs::path& dest, std::size_t i
         // 表现是进度条一开始就停在上次断掉的位置不动。
         fs::remove(log, ec);
 
+        // 旧版本（或这一版修好之前）留下的半截文件就躺在正式名字上。
+        // 挪到 `.part` 去：续传接得上，而那个会骗人的 `exists` 当场消失。
+        if (const auto here = file_size_or_zero(dest); here > 0 && here != want) {
+            std::error_code mv;
+            fs::rename(dest, part, mv);
+            if (mv) fs::remove(dest, mv);
+        }
+
+        // **比应有的还大就只能重下。**
+        //
+        // `-C -` 是**追加**式续传：它从当前文件长度往后接。文件一旦被写
+        // 过头，续传每一次都只会让它更大或不变，`got == want` 永远不成立
+        // ——重试三次是纯粹空转，最后报一句「试了 3 次都没下全」，而实际
+        // 是下多了，人照着这句话去查网络，方向正好反的。
+        //
+        // 怎么会写过头：两个 curl 同时写同一个 `.part`。2026-09-15 实测
+        // 撞到——反复重启 worker 时，`setsid` 派生的旧 curl 成了孤儿还在
+        // 写，而新一轮又给同一个文件开了一个。Qwen_Image-Q8_0.gguf 因此
+        // 变成 21840951840 字节，比应有的 21761817120 多了 79 MB。
+        if (want > 0) {
+            if (const auto here = file_size_or_zero(part); here > want) {
+                std::error_code rm;
+                fs::remove(part, rm);
+                set([](ItemProgress& p) {
+                    p.downloaded = 0;
+                    p.error = "盘上那份比应有的还大（多半是上一轮有两个下载"
+                              "同时写它），续传接不回来，这一次从头下。";
+                });
+            }
+        }
+
         std::vector<std::string> args;
         if (tool == "aria2c") {
             args = {"-x", "8", "-s", "8", "-k", "4M",
@@ -439,11 +528,11 @@ bool Downloader::fetch_one(const Item& item, const fs::path& dest, std::size_t i
                     "--max-tries=3", "--retry-wait=5",
                     "--console-log-level=warn", "--summary-interval=1",
                     "-d", paths::to_utf8(dest.parent_path()),
-                    "-o", paths::to_utf8(dest.filename()), item.url};
+                    "-o", paths::to_utf8(part.filename()), item.url};
         } else {
             // curl 是单连接，文件大小就是真进度，不用解析输出。
             args = {"-L", "--fail", "--retry", "3", "--retry-delay", "5",
-                    "-C", "-", "-o", paths::to_utf8(dest), item.url};
+                    "-C", "-", "-o", paths::to_utf8(part), item.url};
         }
 
         const proc::ProcHandle h = proc::spawn(tool, args, log);
@@ -463,7 +552,7 @@ bool Downloader::fetch_one(const Item& item, const fs::path& dest, std::size_t i
         // 盯着它。速度优先用下载器自己报的（aria2 的 DL:），
         // 拿不到就自己按文件大小的增量算。
         auto last_at = clock_type::now();
-        std::uint64_t last_bytes = file_size_or_zero(dest);
+        std::uint64_t last_bytes = file_size_or_zero(part);
         double smoothed = 0.0;
         bool killed = false;
 
@@ -476,7 +565,7 @@ bool Downloader::fetch_one(const Item& item, const fs::path& dest, std::size_t i
             }
             const bool still = proc::alive(h);
 
-            std::uint64_t now_bytes = file_size_or_zero(dest);
+            std::uint64_t now_bytes = file_size_or_zero(part);
             double speed = 0.0;
             if (tool == "aria2c") {
                 const auto parsed = parse_aria2_progress(tail_of(log, 4096));
@@ -535,11 +624,23 @@ bool Downloader::fetch_one(const Item& item, const fs::path& dest, std::size_t i
             return false;
         }
 
-        const std::uint64_t got = file_size_or_zero(dest);
+        const std::uint64_t got = file_size_or_zero(part);
         // **字节数对不上就算没下完。** 下载器退出码为 0 也可能留下截断的
         // 文件（连接被中间设备掐断、镜像返回了一个错误页）。
         // 而截断的权重加载时报的是"读不对"，指向完全错误的方向。
         if (want == 0 || got == want) {
+            // 字节数对上了才把它摆到正式名字上——**在这之前，任何人问
+            // "这台有没有这个模型"，答案都必须是没有。**
+            std::error_code mv;
+            fs::rename(part, dest, mv);
+            if (mv) {
+                set([&](ItemProgress& p) {
+                    p.state = ItemState::Failed;
+                    p.speed_bps = 0.0;
+                    p.error = "下全了，但改名失败：" + mv.message();
+                });
+                return false;
+            }
             set([&](ItemProgress& p) {
                 p.state = ItemState::Done;
                 p.downloaded = want == 0 ? got : want;
@@ -553,9 +654,16 @@ bool Downloader::fetch_one(const Item& item, const fs::path& dest, std::size_t i
             set([&](ItemProgress& p) {
                 p.state = ItemState::Failed;
                 p.speed_bps = 0.0;
+                // **多了和少了是两件事，别都说成"没下全"。**
+                // 少了是网络断在半路；多了是这个文件被写过头（两个下载
+                // 同时写），那时候人该做的是删掉重下，不是去查网络。
+                const bool over = got > want;
                 p.error = "下了 " + std::to_string(got) + " 字节，应该是 " +
-                          std::to_string(want) + "。试了 " +
-                          std::to_string(kMaxAttempts) + " 次都没下全。" +
+                          std::to_string(want) + "。" +
+                          (over ? "比应有的多 " + std::to_string(got - want) +
+                                      " 字节——这一份坏了，删掉 .part 重下。"
+                                : "试了 " + std::to_string(kMaxAttempts) +
+                                      " 次都没下全。") +
                           (detail.empty() ? "" : "\n下载器最后说：\n" + detail);
             });
             return false;

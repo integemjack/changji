@@ -639,7 +639,15 @@ function goLine(i) {
   caret.value = pos
 }
 
+// **挂载那一趟 await 期间人可能已经走了。** 卸载钩子跑在前面的话，
+// 后面才挂上的监听和轮询没人收——beforeunload 在别的页上继续拦、Ctrl+K
+// 继续翻面板、socket 和 5 秒重试永远活着。所以监听先挂，await 回来再看
+// 这一面还在不在。
+let alive = true
 onMounted(async () => {
+  window.addEventListener('beforeunload', beforeUnload)
+  window.addEventListener('keydown', onKey)
+  narrowQuery.addEventListener('change', onNarrow)
   load()
   // **上次离开页面时可能还在跑，那就得把轮询接着开起来。**
   //
@@ -650,13 +658,12 @@ onMounted(async () => {
   //   · AI 写完之后正文也不出现——下面那个 watch 等的是 writer.running
   //     从真变假，而没人轮询的话它根本不会变。
   await writer.poll()
+  if (!alive) return
   if (writer.running) writer.start()
   watchBatch()
-  window.addEventListener('beforeunload', beforeUnload)
-  window.addEventListener('keydown', onKey)
-  narrowQuery.addEventListener('change', onNarrow)
 })
 onUnmounted(() => {
+  alive = false
   writer.stop()
   batchSock?.close()
   batchSock = null
@@ -732,7 +739,13 @@ watch(
     if (before && !now) {
       // 流出来的是原始 token，落库那份解析过、过了守卫、算过钩子。
       // 整个重读一遍，以它为准。
+      //
+      // **先把排着的存冲出去。** 批量跑着的时候只锁正在流的那一章，别的章
+      // 人照样能改；load() 一上来就把 buf 整个清掉，1.5 秒那次自动存接着
+      // 读到的是空串、直接跳过，那几个字就没了。flushAll 同步读走 buf 再
+      // 发请求，赶在清空前面。
       streaming.value = null
+      flushAll()
       load()
     }
   },
@@ -1757,7 +1770,14 @@ async function startBlank() {
 async function addChapter() {
   const project = session.projectPath
   const next = chapters.value.map((c) => ({ ...c }))
-  const id = 'ch' + String(next.length + 1).padStart(2, '0')
+  // **编号取"最大的那个 + 1"，不是"有几章 + 1"。** 删掉中间一章之后
+  // 数量比最大编号小，按数量算出来的 id 已经有人占着，引擎回 400
+  // 「章节 id 重复」，之后每一次「加一章」都撞在同一个 id 上。
+  const top = next.reduce((m, c) => {
+    const n = Number(/^ch(\d+)$/.exec(c.chapter_id ?? '')?.[1] ?? 0)
+    return Number.isFinite(n) && n > m ? n : m
+  }, 0)
+  const id = 'ch' + String(top + 1).padStart(2, '0')
   next.push({ chapter_id: id, title: `第 ${next.length + 1} 章`, summary: '', text: '' })
   const result = await run(
     () =>
@@ -2516,7 +2536,14 @@ async function stopWriting() {
               >
                 <AppIcon name="menu" :size="15" />
               </button>
-              <select v-if="!listShown" v-model="current" class="select doc__pick">
+              <!-- 走 pickChapter，不直接绑 current：批量写作时人主动挑一章就是
+                   "我要看这一章"，得把「跟着翻」关掉，否则下一个 token 又翻走。 -->
+              <select
+                v-if="!listShown"
+                :value="current"
+                class="select doc__pick"
+                @change="pickChapter($event.target.value)"
+              >
                 <option v-for="(c, i) in chapters" :key="c.chapter_id" :value="c.chapter_id">
                   {{ chapterLabel(c, i) }} · {{ stateText(c.chapter_id) }}
                 </option>
@@ -3379,6 +3406,9 @@ async function stopWriting() {
   font-size: var(--fs-xs);
   color: var(--text-3);
   white-space: nowrap;
+  /* 摆不下就横着滚，别让右边那几颗按钮无声消失 */
+  overflow-x: auto;
+  scrollbar-width: none;
 }
 .status__item.is-dirty {
   color: var(--warn);
@@ -3415,6 +3445,10 @@ async function stopWriting() {
 .say {
   height: 22px;
   width: 200px;
+  /* 窄屏上这一格不能把「对话」「专注」挤出容器：外层是 overflow: hidden，
+     挤出去就是按钮没了。 */
+  max-width: 30vw;
+  min-width: 0;
 }
 
 /* ---------- 右：对话 ---------- */

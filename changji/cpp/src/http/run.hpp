@@ -37,6 +37,12 @@ struct RunDeps {
     /// "不同的剧用不同的模型"就没了。
     std::function<pipeline::Backends(const config::Settings&,
                                      const models::ProjectStore&)> backends;
+    /// 还不能开工的话，为什么；空串 = 能。post_run 开跑前问一次。
+    ///
+    /// 默认那套问的是体检（doctor::run_checks，**认远程机器**：本机没
+    /// 模型但机器表里有能干的，算能开工）。是回调不是直接调 doctor，
+    /// 因为体检那一层链 httplib，进不了测试目标；测试里留空 = 不拦。
+    std::function<std::string()> blocked;
 };
 
 /// 默认的那套：配置从 runtime 取，后端是 sd.cpp。

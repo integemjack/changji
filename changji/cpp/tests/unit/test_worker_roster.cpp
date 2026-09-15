@@ -115,3 +115,16 @@ TEST_CASE("忙着的不会被挑走，哪怕它是唯一没坏的") {
     CHECK(*b == 1);
     CHECK_FALSE(r.take({}, t0).has_value());
 }
+
+TEST_CASE("pool_lanes：跨机的每台多一路，用来边取产物边派下一镜") {
+    using changji::infer::pool_lanes;
+    // 全是本机拉起的：一进程一路，没有传输这回事
+    CHECK(pool_lanes(1, 0) == 1);
+    CHECK(pool_lanes(8, 0) == 8);
+    // 一台跨机：两路——一路在拉上一镜的首帧，另一路已经把下一镜派出去
+    CHECK(pool_lanes(1, 1) == 2);
+    // 本机 + 一台跨机
+    CHECK(pool_lanes(2, 1) == 3);
+    // 远端数不会超过进程数（防御：算错了也不至于开出一堆空转的线程）
+    CHECK(pool_lanes(2, 5) == 4);
+}

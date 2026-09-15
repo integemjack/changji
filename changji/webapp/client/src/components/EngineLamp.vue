@@ -92,6 +92,14 @@ onUnmounted(() => clearInterval(timer))
   text-decoration: none;
   border-color: var(--line-strong);
 }
+/* **这四个字不能折。** `.lamp` 的高是钉死的 26px，折成两行就是 38px，
+   直接从药丸底下溢出去——而它是整屏唯一一处回答「引擎在不在」的地方。
+   在这一集页上必折：那一页的顶栏比别的页多一个剧集选择器，把这一格
+   挤到放不下五个字（实测视口 1142px 就折了，还远不算窄屏）。
+   窄到 640px 以下时下面那条 media 会把整段字藏掉，不靠折行让位。 */
+.lamp__text {
+  white-space: nowrap;
+}
 .lamp__dot {
   width: 7px;
   height: 7px;

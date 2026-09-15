@@ -70,8 +70,13 @@ public:
     WorkerPool(const WorkerPool&) = delete;
     WorkerPool& operator=(const WorkerPool&) = delete;
 
-    /// 有几个工作进程。阶段那一层拿它当并发上限。
+    /// 有几个工作进程。
     std::size_t size() const;
+
+    /// 阶段那一层该开几路并发：每个工作进程一路，**跨机的再多一路**——
+    /// 那一路用来在取上一镜产物的同时把下一镜派出去。算法在
+    /// worker_roster.hpp 的 pool_lanes，那儿能测。
+    std::size_t lanes() const;
 
     /// 挨个 ping 一遍，回活着的个数。起跑前查一次，
     /// **别等跑到一半才发现有一个是死的**。
@@ -105,6 +110,24 @@ private:
 std::shared_ptr<WorkerPool> make_worker_pool(
     const std::vector<std::string>& endpoints, const std::string& token = {},
     LocalRunner local_runner = {},
+    std::map<std::string, std::string> pick = {});
+
+/// 同上，但**每台带自己的口令**。
+///
+/// 上面那个重载把同一个口令发给所有地址，注释里写的理由是"都是自己的机器"。
+/// 但配置格式里每台可以单独写（`[[peer.nodes]].token`），探活那条也一直是
+/// **先用这台自己的、没有才退回全局**（node_registry.cpp），而界面上
+/// 「加一台机器」收的就是这台自己的口令。三处里只有派活用的是全局那个。
+///
+/// 后果实测到了（2026-09-15）：给一台机器单独设口令之后，它在表上是
+/// 在线的、五项能力全绿，一派活就
+///
+///     配音失败：工作进程拒了这个任务（401）：口令不对或者没带
+///
+/// ——**看得见、永远派不动**。而公网绑定又强制要求设口令
+/// （`refuse_to_listen`），推荐的安全配置恰好就是坏掉的那一种。
+std::shared_ptr<WorkerPool> make_worker_pool(
+    std::vector<WorkerEndpoint> endpoints, LocalRunner local_runner = {},
     std::map<std::string, std::string> pick = {});
 
 }  // namespace changji::infer

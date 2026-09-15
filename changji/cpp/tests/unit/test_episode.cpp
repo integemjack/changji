@@ -585,9 +585,10 @@ TEST_CASE("开始渲染时报的是档位表里的分辨率") {
     run_it(store, opts, rec, tok, &msgs);
 
     const auto spec = make_profile().tiers.at(models::Tier::DRAFT);
+    // 步数不在这句里：跨机时由干活那台按自己有没有 Turbo 定，这台算的
+    // 数可能是错的（2026-09-16 这句写着 20 步、远程实际 6 步）。
     const std::string want = std::to_string(spec.width) + "x" +
-                             std::to_string(spec.height) + " " +
-                             std::to_string(spec.steps) + " 步";
+                             std::to_string(spec.height);
     bool found = false;
     for (const auto& m : msgs) {
         if (m.dump().find(want) != std::string::npos) found = true;

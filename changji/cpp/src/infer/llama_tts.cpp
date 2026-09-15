@@ -7,6 +7,7 @@
 #ifdef CHANGJI_HAVE_LLAMA
 #include <fstream>
 
+#include "common.h"   // common_cpu_get_num_math
 #include "llama.h"
 #include "mtmd-helper.h"
 #include "mtmd.h"
@@ -19,6 +20,21 @@ namespace changji::infer {
 #ifdef CHANGJI_HAVE_LLAMA
 
 namespace {
+
+/// 这台机器上跑 ggml 该开几个线程。0 = 问不出来，调用方保留上游默认值。
+///
+/// **骨干、解码器、体检那句话三处共用一份**：三处各调一次的话，将来谁改了
+/// 其中一处，屏幕上写的线程数和真正在跑的就对不上——而那正是这一行原来的
+/// 毛病（体检印 `mtmd_context_params_default().n_threads`、跑的是别的数）。
+///
+/// `common_cpu_get_num_math()` 不是"逻辑核数"：x86 混合核上它只数性能核，
+/// 苹果芯片上同理，别的情况回物理核数。拿逻辑核数（`hardware_concurrency`）
+/// 去跑 ggml 通常比物理核数还慢。
+int ggml_threads() {
+    const int n = common_cpu_get_num_math();
+    return n > 0 ? n : 0;
+}
+
 
 /// llama.cpp 的后端只需要初始化一次，而且**不在这里 free**。
 ///
@@ -50,8 +66,13 @@ LlamaTtsProbe probe_llama_tts() {
         return out;
     }
     out.ok = true;
-    out.detail = std::string("mtmd 已链入，媒体标记 ") + marker + "，默认 " +
-                 std::to_string(p.n_threads) + " 线程";
+    // **报真正会用的那个数，不是上游的默认值。**
+    // 这里原来印的是 `mtmd_context_params_default().n_threads`，也就是
+    // 写死的 4——而跑起来用的是下面 make() 里按核数设的那个。两个数不一样，
+    // 体检上写着 4、实际跑 16，这一行就是在骗人。
+    const int n = ggml_threads();
+    out.detail = std::string("mtmd 已链入，媒体标记 ") + marker + "，" +
+                 std::to_string(n > 0 ? n : p.n_threads) + " 线程";
     return out;
 }
 
@@ -144,6 +165,30 @@ std::unique_ptr<LlamaTts> LlamaTts::load(const std::filesystem::path& backbone,
     // 一旦哪个模型的 hparams 带了池化类型，这条路就悄悄取到别的东西。
     // 显式写死，不赌默认值。
     cp.pooling_type = LLAMA_POOLING_TYPE_NONE;
+
+    // **线程数按这台机器的核数来，别用 llama 的默认值。**
+    //
+    // `llama_context_default_params()` 给的 n_threads 和 n_threads_batch
+    // 都是 `GGML_DEFAULT_N_THREADS`，也就是**写死的 4**（ggml.h:232，
+    // 上游自己在那一行标着 `TODO: better default`）。这里原来一个都没覆盖。
+    //
+    // 有显卡时无所谓——层全 offload 到 GPU（上面 n_gpu_layers = 999）。
+    // **没显卡时这就是实打实的四分之一**：2026-09-15 在一台 16 核的机器上
+    // 实测，配音那一步只有 4 个核在动，而同一台机器出图那条走的是 sd.cpp
+    // 的 `n_threads = -1`，被解析成物理核数（sd.cpp 的
+    // `n_threads > 0 ? n_threads : sd_get_num_physical_cores()`），满载。
+    // 同一个进程里两条路差着四倍，纯粹是因为这儿漏了一行。
+    //
+    // 而发布的六个 CPU 包面向的正是没有显卡的机器——这一行对它们不是优化，
+    // 是把本来就该用上的算力用上。
+    //
+    // 用 common 那个而不是 `hardware_concurrency()`：后者数的是逻辑核，
+    // 超线程机器上拿逻辑核数去跑 ggml 通常比物理核数还慢。
+    if (const int n = ggml_threads(); n > 0) {
+        cp.n_threads = n;
+        cp.n_threads_batch = n;
+    }
+
     im.lctx = llama_init_from_model(im.model, cp);
     if (im.lctx == nullptr) {
         why = "建不出 llama context";
@@ -152,6 +197,10 @@ std::unique_ptr<LlamaTts> LlamaTts::load(const std::filesystem::path& backbone,
 
     mtmd_context_params mtp = mtmd_context_params_default();
     mtp.use_gpu = use_gpu;
+    // **解码器这半也要，理由同上面那段。** 骨干和解码器是两个上下文，
+    // 各自带一份 n_threads，都默认 4。只改骨干那一个的话，一句话里
+    // 前半段满载、后半段还在四个核上爬。
+    if (const int n = ggml_threads(); n > 0) mtp.n_threads = n;
     im.mctx = mtmd_init_from_file(paths::to_utf8(mmproj).c_str(), im.model, mtp);
     if (im.mctx == nullptr) {
         why = "解码器载不起来：" + paths::to_utf8(mmproj);

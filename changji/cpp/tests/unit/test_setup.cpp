@@ -569,3 +569,42 @@ TEST_CASE("同时下几个：按下载器分档，能用环境变量压回去") 
         CHECK(parallel_lanes(10, "curl") == 4);   // 认不出就按默认
     }
 }
+
+TEST_CASE("下全了没改名的 .part 启动时收编") {
+    // 父进程被杀、孤儿 curl 把文件写完：盘上是一个字节不差的 .part，
+    // 而"这台有没有这个模型"问的是正式名字。见 adopt_finished_parts。
+    namespace fs = std::filesystem;
+    const auto& groups = setup::catalog();
+    REQUIRE(!groups.empty());
+    // 挑整张表里最小的那个文件，稀疏文件撑到它的字节数
+    const setup::FileSpec* pick = nullptr;
+    for (const auto& g : groups)
+        for (const auto& o : g.options)
+            for (const auto& f : o.files)
+                if (f.bytes > 0 && (!pick || f.bytes < pick->bytes)) pick = &f;
+    REQUIRE(pick != nullptr);
+
+    const fs::path dir = fs::temp_directory_path() / "changji_收编part";
+    fs::remove_all(dir);
+    fs::create_directories(dir);
+    const fs::path dest = dir / pick->name;
+    fs::create_directories(dest.parent_path());
+    const fs::path part = dest.parent_path() / (dest.filename().string() + ".part");
+
+    SUBCASE("字节数恰好对上：改名") {
+        { std::ofstream(part, std::ios::binary).put('x'); }
+        fs::resize_file(part, pick->bytes);
+        CHECK(setup::adopt_finished_parts(dir) == 1);
+        CHECK(fs::exists(dest));
+        CHECK_FALSE(fs::exists(part));
+        CHECK(fs::file_size(dest) == pick->bytes);
+    }
+    SUBCASE("少了一个字节：不碰，留给续传") {
+        { std::ofstream(part, std::ios::binary).put('x'); }
+        fs::resize_file(part, pick->bytes - 1);
+        CHECK(setup::adopt_finished_parts(dir) == 0);
+        CHECK(fs::exists(part));
+        CHECK_FALSE(fs::exists(dest));
+    }
+    fs::remove_all(dir);
+}

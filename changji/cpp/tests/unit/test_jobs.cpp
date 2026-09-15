@@ -962,8 +962,8 @@ TEST_CASE("借槽那一下：只报「正在准备」，不挂空进度条") {
     // 牌子上就是一动不动——用户看到的是"卡死了"，而实际上正是他要的
     // "点击出片清理掉大模型"在发生。
     //
-    // 所以这一下要报一条 shot_prep=true、**但没有步数**的事件：
-    //   有 shot_prep  → 牌子上写「正在准备模型」
+    // 所以这一下要报一条 shot_phase="prep"、**但没有步数**的事件：
+    //   有 shot_phase=prep → 牌子上写「正在准备模型」
     //   没有 shot_steps → 进度条不画（补个 0 会让每张牌挂一条永远空着的槽）
     changji::pipeline::JobTable table;
     std::vector<nlohmann::json> msgs;
@@ -978,7 +978,7 @@ TEST_CASE("借槽那一下：只报「正在准备」，不挂空进度条") {
         prep.shot_id = "sh9";
         prep.shot_step = 0;
         prep.shot_steps = 0;      // 还没进采样
-        prep.shot_prep = true;
+        prep.shot_phase = "prep";
         p.report(prep);
     });
     table.wait_idle();
@@ -987,7 +987,7 @@ TEST_CASE("借槽那一下：只报「正在准备」，不挂空进度条") {
         return m.value("shot_id", "") == "sh9";
     });
     REQUIRE(it != msgs.end());
-    CHECK(it->value("shot_prep", false) == true);
+    CHECK(it->value("shot_phase", "") == "prep");
     // 步数一个都不许带——带了牌子上就多一条空槽。
     CHECK(it->find("shot_steps") == it->end());
     CHECK(it->find("shot_step") == it->end());

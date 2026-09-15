@@ -66,9 +66,25 @@ describe('设置里能加远程机器', () => {
     expect(ui).toMatch(/api\.removeNode\(/)
   })
 
-  it('本机那一行不给「不用了」', () => {
-    const cell = ui.slice(ui.indexOf('removeNode(n)') - 600, ui.indexOf('removeNode(n)'))
-    expect(cell, '删那颗没挡住本机').toMatch(/v-if="!n\.local"/)
+  it('本机那一行不给删', () => {
+    // **钉的是那颗按钮上的守卫，不是 removeNode 的调用点。**
+    // 2026-09-15 删改成了弹窗确认：行里那颗垃圾桶只负责把 confirming 指到
+    // 这一台（`confirming = n.url`），真正的 removeNode 由弹窗里的「删除」
+    // 调、拿的是 confirmNode——原来那句按 `removeNode(n)` 往前数 600 个
+    // 字符找守卫，从此找不到那个串，indexOf 回 -1、slice 切到文件末尾的
+    // CSS 上，报的是"删那颗没挡住本机"，而实际上挡得好好的。
+    const at = ui.indexOf("confirming = n.url")
+    expect(at, '行里那颗删按钮不见了').toBeGreaterThan(0)
+    const btn = ui.slice(ui.lastIndexOf('<button', at), at)
+    expect(btn, '删那颗没挡住本机').toMatch(/v-if="!n\.local"/)
+  })
+
+  it('删要先问一句，而且问的是弹窗', () => {
+    // 行内确认会把「机器」那一列挤窄、整张表横着溢出，见 NodeMatrix 里
+    // 那段注释。判据两条：有一层遮罩，且遮罩里那颗才叫 removeNode。
+    expect(MATRIX, '没有确认弹窗').toMatch(/confirmNode[\s\S]{0,400}class="mask"/)
+    expect(MATRIX, '垃圾桶那颗直接就删了').not.toMatch(/@click="removeNode\(n\)"/)
+    expect(MATRIX, '弹窗里没有真正执行删除的那颗').toMatch(/removeNode\(confirmNode\)/)
   })
 
   it('加失败不关那个框', () => {

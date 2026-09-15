@@ -88,6 +88,14 @@ bool is_hero_shot(const Shot& shot, bool first, bool last) {
     return false;
 }
 
+bool take_good_enough(const gates::GateResult& r) {
+    if (!r.ok()) return false;
+    if (r.metrics.count("cut_inside") != 0) return false;
+    const auto it = r.metrics.find("motion_mean");
+    if (it == r.metrics.end()) return true;   // 闸门没量运动：过了就算干净
+    return it->second >= 0.8 && it->second <= 15.0;
+}
+
 std::size_t pick_take(const std::vector<gates::GateResult>& results) {
     const auto score = [](const gates::GateResult& r) {
         double s = r.ok() ? 100.0 : 0.0;
@@ -202,7 +210,7 @@ std::vector<RenderOutcome> render_batch(std::vector<Shot*>& shots,
             // 21/22 那个百分比。默认 0，只有采样回调那条会填。
             const auto say = [&](const char* kind, const std::string& msg,
                                  int shot_step = 0, int shot_steps = 0,
-                                 bool shot_prep = false) {
+                                 infer::Phase phase = infer::Phase::Sample) {
                 pipeline::Event e;
                 e.stage = stage_name;
                 e.kind = kind;
@@ -212,7 +220,11 @@ std::vector<RenderOutcome> render_batch(std::vector<Shot*>& shots,
                 e.message = msg;
                 e.shot_step = shot_step;
                 e.shot_steps = shot_steps;
-                e.shot_prep = shot_prep;
+                // 只有带步数、或者明说在准备的那条才标阶段；
+                // 别的事件（shot_done、warn）没有阶段这回事。
+                if (shot_steps > 0 || phase == infer::Phase::Prep) {
+                    e.shot_phase = infer::phase_name(phase);
+                }
                 progress.report(e);
             };
 
@@ -269,29 +281,17 @@ std::vector<RenderOutcome> render_batch(std::vector<Shot*>& shots,
                     // **并发时几镜同时报**，靠 Event 里的 shot_id 分得开；
                     // JobProgress::report 自己有锁。
                     const auto on_step = [&](int step, int steps, double,
-                                             bool loading) {
+                                             infer::Phase phase) {
+                        // 三种阶段的文案在 infer::phase_note 里，和 frames.cpp
+                        // 共用。第一个采样步上把"卸没卸大模型"带出来，那是
+                        // 用户点完出片最想知道的一件事，而它以前只在设置页上。
                         say("progress",
-                            // 不是采样的那些阶段（搬权重、VAE 分块解码、
-                            // 首次载权重）分不开，所以只说"准备"，
-                            // 别说"加载模型"——那会让人以为每镜都重载。
-                            // steps == 0：还没开始采样，正在腾显存 / 装模型。
-                            // 这一支没有步数，写"准备 0/0"只会让人以为出错了。
-                            (loading && steps == 0)
-                                ? "出视频 " + local.shot_id + "（正在准备模型，可能要先腾出显存）"
-                            : loading ? "出视频 " + local.shot_id + "（准备 " +
-                                          std::to_string(step) + "/" +
-                                          std::to_string(steps) + "）"
-                                    : "出视频 " + local.shot_id + "（第 " +
-                                          std::to_string(step) + "/" +
-                                          std::to_string(steps) + " 步）" +
-                                          // 见 frames.cpp 里同样这一处：
-                                          // 第一步上把"卸没卸大模型"带出来，
-                                          // 那是用户点完出片最想知道的一件事，
-                                          // 而它以前只在设置页上。
-                                          (step == 1 ? room_note_suffix(
-                                                           infer::Slot::Video)
-                                                     : std::string{}),
-                            step, steps, loading);
+                            "出视频 " + local.shot_id +
+                                infer::phase_note(phase, step, steps) +
+                                (phase == infer::Phase::Sample && step == 1
+                                     ? room_note_suffix(infer::Slot::Video)
+                                     : std::string{}),
+                            step, steps, phase);
                     };
 
                     // ---- 尾帧串镜 ----
@@ -350,10 +350,12 @@ std::vector<RenderOutcome> render_batch(std::vector<Shot*>& shots,
                         if (fs::is_regular_file(ef, eec)) plan.end_image = ef;
                     }
 
-                    // ---- 关键镜头多出几条挑 ----
+                    // ---- 关键镜头第一条不干净时多出几条挑 ----
                     //
                     // 每条换一个种子（attempts 拉开 100，别和重试的 +1 撞上），
                     // 各过一遍闸门，按 pick_take 留一条。要闸门在才有依据挑。
+                    // **第一条就干净的话到此为止**（take_good_enough）：
+                    // 无条件出两条是整集时间翻倍。
                     const int takes =
                         (gate.check &&
                          is_hero_shot(local, i == 0, i == total - 1))
@@ -369,12 +371,15 @@ std::vector<RenderOutcome> render_batch(std::vector<Shot*>& shots,
                                 dest.parent_path() /
                                 paths::from_utf8(local.shot_id + "_take" +
                                                  std::to_string(k + 1) + ".mp4");
-                            say("progress", "出视频 " + local.shot_id + "（第 " +
-                                                std::to_string(k + 1) + "/" +
-                                                std::to_string(takes) + " 条）");
+                            // 第一条不说"1/2"——多半到它就完了；补出来的才说
+                            say("progress", "出视频 " + local.shot_id +
+                                                (k == 0 ? std::string{}
+                                                        : "（补第 " + std::to_string(k + 1) +
+                                                              " 条）"));
                             render(take, plan, start, d, tok, on_step);
                             files.push_back(d);
                             results.push_back(gate.check(take, d, plan));
+                            if (take_good_enough(results.back())) break;
                         }
                         const std::size_t best = pick_take(results);
                         std::error_code rec;
@@ -387,10 +392,14 @@ std::vector<RenderOutcome> render_batch(std::vector<Shot*>& shots,
                         }
                         for (const fs::path& f : files) fs::remove(f, rec);
                         picked = results[best];
-                        say("info", local.shot_id + " 出了 " +
-                                        std::to_string(takes) + " 条，留第 " +
-                                        std::to_string(best + 1) + " 条" +
-                                        gates::motion_note(*picked));
+                        // 只出了一条就没什么可说的，闸门那句自己会说
+                        if (results.size() > 1) {
+                            say("info", local.shot_id + " 出了 " +
+                                            std::to_string(results.size()) +
+                                            " 条，留第 " +
+                                            std::to_string(best + 1) + " 条" +
+                                            gates::motion_note(*picked));
+                        }
                     } else {
                         render(local, plan, start, dest, tok, on_step);
                     }
