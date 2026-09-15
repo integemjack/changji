@@ -1307,3 +1307,31 @@ TEST_CASE("摘掉会把主体带出画的动作：闸门判出片中硬切之后
     CHECK(defuse_motion(all_bad) == all_bad);
     CHECK(defuse_motion("").empty());
 }
+
+TEST_CASE("排分镜时就把进画出画摘掉，不等崩了再补救") {
+    // 提示词第 6 条明令禁止，但三集实测残留 1/18，而残留的那一条照样崩
+    // （ep04_sh009「曾老板走向门口」五秒换了一间屋子一个人）。闸门量的是
+    // 相邻帧差、只抓得住硬切，渐变漂移放行——所以在这儿就让它没得选。
+    const models::AssetLibrary a = test_assets();
+    const std::string raw = R"({"shots":[
+      {"shot_id":"ep01_sh001","scene_id":"s1","order":0,"duration_s":5,
+       "first_frame_prompt":"画面",
+       "motion_prompt":"[0-5秒] 曾老板走向门口，宋律师说话，镜头轻微向右平移",
+       "shot_size":"MS","camera_move":"pan_right","camera_angle":"eye_level",
+       "lens":"normal","lighting":"夜里，窗外霓虹侧后方打过来，硬",
+       "characters":[{"char_id":"c_lin_wan"}],"dialogue":[]},
+      {"shot_id":"ep01_sh002","scene_id":"s1","order":1,"duration_s":3,
+       "first_frame_prompt":"画面","motion_prompt":"[0-3秒] 雨点砸在窗上，越来越密",
+       "shot_size":"MS","camera_move":"static","camera_angle":"eye_level",
+       "lens":"normal","lighting":"夜里，窗外霓虹侧后方打过来，硬",
+       "characters":[],"dialogue":[]}]})";
+    const auto shots = stages::parse_storyboard(raw, a);
+    REQUIRE(shots.size() == 2);
+    // 「走向门口」摘掉了，时间码留着，别的分句一个不少
+    CHECK(shots[0].motion_prompt.find("走向门口") == std::string::npos);
+    CHECK(shots[0].motion_prompt.find("[0-5秒]") != std::string::npos);
+    CHECK(shots[0].motion_prompt.find("宋律师说话") != std::string::npos);
+    CHECK(shots[0].motion_prompt.find("镜头轻微向右平移") != std::string::npos);
+    // 干净的一个字不动
+    CHECK(shots[1].motion_prompt == "[0-3秒] 雨点砸在窗上，越来越密");
+}
