@@ -471,6 +471,7 @@ async function save() {
         :budget-chars="draft.budget_chars ?? 0"
         :fit="draft.fit ?? ''"
         :dialogue-chars="draft.dialogue_chars ?? 0"
+        :speakers="draft.speakers ?? []"
       />
     </section>
 

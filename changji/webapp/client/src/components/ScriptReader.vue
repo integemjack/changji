@@ -55,6 +55,26 @@ const props = defineProps({
    * 这边猜的——那儿本来就写着「约」，而且分段的数引擎没有。
    */
   dialogueChars: { type: Number, default: 0 },
+  /**
+   * 现成的说话人名单。给了就**只认名单里的**，不再靠猜。
+   *
+   * 和 `fit`、`dialogueChars` 是同一族：真身在引擎的结构化拍子上
+   * （`ScriptDraft::speakers()` 只收 `kind == "dialogue"` 那几条的
+   * speaker），这一页是把渲染好的文本再解析回来猜——「冒号在前 12 个字
+   * 以内、名字里没有逗号句号」。
+   *
+   * 猜错的那一类很具体：「字幕：三年后」「画外音：他没回头」这类**带冒号
+   * 的描写行**会被当成台词。后果不只是数字虚高（那一半 dialogueChars 已经
+   * 接过来了），还有**画面上的**：那一行会按台词排版、「字幕」会进说话人
+   * 图例当成一个角色、每一段那句「N 句 · 对白约 N 秒」也跟着错。
+   *
+   * 名单是安全的：`render()` 写台词行用的就是 `b.speaker`，而 `speakers()`
+   * 收的正是同一批——每一行 `名字：台词` 的名字必定在名单里，不会有真台词
+   * 被这条判成描写。
+   *
+   * 引擎没给名单时（存下来的剧本那条路 `/api/script` 不回它）照旧靠猜。
+   */
+  speakers: { type: Array, default: () => [] },
 })
 
 /** 台词说话人的配色。同一个人从头到尾同一个颜色，扫一眼就认得出。 */
@@ -110,6 +130,7 @@ const SCENE = /^【第(\d+)场\s*(?:[·：，、:,-]\s*)?([^【】]*?)\s*】$/
 const asciiTrim = (s) => s.replace(/^[\t\n\v\f\r ]+|[\t\n\v\f\r ]+$/g, '')
 
 const parsed = computed(() => {
+  const known = new Set(props.speakers.map((x) => String(x).trim()).filter(Boolean))
   const speakers = new Map()
   const sections = []
   let cur = null
@@ -142,8 +163,10 @@ const parsed = computed(() => {
     // 全角冒号是引擎渲染时固定用的；半角一并认，手改的剧本常打成半角
     const at = line.search(/[：:]/)
     const name = at > 0 ? line.slice(0, at).trim() : ''
-    // 名字那一段太长就不是说话人，是一句带冒号的描写
-    const isDialogue = at > 0 && at <= 12 && !name.includes('，') && !name.includes('。')
+    // 有名单就按名单认，没有才退回猜。见 speakers 那条 prop。
+    const isDialogue = known.size
+      ? at > 0 && known.has(name)
+      : at > 0 && at <= 12 && !name.includes('，') && !name.includes('。')
     if (isDialogue) {
       if (!speakers.has(name)) speakers.set(name, HUES[speakers.size % HUES.length])
       section().blocks.push({ kind: 'dialogue', name, text: line.slice(at + 1).trim() })
