@@ -313,8 +313,8 @@ std::vector<FrameOutcome> run_frames(std::vector<Shot*>& shots,
             done[i].elapsed_s = now_seconds() - started;
 
             // **出完一镜就落一次盘。** 不落的话这一批（一集二十二镜）
-            // 跑完之前，制作页问到的永远是开跑那一刻的样子——
-            // 镜头墙上一张缩略图都没有。
+            // 跑完之前，镜头墙问到的永远是开跑那一刻的样子——
+            // 一张缩略图都没有。
             if (commit) {
                 std::lock_guard<std::mutex> lg(commit_mu);
                 apply(i);

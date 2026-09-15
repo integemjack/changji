@@ -87,7 +87,7 @@ FrameRenderer sd_renderer_with_seed(const config::Settings& settings,
 /// 写回 `frame_path` / `status` / `attempts` 一律等全部收完之后
 /// 在调用线程上顺序做。这条守住，"单一写者"就不破。
 ///
-/// 多卡时取工作进程数：`FrameStage` 那一层不知道有几张卡，
+/// 多卡时取工作进程数：出首帧那一层不知道有几张卡，
 /// 但它知道池里有几个。
 std::vector<FrameOutcome> run_frames(
     std::vector<models::Shot*>& shots,

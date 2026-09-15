@@ -451,7 +451,7 @@ std::vector<RenderOutcome> render_batch(std::vector<Shot*>& shots,
             done[i].elapsed_s = now_seconds() - started;
 
             // **出完一镜就落一次盘。** 一集二十二镜、一镜两分钟，
-            // 不落的话这一个小时里制作页看到的还是开跑那一刻：
+            // 不落的话这一个小时里镜头墙上看到的还是开跑那一刻：
             // 没有能点开看的片子，而那正是用户要的。
             // 进程被杀掉时更糟——mp4 躺在磁盘上，project.json 一条没记。
             //

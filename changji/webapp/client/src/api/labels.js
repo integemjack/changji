@@ -129,7 +129,7 @@ export const ACT_LABELS = [
 ]
 
 /**
- * 流水线阶段。制作页的进度条和事件流用。
+ * 流水线阶段。顶栏那块「AI 作业中」和镜头墙上的进度用（三处消费者见下）。
  *
  * **键必须是引擎的 `stage`，不是 `kind`。** 三处消费者
  * （JobBadge、useShots、run store）查的都是 `x.stage`，而引擎那边
