@@ -89,6 +89,27 @@ bool Hub::should_throttle(const std::string& job_id, const std::string& type,
     // 「生成中」直到用户手动刷新——比进度条不流畅严重得多。
     if (type != "progress") return false;
 
+    // **每一镜的"落定"也是完成消息，同上。**
+    //
+    // 上面那条只挡住了**整个任务**的完成（type = done / error）。而一镜跑完
+    // 报的是 `{type: "progress", kind: "shot_done"}`——type 仍是 progress
+    // （jobs.cpp 里 `ev.kind == "error" ? "error" : "progress"`，只分两种），
+    // 于是它落进下面的节流里，和**别的镜头的 shot_done** 抢同一个 200ms
+    // 的槽（key 是 `job_id|kind`，同 kind 共桶）。
+    //
+    // 而镜头是并发跑的（render.cpp 那句「并发时序号先到的未必先跑完」，
+    // 上面 kind 那段也写着「多卡之后六镜同时在跑」）。两镜前后脚跑完，
+    // 后一条 shot_done 就被丢了——而界面上删掉那张牌的**唯一**依据就是它
+    // （run store 的 trackInflight：`kind === 'progress'` 更新，否则
+    // `next.delete(msg.shot_id)`），于是那一镜明明跑完了，牌子还写着
+    // 「生成中」，一直挂到换阶段（trackInflight 里那道兜底才清）。
+    // 正是上面那句话描述的毛病，只是发生在镜头这一级。
+    //
+    // 放行不会带来量：这几种 kind 都是**一镜一条**（shot_done / gate /
+    // warn / eta）或者一段一条（start / done / info），不像 progress 和
+    // preview 是一步一条。真正要挡的从来只有那两条流。
+    if (!kind.empty() && kind != "progress" && kind != "preview") return false;
+
     // **按"流"分桶，不只按 job_id。** 采样进度（kind=progress）和预览图
     // （kind=preview）都用 type=progress 广播，但它们是两条独立的流：
     // 一条几十字节、要跟得上步数，一条几十 KB、够看个大概就行。
