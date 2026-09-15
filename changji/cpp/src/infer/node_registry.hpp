@@ -53,4 +53,8 @@ NodeRegistry& node_registry();
 /// 的线索**，界面上悬停就能看见。
 nlohmann::json nodes_json(const config::Settings& s);
 
+/// 同上，但**不问任何机器**：拼那张表这一段是纯的，单独拎出来好撞。
+/// 上面那个 = `snapshot()` 去问一圈 + 这个。
+nlohmann::json nodes_json(const std::vector<NodeState>& nodes);
+
 }  // namespace changji::infer

@@ -1046,6 +1046,7 @@ if(CHANGJI_BUILD_TESTS)
         tests/unit/test_peer_auth.cpp
         tests/unit/test_blob.cpp
         tests/unit/test_node_pick.cpp
+        tests/unit/test_node_table.cpp
         tests/unit/test_flow.cpp
         tests/unit/test_webapp.cpp
         tests/unit/test_shot.cpp

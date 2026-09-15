@@ -54,7 +54,11 @@ NodeState local_node(const config::Settings& s) {
     n.url = "local";
     const auto facts = probe_facts(s);
     for (const auto& r : capabilities_of(facts)) {
-        if (r.able) n.able.insert(r.cap);
+        if (r.able) {
+            n.able.insert(r.cap);
+        } else {
+            n.why[r.cap] = r.why;
+        }
     }
     n.online = true;   // 自己总是在线的
     n.busy = local_exec().busy();
@@ -137,10 +141,15 @@ void NodeRegistry::refresh(const config::Settings& s) {
                 if (js.contains("capabilities") &&
                     js["capabilities"].is_array()) {
                     for (const auto& item : js["capabilities"]) {
-                        if (!item.value("able", false)) continue;
-                        if (const auto c =
-                                capability_from(item.value("cap", ""))) {
+                        const auto c = capability_from(item.value("cap", ""));
+                        if (!c) continue;
+                        if (item.value("able", false)) {
                             n.able.insert(*c);
+                        } else {
+                            // **那句话得跟着一起过来。** 它是那台自己算的
+                            // （缺哪个文件、编没编进去，只有它知道），这边
+                            // 除了原样传没有别的办法补出来。
+                            n.why[*c] = item.value("why", std::string());
                         }
                     }
                 }
@@ -163,8 +172,10 @@ NodeRegistry& node_registry() {
 }
 
 json nodes_json(const config::Settings& s) {
-    const auto nodes = node_registry().snapshot(s);
+    return nodes_json(node_registry().snapshot(s));
+}
 
+json nodes_json(const std::vector<NodeState>& nodes) {
     json rows = json::array();
     for (const NodeState& n : nodes) {
         json caps = json::array();
@@ -174,10 +185,22 @@ json nodes_json(const config::Settings& s) {
             // 三态：干不了（灰）／能干但你关了（空心）／参与调度（实心）。
             // 界面照这个画，不自己推。
             const bool locked = n.off_locked.count(c) != 0;
+            // 干不了时那句话。整台连不上的时候每一格都是那句连接错误
+            // ——那台自己没能开口，问不出更细的。
+            std::string why;
+            if (!able) {
+                const auto it = n.why.find(c);
+                why = it != n.why.end() && !it->second.empty() ? it->second
+                      : !n.online                             ? n.error
+                                                              : std::string();
+            }
             caps.push_back({{"cap", to_string(c)},
                             {"label", label_of(c)},
                             {"able", able},
                             {"off", off},
+                            // 干不了时为什么。**界面上那个灰格子除了"灰"
+                            // 以外什么都不说，这句话是用户唯一的线索。**
+                            {"why", why},
                             // 配置文件关的，界面上点不动
                             {"locked", locked},
                             {"on", able && off == false && n.online}});
