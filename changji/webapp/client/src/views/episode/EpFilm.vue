@@ -220,7 +220,19 @@ async function loadShots() {
   }
 }
 
-watch(() => [session.projectPath, session.episodeId], load, { immediate: true })
+/**
+ * 换剧、换集要重拉。
+ *
+ * **不带 `immediate`**：这一格被 KeepAlive 冻着，头一次挂上来的时候
+ * `onActivated(load)` 已经跑了一趟（Vue 对 KeepAlive 里的组件，初次挂载也
+ * 会触发 activated）。两边都跑的结果是进这一格就发两遍 `/api/outputs`，
+ * 而读砸的时候屏幕上是**两条一模一样的红字**——那一页自己已经摆着
+ * 「读不到这部剧的成片」那一屏了，红字还来两条。
+ *
+ * ⚠️ 这一条指望着上面那句 `onActivated`：哪天这一格不再被 KeepAlive 包着，
+ * 它就不会在挂载时触发，这儿得换回 `immediate`。
+ */
+watch(() => [session.projectPath, session.episodeId], load)
 /**
  * 那一轮跑完，片子就是这一刻落盘的——这一页要自己看见。
  *

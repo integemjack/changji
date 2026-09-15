@@ -147,3 +147,23 @@ describe('镜头页：项目没读回来时那行「还没有角色和场景」'
     expect(body).toContain('session.locations.length')
   })
 })
+
+/**
+ * 成片页读砸了，屏幕上是**两条一模一样的红字**。
+ *
+ * 那一格被 KeepAlive 冻着，进来时靠 `onActivated(load)` 重拉；而底下那条
+ * 换剧换集的 watch 原来还带着 `immediate: true`——Vue 对 KeepAlive 里的
+ * 组件初次挂载也会触发 activated，于是两边都跑，进这一格发两遍
+ * `/api/outputs`、`ui.error` 也弹两次。那一页自己已经摆着「读不到这部剧的
+ * 成片」那一屏了。
+ */
+describe('成片页：进这一格只该读一遍', () => {
+  const view = read('views/episode/EpFilm.vue')
+
+  it('挂载那一趟交给 onActivated，watch 不要再 immediate 一次', () => {
+    expect(view).toContain('onActivated(load)')
+    const at = view.indexOf('watch(() => [session.projectPath, session.episodeId], load')
+    expect(at, '换剧换集那条 watch 不见了').toBeGreaterThan(0)
+    expect(view.slice(at, at + 120)).not.toContain('immediate')
+  })
+})
