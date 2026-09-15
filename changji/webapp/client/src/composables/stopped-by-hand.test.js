@@ -58,20 +58,35 @@ describe('stoppedByHand', () => {
 describe('按停之后留下的那几个字', () => {
   const STORY = read('../views/StoryView.vue')
 
+  /**
+   * 按停那一支的开头。
+   *
+   * **按分支名找，别按 `buf[chapterId] = acc` 找。** 那一句在这个文件里
+   * 出现三次：流式一边收一边画、按停留下、断线留下（story-lost-link）。
+   * 原来这两条用的是 `lastIndexOf`，断线那一支加进来之后就指错了地方
+   * ——用例当场红给我看了，好过悄悄测着另一段。
+   */
+  const BY_HAND = STORY.indexOf(
+    'if (byHand && acc.trim()) {',
+    STORY.indexOf('async function writeChapter('),
+  )
+
   it('写正文：先留、后退——两条分支的顺序不能反', () => {
     // 反了的话按停就走进"写砸了"那一支，流出来的字被原样清掉，
     // 而那正是这条用例要挡的事。
-    // 最后那一处才是收尾里的；前面还有一处是流式一边收一边画。
-    const keep = STORY.lastIndexOf('buf[chapterId] = acc')
-    const drop = STORY.indexOf('buf[chapterId] = had')
+    const keep = STORY.indexOf('buf[chapterId] = acc', BY_HAND)
+    const drop = STORY.indexOf('// 写砸了：把流出来那半截清掉')
+    expect(BY_HAND).toBeGreaterThan(0)
     expect(keep).toBeGreaterThan(0)
     expect(drop).toBeGreaterThan(0)
     expect(keep).toBeLessThan(drop)
   })
 
   it('写正文：留下来的那份要存，不然刷一下就没了', () => {
-    const tail = STORY.slice(STORY.lastIndexOf('buf[chapterId] = acc'))
-    expect(tail.slice(0, 1200)).toContain('scheduleSave(chapterId, 0)')
+    // ⚠️ 只有**按停**这一支该存。断线那一支特意不存（那头可能已经写完
+    // 落库了，存半截等于盖掉完整那份），见 story-lost-link.test.js。
+    const tail = STORY.slice(BY_HAND, STORY.indexOf('if (lostLink', BY_HAND))
+    expect(tail).toContain('scheduleSave(chapterId, 0)')
   })
 
   it('改一段：留下来的同时要摆底稿，「撤销」才有东西可退', () => {

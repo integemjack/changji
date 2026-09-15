@@ -1176,6 +1176,18 @@ async function revise() {
   pending.value = { chapter_id: id, prev, origin: at, after: null }
   await paint('')
 
+  /**
+   * 这一趟是**连接断了**，不是改砸了。
+   *
+   * ⚠️ **声明必须在 openJobFeed 之前**：那个 onLost 可能在 await 里就叫，
+   * 摆在后面踩的是 TDZ，而且只在"刚好那一刻断了"才现。
+   *
+   * `openJobFeed` 的 onLost 只在"我们跟丢了"时叫：socket 掉了、信箱取不到、
+   * 引擎说完了而收尾那条没看见。这几种的共同点是**那头干没干完不知道**，
+   * 和"引擎明说改砸了"是两回事，而原来它俩走的是同一条收尾。
+   */
+  let lostLink = false
+
   feed = await openJobFeed(
     streamId,
     (msg) => {
@@ -1195,7 +1207,11 @@ async function revise() {
       else if (msg.type === 'job_error') settle({ ok: false, message: msg.message })
     },
     // 这条路断了：把等的人放出来，否则这一段会永远显示"改着…"
-    (message) => settle?.({ ok: false, message }),
+    // **记一笔它是"断了"而不是"改砸了"**——底下那两条收尾完全不一样。
+    (message) => {
+      lostLink = true
+      settle?.({ ok: false, message })
+    },
     { lost: '和引擎的连接断了，这一段改没改完不好说' },
   )
   live = feed.mode !== 'none'
@@ -1215,7 +1231,9 @@ async function revise() {
       result = fin.ok ? fin.result : null
       // 自己按的停别再红一次，理由同 writeChapter 那处。
       byHand = !fin.ok && stoppedByHand(fin.message)
-      if (!fin.ok && !byHand) ui.error(fin.message || '这一段没改成')
+      // 断线那条也别在这儿红一次：底下 `lostLink` 那一支说得更清楚，
+      // 还带着"该怎么办"。两条一起弹的话，人先看到的是红的那句。
+      if (!fin.ok && !byHand && !lostLink) ui.error(fin.message || '这一段没改成')
     }
   } finally {
     // 上面那句注释说的就是这一下。理由同 writeStory / writeChapter 那两处：
@@ -1235,6 +1253,34 @@ async function revise() {
       pending.value = { chapter_id: id, prev, origin: at, after: buf[id] }
       scheduleSave(id, 800)
       ui.info(`停下了，改出来的 ${[...acc].length} 字留着（不要就按撤销）`)
+      return
+    }
+    if (lostLink && acc.trim()) {
+      // **断线不是改砸了。** 上面那句话自己都说"改没改完不好说"，而原来
+      // 接着就把改出来的那一段清掉了——人盯着它改了半天，网抖一下全没。
+      //
+      // 留在编辑器里，但**不存**：那头可能已经改完并落库了，这会儿把半截
+      // 存回去等于拿它盖掉完整那份。按停那条敢存，是因为停是确定的
+      // ——引擎收到停就不会再写了。
+      pending.value = { chapter_id: id, prev, origin: at, after: buf[id] }
+      await nextTick()
+      fit(boxes[id])
+      ui.push(
+        'warn',
+        `连接断了。改出来的 ${[...acc].length} 字留在这儿了，但没存下去` +
+          `——那头可能已经改完了，刷新这一页看引擎那份；要丢就按撤销`,
+        12000,
+      )
+      return
+    }
+    if (lostLink) {
+      // 断了，而且一个字都没流出来。放回原样，但话要说清是"断了"不是
+      // "改砸了"——两者该做的事不一样（前者刷新看看，后者重来一次）。
+      buf[id] = prev
+      pending.value = null
+      await nextTick()
+      fit(boxes[id])
+      ui.warn('连接断了，这一段改没改完不好说。刷新这一页看引擎那份')
       return
     }
     // 改砸了，把清掉的那一段放回去
@@ -1884,6 +1930,12 @@ async function writeChapter(chapterId, overwrite = false) {
   // 新起一轮就重新跟上：上一轮里人滚上去看过，不该影响这一轮。
   stuck.value = true
 
+  /**
+   * 这一趟是**连接断了**，不是写砸了。理由同 reviseSelection 那处。
+   * 同样**必须声明在 openJobFeed 之前**（onLost 可能在 await 里就叫）。
+   */
+  let lostLink = false
+
   feed = await openJobFeed(
     streamId,
     async (msg) => {
@@ -1917,7 +1969,11 @@ async function writeChapter(chapterId, overwrite = false) {
     },
     // 这条路断了。**一定要把等的人放出来**，否则这一章会永远显示"写着…"，
     // 而那比报个错难受得多。
-    (message) => settle({ ok: false, message }),
+    // **记一笔它是"断了"而不是"写砸了"**——底下那两条收尾完全不一样。
+    (message) => {
+      lostLink = true
+      settle({ ok: false, message })
+    },
     { lost: '和引擎的连接断了，这一章写没写完不好说' },
   )
   live = feed.mode !== 'none'
@@ -1950,7 +2006,8 @@ async function writeChapter(chapterId, overwrite = false) {
       result = fin.ok ? fin.result : null
       // **自己按的停别再红一次。** 下面那一段负责说停在哪儿、留下了什么。
       byHand = !fin.ok && stoppedByHand(fin.message)
-      if (!fin.ok && !byHand) ui.error(fin.message || '这一章没写成')
+      // 断线那条也别在这儿红一次，理由同 reviseSelection 那处。
+      if (!fin.ok && !byHand && !lostLink) ui.error(fin.message || '这一章没写成')
     }
   } finally {
     // 理由同 writeStory 里那段：注释一直说"清在 finally 里"，而它原来不在。
@@ -1997,6 +2054,39 @@ async function writeChapter(chapterId, overwrite = false) {
           ? `停下了，写出来的 ${wrote} 字留着（按 Ctrl+Z 退回原来那份）`
           : `停下了，写出来的 ${wrote} 字留着`,
       )
+      return
+    }
+    if (lostLink && acc.trim()) {
+      // **断线不是写砸了。** 上面那句话自己都说"写没写完不好说"，而原来
+      // 接着就把流出来的那些字清掉了——人盯着它写了一两分钟，网抖一下、
+      // 引擎重启一下，一个字不剩。这和按停那条是同一件事的两种触发，
+      // 而按停那条已经留了（用户 2026-09-15 报的就是它）。
+      //
+      // 留在编辑器里，但**不存**：那头可能已经写完并落库了，这会儿把半截
+      // 存回去等于拿它盖掉完整那份（`applyRevision` 是按整章长度替换的）。
+      // 按停那条敢存，是因为停是确定的——引擎收到停就不会再写了。
+      buf[chapterId] = acc
+      pending.value = had
+        ? { chapter_id: chapterId, prev: had, origin: null, after: acc }
+        : null
+      await nextTick()
+      fit(boxes[chapterId])
+      ui.push(
+        'warn',
+        `连接断了。写出来的 ${wrote} 字留在这儿了，但没存下去——` +
+          (had
+            ? '那头可能已经写完了，刷新这一页看引擎那份；要退回原来那份按 Ctrl+Z'
+            : '那头可能已经写完了，刷新这一页看引擎那份'),
+        12000,
+      )
+      return
+    }
+    if (lostLink) {
+      // 断了，而且一个字都没流出来。理由同 reviseSelection 那处。
+      buf[chapterId] = had
+      await nextTick()
+      fit(boxes[chapterId])
+      ui.warn('连接断了，这一章写没写完不好说。刷新这一页看引擎那份')
       return
     }
     // 写砸了：把流出来那半截清掉，别在稿子里留一段没头没尾的东西。
