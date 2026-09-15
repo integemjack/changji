@@ -278,6 +278,17 @@ async function reloadModels() {
   try {
     llm.value = await api.llmModels()
     llmPick.value = llm.value.current || ''
+    // **问不到也是 200。** llm_info.cpp 那三条失败（连不上 / 对面回
+    // 4xx、5xx / 回的不是 JSON）一律「返回空列表加一句原因」，刻意不抛
+    // ——「列不出来不该让整个设置页打不开」。于是这一趟在 fetch 那一层
+    // 是成功的，下面那个 catch 一次都轮不到。
+    //
+    // 而列表空着这件事**看不出来**：llmChoices 拉不到就退回我们自己那本
+    // 小抄（known），下拉里照样是一串眼熟的模型名。填了个打错的地址、
+    // 或者 Ollama 压根没起来，这个窗从头到尾一声不吭，要到第一次写剧本
+    // 才报错。引擎把话说得很具体（「连不上 http://…：Connection
+    // refused」），一直没人念出来。
+    if (llm.value?.error) ui.warn(llm.value.error)
   } catch (e) {
     // 连不上那家（地址刚换、密钥还没填）——模型列表空着，地址和密钥照样能存
     llm.value = { models: [], known: [], current: '' }
