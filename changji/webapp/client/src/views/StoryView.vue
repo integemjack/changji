@@ -52,11 +52,15 @@ import { stoppedByHand } from '@/composables/stopped-by-hand'
 import { openJobSocket } from '@/composables/useJobSocket'
 import { useThinking } from '@/stores/thinking'
 import { readLocal, writeLocal } from '@/composables/local-storage'
+import { pickProjectHint } from '@/composables/pick-project-hint'
+import { useProjects } from '@/stores/projects'
 import { useSession } from '@/stores/session'
 import { useUi } from '@/stores/ui'
 import { useWriter } from '@/stores/run'
 
 const session = useSession()
+/** 只为那一屏「还没选项目」的提示：一个都没有时该说的是「建一个」。 */
+const projects = useProjects()
 const ui = useUi()
 const thinking = useThinking()
 const writer = useWriter()
@@ -2033,7 +2037,7 @@ async function stopWriting() {
       icon="folder"
       tone="warn"
       title="还没选项目"
-      hint="故事挂在项目上。在项目库那条栏里点一个。"
+      :hint="`故事挂在项目上。${pickProjectHint(projects)}。`"
     />
     <div v-else-if="loading && !hasStory" class="ed__center tiny dim">读取中…</div>
     <!-- **读不出来的时候不能摆"开始写"那一屏。** 那一屏说的是「这部剧还

@@ -34,6 +34,7 @@ import { projectStage } from '@/composables/project-stage'
 import { useAction } from '@/composables/useAction'
 import { useModels } from '@/stores/models'
 import { useProjects } from '@/stores/projects'
+import { pickProjectHint } from '@/composables/pick-project-hint'
 import { useSession } from '@/stores/session'
 import { useUi } from '@/stores/ui'
 
@@ -265,7 +266,7 @@ watch(() => session.projectPath, loadShow, { immediate: true })
       icon="folder"
       tone="warn"
       title="还没选项目"
-      hint="在项目库那条栏里点一个，或者点栏头的加号建一个"
+      :hint="pickProjectHint(store)"
     />
 
     <ShowDialog :open="showOpen" @close="showOpen = false" @saved="loadShow" />

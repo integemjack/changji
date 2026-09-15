@@ -42,10 +42,14 @@ import { runAsyncJob } from '@/composables/useAsyncJob'
 import { stoppedByHand } from '@/composables/stopped-by-hand'
 import { useRefStream } from '@/composables/useRefStream'
 import { useWriter } from '@/stores/run'
+import { pickProjectHint } from '@/composables/pick-project-hint'
+import { useProjects } from '@/stores/projects'
 import { useSession } from '@/stores/session'
 import { useUi } from '@/stores/ui'
 
 const session = useSession()
+/** 只为那一屏「还没选项目」的提示：一个都没有时该说的是「建一个」。 */
+const projects = useProjects()
 const route = useRoute()
 const router = useRouter()
 const ui = useUi()
@@ -514,7 +518,7 @@ watch(
       icon="folder"
       tone="warn"
       title="还没选项目"
-      hint="在项目库里点一个"
+      :hint="pickProjectHint(projects)"
     />
 
     <template v-else>
