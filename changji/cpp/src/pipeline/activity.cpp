@@ -17,6 +17,9 @@ struct Row {
     std::string episode_id;
     std::string message;
     std::string note;
+    /// 这件活画的是哪一格参考图（`char_id_slot` / `location_id_empty`）。
+    /// 只有出参考图那一族填，别的活是空串。见 Activity::set_target。
+    std::string target;
     int current = 0;
     int total = 0;
 };
@@ -47,9 +50,15 @@ Activity::Activity(std::string kind, std::string project, std::string episode_id
     Registry& r = reg();
     std::lock_guard lg(r.mu);
     id_ = r.next++;
-    r.rows.emplace(id_, Row{std::move(kind), std::move(project),
-                            std::move(episode_id), std::move(message), "", 0,
-                            0});
+    // **按名字写，不是按位置。** 这儿原来是一串裸的位置实参
+    // （`Row{kind, project, episode_id, message, "", 0, 0}`），而往 Row 中间
+    // 插一个字段的后果是**把 0 塞进一个 std::string**——`std::string(nullptr)`
+    // 是未定义行为，实际表现是构造 Activity 当场 SIGSEGV。加 `target` 那一次
+    // 就这么炸了四个测试。指名道姓写，以后加字段只会编不过，不会崩。
+    r.rows.emplace(id_, Row{.kind = std::move(kind),
+                            .project = std::move(project),
+                            .episode_id = std::move(episode_id),
+                            .message = std::move(message)});
     t_stack.push_back(this);
 }
 
@@ -82,6 +91,13 @@ void Activity::set_progress(int current, int total) {
     if (it == r.rows.end()) return;
     it->second.current = current;
     it->second.total = total;
+}
+
+void Activity::set_target(std::string t) {
+    Registry& r = reg();
+    std::lock_guard lg(r.mu);
+    auto it = r.rows.find(id_);
+    if (it != r.rows.end()) it->second.target = std::move(t);
 }
 
 void Activity::set_note(std::string n) {
@@ -123,6 +139,10 @@ nlohmann::json running_activities() {
             // stage 这一格短活没有，但形状要和长跑任务那边一样——
             // 前端一套代码画两边，少一个键就得在模板里到处判空。
             {"stage", ""},
+            // 画的是哪一格参考图。**没有 WebSocket 的时候设定页就靠它**
+            // 认出那一格在画（见前端 useRefStream）：`refs` 那条固定频道是
+            // 纯 socket 的，代理掐了 Upgrade 就一条消息都不来。别的活是空串。
+            {"target", row.target},
             {"current", row.current},
             {"total", row.total},
             // 排队那句盖在上面。**顶栏只有一行**，两句都塞进去会挤掉

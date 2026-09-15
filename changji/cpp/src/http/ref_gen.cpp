@@ -99,6 +99,10 @@ Rendered render_ref(const ProjectStore& store, const std::string& stem,
     // 界面上就是一个不动的转圈——那正是最需要顶栏说句话的时候。
     pipeline::Activity act{"image", paths::to_utf8(store.root()), "",
                            "正在画参考图"};
+    // **说清楚画的是哪一格。** `stem` 就是那条固定频道上用的 target
+    // （下面 ref_progress 发的也是它）。没有 WebSocket 的时候设定页只能从
+    // `/api/system` 那份表里认这一格，见 Activity::set_target。
+    act.set_target(stem);
 
     // **借不到就排队等**，不当场抛。撞车的常态是"另一边正在写一章"
     // （一两分钟），当场抛的话用户得到一个 500，而他唯一能做的就是过会儿

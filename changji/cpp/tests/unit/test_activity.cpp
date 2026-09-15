@@ -163,3 +163,34 @@ TEST_CASE("全部在干的活：没长跑任务时就等于短活那份") {
     REQUIRE(all.size() == 1);
     CHECK(all[0]["kind"] == "image");
 }
+
+TEST_CASE("画的是哪一格参考图：target 跟着那一行走") {
+    // 没有 WebSocket 的时候，设定页只能从 `/api/system` 那份表里认出
+    // "这一格在画"（`refs` 那条固定频道是纯 socket 的）。少了这一栏，
+    // 那几格从头到尾一动不动，而且不报错。
+    Activity a{"image", "/p/one", "", "正在画参考图"};
+    {
+        const auto rows = running_activities();
+        REQUIRE(rows.size() == 1);
+        // 没说画哪一格之前是空串，不是 null——前端直接读它
+        CHECK(rows[0]["target"] == "");
+    }
+    a.set_target("linyuan_front");
+    a.set_progress(7, 20);
+    const auto rows = running_activities();
+    REQUIRE(rows.size() == 1);
+    CHECK(rows[0]["target"] == "linyuan_front");
+    CHECK(rows[0]["current"] == 7);
+    CHECK(rows[0]["total"] == 20);
+}
+
+TEST_CASE("长跑任务那几行也要有 target 这一栏") {
+    // 顶栏和设定页都是一套代码画两边的列表，少一个键就得到处判空。
+    // 同 `queued` 那一栏的理由。
+    const auto all = running_work();
+    CHECK(all.is_array());
+    Activity a{"image", "/p/two", "", "正在画参考图"};
+    for (const auto& row : running_work()) {
+        CHECK(row.contains("target"));
+    }
+}

@@ -50,6 +50,17 @@ public:
     void set_message(std::string m);
     void set_progress(int current, int total);
 
+    /// 这件活画的是哪一格参考图（`char_id_slot` / `location_id_empty`）。
+    ///
+    /// **给没有 WebSocket 的那条路用的。** 每一格的进度、半成品小图、
+    /// 「画完了去重拉这张图」全走 `refs` 那条固定频道，而那是纯 socket 的
+    /// ——代理把 Upgrade 掐了就一条消息都不来，设定页上那几格从头到尾一动
+    /// 不动。顶栏那份系统表有 REST 的那一份（`/api/system`），只差"这一行
+    /// 画的是哪一格"，填上它前端就认得出来了。
+    ///
+    /// 只有出参考图那一族填。别的活留空，前端照旧不看这一栏。
+    void set_target(std::string t);
+
     /// 盖在那句话上的一层：排队时写「排队中，前面还有 2 件」，轮到了就清掉。
     ///
     /// **盖一层而不是改那句话**，是因为排完了还得说回原来那句（"正在画参考

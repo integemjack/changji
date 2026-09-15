@@ -321,6 +321,9 @@ json JobTable::running_jobs() const {
             {"project", s.project},
             {"episode_id", s.episode_id.value_or("")},
             {"stage", s.stage},
+            // 长跑任务不画某一格参考图。字段还是要有，理由同下面那个
+            // `queued`：前端一套代码画两边，少一个键就得到处判空。
+            {"target", ""},
             // Run 用 current/total（第几镜），Write 用 done/total（第几章）。
             // 两套字段在这儿抹平成一套，界面不用分情况画进度。
             {"current", k == JobKind::Run ? s.current : s.done},
