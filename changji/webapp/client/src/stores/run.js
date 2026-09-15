@@ -386,8 +386,26 @@ export const useWriter = defineStore('writer', () => {
    * 走 `changji:error` 这个自定义事件而不是直接叫 ui store，理由同
    * session.js 那处：不让这两个 store 互相认识。ToastStack 订着它。
    */
-  function announceFatal(before) {
-    if (!before || running.value) return          // 不是"跑着→停了"那一下
+  /**
+   * 上一拍落地时它是不是还跑着。**这面旗子要在 poll 落地那一刻翻，
+   * 不能在发请求之前取一个快照。**
+   *
+   * 两拍会撞上，而且是常态而不是巧合：socket 推来终止消息时
+   * `applyMessage` 会立刻叫一次 poll（episodes 和 error 只有全量里有），
+   * 而 1.5 秒那个定时器同时也在拉——引擎翻 running 的那一瞬正好是两条
+   * 路一起动的时候。取快照的写法下，两拍都会看到"之前跑着、现在停了"：
+   *
+   *   · 整批炸了：同一句红字弹两遍；
+   *   · **人自己按的停：弹一遍红的**——第一拍把 stoppedByHand 吃掉了，
+   *     第二拍看不见那面旗子，于是把引擎写在 error 里的「已手动停止」
+   *     当成事故报出来，旁边还并排站着 stopWriting() 那句绿的「已停」。
+   *
+   * 在这儿翻就没有这回事：先落地的那一拍翻成 false，后到的那一拍看见的
+   * 就不是"跑着→停了"。
+   */
+  let wasRunning = false
+
+  function announceFatal() {
     const err = state.value?.error
     if (!err) return
     if (stoppedByHand) { stoppedByHand = false; return }  // 停是自己按的，已经绿字说过
@@ -397,11 +415,12 @@ export const useWriter = defineStore('writer', () => {
   }
 
   async function poll() {
-    const was = running.value
     try {
       state.value = await api.seriesStatus()
       missCount = 0
-      announceFatal(was)
+      const now = running.value
+      if (wasRunning && !now) announceFatal()
+      wasRunning = now
       if (!state.value.running) stop()
     } catch {
       // **一次取不到不等于活儿结束了。** 原来这里是 catch 就 stop()，
