@@ -1244,8 +1244,7 @@ void run(const config::Settings& settings, const Options& opts) {
     // 窗口读的。不带项目的话它只看全局——于是人在项目页挑完、写进了项目，
     // 再打开那个窗口看到的还是全局那一档，**看着像没保存上**。
     //
-    // 不给 path 照旧只看全局：设置页那一节和给对等机装模型都不属于任何
-    // 一部剧。
+    // 不给 path 照旧只看全局：设置页那一节不属于任何一部剧。
     CROW_ROUTE(app, "/bff/setup/state")([](const crow::request& req) {
         auto r = guard([&] {
             const std::string project = query(req, "path");
@@ -1301,6 +1300,13 @@ void run(const config::Settings& settings, const Options& opts) {
         return status == 0 ? 502 : status;
     };
 
+    // `path` 给了就带上那部剧的 `[models.pick]`，理由同 /bff/setup/state。
+    //
+    // **这一条尤其要带。** 界面拿本机这一份当「标准那一套」发给别的机器
+    // （NodeMatrix 的「装成和本机同一套」）。不带项目的话那个标准是**这台
+    // 机器全局配着的那一档**，而派活时带过去的是**这部剧挑的那一档**——
+    // 两者不同的时候，给对面装的和真要用的就不是一个东西，而表现要到
+    // 那一镜被对面拒了才看得出来（「这台装的是别的档」，见 task_run.cpp）。
     CROW_ROUTE(app, "/api/nodes/setup")(
         [node_target, proxy_status](const crow::request& req) {
             const std::string url = node_target(req);
@@ -1308,7 +1314,11 @@ void run(const config::Settings& settings, const Options& opts) {
                 return json_response({{"detail", "要 url（local 或节点地址）"}},
                                      422);
             }
-            const auto s = config::runtime().snapshot();
+            const std::string project = query(req, "path");
+            const auto s = project.empty()
+                               ? config::runtime().snapshot()
+                               : config::load_settings(
+                                     paths::expand_user(project));
             if (url == infer::kLocalEndpoint) {
                 auto r = guard([&] {
                     return get_setup_state(s, config::runtime().profile());

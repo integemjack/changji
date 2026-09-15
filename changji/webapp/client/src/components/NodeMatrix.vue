@@ -27,6 +27,11 @@
 import { onMounted, onUnmounted, ref } from 'vue'
 import AppIcon from '@/components/AppIcon.vue'
 import { api } from '@/api'
+// 「这部剧挑了哪一档」记在项目里。下面那几处问模型状态都要带上它，
+// 否则问到的是本机全局那一档——见 api.nodeSetup 那条注释。
+import { useSession } from '@/stores/session'
+
+const session = useSession()
 
 const data = ref(null)
 const error = ref('')
@@ -104,7 +109,10 @@ async function openRow(node) {
 async function loadSetup(url) {
   busyNode.value = url
   try {
-    setup.value = { ...setup.value, [url]: await api.nodeSetup(url) }
+    setup.value = {
+      ...setup.value,
+      [url]: await api.nodeSetup(url, session.projectPath),
+    }
     error.value = ''
   } catch (err) {
     error.value = err.message
@@ -114,13 +122,20 @@ async function loadSetup(url) {
 }
 
 /**
- * 让这台装成和本机同一套。
+ * 让这台装成和这部剧要的同一套。
  *
- * **本机选的那一套就是标准**：拿它的 selected 原样发过去。让用户在这儿
- * 再挑一遍的话，两台挑得不一样就是画风跳，而那要到成片才看得出来。
+ * **标准是「这部剧挑的那一档」，不是「本机装着哪一档」。** 拿它的
+ * selected 原样发过去——让用户在这儿再挑一遍的话，两台挑得不一样就是
+ * 画风跳，而那要到成片才看得出来。
+ *
+ * 问本机那一份时带上项目：`[models.pick]` 记在项目里，不带的话拿到的是
+ * 本机全局配着的那一档。派活时带给对面的是项目那一档（见 worker_pool
+ * 的 pick），两者不同的话，给对面装的和真要用的就不是一个东西——
+ * 而表现要到那一镜被对面拒了才看得出来。
  */
 async function matchLocal(url) {
-  const mine = setup.value.local ?? (await api.nodeSetup('local'))
+  const mine =
+    setup.value.local ?? (await api.nodeSetup('local', session.projectPath))
   setup.value = { ...setup.value, local: mine }
   const selections = mine?.selected ?? {}
   if (!Object.keys(selections).length) {

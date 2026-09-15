@@ -359,7 +359,11 @@ export const api = {
   // （合并时没把分支上那条 `hardware: () => get('/api/hardware')` 带进来：
   //   这一版的硬件信息由 `/bff/settings/overview` 一次带回来，单独那条
   //   全仓一个调用点都没有。NodeMatrix 用的是上面 nodeSetup 那几条。）
-  nodeSetup: (url) => get('/api/nodes/setup', { url }),
+  // `project` 是**必须带的**：界面拿本机这一份当「标准那一套」发给别的
+  // 机器，而「挑了哪一档」记在项目里（`[models.pick]`）。不带的话那个
+  // 标准是本机全局配着的那一档，派活时带过去的却是这部剧挑的那一档——
+  // 给对面装的和真要用的不是一个东西，而那要到那一镜被对面拒了才看得出来。
+  nodeSetup: (url, project) => get('/api/nodes/setup', { url, path: project }),
   nodeSetupDownload: (url, selections) =>
     post('/api/nodes/setup/download', { url, selections }),
   nodeSetupProgress: (url) => get('/api/nodes/setup/progress', { url }),

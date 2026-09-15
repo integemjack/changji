@@ -93,3 +93,37 @@ describe('挑哪一档归这部剧', () => {
     expect(code(DIALOG), '摆出来了却不显示内容').toMatch(/{{ g\.pickProblem }}/)
   })
 })
+
+/** 那张「机器 × 能力」的表。给别的机器装模型走的是它。 */
+const MATRIX = fs.readFileSync(
+  fileURLToPath(new URL('../components/NodeMatrix.vue', import.meta.url)),
+  'utf8',
+)
+/** 引擎那一头：转发给别的机器那几条。 */
+const SERVER = fs.readFileSync(
+  fileURLToPath(new URL('../../../../cpp/src/http/server.cpp', import.meta.url)),
+  'utf8',
+)
+
+describe('给别的机器装模型，标准是这部剧挑的那一档', () => {
+  // 「装成和本机同一套」拿本机的 selected 原样发过去。而派活时带给对面的
+  // 是**项目**里那一档（worker_pool 的 pick）。问本机那一份时不带项目的
+  // 话，两者就是两个东西——给对面装 A、真要用 B，而表现要到那一镜被对面
+  // 拒了才看得出来（「这台装的是别的档」）。
+  it('问本机那一份要带上项目', () => {
+    expect(code(API), 'nodeSetup 不收项目').toMatch(
+      /nodeSetup:\s*\(url,\s*project\)/,
+    )
+    expect(code(API), '收了却没发出去').toMatch(/path:\s*project/)
+    expect(code(MATRIX), '表这边没把项目传进去').toMatch(
+      /nodeSetup\((?:url|'local'),\s*session\.projectPath\)/,
+    )
+  })
+
+  it('引擎那条接口认 path', () => {
+    const route = SERVER.slice(SERVER.indexOf('"/api/nodes/setup")'))
+    expect(route.slice(0, 900), '/api/nodes/setup 不读 path 了？').toMatch(
+      /query\(req, "path"\)/,
+    )
+  })
+})
