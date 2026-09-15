@@ -45,6 +45,7 @@ import { useAction } from '@/composables/useAction'
 import { useProjects } from '@/stores/projects'
 import { readLocal, writeLocal } from '@/composables/local-storage'
 import { useRun, useWriter } from '@/stores/run'
+import { useSystemFeed } from '@/composables/useSystemFeed'
 import { useSession } from '@/stores/session'
 import { useUi } from '@/stores/ui'
 
@@ -52,6 +53,8 @@ const store = useProjects()
 const session = useSession()
 const ui = useUi()
 const runner = useRun()
+/** 顶栏那份系统表：两秒一拍，每一行带着 project。见下面 busyPaths。 */
+const sysFeed = useSystemFeed()
 const writer = useWriter()
 const { run, isBusy } = useAction()
 
@@ -68,59 +71,39 @@ const box = ref(null)
 const removing = ref('')
 const confirmName = ref('')
 /**
- * 引擎此刻在跑哪几个项目（目录绝对路径）。空集 = 不知道。
+ * 正在跑的是哪几个项目（目录绝对路径）。
  *
- * **只能从 `/api/system` 拿。** `/api/run` 和 `/api/script/series` 那两份
- * 快照里没有 `project`——它们的字段数被单元测试钉死了（「跟 Python 的
- * snapshot 对拍，也不能多」），加不得。而 `running_work()` 那份列表
- * 每一条都带着 project，`/api/system` 和 "system" 频道推的就是它。
- *
- * 开 ⋯ 菜单那一下问一次，不轮询：这个答案只在人要动手的那一刻有用。
- */
-/**
- * 正在跑的是哪几个项目。
+ * **从顶栏那份系统表读。** `running_work()` 那份列表每一条都带着 project，
+ * `/api/system` 和 "system" 频道推的就是它（`/api/run` 和
+ * `/api/script/series` 那两份快照里没有 project——它们的字段数被单元测试
+ * 钉死了，加不得）。那份表 `useSystemFeed` 两秒一拍地在拉，搭它的车就行。
  *
  * ⚠️ **三种情况要分开，不能都用空集表示。**
- *   `null`  —— 问不到（请求砸了）。真·不确定，下面那道闸 fail-closed。
- *   空 Set  —— 问过了，**谁都没在跑**。
- *   有内容  —— 问过了，就这几个在跑。
+ *   `null`  —— 还不知道（表没回来、拉不到）。下面那道闸 fail-closed。
+ *   空 Set  —— 表回来了，**谁都没在跑**。
+ *   有内容  —— 就这几个在跑。
  *
- * 原来后两种都写成 `new Set()`，而 `busyProject` 拿"集合是空的"当"不确定"
- * 一律返回真。于是只要 `runner.running || writer.running` 是真、而
- * `/api/system` 回的 jobs 是空的，**项目库里每一条的改名和删除全部变灰**，
- * 提示还写着「正在跑，跑完再删」——而根本没有东西在跑。
+ * ⚠️ **这儿原来是"开 ⋯ 菜单时现问一次"，而且前面挡着一句
+ * `if (!(runner.running || writer.running)) { 空集; return }`。那一句是
+ * 个 fail-open 的短路**：`useRun` 只有镜头页在驱动、`useWriter` 只有故事页
+ * 和设定页那一格在驱动，而这条栏在**每一页**上。刚打开浏览器、或者压根没
+ * 去过镜头页的时候，两个旗子都是假的——于是它不问就断言"谁都没在跑"，
+ * 而引擎那头可能正在给这部剧写分镜。实测：假引擎报着「正在给 ep02 出分镜」，
+ * 项目页上那条的「改名」「删掉」两颗全亮着，一句提示都没有。
  *
- * 这不是边角情形，`runner.running` 会实打实地卡在真上：`useRun` 只有
- * `useShots` 在驱动（也就是只有镜头页），而 `stop()`（镜头页卸载时调）
- * 只停轮询和 socket，**不清 `state`**——于是 `running` 保持着离开那一刻
- * 的值。在镜头页起一轮、走到项目页，这一整页从此每一条都是"正在跑"，
- * 回镜头页转一圈才会解开。
+ * （反方向那个坑的记录留着：后两种都写成空集、`busyProject` 拿"集合是空的"
+ * 当"不确定"的那一版，会因为旗子卡在真上而把每一条都变灰，提示还写着
+ * 「正在跑，跑完再删」。两个方向都栽过，所以三态要分清。）
  */
-const busyPaths = ref(new Set())
+const busyPaths = computed(() => {
+  const jobs = sysFeed.stat.value?.jobs
+  if (!jobs) return null
+  return new Set(jobs.map((j) => j.project).filter(Boolean))
+})
 
-async function refreshBusy() {
-  // 两个旗子都不亮，那肯定没在跑，省一次请求
-  if (!(runner.running || writer.running)) {
-    busyPaths.value = new Set()
-    return
-  }
-  try {
-    const sys = await api.system()
-    // 空数组是个**确定**的答案：这一刻谁都没在跑。
-    busyPaths.value = new Set(
-      (sys.jobs ?? []).map((j) => j.project).filter(Boolean),
-    )
-  } catch {
-    // 问不到才是"不确定"，下面那道闸会一律挡住。
-    busyPaths.value = null
-  }
-}
-
-/** 开 / 关这一条的 ⋯。开的时候顺手问一次谁在跑。 */
+/** 开 / 关这一条的 ⋯。 */
 function toggleMenu(p) {
-  const open = menuFor.value !== p.path
-  menuFor.value = open ? p.path : ''
-  if (open) refreshBusy()
+  menuFor.value = menuFor.value !== p.path ? p.path : ''
 }
 
 /**
