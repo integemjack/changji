@@ -283,6 +283,28 @@ async function write() {
 async function adopt() {
   const taking = draft.value
   if (!taking) return
+  // **换掉的是已经存下的那一版，问一句。**
+  //
+  // 有剧本的时候那颗按钮写的是「AI 重写」/「重新改编」，出来的草稿点
+  // 「采用」就直接盖过去——引擎那头 `post_script` 一句 `ep->script =
+  // script` 就完了，没有回退。而这一集的剧本可能是人一句句改过的。
+  //
+  // 故事页同一件事早就问了：「采用会把现在这 N 章整份换掉。确定？」，
+  // 而且只在真的会换掉时才问（`replacing`）。这儿照它：没存过、或者草稿
+  // 和存下的那份一模一样，都不拦——那时候点采用什么也没失去。
+  //
+  // 编辑器里还有没保存的改动时一并说：它们也会跟着没。
+  const had = savedScript.value.trim()
+  if (had && taking.script !== savedScript.value) {
+    const extra = dirty.value ? '，还有没保存的改动也一起没' : ''
+    if (
+      !confirm(
+        `采用会把这一集现在这 ${countScriptChars(savedScript.value)} 字整份换掉${extra}。确定？`,
+      )
+    ) {
+      return
+    }
+  }
   // **整件事钉在它自己那一集上。**
   //
   // 一个来回之间在顶栏换一集：请求本身是同步拼好的（发的是对的那一集），
