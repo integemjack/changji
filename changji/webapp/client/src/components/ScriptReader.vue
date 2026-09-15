@@ -82,7 +82,17 @@ const HEADER = new RegExp(
 //   · 引擎收半角逗号 `,`，旧正则漏了；旧正则收 `/`，引擎不收。
 //   · 引擎明确拒绝里面再出现【】，旧正则的 `(.*?)` 会把
 //     「【第1场 · a】b【c】」吞成一条场次头。
+//   · **首尾空白的定义不一样**（第四处，2026-09-15 补）。引擎第一步是
+//     `strip_ascii`，而那个函数只去 **ASCII** 空白（util/text.cpp 的
+//     `is_ascii_ws`）；JS 的 `.trim()` 连全角空格 U+3000 和 NBSP 一起去。
+//     于是行首带一个全角空格的「【第1场 · 天台】」——中文段首缩进的习惯
+//     写法，手打和粘贴都很容易带上——前端认、引擎不认：页面上画出一条
+//     分场线，而分镜那一步根本不会在那儿切。方向和上面三条反过来，
+//     后果是一样的：两边对不上，而人以为自己看见的就是要发生的。
 const SCENE = /^【第(\d+)场\s*(?:[·：，、:,-]\s*)?([^【】]*?)\s*】$/
+
+/** 只去 ASCII 空白，和引擎的 `strip_ascii` 一样。见上面第四条。 */
+const asciiTrim = (s) => s.replace(/^[\t\n\v\f\r ]+|[\t\n\v\f\r ]+$/g, '')
 
 const parsed = computed(() => {
   const speakers = new Map()
@@ -106,7 +116,8 @@ const parsed = computed(() => {
       continue
     }
     // 场次头是内容不是段：留在段里，单独一种块，页面上画成一条分场线
-    const sc = SCENE.exec(line)
+    // 场次头按引擎那套空白规则判，不用上面 .trim() 过的 line
+    const sc = SCENE.exec(asciiTrim(raw))
     if (sc) {
       section().blocks.push({ kind: 'scene', index: Number(sc[1]), text: (sc[2] ?? '').trim() })
       continue
