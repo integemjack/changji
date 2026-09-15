@@ -1,5 +1,7 @@
 #include "stages/prompt_compose.hpp"
 
+#include "stages/storyboard.hpp"  // motion_covering
+
 #include <cstdio>
 #include <map>
 #include <utility>
@@ -250,7 +252,17 @@ std::string PromptComposer::motion_prompt(const Shot& shot) const {
     for (const CharacterInShot& in_shot : shot.characters) {
         if (!in_shot.action.empty()) actions.push_back(in_shot.action);
     }
-    const std::string motion = text::strip_ws(shot.motion_prompt);
+    // **用之前再夹一次时长。**
+    //
+    // 排分镜和改时长那两处已经对齐过（storyboard.cpp 的 motion_covering），
+    // 但**盘上的老分镜表不会自愈**：2026-09-16 实测，修复之前排的一集里
+    // 一个 6 秒的镜头挂着 `[0-15秒]`、一个 2 秒的挂着 `[0-5秒]`。那些表
+    // 不重排就一直是错的，而重排会把人手改过的东西一起冲掉。
+    //
+    // 夹在**用**的这一刻，老表照样出对的片子，一个字都不用人管。
+    // 对已经对齐的表这一步是恒等变换。
+    const std::string motion =
+        motion_covering(text::strip_ws(shot.motion_prompt), shot.duration_s);
 
     // 分镜模型已经按时间码分段：运镜词并进第一段（紧跟第一个「]」），
     // 角色动作接在最后。

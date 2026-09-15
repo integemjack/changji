@@ -1270,3 +1270,21 @@ TEST_CASE("motion_covering 两头都夹，空的和没格式的都不炸") {
     CHECK(stages::motion_covering("", 3.0).empty());
     CHECK(stages::motion_covering("他抬头", 0.0) == "他抬头");   // 时长不合法就别动
 }
+
+TEST_CASE("老分镜表在用的时候也会被夹：盘上存的对不上，出片照样按真时长") {
+    // 2026-09-16 实测：修复之前排的一集里，一个 6 秒的镜头挂着 [0-15秒]。
+    // 那些表不重排就一直是错的，而重排会把人手改过的东西一起冲掉——
+    // 所以在 PromptComposer::motion_prompt 里用之前再夹一次。
+    models::AssetLibrary a;
+    a.style.global_style = "电影感";
+    models::Shot s;
+    s.shot_id = "sh1";
+    s.duration_s = 6.0;
+    s.motion_prompt = "[0-15秒] 灯光闪烁";
+    s.camera_move = models::CameraMove::STATIC;
+    const stages::PromptComposer c(a);
+    const std::string got = c.motion_prompt(s);
+    CAPTURE(got);
+    CHECK(got.find("[0-6秒]") != std::string::npos);
+    CHECK(got.find("15秒") == std::string::npos);
+}

@@ -257,6 +257,22 @@ std::vector<RenderOutcome> render_batch(std::vector<Shot*>& shots,
                 try {
                     plan = make_plan(local, spec, composer,
                                      assets.style.aspect_ratio, fps);
+                    // **参考图还原成绝对路径。**
+                    //
+                    // 和 frames.cpp 里同名的那一段是同一件事，2026-09-13 在
+                    // 首帧那条修过，出片这条漏了：`compose` 交出来的是相对
+                    // 项目根的路径（refs/xxx.png），跨机派活时 ship_input 拿
+                    // 它去读文件，读的是工作目录——报「读不了输入文件：
+                    // refs/c_zeng_laoban_front.png」，而那个文件明明在项目里。
+                    //
+                    // **一直没露出来，是因为上一版分镜全是 ECU**，而大特写
+                    // 整档不带参考图（见 PromptComposer::compose_with）。
+                    // 景别修好、镜头重新带上参考图的当天，这条就断了。
+                    // 消息里那个相对路径本身就是线索：这一层的报错一律该是
+                    // 绝对路径，看见相对的就说明哪儿漏了还原。
+                    for (std::string& r : plan.prompts.reference_images) {
+                        r = paths::to_utf8(paths.abs(r));
+                    }
 
                     // 首帧是这一镜的起点。没有的话退回纯文生视频——
                     // 那样跨镜头一致性会掉一大截，但总比整条流水线卡住强。

@@ -480,9 +480,12 @@ TEST_CASE("运动描述按时间码分段：没分段的整镜当一段，分了
     s.duration_s = 4.5;
     CHECK(composer.motion_prompt(s) == "[0-4.5秒] 镜头缓慢推近，雨丝斜掠，转身");
 
+    // **末段跟着这一镜的真时长走。** 这一镜是 4.5 秒而分镜写到 [2-5秒]，
+    // 多出来那半秒没人描述，出片模型自由发挥——而它发挥的方式是把主体丢掉
+    // （2026-09-16 实测）。夹在用之前，盘上的老分镜表也照样出对的片子。
     s.motion_prompt = "[0-2秒] 她抬头看雨。 [2-5秒] 雨越下越大";
     CHECK(composer.motion_prompt(s) ==
-          "[0-2秒] 镜头缓慢推近，她抬头看雨。 [2-5秒] 雨越下越大，转身");
+          "[0-2秒] 镜头缓慢推近，她抬头看雨。 [2-4.5秒] 雨越下越大，转身");
 
     SUBCASE("空着的话只剩运镜词，也带时间码") {
         s.motion_prompt.clear();
@@ -849,4 +852,62 @@ TEST_CASE("查这台的 ffmpeg 有没有某个滤镜") {
                                   return media::ProcResult{};   // launched=false
                               })
                     .has_filter("subtitles"));
+}
+
+TEST_CASE("出片那条也要把参考图还原成绝对路径") {
+    // 和 frames.cpp 里同名的那一段是同一件事：2026-09-13 在首帧那条修过，
+    // 出片这条漏了。compose 交出来的是相对项目根的路径（refs/xxx.png），
+    // 跨机派活时 ship_input 拿它去读文件，读的是工作目录——报
+    // 「读不了输入文件：refs/c_zeng_laoban_front.png」。
+    //
+    // **一直没露出来，是因为上一版分镜全是 ECU**，而大特写整档不带参考图。
+    // 景别修好、镜头重新带上参考图的当天（2026-09-16），这条就断了。
+    const fs::path root = temp_root("refabs");
+    const models::ProjectPaths paths(root);
+    paths.ensure();
+    auto owned = std::vector<models::Shot>{make_shot("ep01_sh001", 0)};
+    // 让这一镜带上一个在场角色，compose 才会给参考图
+    models::CharacterInShot in_shot;
+    in_shot.char_id = "c_lin_wan";
+    owned[0].characters.push_back(in_shot);
+    owned[0].shot_size = models::ShotSize::MS;   // ECU 整档不带参考图
+    std::vector<models::Shot*> shots = {&owned[0]};
+
+    const models::AssetLibrary assets = make_assets();
+    // 资产库里那张参考图落到盘上，compose 才认
+    for (const auto& kv : assets.characters) {
+        const auto& c = kv.second;
+        for (const std::optional<std::string>* rel :
+             {&c.ref_front, &c.ref_three_quarter, &c.ref_back}) {
+            if (!rel->has_value() || rel->value().empty()) continue;
+            const fs::path p = paths.abs(rel->value());
+            std::error_code ec;
+            fs::create_directories(p.parent_path(), ec);
+            touch(p);
+        }
+    }
+
+    std::vector<std::string> seen;
+    const stages::VideoRenderer render =
+        [&seen](const models::Shot&, const stages::RenderPlan& plan,
+                const std::optional<fs::path>&, const fs::path& dest,
+                pipeline::CancelToken&, const infer::StepCallback&) {
+            for (const auto& r : plan.prompts.reference_images) seen.push_back(r);
+            touch(dest);
+        };
+
+    pipeline::JobTable table;
+    pipeline::CancelToken tok;
+    table.start(pipeline::JobKind::Run, "ep01", [&](pipeline::JobProgress& p) {
+        stages::render_batch(shots, assets, make_spec(), paths, render, p, tok,
+                             24, 1, {}, {}, {});
+    });
+    table.wait_idle();
+
+    for (const std::string& r : seen) {
+        CAPTURE(r);
+        // 绝对路径，而且文件真的在——相对路径跨机必然读不到
+        CHECK(fs::path(paths::from_utf8(r)).is_absolute());
+        CHECK(fs::is_regular_file(paths::from_utf8(r)));
+    }
 }
