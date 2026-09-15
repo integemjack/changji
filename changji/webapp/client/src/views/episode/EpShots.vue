@@ -136,6 +136,27 @@ const blocked = computed(
 const failedChecks = computed(() =>
   (doctor.value?.checks ?? []).filter((x) => x.level === 'fail' || x.level === 'error'),
 )
+
+/**
+ * 按不动的时候，鼠标停上去该看到的那句话。
+ *
+ * 上面那段注释说"原因写在下面那一块里"，那一块确实在——但**按钮自己是哑
+ * 的**：「只出首帧」灰着的时候悬停还在说「先把缺的首帧铺开，不出视频」
+ * （它能干什么，不是它为什么不能干），「出片」干脆一个 title 都没有。
+ * 人把鼠标停在一颗灰按钮上，问的就是"为什么"。
+ *
+ * 真引擎上量过：这份构建 CHANGJI_SD=OFF 又没有 ffmpeg，两颗都灰着，而
+ * 悬停一句有用的都没有。
+ */
+const blockedWhy = computed(() => {
+  if (!blocked.value) return ''
+  if (bareShots.value.length) {
+    return `有 ${bareShots.value.length} 镜拿不到参考图，出图会退化成彩色噪点——底下「还不能开工」那一块写着是哪几镜`
+  }
+  const first = failedChecks.value[0]
+  if (!first) return '还不能开工，底下那一块写着为什么'
+  return `还不能开工：${first.name}${first.detail ? ' · ' + first.detail : ''}`
+})
 const openShot = computed(
   () => shots.value.find((s) => s.shot_id === openId.value) ?? null,
 )
@@ -1053,9 +1074,9 @@ onDeactivated(() => window.removeEventListener('keydown', onKey))
           v-if="shots.length"
           class="btn btn--ghost btn--sm"
           type="button"
-          :title="pendingFrames
+          :title="blockedWhy || (pendingFrames
             ? '先把缺的首帧铺开，不出视频'
-            : '每一镜都有首帧了；点了会全部重出（视频不动）'"
+            : '每一镜都有首帧了；点了会全部重出（视频不动）')"
           :disabled="blocked || starting"
           @click="startFrames"
         >
@@ -1069,6 +1090,7 @@ onDeactivated(() => window.removeEventListener('keydown', onKey))
           v-if="shots.length"
           class="btn btn--primary"
           type="button"
+          :title="blockedWhy || (pending ? '把还没出片的那几镜跑完' : '每一镜都有片了；点了会全部重出')"
           :disabled="blocked || starting"
           @click="startAll"
         >
