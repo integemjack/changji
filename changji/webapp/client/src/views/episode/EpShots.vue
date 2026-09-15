@@ -1139,7 +1139,14 @@ onDeactivated(() => {
          「共 X」——全是前端这一套。混着用就是同一屏里两种写法。
          引擎两样都回，`estimate_s` 是秒数，直接拿它格式化。 -->
     <p v-if="preview && !running && !blocked" class="tiny dim prev">
-      <template v-if="preview.idle">
+      <!-- **一镜都没有和「都出完了」是两回事。** 0 镜时 idle 也是真
+           （没什么可跑的），原来照样说「每一镜都出到头了，点『全部重出』
+           才会动」——而这一集根本还没有镜头，「全部重出」也不在那儿。
+           接口回的 shots 就是镜头数，分开说。 -->
+      <template v-if="preview.shots === 0">
+        这一集还没有分镜，先点上面的「AI 出分镜」。
+      </template>
+      <template v-else-if="preview.idle">
         这一集每一镜都出到头了，点「全部重出」才会动。
       </template>
       <template v-else>
