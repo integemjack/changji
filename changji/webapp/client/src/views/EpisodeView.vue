@@ -364,13 +364,17 @@ watch(
       :hint="pickProjectHint(projects)"
     />
 
-    <!-- 「还没选到某一集」只判这一处。 -->
+    <!-- 「还没选到某一集」只判这一处。
+         **一集都没有的时候「顶上挑一集」是句办不到的话**：那时候顶栏那个
+         下拉是灰的，里面只有一行「还没有剧集」。而这正是新项目最常撞见的
+         状态——故事写完、还没落成剧集。底下那颗「去分集」本来就在，
+         话跟着它说。 -->
     <EmptyState
       v-else-if="!session.episodeId"
       icon="script"
       tone="warn"
       title="还没选到某一集"
-      hint="顶上挑一集"
+      :hint="session.episodes.length ? '顶上挑一集' : '这部剧还一集都没有。去分集那一格落一集出来'"
     >
       <RouterLink to="/assets?tab=episodes" class="btn btn--sm">去分集</RouterLink>
     </EmptyState>

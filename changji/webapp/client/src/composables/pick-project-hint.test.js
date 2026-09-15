@@ -5,6 +5,10 @@
  * 这一集只写了「在项目库里点一个」。一台刚装好的机器上项目库是空的，
  * 这三页却在叫人去那儿点一个——而初始化那一页 2026-09-14 删了，"第一次
  * 打开该干什么"现在全靠这句话。
+ *
+ * 底下还顺带钉住同一族的另一句：「还没选到某一集」下面那半句。一集都没有
+ * 的时候「顶上挑一集」同样办不到——那时候顶栏那个下拉是灰的，里面只有一行
+ * 「还没有剧集」。新项目最常撞见的就是这个状态（故事写完、还没落成剧集）。
  */
 import fs from 'node:fs'
 import path from 'node:path'
@@ -46,5 +50,20 @@ describe('四页都从这一处取', () => {
       const near = src.slice(at, at + 200)
       expect(near, `${v} 还写死着提示语`).toContain('pickProjectHint')
     }
+  })
+})
+
+describe('「还没选到某一集」底下那句', () => {
+  const SRC = fileURLToPath(new URL('..', import.meta.url))
+
+  it('一集都没有时不能说"顶上挑一集"', () => {
+    const src = fs.readFileSync(path.join(SRC, 'views', 'EpisodeView.vue'), 'utf8')
+    const at = src.indexOf('title="还没选到某一集"')
+    expect(at, '那一屏不见了').toBeGreaterThan(0)
+    const near = src.slice(at, at + 260)
+    // 判据得是"这部剧有没有集"，不是写死一句
+    expect(near).toContain('session.episodes.length')
+    expect(near).toContain('顶上挑一集')
+    expect(near).toMatch(/一集都没有/)
   })
 })
