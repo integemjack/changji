@@ -218,3 +218,56 @@ TEST_CASE("工作进程回的话拼进错误消息时按字符截，不按字节
               "工作进程回的不是 {\"id\":...}：<html>");
     }
 }
+
+TEST_CASE("配音任务：那几个字段要能往返") {
+    infer::Task t;
+    t.kind = infer::TaskKind::Tts;
+    t.shot_id = "sh007";
+    t.text = "雨夜的天台上，他没有回头。";
+    t.voice_id = "female_01";
+    t.emotion = "低沉";
+    t.intensity = 0.7;
+    t.dest = "C:/out/sh007.wav";
+    t.return_artifact = true;
+
+    const infer::Task back = infer::task_from_json(infer::to_json(t));
+    CHECK(back.kind == infer::TaskKind::Tts);
+    CHECK(back.text == t.text);
+    CHECK(back.voice_id == t.voice_id);
+    CHECK(back.emotion == t.emotion);
+    CHECK(back.intensity == doctest::Approx(t.intensity));
+    CHECK(back.return_artifact);
+}
+
+TEST_CASE("配音出来多长要能带回来") {
+    // 配音先行那条线靠这个数反推镜头时长。只有跑活那台知道它——
+    // 它顺手就量了，没道理让派活方再算一遍。
+    infer::TaskResult r;
+    r.ok = true;
+    r.duration_s = 3.75;
+    r.artifact_id = std::string(40, 'a');
+    const infer::TaskResult back = infer::task_result_from_json(infer::to_json(r));
+    CHECK(back.duration_s == doctest::Approx(3.75));
+    CHECK(back.artifact_id == r.artifact_id);
+}
+
+TEST_CASE("非法 UTF-8 在入口就被判掉") {
+    // nlohmann 解析时照单全收，dump 时才抛 type_error.316——那时候已经
+    // 出了 try 块，派活方拿到的是一个空白的 500。2026-09-12 实撞过：
+    // 请求体是 GBK 的中文台词，工作进程回 500，日志里只有一行
+    // "invalid UTF-8 byte at index 174"。
+    nlohmann::json j = infer::to_json([] {
+        infer::Task t;
+        t.kind = infer::TaskKind::Tts;
+        t.shot_id = "sh001";
+        t.dest = "C:/out/a.wav";
+        return t;
+    }());
+    // GBK 的"雨夜"：两个字节都不是合法的 UTF-8 起始
+    j["text"] = std::string("\xD3\xEA\xD2\xB9");
+    CHECK_THROWS_AS(infer::task_from_json(j), std::runtime_error);
+
+    // 合法的就该过
+    j["text"] = "雨夜";
+    CHECK_NOTHROW(infer::task_from_json(j));
+}

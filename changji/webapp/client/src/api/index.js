@@ -339,6 +339,24 @@ export const api = {
    */
   jobEvents: (stream, since) => get('/api/job/events', { stream, since }),
   outputs: (path) => get('/api/outputs', { path }),
+  // 那张「机器 × 能力」的表。**答得慢是正常的**：引擎要挨个问
+  // 别的机器的 /status（每台最多 3 秒），结果缓存五秒。
+  nodes: () => get('/api/nodes'),
+  // 关掉／打开某台的某个能力。**正在跑的时候会被拒（409）**：
+  // 半集换机器会让前后画风对不上。
+  setNodeOff: (url, cap, off) => post('/api/nodes/off', { url, cap, off }),
+  // 任意一台机器的模型：本机走本地那份，别的机器由引擎转发过去。
+  // **浏览器连不上那几台**（地址可能只有引擎这边通，口令也不该发到前端），
+  // 所以这几条都带一个 url 参数走引擎。
+  //
+  // （合并时没把分支上那条 `hardware: () => get('/api/hardware')` 带进来：
+  //   这一版的硬件信息由 `/bff/settings/overview` 一次带回来，单独那条
+  //   全仓一个调用点都没有。NodeMatrix 用的是上面 nodeSetup 那几条。）
+  nodeSetup: (url) => get('/api/nodes/setup', { url }),
+  nodeSetupDownload: (url, selections) =>
+    post('/api/nodes/setup/download', { url, selections }),
+  nodeSetupProgress: (url) => get('/api/nodes/setup/progress', { url }),
+  nodeSetupCancel: (url) => post('/api/nodes/setup/cancel', { url }),
   // 此刻的负载，一次性的。顶栏那三个小表走 WebSocket（订 "system"），
   // 这个留给排查用。
   system: () => get('/api/system'),

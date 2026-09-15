@@ -2,6 +2,10 @@
 
 #include <atomic>
 #include <filesystem>
+#include <fstream>
+#include <iostream>
+#include <sstream>
+#include <optional>
 #include <map>
 #include <chrono>
 #include <cstdlib>
@@ -13,16 +17,18 @@
 
 #include <crow.h>
 
+#include "http/setup_api.hpp"
+#include "infer/blob.hpp"
+#include "infer/node_status.hpp"
+#include "infer/peer_auth.hpp"
+#include "infer/task_run.hpp"
 #include "infer/scheduler.hpp"
 #include "infer/sd_backend.hpp"
 #include "infer/sd_image.hpp"
-#include "infer/sd_video.hpp"
 #include "infer/worker_proto.hpp"
-#include "media/ffmpeg.hpp"
 #include "pipeline/jobs.hpp"
-#include "stages/frames.hpp"
-#include "stages/render.hpp"
 #include "util/paths.hpp"
+#include "util/text.hpp"
 
 namespace changji::infer {
 
@@ -52,63 +58,6 @@ struct State {
     std::atomic<std::uint64_t> next_id{1};
 };
 
-/// 接任务之前先看这活干不干得成。干不成就当场说，别跑到一半才发现。
-///
-/// **这条是实机烧出来的**：第一次跑出片，扩散 8 步全跑完，到最后编码那一步
-/// 才报"找不到 ffmpeg"。本机上 doctor 会在起跑前拦，但直接给 worker 派任务
-/// 绕过了那道检查。在 8 卡机器上，"跑几十秒再失败"乘以八就是几分钟白烧。
-///
-/// 回空串表示能干。
-std::string cannot_do(const Task& t, const config::Settings& s) {
-    const auto ws = s.workspace_path();
-
-    // 出图出片都要扩散模型和它的文本编码器
-    const std::string& which = t.kind == TaskKind::Video ? s.models.video
-                                                        : s.models.image;
-    if (which.empty()) {
-        return std::string(t.kind == TaskKind::Video ? "[models].video"
-                                                     : "[models].image") +
-               " 没配，这个 worker 干不了" +
-               (t.kind == TaskKind::Video ? "出片" : "出图");
-    }
-    for (const auto& [key, name] : std::vector<std::pair<const char*, std::string>>{
-             {"扩散模型", which},
-             {"VAE", t.kind == TaskKind::Video
-                         ? s.models.video_vae
-                         : (s.models.image_vae.empty() ? s.models.video_vae
-                                                       : s.models.image_vae)},
-         }) {
-        if (name.empty()) continue;
-        std::error_code ec;
-        const auto p = s.models.resolve(name, ws);
-        if (!std::filesystem::is_regular_file(p, ec)) {
-            return std::string(key) + " 找不到：" + paths::to_utf8(p);
-        }
-    }
-
-    // **出片要 ffmpeg 把帧编成 mp4。** 就是这一条烧过一次。
-    if (t.kind == TaskKind::Video) {
-        // check() 是 void，缺了就抛。这里把异常翻成一句话回给调用方。
-        try {
-            const media::FFmpeg ff(s.assembly.ffmpeg_path,
-                                   s.assembly.ffprobe_path,
-                                   media::default_runner());
-            ff.check();
-        } catch (const std::exception& e) {
-            return e.what();
-        }
-    }
-
-    // 产物目录得写得进去
-    std::error_code ec;
-    const auto dir = std::filesystem::path(paths::from_utf8(t.dest)).parent_path();
-    if (!dir.empty()) {
-        std::filesystem::create_directories(dir, ec);
-        if (ec) return "产物目录建不出来：" + paths::to_utf8(dir);
-    }
-    return {};
-}
-
 crow::response json_res(const json& body, int code = 200) {
     // dump 用 replace 不用默认的 strict，理由同 http/server.cpp 的
     // `json_response`：这里回的 body 里带着 sd.cpp 抛上来的那句错误原文，
@@ -123,7 +72,16 @@ crow::response json_res(const json& body, int code = 200) {
 
 }  // namespace
 
-void run_worker(const config::Settings& settings, const WorkerOptions& opts) {
+bool run_worker(const config::Settings& settings, const WorkerOptions& opts) {
+    // **先看这个地址开不开得起。** 对外监听而没设口令的话当场拒绝——
+    // 那种情况下谁都能派活过来烧这张卡、读走这台有哪些模型。
+    // 理由和判据在 peer_auth.hpp。
+    if (const auto why = refuse_to_listen(opts.host, settings.peer.token);
+        !why.empty()) {
+        std::cerr << why << std::endl;
+        return false;
+    }
+
     // **绑卡靠 CUDA_VISIBLE_DEVICES。** 在建任何 ggml 上下文之前设，
     // 之后再设没用——后端初始化的时候就把设备列表读走了。
     //
@@ -139,12 +97,40 @@ void run_worker(const config::Settings& settings, const WorkerOptions& opts) {
     // 独立进程，它的 stderr 就是排查出图问题唯一的地方。
     sd_log_to_stderr();
 
-    register_sd_slots(settings, models::HardwareProfile::detect(
-                                    settings.vram_gb_override));
+    // **只探一次。** detect 会跑 nvidia-smi，一百毫秒上下；
+    // /status 每次重探的话，别的机器轮询一下就是白白拖慢这台。
+    const auto profile =
+        models::HardwareProfile::detect(settings.vram_gb_override);
+    register_sd_slots(settings, profile);
 
     auto state = std::make_shared<State>();
     crow::SimpleApp app;
     app.loglevel(crow::LogLevel::Warning);
+
+    // **这台的自我介绍。** 别的机器靠它决定派不派活过来：能力齐不齐、
+    // 卡多大、模型目录还剩多少。拼的地方只有一处（node_status.cpp），
+    // 界面上那张表和 --doctor 末尾那句用的是同一份。
+    // 对外监听时，除了 /health 都要口令。
+    //
+    // **/health 故意不要**：它只回 ok/gpu/busy，探活的那一头（可能是
+    // 负载均衡、可能是脚本）不该为了 ping 一下就拿到口令。
+    const auto gate = [settings, opts](const crow::request& req)
+        -> std::optional<crow::response> {
+        if (!is_public_bind(opts.host)) return std::nullopt;
+        if (token_ok(req.get_header_value("Authorization"),
+                     settings.peer.token)) {
+            return std::nullopt;
+        }
+        return json_res({{"detail",
+                          "口令不对或者没带。要 Authorization: Bearer "
+                          "<对面 [peer].token 那个值>"}},
+                        401);
+    };
+
+    CROW_ROUTE(app, "/status")([settings, profile, gate](const crow::request& req) {
+        if (auto deny = gate(req)) return std::move(*deny);
+        return json_res(node_status_json(settings, profile));
+    });
 
     CROW_ROUTE(app, "/health")([opts, state] {
         std::lock_guard lg(state->mu);
@@ -153,17 +139,118 @@ void run_worker(const config::Settings& settings, const WorkerOptions& opts) {
                          {"busy", state->current != nullptr}});
     });
 
+    // ---- 装模型：让派活那头能指挥这台去补齐 ----
+    //
+    // **转调初始化页那套**（http/setup_api），不另写一份：清单、推荐档、
+    // aria2/curl、断点续传、按真实字节数判完成，全在那儿了。这台机器
+    // 自己打开界面点下载，和别的机器指挥它下载，走的必须是同一条路——
+    // 两份的话，"下完了没有"的判据迟早只改一边。
+    const auto api_res = [](const http::ApiResult& r) {
+        return json_res(r.body, r.status);
+    };
+
+    CROW_ROUTE(app, "/setup/state")(
+        [gate, settings, profile, api_res](const crow::request& req) {
+        if (auto deny = gate(req)) return std::move(*deny);
+        return api_res(http::get_setup_state(settings, profile));
+    });
+
+    CROW_ROUTE(app, "/setup/download").methods(crow::HTTPMethod::POST)(
+        [gate, settings, api_res](const crow::request& req) {
+        if (auto deny = gate(req)) return std::move(*deny);
+        const auto body = json::parse(req.body, nullptr, false);
+        if (body.is_discarded()) {
+            return json_res({{"detail", "请求体不是 JSON"}}, 400);
+        }
+        try {
+            return api_res(http::post_setup_download(settings, body));
+        } catch (const http::ApiError& e) {
+            return json_res({{"detail", e.detail()}}, e.status());
+        }
+    });
+
+    CROW_ROUTE(app, "/setup/progress")(
+        [gate, api_res](const crow::request& req) {
+        if (auto deny = gate(req)) return std::move(*deny);
+        return api_res(http::get_setup_progress());
+    });
+
+    CROW_ROUTE(app, "/setup/cancel").methods(crow::HTTPMethod::POST)(
+        [gate, api_res](const crow::request& req) {
+        if (auto deny = gate(req)) return std::move(*deny);
+        return api_res(http::post_setup_cancel());
+    });
+
+    // ---- blob：跨机时输入和产物都走这三条 ----
+    //
+    // **为什么不把文件塞进任务的 JSON 里。** 一张参考图几 MB，base64 之后
+    // 还要涨三分之一，而一集里那几张图是同一批文件——塞进去就是同一张脸
+    // 传二十二遍。分开之后，第二镜起 probe 一问就跳过了。
+    const auto cache = infer::cache_root_of(settings.workspace_path());
+
+    CROW_ROUTE(app, "/blob/<string>/probe")(
+        [gate, cache](const crow::request& req, const std::string& id) {
+        if (auto deny = gate(req)) return std::move(*deny);
+        // 派活那头靠这一句决定传不传。**不合法的指纹回 have:false 就够**
+        // ——它本来也不可能存在，而当成错误会让派活方以为链路坏了。
+        return json_res({{"have", blob_present(cache, id)}});
+    });
+
+    CROW_ROUTE(app, "/blob/<string>").methods(crow::HTTPMethod::POST)(
+        [gate, cache](const crow::request& req, const std::string& id) {
+        if (auto deny = gate(req)) return std::move(*deny);
+        // 先核指纹再落地，对不上不写——截断的那份是最阴的故障，
+        // 见 blob.hpp。
+        if (const auto why = blob_store(cache, id, req.body); !why.empty()) {
+            return json_res({{"detail", why}}, 400);
+        }
+        return json_res({{"ok", true}});
+    });
+
+    CROW_ROUTE(app, "/blob/<string>")(
+        [gate, cache](const crow::request& req, const std::string& id) {
+        if (auto deny = gate(req)) return std::move(*deny);
+        const auto p = blob_path(cache, id);
+        std::error_code ec;
+        if (p.empty() || !std::filesystem::is_regular_file(p, ec)) {
+            return json_res({{"detail", "没有这个 blob：" + id}}, 404);
+        }
+        std::ifstream in(p, std::ios::binary);
+        if (!in) return json_res({{"detail", "读不了：" + id}}, 500);
+        std::ostringstream ss;
+        ss << in.rdbuf();
+        crow::response res(200, ss.str());
+        res.set_header("Content-Type", "application/octet-stream");
+        return res;
+    });
+
     CROW_ROUTE(app, "/task").methods(crow::HTTPMethod::POST)(
-        [state, settings](const crow::request& req) {
+        [state, settings, gate](const crow::request& req) {
+            if (auto deny = gate(req)) return std::move(*deny);
+            // **先看这串字节是不是合法 UTF-8。** 不是的话下面每一条
+            // 路都会炸在同一个地方：nlohmann 解析时照单全收，而把出错
+            // 位置附近的原始字节拼进 {"detail": …} 再 dump，就在报错的
+            // 路上又抛一次——第二次没人接，派活方拿到一个空白的 500。
+            // 2026-09-12 实撞，日志里只有一行 invalid UTF-8 byte。
+            if (!text::is_valid_utf8(req.body)) {
+                return json_res(
+                    {{"detail",
+                      "请求体不是合法的 UTF-8。派活那头多半没按 UTF-8 编码"
+                      "（Windows 上直接发 GBK 的中文就会这样）"}},
+                    400);
+            }
             Task task;
             try {
                 task = task_from_json(json::parse(req.body));
             } catch (const std::exception& e) {
-                return json_res({{"detail", std::string("任务读不懂：") + e.what()}},
+                // e.what() 里可能带着原始字节，洗一遍再放进 JSON
+                return json_res({{"detail", std::string("任务读不懂：") +
+                                                text::sanitize_utf8(e.what())}},
                                 400);
             }
 
             // **先自检再排队。** 干不成就当场说——这一条是烧过一次换来的。
+            // 判据在 task_run.cpp，两条路（工作进程、对等互联）共用一份。
             if (const auto why = cannot_do(task, settings); !why.empty()) {
                 return json_res({{"detail", why}, {"shot_id", task.shot_id}}, 400);
             }
@@ -181,7 +268,8 @@ void run_worker(const config::Settings& settings, const WorkerOptions& opts) {
 
             // **建完就 detach**，见 Live 的注释。live 是 shared_ptr，
             // 被 lambda 捕获一份，线程跑多久它就活多久。
-            std::thread([state, live, task, settings] {
+            // id 也捕一份：跨机时沙箱按它起名（<cache>/tasks/<id>）。
+            std::thread([state, live, task, settings, id] {
                 const auto on_step = [state, live](int step, int steps,
                                                   double, bool loading) {
                     std::lock_guard lg(state->mu);
@@ -189,42 +277,17 @@ void run_worker(const config::Settings& settings, const WorkerOptions& opts) {
                     live->progress.steps = steps;
                     live->progress.loading = loading;
                 };
-                TaskResult result;
-                try {
-                    const std::filesystem::path dest =
-                        paths::from_utf8(task.dest);
-                    if (task.kind == TaskKind::Frame) {
-                        models::Shot shot;
-                        shot.shot_id = task.shot_id;
-                        stages::sd_renderer_with_seed(settings, task.seed)(
-                            shot, task.prompts, task.spec, dest, live->tok,
-                            on_step);
-                    } else {
-                        models::Shot shot;
-                        shot.shot_id = task.shot_id;
-                        stages::RenderPlan plan;
-                        plan.shot_id = task.shot_id;
-                        plan.tier = task.tier;
-                        plan.spec = task.spec;
-                        plan.frames = task.frames;
-                        plan.prompts = task.prompts;
-                        plan.motion = task.motion;
-                        plan.style_line = task.style_line;
-                        std::optional<std::filesystem::path> start;
-                        if (task.start_image) {
-                            start = paths::from_utf8(*task.start_image);
-                        }
-                        sd_video_renderer_with_seed(settings, task.seed)(
-                            shot, plan, start, dest, live->tok, on_step);
-                    }
-                    result.ok = true;
-                    result.dest = task.dest;
-                } catch (const std::exception& e) {
-                    result.ok = false;
-                    // 这句会一路变成协调者事件流里的那条 warn，
-                    // 所以要能直接给用户看。
-                    result.error = e.what();
-                }
+                // 怎么跑在 task_run.cpp 里，那一层不碰网络。
+                // **origin 是 Local**：这些工作进程是本机自己按显卡数
+                // 拉起来的（见 worker_farm.hpp），它们干的就是本机的活。
+                // 别的机器派来的活走对等互联那条路，那边传 Peer。
+                //
+                // （合并时这儿原来是一整段就地跑的代码，包括那句
+                //  `sd_renderer_with_seed(settings, task.seed)`——采样旋钮
+                //  要跟着这一集的 settings 走。搬进 run_task_locally 之后
+                //  那个参数还在，见 task_run.cpp 里那一行。）
+                const TaskResult result = run_task_locally(
+                    task, settings, Origin::Local, id, on_step, live->tok);
                 std::lock_guard lg(state->mu);
                 live->progress.state = result.ok ? "done" : "failed";
                 live->progress.result = result;
@@ -235,7 +298,9 @@ void run_worker(const config::Settings& settings, const WorkerOptions& opts) {
             return json_res({{"id", id}}, 202);
         });
 
-    CROW_ROUTE(app, "/task/<string>")([state](const std::string& id) {
+    CROW_ROUTE(app, "/task/<string>")(
+        [state, gate](const crow::request& req, const std::string& id) {
+        if (auto deny = gate(req)) return std::move(*deny);
         std::lock_guard lg(state->mu);
         if (!state->current || state->current_id != id) {
             return json_res({{"detail", "没有这个任务"}}, 404);
@@ -250,7 +315,9 @@ void run_worker(const config::Settings& settings, const WorkerOptions& opts) {
     });
 
     CROW_ROUTE(app, "/task/<string>/cancel")
-        .methods(crow::HTTPMethod::POST)([state](const std::string& id) {
+        .methods(crow::HTTPMethod::POST)(
+            [state, gate](const crow::request& req, const std::string& id) {
+            if (auto deny = gate(req)) return std::move(*deny);
             std::lock_guard lg(state->mu);
             if (!state->current || state->current_id != id) {
                 return json_res({{"detail", "没有这个任务"}}, 404);
@@ -295,6 +362,7 @@ void run_worker(const config::Settings& settings, const WorkerOptions& opts) {
         }
     }
     std::_Exit(0);
+    return true;   // 到不了，但签名要它
 }
 
 }  // namespace changji::infer

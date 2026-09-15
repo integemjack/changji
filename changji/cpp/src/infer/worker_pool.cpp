@@ -3,6 +3,9 @@
 #include "infer/worker_roster.hpp"
 
 #include <atomic>
+#include <filesystem>
+#include <fstream>
+#include <sstream>
 #include <chrono>
 #include <condition_variable>
 #include <optional>
@@ -13,9 +16,12 @@
 
 #include <nlohmann/json.hpp>
 
+#include "infer/blob.hpp"
+#include "infer/peer_auth.hpp"
 #include "infer/worker_proto.hpp"
 #include "util/httplib.hpp"
 #include "util/paths.hpp"
+#include "util/text.hpp"
 
 namespace changji::infer {
 
@@ -36,6 +42,16 @@ std::pair<std::string, std::string> split_url(const std::string& url) {
             rest.substr(slash)};
 }
 
+/// 读一个文件。读不了抛——**别拿空内容接着跑**：那样传过去的是一个
+/// 指纹对得上的空文件，对面照样"成功"，直到出图那步才发现参考图是空的。
+std::string read_file(const std::filesystem::path& p) {
+    std::ifstream in(p, std::ios::binary);
+    if (!in) throw std::runtime_error("读不了输入文件：" + paths::to_utf8(p));
+    std::ostringstream ss;
+    ss << in.rdbuf();
+    return ss.str();
+}
+
 }  // namespace
 
 struct WorkerPool::Impl {
@@ -44,6 +60,8 @@ struct WorkerPool::Impl {
     };
 
     std::vector<Worker> workers;
+    /// 本机那个槽怎么跑。空 = 池里没有本机这一档。
+    LocalRunner local_runner;
     /// 谁忙着、谁坏了。策略在 worker_roster.hpp，那份不含网络代码、能测。
     std::unique_ptr<WorkerRoster> roster;
     std::mutex mu;
@@ -86,14 +104,118 @@ struct WorkerPool::Impl {
     };
 
     /// 在指定的工作进程上把任务跑完。连不上抛 Unreachable，其余照旧。
-    void run_on(std::size_t idx, const Task& task, pipeline::CancelToken& tok,
-                const StepCallback& on_step) {
+    /// 把一个输入文件送到对面去，回它的 `blob:` 记法。
+    ///
+    /// **先问再传。** 一集 22 镜、每镜三五张参考图，而那几张是同一批文件；
+    /// 不问的话就是同一张脸传二十二遍。
+    std::string ship_input(httplib::Client& cli, const std::string& prefix,
+                           const std::string& url, const std::string& path) {
+        const std::string bytes = read_file(paths::from_utf8(path));
+        const std::string id = text::sha1_hex(bytes);
+
+        auto probe = cli.Get(prefix + "/blob/" + id + "/probe");
+        if (!probe) {
+            throw Unreachable("问不到工作进程 " + url + "：" +
+                              httplib::to_string(probe.error()));
+        }
+        bool have = false;
+        if (probe->status == 200) {
+            const auto j = json::parse(probe->body, nullptr, false);
+            have = !j.is_discarded() && j.value("have", false);
+        }
+        if (!have) {
+            auto res = cli.Post(prefix + "/blob/" + id, bytes,
+                                "application/octet-stream");
+            if (!res) {
+                throw Unreachable("传不过去 " + url + "：" +
+                                  httplib::to_string(res.error()));
+            }
+            if (res->status != 200) {
+                throw std::runtime_error(
+                    worker_rejected_message(res->status, res->body));
+            }
+        }
+        return "blob:" + id;
+    }
+
+    /// 把产物取回来，落到本机的 dest。
+    void pull_artifact(httplib::Client& cli, const std::string& prefix,
+                       const std::string& url, const std::string& artifact_id,
+                       const std::string& dest) {
+        if (artifact_id.empty()) {
+            throw std::runtime_error(
+                "对面说跑成了，却没给产物指纹——多半是那台的版本还不认 "
+                "return_artifact");
+        }
+        auto res = cli.Get(prefix + "/blob/" + artifact_id);
+        if (!res) {
+            throw Unreachable("取不回产物 " + url + "：" +
+                              httplib::to_string(res.error()));
+        }
+        if (res->status != 200) {
+            throw std::runtime_error(
+                worker_rejected_message(res->status, res->body));
+        }
+        // **落地之前核一遍指纹。** 少几个字节的 png 照样能写下去，
+        // 之后报的是一张半截图或者"权重读不对"，指向完全错误的方向。
+        const std::string real = text::sha1_hex(res->body);
+        if (real != artifact_id) {
+            throw std::runtime_error("产物传坏了：说好的是 " + artifact_id +
+                                     "，收到的是 " + real + "（" +
+                                     std::to_string(res->body.size()) +
+                                     " 字节）");
+        }
+        const auto out = paths::from_utf8(dest);
+        std::error_code ec;
+        std::filesystem::create_directories(out.parent_path(), ec);
+        std::ofstream f(out, std::ios::binary | std::ios::trunc);
+        if (!f) throw std::runtime_error("写不了产物：" + dest);
+        f.write(res->body.data(),
+                static_cast<std::streamsize>(res->body.size()));
+        if (!f) throw std::runtime_error("产物写坏了：" + dest);
+    }
+
+    /// 跑完回结果。**要这个返回值是为了配音**：出来多长（秒）只有跑活
+    /// 那台知道（它顺手就量了），而配音先行那条线靠它反推镜头时长。
+    TaskResult run_on(std::size_t idx, const Task& task,
+                      pipeline::CancelToken& tok,
+                      const StepCallback& on_step) {
+        // 本机那个槽：进程内跑，不发 HTTP，也不搬文件（同一个文件系统）。
+        // 排队由执行位管（见 exec_queue.hpp），这儿不用再判忙不忙。
+        if (workers[idx].ep.url == kLocalEndpoint) {
+            if (!local_runner) {
+                throw Unreachable("池里有个 local 槽，却没给怎么在本机跑");
+            }
+            const TaskResult r = local_runner(task, on_step, tok);
+            if (!r.ok) throw std::runtime_error(r.error);
+            return r;
+        }
+
         const auto [origin, prefix] = split_url(workers[idx].ep.url);
         httplib::Client cli(origin);
+        // 跨机那头要口令，本机那些听回环的不查——带上都不碍事。
+        if (!workers[idx].ep.token.empty()) {
+            cli.set_bearer_token_auth(workers[idx].ep.token);
+        }
         cli.set_connection_timeout(10, 0);
         cli.set_read_timeout(600, 0);
 
-        auto res = cli.Post(prefix + "/task", to_json(task).dump(),
+        // **同机就什么都不搬。** 一个文件系统，参考图直接给路径、
+        // 产物直接写过去。跨机才走 blob：那边根本没有这些目录。
+        const bool remote = !endpoint_is_local(workers[idx].ep.url);
+        Task t = task;
+        if (remote) {
+            t.return_artifact = true;
+            for (auto& r : t.prompts.reference_images) {
+                r = ship_input(cli, prefix, workers[idx].ep.url, r);
+            }
+            if (t.start_image) {
+                t.start_image =
+                    ship_input(cli, prefix, workers[idx].ep.url, *t.start_image);
+            }
+        }
+
+        auto res = cli.Post(prefix + "/task", to_json(t).dump(),
                             "application/json");
         if (!res) {
             throw Unreachable("连不上工作进程 " + workers[idx].ep.url + "：" +
@@ -156,7 +278,11 @@ struct WorkerPool::Impl {
             if (p.state == "done" || p.state == "failed") {
                 if (!p.result) throw std::runtime_error("跑完了却没有结果");
                 if (!p.result->ok) throw std::runtime_error(p.result->error);
-                return;
+                if (remote) {
+                    pull_artifact(cli, prefix, workers[idx].ep.url,
+                                  p.result->artifact_id, task.dest);
+                }
+                return *p.result;
             }
         }
     }
@@ -168,8 +294,8 @@ struct WorkerPool::Impl {
     /// 8×L20 上真发生过：一个工作进程 OOM 崩了、systemd 正在重启它，
     /// 十一个镜头连着挑中它，每个 attempts 加到 3 直接降级——
     /// 而池子里另外七个好好的，一个都没被试过。
-    void run_task(const Task& task, pipeline::CancelToken& tok,
-                  const StepCallback& on_step) {
+    TaskResult run_task(const Task& task, pipeline::CancelToken& tok,
+                        const StepCallback& on_step) {
         std::set<std::size_t> tried;
         std::string last_error;
         for (;;) {
@@ -187,9 +313,9 @@ struct WorkerPool::Impl {
             } release{this, idx};
 
             try {
-                run_on(idx, task, tok, on_step);
+                const TaskResult r = run_on(idx, task, tok, on_step);
                 mark_ok(idx);
-                return;
+                return r;
             } catch (const Unreachable& e) {
                 mark_bad(idx);
                 tried.insert(idx);
@@ -200,8 +326,10 @@ struct WorkerPool::Impl {
     }
 };
 
-WorkerPool::WorkerPool(std::vector<WorkerEndpoint> endpoints)
+WorkerPool::WorkerPool(std::vector<WorkerEndpoint> endpoints,
+                       LocalRunner local_runner)
     : impl_(std::make_unique<Impl>()) {
+    impl_->local_runner = std::move(local_runner);
     for (auto& e : endpoints) impl_->workers.push_back({std::move(e)});
     impl_->roster = std::make_unique<WorkerRoster>(impl_->workers.size());
 }
@@ -213,8 +341,14 @@ std::size_t WorkerPool::size() const { return impl_->workers.size(); }
 std::size_t WorkerPool::alive() const {
     std::size_t n = 0;
     for (const auto& w : impl_->workers) {
+        // 本机那个槽不用 ping：它要么在，要么这个进程自己也没了。
+        if (w.ep.url == kLocalEndpoint) {
+            if (impl_->local_runner) ++n;
+            continue;
+        }
         const auto [origin, prefix] = split_url(w.ep.url);
         httplib::Client cli(origin);
+        if (!w.ep.token.empty()) cli.set_bearer_token_auth(w.ep.token);
         cli.set_connection_timeout(3, 0);
         auto res = cli.Get(prefix + "/health");
         if (res && res->status == 200) ++n;
@@ -267,13 +401,44 @@ stages::VideoRenderer WorkerPool::video_renderer() {
     };
 }
 
+stages::Synthesizer WorkerPool::tts_synthesizer() {
+    Impl* impl = impl_.get();
+    return [impl](const std::string& text, const std::filesystem::path& dest,
+                  const std::optional<std::string>& voice_id,
+                  const std::string& emotion, double intensity) {
+        Task t;
+        t.kind = TaskKind::Tts;
+        // shot_id 在配音这条路上没有意义，但沙箱和日志都靠它认人，
+        // 给一个固定的比空着强。
+        t.shot_id = "tts";
+        t.text = text;
+        t.voice_id = voice_id.value_or("");
+        t.emotion = emotion;
+        t.intensity = intensity;
+        t.dest = paths::to_utf8(dest);
+
+        // **配音这条路上没有取消令牌。** Synthesizer 的签名里就没有——
+        // 一句话十几秒，点了停止最多多等这么久，不值得为它把整条
+        // 配音链路的签名都改一遍。
+        pipeline::CancelToken tok;
+        const TaskResult r = impl->run_task(t, tok, {});
+
+        stages::SynthesisResult out;
+        out.duration_s = r.duration_s;
+        // 产物已经落到 dest 了（同机直接写，跨机拉回来）。
+        out.audio_path = dest;
+        return out;
+    };
+}
+
 std::shared_ptr<WorkerPool> make_worker_pool(
-    const std::vector<std::string>& endpoints) {
+    const std::vector<std::string>& endpoints, const std::string& token,
+    LocalRunner local_runner) {
     if (endpoints.empty()) return nullptr;
     std::vector<WorkerEndpoint> eps;
     eps.reserve(endpoints.size());
-    for (const auto& u : endpoints) eps.push_back(WorkerEndpoint{u});
-    return std::make_shared<WorkerPool>(std::move(eps));
+    for (const auto& u : endpoints) eps.push_back(WorkerEndpoint{u, token});
+    return std::make_shared<WorkerPool>(std::move(eps), std::move(local_runner));
 }
 
 }  // namespace changji::infer

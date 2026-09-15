@@ -733,6 +733,16 @@ add_executable(changji
     src/llm/client.cpp
     src/llm/sse.cpp
     src/llm/client_http.cpp
+    src/infer/capability.cpp
+    src/infer/blob.cpp
+    src/infer/node_pick.cpp
+    src/infer/node_prefs.cpp
+    src/infer/node_proxy.cpp
+    src/infer/node_registry.cpp
+    src/infer/peer_auth.cpp
+    src/infer/node_status.cpp
+    src/infer/local_exec.cpp
+    src/infer/task_run.cpp
     src/infer/worker_pool.cpp
     src/infer/worker_farm.cpp
     src/infer/worker_server.cpp
@@ -1031,6 +1041,11 @@ if(CHANGJI_BUILD_TESTS)
         tests/unit/main.cpp
         tests/unit/test_worker_proto.cpp
         tests/unit/test_worker_roster.cpp
+        tests/unit/test_exec_queue.cpp
+        tests/unit/test_capability.cpp
+        tests/unit/test_peer_auth.cpp
+        tests/unit/test_blob.cpp
+        tests/unit/test_node_pick.cpp
         tests/unit/test_flow.cpp
         tests/unit/test_webapp.cpp
         tests/unit/test_shot.cpp
@@ -1107,6 +1122,12 @@ if(CHANGJI_BUILD_TESTS)
         # 逻辑部分都已经拆到不依赖网络库的文件里了。
         src/infer/worker_proto.cpp
         src/infer/worker_farm.cpp
+        # 执行位：frames / sd_video / ref_gen 三个都用它，而它们都在这个目标里
+        src/infer/local_exec.cpp
+        src/infer/capability.cpp
+        src/infer/peer_auth.cpp
+        src/infer/blob.cpp
+        src/infer/node_pick.cpp
         src/http/flow.cpp
         src/http/webapp.cpp
         src/models/shot.cpp

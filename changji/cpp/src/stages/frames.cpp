@@ -8,6 +8,7 @@
 #include <chrono>
 #include <cstdlib>
 
+#include "infer/local_exec.hpp"
 #include "infer/scheduler.hpp"
 #include "pipeline/activity.hpp"
 #include "util/paths.hpp"
@@ -52,14 +53,25 @@ std::int64_t frame_seed(const std::string& shot_id, int attempts) {
 namespace {
 
 /// 出图那一段的公共实现。`seed_override` 有值就用它，没有就按镜头算。
+// 合并时两边各加了一个参数，都要：`settings` 是采样旋钮那一份（见下面
+// knobs），`origin` 是"这活谁派的"（见下面 local_exec().enter）。
 FrameRenderer make_sd_renderer(const config::Settings& settings,
-                              std::optional<std::int64_t> seed_override) {
+                               std::optional<std::int64_t> seed_override,
+                               infer::Origin origin) {
     const infer::SamplingKnobs knobs =
         infer::sampling_knobs_for(settings, infer::ModelRole::Image);
-    return [seed_override, knobs](const Shot& shot,
+    return [seed_override, origin, knobs](const Shot& shot,
               const PromptBundle& prompts,
               const TierSpec& spec, const fs::path& dest,
               pipeline::CancelToken& tok, const infer::StepCallback& on_step) {
+        // **先拿本机的执行位，再向调度器借显存槽。** 反过来的话会撞上
+        // 「出片在显存那儿干等五分钟」——理由写在 local_exec.hpp 里。
+        //
+        // origin 现在一律是 Local：派给别的机器算的活走的是工作进程池
+        // 那条路，根本不经过这儿。接上对等互联之后，外来的活在工作进程
+        // 那一侧标 Peer，本机自己的一集就排在它前面。
+        auto hold = infer::local_exec().enter(origin, pipeline::note_queued,
+                                              &tok);
         // 每次借一下。**不在外面借一次拿着不放**——那样跑首帧期间
         // 别的槽（比如视频模型）永远腾不出地方，
         // 而按阶段分批的整个意义就是让它们轮流占显存。
@@ -106,12 +118,12 @@ FrameRenderer make_sd_renderer(const config::Settings& settings,
 }  // namespace
 
 FrameRenderer sd_renderer(const config::Settings& settings) {
-    return make_sd_renderer(settings, std::nullopt);
+    return make_sd_renderer(settings, std::nullopt, infer::Origin::Local);
 }
 
 FrameRenderer sd_renderer_with_seed(const config::Settings& settings,
-                                   std::int64_t seed) {
-    return make_sd_renderer(settings, seed);
+                                    std::int64_t seed, infer::Origin origin) {
+    return make_sd_renderer(settings, seed, origin);
 }
 
 std::vector<FrameOutcome> run_frames(std::vector<Shot*>& shots,

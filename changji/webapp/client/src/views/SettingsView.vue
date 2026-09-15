@@ -24,6 +24,7 @@
 import { computed, onMounted, ref, watch } from 'vue'
 
 import AppIcon from '@/components/AppIcon.vue'
+import NodeMatrix from '@/components/NodeMatrix.vue'
 import { api } from '@/api'
 import { useAction } from '@/composables/useAction'
 import { useSession } from '@/stores/session'
@@ -642,6 +643,10 @@ function scrollTo(id) {
             </div>
 
             <p class="tiny dim mono">配置文件：{{ node.configFile }}</p>
+
+            <!-- 「机器 × 能力」那张表。本机也是其中一行——本地和远程是
+                 同一张表上的两个格子，不是两套设置。 -->
+            <NodeMatrix v-if="engineOnline" />
           </div>
         </section>
 

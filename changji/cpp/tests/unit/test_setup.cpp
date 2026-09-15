@@ -165,11 +165,12 @@ TEST_CASE("推荐：显存多大都得给得出一套") {
 }
 
 TEST_CASE("推荐：卡越大挑得越好，而且不会推荐装不下的") {
-    // 不能叫 small：Windows 的 rpcndr.h 里 `#define small char`，
-    // MSVC 上 `const auto small` 会展开成 `const auto char`，编不过。
-    const auto low = setup::recommend(8.0);
-    const auto big = setup::recommend(80.0);
-    CHECK(low.at("image") != big.at("image"));
+    // **别把这两个叫 small / big。** Windows SDK 的 rpcndr.h 里有
+    // `#define small char`，`const auto small` 在 MSVC 上直接编不过
+    // （C3530「auto 不能与任何其他类型说明符组合」，指向的行看着完全正常）。
+    const auto small_card = setup::recommend(8.0);
+    const auto big_card = setup::recommend(80.0);
+    CHECK(small_card.at("image") != big_card.at("image"));
 
     for (const auto& g : setup::catalog()) {
         const auto* picked = g.find(setup::recommend(24.0).at(g.key));

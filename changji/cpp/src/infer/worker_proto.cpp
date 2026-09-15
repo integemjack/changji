@@ -9,12 +9,18 @@ namespace changji::infer {
 using nlohmann::json;
 
 const char* to_string(TaskKind k) {
-    return k == TaskKind::Video ? "video" : "frame";
+    switch (k) {
+        case TaskKind::Video: return "video";
+        case TaskKind::Tts: return "tts";
+        case TaskKind::Frame: break;
+    }
+    return "frame";
 }
 
 std::optional<TaskKind> task_kind_from(const std::string& s) {
     if (s == "frame") return TaskKind::Frame;
     if (s == "video") return TaskKind::Video;
+    if (s == "tts") return TaskKind::Tts;
     return std::nullopt;
 }
 
@@ -48,6 +54,11 @@ json to_json(const Task& t) {
         {"tier", t.tier},
         {"dest", t.dest},
         {"seed", t.seed},
+        {"return_artifact", t.return_artifact},
+        {"text", t.text},
+        {"voice_id", t.voice_id},
+        {"emotion", t.emotion},
+        {"intensity", t.intensity},
     };
     if (t.start_image) j["start_image"] = *t.start_image;
     return j;
@@ -56,7 +67,9 @@ json to_json(const Task& t) {
 Task task_from_json(const json& j) {
     Task t;
     const auto kind = task_kind_from(need(j, "kind").get<std::string>());
-    if (!kind) throw std::runtime_error("任务的 kind 只能是 frame 或 video");
+    if (!kind) {
+        throw std::runtime_error("任务的 kind 只能是 frame / video / tts");
+    }
     t.kind = *kind;
     t.shot_id = need(j, "shot_id").get<std::string>();
     t.dest = need(j, "dest").get<std::string>();
@@ -82,11 +95,44 @@ Task task_from_json(const json& j) {
     // **种子必须带**。让工作进程自己算的话它不知道 attempts，
     // 算出来的图和串行跑的不一样——那样并行就不是"更快"，是"结果变了"。
     t.seed = need(j, "seed").get<std::int64_t>();
+    // **默认假**：老版本的派活方不带这个字段，那时候它要的就是老行为
+    // （直接写 dest，两头共享文件系统）。
+    t.return_artifact = j.value("return_artifact", false);
+    t.text = j.value("text", std::string());
+    t.voice_id = j.value("voice_id", std::string());
+    t.emotion = j.value("emotion", std::string());
+    t.intensity = j.value("intensity", 0.0);
+
+    // **在入口处判掉非法 UTF-8。** nlohmann 解析时照单全收，dump 时才抛
+    // type_error.316——那时候已经出了这儿的 try 块，派活方拿到的是一个
+    // 空白的 500。跨机时两头编码不一样是迟早的事（2026-09-12 实撞：
+    // 请求体是 GBK 的中文台词，日志里只有一行 invalid UTF-8 byte）。
+    for (const auto& [what, s] : std::vector<std::pair<const char*, const std::string*>>{
+             {"shot_id", &t.shot_id},
+             {"dest", &t.dest},
+             {"text", &t.text},
+             {"voice_id", &t.voice_id},
+             {"emotion", &t.emotion},
+             {"motion", &t.motion},
+             {"prompts.positive", &t.prompts.positive},
+             {"prompts.negative", &t.prompts.negative},
+         }) {
+        if (!text::is_valid_utf8(*s)) {
+            throw std::runtime_error(
+                std::string(what) +
+                " 不是合法的 UTF-8。派活那头多半没按 UTF-8 编码"
+                "（Windows 上用 GBK 发中文就会这样）");
+        }
+    }
     return t;
 }
 
 json to_json(const TaskResult& r) {
-    return json{{"ok", r.ok}, {"error", r.error}, {"dest", r.dest}};
+    return json{{"ok", r.ok},
+                {"error", r.error},
+                {"dest", r.dest},
+                {"artifact_id", r.artifact_id},
+                {"duration_s", r.duration_s}};
 }
 
 TaskResult task_result_from_json(const json& j) {
@@ -94,6 +140,8 @@ TaskResult task_result_from_json(const json& j) {
     r.ok = j.value("ok", false);
     r.error = j.value("error", std::string());
     r.dest = j.value("dest", std::string());
+    r.artifact_id = j.value("artifact_id", std::string());
+    r.duration_s = j.value("duration_s", 0.0);
     return r;
 }
 

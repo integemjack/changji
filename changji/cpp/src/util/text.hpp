@@ -61,6 +61,25 @@ std::string strip_leading_ordinal(const std::string& s);
 /// 用 s.size() 当字数会让所有长度判断偏大三倍。
 std::size_t utf8_len(const std::string& s);
 
+/// 这串字节是不是合法的 UTF-8。
+///
+/// **为什么要它。** nlohmann 解析 JSON 时**不校验** UTF-8（照单全收），
+/// 但 `dump()` 时校验——于是一段 GBK 的中文进来之后一路无事，直到把它
+/// 回显进某个响应里才抛 `type_error.316`，而那时候已经出了 try 块，
+/// 用户拿到的是一个空白的 500。
+///
+/// 2026-09-12 实撞：往工作进程派一个带中文台词的配音任务，请求体是 GBK，
+/// 工作进程回 500，日志里只有一行 "invalid UTF-8 byte at index 174"。
+/// 跨机时两头编码不一样是迟早的事，所以在入口处就要判掉。
+bool is_valid_utf8(const std::string& s);
+
+/// 把非法字节换成 `?`，让这串一定塞得进 JSON。
+///
+/// **专治"错误消息本身炸掉"**：nlohmann 的解析错误里会带上出错位置附近
+/// 的原始字节，把它拼进 `{"detail": …}` 再 dump，就在报错的路上又抛一次
+/// ——而第二次没人接，用户拿到的是一个空白的 500。
+std::string sanitize_utf8(const std::string& s);
+
 /// 一个 UTF-8 字符占几字节，从起始字节判断。非法起始字节按 1 算。
 std::size_t utf8_char_len(unsigned char lead);
 

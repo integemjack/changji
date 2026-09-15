@@ -1,6 +1,9 @@
 #include "doctor/doctor.hpp"
 
 
+// 能力自检那一段要它（probe_facts / can_produce_line），见文件末尾。
+#include "infer/node_status.hpp"
+
 
 #include <algorithm>
 #include <cctype>
@@ -585,6 +588,30 @@ namespace {
 /// 字面意思是"栈缓冲区溢出"，排查方向完全被带偏。
 ///
 /// 现在单项失败降级成一条 WARN，其余检查照跑。
+/// 这台机器能产什么。
+///
+/// **上面那些项是按"缺什么"组织的，这一项是按"能干什么"组织的。**
+/// 两种都要：缺什么告诉你去装什么，能干什么告诉你这台在那张
+/// 「机器 × 能力」的表里会亮几格——对等互联之后，那是别的机器
+/// 看这台的唯一视角。
+///
+/// 判断和 /status 用的是同一份（infer::probe_facts），不另算一遍。
+Check check_produces(const config::Settings& settings) {
+    const auto facts = infer::probe_facts(settings);
+    const std::string line = infer::can_produce_line(facts);
+
+    std::string missing;
+    for (const auto& r : infer::capabilities_of(facts)) {
+        if (r.able) continue;
+        if (!missing.empty()) missing += "\n";
+        missing += std::string(infer::label_of(r.cap)) + "：" + r.why;
+    }
+    if (missing.empty()) return {"能产什么", Level::OK, line};
+    // **不是 FAIL。** 一台只写文不出片的机器是完全正当的用法
+    // （build-coord 那份就是），这一项只负责把话说清楚。
+    return {"能产什么", Level::WARN, line, missing};
+}
+
 template <typename F>
 Check guarded(const char* name, F&& fn) {
     try {
@@ -691,6 +718,7 @@ Report run_checks(const config::Settings& settings) {
     r.checks.push_back(guarded("权重放哪", [&] { return check_weights(settings); }));
     r.checks.push_back(guarded("出片画布", [&] { return check_canvas(settings); }));
     r.checks.push_back(guarded("项目目录", [&] { return check_workspace(settings); }));
+    r.checks.push_back(guarded("能产什么", [&] { return check_produces(settings); }));
     return r;
 }
 

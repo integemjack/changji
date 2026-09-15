@@ -504,7 +504,7 @@ int run(int argc, char** argv) {
 
         wo.gpu = worker_gpu;
 
-        changji::infer::run_worker(settings, wo);
+        if (!changji::infer::run_worker(settings, wo)) return 1;
 
         return 0;
 

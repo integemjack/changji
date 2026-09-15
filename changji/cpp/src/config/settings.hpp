@@ -994,6 +994,39 @@ struct WorkersConfig {
     int gpu = -1;
 };
 
+/// 对等互联：这台接不接外来的活、拿什么口令认。
+///
+/// **口令只在对外监听时才要**（见 `infer/peer_auth.hpp`）：本机按显卡数
+/// 自己拉起的那些工作进程听的是回环，多卡那条路一行配置都不用改。
+/// 反过来，`--host 0.0.0.0` 而这里空着的话，服务**当场拒绝启动**——
+/// 那种情况下谁都能派活过来烧这张卡、读走这台有哪些模型。
+struct PeerNodeConfig {
+    /// `http://gpu-box:9001`。**同时是这台的身份**——同一台机器上的两张卡
+    /// 是两个节点，端口不同。
+    std::string url;
+    /// 派活给它时带的口令。**留空就用 `[peer].token`**——都是自己的机器，
+    /// 一个口令走遍是常态，每台配一个只是给自己添麻烦。
+    std::string token;
+    /// 不许它干的那几样，能力名（`llm` / `tts` / `frame` / `video` /
+    /// `assemble`）。"这台留着写剧本，不许拿去出片"就是往这儿加一项。
+    ///
+    /// **只能关，不能开**：能不能干是那台自己说的（见
+    /// `infer/capability.hpp`），这儿只做减法。
+    std::vector<std::string> off;
+};
+
+struct PeerConfig {
+    /// 接活时认的口令。空 = 不接外来的活。
+    std::string token;
+
+    /// 别的机器。空 = 只有本机。
+    ///
+    /// 和 `[workers].endpoints` 的区别：那一项是本机多卡时自己拉起的那些
+    /// 工作进程（同机、共享文件系统、不用口令），这一项是**别的机器**，
+    /// 跨机传文件、要口令、而且每台能单独关掉某些能力。
+    std::vector<PeerNodeConfig> nodes;
+};
+
 /// 全部配置。
 struct Settings {
     LLMConfig llm;
@@ -1007,6 +1040,7 @@ struct Settings {
     UpscaleConfig upscale;
     ModelsConfig models;
     WorkersConfig workers;
+    PeerConfig peer;
 
     /// 显存覆盖。推理服务在别的机器上时本机探测不到，用它手动指定
     std::optional<double> vram_gb_override;

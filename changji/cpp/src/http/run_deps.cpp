@@ -6,6 +6,7 @@
 //
 // 换句话说，这个文件里没有任何值得测的判断——它只是把
 // "配置说走哪条路" 翻译成 "装哪两个函数对象"。
+#include <algorithm>
 #include <chrono>
 #include <thread>
 #include <memory>
@@ -17,6 +18,9 @@
 #include "http/run.hpp"
 #include "infer/sd_image.hpp"
 #include "infer/sd_video.hpp"
+#include "infer/node_pick.hpp"
+#include "infer/node_registry.hpp"
+#include "infer/task_run.hpp"
 #include "infer/worker_farm.hpp"
 #include "infer/worker_pool.hpp"
 #include "stages/frames.hpp"
@@ -67,22 +71,89 @@ RunDeps default_run_deps() {
                     }
                     return false;
                 });
-        const std::vector<std::string> endpoints =
+        const std::vector<std::string> farm_eps =
             farm ? farm->endpoints() : s.workers.endpoints;
 
-        // **配了工作进程就派出去算。** 空的话上面那两行原样生效——
-        // 行为和以前一模一样，这是这一步能安全落地的前提。
-        if (auto pool = infer::make_worker_pool(endpoints)) {
-            b.frame = pool->frame_renderer();
-            b.video = pool->video_renderer();
-            b.frame_backend_name =
-                "sd.cpp（" + std::to_string(pool->size()) + " 个工作进程）";
-            // **并发上限就是池的大小。** 没有池时保持 1——
-            // 进程内不能并发（sd.cpp 的进度回调是全局的）。
-            b.render_lanes = static_cast<int>(pool->size());
-            // 池要活到渲染结束。Backends 只存 std::function，
-            // 捕获一份 shared_ptr 让它跟着活。
-            b.keepalive.push_back(pool);
+        // 别的机器：按能力挑。**出图和出片要分开挑**——一台只装了出图
+        // 模型的机器该参与首帧、不该参与出片，而以前那个池是"所有
+        // 工作进程都能干所有活"。
+        const auto nodes = infer::node_registry().snapshot(s);
+
+        // 本机进程内跑一个任务。**做成回调注入**，池那一层不该知道
+        // 配置长什么样（同 WorkerFarm::HealthProbe）。
+        const infer::LocalRunner local_runner =
+            [s](const infer::Task& t, const infer::StepCallback& on_step,
+                pipeline::CancelToken& tok) {
+                return infer::run_task_locally(t, s, infer::Origin::Local,
+                                               infer::kLocalEndpoint, on_step,
+                                               tok);
+            };
+
+        const auto eps_for = [&](infer::Capability cap) {
+            std::vector<std::string> out;
+            // 本机这一档：多卡时是自己拉起的那几个子进程，单卡时是
+            // 进程内那个槽。**两者不叠加**——多卡时进程内不该再跑，
+            // 那几个子进程已经把卡占满了。
+            if (!farm_eps.empty()) {
+                out = farm_eps;
+            } else {
+                for (const auto* n : infer::candidates_for(nodes, cap)) {
+                    if (n->url == infer::kLocalEndpoint) {
+                        out.push_back(n->url);
+                        break;
+                    }
+                }
+            }
+            // 别的机器
+            for (const auto* n : infer::candidates_for(nodes, cap)) {
+                if (n->url != infer::kLocalEndpoint) out.push_back(n->url);
+            }
+            return out;
+        };
+
+        // **只有本机一个槽就别绕池了。** 那种情况下走池是纯粹多一层
+        // 间接：一样的种子、一样的进程内 sd.cpp，只是中间过一遍任务的
+        // 序列化和路径往返。单卡单机是最常见的用法，那条路上的行为
+        // 应该和以前逐字节一样，不给自己留一个"绕了一圈才发现哪儿不同"
+        // 的机会。
+        const auto worth_pooling = [](const std::vector<std::string>& eps) {
+            if (eps.empty()) return false;
+            if (eps.size() == 1 && eps.front() == infer::kLocalEndpoint) {
+                return false;
+            }
+            return true;
+        };
+
+        // **一个池只管一个能力。** 口令带上：本机自己拉起的那些听回环、
+        // 不查，跨机那头要。
+        const auto frame_eps = eps_for(infer::Capability::Frame);
+        const auto video_eps = eps_for(infer::Capability::Video);
+        auto frame_pool =
+            worth_pooling(frame_eps)
+                ? infer::make_worker_pool(frame_eps, s.peer.token, local_runner)
+                : nullptr;
+        auto video_pool =
+            worth_pooling(video_eps)
+                ? infer::make_worker_pool(video_eps, s.peer.token, local_runner)
+                : nullptr;
+
+        if (frame_pool) {
+            b.frame = frame_pool->frame_renderer();
+            b.keepalive.push_back(frame_pool);
+        }
+        if (video_pool) {
+            b.video = video_pool->video_renderer();
+            b.keepalive.push_back(video_pool);
+        }
+        if (frame_pool || video_pool) {
+            const std::size_t n =
+                std::max(frame_pool ? frame_pool->size() : 0,
+                         video_pool ? video_pool->size() : 0);
+            b.frame_backend_name = "sd.cpp（" + std::to_string(n) + " 处算力）";
+            // **并发上限取大的那个。** 两个池不一样大时，小的那一阶段
+            // 靠池自己挡住（借不到就等），而把上限压到小的那个会让
+            // 大的那一阶段白白少跑几路。
+            b.render_lanes = static_cast<int>(n);
             if (farm) b.keepalive.push_back(farm);
         }
 
@@ -91,34 +162,32 @@ RunDeps default_run_deps() {
         b.ffmpeg = media::FFmpeg(s.assembly.ffmpeg_path, s.assembly.ffprobe_path,
                                  media::default_runner());
 
-        // 配音后端按 [tts].backend 选。
+        // 配音后端。**搭法只有一份**（infer::make_tts_backend），因为别的
+        // 机器派配音任务过来时走的也是它——两份的话，"这台配音到底走哪条
+        // 路"迟早在两边不一样，表现是同一集里前半段有声、后半段静音。
         //
-        // **任何一条路搭不起来都退回估算后端，不抛。** 配音只是五个阶段
-        // 之一，为它整条流水线跑不起来不值得——而且估算后端会写出等长
-        // 静音，画面那几步照样能验。真出不了声这件事在配音阶段的
+        // 任何一条路搭不起来都退回估算后端（留空即是），不抛：配音只是
+        // 五个阶段之一，为它整条流水线跑不起来不值当，而估算后端会写出
+        // 等长静音，画面那几步照样能验。真出不了声这件事在配音阶段的
         // start 事件里说清楚了，不会跑完一整集才发现。
-        b.tts.reset();
-        if (s.tts.backend == "http" && s.tts.base_url.has_value() &&
-            !s.tts.base_url->empty()) {
-            b.tts = stages::http_tts_backend(*s.tts.base_url, 300.0,
-                                             llm::default_http_post(), b.ffmpeg);
-        } else if (s.tts.backend == "local") {
-            // 进程内配音。模型路径在 [models] 里——那一节本来就是
-            // C++ 侧独有的，C++ 独有的键集中在一处。
-            std::string why;
-            const auto ws = s.workspace_path();
-            auto local = stages::local_tts_backend(
-                s.models.resolve(s.models.tts, ws),
-                s.models.resolve(s.models.tts_decoder, ws),
-                /*use_gpu=*/true, b.ffmpeg, why);
-            if (local.has_value()) b.tts = std::move(*local);
-            // 载不起来就退回估算后端，和另外两条路一样。
-            //
-            // **不在这里往哪儿写一行日志**：这个文件没有日志设施，
-            // 为一条错误现造一个不合适。用户看得见的地方有两处，
-            // 都已经覆盖：配音阶段的 start 事件里会报后端名字
-            // （退回了就是 estimate），以及 /api/doctor 的"进程内配音"
-            // 那一项——它查的就是这两个模型路径。
+        b.tts = infer::make_tts_backend(s, b.ffmpeg);
+
+        // 配音也能派给别的机器：那张表上它是一列，能勾就得能派。
+        //
+        // **本机自己配得了就不派**：配一句才十几秒，为它跨机搬一趟音频
+        // 不划算。本机配不了（没模型、或者这份二进制没编 llama.cpp）时
+        // 才去找别人——而那正是以前只能改配置指到一个固定地址的情况。
+        if (!b.tts.has_value()) {
+            std::vector<std::string> remote_tts;
+            for (const auto& u : eps_for(infer::Capability::Tts)) {
+                if (u != infer::kLocalEndpoint) remote_tts.push_back(u);
+            }
+            if (auto tts_pool = infer::make_worker_pool(
+                    remote_tts, s.peer.token, local_runner)) {
+                b.tts = stages::TTSBackend{"peer", tts_pool->tts_synthesizer(),
+                                           {}};
+                b.keepalive.push_back(tts_pool);
+            }
         }
         return b;
     };

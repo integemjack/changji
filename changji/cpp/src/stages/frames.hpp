@@ -14,6 +14,7 @@
 #include <string>
 #include <vector>
 
+#include "infer/exec_queue.hpp"
 #include "infer/sd_image.hpp"
 #include "models/character.hpp"
 #include "models/hardware.hpp"
@@ -64,13 +65,17 @@ using FrameRenderer = std::function<void(
 /// 见 infer::SamplingKnobs。
 FrameRenderer sd_renderer(const config::Settings& settings);
 
-/// 同上，但**种子由外面给**。
+/// 同上，但**种子由外面给**，顺带说明这活是谁派的。
 ///
 /// 工作进程用这个：任务里带着协调者算好的种子。它自己算不了——
 /// `frame_seed` 要 `attempts`，而工作进程拿不到那个数。
 /// 用错种子出来的图和串行跑的不一样，**而且不会有任何报错**。
+/// **两个参数是两边各加的，都要。** `settings` 那一半是采样旋钮跟着
+/// 「这一集」走（见 sd_renderer 上面那段），`origin` 那一半是"这活谁派的"
+/// ——工作进程接外来的活时标 Peer，本机自己那一集就排在它前面。
 FrameRenderer sd_renderer_with_seed(const config::Settings& settings,
-                                   std::int64_t seed);
+                                    std::int64_t seed,
+                                    infer::Origin origin = infer::Origin::Local);
 
 /// 给一批镜头出首帧。
 ///
