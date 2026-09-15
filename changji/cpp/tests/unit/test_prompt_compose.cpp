@@ -7,6 +7,7 @@
 
 #include <doctest/doctest.h>
 
+#include <algorithm>
 #include <fstream>
 #include <string>
 #include <vector>
@@ -108,6 +109,60 @@ void check_text(const std::string& got, const std::string& want,
 }
 
 }  // namespace
+
+TEST_CASE("近景以紧不带空景图：一张全景会把整场的景别抹平") {
+    // 2026-09-16 实测 ep06：宋律师办公室那一场八镜，分镜排的是
+    // LS / MS / MCU / CU 四种景别，出来的八张首帧机位和那张空景图分毫
+    // 不差——同一张桌子、同一扇窗、墙上同样三个镜框，只是人站的位置不同；
+    // 标着「近景」的那几镜，画面里的人只有巴掌大。Edit 模型拿到空景图
+    // 就是「照着这张，把人加进去」，机位一并照抄，景别那两个字拦不住它。
+    const models::AssetLibrary a = make_assets(models::StyleLine::REALISTIC);
+    const stages::PromptComposer composer(a);
+
+    const auto refs_of = [&](models::ShotSize size) {
+        models::Shot s;
+        s.shot_id = "sh001";
+        s.scene_id = "s1";
+        s.location_id = "loc_rooftop";
+        s.shot_size = size;
+        s.first_frame_prompt = "他站在护栏边";
+        models::CharacterInShot who;
+        who.char_id = "c_lin_wan";   // 这个角色有定妆图，c_chen_mo 没有
+        s.characters.push_back(who);
+        return composer.compose(s).reference_images;
+    };
+    const auto has_empty = [](const std::vector<std::string>& refs) {
+        return std::find(refs.begin(), refs.end(),
+                         std::string("refs/loc_rooftop_empty.png")) !=
+               refs.end();
+    };
+
+    // 中景以宽照带：场景一致靠它
+    CHECK(has_empty(refs_of(models::ShotSize::LS)));
+    CHECK(has_empty(refs_of(models::ShotSize::MLS)));
+    CHECK(has_empty(refs_of(models::ShotSize::MS)));
+    // 近景以紧不带
+    CHECK_FALSE(has_empty(refs_of(models::ShotSize::MCU)));
+    CHECK_FALSE(has_empty(refs_of(models::ShotSize::CU)));
+    CHECK_FALSE(has_empty(refs_of(models::ShotSize::ECU)));
+
+    // **人物参考图照带**——近景要的正是那张脸。大特写除外，那一档
+    // 本来就什么都不带（见 prompt_compose.cpp 里那段）。
+    CHECK_FALSE(refs_of(models::ShotSize::MCU).empty());
+    CHECK_FALSE(refs_of(models::ShotSize::CU).empty());
+
+    // 场景的**文字**照留，环境还得靠它交代
+    models::Shot cu;
+    cu.shot_id = "sh002";
+    cu.scene_id = "s1";
+    cu.location_id = "loc_rooftop";
+    cu.shot_size = models::ShotSize::CU;
+    cu.first_frame_prompt = "他的眼睛";
+    models::CharacterInShot who;
+    who.char_id = "c_lin_wan";
+    cu.characters.push_back(who);
+    CHECK(composer.compose(cu).positive.find("锈蚀护栏") != std::string::npos);
+}
 
 TEST_CASE("提示词组装和 Python 逐字节一致") {
     for (const auto& c : golden().at("cases")) {
@@ -398,11 +453,21 @@ TEST_CASE("大特写不带身份层：物件特写里塞角色全身描述，出
         CHECK(p.positive.find("电影感") != std::string::npos);     // 风格层照旧
         CHECK(p.reference_images.empty());
     }
-    SUBCASE("CU 及以上照旧带身份层和场景层") {
+    SUBCASE("CU 照旧带身份层和场景的文字，但**不带那张空景图**") {
+        // 2026-09-16 改：空景图是全景，Edit 模型照着它摆机位，近景就
+        // 出不来了（见本文件里「一张全景会把整场的景别抹平」那条）。
+        // 这一条原来钉的是 2 张——身份图 + 空景图；现在只剩身份图。
+        // 文字两层照旧，环境还得靠场景那句交代。
         s.shot_size = models::ShotSize::CU;
         const auto p = stages::PromptComposer(a).compose(s);
         CHECK(p.positive.find("鹅蛋脸") != std::string::npos);
         CHECK(p.positive.find("锈蚀护栏") != std::string::npos);
+        REQUIRE(p.reference_images.size() == 1);
+        CHECK(p.reference_images[0] == "refs/c_lin_wan_front.png");
+    }
+    SUBCASE("MS 照旧两张都带") {
+        s.shot_size = models::ShotSize::MS;
+        const auto p = stages::PromptComposer(a).compose(s);
         CHECK(p.reference_images.size() == 2);
     }
     SUBCASE("ECU 引用了未注册场景照样拦") {

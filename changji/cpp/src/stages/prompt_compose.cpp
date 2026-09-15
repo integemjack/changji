@@ -186,9 +186,30 @@ PromptBundle PromptComposer::compose_with(const Shot& shot,
         // 而文字至少和这一镜的光是一致的。人物参考图不受影响——脸不分昼夜。
         // 判据只认「明说了而且不是同一个时段」，说不准的一律照喂（见
         // lighting_clashes）。
+        //
+        // **景别越紧，越不能喂空景图。**
+        //
+        // 空景图是一整间屋子的全景，而 Edit 模型拿到它就是「照着这张，
+        // 把人加进去」——机位一并照抄。2026-09-16 实测 ep06：宋律师办公室
+        // 那一场八镜，分镜排的是 LS / MS / MCU / CU 四种景别，出来的八张
+        // 首帧机位一模一样，和那张空景图分毫不差（同一张桌子、同一扇窗、
+        // 墙上同样三个镜框），只是人站的位置不同。标着「近景」的那几镜，
+        // 画面里的人只有巴掌大。同一集里酒吧那几镜的空景图角度偏、光也暗，
+        // 反倒出了正常的近景——也就是说这件事听那张图的，不听景别。
+        //
+        // 用户报的「都是近景没有远景」和这里是同一件事的两面：空景图碰巧
+        // 是张紧的，整场就全是近景；是张全景，特写就永远出不来。分镜那一步
+        // 排好的景别节奏，到出图这一步被一张图抹平了。
+        //
+        // 所以近景以紧（MCU / CU / ECU）不带这张图，只留文字描述环境——
+        // 和上面大特写那段是同一个道理，只是那一档连文字都不要。人物参考图
+        // 照带：近景要的正是那张脸。
+        const bool tight = shot.shot_size == ShotSize::MCU ||
+                           shot.shot_size == ShotSize::CU ||
+                           shot.shot_size == ShotSize::ECU;
         const bool clash =
             lighting_clashes(it->second.lighting, shot.lighting);
-        if (!clash && it->second.ref_empty.has_value() &&
+        if (!tight && !clash && it->second.ref_empty.has_value() &&
             !it->second.ref_empty->empty()) {
             refs.push_back(*it->second.ref_empty);
         }
