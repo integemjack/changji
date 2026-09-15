@@ -23,6 +23,7 @@
 // 什么，但那一步正好是用户等得最久的一步，"写完了"和"看到"之间再插一段
 // 空白很难受。
 
+#include <cstddef>
 #include <functional>
 #include <string>
 
@@ -112,6 +113,56 @@ private:
 /// **没有 JobScope 时返回一个哑元**（同步那条路、单测直接调）：那儿没人
 /// 能按停，给个永远不会被触发的令牌比让调用方各自 new 一个干净。
 pipeline::CancelToken& current_cancel();
+
+// ---------------------------------------------------------------------------
+// 没有 WebSocket 的时候：同一批消息，改成拿 HTTP 来取
+// ---------------------------------------------------------------------------
+//
+// 上面整套是按"界面连得上那条 socket"写的。连不上的场合是真实存在的——
+// 公司代理把 Upgrade 掐了、页面刚打开还没握完手——原来那条退路是**不带
+// async 发过去，让 HTTP 一直等到干完**。拿得到结果，但那几分钟里：
+//
+//     进度   没有（job_progress 播出去没人听）
+//     思考   没有（同上，而这恰恰是最需要看见的那一步）
+//     停下   没有（顶栏那块徽标是 thinking.start 才出现的，没有它就没有
+//            按钮；而且同步那条路上 JobScope 压根没挂，cancel_job 找不到）
+//
+// 三样一起没有，所以单补取消也没用：没有按钮可按。
+//
+// 现在改成：**socket 连不上就开个信箱，照样异步跑，消息从 HTTP 取走。**
+// 界面先 `mail_open`，再发请求（带 stream + async），然后一秒拉一次
+// `GET /api/job/events`。进度、思考、结果全都回来了，而后台那条活是
+// `start_async` 起的，JobScope 挂着，顶栏那个「停下」照样按得动。
+//
+// **只给开过信箱的那条 stream 存。** 不然每一件走 socket 的活都白攒一份，
+// 而思考流一段能有上万字。
+//
+// **不存 job_preview。** 一张几十 KB、一步一张，攒起来这个信箱就成了
+// 主要流量——理由和 job_preview 头上那句"只广播，不留底"是同一条。
+// 退到轮询时没有半成品小图，进度条照旧走。
+
+/// 开一个信箱。已经有了就只是把它的过期时间往后推。
+///
+/// **要在发请求之前开。** 反过来的话，开之前那几条（第一段思考往往就在
+/// 那几百毫秒里）没地方存，界面上表现为"前面一截思考不见了"。
+void mail_open(const std::string& stream_id);
+
+/// 取走 `since` 之后的消息。
+///
+/// 回 `{"events": [...], "next": n, "done": bool, "dropped": n, "exists": bool}`。
+/// `exists` 为假表示这个信箱没了——没开过、或者太久没人来取被扫掉了；
+/// 界面该把它当成"连接断了"，而不是"干完了"。
+///
+/// 取到 `job_done` / `job_error` 之后这个信箱就销号：结果只送一次，
+/// 再来取就是 `exists=false`。
+nlohmann::json mail_take(const std::string& stream_id, std::size_t since);
+
+/// 信箱里攒多少条就开始从前面丢。思考是一段一条推的，几千条很正常。
+inline constexpr std::size_t kMailMaxEvents = 4000;
+/// 信箱里攒多少字节就开始从前面丢。
+inline constexpr std::size_t kMailMaxBytes = 512 * 1024;
+/// 多久没人来取就当人已经走了，把信箱扫掉。
+inline constexpr int kMailIdleSeconds = 180;
 
 /// 按 stream_id 把那件活停掉。找不到（早干完了、id 写错了）返回 false。
 ///

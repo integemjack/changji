@@ -6,7 +6,9 @@
 #include <cctype>
 #include <filesystem>
 #include <fstream>
+#include <cstddef>
 #include <iterator>
+#include <string>
 #include <nlohmann/json.hpp>
 
 #include "doctor/doctor.hpp"
@@ -1917,6 +1919,45 @@ void run(const config::Settings& settings, const Options& opts) {
             });
             return json_response(r.body, r.status);
         });
+
+    // 连不上 WebSocket 的时候，同一批消息改从这儿取。见 job_stream.hpp 里
+    // mail_open 上面那段：没有 socket 的那条退路原来是"同步跑到干完"，
+    // 于是进度、思考、停下三样一起没有。
+    //
+    // **开信箱要在发那个请求之前。** 反过来的话开之前那几条没地方存，
+    // 表现为"前面一截思考不见了"——而第一段思考往往就在那几百毫秒里。
+    CROW_ROUTE(app, "/api/job/watch").methods("POST"_method)(
+        [](const crow::request& req) {
+            auto r = guard([&]() -> ApiResult {
+                const json body = parse_body(req.body);
+                const std::string id = stream_of(body);
+                if (id.empty()) throw ApiError(400, "要给 stream");
+                mail_open(id);
+                return ApiResult{200, {{"watching", true}, {"stream", id}}};
+            });
+            return json_response(r.body, r.status);
+        });
+
+    // 取走这条 stream 上 `since` 之后的消息。**只读**：信箱是上面那条
+    // POST 开的，这儿开不出来——`exists` 为假就是"没开过或者早过期了"，
+    // 界面该按"连接断了"处理，而不是傻等。
+    CROW_ROUTE(app, "/api/job/events")([](const crow::request& req) {
+        auto r = guard([&]() -> ApiResult {
+            const std::string id = required_query(req, "stream");
+            std::size_t since = 0;
+            const std::string raw = query(req, "since");
+            if (!raw.empty()) {
+                try {
+                    const long long n = std::stoll(raw);
+                    if (n > 0) since = static_cast<std::size_t>(n);
+                } catch (const std::exception&) {
+                    throw ApiError(400, "since 要是个数");
+                }
+            }
+            return ApiResult{200, mail_take(id, since)};
+        });
+        return json_response(r.body, r.status);
+    });
 
     CROW_ROUTE(app, "/api/stop").methods("POST"_method)([](const crow::request&) {
         // 没在跑时回 {"stopped": false} 而不是报错。

@@ -318,6 +318,26 @@ export const api = {
    * 找不到不是错（按下去那一刻可能刚好干完），回的是 {stopped: false}。
    */
   cancelJob: (stream) => post('/api/job/cancel', { stream }),
+
+  /**
+   * 开一个信箱：这条 stream 上的消息除了走 WebSocket，再往服务端存一份。
+   *
+   * **给连不上 WebSocket 的场合用的**（代理掐了 Upgrade、页面刚打开）。
+   * 开完照样带 `async` 发请求，然后拿 jobEvents 一条条取回来——进度、
+   * 思考、顶栏那个「停下」就都还在。见 composables/useAsyncJob。
+   *
+   * **要在发那个请求之前开。** 反过来的话开之前那几条没地方存，表现为
+   * "前面一截思考不见了"，而第一段思考往往就在那几百毫秒里。
+   */
+  watchJob: (stream) => post('/api/job/watch', { stream }),
+
+  /**
+   * 取走这条 stream 上 `since` 之后的消息。
+   *
+   * 回 `{events, next, done, dropped, exists}`。`exists` 为假是"信箱没了"
+   * ——没开过，或者太久没来取被扫掉了；按"连接断了"处理，别傻等。
+   */
+  jobEvents: (stream, since) => get('/api/job/events', { stream, since }),
   outputs: (path) => get('/api/outputs', { path }),
   // 此刻的负载，一次性的。顶栏那三个小表走 WebSocket（订 "system"），
   // 这个留给排查用。

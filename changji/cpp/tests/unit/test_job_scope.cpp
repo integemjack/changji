@@ -145,3 +145,99 @@ TEST_CASE("借外面那个令牌：批量那几条真正管事的是 JobProgress
         CHECK_FALSE(outside.cancelled());            // 而外面那个没人碰
     }
 }
+
+// ---------------------------------------------------------------------------
+// 信箱：连不上 WebSocket 的时候，同一批消息改成拿 HTTP 来取
+// ---------------------------------------------------------------------------
+//
+// 这一层错了的表现都不报错，只是"界面上一直转着"：
+//   没开就存    → 每件走 socket 的活白攒一份，思考一段上万字；
+//   结果被丢掉  → 前端永远等不到 job_done；
+//   销号太早    → 取到一半信箱没了，当成"连接断了"。
+
+TEST_CASE("信箱：没开过就不存，取的时候明说没有") {
+    http::job_progress("no-box", 1, 3, "一");
+    const auto r = http::mail_take("no-box", 0);
+    CHECK_FALSE(r.at("exists").get<bool>());
+    CHECK(r.at("events").empty());
+}
+
+TEST_CASE("信箱：开了之后进度和思考都留底，取过的不再给") {
+    http::mail_open("box-1");
+    http::job_progress("box-1", 1, 3, "一");
+    http::job_thinking("box-1", "先想想");
+
+    auto r = http::mail_take("box-1", 0);
+    CHECK(r.at("exists").get<bool>());
+    CHECK(r.at("events").size() == 2);
+    CHECK(r.at("events")[0].at("type") == "job_progress");
+    CHECK(r.at("events")[0].at("job_id") == "box-1");
+    CHECK(r.at("events")[1].at("text") == "先想想");
+    CHECK_FALSE(r.at("done").get<bool>());
+    const std::size_t next = r.at("next").get<std::size_t>();
+    CHECK(next == 2);
+
+    // 没有新的就该是空的——轮询是一秒一次，重发已取过的等于把那段思考
+    // 再拼一遍，界面上会看见重复的字。
+    r = http::mail_take("box-1", next);
+    CHECK(r.at("events").empty());
+    CHECK(r.at("next").get<std::size_t>() == next);
+
+    http::job_thinking("box-1", "想好了");
+    r = http::mail_take("box-1", next);
+    CHECK(r.at("events").size() == 1);
+    CHECK(r.at("events")[0].at("text") == "想好了");
+}
+
+TEST_CASE("信箱：结果送到就销号，再取是「没有这个信箱」") {
+    http::mail_open("box-done");
+    http::job_done("box-done", {{"shots", 7}});
+    auto r = http::mail_take("box-done", 0);
+    CHECK(r.at("done").get<bool>());
+    CHECK(r.at("events").size() == 1);
+    CHECK(r.at("events")[0].at("result").at("shots") == 7);
+    // 送一次就够了。留着只会等着过期，而结果一份可能是整集剧本。
+    r = http::mail_take("box-done", 0);
+    CHECK_FALSE(r.at("exists").get<bool>());
+
+    http::mail_open("box-err");
+    http::job_error("box-err", "显存不够");
+    r = http::mail_take("box-err", 0);
+    CHECK(r.at("done").get<bool>());
+    CHECK(r.at("events")[0].at("message") == "显存不够");
+}
+
+TEST_CASE("信箱：预览图不留底") {
+    // 一张几十 KB、一步一张。存起来这个信箱就成了主要流量——
+    // 理由和 job_preview 头上那句"只广播，不留底"是同一条。
+    http::mail_open("box-prev");
+    http::job_preview("box-prev", 3, "data:image/png;base64,AAAA");
+    http::job_progress("box-prev", 3, 20, "");
+    const auto r = http::mail_take("box-prev", 0);
+    CHECK(r.at("events").size() == 1);
+    CHECK(r.at("events")[0].at("type") == "job_progress");
+}
+
+TEST_CASE("信箱：攒太多从前面丢，但结果那条一定留着") {
+    http::mail_open("box-flood");
+    // 思考是一段一条推的。**丢头不丢尾**：尾巴上那条才是结果，
+    // 丢掉它的话前端永远等不到 job_done，界面一直转着。
+    for (std::size_t i = 0; i < http::kMailMaxEvents + 50; ++i) {
+        http::job_thinking("box-flood", "想");
+    }
+    http::job_done("box-flood", {{"ok", true}});
+    const auto r = http::mail_take("box-flood", 0);
+    CHECK(r.at("dropped").get<std::size_t>() > 0);
+    CHECK(r.at("events").size() <= http::kMailMaxEvents);
+    CHECK(r.at("events").back().at("type") == "job_done");
+
+    // 丢过之后，`since` 落在没了的那一段里：从现有的头上接着给，
+    // 别越界、别把 next 倒回去。
+    http::mail_open("box-drop");
+    for (std::size_t i = 0; i < http::kMailMaxEvents + 10; ++i) {
+        http::job_thinking("box-drop", "想");
+    }
+    const auto r2 = http::mail_take("box-drop", 0);
+    CHECK(r2.at("events").size() <= http::kMailMaxEvents);
+    CHECK(r2.at("next").get<std::size_t>() == http::kMailMaxEvents + 10);
+}
