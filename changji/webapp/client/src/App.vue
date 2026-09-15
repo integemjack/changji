@@ -13,7 +13,7 @@
  * 集号只在分集那一步出现。全剧那几步摆一个「当前集」，会让人以为角色和
  * 场景也要每集重做一遍——这条是从原来的 ContextBar 继承下来的判断。
  */
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
 import AppIcon from '@/components/AppIcon.vue'
@@ -48,6 +48,40 @@ const wide = computed(() => route.meta?.wide === true)
  *
  * 鼠标贴到窗口最上面那几个像素，顶栏浮回来；Esc 退出。
  */
+/**
+ * **窄屏上把"我在第几步"那一格滚进视野。**
+ *
+ * 这一排是唯一的一张地图（见 .nav 上面那段），而窄屏上它是横着能滚的
+ * （`overflow-x: auto`，手机上连滚动条都不画）。滚动位置一直停在 0，
+ * 于是在手机上打开「这一集」——四步里的最后一步、也是整个分集流程的入口
+ * ——那一格在可视区外七十多像素，屏幕上只有前面那两三步，**没有任何东西
+ * 说明当前在哪一步，也看不出还有第四步**。
+ *
+ * 不摆箭头、不加渐隐：这一排本来就能滑，缺的只是"打开时停在该停的地方"。
+ *
+ * 直接算 scrollLeft，不用 `scrollIntoView`——后者会把**外层每一个**可滚动
+ * 祖先一起挪，页面主体跟着跳一下。
+ */
+const navEl = ref(null)
+function revealStep() {
+  const nav = navEl.value
+  const on = nav?.querySelector('.nav__item.is-on')
+  if (!nav || !on) return
+  const nr = nav.getBoundingClientRect()
+  const r = on.getBoundingClientRect()
+  const left = r.left - nr.left + nav.scrollLeft
+  const right = left + r.width
+  if (left < nav.scrollLeft) nav.scrollLeft = left
+  else if (right > nav.scrollLeft + nav.clientWidth) nav.scrollLeft = right - nav.clientWidth
+}
+// 换页之后那一格才挂上 is-on，所以等一拍。宽屏上滚不动，这两行什么都不做。
+watch(() => route.path, () => nextTick(revealStep), { immediate: true })
+onMounted(() => {
+  nextTick(revealStep)
+  window.addEventListener('resize', revealStep)
+})
+onUnmounted(() => window.removeEventListener('resize', revealStep))
+
 const canFocus = computed(() => stepKey.value === 'story')
 const focused = computed(() => canFocus.value && ui.focusMode)
 const peeking = ref(false)
@@ -139,7 +173,7 @@ function cycleTheme() {
         <span class="proj__name truncate">{{ projectName }}</span>
       </button>
 
-      <nav class="nav">
+      <nav ref="navEl" class="nav">
         <RouterLink
           v-for="s in STEP_ROUTES"
           :key="s.key"
@@ -448,8 +482,15 @@ function cycleTheme() {
   .proj {
     display: none;
   }
+  /* **集号让位给导航，而不是反过来。** 上面那句话原来只兑现了一半：
+     `.ep` 是 `flex: none`，一步都不让；真正被挤掉的是 `.nav`（它
+     `min-width: 0` 又能横滚，缩起来没有下限）。375px 上进「这一集」那一页
+     时，导航只剩 44px——一整排四步里连一格都摆不下。
+     现在让它可缩，留 5rem 的底：原生 select 上那几个字是 `ep01 · …`，
+     点开是系统的整屏选单，窄一点照样挑得到。 */
   .ep {
-    max-width: 8rem;
+    flex: 0 1 8rem;
+    min-width: 5rem;
   }
   .main__inner {
     padding: var(--s4) var(--s4) var(--s10);
