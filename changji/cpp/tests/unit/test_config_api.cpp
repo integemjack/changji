@@ -60,14 +60,6 @@ void reset_runtime() {
     config::runtime().clear_tier_overrides();
 }
 
-std::string slurp(const fs::path& p) {
-    std::ifstream in(p, std::ios::binary);
-    if (!in) return {};
-    std::ostringstream ss;
-    ss << in.rdbuf();
-    return ss.str();
-}
-
 }  // namespace
 
 TEST_CASE("读连接设置时不回传密钥明文") {

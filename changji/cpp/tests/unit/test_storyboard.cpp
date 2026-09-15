@@ -80,14 +80,6 @@ models::AssetLibrary test_assets(bool with_locations = true) {
     return a;
 }
 
-stages::DurationQuota quota_from(const json& slots) {
-    stages::DurationQuota q;
-    for (const auto& pair : slots) {
-        q.slots[pair[0].get<double>()] = pair[1].get<int>();
-    }
-    return q;
-}
-
 }  // namespace
 
 TEST_CASE("时长档位由 MAX_FRAMES 推导") {
