@@ -1,4 +1,5 @@
 #include "stages/render.hpp"
+#include "stages/storyboard.hpp"  // defuse_motion
 
 #include <algorithm>
 #include <atomic>
@@ -472,6 +473,24 @@ std::vector<RenderOutcome> render_batch(std::vector<Shot*>& shots,
                 // 那一档，attempts 加一让首帧换个种子。下一次跑首帧和出片
                 // 就会把这一镜重做；这一轮装配会点名它缺了。
                 if (res.metrics.count("cut_inside") != 0) {
+                    // **重试之前先把会把主体带出画的动作摘掉。**
+                    //
+                    // 闸门自己那句话就写着「换种子重出视频没用」，而这儿
+                    // 原来做的正是换种子：attempts 加一、退回重出首帧，
+                    // 运动描述一个字不动。那句「走向门口」还在，下一轮
+                    // 照样半路换成另一场戏（2026-09-16 实测 ep04_sh009）。
+                    //
+                    // 镜头少演一个动作，比整镜换成另一场戏强得多。摘不到
+                    // 东西就照旧换种子，行为和以前一样。
+                    const std::string defused =
+                        defuse_motion(local.motion_prompt);
+                    if (defused != local.motion_prompt) {
+                        say("info",
+                            local.shot_id +
+                                " 的运动描述里有会把主体带出画的动作，"
+                                "已经摘掉再重出：" + defused);
+                        local.motion_prompt = defused;
+                    }
                     local.status = ShotStatus::AUDIO_DONE;
                     local.attempts += 1;
                     done[i].error = join_reasons(res.reasons);

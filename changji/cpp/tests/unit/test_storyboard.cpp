@@ -1288,3 +1288,22 @@ TEST_CASE("老分镜表在用的时候也会被夹：盘上存的对不上，出
     CHECK(got.find("[0-6秒]") != std::string::npos);
     CHECK(got.find("15秒") == std::string::npos);
 }
+
+TEST_CASE("摘掉会把主体带出画的动作：闸门判出片中硬切之后的兜底") {
+    using stages::defuse_motion;
+    // 2026-09-16 实测 ep04_sh009：「曾老板走向门口」五秒里半路换成了
+    // 另一间屋子另一个人。提示词把这类写法从 3/3 压到 1/18，没清零。
+    CHECK(defuse_motion("[0-5秒] 曾老板走向门口，宋律师说话，镜头轻微向右平移") ==
+          "[0-5秒] 宋律师说话，镜头轻微向右平移");
+    // 开门那一类同理：门后有什么模型不知道，会自己编一间楼梯间
+    CHECK(defuse_motion("[0-3秒] 门把手转动，门打开，宋律师走进来") ==
+          "[0-3秒] 门把手转动");
+    // 没有可摘的就一个字不动
+    const std::string clean = "[0-3秒] 雨点砸在窗上，越来越密";
+    CHECK(defuse_motion(clean) == clean);
+    // **摘完只剩时间码的原样还回去**：空的运动描述模型同样自由发挥，
+    // 而且连线索都没有了——宁可留一个会崩的镜头。
+    const std::string all_bad = "[0-3秒] 他走进来，她走出去";
+    CHECK(defuse_motion(all_bad) == all_bad);
+    CHECK(defuse_motion("").empty());
+}

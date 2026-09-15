@@ -206,6 +206,20 @@ void add_missing_speakers(nlohmann::json& item,
 /// 一段都没有的（模型没按格式写）整句包成 `[0-N秒]`：至少时间轴是满的。
 std::string motion_covering(const std::string& motion_prompt, double dur);
 
+/// 把运动描述里那些**会把主体带出画**的分句摘掉，返回摘完的那一份。
+/// 没有可摘的（或者摘完就空了）原样返回。
+///
+/// **这是闸门判出「片中硬切」之后的兜底。** 图生视频只能动第一帧里已经有
+/// 的东西，写了「走向门口」「推门进来」「镜头穿过走廊」，模型只能凭空造
+/// 画面外的人和空间——造出来的就是半路换掉的那一场戏。
+///
+/// 提示词第 6 条已经把这类写法从 3/3 压到 1/18（2026-09-16 三集实测），
+/// 但没清零，而残留的那一条照样崩。而现在的重试只换种子——闸门自己那句
+/// 话就写着「换种子重出视频没用」。种子换了一百遍，那句「走向门口」还在。
+///
+/// 所以摘掉它再重出：镜头少演一个动作，比整镜半路换成另一场戏强得多。
+std::string defuse_motion(const std::string& motion_prompt);
+
 std::vector<models::Shot> parse_storyboard(const std::string& raw,
                                            const models::AssetLibrary& assets);
 

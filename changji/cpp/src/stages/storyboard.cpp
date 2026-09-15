@@ -1093,6 +1093,81 @@ void cover_full_duration(json& item) {
 
 }  // namespace
 
+std::string defuse_motion(const std::string& in) {
+    if (in.empty()) return in;
+    // 会把主体带出画、或者要求模型去编第一帧看不见的空间的那些词。
+    // 判据和提示词第 6 条那四条一一对应，改一处要改两处。
+    static const char* kRisky[] = {
+        "走进", "走出", "走向", "走上", "走下", "闯入", "进入画面", "离开画面",
+        "出画", "入画", "推开门", "推门", "开门", "门打开", "门被打开",
+        "门被带上", "关门", "拉开抽屉", "穿过", "跑出", "跑进", "退出画面",
+    };
+    // 逐分句扫。`[a-b秒]` 那种时间码不是分句，原样留着——摘掉它会把
+    // 时间轴打断，而 motion_covering 还要靠它对齐。
+    const std::string kComma = "，";
+    const std::string kStop = "。";
+    std::vector<std::string> kept;
+    std::string cur;
+    bool dropped_any = false;
+    bool has_text = false;
+    const auto flush = [&] {
+        if (cur.empty()) return;
+        const std::string clause = text::strip_ws(cur);
+        cur.clear();
+        if (clause.empty()) return;
+        for (const char* w : kRisky) {
+            if (clause.find(w) != std::string::npos) {
+                dropped_any = true;
+                // **摘正文，别把开头那个时间码一起摘走。**
+                // `[0-5秒] 曾老板走向门口` 整句丢掉的话时间轴就从
+                // `[0-5秒]` 变成没有，motion_covering 只好整句重包，
+                // 后面那几段的分段也跟着错位。
+                if (!clause.empty() && clause.front() == '[') {
+                    const auto close = clause.find(']');
+                    if (close != std::string::npos) {
+                        kept.push_back(clause.substr(0, close + 1));
+                    }
+                }
+                return;
+            }
+        }
+        // 只剩时间码、没有正文的不算正文（下面判"摘完就空了"要用）
+        if (clause.find_first_not_of(" \t") != std::string::npos &&
+            !(clause.front() == '[' && clause.back() == ']')) {
+            has_text = true;
+        }
+        kept.push_back(clause);
+    };
+    for (std::size_t i = 0; i < in.size();) {
+        if (in.compare(i, kComma.size(), kComma) == 0) {
+            flush();
+            i += kComma.size();
+            continue;
+        }
+        if (in.compare(i, kStop.size(), kStop) == 0) {
+            flush();
+            i += kStop.size();
+            continue;
+        }
+        cur += in[i];
+        ++i;
+    }
+    flush();
+
+    // 没摘到东西，或者摘完只剩时间码：原样还回去。
+    // **宁可留一个会崩的镜头，也不交一段空的运动描述**——那一段模型
+    // 同样会自由发挥，而且连线索都没有了。
+    if (!dropped_any || !has_text) return in;
+
+    std::string out;
+    for (const std::string& c : kept) {
+        if (!out.empty() && out.back() != ']') out += kComma;
+        else if (!out.empty()) out += " ";
+        out += c;
+    }
+    return out;
+}
+
 std::string motion_covering(const std::string& in, double dur) {
     std::string mp = in;
     if (mp.empty() || !(dur > 0)) return mp;
