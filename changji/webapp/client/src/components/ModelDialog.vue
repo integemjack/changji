@@ -212,17 +212,36 @@ const stat = computed(() => {
   let speed = 0
   let active = false
   let failed = false
+  const notes = []
   for (const i of mine) {
     total += Number(i.total) || 0
     done += Number(i.downloaded) || 0
     if (i.state === 'running') speed += Number(i.speedBps) || 0
     if (i.state === 'running' || i.state === 'pending') active = true
     if (i.state === 'failed') failed = true
+    // 这一项自己的说法。引擎写得很具体（"起不来 aria2c"、"下了 N 字节，
+    // 应该是 M"），而这儿原来只把它们并成一个 failed 布尔。
+    if (i.error) notes.push(`${i.name}：${i.error}`)
   }
+  // **整趟活儿挂掉那一种，一项都没轮到。** 找不到 aria2c / curl，或者
+  // 建不了模型目录——downloader.cpp 的 `fatal` 那两条——items 全停在
+  // pending 上，谁都不是 failed。于是下面那个三目走到最后一支，屏幕上
+  // 是一条绿的「这一组齐了」钉在 0%，而一个字节都没下。
+  const dead = p.state === 'failed'
   return {
     percent: total ? Math.min(100, (done / total) * 100) : 0,
     running: models.running && active,
-    failed,
+    failed: failed || dead,
+    // **没跑完也不是"齐了"。** 人自己按了停（RunState::Canceled）之后
+    // items 是 canceled，谁都不是 failed，于是下面那个三目一样落到最后
+    // 一支——一条绿的「这一组齐了」，旁边紧挨着写「5.1 GB / 8.2 GB」，
+    // 底下那颗按钮还写着「下载 8.2 GB」。三句话互相打架。
+    short: total > 0 && done < total,
+    // 出了事说人话。每一项自己的说明优先——引擎在整体那句里写的就是
+    // 「看下面每一项的说明」，而这一版之前**一项的说明都没地方看**。
+    // 一项都没说法（fatal 那两条正是这样）才退回整体那一句，那一句里
+    // 装着"装哪个下载器"这类唯一能指望的出路。
+    why: notes.length ? notes.join('\n') : dead ? String(p.error || '') : '',
     speed,
     downloaded: done,
     total,
@@ -483,14 +502,26 @@ async function download() {
           <ProgressBar
             :percent="stat.percent"
             :indeterminate="stat.running && !stat.total"
-            :tone="stat.failed ? 'danger' : stat.running ? 'accent' : 'ok'"
-            :label="stat.failed ? '有文件没下下来' : stat.running ? '正在下' : '这一组齐了'"
+            :tone="stat.failed ? 'danger' : stat.running || stat.short ? 'accent' : 'ok'"
+            :label="
+              stat.failed
+                ? '有文件没下下来'
+                : stat.running
+                  ? '正在下'
+                  : stat.short
+                    ? '没下完，再下一次会从断点接着'
+                    : '这一组齐了'
+            "
             :detail="
               stat.total
                 ? `${humanBytes(stat.downloaded)} / ${humanBytes(stat.total)}`
                 : humanBytes(stat.downloaded)
             "
           />
+          <!-- 出事了的那句原话。上面那条只有颜色和「有文件没下下来」五个字，
+               而**为什么**一直被丢掉：这台机器上没有 aria2c/curl 时引擎
+               给的是三行「装一个就行」的命令，是唯一的出路。 -->
+          <p v-if="stat.why" class="tiny danger-text lines">{{ stat.why }}</p>
           <div v-if="stat.running" class="row row--between tiny dim">
             <span class="numeric">
               <template v-if="stat.speed > 0">{{ humanRate(stat.speed) }}</template>
@@ -534,6 +565,11 @@ async function download() {
 </template>
 
 <style scoped>
+/* 引擎那几条说明是带换行的（"装一个就行"底下三行命令），别挤成一行 */
+.lines {
+  white-space: pre-line;
+}
+
 .mask {
   position: fixed;
   inset: 0;
