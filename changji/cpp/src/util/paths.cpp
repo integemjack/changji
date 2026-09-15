@@ -62,9 +62,38 @@ std::vector<std::string> utf8_args(int argc, char** argv) {
 }
 
 std::filesystem::path from_utf8(const std::string& s) {
-    // C++17 的 u8path 就是为这件事存在的（C++20 起被标记为弃用，
-    // 替代品是 char8_t 那一套，但本项目全局停在 C++17，用它最直接）。
+    // C++17 的 u8path 就是为这件事存在的。C++20 起它被标记为弃用。
+    //
+    // ⚠️ **那条弃用对我们是生效的。** 上一版这儿写的是「本项目全局停在
+    // C++17」——那句话只说对了一半：CMakeLists 把 `CMAKE_CXX_STANDARD`
+    // 定在 17 是为了**不传染给上游**（llama.cpp / ggml 声明的是下限不是
+    // 上限，父作用域给 20 会让它们整个按 20 编，然后在 MSVC 上撞
+    // char8_t），而我们自己那个目标下一行就是
+    // `target_compile_features(changji PRIVATE cxx_std_20)`。也就是说
+    // 这个文件按 C++20 编，那条 -Wdeprecated-declarations 每次构建都在。
+    //
+    // **还是留着它。** 替代写法要先把 UTF-8 转成宽字符再构造 path
+    // （直接 `path(std::string)` 在 Windows 上按 ANSI 代码页解释，
+    // 中文项目名当场乱码——这正是 u8path 在这儿的全部理由），而这个文件
+    // 里只有反方向的 `to_utf8(wstring)`，正方向得新写一个
+    // MultiByteToWideChar。为一条警告去动整套路径的入口，不划算。
+    //
+    // 所以就地按下这条警告，别让它在 -Wall -Wextra -Wpedantic 里一直响
+    // ——理由同 CMakeLists 给 zlib 加 `-w` 那段：「几十条 C4996 会淹掉
+    // 真正的警告」。按下的范围只有这一行。
+#if defined(_MSC_VER)
+#pragma warning(push)
+#pragma warning(disable : 4996)
+#elif defined(__clang__) || defined(__GNUC__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+#endif
     return std::filesystem::u8path(s);
+#if defined(_MSC_VER)
+#pragma warning(pop)
+#elif defined(__clang__) || defined(__GNUC__)
+#pragma GCC diagnostic pop
+#endif
 }
 
 std::string to_utf8(const std::filesystem::path& p) {
