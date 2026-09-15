@@ -558,12 +558,23 @@ async function planAll() {
       >
         {{ isBusy('planAll') ? '排着…' : '批量补分镜' }}
       </button>
+      <!-- **没有分集表就按不动。** 它落的是分集表，而分集表是写大纲那一步
+           出的（`story.plan`）——空着的时候按下去引擎回「还没有分集表。先写
+           一份大纲，或者改一下每集时长重算一次」。而左边那行字这会儿正写着
+           「N 章 → **0 集**」：页面自己已经说了没有，按钮却还亮着。
+           旁边「批量补分镜」判的就是同一个 `plan.length`（它用 v-if 整个藏
+           起来）。这颗是这一格的主按钮，藏了人会不知道有这一步，所以改成
+           灰着 + 说清楚缺什么。 -->
       <button
         v-if="hasStory"
         class="btn btn--primary btn--sm"
         type="button"
-        :disabled="isBusy('episodes')"
-        title="分集表是计划，落成剧集之后后面几步才有东西可对"
+        :disabled="isBusy('episodes') || !plan.length"
+        :title="
+          plan.length
+            ? '分集表是计划，落成剧集之后后面几步才有东西可对'
+            : '还没有分集表——它是写大纲那一步出的。先去故事页写一份大纲，或者改一下左边那个每集时长重算一次'
+        "
         @click="makeEpisodes"
       >
         {{ isBusy('episodes') ? '正在建…' : '落成剧集' }}
