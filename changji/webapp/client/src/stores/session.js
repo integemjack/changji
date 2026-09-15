@@ -124,13 +124,23 @@ export const useSession = defineStore('session', () => {
       // （见 router/index.js）：ToastStack 订着它。store 里不直接叫 ui
       // store，是为了不让这两个互相认识。
       //
-      // 不怕刷屏：refresh 是边沿触发的（换项目、换集、干完一件事各一次），
-      // 没有任何一处在轮询它。
-      window.dispatchEvent(
-        new CustomEvent('changji:error', {
-          detail: `读不到这个项目：${err.message}`,
-        }),
-      )
+      // **同一场失败只说一次。** refresh 本身是边沿触发的（换项目、换集、
+      // 干完一件事各一次），没有一处在轮询它——但砸了之后还有一条会自己
+      // 再来一趟：App.vue 那句 `useRetryWhenBack`。它盯的是系统表从 null
+      // 变成非空，而**页面第一次读就砸了的时候，这个跳变必然会发生一次**
+      // （第一份系统表到手就是一次 null → 非空，那个 composable 自己的注释
+      // 也点了这件事）。于是那一条红字每次都弹两遍，一模一样。
+      //
+      // `failed` 就是"上一趟砸了而且还没成功过"，成功那一支会清掉它
+      // （见上面 `failed.value = false`）。拿它当闸：新的一场失败照说，
+      // 同一场的重试不再说第二遍。
+      if (!failed.value) {
+        window.dispatchEvent(
+          new CustomEvent('changji:error', {
+            detail: `读不到这个项目：${err.message}`,
+          }),
+        )
+      }
       // 项目被删了或者路径不对，别把坏路径一直留着挡住后面的操作
       if (err.status === 400 || err.status === 404) {
         project.value = null
