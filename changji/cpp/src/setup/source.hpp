@@ -81,7 +81,7 @@ struct SourceProbe {
 /// 用户报的"刷新页面白屏"就是这个。答案在一次会话里几乎不会变，没有理由
 /// 每次都去问。
 ///
-/// `force = true` 跳过缓存重新探（初始化页上让用户手动重试用）。
+/// `force = true` 跳过缓存重新探（模型窗上让用户手动重试用）。
 SourceProbe probe_sources(bool force = false);
 
 }  // namespace changji::setup

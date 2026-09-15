@@ -395,10 +395,16 @@ function cycleTheme() {
   padding-left: max(var(--s6), env(safe-area-inset-left));
   padding-right: max(var(--s6), env(safe-area-inset-right));
 }
-/* 初始化页自己排版。**必须排在上面那条后面**——同样的特指度，
-   靠源码顺序覆盖，写在前面的话内边距根本不会被去掉。 */
 /* 专注模式：稿纸铺满，两边不留边距。顶栏和项目库都收了，
-   这一屏上除了字什么都没有。 */
+   这一屏上除了字什么都没有。
+
+   **这一条必须排在 `.main__inner` 后面**——两条同样的特指度（都是一个
+   类），靠源码顺序覆盖；写在前面的话上面那三行内边距根本不会被去掉，
+   「铺满」就是假的。
+
+   （这段话原来的主语是"初始化页"。那一页 2026-09-14 删了——用户原话
+   「不需要初始化页面」，见 ProjectView 开头——而这条排版要求跟着落到了
+   下面这个 `--focus` 上。） */
 .main__inner--focus {
   max-width: none;
   padding: 0;

@@ -73,7 +73,7 @@ void apply_video_limits(const Settings& s) {
 
 void Runtime::replace(Settings s) {
     // 视频模型的限制跟着配置走。**放在这一处而不是每个调用方**：能改配置的
-    // 入口有五个（起服务、/api/settings、/api/connections、初始化页……），
+    // 入口有五个（起服务、/api/settings、/api/connections、模型窗……），
     // 漏掉任何一个都是"配置改了但分镜还按老上限排"，而且不报错。
     // 怎么算的见 video_limits_for；按项目重读设置的那几条路也调它。
     apply_video_limits(s);

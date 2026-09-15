@@ -1440,7 +1440,7 @@ void register_sd_slots(SettingsProvider raw_provider,
         spec.slot = Slot::Image;
         spec.residency = Residency::Cached;   // 每个镜头都要，别反复卸
         spec.vram_estimate = estimate;
-        // 每次借槽时现算：模型可能已经被换掉了（初始化页就能换），
+        // 每次借槽时现算：模型可能已经被换掉了（模型窗就能换），
         // 而槽一个进程只注册一次。见 SlotSpec::live_vram。
         spec.live_vram = [provider, live_bytes] {
             const config::Settings s = provider();

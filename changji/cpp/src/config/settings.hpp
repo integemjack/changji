@@ -268,9 +268,9 @@ struct LLMConfig {
 
     /// 这个地址要不要 API Key。
     ///
-    /// 只有两个地方问它：初始化页判「这一组配齐了没有」，体检判「该不该
+    /// 只有两个地方问它：模型窗判「这一组配齐了没有」，体检判「该不该
     /// 去连」。两处都不能只看 backend——默认配置就是「远端 + 空密钥」，
-    /// 只看 backend 的话初始化页会放人过去、体检会报一句"连不上"外加
+    /// 只看 backend 的话模型窗会放人过去、体检会报一句"连不上"外加
     /// 「用 Docker 起 ollama」，而真正的原因是密钥还没填。
     ///
     /// 判据是地址：本机和局域网上的服务（Ollama、LM Studio、自建 vLLM）
@@ -683,7 +683,7 @@ struct ModelsConfig {
     /// Wan 2.2 A14B 3.5、Wan 5B 6.0（都是上游 docs 里给的命令行）。以前默认
     /// 写死 6.0，而 `video_lora` / `video_max_frames` 的默认早就按 H3 了——
     /// 手改 `[models].video` 换成 H3 的人拿 6.0 跑：多跑一遍 uncond（时间
-    /// 翻倍）而且不报错。初始化页选家族时会写具体值，那条路不受影响。
+    /// 翻倍）而且不报错。模型窗选家族时会写具体值，那条路不受影响。
     /// 取值见 effective_video_cfg。
     double video_cfg = 0.0;
     double video_flow_shift = 0.0;
