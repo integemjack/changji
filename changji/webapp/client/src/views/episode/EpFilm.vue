@@ -46,6 +46,8 @@ const loading = ref(false)
 const loadError = ref('')
 const currentRel = ref('')
 const shots = ref([])
+/** 分镜表读砸了。空的分镜表和读不到分镜表，下面那句空状态的说法不一样。 */
+const shotsUnknown = ref(false)
 const videoEl = ref(null)
 const playhead = ref(0)
 /** 这部剧的画面规格。只用来定跳转条上那排格子的长宽比，见 stripRatio。 */
@@ -191,6 +193,7 @@ async function loadSpec() {
 async function loadShots() {
   if (!session.projectPath || !session.episodeId) {
     shots.value = []
+    shotsUnknown.value = false
     return
   }
   const want = `${session.projectPath}::${session.episodeId}`
@@ -199,8 +202,21 @@ async function loadShots() {
     const data = await api.shots(session.projectPath, session.episodeId)
     if (!mine()) return
     shots.value = data.shots ?? []
+    shotsUnknown.value = false
   } catch {
-    if (mine()) shots.value = []
+    // **空的分镜表和读不到分镜表是两回事。**
+    //
+    // 下面那两句空状态全靠 shots 分：有镜头且都出完了说「镜头都出完了，
+    // 还没装配」（并把 ffmpeg 那条出路讲清楚），没镜头说「这一集的镜头
+    // 还没跑出来」。读砸了退成空的话，一定落到后一句上——而那是一句
+    // **断言**：它替人回答了"镜头跑没跑"，答案来自一次失败的请求。
+    //
+    // 同一页上面那一段已经为片单写过这件事（「读砸了不能摆『还没有成片』」）。
+    // 这儿是同一个规矩的另一半。
+    if (mine()) {
+      shots.value = []
+      shotsUnknown.value = true
+    }
   }
 }
 
@@ -300,7 +316,13 @@ watch(currentRel, () => {
       v-else-if="!loading && !files.length"
       icon="film"
       title="还没有成片"
-      :hint="shotsLeft ? `这一集还差 ${shotsLeft} 镜没出视频，跑完自动装配成片` : '这一集的镜头还没跑出来，跑完自动装配成片'"
+      :hint="
+        shotsUnknown
+          ? '这一集的分镜表这会儿读不出来，所以说不准镜头跑到哪儿了。去镜头页看一眼'
+          : shotsLeft
+            ? `这一集还差 ${shotsLeft} 镜没出视频，跑完自动装配成片`
+            : '这一集的镜头还没跑出来，跑完自动装配成片'
+      "
     >
       <button class="btn btn--primary" type="button" @click="emit('go', 'shots')">
         去做镜头
