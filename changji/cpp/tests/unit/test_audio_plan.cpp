@@ -401,20 +401,20 @@ TEST_CASE("拆句不能留下只有标点的碎片") {
     // 零点几秒，所以它一路过了所有检查，直到听成片才会发现。
     const double cap = stages::max_line_seconds(24);
 
-    // 每一段都得有能念出声的字。**不能用 text::rstrip_punct 判**——那个表只有
-    // 八个字符（。．；；，，、和空格），不含 ！？… 之类，第一版就是栽在这儿：
-    // 修完之后实跑照样切出「！」和「…」两种独立片段。
+    // 每一段都得有能念出声的字。
+    //
+    // **判据用生产那一份，不再自己抄一张标点表。** 这儿原来抄了一张，而
+    // 抄的那张比 `has_speakable` 里的 kMarks **少** `－〈〉‥﹏` 和全角
+    // 空格——也就是说用例比它守的那条规则还松：真漏出一个只有「〈〉」的
+    // 碎片，用例判它"能念"，一路绿灯。
+    //
+    // （`text::rstrip_punct` 也不能用：那个表只有八个字符——。．；；，，、
+    //   和空格——是给"清理句尾"用的，不含 ！？… 之类。第一版就是栽在这儿：
+    //   修完之后实跑照样切出「！」和「…」两种独立片段。）
     auto no_punct_only = [](const std::vector<std::string>& parts) {
-        static const std::string marks =
-            "。，、；：！？…—～「」『』“”‘’（）《》【】·"
-            ".,;:!?-~\"'()[]{}<>/\\|*_+= \t\n\r";
         for (const auto& p : parts) {
             CAPTURE(p);
-            bool speakable = false;
-            for (const auto& ch : text::utf8_chars(p)) {
-                if (marks.find(ch) == std::string::npos) { speakable = true; break; }
-            }
-            CHECK(speakable);
+            CHECK(stages::has_speakable(p));
         }
     };
 

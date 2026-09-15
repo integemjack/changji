@@ -82,6 +82,19 @@ struct ShotAudioPlan {
     bool is_tight() const { return slack_s < 0.5; }
 };
 
+/// 这一段送给 TTS 会不会念出东西来。
+///
+/// 全是标点 / 括号 / 空白就是假。`split_long_text` 拿它决定"这一截要不要
+/// 并回前一段"——一段纯标点进合成器，出来多长完全不可预期（实测一个「！」
+/// 出过 41 秒，而那一镜只有 5 秒，声音盖住后面好几镜）。
+///
+/// **导出来是为了测得到。** 它原来在 audio_plan.cpp 的匿名命名空间里，
+/// 于是 test_audio_plan 里那条「拆句不能留下只有标点的碎片」只好自己抄了
+/// 一张标点表——而抄的那张比这儿**少**了 `－〈〉‥﹏` 和全角空格，也就是
+/// 说用例比它守的那条规则还松：真漏出一个只有「〈〉」的碎片，用例判它
+/// "能念"，一路绿灯。判据只该有一份。
+bool has_speakable(const std::string& text);
+
 /// 配音结果概览。
 std::string summarize(const std::vector<ShotAudioPlan>& plans);
 

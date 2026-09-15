@@ -92,9 +92,9 @@ double max_line_seconds(int fps) {
     return max_shot_duration_s(fps) - kTailS;
 }
 
-namespace {
 
-/// 这一段除了标点和空白，还有没有能念出声的字。
+/// 这一段除了标点和空白，还有没有能念出声的字。声明在 audio_plan.hpp
+/// （导出来是为了让 test_audio_plan 用同一份判据，见那儿的说明）。
 ///
 /// **不能用 text::rstrip_punct 代替。** 那个表只有八个字符
 /// （。．；；，，、和空格），是给"清理句尾"用的，不含 ！？…—
@@ -118,7 +118,6 @@ bool has_speakable(const std::string& s) {
     return false;
 }
 
-}  // namespace
 
 std::vector<std::string> split_long_text(const std::string& text_in,
                                          double max_seconds) {
