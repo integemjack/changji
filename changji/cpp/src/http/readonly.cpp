@@ -505,6 +505,22 @@ ApiResult get_projects(const config::Settings& settings) {
                 // 故事」）——顺手删掉的正是投入最多的那一个。
                 story_broken = e.what();
             }
+
+            // 资产库同理。**「坏了」和「空的」也要分开**——上面那段话
+            // （一个写完的项目和空壳长得一模一样）对 assets.json 一字不差
+            // 地成立：它装着角色、服装和一堆参考图路径，形状歪了就整份读
+            // 不出来，而"读不出来"和"这个项目还没定妆"在这条列表上原来是
+            // 同一个样子。
+            //
+            // 只读、不算数：这条列表不显示角色数，要的只是"它是不是坏的"，
+            // 好让项目库上那一行能说出来、而不是等人点进去撞一个 400。
+            std::string assets_broken;
+            try {
+                (void)store.load_assets();
+            } catch (const std::exception& e) {
+                assets_broken = e.what();
+            }
+
             if (logline.empty()) logline = project.premise;
 
             // **砍短了要说一声。**
@@ -537,6 +553,7 @@ ApiResult get_projects(const config::Settings& settings) {
                 {"written_chapters", written_chapters},
                 {"planned_episodes", planned_episodes},
                 {"story_broken", story_broken},
+                {"assets_broken", assets_broken},
                 {"mtime", mtime},
             }, mtime});
         }

@@ -441,7 +441,7 @@ function busyProject(p) {
           <span
             class="item__stage tiny truncate"
             :class="`item__stage--${projectStage(p).tone}`"
-            :title="p.broken || p.story_broken || projectStage(p).label"
+            :title="p.broken || p.story_broken || p.assets_broken || projectStage(p).label"
           >
             {{ projectStage(p).label }}
           </span>

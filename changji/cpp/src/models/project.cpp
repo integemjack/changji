@@ -335,8 +335,37 @@ AssetLibrary ProjectStore::load_assets() const {
         return AssetLibrary{};
     }
     // 用 ordered_json 而不是 json：见 read_json_file 的注释。
-    AssetLibrary lib = read_json_file<nlohmann::ordered_json>(paths_.assets_file())
-                           .get<AssetLibrary>();
+    const auto raw = read_json_file<nlohmann::ordered_json>(paths_.assets_file());
+
+    // ⚠️ **形状不对不能当成"这个项目还没有角色"。**
+    //
+    // `characters` / `locations` 是 **id → 内容** 的对象（OrderedMap），
+    // 上面那段注释讲的就是它为什么不是数组。而反序列化用的是
+    // `..._WITH_DEFAULT` 那个宏：类型对不上时它**不报错，回默认值**——
+    // 一个空库。于是一份手改歪了的 assets.json（比如把它写成数组）读出来
+    // 和"新项目"一模一样：界面显示「还没有角色」，人看不出文件里其实有
+    // 十几个角色、几十条服装和一堆参考图路径。
+    //
+    // 更糟的是下一步：这时候点「照故事定妆」，merge_bible 会拿新生成的
+    // 那份**盖掉**这个文件——数据就真没了。
+    //
+    // 手改 assets.json 是这个项目**写在文档里的用法**（见
+    // character.cpp 里「唯一的办法是手改 assets.json」那一段），所以这一
+    // 处必须说话。抛出去：上层 `load_assets_or_400` 那条本来就是为"文件
+    // 本身是坏的"准备的。
+    for (const char* key : {"characters", "locations"}) {
+        if (!raw.contains(key)) continue;
+        const auto& node = raw.at(key);
+        if (node.is_null() || node.is_object()) continue;
+        throw std::runtime_error(
+            std::string("assets.json 里的 ") + key +
+            " 得是一个对象（\"id\": {…} 这种），现在是 " + node.type_name() +
+            "。这份资产库没有装进来——先把它改回对象再打开，"
+            "别在这个状态下重新定妆，那会把文件盖掉：" +
+            paths::to_utf8(paths_.assets_file()));
+    }
+
+    AssetLibrary lib = raw.get<AssetLibrary>();
 
     // **没写画风就按这条线补一个。** 空着的后果不是"少一句修饰"：整条
     // 提示词里一个画风词都没有，出图模型每张各自发挥——同一个项目里三个

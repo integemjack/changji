@@ -111,5 +111,11 @@ export function projectStage(p) {
   if (p?.story_broken) {
     return { key: 'story-broken', label: '故事文件坏了', percent: 0, rank: 99, tone: 'bad' }
   }
+  // 资产库坏了同理，和 story_broken 一个待遇。**排在 empty 之前**：
+  // 一个定完妆的项目，assets.json 形状歪了之后在这条列表上原来显示成
+  // 「还没写故事」——和空壳一模一样，而空壳正是顺手删掉的那一类。
+  if (p?.assets_broken) {
+    return { key: 'assets-broken', label: '设定文件坏了', percent: 0, rank: 98, tone: 'bad' }
+  }
   return { key: 'empty', label: '还没写故事', percent: 0, rank: 0, tone: 'dim' }
 }
