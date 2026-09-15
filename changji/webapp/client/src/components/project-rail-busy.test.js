@@ -52,42 +52,9 @@ describe('谁在跑这一问', () => {
   })
 })
 
-/**
- * 「跑完了重拉一次项目库」那条下降沿。
- *
- * 它原来盯的是 `runner.running || writer.running`，而那两个 store 在这一页
- * 上**没有人驱动**（`useRun` 只有镜头页轮询，`useWriter` 只有故事页和设定
- * 页那一格）。于是这件事恰恰在**卡片就摆在眼前的项目页**上一次都不会发生：
- * 引擎那头一轮批量跑完，`/api/projects` 一次都没重拉，卡上那句
- * 「1/2 集已出片」原样挂着。
- *
- * 换成那份系统表之后要守住一条：**只认长跑那两种**。出参考图那种短活也在
- * 表里，一键出图一跑就是十几条，跟着它重拉等于把每个项目的 project.json 和
- * story.json（引擎注释写着「可能有几百 KB」）重读十几遍。
+/*
+ * 「跑完了重拉一次」那条下降沿原来也钉在这儿。后来查出来那是**四处同一个
+ * 根**（项目库、这一集那排标签、设定页那行标签、成片页），判据一起收进了
+ * `useLongRunning`，用例也跟着搬到 `src/undriven-stores.test.js` 一处去钉
+ * ——留在这儿的话四处各钉一遍，而它们只有一条规矩。
  */
-describe('跑完了重拉一次', () => {
-  it('下降沿从那份系统表来，不看那两个没人驱动的旗子', () => {
-    const at = RAIL.indexOf('const longRunning = computed(')
-    expect(at, 'longRunning 不见了').toBeGreaterThan(0)
-    expect(RAIL.slice(at, at + 300)).toContain('stat.value?.jobs')
-    expect(RAIL).toMatch(/watch\(longRunning/)
-    // 那两个 store 在这一页上已经不读了。认那句 import——两个名字本身
-    // 还留在注释里，记着当初为什么错。
-    expect(RAIL).not.toContain("from '@/stores/run'")
-    expect(RAIL).not.toMatch(/const (runner|writer) = use/)
-  })
-
-  it('只认 run / write 两种，别被出参考图那种短活带着重拉', () => {
-    const at = RAIL.indexOf('const longRunning = computed(')
-    const body = RAIL.slice(at, at + 300)
-    expect(body).toContain("j.kind === 'run'")
-    expect(body).toContain("j.kind === 'write'")
-  })
-
-  it('表还没回来的时候不算"刚跑完"', () => {
-    const at = RAIL.indexOf('const longRunning = computed(')
-    expect(RAIL.slice(at, at + 300)).toContain('return null')
-    const w = RAIL.indexOf('watch(longRunning')
-    expect(RAIL.slice(w, w + 160)).toContain('before === true && now === false')
-  })
-})

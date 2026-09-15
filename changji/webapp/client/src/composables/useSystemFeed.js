@@ -17,7 +17,7 @@
  *
  * 只在 socket 没有的时候拉：连上之后这条就停，不为同一个节奏做两遍功。
  */
-import { onMounted, onUnmounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 
 import { api } from '@/api'
 import { openJobSocket } from '@/composables/useJobSocket'
@@ -143,4 +143,29 @@ export function useSystemFeed() {
     stat.value = null
   })
   return { stat }
+}
+
+/**
+ * 长跑任务此刻在不在跑。`null` = 还不知道（表没回来、拉不到）。
+ *
+ * **给"跑完了重拉一次"那几条下降沿用的。** 它们原来盯的是
+ * `useRun.running` / `useWriter.running`，而那两个 store **只有特定几页
+ * 在驱动**：`useRun` 只有镜头格里的 `useShots` 在轮询，`useWriter` 只有
+ * 故事页和设定页那一格。于是"跑完了"这件事恰恰在**数字摆在眼前的那几页**
+ * 上一次都不会发生——项目库的卡片、这一集那排标签、设定页那行标签，
+ * 三处都栽在同一条上。这份表在每一页上都两秒一拍地拉，没有这个问题。
+ *
+ * **默认只认 run / write 两种**（就是那两个作业槽的语义）。出参考图那种
+ * 短活也在这份表里，一键出图一跑就是十几条，跟着它重拉等于把一整页的
+ * 请求重发十几遍。
+ *
+ * @param {string[]} [kinds] 认哪几种。成片那一页只认 `run`：片子只有它出。
+ */
+export function useLongRunning(kinds = ['run', 'write']) {
+  const { stat } = useSystemFeed()
+  return computed(() => {
+    const jobs = stat.value?.jobs
+    if (!jobs) return null
+    return jobs.some((j) => kinds.includes(j.kind))
+  })
 }

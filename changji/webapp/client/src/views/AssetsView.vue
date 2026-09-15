@@ -41,7 +41,7 @@ import { useAction } from '@/composables/useAction'
 import { runAsyncJob } from '@/composables/useAsyncJob'
 import { stoppedByHand } from '@/composables/stopped-by-hand'
 import { useRefStream } from '@/composables/useRefStream'
-import { useWriter } from '@/stores/run'
+import { useLongRunning } from '@/composables/useSystemFeed'
 import { pickProjectHint } from '@/composables/pick-project-hint'
 import { useProjects } from '@/stores/projects'
 import { useSession } from '@/stores/session'
@@ -55,7 +55,8 @@ const router = useRouter()
 const ui = useUi()
 const { run, isBusy, error: actionError } = useAction()
 const { finished, touch } = useRefStream()
-const writer = useWriter()
+/** 长跑任务在不在跑。见下面那条下降沿。 */
+const longRunning = useLongRunning()
 
 const story = ref(null)
 /**
@@ -522,12 +523,17 @@ watch(finished, loadAssets)
  * 只订下降沿：跑的过程中它一章章写，这一行是给"到哪一步了"看的，不是
  * 进度条。
  */
-watch(
-  () => writer.running,
-  (now, before) => {
-    if (before && !now) loadAll()
-  },
-)
+/**
+ * ⚠️ **这儿原来盯的是 `writer.running`，而这一页不保证有人在驱动它。**
+ * `useWriter` 的轮询只有故事页和「分集」那一格会开（而那一格要先被点开
+ * 才挂载，KeepAlive 之前它根本不存在）。一上来落在「角色」格、或者刷新
+ * 一下浏览器，那个旗子就永远是假的——下降沿一次都不来，这一行标签跑完
+ * 还是开跑之前的数，正是上面那段话要治的事。
+ * 换成那份系统表：它在每一页上都两秒一拍地拉。见 useLongRunning。
+ */
+watch(longRunning, (now, before) => {
+  if (before === true && now === false) loadAll()
+})
 </script>
 
 <template>

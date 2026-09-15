@@ -44,7 +44,7 @@ import { api } from '@/api'
 import { useAction } from '@/composables/useAction'
 import { useProjects } from '@/stores/projects'
 import { readLocal, writeLocal } from '@/composables/local-storage'
-import { useSystemFeed } from '@/composables/useSystemFeed'
+import { useLongRunning, useSystemFeed } from '@/composables/useSystemFeed'
 import { useSession } from '@/stores/session'
 import { useUi } from '@/stores/ui'
 
@@ -205,11 +205,7 @@ onUnmounted(() => narrowQuery.removeEventListener('change', onNarrow))
  * 这份表里，一键出图一跑就是十几条，跟着它重拉等于把每个项目的
  * project.json + story.json 重读十几遍。
  */
-const longRunning = computed(() => {
-  const jobs = sysFeed.stat.value?.jobs
-  if (!jobs) return null // 还不知道，别当成"刚跑完"
-  return jobs.some((j) => j.kind === 'run' || j.kind === 'write')
-})
+const longRunning = useLongRunning()
 
 watch(longRunning, (now, before) => {
   if (before === true && now === false) store.load()

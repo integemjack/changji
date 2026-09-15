@@ -34,8 +34,8 @@ import EpShots from '@/views/episode/EpShots.vue'
 import { api } from '@/api'
 import { countScriptChars, isFilmOf } from '@/api/labels'
 import { useAction } from '@/composables/useAction'
-import { useRun, useWriter } from '@/stores/run'
 import { pickProjectHint } from '@/composables/pick-project-hint'
+import { useLongRunning } from '@/composables/useSystemFeed'
 import { useProjects } from '@/stores/projects'
 import { useSession } from '@/stores/session'
 import { useUi } from '@/stores/ui'
@@ -43,8 +43,6 @@ import { useUi } from '@/stores/ui'
 const session = useSession()
 /** 只为那一屏「还没选项目」的提示：一个都没有时该说的是「建一个」。 */
 const projects = useProjects()
-const runner = useRun()
-const writer = useWriter()
 const ui = useUi()
 const route = useRoute()
 const router = useRouter()
@@ -344,12 +342,25 @@ watch(view, load)
  * 剧本）。两样动的都正是这一行标签上的数。不订的话，在分集那一格点完
  * 「批量补分镜」，跑完回到这一页，「镜头」那一格还写着 0。
  */
-watch(
-  () => [runner.running, writer.running],
-  ([run, write], [wasRun, wasWrite]) => {
-    if ((wasRun && !run) || (wasWrite && !write)) load()
-  },
-)
+/**
+ * 长跑任务有没有在跑。**从那份系统表读，不看 `runner` / `writer` 那两个旗子。**
+ *
+ * ⚠️ 上面那段话说的场景（在分集那一格点完「批量补分镜」，跑完回到这一页）
+ * **靠的是运气**：`useWriter` 的轮询只有故事页和设定页那一格会开，而
+ * `writer.stop()` 只有故事页在调。刷新一下浏览器、直接落在这一页上，
+ * 那个旗子就永远是假的——下降沿一次都不会来，「镜头」那一格跑完还写着 0。
+ * `runner` 同理：它只有镜头格里的 `useShots` 在驱动。
+ *
+ * 那份表（`useSystemFeed`）两秒一拍、在每一页上都在拉，`running_work()`
+ * 里长跑那两个槽各占一行。项目库那条栏为同一件事刚改过，理由写在那儿。
+ *
+ * 只认 run / write：出参考图那种短活也在表里，而这一层一跑就是四个请求。
+ */
+const longRunning = useLongRunning()
+
+watch(longRunning, (now, before) => {
+  if (before === true && now === false) load()
+})
 </script>
 
 <template>

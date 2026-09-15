@@ -12,6 +12,7 @@ import EmptyState from '@/components/EmptyState.vue'
 import { api, mediaUrl } from '@/api'
 import { isFilmOf } from '@/api/labels'
 import { humanAgo } from '@/composables/useAction'
+import { useLongRunning } from '@/composables/useSystemFeed'
 import { useRun } from '@/stores/run'
 import { useSession } from '@/stores/session'
 import { useUi } from '@/stores/ui'
@@ -241,12 +242,18 @@ watch(() => [session.projectPath, session.episodeId], load)
  * ——装配写盘时这一页一动不动，人以为没出来，其实文件已经在了。
  * 只订下降沿：跑的过程中这一页没有任何东西会变。
  */
-watch(
-  () => runner.running,
-  (now, before) => {
-    if (before && !now) load()
-  },
-)
+/**
+ * ⚠️ **这儿原来盯的是 `runner.running`，而它只有镜头格里的 `useShots` 在
+ * 驱动。** 这一集默认落在哪一格是按进度挑的——落在「成片」那一格时，镜头
+ * 那一格根本没挂载过，旗子永远是假的，下降沿一次都不来。而"开跑之后切到
+ * 这一格等着看成片"正是上面那段话说的用法。
+ *
+ * 换成那份系统表，**只认 `run`**：片子只有出片那个槽会出，写整季跑完不该
+ * 让这一页白拉一趟。见 useLongRunning。
+ */
+watch(useLongRunning(['run']), (now, before) => {
+  if (before === true && now === false) load()
+})
 
 /**
  * 成片的地址，**带上这个文件的 mtime**。
