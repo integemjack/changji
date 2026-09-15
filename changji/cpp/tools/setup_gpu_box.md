@@ -14,19 +14,29 @@
 | 阶段 | 权重 | 加缓冲 |
 |---|---|---|
 | 出片 | Wan 5B fp16 9.4 + umt5-xxl 11 + VAE 1.4 ≈ **22 GB** | ≈29 GB |
-| 出首帧（fp8，全常驻） | Qwen-Image fp8 20 + Qwen2.5-VL Q8_0 8 ≈ **28 GB** | ≈35 GB ✗ |
-| 出首帧（fp8，`te=cpu,vae=cpu`） | 显存里只有扩散模型 **19.5 GB**，编码器和 VAE 在内存 | 峰值 31.9 GB ✓（紧） |
-| 出首帧（**Q6_K**） | Qwen-Image Q6_K 16 + Qwen2.5-VL Q8_0 8 ≈ **24 GB** | ≈31 GB ✓ |
+| 出首帧（Q8_0） | Edit Q8_0 21.8 + Qwen2.5-VL Q8_0 8 + 视觉塔 1.3 ≈ **31 GB** | ≈38 GB ✗ |
+| 出首帧（**Q6_K**） | Edit Q6_K 16.8 + Qwen2.5-VL Q8_0 8 + 视觉塔 1.3 ≈ **26 GB** | ≈33 GB ✓ |
 
-- **≥40 GB**（L20 48 GB / A100）：随便配，bf16 编码器也行。
-- **32 GB**（5090）：两条路都能跑，选一条：
-  - **fp8 那份（20 GB）+ `weights = "te=cpu,vae=cpu"`**：只把扩散模型
-    放显存，编码器和 VAE 的权重留在内存。画质最好，**峰值 31.9 / 32.6 GB，
-    很紧**——桌面、别的进程、更大的图都可能把它顶爆。
-  - **`qwen-image-Q6_K.gguf`（16 GB）+ `weights = "auto"`**：稳，画质
-    略逊于 fp8（能看出来，但不大）。
-  - 文本编码器都用 `Qwen2.5-VL-7B-Instruct-Q8_0.gguf`（8 GB）。
+⚠️ **首帧那一族 2026-09-15 换成了 Qwen-Image-Edit 2509**（下载目录
+`setup/catalog.cpp` 和 `fetch_models.sh` 都是这一族）。它是**图像编辑**
+模型：角色三视图和空景图会当参考图一起喂进去，跨镜头才是同一张脸。
+两点跟着变：
+
+- **没有 fp8 这一档**——上游只放了 GGUF 梯队，原来那条"fp8 +
+  `weights=te=cpu,vae=cpu`"的路没有了。
+- **必须多带一个视觉塔**（`image_text_encoder_vision`，1.3 GB）。
+  2509 起不带它不报错，只在日志里说一句 `vision disabled`，然后参考图
+  只有一半进得去、出来的图和参考对不上。
+
+- **≥40 GB**（L20 48 GB / A100）：随便配，bf16 编码器也行，Q8_0 也放得下。
+- **32 GB**（5090）：**`Qwen-Image-Edit-2509-Q6_K.gguf`（16.8 GB）+
+  `weights = "auto"`**。再往上 Q8_0 是 21.8 GB，加上编码器就常驻不下了。
+  - 文本编码器用 `Qwen2.5-VL-7B-Instruct-Q8_0.gguf`（8 GB）。
     **不要用 Comfy 的 `fp8_scaled`**——见下面第 1 节第 2 条。
+  - 下面那张实测表是**基础版 Qwen-Image** 量的。Edit 2509 是同一个 20B、
+    同一套量化，文件大小逐档一字不差（Q6_K 两边都是 16824990240 字节），
+    所以"放得下放不下"照搬没问题；**每张多少秒没有重新量过**，参考图多
+    一路编码，只会比表里慢一点。
 
   实测（5090，704×1280 首帧）：
 
@@ -61,12 +71,13 @@
     Wan2.2-I2V-A14B-LowNoise-Q8_0.gguf      15.4 GB
     wan_2.1_vae.safetensors                 0.25 GB
 
-    # 出首帧：Qwen-Image **基础模型**。32 GB 的卡两份都能跑（见上面）
-    qwen_image_fp8_e4m3fn.safetensors         20 GB   # 画质好；32 GB 上要 weights=te=cpu,vae=cpu
-    qwen-image-Q6_K.gguf                      16 GB   # 稳；weights=auto
+    # 出首帧：Qwen-Image-**Edit 2509**（图像编辑，收参考图）
+    Qwen-Image-Edit-2509-Q8_0.gguf          21.8 GB   # ≥40 GB 卡
+    Qwen-Image-Edit-2509-Q6_K.gguf          16.8 GB   # 32 GB 卡；weights=auto
     qwen_image_vae.safetensors               243 MB
     qwen_2.5_vl_7b_bf16.safetensors           16 GB   # ≥40 GB 卡用这份
     Qwen2.5-VL-7B-Instruct-Q8_0.gguf         ~8 GB   # 32 GB 卡用这份
+    Qwen2.5-VL-7B-Instruct-mmproj-BF16.gguf  1.3 GB   # 视觉塔，2509 非它不可
 
     # 配音：Qwen3-TTS
     Qwen3-TTS-12Hz-1.7B-Base-bf16.gguf       3.3 GB
@@ -207,9 +218,11 @@ sd.cpp 认这个给 ComfyUI 做的 LoRA（日志里有 `apply lora at runtime`�
     video_rng = "cpu"
     # 加速 LoRA 默认就指着这个路径，不用写；文件不在会在日志里说一声
     # video_lora = "loras/minimax_h3_turbo_v4_step600_ema.safetensors"
-    image = "qwen_image_fp8_e4m3fn.safetensors"
+    image = "Qwen-Image-Edit-2509-Q8_0.gguf"
     image_vae = "qwen_image_vae.safetensors"
     image_text_encoder = "qwen_2.5_vl_7b_bf16.safetensors"
+    # 2509 不带视觉塔就是"参考图只进去一半"，而且不报错
+    image_text_encoder_vision = "Qwen2.5-VL-7B-Instruct-mmproj-BF16.gguf"
     tts = "Qwen3-TTS-12Hz-1.7B-Base-bf16.gguf"
     tts_decoder = "mmproj-Qwen3-TTS-12Hz-1.7B-Base-bf16.gguf"
     # 首帧按哪个档位出。首帧是跨镜头一致性的锚点、又会当起始图喂给出片

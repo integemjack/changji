@@ -62,22 +62,28 @@ dl umt5_xxl_fp16.safetensors \
    "$B/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/text_encoders/umt5_xxl_fp16.safetensors" \
    11366399385
 
-echo "== 出首帧（Qwen-Image **基础模型**，不是 Edit） =="
-# Edit 是图生图编辑模型，拿它做文生图出来的是彩色雪花——而且方差比真图还大，
-# 靠"方差不为零"判"不是空图"会一路绿灯。这台机器上栽过。
+echo "== 出首帧（Qwen-Image-Edit 2509） =="
+# ⚠️ **Edit 是图生图编辑模型，一定要有参考图。** 没有任何参考图的时候它退化
+# 成文生图，出来的是彩色雪花——而且方差比真图还大，靠"方差不为零"判"不是空图"
+# 会一路绿灯。这台机器上栽过。
+#
+# 这套流水线本来就每一镜都喂参考图（在场每个角色的三视图 + 这个场景的空景图，
+# 见 stages/prompt_compose.cpp 的 refs），所以走的是它擅长的那条路——跨镜头
+# 同一张脸靠的就是它。**代价是定妆和参考图必须先铺开**：一张参考图都没有的
+# 镜头会撞上上面那句。
+#
+# **要 2509 不要初版**：多参考图是 2509 加的，初版只收一张，而一镜常常三张。
+# 下载目录（setup/catalog.cpp）里装的也是这一族，两条路要一致。
 if [ "$ENC" = "bf16" ]; then
-  # ≥40 GB 的卡：fp8 那份
-  dl qwen_image_fp8_e4m3fn.safetensors \
-     "$B/Comfy-Org/Qwen-Image_ComfyUI/resolve/main/split_files/diffusion_models/qwen_image_fp8_e4m3fn.safetensors" \
-     20430635136
+  # ≥40 GB 的卡：整个梯队最好的 Q8_0
+  dl Qwen-Image-Edit-2509-Q8_0.gguf \
+     "$B/QuantStack/Qwen-Image-Edit-2509-GGUF/resolve/main/Qwen-Image-Edit-2509-Q8_0.gguf" \
+     21761817120
 else
-  # 32 GB 的卡两份都下：fp8 配 weights="te=cpu,vae=cpu" 画质最好但
-  # 峰值 31.9 GB 很紧；Q6_K 配 weights="auto" 稳。两份都是 35 秒一张。
-  dl qwen_image_fp8_e4m3fn.safetensors \
-     "$B/Comfy-Org/Qwen-Image_ComfyUI/resolve/main/split_files/diffusion_models/qwen_image_fp8_e4m3fn.safetensors" \
-     20430635136
-  dl qwen-image-Q6_K.gguf \
-     "$B/city96/Qwen-Image-gguf/resolve/main/qwen-image-Q6_K.gguf" \
+  # 32 GB 的卡：Q6_K 配 weights="auto"，权重常驻，35 秒一张。
+  # 再往上 Q8_0 是 21.8 GB，这张卡上只能放内存，慢五倍。
+  dl Qwen-Image-Edit-2509-Q6_K.gguf \
+     "$B/QuantStack/Qwen-Image-Edit-2509-GGUF/resolve/main/Qwen-Image-Edit-2509-Q6_K.gguf" \
      16824990240
 fi
 dl qwen_image_vae.safetensors \
@@ -98,6 +104,14 @@ else
      8098524032
 fi
 
+# 文本编码器的视觉塔。**2509 起非它不可，而且不带也不报错**：sd.cpp 只在日志
+# 里说一句 "no vision weights detected, vision disabled" 然后照常跑，参考图只
+# 剩 VAE 潜空间那一半进 DiT，出来的图和参考对不上。
+# 它在**初版 Edit 那个仓库**下面——2509 那个仓库只放了扩散权重。
+dl Qwen2.5-VL-7B-Instruct-mmproj-BF16.gguf \
+   "$B/QuantStack/Qwen-Image-Edit-GGUF/resolve/main/mmproj/Qwen2.5-VL-7B-Instruct-mmproj-BF16.gguf" \
+   1354163040
+
 echo "== 编剧用的大模型（llama-server 跑，和出图出片分开一张卡） =="
 dl llm/Qwen3-14B-Q4_K_M.gguf \
    "$B/Qwen/Qwen3-14B-GGUF/resolve/main/Qwen3-14B-Q4_K_M.gguf" \
@@ -110,13 +124,14 @@ ls -la "$DIR" "$DIR/llm" | awk '$5 > 1000000 {printf "  %10.1f GB  %s\n", $5/107
 echo
 echo "配置照着写：cpp/tools/setup_gpu_box.md 第 2 节"
 if [ "$ENC" = "bf16" ]; then
-  echo '  image = "qwen_image_fp8_e4m3fn.safetensors"'
+  echo '  image = "Qwen-Image-Edit-2509-Q8_0.gguf"'
   echo '  image_text_encoder = "qwen_2.5_vl_7b_bf16.safetensors"'
   echo '  weights = "auto"'
 else
-  echo '  # 画质优先：fp8 + 只把扩散模型放显存（峰值 31.9/32.6 GB，很紧）'
-  echo '  image = "qwen_image_fp8_e4m3fn.safetensors"'
-  echo '  weights = "te=cpu,vae=cpu"'
-  echo '  # 求稳：image = "qwen-image-Q6_K.gguf" 配 weights = "auto"'
+  echo '  image = "Qwen-Image-Edit-2509-Q6_K.gguf"'
   echo '  image_text_encoder = "Qwen2.5-VL-7B-Instruct-Q8_0.gguf"'
+  echo '  weights = "auto"'
 fi
+# **这一行不能漏**：2509 不带视觉塔就是"参考图只进去一半"，而且不报错。
+echo '  image_text_encoder_vision = "Qwen2.5-VL-7B-Instruct-mmproj-BF16.gguf"'
+echo '  image_vae = "qwen_image_vae.safetensors"' 

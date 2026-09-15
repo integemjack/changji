@@ -801,6 +801,34 @@ void SdContext::generate(const ImageRequest& req, const fs::path& dest,
                 impl_->diffusion.c_str());
         }
     }
+    // **反过来那一头也要说：编辑模型手上一张参考图都没有。**
+    //
+    // 首帧那一族 2026-09-15 整族换成了 Qwen-Image-Edit 2509，于是这条路
+    // 从"几乎碰不上"变成了默认路径上的一种：这一镜在场的角色还没定妆
+    // 三视图、这个场景也没有空景图，`prompt_compose` 就一张 ref 都推不出来
+    // （那两处都是 `has_value() && !empty()` 才推），Edit 手上没有编辑源，
+    // 退化成文生图。
+    //
+    // **而那个东西不能看，还骗得过闸门。** 设计文档里那一段记着实测：
+    // 「39 GB bf16 编辑模型出 22 帧要 4 分钟以上、出来是雪花」；
+    // tools/fetch_models.sh 那条记着为什么闸门拦不住——「方差比真图还大，
+    // 靠"方差不为零"判"不是空图"会一路绿灯」。
+    //
+    // 所以这一句非说不可。说一次就够，理由同上面那条。
+    if (take_refs && req.reference_images.empty()) {
+        static bool said_bare = false;
+        if (!said_bare) {
+            said_bare = true;
+            std::fprintf(
+                stderr,
+                "[出图] %s 是图像编辑模型，而这一镜一张参考图都没有：没有编辑"
+                "源它会退化成文生图，出来多半是彩色噪点，而且闸门那条"
+                "「不是空图」的判据拦不住它。先去设定页把角色定妆、给场景出"
+                "空景图（「照故事定妆」+「一键出图」），参考图有了这一族才"
+                "是它该干的活\n",
+                impl_->diffusion.c_str());
+        }
+    }
     if (take_refs) {
         for (const auto& p : req.reference_images) refs.push_back(load_image(p));
     }

@@ -1317,13 +1317,13 @@ subtitle_font = "Source Han Sans SC"
 # video = "Wan2.2-TI2V-5B-Q4_K_M.gguf"
 # video_vae = "Wan2.2_VAE.safetensors"
 # video_text_encoder = "umt5-xxl-encoder-Q5_K_M.gguf"
-# image = "Qwen_Image_Edit-Q2_K.gguf"
+# image = "Qwen-Image-Edit-2509-Q6_K.gguf"
 # 图像模型自己的 VAE 和文本编码器。**别拿视频那套顶**——
 # Wan 的 VAE 和 Qwen-Image 的不是一回事，UMT5-XXL 和 Qwen2.5-VL 更不是
 # （在 sd.cpp 里连参数位都不同）。喂错了不报错，只是出来的图和提示词没关系。
 # 这两项留空会退回 video_vae / video_text_encoder，只用 Wan 的人不必填。
 # image_vae = "qwen_image_vae.safetensors"
-# image_text_encoder = "Qwen2.5-VL-7B-Instruct-Q2_K.gguf"
+# image_text_encoder = "Qwen2.5-VL-7B-Instruct-Q8_0.gguf"
 # 2509 及以后的 Qwen-Image-Edit 还要视觉塔，初版可以不填
 # image_text_encoder_vision = "Qwen2.5-VL-7B-Instruct-mmproj-BF16.gguf"
 #

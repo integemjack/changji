@@ -335,20 +335,20 @@ ApiResult get_assets(const std::string& path) {
 
     return {200, {
         {"reference_images_used", refs_honored},
-        // ⚠️ **这句话原来指了一条走不通的路。** 它写的是「去项目页「模型」
-        // 那一行换一个图像编辑模型（Qwen-Image-Edit、**Flux Kontext** 这类）」，
-        // 三处对不上：
+        // ⚠️ **这句话两次指错路。**
         //
-        //   · 那个弹窗里的首帧那一组**全是文生图**（catalog.cpp 里 g.title
-        //     就写着「首帧模型（文生图）」，kImage 只有 qwen-image-* 那一串
-        //     量化档），换不出编辑模型来——得自己下好再填 [models].image。
-        //   · 引擎是**按文件名**认编辑模型的（accepts_reference_images：
-        //     文件名里带 edit 才算）。Flux Kontext 的文件名是
-        //     `flux1-kontext-…`，认不出来——照这句话换过去，参考图照样一张
-        //     都不传，而这条提示还挂在那儿。引擎自己那段契约也只点名
-        //     Qwen-Image-Edit。
-        //   · 2509 起还要配上 image_text_encoder_vision，不说的话换完还是
-        //     不работа。
+        // 最早写的是「去项目页「模型」那一行换一个图像编辑模型
+        // （Qwen-Image-Edit、**Flux Kontext** 这类）」——Flux Kontext 的
+        // 文件名是 `flux1-kontext-…`，`accepts_reference_images` 认的是名字
+        // 里的 "edit"，认不出来；照那句话换过去参考图照样一张都不传。
+        //
+        // 后来改成「模型下载那一组里没有这一档（它那一组是文生图），要自己
+        // 下好再填路径」——**2026-09-15 起也不成立了**：首帧那一组整族换成了
+        // Qwen-Image-Edit 2509，视觉塔（image_text_encoder_vision）也跟着一
+        // 起下，弹窗里挑一档点保存就齐了。再教人去手填路径是把人支去绕远路。
+        //
+        // 所以现在只剩一种走到这儿的情形：**配置里还指着一个非 edit 的权重**
+        // ——老装机留下的基础版 Qwen-Image，或者自己手填过。指回那个弹窗即可。
         //
         // （为什么基础模型一律不传：sd.cpp 见到 ref_images 就走 EDIT mode，
         // 基础版出来的是参考图的翻版——settings.hpp 那段记着实见的那一镜。）
@@ -357,13 +357,11 @@ ApiResult get_assets(const std::string& path) {
             "画面靠的是下面那段拼出来的提示词。要让参考图真生效，"
             // 项目页上那是**一行**（`line__k` 写着「模型」，后面四个名字
             // 各是一个按钮），不是一节；而且要换的是四个里的哪一个也得说
-            // 出来——参考图归首帧那一组（catalog.cpp 里 g.title =
-            // 「首帧模型（文生图）」）。只说"那一节"的人会在项目页上找一个
-            // 不存在的小标题。
-            "把 [models].image 换成 Qwen-Image-Edit（2509 起还要一并配上 "
-            "image_text_encoder_vision）。⚠️ 引擎是按**文件名**认的，名字里"
-            "带 edit 才算——官方那几份自带，改过名就认不出来。模型下载那一"
-            "组里没有这一档（它那一组是文生图），要自己下好再填路径。"},
+            // 出来——参考图归首帧那一组。只说"那一节"的人会在项目页上找
+            // 一个不存在的小标题。
+            "去项目页「模型」那一行点开首帧那一个，挑一档 Qwen-Image-Edit "
+            "2509 下下来（视觉塔会跟着一起下）。⚠️ 引擎是按**文件名**认的，"
+            "名字里带 edit 才算——官方那几份自带，改过名就认不出来。"},
         {"characters", characters},
         {"locations", locations},
         {"style", {

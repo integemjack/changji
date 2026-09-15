@@ -98,17 +98,17 @@ TEST_CASE("每个文件都有仓库、路径和核对过的字节数") {
 TEST_CASE("下载地址：国内魔搭、国外 HuggingFace") {
     // 三个源的仓库名和路径完全一致，只有域名和分支名不同
     // （魔搭是 master 而且多一段 /models）。拼错了就是 404。
-    const std::string repo = "city96/Qwen-Image-gguf";
-    const std::string path = "qwen-image-Q6_K.gguf";
+    const std::string repo = "QuantStack/Qwen-Image-Edit-2509-GGUF";
+    const std::string path = "Qwen-Image-Edit-2509-Q6_K.gguf";
     CHECK(setup::resolve_url(setup::Source::ModelScope, repo, path) ==
-          "https://modelscope.cn/models/city96/Qwen-Image-gguf/resolve/master/"
-          "qwen-image-Q6_K.gguf");
+          "https://modelscope.cn/models/QuantStack/Qwen-Image-Edit-2509-GGUF/"
+          "resolve/master/Qwen-Image-Edit-2509-Q6_K.gguf");
     CHECK(setup::resolve_url(setup::Source::HuggingFace, repo, path) ==
-          "https://huggingface.co/city96/Qwen-Image-gguf/resolve/main/"
-          "qwen-image-Q6_K.gguf");
+          "https://huggingface.co/QuantStack/Qwen-Image-Edit-2509-GGUF/"
+          "resolve/main/Qwen-Image-Edit-2509-Q6_K.gguf");
     CHECK(setup::resolve_url(setup::Source::HfMirror, repo, path) ==
-          "https://hf-mirror.com/city96/Qwen-Image-gguf/resolve/main/"
-          "qwen-image-Q6_K.gguf");
+          "https://hf-mirror.com/QuantStack/Qwen-Image-Edit-2509-GGUF/"
+          "resolve/main/Qwen-Image-Edit-2509-Q6_K.gguf");
     // 带子目录的路径原样接上，不做任何转义
     CHECK(setup::resolve_url(setup::Source::ModelScope, "Comfy-Org/MiniMax-H3",
                              "vae/minimax_h3_audio_vae_fp32.safetensors") ==
@@ -180,10 +180,10 @@ TEST_CASE("推荐：卡越大挑得越好，而且不会推荐装不下的") {
         CHECK(picked->min_vram_gb <= (g.key == "llm" ? 24.0 * 0.6 : 24.0));
     }
     const auto rec5090 = setup::recommend(31.8);
-    // **推荐 = 这张卡上权重能常驻的最好一档。** 5090 上 Qwen-Image Q6_K
-    // 正好是那一档：实测权重常驻 35 秒一张，而 fp8（门槛 34.4 GB）
-    // 在这张卡上只能放内存，190 秒一张。
-    CHECK(rec5090.at("image") == "qwen-image-q6_k");
+    // **推荐 = 这张卡上权重能常驻的最好一档。** 5090 上 Qwen-Image-Edit
+    // Q6_K 正好是那一档：实测权重常驻 35 秒一张，再往上 Q8_0（21.8 GB）
+    // 在这张卡上只能放内存，慢五倍。
+    CHECK(rec5090.at("image") == "qwen-image-edit-2509-q6_k");
     // 出片这一组同理：完整版 H3 的权重要 33.4 GB 才常驻得下，这张卡差
     // 一点点，所以推荐落在精简版上。**完整版没被禁掉**，只是不当默认值
     // ——用户这台机器上现在跑的就是完整版（权重放内存，实测 124 秒一镜），
@@ -336,9 +336,9 @@ TEST_CASE("写回配置：云端那一项连地址和模型名一起写，也不
 
 TEST_CASE("写回配置：认不出的选项跳过那一组，不炸") {
     const json patch = setup::config_patch(
-        {{"video", "这个选项早就删了"}, {"image", "qwen-image-q6_k"}});
+        {{"video", "这个选项早就删了"}, {"image", "qwen-image-edit-2509-q6_k"}});
     CHECK_FALSE(patch["models"].contains("video"));
-    CHECK(patch["models"]["image"] == "qwen-image-Q6_K.gguf");
+    CHECK(patch["models"]["image"] == "Qwen-Image-Edit-2509-Q6_K.gguf");
 }
 
 TEST_CASE("apply_setup_patch 把 patch 落到内存里那份配置上") {

@@ -200,32 +200,40 @@ FileSpec wan_encoder(double diff_gb) {
 constexpr const char* kQwenImageFamilyNote =
     "首帧是跨镜头一致性的锚点，也是喂给出片那一步的起始图——糊了后面每一镜"
     "都糊，而且全程不报错。所以这一组值得往高了挑：5090 上实测 Q6_K 权重"
-    "常驻显存是 35 秒一张，同一台机器上 fp8 那份放内存是 190 秒一张。";
+    "常驻显存是 35 秒一张，同一台机器上放内存慢五倍。"
+    "这一族是**图像编辑**模型：角色三视图和空景图会当参考图一起喂进去，"
+    "同一个人在几十镜里才是同一张脸。没有任何参考图的镜头会退化成文生图，"
+    "那时候它出的东西不能看——所以定妆和参考图要先铺开。";
+
+/// 首帧那一族的仓库。**2509 版**：多参考图是它加的，而这套流水线一镜要喂
+/// 好几张（在场的每个角色一张三视图 + 这个场景的空景图，见
+/// stages/prompt_compose.cpp 里那个 refs）。初版 Edit 只收一张。
+constexpr const char* kImageRepo = "QuantStack/Qwen-Image-Edit-2509-GGUF";
 
 struct ImageSpec {
     const char* quant;
     const char* file;
     std::uint64_t bytes;
-    bool safetensors;  // fp8 那份在 Comfy 的仓库，其余在 city96
     int rank;
 };
 
+/// 字节数是 2026-09-15 在 HuggingFace 和魔搭上各查一遍对过的，两边一字不差
+/// （FileSpec::bytes 上那条规矩：两个源必须一致，否则"下完了没有"的判据就废了）。
+/// **这一族没有 BF16 也没有 fp8**——上游只放了 GGUF 这一梯队。
 constexpr ImageSpec kImage[] = {
-    {"BF16", "qwen-image-BF16.gguf", 40872114720ULL, false, 16},
-    {"Q8_0", "qwen-image-Q8_0.gguf", 21761817120ULL, false, 15},
-    {"fp8", "qwen_image_fp8_e4m3fn.safetensors", 20430635136ULL, true, 14},
-    {"Q6_K", "qwen-image-Q6_K.gguf", 16824990240ULL, false, 13},
-    {"Q5_1", "qwen-image-Q5_1.gguf", 15391717920ULL, false, 12},
-    {"Q5_K_M", "qwen-image-Q5_K_M.gguf", 14934899232ULL, false, 11},
-    {"Q5_0", "qwen-image-Q5_0.gguf", 14400813600ULL, false, 10},
-    {"Q5_K_S", "qwen-image-Q5_K_S.gguf", 14117698080ULL, false, 9},
-    {"Q4_K_M", "qwen-image-Q4_K_M.gguf", 13065746976ULL, false, 8},
-    {"Q4_1", "qwen-image-Q4_1.gguf", 12843678240ULL, false, 7},
-    {"Q4_K_S", "qwen-image-Q4_K_S.gguf", 12140608032ULL, false, 6},
-    {"Q4_0", "qwen-image-Q4_0.gguf", 11852773920ULL, false, 5},
-    {"Q3_K_M", "qwen-image-Q3_K_M.gguf", 9679567392ULL, false, 4},
-    {"Q3_K_S", "qwen-image-Q3_K_S.gguf", 8952609312ULL, false, 3},
-    {"Q2_K", "qwen-image-Q2_K.gguf", 7062518304ULL, false, 2},
+    {"Q8_0", "Qwen-Image-Edit-2509-Q8_0.gguf", 21761817120ULL, 15},
+    {"Q6_K", "Qwen-Image-Edit-2509-Q6_K.gguf", 16824990240ULL, 13},
+    {"Q5_1", "Qwen-Image-Edit-2509-Q5_1.gguf", 15391717920ULL, 12},
+    {"Q5_K_M", "Qwen-Image-Edit-2509-Q5_K_M.gguf", 14934899232ULL, 11},
+    {"Q5_0", "Qwen-Image-Edit-2509-Q5_0.gguf", 14400813600ULL, 10},
+    {"Q5_K_S", "Qwen-Image-Edit-2509-Q5_K_S.gguf", 14117698080ULL, 9},
+    {"Q4_K_M", "Qwen-Image-Edit-2509-Q4_K_M.gguf", 13065746976ULL, 8},
+    {"Q4_1", "Qwen-Image-Edit-2509-Q4_1.gguf", 12886145568ULL, 7},
+    {"Q4_K_S", "Qwen-Image-Edit-2509-Q4_K_S.gguf", 12204309024ULL, 6},
+    {"Q4_0", "Qwen-Image-Edit-2509-Q4_0.gguf", 11928271392ULL, 5},
+    {"Q3_K_M", "Qwen-Image-Edit-2509-Q3_K_M.gguf", 9764502048ULL, 4},
+    {"Q3_K_S", "Qwen-Image-Edit-2509-Q3_K_S.gguf", 9037543968ULL, 3},
+    {"Q2_K", "Qwen-Image-Edit-2509-Q2_K.gguf", 7147452960ULL, 2},
 };
 
 /// Qwen-Image 的文本编码器（Qwen2.5-VL-7B）按扩散模型那一档配。
@@ -481,10 +489,11 @@ std::vector<Group> build() {
     {
         Group g;
         g.key = "image";
-        g.title = "首帧模型（文生图）";
+        g.title = "首帧模型（图像编辑）";
         g.purpose =
             "每一镜先出一张首帧，再由它生成视频。首帧是跨镜头一致性的锚点，"
-            "糊了后面每一镜都糊。";
+            "糊了后面每一镜都糊。这一族收参考图：在场角色的三视图和这个场景"
+            "的空景图一起喂进去，脸和地方才跨镜头对得上。";
         g.required = true;
         g.owned_roles = {"image", "image_vae", "image_text_encoder",
                          "image_text_encoder_vision"};
@@ -496,27 +505,43 @@ std::vector<Group> build() {
             "VAE。不能复用视频那份——Wan 的 VAE 和 Qwen-Image 的不是一回事，"
             "喂错了不报错，只是出一张和提示词没关系的图"};
 
+        /// 文本编码器的视觉塔。
+        ///
+        /// **2509 起非它不可**，而且不带也不报错：sd.cpp 只在日志里说一句
+        /// "no vision weights detected, vision disabled" 然后照常跑，参考图
+        /// 只剩 VAE 潜空间那一半进 DiT，出来的图和参考对不上。
+        /// `ModelsConfig::validate` 为这件事专门留了一条校验（认文件名里的
+        /// 2509/2511），这一组不把它一起下下来的话，装完存一下就是那条红字。
+        ///
+        /// 它在**初版 Edit 那个仓库**下面——2509 那个仓库只放了扩散权重。
+        /// 视觉塔是 Qwen2.5-VL-7B 自己的那一份，两个版本共用。
+        const FileSpec vision{
+            "Qwen2.5-VL-7B-Instruct-mmproj-BF16.gguf",
+            "QuantStack/Qwen-Image-Edit-GGUF",
+            "mmproj/Qwen2.5-VL-7B-Instruct-mmproj-BF16.gguf",
+            1354163040ULL, "image_text_encoder_vision",
+            "文本编码器的视觉塔（mmproj）。没有它，参考图只有一半进得去，"
+            "而且不报错"};
+
         for (const auto& spec : kImage) {
             Option o;
-            o.id = lower_id(std::string("qwen-image-") + spec.quant);
-            o.family = "Qwen-Image";
-            o.label = std::string("Qwen-Image · ") + spec.quant;
+            o.id = lower_id(std::string("qwen-image-edit-2509-") + spec.quant);
+            o.family = "Qwen-Image-Edit 2509";
+            o.label = std::string("Qwen-Image-Edit 2509 · ") + spec.quant;
             o.quant = spec.quant;
             o.family_note = kQwenImageFamilyNote;
             o.note = quant_note(spec.quant);
             o.min_vram_gb = resident_vram(true, gb(spec.bytes));
             o.rank = spec.rank;
 
-            o.files.push_back(
-                {spec.file,
-                 spec.safetensors ? "Comfy-Org/Qwen-Image_ComfyUI"
-                                  : "city96/Qwen-Image-gguf",
-                 spec.safetensors
-                     ? "split_files/diffusion_models/" + std::string(spec.file)
-                     : std::string(spec.file),
-                 spec.bytes, "image", "扩散模型"});
+            // 落盘名就用仓库里那个名字：`accepts_reference_images` 认的是
+            // 文件名里的 "edit"，而 validate 那条认的是 "2509"——两条都靠
+            // 这一串字。改名字等于把参考图这条路悄悄关掉。
+            o.files.push_back({spec.file, kImageRepo, spec.file, spec.bytes,
+                               "image", "扩散模型"});
             o.files.push_back(vae);
             o.files.push_back(image_encoder(gb(spec.bytes)));
+            o.files.push_back(vision);
             g.options.push_back(std::move(o));
         }
 
