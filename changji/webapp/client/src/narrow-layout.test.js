@@ -43,6 +43,36 @@ describe('窄屏上摆不下的那几排', () => {
     expect(css).toMatch(/flex:\s*0\s+1/)
   })
 
+  it('那张「机器 × 能力」的表自己横滚，别把整张设置页顶宽', () => {
+    /**
+     * 这是**新合进来那一页**栽的同一个坑，形状换了一下：
+     *
+     * 那张表六列中文表头加一颗按钮，min-content 357.5px；而 375px 上设置页
+     * 正文那一栏只有 282。于是整张页被顶到 374 宽，横着能推、屏幕上什么都
+     * 不说，「重新体检」「保存」全被推到侧边那条栏底下。浏览器里量过：把表
+     * 从 DOM 里摘掉，那一栏当场回到 282。
+     *
+     * 两处缺一不可——只给表加横滚的话，`1fr` 那个自动最小值照样把列撑开；
+     * 只改 `1fr` 的话，列缩了而表照样溢出来。
+     */
+    const view = read('./views/SettingsView.vue')
+    const at = view.indexOf('@media (max-width: 900px)')
+    const narrow = view.slice(at, view.indexOf('</style>', at))
+    // 一、窄屏那条也要 minmax(0, …)：光一个 1fr 的自动最小值是 min-content
+    expect(rule(narrow, '  .set'), '窄屏那条还是光一个 1fr').toMatch(
+      /grid-template-columns:\s*minmax\(0,\s*1fr\)/,
+    )
+    // 宽屏那条本来就是对的，别一起改坏了
+    expect(view.slice(0, at)).toMatch(/grid-template-columns:\s*168px minmax\(0, 1fr\)/)
+
+    // 二、表自己装在一个能横滚的盒子里，而且那一路要能缩下去
+    const nm = read('./components/NodeMatrix.vue')
+    expect(nm, '表没装进盒子').toMatch(/class="matrix__scroll"/)
+    expect(rule(nm, '.matrix__scroll')).toMatch(/overflow-x:\s*auto/)
+    expect(rule(nm, '.matrix__scroll'), '盒子自己缩不下去').toMatch(/min-width:\s*0/)
+    expect(rule(nm, '.matrix'), 'min-content 会从这儿一路往上顶').toMatch(/min-width:\s*0/)
+  })
+
   it('设置页那一排换行，不藏在一条不画滚动条的横滚里', () => {
     const view = read('./views/SettingsView.vue')
     const at = view.indexOf('@media (max-width: 900px)')

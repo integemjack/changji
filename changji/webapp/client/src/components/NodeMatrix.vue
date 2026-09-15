@@ -248,7 +248,13 @@ function cellTitle(cap, node) {
          那种时候，表里至少还有本机那一行。 -->
     <p v-if="loading && !data" class="tiny dim">问着…（每台最多等 3 秒）</p>
 
-    <table v-if="data" class="matrix__grid">
+    <!-- 表单独装在一个能横滚的盒子里。**不这么做的话它会把整张设置页顶宽**
+         ——六列中文表头加一颗按钮，min-content 357.5px，而 375px 上那一栏
+         只有 282。溢出的部分被外层 `.main__scroll` 那个 overflow-x 吞掉：
+         页面横着能推，屏幕上什么都不说，而「重新体检」「保存」这些都被推到
+         侧边那条栏底下。 -->
+    <div v-if="data" class="matrix__scroll">
+      <table class="matrix__grid">
       <thead>
         <tr>
           <th class="col-name">机器</th>
@@ -361,8 +367,9 @@ function cellTitle(cap, node) {
             </td>
           </tr>
         </template>
-      </tbody>
-    </table>
+        </tbody>
+      </table>
+    </div>
 
     <ul v-if="data" class="sum">
       <li v-for="s in data.summary" :key="s.cap" :class="{ bad: s.count === 0 }">
@@ -388,6 +395,14 @@ function cellTitle(cap, node) {
   display: flex;
   flex-direction: column;
   gap: 8px;
+  /* 让它能缩到比里面那张表窄。少了这一句，min-content 会一路往上顶，
+     上面那个 overflow-x 就永远轮不到。 */
+  min-width: 0;
+}
+/* 横着放不下就在这儿滚，别把整页顶宽。 */
+.matrix__scroll {
+  min-width: 0;
+  overflow-x: auto;
 }
 .matrix__head {
   display: flex;
