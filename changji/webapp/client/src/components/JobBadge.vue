@@ -13,9 +13,10 @@
  * **没在跑就整个不显示。** 顶栏上常驻一个写着"0 个任务"的东西，是在提醒
  * 一件不存在的事。
  *
- * **搭系统表那趟车，不另开轮询。** 引擎两秒推一条 `system`，里面顺带带着
- * 此刻在跑的那几件（`jobs`）——要的就是这个节奏，另开一条等于为同一件事
- * 做两遍功。
+ * **搭系统表那趟车。** 引擎两秒推一条 `system`，里面顺带带着此刻在跑的
+ * 那几件（`jobs`）——要的就是这个节奏。那份表在 `useSystemFeed` 里接
+ * （顶栏那三个小表也读它），连不上 WebSocket 时它自己会退回拉
+ * `/api/system`，回的是同一份 body。
  *
  * **"排队中"是真的。** 显存这一层现在会排队：借不到槽的活按先来后到
  * 排成一列等着（见 Scheduler::AcquireOptions），排到自己才干。所以这个
@@ -30,7 +31,7 @@ import { useRouter } from 'vue-router'
 
 import AppIcon from '@/components/AppIcon.vue'
 import { STAGE_LABELS } from '@/api/labels'
-import { openJobSocket } from '@/composables/useJobSocket'
+import { useSystemFeed } from '@/composables/useSystemFeed'
 import { useProjects } from '@/stores/projects'
 import { useSession } from '@/stores/session'
 
@@ -38,75 +39,22 @@ const router = useRouter()
 const session = useSession()
 const projects = useProjects()
 
-const jobs = ref([])
+/**
+ * 那份表在哪儿接的：`useSystemFeed`（模块级一份，和顶栏那三个小表共用）。
+ *
+ * **这儿原来自己开一条 socket**，和 SysMeter 逐字重复一份——连讣告串台、
+ * 看门狗、重连越积越多那几个坑都分别踩了一遍、修了一遍。两条订的还是同一
+ * 个频道，引擎两秒一次那份表要发两遍。
+ *
+ * 收在一处顺带补上了**连不上 WebSocket 时退回轮询**。这一块尤其要紧：
+ * 从设定页点完「批量补分镜」之后，它是**唯一**看得见的出口（那一页自己的
+ * 提示就写着「顶栏那块「AI 作业中」里看进度」），而代理掐了 Upgrade 的
+ * 部署上它原来一次都不会出现——人按下去之后屏幕上再没有任何东西。
+ */
+const { stat } = useSystemFeed()
+const jobs = computed(() => stat.value?.jobs ?? [])
 const open = ref(false)
 const root = ref(null)
-let sock = null
-let retry = null
-let watchdog = null
-let lastAt = 0
-let gone = false
-
-/** 和系统表同一条规矩：八秒没动静就当断了。见 SysMeter 里那段。 */
-const kStaleMs = 8000
-
-/**
- * 这一条连接是第几条。**断开回调要认自己那一条**。
- *
- * 两条重连路径撞在一起会出事：
- *
- *   看门狗发现八秒没动静 → `dead.close()` → 紧接着 `connect()` 连上新的
- *   而 `close()` 的 onclose 是**异步**到的——它带着的是**上一条**的讣告，
- *   却会把刚建好那条的状态一并清掉（`sock = null`、清空 jobs），
- *   还顺手排一个五秒后的重连。
- *
- *   五秒后那次到点，又连一条；而刚才那条既没关、也没人记着。
- *   往后每次看门狗触发都多留一条，越积越多——两条都订着 system，
- *   引擎两秒一次的系统表和任务表就收两遍。
- *
- * 用一个递增的号认人：讣告上的号和当前的对不上，就是上一条的，不理。
- * `connect()` 进来还要先掐掉排着的那次——这一条和 refs、出片那两条频道
- * 刚修过的是同一个毛病。
- */
-let gen = 0
-
-function connect() {
-  if (gone) return
-  clearTimeout(retry)
-  retry = null
-  const myGen = ++gen
-  lastAt = Date.now()
-  sock = openJobSocket(
-    'system',
-    (msg) => {
-      if (msg.type !== 'system') return
-      lastAt = Date.now()
-      jobs.value = msg.jobs ?? []
-    },
-    () => {
-      // 上一条的讣告，现在这条好好的——不要动它。
-      // （连不上时 openJobSocket 会同步回调，那会儿号还是相等的，
-      //   所以这一条不会把"一上来就连不上"那种情况挡掉。）
-      if (myGen !== gen) return
-      sock = null
-      jobs.value = []
-      clearTimeout(retry)
-      retry = setTimeout(connect, 5000)
-    },
-  )
-}
-
-function sweep() {
-  if (gone || !sock) return
-  if (Date.now() - lastAt < kStaleMs) return
-  // 断了就当没有任务在跑。**留着旧的更糟**：顶栏说"正在出片"，而那一轮
-  // 可能早跑完了，点进去什么都没有。
-  jobs.value = []
-  const dead = sock
-  sock = null
-  dead.close()
-  connect()
-}
 
 /** 点别处关掉。划过就开那版靠 mouseleave，点开这版得自己收。 */
 function onDocClick(e) {
@@ -118,8 +66,6 @@ function onEsc(e) {
 }
 
 onMounted(() => {
-  connect()
-  watchdog = setInterval(sweep, 3000)
   // **捕获阶段**：页面上别处有不少 `@click.stop`（卡片、抽屉、列表行），
   // 挂在冒泡阶段的话，点到那些地方这个菜单收不掉——而"点哪儿都关不上的
   // 浮层"是最烦人的一种。捕获阶段先于它们拿到事件，且只读不拦。
@@ -130,12 +76,8 @@ onMounted(() => {
   if (!projects.loaded) projects.load()
 })
 onUnmounted(() => {
-  gone = true
-  clearInterval(watchdog)
-  clearTimeout(retry)
   document.removeEventListener('click', onDocClick, true)
   document.removeEventListener('keydown', onEsc)
-  sock?.close()
 })
 
 /**

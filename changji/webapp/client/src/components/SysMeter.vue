@@ -5,95 +5,29 @@
  * 用户 2026-09-11：「在顶部导航栏增加 GPU，CPU，内存的使用情况实时显示」，
  * 「使用 ws 方式」。
  *
- * **推，不轮询。** 订 "system" 这一类，引擎两秒推一条；没人订它就不采样。
- * 断了五秒后再连；连不上就整块不显示——顶栏上一个不动的数比没有更误导。
+ * **能推就推。** 订 "system" 这一类，引擎两秒推一条；没人订它就不采样。
+ * 断了五秒后再连，这几秒里退回拉 `/api/system`（同一份 body）——
+ * 连不上 WebSocket 的部署上这一块原来是永远空白的。
+ * 两条都没有才整块不显示：顶栏上一个不动的数比没有更误导。
  *
  * 每一项一个数加一条 3px 的小杠。杠是给眼角看的：写字的时候不会去读
  * 数字，但余光看得见杠满没满；满了变红。
  */
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { computed } from 'vue'
 
-import { openJobSocket } from '@/composables/useJobSocket'
-
-const stat = ref(null)
-let sock = null
-let retry = null
-let watchdog = null
-let lastAt = 0
-let gone = false
+import { useSystemFeed } from '@/composables/useSystemFeed'
 
 /**
- * 多久没收到就当它死了。
+ * 那份表在哪儿接的：`useSystemFeed`（模块级一份）。
  *
- * **不能只靠 onclose。** 2026-09-11 用户报"GPU 一直 0、显存一直 22.1，
- * 有任务也不动"——查出来是这条：服务重启（或者隧道断一下）之后，浏览器
- * 这头常常收不到 FIN，socket 在 readyState 上还是 OPEN，`onclose` 一辈子
- * 不触发。于是 `stat` 停在最后一条消息上，顶栏挂着三个冻住的数——而这正是
- * 这个组件开头那句"一个不动的数比没有更误导"要防的事，只是当时只防了
- * 能被发现的那种断线。
+ * **这儿原来自己开一条 socket**，和 JobBadge 逐字重复一份——它们的注释
+ * 也写着「两个组件是同一份写法，也就有同一个毛病」（讣告串台那个，确实
+ * 分别修了两遍）。两条订的还是同一个频道，引擎两秒一次那份表要发两遍。
  *
- * 服务端两秒一推，八秒还没动静就是不对了（丢三条）。留够余量是因为标签页
- * 切到后台时浏览器会压计时器，压得太紧会来回重连。
+ * 收在一处顺带补上了**连不上 WebSocket 时退回轮询**：原来这一块在代理
+ * 掐了 Upgrade 的部署上是永远空白的。
  */
-const kStaleMs = 8000
-
-/**
- * 这一条连接是第几条。理由和 JobBadge 里那段一字不差——两个组件是同一份
- * 写法，也就有同一个毛病：
- *
- *   看门狗 `dead.close()` 之后紧接着 `connect()`，而 onclose 是**异步**
- *   到的；那份讣告属于上一条，却会把刚建好那条的状态清掉并排一次重连，
- *   五秒后再连一条——而刚才那条既没关也没人记着。每触发一次看门狗就
- *   多留一条，两个组件都订着 system，一次抖动漏两条。
- */
-let gen = 0
-
-function connect() {
-  if (gone) return
-  clearTimeout(retry)
-  retry = null
-  const myGen = ++gen
-  lastAt = Date.now()
-  sock = openJobSocket(
-    'system',
-    (msg) => {
-      if (msg.type !== 'system') return
-      lastAt = Date.now()
-      stat.value = msg
-    },
-    () => {
-      if (myGen !== gen) return // 上一条的讣告，别动现在这条
-      sock = null
-      stat.value = null
-      clearTimeout(retry)
-      retry = setTimeout(connect, 5000)
-    },
-  )
-}
-
-/** 半开的连接自己不会说话，所以由这头来问。 */
-function sweep() {
-  if (gone || !sock) return
-  if (Date.now() - lastAt < kStaleMs) return
-  // **先把数清掉再重连。** 留着旧数等重连成功的话，那几秒里顶栏还在
-  // 说谎；而清掉之后那一块直接不显示，一眼看得出"现在没数据"。
-  stat.value = null
-  const dead = sock
-  sock = null
-  dead.close()
-  connect()
-}
-
-onMounted(() => {
-  connect()
-  watchdog = setInterval(sweep, 3000)
-})
-onUnmounted(() => {
-  gone = true
-  clearInterval(watchdog)
-  clearTimeout(retry)
-  sock?.close()
-})
+const { stat } = useSystemFeed()
 
 /**
  * 这份读数旧了没有。
