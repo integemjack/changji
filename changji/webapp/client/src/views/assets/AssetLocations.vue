@@ -733,9 +733,21 @@ async function clearEmpty(locationId) {
                           : '画一张'
                     }}
                   </button>
-                  <label class="btn btn--sm">
+                  <!-- label 接不了 disabled，用 .is-off（样式和真禁用同一块，
+                       见 base.css）。传一张图要走一趟网络，不说一声的话人
+                       只会再选一次文件——旁边那颗「画」是这么做的。 -->
+                  <label
+                    class="btn btn--sm"
+                    :class="{ 'is-off': isBusy('up:' + openLoc.location_id) }"
+                  >
                     <AppIcon name="image" :size="13" />
-                    {{ openLoc.ref_empty ? '换一张' : '传空景图' }}
+                    {{
+                      isBusy('up:' + openLoc.location_id)
+                        ? '传着…'
+                        : openLoc.ref_empty
+                          ? '换一张'
+                          : '传空景图'
+                    }}
                     <input
                       type="file"
                       accept="image/png,image/jpeg"
@@ -747,9 +759,10 @@ async function clearEmpty(locationId) {
                     v-if="openLoc.ref_empty"
                     class="btn btn--sm btn--ghost"
                     type="button"
+                    :disabled="isBusy('clr:' + openLoc.location_id)"
                     @click="clearEmpty(openLoc.location_id)"
                   >
-                    撤掉
+                    {{ isBusy('clr:' + openLoc.location_id) ? '撤着…' : '撤掉' }}
                   </button>
                 </div>
               </div>

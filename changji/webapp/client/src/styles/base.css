@@ -121,7 +121,8 @@ textarea {
  * 看着能点的死按钮。下面只为 `--ghost` 补一句——它本来就是透明的，
  * 给它填一块灰底反而凭空多出个方块。 */
 .btn:disabled,
-.btn[disabled] {
+.btn[disabled],
+.btn.is-off {
   opacity: 1;
   background: var(--surface-3);
   background-image: none;
@@ -132,9 +133,17 @@ textarea {
   box-shadow: none;
 }
 .btn--ghost:disabled,
-.btn--ghost[disabled] {
+.btn--ghost[disabled],
+.btn--ghost.is-off {
   background: transparent;
   border-color: transparent;
+}
+/* `<label class="btn">` 那几个传文件的按钮**接不了 disabled 属性**——
+   label 上没有这一项，加了浏览器也不认，照样能点开文件选择器。上面那一族
+   选择器里带上 `.is-off` 就是给它们的：样子和真禁用一模一样（同一个声明
+   块，两边想漂也漂不开），再补一句真的挡住点击。 */
+.btn.is-off {
+  pointer-events: none;
 }
 
 .btn--primary {

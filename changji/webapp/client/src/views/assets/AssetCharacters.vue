@@ -1086,8 +1086,20 @@ async function clearRef(charId, slot) {
                             : '画'
                         }}
                       </button>
-                      <label class="btn btn--sm btn--ghost">
-                        {{ openChar['ref_' + s.key] ? '换' : '传' }}
+                      <!-- label 接不了 disabled，用 .is-off（样式和真禁用
+                           同一块，见 base.css）。传一张图要走一趟网络，
+                           不说一声的话人只会再选一次文件。 -->
+                      <label
+                        class="btn btn--sm btn--ghost"
+                        :class="{ 'is-off': isBusy('up:' + openChar.char_id + s.key) }"
+                      >
+                        {{
+                          isBusy('up:' + openChar.char_id + s.key)
+                            ? '传着…'
+                            : openChar['ref_' + s.key]
+                              ? '换'
+                              : '传'
+                        }}
                         <input
                           type="file"
                           accept="image/png,image/jpeg"
@@ -1099,9 +1111,10 @@ async function clearRef(charId, slot) {
                         v-if="openChar['ref_' + s.key]"
                         class="btn btn--sm btn--ghost"
                         type="button"
+                        :disabled="isBusy('clr:' + openChar.char_id + s.key)"
                         @click="clearRef(openChar.char_id, s.key)"
                       >
-                        撤
+                        {{ isBusy('clr:' + openChar.char_id + s.key) ? '撤着…' : '撤' }}
                       </button>
                     </div>
                   </div>
@@ -1150,8 +1163,19 @@ async function clearRef(charId, slot) {
                 </datalist>
 
                 <div class="row row--wrap">
-                  <label class="btn btn--sm btn--ghost">
-                    {{ edits[openChar.char_id].voice_id ? '换一段' : '传一段人声' }}
+                  <!-- 一段人声比一张图大，这一趟更久。同上：label 接不了
+                       disabled，用 .is-off。 -->
+                  <label
+                    class="btn btn--sm btn--ghost"
+                    :class="{ 'is-off': isBusy('voice:' + openChar.char_id) }"
+                  >
+                    {{
+                      isBusy('voice:' + openChar.char_id)
+                        ? '传着…'
+                        : edits[openChar.char_id].voice_id
+                          ? '换一段'
+                          : '传一段人声'
+                    }}
                     <input
                       type="file"
                       accept="audio/wav,audio/x-wav,audio/mpeg,audio/flac"
@@ -1171,9 +1195,10 @@ async function clearRef(charId, slot) {
                     v-if="edits[openChar.char_id].voice_id"
                     class="btn btn--sm btn--ghost"
                     type="button"
+                    :disabled="isBusy('voice:' + openChar.char_id)"
                     @click="clearVoice(openChar.char_id)"
                   >
-                    撤
+                    {{ isBusy('voice:' + openChar.char_id) ? '撤着…' : '撤' }}
                   </button>
                 </div>
 
