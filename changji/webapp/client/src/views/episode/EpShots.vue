@@ -1476,6 +1476,19 @@ onDeactivated(() => window.removeEventListener('keydown', onKey))
             <span v-if="openShot.beat" class="pill pill--neutral tiny">{{ openShot.beat }}</span>
           </div>
 
+          <!-- **接戏那句，模型是专门写给看片的人的。**
+               提示词第 16 条在教它写（「记录需要与前后镜保持一致的细节，
+               比如道具在哪只手」），schema 里有、validate() 查它不超 200
+               字、存进 shots.json、`/api/shots` 也原样发过来——然后在浏览器
+               里被丢掉。整条链只差这一行（shot.hpp 里那段注释记着这件事）。
+
+               只读：它是模型对这一镜的观察，不是参数。改它没有下游会读，
+               而一个能改却没人读的框比不摆更糟。 -->
+          <p v-if="openShot.continuity_notes" class="cont tiny">
+            <AppIcon name="link" :size="13" />
+            <span><b>接戏</b>：{{ openShot.continuity_notes }}</span>
+          </p>
+
           <p class="group">画面</p>
           <label class="field">
             <span class="field__label">画面描述</span>
@@ -1727,6 +1740,26 @@ onDeactivated(() => window.removeEventListener('keydown', onKey))
   font-size: var(--fs-sm);
   font-weight: 600;
   color: var(--text-2);
+}
+
+/* 接戏那一句。**不画成 alert**：它不是"出问题了"，是模型留给看片的人的
+   一句话。左边一道线加淡底，读起来像批注，和上面那条黄色的闸门警告分得开。 */
+.cont {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s2);
+  margin: 0;
+  padding: var(--s2) var(--s3);
+  border-left: 2px solid var(--line-strong);
+  border-radius: var(--r-sm);
+  background: var(--surface-2);
+  color: var(--text-2);
+  line-height: 1.6;
+}
+
+.cont :deep(svg) {
+  flex: none;
+  color: var(--text-3);
 }
 
 /* 「更多：负向提示词、转场、口型」那个折叠。
