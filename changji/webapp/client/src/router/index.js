@@ -35,6 +35,7 @@ import {
   isChunkLoadError,
   shouldAutoReload,
 } from './chunk-error'
+import { applyTitle } from './page-title'
 
 export const STEP_ROUTES = [
   {
@@ -178,8 +179,8 @@ router.onError((err, to) => {
   window.location.assign(to.fullPath)
 })
 
-router.afterEach((to) => {
-  document.title = to.meta?.title ? `${to.meta.title} · 场记` : '场记'
+router.afterEach((to, _from, failure) => {
+  applyTitle(to, failure)
   // 进得来就说明资源是好的，把"重载过一次"那一笔清掉——
   // 不清的话这一会话里下次真遇到换版，就不会自动重载了。
   // ⚠️ **这一句每次导航都跑。** 原来写的是 `globalThis.sessionStorage`——

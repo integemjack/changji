@@ -13,6 +13,7 @@
  * 章」的表，人看不见线画在哪，还得回去翻第 5 章是什么。
  */
 import { computed, onActivated, onMounted, onUnmounted, ref, watch } from 'vue'
+import { onBeforeRouteLeave } from 'vue-router'
 
 import AppIcon from '@/components/AppIcon.vue'
 import EmptyState from '@/components/EmptyState.vue'
@@ -421,6 +422,22 @@ function beforeUnload(e) {
   e.preventDefault()
   e.returnValue = ''
 }
+
+/**
+ * **站内换页也要拦。** 上面那段注释里「点错一个链接」说的就是这一种，
+ * 而 `beforeunload` 一个都管不到——它只在关标签页和刷新时响。
+ *
+ * 这一格切到「角色」再切回来是安全的（AssetsView 那个 `<KeepAlive>` 冻着
+ * 它，草稿还在），丢的是离开「设定」这一页：顶栏那排点一下，整棵树连同
+ * KeepAlive 里冻着的一起卸掉，那份草稿一声不吭地没了。
+ */
+onBeforeRouteLeave(() => {
+  if (!trailerDraft.value && !isBusy('trailer')) return true
+  const what = trailerDraft.value
+    ? '剪好还没存的那条预告片会没掉'
+    : '正在剪的这条预告片会没掉'
+  return confirm(`${what}——它没有存盘的地方，走了就得重剪一两分钟。确定？`)
+})
 /**
  * 让「写」那个槽的状态**真的有人在看**。
  *

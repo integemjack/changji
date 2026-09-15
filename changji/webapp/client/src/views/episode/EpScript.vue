@@ -24,6 +24,7 @@
  * 13 秒的剧本走到镜头页，直到出片才发现。
  */
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { onBeforeRouteLeave } from 'vue-router'
 
 import AppIcon from '@/components/AppIcon.vue'
 import EmptyState from '@/components/EmptyState.vue'
@@ -238,6 +239,32 @@ onMounted(() => window.addEventListener('beforeunload', beforeUnload))
 onUnmounted(() => {
   window.removeEventListener('beforeunload', beforeUnload)
   flush()
+})
+
+/**
+ * **站内换页也要拦。** `beforeunload` 只管关标签页和刷新。
+ *
+ * 上面那段注释说的三样里，改了还没存的字这一页是**冲出去**的
+ * （`onUnmounted` 里那句 `flush()`，故事页也是这么办的），丢不了；
+ * 另外两样丢得干干净净：
+ *
+ *   · 写出来还没采用的那一份——它只活在这一次回包里，引擎不存剧本草稿；
+ *   · 正在写的那一份——活儿在引擎那头照样跑完，但结果只从那条回传路
+ *     送回来一次，这一页没了就没人接。
+ *
+ * 两样都是一两分钟换来的，而点顶栏那排「项目 / 故事 / 设定」是一下的事，
+ * 屏幕上原来什么都不会说。`flush()` 那条同一类的坑故事页注释里写着
+ * 「拦的只有浏览器那一半」，这儿是另一半。
+ */
+onBeforeRouteLeave(() => {
+  // 草稿按集号存着，别只看当前这一格：在 ep01 写了一篇没采用、切到 ep02
+  // 再走开，丢的是 ep01 那一篇。
+  const n = Object.keys(drafts.value).length
+  if (!n && !isBusy('write')) return true
+  const what = n
+    ? `写好还没采用的${n > 1 ? ` ${n} 篇` : ''}剧本会没掉`
+    : 'AI 正在写的这一篇会没掉'
+  return confirm(`${what}——它没有存盘的地方，走了就得重跑一两分钟。确定？`)
 })
 
 watch(
