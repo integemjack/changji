@@ -317,6 +317,18 @@ std::vector<std::string> missing_dialogue_lines(
 /// 实测（walk_c ep01，目标 60 秒）：rebalance 把名义总长精算到 57.00 秒，
 /// 成片是 62.54 秒。**它压的那个数根本不是成片长度。** Wan 那会儿每镜只
 /// 差 0.042 秒（1%），藏得住；换 H3 之后单镜最多差 0.583 秒，就露出来了。
+/// 每一场至少留一个交代地方的大景（LS / MLS）。
+///
+/// 表里分布看着匀、却一个大景都没有的时候补一个。2026-09-16 实测 ep07：
+/// MS 5 / CU 4 / MCU 8，十七镜没有一个 LS 或 MLS——用户报的
+/// 「都是近景没有远景」就是这一种，而「整表塌成一种」那道线够不着。
+///
+/// 一场只动一镜，只在这一场一个大景都没有时动，优先挑第一个有人的镜头；
+/// 整表不足四镜不动（和 diversify_shot_sizes 同一道门槛）。
+/// **大景是少数真出得来的景别**：首帧的取景听参考图的，而场景空景图本身
+/// 就是一张大景，所以标成 LS 的镜头是真会出成大景（见 prompt_compose.cpp）。
+void ensure_establishing_shots(std::vector<models::Shot>& shots);
+
 double real_total_s(const std::vector<models::Shot>& shots, int fps = 24);
 
 /// 同上，但用**指定的**那份格子，不读进程里那一份全局的。

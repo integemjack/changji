@@ -932,6 +932,93 @@ TEST_CASE("时段对不上就别喂那张空景图") {
     CHECK_FALSE(lighting_clashes("侧逆光，硬", "顶光，软"));
 }
 
+TEST_CASE("每一场至少留一个大景：分布看着匀、却一个远景都没有") {
+    // 2026-09-16 实测 ep07：MS 5 / CU 4 / MCU 8，十七镜没有一个 LS 或
+    // MLS。八成塌成一种那道线根本够不着，而用户报的正是这个：
+    // 「都是近景没有远景」。
+    using models::Shot;
+    using models::ShotSize;
+    const auto make = [](const char* scene, ShotSize sz, bool people) {
+        Shot s;
+        s.scene_id = scene;
+        s.shot_size = sz;
+        if (people) {
+            models::CharacterInShot who;
+            who.char_id = "c_a";
+            s.characters.push_back(who);
+        }
+        return s;
+    };
+    const auto widest = [](const std::vector<Shot>& v, const char* scene) {
+        int n = 0;
+        for (const Shot& s : v) {
+            if (s.scene_id != scene) continue;
+            if (s.shot_size == ShotSize::LS || s.shot_size == ShotSize::MLS ||
+                s.shot_size == ShotSize::ELS) {
+                ++n;
+            }
+        }
+        return n;
+    };
+
+    SUBCASE("一个大景都没有：补一个，而且补在第一个有人的镜头上") {
+        std::vector<Shot> v = {make("s1", ShotSize::CU, false),
+                               make("s1", ShotSize::MCU, true),
+                               make("s1", ShotSize::MS, true),
+                               make("s1", ShotSize::MCU, true)};
+        stages::ensure_establishing_shots(v);
+        CHECK(widest(v, "s1") == 1);
+        CHECK(v[1].shot_size == ShotSize::LS);   // 第一个有人的那一镜
+        CHECK(v[0].shot_size == ShotSize::CU);   // 空镜不动
+    }
+    SUBCASE("整场没人：第一镜改 MLS，不是 LS") {
+        std::vector<Shot> v = {make("s1", ShotSize::CU, false),
+                               make("s1", ShotSize::MCU, false),
+                               make("s1", ShotSize::CU, false),
+                               make("s1", ShotSize::MCU, false)};
+        stages::ensure_establishing_shots(v);
+        CHECK(v[0].shot_size == ShotSize::MLS);
+    }
+    SUBCASE("整表不足四镜：一个字不碰") {
+        std::vector<Shot> v = {make("s1", ShotSize::CU, true),
+                               make("s1", ShotSize::MCU, true),
+                               make("s1", ShotSize::CU, true)};
+        stages::ensure_establishing_shots(v);
+        CHECK(v[0].shot_size == ShotSize::CU);
+        CHECK(v[1].shot_size == ShotSize::MCU);
+    }
+    SUBCASE("已经有大景的场：一个字不碰") {
+        std::vector<Shot> v = {make("s1", ShotSize::MLS, true),
+                               make("s1", ShotSize::MCU, true),
+                               make("s1", ShotSize::CU, true)};
+        const std::vector<Shot> before = v;
+        stages::ensure_establishing_shots(v);
+        for (std::size_t i = 0; i < v.size(); ++i) {
+            CHECK(v[i].shot_size == before[i].shot_size);
+        }
+    }
+    SUBCASE("按场分别看：一场缺、一场不缺，只补缺的那一场") {
+        std::vector<Shot> v = {make("s1", ShotSize::LS, true),
+                               make("s1", ShotSize::MCU, true),
+                               make("s2", ShotSize::MCU, true),
+                               make("s2", ShotSize::CU, true),
+                               make("s2", ShotSize::MS, true)};
+        stages::ensure_establishing_shots(v);
+        CHECK(v[0].shot_size == ShotSize::LS);
+        CHECK(v[1].shot_size == ShotSize::MCU);   // s1 没动
+        CHECK(widest(v, "s2") == 1);
+        CHECK(v[2].shot_size == ShotSize::LS);
+    }
+    SUBCASE("一镜的场不折腾") {
+        std::vector<Shot> v = {make("s1", ShotSize::MCU, true),
+                               make("s2", ShotSize::CU, true),
+                               make("s3", ShotSize::MCU, true)};
+        stages::ensure_establishing_shots(v);
+        CHECK(v[0].shot_size == ShotSize::MCU);
+        CHECK(v[1].shot_size == ShotSize::CU);
+    }
+}
+
 TEST_CASE("开门关门：中间插一个副词也要认出来") {
     // 用户 2026-09-16 报的「开门关门都有 bug」。kRisky 里列着「开门」
     // 「门打开」「推开门」，而模型写的是「门缓慢打开」——中间插一个副词，

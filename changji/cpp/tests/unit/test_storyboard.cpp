@@ -405,8 +405,19 @@ TEST_CASE("认不出的枚举取值当没填，不能变成表里第一项") {
     const std::vector<models::Shot> shots = stages::parse_storyboard(doc.dump(), a);
     REQUIRE_FALSE(shots.empty());
     bool saw_character = false;
+    // **景别这一栏要单独数。** 回落本身给的是 MS，但 parse 的最后一步
+    // （ensure_establishing_shots）会给缺大景的场补一个 LS / MLS——那是
+    // 另一条规矩，和「认不出的取值当没填」无关。这里要钉死的是「medium
+    // 不能变成 ECU」，所以数：一个 ECU 都不许有，非 MS 的最多一镜，
+    // 而且只能是补出来的那个大景。
+    int not_ms = 0;
     for (const models::Shot& s : shots) {
-        CHECK(s.shot_size == models::ShotSize::MS);
+        CHECK(s.shot_size != models::ShotSize::ECU);
+        if (s.shot_size != models::ShotSize::MS) {
+            ++not_ms;
+            CHECK((s.shot_size == models::ShotSize::LS ||
+                   s.shot_size == models::ShotSize::MLS));
+        }
         CHECK(s.camera_angle == models::CameraAngle::EYE_LEVEL);
         CHECK(s.camera_move == models::CameraMove::STATIC);
         CHECK(s.lens == models::Lens::AUTO);
@@ -417,6 +428,7 @@ TEST_CASE("认不出的枚举取值当没填，不能变成表里第一项") {
         }
     }
     CHECK(saw_character);
+    CHECK(not_ms <= 1);   // 最多补出来的那一个大景
 
     // 认得出的取值要原样留着——别把这一条写成"所有枚举都清零"
     for (auto& sh : items) sh["shot_size"] = "ELS";

@@ -1471,6 +1471,58 @@ void diversify_shot_sizes(std::vector<Shot>& shots) {
     }
 }
 
+/// 每一场至少有一个交代地方的大景。
+///
+/// `diversify_shot_sizes` 只管「整表塌成一种」那种极端情况（八成以上同一
+/// 个值）。2026-09-16 实测 ep07：MS 5 / CU 4 / MCU 8，分布看着挺匀，
+/// **一个 LS、一个 MLS 都没有**——十七镜全是中近景。八成那道线根本够不着，
+/// 而用户报的正是这个：「都是近景没有远景」。
+///
+/// 为什么这一条值得在代码里兜底、而景别的别的部分不值得：**大景是少数
+/// 真能出来的景别**。首帧走的是图像编辑模型，取景听参考图的（见
+/// prompt_compose.cpp 里那段），而场景空景图本身就是一张大景——所以
+/// 标成 LS 的镜头是真的会出成大景。近景那一侧改标签没用，这一侧有用。
+///
+/// 动手很轻：一场只动一镜，而且只在这一场**一个大景都没有**的时候动。
+/// 优先挑这一场里第一个有人的镜头（人站在哪儿才是交代地方），整场都没人
+/// 就把第一镜改成 MLS。模型认真排过大景的场，一个字不碰。
+void ensure_establishing_shots(std::vector<Shot>& shots) {
+    // 和 diversify_shot_sizes 用同一道门槛：三两镜的表看不出缺不缺大景，
+    // 别折腾（插入镜头、片头片尾那种短表本来就该全是特写）。
+    if (shots.size() < 4) return;
+    std::vector<std::string> order;
+    std::map<std::string, std::vector<std::size_t>> by_scene;
+    for (std::size_t i = 0; i < shots.size(); ++i) {
+        const std::string& key = shots[i].scene_id;
+        if (by_scene.find(key) == by_scene.end()) order.push_back(key);
+        by_scene[key].push_back(i);
+    }
+    for (const std::string& key : order) {
+        const std::vector<std::size_t>& idx = by_scene[key];
+        if (idx.size() < 2) continue;   // 一镜的场不折腾
+        bool wide = false;
+        for (const std::size_t i : idx) {
+            if (shots[i].shot_size == ShotSize::LS ||
+                shots[i].shot_size == ShotSize::MLS ||
+                shots[i].shot_size == ShotSize::ELS) {
+                wide = true;
+                break;
+            }
+        }
+        if (wide) continue;
+        std::size_t pick = idx.front();
+        ShotSize want = ShotSize::MLS;
+        for (const std::size_t i : idx) {
+            if (!shots[i].characters.empty()) {
+                pick = i;
+                want = ShotSize::LS;
+                break;
+            }
+        }
+        shots[pick].shot_size = want;
+    }
+}
+
 std::vector<Shot> parse_storyboard(const std::string& raw,
                                    const AssetLibrary& assets) {
     json data;
@@ -1612,6 +1664,7 @@ std::vector<Shot> parse_storyboard(const std::string& raw,
     }
     // 景别塌成一个值的兜底，见 diversify_shot_sizes。
     diversify_shot_sizes(shots);
+    ensure_establishing_shots(shots);
     return shots;
 }
 
