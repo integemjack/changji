@@ -316,9 +316,16 @@ TEST_CASE("一场的提示词：钉死地点和时段，带共用的硬性要求
     CHECK(has(p, "  c_lin_wan：林晚"));
     CHECK(has(p, "  loc_cafe：咖啡馆门口"));
     CHECK(has(p, "1. shot_id 用 ep01_sh001 这样的格式"));
-    // 共用的那份规则要在
-    CHECK(has(p, "2. order 从 0 开始递增。"));
-    CHECK(has(p, "lighting 必须填"));
+    // 共用的那份规则要在。
+    //
+    // **锚点挑的是"只可能出自那份规则"的句子，不是随手两行。** 2026-09-16
+    // 这儿原来钉的是「2. order 从 0 开始递增。」和「lighting 必须填」——
+    // 那两条当天砍了（order 被 renumber_shots 整个重排，模型写什么都覆盖；
+    // lighting 那条和字段 description 一字不差）。钉具体措辞太脆，改钉
+    // 那几条**只能写在规则里、schema 管不着**的：进画出画、开门、景别节奏。
+    CHECK(has(p, "不写进画、出画"));
+    CHECK(has(p, "不写开门、开窗、拉抽屉"));
+    CHECK(has(p, "整场不能只用一种"));
     CHECK(has(p, "这一场的剧本：\n\n陈默推门出来。\n陈默：我不该来。"));
     CHECK(has(p, "只输出 JSON"));
 
