@@ -361,9 +361,13 @@ TEST_CASE("批量出分镜只挑有剧本又没分镜的") {
         return http::post_plan_all(
             json{{"project", paths::to_utf8(root)}}, client);
     });
-    // ep01 已经有分镜、ep02 没剧本，所以一个都不该有
-    CHECK(r.status == 400);
-    CHECK(r.body.at("detail") == "没有需要出分镜的剧集。有剧本又没分镜的才算");
+    // ep01 已经有分镜、ep02 没剧本，所以一个都不该有。
+    // **这不是错**：这颗按钮的用法就是隔一阵按一下把新写的章补上，按下去
+    // 本来就没有漏的是常态。2026-09-16 前这儿回 400，界面上弹一个红框说
+    // "一切正常"。现在回 200 + started:false，让界面自己挑话说。
+    CHECK(r.status == 200);
+    CHECK(r.body.at("started") == false);
+    CHECK(r.body.at("episodes").empty());
 
     SUBCASE("勾了覆盖就把有剧本的都算上") {
         std::vector<std::string> many;

@@ -542,8 +542,17 @@ ApiResult post_script_all(const json& body, std::shared_ptr<llm::Client> client)
         if (!overwrite && !text::strip_ws(ep.script).empty()) continue;
         todo.push_back(ep.episode_id);
     }
+    // **"没有要做的"不是错。**
+    //
+    // 这两颗批量按钮的用法就是"隔一阵按一下，把新写的章补上"，而按下去
+    // 十有八九本来就没有漏的——原来这一下回 400，界面上弹一个带警告角标
+    // 的红框，说的却是"一切正常，你不用做任何事"。用户 2026-09-16：
+    // 「交互过程也太繁琐。」报错该留给真出事的时候。
+    //
+    // 回 200 + `started: false` + 空 `episodes`，让调用方自己挑话说。
+    // 跑起来那一条仍然是 202（它是异步的）；这一条没有活要干，就是 200。
     if (todo.empty()) {
-        throw ApiError(400, "没有需要改编的章。挂着章、又还没有剧本的才算");
+        return {200, {{"started", false}, {"episodes", json::array()}}};
     }
 
     const std::string root = paths::to_utf8(store.root());
@@ -608,7 +617,18 @@ ApiResult post_plan_all(const json& body, std::shared_ptr<llm::Client> client) {
         if (!overwrite && !ep.shots.empty()) continue;
         todo.push_back(ep.episode_id);
     }
-    if (todo.empty()) throw ApiError(400, "没有需要出分镜的剧集。有剧本又没分镜的才算");
+    // **"没有要做的"不是错。**
+    //
+    // 这两颗批量按钮的用法就是"隔一阵按一下，把新写的章补上"，而按下去
+    // 十有八九本来就没有漏的——原来这一下回 400，界面上弹一个带警告角标
+    // 的红框，说的却是"一切正常，你不用做任何事"。用户 2026-09-16：
+    // 「交互过程也太繁琐。」报错该留给真出事的时候。
+    //
+    // 回 200 + `started: false` + 空 `episodes`，让调用方自己挑话说。
+    // 跑起来那一条仍然是 202（它是异步的）；这一条没有活要干，就是 200。
+    if (todo.empty()) {
+        return {200, {{"started", false}, {"episodes", json::array()}}};
+    }
 
     const bool started = pipeline::jobs().start(
         pipeline::JobKind::Write, "",

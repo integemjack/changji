@@ -476,7 +476,11 @@ async function scriptAll() {
     { key: 'scriptAll' },
   )
   // 进度和「批量补分镜」共用"写"那个槽，所以看的是顶栏那块「AI 作业中」。
-  if (result) {
+  // **一章都不用改编不是错**：引擎回 200 + started:false（见 batch.cpp
+  // 那两段），这儿就平铺直叙说一句，别弹红框。
+  if (result && !result.episodes?.length) {
+    ui.info('每一章都已经有剧本了，没有要改编的')
+  } else if (result) {
     ui.info(
       `正在改编 ${result.episodes.join('、')}，顶栏那块「AI 作业中」里看进度`,
     )
@@ -492,7 +496,9 @@ async function planAll() {
   // **别写「在这一页看进度」。** 批量补分镜跑在"写"那个槽上（和写整季
   // 同一个），而这一页盯的是"出片"那个槽——它那儿一动不动。真正一直
   // 看得见的是顶栏那块「AI 作业中」。
-  if (result) {
+  if (result && !result.episodes?.length) {
+    ui.info('每一章都已经有分镜了，没有要补的')
+  } else if (result) {
     ui.info(
       `正在给 ${result.episodes.join('、')} 补分镜，顶栏那块「AI 作业中」里看进度`,
     )
