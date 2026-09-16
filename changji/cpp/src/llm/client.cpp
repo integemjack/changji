@@ -314,9 +314,36 @@ std::vector<std::pair<std::string, std::string>> known_models(
 
 namespace {
 
-/// 连不上时那句话。三处在用，措辞得一样。
+/// 这一趟没走通时那句话。三处在用，措辞得一样。
+///
+/// **「连不上」和「连上了但没读完」是两回事，不能都说成连不上。**
+///
+/// 2026-09-16 实撞：拆分镜连砸三次，日志里写着「连不上大模型服务
+/// （https://open.bigmodel.cn/…）」，而同一台机器 curl 那个地址秒回。
+/// 照着这句话查了半小时网络、代理、重复进程，全是好的——真正的原因在
+/// **第二行**：`Failed to read connection`，也就是连接建起来了、请求发出去
+/// 了，读响应的时候断的。同一个服务几十分钟前写大纲还是好的，只有分镜这
+/// 一步砸——那是这条流水线上最大的一个请求。
+///
+/// 两种说法指向两个完全不同的地方：「连不上」让人去查网络和地址，
+/// 「读一半断了」让人去看请求是不是太大、超时够不够、服务端掐没掐。
+/// 所以按 why 里的措辞分开说。
 std::string connect_failed(const config::LLMConfig& cfg,
                            const std::string& why) {
+    // cpp-httplib 的错误字样：连接阶段是 Connection/Connect，读写阶段是
+    // Read/Write，超时是 Timeout。只要不是"压根没连上"，就别说连不上。
+    const auto has = [&why](const char* w) {
+        return why.find(w) != std::string::npos;
+    };
+    if (has("read") || has("Read") || has("write") || has("Write") ||
+        has("timeout") || has("Timeout")) {
+        return "和大模型服务连上了，但这一趟没走完（" + cfg.base_url + "）。\n" +
+               why +
+               "\n请求发出去了、响应没读回来。多半是这一趟太大或太慢："
+               "把 [llm].timeout_s 调大，或者换一个上下文更长的模型；"
+               "服务端限流时也会这样。**不是网络不通**——网络不通的话下面"
+               "那行写的是连接失败。";
+    }
     return "连不上大模型服务（" + cfg.base_url + "）。\n" + why;
 }
 
