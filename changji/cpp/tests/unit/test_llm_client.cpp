@@ -879,4 +879,20 @@ TEST_CASE("校验层：一个字段没填好，不该把整份输出作废") {
         CHECK(validate_json_schema(json{{"scenes", json::array({1, 2})}}, arr)
                   .has_value());
     }
+
+    SUBCASE("数组写多了：放行。多和少不对称") {
+        // 2026-09-16 / 17 两次实撞：
+        //     大模型输出不符合 script Schema：$.scenes.s2.beats 的项目太多
+        // 一次五分钟的改编，就因为第二场多写了一拍，整份作废。而多出来的
+        // 那一拍下游本来就吃得下——拍子会变成镜头，多一个少一个不是结构问题。
+        const auto arr = ordered::parse(
+            R"({"type":"object","properties":{
+                 "beats":{"type":"array","minItems":2,"maxItems":3}}})");
+        CHECK_FALSE(
+            validate_json_schema(json{{"beats", json::array({1, 2, 3, 4})}}, arr)
+                .has_value());
+        // 少写了还是拦
+        CHECK(validate_json_schema(json{{"beats", json::array({1})}}, arr)
+                  .has_value());
+    }
 }

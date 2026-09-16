@@ -162,7 +162,19 @@ const parsed = computed(() => {
     }
     // 全角冒号是引擎渲染时固定用的；半角一并认，手改的剧本常打成半角
     const at = line.search(/[：:]/)
-    const name = at > 0 ? line.slice(0, at).trim() : ''
+    // **名字后面那个括号要摘掉再认人。**
+    //
+    // 章模式的剧本把「这句是怎么说的」写成名字后的括号（引擎那边的
+    // `delivery` 字段，见 prompts.toml 的 seg2_chapter）：
+    //     曾老板（低声）：宋律师，你也在其中。
+    // 冒号前是「曾老板（低声）」，不在人物名单里，于是整行被判成描写。
+    //
+    // 2026-09-17 实见的后果有两层：主审阅页把每一份章剧本都报成
+    // 「0 句台词 · 56 段描写」（而那一份通篇都是对白），台词也拿不到说话人
+    // 配色；**更糟的是它会骗人**——我上一轮正是拿这个 0 当证据，判定一次
+    // 提示词改动"让整集变默片"，把一份本来没问题的改动整份退了回去。
+    const nameRaw = at > 0 ? line.slice(0, at).trim() : ''
+    const name = nameRaw.replace(/[（(][^）)]*[）)]\s*$/, '').trim()
     // 有名单就按名单认，没有才退回猜。见 speakers 那条 prop。
     const isDialogue = known.size
       ? at > 0 && known.has(name)

@@ -131,12 +131,16 @@ inline std::optional<std::string> validate_value(
             value.size() < static_cast<std::size_t>(it->get<long long>())) {
             return path + " 的项目太少";
         }
-        if (const auto it = schema.find("maxItems");
-            it != schema.end() && it->is_number_integer() &&
-            it->get<long long>() >= 0 &&
-            value.size() > static_cast<std::size_t>(it->get<long long>())) {
-            return path + " 的项目太多";
-        }
+        // **写多了不在这儿拦，写少了才拦。** 理由同上面枚举和 minLength。
+        //
+        // 2026-09-16 / 17 两次实撞，都是同一句：
+        //     大模型输出不符合 script Schema：$.scenes.s2.beats 的项目太多
+        // 一次五分钟的改编，就因为第二场多写了一拍，整份作废——而多出来的
+        // 那一拍下游本来就吃得下（拍子会变成镜头，多一个少一个不是结构问题）。
+        //
+        // **minItems 还是拦**：少写了几场、几拍，下游没法凭空补出来，那是
+        // 真的"这份输出不能用"。多和少在这儿不是对称的。
+        (void)0;
         if (const auto items = schema.find("items");
             items != schema.end() && items->is_object()) {
             for (std::size_t i = 0; i < value.size(); ++i) {
