@@ -35,19 +35,31 @@ inline bool type_matches(const Json& value, const std::string& type) {
     return true;
 }
 
+/// `in_item` = 现在查的是某个数组里的一项。
+///
+/// **一项缺字段，不该把另外二十几项一起废掉。** 这个项目早有这条规矩：
+/// storyboard.cpp 的 drop_unknown_enums 写着「是抹掉不是报错：这一栏填错
+/// 不值得把另外十几个好镜头一起作废」。2026-09-17 实撞到同一件事的另一面：
+///     大模型输出不符合 script Schema：$.scenes.s1.beats[12] 缺少必填字段 characters
+/// 二十六拍里有一拍没填「画面里有谁」，一次五分钟的改编整份作废——**而下游
+/// 本来就受得住**（script.cpp:1207 那句 `it != item.end() && it->is_array()`，
+/// 缺了就是空数组，正好是 schema 自己写的「环境拍、空镜填空数组」）。
+///
+/// 顶层的必填还是拦：那一层缺了就是整份输出没有内容，不是"其中一项不完整"。
 inline std::optional<std::string> validate_value(
     const Json& value, const Schema& schema, const Schema& root,
-    const std::string& path) {
+    const std::string& path, bool in_item = false) {
     if (const auto ref = schema.find("$ref"); ref != schema.end() && ref->is_string()) {
         const Schema* target = resolve_ref(root, ref->get<std::string>());
         if (target == nullptr) return path + " 使用了无法解析的 $ref";
-        return validate_value(value, *target, root, path);
+        return validate_value(value, *target, root, path, in_item);
     }
 
     if (const auto choices = schema.find("anyOf");
         choices != schema.end() && choices->is_array()) {
         for (const auto& choice : *choices) {
-            if (!validate_value(value, choice, root, path).has_value()) return std::nullopt;
+            if (!validate_value(value, choice, root, path, in_item).has_value())
+                return std::nullopt;
         }
         return path + " 不符合 anyOf 中的任何一种结构";
     }
@@ -56,7 +68,7 @@ inline std::optional<std::string> validate_value(
         choices != schema.end() && choices->is_array()) {
         int matched = 0;
         for (const auto& choice : *choices) {
-            if (!validate_value(value, choice, root, path).has_value()) ++matched;
+            if (!validate_value(value, choice, root, path, in_item).has_value()) ++matched;
         }
         if (matched != 1) return path + " 不符合 oneOf 的唯一一种结构";
     }
@@ -144,8 +156,10 @@ inline std::optional<std::string> validate_value(
         if (const auto items = schema.find("items");
             items != schema.end() && items->is_object()) {
             for (std::size_t i = 0; i < value.size(); ++i) {
+                // 从这儿往下就是"数组里的一项"了
                 if (auto err = validate_value(value[i], *items, root,
-                                              path + "[" + std::to_string(i) + "]")) {
+                                              path + "[" + std::to_string(i) + "]",
+                                              /*in_item=*/true)) {
                     return err;
                 }
             }
@@ -153,8 +167,9 @@ inline std::optional<std::string> validate_value(
     }
 
     if (value.is_object()) {
+        // 数组里的一项缺字段不在这儿拦，见函数头上那段。
         if (const auto required = schema.find("required");
-            required != schema.end() && required->is_array()) {
+            !in_item && required != schema.end() && required->is_array()) {
             for (const auto& key : *required) {
                 if (key.is_string() && !value.contains(key.get<std::string>())) {
                     return path + " 缺少必填字段 " + key.get<std::string>();
@@ -166,20 +181,27 @@ inline std::optional<std::string> validate_value(
             for (const auto& item : properties->items()) {
                 const auto actual = value.find(item.key());
                 if (actual == value.end()) continue;
+                // 一项里面再往下（对象的字段、字段里的数组）都还算这一项
                 if (auto err = validate_value(*actual, item.value(), root,
-                                              path + "." + item.key())) {
+                                              path + "." + item.key(), in_item)) {
                     return err;
                 }
             }
-            const auto additional = schema.find("additionalProperties");
-            if (additional != schema.end() && additional->is_boolean() &&
-                !additional->get<bool>()) {
-                for (const auto& item : value.items()) {
-                    if (!properties->contains(item.key())) {
-                        return path + " 含有未声明字段 " + item.key();
-                    }
-                }
-            }
+            // **多写了一个键不在这儿拦。** 理由同上面枚举、minLength、
+            // maxItems 那三段——这一层接的是"整份输出坏了"，多一个键不是
+            // 那一类：**下游是按名字取字段的，多出来的那个根本碰不到。**
+            //
+            // 这个项目自己在别处早就立过同一条规矩：`/api/run` 刻意不
+            // forbid 多余的键，注释写着「前端和引擎的版本不一定同步升，
+            // 多一个键就 422 会让整个功能挂掉」，改成照收不误、把不认识的
+            // 列回去。模型这头更该这样——带推理的模型会把思考编成键名塞
+            // 进来（2026-09-12 实见 `last_line_ending_context_hint_for_...`
+            // 那一串，prompts.toml 的 chapter_write tail 上面记着），
+            // 在这儿判废就是拿一次十分钟的正文去换一个没人读的键。
+            //
+            // **schema 里那句 `additionalProperties: false` 留着**：它是
+            // 给模型看的、也进 GBNF 语法，那才是真管用的地方。这儿只是
+            // 事后那一道，不该比语法还硬。
         }
     }
 

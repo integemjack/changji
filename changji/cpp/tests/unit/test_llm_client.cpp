@@ -865,6 +865,43 @@ TEST_CASE("校验层：一个字段没填好，不该把整份输出作废") {
         CHECK(empty->find("$.worse") != std::string::npos);
     }
 
+    SUBCASE("多写了一个键：放行") {
+        // 下游是按名字取字段的，多出来那个根本碰不到。而带推理的模型会把
+        // 思考编成键名塞进来——在这儿判废就是拿一次十分钟的正文去换一个
+        // 没人读的键。项目自己在 /api/run 上早就立过同一条规矩。
+        const auto schema = ordered::parse(
+            R"({"type":"object","properties":{"a":{"type":"string"}},
+                "additionalProperties":false})");
+        CHECK_FALSE(
+            validate_json_schema(json{{"a", "好"}, {"模型自己加的备注", "x"}},
+                                 schema)
+                .has_value());
+    }
+
+    SUBCASE("数组里的一项缺字段：放行；顶层缺：拦") {
+        // 2026-09-17 实撞：
+        //     $.scenes.s1.beats[12] 缺少必填字段 characters
+        // 二十六拍里一拍没填「画面里有谁」，一次五分钟的改编整份作废——
+        // 而下游本来就受得住（script.cpp 那句 `it != item.end()`，缺了就是
+        // 空数组，正是 schema 自己写的「环境拍、空镜填空数组」）。
+        const auto schema = ordered::parse(
+            R"({"type":"object","properties":{
+                 "beats":{"type":"array","items":{
+                   "type":"object",
+                   "properties":{"text":{"type":"string"},
+                                 "characters":{"type":"array"}},
+                   "required":["text","characters"]}}},
+                "required":["beats"]})");
+        // 第二拍缺 characters：整份还是能用
+        const json one_bad = {{"beats", json::array({
+            json{{"text", "他推门进来"}, {"characters", json::array({"曾老板"})}},
+            json{{"text", "窗外下着雨"}},
+        })}};
+        CHECK_FALSE(validate_json_schema(one_bad, schema).has_value());
+        // 顶层缺 beats：那是整份没有内容，照拦
+        CHECK(validate_json_schema(json::object(), schema).has_value());
+    }
+
     SUBCASE("真坏了的还得拦住") {
         // 这一层的本职：类型不对、缺必填、整份走错分支
         const auto schema = ordered::parse(
