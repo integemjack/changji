@@ -97,11 +97,24 @@ inline std::optional<std::string> validate_value(
 
     if (value.is_string()) {
         const std::size_t length = text::utf8_len(value.get<std::string>());
+        // **写短了不在这儿拦，写空了才拦。** 理由同上面枚举那一段。
+        //
+        // 这些 minLength 本来就是"推一把"的数，不是地板：last_line 的下限
+        // 当初还从 12 降到 4 过，理由是「"走吧。"四个字正是一集的收口」。
+        // 差一两个字和"整份输出坏了"根本不是一回事，而在这儿 return 一个错
+        // 的代价是整章作废——2026-09-16 实测：
+        //     异步作业砸了：大模型输出不符合 chapter Schema：
+        //     $.scenes[2].worse 太短
+        // 写了十分钟、三场戏都在，就因为第三场的一句话短了几个字，一个字
+        // 都没留下。而这些模型（走远端 API 的那些）根本不按 GBNF 生成，
+        // minLength 对它们从来只是建议。
+        //
+        // **空串还是拦**：那不是"写短了"，是这一栏压根没写——和被截断、
+        // 被内容过滤掐掉是同一类，正是这一层该接住的。
         if (const auto it = schema.find("minLength");
             it != schema.end() && it->is_number_integer() &&
-            it->get<long long>() >= 0 &&
-            length < static_cast<std::size_t>(it->get<long long>())) {
-            return path + " 太短";
+            it->get<long long>() > 0 && length == 0) {
+            return path + " 是空的";
         }
         if (const auto it = schema.find("maxLength");
             it != schema.end() && it->is_number_integer() &&

@@ -24,7 +24,7 @@ bool ends_sentence(const std::string& ch) {
 /// **不这么做会漏掉一半。** 退化循环里同一句话常常一次带引号一次不带
 /// （`'你早就走了'` 和 `你早就走了`），按原样比的话它们算两句，
 /// 一句也到不了三次。
-std::string normalize(const std::string& s) {
+std::string normalize_impl(const std::string& s) {
     std::string out = text::strip_ws(s);
     static const char* kWrap[] = {"'", "'", "\"", "\"", "「", "」",
                                   "‘",  "’",  "“",  "”",  "『", "』"};
@@ -49,6 +49,8 @@ std::string normalize(const std::string& s) {
 }
 
 }  // namespace
+
+std::string repeat_key(const std::string& s) { return normalize_impl(s); }
 
 std::vector<std::string> split_sentences(const std::string& text) {
     std::vector<std::string> out;
@@ -80,7 +82,7 @@ RepetitionReport check_repetition(const std::string& text) {
     std::size_t total_chars = 0;
     std::size_t unique_chars = 0;
     for (const std::string& s : sentences) {
-        const std::string key = normalize(s);
+        const std::string key = repeat_key(s);
         const std::size_t n = text::utf8_len(key);
         total_chars += n;
         // 太短的句子不进统计，也不算进比例：「他说。」重复十次是正常的，
@@ -107,7 +109,7 @@ RepetitionReport check_repetition(const std::string& text) {
     // 过"——零星撞车到不了五句连着，而真复制一段情节起步就是十几句。
     int run = 0;
     for (const std::string& sentence : sentences) {
-        const std::string key = normalize(sentence);
+        const std::string key = repeat_key(sentence);
         if (text::utf8_len(key) < kRepeatMinSentenceChars) continue;
         if (seen[key] > 1) {
             ++run;

@@ -21,6 +21,7 @@
 
 #include "config/settings.hpp"
 #include "llm/client.hpp"
+#include "llm/schema_validate.hpp"
 #include "pipeline/jobs.hpp"
 
 #include "scoped_env.hpp"
@@ -822,4 +823,60 @@ TEST_CASE("远端 SSE：中途取消要断掉，别让它继续生成") {
                     llm::LlmError);
     // 叫停之后不该再有第二段——on_chunk 返回 false，传输层会断开
     CHECK(pieces.size() == 1);
+}
+
+/**
+ * 这一层是用来接住"整份输出坏了"的——被 length 截断、内容过滤掐掉、
+ * 压根不是 JSON。**一个字段没填好不是那一类**，而在这儿 return 一个错的
+ * 代价是整份作废：一集十七镜、或者一章十分钟，全没。
+ *
+ * 两条都是实跑撞出来的，所以一起钉在这儿。
+ */
+TEST_CASE("校验层：一个字段没填好，不该把整份输出作废") {
+    using changji::llm::validate_json_schema;
+    using nlohmann::json;
+    using ordered = nlohmann::ordered_json;
+
+    SUBCASE("枚举填了表外的值：放行") {
+        // 2026-09-16 实测：一集十七镜里第三镜的 face_pose 填了个表外的值，
+        // 整个 /api/plan 回 400，十七镜全没了——而下游 drop_unknown_enums
+        // 本来就会把它抹成默认值，一镜都不该丢。
+        const auto schema = ordered::parse(
+            R"({"type":"object","properties":{
+                 "face_pose":{"type":"string","enum":["front","back"]}}})");
+        CHECK_FALSE(validate_json_schema(json{{"face_pose", "三分之二侧"}}, schema)
+                        .has_value());
+    }
+
+    SUBCASE("字符串写短了：放行；写空了：拦") {
+        // 2026-09-16 实测：写了十分钟、三场戏都在，就因为第三场的 worse
+        // 短了几个字，一个字都没留下：
+        //   大模型输出不符合 chapter Schema：$.scenes[2].worse 太短
+        // 这些 minLength 本来就是"推一把"的数（last_line 的下限还从 12 降到
+        // 过 4），而走远端 API 的模型根本不按 GBNF 生成，它对它们只是建议。
+        const auto schema = ordered::parse(
+            R"({"type":"object","properties":{
+                 "worse":{"type":"string","minLength":8}}})");
+        CHECK_FALSE(validate_json_schema(json{{"worse", "少了退路"}}, schema)
+                        .has_value());
+        // 空串是另一回事：那不是"写短了"，是这一栏压根没写
+        const auto empty = validate_json_schema(json{{"worse", ""}}, schema);
+        REQUIRE(empty.has_value());
+        CHECK(empty->find("$.worse") != std::string::npos);
+    }
+
+    SUBCASE("真坏了的还得拦住") {
+        // 这一层的本职：类型不对、缺必填、整份走错分支
+        const auto schema = ordered::parse(
+            R"({"type":"object","properties":{"n":{"type":"integer"}},
+                "required":["n"]})");
+        CHECK(validate_json_schema(json{{"n", "不是数"}}, schema).has_value());
+        CHECK(validate_json_schema(json::object(), schema).has_value());
+        // 数组的下限是地板，不是建议——少写了几场，下游没法凭空补出来
+        const auto arr = ordered::parse(
+            R"({"type":"object","properties":{
+                 "scenes":{"type":"array","minItems":3}}})");
+        CHECK(validate_json_schema(json{{"scenes", json::array({1, 2})}}, arr)
+                  .has_value());
+    }
 }

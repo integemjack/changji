@@ -40,6 +40,7 @@
 #include "stages/story_analyze.hpp"
 #include "stages/story_import.hpp"
 #include "stages/json_partial.hpp"
+#include "stages/repetition.hpp"
 #include "stages/story_outline.hpp"
 #include "stages/story_plan.hpp"
 #include "util/paths.hpp"
@@ -3163,6 +3164,45 @@ TEST_CASE("提示词：正文是主要产出，不是顺带的") {
                                        .at("description");
     CHECK(paras_desc.find("这一场的正文") != std::string::npos);
     CHECK(paras_desc.find("不是梗概") != std::string::npos);
+}
+
+TEST_CASE("解析：守卫数得到的句子，摘除就一定要摘得掉") {
+    // 2026-09-16 实测，hulian-test ch08 写了十分钟然后整章作废：
+    //   异步作业砸了：大模型没写出能用的正文：正文在复读：
+    //   这一句出现了 3 次：「他微笑，嘴角上扬。」
+    //
+    // 根子是**两边用了不同的归一函数**。守卫用 repeat_key（只剥首尾引号），
+    // 摘除用 chapter_write 自己的 bare（连句内标点一起剥）。同一句：
+    //   repeat_key → 「他微笑，嘴角上扬。」9 字 ≥ 8 → 守卫数它，三次判废
+    //   bare       → 「他微笑嘴角上扬」  7 字 < 8 → 摘除跳过，一次不摘
+    // 那一句于是按构造救不回来：守卫必判、摘除永远不碰，重试只是再掷骰子。
+    //
+    // 这个用例钉的是那条不变量：**守卫数得到的，摘除就得摘得掉**。
+    const std::string dup = "他微笑，嘴角上扬。";
+    REQUIRE(changji::text::utf8_len(changji::stages::repeat_key(dup)) >=
+            changji::stages::kRepeatMinSentenceChars);
+
+    std::string body;
+    for (int i = 0; i < 10; ++i) {
+        body += "他走到窗边，看着楼下第 " + std::to_string(i) + " 辆车开过去。\n";
+    }
+    // 三句，分散在不同段落里——段级那道碰不到，只能靠句级那道
+    body += dup + "远处传来汽笛。\n";
+    body += "他停下脚步。" + dup + "\n";
+    body += "雨点打在窗上。" + dup + "\n";
+
+    // 摘不掉的话这一句会抛 StoryError("正文在复读：…")
+    const auto d = changji::stages::parse_chapter(json{{"text", body}}.dump(), 10);
+    int hits = 0;
+    for (size_t at = d.text.find(dup); at != std::string::npos;
+         at = d.text.find(dup, at + 1)) {
+        ++hits;
+    }
+    CHECK(hits == 1);
+    // 同段里跟着那一句的别的话不能被连累
+    CHECK(d.text.find("远处传来汽笛") != std::string::npos);
+    CHECK(d.text.find("他停下脚步") != std::string::npos);
+    CHECK(d.text.find("雨点打在窗上") != std::string::npos);
 }
 
 TEST_CASE("解析：一字不差的重复段，守卫没响也要丢") {

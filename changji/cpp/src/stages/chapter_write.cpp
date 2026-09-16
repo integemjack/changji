@@ -1055,7 +1055,20 @@ ChapterDraft parse_chapter(const std::string& raw, int min_chars, bool strict) {
             if (!seen_para.insert(bare(one)).second) return;
             std::string keep_para;
             for (const std::string& sent : split_sentences(one)) {
-                const std::string key = bare(sent);
+                // **键和长度都得用守卫那一个（repeat_key）。**
+                //
+                // 这儿原来用的是本文件的 `bare()`，它连句内的逗号句号一起
+                // 剥掉，而守卫只剥首尾的引号。同一句「他微笑，嘴角上扬。」：
+                // 守卫量到 9 个字、够着 8 的下限，数到三次判废；这儿量到
+                // 7 个字、够不着下限，**一次都不摘**。那一句于是按构造就是
+                // 救不回来的——2026-09-16 实测，ch08 写了十分钟，日志里
+                // 「正文在复读：这一句出现了 3 次：「他微笑，嘴角上扬。」」，
+                // 整章作废，而重试只是再掷一次骰子。
+                //
+                // 上面那段注释一直写着"摘的粒度必须和守卫量的粒度一样"——
+                // 粒度是一样了，归一函数没一样。现在共用一个：摘完之后守卫
+                // 数到的每一句都只剩一次，必过。
+                const std::string key = repeat_key(sent);
                 // 短句重复是正常的（「我知道。」「为什么？」），不动。
                 if (text::utf8_len(key) >= kRepeatMinSentenceChars &&
                     ++seen[key] > 1) {

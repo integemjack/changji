@@ -149,6 +149,21 @@ ApiResult start_async(const std::string& stream_id, Work work) {
         // 挂上"这条线程在给谁干活"，里面每一步的思考流就不用各自去捞
         // stream 了（见 job_stream.hpp 的 current_stream）。
         const JobScope scope{stream_id};
+        // **异步的活砸了，日志里要有一行。**
+        //
+        // 这三条路原来只 job_error 给前端，服务端一个字不写。后果是活砸了
+        // 之后**引擎日志里只剩一条 202，再没有别的**——2026-09-16 实测：
+        // 「重写整章」跑了十分钟，正文流了一半又被撤掉，日志里从头到尾就是
+        //     Request: ... POST /api/story/chapter
+        //     Response: ... /api/story/chapter 202 0
+        // 两行。页面上那句红字一闪而过，翻日志什么都查不到，只能再跑十分钟。
+        //
+        // 这儿是**所有异步活的唯一出口**（写正文、改稿、出图、配音都从这儿
+        // 过），补一行就全覆盖了。
+        const auto fail = [&stream_id](const std::string& why) {
+            CROW_LOG_ERROR << "异步作业砸了 [" << stream_id << "]：" << why;
+            job_error(stream_id, why);
+        };
         try {
             const ApiResult r = work();
             // 处理函数自己回了个错状态码（不抛，直接回）也要算砸了，
@@ -159,14 +174,14 @@ ApiResult start_async(const std::string& stream_id, Work work) {
                             r.body.at("detail").is_string()
                         ? r.body.at("detail").get<std::string>()
                         : std::string("没干成");
-                job_error(stream_id, msg);
+                fail(msg);
             } else {
                 job_done(stream_id, r.body);
             }
         } catch (const ApiError& e) {
-            job_error(stream_id, e.what());
+            fail(e.what());
         } catch (const std::exception& e) {
-            job_error(stream_id, e.what());
+            fail(e.what());
         }
     });
     return {202, {{"started", true}, {"stream", stream_id}}};
