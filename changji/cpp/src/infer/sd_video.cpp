@@ -134,11 +134,12 @@ stages::VideoRenderer make_video_renderer(
     // 重读一遍），而建 SD 上下文用的是全局那份。采样旋钮跟着请求走才对得上，
     // 见 SamplingKnobs。
     const SamplingKnobs knobs = sampling_knobs_for(settings, ModelRole::Video);
-    // 留不留模型自己出的声音是剧的属性（[sound].ambient）。
-    const bool keep_ambient = settings.sound.ambient;
+    // 留不留模型自己出的声音是剧的属性（[sound].ambient）。计划里带了
+    // （派活方那部剧的设置）就按计划的，没带按本机的。
+    const bool keep_ambient_default = settings.sound.ambient;
     // 合并时两边各往这个 lambda 里加了捕获，都要：knobs / keep_ambient 是
     // 「这一集」那一份设置，origin 是"这活谁派的"（见下面 local_exec().enter）。
-    return [assembly, seed_override, lora_tiers, origin, knobs, keep_ambient](
+    return [assembly, seed_override, lora_tiers, origin, knobs, keep_ambient_default](
                const models::Shot& shot, const stages::RenderPlan& plan,
                       const std::optional<fs::path>& start_image,
                       const fs::path& dest, pipeline::CancelToken& tok,
@@ -200,6 +201,7 @@ stages::VideoRenderer make_video_renderer(
         ctx->generate_video(req, raw, tok, on_step);
         std::optional<fs::path> audio;
         std::error_code ec;
+        const bool keep_ambient = plan.keep_ambient.value_or(keep_ambient_default);
         if (keep_ambient && fs::is_regular_file(wav, ec)) audio = wav;
         encode_raw_to_mp4(raw, req.width, req.height, req.fps, assembly, dest,
                           audio,

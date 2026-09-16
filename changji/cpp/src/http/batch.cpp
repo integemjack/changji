@@ -601,6 +601,8 @@ ApiResult post_plan_all(const json& body, std::shared_ptr<llm::Client> client) {
                     sb.assets = assets;
                     sb.episode_id = episode_id;
                     sb.duration_s = ep->target_duration_s;
+                    sb.content_driven =
+                        config::load_settings(store.root()).assembly.episode_s > 0.0;
                     sb.on_thinking = thinking_sink();
                     sb.on_progress = [&p, &episode_id](const std::string& m) {
                         p.set_message(episode_id + "：" + m);

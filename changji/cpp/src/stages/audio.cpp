@@ -424,6 +424,9 @@ std::optional<std::string> AudioStage::voice_for(
     return models::pick_voice(available, ch->voice_gender, ch->voice_order);
 }
 
+/// 分镜排到这个长度以上的，当它是有意的长镜头：配音不许压短。
+static constexpr double kLongShotS = 8.0;
+
 double AudioStage::lock_duration(models::Shot& shot, double speech_s) const {
     // 没有台词的镜头保持分镜给的时长不动，它们是节奏调节的余量。
     if (shot.dialogue.empty()) return shot.duration_s;
@@ -446,7 +449,11 @@ double AudioStage::lock_duration(models::Shot& shot, double speech_s) const {
     //
     // 整集时长超了由配音之后那次 rebalance 去收，而它动的正是没有台词的
     // 那些镜头。
-    if (count_motion_segments(shot.motion_prompt) >= 2) {
+    // **计划得明显长的镜头同样不压。** 只看分了几段的话，一个计划 12 秒、
+    // 运动描述只写了一段的长镜头照样被一句两秒的台词压成 3 秒
+    // （2026-09-16 查出）。8 秒以上的镜头一定是分镜有意排的长镜头。
+    if (count_motion_segments(shot.motion_prompt) >= 2 ||
+        shot.duration_s >= kLongShotS) {
         locked = std::max(locked, shot.duration_s);
     }
     shot.duration_s = locked;

@@ -90,6 +90,45 @@ TEST_CASE("出片任务的那几项也要活着回来") {
     CHECK(*back.start_image == "/tmp/first.png");
 }
 
+TEST_CASE("尾帧、环境声开关、视频那份负向词和画面层也要活着回来") {
+    // 2026-09-16 之前这几项不在协议里：填了 last_frame_prompt、尾帧也出来了，
+    // 走工作进程池就退回单帧图生视频；派出去的出片任务负向词是空的；环境
+    // 声按工作进程那台的设置来，同一集一半有一半没有。
+    infer::Task t;
+    t.kind = infer::TaskKind::Video;
+    t.shot_id = "ep01_sh001";
+    t.dest = "/tmp/out.mp4";
+    t.seed = 1;
+    t.start_image = "/tmp/first.png";
+    t.end_image = "/tmp/last.png";
+    t.keep_ambient = false;
+    t.prompts.negative_video = "溶解转场";
+    t.prompts.video_scene = "中景，雨夜天台";
+    t.prompts.style_layer = "胶片质感";
+    const auto j = infer::to_json(t);
+    const infer::Task back = infer::task_from_json(j);
+    REQUIRE(back.end_image.has_value());
+    CHECK(*back.end_image == "/tmp/last.png");
+    REQUIRE(back.keep_ambient.has_value());
+    CHECK_FALSE(*back.keep_ambient);
+    CHECK(back.prompts.negative_video == "溶解转场");
+    CHECK(back.prompts.video_scene == "中景，雨夜天台");
+    CHECK(back.prompts.style_layer == "胶片质感");
+
+    SUBCASE("没填的不凭空多出来") {
+        infer::Task bare;
+        bare.kind = infer::TaskKind::Video;
+        bare.shot_id = "x";
+        bare.dest = "/tmp/x.mp4";
+        const auto jb = infer::to_json(bare);
+        CHECK_FALSE(jb.contains("end_image"));
+        CHECK_FALSE(jb.contains("keep_ambient"));
+        const infer::Task bb = infer::task_from_json(jb);
+        CHECK_FALSE(bb.end_image.has_value());
+        CHECK_FALSE(bb.keep_ambient.has_value());
+    }
+}
+
 TEST_CASE("没有首帧图的任务不该凭空多出一个") {
     auto t = sample_frame();
     t.start_image.reset();

@@ -152,7 +152,10 @@ int scene_target_chars(const Story& story) {
 }
 
 int chapter_scene_chars(const Story& story) {
-    return std::max(200, chapter_target_chars(story) / chapter_target_scenes(story));
+    // 就是 scene_target_chars：一场对一集。原来按「章的字数 ÷ 场数」另算
+    // 一遍，每集 30 秒时算出 600 字/场对 450 字/集的容量，每集 60 秒时
+    // 1000 对 900——「一场一集」在数字上就不成立，分集只能在场中间下刀。
+    return std::max(200, scene_target_chars(story));
 }
 
 int chapter_scene_paras(const Story& story) {
@@ -1063,14 +1066,11 @@ ChapterDraft parse_chapter(const std::string& raw, int min_chars, bool strict) {
     // 阈值按每千字放宽：偶尔冒一个是行文，成串出现才是这个毛病。全禁的话
     // 14B 会反复撞墙，一章要重试好几轮。
     {
-        static const char* kLabels[] = {
-            "神情复杂", "五味杂陈", "百感交集", "难以言喻", "若有所思",
-            "不知所措", "心中涌起", "内心充满", "眼中满是", "眼里满是",
-            "脸上满是", "久久不能平静", "意味深长", "百般滋味",
-        };
+        // 词表和提示词共用 prompts.toml 那一份：两边各抄一份的时候
+        // （提示词 11 个、这儿 14 个），模型会因为没被告知的词被打回。
         int hits = 0;
         std::string worst;
-        for (const char* w : kLabels) {
+        for (const char* w : prompt::chapter_write::kEmotionLabels) {
             std::string::size_type i = 0;
             while ((i = d.text.find(w, i)) != std::string::npos) {
                 ++hits;

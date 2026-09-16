@@ -5,6 +5,7 @@
 #include <atomic>
 #include <chrono>
 #include <cmath>
+#include <cstdio>
 #include <mutex>
 #include <thread>
 
@@ -83,6 +84,7 @@ RenderPlan make_plan(const Shot& shot, const TierSpec& spec,
 
 bool is_hero_shot(const Shot& shot, bool first, bool last) {
     if (first || last) return true;
+    // beat 现在是枚举（钩子 / 高潮 / 反转…），老表里可能是自由文本，两种都认。
     for (const char* w : {"钩", "扣", "反转", "高潮", "揭", "真相"}) {
         if (shot.beat.find(w) != std::string::npos) return true;
     }
@@ -128,9 +130,23 @@ std::size_t pick_take(const std::vector<gates::GateResult>& results) {
 
 std::string video_positive(const RenderPlan& plan) {
     const std::string sep = plan.style_line == StyleLine::ANIME ? ", " : "，";
-    if (plan.motion.empty()) return plan.prompts.positive;
-    if (plan.prompts.positive.empty()) return plan.motion;
-    return plan.prompts.positive + sep + plan.motion;
+    std::vector<std::string> parts;
+    for (const std::string* p : {&plan.prompts.video_scene, &plan.motion,
+                                 &plan.prompts.style_layer}) {
+        if (!text::strip_ws(*p).empty()) parts.push_back(*p);
+    }
+    // 老计划（工作进程那头版本旧、没有 video_scene）退回整段 positive。
+    if (plan.prompts.video_scene.empty() && plan.prompts.style_layer.empty()) {
+        if (plan.motion.empty()) return plan.prompts.positive;
+        if (plan.prompts.positive.empty()) return plan.motion;
+        return plan.prompts.positive + sep + plan.motion;
+    }
+    std::string out;
+    for (std::size_t i = 0; i < parts.size(); ++i) {
+        if (i) out += sep;
+        out += parts[i];
+    }
+    return out;
 }
 
 std::vector<RenderOutcome> render_batch(std::vector<Shot*>& shots,
@@ -258,6 +274,18 @@ std::vector<RenderOutcome> render_batch(std::vector<Shot*>& shots,
                 try {
                     plan = make_plan(local, spec, composer,
                                      assets.style.aspect_ratio, fps);
+                    plan.keep_ambient = extras.keep_ambient;
+                    // **被夹短了要说出来。** 镜长从分镜到出片要过四道夹子
+                    // （模型上限、显存、内核、项目 max_shot_s）再对齐到帧格，
+                    // 原来一路没有一句话——成片比分镜短一截，界面上一个字
+                    // 都不提（8f00579 只是让人能查，没在这儿拦）。
+                    if (local.duration_s - plan.duration_s() > 0.5) {
+                        char buf[96];
+                        std::snprintf(buf, sizeof buf, "%.1f 秒，实际只能出 %.1f 秒",
+                                      local.duration_s, plan.duration_s());
+                        say("warn", local.shot_id + " 分镜排的是 " + buf +
+                                        "（被单镜上限夹住了，运动描述按实际时长截）");
+                    }
                     // **参考图还原成绝对路径。**
                     //
                     // 和 frames.cpp 里同名的那一段是同一件事，2026-09-13 在
@@ -484,7 +512,10 @@ std::vector<RenderOutcome> render_batch(std::vector<Shot*>& shots,
                     // 东西就照旧换种子，行为和以前一样。
                     const std::string defused =
                         defuse_motion(local.motion_prompt);
-                    if (defused != local.motion_prompt) {
+                    // 角色的 action 也要摘：它会被重新接回运动提示词，
+                    // 只摘 motion_prompt 等于没摘，闸门会反复退回同一镜。
+                    const bool actions_changed = defuse_actions(local.characters);
+                    if (defused != local.motion_prompt || actions_changed) {
                         say("info",
                             local.shot_id +
                                 " 的运动描述里有会把主体带出画的动作，"

@@ -17,25 +17,29 @@ StoryboardRunResult run_storyboard(const StoryboardRunOptions& opts,
 
     std::vector<stages::SceneBlock> scenes = stages::split_scenes(script, assets);
     std::vector<Shot> shots;
+    // 章模式：目标量按剧本估，不按这一集的名义时长。
+    const double target_s = opts.content_driven
+                                ? stages::estimate_script_seconds(script)
+                                : opts.duration_s;
 
     if (scenes.size() <= 1) {
         // ---- 整集一次拆：和 2026-09-15 之前逐字节一样 ----
         const stages::DurationQuota quota =
-            stages::DurationQuota::for_duration(opts.duration_s);
+            stages::DurationQuota::for_duration(target_s);
         llm::Request req;
         req.prompt = stages::build_storyboard_prompt(script, assets, quota,
                                                      opts.episode_id);
         // 镜头数写进 schema。配额那句话模型不一定听——实测 60 秒的集出过
         // 两镜六秒，提示词里"合计 16 个镜头"一个字没少。
         req.schema = stages::llm_shot_schema(
-            assets, stages::shot_count_bounds(quota, opts.duration_s,
+            assets, stages::shot_count_bounds(quota, target_s,
                                               stages::count_beats(script)));
         req.schema_name = "storyboard";
         req.on_thinking = opts.on_thinking;
         shots = stages::parse_storyboard(client.complete(req, tok), assets);
     } else {
         // ---- 按场拆 ----
-        stages::assign_scene_seconds(scenes, opts.duration_s);
+        stages::assign_scene_seconds(scenes, target_s);
         result.scenes = static_cast<int>(scenes.size());
         std::string prev_tail;
         int running_order = 0;
@@ -97,7 +101,8 @@ StoryboardRunResult run_storyboard(const StoryboardRunOptions& opts,
     // 编号和顺序按引擎的来。模型编出来的 id 有错集号、没补零、打错字的。
     stages::renumber_shots(shots, opts.episode_id);
     // 总时长拉回目标。只动没台词的镜头，有台词的由配音定。
-    stages::rebalance_durations(shots, opts.duration_s);
+    // 章模式不压：这一章多长由内容定，装配时再按每集时长切。
+    if (!opts.content_driven) stages::rebalance_durations(shots, opts.duration_s);
     result.shots = std::move(shots);
     return result;
 }

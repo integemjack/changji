@@ -17,6 +17,7 @@
 #include "models/character.hpp"
 #include "models/shot.hpp"
 #include "stages/prompt_compose.hpp"
+#include "stages/prompts.inc.hpp"
 #include "stages/render.hpp"
 
 using namespace changji;
@@ -155,8 +156,25 @@ TEST_CASE("提示词组装和 Python 逐字节一致") {
         spec.height = 854;
         spec.steps = 4;
         const auto plan = stages::make_plan(shot, spec, composer, "9:16");
-        check_text(stages::video_positive(plan),
-                   c.at("video_positive").get<std::string>(), "视频正向");
+        // 视频正向词 2026-09-16 起不再是「整段 positive + 运动」（那样把
+        // 外观层整个重喂给出片模型，脸在动的过程中变形），而是这一镜的画面
+        // + 运动 + 风格层。语料里那一栏是老拼法，这儿按新拼法自证：三段各自
+        // 都在、顺序对、分隔符对、身份层不在。
+        const std::string sep = line == models::StyleLine::ANIME ? ", " : "，";
+        std::string want;
+        const std::string* parts[] = {&got.video_scene, &plan.motion, &got.style_layer};
+        for (const std::string* part : parts) {
+            if (part->empty()) continue;
+            if (!want.empty()) want += sep;
+            want += *part;
+        }
+        check_text(stages::video_positive(plan), want, "视频正向");
+        // 画面描述在，身份层不在
+        if (!shot.first_frame_prompt.empty()) {
+            CHECK(stages::video_positive(plan).find(shot.first_frame_prompt) !=
+                  std::string::npos);
+        }
+        CHECK(stages::video_positive(plan).find("鹅蛋脸") == std::string::npos);
     }
 }
 
@@ -372,6 +390,80 @@ TEST_CASE("模型写的句号不会和分隔符撞成「。，」") {
     }
 }
 
+TEST_CASE("这一镜写了光，场景资产那句光就不拼：两句光同时在，模型两句都读") {
+    // 2026-09-16 实测 ep04_sh001：场景资产写着「白天，散射光从窗户来」，
+    // 这一镜的光是「夜晚…硬光」，两句都进了提示词，首帧出来是大白天。
+    models::AssetLibrary a = make_assets(models::StyleLine::REALISTIC);
+    models::Shot s;
+    s.shot_id = "ep01_sh001";
+    s.scene_id = "sc01";
+    s.location_id = "loc_rooftop";
+    s.first_frame_prompt = "雨夜天台";
+    const std::string loc_light = a.locations.at("loc_rooftop").lighting;
+    REQUIRE_FALSE(loc_light.empty());
+
+    SUBCASE("没写镜头光：场景那句光照旧") {
+        const auto p = stages::PromptComposer(a).compose(s);
+        CHECK(p.positive.find(loc_light) != std::string::npos);
+    }
+    SUBCASE("写了镜头光：只剩镜头那句") {
+        s.lighting = "夜晚，路灯从画左上斜射，硬光";
+        const auto p = stages::PromptComposer(a).compose(s);
+        CHECK(p.positive.find(loc_light) == std::string::npos);
+        CHECK(p.positive.find("夜晚，路灯从画左上斜射，硬光") != std::string::npos);
+        // 空间和色板那两句还在，丢的只是光
+        CHECK(p.positive.find(a.locations.at("loc_rooftop").space) != std::string::npos);
+    }
+}
+
+TEST_CASE("时间码格式的运动描述：运镜词不再前插，角色动作并进第一段") {
+    // 前插一次就是「镜头缓慢推近, 缓慢推近」（金语料里原来就长这样）；
+    // 动作接在整串末尾，三段的镜头里所有动作都被读成最后一段的事。
+    models::AssetLibrary a = make_assets(models::StyleLine::REALISTIC);
+    models::Shot s;
+    s.shot_id = "ep01_sh001";
+    s.scene_id = "sc01";
+    s.camera_move = models::CameraMove::PUSH_IN;
+    s.duration_s = 15.0;
+    s.motion_prompt = "[0-5秒] 镜头缓慢推近半步，雨点砸在栏杆上 [5-10秒] 她抬头 [10-15秒] 手松开";
+    models::CharacterInShot in;
+    in.char_id = "c_lin_wan";
+    in.action = "扶着护栏";
+    s.characters = {in};
+    const std::string m = stages::PromptComposer(a).motion_prompt(s);
+    // 第一段：原句 + 动作；后面两段原样
+    CHECK(m.find("[0-5秒] 镜头缓慢推近半步，雨点砸在栏杆上，扶着护栏") == 0);
+    CHECK(m.find("[5-10秒] 她抬头") != std::string::npos);
+    CHECK(m.find("[10-15秒] 手松开") != std::string::npos);
+    // 动作不在末段
+    CHECK(m.find("手松开，扶着护栏") == std::string::npos);
+    // 运镜枚举词没有第二次出现
+    CHECK(m.find("镜头缓慢推近，") == std::string::npos);
+    CHECK(m.find(", 缓慢推近") == std::string::npos);
+}
+
+TEST_CASE("项目页「负向」框里用户自己加的词要进视频负向词，默认那串不进") {
+    models::AssetLibrary a = make_assets(models::StyleLine::REALISTIC);
+    models::Shot s;
+    s.shot_id = "ep01_sh001";
+    s.scene_id = "sc01";
+    s.first_frame_prompt = "雨夜";
+    SUBCASE("只有默认串：视频负向词就是 [style].negative_video") {
+        a.style.negative_prompt = stages::prompt::style::kNegativeBase;
+        const auto p = stages::PromptComposer(a).compose(s);
+        CHECK(p.negative_video == std::string(stages::prompt::style::kNegativeVideo));
+        CHECK(p.negative_video.find("多余的手指") == std::string::npos);
+    }
+    SUBCASE("默认串后面用户加了词：那几个词进去，默认串不进") {
+        a.style.negative_prompt =
+            std::string(stages::prompt::style::kNegativeBase) + "，3D 渲染，卡通";
+        const auto p = stages::PromptComposer(a).compose(s);
+        CHECK(p.negative_video.find("3D 渲染，卡通") == 0);
+        CHECK(p.negative_video.find("多余的手指") == std::string::npos);
+        CHECK(p.negative_video.find(stages::prompt::style::kNegativeVideo) != std::string::npos);
+    }
+}
+
 TEST_CASE("大特写不带身份层：物件特写里塞角色全身描述，出来的是人不是物件") {
     // 2026-09-13 q4_full sh004：分镜要床头柜手机特写，角色列表挂着男主，
     // 身份层排最前，出的首帧是拿手机站在床边的全身人像；身份层挪后、只留
@@ -388,7 +480,7 @@ TEST_CASE("大特写不带身份层：物件特写里塞角色全身描述，出
 
     s.location_id = "loc_rooftop";
 
-    SUBCASE("ECU：没有名字、脸、衣着、场景，画面描述和风格还在，参考图也不带") {
+    SUBCASE("ECU：没有名字、脸、衣着、场景，画面描述和风格还在；走基础文生图") {
         s.shot_size = models::ShotSize::ECU;
         const auto p = stages::PromptComposer(a).compose(s);
         CHECK(p.positive.find("鹅蛋脸") == std::string::npos);
@@ -397,6 +489,17 @@ TEST_CASE("大特写不带身份层：物件特写里塞角色全身描述，出
         CHECK(p.positive.find("床头柜上的手机屏幕亮起") != std::string::npos);
         CHECK(p.positive.find("大特写") != std::string::npos);
         CHECK(p.positive.find("电影感") != std::string::npos);     // 风格层照旧
+        // 不带身份参考图（带了就画成全身人像）。首帧那一族是 Edit 模型，
+        // 一张参考图都没有会退化成彩噪，所以这一档要基础文生图权重；基础版
+        // 没配时退回 Edit，那时至少带这个场景的空景图当编辑源。
+        CHECK(p.base_model);
+        CHECK(p.reference_images == std::vector<std::string>{"refs/loc_rooftop_empty.png"});
+    }
+    SUBCASE("ECU 没有场景：一张参考图都没有，但标了基础模型") {
+        s.shot_size = models::ShotSize::ECU;
+        s.location_id.reset();
+        const auto p = stages::PromptComposer(a).compose(s);
+        CHECK(p.base_model);
         CHECK(p.reference_images.empty());
     }
     SUBCASE("CU 及以上照旧带身份层和场景层") {

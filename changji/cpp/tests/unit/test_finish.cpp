@@ -28,6 +28,7 @@
 #include "stages/music.hpp"
 #include "stages/prompt_compose.hpp"
 #include "stages/render.hpp"
+#include "stages/prompts.inc.hpp"
 #include "stages/script.hpp"
 #include "stages/storyboard.hpp"
 #include "util/cmdline.hpp"
@@ -1077,66 +1078,104 @@ TEST_CASE("每一场至少留一个大景：分布看着匀、却一个远景都
     }
 }
 
-TEST_CASE("章模式：拍数按篇幅给，段头没有秒数，切集数由内容定") {
-    // 用户 2026-09-16 的判词：剧本从一章里直接拿，写多长由内容定，不该在
-    // 提示词里限制一集多长——不够模型就凑，超了就压。act_plan 里那两个数
-    // （min_beats / max_beats）正是从秒数推的，而**地板是 schema 里唯一
-    // 管用的东西**：按秒给地板就等于按秒卡长度。
-    SUBCASE("篇幅长的章拍数多，篇幅短的少；四段都在，秒数全是 0") {
-        const auto small = stages::act_plan_for_chapter(300, 0);
-        const auto big = stages::act_plan_for_chapter(3000, 0);
-        REQUIRE(small.size() == 4);
-        REQUIRE(big.size() == 4);
-        int s_min = 0, b_min = 0, s_max = 0, b_max = 0;
-        for (const auto& a : small) { s_min += a.min_beats; s_max += a.max_beats; }
-        for (const auto& a : big)   { b_min += a.min_beats; b_max += a.max_beats; }
-        CHECK(b_min > s_min);
-        CHECK(b_max > s_max);
-        for (const auto& a : big) {
-            CHECK(a.from_s == 0);
-            CHECK(a.to_s == 0);
-            CHECK(a.min_beats >= 2);
-            CHECK(a.max_beats > a.min_beats);
-        }
-        // 三千字的章至少五十拍：一拍六十字起
-        CHECK(b_min >= 50);
+TEST_CASE("章模式：按场给拍数地板，没有秒数，也没有四段") {
+    // 用户 2026-09-16 的判词：剧本从一章里直接拿，写多长由内容定。正文是按
+    // 场写的，剧本照着场走；之前在场之上又套了一副按秒排的四段骨架，段头还
+    // 印着「按秒排」。地板按每场的篇幅：六十字一拍起，二十字一拍封顶。
+    SUBCASE("篇幅长的场拍数多，短的少，再短也有四拍") {
+        const auto plan = stages::scene_plan_for_chapter({{"天台", 300}, {"咖啡馆", 3000}, {"", 0}});
+        REQUIRE(plan.size() == 3);
+        CHECK(plan[0].key == "s1");
+        CHECK(plan[1].key == "s2");
+        CHECK(plan[1].min_beats > plan[0].min_beats);
+        CHECK(plan[1].min_beats >= 50);
+        CHECK(plan[2].min_beats == 4);
+        for (const auto& p : plan) CHECK(p.max_beats > p.min_beats);
     }
-    SUBCASE("再短的章也有八拍起，四段每段两拍") {
-        const auto tiny = stages::act_plan_for_chapter(0, 0);
-        int total = 0;
-        for (const auto& a : tiny) { total += a.min_beats; CHECK(a.min_beats >= 2); }
-        CHECK(total >= 8);
+    SUBCASE("没有场：整章当一场") {
+        const auto plan = stages::scene_plan_for_chapter({});
+        REQUIRE(plan.size() == 1);
+        CHECK(plan[0].key == "s1");
     }
-    SUBCASE("章模式的 schema：每段描述里没有「秒」，minItems 按篇幅") {
-        const auto sc = stages::script_schema_for_chapter(1200, {"林晚", "陈默"}, 0);
-        // **只看四段的描述**：那是我改的地方。一拍自己的字段描述里提「秒」
-        // （台词两三秒那种）是拍子的说明，和一集多长无关，照旧。
-        const auto specs = stages::act_plan_for_chapter(1200, 0);
-        for (const auto& a : specs) {
-            const auto& act = sc.at("properties").at(a.key);
-            const auto& beats = act.at("properties").at("beats");
-            const std::string desc = beats.at("description").get<std::string>();
-            // 要查的是「0–5 秒」那种时长戳，不是段落说明里的「三秒内有事
-            // 发生」——那句是戏的要求，和一集多长无关，章模式照旧带着。
-            static const std::regex stamp(R"([0-9]+–[0-9]+ 秒)");
-            CHECK_FALSE(std::regex_search(desc, stamp));
-            CHECK(desc.find(a.label) != std::string::npos);
-            // 和 act_plan_for_chapter 同一个数：地板要对得上
-            CHECK(beats.at("minItems").get<int>() == a.min_beats);
-            CHECK(beats.at("maxItems").get<int>() == a.max_beats);
+    SUBCASE("schema：scenes 里一场一个字段，拍子带四个新栏，都在 required 里") {
+        const auto plan = stages::scene_plan_for_chapter({{"天台", 600}, {"咖啡馆", 900}});
+        const auto sc = stages::script_schema_for_chapter(plan, {"林晚", "陈默"});
+        const auto& scenes = sc.at("properties").at("scenes");
+        CHECK(scenes.at("required") == nlohmann::ordered_json::array({"s1", "s2"}));
+        for (const auto& p : plan) {
+            const auto& beats = scenes.at("properties").at(p.key).at("properties").at("beats");
+            CHECK(beats.at("minItems").get<int>() == p.min_beats);
+            CHECK(beats.at("maxItems").get<int>() == p.max_beats);
+            const auto& item = beats.at("items");
+            for (const char* f : {"kind", "speaker", "text", "characters", "delivery", "subtext", "fx"}) {
+                bool found = false;
+                for (const auto& r : item.at("required")) found = found || r == f;
+                CAPTURE(f);
+                CHECK(found);
+            }
+            CHECK(item.at("properties").at("characters").at("items").at("enum") ==
+                  nlohmann::ordered_json::array({"林晚", "陈默"}));
         }
-        // 对照：老 schema 的段描述是带秒的
-        const auto old_sc = stages::script_schema(60.0, {"林晚"}, 0);
-        const auto& old_desc = old_sc.at("properties").at(specs[0].key)
-                                   .at("properties").at("beats").at("description");
-        static const std::regex stamp2(R"([0-9]+–[0-9]+ 秒)");
-        CHECK(std::regex_search(old_desc.get<std::string>(), stamp2));
+        // 没有四段的键
+        CHECK_FALSE(sc.at("properties").contains("opening"));
+        const std::string dumped = sc.dump();
+        CHECK(dumped.find("秒") == std::string::npos);
+    }
+    SUBCASE("解析：各场顺次拼平，漏了场次头的补一个；四栏读进来；渲染带括号") {
+        const auto plan = stages::scene_plan_for_chapter({{"天台", 60}, {"咖啡馆", 60}});
+        const nlohmann::json raw = {
+            {"title", "雨夜"}, {"logline", "x"},
+            {"scenes", {
+                {"s1", {{"beats", nlohmann::json::array({
+                    {{"kind", "scene"}, {"speaker", ""}, {"text", "夜 · 外 · 天台"},
+                     {"characters", nlohmann::json::array()}, {"delivery", ""}, {"subtext", ""}, {"fx", ""}},
+                    {{"kind", "action"}, {"speaker", ""}, {"text", "林晚站在边缘。"},
+                     {"characters", nlohmann::json::array({"林晚"})}, {"delivery", ""},
+                     {"subtext", "她在等他先开口"}, {"fx", "雨"}},
+                    {{"kind", "dialogue"}, {"speaker", "林晚"}, {"text", "你来了。"},
+                     {"characters", nlohmann::json::array({"林晚"})}, {"delivery", "压着嗓子"},
+                     {"subtext", ""}, {"fx", ""}}})}}},
+                {"s2", {{"beats", nlohmann::json::array({
+                    {{"kind", "action"}, {"speaker", ""}, {"text", "陈默推开杯子。"},
+                     {"characters", nlohmann::json::array({"陈默"})}, {"delivery", ""}, {"subtext", ""}, {"fx", ""}},
+                    {{"kind", "dialogue"}, {"speaker", "陈默"}, {"text", "我不该来。"},
+                     {"characters", nlohmann::json::array({"陈默"})}, {"delivery", ""}, {"subtext", ""}, {"fx", ""}}})}}}}}};
+        const auto d = stages::parse_chapter_script(raw.dump(), plan);
+        REQUIRE(d.beats.size() == 6);   // 第二场补了一个空场次头
+        CHECK(d.acts.empty());
+        CHECK(d.beats[0].kind == "scene");
+        CHECK(d.beats[1].characters == std::vector<std::string>{"林晚"});
+        CHECK(d.beats[1].subtext == "她在等他先开口");
+        CHECK(d.beats[1].fx == "雨");
+        CHECK(d.beats[2].delivery == "压着嗓子");
+        CHECK(d.beats[3].kind == "scene");
+        CHECK(d.beats[3].text.empty());
+        const std::string r = d.render();
+        CHECK(r.find("【第1场 · 夜 · 外 · 天台】") != std::string::npos);
+        CHECK(r.find("林晚站在边缘。〔她在等他先开口〕〔特效：雨〕") != std::string::npos);
+        CHECK(r.find("林晚（压着嗓子）：你来了。") != std::string::npos);
+        CHECK(r.find("【第2场】") != std::string::npos);
+        // 没有段头
+        CHECK(r.find("秒】") == std::string::npos);
     }
     SUBCASE("老路（按秒）一个字没变：60 秒还是原来那组地板") {
         const auto old = stages::act_plan(60.0, 0);
         REQUIRE(old.size() == 4);
         CHECK(old[0].to_s > old[0].from_s);   // 段头带秒
     }
+}
+
+TEST_CASE("情绪标签词表：提示词那份和守卫那份逐项一致") {
+    // 2026-09-16 之前两边各抄一份（11 个对 14 个），模型会因为没被告知的词
+    // 被打回重写。现在守卫按 prompts.toml 的数组，提示词按顿号串，钉住一致。
+    std::string joined;
+    for (const char* w : stages::prompt::chapter_write::kEmotionLabels) {
+        if (!joined.empty()) joined += "、";
+        joined += w;
+    }
+    // [shared] 不生成命名空间，那串顿号文字展开在正文规则里：查它在不在。
+    CHECK(std::string(stages::prompt::chapter_write::kRules).find(joined) !=
+          std::string::npos);
 }
 
 TEST_CASE("开门关门：中间插一个副词也要认出来") {

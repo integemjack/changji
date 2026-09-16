@@ -386,8 +386,10 @@ DurationQuota DurationQuota::for_duration(double target_s) {
             std::max<long>(0, py_round(target_s * share * scale / dur)));
     }
 
-    // 用最长的档位补足或削减差额
-    const double pad = all.back();
+    // 用 5 秒那一档补足或削减差额。**不是最长的那一档**：单镜上限抬到
+    // 15 秒之后（2026-09-16），拿它补差会把 60 秒的目标凑成 75 秒——
+    // 配额里凭空多出一个 15 秒镜头，提示词照这个数告诉模型。
+    const double pad = pad_slot();
     slots[pad] = std::max(1, slots.count(pad) ? slots[pad] : 0);
     double sum = 0.0;
     for (const auto& [d, n] : slots) sum += d * n;
@@ -399,6 +401,17 @@ DurationQuota DurationQuota::for_duration(double target_s) {
         if (n > 0) q.slots[d] = n;
     }
     return q;
+}
+
+double pad_slot() {
+    // 不超过 5 秒的档位里最长的那一个；一个都没有（上限被夹到 5 秒以下）
+    // 就退回最长的。5 秒是「一镜一件事」的单位，配额和镜数下限都按它算。
+    const std::vector<double>& all = duration_slots();
+    double best = 0.0;
+    for (const double d : all) {
+        if (d <= 5.0 + 1e-9 && d > best) best = d;
+    }
+    return best > 0.0 ? best : all.back();
 }
 
 double snap_duration(double seconds) {
@@ -422,6 +435,19 @@ double ceil_duration(double seconds) {
         if (slot >= seconds - 1e-6) return slot;
     }
     return duration_slots().back();
+}
+
+double estimate_script_seconds(const std::string& script) {
+    std::size_t dialogue_chars = 0;
+    for (const auto& e : script_dialogue_entries(script)) {
+        dialogue_chars += text::utf8_len(e.said);
+    }
+    const int lines = count_beats(script);
+    const int spoken = static_cast<int>(script_dialogue_entries(script).size());
+    const int action_beats = std::max(0, lines - spoken);
+    const double talk_s =
+        static_cast<double>(dialogue_chars) / prompt::script::kCharsPerSecond;
+    return std::max(20.0, talk_s + action_beats * 3.0);
 }
 
 int count_beats(const std::string& script) {
@@ -683,7 +709,14 @@ std::string build_scene_storyboard_prompt(const SceneBlock& scene,
     out += prompt::storyboard_scene::kSeg5;
     out += roster_text(assets);
     out += prompt::storyboard_scene::kSeg6;
-    out += places_text(assets);
+    // 地点接上了就只列这一个：整份清单模型选了也被引擎盖掉，白占上下文。
+    if (scene.location_id.has_value() && !scene.location_id->empty() &&
+        assets.locations.count(*scene.location_id) != 0) {
+        out += "  " + *scene.location_id + "：" +
+               assets.locations.at(*scene.location_id).name;
+    } else {
+        out += places_text(assets);
+    }
     out += prompt::storyboard_scene::kSeg7;
     out += quota.describe();
     out += prompt::storyboard_scene::kSeg8;
@@ -729,7 +762,9 @@ void stamp_scene(std::vector<Shot>& shots, const SceneBlock& scene) {
 
 ShotCountBounds shot_count_bounds(const DurationQuota& quota, double target_s,
                                   int beats) {
-    const double longest = duration_slots().back();
+    // 地板按 5 秒一镜算，不按最长档位：上限 15 秒时 60 秒只剩 4 镜的地板，
+    // 而提示词说的是「16 个镜头」——语法放开到 4，模型就真给 4 个。
+    const double longest = pad_slot();
     const int physical = std::max(
         1, static_cast<int>(std::ceil(target_s / longest - 1e-9)));
     ShotCountBounds b;
@@ -762,6 +797,22 @@ ordered llm_shot_schema(const AssetLibrary& assets, ShotCountBounds bounds) {
         cis["properties"]["char_id"] = {
             {"type", "string"}, {"enum", char_ids},
             {"description", "必须是已注册角色之一"}};
+        // **表情、动作、朝向进 required。** 运动提示词就是拿这三样拼的
+        // （PromptComposer::motion_prompt），而「不在 required 里的字段模型
+        // 整个略过」是坐实过的机制——2026-09-16 之前只有 char_id 必填，
+        // 其余三栏多半是空的，出片模型收到的就是「站着不动」。
+        cis["properties"]["expression"] = {
+            {"type", "string"}, {"minLength", 1}, {"maxLength", 40},
+            {"description", "这一镜的表情：愕然、隐忍、强笑…一两个词"}};
+        cis["properties"]["action"] = {
+            {"type", "string"}, {"minLength", 1}, {"maxLength", 80},
+            {"description",
+             "这一镜身体在做什么：后退半步、手指抠着杯沿…只写第一帧里"
+             "看得见的人能做的动作，不写进画出画"}};
+        // 没人创建换装状态、没人读画面位置：从模型能看到的字段里拿掉。
+        cis["properties"].erase("wardrobe_state");
+        cis["properties"].erase("screen_pos");
+        cis["required"] = {"char_id", "expression", "action", "face_pose"};
     }
     if (defs.contains("DialogueLine")) {
         ordered& dl = defs["DialogueLine"];
@@ -878,6 +929,19 @@ ordered llm_shot_schema(const AssetLibrary& assets, ShotCountBounds bounds) {
          "只有这一镜必须落在一个明确的画面上时才填（比如推到某个物件上停住），"
          "否则留空"}};
 
+    // beat：这一镜在戏里干什么。枚举 + 必填，理由见 kBeatKinds。
+    {
+        ordered beats = ordered::array();
+        for (const char* b : prompt::kBeatKinds) beats.push_back(b);
+        kept["beat"] = {
+            {"type", "string"},
+            {"enum", beats},
+            {"description",
+             "这一镜在戏里干什么。钩子 = 集尾留扣，高潮 = 情绪最高那一下，"
+             "反转 = 认知被推翻，对峙 = 两个人顶上，反应 = 听的人的脸，"
+             "留白 = 空镜或过渡"}};
+    }
+
     // characters 和 dialogue 必须是必填并且带说明。
     // 只给一个 $ref 而不说要填什么，模型会整个略过这两个字段，
     // 结果是分镜里一句台词都没有，配音和口型全部落空。
@@ -900,7 +964,7 @@ ordered llm_shot_schema(const AssetLibrary& assets, ShotCountBounds bounds) {
     shots_item["required"] = {"shot_id", "scene_id", "order", "first_frame_prompt",
                               "motion_prompt", "shot_size", "camera_move",
                               "camera_angle", "lens", "lighting",
-                              "duration_s", "characters", "dialogue"};
+                              "duration_s", "characters", "dialogue", "beat"};
     shots_item["additionalProperties"] = false;
 
     ordered shots = ordered::object();
@@ -1124,6 +1188,19 @@ void cover_full_duration(json& item) {
 }
 
 }  // namespace
+
+bool defuse_actions(std::vector<models::CharacterInShot>& characters) {
+    bool changed = false;
+    for (auto& c : characters) {
+        if (c.action.empty()) continue;
+        const std::string kept = defuse_motion(c.action);
+        if (kept != c.action) {
+            c.action = kept;
+            changed = true;
+        }
+    }
+    return changed;
+}
 
 int count_motion_segments(const std::string& motion_prompt) {
     static const std::regex seg(
@@ -1440,7 +1517,7 @@ void diversify_shot_sizes(std::vector<Shot>& shots) {
     if (!collapsed && !too_many_ecu) return;
 
     const auto emotional = [](const Shot& s) {
-        for (const char* w : {"钩", "扣", "反转", "高潮", "揭", "真相", "爆发"}) {
+        for (const char* w : {"钩", "扣", "反转", "高潮", "揭", "真相", "爆发", "对峙"}) {
             if (s.beat.find(w) != std::string::npos) return true;
         }
         return false;
@@ -1660,6 +1737,17 @@ std::vector<Shot> parse_storyboard(const std::string& raw,
         // 摘完只剩时间码的原样留着（见 defuse_motion）：空的运动描述模型
         // 同样自由发挥，而且连线索都没有了。
         item["motion_prompt"] = defuse_motion(str_or(item, "motion_prompt"));
+        // 角色的 action 会被重新接到运动提示词后面，同样要摘。
+        if (const auto cit = item.find("characters");
+            cit != item.end() && cit->is_array()) {
+            for (auto& c : *cit) {
+                if (!c.is_object()) continue;
+                const std::string act = str_or(c, "action");
+                if (act.empty()) continue;
+                const std::string kept_act = defuse_motion(act);
+                if (kept_act != act) c["action"] = kept_act;
+            }
+        }
         // 运动描述短一截的补满，理由见 cover_full_duration。
         // **要在 duration_s 吸附之后**：补的是吸附后那个真时长。
         // 也要在摘完之后：摘掉一句会让末段的时间码落到别处。
@@ -1741,6 +1829,54 @@ namespace {
 /// ScriptReader 一样：冒号前是个短名字。
 /// 剧本里的台词，一句一条，带说话人。
 std::vector<std::pair<std::string, std::string>> script_dialogue_pairs(
+    const std::string& script);
+
+namespace {
+
+/// 削掉 〔…〕 那几段（潜台词、特效标注）。它们是给分镜看的，不念。
+std::string strip_brackets(const std::string& s) {
+    std::string out;
+    int depth = 0;
+    for (std::size_t i = 0; i < s.size();) {
+        if (s.compare(i, 3, "〔") == 0) { ++depth; i += 3; continue; }
+        if (s.compare(i, 3, "〕") == 0) { if (depth > 0) --depth; i += 3; continue; }
+        if (depth == 0) out += s[i];
+        ++i;
+    }
+    return text::strip_ws(out);
+}
+
+}  // namespace
+
+}  // namespace（匿名的那层先关上：下面这个在头文件里声明过，得落在 stages 里）
+
+std::vector<DialogueEntry> script_dialogue_entries(const std::string& script) {
+    std::vector<DialogueEntry> out;
+    for (const auto& kv : script_dialogue_pairs(script)) {
+        DialogueEntry e;
+        e.name = kv.first;
+        // 「林晚（压着嗓子）」→ 名字 + 怎么说的。括号认全角和半角。
+        for (const char* open : {"（", "("}) {
+            const std::size_t at = e.name.find(open);
+            if (at == std::string::npos) continue;
+            std::string inner = e.name.substr(at + std::strlen(open));
+            for (const char* close : {"）", ")"}) {
+                const std::size_t c = inner.rfind(close);
+                if (c != std::string::npos) inner = inner.substr(0, c);
+            }
+            e.delivery = text::strip_ws(inner);
+            e.name = text::strip_ws(e.name.substr(0, at));
+            break;
+        }
+        e.said = strip_brackets(kv.second);
+        if (!e.said.empty()) out.push_back(std::move(e));
+    }
+    return out;
+}
+
+namespace {
+
+std::vector<std::pair<std::string, std::string>> script_dialogue_pairs(
     const std::string& script) {
     std::vector<std::pair<std::string, std::string>> out;
     std::size_t start = 0;
@@ -1759,7 +1895,17 @@ std::vector<std::pair<std::string, std::string>> script_dialogue_pairs(
             sep = 1;
         }
         if (at == std::string::npos || at == 0) continue;
-        const std::string name = line.substr(0, at);
+        std::string name = line.substr(0, at);
+        // 「名字（怎么说）」：量长度时不算括号那一截，它不是名字。
+        {
+            std::string bare = name;
+            for (const char* open : {"（", "("}) {
+                const std::size_t p = bare.find(open);
+                if (p != std::string::npos) bare = bare.substr(0, p);
+            }
+            if (text::utf8_len(text::strip_ws(bare)) > 12) continue;
+            if (text::strip_ws(bare).empty()) continue;
+        }
         // **冒号前 ≤12 字就算说话人**，这是这套文本格式唯一的判据——
         // 渲染出来的台词是「名字：台词」，动作行是光秃秃一行，一旦动作行
         // 自己带了冒号，两者就分不开了。
@@ -1773,7 +1919,6 @@ std::vector<std::pair<std::string, std::string>> script_dialogue_pairs(
         // 术语），没有动这里的 12。理由：真台词的说话人受 schema 枚举约束、
         // 一定是注册角色，而这个阈值收紧多少才既挡住标签又不误伤，
         // 手上只有一次观察，不够。要动它得先有一批样本。
-        if (text::utf8_len(name) > 12) continue;
         // **正文这条路也要清一道。** strip_list_marker / strip_speech_tags
         // 跑在「模型 JSON → 拍子」那一步，管不到已经存下的剧本：老项目、
         // 人手改过的、以及修这条之前生成的那些，正文里的 `-` 会原样变成
@@ -1884,7 +2029,9 @@ std::vector<std::string> check_coverage(const std::string& script,
 int place_missing_dialogue(std::vector<Shot>& shots, const std::string& script,
                            const AssetLibrary& assets) {
     if (shots.empty()) return 0;
-    const auto want = script_dialogue_pairs(script);
+    const auto entries = script_dialogue_entries(script);
+    std::vector<std::pair<std::string, std::string>> want;
+    for (const auto& e : entries) want.emplace_back(e.name, e.said);
     if (want.empty()) return 0;
 
     // 名字 → char_id。剧本里写的是名字，镜头里存的是 id。
@@ -1982,6 +2129,10 @@ int place_missing_dialogue(std::vector<Shot>& shots, const std::string& script,
         Shot& shot = shots[static_cast<std::size_t>(target)];
         models::DialogueLine line;
         line.text = want[static_cast<std::size_t>(i)].second;
+        // 剧本里写了怎么说的就带上：配音照着念，字幕不受影响。
+        if (!entries[static_cast<std::size_t>(i)].delivery.empty()) {
+            line.emotion = entries[static_cast<std::size_t>(i)].delivery;
+        }
         const auto it = id_of.find(want[static_cast<std::size_t>(i)].first);
         // 认不出的名字当旁白。这一层不该猜，剧本那边已经把 speaker 收成
         // 枚举了，认不出来多半真是旁白。

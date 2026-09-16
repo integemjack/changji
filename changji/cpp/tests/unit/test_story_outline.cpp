@@ -1216,7 +1216,13 @@ TEST_CASE("POST /api/story/episodes：章模式下一章一集") {
     CHECK(first.title == s.chapters[0].title);
 
     // 这一章值多长：分集表里结束在这一章的条目加起来（两条 60 秒 = 120）
-    CHECK(first.target_duration_s == doctest::Approx(120.0));
+    // 2026-09-16 起按正文字数估（每秒消化多少字那个系数），不数分集条目
+    // ——短章被并进多章一集时一条都数不到、跨章的条目把整段记到后一章头上。
+    const double want_s =
+        s.chapters[0].text_len() > 0
+            ? s.chapters[0].text_len() / changji::stages::kProseCharsPerSecond
+            : 60.0;
+    CHECK(first.target_duration_s == doctest::Approx(want_s));
 
     SUBCASE("再来一次：只补元数据，写好的剧本一个字不动") {
         Project p2 = store.load_project();

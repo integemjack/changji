@@ -109,6 +109,31 @@ PromptBundle PromptComposer::compose(const Shot& shot) const {
     return compose_with(shot, shot.first_frame_prompt);
 }
 
+std::string PromptComposer::project_negative_extras() const {
+    // 读资产库那一步会把默认负向词补进 negative_prompt（图像那套）。
+    // 把默认那截削掉，剩下的才是用户自己加的。
+    std::string v = text::strip_ws(assets_.style.negative_prompt);
+    const auto strip_prefix = [&](const std::string& p) {
+        if (p.empty() || v.compare(0, p.size(), p) != 0) return;
+        v = v.substr(p.size());
+        // 紧跟的分隔符一起削
+        for (const char* sep : {"，", ", ", ","}) {
+            const std::string s = sep;
+            if (v.compare(0, s.size(), s) == 0) {
+                v = v.substr(s.size());
+                break;
+            }
+        }
+        v = text::strip_ws(v);
+    };
+    if (style_line_ == StyleLine::ANIME) {
+        strip_prefix(std::string(prompt::style::kNegativeBase) +
+                     prompt::style::kNegativeAnimeExtra);
+    }
+    strip_prefix(prompt::style::kNegativeBase);
+    return v;
+}
+
 PromptBundle PromptComposer::compose_end(const Shot& shot) const {
     if (!shot.last_frame_prompt.has_value() ||
         text::strip_ws(*shot.last_frame_prompt).empty()) {
@@ -171,7 +196,9 @@ PromptBundle PromptComposer::compose_with(const Shot& shot,
     }
     if (!insert_shot && shot.location_id.has_value() && !shot.location_id->empty()) {
         const auto it = assets_.locations.find(*shot.location_id);
-        layers.push_back(it->second.render_prompt(style_line_));
+        // 这一镜自己写了光就不带场景那句光：两句光同时在，模型两句都读。
+        const bool shot_has_light = !text::strip_ws(shot.lighting).empty();
+        layers.push_back(it->second.render_prompt(style_line_, !shot_has_light));
         // **时段对不上就别喂那张空景图。**
         //
         // 空景图一个场景只有一张，而同一个场景会有日夜两场戏。
@@ -215,16 +242,16 @@ PromptBundle PromptComposer::compose_with(const Shot& shot,
     //
     // 景别、机位、焦段一句；然后是这一镜的光；然后是画面描述。
     // 焦段和光是 2026-09-14 加的（docs/电影质感方案.md）：没填时
-    // （老分镜表）一个字不加，语料照旧。光排在场景层之后是有意的——
-    // 场景资产那句 lighting 是一场戏的基调，这一句是这一镜的，要盖过它。
-    layers.push_back(join_nonempty(
+    // （老分镜表）一个字不加，语料照旧。这一镜的光填了的话，场景层那句
+    // 光就不拼（见上面），所以这里不存在「谁盖过谁」的问题。
+    std::vector<std::string> shot_layers;
+    shot_layers.push_back(join_nonempty(
         {shot_size_zh(shot.shot_size), angle_zh(shot.camera_angle),
          lens_zh(shot.lens)},
         sep_));
-    if (!text::strip_ws(shot.lighting).empty()) layers.push_back(shot.lighting);
-    if (!picture.empty()) {
-        layers.push_back(picture);
-    }
+    if (!text::strip_ws(shot.lighting).empty()) shot_layers.push_back(shot.lighting);
+    if (!picture.empty()) shot_layers.push_back(picture);
+    for (const auto& l : shot_layers) layers.push_back(l);
 
     // ---- 风格层 ----
     //
@@ -246,6 +273,30 @@ PromptBundle PromptComposer::compose_with(const Shot& shot,
     }
 
     PromptBundle out;
+    {
+        std::vector<std::string> vs;
+        for (const auto& l : shot_layers) {
+            if (!text::strip_ws(l).empty()) vs.push_back(l);
+        }
+        out.video_scene = join_nonempty(vs, sep_);
+        out.style_layer = assets_.style.global_style;
+    }
+    // **大特写走基础文生图权重。** 这一档故意不带身份层、场景层和参考图
+    // （上面那段），而首帧那一族是 Edit 模型：没有编辑源它退化成文生图，
+    // 出来多半是彩色噪点，闸门那条「不是空图」拦不住（sd_image.cpp）。
+    // 基础版没配时 frames.cpp 会退回 Edit——那时至少带上这个场景的空景图
+    // 当编辑源（下面），一张桌子上的杯子照着空景画，比噪点强。
+    if (insert_shot) {
+        out.base_model = true;
+        if (shot.location_id.has_value() && !shot.location_id->empty()) {
+            const auto it = assets_.locations.find(*shot.location_id);
+            if (it != assets_.locations.end() && it->second.ref_empty.has_value() &&
+                !it->second.ref_empty->empty() &&
+                !lighting_clashes(it->second.lighting, shot.lighting)) {
+                refs.push_back(*it->second.ref_empty);
+            }
+        }
+    }
     // **ASCII 圆括号和方括号在 sd.cpp 里是权重语法，这里没有转义。**
     //
     // stable-diffusion.cpp 的 parse_prompt_attention 把 ( ) 当加权、
@@ -273,10 +324,14 @@ PromptBundle PromptComposer::compose_with(const Shot& shot,
     // 它是针对这一镜的具体问题加的，权重该更高。
     out.negative = join_nonempty(
         {shot.negative_prompt, assets_.style.negative_prompt}, sep_);
-    // 视频那份：镜头自己的 + 全剧的视频负向词（prompts.toml [style]）。
-    // 图像那份不带过去，理由见 PromptBundle::negative_video。
+    // 视频那份：镜头自己的 + 项目页「负向」框里用户自己加的 + 全剧的视频
+    // 负向词（prompts.toml [style]）。图像那份的默认串（「多余的手指」）
+    // 不带过去，理由见 PromptBundle::negative_video；但用户在那个框里
+    // **自己加的**要带——文件里推荐它「再压一道」，而 2026-09-16 之前它一个
+    // 字都进不了视频。
     out.negative_video = join_nonempty(
-        {shot.negative_prompt, prompt::style::kNegativeVideo}, sep_);
+        {shot.negative_prompt, project_negative_extras(), prompt::style::kNegativeVideo},
+        sep_);
     out.reference_images = std::move(refs);
     return out;
 }
@@ -320,16 +375,24 @@ std::string PromptComposer::motion_prompt(const Shot& shot) const {
     const std::string motion =
         motion_covering(text::strip_ws(shot.motion_prompt), shot.duration_s);
 
-    // 分镜模型已经按时间码分段：运镜词并进第一段（紧跟第一个「]」），
-    // 角色动作接在最后。
+    // 分镜模型已经按时间码分段：运镜它自己写在段里了（规则第 6 条要它写
+    // 名字、幅度、速度），不再前插枚举词——前插就是「镜头缓慢推近, 缓慢推近」。
+    // 角色动作并进**第一段**：它是这一镜的起始状态；接在整串末尾的话，
+    // 三段的镜头里所有动作都被读成最后一段的事（2026-09-16 查出）。
     if (!motion.empty() && motion.front() == '[') {
         const std::size_t close = motion.find(']');
         if (close != std::string::npos) {
-            std::string head = motion.substr(0, close + 1);
+            const std::string head = motion.substr(0, close + 1);
             std::string rest = text::strip_ws(motion.substr(close + 1));
-            std::vector<std::string> first = {move_zh(shot.camera_move), rest};
-            std::string out = head + " " + join_nonempty(first, sep_);
-            if (!actions.empty()) out += sep_ + join_nonempty(actions, sep_);
+            // 第一段到下一个时间码为止
+            const std::size_t next = rest.find('[');
+            std::string first = next == std::string::npos ? rest : rest.substr(0, next);
+            std::string later = next == std::string::npos ? "" : rest.substr(next);
+            first = text::strip_ws(first);
+            std::vector<std::string> parts = {first};
+            parts.insert(parts.end(), actions.begin(), actions.end());
+            std::string out = head + " " + join_nonempty(parts, sep_);
+            if (!later.empty()) out += " " + text::strip_ws(later);
             return out;
         }
     }

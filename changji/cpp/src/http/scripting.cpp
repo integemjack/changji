@@ -261,16 +261,36 @@ ApiResult post_script_write(const json& body, llm::Client& client,
     // 不是下面那个「最近三集原文截 4000 字符」。
     Story story;
     const EpisodePlan* plan = nullptr;
+    EpisodePlan chapter_plan_storage;
+    // **章模式**（[assembly].episode_s > 0）：没有秒数、没有字数，这一章
+    // 写多长由内容定；分镜出片之后再按 episode_s 切成几集。
+    const bool chapter_mode =
+        config::load_settings(store.root()).assembly.episode_s > 0.0;
     if (!episode_id.empty()) {
         try {
             story = store.load_story();
         } catch (const std::exception&) {
             // 读不了就当没有，退回老路径。老项目本来就没有这个文件。
         }
-        for (const auto& p : story.plan) {
-            if (p.episode_id == episode_id) {
-                plan = &p;
-                break;
+        // 章模式：这一集就是一章，计划按章配（整章、钩子取最后一场的
+        // turn）。**不按 episode_id 去分集表里查**——那张表的 id 是按切片
+        // 发的，一章切两段就有两条，和「ch07 → ep07」对不上，查到的是
+        // 隔壁章的半截（2026-09-16 实撞）。
+        if (chapter_mode) {
+            const Episode* ep = project.episode_by_id(episode_id);
+            if (ep != nullptr && !ep->chapter_refs.empty() &&
+                story.chapter_by_id(ep->chapter_refs.front()) != nullptr) {
+                chapter_plan_storage = stages::chapter_plan(
+                    story, ep->chapter_refs.front(), ep->target_duration_s);
+                plan = &chapter_plan_storage;
+            }
+        }
+        if (plan == nullptr) {
+            for (const auto& p : story.plan) {
+                if (p.episode_id == episode_id) {
+                    plan = &p;
+                    break;
+                }
             }
         }
     }
@@ -300,9 +320,7 @@ ApiResult post_script_write(const json& body, llm::Client& client,
     const std::vector<std::string> names =
         reuse_chars ? character_names(assets) : std::vector<std::string>{};
 
-    bool chapter_mode = false;
-
-    int chapter_chars = 0;
+    std::vector<stages::ScenePlan> chapter_scenes;
 
     std::string prompt;
     const char* source = "premise";
@@ -329,28 +347,45 @@ ApiResult post_script_write(const json& body, llm::Client& client,
     if (plan != nullptr) {
         // 上一集的结尾拿来接语气。**按分集表的顺序取上一条**，不是按
         // project.episodes 的顺序——后者可能被手动加过集、插过预告片。
+        // 章模式按章：上一章对应的那一集（chapter_refs 指着上一章的）。
         std::string prev_tail;
-        for (std::size_t i = 0; i < story.plan.size(); ++i) {
-            if (story.plan[i].episode_id != episode_id) continue;
-            if (i == 0) break;
-            const Episode* prev_ep =
-                project.episode_by_id(story.plan[i - 1].episode_id);
-            if (prev_ep != nullptr) {
-                prev_tail = stages::script_tail(prev_ep->script);
+        if (chapter_mode && plan == &chapter_plan_storage) {
+            const Chapter* prev_ch = nullptr;
+            for (std::size_t i = 1; i < story.chapters.size(); ++i) {
+                if (story.chapters[i].chapter_id == plan->from_chapter) {
+                    prev_ch = &story.chapters[i - 1];
+                    break;
+                }
             }
-            break;
+            if (prev_ch != nullptr) {
+                for (const Episode& e : project.episodes) {
+                    if (std::find(e.chapter_refs.begin(), e.chapter_refs.end(),
+                                  prev_ch->chapter_id) != e.chapter_refs.end()) {
+                        prev_tail = stages::script_tail(e.script);
+                        break;
+                    }
+                }
+            }
+        } else {
+            for (std::size_t i = 0; i < story.plan.size(); ++i) {
+                if (story.plan[i].episode_id != episode_id) continue;
+                if (i == 0) break;
+                const Episode* prev_ep =
+                    project.episode_by_id(story.plan[i - 1].episode_id);
+                if (prev_ep != nullptr) {
+                    prev_tail = stages::script_tail(prev_ep->script);
+                }
+                break;
+            }
         }
         // 形状每写一次摇一个新的（ComfyUI 的 randomize 那个意思）——**不是
         // 按集号哈希**，那样同一集永远是同一个形状，人不喜欢这一集的节奏也
         // 换不掉。不满意就再点一次「重新改编」，满意了点采用，形状跟着定下来。
-        // **章模式**（[assembly].episode_s > 0）：没有秒数、没有字数，这一章
-        // 写多长由内容定；分镜出片之后再按 episode_s 切成几集。见
-        // build_chapter_script_prompt 和 act_plan_for_chapter。
-        chapter_mode = config::load_settings(store.root()).assembly.episode_s > 0.0;
+        // 章模式没有形状：剧本照正文的场走，见 build_chapter_script_prompt。
         if (chapter_mode) {
+            chapter_scenes = stages::chapter_scene_plan(story, *plan);
             prompt = stages::build_chapter_script_prompt(
-                story, *plan, project.style_line, names, prev_tail, variation,
-                &chapter_chars);
+                story, *plan, project.style_line, names, prev_tail, chapter_scenes);
         } else {
             prompt = stages::build_script_prompt_from_story(
                 story, *plan, project.style_line, names, prev_tail, variation);
@@ -374,8 +409,9 @@ ApiResult post_script_write(const json& body, llm::Client& client,
     //
     // 名字同理：提示词里说了「一字不改」，实跑还是写出了林浩 / Lin Hao /
     // LinHao / Su Wan 四种。收成枚举，和分镜那边收 char_id 是一个道理。
-    req.schema = chapter_mode
-                     ? stages::script_schema_for_chapter(chapter_chars, names, variation)
+    const bool chapter_script = chapter_mode && plan != nullptr;
+    req.schema = chapter_script
+                     ? stages::script_schema_for_chapter(chapter_scenes, names)
                      : stages::script_schema(used_duration, names, variation);
     req.schema_name = "script";
     req.on_thinking = thinking_sink();
@@ -386,9 +422,10 @@ ApiResult post_script_write(const json& body, llm::Client& client,
     pipeline::Activity act{"script", paths::to_utf8(store.root()), episode_id,
                            plan != nullptr ? "正在改编成剧本" : "正在写剧本"};
     const stages::ScriptDraft draft = llm_guard([&] {
-        // 章模式传 0：段头上不贴秒数（parse_script 只在 > 0 时贴）。
-        return stages::parse_script(client.complete(req, tok),
-                                    chapter_mode ? 0.0 : used_duration, variation);
+        const std::string raw = client.complete(req, tok);
+        return chapter_script
+                   ? stages::parse_chapter_script(raw, chapter_scenes)
+                   : stages::parse_script(raw, used_duration, variation);
     });
 
     // 梗概存到项目上。下次写新一集时直接回填，不用凭记忆重打。
@@ -415,7 +452,7 @@ ApiResult post_script_write(const json& body, llm::Client& client,
     json out = draft_common(draft, used_duration);
     // 写长了后面配音会把镜头撑爆，写短了成片不够时长，都得说出来
     // 章模式没有字数预算——长度由内容定，不判长短。
-    out["fit"] = chapter_mode            ? "合适"
+    out["fit"] = chapter_script          ? "合适"
                  : chars > budget * 1.35 ? "偏长"
                  : chars < budget * 0.6  ? "偏短"
                                          : "合适";

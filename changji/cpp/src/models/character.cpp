@@ -216,12 +216,13 @@ void Location::validate(std::vector<std::string>& errs) const {
     if (lighting.empty()) errs.push_back(location_id + "：lighting 不能为空");
 }
 
-std::string Location::render_prompt(StyleLine style_line) const {
+std::string Location::render_prompt(StyleLine style_line, bool with_lighting) const {
     // 注意：这里 Python 用的是 p.strip() 而不是 rstrip 标点，
     // 和 AppearanceBlock.render 不一样。不要"顺手统一"，
-    // 输出必须逐字节对齐。
+    // 输出必须逐字节对齐（with_lighting = true 那条路）。
     std::vector<std::string> parts;
     for (const std::string* p : {&space, &lighting, &palette}) {
+        if (p == &lighting && !with_lighting) continue;
         std::string t = strip_ws(*p);
         if (!t.empty()) parts.push_back(std::move(t));
     }

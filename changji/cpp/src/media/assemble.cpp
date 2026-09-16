@@ -50,7 +50,8 @@ std::vector<SubtitleCue> Timeline::cues() const {
 
 Timeline build_timeline(const std::vector<models::Shot>& shots,
                         const models::ProjectPaths& paths,
-                        const config::AssemblyConfig& config) {
+                        const config::AssemblyConfig& config,
+                        const std::function<double(const std::filesystem::path&)>& probe) {
     Timeline timeline;
     double cursor = 0.0;
 
@@ -94,8 +95,18 @@ Timeline build_timeline(const std::vector<models::Shot>& shots,
         // 4 秒的镜头出来可能是 107 帧 = 4.458 秒。按名义值排的话，每一镜
         // 差的那几百毫秒会**逐镜累积**——十几镜之后字幕和画面能错开好几秒，
         // 而每一段单独看都是对的，最难查的那种。
-        const double real =
+        double real =
             stages::video_limits().real_duration_s(shot.duration_s, config.fps);
+        // 能量到文件就按文件的：名义值对齐到的是**现在**的帧格，而这一镜
+        // 可能是在另一份 limits 下出的。
+        if (probe) {
+            try {
+                const double measured = probe(video);
+                if (measured > 0.0) real = measured;
+            } catch (const std::exception&) {
+                // 探不到就按名义值
+            }
+        }
 
         TimelineEntry entry;
         entry.shot_id = shot.shot_id;

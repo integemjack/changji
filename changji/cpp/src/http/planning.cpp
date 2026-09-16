@@ -503,6 +503,8 @@ ApiResult post_plan(const json& body, llm::Client& client,
     sb.assets = assets;
     sb.episode_id = episode_id;
     sb.duration_s = duration_s;
+    sb.content_driven =
+        config::load_settings(store.root()).assembly.episode_s > 0.0;
     sb.on_thinking = thinking_sink();
     sb.on_progress = [&act](const std::string& m) { act.set_message(m); };
 

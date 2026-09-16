@@ -59,6 +59,13 @@ struct Task {
     models::Tier tier = models::Tier::DRAFT;
     /// 首帧图。出片时可能有（图生视频），出图时没有。
     std::optional<std::string> start_image;
+    /// 尾帧图（首尾帧那条路，FL2VA）。2026-09-16 之前这一项不在协议里：
+    /// 填了 last_frame_prompt、尾帧也出来了，走工作进程池就退回单帧图生
+    /// 视频，一声不吭——同一集换条执行路径结果不同。
+    std::optional<std::string> end_image;
+    /// 留不留模型自己出的声音。**跟着任务走**，不读工作进程那台的设置：
+    /// 那样同一集里不同节点出的镜头一半有环境声一半没有。没带就按本机。
+    std::optional<bool> keep_ambient;
     /// 产物落在哪。**绝对路径**——工作进程可能在别的工作目录里跑。
     ///
     /// `return_artifact` 为真时这一项**没有意义**：那时候对面写的是自己的

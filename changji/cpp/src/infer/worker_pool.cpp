@@ -242,6 +242,10 @@ struct WorkerPool::Impl {
                 t.start_image =
                     ship_input(cli, prefix, workers[idx].ep.url, *t.start_image);
             }
+            if (t.end_image) {
+                t.end_image =
+                    ship_input(cli, prefix, workers[idx].ep.url, *t.end_image);
+            }
         }
 
         auto res = cli.Post(prefix + "/task", to_json(t).dump(),
@@ -477,6 +481,8 @@ stages::VideoRenderer WorkerPool::video_renderer() {
         t.style_line = plan.style_line;
         t.tier = plan.tier;
         if (start_image) t.start_image = paths::to_utf8(*start_image);
+        if (plan.end_image) t.end_image = paths::to_utf8(*plan.end_image);
+        t.keep_ambient = plan.keep_ambient;
         t.dest = paths::to_utf8(dest);
         // **出片用 render_seed，不是 frame_seed。** 两个是不同的函数，
         // 算出来的种子不同、画面就不同。写错了不会报错、不会变慢，

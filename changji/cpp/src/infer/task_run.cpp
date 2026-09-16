@@ -199,6 +199,8 @@ TaskResult run_task_locally(const Task& t, const config::Settings& base,
             plan.prompts = t.prompts;
             plan.motion = t.motion;
             plan.style_line = t.style_line;
+            plan.keep_ambient = t.keep_ambient;
+            if (t.end_image) plan.end_image = resolve_input(cache, *t.end_image);
             std::optional<std::filesystem::path> start;
             if (t.start_image) start = resolve_input(cache, *t.start_image);
             sd_video_renderer_with_seed(s, t.seed, origin)(

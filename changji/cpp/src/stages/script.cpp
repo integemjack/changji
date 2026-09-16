@@ -582,27 +582,21 @@ std::vector<ActSpec> act_plan(double duration_s, std::uint32_t variation) {
     return out;
 }
 
-std::vector<ActSpec> act_plan_for_chapter(int source_chars,
-                                          std::uint32_t variation) {
-    // 形状和比重借 act_plan 的：给它一个固定的名义时长只为挑形状，
-    // 秒数本身随后全部抹掉。
-    std::vector<ActSpec> out = act_plan(60.0, variation);
-    // 拍数按篇幅：六十字一拍起步，二十字一拍封顶。不足八拍的章也按八拍
-    // 起（四段每段至少两拍，少了就不是一段）。
-    const int chars = std::max(0, source_chars);
-    const int total_min = std::max(8, chars / 60);
-    const int total_max = std::max(total_min + 8, chars / 20);
-    // 按 act_plan 给的秒数比重分到四段
-    int sum_s = 0;
-    for (const ActSpec& a : out) sum_s += std::max(1, a.to_s - a.from_s);
-    for (ActSpec& a : out) {
-        const double share =
-            static_cast<double>(std::max(1, a.to_s - a.from_s)) / sum_s;
-        a.min_beats = std::max(2, static_cast<int>(std::lround(total_min * share)));
-        a.max_beats = std::max(a.min_beats + 2,
-                               static_cast<int>(std::lround(total_max * share)));
-        a.from_s = 0;
-        a.to_s = 0;
+std::vector<ScenePlan> scene_plan_for_chapter(
+    const std::vector<std::pair<std::string, int>>& scene_chars) {
+    std::vector<std::pair<std::string, int>> src = scene_chars;
+    if (src.empty()) src.emplace_back("", 0);
+    std::vector<ScenePlan> out;
+    for (std::size_t i = 0; i < src.size(); ++i) {
+        ScenePlan p;
+        p.key = "s" + std::to_string(i + 1);
+        p.where = src[i].first;
+        p.chars = std::max(0, src[i].second);
+        // 一拍六十字起步、二十字封顶。再短的场也有四拍：场次头、环境、
+        // 一个动作、一句话——少于这个就不是一场戏。
+        p.min_beats = std::max(4, p.chars / 60);
+        p.max_beats = std::max(p.min_beats + 4, p.chars / 20);
+        out.push_back(std::move(p));
     }
     return out;
 }
@@ -781,11 +775,23 @@ std::string ScriptDraft::render() const {
             return;
         }
         if (t.empty()) return;
+        // 潜台词和特效挂在拍子末尾的 〔〕 里：分镜认它、配音那条路
+        // （script_dialogue_pairs）会把它削掉。
+        std::string tail;
+        const std::string sub = strip_ascii(b.subtext);
+        const std::string fx = strip_ascii(b.fx);
+        if (!sub.empty()) tail += "〔" + sub + "〕";
+        if (!fx.empty()) tail += "〔特效：" + fx + "〕";
         if (b.kind == "dialogue") {
             const std::string name = strip_ascii(b.speaker);
-            lines.push_back(name.empty() ? t : name + "：" + t);
+            const std::string how = strip_ascii(b.delivery);
+            std::string head = name;
+            // 「林晚（压着嗓子）：台词」。括号里是怎么说的，分镜填进
+            // emotion、配音照着念；script_dialogue_pairs 认这个形状。
+            if (!name.empty() && !how.empty()) head += "（" + how + "）";
+            lines.push_back(head.empty() ? t + tail : head + "：" + t + tail);
         } else {
-            lines.push_back(t);
+            lines.push_back(t + tail);
         }
     };
     if (acts.empty()) {
@@ -909,7 +915,8 @@ namespace {
 /// characters 非空时把 speaker 收紧成枚举——名字必须一字不差，
 /// 空串留给动作行。
 ordered beat_item_schema(bool with_floor,
-                         const std::vector<std::string>& characters = {}) {
+                         const std::vector<std::string>& characters = {},
+                         bool rich = false) {
     ordered beat_props = ordered::object();
     beat_props["kind"] = {
         {"type", "string"},
@@ -944,6 +951,42 @@ ordered beat_item_schema(bool with_floor,
     items["type"] = "object";
     items["additionalProperties"] = false;
     items["required"] = {"kind", "speaker", "text"};
+    if (rich) {
+        // 章模式的四栏。**全进 required**：不在里面的字段模型整个略过
+        // （storyboard.cpp 那条坐实过的机制），用不上就填空串 / 空数组。
+        ordered names = ordered::object();
+        names["type"] = "string";
+        if (!characters.empty()) {
+            ordered en = ordered::array();
+            for (const std::string& n : characters) en.push_back(n);
+            names["enum"] = en;
+        }
+        beat_props["characters"] = {
+            {"type", "array"},
+            {"items", names},
+            {"description",
+             "这一拍画面里有谁，用人物表里的名字。环境拍、空镜填空数组"}};
+        beat_props["delivery"] = {
+            {"type", "string"},
+            {"maxLength", 30},
+            {"description",
+             "kind=dialogue 时这句是怎么说的：压着嗓子、笑着说、说到一半停住。"
+             "不是台词就填空串"}};
+        beat_props["subtext"] = {
+            {"type", "string"},
+            {"maxLength", 60},
+            {"description",
+             "潜台词：这个人此刻真正想要什么、在藏什么、怕什么。不进画面、"
+             "不进配音，只给分镜挑机位和表情用。场次头填空串"}};
+        beat_props["fx"] = {
+            {"type", "string"},
+            {"maxLength", 40},
+            {"description",
+             "这一拍需要的特效，写成画面里看得见的样子（火、雨、烟、玻璃碎、"
+             "灯忽然灭）。没有就填空串"}};
+        items["required"] = {"kind", "speaker", "text", "characters",
+                             "delivery", "subtext", "fx"};
+    }
     items["properties"] = beat_props;
     return items;
 }
@@ -1015,38 +1058,45 @@ ordered script_schema(double duration_s,
     return out;
 }
 
-ordered script_schema_for_chapter(int source_chars,
-                                  const std::vector<std::string>& characters,
-                                  std::uint32_t variation) {
-    const std::vector<ActSpec> specs = act_plan_for_chapter(source_chars, variation);
-
+ordered script_schema_for_chapter(const std::vector<ScenePlan>& scenes,
+                                  const std::vector<std::string>& characters) {
     ordered props = ordered::object();
     put_title_and_logline(props);
-    ordered required = ordered::array({"title", "logline"});
-    for (std::size_t i = 0; i < specs.size(); ++i) {
-        const ActSpec& s = specs[i];
+
+    // 一场一个命名字段，理由和四段那份一样：GBNF 按 properties 的顺序生成，
+    // 几场就一定按顺序、一场不少地出来，而且每场的地板各不相同。
+    ordered scene_props = ordered::object();
+    ordered scene_required = ordered::array();
+    for (const ScenePlan& p : scenes) {
         ordered beats = ordered::object();
         beats["type"] = "array";
-        beats["minItems"] = s.min_beats;
-        beats["maxItems"] = s.max_beats;
-        beats["description"] = s.label + "。" + s.brief;
-        beats["items"] = beat_item_schema(true, characters);
+        beats["minItems"] = p.min_beats;
+        beats["maxItems"] = p.max_beats;
+        beats["description"] =
+            (p.where.empty() ? std::string("这一场") : p.where) +
+            "。第一拍是 kind=scene 的场次头";
+        beats["items"] = beat_item_schema(true, characters, /*rich=*/true);
 
-        ordered act = ordered::object();
-        act["type"] = "object";
-        act["additionalProperties"] = false;
-        act["required"] = {"beats"};
-        act["properties"] = ordered::object();
-        act["properties"]["beats"] = beats;
-
-        props[s.key] = act;
-        required.push_back(s.key);
+        ordered sc = ordered::object();
+        sc["type"] = "object";
+        sc["additionalProperties"] = false;
+        sc["required"] = {"beats"};
+        sc["properties"] = ordered::object();
+        sc["properties"]["beats"] = beats;
+        scene_props[p.key] = sc;
+        scene_required.push_back(p.key);
     }
+    ordered scenes_obj = ordered::object();
+    scenes_obj["type"] = "object";
+    scenes_obj["additionalProperties"] = false;
+    scenes_obj["required"] = scene_required;
+    scenes_obj["properties"] = scene_props;
+    props["scenes"] = scenes_obj;
 
     ordered out = ordered::object();
     out["type"] = "object";
     out["additionalProperties"] = false;
-    out["required"] = required;
+    out["required"] = {"title", "logline", "scenes"};
     out["properties"] = props;
     return out;
 }
@@ -1152,7 +1202,33 @@ void parse_beats_into(const json& arr, std::vector<Beat>& out) {
         if (kind == "dialogue") t = strip_wrapper(strip_speech_tags(t, speaker));
         if (t.empty()) continue;
 
-        out.push_back(Beat{kind, speaker, t});
+        Beat b{kind, speaker, t};
+        // 章模式的四栏。集模式的回包里没有，留空。
+        if (const auto it = item.find("characters");
+            it != item.end() && it->is_array()) {
+            for (const auto& n : *it) {
+                if (!n.is_string()) continue;
+                const std::string name = strip_ascii(n.get<std::string>());
+                if (!name.empty()) b.characters.push_back(name);
+            }
+        }
+        b.delivery = strip_wrapper(strip_ascii(get_str(item, "delivery")));
+        b.subtext = strip_wrapper(strip_ascii(get_str(item, "subtext")));
+        b.fx = strip_wrapper(strip_ascii(get_str(item, "fx")));
+        // 〔〕是渲染时给潜台词用的括号，模型自己写进来的先削掉，不然嵌套。
+        for (std::string* f : {&b.delivery, &b.subtext, &b.fx}) {
+            std::string& v = *f;
+            std::string cleaned;
+            for (std::size_t i = 0; i < v.size();) {
+                if (v.compare(i, 3, "〔") == 0 || v.compare(i, 3, "〕") == 0) {
+                    i += 3;
+                    continue;
+                }
+                cleaned += v[i++];
+            }
+            v = cleaned;
+        }
+        out.push_back(std::move(b));
     }
 }
 
@@ -1212,6 +1288,54 @@ ScriptDraft parse_script(const std::string& raw, double duration_s,
         [](const Beat& b) { return b.kind == "dialogue"; });
     if (!any_dialogue) {
         throw ScriptError("整集一句台词都没有，这样出来的是默片");
+    }
+    return draft;
+}
+
+ScriptDraft parse_chapter_script(const std::string& raw,
+                                 const std::vector<ScenePlan>& scenes) {
+    json data;
+    try {
+        data = extract_json(raw);
+    } catch (const std::exception& e) {
+        throw ScriptError(e.what());
+    }
+    if (!data.is_object()) throw ScriptError("大模型没有返回对象");
+
+    ScriptDraft draft;
+    draft.title = strip_ascii(get_str(data, "title"));
+    draft.logline = strip_ascii(get_str(data, "logline"));
+
+    const json& sc = data.contains("scenes") ? data.at("scenes") : json();
+    if (sc.is_object() && !scenes.empty()) {
+        for (const ScenePlan& p : scenes) {
+            if (!sc.contains(p.key)) continue;
+            const json& node = sc.at(p.key);
+            const json& arr = node.is_object() && node.contains("beats")
+                                  ? node.at("beats")
+                                  : node;
+            std::vector<Beat> beats;
+            parse_beats_into(arr, beats);
+            if (beats.empty()) continue;
+            // 一场的第一拍必须是场次头：它是分镜切场、装配切集的切点。
+            // 模型漏了就补一个空的——「【第N场】」仍是切点，只是没说在哪。
+            if (beats.front().kind != "scene") {
+                beats.insert(beats.begin(), Beat{"scene", "", ""});
+            }
+            draft.beats.insert(draft.beats.end(), beats.begin(), beats.end());
+        }
+    } else {
+        // 模型没按场给（或者根本没有场）：认平的 beats，和预告片一样。
+        json beats_raw = data.contains("beats") ? data["beats"] : json();
+        if (beats_raw.is_array()) parse_beats_into(beats_raw, draft.beats);
+    }
+
+    if (draft.beats.empty()) throw ScriptError("大模型没写出任何内容");
+    const bool any_dialogue = std::any_of(
+        draft.beats.begin(), draft.beats.end(),
+        [](const Beat& b) { return b.kind == "dialogue"; });
+    if (!any_dialogue) {
+        throw ScriptError("整章一句台词都没有，这样出来的是默片");
     }
     return draft;
 }

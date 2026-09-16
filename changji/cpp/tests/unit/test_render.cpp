@@ -179,11 +179,16 @@ TEST_CASE("视频提示词是画面加运动") {
     const auto plan = stages::make_plan(shot, make_spec(), composer, "9:16");
 
     const std::string v = stages::video_positive(plan);
-    CHECK(v.find("二十七岁女性") != std::string::npos);      // 画面
+    // 2026-09-16 起：画面（这一镜自己的描述）+ 运动 + 风格层，**不带身份层**
+    // ——首帧已经把长相定死了，再喂整段外观出片模型会重画一遍角色。
+    CHECK(v.find("二十七岁女性") == std::string::npos);      // 身份层不在
+    CHECK(v.find(shot.first_frame_prompt) != std::string::npos);   // 画面
     CHECK(v.find("镜头缓慢推近") != std::string::npos);      // 运动
     CHECK(v.find("雨丝斜掠") != std::string::npos);
-    // 画面在前，运动在后
-    CHECK(v.find("二十七岁女性") < v.find("镜头缓慢推近"));
+    CHECK(v.find("电影感") != std::string::npos);            // 风格层
+    // 画面在前，运动在中，风格在后
+    CHECK(v.find(shot.first_frame_prompt) < v.find("镜头缓慢推近"));
+    CHECK(v.find("镜头缓慢推近") < v.find("电影感"));
 
     SUBCASE("动画线用半角逗号加空格，写实线用全角逗号") {
         // **原来这里是错的。** 两个视频后端（comfy/renderers.cpp 和
@@ -205,10 +210,10 @@ TEST_CASE("视频提示词是画面加运动") {
 
         REQUIRE_FALSE(ap.motion.empty());
         CHECK(av.find(", ") != std::string::npos);
-        CHECK(av.find(ap.prompts.positive + ", " + ap.motion) == 0);
+        CHECK(av.find(ap.prompts.video_scene + ", " + ap.motion) == 0);
 
         // 写实线仍是全角逗号，没被顺手改掉
-        CHECK(v.find(plan.prompts.positive + "，" + plan.motion) == 0);
+        CHECK(v.find(plan.prompts.video_scene + "，" + plan.motion) == 0);
     }
 
     SUBCASE("style_line 跟着资产库走，不是默认值") {
@@ -227,8 +232,14 @@ TEST_CASE("视频提示词是画面加运动") {
         p.motion.clear();
         const std::string s =
             stages::video_positive(p);
-        CHECK(s == p.prompts.positive);
+        CHECK(s == p.prompts.video_scene + "，" + p.prompts.style_layer);
         CHECK(s.rfind("，") != s.size() - 3);
+    }
+    SUBCASE("老计划（工作进程那头版本旧、没有 video_scene）退回整段 positive") {
+        stages::RenderPlan p = plan;
+        p.prompts.video_scene.clear();
+        p.prompts.style_layer.clear();
+        CHECK(stages::video_positive(p) == p.prompts.positive + "，" + p.motion);
     }
 }
 

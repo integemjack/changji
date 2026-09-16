@@ -123,8 +123,94 @@ std::string script_tail(const std::string& script) {
     return text::strip_ws(tail);
 }
 
+EpisodePlan chapter_plan(const Story& story, const std::string& chapter_id,
+                         double target_duration_s) {
+    EpisodePlan p;
+    p.from_chapter = chapter_id;
+    p.to_chapter = chapter_id;
+    p.from_char = 0;
+    p.target_duration_s = target_duration_s;
+    const Chapter* c = story.chapter_by_id(chapter_id);
+    if (c == nullptr) return p;
+    p.title = c->title;
+    p.to_char = c->text_len();
+    // 停在哪：最后一场的 turn 是这一章的收口；没有场（粘贴导入的故事）
+    // 就拿最后一条有说法的钩子；再没有就空着，提示词写「最后一场的落点」。
+    for (auto it = c->scenes.rbegin(); it != c->scenes.rend(); ++it) {
+        if (!text::strip_ws(it->turn).empty()) {
+            p.hook = it->turn;
+            break;
+        }
+    }
+    if (p.hook.empty()) {
+        for (auto it = c->hooks.rbegin(); it != c->hooks.rend(); ++it) {
+            if (!text::strip_ws(it->text).empty()) {
+                p.hook = it->text;
+                break;
+            }
+        }
+    }
+    return p;
+}
+
+std::vector<ScenePlan> chapter_scene_plan(const Story& story,
+                                          const EpisodePlan& plan) {
+    std::vector<std::pair<std::string, int>> scene_chars;
+    const int a = index_of(story, plan.from_chapter);
+    if (a >= 0) {
+        const int b0 = index_of(story, plan.to_chapter);
+        const int b = b0 < a ? a : b0;
+        for (int i = a; i <= b; ++i) {
+            const Chapter& c = story.chapters[static_cast<std::size_t>(i)];
+            const int len = c.text_len();
+            const int from = (i == a) ? plan.from_char : 0;
+            const int to = (i == b) ? plan.to_char : len;
+            for (const Scene& s : c.scenes) {
+                if (s.to_char <= from || s.from_char >= to) continue;
+                std::string where;
+                if (!s.where.empty()) where += s.where;
+                if (!s.pov.empty()) where += "。跟着" + s.pov + "走";
+                if (!s.goal.empty()) where += "：他要" + s.goal;
+                if (!s.obstacle.empty()) where += "；拦着他的是" + s.obstacle;
+                if (!s.turn.empty()) where += "。收在：" + s.turn;
+                const int chars = std::min(s.to_char, to) - std::max(s.from_char, from);
+                scene_chars.emplace_back(where, std::max(0, chars));
+            }
+        }
+    }
+    if (scene_chars.empty()) {
+        // 没有场：整章一场，篇幅按正文（没正文按梗概）。
+        std::string body = episode_text(story, plan);
+        if (body.empty()) {
+            for (const auto& id : episode_chapters(story, plan)) {
+                const Chapter* c = story.chapter_by_id(id);
+                if (c != nullptr) body += c->summary;
+            }
+        }
+        scene_chars.emplace_back("", static_cast<int>(text::utf8_len(body)));
+    }
+    return scene_plan_for_chapter(scene_chars);
+}
+
+std::string truncate_middle(const std::string& body, std::size_t limit) {
+    const std::vector<std::string> chars = text::utf8_chars(body);
+    if (chars.size() <= limit || limit < 20) {
+        return limit < 20 ? text::truncate_utf8(body, limit) : body;
+    }
+    const std::size_t head_n = limit * 6 / 10;
+    const std::size_t tail_n = limit - head_n;
+    std::string out;
+    for (std::size_t i = 0; i < head_n; ++i) out += chars[i];
+    out += "\n……（中间略）……\n";
+    for (std::size_t i = chars.size() - tail_n; i < chars.size(); ++i) out += chars[i];
+    return out;
+}
+
 std::string render_script_context(const Story& story, const EpisodePlan& plan,
-                                  const std::string& previous_tail) {
+                                  const std::string& previous_tail,
+                                  const std::vector<ScenePlan>* chapter_scenes) {
+    const bool chapter_mode = chapter_scenes != nullptr;
+    const char* unit = chapter_mode ? "这一章" : "这一集";
     std::string out;
 
     if (!story.logline.empty()) out += "【这个故事】" + story.logline + "\n";
@@ -166,45 +252,80 @@ std::string render_script_context(const Story& story, const EpisodePlan& plan,
         }
         return 0;
     }();
-    std::string recap;
+    // **从最近的章往前攒，攒满为止。** 原来是从第 1 章往后拼再截尾——
+    // 章一多，截掉的正是最近几章，而那几章恰恰是连贯最需要的。
+    std::vector<std::string> recap_lines;
     for (int i = 0; i < first; ++i) {
         const Chapter& c = story.chapters[i];
-        recap += std::to_string(i + 1) + " " + c.title;
-        if (!c.summary.empty()) recap += "：" + text::collapse_ws(c.summary);
-        recap += "\n";
+        std::string line = std::to_string(i + 1) + " " + c.title;
+        if (!c.summary.empty()) line += "：" + text::collapse_ws(c.summary);
+        recap_lines.push_back(line + "\n");
+    }
+    std::string recap;
+    {
+        std::size_t used = 0;
+        std::vector<std::string> kept;
+        for (auto it = recap_lines.rbegin(); it != recap_lines.rend(); ++it) {
+            const std::size_t n = text::utf8_len(*it);
+            if (used + n > prompt::script_story::kRecapMaxChars && !kept.empty()) break;
+            kept.push_back(*it);
+            used += n;
+        }
+        for (auto it = kept.rbegin(); it != kept.rend(); ++it) recap += *it;
+        if (kept.size() < recap_lines.size()) {
+            recap = "（更早的几章略）\n" + recap;
+        }
     }
     if (!recap.empty()) {
         out += "\n【前情提要】（之前发生过的事，不要再演一遍）\n";
-        out += text::truncate_utf8(recap, prompt::script_story::kRecapMaxChars);
+        out += text::truncate_utf8(recap, prompt::script_story::kRecapMaxChars + 20);
     }
 
     const std::string tail = text::strip_ws(previous_tail);
     if (!tail.empty()) {
-        out += "\n【上一集是这么结束的】\n";
+        out += std::string("\n【上一") + (chapter_mode ? "章" : "集") +
+               "是这么结束的】\n";
         out += text::truncate_utf8(tail, prompt::script_story::kPrevTailMaxChars);
         out += "\n";
     }
 
     // **这一集在哪、跟着谁。** 正文里这些是化在叙述里的，模型顺着读容易
     // 把地点写丢——而一集的每一镜都要照着地点画，丢了就镜镜不一样。
-    const std::vector<Scene> scenes = episode_scenes(story, plan);
-    if (!scenes.empty()) {
-        out += "\n【这一集的场】\n";
-        for (const Scene& s : scenes) {
-            if (!s.where.empty()) out += s.where;
-            if (!s.pov.empty()) out += "。跟着" + s.pov + "走";
-            if (!s.goal.empty()) out += "：他要" + s.goal;
-            if (!s.obstacle.empty()) out += "；拦着他的是" + s.obstacle;
-            out += "。\n";
+    if (chapter_mode) {
+        // 章模式：场次清单就是 JSON 里 scenes 的形状，一场一行，带地板。
+        out += prompt::script_story::kScenesHead;
+        for (std::size_t i = 0; i < chapter_scenes->size(); ++i) {
+            const ScenePlan& p = (*chapter_scenes)[i];
+            out += prompt::script_story::kSceneLinePre + std::to_string(i + 1) +
+                   prompt::script_story::kSceneLineMid;
+            if (!p.where.empty()) out += p.where + "。";
+            out += prompt::script_story::kSceneLineBeatsPre +
+                   std::to_string(p.min_beats) +
+                   prompt::script_story::kSceneLineBeatsPost + "\n";
+        }
+    } else {
+        const std::vector<Scene> scenes = episode_scenes(story, plan);
+        if (!scenes.empty()) {
+            out += "\n【这一集的场】\n";
+            for (const Scene& s : scenes) {
+                if (!s.where.empty()) out += s.where;
+                if (!s.pov.empty()) out += "。跟着" + s.pov + "走";
+                if (!s.goal.empty()) out += "：他要" + s.goal;
+                if (!s.obstacle.empty()) out += "；拦着他的是" + s.obstacle;
+                out += "。\n";
+            }
         }
     }
 
     // 这一集要拍的。有正文用正文，没展开正文就用章节梗概——大纲阶段就
     // 能先把剧本写出来，不必等逐章展开。
-    out += "\n【这一集】\n";
+    out += std::string("\n【") + unit + "】\n";
     const std::string body = episode_text(story, plan);
     if (!body.empty()) {
-        out += text::truncate_utf8(body, prompt::script_story::kEpisodeMaxChars);
+        // 章模式掐中间不掐尾巴：尾巴是钩子所在。
+        out += chapter_mode
+                   ? truncate_middle(body, prompt::script_story::kChapterMaxChars)
+                   : text::truncate_utf8(body, prompt::script_story::kEpisodeMaxChars);
     } else {
         for (const auto& id : episode_chapters(story, plan)) {
             const Chapter* c = story.chapter_by_id(id);
@@ -217,8 +338,12 @@ std::string render_script_context(const Story& story, const EpisodePlan& plan,
 
     // 停在哪。**这一条是老路线完全没有的**：原来模型不知道自己该停在
     // 什么地方，结尾全凭它自己找一个落点，下一集接不接得上看运气。
+    // 章模式没有钩子也要写一句，规则里说了「停在【要停在】写的地方」。
     if (!plan.hook.empty()) {
-        out += "\n【这一集要停在】" + plan.hook + "\n";
+        out += std::string("\n【") + unit + "要停在】" + plan.hook + "\n";
+    } else if (chapter_mode) {
+        out += std::string("\n【") + unit + "要停在】" +
+               prompt::script_story::kNoHookChapter + "\n";
     }
 
     return out;
@@ -262,38 +387,16 @@ std::string build_script_prompt_from_story(
 std::string build_chapter_script_prompt(
     const Story& story, const EpisodePlan& plan, StyleLine style_line,
     const std::vector<std::string>& characters,
-    const std::string& previous_tail, std::uint32_t variation,
-    int* source_chars) {
+    const std::string& previous_tail, const std::vector<ScenePlan>& scenes) {
     const char* hint = style_line == StyleLine::ANIME
                            ? prompt::script::kHintAnime
                            : prompt::script::kHintRealistic;
-    // 篇幅按原文算（没展开正文就按梗概），和 script_schema_for_chapter
-    // 用同一个数——两处算出来的地板不一样，模型看到的段和 schema 卡的段
-    // 就对不上。
-    std::string body = episode_text(story, plan);
-    if (body.empty()) {
-        for (const auto& id : episode_chapters(story, plan)) {
-            const Chapter* c = story.chapter_by_id(id);
-            if (c != nullptr) body += c->summary;
-        }
-    }
-    const int chars = static_cast<int>(text::utf8_len(body));
-    if (source_chars != nullptr) *source_chars = chars;
 
     std::string out;
     out += prompt::script_story::kSeg0Chapter;
     out += hint;
     out += prompt::script_story::kSeg2Chapter;
     out += prompt::script_story::kRulesChapter;
-    // 四段：段头不带秒数（from_s / to_s 都是 0，render_act_brief 会印
-    // 「0–0 秒」，所以这里自己拼），拍数地板按篇幅。
-    const std::vector<ActSpec> specs = act_plan_for_chapter(chars, variation);
-    out += prompt::script::kActBlockHead;
-    for (const ActSpec& a : specs) {
-        out += "  " + a.label + "：" + a.brief + "。至少 " +
-               std::to_string(a.min_beats) + " 拍。\n";
-    }
-    out += prompt::script_story::kActBlockTailChapter;
 
     if (!characters.empty()) {
         out += prompt::script_story::kCharsPre;
@@ -303,8 +406,8 @@ std::string build_chapter_script_prompt(
         }
         out += prompt::script_story::kCharsPost;
     }
-    out += prompt::script_story::kContextHead;
-    out += render_script_context(story, plan, previous_tail);
+    out += prompt::script_story::kContextHeadChapter;
+    out += render_script_context(story, plan, previous_tail, &scenes);
     out += prompt::script_story::kTail;
     return out;
 }

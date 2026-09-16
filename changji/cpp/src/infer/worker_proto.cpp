@@ -46,6 +46,11 @@ json to_json(const Task& t) {
         {"prompts",
          json{{"positive", t.prompts.positive},
               {"negative", t.prompts.negative},
+              // 视频那份负向词和画面/风格层：2026-09-16 之前不在协议里，
+              // 派出去的出片任务负向词是空的、正向词退回整段外观。
+              {"negative_video", t.prompts.negative_video},
+              {"video_scene", t.prompts.video_scene},
+              {"style_layer", t.prompts.style_layer},
               {"reference_images", t.prompts.reference_images},
               {"base_model", t.prompts.base_model}}},
         {"spec", t.spec},
@@ -62,6 +67,8 @@ json to_json(const Task& t) {
         {"intensity", t.intensity},
     };
     if (t.start_image) j["start_image"] = *t.start_image;
+    if (t.end_image) j["end_image"] = *t.end_image;
+    if (t.keep_ambient) j["keep_ambient"] = *t.keep_ambient;
     if (t.prompts.seed_override) j["prompts"]["seed_override"] = *t.prompts.seed_override;
     // **空的就不发。** 老版本的工作进程会把认不得的键原样忽略，
     // 但请求体里多一个空对象这件事在日志里读着像"挑了、挑空了"。
@@ -82,6 +89,9 @@ Task task_from_json(const json& j) {
     const auto& p = need(j, "prompts");
     t.prompts.positive = p.value("positive", std::string());
     t.prompts.negative = p.value("negative", std::string());
+    t.prompts.negative_video = p.value("negative_video", std::string());
+    t.prompts.video_scene = p.value("video_scene", std::string());
+    t.prompts.style_layer = p.value("style_layer", std::string());
     if (p.contains("reference_images") && p["reference_images"].is_array()) {
         t.prompts.reference_images =
             p["reference_images"].get<std::vector<std::string>>();
@@ -101,6 +111,12 @@ Task task_from_json(const json& j) {
     if (j.contains("tier")) t.tier = j["tier"].get<models::Tier>();
     if (j.contains("start_image") && j["start_image"].is_string()) {
         t.start_image = j["start_image"].get<std::string>();
+    }
+    if (j.contains("end_image") && j["end_image"].is_string()) {
+        t.end_image = j["end_image"].get<std::string>();
+    }
+    if (j.contains("keep_ambient") && j["keep_ambient"].is_boolean()) {
+        t.keep_ambient = j["keep_ambient"].get<bool>();
     }
     // **种子必须带**。让工作进程自己算的话它不知道 attempts，
     // 算出来的图和串行跑的不一样——那样并行就不是"更快"，是"结果变了"。
@@ -133,6 +149,9 @@ Task task_from_json(const json& j) {
              {"motion", &t.motion},
              {"prompts.positive", &t.prompts.positive},
              {"prompts.negative", &t.prompts.negative},
+             {"prompts.negative_video", &t.prompts.negative_video},
+             {"prompts.video_scene", &t.prompts.video_scene},
+             {"prompts.style_layer", &t.prompts.style_layer},
          }) {
         if (!text::is_valid_utf8(*s)) {
             throw std::runtime_error(

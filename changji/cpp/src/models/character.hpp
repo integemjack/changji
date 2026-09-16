@@ -150,7 +150,10 @@ struct Location {
 
     void validate(std::vector<std::string>& errs) const;
 
-    std::string render_prompt(StyleLine style_line) const;
+    /// `with_lighting` 为假时不带那句光（这一镜自己写了光的时候）：两句光
+    /// 同时在提示词里会互相打架——场景资产说「白天散射光」、镜头说「夜晚
+    /// 硬光」，出图模型两句都读，首帧出来是白天，出片再拉成夜晚。
+    std::string render_prompt(StyleLine style_line, bool with_lighting = true) const;
 };
 
 /// 全剧统一的风格层。所有镜头共用，保证整体调性不漂。

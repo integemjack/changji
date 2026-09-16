@@ -507,6 +507,12 @@ inline constexpr const char* kShotSchemaJson =
 })CJ";
 
 // 分镜阶段允许大模型填的字段。外观类字段不在其中，这是刻意的。
+//
+// 2026-09-16 拿掉了六个**没人读**的字段：camera_id（没有任何越轴校验）、
+// transition_in / transition_dur_s（装配是纯硬切，转场从没渲染过）、
+// subtitle_text（成片字幕来自台词，不读它）、continuity_notes（只回显）、
+// missing_info（零消费者）。模型填了也白填，还占着提示词和 GBNF。结构体里
+// 那几栏留着（盘上格式），只是模型再也见不到。
 inline constexpr const char* kLlmShotFields[] = {
     "shot_id",
     "scene_id",
@@ -521,17 +527,19 @@ inline constexpr const char* kLlmShotFields[] = {
     "lens",
     "lighting",
     "continuous_with_prev",
-    "camera_id",
     "characters",
     "location_id",
     "duration_s",
     "dialogue",
-    "transition_in",
-    "transition_dur_s",
-    "subtitle_text",
     "beat",
-    "continuity_notes",
-    "missing_info",
+};
+
+/// beat 这一栏的枚举：这一镜在戏里干什么。**进 required、收成枚举**——
+/// 2026-09-16 之前它是自由文本、不在 required 里、提示词里一个字没提，
+/// 而关键镜判定（render.cpp 的 is_hero_shot）和景别兜底（diversify_shot_sizes
+/// 的「情绪那一下才给 CU」）都靠它，等于两处死代码。
+inline constexpr const char* kBeatKinds[] = {
+    "铺垫", "推进", "对峙", "反应", "反转", "高潮", "钩子", "留白",
 };
 
 }  // namespace changji::stages::prompt

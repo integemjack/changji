@@ -58,9 +58,14 @@ struct Timeline {
 ///
 /// **字幕的时间戳来自配音的真实时长，不是估算。** 这是音画对齐的最后一环——
 /// 用估算时长的话，一集下来字幕会越飘越远，而每一条单看都"差不多对"。
-Timeline build_timeline(const std::vector<models::Shot>& shots,
-                        const models::ProjectPaths& paths,
-                        const config::AssemblyConfig& config);
+///
+/// `probe` 给了就按 mp4 **实测**长度排时间轴；没给按名义值对齐到帧格算。
+/// 后者是进程全局的 limits 算的，跑完之后可能被别的项目重算过（改了
+/// max_shot_s、换了画幅），时间轴就和文件长度分叉，字幕逐镜累积漂移。
+Timeline build_timeline(
+    const std::vector<models::Shot>& shots, const models::ProjectPaths& paths,
+    const config::AssemblyConfig& config,
+    const std::function<double(const std::filesystem::path&)>& probe = {});
 
 /// 把一条时间线按每集时长切成几集。
 ///

@@ -301,7 +301,10 @@ std::string run_assemble(const ProjectStore& store,
     }
 
     const media::Timeline timeline =
-        media::build_timeline(shots, store.paths(), settings.assembly);
+        media::build_timeline(shots, store.paths(), settings.assembly,
+                              [&ff](const std::filesystem::path& v) {
+                                  return ff.probe(v).duration_s;
+                              });
 
     // **字幕自检。** `media::subtitle_problems` 早就写好了，头文件里注明
     // 「装配后闸门要用」，可 2026-09-13 查下来**全代码库一处调用都没有**
@@ -666,6 +669,7 @@ RunReport run_episode(const ProjectStore& store,
         stages::RenderExtras extras;
         extras.hero_takes = settings.video.hero_takes;
         extras.chain_frames = settings.video.chain_frames;
+        extras.keep_ambient = settings.sound.ambient;
         if (backends.ffmpeg) {
             const media::FFmpeg& ff = *backends.ffmpeg;
             const int fps = settings.assembly.fps;

@@ -51,6 +51,10 @@ struct RenderPlan {
     std::string motion;
     /// 尾帧（绝对路径）。有就走首尾帧，没有就是单帧图生视频。
     std::optional<std::filesystem::path> end_image;
+    /// 留不留出片模型自己出的声音（[sound].ambient）。**跟着计划走**：
+    /// 派给别的机器时那台读的是它自己的设置，同一集会一半有环境声一半没有。
+    /// 没填就按跑的那台的设置。
+    std::optional<bool> keep_ambient;
 
     /// 拼提示词要用的分隔符由它决定（动画线 ", "，写实线 "，"）。
     ///
@@ -67,10 +71,13 @@ RenderPlan make_plan(const models::Shot& shot, const models::TierSpec& spec,
                      const PromptComposer& composer,
                      const std::string& aspect_ratio, int fps = 24);
 
-/// 视频模型的正向提示词：画面描述加运动描述。
+/// 视频模型的正向提示词：这一镜的画面（景别机位、光、画面描述）+ 运动
+/// 描述 + 风格层。
 ///
-/// 拼在一起而不是只给运动描述，是因为视频模型也要知道画面里有什么——
-/// 只给"镜头缓慢推近"的话它不知道推的是谁。
+/// **不带身份层和场景资产层**（那是首帧的事）：首帧已经把长相、服装、场景
+/// 定死了，再喂整段外观，出片模型会试着重画一遍角色，脸在动的过程中变形。
+/// 但也不能只给运动描述——只给"镜头缓慢推近"的话它不知道推的是谁，
+/// 所以画面描述那一句留着。见 PromptBundle::video_scene。
 std::string video_positive(const RenderPlan& plan);
 
 struct RenderOutcome {
@@ -113,6 +120,8 @@ struct GateHooks {
 struct RenderExtras {
     /// 关键镜头出几条换种子挑最好的。1 = 不多出。见 is_hero_shot / pick_take。
     int hero_takes = 1;
+    /// 留不留出片模型自己出的声音，写进每一镜的计划（见 RenderPlan::keep_ambient）。
+    std::optional<bool> keep_ambient;
     /// 标了 `continuous_with_prev` 的镜头拿上一镜的最后一帧当首帧。
     /// 只在串行（concurrency = 1）时生效——并行时上一镜可能还没出来。
     bool chain_frames = false;

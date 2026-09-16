@@ -166,6 +166,22 @@ struct Beat {
     std::string kind;
     std::string speaker;  ///< kind 是 action / scene 时是空串
     std::string text;
+
+    // ---- 章模式多出来的四栏（2026-09-16）----
+    //
+    // 集模式的拍子只有上面三样，章模式的提示词却要求「环境拍 characters
+    // 为空」「台词旁边写怎么说的」「特效直接写」——要求了没地方放，模型要么
+    // 略过、要么塞进 text 被配音念出来。现在各有各的栏：
+    /// 这一拍画面里有谁（人物表里的名字）。动作拍用；空 = 空镜。
+    std::vector<std::string> characters;
+    /// 这句台词怎么说的（压着嗓子、笑着说）。渲染成「名字（怎么说）：台词」，
+    /// 分镜填进 DialogueLine::emotion，配音照着念；**不进 text**。
+    std::string delivery;
+    /// 潜台词：这个人此刻真正想要什么、在藏什么。渲染成 〔…〕，只给分镜
+    /// 挑机位、表情和光用，不进画面描述、不进配音。
+    std::string subtext;
+    /// 需要特效的地方，写成画面里看得见的样子。渲染成 〔特效：…〕。
+    std::string fx;
 };
 
 /// 一集四段里的一段，按秒排。
@@ -223,19 +239,26 @@ std::uint32_t random_shape();
 /// 和以前一字不差。语料和单测走的就是这一档。
 std::vector<ActSpec> act_plan(double duration_s, std::uint32_t variation = 0);
 
-/// 章模式的四段：**拍数按这一章的篇幅给，不按秒。**
+/// 章模式的一场：**拍数按这一场的篇幅给，不按秒，也不套四段。**
 ///
 /// 用户 2026-09-16 的判词：剧本从一章里直接拿，写多长由内容定，不该在
-/// 提示词里限制一集多长——不够模型就凑、超了就压。而 act_plan 里那两个
-/// 数（min_beats / max_beats）正是从秒数推的：**地板是 schema 里唯一管用
-/// 的东西**，模型写几拍就看它，所以按秒给地板就等于按秒卡长度。
+/// 提示词里限制一集多长。正文那一步已经把章写成了几场（每场有目标、
+/// 阻碍、转折），剧本照着场走——之前在场之上又套了一副按秒排的四段骨架，
+/// 两副骨架叠着，段头还印着「按秒排」。
 ///
-/// 这里按原文的字数给：一拍是一件事或一句话，原文六十个字左右一拍起步，
-/// 二十个字一拍封顶——这一章有多少事就写多少拍。四段的比重和形状照
-/// act_plan 的（那是戏的走法，和长度无关），from_s / to_s 一律 0：
-/// 段头上不标秒，parse_script 传 0 进去就不会往段上贴秒数。
-std::vector<ActSpec> act_plan_for_chapter(int source_chars,
-                                          std::uint32_t variation = 0);
+/// 一拍是一件事或一句话，原文六十个字左右一拍起步，二十个字一拍封顶。
+/// **地板是 schema 里唯一管用的东西**，所以每场各给各的地板。
+struct ScenePlan {
+    std::string key;    ///< JSON 里的键：s1、s2…
+    std::string where;  ///< 这一场在哪、跟着谁（给提示词看的一行）
+    int chars = 0;      ///< 这一场的原文字数
+    int min_beats = 0;
+    int max_beats = 0;
+};
+
+/// 按各场的字数给拍数。`scene_chars` 空时整章当一场。
+std::vector<ScenePlan> scene_plan_for_chapter(
+    const std::vector<std::pair<std::string, int>>& scene_chars);
 
 /// 给提示词看的那一段：四段各占几秒、各干什么、至少几拍。
 ///
@@ -353,11 +376,13 @@ nlohmann::ordered_json script_schema(
     double duration_s, const std::vector<std::string>& characters = {},
     std::uint32_t variation = 0);
 
-/// 章模式的 schema：同上，但每段的 minItems / maxItems 按篇幅来，描述里
-/// 不带秒数。见 act_plan_for_chapter。
+/// 章模式的 schema：title、logline，然后 scenes 对象里 s1 / s2 … 按顺序各带
+/// 一个 beats 数组，地板按那一场的篇幅（见 scene_plan_for_chapter）。拍子是
+/// **带 characters / delivery / subtext / fx 的那份**（beat_item_schema 的
+/// rich），speaker 和 characters 都收成人物表里的枚举。
 nlohmann::ordered_json script_schema_for_chapter(
-    int source_chars, const std::vector<std::string>& characters,
-    std::uint32_t variation = 0);
+    const std::vector<ScenePlan>& scenes,
+    const std::vector<std::string>& characters);
 /// 选题的 JSON Schema。
 const nlohmann::ordered_json& premise_schema();
 
@@ -369,6 +394,12 @@ const nlohmann::ordered_json& premise_schema();
 /// 只是段头没有秒数。
 ScriptDraft parse_script(const std::string& raw, double duration_s = 0.0,
                          std::uint32_t variation = 0);
+
+/// 解析章模式的回包（script_schema_for_chapter 那份）。各场的拍子顺次拼成
+/// 平的一份，没有段；一场的第一拍不是场次头的话，补一个空的场次头
+/// （「【第N场】」仍是切点，只是没说在哪）。
+ScriptDraft parse_chapter_script(const std::string& raw,
+                                 const std::vector<ScenePlan>& scenes);
 std::vector<PremiseIdea> parse_premises(const std::string& raw);
 
 }  // namespace changji::stages

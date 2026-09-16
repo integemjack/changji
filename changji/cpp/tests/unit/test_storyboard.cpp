@@ -232,6 +232,92 @@ TEST_CASE("schema 里角色 id 被收紧成枚举") {
                  .at("properties").contains("needs_lipsync"));
 }
 
+TEST_CASE("beat 是枚举且必填；表情、动作、朝向必填；死字段模型见不到") {
+    const json s = json(stages::llm_shot_schema(test_assets()));
+    const json& item = s.at("properties").at("shots").at("items");
+    const json& req = item.at("required");
+    const auto has = [&req](const char* key) {
+        for (const auto& v : req) {
+            if (v == key) return true;
+        }
+        return false;
+    };
+    CHECK(has("beat"));
+    CHECK(item.at("properties").at("beat").contains("enum"));
+    for (const char* gone : {"camera_id", "transition_in", "transition_dur_s",
+                             "subtitle_text", "continuity_notes", "missing_info"}) {
+        CAPTURE(gone);
+        CHECK_FALSE(item.at("properties").contains(gone));
+    }
+    const json& cis = s.at("$defs").at("CharacterInShot");
+    CHECK(cis.at("required") == json::array({"char_id", "expression", "action", "face_pose"}));
+    CHECK_FALSE(cis.at("properties").contains("wardrobe_state"));
+    CHECK_FALSE(cis.at("properties").contains("screen_pos"));
+}
+
+TEST_CASE("配额按 5 秒那一档补差，不按最长档位") {
+    // 单镜上限 15 秒时，原来拿 15 秒补差：60 秒的目标凑成 75 秒，提示词照
+    // 这个数告诉模型。
+    const stages::DurationQuota q = stages::DurationQuota::for_duration(60.0);
+    CHECK(q.total_s() <= 65.0);
+    CHECK(q.total_s() >= 55.0);
+    CHECK(stages::pad_slot() <= 5.0 + 1e-9);
+    // 地板也按它算：60 秒至少 12 镜，不是 4 镜
+    const auto b = stages::shot_count_bounds(q, 60.0, 30);
+    CHECK(b.min_items >= 12);
+}
+
+TEST_CASE("剧本台词：认「名字（怎么说）：台词〔潜台词〕」") {
+    const std::string script =
+        "【第1场 · 夜 · 内 · 天台】\n"
+        "林晚站在天台边缘。〔她在等他先开口〕\n"
+        "林晚（压着嗓子）：你来了。〔想让他先认错〕\n"
+        "陈默：我不该来。\n"
+        "陈默：（脚步声）\n";
+    const auto e = stages::script_dialogue_entries(script);
+    REQUIRE(e.size() == 2);
+    CHECK(e[0].name == "林晚");
+    CHECK(e[0].delivery == "压着嗓子");
+    CHECK(e[0].said == "你来了。");
+    CHECK(e[1].name == "陈默");
+    CHECK(e[1].delivery.empty());
+    CHECK(e[1].said == "我不该来。");
+
+    SUBCASE("落位时把「怎么说的」带进 emotion") {
+        const auto a = test_assets();
+        std::vector<models::Shot> shots(1);
+        shots[0].shot_id = "ep01_sh001";
+        shots[0].duration_s = 5.0;
+        stages::place_missing_dialogue(shots, script, a);
+        REQUIRE(shots[0].dialogue.size() == 2);
+        CHECK(shots[0].dialogue[0].emotion == "压着嗓子");
+        CHECK(shots[0].dialogue[0].text == "你来了。");
+        CHECK(shots[0].dialogue[1].emotion == "neutral");
+    }
+}
+
+TEST_CASE("章模式：目标量按剧本估") {
+    const std::string script =
+        "林晚站在天台边缘。\n林晚：你来了。\n陈默：我不该来的，可我还是来了。\n他转身。\n";
+    const double s = stages::estimate_script_seconds(script);
+    CHECK(s >= 20.0);
+    // 两句台词约 20 字、两拍动作各 3 秒：不会离谱地大
+    CHECK(s < 40.0);
+}
+
+TEST_CASE("角色 action 里的进画出画也要摘") {
+    models::CharacterInShot in;
+    in.char_id = "c_lin_wan";
+    in.action = "走向门口";
+    std::vector<models::CharacterInShot> v = {in};
+    CHECK(stages::defuse_actions(v));
+    CHECK(v[0].action.find("走向") == std::string::npos);
+    std::vector<models::CharacterInShot> w = {in};
+    w[0].action = "扶着护栏";
+    CHECK_FALSE(stages::defuse_actions(w));
+    CHECK(w[0].action == "扶着护栏");
+}
+
 TEST_CASE("运动那两栏是必填的") {
     // **上面那条对拍测不出这个。** 它比的是整份 schema 相等，而语料是跟着
     // 代码一起改的；真正要钉死的是「为什么」，所以单拎出来一条。
@@ -341,10 +427,11 @@ TEST_CASE("解析时的三处兜底") {
     REQUIRE(shots[1].location_id.has_value());
     CHECK(*shots[1].location_id == "loc_rooftop");
 
-    // 硬切必须零时长；dissolve 忘填时长补 0.4
+    // 转场那两栏 2026-09-16 起模型见不到（装配是纯硬切，转场从没渲染过），
+    // 回包里写了也丢掉：一律硬切、零时长。
     CHECK(shots[0].transition_dur_s == 0.0);
-    CHECK(shots[2].transition_in == models::Transition::DISSOLVE);
-    CHECK(shots[2].transition_dur_s == doctest::Approx(0.4));
+    CHECK(shots[2].transition_in == models::Transition::CUT);
+    CHECK(shots[2].transition_dur_s == 0.0);
 }
 
 TEST_CASE("该报错的都报错") {
@@ -726,10 +813,12 @@ TEST_CASE("越界的转场时长兜住，别为一栏装饰丢掉一整集") {
         return shots[0].transition_dur_s;
     };
 
-    CHECK(one("dissolve", -0.4) == doctest::Approx(0.4));   // 负的
-    CHECK(one("dissolve", 9.0) == doctest::Approx(0.4));    // 超过 2 秒
-    CHECK(one("dissolve", 0.0) == doctest::Approx(0.4));    // 没填
-    CHECK(one("dissolve", 0.8) == doctest::Approx(0.8));    // 合法的不动
+    // 2026-09-16 起转场那两栏不再是模型能填的字段（keep_llm_fields 丢掉），
+    // 所以不管它写什么，出来都是硬切零时长——越界的自然也不会让整集作废。
+    CHECK(one("dissolve", -0.4) == 0.0);   // 负的
+    CHECK(one("dissolve", 9.0) == 0.0);    // 超过 2 秒
+    CHECK(one("dissolve", 0.0) == 0.0);    // 没填
+    CHECK(one("dissolve", 0.8) == 0.0);    // 写了也不认
     CHECK(one("cut", 1.5) == doctest::Approx(0.0));         // 硬切一律零
 }
 

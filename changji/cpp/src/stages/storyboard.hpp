@@ -56,6 +56,15 @@ struct DurationQuota {
 /// 把任意时长吸附到最近的可生成档位。
 double snap_duration(double seconds);
 
+/// 「一镜一件事」那一档：不超过 5 秒的档位里最长的一个。配额补差、镜数
+/// 地板都按它算，不按最长档位（单镜上限 15 秒时最长档位会把 60 秒的目标
+/// 凑成 75 秒）。
+double pad_slot();
+
+/// 章模式：一段剧本大概要拍多久。台词按念的速度、动作拍按每拍三秒估——
+/// 只是拆镜头的目标量，真时长以配音为准。至少 20 秒。
+double estimate_script_seconds(const std::string& script);
+
 /// 向上吸附。配音时长反推镜头时长时用，宁长勿短。
 double ceil_duration(double seconds);
 
@@ -219,6 +228,25 @@ std::string motion_covering(const std::string& motion_prompt, double dur);
 ///
 /// 所以摘掉它再重出：镜头少演一个动作，比整镜半路换成另一场戏强得多。
 std::string defuse_motion(const std::string& motion_prompt);
+
+/// 把在场角色的 action 里会把主体带出画的分句一并摘掉（同 defuse_motion）。
+/// **两处都要摘**：拼运动提示词时 characters[].action 会被重新接到
+/// motion_prompt 后面（PromptComposer::motion_prompt），只摘 motion_prompt
+/// 等于没摘，闸门会在同一镜上反复退回（2026-09-16 查出）。
+/// 返回有没有真摘掉东西。
+bool defuse_actions(std::vector<models::CharacterInShot>& characters);
+
+/// 剧本正文里的一句台词：谁说的、说了什么、怎么说的。
+///
+/// 章模式的剧本渲染成「名字（压着嗓子）：台词〔潜台词〕」——括号里是
+/// delivery（分镜填进 DialogueLine::emotion，配音照着念），〔〕里是潜台词
+/// （只给分镜看）。这里把三样拆开：said 里没有〔〕，name 里没有括号。
+struct DialogueEntry {
+    std::string name;
+    std::string said;
+    std::string delivery;
+};
+std::vector<DialogueEntry> script_dialogue_entries(const std::string& script);
 
 /// 运动描述里有几段 `[a-b秒]`。0 = 没按格式写。
 ///

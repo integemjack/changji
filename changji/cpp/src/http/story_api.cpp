@@ -903,15 +903,15 @@ EpisodeSync sync_episodes_to_chapters(const ProjectStore& store, const Story& st
         // 取的，一章切两段就有两个，和「一章一集」对不上。
         const std::string ep_id = episode_id_for_chapter(c.chapter_id, i);
 
-        // 这一章值多长。**拿分集表当估算器，不另拍一个常数**：那张表是写
-        // 大纲时按内容算出来的，一章被切成几段就说明它有几段的量。数
-        // 「结束在这一章」的条目，一条只算给一章，不会重复计。
+        // 这一章值多长。**按正文字数估**（story_plan 那个每秒消化多少字的
+        // 系数），没正文按梗概的章数占比。原来数「结束在这一章」的分集条目，
+        // 短章被并进多章一集时一条都数不到、跨章的条目把整段时长记到后一章
+        // 头上（2026-09-16 查出）。章模式下这个数不卡长度（分镜、配音那两次
+        // rebalance 都跳过），它只是拆镜头的目标量。
         double dur = 0.0;
-        for (const auto& p : story.plan) {
-            if (p.to_chapter == c.chapter_id) dur += p.target_duration_s;
+        if (c.text_len() > 0) {
+            dur = static_cast<double>(c.text_len()) / stages::kProseCharsPerSecond;
         }
-        // 没有分集表（粘贴导入的故事）就按一集的长度起步。章模式下这个数
-        // 不卡长度（配音之后那次 rebalance 整个跳过），它只是拆镜头的目标量。
         if (!(dur > 0.0)) dur = settings.assembly.episode_s;
 
         const std::string synopsis =

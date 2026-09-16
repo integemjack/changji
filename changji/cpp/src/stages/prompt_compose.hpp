@@ -44,6 +44,15 @@ struct PromptBundle {
     /// 分开是因为图像那份（「多余的手指」）对出片模型没意义，而出片模型真会
     /// 犯的错（溶解、形变、片中硬切）图像那份一个字没提。
     std::string negative_video;
+    /// 视频模型的正向词里「画面」那一半：景别机位焦段、这一镜的光、画面
+    /// 描述——**不带身份层和场景资产层**。首帧已经把长相、服装、场景定死了，
+    /// 再把整段外观喂给出片模型，它会试着重画一遍角色，脸在动的过程中变形
+    /// （prompt_compose.hpp 顶上那条设计声明；2026-09-16 之前 video_positive
+    /// 是整段 positive + motion，声明只约束了模型没约束代码）。
+    /// 留画面描述是为了让它知道「推的是谁」（render.hpp 那条的理由）。
+    std::string video_scene;
+    /// 风格层（全剧统一的画风），视频正向词末尾也带。
+    std::string style_layer;
     /// 角色定妆图和场景空景图的相对路径。图像模型那条路会用，
     /// 视频模型那条路忽略。
     std::vector<std::string> reference_images;
@@ -81,8 +90,11 @@ public:
     ///
     /// **按 MiniMax-H3 的时间码格式**（2026-09-14 起）：官方的提示词改写器
     /// 就是把整镜写成 `[0-2秒] …… [2-5秒] ……` 这样的段。分镜模型照规则
-    /// 写了时间码的话，运镜词并进第一段；没写的话整镜当一段，前面补上
-    /// `[0-时长秒]`。角色的动作接在最后。
+    /// 写了时间码的话，**运镜词不再前插**（规则要它自己把运镜名、幅度、
+    /// 速度写进段里，前插一次就是「镜头缓慢推近, 缓慢推近」），角色的动作
+    /// 并进**第一段**（它是这一镜的起始状态，接在末尾会被读成最后一段的
+    /// 事）。没写时间码的整镜当一段：运镜词 + 描述 + 动作，前面补
+    /// `[0-时长秒]`。
     std::string motion_prompt(const models::Shot& shot) const;
 
     /// 这条片子是写实线还是动画线。
@@ -96,6 +108,8 @@ private:
     /// compose / compose_end 的公共实现，`picture` 是画面描述那一层。
     PromptBundle compose_with(const models::Shot& shot,
                               const std::string& picture) const;
+    /// 项目页「负向」框里用户自己加的那截（去掉读资产库时补进去的默认串）。
+    std::string project_negative_extras() const;
 
     models::AssetLibrary assets_;
     models::StyleLine style_line_;
