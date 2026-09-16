@@ -397,12 +397,14 @@ std::string run_assemble(const ProjectStore& store,
              "片子照常出，字幕另存在 subtitles/ 下，播放器里挂上就能看。"
              "要烧进画面的话装一个带 libass 的 ffmpeg。");
     }
-    // **章模式：按每集时长切成几集，能切出几集是这一章内容的结果。**
-    // 见 media::split_into_episodes。不切（episode_s = 0）就是原来那一条。
+    // **按每集时长切成几集，能切出几集是这一章内容的结果。**
+    // 见 media::split_into_episodes。
+    //
+    // 2026-09-16 之前这儿有个 `episode_s > 0` 的岔口，0 表示"不切、整章一集"
+    // ——那是集模式，当天整个删了。episode_s 现在恒 > 0（老配置里的 0 在
+    // 读取时抬到默认值，见 config::Settings），这一岔永远走同一边。
     const std::vector<media::Timeline> parts =
-        settings.assembly.episode_s > 0.0
-            ? media::split_into_episodes(timeline, settings.assembly.episode_s)
-            : std::vector<media::Timeline>{timeline};
+        media::split_into_episodes(timeline, settings.assembly.episode_s);
     std::vector<std::filesystem::path> outputs;
     for (std::size_t k = 0; k < parts.size(); ++k) {
         // 一集就叫 ep.mp4；切成几集叫 ep_01.mp4 / ep_02.mp4……
@@ -851,10 +853,14 @@ RunReport run_episode(const ProjectStore& store,
                 // stages::real_total_s。
                 const int fps = settings.assembly.fps;
                 const double before_s = stages::real_total_s(ep->shots, fps);
-                // **章模式（episode_s > 0）不按目标时长挤。** 这一章多长由内容
-                // 定，装配时再按每集时长切成几集——在这儿把它压回一集的尺寸，
-                // 就是把用户说的「超了就压」从剧本挪到分镜。
-                if (settings.assembly.episode_s > 0.0) {
+                // **不按目标时长挤。** 这一章多长由内容定，装配时再按每集时长
+                // 切成几集——在这儿把它压回一集的尺寸，就是把用户说的
+                // 「超了就压」从剧本挪到分镜。
+                //
+                // 2026-09-16 之前这儿是个 if/else：集模式那一边会跑
+                // rebalance_durations 把整集压回目标时长。那条路当天删了，
+                // else 那一整块（连同它那两句"压不到目标"的提示）跟着删。
+                {
                     emit(progress, "audio", "info",
                          "章模式：按配音定下时长后不再压回一集的尺寸，这一章 " +
                              util::human_time_precise_as(before_s, before_s) +
@@ -862,35 +868,7 @@ RunReport run_episode(const ProjectStore& store,
                              util::human_time_precise_as(settings.assembly.episode_s,
                                                          settings.assembly.episode_s) +
                              " 切");
-                } else {
-                stages::rebalance_durations(ep->shots, ep->target_duration_s,
-                                            3.0, fps);
-                const double after_s = stages::real_total_s(ep->shots, fps);
-                // human_time 在一分钟以上只留整分钟，三个数会全都显示成
-                // 「1 分钟」——对比句必须用带零头的那个。量纲按三个里最小的
-                // 定，否则 57.6 和 60.0 跨在一分钟两边，一句话里两种单位。
-                const double scale =
-                    std::min({before_s, after_s, ep->target_duration_s});
-                const auto say = [scale](double v) {
-                    return util::human_time_precise_as(v, scale);
-                };
-                if (std::abs(after_s - before_s) > 0.01) {
-                    emit(progress, "audio", "info",
-                         "按配音重排了镜头时长：" + say(before_s) + " → " +
-                             say(after_s) + "（目标 " +
-                             say(ep->target_duration_s) + "）");
                 }
-                // **压不到目标就要说出来。** 有台词的镜头动不了（动了会截断
-                // 声音），过渡镜也有最短的那一档，所以并不是总能压回去。
-                // 不吭声的话，人看到的是「配音完成」，而成片比要的长三分之一。
-                if (after_s - ep->target_duration_s > 3.0) {
-                    emit(progress, "audio", "warn",
-                         "这一集排下来 " + say(after_s) + "，比目标 " +
-                             say(ep->target_duration_s) +
-                             " 长。台词镜的时长由配音定、动不了，过渡镜也压到"
-                             "头了——要短就得回剧本删戏或者减台词。");
-                }
-                }  // 非章模式
                 save();
 
                 emit(progress, "audio", "done", stages::summarize(report.audio),

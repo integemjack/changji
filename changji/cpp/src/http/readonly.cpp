@@ -212,6 +212,11 @@ ApiResult get_project(const std::string& path) {
             {"title", e.title},
             {"synopsis", e.synopsis},
             {"shots", static_cast<int>(e.shots.size())},
+            // **挂在哪一章。** 界面靠它分辨"两条看起来一样的集"：一章一集
+            // 是现在的规矩，而规矩立起来之前留下的重复（两个集挂同一章）
+            // 在下拉里长得一模一样——2026-09-16 实见 ep08 和 ep09 都写着
+            // 「了结（17 镜）」，选哪个全靠猜。
+            {"chapter_refs", e.chapter_refs},
             // **界面上这个数标着"时长"，那它就得是成片的长度。**
             //
             // 不是 planned_duration_s()——那是分镜表里那串名义值的和，而

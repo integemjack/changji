@@ -94,7 +94,8 @@
               "planned": 1
             },
             "synopsis": "林渊在天台等一个不会来的人。",
-            "title": "第一集 · 雨"
+            "title": "第一集 · 雨",
+            "chapter_refs": []
           },
           {
             "duration_s": 0,
@@ -102,7 +103,8 @@
             "shots": 0,
             "status": {},
             "synopsis": "三年后，同一个天台。",
-            "title": "第二集 · 晴"
+            "title": "第二集 · 晴",
+            "chapter_refs": []
           }
         ],
         "locations": [

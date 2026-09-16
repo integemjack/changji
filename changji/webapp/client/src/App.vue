@@ -32,6 +32,23 @@ import { useUi } from '@/stores/ui'
 const route = useRoute()
 const router = useRouter()
 const session = useSession()
+
+/**
+ * 这一集和别的集挂在同一章上时，把章号显示出来。
+ *
+ * 「一章一集」立起来之前留下的重复：两个集挂同一章、标题和镜头数都一样，
+ * 下拉里两行一模一样。引擎那头 sync_episodes_to_chapters 早就把这种算进
+ * `orphans` 回给调用方了，只是**前端一个字都没读**——所以人只看到两条重复。
+ *
+ * 不撞车就返回空串：平时不给每一行加长。
+ */
+function dupChapterNote(ep) {
+  const mine = (ep?.chapter_refs ?? [])[0]
+  if (!mine) return ''
+  const n = session.episodes.filter((e) => (e.chapter_refs ?? [])[0] === mine).length
+  return n > 1 ? ` ⚠ ${mine}` : ''
+}
+
 const ui = useUi()
 
 const stepKey = computed(() => route.meta?.step ?? '')
@@ -232,8 +249,12 @@ function cycleTheme() {
           @change="onPickEpisode"
         >
           <option v-if="!session.episodes.length" value="">还没有剧集</option>
+          <!-- **两个集挂同一章时要能分辨。** 一章一集是现在的规矩，而规矩
+               立起来之前留下的重复在这儿长得一模一样：2026-09-16 实见
+               ep08 和 ep09 都写着「了结（17 镜）」，选哪个全靠猜。
+               只在真撞车时才多显示那一句，平时不加长。 -->
           <option v-for="ep in session.episodes" :key="ep.episode_id" :value="ep.episode_id">
-            {{ ep.episode_id }} · {{ ep.title || '未命名' }}（{{ ep.shots }} 镜）
+            {{ ep.episode_id }} · {{ ep.title || '未命名' }}（{{ ep.shots }} 镜）{{ dupChapterNote(ep) }}
           </option>
         </select>
       </label>
