@@ -659,7 +659,15 @@ TEST_CASE("只有远端这一条后端了") {
     const auto c = llm::make_client(dummy_post);
     REQUIRE(c != nullptr);
     pipeline::CancelToken tok;
-    CHECK(c->complete(simple_req(), tok) == "好");
+    // **这一趟不带 schema。** 这条用例要钉的是"make_client 只给得出远端
+    // 这一条，而且它跑得通"，不是校验。原来用的是 simple_req()——它带着
+    // `{"type":"object"}`，而假响应是裸文本「好」，于是 4c90bd0 给远端那条
+    // 加上结构化校验之后这条就一直红着。**红的是夹具不是实现**：一个带
+    // schema 的请求回一段裸文本，本来就该被拒。
+    llm::Request plain;
+    plain.prompt = "写一集短剧";
+    plain.temperature = 0.7;
+    CHECK(c->complete(plain, tok) == "好");
 }
 
 // ---- 起服务时不预热 ----
