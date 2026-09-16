@@ -442,6 +442,22 @@ function onKey(event) {
 
 // ---- 出分镜 ----
 
+/** 给全项目还没分镜的章补分镜。2026-09-16 从设定的章节那一格搬回来的。 */
+async function planAll() {
+  const result = await run(
+    () => api.planAll({ project: session.projectPath, overwrite: false }),
+    { key: 'planAll' },
+  )
+  // **别写「在这一页看进度」。** 批量补分镜跑在"写"那个槽上（和写整季
+  // 同一个），而这一页盯的是"出片"那个槽——它那儿一动不动。真正一直
+  // 看得见的是顶栏那块「AI 作业中」。
+  if (result) {
+    ui.info(
+      `正在给 ${result.episodes.join('、')} 补分镜，顶栏那块「AI 作业中」里看进度`,
+    )
+  }
+}
+
 async function generate() {
   if (!session.episodeId) {
     ui.warn('先选一集')
@@ -1111,6 +1127,19 @@ onDeactivated(() => {
         >
           <AppIcon name="sparkle" :size="15" />
           {{ isBusy('plan') ? '拆镜头中…' : shots.length ? 'AI 重出分镜' : 'AI 出分镜' }}
+        </button>
+        <!-- 全项目还没分镜的章一次补完。**2026-09-16 搬回这儿**：它之前
+             在设定的章节那一格，理由是「那一格就是所有集摆在一起的地方」
+             ——而那一格现在只讲章节和人物场景的关系，不再有集的概念了。
+             这是一件生产上的事，属于这一页。 -->
+        <button
+          class="btn btn--ghost btn--sm"
+          type="button"
+          :disabled="isBusy('planAll')"
+          title="把全项目还没有分镜的章一次补完，已经有分镜的不动"
+          @click="planAll"
+        >
+          {{ isBusy('planAll') ? '排着…' : '批量补分镜' }}
         </button>
         <!-- 先出首帧，看一眼构图再决定要不要花那两分钟出视频。 -->
         <button

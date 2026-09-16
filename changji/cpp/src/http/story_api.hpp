@@ -12,10 +12,13 @@
 // 后面几十分钟的渲染全是白跑。所以 AI 写完先摆出来，点了采用才落库。
 
 #include <string>
+#include <vector>
 
 #include <nlohmann/json.hpp>
 
 #include "http/readonly.hpp"
+#include "models/project.hpp"
+#include "models/story.hpp"
 #include "llm/client.hpp"
 #include "pipeline/jobs.hpp"
 
@@ -149,6 +152,22 @@ ApiResult post_story_chapter(const nlohmann::json& body, llm::Client& client,
 ///
 /// 已经存在的同号剧集**只补元数据，绝不碰 script 和 shots**：改一次每集
 /// 时长就把写好的剧本冲掉，那是没法接受的。分集表里没有的老剧集一律留着。
+/// sync_episodes_to_chapters 的结果。落单的那几个只报不删。
+struct EpisodeSync {
+    std::vector<std::string> created;
+    std::vector<std::string> updated;
+    std::vector<std::string> orphans;
+
+    bool touched() const { return !created.empty() || !updated.empty(); }
+};
+
+/// 章模式（[assembly].episode_s > 0）下把剧集对齐到章节：一章一个。
+///
+/// **每一处改动章节的接口，存完 story 都要叫它。** 一章一集是机械映射，
+/// 用户 2026-09-16 选的是「自动做，不要按钮」。非章模式下它什么都不做。
+EpisodeSync sync_episodes_to_chapters(const models::ProjectStore& store,
+                                      const models::Story& story);
+
 ApiResult post_story_episodes(const nlohmann::json& body);
 
 }  // namespace changji::http

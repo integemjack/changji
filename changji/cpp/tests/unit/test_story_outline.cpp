@@ -1146,6 +1146,45 @@ TEST_CASE("POST /api/story/episodes：把分集表落成真的剧集") {
     fs::remove_all(root, ec);
 }
 
+TEST_CASE("章模式下剧集自动跟着章节走，不用按任何按钮") {
+    // 用户 2026-09-16 选的是「自动做，不要按钮」——一章一集是机械映射。
+    // **这条从头到尾不叫 post_story_episodes**：它要证明的正是「不按也对齐」。
+    const fs::path root = fresh_project("自动对齐");
+    ProjectStore store(root);
+    set_episode_s(root, 60.0);
+
+    Story s = written_story();
+    REQUIRE(s.chapters.size() >= 2);
+
+    SUBCASE("存一次故事，剧集就出来了") {
+        store.save_story(s);
+        // 走接口存（post_story 里挂着对齐那一句）
+        const auto r = http::post_story(json{{"project", p_str(root)},
+                                             {"premise", "自动对齐试一下"}});
+        CHECK(r.status == 200);
+
+        const Project project = store.load_project();
+        CHECK(project.episodes.size() == s.chapters.size());
+        CHECK(project.episodes[0].episode_id == "ep01");
+        REQUIRE_FALSE(project.episodes[0].chapter_refs.empty());
+        CHECK(project.episodes[0].chapter_refs[0] == "ch01");
+    }
+
+    SUBCASE("老路线（episode_s = 0）一个剧集都不建") {
+        const fs::path old_root = fresh_project("老路线不自动");
+        ProjectStore old_store(old_root);
+        set_episode_s(old_root, 0.0);
+        old_store.save_story(written_story());
+        http::post_story(json{{"project", p_str(old_root)}, {"premise", "老路线"}});
+        CHECK(old_store.load_project().episodes.empty());
+        std::error_code ec2;
+        fs::remove_all(old_root, ec2);
+    }
+
+    std::error_code ec;
+    fs::remove_all(root, ec);
+}
+
 TEST_CASE("POST /api/story/episodes：章模式下一章一集") {
     // 用户 2026-09-16：「落成剧集改成一章一个。」原来按 story.plan 一条
     // 一条建——那张表是把章正文按每集时长切出来的，一章能切成好几条。

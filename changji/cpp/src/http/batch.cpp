@@ -1,4 +1,6 @@
 #include "http/batch.hpp"
+
+#include "http/story_api.hpp"
 #include "config/runtime.hpp"
 
 #include <cmath>
@@ -353,6 +355,9 @@ ApiResult post_story_chapters(const json& body,
 
                 next.plan = stages::plan_episodes(next, next.episode_duration_s);
                 store.save_story(next);
+                // 正文扩写完，这一章的梗概和它值多长都变了——剧集跟着对齐。
+                // 非章模式下这一句什么都不做。
+                sync_episodes_to_chapters(store, next);
 
                 const Chapter* written = next.chapter_by_id(id);
                 p.add_episode(json{

@@ -299,6 +299,9 @@ ApiResult post_story(const json& body) {
 
     validate_or_400(story);
     store.save_story(story);
+    // **章节动了，剧集跟着对齐。** 一章一集是机械映射，用户 2026-09-16
+    // 选的是「自动做，不要按钮」。非章模式下这一句什么都不做。
+    sync_episodes_to_chapters(store, story);
     return {200, story_response(story)};
 }
 
@@ -573,6 +576,9 @@ ApiResult post_story_chapter_delete(const json& body) {
     const Story::ChapterRemoval r = story.remove_chapter(chapter_id);
     if (!r.removed) throw ApiError(404, "没有章节 " + chapter_id);
     store.save_story(story);
+    // **章节动了，剧集跟着对齐。** 一章一集是机械映射，用户 2026-09-16
+    // 选的是「自动做，不要按钮」。非章模式下这一句什么都不做。
+    sync_episodes_to_chapters(store, story);
 
     json out = story_response(story);
     out["deleted"] = chapter_id;
@@ -615,6 +621,9 @@ ApiResult post_story_adopt(const json& body) {
 
     validate_or_400(story);
     store.save_story(story);
+    // **章节动了，剧集跟着对齐。** 一章一集是机械映射，用户 2026-09-16
+    // 选的是「自动做，不要按钮」。非章模式下这一句什么都不做。
+    sync_episodes_to_chapters(store, story);
     // 采用了，草稿的使命就完了。留着的话下次打开故事页会**同时**看到
     // "这本书"和一份和它一模一样的草稿。
     store.clear_story_draft();
@@ -869,18 +878,89 @@ std::string episode_id_for_chapter(const std::string& chapter_id,
     return "ep" + digits;
 }
 
+/// 章模式下把剧集对齐到章节：一章一个。
+///
+/// 用户 2026-09-16 选的是「自动做，不要按钮」——一章一集是机械映射，
+/// 不该让人去按一下。**所以每一处改动章节的接口，存完 story 都要叫它。**
+///
+/// 返回这一轮建了几个、更新了几个、还有哪几个落了单（对不上任何一章）。
+/// **落单的不删**：它们可能已经出过片，删了就是把片子连着记录一起抹掉。
+///
+/// 非章模式（episode_s = 0）一个字不动：老路线由 post_story_episodes
+/// 按分集表来建。
+EpisodeSync sync_episodes_to_chapters(const ProjectStore& store, const Story& story) {
+    EpisodeSync out;
+    const auto settings = config::load_settings(store.root());
+    if (!(settings.assembly.episode_s > 0.0)) return out;   // 老路线不动
+    if (story.chapters.empty()) return out;                 // 还没有章节
+
+    Project project = load_or_400(store);
+    for (std::size_t i = 0; i < story.chapters.size(); ++i) {
+        const Chapter& c = story.chapters[i];
+        if (c.chapter_id.empty()) continue;
+
+        // 一章一个 id：ch07 → ep07。**不复用 plan 里的 id**——那些是按切片
+        // 取的，一章切两段就有两个，和「一章一集」对不上。
+        const std::string ep_id = episode_id_for_chapter(c.chapter_id, i);
+
+        // 这一章值多长。**拿分集表当估算器，不另拍一个常数**：那张表是写
+        // 大纲时按内容算出来的，一章被切成几段就说明它有几段的量。数
+        // 「结束在这一章」的条目，一条只算给一章，不会重复计。
+        double dur = 0.0;
+        for (const auto& p : story.plan) {
+            if (p.to_chapter == c.chapter_id) dur += p.target_duration_s;
+        }
+        // 没有分集表（粘贴导入的故事）就按一集的长度起步。章模式下这个数
+        // 不卡长度（配音之后那次 rebalance 整个跳过），它只是拆镜头的目标量。
+        if (!(dur > 0.0)) dur = settings.assembly.episode_s;
+
+        const std::string synopsis =
+            text::truncate_utf8(text::collapse_ws(c.summary), 120);
+
+        Episode* existing = project.episode_by_id(ep_id);
+        if (existing != nullptr) {
+            // **只补元数据。** script 和 shots 一个字不动——章节一改就把写好
+            // 的剧本和出过的片冲掉，那是没法接受的。
+            if (!c.title.empty()) existing->title = c.title;
+            existing->target_duration_s = dur;
+            existing->chapter_refs = {c.chapter_id};
+            if (existing->synopsis.empty()) existing->synopsis = synopsis;
+            out.updated.push_back(ep_id);
+            continue;
+        }
+
+        Episode ep;
+        ep.episode_id = ep_id;
+        ep.title = c.title;
+        ep.synopsis = synopsis;
+        ep.target_duration_s = dur;
+        ep.chapter_refs = {c.chapter_id};
+        project.episodes.push_back(std::move(ep));
+        out.created.push_back(ep_id);
+    }
+
+    for (const Episode& e : project.episodes) {
+        const bool mine =
+            std::find(out.created.begin(), out.created.end(), e.episode_id) !=
+                out.created.end() ||
+            std::find(out.updated.begin(), out.updated.end(), e.episode_id) !=
+                out.updated.end();
+        if (!mine) out.orphans.push_back(e.episode_id);
+    }
+
+    store.save_project(project);
+    return out;
+}
+
 ApiResult post_story_episodes(const json& body) {
     forbid_extra(body, {"project"});
     ProjectStore store = open_project(body);
     Project project = load_or_400(store);
     const Story story = load_story_or_400(store);
 
-    // **章模式：一章一集。**
-    //
-    // 用户 2026-09-16：「落成剧集改成一章一个。」原来这儿按 story.plan
-    // 一条一条建——那张表是把章正文按每集时长切出来的，一章能切成好几条
-    // （实测这个项目 8 章切成 10 集，第 5 章和第 7 章各切两段）。而章模式
-    // 下切集是拍完之后按每集时长切的，分集表不该再决定建几个剧集。
+    // **章模式：一章一集。** 实现在 sync_episodes_to_chapters 里——那件事
+    // 现在是自动做的（每一处改动章节的接口存完 story 都会叫它），这个接口
+    // 留着是为了让老客户端和对拍脚本还能按一下。
     const bool chapter_mode =
         config::load_settings(store.root()).assembly.episode_s > 0.0;
 
@@ -891,65 +971,11 @@ ApiResult post_story_episodes(const json& body) {
         if (story.chapters.empty()) {
             throw ApiError(400, "这部剧还没有章节。先去故事页写一份大纲");
         }
-        for (std::size_t i = 0; i < story.chapters.size(); ++i) {
-            const Chapter& c = story.chapters[i];
-            if (c.chapter_id.empty()) continue;
-
-            // 一章一个 id：ch07 → ep07。认不出编号就按它在表里的位置排，
-            // **不复用 plan 里的 id**——那些是按切片取的，和章对不上。
-            const std::string ep_id = episode_id_for_chapter(c.chapter_id, i);
-
-            // 这一章值多长。**用分集表当估算器，不另拍一个常数**：那张表
-            // 是写大纲时按内容算出来的，一章被切成几段就说明它有几段的量。
-            // 数「结束在这一章」的条目，一条只算给一章，不会重复计。
-            double dur = 0.0;
-            for (const auto& p : story.plan) {
-                if (p.to_chapter == c.chapter_id) dur += p.target_duration_s;
-            }
-            // 没有分集表（粘贴导入的故事）就按一集的长度起步。章模式下
-            // 这个数不卡长度（配音之后那次 rebalance 整个跳过），它只是
-            // 拆镜头时的目标量。
-            if (!(dur > 0.0)) {
-                dur = config::load_settings(store.root()).assembly.episode_s;
-            }
-
-            const std::string synopsis =
-                text::truncate_utf8(text::collapse_ws(c.summary), 120);
-
-            Episode* existing = project.episode_by_id(ep_id);
-            if (existing != nullptr) {
-                // 只补元数据，理由同下面那一支：script 和 shots 一个字不动。
-                if (!c.title.empty()) existing->title = c.title;
-                existing->target_duration_s = dur;
-                existing->chapter_refs = {c.chapter_id};
-                if (existing->synopsis.empty()) existing->synopsis = synopsis;
-                updated.push_back(ep_id);
-                continue;
-            }
-
-            Episode ep;
-            ep.episode_id = ep_id;
-            ep.title = c.title;
-            ep.synopsis = synopsis;
-            ep.target_duration_s = dur;
-            ep.chapter_refs = {c.chapter_id};
-            project.episodes.push_back(std::move(ep));
-            created.push_back(ep_id);
-        }
-
-        store.save_project(project);
+        const EpisodeSync r = sync_episodes_to_chapters(store, story);
         json out = story_response(story);
-        out["created"] = created;
-        out["updated"] = updated;
-        // 按分集表建过、这回没对上的那几个。**不删**：它们可能已经出过片。
-        json orphans = json::array();
-        for (const Episode& e : project.episodes) {
-            const bool mine =
-                std::find(created.begin(), created.end(), e.episode_id) != created.end() ||
-                std::find(updated.begin(), updated.end(), e.episode_id) != updated.end();
-            if (!mine) orphans.push_back(e.episode_id);
-        }
-        out["orphans"] = orphans;
+        out["created"] = r.created;
+        out["updated"] = r.updated;
+        out["orphans"] = r.orphans;
         return {200, out};
     }
 
@@ -1165,6 +1191,9 @@ ApiResult post_story_revise_apply(const json& body) {
 
     validate_or_400(next);
     store.save_story(next);
+    // **章节动了，剧集跟着对齐。** 一章一集是机械映射，用户 2026-09-16
+    // 选的是「自动做，不要按钮」。非章模式下这一句什么都不做。
+    sync_episodes_to_chapters(store, next);
 
     json out = story_response(next);
     const Chapter* c = next.chapter_by_id(span.chapter_id);
@@ -1196,6 +1225,9 @@ ApiResult post_story_from_episodes(const json& body) {
 
     validate_or_400(story);
     store.save_story(story);
+    // **章节动了，剧集跟着对齐。** 一章一集是机械映射，用户 2026-09-16
+    // 选的是「自动做，不要按钮」。非章模式下这一句什么都不做。
+    sync_episodes_to_chapters(store, story);
 
     // **顺手把集和章接上。** 不接的话故事在这儿、剧集在那儿，两边看着都
     // 齐全，只有写下一集时才发现它拿不到前情——而那时候没有任何报错。

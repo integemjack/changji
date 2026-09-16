@@ -52,7 +52,6 @@ const loadError = ref('')
 const openChapter = ref('')
 
 const chapters = computed(() => story.value?.chapters ?? [])
-const plan = computed(() => story.value?.plan ?? [])
 const durationS = computed(() => story.value?.episode_duration_s ?? 60)
 const hasStory = computed(() => chapters.value.length > 0)
 const writtenCount = computed(
@@ -213,30 +212,6 @@ watch(
 )
 
 
-async function makeEpisodes() {
-  const result = await run(
-    () => api.makeEpisodes({ project: session.projectPath }),
-    { key: 'episodes', refresh: true },
-  )
-  if (!result) return
-  const created = result.created?.length ?? 0
-  const updated = result.updated?.length ?? 0
-  ui.ok(created ? `建了 ${created} 集` : `${updated} 集已经在了，只更新了信息`)
-
-  // **落单的那几集要说出来。** 章模式是一章一集，而按老分集表建过的项目
-  // 里集数常常更多（实测这个项目 8 章、9 集）——多出来的那几个这一轮没人
-  // 认领。**不删**：它们可能已经出过片，删了就是把片子连着记录一起抹掉。
-  // 但也不能不吭声：它们会一直摆在集的下拉里，点开是上一版的内容。
-  const orphans = result.orphans ?? []
-  if (orphans.length) {
-    ui.warn(
-      `有 ${orphans.length} 集不对应任何一章：${orphans.join('、')}。` +
-        '它们是按老的分集表建的，这一轮没动它们——出过片的话片子还在，' +
-        '不想要了到「这一集」那一页自己删。',
-    )
-  }
-  await load()
-}
 
 // ---------------------------------------------------------------------------
 // 支线。整部剧只用一两次的东西，收在折叠区里
@@ -421,25 +396,6 @@ async function addEpisode() {
   session.selectEpisode(created.episode_id)
 }
 
-/** 给全项目还没分镜的集补分镜。从「这一集」的镜头格搬来的，理由见模板。 */
-async function planAll() {
-  const result = await run(
-    () => api.planAll({ project: session.projectPath, overwrite: false }),
-    { key: 'planAll' },
-  )
-  // **别写「去『这一集』能看进度」。** 批量补分镜跑在"写"那个槽上
-  // （和写整季同一个），而「这一集」那一页盯的是"出片"那个槽——它那儿
-  // 一动不动。真正一直看得见的是顶栏那块「AI 作业中」。
-  if (result) {
-    // **把轮询接上。** 不接的话没有任何一处在看"写"那个槽，下面那条
-    // 「跑完了重拉」的 watch 永远等不到 running 从真变假——见 watchWriter
-    // 上面那段。故事页点「展开」那一下也是这么做的（writeAllChapters）。
-    writer.start()
-    ui.info(
-      `正在给 ${result.episodes.join('、')} 补分镜，顶栏那块「AI 作业中」里看进度`,
-    )
-  }
-}
 
 </script>
 
@@ -456,41 +412,6 @@ async function planAll() {
         {{ chapters.length }} 章<template v-if="writtenCount < chapters.length">
           · {{ chapters.length - writtenCount }} 章还没正文</template>
       </span>
-      <span class="spacer" />
-      <!-- 给全项目还没分镜的集都出一遍。原来在「这一集」的镜头格上——
-           一个管**全项目**的按钮摆在**一集**的页面上。它属于这儿：
-           这一格就是所有集摆在一起的地方。 -->
-      <button
-        v-if="hasStory && plan.length"
-        class="btn btn--ghost btn--sm"
-        type="button"
-        :disabled="isBusy('planAll')"
-        title="把还没有分镜的集一次出完，有分镜的不动"
-        @click="planAll"
-      >
-        {{ isBusy('planAll') ? '排着…' : '批量补分镜' }}
-      </button>
-      <!-- **没有分集表就按不动。** 它落的是分集表，而分集表是写大纲那一步
-           出的（`story.plan`）——空着的时候按下去引擎回「还没有分集表。先写
-           一份大纲，或者改一下每集时长重算一次」。而左边那行字这会儿正写着
-           「N 章 → **0 集**」：页面自己已经说了没有，按钮却还亮着。
-           旁边「批量补分镜」判的就是同一个 `plan.length`（它用 v-if 整个藏
-           起来）。这颗是这一格的主按钮，藏了人会不知道有这一步，所以改成
-           灰着 + 说清楚缺什么。 -->
-      <button
-        v-if="hasStory"
-        class="btn btn--primary btn--sm"
-        type="button"
-        :disabled="isBusy('episodes') || !plan.length"
-        :title="
-          plan.length
-            ? '分集表是计划，落成剧集之后后面几步才有东西可对'
-            : '还没有分集表——它是写大纲那一步出的。先去故事页写一份大纲，或者改一下左边那个每集时长重算一次'
-        "
-        @click="makeEpisodes"
-      >
-        {{ isBusy('episodes') ? '正在建…' : '落成剧集' }}
-      </button>
     </div>
 
     <div v-if="loading" class="tiny dim">读取中…</div>

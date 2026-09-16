@@ -395,17 +395,23 @@ watch(longRunning, (now, before) => {
 
     <!-- 「还没选到某一集」只判这一处。
          **一集都没有的时候「顶上挑一集」是句办不到的话**：那时候顶栏那个
-         下拉是灰的，里面只有一行「还没有剧集」。而这正是新项目最常撞见的
-         状态——故事写完、还没落成剧集。底下那颗「去分集」本来就在，
-         话跟着它说。 -->
+         下拉是灰的，里面只有一行「还没有剧集」。
+         2026-09-16 改：以前这儿写的是「去分集那一格落一集出来」，指向设定
+         的那颗「落成剧集」按钮。那颗按钮没了——章模式下一章一集是自动对齐
+         的（见 sync_episodes_to_chapters），一集都没有只可能是**还没有章节**。
+         所以话跟着改，指回故事页。 -->
     <EmptyState
       v-else-if="!session.episodeId"
       icon="script"
       tone="warn"
       title="还没选到某一集"
-      :hint="session.episodes.length ? '顶上挑一集' : '这部剧还一集都没有。去分集那一格落一集出来'"
+      :hint="
+        session.episodes.length
+          ? '顶上挑一集'
+          : '这部剧还一集都没有——章是自动对上集的，所以多半是还没有章节。去故事页写一份大纲，章出来了这儿就有了'
+      "
     >
-      <RouterLink to="/assets?tab=episodes" class="btn btn--sm">去分集</RouterLink>
+      <RouterLink to="/story" class="btn btn--sm">去写故事</RouterLink>
     </EmptyState>
 
     <template v-else>
