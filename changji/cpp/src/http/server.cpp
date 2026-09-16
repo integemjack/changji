@@ -2201,6 +2201,8 @@ void run(const config::Settings& settings, const Options& opts) {
 
     CROW_ROUTE(app, "/api/script/series").methods("POST"_method)(
         batch_route(&post_script_series));
+    CROW_ROUTE(app, "/api/script/all").methods("POST"_method)(
+        batch_route(&post_script_all));
     CROW_ROUTE(app, "/api/plan/all").methods("POST"_method)(
         batch_route(&post_plan_all));
     // 和上面两个共用 JobKind::Write 那个槽，所以进度也走

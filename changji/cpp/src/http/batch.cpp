@@ -515,6 +515,81 @@ ApiResult post_script_series(const json& body,
     return {200, {{"started", true}, {"total", episodes}}};
 }
 
+/// 把所有挂着章、又还没有剧本的章一次改编完。
+///
+/// 用户 2026-09-16：「交互过程也太繁琐。」原来一章要点两下、等一轮：
+/// 「改编成剧本」等两三分钟，回来点「采用」，下一章再来一遍——八章就是
+/// 十六下点击、八段等待。而**旁边「批量补分镜」早就是一次点完**，
+/// 缺的就是它前面这一步。
+///
+/// **不复制单章那条路的逻辑**：它要挑上一章的结尾接语气、要按章排场、
+/// 章模式和老路线还分岔（见 post_script_write）。这儿原样调它，出来的稿子
+/// 直接存（post_script）——批量就是"我不逐篇看了"，没有草稿态。
+ApiResult post_script_all(const json& body, std::shared_ptr<llm::Client> client) {
+    forbid_extra(body, {"project", "overwrite"});
+    const bool overwrite = opt_bool(body, "overwrite", false);
+
+    if (pipeline::jobs().running(pipeline::JobKind::Write)) {
+        throw ApiError(409, "剧本那边还在忙");
+    }
+    ProjectStore store = open_project(body);
+    const Project project = load_or_400(store);
+
+    std::vector<std::string> todo;
+    for (const auto& ep : project.episodes) {
+        // 挂着章的才改编：手动加的一集、预告片那种没有章可照，跳过。
+        if (ep.chapter_refs.empty()) continue;
+        if (!overwrite && !text::strip_ws(ep.script).empty()) continue;
+        todo.push_back(ep.episode_id);
+    }
+    if (todo.empty()) {
+        throw ApiError(400, "没有需要改编的章。挂着章、又还没有剧本的才算");
+    }
+
+    const std::string root = paths::to_utf8(store.root());
+    const bool started = pipeline::jobs().start(
+        pipeline::JobKind::Write, "",
+        [store, client, todo, root](pipeline::JobProgress& p) {
+            p.set_total(static_cast<int>(todo.size()));
+            // 思考流和取消令牌都挂在这条 job 上，理由同 post_plan_all。
+            const JobScope scope{
+                pipeline::jobs().job_id(pipeline::JobKind::Write), p.token()};
+            int done = 0;
+            for (const std::string& episode_id : todo) {
+                if (p.cancelled()) return;
+                p.set_message("正在改编 " + episode_id);
+                try {
+                    pipeline::CancelToken& tok = p.token();
+                    json req = json::object();
+                    req["project"] = root;
+                    req["episode_id"] = episode_id;
+                    // 老路线那一支要这个键才不报"缺 premise"；章模式用不上。
+                    req["premise"] = "";
+                    const ApiResult wrote = post_script_write(req, *client, tok);
+                    if (wrote.status != 200 || !wrote.body.is_object()) continue;
+                    const auto sit = wrote.body.find("script");
+                    if (sit == wrote.body.end() || !sit->is_string()) continue;
+
+                    json save = json::object();
+                    save["project"] = root;
+                    save["episode_id"] = episode_id;
+                    save["script"] = *sit;
+                    if (const auto lit = wrote.body.find("logline");
+                        lit != wrote.body.end() && lit->is_string()) {
+                        save["synopsis"] = *lit;
+                    }
+                    post_script(save, *client, tok);
+                } catch (const std::exception&) {
+                    // **一章砸了不拖垮整批。** 后面那几章照跑，跑完人回来看
+                    // 哪几章还是空的——和 post_plan_all 那条一个做法。
+                }
+                p.set_done(++done);
+            }
+        });
+    if (!started) throw ApiError(409, "剧本那边还在忙");
+    return {202, {{"started", true}, {"episodes", todo}}};
+}
+
 ApiResult post_plan_all(const json& body, std::shared_ptr<llm::Client> client) {
     forbid_extra(body, {"project", "overwrite"});
     const bool overwrite = opt_bool(body, "overwrite", false);

@@ -300,6 +300,8 @@ export const api = {
   // ---- 引擎：分镜 ----
   plan: (payload) => post('/api/plan', payload),
   planAll: (payload) => post('/api/plan/all', payload),
+  /** 把所有挂着章、又还没剧本的章一次改编完。批量补分镜前面那一步。 */
+  scriptAll: (payload) => post('/api/script/all', payload),
   shots: (path, episodeId) => get('/api/shots', { path, episode_id: episodeId }),
   saveShot: (payload) => post('/api/shot', payload),
   batchShots: (payload) => post('/api/shots/batch', payload),

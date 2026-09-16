@@ -46,6 +46,11 @@ ApiResult post_story_chapters(const nlohmann::json& body,
 ///
 /// 连着写了五集之后，每一集都还得单独点一次「重出分镜」。
 /// 五次里漏掉一次，跑整个项目时那一集就被跳过去了。
+/// POST /api/script/all —— 把所有挂着章、又还没剧本的章一次改编完。
+/// 和「批量补分镜」对称：那一步是它后面那一步。
+ApiResult post_script_all(const nlohmann::json& body,
+                          std::shared_ptr<llm::Client> client);
+
 ApiResult post_plan_all(const nlohmann::json& body,
                         std::shared_ptr<llm::Client> client);
 

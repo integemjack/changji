@@ -442,6 +442,20 @@ function onKey(event) {
 
 // ---- 出分镜 ----
 
+/** 把全项目还没剧本的章一次改编完。和 planAll 是一对，见模板里那段。 */
+async function scriptAll() {
+  const result = await run(
+    () => api.scriptAll({ project: session.projectPath, overwrite: false }),
+    { key: 'scriptAll' },
+  )
+  // 进度和「批量补分镜」共用"写"那个槽，所以看的是顶栏那块「AI 作业中」。
+  if (result) {
+    ui.info(
+      `正在改编 ${result.episodes.join('、')}，顶栏那块「AI 作业中」里看进度`,
+    )
+  }
+}
+
 /** 给全项目还没分镜的章补分镜。2026-09-16 从设定的章节那一格搬回来的。 */
 async function planAll() {
   const result = await run(
@@ -1127,6 +1141,23 @@ onDeactivated(() => {
         >
           <AppIcon name="sparkle" :size="15" />
           {{ isBusy('plan') ? '拆镜头中…' : shots.length ? 'AI 重出分镜' : 'AI 出分镜' }}
+        </button>
+        <!-- 全项目还没剧本的章一次改编完。**和它右边那颗是一对**：
+             原来一章要「改编」等一轮、回来点「采用」，八章就是十六下点击
+             加八段等待，而补分镜早就是一次点完的。用户 2026-09-16：
+             「交互过程也太繁琐。」 -->
+        <button
+          class="btn btn--ghost btn--sm"
+          type="button"
+          :disabled="isBusy('scriptAll') || !session.episodes.length"
+          :title="
+            session.episodes.length
+              ? '把全项目还没有剧本的章一次改编完，已经有剧本的不动'
+              : '这部剧还一集都没有——章是自动对上集的，先去故事页写一份大纲'
+          "
+          @click="scriptAll"
+        >
+          {{ isBusy('scriptAll') ? '改编中…' : '批量改编' }}
         </button>
         <!-- 全项目还没分镜的章一次补完。**2026-09-16 搬回这儿**：它之前
              在设定的章节那一格，理由是「那一格就是所有集摆在一起的地方」

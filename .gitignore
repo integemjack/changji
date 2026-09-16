@@ -50,3 +50,4 @@ changji/cpp/build*/
 # 外部工具（ffmpeg 之类）。和 models/ 一样：仓库根就是这个目录，
 # 往它下面放大文件必须先写进这里。开头的斜杠同理，不能少。
 /bin/
+build_tests/
