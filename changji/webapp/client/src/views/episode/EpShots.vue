@@ -184,8 +184,23 @@ const totalDuration = computed(() =>
 const problemCount = computed(
   () => shots.value.filter((s) => s.gate_notes?.length).length,
 )
-/** 还没出片的镜头数。0 就是这一集做完了。 */
-const pending = computed(() => shots.value.filter((s) => !s.video_path).length)
+/** 终态：跑完了、锁住了、或者重试超限降级了。和引擎挑镜头的判据是同一条。 */
+const DONE_STATUS = ['final_done', 'locked', 'fallback']
+/**
+ * 还没出片的镜头数。0 就是这一集做完了。
+ *
+ * **按状态数，不按有没有文件数。** 闸门判了硬切的镜头会退回首帧阶段
+ * （状态回到 audio_done），但它上一版那个视频文件还留在磁盘上——按
+ * `video_path` 数的话这几镜看着像做完了，于是按钮从「出片（差 3）」
+ * 变成「全部重出」，提示写着「配音 19 · 首帧 19 · 成片档 19，约 1 小时
+ * 38 分」。而引擎那边 /api/run/preview 明明白白回的是「首帧 3 · 成片档
+ * 3，约 15 分钟」——三镜的活报成了整集的活。
+ * 2026-09-16 实测 ep06：三镜被闸门退回，成片只装了 46.6 秒（计划 76.2），
+ * 而页面上没有任何一个按钮是「把那三镜补上」。
+ */
+const pending = computed(
+  () => shots.value.filter((s) => !DONE_STATUS.includes(s.status)).length,
+)
 /** 还没有首帧的镜头数。「只出首帧」那个按钮按它显示。 */
 const pendingFrames = computed(() => shots.value.filter((s) => !s.frame_path).length)
 /**
@@ -278,9 +293,7 @@ const FILTERS = [
 
 const shown = computed(() => {
   if (filter.value === 'todo') {
-    return shots.value.filter(
-      (s) => !['final_done', 'locked', 'fallback'].includes(s.status),
-    )
+    return shots.value.filter((s) => !DONE_STATUS.includes(s.status))
   }
   if (filter.value === 'problem') {
     return shots.value.filter(
