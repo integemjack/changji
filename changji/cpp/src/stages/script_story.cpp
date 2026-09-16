@@ -364,41 +364,6 @@ std::string render_script_context(const Story& story, const EpisodePlan& plan,
     return out;
 }
 
-std::string build_script_prompt_from_story(
-    const Story& story, const EpisodePlan& plan, StyleLine style_line,
-    const std::vector<std::string>& characters,
-    const std::string& previous_tail, std::uint32_t variation) {
-    const char* hint = style_line == StyleLine::ANIME
-                           ? prompt::script::kHintAnime
-                           : prompt::script::kHintRealistic;
-
-    std::string out;
-    out += prompt::script_story::kSeg0;
-    out += format_f0(plan.target_duration_s);
-    out += prompt::script_story::kSeg1;
-    out += hint;
-    out += prompt::script_story::kSeg2;
-    out += std::to_string(budget_chars(plan.target_duration_s));
-    out += prompt::script_story::kRules;
-    // 四段按秒排。时长按分集表的，和字数预算同源；形状随这一集浮动，
-    // 所以种子要和出 schema、解析那两处用同一个。
-    out += render_act_brief(act_plan(plan.target_duration_s, variation));
-
-    if (!characters.empty()) {
-        out += prompt::script_story::kCharsPre;
-        for (std::size_t i = 0; i < characters.size(); ++i) {
-            if (i > 0) out += "、";
-            out += characters[i];
-        }
-        out += prompt::script_story::kCharsPost;
-    }
-
-    out += prompt::script_story::kContextHead;
-    out += render_script_context(story, plan, previous_tail);
-    out += prompt::script_story::kTail;
-    return out;
-}
-
 std::string build_chapter_script_prompt(
     const Story& story, const EpisodePlan& plan, StyleLine style_line,
     const std::vector<std::string>& characters,

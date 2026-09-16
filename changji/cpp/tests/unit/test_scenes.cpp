@@ -380,8 +380,17 @@ TEST_CASE("没有场次头：整集一次拆，提示词和以前逐字节一样
     pipeline::CancelToken tok;
     const auto r = pipeline::run_storyboard(o, client, tok);
     REQUIRE(client.prompts.size() == 1);
+    // **配额按剧本估的秒数，不按 duration_s。** 这儿原来钉的是
+    // `for_duration(10.0)`——那是集模式的做法：一集多长先定死，分镜按它拆、
+    // 拆完再压回去。2026-09-16 用户定了只留章模式，那条路删了：一章多长由
+    // 它自己的内容定，装配时再按每集时长切。duration_s 现在只在剧本估不出
+    // 秒数时兜底。
     CHECK(client.prompts[0] ==
-          stages::build_storyboard_prompt(script, a, stages::DurationQuota::for_duration(10.0), "ep01"));
+          stages::build_storyboard_prompt(
+              script, a,
+              stages::DurationQuota::for_duration(
+                  stages::estimate_script_seconds(script)),
+              "ep01"));
     CHECK(r.scenes == 1);
     CHECK(progress == 0);
     REQUIRE(r.shots.size() == 1);

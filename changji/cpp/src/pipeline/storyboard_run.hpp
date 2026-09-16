@@ -24,12 +24,13 @@ struct StoryboardRunOptions {
     std::string script;
     models::AssetLibrary assets;
     std::string episode_id;
+    /// **只在剧本估不出秒数时兜底。** 镜头数由剧本的内容定，拆完也不压回
+    /// 这个数——一章多长由它自己的内容定，装配时再按每集时长切。
+    ///
+    /// 2026-09-16 之前这儿有个 `content_driven` 开关，关着的时候按一集
+    /// 60 秒的配额拆、拆完再压回去，等于把「不够凑、超了压」从剧本挪到了
+    /// 分镜。那条路（集模式）当天整个删了，开关跟着没了。
     double duration_s = 60.0;
-    /// 章模式（[assembly].episode_s > 0）：镜头数由剧本的内容定，不按
-    /// duration_s 的配额拆，拆完也**不压回**目标时长——这一章多长由内容定，
-    /// 装配时再按每集时长切。2026-09-16 之前这儿照样按一集 60 秒的配额拆、
-    /// 拆完压回一集，等于把「超了就压」从剧本挪到了分镜。
-    bool content_driven = false;
     /// 模型的思考流，同 llm::Request::on_thinking。可空。
     std::function<void(const std::string&)> on_thinking;
     /// 「正在拆第 2/3 场：夜 · 内 · 天台」这类话往哪儿报。可空。

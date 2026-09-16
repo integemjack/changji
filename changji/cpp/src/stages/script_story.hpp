@@ -92,14 +92,6 @@ std::vector<ScenePlan> chapter_scene_plan(const models::Story& story,
 /// 结尾是钩子所在，截头的话模型就不知道这一章该停在哪。
 std::string truncate_middle(const std::string& body, std::size_t limit);
 
-/// 拼提示词。
-/// variation 是这一集的形状种子（见 script.hpp 的 act_plan）。要和出 schema、
-/// 解析那两处用同一个，否则段头上的秒数和模型看到的对不上。
-std::string build_script_prompt_from_story(
-    const models::Story& story, const models::EpisodePlan& plan,
-    models::StyleLine style_line, const std::vector<std::string>& characters = {},
-    const std::string& previous_tail = "", std::uint32_t variation = 0);
-
 /// 章模式的提示词（[assembly].episode_s > 0）：**没有秒数、没有字数、
 /// 没有四段**，这一章写多长由它的内容定，剧本照着正文的场走。`scenes`
 /// 要和出 schema（script_schema_for_chapter）、解析（parse_chapter_script）

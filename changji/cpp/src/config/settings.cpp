@@ -245,8 +245,10 @@ std::vector<std::string> AssemblyConfig::validate() const {
     check_range(errs, "assembly.audio_sample_rate", audio_sample_rate, 8000, 192000);
     check_range(errs, "assembly.audio_channels", audio_channels, 1, 2);
     check_range(errs, "assembly.scene_transition_s", scene_transition_s, 0.0, 2.0);
-    // 0 是「不切」；真填就得是一集能看的长度，十秒以下是手误
-    if (episode_s != 0.0) check_range(errs, "assembly.episode_s", episode_s, 10.0, 3600.0);
+    // 一集能看的长度，十秒以下是手误。**不再允许 0**：0 原来表示"走老的
+    // 集模式"，而集模式 2026-09-16 已经删了（用户当天定的）。老配置里写着
+    // 0 的在读取时就抬到默认值，走不到这儿。
+    check_range(errs, "assembly.episode_s", episode_s, 10.0, 3600.0);
     check_range(errs, "assembly.subtitle_max_chars_per_line",
                 subtitle_max_chars_per_line, 6, 30);
     check_range(errs, "assembly.subtitle_max_lines", subtitle_max_lines, 1, 3);
@@ -803,6 +805,10 @@ void apply_table(const toml::table& doc, Settings& s) {
         take(t, "audio_channels", s.assembly.audio_channels);
         take(t, "scene_transition_s", s.assembly.scene_transition_s);
         take(t, "episode_s", s.assembly.episode_s);
+        // **老配置里的 0 抬到默认值。** 0 原来的意思是"走老的一集一章"，
+        // 那条路已经没有了；留着 0 的话装配那一步拿它当每集时长，切不出集来。
+        // 负数同理（手误）。
+        if (s.assembly.episode_s <= 0.0) s.assembly.episode_s = kDefaultEpisodeS;
         take(t, "subtitle_max_chars_per_line", s.assembly.subtitle_max_chars_per_line);
         take(t, "subtitle_max_lines", s.assembly.subtitle_max_lines);
         take(t, "subtitle_font", s.assembly.subtitle_font);

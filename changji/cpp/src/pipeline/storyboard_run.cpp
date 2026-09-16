@@ -17,10 +17,10 @@ StoryboardRunResult run_storyboard(const StoryboardRunOptions& opts,
 
     std::vector<stages::SceneBlock> scenes = stages::split_scenes(script, assets);
     std::vector<Shot> shots;
-    // 章模式：目标量按剧本估，不按这一集的名义时长。
-    const double target_s = opts.content_driven
-                                ? stages::estimate_script_seconds(script)
-                                : opts.duration_s;
+    // **目标量按剧本估，不按名义时长。** 估不出来（剧本是空的、全是场次头）
+    // 才退回 duration_s。
+    const double estimated = stages::estimate_script_seconds(script);
+    const double target_s = estimated > 0.0 ? estimated : opts.duration_s;
 
     if (scenes.size() <= 1) {
         // ---- 整集一次拆：和 2026-09-15 之前逐字节一样 ----
@@ -100,9 +100,9 @@ StoryboardRunResult run_storyboard(const StoryboardRunOptions& opts,
     apply_lipsync_rules(shots);
     // 编号和顺序按引擎的来。模型编出来的 id 有错集号、没补零、打错字的。
     stages::renumber_shots(shots, opts.episode_id);
-    // 总时长拉回目标。只动没台词的镜头，有台词的由配音定。
-    // 章模式不压：这一章多长由内容定，装配时再按每集时长切。
-    if (!opts.content_driven) stages::rebalance_durations(shots, opts.duration_s);
+    // **不压回目标时长。** 这一章多长由它自己的内容定，装配时再按每集
+    // 时长切成几集。2026-09-16 之前这儿有一道 rebalance_durations，
+    // 只在集模式下跑——那条路当天删了，这一道跟着没了。
     result.shots = std::move(shots);
     return result;
 }

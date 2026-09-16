@@ -47,7 +47,7 @@
           "subtitle_font": "Source Han Sans SC",
           "subtitle_max_chars_per_line": 15,
           "subtitle_max_lines": 2,
-          "episode_s": 0.0
+          "episode_s": 60.0
         },
         "gates": {
           "enabled": true,

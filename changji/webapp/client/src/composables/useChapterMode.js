@@ -1,37 +1,29 @@
 import { ref } from 'vue'
 
-import { api } from '@/api'
-
 /**
- * 章模式开没开（[assembly].episode_s > 0）。
+ * **章模式现在是唯一的模式。**
  *
- * 用户 2026-09-16 的判词：设定里的分集应该就是剧本，「这一集」应该叫
- * 「这一章」——一章按内容写完、拍完，最后按固定的每集时长切成几集。
- * 引擎那边四处已经按这个数切换了；界面上先把最显眼的两个叫法跟上：
- * 步骤条里的「这一集」和设定页的「分集」。别的一百多处「这一集」文案
- * 等这条路跑顺了再统一改，现在改一半比不改更乱。
+ * 用户 2026-09-16：设定里的分集应该就是剧本，「这一集」应该叫「这一章」；
+ * 同一天又定了只留章模式、把集模式删掉。引擎那边 `[assembly].episode_s`
+ * 也不再是开关了，只是"一集多长"（装配时按它切），老配置里的 0 在读取时
+ * 抬到默认值。
  *
- * 读一次就够：这个数改了要在设置页保存，保存那一页自己会刷新。
+ * 所以这儿原来那趟 `/bff/settings/overview` 没了：
+ *
+ *   · 它本来就只用来回答"开没开"，而答案现在恒为真；
+ *   · 而且它**会答错**——引擎重启那几秒请求被拒，catch 里按老叫法兜底，
+ *     于是标签页写「这一集 · 场记」而屏幕上写「这一章」。2026-09-16 实见。
+ *
+ * 留着这个 ref 和 chapterWord 是为了不动那一百多处调用点：等「这一集」
+ * 那些文案统一扫完再把它们一起删掉。
  */
-const chapter = ref(false)
-let loaded = false
+const chapter = ref(true)
 
 export function useChapterMode() {
-  if (!loaded) {
-    loaded = true
-    api
-      .settingsOverview()
-      .then((d) => {
-        chapter.value = Number(d?.settings?.assembly?.episode_s ?? 0) > 0
-      })
-      .catch(() => {
-        // 读不到就按老叫法。这是个称呼，不值得弹错
-      })
-  }
   return { chapter }
 }
 
-/** 步骤条、页签上的名字：章模式把「这一集」说成「这一章」，「分集」说成「章节」。 */
+/** 步骤条、页签上的名字：「这一集」说成「这一章」，「分集」说成「章节」。 */
 export function chapterWord(title, isChapter) {
   if (!isChapter) return title
   if (title === '这一集') return '这一章'

@@ -262,10 +262,13 @@ ApiResult post_script_write(const json& body, llm::Client& client,
     Story story;
     const EpisodePlan* plan = nullptr;
     EpisodePlan chapter_plan_storage;
-    // **章模式**（[assembly].episode_s > 0）：没有秒数、没有字数，这一章
-    // 写多长由内容定；分镜出片之后再按 episode_s 切成几集。
-    const bool chapter_mode =
-        config::load_settings(store.root()).assembly.episode_s > 0.0;
+    // 没有秒数、没有字数：这一章写多长由内容定，分镜出片之后再按
+    // [assembly].episode_s 切成几集。
+    //
+    // 2026-09-16 之前这儿有个 `chapter_mode` 开关（episode_s > 0），关着
+    // 的时候走另一套：剧本按「这一集总时长约 N 秒」写，不够凑、超了压。
+    // 那条路当天整个删了（用户定的），开关跟着没了——下面几处原来都挂在
+    // 它上面，现在是无条件的。
     if (!episode_id.empty()) {
         try {
             story = store.load_story();
@@ -276,7 +279,7 @@ ApiResult post_script_write(const json& body, llm::Client& client,
         // turn）。**不按 episode_id 去分集表里查**——那张表的 id 是按切片
         // 发的，一章切两段就有两条，和「ch07 → ep07」对不上，查到的是
         // 隔壁章的半截（2026-09-16 实撞）。
-        if (chapter_mode) {
+        {
             const Episode* ep = project.episode_by_id(episode_id);
             if (ep != nullptr && !ep->chapter_refs.empty() &&
                 story.chapter_by_id(ep->chapter_refs.front()) != nullptr) {
@@ -349,7 +352,7 @@ ApiResult post_script_write(const json& body, llm::Client& client,
         // project.episodes 的顺序——后者可能被手动加过集、插过预告片。
         // 章模式按章：上一章对应的那一集（chapter_refs 指着上一章的）。
         std::string prev_tail;
-        if (chapter_mode && plan == &chapter_plan_storage) {
+        if (plan == &chapter_plan_storage) {
             const Chapter* prev_ch = nullptr;
             for (std::size_t i = 1; i < story.chapters.size(); ++i) {
                 if (story.chapters[i].chapter_id == plan->from_chapter) {
@@ -382,14 +385,9 @@ ApiResult post_script_write(const json& body, llm::Client& client,
         // 按集号哈希**，那样同一集永远是同一个形状，人不喜欢这一集的节奏也
         // 换不掉。不满意就再点一次「重新改编」，满意了点采用，形状跟着定下来。
         // 章模式没有形状：剧本照正文的场走，见 build_chapter_script_prompt。
-        if (chapter_mode) {
-            chapter_scenes = stages::chapter_scene_plan(story, *plan);
-            prompt = stages::build_chapter_script_prompt(
-                story, *plan, project.style_line, names, prev_tail, chapter_scenes);
-        } else {
-            prompt = stages::build_script_prompt_from_story(
-                story, *plan, project.style_line, names, prev_tail, variation);
-        }
+        chapter_scenes = stages::chapter_scene_plan(story, *plan);
+        prompt = stages::build_chapter_script_prompt(
+            story, *plan, project.style_line, names, prev_tail, chapter_scenes);
         source = "story";
     } else {
         prompt = stages::build_script_prompt(
@@ -409,7 +407,7 @@ ApiResult post_script_write(const json& body, llm::Client& client,
     //
     // 名字同理：提示词里说了「一字不改」，实跑还是写出了林浩 / Lin Hao /
     // LinHao / Su Wan 四种。收成枚举，和分镜那边收 char_id 是一个道理。
-    const bool chapter_script = chapter_mode && plan != nullptr;
+    const bool chapter_script = plan != nullptr;
     req.schema = chapter_script
                      ? stages::script_schema_for_chapter(chapter_scenes, names)
                      : stages::script_schema(used_duration, names, variation);

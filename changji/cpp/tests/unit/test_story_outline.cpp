@@ -1080,26 +1080,11 @@ TEST_CASE("上一集的结尾接得上，而且不从半行中间起") {
     CHECK(tail.rfind("林晚：", 0) == 0);
 }
 
-TEST_CASE("提示词：这一集要发生什么已经定好了") {
-    const Story s = written_story();
-    const std::string p = changji::stages::build_script_prompt_from_story(
-        s, s.plan[0], StyleLine::REALISTIC, {"林晚", "陈默"});
-
-    // 和老路线的分水岭：不是让它构思剧情
-    CHECK(p.find("已经定好了") != std::string::npos);
-    CHECK(p.find("不要把前情再演一遍") != std::string::npos);
-    CHECK(p.find("结尾必须停在给定的那个钩子上") != std::string::npos);
-    // 时长按分集表来，字数预算跟着算
-    CHECK(p.find("总时长约 30 秒") != std::string::npos);
-    CHECK(p.find("必须沿用这些已有角色，名字一字不改：林晚、陈默") !=
-          std::string::npos);
-    // 动作要拍得出来那几条留着
-    CHECK(p.find("写角色**身体在做什么**") != std::string::npos);
-    // 四段按秒排，跟着 30 秒的集算
-    CHECK(p.find("开场钩子（0–") != std::string::npos);
-    CHECK(p.find("集尾留扣（") != std::string::npos);
-    CHECK(p.find("至少 ") != std::string::npos);
-}
+// 这儿原来有一条「提示词：这一集要发生什么已经定好了」，钉的是
+// build_script_prompt_from_story——集模式那条路的剧本提示词（按秒写、
+// 四段按秒排、字数预算跟着算）。2026-09-16 用户定了只留章模式，那个函数
+// 和它独占的四串提示词一起删了。章模式那条的提示词由下面
+// 「照着章写剧本」那几条钉着。
 
 /// 往项目的 changji.toml 里写一行 [assembly].episode_s。
 ///
@@ -1111,22 +1096,23 @@ static void set_episode_s(const fs::path& root, double seconds) {
     f << "\n[assembly]\nepisode_s = " << seconds << "\n";
 }
 
-TEST_CASE("POST /api/story/episodes：把分集表落成真的剧集") {
+TEST_CASE("POST /api/story/episodes：落成剧集，一章一个") {
     const fs::path root = fresh_project("落成剧集");
     ProjectStore store(root);
     const Story s = written_story();
     store.save_story(s);
-    set_episode_s(root, 0.0);   // 老路线：一条分集一个剧集
 
     const auto r = http::post_story_episodes(json{{"project", p_str(root)}});
     CHECK(r.status == 200);
-    CHECK(r.body.at("created").size() == s.plan.size());
+    // **一章一个，不照分集表。** 用户 2026-09-16：「落成剧集改成一章一个」，
+    // 同一天又定了只留章模式。这儿原来先 set_episode_s(root, 0) 切回老路线、
+    // 再钉「一条分集一个剧集」——那条路已经没有了。
+    // 语料里 plan 有 4 条而章只有 2 章，所以这两个数不一样，钉的是章数。
+    CHECK(r.body.at("created").size() == s.chapters.size());
 
     Project project = store.load_project();
-    REQUIRE(project.episodes.size() == s.plan.size());
+    REQUIRE(project.episodes.size() == s.chapters.size());
     const Episode& first = project.episodes[0];
-    CHECK(first.episode_id == s.plan[0].episode_id);
-    CHECK(first.target_duration_s == doctest::Approx(s.plan[0].target_duration_s));
     CHECK_FALSE(first.chapter_refs.empty());
     CHECK(first.chapter_refs[0] == "ch01");
 
@@ -1138,7 +1124,7 @@ TEST_CASE("POST /api/story/episodes：把分集表落成真的剧集") {
         const auto again =
             http::post_story_episodes(json{{"project", p_str(root)}});
         CHECK(again.body.at("created").empty());
-        CHECK(again.body.at("updated").size() == s.plan.size());
+        CHECK(again.body.at("updated").size() == s.chapters.size());
         CHECK(store.load_project().episodes[0].script ==
               "林晚：这是已经写好的剧本。");
     }
@@ -1171,13 +1157,23 @@ TEST_CASE("章模式下剧集自动跟着章节走，不用按任何按钮") {
         CHECK(project.episodes[0].chapter_refs[0] == "ch01");
     }
 
-    SUBCASE("老路线（episode_s = 0）一个剧集都不建") {
-        const fs::path old_root = fresh_project("老路线不自动");
+    SUBCASE("老配置里写着 episode_s = 0 的，照样跟着章节走") {
+        // 这儿原来钉的是「老路线（episode_s = 0）一个剧集都不建」——那条路
+        // 2026-09-16 整个删了（用户当天定的：只留章模式）。0 现在不再表示
+        // "走老路线"，它在读配置时就被抬到默认值（settings.cpp 里那一句），
+        // 所以老项目打开之后和新项目走同一条路。
+        //
+        // **留着这个子用例而不是删掉**：它现在钉的是那次迁移——老配置不该
+        // 掉进"一个剧集都不建"的坑里，那正是删掉开关之前它会掉进去的地方。
+        const fs::path old_root = fresh_project("老配置迁移");
         ProjectStore old_store(old_root);
         set_episode_s(old_root, 0.0);
         old_store.save_story(written_story());
-        http::post_story(json{{"project", p_str(old_root)}, {"premise", "老路线"}});
-        CHECK(old_store.load_project().episodes.empty());
+        http::post_story(json{{"project", p_str(old_root)}, {"premise", "老配置"}});
+        const Project migrated = old_store.load_project();
+        CHECK_FALSE(migrated.episodes.empty());
+        REQUIRE_FALSE(migrated.episodes[0].chapter_refs.empty());
+        CHECK(migrated.episodes[0].chapter_refs[0] == "ch01");
         std::error_code ec2;
         fs::remove_all(old_root, ec2);
     }
