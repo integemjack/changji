@@ -360,7 +360,7 @@ function retry(record) {
       <RouterLink to="/project" class="btn btn--primary">去项目页</RouterLink>
     </EmptyState>
 
-    <EmptyState v-else-if="!files.length" icon="film" title="还没有能投的片" hint="这一集的镜头还没跑出来，跑完自动装配成片">
+    <EmptyState v-else-if="!files.length" icon="film" title="还没有能投的片" hint="这一章的镜头还没跑出来，跑完自动装配成片">
       <button class="btn btn--primary" type="button" @click="emit('go', 'shots')">
         去做镜头
       </button>

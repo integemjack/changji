@@ -10,7 +10,6 @@
  */
 import { describe, expect, it } from 'vitest'
 
-import { useChapterMode } from '@/composables/useChapterMode'
 import { applyTitle, titleOf } from './page-title'
 
 const doc = () => ({ title: '这一集 · 场记' })
@@ -37,24 +36,17 @@ describe('applyTitle', () => {
   })
 })
 
-describe('章模式下标签页跟着改叫法', () => {
-  // 2026-09-16：导航栏那一排早就过了 chapterWord（App.vue、AssetsView.vue），
-  // 标签页这儿没有——同一页，屏幕左上写「这一章」、标签页写「这一集 · 场记」。
-  // 用户当天的原话：「这一集应该叫这一章」。两处各写各的就是这么飘起来的。
-  it('章模式开着时，「这一集」在标签页上也是「这一章」', async () => {
-    const { chapter } = useChapterMode()
-    chapter.value = true
-    try {
-      expect(titleOf({ meta: { title: '这一集' } })).toBe('这一章 · 场记')
-      expect(titleOf({ meta: { title: '分集' } })).toBe('章节 · 场记')
-      // 别的名字不动
-      expect(titleOf({ meta: { title: '故事' } })).toBe('故事 · 场记')
-    } finally {
-      chapter.value = false
-    }
-  })
-
-  it('章模式没开就还是老叫法', () => {
-    expect(titleOf({ meta: { title: '这一集' } })).toBe('这一集 · 场记')
+describe('步骤名直接来自路由表，中间没有翻译层', () => {
+  // 2026-09-16 这儿一度有两条，钉的是「章模式下 chapterWord 把『这一集』
+  // 换成『这一章』」。那一层当天删了：集模式整个没了，名字在路由表里写成
+  // 什么就是什么（router/index.js 里 title: '这一章'）。
+  //
+  // **留这一条**是因为翻译层栽过两次，都栽在"两处不同源"上：先是导航栏过
+  // 了翻译、标签页没过；补上之后翻译层要发请求问"章模式开没开"，引擎重启
+  // 那几秒请求被拒就兜底成老叫法。钉住"照搬 meta.title"，两种飘法都回不来。
+  it('照搬 meta.title，一个字不改', () => {
+    expect(titleOf({ meta: { title: '这一章' } })).toBe('这一章 · 场记')
+    expect(titleOf({ meta: { title: '章节' } })).toBe('章节 · 场记')
+    expect(titleOf({ meta: { title: '故事' } })).toBe('故事 · 场记')
   })
 })

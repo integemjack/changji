@@ -97,7 +97,7 @@ export const STEP_ROUTES = [
     path: '/episode',
     name: 'episode',
     phase: 'episode',
-    title: '这一集',
+    title: '这一章',
     icon: 'board',
     component: () => import('@/views/EpisodeView.vue'),
   },

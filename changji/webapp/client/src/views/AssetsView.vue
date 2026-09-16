@@ -46,10 +46,8 @@ import { pickProjectHint } from '@/composables/pick-project-hint'
 import { useProjects } from '@/stores/projects'
 import { useSession } from '@/stores/session'
 import { useUi } from '@/stores/ui'
-import { chapterWord, useChapterMode } from '@/composables/useChapterMode'
 
 const session = useSession()
-const { chapter } = useChapterMode()
 /** 只为那一屏「还没选项目」的提示：一个都没有时该说的是「建一个」。 */
 const projects = useProjects()
 const route = useRoute()
@@ -162,7 +160,7 @@ const TABS = computed(() => [
   },
   {
     key: 'episodes',
-    label: '分集',   // 章模式下显示为「章节」，见 tabLabel
+    label: '章节',
     // **数章，不数集。** 用户 2026-09-16：这一格不需要集的概念了。
     // 原来这儿数的是 plan.length（分集条目），于是页签上写着 10 而
     // 底下列着 8 章。
@@ -576,7 +574,7 @@ watch(longRunning, (now, before) => {
           type="button"
           @click="pick(t.key)"
         >
-          {{ chapterWord(t.label, chapter) }}
+          {{ t.label }}
           <span v-if="t.n" class="tab__n">{{ t.n }}</span>
           <span v-if="t.gap" class="tab__gap">· {{ t.gap }}</span>
         </button>

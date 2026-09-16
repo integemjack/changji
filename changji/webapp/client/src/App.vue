@@ -22,7 +22,6 @@ import ToastStack from '@/components/ToastStack.vue'
 import EngineLamp from '@/components/EngineLamp.vue'
 import ProjectRail from '@/components/ProjectRail.vue'
 import JobBadge from '@/components/JobBadge.vue'
-import { chapterWord, useChapterMode } from '@/composables/useChapterMode'
 import ThinkingBadge from '@/components/ThinkingBadge.vue'
 import SysMeter from '@/components/SysMeter.vue'
 import { useRetryWhenBack } from '@/composables/useSystemFeed'
@@ -31,7 +30,6 @@ import { useSession } from '@/stores/session'
 import { useUi } from '@/stores/ui'
 
 const route = useRoute()
-const { chapter } = useChapterMode()
 const router = useRouter()
 const session = useSession()
 const ui = useUi()
@@ -222,7 +220,7 @@ function cycleTheme() {
           }"
         >
           <AppIcon v-if="session.done[s.key]" name="check" :size="12" />
-          <span>{{ chapterWord(s.title, chapter) }}</span>
+          <span>{{ s.title }}</span>
         </RouterLink>
       </nav>
 

@@ -834,7 +834,7 @@ async function clearEmpty(locationId) {
           <button
             class="fold"
             type="button"
-            title="同一个库，这一集没用到"
+            title="同一个库，这一章没用到"
             @click="showOthers = !showOthers"
           >
             <AppIcon :name="showOthers ? 'arrowLeft' : 'arrowRight'" :size="14" />

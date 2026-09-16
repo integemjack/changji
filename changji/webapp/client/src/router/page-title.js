@@ -1,5 +1,3 @@
-import { chapterWord, useChapterMode } from '@/composables/useChapterMode'
-
 /**
  * 标签页上那个名字。
  *
@@ -20,18 +18,16 @@ import { chapterWord, useChapterMode } from '@/composables/useChapterMode'
 /**
  * 拼出这一页该显示的名字。
  *
- * **章模式下的叫法要和导航栏同源。** 导航栏那一排早就过了 `chapterWord`
- * （App.vue、AssetsView.vue），标签页这儿没有——于是同一页，屏幕左上写
- * 「这一章」、标签页写「这一集 · 场记」。用户 2026-09-16：「这一集应该叫
- * 这一章。」两处各写各的就是这么飘起来的。
+ * **和导航栏同源**：两边都直接用 `meta.title`（路由表里那个字面量），
+ * 中间不再有一层翻译。2026-09-16 一度是「导航栏过 chapterWord、标签页
+ * 不过」，于是同一页屏幕左上写「这一章」、标签页写「这一集 · 场记」；
+ * 补上那一层之后又撞到第二种飘法——那一层要发请求问"章模式开没开"，
+ * 引擎重启那几秒请求被拒就兜底成老叫法。
  *
- * 读的是 `useChapterMode` 那个模块级的 ref（读一次就够，见它的注释），
- * 所以这儿不用再发请求；它还没读回来时按老叫法，和别处一致。
+ * 集模式当天整个删了，翻译层跟着没了：名字在路由表里写成什么就是什么。
  */
 export function titleOf(to) {
-  if (!to?.meta?.title) return '场记'
-  const { chapter } = useChapterMode()
-  return `${chapterWord(to.meta.title, chapter.value)} · 场记`
+  return to?.meta?.title ? `${to.meta.title} · 场记` : '场记'
 }
 
 /**

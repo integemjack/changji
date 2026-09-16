@@ -29,7 +29,6 @@ import { onBeforeRouteLeave } from 'vue-router'
 import AppIcon from '@/components/AppIcon.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import ScriptReader from '@/components/ScriptReader.vue'
-import { useChapterMode } from '@/composables/useChapterMode'
 import { api } from '@/api'
 import { countScriptChars } from '@/api/labels'
 import { runAsyncJob } from '@/composables/useAsyncJob'
@@ -39,7 +38,6 @@ import { useSession } from '@/stores/session'
 import { useUi } from '@/stores/ui'
 
 const session = useSession()
-const { chapter } = useChapterMode()
 const ui = useUi()
 const { run, isBusy } = useAction()
 
@@ -128,7 +126,7 @@ const hasHead = computed(
 const writeLabel = computed(() => {
   if (isBusy('write')) return fromStory.value ? '改编中…' : '写着…'
   if (script.value.trim()) return fromStory.value ? '重新改编' : 'AI 重写'
-  return fromStory.value ? '改编成剧本' : 'AI 写这一集'
+  return fromStory.value ? '改编成剧本' : 'AI 写这一章'
 })
 
 async function load() {
@@ -345,7 +343,7 @@ async function adopt() {
     const extra = dirty.value ? '，还有没保存的改动也一起没' : ''
     if (
       !confirm(
-        `采用会把这一集现在这 ${countScriptChars(savedScript.value)} 字整份换掉${extra}。确定？`,
+        `采用会把这一章现在这 ${countScriptChars(savedScript.value)} 字整份换掉${extra}。确定？`,
       )
     ) {
       return
@@ -415,7 +413,7 @@ async function save() {
       <!-- 章模式下不提目标时长：这一章多长由它的内容定，不是奔着一个数去写的。
            用户 2026-09-16：「剧本里还需要目标时长吗」——不需要。 -->
       <span class="tiny dim numeric">
-        {{ wordCount }} 字<template v-if="!chapter"> · 目标 {{ durationS }} 秒</template>
+        {{ wordCount }} 字
       </span>
       <span v-if="dirty" class="pill pill--warn">未存</span>
       <span class="spacer" />
@@ -455,7 +453,7 @@ async function save() {
          和底下「原文」同一条规矩。 -->
     <details v-if="hasHead" class="head" :open="!script.trim()">
       <summary class="source__sum">
-        <span>{{ chapter ? '这一章要拍什么' : '这一集要拍什么' }}</span>
+        <span>这一章要拍什么</span>
         <span class="tiny dim numeric">{{ scenes.length }} 场</span>
       </summary>
       <div v-for="(s, i) in scenes" :key="i" class="head__scene">
@@ -474,7 +472,7 @@ async function save() {
       <div class="head__foot tiny dim">
         <span v-if="chapterNames">照 {{ chapterNames }} 展开</span>
         <span v-if="ctx.hook">· 停在「{{ ctx.hook }}」</span>
-        <span v-if="!fromStory">这一集不在分集表上，照梗概写</span>
+        <span v-if="!fromStory">这一章不在分集表上，照梗概写</span>
       </div>
     </details>
 
@@ -483,8 +481,8 @@ async function save() {
          默认收着——它是背景，不是这一页要读的正文（那是下面的原文）。 -->
     <details v-if="previousTail" class="source">
       <summary class="source__sum">
-        <span>{{ chapter ? '上一章结尾' : '上一集结尾' }}</span>
-        <span class="tiny dim">写这一{{ chapter ? '章' : '集' }}时模型看的就是这一段</span>
+        <span>上一章结尾</span>
+        <span class="tiny dim">写这一章时模型看的就是这一段</span>
       </summary>
       <div class="source__body">{{ previousTail }}</div>
     </details>
@@ -524,14 +522,13 @@ async function save() {
         <template v-if="draft.source === 'story'">
           照 {{ (draft.chapters ?? []).join('、') }} 改编<template v-if="draft.hook">，停在「{{ draft.hook }}」</template>
         </template>
-        <template v-else>照梗概续写，这一集不在分集表上</template>
+        <template v-else>照梗概续写，这一章不在分集表上</template>
       </p>
-      <!-- 章模式下不摆「够不够」那个丸子：没有目标时长，也就无所谓够不够。 -->
+      <!-- **不摆「够不够」那个丸子**：一章写多长由它自己的内容定，没有
+           目标时长，也就无所谓够不够。target-seconds / budget-chars / fit
+           三个不传，ScriptReader 的默认值（0 / 0 / ''）就是"不画"。 -->
       <ScriptReader
         :text="draft.script"
-        :target-seconds="chapter ? 0 : durationS"
-        :budget-chars="chapter ? 0 : (draft.budget_chars ?? 0)"
-        :fit="chapter ? '' : (draft.fit ?? '')"
         :dialogue-chars="draft.dialogue_chars ?? 0"
         :speakers="draft.speakers ?? []"
       />
@@ -543,22 +540,17 @@ async function save() {
       v-else-if="loadError"
       icon="warn"
       tone="warn"
-      title="读不到这一集的剧本"
+      title="读不到这一章的剧本"
       :hint="loadError"
     />
 
     <EmptyState
       v-else-if="!script.trim() && !draft && mode !== 'edit'"
       icon="script"
-      :title="fromStory ? '原文在上面，还没改编成剧本' : '这一集还没有剧本'"
+      :title="fromStory ? '原文在上面，还没改编成剧本' : '这一章还没有剧本'"
     />
 
-    <ScriptReader
-      v-else-if="mode === 'read'"
-      :text="script"
-      :target-seconds="chapter ? 0 : durationS"
-      :budget-chars="chapter ? 0 : (ctx?.budget_chars ?? 0)"
-    />
+    <ScriptReader v-else-if="mode === 'read'" :text="script" />
 
     <textarea
       v-else
