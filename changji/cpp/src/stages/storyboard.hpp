@@ -372,6 +372,28 @@ std::vector<std::string> missing_dialogue_lines(
 /// 有台词的镜头能不动就不动。整表不足四镜一个字不碰。
 /// **大景是少数真出得来的景别**：首帧的取景听参考图的，而场景空景图本身
 /// 就是一张大景，所以标成 LS 的镜头是真会出成大景（见 prompt_compose.cpp）。
+/// 把说不通的 `continuous_with_prev` 抹掉，回抹了几镜。
+///
+/// **接戏这一栏措辞按不住，只能事后判。** 2026-09-17 实测（ep02、glm-5.3）：
+/// 17 镜里 16 镜标了接戏，而 schema 的 description 明明写着「同一场景、
+/// 同一时刻、动作连着才填 true」。换成更严的提示词也一样——这一项由模型
+/// 定，不由措辞定（同一份提示词换 glm-4.5-air 是 0 镜，换 glm-5.3 是 16 镜）。
+///
+/// 而它不是个创作字段，是个**技术开关**：标了它，出片时会拿上一镜真出来的
+/// 最后一帧当这一镜的首帧（render.cpp 的 chain_frames，默认开）。于是这一镜
+/// 自己写的 first_frame_prompt、景别、机位**全部作废**——那正是用户报的
+/// 「好几个镜头产生的视频都有问题」。
+///
+/// 三条判据都是机械的，不掺审美：
+///   · 第一镜没有"上一镜"可接；
+///   · 换了场就不是"同一时刻"；
+///   · **自相矛盾**：一边说接着上一镜，一边把景别或机位换了。接戏会把上一镜
+///     的尾帧当首帧，那一帧的取景就是上一镜的——这时候再声明另一个景别/机位，
+///     出来的画面必然不是你要的。实测 16 个标记里 15 个是这一种。
+///
+/// 是抹掉不是报错，同 drop_unknown_enums。
+int drop_impossible_continuity(std::vector<models::Shot>& shots);
+
 void ensure_establishing_shots(std::vector<models::Shot>& shots);
 
 double real_total_s(const std::vector<models::Shot>& shots, int fps = 24);

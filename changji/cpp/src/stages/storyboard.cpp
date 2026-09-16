@@ -1573,6 +1573,39 @@ void diversify_shot_sizes(std::vector<Shot>& shots) {
 /// 动手很轻：一场只动一镜，而且只在这一场**一个大景都没有**的时候动。
 /// 优先挑这一场里第一个有人的镜头（人站在哪儿才是交代地方），整场都没人
 /// 就把第一镜改成 MLS。模型认真排过大景的场，一个字不碰。
+int drop_impossible_continuity(std::vector<Shot>& shots) {
+    std::vector<Shot*> by_order;
+    by_order.reserve(shots.size());
+    for (Shot& s : shots) by_order.push_back(&s);
+    std::stable_sort(by_order.begin(), by_order.end(),
+                     [](const Shot* a, const Shot* b) { return a->order < b->order; });
+    int dropped = 0;
+    for (std::size_t i = 0; i < by_order.size(); ++i) {
+        Shot& cur = *by_order[i];
+        if (!cur.continuous_with_prev) continue;
+        // 第一镜没有"上一镜"可接。
+        if (i == 0) {
+            cur.continuous_with_prev = false;
+            ++dropped;
+            continue;
+        }
+        const Shot& prev = *by_order[i - 1];
+        // **换了场就不是同一时刻。**
+        if (cur.scene_id != prev.scene_id) {
+            cur.continuous_with_prev = false;
+            ++dropped;
+            continue;
+        }
+        // **自相矛盾那一种：接着上一镜，却换了取景。**
+        if (cur.shot_size != prev.shot_size ||
+            cur.camera_angle != prev.camera_angle) {
+            cur.continuous_with_prev = false;
+            ++dropped;
+        }
+    }
+    return dropped;
+}
+
 void ensure_establishing_shots(std::vector<Shot>& shots) {
     // 和 diversify_shot_sizes 用同一道门槛：三两镜的表看不出缺不缺大景，
     // 别折腾（插入镜头、片头片尾那种短表本来就该全是特写）。
@@ -1812,6 +1845,7 @@ std::vector<Shot> parse_storyboard(const std::string& raw,
     }
     // 景别塌成一个值的兜底，见 diversify_shot_sizes。
     diversify_shot_sizes(shots);
+    drop_impossible_continuity(shots);
     ensure_establishing_shots(shots);
     return shots;
 }

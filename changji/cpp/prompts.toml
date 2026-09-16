@@ -204,7 +204,7 @@ emotion_labels_zh = "神情复杂、五味杂陈、百感交集、难以言喻�
 #   8  机位怎么挑 → camera_angle 的 description 逐字（压迫 low、脆弱 high…）
 #   9  焦段怎么挑 → lens 的 description 逐字（wide / normal / portrait / tele）
 #  10  光要写四样 → lighting 的 description 逐字，还带 minLength 10
-#  13  接戏和末帧 → continuous_with_prev / last_frame_prompt 两栏的 description 逐字
+#  （13 接戏和末帧**试过砍，实跑打回来了**，见下面那段；现在是第 10 条）
 #
 # 另有几条只砍**已经被语法管死的那半句**，剩下半句留着：
 #
@@ -218,6 +218,27 @@ emotion_labels_zh = "神情复杂、五味杂陈、百感交集、难以言喻�
 #  11  「旁白留空」→ speaker 的 description 逐字。**「说话的角色也要出现在
 #      characters 里」留着**：跨字段，哪一栏都管不着。
 #  12  「从枚举里挑一个」→ beat 是 enum。潜台词那半句留着。
+#
+# ⚠️ **接戏那条（原 13）2026-09-17 实跑证明砍不得，已恢复成现在的第 10 条。**
+#
+# 当时的理由是它和 continuous_with_prev / last_frame_prompt 两栏的
+# description 一字不差。拿 ep02 做 A/B（同一集、同一剧本、只差提示词）：
+#
+#                       旧（完整）  新（砍完）
+#   continuous_with_prev      0        16   ← 17 镜里 16 镜标了接戏
+#   last_frame_prompt         0         2
+#
+# description 明明写着「紧接上一镜的动作（同一场景、同一时刻、动作连着）才
+# 填 true」——**模型照样几乎全填 true**。而 chain_frames 会拿上一镜的最后
+# 一帧当这一镜的首帧（render.cpp:347），整集连成一条链之后换场、换机位、
+# 换景别全被那一帧盖掉，正是用户报的「产生的视频都有问题」。
+#
+# 教训和 [script_story] 那次 speaker 是同一条：**描述里说了什么不重要，要看
+# 那一栏的约束拦不拦得住**。布尔字段没有任何语法约束可言，全靠措辞。
+#
+# 同一次 A/B 里，砍掉的另外三条**验住了**（都没退，有的更好）：
+#   机位种类 4→4、光写够长 17/17→17/17、焦段种类 3→4、
+#   运镜种类 5→8、static 5→1、危险运动 0→0、首镜 LS→LS、景别种类 5→5。
 #
 # 2127 → 约 1180 字（这还是在上一轮挪走 359 字伪注释之后）。
 storyboard_rules = """

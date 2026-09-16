@@ -305,6 +305,49 @@ TEST_CASE("章模式：目标量按剧本估") {
     CHECK(s < 40.0);
 }
 
+TEST_CASE("说不通的接戏要抹掉：换了取景就不可能接着上一镜") {
+    // 2026-09-17 实测（ep02、glm-5.3）：17 镜里 16 镜标了 continuous_with_prev，
+    // 而其中 15 镜同时把景别或机位换了——**那两件事不能同时成立**。
+    // 接戏会拿上一镜真出来的最后一帧当这一镜的首帧（chain_frames，默认开），
+    // 那一帧的取景就是上一镜的；这时候再声明另一个景别/机位，出来的画面
+    // 必然不是要的那个。用户报的「好几个镜头产生的视频都有问题」就是它。
+    //
+    // 措辞按不住：同一份提示词，glm-4.5-air 一镜都不标，glm-5.3 标 16 镜。
+    // 而这不是创作字段，是技术开关，所以判在代码里。
+    auto mk = [](int order, const char* scene, models::ShotSize size,
+                 models::CameraAngle angle, bool cont) {
+        models::Shot s;
+        s.order = order;
+        s.shot_id = "ep01_sh00" + std::to_string(order + 1);
+        s.scene_id = scene;
+        s.shot_size = size;
+        s.camera_angle = angle;
+        s.continuous_with_prev = cont;
+        return s;
+    };
+    using A = models::CameraAngle;
+    using Z = models::ShotSize;
+    std::vector<models::Shot> v = {
+        mk(0, "sc01", Z::LS, A::EYE_LEVEL, true),   // 第一镜：没有上一镜
+        mk(1, "sc01", Z::MCU, A::EYE_LEVEL, true),  // 换了景别
+        mk(2, "sc01", Z::MCU, A::HIGH, true),       // 换了机位
+        mk(3, "sc01", Z::MCU, A::HIGH, true),       // 取景没变：留
+        mk(4, "sc02", Z::MCU, A::HIGH, true),       // 换了场
+    };
+    CHECK(stages::drop_impossible_continuity(v) == 4);
+    CHECK_FALSE(v[0].continuous_with_prev);
+    CHECK_FALSE(v[1].continuous_with_prev);
+    CHECK_FALSE(v[2].continuous_with_prev);
+    CHECK(v[3].continuous_with_prev);       // 唯一说得通的那一镜
+    CHECK_FALSE(v[4].continuous_with_prev);
+
+    SUBCASE("本来就没标的不动") {
+        std::vector<models::Shot> w = {mk(0, "sc01", Z::LS, A::EYE_LEVEL, false),
+                                       mk(1, "sc01", Z::MS, A::EYE_LEVEL, false)};
+        CHECK(stages::drop_impossible_continuity(w) == 0);
+    }
+}
+
 TEST_CASE("角色 action 里的进画出画也要摘") {
     models::CharacterInShot in;
     in.char_id = "c_lin_wan";
