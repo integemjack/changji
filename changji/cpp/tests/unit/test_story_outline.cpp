@@ -2268,16 +2268,24 @@ TEST_CASE("正文在贴情绪标签就打回") {
     CHECK_NOTHROW(changji::stages::parse_chapter(json{{"scenes", one}}.dump()));
 }
 
-TEST_CASE("在场的人是数组，语法上就不能只写一个") {
+TEST_CASE("在场的人是数组，不是一个字符串") {
     // 上一版是一个字符串加 minLength，模型填了「林夏, 无他人」就绕过去了
     // ——2026-09-12 实跑，那一章对白只有 4%。措辞拦不住的用语法拦：数组的
     // minItems 进 GBNF 是硬的。这和第一轮把正文从 text 改成 paragraphs
-    // 是同一招。
+    // 是同一招。**「是数组」这一半到今天仍然管用，钉住。**
+    //
+    // ⚠️ **下限从 2 降到 1 是有意的（0d2c984）**，chapter_write.cpp 里写着
+    // 理由：「单人场是合法的：独处时仍然可以有实时行动、电话或环境阻力。
+    // 对白比例由正文守卫检查，不再靠凭空塞第二个人来保证。」
+    // 这条用例原来钉 `>= 2`，从那以后一直红着——**红了不改比不写更糟**，
+    // 它会把人训练成"看见红的先跳过"。改成钉现在的设计：至少一人（空的
+    // 那种仍然拦得住），上限三人（画面里立不住更多）。
     const auto s = changji::stages::chapter_schema(3, 22);
     const auto& sp = s.at("properties").at("scenes").at("items").at("properties");
     REQUIRE(sp.contains("who"));
     CHECK(sp.at("who").at("type") == "array");
-    CHECK(sp.at("who").at("minItems").get<int>() >= 2);
+    CHECK(sp.at("who").at("minItems").get<int>() >= 1);
+    CHECK(sp.at("who").at("maxItems").get<int>() <= 3);
 
     // 落库之后是一行顿号分隔的名字
     json paras = json::array();

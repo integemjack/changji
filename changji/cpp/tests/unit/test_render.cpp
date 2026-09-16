@@ -183,12 +183,15 @@ TEST_CASE("视频提示词是画面加运动") {
     // ——首帧已经把长相定死了，再喂整段外观出片模型会重画一遍角色。
     CHECK(v.find("二十七岁女性") == std::string::npos);      // 身份层不在
     CHECK(v.find(shot.first_frame_prompt) != std::string::npos);   // 画面
-    CHECK(v.find("镜头缓慢推近") != std::string::npos);      // 运动
-    CHECK(v.find("雨丝斜掠") != std::string::npos);
+    // 运动那一段的锚点用「雨丝斜掠」，**不用运镜词**：2026-09-16 起运镜词
+    // 不再前插（分镜模型自己把它写在段里了，前插就是「镜头缓慢推近,
+    // 缓慢推近」，见 prompt_compose.cpp）。这条用例原来拿「镜头缓慢推近」
+    // 当锚点，从那以后一直红着——而它真正要钉的是**次序**，不是那个词。
+    CHECK(v.find("雨丝斜掠") != std::string::npos);          // 运动
     CHECK(v.find("电影感") != std::string::npos);            // 风格层
     // 画面在前，运动在中，风格在后
-    CHECK(v.find(shot.first_frame_prompt) < v.find("镜头缓慢推近"));
-    CHECK(v.find("镜头缓慢推近") < v.find("电影感"));
+    CHECK(v.find(shot.first_frame_prompt) < v.find("雨丝斜掠"));
+    CHECK(v.find("雨丝斜掠") < v.find("电影感"));
 
     SUBCASE("动画线用半角逗号加空格，写实线用全角逗号") {
         // **原来这里是错的。** 两个视频后端（comfy/renderers.cpp 和
