@@ -74,6 +74,16 @@ std::string build_script_prompt_from_story(
     models::StyleLine style_line, const std::vector<std::string>& characters = {},
     const std::string& previous_tail = "", std::uint32_t variation = 0);
 
+/// 章模式的提示词（[assembly].episode_s > 0）：**没有秒数、没有字数**，
+/// 这一章写多长由它的内容定。四段的形状留着，每段几拍由 schema 按篇幅给
+/// （见 act_plan_for_chapter）。variation 同上，要和出 schema 那处一致。
+/// `source_chars` 回这一章原文的字数，出 schema 时要用同一个数。
+std::string build_chapter_script_prompt(
+    const models::Story& story, const models::EpisodePlan& plan,
+    models::StyleLine style_line, const std::vector<std::string>& characters,
+    const std::string& previous_tail, std::uint32_t variation,
+    int* source_chars);
+
 /// 取一段剧本的结尾，给下一集接语气用。按字符截，不按字节。
 std::string script_tail(const std::string& script);
 

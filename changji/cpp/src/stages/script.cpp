@@ -582,6 +582,31 @@ std::vector<ActSpec> act_plan(double duration_s, std::uint32_t variation) {
     return out;
 }
 
+std::vector<ActSpec> act_plan_for_chapter(int source_chars,
+                                          std::uint32_t variation) {
+    // 形状和比重借 act_plan 的：给它一个固定的名义时长只为挑形状，
+    // 秒数本身随后全部抹掉。
+    std::vector<ActSpec> out = act_plan(60.0, variation);
+    // 拍数按篇幅：六十字一拍起步，二十字一拍封顶。不足八拍的章也按八拍
+    // 起（四段每段至少两拍，少了就不是一段）。
+    const int chars = std::max(0, source_chars);
+    const int total_min = std::max(8, chars / 60);
+    const int total_max = std::max(total_min + 8, chars / 20);
+    // 按 act_plan 给的秒数比重分到四段
+    int sum_s = 0;
+    for (const ActSpec& a : out) sum_s += std::max(1, a.to_s - a.from_s);
+    for (ActSpec& a : out) {
+        const double share =
+            static_cast<double>(std::max(1, a.to_s - a.from_s)) / sum_s;
+        a.min_beats = std::max(2, static_cast<int>(std::lround(total_min * share)));
+        a.max_beats = std::max(a.min_beats + 2,
+                               static_cast<int>(std::lround(total_max * share)));
+        a.from_s = 0;
+        a.to_s = 0;
+    }
+    return out;
+}
+
 std::string render_act_brief(const std::vector<ActSpec>& specs) {
     std::string out = prompt::script::kActBlockHead;
     for (std::size_t i = 0; i < specs.size(); ++i) {
@@ -969,6 +994,42 @@ ordered script_schema(double duration_s,
         beats["maxItems"] = s.max_beats;
         beats["description"] = s.label + "，" + std::to_string(s.from_s) + "–" +
                                std::to_string(s.to_s) + " 秒。" + s.brief;
+        beats["items"] = beat_item_schema(true, characters);
+
+        ordered act = ordered::object();
+        act["type"] = "object";
+        act["additionalProperties"] = false;
+        act["required"] = {"beats"};
+        act["properties"] = ordered::object();
+        act["properties"]["beats"] = beats;
+
+        props[s.key] = act;
+        required.push_back(s.key);
+    }
+
+    ordered out = ordered::object();
+    out["type"] = "object";
+    out["additionalProperties"] = false;
+    out["required"] = required;
+    out["properties"] = props;
+    return out;
+}
+
+ordered script_schema_for_chapter(int source_chars,
+                                  const std::vector<std::string>& characters,
+                                  std::uint32_t variation) {
+    const std::vector<ActSpec> specs = act_plan_for_chapter(source_chars, variation);
+
+    ordered props = ordered::object();
+    put_title_and_logline(props);
+    ordered required = ordered::array({"title", "logline"});
+    for (std::size_t i = 0; i < specs.size(); ++i) {
+        const ActSpec& s = specs[i];
+        ordered beats = ordered::object();
+        beats["type"] = "array";
+        beats["minItems"] = s.min_beats;
+        beats["maxItems"] = s.max_beats;
+        beats["description"] = s.label + "。" + s.brief;
         beats["items"] = beat_item_schema(true, characters);
 
         ordered act = ordered::object();

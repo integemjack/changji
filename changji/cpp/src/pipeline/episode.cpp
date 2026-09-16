@@ -1,6 +1,7 @@
 #include "pipeline/episode.hpp"
 
 #include <algorithm>
+#include <cstdio>
 #include <chrono>
 #include <filesystem>
 #include <set>
@@ -393,19 +394,36 @@ std::string run_assemble(const ProjectStore& store,
              "片子照常出，字幕另存在 subtitles/ 下，播放器里挂上就能看。"
              "要烧进画面的话装一个带 libass 的 ffmpeg。");
     }
-    const auto output =
-        assembler.assemble(timeline, ep.episode_id + ".mp4", can_burn);
-
-    // 成片检查同样只报不拦：片子已经出来了，人可以自己看一眼再决定。
-    const auto result = gates::gate_episode(output, ff, settings.gates,
-                                            timeline.total_duration_s());
-    for (const auto& reason : result.reasons) {
-        Event e;
-        e.stage = "assemble";
-        e.kind = "gate";
-        e.message = "成片：" + reason;
-        progress.report(e);
+    // **章模式：按每集时长切成几集，能切出几集是这一章内容的结果。**
+    // 见 media::split_into_episodes。不切（episode_s = 0）就是原来那一条。
+    const std::vector<media::Timeline> parts =
+        settings.assembly.episode_s > 0.0
+            ? media::split_into_episodes(timeline, settings.assembly.episode_s)
+            : std::vector<media::Timeline>{timeline};
+    std::vector<std::filesystem::path> outputs;
+    for (std::size_t k = 0; k < parts.size(); ++k) {
+        // 一集就叫 ep.mp4；切成几集叫 ep_01.mp4 / ep_02.mp4……
+        std::string name = ep.episode_id;
+        if (parts.size() > 1) {
+            char buf[8];
+            std::snprintf(buf, sizeof buf, "_%02d", static_cast<int>(k + 1));
+            name += buf;
+        }
+        name += ".mp4";
+        const auto out_k = assembler.assemble(parts[k], name, can_burn);
+        outputs.push_back(out_k);
+        // 成片检查同样只报不拦：片子已经出来了，人可以自己看一眼再决定。
+        const auto result = gates::gate_episode(out_k, ff, settings.gates,
+                                                parts[k].total_duration_s());
+        for (const auto& reason : result.reasons) {
+            Event e;
+            e.stage = "assemble";
+            e.kind = "gate";
+            e.message = (parts.size() > 1 ? "第 " + std::to_string(k + 1) + " 集：" : "成片：") + reason;
+            progress.report(e);
+        }
     }
+    const std::filesystem::path output = outputs.empty() ? std::filesystem::path{} : outputs.front();
 
     // **降级的镜头要在最后这句里说出来。**
     //
@@ -454,8 +472,19 @@ std::string run_assemble(const ProjectStore& store,
         emit(progress, "assemble", "warn", msg);
     }
 
-    emit(progress, "assemble", "done", "成片已生成：" + paths::to_utf8(output),
-         static_cast<int>(shots.size()), static_cast<int>(shots.size()));
+    if (outputs.size() > 1) {
+        std::string msg = "这一章切成了 " + std::to_string(outputs.size()) + " 集：";
+        for (std::size_t k = 0; k < outputs.size(); ++k) {
+            msg += "\n  " + paths::to_utf8(outputs[k].filename()) + "（" +
+                   util::human_time_precise_as(parts[k].total_duration_s(),
+                                               parts[k].total_duration_s()) + "）";
+        }
+        emit(progress, "assemble", "done", msg, static_cast<int>(shots.size()),
+             static_cast<int>(shots.size()));
+    } else {
+        emit(progress, "assemble", "done", "成片已生成：" + paths::to_utf8(output),
+             static_cast<int>(shots.size()), static_cast<int>(shots.size()));
+    }
     return paths::to_utf8(output);
 }
 
@@ -818,6 +847,18 @@ RunReport run_episode(const ProjectStore& store,
                 // stages::real_total_s。
                 const int fps = settings.assembly.fps;
                 const double before_s = stages::real_total_s(ep->shots, fps);
+                // **章模式（episode_s > 0）不按目标时长挤。** 这一章多长由内容
+                // 定，装配时再按每集时长切成几集——在这儿把它压回一集的尺寸，
+                // 就是把用户说的「超了就压」从剧本挪到分镜。
+                if (settings.assembly.episode_s > 0.0) {
+                    emit(progress, "audio", "info",
+                         "章模式：按配音定下时长后不再压回一集的尺寸，这一章 " +
+                             util::human_time_precise_as(before_s, before_s) +
+                             "，装配时按每集 " +
+                             util::human_time_precise_as(settings.assembly.episode_s,
+                                                         settings.assembly.episode_s) +
+                             " 切");
+                } else {
                 stages::rebalance_durations(ep->shots, ep->target_duration_s,
                                             3.0, fps);
                 const double after_s = stages::real_total_s(ep->shots, fps);
@@ -845,6 +886,7 @@ RunReport run_episode(const ProjectStore& store,
                              " 长。台词镜的时长由配音定、动不了，过渡镜也压到"
                              "头了——要短就得回剧本删戏或者减台词。");
                 }
+                }  // 非章模式
                 save();
 
                 emit(progress, "audio", "done", stages::summarize(report.audio),

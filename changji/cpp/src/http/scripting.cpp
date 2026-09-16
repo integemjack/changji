@@ -1,5 +1,7 @@
 #include "http/scripting.hpp"
 
+#include "config/settings.hpp"
+
 #include <algorithm>
 #include <set>
 #include <string>
@@ -298,6 +300,10 @@ ApiResult post_script_write(const json& body, llm::Client& client,
     const std::vector<std::string> names =
         reuse_chars ? character_names(assets) : std::vector<std::string>{};
 
+    bool chapter_mode = false;
+
+    int chapter_chars = 0;
+
     std::string prompt;
     const char* source = "premise";
     // 这一集四段的形状（占几秒、每段是什么戏）。
@@ -337,8 +343,18 @@ ApiResult post_script_write(const json& body, llm::Client& client,
         // 形状每写一次摇一个新的（ComfyUI 的 randomize 那个意思）——**不是
         // 按集号哈希**，那样同一集永远是同一个形状，人不喜欢这一集的节奏也
         // 换不掉。不满意就再点一次「重新改编」，满意了点采用，形状跟着定下来。
-        prompt = stages::build_script_prompt_from_story(
-            story, *plan, project.style_line, names, prev_tail, variation);
+        // **章模式**（[assembly].episode_s > 0）：没有秒数、没有字数，这一章
+        // 写多长由内容定；分镜出片之后再按 episode_s 切成几集。见
+        // build_chapter_script_prompt 和 act_plan_for_chapter。
+        chapter_mode = config::load_settings(store.root()).assembly.episode_s > 0.0;
+        if (chapter_mode) {
+            prompt = stages::build_chapter_script_prompt(
+                story, *plan, project.style_line, names, prev_tail, variation,
+                &chapter_chars);
+        } else {
+            prompt = stages::build_script_prompt_from_story(
+                story, *plan, project.style_line, names, prev_tail, variation);
+        }
         source = "story";
     } else {
         prompt = stages::build_script_prompt(
@@ -358,7 +374,9 @@ ApiResult post_script_write(const json& body, llm::Client& client,
     //
     // 名字同理：提示词里说了「一字不改」，实跑还是写出了林浩 / Lin Hao /
     // LinHao / Su Wan 四种。收成枚举，和分镜那边收 char_id 是一个道理。
-    req.schema = stages::script_schema(used_duration, names, variation);
+    req.schema = chapter_mode
+                     ? stages::script_schema_for_chapter(chapter_chars, names, variation)
+                     : stages::script_schema(used_duration, names, variation);
     req.schema_name = "script";
     req.on_thinking = thinking_sink();
 
@@ -368,8 +386,9 @@ ApiResult post_script_write(const json& body, llm::Client& client,
     pipeline::Activity act{"script", paths::to_utf8(store.root()), episode_id,
                            plan != nullptr ? "正在改编成剧本" : "正在写剧本"};
     const stages::ScriptDraft draft = llm_guard([&] {
-        return stages::parse_script(client.complete(req, tok), used_duration,
-                                    variation);
+        // 章模式传 0：段头上不贴秒数（parse_script 只在 > 0 时贴）。
+        return stages::parse_script(client.complete(req, tok),
+                                    chapter_mode ? 0.0 : used_duration, variation);
     });
 
     // 梗概存到项目上。下次写新一集时直接回填，不用凭记忆重打。
@@ -395,7 +414,9 @@ ApiResult post_script_write(const json& body, llm::Client& client,
     const auto chars = static_cast<double>(draft.dialogue_chars());
     json out = draft_common(draft, used_duration);
     // 写长了后面配音会把镜头撑爆，写短了成片不够时长，都得说出来
-    out["fit"] = chars > budget * 1.35   ? "偏长"
+    // 章模式没有字数预算——长度由内容定，不判长短。
+    out["fit"] = chapter_mode            ? "合适"
+                 : chars > budget * 1.35 ? "偏长"
                  : chars < budget * 0.6  ? "偏短"
                                          : "合适";
     out["continued_from"] = !previous.empty();
@@ -440,6 +461,8 @@ ApiResult post_script_trailer(const json& body, llm::Client& client,
     if (picked.empty()) {
         throw ApiError(400, "没有可用来剪预告的剧集。先写几集正片，再回来剪预告");
     }
+
+
 
     std::string source;
     for (std::size_t i = 0; i < picked.size(); ++i) {

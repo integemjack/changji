@@ -28,6 +28,7 @@
 #include "stages/music.hpp"
 #include "stages/prompt_compose.hpp"
 #include "stages/render.hpp"
+#include "stages/script.hpp"
 #include "stages/storyboard.hpp"
 #include "util/cmdline.hpp"
 #include "util/paths.hpp"
@@ -1073,6 +1074,68 @@ TEST_CASE("每一场至少留一个大景：分布看着匀、却一个远景都
         stages::ensure_establishing_shots(v);
         CHECK(v[0].shot_size == ShotSize::MCU);
         CHECK(v[1].shot_size == ShotSize::CU);
+    }
+}
+
+TEST_CASE("章模式：拍数按篇幅给，段头没有秒数，切集数由内容定") {
+    // 用户 2026-09-16 的判词：剧本从一章里直接拿，写多长由内容定，不该在
+    // 提示词里限制一集多长——不够模型就凑，超了就压。act_plan 里那两个数
+    // （min_beats / max_beats）正是从秒数推的，而**地板是 schema 里唯一
+    // 管用的东西**：按秒给地板就等于按秒卡长度。
+    SUBCASE("篇幅长的章拍数多，篇幅短的少；四段都在，秒数全是 0") {
+        const auto small = stages::act_plan_for_chapter(300, 0);
+        const auto big = stages::act_plan_for_chapter(3000, 0);
+        REQUIRE(small.size() == 4);
+        REQUIRE(big.size() == 4);
+        int s_min = 0, b_min = 0, s_max = 0, b_max = 0;
+        for (const auto& a : small) { s_min += a.min_beats; s_max += a.max_beats; }
+        for (const auto& a : big)   { b_min += a.min_beats; b_max += a.max_beats; }
+        CHECK(b_min > s_min);
+        CHECK(b_max > s_max);
+        for (const auto& a : big) {
+            CHECK(a.from_s == 0);
+            CHECK(a.to_s == 0);
+            CHECK(a.min_beats >= 2);
+            CHECK(a.max_beats > a.min_beats);
+        }
+        // 三千字的章至少五十拍：一拍六十字起
+        CHECK(b_min >= 50);
+    }
+    SUBCASE("再短的章也有八拍起，四段每段两拍") {
+        const auto tiny = stages::act_plan_for_chapter(0, 0);
+        int total = 0;
+        for (const auto& a : tiny) { total += a.min_beats; CHECK(a.min_beats >= 2); }
+        CHECK(total >= 8);
+    }
+    SUBCASE("章模式的 schema：每段描述里没有「秒」，minItems 按篇幅") {
+        const auto sc = stages::script_schema_for_chapter(1200, {"林晚", "陈默"}, 0);
+        // **只看四段的描述**：那是我改的地方。一拍自己的字段描述里提「秒」
+        // （台词两三秒那种）是拍子的说明，和一集多长无关，照旧。
+        const auto specs = stages::act_plan_for_chapter(1200, 0);
+        for (const auto& a : specs) {
+            const auto& act = sc.at("properties").at(a.key);
+            const auto& beats = act.at("properties").at("beats");
+            const std::string desc = beats.at("description").get<std::string>();
+            // 要查的是「0–5 秒」那种时长戳，不是段落说明里的「三秒内有事
+            // 发生」——那句是戏的要求，和一集多长无关，章模式照旧带着。
+            static const std::regex stamp(R"([0-9]+–[0-9]+ 秒)");
+            CHECK_FALSE(std::regex_search(desc, stamp));
+            CHECK(desc.find(a.label) != std::string::npos);
+            // 和 act_plan_for_chapter 同一个数：地板要对得上
+            CHECK(beats.at("minItems").get<int>() == a.min_beats);
+            CHECK(beats.at("maxItems").get<int>() == a.max_beats);
+        }
+        // 对照：老 schema 的段描述是带秒的
+        const auto old_sc = stages::script_schema(60.0, {"林晚"}, 0);
+        const auto& old_desc = old_sc.at("properties").at(specs[0].key)
+                                   .at("properties").at("beats").at("description");
+        static const std::regex stamp2(R"([0-9]+–[0-9]+ 秒)");
+        CHECK(std::regex_search(old_desc.get<std::string>(), stamp2));
+    }
+    SUBCASE("老路（按秒）一个字没变：60 秒还是原来那组地板") {
+        const auto old = stages::act_plan(60.0, 0);
+        REQUIRE(old.size() == 4);
+        CHECK(old[0].to_s > old[0].from_s);   // 段头带秒
     }
 }
 

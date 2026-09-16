@@ -46,8 +46,10 @@ import { pickProjectHint } from '@/composables/pick-project-hint'
 import { useProjects } from '@/stores/projects'
 import { useSession } from '@/stores/session'
 import { useUi } from '@/stores/ui'
+import { chapterWord, useChapterMode } from '@/composables/useChapterMode'
 
 const session = useSession()
+const { chapter } = useChapterMode()
 /** 只为那一屏「还没选项目」的提示：一个都没有时该说的是「建一个」。 */
 const projects = useProjects()
 const route = useRoute()
@@ -161,7 +163,7 @@ const TABS = computed(() => [
   },
   {
     key: 'episodes',
-    label: '分集',
+    label: '分集',   // 章模式下显示为「章节」，见 tabLabel
     n: plan.value.length,
     gap: plan.value.length && unwritten.value ? `${unwritten.value} 章没正文` : '',
   },
@@ -572,7 +574,7 @@ watch(longRunning, (now, before) => {
           type="button"
           @click="pick(t.key)"
         >
-          {{ t.label }}
+          {{ chapterWord(t.label, chapter) }}
           <span v-if="t.n" class="tab__n">{{ t.n }}</span>
           <span v-if="t.gap" class="tab__gap">· {{ t.gap }}</span>
         </button>

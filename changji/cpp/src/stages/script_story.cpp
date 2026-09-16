@@ -259,4 +259,54 @@ std::string build_script_prompt_from_story(
     return out;
 }
 
+std::string build_chapter_script_prompt(
+    const Story& story, const EpisodePlan& plan, StyleLine style_line,
+    const std::vector<std::string>& characters,
+    const std::string& previous_tail, std::uint32_t variation,
+    int* source_chars) {
+    const char* hint = style_line == StyleLine::ANIME
+                           ? prompt::script::kHintAnime
+                           : prompt::script::kHintRealistic;
+    // 篇幅按原文算（没展开正文就按梗概），和 script_schema_for_chapter
+    // 用同一个数——两处算出来的地板不一样，模型看到的段和 schema 卡的段
+    // 就对不上。
+    std::string body = episode_text(story, plan);
+    if (body.empty()) {
+        for (const auto& id : episode_chapters(story, plan)) {
+            const Chapter* c = story.chapter_by_id(id);
+            if (c != nullptr) body += c->summary;
+        }
+    }
+    const int chars = static_cast<int>(text::utf8_len(body));
+    if (source_chars != nullptr) *source_chars = chars;
+
+    std::string out;
+    out += prompt::script_story::kSeg0Chapter;
+    out += hint;
+    out += prompt::script_story::kSeg2Chapter;
+    out += prompt::script_story::kRulesChapter;
+    // 四段：段头不带秒数（from_s / to_s 都是 0，render_act_brief 会印
+    // 「0–0 秒」，所以这里自己拼），拍数地板按篇幅。
+    const std::vector<ActSpec> specs = act_plan_for_chapter(chars, variation);
+    out += prompt::script::kActBlockHead;
+    for (const ActSpec& a : specs) {
+        out += "  " + a.label + "：" + a.brief + "。至少 " +
+               std::to_string(a.min_beats) + " 拍。\n";
+    }
+    out += prompt::script_story::kActBlockTailChapter;
+
+    if (!characters.empty()) {
+        out += prompt::script_story::kCharsPre;
+        for (std::size_t i = 0; i < characters.size(); ++i) {
+            if (i > 0) out += "、";
+            out += characters[i];
+        }
+        out += prompt::script_story::kCharsPost;
+    }
+    out += prompt::script_story::kContextHead;
+    out += render_script_context(story, plan, previous_tail);
+    out += prompt::script_story::kTail;
+    return out;
+}
+
 }  // namespace changji::stages

@@ -161,6 +161,7 @@ ApiResult get_settings(const config::Settings& s, const HardwareProfile& p) {
             {"subtitle_max_chars_per_line", s.assembly.subtitle_max_chars_per_line},
             {"subtitle_max_lines", s.assembly.subtitle_max_lines},
             {"scene_transition_s", s.assembly.scene_transition_s},
+            {"episode_s", s.assembly.episode_s},
         }},
         {"gates", {
             {"enabled", s.gates.enabled},

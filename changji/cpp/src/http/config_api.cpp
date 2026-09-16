@@ -416,7 +416,7 @@ ApiResult post_settings(const json& body) {
         "draft_width", "draft_height", "draft_steps",
         "final_width", "final_height", "final_steps",
         "fps", "crf", "subtitle_font", "subtitle_max_chars_per_line",
-        "subtitle_max_lines", "scene_transition_s",
+        "subtitle_max_lines", "scene_transition_s", "episode_s",
         "gates_enabled", "max_attempts_per_shot", "min_pixel_std",
         "min_frame_similarity", "max_audio_drift_s", "target_lufs",
         "fallback_on_exhausted"};
@@ -519,6 +519,7 @@ ApiResult post_settings(const json& body) {
     take_int("subtitle_max_chars_per_line", s.assembly.subtitle_max_chars_per_line);
     take_int("subtitle_max_lines", s.assembly.subtitle_max_lines);
     take_num("scene_transition_s", s.assembly.scene_transition_s);
+    take_num("episode_s", s.assembly.episode_s);
 
     take_int("max_attempts_per_shot", s.gates.max_attempts_per_shot);
     take_num("min_pixel_std", s.gates.min_pixel_std);
@@ -620,6 +621,8 @@ ApiResult post_settings(const json& body) {
                     value = s.assembly.subtitle_max_lines;
                 else if (field == "scene_transition_s")
                     value = s.assembly.scene_transition_s;
+                else if (field == "episode_s")
+                    value = s.assembly.episode_s;
             } else if (section == "gates") {
                 if (field == "enabled") value = s.gates.enabled;
                 else if (field == "max_attempts_per_shot")

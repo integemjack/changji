@@ -223,6 +223,20 @@ std::uint32_t random_shape();
 /// 和以前一字不差。语料和单测走的就是这一档。
 std::vector<ActSpec> act_plan(double duration_s, std::uint32_t variation = 0);
 
+/// 章模式的四段：**拍数按这一章的篇幅给，不按秒。**
+///
+/// 用户 2026-09-16 的判词：剧本从一章里直接拿，写多长由内容定，不该在
+/// 提示词里限制一集多长——不够模型就凑、超了就压。而 act_plan 里那两个
+/// 数（min_beats / max_beats）正是从秒数推的：**地板是 schema 里唯一管用
+/// 的东西**，模型写几拍就看它，所以按秒给地板就等于按秒卡长度。
+///
+/// 这里按原文的字数给：一拍是一件事或一句话，原文六十个字左右一拍起步，
+/// 二十个字一拍封顶——这一章有多少事就写多少拍。四段的比重和形状照
+/// act_plan 的（那是戏的走法，和长度无关），from_s / to_s 一律 0：
+/// 段头上不标秒，parse_script 传 0 进去就不会往段上贴秒数。
+std::vector<ActSpec> act_plan_for_chapter(int source_chars,
+                                          std::uint32_t variation = 0);
+
 /// 给提示词看的那一段：四段各占几秒、各干什么、至少几拍。
 ///
 /// 说法从 `specs[i].brief` 来，不查词表——形状是 act_plan 挑的，
@@ -337,6 +351,12 @@ const nlohmann::ordered_json& script_schema();
 /// variation 要和提示词、解析那两处用**同一个**，否则段头上的秒数对不上。
 nlohmann::ordered_json script_schema(
     double duration_s, const std::vector<std::string>& characters = {},
+    std::uint32_t variation = 0);
+
+/// 章模式的 schema：同上，但每段的 minItems / maxItems 按篇幅来，描述里
+/// 不带秒数。见 act_plan_for_chapter。
+nlohmann::ordered_json script_schema_for_chapter(
+    int source_chars, const std::vector<std::string>& characters,
     std::uint32_t variation = 0);
 /// 选题的 JSON Schema。
 const nlohmann::ordered_json& premise_schema();

@@ -245,6 +245,8 @@ std::vector<std::string> AssemblyConfig::validate() const {
     check_range(errs, "assembly.audio_sample_rate", audio_sample_rate, 8000, 192000);
     check_range(errs, "assembly.audio_channels", audio_channels, 1, 2);
     check_range(errs, "assembly.scene_transition_s", scene_transition_s, 0.0, 2.0);
+    // 0 是「不切」；真填就得是一集能看的长度，十秒以下是手误
+    if (episode_s != 0.0) check_range(errs, "assembly.episode_s", episode_s, 10.0, 3600.0);
     check_range(errs, "assembly.subtitle_max_chars_per_line",
                 subtitle_max_chars_per_line, 6, 30);
     check_range(errs, "assembly.subtitle_max_lines", subtitle_max_lines, 1, 3);
@@ -800,6 +802,7 @@ void apply_table(const toml::table& doc, Settings& s) {
         take(t, "audio_sample_rate", s.assembly.audio_sample_rate);
         take(t, "audio_channels", s.assembly.audio_channels);
         take(t, "scene_transition_s", s.assembly.scene_transition_s);
+        take(t, "episode_s", s.assembly.episode_s);
         take(t, "subtitle_max_chars_per_line", s.assembly.subtitle_max_chars_per_line);
         take(t, "subtitle_max_lines", s.assembly.subtitle_max_lines);
         take(t, "subtitle_font", s.assembly.subtitle_font);
@@ -1352,6 +1355,7 @@ crf = 18
 # 引擎里一处 xfade / acrossfade 都没有（见 media/assemble.cpp 里那段）。
 # 这个数还收着（改它不报错、也存得住），但改了不会有任何变化。
 scene_transition_s = 0.4
+# episode_s = 90   # 填了就是章模式：一章按内容写完、拍完，最后按这个数切成几集；0 = 老的一集一章
 # 中文字幕单行上限，全角字符数。
 subtitle_max_chars_per_line = 15
 subtitle_font = "Source Han Sans SC"
@@ -1604,6 +1608,7 @@ crf = 18
 # ⚠️ 转场目前不生效：装配是 `-f concat -c copy` 直接拼，全程硬切。
 # 这个数还收着，但改了不会有任何变化。见 media/assemble.cpp。
 scene_transition_s = 0.4
+# episode_s = 90   # 填了就是章模式：一章按内容写完、拍完，最后按这个数切成几集；0 = 老的一集一章
 # 中文字幕单行上限（全角字符数）和字体。
 subtitle_max_chars_per_line = 15
 subtitle_font = "Source Han Sans SC"
