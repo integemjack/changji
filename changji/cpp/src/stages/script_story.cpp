@@ -214,6 +214,7 @@ std::string render_script_context(const Story& story, const EpisodePlan& plan,
     std::string out;
 
     if (!story.logline.empty()) out += "【这个故事】" + story.logline + "\n";
+    if (!story.genre.empty()) out += "【题材】" + story.genre + "\n";
     if (!story.tone.empty()) out += "【调子】" + story.tone + "\n";
     if (!out.empty()) out += "\n";
 
@@ -223,6 +224,9 @@ std::string render_script_context(const Story& story, const EpisodePlan& plan,
         if (!c.identity.empty()) out += "：" + c.identity;
         out += "。";
         if (!c.want.empty()) out += "他要的是：" + c.want + "。";
+        if (!c.fear.empty()) out += "他怕的是：" + c.fear + "。";
+        if (!c.voice.empty()) out += "说话：" + c.voice + "。";
+        if (!c.arc.empty()) out += "他会从" + c.arc + "。";
         out += "\n";
     }
 
@@ -233,6 +237,17 @@ std::string render_script_context(const Story& story, const EpisodePlan& plan,
             if (!r.kind.empty()) out += "：" + r.kind;
             out += "。";
             if (!r.tension.empty()) out += r.tension + "。";
+            out += "\n";
+        }
+    }
+
+    if (!story.locations.empty()) {
+        out += "\n【地方】（场次头只能使用这里的名字，一字不改）\n";
+        for (const auto& l : story.locations) {
+            out += l.name;
+            if (!l.what.empty()) out += "：" + l.what;
+            out += "。";
+            if (!l.when.empty()) out += l.when + "。";
             out += "\n";
         }
     }

@@ -2,16 +2,9 @@
 
 // 大模型客户端。
 //
-// 两种后端长期共存，不是过渡状态：
-//
-//   Remote  —— 远端兼容 OpenAI 接口的服务（Ollama、云端）。对应 [llm] 配置段。
-//   Local   —— 进程内 llama.cpp。对应 [models].llm。
-//
-// 决策 4 之后"用远端"不再是临时方案：树莓派没有跑 14B 的内存，
-// 它只能打到局域网的 Windows 机器或者云端。所以这两条路都要留着。
-//
-// 还有第三个后端 Replay，只给测试和"回放模式"用——把录好的返回原样吐出来。
-// 阶段 4 的完成判据里"回放模式下生成结果与 Python 一致"靠的就是它。
+// 远端兼容 OpenAI 接口的服务（Ollama、云端）。对应 [llm] 配置段。
+// Replay 后端只给测试和回放模式用。文本生成已经没有进程内 Local 后端；
+// llama.cpp 仍用于进程内配音。
 //
 // ---
 //
@@ -44,9 +37,9 @@ public:
 /// 一次请求。
 struct Request {
     std::string prompt;
-    /// 约束输出结构的 JSON Schema。空表示不约束。
+    /// 结构化输出会在收到完整正文后按 schema 做本地校验；不符合时抛 LlmError。
     nlohmann::ordered_json schema;
-    /// schema 的名字，走 response_format 时要填。
+    /// schema 的任务名，用于模型和温度分流。
     std::string schema_name;
 
     /// 这一步专用的温度。**不填就用 `[llm].temperature`**，也就是用户在
@@ -222,9 +215,8 @@ public:
 
     std::string complete(const Request& req, pipeline::CancelToken& tok) override;
 
-    /// 走 SSE。**三条退路，一条都不能少**（见实现里那段注释）：
-    /// 服务不认 json_schema → 不带 schema 再来一次；还是不行 / 压根不认
-    /// stream → 退回整段那条。所以"接了 SSE"不会让任何一种服务变得更糟。
+    /// 走 SSE。服务不支持流式但返回普通 OpenAI JSON 时会就地解析；
+    /// 不会为同一请求自动再发一次，避免重复生成和重复计费。
     std::string complete(const Request& req, pipeline::CancelToken& tok,
                          const OnToken& on_token) override;
 

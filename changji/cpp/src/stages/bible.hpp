@@ -32,11 +32,12 @@ public:
     explicit BibleError(const std::string& what) : std::runtime_error(what) {}
 };
 
-/// 请求里带的 JSON Schema，约束模型的输出结构。
-///
-/// 走远端 OpenAI 兼容接口时原样塞进 response_format；
-/// 走进程内 llama.cpp 时要先转成 GBNF 语法。
+/// 请求里带的 JSON Schema。远端不支持统一的 response_format 方言，
+/// 所以客户端会把它附在提示词后，并在收到结果后执行本地校验。
 const nlohmann::ordered_json& bible_schema();
+
+/// 从故事定妆时使用的动态 schema：名字只能来自故事名单，数组数量也必须一致。
+nlohmann::ordered_json bible_schema_for_story(const models::Story& story);
 
 /// 拼提示词。**输出必须和 Python 的 build_prompt 逐字节一致。**
 ///
@@ -70,6 +71,12 @@ std::string build_bible_prompt_from_story(const models::Story& story,
 models::AssetLibrary parse_bible(const std::string& raw,
                                  models::StyleLine style_line,
                                  const std::string& aspect_ratio);
+
+/// 解析故事定妆结果，并核对角色、地点集合与故事名单完全一致。
+models::AssetLibrary parse_bible_for_story(const std::string& raw,
+                                           models::StyleLine style_line,
+                                           const std::string& aspect_ratio,
+                                           const models::Story& story);
 
 /// 默认负向提示词。
 ///

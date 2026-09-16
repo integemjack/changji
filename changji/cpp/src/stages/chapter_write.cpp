@@ -234,18 +234,14 @@ ordered chapter_schema(int target_scenes, int paras_per_scene) {
             {"type", "string"},
             {"description", "这一场跟着谁走。只有他心里想什么可以写"},
             {"minLength", 1}};
-        // **紧跟着 pov。** pov 是跟谁走，who 是场上有谁——两件事分开填，
-        // 模型才不会把「跟着林晚走」当成「场上只有林晚」。
-        // **数组，minItems 2。** 上一版是一个字符串加 minLength——模型填了
-        // 「林夏, 无他人」就绕过去了（2026-09-12 实跑，那一章对白 4%）。
-        // 措辞拦不住的用语法拦：数组的 minItems 进 GBNF 是硬的，它没法只
-        // 写一项。这和第一轮把正文从 text 改成 paragraphs 是同一招。
+        // 单人场是合法的：独处时仍然可以有实时行动、电话或环境阻力。
+        // 对白比例由正文守卫检查，不再靠凭空塞第二个人来保证。
         scene_props["who"] = {
             {"type", "array"},
             {"description",
-             "这一场在场的人，一人一项，写人物表里的名字。**至少两个真的在场的人**——只有一个人的场是回忆不是戏，写出来一句对白都没有，切出来就是一集默片"},
-            {"minItems", 2},
-            {"maxItems", 4},
+             "这一场真正出现在场上的人物，一人一项，写人物表里的名字。独处场填一人，不要为了凑数虚构第二个人"},
+            {"minItems", 1},
+            {"maxItems", 3},
             {"items", {{"type", "string"}, {"minLength", 1}}}};
         scene_props["goal"] = {
             {"type", "string"},

@@ -146,12 +146,12 @@ AssetLibrary generate_bible_from_story(const Story& story, StyleLine style_line,
                                        pipeline::CancelToken& tok) {
     llm::Request req;
     req.prompt = stages::build_bible_prompt_from_story(story, style_line);
-    req.schema = stages::bible_schema();
+    req.schema = stages::bible_schema_for_story(story);
     req.schema_name = "bible";
     req.on_thinking = thinking_sink();
     return stage_guard([&] {
-        return stages::parse_bible(client.complete(req, tok), style_line,
-                                   aspect_ratio);
+        return stages::parse_bible_for_story(client.complete(req, tok), style_line,
+                                             aspect_ratio, story);
     });
 }
 

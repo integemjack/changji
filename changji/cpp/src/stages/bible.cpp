@@ -1,5 +1,6 @@
 #include "stages/bible.hpp"
 
+#include <set>
 #include <string>
 #include <vector>
 
@@ -85,6 +86,33 @@ const ordered& bible_schema() {
         s["additionalProperties"] = false;
         return s;
     }();
+    return schema;
+}
+
+ordered bible_schema_for_story(const Story& story) {
+    ordered schema = bible_schema();
+
+    ordered character_names = ordered::array();
+    for (const auto& character : story.characters) {
+        if (!text::strip_ws(character.name).empty()) {
+            character_names.push_back(character.name);
+        }
+    }
+    ordered& characters = schema["properties"]["characters"];
+    characters["minItems"] = character_names.size();
+    characters["maxItems"] = character_names.size();
+    characters["items"]["properties"]["name"]["enum"] = character_names;
+
+    ordered location_names = ordered::array();
+    for (const auto& location : story.locations) {
+        if (!text::strip_ws(location.name).empty()) {
+            location_names.push_back(location.name);
+        }
+    }
+    ordered& locations = schema["properties"]["locations"];
+    locations["minItems"] = location_names.size();
+    locations["maxItems"] = location_names.size();
+    locations["items"]["properties"]["name"]["enum"] = location_names;
     return schema;
 }
 
@@ -266,6 +294,39 @@ AssetLibrary parse_bible(const std::string& raw, StyleLine style_line,
     lib.style.global_style = text::clean_field(get_str(data, "global_style"));
     lib.style.negative_prompt = default_negative(style_line);
     lib.style.aspect_ratio = aspect_ratio;
+    return lib;
+}
+
+AssetLibrary parse_bible_for_story(const std::string& raw, StyleLine style_line,
+                                   const std::string& aspect_ratio,
+                                   const Story& story) {
+    AssetLibrary lib = parse_bible(raw, style_line, aspect_ratio);
+
+    std::set<std::string> expected_characters;
+    for (const auto& character : story.characters) {
+        const std::string name = text::strip_ws(character.name);
+        if (!name.empty()) expected_characters.insert(name);
+    }
+    std::set<std::string> actual_characters;
+    for (const auto& item : lib.characters) {
+        actual_characters.insert(text::strip_ws(item.second.name));
+    }
+    if (actual_characters != expected_characters) {
+        throw BibleError("定妆返回的角色名单与故事不一致：必须一个不多、一个不少，名字逐字相同");
+    }
+
+    std::set<std::string> expected_locations;
+    for (const auto& location : story.locations) {
+        const std::string name = text::strip_ws(location.name);
+        if (!name.empty()) expected_locations.insert(name);
+    }
+    std::set<std::string> actual_locations;
+    for (const auto& item : lib.locations) {
+        actual_locations.insert(text::strip_ws(item.second.name));
+    }
+    if (actual_locations != expected_locations) {
+        throw BibleError("定妆返回的地点名单与故事不一致：必须一个不多、一个不少，名字逐字相同");
+    }
     return lib;
 }
 

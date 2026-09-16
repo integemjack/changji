@@ -176,7 +176,9 @@ const ordered& outline_schema() {
             {"minLength", 2}};
         props["characters"] = {
             {"type", "array"},
-            {"description", "故事里的人。主要人物不超过三个"},
+            {"description", "故事里的主要人物和重要配角，共三到五人"},
+            {"minItems", 3},
+            {"maxItems", 5},
             {"items", {{"type", "object"},
                        {"properties", character_props},
                        {"required", {"name", "identity", "want", "fear", "voice"}},

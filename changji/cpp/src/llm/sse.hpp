@@ -53,6 +53,9 @@ public:
     /// 收到 `data: [DONE]` 了。
     bool done() const { return done_; }
 
+    /// 服务端报告的完成原因（stop / length / content_filter 等）。
+    const std::string& finish_reason() const { return finish_reason_; }
+
     /// 服务端在流里塞了 error。空串表示没有。
     ///
     /// **这个要单独报。** 有些服务先回 200 再在流里说"这个模型没有"，
@@ -65,6 +68,7 @@ private:
     std::string buf_;       ///< 还没凑够一行的那半截
     std::string thinking_;  ///< 攒着的思考增量，等人来取
     std::string error_;
+    std::string finish_reason_;
     bool done_ = false;
 };
 

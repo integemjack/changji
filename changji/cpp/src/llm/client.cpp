@@ -11,6 +11,7 @@
 #include <utility>
 
 #include "config/runtime.hpp"
+#include "llm/schema_validate.hpp"
 #include "llm/sse.hpp"
 #include "stages/prompts.inc.hpp"
 #include "util/text.hpp"
@@ -76,6 +77,41 @@ std::string model_not_allowed(const std::string& detail) {
         if (low.find(m) != std::string::npos) return detail;
     }
     return {};
+}
+
+std::string completion_reason(const std::string& raw_body) {
+    const json body = json::parse(raw_body, nullptr, /*allow_exceptions=*/false);
+    if (body.is_discarded() || !body.is_object()) return {};
+    const auto choices = body.find("choices");
+    if (choices == body.end() || !choices->is_array() || choices->empty() ||
+        !(*choices)[0].is_object()) {
+        return {};
+    }
+    const auto finish = (*choices)[0].find("finish_reason");
+    return finish != (*choices)[0].end() && finish->is_string()
+               ? finish->get<std::string>()
+               : std::string();
+}
+
+void require_complete_reason(const std::string& reason) {
+    if (reason.empty() || reason == "stop" || reason == "tool_calls") return;
+    if (reason == "length") {
+        throw LlmError("大模型输出达到长度上限，返回内容被截断。请提高该模型的输出上限，或缩短输入后重试");
+    }
+    if (reason == "content_filter") {
+        throw LlmError("大模型服务的内容过滤器中止了生成");
+    }
+    throw LlmError("大模型没有正常完成生成（finish_reason=" + reason + "）");
+}
+
+std::string checked_output(const Request& req, std::string out) {
+    if (const auto err = validate_structured_output(out, req.schema)) {
+        throw LlmError("大模型输出不符合 " +
+                       (req.schema_name.empty() ? std::string("JSON Schema")
+                                                : req.schema_name + " Schema") +
+                       "：" + *err);
+    }
+    return out;
 }
 
 }  // namespace
@@ -331,6 +367,8 @@ std::string RemoteClient::complete(const Request& req,
     struct Attempt {
         std::string text;
         std::string sse_error;   ///< 服务端在流里塞的 error
+        std::string response_body;
+        std::string finish_reason;
         int status = 0;
         std::optional<std::string> transport_error;
         bool canceled = false;
@@ -361,47 +399,47 @@ std::string RemoteClient::complete(const Request& req,
                 return true;
             });
         a.status = r.status;
+        a.response_body = r.body;
         a.transport_error = r.transport_error;
         a.sse_error = sse.error();
+        a.finish_reason = sse.finish_reason();
         // **服务端没理会 stream 的情况**：它回了一份普通的 JSON，SSE 解不
         // 出任何东西。那份 body 在 r.body 里（流式那条只在出错时收 body，
         // 但"整份 JSON"和"错误体"在传输上没区别），试着按整段解一次。
         if (a.text.empty() && a.status < 400 && !r.body.empty()) {
             try {
+                a.finish_reason = completion_reason(r.body);
                 a.text = extract_content(r.body);
                 if (!a.text.empty()) on_token(a.text);
             } catch (const std::exception&) {
-                // 解不出来就当这次没成，下面退回整段那条
+                // 解不出来就由下面按本次响应直接报错；不重复发送同一个请求。
             }
         }
         return a;
     };
 
-    // **只发一次。**
-    //
-    // 这儿原来挂着一部四档退档梯子（json_schema → 削过的 schema →
-    // json_object → 什么都不发），为的是兜住各家对 response_format 支持得
-    // 七零八落。2026-09-14 把 schema 整个搬进提示词之后它没有存在的理由了，
-    // 而它的代价一直很实在：任何一个别的 400（限流之外的，比如 glm-5.3
-    // 不收 thinking 的关闭值）都会被它读成"这家不支持 json_schema"，
-    // 于是**悄悄**退到最宽那一档接着生成，日志上看一切正常。
-    //
-    // 剩下的唯一一条退路是"退回整段"，那条治的是另一件事：有的服务压根
-    // 不支持 stream。
+    // **只发一次。** 不支持 SSE 但直接返回普通 OpenAI JSON 的服务会在
+    // run() 里就地解析同一份响应；空响应和错误响应都不会自动再发一次，
+    // 避免重复生成和重复计费。
     Attempt a = run();
     if (a.canceled) throw LlmError("已取消");
+    if (a.transport_error.has_value()) {
+        throw LlmError(connect_failed(cfg, *a.transport_error));
+    }
+    if (a.status >= 400) {
+        throw LlmError(explain_status(cfg, a.status, a.response_body));
+    }
 
-    // 流里明说了出错：这条要报出来，不能当成"生成完了"——
-    // 否则用户拿到的是一段空正文外加一句"写好了"。
-    if (!a.sse_error.empty() && a.text.empty()) {
+    // 服务在流里报错时，即使前面已经吐过半份正文也必须报真实错误。
+    // 把半份正文交给解析器，只会把它伪装成“JSON 格式错误”。
+    if (!a.sse_error.empty()) {
         throw LlmError("大模型服务报错：" + a.sse_error);
     }
-    if (!a.text.empty()) return a.text;
-
-    // 一个字都没流出来。退回整段那条：**它治的是"这家不支持 stream"**，
-    // 不是结构问题。连不上、认证错这类也在那边统一报——explain_status
-    // 已经把各种状态码翻成了能照着做的话。
-    return Client::complete(req, tok, on_token);
+    require_complete_reason(a.finish_reason);
+    if (a.text.empty()) {
+        throw LlmError("大模型服务没有返回正文；本次请求不会自动重发，以免重复生成或重复计费");
+    }
+    return checked_output(req, std::move(a.text));
 }
 
 std::string Client::complete(const Request& req, pipeline::CancelToken& tok,
@@ -451,7 +489,8 @@ std::string RemoteClient::complete(const Request& req,
         const std::string think = extract_thinking(r.body);
         if (!think.empty()) req.on_thinking(think);
     }
-    return extract_content(r.body);
+    require_complete_reason(completion_reason(r.body));
+    return checked_output(req, extract_content(r.body));
 }
 
 // ---- ReplayClient ----

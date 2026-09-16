@@ -60,6 +60,11 @@ void SseDeltas::take_line(std::string line, std::string& out) {
     const auto& first = (*choices)[0];
     if (!first.is_object()) return;
 
+    if (const auto finish = first.find("finish_reason");
+        finish != first.end() && finish->is_string()) {
+        finish_reason_ = finish->get<std::string>();
+    }
+
     // delta.content 是流式那条；message.content 是有些服务在最后一条里
     // 给全文（Ollama 的某些版本就这样）。**两个都认，但只取 delta**——
     // message 那条是累计的，取了会把全文再加一遍。
