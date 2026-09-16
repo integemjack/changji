@@ -29,6 +29,7 @@ import { onBeforeRouteLeave } from 'vue-router'
 import AppIcon from '@/components/AppIcon.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import ScriptReader from '@/components/ScriptReader.vue'
+import { useChapterMode } from '@/composables/useChapterMode'
 import { api } from '@/api'
 import { countScriptChars } from '@/api/labels'
 import { runAsyncJob } from '@/composables/useAsyncJob'
@@ -38,6 +39,7 @@ import { useSession } from '@/stores/session'
 import { useUi } from '@/stores/ui'
 
 const session = useSession()
+const { chapter } = useChapterMode()
 const ui = useUi()
 const { run, isBusy } = useAction()
 
@@ -410,7 +412,11 @@ async function save() {
          "没写"是"不知道"；「AI 写这一集」按下去就是拿新写的盖掉可能还在
          的那篇。 -->
     <div v-if="!loadError" class="toolbar">
-      <span class="tiny dim numeric">{{ wordCount }} 字 · 目标 {{ durationS }} 秒</span>
+      <!-- 章模式下不提目标时长：这一章多长由它的内容定，不是奔着一个数去写的。
+           用户 2026-09-16：「剧本里还需要目标时长吗」——不需要。 -->
+      <span class="tiny dim numeric">
+        {{ wordCount }} 字<template v-if="!chapter"> · 目标 {{ durationS }} 秒</template>
+      </span>
       <span v-if="dirty" class="pill pill--warn">未存</span>
       <span class="spacer" />
       <button
@@ -520,11 +526,12 @@ async function save() {
         </template>
         <template v-else>照梗概续写，这一集不在分集表上</template>
       </p>
+      <!-- 章模式下不摆「够不够」那个丸子：没有目标时长，也就无所谓够不够。 -->
       <ScriptReader
         :text="draft.script"
-        :target-seconds="durationS"
-        :budget-chars="draft.budget_chars ?? 0"
-        :fit="draft.fit ?? ''"
+        :target-seconds="chapter ? 0 : durationS"
+        :budget-chars="chapter ? 0 : (draft.budget_chars ?? 0)"
+        :fit="chapter ? '' : (draft.fit ?? '')"
         :dialogue-chars="draft.dialogue_chars ?? 0"
         :speakers="draft.speakers ?? []"
       />
@@ -549,8 +556,8 @@ async function save() {
     <ScriptReader
       v-else-if="mode === 'read'"
       :text="script"
-      :target-seconds="durationS"
-      :budget-chars="ctx?.budget_chars ?? 0"
+      :target-seconds="chapter ? 0 : durationS"
+      :budget-chars="chapter ? 0 : (ctx?.budget_chars ?? 0)"
     />
 
     <textarea

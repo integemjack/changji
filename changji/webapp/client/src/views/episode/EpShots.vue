@@ -1135,8 +1135,12 @@ onDeactivated(() => {
         <button
           class="btn btn--ghost btn--sm"
           type="button"
-          :disabled="isBusy('planAll')"
-          title="把全项目还没有分镜的章一次补完，已经有分镜的不动"
+          :disabled="isBusy('planAll') || !session.episodes.length"
+          :title="
+            session.episodes.length
+              ? '把全项目还没有分镜的章一次补完，已经有分镜的不动'
+              : '这部剧还一集都没有——章是自动对上集的，先去故事页写一份大纲'
+          "
           @click="planAll"
         >
           {{ isBusy('planAll') ? '排着…' : '批量补分镜' }}
