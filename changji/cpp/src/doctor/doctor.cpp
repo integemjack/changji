@@ -448,16 +448,27 @@ Check check_local_tts(const config::Settings& settings) {
     // 但不再挡着开工。
     const bool elsewhere = selected && dispatchable_elsewhere(
                                            settings, infer::Capability::Tts);
+    // ⚠️ **坏在哪要排第一句，内部状态排最后。**
+    //
+    // 这三条原来一律 `probe.detail + "；…"` 开头，而 probe.detail 说的是
+    // 「mtmd 已链入，媒体标记 <__media__>，4 线程」——一句**内部一切正常**
+    // 的汇报。于是镜头页上那一大块红字的第一行讲的是 mtmd 和线程数，真正
+    // 的那句「缺模型」被挤到后半截。人打开页面看见的是一段开发者才懂的话，
+    // 而他要知道的只有两件事：坏了什么、怎么办。
+    //
+    // 好的那一条（两份都在）照旧把 probe.detail 放前面——那时候它就是答案。
     if (elsewhere) {
         return {"进程内配音", Level::WARN,
-                probe.detail + "；本机缺模型：" + missing +
-                    "。这一步会派给别的机器（机器表里有能配音的）",
+                "本机缺模型：" + missing +
+                    "。这一步会派给别的机器（机器表里有能配音的）。" +
+                    probe.detail,
                 "本机也想跑的话，填 [models].tts 和 [models].tts_decoder；"
                 "只靠别的机器就不用管这条。"};
     }
     return {"进程内配音", selected ? Level::FAIL : Level::OK,
-            probe.detail + "；缺模型：" + missing +
-                (selected ? "，配音会退回估算后端（出静音）" : "（当前没选它）"),
+            "缺模型：" + missing +
+                (selected ? "，配音会出静音。" : "（当前没选它）。") +
+                probe.detail,
             // **两条路都要说。** 只说"下模型"的话，小卡上的用户下完才
             // 发现配音和出片挤不进同一张卡——而外接一个配音服务不用改
             // 一行代码、也不占本机显存，那多半才是他要的那条。
