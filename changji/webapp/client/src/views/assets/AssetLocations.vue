@@ -25,8 +25,10 @@ import { runAsyncJob } from '@/composables/useAsyncJob'
 import { useRefStream } from '@/composables/useRefStream'
 import { useSession } from '@/stores/session'
 import { useUi } from '@/stores/ui'
+import { useChapterIndex } from '@/composables/useChapterIndex'
 
 const session = useSession()
+const { chapterLabel } = useChapterIndex()
 const ui = useUi()
 const { run, isBusy } = useAction()
 
@@ -671,6 +673,12 @@ async function clearEmpty(locationId) {
                   <span v-if="prefix" class="cell__pre">{{ prefix }}</span>{{ head(l) }}
                 </button>
                 <span class="spacer" />
+                <!-- 出现在哪几章。和角色那一格同一份索引（useChapterIndex）。 -->
+                <span
+                  v-if="chapterLabel(l.name)"
+                  class="pill pill--neutral tiny nowrap"
+                  :title="`${l.name} 出现在${chapterLabel(l.name)}`"
+                >{{ chapterLabel(l.name) }}</span>
                 <!-- 「有空景图/缺图」删了：图在不在，看框里就知道 -->
                 <span v-if="changed(l.location_id)" class="pill pill--warn tiny">未保存</span>
               </div>

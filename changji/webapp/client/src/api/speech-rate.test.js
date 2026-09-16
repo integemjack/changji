@@ -115,8 +115,12 @@ describe('对白占比', () => {
  * 抄的那份落后，同一份稿子在草稿面板上写「合适」、存下来之后写「偏短」。
  *
  * 这条读的是 C++ 源码而不是某个配置文件——那两个数就写在那儿，没有第二
- * 个源头。锚在 `out["fit"] = chars > budget *` 上，只有正片那一处是这个
- * 形状（预告片那一处的上界是 `chars > budget`，没有乘号）。
+ * 个源头。锚在 `out["fit"] = ... chars > budget *` 上，只有正片那一处是
+ * 这个形状（预告片那一处的上界是 `chars > budget`，没有乘号）。
+ *
+ * 2026-09-16 放宽了一点：章模式在 `out["fit"] =` 和 `chars > budget *`
+ * 之间插了一个三目（章模式没有字数预算，长度由内容定，不判长短）。
+ * 锚点跳过中间那一段，两个阈值本身一个没动。
  */
 describe('够不够的两条阈值', () => {
   const CPP = fileURLToPath(new URL('../../../../cpp/src/http/scripting.cpp', import.meta.url))
@@ -124,7 +128,7 @@ describe('够不够的两条阈值', () => {
   function engineFit() {
     const src = fs.readFileSync(CPP, 'utf8')
     const m = src.match(
-      /out\["fit"\]\s*=\s*chars\s*>\s*budget\s*\*\s*([0-9.]+)[\s\S]{0,120}?chars\s*<\s*budget\s*\*\s*([0-9.]+)/,
+      /out\["fit"\]\s*=[\s\S]{0,120}?chars\s*>\s*budget\s*\*\s*([0-9.]+)[\s\S]{0,120}?chars\s*<\s*budget\s*\*\s*([0-9.]+)/,
     )
     if (!m) throw new Error('scripting.cpp 里找不到 post_script_write 那两条阈值')
     return { long: Number(m[1]), short: Number(m[2]) }

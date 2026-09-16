@@ -16,6 +16,7 @@ import { useAction } from '@/composables/useAction'
 import { runAsyncJob } from '@/composables/useAsyncJob'
 import { useRefStream } from '@/composables/useRefStream'
 import { useSession } from '@/stores/session'
+import { useChapterIndex } from '@/composables/useChapterIndex'
 import { useUi } from '@/stores/ui'
 
 const props = defineProps({
@@ -24,6 +25,7 @@ const props = defineProps({
 })
 
 const session = useSession()
+const { chapterLabel } = useChapterIndex()
 const ui = useUi()
 const { run, isBusy } = useAction()
 
@@ -970,8 +972,14 @@ async function clearRef(charId, slot) {
               {{ c.name }}
             </button>
             <span class="spacer" />
-            <!-- 只剩「未保存」。0/3 和「音色/自动」删了：三个空格子本身就是
-                 0/3，图能说的话不再用字说一遍；音色是改的时候才要的，在抽屉里。 -->
+            <!-- 出现在哪几章。用户 2026-09-16：「角色应该显示出现在哪几章里，
+                 和场景一样」。名单从章节来（靠名字对，见 useChapterIndex）；
+                 故事还没写、或者这个人没在正文里出现过，就不摆这一栏。 -->
+            <span
+              v-if="chapterLabel(c.name)"
+              class="pill pill--neutral tiny nowrap"
+              :title="`${c.name} 出现在${chapterLabel(c.name)}`"
+            >{{ chapterLabel(c.name) }}</span>
             <span v-if="changed(c.char_id)" class="pill pill--warn tiny">未保存</span>
           </div>
 

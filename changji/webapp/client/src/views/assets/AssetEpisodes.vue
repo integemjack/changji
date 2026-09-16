@@ -51,10 +51,6 @@ const loading = ref(false)
 const loadError = ref('')
 const openChapter = ref('')
 
-// **体量不在这一格。** 它是"这个故事有多长"，写大纲时就要定，属于创作，
-// 所以留在「故事」那一页。这一格只管"把它切成多长一段"。
-const DURATIONS = [30, 60, 90, 120, 180]
-
 const chapters = computed(() => story.value?.chapters ?? [])
 const plan = computed(() => story.value?.plan ?? [])
 const durationS = computed(() => story.value?.episode_duration_s ?? 60)
@@ -62,8 +58,6 @@ const hasStory = computed(() => chapters.value.length > 0)
 const writtenCount = computed(
   () => chapters.value.filter((c) => (c.text ?? '').trim()).length,
 )
-/** 停在有说法的钩子上的集数。剩下的收在段落边界——到点了，不是悬念。 */
-const hooked = computed(() => plan.value.filter((p) => p.hook).length)
 
 /**
  * 回车/空格也能展开这一章。
@@ -83,20 +77,8 @@ function onChapKey(id, event) {
   }
 }
 
-/** 这一章之后要画的那几条分集线（在这一章结束的集）。 */
-function cutsAfter(chapterId) {
-  return plan.value.filter((p) => p.to_chapter === chapterId)
-}
 
-// ---------------------------------------------------------------------------
-// 每一集用到的人和地方
-// ---------------------------------------------------------------------------
-//
-// 用户 2026-09-12：「分集里每集用到的角色和场景图应该显示出来，容易区分」。
-//
-// **分集表最难的就是分不清。** 十来行「第 N 集 · 60s · 某某悬念」，字都
-// 差不多长、颜色都一样，要找"陈默在医院那一集"只能一行行读过去。而这几集
-// 之间真正的差别是**谁在场、在哪儿**——那正好是图。
+// 这一章有谁、在哪儿，靠名字把两边对上。
 //
 // 名单从章节来（`chapter.characters` / `chapter.locations`，是「读故事」
 // 那一步照着正文读出来的），图从资产库来。两边靠**名字**对上：章节里存的
@@ -114,92 +96,35 @@ const locByName = computed(() => {
   return m
 })
 
-/** 这一集覆盖的那几章。分集表里存的是首尾章号，中间的按顺序取。 */
-function chaptersOf(ep) {
-  const from = chapters.value.findIndex((c) => c.chapter_id === ep.from_chapter)
-  const to = chapters.value.findIndex((c) => c.chapter_id === ep.to_chapter)
-  if (from < 0 || to < 0) return []
-  return chapters.value.slice(from, to + 1)
-}
-
 /**
- * 这一集自己那段正文。
+ * 一章里有谁、在哪儿。
  *
- * **一集常常只是一章的一截**：一章三千字切成三集，三集共用一份章级名单的
- * 话，那三行看着一模一样——而这一栏存在的全部理由就是让人分得清。
- *
- * `from_char` / `to_char` 是**各自那一章里**的偏移（首章从 from_char 到尾，
- * 末章从头到 to_char，中间整章）。它们是码点偏移，而 JS 的 slice 按 UTF-16
- * 数——中文都在基本平面上，两者一致；真混进 emoji 也只是偏几个字，
- * 对"名字在不在这一段里"没有影响。
+ * 用户 2026-09-16：「章节只是梳理人物和场景的关系，这个页面不需要集的
+ * 概念了。」所以这一份**直接读章节自己那两份名单**（`chapter.characters`
+ * / `chapter.locations`），不再绕分集：原来那条路要先算一集覆盖了哪几章、
+ * 再拿那一集的正文切片去扫，那是分集才需要的迂回。
  */
-function sliceOf(ep) {
-  const list = chaptersOf(ep)
-  if (!list.length) return ''
-  let out = ''
-  list.forEach((c, i) => {
-    const text = c.text ?? ''
-    const a = i === 0 ? (ep.from_char ?? 0) : 0
-    const b = i === list.length - 1 ? (ep.to_char ?? text.length) : text.length
-    out += text.slice(a, b)
-  })
-  return out
-}
-
-/**
- * 这一集有谁、在哪儿。
- *
- * 两步：**名单从章节来，在不在场看这一集自己那段正文**。
- *
- *   * 候选名单是 `chapter.characters` / `chapter.locations`——「读故事」那一步
- *     照着正文读出来的，是权威的那一份。
- *   * **老项目里这两项是空的**：2026-09-12 之前 schema 没把它们写进
- *     required，14B 就一个都不给（见 story_outline.cpp 里那段）。那时候候选
- *     退成资产库里登记过的全部名字。
- *   * 然后拿这一集的正文过一遍：出现过的才算在场。人名在正文里是实打实
- *     写出来的，扫得准；地名多半扫不到（正文里很少原样写"高架桥下的咖啡
- *     馆"），扫不到就空着，不猜。
- *
- * 正文还没写的章走不到第二步（没得扫），那就直接用章级名单——那时候它是
- * 计划，显示计划是对的。
- */
-function castOf(ep, listKey, lookup, refKey) {
-  const covered = chaptersOf(ep)
-  const listed = []
-  for (const c of covered) {
-    for (const n of c[listKey] ?? []) if (!listed.includes(n)) listed.push(n)
+function chapterCast(chapter, listKey, lookup, refKey) {
+  const names = []
+  for (const n of chapter[listKey] ?? []) {
+    const name = String(n ?? '').trim()
+    if (name && !names.includes(name)) names.push(name)
   }
-  const candidates = listed.length ? listed : [...lookup.keys()]
-
-  const text = sliceOf(ep)
-  let names = text ? candidates.filter((n) => n && text.includes(n)) : []
-  // 扫不出来（正文没写，或者名字确实没在这一段里出现）就退回章级名单。
-  // **空着比错着好，但全空就等于这一栏不存在**——所以只在完全扫不到时退。
-  if (!names.length) names = listed
-
   return names.map((name) => {
     const hit = lookup.get(name)
-    // 地址后面挂一个换代号：参考图重画是原地覆盖、路径不变，不挂的话这一排
-    // 脸会一直是缓存里的老样子（理由见 useRefStream 的 bustOf）。
-    // target 和引擎那条 refs 频道上用的一样：`<id>_<slot>`——refKey 是
-    // `ref_front` / `ref_empty`，去掉 `ref_` 正好是 slot 那一段。
+    // 地址后面挂换代号，理由同原来那处：参考图重画是原地覆盖、路径不变。
     const id = hit?.char_id ?? hit?.location_id ?? ''
     const target = id ? `${id}_${refKey.slice(4)}` : ''
     return {
       name,
-      // 没有图就只给名字，界面上退成一个字的小牌子——**比不显示强**：
-      // 这一栏存在的理由就是让人一眼分清哪一集是哪一集，而名字也分得清。
       url: hit?.[refKey]
         ? mediaUrl(session.projectPath, hit[refKey]) + '&_=' + bustOf(target)
         : '',
     }
   })
 }
-
-const facesOf = (ep) =>
-  castOf(ep, 'characters', charByName.value, 'ref_front')
-const scenesOf = (ep) =>
-  castOf(ep, 'locations', locByName.value, 'ref_empty')
+const chapterFaces = (c) => chapterCast(c, 'characters', charByName.value, 'ref_front')
+const chapterScenes = (c) => chapterCast(c, 'locations', locByName.value, 'ref_empty')
 
 async function load() {
   if (!session.projectPath) {
@@ -287,22 +212,6 @@ watch(
   },
 )
 
-async function pickDuration(event) {
-  const seconds = Number(event.target.value)
-  const project = session.projectPath
-  // **改时长就是重新分集。** 存一个数然后等人再按一次「重算」，那一下
-  // 之间界面上写的集数是旧的，而用户以为已经改了。
-  const result = await run(
-    () =>
-      api.planEpisodes({ project, duration_s: seconds }),
-    { key: 'duration' },
-  )
-  if (!result) return
-  // 换剧了就别把这一份分集表装进新那一部（它是上一部算出来的）。
-  if (project !== session.projectPath) return
-  story.value = result.story ?? story.value
-  ui.ok(`每集 ${seconds} 秒 → ${plan.value.length} 集`)
-}
 
 async function makeEpisodes() {
   const result = await run(
@@ -523,25 +432,15 @@ async function planAll() {
 
 <template>
   <div class="eps">
-    <!-- 同一个故事，每集多长决定切成几集。集数是算出来的。改时长就是重新分集。 -->
-    <!-- 读砸了整条不摆：这里每一样动的都是分集表，而这会儿手里连章节都没有。 -->
+    <!-- **这一格只讲章节。** 用户 2026-09-16：「章节只是梳理人物和场景的
+         关系，这个页面不需要集的概念了。」所以「每集几秒」那个下拉撤了——
+         它按一下就重新分集，而切成几集现在是拍完之后按每集时长切出来的
+         结果（[assembly].episode_s，在设置页），不该在这儿先定死。
+         「N 章 → M 集」那行数也跟着撤了：这一页不预告集数。 -->
+    <!-- 读砸了整条不摆：这会儿手里连章节都没有。 -->
     <div v-if="!loadError" class="toolbar">
-      <label class="dur">
-        <span class="tiny dim">每集</span>
-        <select
-          class="select dur__pick"
-          :value="durationS"
-          :disabled="isBusy('duration')"
-          title="改时长就是重新分集"
-          @change="pickDuration"
-        >
-          <option v-for="d in DURATIONS" :key="d" :value="d">{{ d }} 秒</option>
-        </select>
-      </label>
       <span v-if="hasStory" class="tiny dim nowrap">
-        {{ chapters.length }} 章 → {{ plan.length }} 集<template v-if="plan.length">
-          · {{ hooked }} 集停在悬念上</template>
-        <template v-if="writtenCount < chapters.length">
+        {{ chapters.length }} 章<template v-if="writtenCount < chapters.length">
           · {{ chapters.length - writtenCount }} 章还没正文</template>
       </span>
       <span class="spacer" />
@@ -598,7 +497,7 @@ async function planAll() {
       <RouterLink to="/story" class="btn btn--sm">去写故事</RouterLink>
     </EmptyState>
 
-    <!-- 章节一行，分集线画在两行之间。线在哪一眼就看得见。 -->
+    <!-- 一章一行，行上摆着这一章的人和地方。 -->
     <section v-else class="stack stack--sm">
       <template v-for="(c, i) in chapters" :key="c.chapter_id">
         <div
@@ -617,23 +516,11 @@ async function planAll() {
               {{ c.summary }}
             </p>
           </div>
-          <span v-if="c.text" class="tiny dim numeric nowrap">
-            {{ [...c.text].length }} 字
-          </span>
-          <RouterLink v-else to="/story" class="btn btn--sm btn--ghost nowrap" @click.stop>
-            去展开正文
-          </RouterLink>
-        </div>
-
-        <div v-for="ep in cutsAfter(c.chapter_id)" :key="ep.episode_id" class="cut">
-          <span class="cut__id numeric">{{ ep.episode_id }}</span>
-          <span class="cut__dur numeric">{{ ep.target_duration_s }}s</span>
-
-          <!-- 这一集里谁在场、在哪儿。**人是圆的，地方是方的**——形状不一样，
-               扫一眼就分得开，不用去读底下那行字。 -->
+          <!-- 这一章有谁、在哪儿。**人是圆的，地方是方的**——形状不一样，
+               扫一眼就分得开，不用去读名字。这一栏就是这一格存在的理由。 -->
           <span class="cast">
             <span
-              v-for="f in facesOf(ep)"
+              v-for="f in chapterFaces(c)"
               :key="'c' + f.name"
               class="cast__one cast__one--who"
               :title="f.name"
@@ -642,7 +529,7 @@ async function planAll() {
               <i v-else>{{ [...f.name][0] }}</i>
             </span>
             <span
-              v-for="l in scenesOf(ep)"
+              v-for="l in chapterScenes(c)"
               :key="'l' + l.name"
               class="cast__one cast__one--where"
               :title="l.name"
@@ -651,11 +538,14 @@ async function planAll() {
               <i v-else>{{ [...l.name][0] }}</i>
             </span>
           </span>
-
-          <!-- 钩子是"这一集停在哪儿"的全部说明，分集线上一行放不下。 -->
-          <span v-if="ep.hook" class="cut__hook truncate" :title="ep.hook">{{ ep.hook }}</span>
-          <span v-else class="cut__hook dim">章尾</span>
+          <span v-if="c.text" class="tiny dim numeric nowrap">
+            {{ [...c.text].length }} 字
+          </span>
+          <RouterLink v-else to="/story" class="btn btn--sm btn--ghost nowrap" @click.stop>
+            去展开正文
+          </RouterLink>
         </div>
+
       </template>
     </section>
 

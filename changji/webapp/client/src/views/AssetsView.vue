@@ -88,7 +88,6 @@ const SLOTS = ['front', 'three_quarter', 'back']
 const characters = computed(() => assets.value?.characters ?? [])
 const locations = computed(() => assets.value?.locations ?? [])
 const chapters = computed(() => story.value?.chapters ?? [])
-const plan = computed(() => story.value?.plan ?? [])
 const relations = computed(() => story.value?.relations ?? [])
 
 /**
@@ -164,8 +163,11 @@ const TABS = computed(() => [
   {
     key: 'episodes',
     label: '分集',   // 章模式下显示为「章节」，见 tabLabel
-    n: plan.value.length,
-    gap: plan.value.length && unwritten.value ? `${unwritten.value} 章没正文` : '',
+    // **数章，不数集。** 用户 2026-09-16：这一格不需要集的概念了。
+    // 原来这儿数的是 plan.length（分集条目），于是页签上写着 10 而
+    // 底下列着 8 章。
+    n: chapters.value.length,
+    gap: chapters.value.length && unwritten.value ? `${unwritten.value} 章没正文` : '',
   },
 ])
 
