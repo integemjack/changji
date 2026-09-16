@@ -62,6 +62,26 @@ Timeline build_timeline(const std::vector<models::Shot>& shots,
                         const models::ProjectPaths& paths,
                         const config::AssemblyConfig& config);
 
+/// 把一条时间线按每集时长切成几集。
+///
+/// **集数由内容定，不是由内容去凑集数。**
+/// 原来一章写多长是提示词里那句「这一集总时长约 N 秒」定的——不够模型就
+/// 凑，超了就压。用户 2026-09-16 报的就是这个：该写完的一章被切成一集的
+/// 尺寸。改成反过来：一章按它自己的内容写完、拍完，最后按固定的每集时长
+/// 切成几集，能切出几集是这一章内容的结果。
+///
+/// **只在镜头边界切。** 切在一镜中间等于把一个镜头劈成两半，画面和配音
+/// 都对不上。所以某一集会比 `per_episode_s` 略长或略短——宁可长短不齐，
+/// 也不切坏镜头。
+///
+/// 每一集的 start_s 和字幕时间戳都重新从 0 起算，不然第二集的字幕会挂在
+/// 第一集的时间轴上。
+///
+/// `per_episode_s <= 0` 或者只有一集的量：原样回一条，等于没切。
+/// 单个镜头本身就超过一集时长的，它自己单独成一集（不可能再短了）。
+std::vector<Timeline> split_into_episodes(const Timeline& timeline,
+                                          double per_episode_s);
+
 // ---- 各步的参数。纯函数，测得死。 ----
 
 /// 统一编码规格。

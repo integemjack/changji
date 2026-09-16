@@ -130,6 +130,40 @@ Timeline build_timeline(const std::vector<models::Shot>& shots,
     return timeline;
 }
 
+std::vector<Timeline> split_into_episodes(const Timeline& timeline,
+                                          double per_episode_s) {
+    if (timeline.entries.empty()) return {};
+    if (!(per_episode_s > 0.0)) return {timeline};
+
+    std::vector<Timeline> out;
+    Timeline cur;
+    double used = 0.0;
+    for (const TimelineEntry& e : timeline.entries) {
+        // **满了才开下一集，而且至少留一镜。**
+        // 不留这一条的话，一个本身就超过一集时长的长镜头会让每一集都空着
+        // 开头——它永远"装不下"，于是每次都先切一刀再放进去。
+        if (!cur.entries.empty() && used + e.duration_s > per_episode_s) {
+            out.push_back(std::move(cur));
+            cur = Timeline{};
+            used = 0.0;
+        }
+        TimelineEntry moved = e;
+        // 每一集自己从 0 起算：时间戳留着上一集的，第二集的字幕会挂在
+        // 第一集的时间轴上，越往后偏得越远。
+        const double shift = moved.start_s - used;
+        moved.start_s = used;
+        for (SubtitleCue& c : moved.cues) {
+            c.start_s -= shift;
+            c.end_s -= shift;
+        }
+        used += moved.duration_s;
+        cur.entries.push_back(std::move(moved));
+    }
+    if (!cur.entries.empty()) out.push_back(std::move(cur));
+    return out;
+}
+
+
 std::vector<std::string> normalize_args(const fs::path& src, int target_w,
                                         int target_h,
                                         const config::AssemblyConfig& config,

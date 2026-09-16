@@ -108,6 +108,91 @@ struct ExactFrames {
 
 }  // namespace
 
+TEST_CASE("一章按每集时长切成几集：只在镜头边界切，每集重新从 0 起算") {
+    // 用户 2026-09-16 的判词：一章按它自己的内容写完、拍完，最后按固定
+    // 的每集时长切成几集——**能切出几集是这一章内容的结果**，不是反过来
+    // 让内容去凑一集的长度（凑不满就注水，超了就压缩）。
+    const auto entry = [](const char* id, double start, double dur) {
+        media::TimelineEntry e;
+        e.shot_id = id;
+        e.start_s = start;
+        e.duration_s = dur;
+        media::SubtitleCue c;
+        c.start_s = start;
+        c.end_s = start + dur;
+        c.text = id;
+        e.cues.push_back(c);
+        return e;
+    };
+    media::Timeline t;
+    double at = 0.0;
+    for (int i = 0; i < 7; ++i) {
+        t.entries.push_back(entry(("sh" + std::to_string(i)).c_str(), at, 10.0));
+        at += 10.0;
+    }
+
+    SUBCASE("70 秒按 30 秒一集切：3 集，3/3/1 镜") {
+        const auto eps = media::split_into_episodes(t, 30.0);
+        REQUIRE(eps.size() == 3);
+        CHECK(eps[0].entries.size() == 3);
+        CHECK(eps[1].entries.size() == 3);
+        CHECK(eps[2].entries.size() == 1);
+        // 一镜都没丢，顺序也没乱
+        std::vector<std::string> ids;
+        for (const auto& e : eps) {
+            for (const auto& x : e.entries) ids.push_back(x.shot_id);
+        }
+        REQUIRE(ids.size() == 7);
+        for (int i = 0; i < 7; ++i) CHECK(ids[i] == "sh" + std::to_string(i));
+    }
+    SUBCASE("每一集自己从 0 起算，字幕跟着挪") {
+        const auto eps = media::split_into_episodes(t, 30.0);
+        REQUIRE(eps.size() >= 2);
+        for (const auto& e : eps) {
+            REQUIRE_FALSE(e.entries.empty());
+            CHECK(e.entries.front().start_s == doctest::Approx(0.0));
+            REQUIRE_FALSE(e.entries.front().cues.empty());
+            CHECK(e.entries.front().cues.front().start_s == doctest::Approx(0.0));
+            // 集内仍然首尾相接
+            double want = 0.0;
+            for (const auto& x : e.entries) {
+                CHECK(x.start_s == doctest::Approx(want));
+                REQUIRE_FALSE(x.cues.empty());
+                CHECK(x.cues.front().start_s == doctest::Approx(want));
+                want += x.duration_s;
+            }
+        }
+    }
+    SUBCASE("不许切在镜头中间：宁可这一集长一点") {
+        const auto eps = media::split_into_episodes(t, 25.0);
+        for (const auto& e : eps) {
+            for (const auto& x : e.entries) CHECK(x.duration_s == doctest::Approx(10.0));
+        }
+        // 25 秒装不下第三镜，所以每集两镜 20 秒，最后一集一镜
+        REQUIRE(eps.size() == 4);
+        CHECK(eps.back().entries.size() == 1);
+    }
+    SUBCASE("单镜就超过一集时长：它自己单独成一集，不留空集") {
+        media::Timeline big;
+        big.entries.push_back(entry("long1", 0.0, 40.0));
+        big.entries.push_back(entry("long2", 40.0, 40.0));
+        const auto eps = media::split_into_episodes(big, 30.0);
+        REQUIRE(eps.size() == 2);
+        CHECK(eps[0].entries.size() == 1);
+        CHECK(eps[1].entries.size() == 1);
+        for (const auto& e : eps) CHECK(e.entries.front().start_s == doctest::Approx(0.0));
+    }
+    SUBCASE("不切：每集时长给 0 或者根本装得下，原样一条") {
+        CHECK(media::split_into_episodes(t, 0.0).size() == 1);
+        CHECK(media::split_into_episodes(t, -5.0).size() == 1);
+        CHECK(media::split_into_episodes(t, 1000.0).size() == 1);
+        CHECK(media::split_into_episodes(t, 1000.0)[0].entries.size() == 7);
+    }
+    SUBCASE("空时间线：一集都不出，别出个空集") {
+        CHECK(media::split_into_episodes(media::Timeline{}, 30.0).empty());
+    }
+}
+
 TEST_CASE("时间轴按这一镜真正会生成的帧数排，不按分镜表的名义时长") {
     // 帧数要落在模型的格子上：名义 4 秒的镜头按 17k+5 对齐之后是 107 帧
     // = 4.458 秒。按名义值排的话，每镜差的那几百毫秒会**逐镜累积**——
