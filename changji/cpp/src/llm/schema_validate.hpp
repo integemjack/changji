@@ -77,17 +77,19 @@ inline std::optional<std::string> validate_value(
         if (!matched) return path + " 的类型不符合 schema";
     }
 
-    if (const auto values = schema.find("enum");
-        values != schema.end() && values->is_array()) {
-        bool found = false;
-        for (const auto& allowed : *values) {
-            if (value == Json(allowed)) {
-                found = true;
-                break;
-            }
-        }
-        if (!found) return path + " 不在允许的枚举值中";
-    }
+    // **枚举对不上不在这儿拦。**
+    //
+    // 这一层是用来接住"整份输出坏了"的——被 length 截断、内容过滤掐掉、
+    // 压根不是 JSON。枚举填错不是那一类：它只坏一个字段，而**下游本来就
+    // 按「当它没填过」处理**（storyboard.cpp 的 drop_unknown_enums，那儿
+    // 写着「是抹掉不是报错：这一栏填错不值得把另外十几个好镜头一起作废」）。
+    //
+    // 在这儿 return 一个错，等于把那条规矩推翻：2026-09-16 实测，一集
+    // 十七镜里第三镜的 face_pose 填了个表外的值，整个 /api/plan 回 400，
+    // 十七镜全没了——而那个字段本来会被抹成默认值，一镜都不该丢。
+    //
+    // const 那一条留着：它不是"一个字段填错"，是整份输出走错了分支。
+    (void)0;
     if (const auto constant = schema.find("const");
         constant != schema.end() && value != Json(*constant)) {
         return path + " 不等于 schema 规定的常量";
