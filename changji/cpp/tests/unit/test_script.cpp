@@ -611,6 +611,27 @@ TEST_CASE("台词里裹着的旁白剥掉，不然会被念出来") {
     CHECK(stages::strip_speech_tags(R"(“我不去，”他说，“你也别去。”)") ==
           "我不去，你也别去。");
 
+    SUBCASE("开头的舞台提示剥掉，不然配音会念出「叹气」两个字") {
+        // 2026-09-16 实测 ch01：让模型写「这句怎么说的」之后，它把说明塞进
+        // 了台词本身——十八句里出了一句「叹气：郑哥不是临时起意，他早有准备」。
+        // 冒号前面那两个字会被配音照着念。
+        CHECK(stages::strip_speech_tags("叹气：郑哥不是临时起意。") ==
+              "郑哥不是临时起意。");
+        CHECK(stages::strip_speech_tags("低声：他在骗你。") == "他在骗你。");
+        CHECK(stages::strip_speech_tags("顿了顿：我不知道。") == "我不知道。");
+        CHECK(stages::strip_speech_tags("冷笑:随你便。") == "随你便。");
+
+        // **按词表认，不按「冒号前面短就剥」认。**
+        // 下面这几句冒号前面也很短，但那是人真说出口的话。
+        for (const char* keep : {"听着：我不同意。", "记住：别回头。",
+                                 "说吧：你到底想怎样。"}) {
+            CHECK(stages::strip_speech_tags(keep) == std::string(keep));
+        }
+
+        // 剥完什么都不剩的原样留着——那说明整句就是那个提示
+        CHECK(stages::strip_speech_tags("叹气：") == "叹气：");
+    }
+
     SUBCASE("引号夹在中间的不动——那不是对话形式") {
         // 剥了会把整句话吃掉只剩两个字，而这句话本身就是要说出口的。
         const std::string mid = R"(他说过“再见”，然后走了)";

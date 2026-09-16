@@ -411,6 +411,34 @@ std::string strip_speech_tags(const std::string& text_in,
         }
     }
 
+    // **开头的舞台提示剥掉**：「叹气：郑哥早有准备」→「郑哥早有准备」。
+    //
+    // 2026-09-16 实测：让模型写「这句怎么说的」之后，它把说明塞进了台词本身
+    // （ch01 十八句里出了一句）。冒号前面那几个字会被配音**照着念出来**——
+    // 成片里会听见有人说「叹气」。提示词和 schema 两头都改了话（说清楚要
+    // 单独写成前面那一拍 action），这儿是兜底。
+    //
+    // **按词表认，不按"冒号前面短就剥"认。** 后者会把「听着：我不同意」
+    // 这种真台词开头吃掉——那是人真说出口的两个字。词表里这些没有一个会
+    // 当台词开头说出来，误伤不了。
+    {
+        static const char* kManner[] = {
+            "叹气", "叹了口气", "冷笑", "苦笑", "低声", "压低声音", "轻声",
+            "顿了顿", "停顿", "沉默", "咬牙", "颤声", "哽咽", "怒吼", "大喊",
+            "喊道", "笑着", "皱眉", "摇头", "点头", "深吸一口气", "急声",
+        };
+        for (const char* w : kManner) {
+            for (const char* colon : {R"CJ(：)CJ", ":"}) {
+                const std::string lead = std::string(w) + colon;
+                if (!starts_with(s, lead)) continue;
+                const std::string rest = strip_ascii(s.substr(lead.size()));
+                // 剥完不能什么都不剩——那说明整句就是那个提示，宁可原样留着
+                if (!rest.empty()) s = rest;
+                break;
+            }
+        }
+    }
+
     const std::vector<QuotedSpan> spans = quoted_spans(s);
     if (spans.empty()) return s;   // 正常剧本的台词本来就不带引号
 
@@ -930,7 +958,10 @@ ordered beat_item_schema(bool with_floor,
         {"type", "string"},
         {"description",
          "这一拍的内容。\n"
-         "kind=dialogue：只写说出口的话，不带引号，不重复人名。\n"
+         "kind=dialogue：只写说出口的话，不带引号，不重复人名，"
+         "也不要在前面加「叹气：」「低声：」这种说明——"
+         "冒号前面那几个字会被配音念出来，"
+         "怎么说的要单独写成前面那一拍 action。\n"
          "kind=action：写**画面上看得见的东西**——谁在哪、身体在做"
          "什么、碰到什么物件。换了地方或时间就把光线一并交代。\n"
          "kind=scene：只写「日/夜 · 内/外 · 地点」三样，地点用清单里的名字。"
