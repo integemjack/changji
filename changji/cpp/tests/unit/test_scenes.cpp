@@ -214,13 +214,46 @@ TEST_CASE("场次头那一截拆成时段、内外、地点") {
     CHECK(b.place.empty());
 }
 
-TEST_CASE("地点名接到资产库：全等优先，其次互相包含") {
+TEST_CASE("地点名接到资产库：全等优先，其次互相包含，最后按顺序的子序列") {
     const auto a = make_assets();
     CHECK(stages::resolve_scene_location("夜晚天台", a) == std::optional<std::string>("loc_rooftop"));
     CHECK(stages::resolve_scene_location("天台", a) == std::optional<std::string>("loc_rooftop"));
     CHECK(stages::resolve_scene_location("咖啡馆门口的台阶", a) == std::optional<std::string>("loc_cafe"));
     CHECK_FALSE(stages::resolve_scene_location("医院走廊", a).has_value());
     CHECK_FALSE(stages::resolve_scene_location("", a).has_value());
+
+    // **剧本里的地名常常比资产库那个多几个字。**
+    // 2026-09-16 实测 ep06：资产库「城南酒吧」，剧本「城南深巷小酒吧」，
+    // 中间插了三个字，上面两条一条都不中——那一场六镜 location_id 全空，
+    // 场景层不拼、空景图不喂，六镜各画各的酒吧。
+    models::AssetLibrary b = make_assets();
+    models::Location bar;
+    bar.location_id = "loc_chengnan_bar";
+    bar.name = "城南酒吧";
+    bar.space = "木质吧台";
+    b.locations["loc_chengnan_bar"] = bar;
+    models::Location office;
+    office.location_id = "loc_song_office";
+    office.name = "宋律师办公室";
+    b.locations["loc_song_office"] = office;
+
+    CHECK(stages::resolve_scene_location("城南深巷小酒吧", b) ==
+          std::optional<std::string>("loc_chengnan_bar"));
+
+    // **要按顺序，不能只看重合几个字。**「曾老板办公室」和「宋律师办公室」
+    // 重合五个字，但「曾」根本不在里面，顺序一对就分得开。
+    CHECK_FALSE(stages::resolve_scene_location("曾老板办公室", b) ==
+                std::optional<std::string>("loc_song_office"));
+    // 同理，别把「城南仓库」认成「城南酒吧」
+    CHECK_FALSE(stages::resolve_scene_location("城南仓库", b).has_value());
+
+    // 名字太短的不参与这一手，免得一两个字什么都能匹配上
+    models::AssetLibrary c;
+    models::Location door;
+    door.location_id = "loc_door";
+    door.name = "门口";
+    c.locations["loc_door"] = door;
+    CHECK_FALSE(stages::resolve_scene_location("公安局门前的台阶", c).has_value());
 }
 
 TEST_CASE("按场次头切场：段头归到它后面那一场，序号按出现次序数") {

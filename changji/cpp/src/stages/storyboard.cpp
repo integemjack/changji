@@ -553,6 +553,37 @@ std::optional<std::string> resolve_scene_location(const std::string& place_in,
             best_len = name.size();
         }
     }
+    if (best.has_value()) return best;
+
+    // **最后一手：场景名的字按顺序出现在剧本那一行里就算同一个地方。**
+    //
+    // 剧本是模型写的，场次头上的地名常常比资产库里那个多几个字：
+    // 2026-09-16 实测 ep06，资产库里是「城南酒吧」，剧本写的是
+    // 「城南深巷小酒吧」——中间插了「深巷小」三个字，上面两条（相等、
+    // 互相包含）一条都不中，于是那一场六镜的 location_id 全是空的。
+    //
+    // 空着的后果不是少一行字：场景层整段不拼、空景图也不喂，六镜各画各的
+    // 酒吧，而且全程只在出分镜时提示一句「N 个镜头没挑场景」。
+    //
+    // 判据是**按顺序**（子序列），不是「有几个字重合」：「城南酒吧」的
+    // 城·南·酒·吧 依次出现在「城南深巷小酒吧」里才算。乱序的重合太容易
+    // 撞上——「曾老板办公室」和「宋律师办公室」重合五个字，但顺序一对
+    // 就分得开（曾字根本不在里面）。再要求资产名至少三个字，免得一两个字
+    // 的名字什么都能匹配上。同样取最长的那个，最具体。
+    const std::vector<std::string> hay = text::utf8_chars(place);
+    for (const auto& [id, loc] : assets.locations) {
+        const std::string name = text::strip_ws(loc.name);
+        const std::vector<std::string> needle = text::utf8_chars(name);
+        if (needle.size() < 3 || needle.size() > hay.size()) continue;
+        std::size_t k = 0;
+        for (std::size_t i = 0; i < hay.size() && k < needle.size(); ++i) {
+            if (hay[i] == needle[k]) ++k;
+        }
+        if (k == needle.size() && name.size() > best_len) {
+            best = id;
+            best_len = name.size();
+        }
+    }
     return best;
 }
 
