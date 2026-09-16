@@ -204,6 +204,33 @@ const pending = computed(
 /** 还没有首帧的镜头数。「只出首帧」那个按钮按它显示。 */
 const pendingFrames = computed(() => shots.value.filter((s) => !s.frame_path).length)
 /**
+ * **全项目**还没出片的镜头数（含这一章）。
+ *
+ * 不用再发一趟请求：`/api/project` 每一集本来就带 `shots` 和 `status`
+ * （引擎那头 `Episode::counts_by_status()`，键就是 `to_string(ShotStatus)`，
+ * 和上面 DONE_STATUS 是同一套字面量）。
+ */
+const projectPending = computed(() =>
+  session.episodes.reduce((a, e) => {
+    const st = e.status ?? {}
+    const done = DONE_STATUS.reduce((n, k) => n + (st[k] ?? 0), 0)
+    return a + Math.max(0, (e.shots ?? 0) - done)
+  }, 0),
+)
+/**
+ * 主按钮这一下该跑整个项目，还是只跑这一章。
+ *
+ * **这一章出完了、别的章还差着的时候，人想要的是"接着下一章"，不是
+ * "把刚跑完的一小时再跑一遍"。** 而这颗按钮原来在那一刻变成「全部重出」
+ * ——最显眼的位置上摆着一个既毁东西又不是人想要的动作，真正想要的那个
+ * 则一个入口都没有：引擎的 `all_episodes` 从写下来那天起就没被界面用过
+ * （`grep -rn all_episodes webapp/` 只有这一处是新加的）。
+ * 用户 2026-09-16：「交互过程也太繁琐。」八章就是八次手点加八段等待。
+ *
+ * 整个项目都出完了才轮到「全部重出」——那时候它确实是唯一还能做的事。
+ */
+const goAll = computed(() => !pending.value && projectPending.value > 0)
+/**
  * 锁着的有几镜。**「全部重出」要把这个数说出来。**
  *
  * 锁是人工确认过的意思，而批量那几颗按钮教给人的正是"锁着的动不了"——
@@ -822,7 +849,7 @@ async function batch(action) {
  * 跑完什么都没变而且不报错，按钮点了像是没反应。
  */
 async function startAll() {
-  if (!pending.value) {
+  if (!pending.value && !goAll.value) {
     const locked = lockedCount.value
     // 锁着的也会跟着重跑——见 lockedCount 上面那段。
     const note = locked ? `（含锁定的 ${locked} 镜）` : ''
@@ -830,7 +857,11 @@ async function startAll() {
       return
     }
   }
-  const r = await start([], null, !pending.value)
+  // 三岔：这一章还差 → 只跑这一章；这一章完了别的章还差 → 整个项目接着跑
+  // （不 force，跑的就是还没跑的那些）；全项目都完了 → 这一章全部重出。
+  const r = goAll.value
+    ? await start([], null, false, true)
+    : await start([], null, !pending.value)
   if (r.ok) return
   // 409 = 已经在跑了（多半是另一个浏览器、或者另一个标签页点的）。
   // **那不是错误**，跟着看进度就行——轮询和 WebSocket 进页面就开着了。
@@ -977,7 +1008,10 @@ async function loadPreview() {
     const got = await api.runPreview({
       path: session.projectPath,
       episode_id: session.episodeId,
-      force: !pending.value,
+      // 按钮走整个项目的时候，预估也得按整个项目报——上面那段写着
+      // 「不一致的预览比没有更糟」，人按它安排时间。
+      ...(goAll.value ? { all_episodes: true } : {}),
+      force: goAll.value ? false : !pending.value,
     })
     // 人按这一行安排时间（「要等 24 分钟」），报的是别的集就更糟
     if (!mine()) return
@@ -1039,8 +1073,10 @@ watch(
 )
 // 镜头数、还差几镜、跑没跑完——任何一个变了，这句话就该重算。
 // 跑的过程中不算（上面那个卫语句挡着），停下来那一刻会算一次。
+// `goAll` 也要盯着：这一章已经出完（pending 一直是 0）而别的章跑完了的
+// 时候，只看 pending 的话这一行还停在"整个项目还差 N 镜"的旧数上。
 watch(
-  () => [session.episodeId, shots.value.length, pending.value, running.value],
+  () => [session.episodeId, shots.value.length, pending.value, running.value, goAll.value],
   loadPreview,
   { immediate: true },
 )
@@ -1197,12 +1233,25 @@ onDeactivated(() => {
           v-if="shots.length"
           class="btn btn--primary"
           type="button"
-          :title="blockedWhy || (pending ? '把还没出片的那几镜跑完' : '每一镜都有片了；点了会全部重出')"
+          :title="
+            blockedWhy ||
+            (pending
+              ? '把还没出片的那几镜跑完'
+              : goAll
+                ? `这一章出完了；接着把全项目还差的 ${projectPending} 镜一口气跑完，已经出片的不动`
+                : '每一镜都有片了；点了会全部重出')
+          "
           :disabled="blocked || starting"
           @click="startAll"
         >
           <AppIcon name="film" :size="15" />
-          {{ pending ? `出片（差 ${pending}）` : '全部重出' }}
+          {{
+            pending
+              ? `出片（差 ${pending}）`
+              : goAll
+                ? `全项目出片（差 ${projectPending}）`
+                : '全部重出'
+          }}
         </button>
       </template>
     </div>

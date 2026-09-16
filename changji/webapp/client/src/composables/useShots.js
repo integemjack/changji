@@ -357,17 +357,17 @@ export function useShots() {
    */
   const starting = ref(false)
 
-  async function start(ids = [], stages = null, force = null) {
+  async function start(ids = [], stages = null, force = null, allEpisodes = false) {
     if (starting.value) return { ok: false, error: null }
     starting.value = true
     try {
-      return await startInner(ids, stages, force)
+      return await startInner(ids, stages, force, allEpisodes)
     } finally {
       starting.value = false
     }
   }
 
-  async function startInner(ids, stages, force) {
+  async function startInner(ids, stages, force, allEpisodes) {
     const one = ids.length > 0
     // **点下去立刻点亮，别等引擎。**
     //
@@ -395,6 +395,10 @@ export function useShots() {
         // 整集那条默认不 force（接着没跑完的往下跑）；「全部重出」
         // 会显式传真，否则那个按钮点了什么都不会发生。
         force: force === null ? one : force,
+        // 整个项目一起跑。引擎见到它就**忽略 episode_id**，把每一个有分镜
+        // 的集排进队列（run.cpp：「做的就是量产，一集一集手点没有意义」）。
+        // 这一集已经出完、别的章还差着的时候，主按钮走的就是这条。
+        ...(allEpisodes ? { all_episodes: true } : {}),
         ...(one ? { shot_ids: ids } : {}),
         ...(stages ? { stages } : {}),
       })
