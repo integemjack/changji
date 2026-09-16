@@ -586,6 +586,31 @@ def generate(doc: dict, src_name: str) -> str:
     return "\n".join(lines)
 
 
+def check_no_hash_lines(doc: dict) -> list[str]:
+    """揪出**以 # 打头的正文行**。
+
+    TOML 的三引号串里 `#` 不是注释，是正文。2026-09-16 撞到过：
+    storyboard_rules 那个三引号**里面**写着一段讲道理的话，以为是注释——
+    359 个字原样发给了模型，夹在第 5 条和第 6 条中间。那一轮"把讲道理搬进
+    注释"的压缩于是白做了大半：规则少了 482 字，又塞回 359 字，还让模型在
+    一串规矩中间读到一段讨论提示词工程的元文字。
+
+    **这一条报在构建期**，不是测试里：提示词写错了就该编不过去，而不是等
+    某个用例跑到。讲道理的话写在表外面、或者键与键之间，那儿才是真注释。
+    """
+    bad = []
+    for table, entries in doc.items():
+        if not isinstance(entries, dict):
+            continue
+        for key, val in entries.items():
+            if not isinstance(val, str):
+                continue
+            for i, line in enumerate(val.splitlines(), 1):
+                if line.lstrip().startswith("#"):
+                    bad.append(f"[{table}].{key} 第 {i} 行：{line.strip()[:40]}")
+    return bad
+
+
 def main(argv: list[str]) -> int:
     if len(argv) != 3:
         print("用法：gen_prompts.py <prompts.toml> <输出.hpp>", file=sys.stderr)
@@ -594,6 +619,16 @@ def main(argv: list[str]) -> int:
     dest = Path(argv[2])
     try:
         doc = expand_shared(parse_toml(src.read_text(encoding="utf-8")))
+        bad = check_no_hash_lines(doc)
+        if bad:
+            print(
+                f"{src}: 提示词正文里有 {len(bad)} 行以 # 打头——TOML 的三引号串里 "
+                "# 不是注释，这些字会原样发给模型。讲道理的话写到表外面去：",
+                file=sys.stderr,
+            )
+            for b in bad[:20]:
+                print("  " + b, file=sys.stderr)
+            return 1
         out = generate(doc, src.name)
     except TomlError as e:
         print(f"{src}: {e}", file=sys.stderr)
