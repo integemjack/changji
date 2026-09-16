@@ -2090,9 +2090,22 @@ TEST_CASE("提示词：只写这一章，带的是压缩的全局记忆") {
     CHECK(p.find("只写这一章") != std::string::npos);
     // 2026-09-12：写作单位是「场」，不是一堆段落。没有这个单位的时候模型
     // 把整章梗概平摊成一串镜头，写出来是概述不是场景。
-    CHECK(p.find("**一场戏是**") != std::string::npos);
+    //
+    // **2026-09-16：这两条搬家了，没有取消。** 「一场戏是什么」和「一段推进
+    // 一两秒钟的事」原来在提示词正文里各占一段，而 scenes / paragraphs 两个
+    // 字段的 description 里逐字就有——描述贴在字段上，模型填那一栏时一定读到，
+    // 比正文里隔着两千字的一句强。所以这儿改成查它们在 schema 里。
     CHECK(p.find("写场面，不写概述") != std::string::npos);
-    CHECK(p.find("一段推进的是**一两秒钟的事**") != std::string::npos);
+    {
+        const auto sch = changji::stages::chapter_schema(3, 22);
+        const auto& sp =
+            sch.at("properties").at("scenes").at("items").at("properties");
+        const std::string scenes_desc =
+            sch.at("properties").at("scenes").at("description");
+        CHECK(scenes_desc.find("一个地方、一段连着的时间里") != std::string::npos);
+        const std::string paras_desc = sp.at("paragraphs").at("description");
+        CHECK(paras_desc.find("一段推进一两秒钟的事") != std::string::npos);
+    }
     CHECK(p.find(std::to_string(changji::stages::chapter_target_scenes(s)) +
                  " 场戏") != std::string::npos);
     CHECK(p.find(std::to_string(changji::stages::chapter_scene_chars(s)) +
@@ -2106,7 +2119,7 @@ TEST_CASE("提示词：只写这一章，带的是压缩的全局记忆") {
     // 长相归美术那一步，但**身体要在场上**——上一版这条被模型扩大成
     // 「不要描写人」，人物在场景里没有身体
     CHECK(p.find("不要写长相") != std::string::npos);
-    CHECK(p.find("身体要在场上") != std::string::npos);
+    CHECK(p.find("身体要在场") != std::string::npos);
     // 五感里至少有一个不靠眼睛
     CHECK(p.find("不靠眼睛的细节，一场里要有三四处") != std::string::npos);
     CHECK(p.find("从上一章停下的地方接着走") != std::string::npos);
@@ -3135,12 +3148,68 @@ TEST_CASE("提示词：正文是主要产出，不是顺带的") {
     Story s = outline_only_story();
     const std::string p = changji::stages::build_chapter_prompt(
         s, "ch01", StyleLine::REALISTIC);
-    // 钩子那句原来和"写正文"挤在开头同一句里抢注意力
-    CHECK(p.find("**主要产出是正文**") != std::string::npos);
     // 篇幅现在是按场给的：每一场多少字。整章那个数模型够不着，
     // 一场一千字它写得到——而下限由 schema 的 minItems/minLength 兜着。
     CHECK(p.find("每一场 ") != std::string::npos);
-    CHECK(p.find("不是梗概") != std::string::npos);
+    // **2026-09-16：「正文是主要产出」这句话从提示词正文搬进了 paragraphs
+    // 的 description。** 要求没变，住处变了——而且变强了：这句话现在就贴在
+    // 要填正文的那一栏上。提示词正文里那一段是纯重复，占字不办事。
+    const auto sch = changji::stages::chapter_schema(3, 22);
+    const std::string paras_desc = sch.at("properties")
+                                       .at("scenes")
+                                       .at("items")
+                                       .at("properties")
+                                       .at("paragraphs")
+                                       .at("description");
+    CHECK(paras_desc.find("这一场的正文") != std::string::npos);
+    CHECK(paras_desc.find("不是梗概") != std::string::npos);
+}
+
+TEST_CASE("解析：一字不差的重复段，守卫没响也要丢") {
+    // 2026-09-16 实测 hulian-test ch08 的结尾：
+    //     他微笑，嘴角上扬，风声呼啸，灰尘在光束里漂浮。
+    //     他微笑，嘴角上扬，风声呼啸，灰尘在光束里漂浮。
+    // 相邻两段一个字都不差，就这么存进了 story.json。
+    //
+    // 原因是**整块去重都挂在 `if (!check_repetition(...).ok)` 里**——复读
+    // 守卫不响就一次都不跑，而这一章的复读没到守卫的阈值。丢一个和前面
+    // 一字不差的段落不可能丢错：那就是"写了两遍"的定义。
+    std::string body;
+    for (int i = 0; i < 12; ++i) {
+        body += "他走到窗边，看着楼下第 " + std::to_string(i) + " 辆车开过去。\n";
+    }
+    const std::string dup = "他微笑，嘴角上扬，风声呼啸，灰尘在光束里漂浮。";
+    body += dup + "\n" + dup + "\n";
+
+    const auto d = changji::stages::parse_chapter(json{{"text", body}}.dump(), 10);
+    // 守卫本来就没响（十二段各不相同，只有一处重复），所以这一段是常开那道
+    // 拦下的
+    int hits = 0;
+    for (size_t at = d.text.find(dup); at != std::string::npos;
+         at = d.text.find(dup, at + 1)) {
+        ++hits;
+    }
+    CHECK(hits == 1);
+    // 别的段一段都不能少
+    CHECK(d.text.find("第 0 辆车") != std::string::npos);
+    CHECK(d.text.find("第 11 辆车") != std::string::npos);
+
+    SUBCASE("短段原样重复是正当的，不丢") {
+        // 「"嗯。"」「他没说话。」这种重复是手法，不是复读
+        std::string short_body;
+        for (int i = 0; i < 12; ++i) {
+            short_body += "他走到窗边，看着楼下第 " + std::to_string(i) + " 辆车。\n";
+        }
+        short_body += "他没说话。\n又走了几步。\n他没说话。\n";
+        const auto sd =
+            changji::stages::parse_chapter(json{{"text", short_body}}.dump(), 10);
+        int n = 0;
+        for (size_t at = sd.text.find("他没说话。"); at != std::string::npos;
+             at = sd.text.find("他没说话。", at + 1)) {
+            ++n;
+        }
+        CHECK(n == 2);
+    }
 }
 
 TEST_CASE("解析：没写出正文就报错，写太多就截断") {

@@ -6,6 +6,7 @@
 #include <cctype>
 #include <map>
 #include <set>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -1006,6 +1007,36 @@ ChapterDraft parse_chapter(const std::string& raw, int min_chars, bool strict) {
     // 所以先摘：同一段原样出现第二次以后的那些直接删掉，剩下的照收。
     // 摘完还判复读（说明是句级的循环，不是整段重复），才打回。
     // 和占位符、引号、分镜话一个路子——能就地修好的别废掉整章。
+    // **一字不差的重复段，什么时候都丢——不要等守卫响。**
+    //
+    // 下面那一整块去重是挂在 `if (!check_repetition(...).ok)` 里面的，
+    // 也就是**守卫不响就一次都不跑**。于是轻度复读（没到守卫的阈值）里
+    // 一字不差的段落原样留在正文里。2026-09-16 实测 hulian-test ch08：
+    //     他微笑，嘴角上扬，风声呼啸，灰尘在光束里漂浮。
+    //     他微笑，嘴角上扬，风声呼啸，灰尘在光束里漂浮。
+    // 相邻两段一个字都不差，守卫没响，于是它就这么存进了 story.json。
+    //
+    // 丢一个和前面一字不差的段落，不可能丢错东西——那就是"写了两遍"的
+    // 定义。**只挑够长的丢**：短段落原样重复是正当的手法（「"嗯。"」
+    // 「他没说话。」），阈值借句级那道的 kRepeatMinSentenceChars。
+    {
+        std::set<std::string> seen_para;
+        std::string kept;
+        std::istringstream in(d.text);
+        std::string one;
+        while (std::getline(in, one)) {
+            const std::string trimmed = text::strip_ws(one);
+            if (trimmed.empty()) continue;
+            if (text::utf8_len(trimmed) >= kRepeatMinSentenceChars &&
+                !seen_para.insert(bare(trimmed)).second) {
+                continue;
+            }
+            if (!kept.empty()) kept += "\n";
+            kept += trimmed;
+        }
+        if (!text::strip_ws(kept).empty()) d.text = kept;
+    }
+
     if (!check_repetition(d.text).ok) {
         // **按句摘，不是按段摘。** 第一版摘的是整段重复，而 2026-09-12
         // 实跑里复读的是**一句话**——「你知道我最恨什么吗？」在三个不同的
