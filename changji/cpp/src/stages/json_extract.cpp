@@ -1,5 +1,7 @@
 #include "stages/json_extract.hpp"
 
+#include "stages/json_partial.hpp"
+
 #include <stdexcept>
 #include <string>
 
@@ -82,6 +84,33 @@ json extract_json(const std::string& raw) {
     json out;
     if (find_balanced(t, '{', '}', out)) return out;
     if (find_balanced(t, '[', ']', out)) return out;
+
+    // **最后一道：把半截的补齐再试一次。**
+    //
+    // 上面三条全是"整份必须是完好的"：直接解、围栏里那段、第一个括号平衡
+    // 的片段。模型写到一半被掐断（长度上限、连接抖一下）就一条都不成立，
+    // 而那时候前面写好的东西其实都在。2026-09-16 实测：写一章十分钟，
+    // 日志里 JSON 开头一切正常（scenes 数组、第一场的 where/pov/who 全齐），
+    // 就因为结尾没闭合，整份作废、一个字不剩。
+    //
+    // `close_partial_json` 本来就是干这个的（写大纲那条边写边看的路在用）。
+    // 它**从头扫**，所以只管"开头就是 JSON、结尾没写完"这一种；前面还带着
+    // 「好的，这是结果：」之类前缀的那些，仍然归上面 find_balanced 管。
+    //
+    // 放在最后、只在前面全败之后跑：这条路原来百分之百是抛异常，所以它
+    // 只可能把"失败"变成"成功"，不会改变任何一个本来就解得出来的结果。
+    // 补出来的那份可能缺东西——**那交给下游的 schema 校验去判**，
+    // 这儿只负责"能解出多少算多少"。
+    if (const std::string closed = close_partial_json(t); !closed.empty()) {
+        json salvaged = json::parse(closed, nullptr, /*allow_exceptions=*/false);
+        // **补出来得有东西。** `{不平衡的括号` 这种补完是个空对象——它能解，
+        // 但里面什么都没有，当成功往下游送比在这儿抛更糟：下一步会拿着一份
+        // 空数据再报一个更难懂的错。语料里钉着这一条要抛。
+        if (!salvaged.is_discarded() && !salvaged.empty() &&
+            (salvaged.is_object() || salvaged.is_array())) {
+            return salvaged;
+        }
+    }
 
     // 截 400 字符，和 Python 一致。全贴出来的话，一段几万字的模型输出
     // 会把日志和界面的错误框都撑爆。

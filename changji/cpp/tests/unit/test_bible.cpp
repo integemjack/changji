@@ -118,6 +118,45 @@ TEST_CASE("从模型输出里抠 JSON") {
     }
 }
 
+TEST_CASE("写到一半被掐断的 JSON，补齐了也算抠得出来") {
+    // 2026-09-16 实测：写一章跑了十分钟，日志里那份输出开头一切正常
+    // （scenes 数组、第一场的 where/pov/who/goal 全齐），就因为结尾没闭合，
+    //     大模型输出不符合 chapter Schema：大模型输出里找不到合法 JSON
+    // 整份作废、一个字不剩。
+    //
+    // 上面三条路全是"整份必须完好"：直接解、围栏里那段、第一个括号平衡的
+    // 片段。被掐断时一条都不成立，而前面写好的东西其实都在。
+    SUBCASE("结尾没闭合") {
+        const std::string raw =
+            R"({"scenes":[{"where":"办公室","pov":"曾老板","who":["曾老板"]},)"
+            R"({"where":"走廊","pov":")";
+        json got;
+        REQUIRE_NOTHROW(got = stages::extract_json(raw));
+        REQUIRE(got.is_object());
+        // 写完的那一场要完整留下
+        REQUIRE(got.at("scenes").size() >= 1);
+        CHECK(got.at("scenes")[0].at("where") == "办公室");
+        CHECK(got.at("scenes")[0].at("who").size() == 1);
+    }
+
+    SUBCASE("补出来是个空壳的，还是要抛") {
+        // `{不平衡的括号` 补完是 `{}`——能解，但里面什么都没有。当成功
+        // 往下游送比在这儿抛更糟：下一步拿着空数据再报一个更难懂的错。
+        CHECK_THROWS(stages::extract_json("{不平衡的括号"));
+        CHECK_THROWS(stages::extract_json("这一段里一个括号都没有"));
+        CHECK_THROWS(stages::extract_json(""));
+    }
+
+    SUBCASE("前面带着中文前缀的半截，这一道管不了") {
+        // close_partial_json 从头扫，「好的，这是结果：」这种前缀会让它
+        // 一开始就不是 JSON。**写下来是因为我一开始以为它能管**：
+        // 那种带前缀又完好的由 find_balanced 接住，带前缀又半截的谁都接不住。
+        // 真要管得加一道"先跳到第一个 { 再补齐"，但那会和 find_balanced
+        // 的括号计数打架，现在没有实跑证据说它值得。
+        CHECK_THROWS(stages::extract_json(R"(好的：{"a":1,"b":)"));
+    }
+}
+
 TEST_CASE("抠不出 JSON 时的错误消息按字符截，不按字节") {
     // 2026-09-11 实跑：模型吐了一大段中文没收口，错误消息里 raw.substr(0, 400)
     // 截在半个汉字上，进了任务快照之后 /api/script/series 序列化 JSON 直接 500，
