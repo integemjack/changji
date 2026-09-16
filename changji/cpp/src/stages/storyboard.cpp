@@ -11,6 +11,7 @@
 #include <vector>
 
 #include <cstring>
+#include <set>
 
 // 落位时要估台词念多久，免得一镜塞到串音
 #include "stages/audio_plan.hpp"
@@ -1520,6 +1521,55 @@ void ensure_establishing_shots(std::vector<Shot>& shots) {
             }
         }
         shots[pick].shot_size = want;
+    }
+
+    // **一场一个是地板，不是节奏。**
+    //
+    // 2026-09-16 量了这个项目里九集：模型自己排出来的大景占比是
+    // 0 / 12 / 11 / 27 / 20 / 21 / 0 / 23 / 5 百分比——排得好的那几集在两成
+    // 上下，砸了的那几集是 0 和 5。而上面那一条只保证「一场一个」，
+    // 一集只有一场的时候就是十七镜里一个大景（ep09 实测 5%），
+    // 用户那句「都是近景没有远景」照旧成立。
+    //
+    // 所以再垫一道按镜数的地板：**每六镜至少一个大景**。对着那九集算：
+    // ep04/05/06/08 本来就够，一镜不动；ep02/03 各补一镜，ep09 补两镜，
+    // ep07 补三镜。只托底，不改已经排好的。
+    //
+    // 挑谁来补，按「动了最不伤」的顺序：
+    //   1. 空镜——画面里本来就没人，rule 15 说的就是空镜用 LS / MLS 交代
+    //      环境，把它拉宽是它本来该有的样子；
+    //   2. 没有台词的镜头——拉宽不影响任何一句话的口型和节奏；
+    //   3. 每一场的最后一镜——提示词第 14 条写着「冲突过去之后拉回
+    //      MLS / LS 把情绪放掉」，那本来就是它的位置。
+    // 有台词的镜头能不动就不动：那是戏的正文。
+    const std::size_t want_wide = (shots.size() + 5) / 6;
+    const auto is_wide = [](const Shot& s) {
+        return s.shot_size == ShotSize::LS || s.shot_size == ShotSize::MLS ||
+               s.shot_size == ShotSize::ELS;
+    };
+    std::size_t have = 0;
+    for (const Shot& s : shots) {
+        if (is_wide(s)) ++have;
+    }
+    if (have >= want_wide) return;
+
+    // 每一场的最后一镜，用来做第三档候选
+    std::set<std::size_t> scene_last;
+    for (const std::string& key : order) {
+        if (!by_scene[key].empty()) scene_last.insert(by_scene[key].back());
+    }
+
+    for (int tier = 0; tier < 3 && have < want_wide; ++tier) {
+        for (std::size_t i = 0; i < shots.size() && have < want_wide; ++i) {
+            Shot& s = shots[i];
+            if (is_wide(s)) continue;
+            const bool ok = tier == 0   ? s.characters.empty()
+                            : tier == 1 ? s.dialogue.empty()
+                                        : scene_last.count(i) != 0;
+            if (!ok) continue;
+            s.shot_size = ShotSize::MLS;
+            ++have;
+        }
     }
 }
 

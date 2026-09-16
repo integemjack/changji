@@ -979,6 +979,63 @@ TEST_CASE("每一场至少留一个大景：分布看着匀、却一个远景都
         stages::ensure_establishing_shots(v);
         CHECK(v[0].shot_size == ShotSize::MLS);
     }
+    SUBCASE("一场一个是地板不是节奏：十七镜一场只补一个还是 5%，要按镜数再垫") {
+        // 2026-09-16 实测 ep09：一场、十七镜，模型只排了一个 LS。前一道
+        // 「一场一个」看它已经有了，一镜不动——5% 的大景，用户那句
+        // 「都是近景没有远景」照旧成立。每六镜至少一个：17 镜要 3 个。
+        std::vector<Shot> v;
+        for (int i = 0; i < 17; ++i) v.push_back(make("s1", ShotSize::MCU, true));
+        v[0].shot_size = ShotSize::LS;   // 模型自己排的那一个
+        v[5].characters.clear();          // 一个空镜
+        v[9].dialogue.clear();            // （默认就没台词，这里显式一下）
+        // 给别的镜头都塞一句台词，好看出它挑的是没台词的
+        for (std::size_t i = 0; i < v.size(); ++i) {
+            if (i == 5 || i == 9) continue;
+            models::DialogueLine line;
+            line.text = "一句话";
+            v[i].dialogue.push_back(line);
+        }
+        stages::ensure_establishing_shots(v);
+        CHECK(widest(v, "s1") == 3);
+        CHECK(v[0].shot_size == ShotSize::LS);    // 原来那个不动
+        CHECK(v[5].shot_size == ShotSize::MLS);   // 第一档：空镜
+        CHECK(v[9].shot_size == ShotSize::MLS);   // 第二档：没台词的
+        // 有台词的一个都没被动
+        for (std::size_t i = 0; i < v.size(); ++i) {
+            if (i == 0 || i == 5 || i == 9) continue;
+            CHECK(v[i].shot_size == ShotSize::MCU);
+        }
+    }
+    SUBCASE("空镜和没台词的都不够时，才动每场的收尾镜") {
+        std::vector<Shot> v;
+        for (int i = 0; i < 12; ++i) {
+            v.push_back(make("s1", ShotSize::MCU, true));
+            models::DialogueLine line;
+            line.text = "一句话";
+            v.back().dialogue.push_back(line);
+        }
+        stages::ensure_establishing_shots(v);
+        // 12 镜要 2 个：第一道给第一镜一个 LS，第二道找不到空镜和没台词的，
+        // 只好动这一场的最后一镜
+        CHECK(widest(v, "s1") == 2);
+        CHECK(v[0].shot_size == ShotSize::LS);
+        CHECK(v[11].shot_size == ShotSize::MLS);
+        for (std::size_t i = 1; i < 11; ++i) CHECK(v[i].shot_size == ShotSize::MCU);
+    }
+    SUBCASE("已经够了的一镜不动：ep08 那种 17 镜 4 个大景") {
+        std::vector<Shot> v;
+        for (int i = 0; i < 17; ++i) v.push_back(make("s1", ShotSize::MCU, true));
+        v[0].shot_size = ShotSize::LS;
+        v[4].shot_size = ShotSize::MLS;
+        v[8].shot_size = ShotSize::LS;
+        v[12].shot_size = ShotSize::MLS;
+        v[2].characters.clear();   // 有个空镜，但不该被动
+        const std::vector<Shot> before = v;
+        stages::ensure_establishing_shots(v);
+        for (std::size_t i = 0; i < v.size(); ++i) {
+            CHECK(v[i].shot_size == before[i].shot_size);
+        }
+    }
     SUBCASE("整表不足四镜：一个字不碰") {
         std::vector<Shot> v = {make("s1", ShotSize::CU, true),
                                make("s1", ShotSize::MCU, true),
