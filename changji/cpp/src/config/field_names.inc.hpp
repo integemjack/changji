@@ -43,6 +43,7 @@ inline constexpr const char* kFieldNames[][2] = {
     {R"CJ(tts_backend)CJ", R"CJ(配音后端)CJ"},
     {R"CJ(tts_base_url)CJ", R"CJ(配音服务地址)CJ"},
     {R"CJ(vram_gb_override)CJ", R"CJ(显存覆盖)CJ"},
+    {R"CJ(episode_s)CJ", R"CJ(每集多长)CJ"},
 };
 
 // 字段名 -> {配置节, 节内的键名}。
@@ -55,6 +56,7 @@ inline constexpr const char* kSettingSections[][3] = {
     {R"CJ(subtitle_max_chars_per_line)CJ", R"CJ(assembly)CJ", R"CJ(subtitle_max_chars_per_line)CJ"},
     {R"CJ(subtitle_max_lines)CJ", R"CJ(assembly)CJ", R"CJ(subtitle_max_lines)CJ"},
     {R"CJ(scene_transition_s)CJ", R"CJ(assembly)CJ", R"CJ(scene_transition_s)CJ"},
+    {R"CJ(episode_s)CJ", R"CJ(assembly)CJ", R"CJ(episode_s)CJ"},
     {R"CJ(max_attempts_per_shot)CJ", R"CJ(gates)CJ", R"CJ(max_attempts_per_shot)CJ"},
     {R"CJ(min_pixel_std)CJ", R"CJ(gates)CJ", R"CJ(min_pixel_std)CJ"},
     {R"CJ(min_frame_similarity)CJ", R"CJ(gates)CJ", R"CJ(min_frame_similarity)CJ"},
