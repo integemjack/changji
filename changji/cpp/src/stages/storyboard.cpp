@@ -1193,7 +1193,7 @@ bool defuse_actions(std::vector<models::CharacterInShot>& characters) {
     bool changed = false;
     for (auto& c : characters) {
         if (c.action.empty()) continue;
-        const std::string kept = defuse_motion(c.action);
+        const std::string kept = defuse_motion(c.action, /*allow_empty=*/true);
         if (kept != c.action) {
             c.action = kept;
             changed = true;
@@ -1238,7 +1238,7 @@ bool door_opens(const std::string& clause) {
 
 }  // namespace
 
-std::string defuse_motion(const std::string& in) {
+std::string defuse_motion(const std::string& in, bool allow_empty) {
     if (in.empty()) return in;
     // 会把主体带出画、或者要求模型去编第一帧看不见的空间的那些词。
     // 判据和提示词第 6 条那四条一一对应，改一处要改两处。
@@ -1306,10 +1306,12 @@ std::string defuse_motion(const std::string& in) {
     }
     flush();
 
-    // 没摘到东西，或者摘完只剩时间码：原样还回去。
-    // **宁可留一个会崩的镜头，也不交一段空的运动描述**——那一段模型
-    // 同样会自由发挥，而且连线索都没有了。
-    if (!dropped_any || !has_text) return in;
+    // 没摘到东西：原样还回去。
+    if (!dropped_any) return in;
+    // 摘完只剩时间码 / 什么都不剩。**运动描述宁可留一个会崩的镜头**——
+    // 空的那一段模型同样会自由发挥，而且连线索都没有了；**角色的 action
+    // 反过来**，空着就是"没有特别的动作"，见头文件上那段。
+    if (!has_text) return allow_empty ? std::string() : in;
 
     std::string out;
     for (const std::string& c : kept) {
@@ -1751,7 +1753,8 @@ std::vector<Shot> parse_storyboard(const std::string& raw,
                 if (!c.is_object()) continue;
                 const std::string act = str_or(c, "action");
                 if (act.empty()) continue;
-                const std::string kept_act = defuse_motion(act);
+                const std::string kept_act =
+                    defuse_motion(act, /*allow_empty=*/true);
                 if (kept_act != act) c["action"] = kept_act;
             }
         }

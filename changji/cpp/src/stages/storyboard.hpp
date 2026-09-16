@@ -227,7 +227,21 @@ std::string motion_covering(const std::string& motion_prompt, double dur);
 /// 话就写着「换种子重出视频没用」。种子换了一百遍，那句「走向门口」还在。
 ///
 /// 所以摘掉它再重出：镜头少演一个动作，比整镜半路换成另一场戏强得多。
-std::string defuse_motion(const std::string& motion_prompt);
+/// @param allow_empty 全句都危险、摘完什么都不剩时怎么办。
+///
+/// **假（默认，给 motion_prompt 用）**：原样还回去。宁可留一个会崩的镜头，
+/// 也不交一段空的运动描述——空的那一段模型同样会自由发挥，而且连线索都没了。
+///
+/// **真（给角色的 action 用）**：摘空就让它空着。这一栏和 motion_prompt 的
+/// 处境不一样：它只是首帧提示词的一个输入，空着就是"这个人没有特别的动作"，
+/// 不存在"模型拿着空描述去编"这回事。
+///
+/// 2026-09-17 之前这两处共用假那一档，于是「走向门口」这种**整句都危险**的
+/// action 原样留了下来——而那正是「人整个走出画面」的来源（用户报过的
+/// 成片毛病之一），test_storyboard 里那条「角色 action 里的进画出画也要摘」
+/// 也一直红着。
+std::string defuse_motion(const std::string& motion_prompt,
+                          bool allow_empty = false);
 
 /// 把在场角色的 action 里会把主体带出画的分句一并摘掉（同 defuse_motion）。
 /// **两处都要摘**：拼运动提示词时 characters[].action 会被重新接到
