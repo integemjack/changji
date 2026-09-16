@@ -13,6 +13,8 @@
 
 #include <doctest/doctest.h>
 
+#include <fstream>
+
 #include <algorithm>
 #include <chrono>
 #include <condition_variable>
@@ -1098,11 +1100,22 @@ TEST_CASE("提示词：这一集要发生什么已经定好了") {
     CHECK(p.find("至少 ") != std::string::npos);
 }
 
+/// 往项目的 changji.toml 里写一行 [assembly].episode_s。
+///
+/// **必须显式写**：这个数决定走「一章一集」还是「按分集表一条一集」，
+/// 而 load_settings 会先读开发机上那份用户配置——不写死的话，同一条用例
+/// 在开了章模式的机器上和没开的机器上跑出两种结果。项目那份压过用户那份。
+static void set_episode_s(const fs::path& root, double seconds) {
+    std::ofstream f(root / "changji.toml", std::ios::app);
+    f << "\n[assembly]\nepisode_s = " << seconds << "\n";
+}
+
 TEST_CASE("POST /api/story/episodes：把分集表落成真的剧集") {
     const fs::path root = fresh_project("落成剧集");
     ProjectStore store(root);
     const Story s = written_story();
     store.save_story(s);
+    set_episode_s(root, 0.0);   // 老路线：一条分集一个剧集
 
     const auto r = http::post_story_episodes(json{{"project", p_str(root)}});
     CHECK(r.status == 200);
@@ -1133,8 +1146,88 @@ TEST_CASE("POST /api/story/episodes：把分集表落成真的剧集") {
     fs::remove_all(root, ec);
 }
 
+TEST_CASE("POST /api/story/episodes：章模式下一章一集") {
+    // 用户 2026-09-16：「落成剧集改成一章一个。」原来按 story.plan 一条
+    // 一条建——那张表是把章正文按每集时长切出来的，一章能切成好几条。
+    const fs::path root = fresh_project("一章一集");
+    ProjectStore store(root);
+    Story s = written_story();
+    // 让第 1 章值两集：分集表里两条都结束在 ch01
+    REQUIRE(s.plan.size() >= 2);
+    s.plan[0].to_chapter = "ch01";
+    s.plan[1].to_chapter = "ch01";
+    s.plan[0].target_duration_s = 60.0;
+    s.plan[1].target_duration_s = 60.0;
+    store.save_story(s);
+    set_episode_s(root, 60.0);
+
+    const auto r = http::post_story_episodes(json{{"project", p_str(root)}});
+    CHECK(r.status == 200);
+
+    Project project = store.load_project();
+    // 一章一个，不是一条分集一个
+    CHECK(project.episodes.size() == s.chapters.size());
+    CHECK(r.body.at("created").size() == s.chapters.size());
+
+    // id 跟着章号走：ch01 → ep01
+    const Episode& first = project.episodes[0];
+    CHECK(first.episode_id == "ep01");
+    REQUIRE(first.chapter_refs.size() == 1);
+    CHECK(first.chapter_refs[0] == "ch01");
+    CHECK(first.title == s.chapters[0].title);
+
+    // 这一章值多长：分集表里结束在这一章的条目加起来（两条 60 秒 = 120）
+    CHECK(first.target_duration_s == doctest::Approx(120.0));
+
+    SUBCASE("再来一次：只补元数据，写好的剧本一个字不动") {
+        Project p2 = store.load_project();
+        p2.episodes[0].script = "林晚：这是已经写好的剧本。";
+        store.save_project(p2);
+        const auto again =
+            http::post_story_episodes(json{{"project", p_str(root)}});
+        CHECK(again.body.at("created").empty());
+        CHECK(again.body.at("updated").size() == s.chapters.size());
+        CHECK(store.load_project().episodes[0].script ==
+              "林晚：这是已经写好的剧本。");
+    }
+
+    SUBCASE("按老路线建过的那几个不删，单独报出来") {
+        Project p2 = store.load_project();
+        Episode stray;
+        stray.episode_id = "ep99";
+        stray.script = "按分集表建的，已经出过片";
+        p2.episodes.push_back(stray);
+        store.save_project(p2);
+
+        const auto again =
+            http::post_story_episodes(json{{"project", p_str(root)}});
+        const auto orphans = again.body.at("orphans");
+        REQUIRE(orphans.size() == 1);
+        CHECK(orphans[0] == "ep99");
+        // 不删：它可能已经出过片
+        bool still = false;
+        for (const auto& e : store.load_project().episodes) {
+            if (e.episode_id == "ep99") still = true;
+        }
+        CHECK(still);
+    }
+
+    std::error_code ec;
+    fs::remove_all(root, ec);
+}
+
+TEST_CASE("POST /api/story/episodes：章模式下没有章节") {
+    const fs::path root = fresh_project("章模式没章节");
+    set_episode_s(root, 60.0);
+    CHECK_THROWS_AS(http::post_story_episodes(json{{"project", p_str(root)}}),
+                    http::ApiError);
+    std::error_code ec;
+    fs::remove_all(root, ec);
+}
+
 TEST_CASE("POST /api/story/episodes：还没有分集表") {
     const fs::path root = fresh_project("没分集表");
+    set_episode_s(root, 0.0);
     CHECK_THROWS_AS(http::post_story_episodes(json{{"project", p_str(root)}}),
                     http::ApiError);
     std::error_code ec;

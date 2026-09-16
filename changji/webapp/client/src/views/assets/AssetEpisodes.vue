@@ -222,6 +222,19 @@ async function makeEpisodes() {
   const created = result.created?.length ?? 0
   const updated = result.updated?.length ?? 0
   ui.ok(created ? `建了 ${created} 集` : `${updated} 集已经在了，只更新了信息`)
+
+  // **落单的那几集要说出来。** 章模式是一章一集，而按老分集表建过的项目
+  // 里集数常常更多（实测这个项目 8 章、9 集）——多出来的那几个这一轮没人
+  // 认领。**不删**：它们可能已经出过片，删了就是把片子连着记录一起抹掉。
+  // 但也不能不吭声：它们会一直摆在集的下拉里，点开是上一版的内容。
+  const orphans = result.orphans ?? []
+  if (orphans.length) {
+    ui.warn(
+      `有 ${orphans.length} 集不对应任何一章：${orphans.join('、')}。` +
+        '它们是按老的分集表建的，这一轮没动它们——出过片的话片子还在，' +
+        '不想要了到「这一集」那一页自己删。',
+    )
+  }
   await load()
 }
 

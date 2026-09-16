@@ -1,6 +1,8 @@
 #include "http/story_api.hpp"
 
+#include <algorithm>
 #include <chrono>
+#include <cstdio>
 #include <filesystem>
 #include <map>
 #include <mutex>
@@ -8,6 +10,7 @@
 #include <string>
 #include <vector>
 
+#include "config/settings.hpp"
 #include "models/project.hpp"
 #include "models/story.hpp"
 #include "stages/chapter_write.hpp"
@@ -846,18 +849,114 @@ ApiResult post_story_chapter(const json& body, llm::Client& client,
                                    stream_id, client, tok)};
 }
 
+/// `ch07` → `ep07`。认不出编号就按它在章节表里的位置排（从 1 起）。
+///
+/// **不复用 story.plan 里的 episode_id**：那些是按切片取的，一章切两段就
+/// 有两个，和「一章一集」对不上。
+std::string episode_id_for_chapter(const std::string& chapter_id,
+                                   std::size_t index) {
+    std::string digits;
+    for (const char ch : chapter_id) {
+        if (ch >= '0' && ch <= '9') digits += ch;
+    }
+    if (digits.empty()) {
+        char buf[16];
+        std::snprintf(buf, sizeof buf, "%02d", static_cast<int>(index + 1));
+        digits = buf;
+    }
+    // 补到两位：ch7 和 ch07 要落在同一个 ep07 上
+    while (digits.size() < 2) digits.insert(digits.begin(), '0');
+    return "ep" + digits;
+}
+
 ApiResult post_story_episodes(const json& body) {
     forbid_extra(body, {"project"});
     ProjectStore store = open_project(body);
     Project project = load_or_400(store);
     const Story story = load_story_or_400(store);
 
+    // **章模式：一章一集。**
+    //
+    // 用户 2026-09-16：「落成剧集改成一章一个。」原来这儿按 story.plan
+    // 一条一条建——那张表是把章正文按每集时长切出来的，一章能切成好几条
+    // （实测这个项目 8 章切成 10 集，第 5 章和第 7 章各切两段）。而章模式
+    // 下切集是拍完之后按每集时长切的，分集表不该再决定建几个剧集。
+    const bool chapter_mode =
+        config::load_settings(store.root()).assembly.episode_s > 0.0;
+
+    std::vector<std::string> created;
+    std::vector<std::string> updated;
+
+    if (chapter_mode) {
+        if (story.chapters.empty()) {
+            throw ApiError(400, "这部剧还没有章节。先去故事页写一份大纲");
+        }
+        for (std::size_t i = 0; i < story.chapters.size(); ++i) {
+            const Chapter& c = story.chapters[i];
+            if (c.chapter_id.empty()) continue;
+
+            // 一章一个 id：ch07 → ep07。认不出编号就按它在表里的位置排，
+            // **不复用 plan 里的 id**——那些是按切片取的，和章对不上。
+            const std::string ep_id = episode_id_for_chapter(c.chapter_id, i);
+
+            // 这一章值多长。**用分集表当估算器，不另拍一个常数**：那张表
+            // 是写大纲时按内容算出来的，一章被切成几段就说明它有几段的量。
+            // 数「结束在这一章」的条目，一条只算给一章，不会重复计。
+            double dur = 0.0;
+            for (const auto& p : story.plan) {
+                if (p.to_chapter == c.chapter_id) dur += p.target_duration_s;
+            }
+            // 没有分集表（粘贴导入的故事）就按一集的长度起步。章模式下
+            // 这个数不卡长度（配音之后那次 rebalance 整个跳过），它只是
+            // 拆镜头时的目标量。
+            if (!(dur > 0.0)) {
+                dur = config::load_settings(store.root()).assembly.episode_s;
+            }
+
+            const std::string synopsis =
+                text::truncate_utf8(text::collapse_ws(c.summary), 120);
+
+            Episode* existing = project.episode_by_id(ep_id);
+            if (existing != nullptr) {
+                // 只补元数据，理由同下面那一支：script 和 shots 一个字不动。
+                if (!c.title.empty()) existing->title = c.title;
+                existing->target_duration_s = dur;
+                existing->chapter_refs = {c.chapter_id};
+                if (existing->synopsis.empty()) existing->synopsis = synopsis;
+                updated.push_back(ep_id);
+                continue;
+            }
+
+            Episode ep;
+            ep.episode_id = ep_id;
+            ep.title = c.title;
+            ep.synopsis = synopsis;
+            ep.target_duration_s = dur;
+            ep.chapter_refs = {c.chapter_id};
+            project.episodes.push_back(std::move(ep));
+            created.push_back(ep_id);
+        }
+
+        store.save_project(project);
+        json out = story_response(story);
+        out["created"] = created;
+        out["updated"] = updated;
+        // 按分集表建过、这回没对上的那几个。**不删**：它们可能已经出过片。
+        json orphans = json::array();
+        for (const Episode& e : project.episodes) {
+            const bool mine =
+                std::find(created.begin(), created.end(), e.episode_id) != created.end() ||
+                std::find(updated.begin(), updated.end(), e.episode_id) != updated.end();
+            if (!mine) orphans.push_back(e.episode_id);
+        }
+        out["orphans"] = orphans;
+        return {200, out};
+    }
+
     if (story.plan.empty()) {
         throw ApiError(400, "还没有分集表。先写一份大纲，或者改一下每集时长重算一次");
     }
 
-    std::vector<std::string> created;
-    std::vector<std::string> updated;
     for (const auto& p : story.plan) {
         if (p.episode_id.empty()) continue;
 
