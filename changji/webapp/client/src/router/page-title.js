@@ -1,3 +1,5 @@
+import { chapterWord, useChapterMode } from '@/composables/useChapterMode'
+
 /**
  * 标签页上那个名字。
  *
@@ -15,9 +17,21 @@
  * 函数分出来也是这个理由。
  */
 
-/** 拼出这一页该显示的名字。 */
+/**
+ * 拼出这一页该显示的名字。
+ *
+ * **章模式下的叫法要和导航栏同源。** 导航栏那一排早就过了 `chapterWord`
+ * （App.vue、AssetsView.vue），标签页这儿没有——于是同一页，屏幕左上写
+ * 「这一章」、标签页写「这一集 · 场记」。用户 2026-09-16：「这一集应该叫
+ * 这一章。」两处各写各的就是这么飘起来的。
+ *
+ * 读的是 `useChapterMode` 那个模块级的 ref（读一次就够，见它的注释），
+ * 所以这儿不用再发请求；它还没读回来时按老叫法，和别处一致。
+ */
 export function titleOf(to) {
-  return to?.meta?.title ? `${to.meta.title} · 场记` : '场记'
+  if (!to?.meta?.title) return '场记'
+  const { chapter } = useChapterMode()
+  return `${chapterWord(to.meta.title, chapter.value)} · 场记`
 }
 
 /**

@@ -455,7 +455,7 @@ async function save() {
          和底下「原文」同一条规矩。 -->
     <details v-if="hasHead" class="head" :open="!script.trim()">
       <summary class="source__sum">
-        <span>这一集要拍什么</span>
+        <span>{{ chapter ? '这一章要拍什么' : '这一集要拍什么' }}</span>
         <span class="tiny dim numeric">{{ scenes.length }} 场</span>
       </summary>
       <div v-for="(s, i) in scenes" :key="i" class="head__scene">
@@ -483,8 +483,8 @@ async function save() {
          默认收着——它是背景，不是这一页要读的正文（那是下面的原文）。 -->
     <details v-if="previousTail" class="source">
       <summary class="source__sum">
-        <span>上一集结尾</span>
-        <span class="tiny dim">写这一集时模型看的就是这一段</span>
+        <span>{{ chapter ? '上一章结尾' : '上一集结尾' }}</span>
+        <span class="tiny dim">写这一{{ chapter ? '章' : '集' }}时模型看的就是这一段</span>
       </summary>
       <div class="source__body">{{ previousTail }}</div>
     </details>
