@@ -39,6 +39,8 @@ export const useRun = defineStore('run', () => {
   /** 真的连上了 WebSocket。界面暂时不显示它，排查时有用。 */
   const live = ref(false)
   let timer = null
+  /** 当前定时器的间隔，retime 拿它判要不要重开。 */
+  let timerMs = 0
   let socket = null
   let retry = null
   let missCount = 0
@@ -189,10 +191,12 @@ export const useRun = defineStore('run', () => {
   function sleepAndRetry() {
     if (!polling.value) return
     if (timer) clearInterval(timer)
+    timerMs = SLOW_POLL_MS
     timer = setInterval(async () => {
       await poll()
       if (missCount !== 0) return
       clearInterval(timer)
+      timerMs = POLL_MS
       timer = setInterval(poll, POLL_MS)
       openSocket()
     }, SLOW_POLL_MS)
@@ -289,15 +293,39 @@ export const useRun = defineStore('run', () => {
    * ⚠️ **进来先掐掉排着的那次**，否则会像 refs 那条一样越积越多：排着
    * 重连的同时有人又调了 start()，两条都连上，消息收两遍。
    */
+  /**
+   * WS 连上了就把轮询放慢，断了再拉回常速。
+   *
+   * **「连上 WS 之后这条路的开销可以忽略」——量过了，不成立。**
+   * 2026-09-17 从引擎日志里数：53 分钟里 `/api/run` 被请求 **1757 次**
+   * （每 1.8 秒一拍），每一次回的是整份状态、**含最多 200 条事件**。
+   * 那一整轮 WS 一直连着，事件本来就是推过来的。
+   *
+   * 全量仍然要拉——outputs / queue_total 这些只有全量里有，推上来的是
+   * 增量（start() 上那段注释说的就是这件事，那部分没变）。**变的只是
+   * 频率**：连着的时候 8 秒一拍够补全了，断了立刻回到 1.2 秒。
+   */
+  function retime() {
+    if (!polling.value) return
+    const want = live.value ? SLOW_POLL_MS : POLL_MS
+    if (timerMs === want) return
+    timerMs = want
+    if (timer) clearInterval(timer)
+    timer = setInterval(poll, want)
+  }
+
   function openSocket() {
     if (socket) return
     clearTimeout(retry)
     retry = null
     socket = openJobSocket('run', (msg) => {
+      const was = live.value
       live.value = true
       applyMessage(msg)
+      if (!was) retime()
     }, () => {
       live.value = false
+      retime()
       socket = null
       // 定时器一直开着，这几秒里退回轮询，不会断档。
       // 只在还想要进度的时候重连——stop() 之后不该自己爬起来。
@@ -312,6 +340,7 @@ export const useRun = defineStore('run', () => {
     // **定时器照常开着，即使 WebSocket 连上了。**
     // 它同时是兜底和补全：推上来的是增量，outputs / queue_total 这些
     // 只有全量里有。连上 WS 之后这条路的开销可以忽略。
+    timerMs = intervalMs
     timer = setInterval(poll, intervalMs)
     openSocket()
   }

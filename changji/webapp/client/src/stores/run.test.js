@@ -6,6 +6,9 @@
  * 表现是"跑着但进度条一直是 0"——而那和任务真的卡住看起来一模一样。
  */
 
+import fs from 'node:fs'
+import { fileURLToPath } from 'node:url'
+
 import { createPinia, setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -297,3 +300,24 @@ describe('useWriter 的 applyMessage', () => {
     expect(w.state).toBeNull()
   })
 })
+
+describe('WS 连着的时候轮询放慢', () => {
+  it('源码里写着：live 变了要 retime，两个方向都要', () => {
+    // **「连上 WS 之后这条路的开销可以忽略」——量过了，不成立。**
+    // 2026-09-17 从引擎日志里数：53 分钟里 /api/run 被请求 1757 次
+    // （每 1.8 秒一拍），每次回的是整份状态、含最多 200 条事件，而那一整轮
+    // WS 一直连着。全量还得拉（outputs / queue_total 只有全量里有），
+    // 变的只是频率。
+    //
+    // 这一条按源码钉：真定时器行为要跑满 8 秒才看得出，不值得在用例里等。
+    const src = fs.readFileSync(fileURLToPath(new URL('./run.js', import.meta.url)), 'utf8')
+    const head = src.slice(0, src.indexOf('let timer = null', src.indexOf('let timer = null') + 10))
+    expect(head).toContain('function retime()')
+    expect(head, 'live 只有 8 秒那一档就没有兜底了').toContain('live.value ? SLOW_POLL_MS : POLL_MS')
+    // 连上要调慢
+    expect(head).toMatch(/live\.value = true[\s\S]{0,120}retime\(\)/)
+    // 断了要调回来——只做一个方向的话，断线之后就一直 8 秒一拍
+    expect(head).toMatch(/live\.value = false\s*\n\s*retime\(\)/)
+  })
+})
+
