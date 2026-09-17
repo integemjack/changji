@@ -4,6 +4,7 @@
 #include <chrono>
 #include <deque>
 #include <map>
+#include <algorithm>
 #include <cmath>
 #include <mutex>
 #include <utility>
@@ -33,6 +34,9 @@ struct Row {
     std::string episode_id;
     std::string target;
     std::string thinking;
+    /// `thinking` 里第一个字的**绝对位置**（从这件活开工算起）。
+    /// 被从头截掉一段时它往前走，取的那头据此知道自己断了一截。
+    std::size_t thinking_from = 0;
     std::string error;
     TaskState state = TaskState::Queued;
     /// 长跑任务表里也有一份，见 Task::mark_long_job。
@@ -214,7 +218,9 @@ void Task::append_thinking(const std::string& piece) {
     CHANGJI_TASK_MUTATE(
         row.thinking += piece;
         if (row.thinking.size() > kThinkingKeep) {
-            row.thinking.erase(0, row.thinking.size() - kThinkingKeep);
+            const std::size_t cut = row.thinking.size() - kThinkingKeep;
+            row.thinking.erase(0, cut);
+            row.thinking_from += cut;
         })
 }
 void Task::fail(std::string why) { CHANGJI_TASK_MUTATE(row.error = std::move(why);) }
@@ -242,15 +248,30 @@ CancelToken& Task::token() {
     return it == b.live.end() ? dummy : it->second->tok;
 }
 
-std::string task_thinking(std::uint64_t id) {
+Thinking task_thinking(std::uint64_t id, std::size_t from) {
     Board& b = board();
     std::lock_guard lg(b.mu);
+    const Row* row = nullptr;
     auto it = b.live.find(id);
-    if (it != b.live.end()) return it->second->thinking;
-    for (const auto& row : b.done) {
-        if (row->id == id) return row->thinking;
+    if (it != b.live.end()) {
+        row = it->second.get();
+    } else {
+        for (const auto& r : b.done) {
+            if (r->id == id) { row = r.get(); break; }
+        }
     }
-    return {};
+    if (row == nullptr) return {};
+
+    Thinking out;
+    // 手上那份比留着的还靠前 = 中间被截掉了一段，从留着的头上给起。
+    out.start = std::max(from, row->thinking_from);
+    out.end = row->thinking_from + row->thinking.size();
+    if (out.start >= out.end) {
+        out.start = out.end;   // 没有新的
+        return out;
+    }
+    out.text = row->thinking.substr(out.start - row->thinking_from);
+    return out;
 }
 
 namespace {

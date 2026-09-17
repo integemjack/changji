@@ -297,7 +297,9 @@ export const api = {
   generateAllReferences: (payload) => post('/api/assets/references', payload),
   // 任务账本。见 cpp/src/pipeline/task_board.hpp。
   tasks: (project) => get('/api/tasks', project ? { project } : undefined),
-  taskThinking: (id) => get('/api/task/thinking', { id }),
+  // **只取新增**：`from` 是手上已经有的字节数。一件活的思考动辄十几万
+  // 字，整份重取的话每一拍都要搬十几万字过去。
+  taskThinking: (id, from) => get('/api/task/thinking', { id, from: from || 0 }),
   cancelTask: (id) => post('/api/task/cancel', { id: String(id) }),
   stopAllReferences: (payload) => post('/api/assets/references/stop', payload),
   referenceQueue: (project) => get('/api/assets/references', { project }),

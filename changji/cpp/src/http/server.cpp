@@ -718,9 +718,16 @@ void run(const config::Settings& settings, const Options& opts) {
         auto r = guard([&]() -> ApiResult {
             const char* id = req.url_params.get("id");
             if (id == nullptr) throw ApiError(400, "要给 id");
+            const char* from = req.url_params.get("from");
+            const auto t = pipeline::task_thinking(
+                std::strtoull(id, nullptr, 10),
+                from != nullptr ? std::strtoull(from, nullptr, 10) : 0);
+            // `start` 大于问的那个 `from` 就是中间断了一截（思考太长被从头
+            // 截过）。页面据此把手上那份丢掉重接，而不是把两段错接起来。
             return {200,
-                    {{"thinking", pipeline::task_thinking(
-                                      std::strtoull(id, nullptr, 10))}}};
+                    {{"thinking", t.text},
+                     {"start", t.start},
+                     {"end", t.end}}};
         });
         return json_response(r.body, r.status);
     });

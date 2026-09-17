@@ -133,10 +133,26 @@ bool cancel_task(std::uint64_t id);
 /// total / seconds / thinking / error / state`。
 nlohmann::json task_board(const std::string& project = {});
 
-/// 那件活到现在为止想了什么。**单独一条路**：思考几千字，塞进上面那份
-/// 每两秒推一次的账里的话，它一件就能把整条通道占满。页面点开才来取。
+/// 那件活到现在为止想了什么。
 ///
-/// 还没结账的、和留在"做完的"里的都找得到；再找不到就回空串。
-std::string task_thinking(std::uint64_t id);
+/// **单独一条路**：思考动辄十几万字，塞进上面那份每秒多次推的账里的话，
+/// 它一件就能把整条通道占满。页面点开才来取。
+///
+/// **而且是按段取的。** `from` 是调用方手上已经有的字节数（绝对位置，从这
+/// 件活开工算起）；回的是从那儿往后的新增。整份重取的话，一件十五万字的活
+/// 每一拍就要搬十五万字过去——实测页面上那一版就是这么卡的，而且人要的是
+/// **最新那一段**，不是从头。
+///
+/// 回的 `start` 是这一段的绝对起点：正常等于 `from`；**思考太长被从头截过**
+/// 时会大于 `from`（见 Task::append_thinking 那个上限），调用方据此知道自己
+/// 中间断了一截。`end` 是取完之后的绝对位置，下次拿它当 `from`。
+///
+/// 还没结账的、和留在"做完的"里的都找得到；再找不到就回 `{0, 0, ""}`。
+struct Thinking {
+    std::size_t start = 0;
+    std::size_t end = 0;
+    std::string text;
+};
+Thinking task_thinking(std::uint64_t id, std::size_t from = 0);
 
 }  // namespace changji::pipeline

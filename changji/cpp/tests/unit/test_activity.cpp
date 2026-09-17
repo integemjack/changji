@@ -289,10 +289,10 @@ TEST_CASE("任务账本：思考接起来存，取的时候是整份") {
         const auto b = pipeline::task_board(proj);
         REQUIRE(b.at("running").size() == 1);
         CHECK(b.at("running")[0].at("thinking") == true);
-        CHECK(pipeline::task_thinking(id) == "先想再想");
+        CHECK(pipeline::task_thinking(id).text == "先想再想");
     }
     // 结完账也还找得到：页面上「做完的」那几行也能点开看。
-    CHECK(pipeline::task_thinking(id) == "先想再想");
+    CHECK(pipeline::task_thinking(id).text == "先想再想");
 }
 
 TEST_CASE("任务账本：预计等多久按「这是哪一族」算，不按 kind") {
@@ -311,4 +311,33 @@ TEST_CASE("任务账本：预计等多久按「这是哪一族」算，不按 ki
         REQUIRE(b.at("queued").size() == 1);
         CHECK(b.at("queued")[0].at("eta") == 0.0);
     }
+}
+
+TEST_CASE("思考按段取：只给新增，断了一截要说得出来") {
+    // 用户 2026-09-17：「在任务里思考没有实时显示最后内容」。整份重取的话，
+    // 一件十五万字的活每一拍就要搬十五万字过去——页面卡在那儿，而人要的是
+    // **最新那一段**，不是从头。
+    const std::string proj = "/tmp/任务账本用例6";
+    pipeline::Task t{"llm", "写第三章", proj};
+    t.begin();
+    t.append_thinking("第一段");
+    const auto a = pipeline::task_thinking(t.id(), 0);
+    CHECK(a.start == 0);
+    CHECK(a.text == "第一段");
+    CHECK(a.end == std::string("第一段").size());
+
+    t.append_thinking("第二段");
+    // 拿上一次的 end 当 from，只回新增的那一段。
+    const auto b = pipeline::task_thinking(t.id(), a.end);
+    CHECK(b.start == a.end);
+    CHECK(b.text == "第二段");
+
+    // 已经取到头了就回空，不重复给。
+    const auto c = pipeline::task_thinking(t.id(), b.end);
+    CHECK(c.text.empty());
+    CHECK(c.start == c.end);
+
+    // 问一个比现在还靠后的位置（不该发生，但别让它回出负数长度的段）
+    const auto d = pipeline::task_thinking(t.id(), b.end + 999);
+    CHECK(d.text.empty());
 }

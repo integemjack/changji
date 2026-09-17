@@ -17,6 +17,7 @@ import { computed, onMounted, onUnmounted, ref } from 'vue'
 
 import AppIcon from '@/components/AppIcon.vue'
 import { api } from '@/api'
+import { readLocal, writeLocal } from '@/composables/local-storage'
 import { useSession } from '@/stores/session'
 import { useUi } from '@/stores/ui'
 
@@ -24,8 +25,25 @@ const session = useSession()
 const ui = useUi()
 
 const board = ref({ running: [], queued: [], done: [] })
-/** 展开了思考的那几件：id → 正文。 */
+/**
+ * 展开了思考的那几件：id → `{ text, end }`。
+ *
+ * `end` 是手上这份的**绝对结尾**，下一拍拿它当 `from` 只取新增——一件活的
+ * 思考动辄十几万字，整份重取的话每一拍都要搬十几万字过去。
+ */
 const opened = ref({})
+/**
+ * 上一次展开的是哪几件。**刷新之后要接回来**：用户 2026-09-17「刷新后思考
+ * 看不到了」——展开状态原来只活在这个标签页的闭包里，而这一族活一跑十几
+ * 分钟，中间刷一下页面是常态，不是边角情况（`useRefStream` 开头那段说的是
+ * 同一件事）。
+ *
+ * 只记 id，不记正文：正文在引擎那头，接回来照样取得到。
+ */
+const kOpenKey = 'changji.tasks.openThinking'
+function rememberOpen() {
+  writeLocal(kOpenKey, JSON.stringify(Object.keys(opened.value)))
+}
 /** 只看这一部剧的。**默认只看**：一台机器上常常开着好几部。 */
 const mineOnly = ref(true)
 /** 第一拍还没回来。空表和"真的没活"要分开说。 */
@@ -120,8 +138,8 @@ async function load() {
       done: d?.done ?? [],
     }
     loaded.value = true
-    // 已经展开的那几件，思考还在长——跟着刷。**只刷展开的那几件**：
-    // 一份思考几千字，全刷等于每两秒把整本账拖一遍。
+    // 已经展开的那几件，思考还在长——跟着刷。**只刷展开的那几件、而且只
+    // 取新增**：一份思考十几万字，整份全刷等于每一拍把整本账拖一遍。
     for (const id of Object.keys(opened.value)) await loadThinking(id, true)
   } catch {
     // 拉不到就保持上一拍。引擎打个嗝不该让整页闪成空的。
@@ -129,9 +147,17 @@ async function load() {
 }
 
 async function loadThinking(id, quiet) {
+  const have = opened.value[id]
   try {
-    const d = await api.taskThinking(id)
-    opened.value = { ...opened.value, [id]: d?.thinking ?? '' }
+    const d = await api.taskThinking(id, have?.end ?? 0)
+    const start = Number(d?.start ?? 0)
+    const end = Number(d?.end ?? 0)
+    const piece = d?.thinking ?? ''
+    // `start` 大于我们手上那份的结尾 = 中间断了一截（思考太长，引擎那头从
+    // 头截过）。这时候**丢掉手上那份重接**，不能把两段错接起来。
+    const broke = have && start > have.end
+    const text = have && !broke ? have.text + piece : piece
+    opened.value = { ...opened.value, [id]: { text, end, broke: !!broke } }
   } catch (e) {
     if (!quiet) ui.error(`看不到这一件的思考：${e?.message || e}`)
   }
@@ -142,9 +168,28 @@ function toggleThinking(row) {
     const next = { ...opened.value }
     delete next[row.id]
     opened.value = next
+    rememberOpen()
     return
   }
-  loadThinking(row.id, false)
+  loadThinking(row.id, false).then(rememberOpen)
+}
+
+/**
+ * 思考那一块**跟着最新往下走**。
+ *
+ * 用户 2026-09-17：「在任务里思考没有实时显示最后内容」。它是从上往下长的，
+ * 而人要看的是**它现在在想什么**——不跟的话每来一段都得自己滚到底。
+ *
+ * **人自己往上翻了就别抢**：离底部超过一屏就当他在回头看，停止跟随；
+ * 滚回底部附近又接着跟。
+ */
+function follow(el) {
+  if (!el) return
+  const near = el.scrollHeight - el.scrollTop - el.clientHeight < 80
+  if (near || el.dataset.first !== '1') {
+    el.dataset.first = '1'
+    el.scrollTop = el.scrollHeight
+  }
 }
 
 async function stop(row) {
@@ -174,6 +219,14 @@ function tick() {
 }
 
 onMounted(async () => {
+  // 刷新之前展开着的那几件，接回来。
+  try {
+    for (const id of JSON.parse(readLocal(kOpenKey) || '[]')) {
+      opened.value = { ...opened.value, [id]: { text: '', end: 0 } }
+    }
+  } catch {
+    // 存的东西坏了就当没记过，不值得打扰用户。
+  }
   await load()
   tick()
 })
@@ -262,9 +315,11 @@ onUnmounted(() => clearTimeout(timer))
           >
             <AppIcon name="stop" :size="14" />
           </button>
-          <pre v-if="opened[r.id] !== undefined" class="think">{{
-            opened[r.id] || '还没有想出字来'
-          }}</pre>
+          <pre
+            v-if="opened[r.id] !== undefined"
+            :ref="(el) => follow(el)"
+            class="think"
+          >{{ opened[r.id].text || '还没有想出字来' }}</pre>
         </li>
       </ul>
     </section>
@@ -352,9 +407,11 @@ onUnmounted(() => clearTimeout(timer))
           >
             思考
           </button>
-          <pre v-if="opened[r.id] !== undefined" class="think">{{
-            opened[r.id] || '没有留下思考'
-          }}</pre>
+          <pre
+            v-if="opened[r.id] !== undefined"
+            :ref="(el) => follow(el)"
+            class="think"
+          >{{ opened[r.id].text || '没有留下思考' }}</pre>
         </li>
       </ul>
     </section>
