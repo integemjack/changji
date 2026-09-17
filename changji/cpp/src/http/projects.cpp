@@ -113,6 +113,19 @@ ApiResult post_new_project(const json& body, const config::Settings& settings) {
             path, text::project_slug(name), title.empty() ? name : title, line);
         // 一部剧一份标准参数，建的时候就落下来。见 project_config_template。
         config::write_project_config(store.root(), video);
+        // **派生那份拷贝也得在这儿写对。**
+        //
+        // 画幅是唯一的源（config::VideoConfig::aspect_ratio），assets.json
+        // 里 StyleProfile.aspect_ratio 只是它派生出来的一份拷贝，给出参考图
+        // 用。派生原来只在「存画面」那条路上做（server.cpp 的 /api/video），
+        // 而建项目这条路不经过它——于是**直接建一个横屏项目，配出来就是
+        // 「横屏 + 9:16」**：成片横的、参考图竖的，而参考图正是每一镜的底子。
+        // 2026-09-17 照用户的话建 hengping-test 时当场撞上。
+        if (auto assets = store.load_assets();
+            assets.style.aspect_ratio != video.aspect_ratio()) {
+            assets.style.aspect_ratio = video.aspect_ratio();
+            store.save_assets(assets);
+        }
         return {200, {{"root", paths::to_utf8(store.root())}}};
     } catch (const fs::filesystem_error& e) {
         throw ApiError(400, std::string("创建目录失败：") + e.what());

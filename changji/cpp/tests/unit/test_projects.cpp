@@ -95,6 +95,32 @@ TEST_CASE("新建项目：只填名字就落在项目库里") {
     CHECK(p.project_id.rfind("p-", 0) == 0);
 }
 
+TEST_CASE("新建横屏项目：assets 里那份比例拷贝也要是横的") {
+    // **画幅是唯一的源**（config::VideoConfig::aspect_ratio），assets.json
+    // 里 StyleProfile.aspect_ratio 只是派生出来的一份拷贝，给出参考图用。
+    // 派生原来只在「存画面」那条路上做，而建项目不经过它——于是直接建一个
+    // 横屏项目，配出来就是「横屏 + 9:16」：成片横的、参考图竖的，而参考图
+    // 正是每一镜的底子。2026-09-17 照用户的话建横屏项目时当场撞上。
+    Workspace ws("横屏");
+    const auto r = http::guard([&] {
+        return http::post_new_project(
+            json{{"path", "横屏剧"}, {"orientation", "landscape"}}, ws.settings);
+    });
+    REQUIRE(r.status == 200);
+    const fs::path made = paths::from_utf8(r.body.at("root").get<std::string>());
+    const auto assets = models::ProjectStore(made).load_assets();
+    CHECK(assets.style.aspect_ratio == "16:9");
+
+    SUBCASE("竖屏（默认）照旧是 9:16，没白写一次盘") {
+        const auto r2 = http::guard([&] {
+            return http::post_new_project(json{{"path", "竖屏剧"}}, ws.settings);
+        });
+        REQUIRE(r2.status == 200);
+        const fs::path m2 = paths::from_utf8(r2.body.at("root").get<std::string>());
+        CHECK(models::ProjectStore(m2).load_assets().style.aspect_ratio == "9:16");
+    }
+}
+
 TEST_CASE("新建项目：带路径分隔符的当绝对/相对路径用") {
     Workspace ws("带路径");
     const fs::path elsewhere =
