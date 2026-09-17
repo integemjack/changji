@@ -836,10 +836,17 @@ jobs:
           $fs = [IO.File]::OpenRead((Resolve-Path $bin))
           $size = 16MB
           $buf = New-Object byte[] $size
+          # **别用 `[Text.Encoding]::Latin1`。** 那个属性是 .NET 5 才有的：
+          # CI 上 `shell: pwsh` 是 PowerShell 7，有；而谁要是拿 powershell.exe
+          #（5.1，跑在 .NET Framework 上）手工跑这段，它是 **$null**，
+          # 报出来的是「不能对 Null 值表达式调用方法」，看着像是文件读坏了。
+          # 2026-09-18 在一台 Windows 机器上手工打包时就是这么挂的。
+          # 28591 就是 ISO-8859-1，两个 PowerShell 都有，行为一模一样。
+          $latin1 = [Text.Encoding]::GetEncoding(28591)
           $carry = ''
           $n = 0
           while (($read = $fs.Read($buf, 0, $size)) -gt 0) {
-            $s = $carry + [Text.Encoding]::Latin1.GetString($buf, 0, $read)
+            $s = $carry + $latin1.GetString($buf, 0, $read)
             $n += [regex]::Matches($s, [regex]::Escape($mark)).Count
             $carry = $s.Substring([Math]::Max(0, $s.Length - $mark.Length))
           }
@@ -943,9 +950,12 @@ jobs:
             $fs = [IO.File]::OpenRead((Resolve-Path stage/changji.exe))
             $size = 16MB
             $buf = New-Object byte[] $size
+            # 28591 = ISO-8859-1。别写成 `::Latin1`，理由见上面「验一下
+            #（Windows）」那一步里的注释：PowerShell 5.1 上它是 $null。
+            $latin1 = [Text.Encoding]::GetEncoding(28591)
             $carry = ''
             while (($read = $fs.Read($buf, 0, $size)) -gt 0) {
-              $s = $carry + [Text.Encoding]::Latin1.GetString($buf, 0, $read)
+              $s = $carry + $latin1.GetString($buf, 0, $read)
               foreach ($m in [regex]::Matches($s, '(?i)(cu|nv)[a-z0-9_]*64_[0-9_]+\.dll')) {
                 # 键小写只为了比对不分大小写（Windows 的文件名本来就不分），
                 # 值留原样——报错里要出现的是 DLL 真正的名字，用户拿着它去找文件。
