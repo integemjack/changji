@@ -63,7 +63,21 @@ describe('按不动的时候说为什么', () => {
 
   it('「出片」：原来一个 title 都没有', () => {
     const f = btn('<AppIcon :name="isBusy(\'whole\') ? \'pause\' : \'film\'"')
-    expect(f).toMatch(/blockedWhy \|\|/)
     expect(f).toMatch(/:title=/)
+    // **钉的是"那句话在 title 里"，不是它怎么拼的。** 2026-09-17 这颗按钮
+    // 多了一支（只能写文的机器上先拆分镜），于是写法从 `blockedWhy ||`
+    // 变成了三元包着它——意图一点没变，而原来的断言按字面比，挂了。
+    expect(f, '灰着的时候说不出为什么').toContain('blockedWhy')
+  })
+
+  it('只能写文的机器上，这颗按钮不该整个灰掉', () => {
+    // 缺一个配音模型把拆分镜也一起拦了，是 2026-09-17 在这台 Mac 上撞见的：
+    // 三颗按钮全灰，而这台机器明明能写文、能拆镜头。
+    const f = btn('<AppIcon :name="isBusy(\'whole\') ? \'pause\' : \'film\'"')
+    expect(f, '还是按 blocked 一刀切').toContain('textOnlyTodo')
+    expect(body).toMatch(/const textOnlyTodo = computed/)
+    // 亮着的时候要说清两件事：这台机器出不了片、这一颗只干前半截。
+    expect(f, '没说这台机器出不了片').toContain('还出不了片')
+    expect(f, '没说这一颗只拆分镜').toContain('章分镜拆完')
   })
 })

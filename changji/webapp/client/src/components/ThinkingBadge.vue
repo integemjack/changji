@@ -35,11 +35,13 @@ import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 
 import { api } from '@/api'
 import AppIcon from '@/components/AppIcon.vue'
+import { useSystemFeed } from '@/composables/useSystemFeed'
 import { useThinking } from '@/stores/thinking'
 import { useUi } from '@/stores/ui'
 
 const thinking = useThinking()
 const ui = useUi()
+const { stat } = useSystemFeed()
 
 /**
  * 跟引擎那本任务账对拍子。**刷新之后这块徽标全靠它**——socket 那份按点击
@@ -48,12 +50,22 @@ const ui = useUi()
  * socket 上有东西的时候 `syncFromServer` 自己会空转，所以这一拍不贵；
  * 拍子按"在不在想"快慢分，和这套代码里别处那几条轮询一个规矩。
  */
+/**
+ * 什么都没在跑。**系统表两秒一拍推过来，和这本账是同一个 `running_work`
+ * 拼的**，所以它空着的时候去问 `/api/tasks` 一定问回空手。
+ * `null` = 表还没回来，那时候照问不误。
+ */
+const idle = computed(() => {
+  const jobs = stat.value?.jobs
+  return Array.isArray(jobs) && jobs.length === 0
+})
+
 let beat = null
 function tick() {
   clearTimeout(beat)
   beat = setTimeout(
     async () => {
-      await thinking.syncFromServer()
+      await thinking.syncFromServer({ idle: idle.value })
       tick()
     },
     thinking.busy ? 2000 : 6000,

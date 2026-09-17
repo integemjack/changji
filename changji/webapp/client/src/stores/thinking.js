@@ -94,9 +94,21 @@ export const useThinking = defineStore('thinking', () => {
    */
   const fromBoard = ref({})
 
-  /** 跟引擎那本账对一次。socket 上有东西就不看。 */
-  async function syncFromServer() {
+  /**
+   * 跟引擎那本账对一次。socket 上有东西就不看。
+   *
+   * `idle` 为真 = **调用方已经知道什么都没在跑**，那就一个请求都别发。
+   * 顶栏那块徽标原来闲着也每 6 秒问一次 `/api/tasks`，而"在不在跑"这件事
+   * 系统表两秒一拍早就推过来了（`stat.jobs`，和这本账同一个 `running_work`
+   * 拼的）——空着的时候那一趟纯属白问。
+   */
+  async function syncFromServer({ idle = false } = {}) {
     if (Object.keys(live.value).length > 0) {
+      if (Object.keys(fromBoard.value).length > 0) fromBoard.value = {}
+      return
+    }
+    if (idle) {
+      // 残留要清：上一件刚干完那一拍，账上已经空了，这儿还挂着它的思考。
       if (Object.keys(fromBoard.value).length > 0) fromBoard.value = {}
       return
     }
