@@ -590,7 +590,7 @@ std::string RemoteClient::complete(const Request& req,
         throw LlmError(connect_failed(cfg, *a.transport_error));
     }
     if (a.status >= 400) {
-        throw LlmError(explain_status(cfg, a.status, a.response_body));
+        throw LlmError(explain_status(cfg, a.status, a.response_body), a.status);
     }
 
     // 服务在流里报错时，即使前面已经吐过半份正文也必须报真实错误。
@@ -662,7 +662,9 @@ std::string RemoteClient::complete(const Request& req,
         throw LlmError(connect_failed(cfg, *r.transport_error));
     }
 
-    if (r.status >= 400) throw LlmError(explain_status(cfg, r.status, r.body));
+    if (r.status >= 400) {
+        throw LlmError(explain_status(cfg, r.status, r.body), r.status);
+    }
     if (tok.cancelled()) throw LlmError(util::kCancelled);
     if (req.on_thinking) {
         const std::string think = extract_thinking(r.body);

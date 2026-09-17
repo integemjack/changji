@@ -1082,3 +1082,48 @@ TEST_CASE("有人要看思考就走流式，哪怕没人要逐字") {
     c.complete(r, tok);
     CHECK(streamed);
 }
+
+TEST_CASE("配错了的错要认得出来：批量据此停下") {
+    // ⚠️ **2026-09-17 实撞：一次补七集分镜，第三集开始密钥失效，而「一集砸
+    // 了不拖垮后面几集」这条让它又试了五集，每集同一个 401**——人白等二十
+    // 分钟，回来看到五条一模一样的报错。
+    //
+    // 那条规矩针对的是**内容**问题（这一集模型没写好，下一集换个剧本也许就
+    // 好了）；而密钥不对、地址不对、模型名不存在，不会在下一集自己变好。
+    SUBCASE("401 / 403 / 404 是配错了") {
+        for (int code : {401, 403, 404}) {
+            CAPTURE(code);
+            const llm::LlmError e("随便一句", code);
+            CHECK(e.status() == code);
+            CHECK(e.is_config_error());
+        }
+    }
+    SUBCASE("限流和 5xx 不算——换个时间真会好，接着跑是对的") {
+        for (int code : {429, 500, 502, 503}) {
+            CAPTURE(code);
+            CHECK_FALSE(llm::LlmError("随便一句", code).is_config_error());
+        }
+    }
+    SUBCASE("不是因为状态码抛的，status 是 0") {
+        const llm::LlmError e("大模型返回的不是 JSON");
+        CHECK(e.status() == 0);
+        CHECK_FALSE(e.is_config_error());
+    }
+}
+
+TEST_CASE("对面回 4xx 时，状态码要挂到异常上") {
+    // 只有一句人话的话，批量那头只能去正则匹配「401」三个字——而措辞是会改
+    // 的（`explain_status` 那几句一直在调），匹配挂了不会报错，只会悄悄退回
+    // "接着试五集"。
+    FakeHttp http;
+    http.responses.push_back(llm::HttpResponse{401, R"({"code":"401"})", std::nullopt});
+    llm::RemoteClient c(test_cfg(), http.fn());
+    pipeline::CancelToken tok;
+    try {
+        c.complete(simple_req(), tok);
+        FAIL("该抛的没抛");
+    } catch (const llm::LlmError& e) {
+        CHECK(e.status() == 401);
+        CHECK(e.is_config_error());
+    }
+}

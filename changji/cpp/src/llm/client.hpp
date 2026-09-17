@@ -32,6 +32,30 @@ namespace changji::llm {
 class LlmError : public std::runtime_error {
 public:
     explicit LlmError(const std::string& what) : std::runtime_error(what) {}
+    LlmError(const std::string& what, int http_status)
+        : std::runtime_error(what), status_(http_status) {}
+
+    /// 对面回的 HTTP 状态码。0 = 不是因为状态码抛的（解析失败、被取消…）。
+    int status() const { return status_; }
+
+    /// **这个错换一件活重来也一样。**
+    ///
+    /// 判据是"配的东西不对"，不是"这一次不巧"：密钥不对（401）、这把密钥
+    /// 没有这个权限（403）、地址或模型名不存在（404）。
+    ///
+    /// ⚠️ **批量那几条要看它。** 2026-09-17 实撞：一次补七集分镜，第三集
+    /// 开始密钥失效，而「一章砸了不拖垮整批」这条规矩让它**又试了五集，
+    /// 每集同一个 401**——人白等二十分钟，回来看到五条一模一样的报错。
+    /// 「一章砸了不拖垮整批」针对的是内容问题（这一章模型没写好），
+    /// 而配错了的东西不会在下一集自己变好。
+    ///
+    /// 429（限流）和 5xx **不算**：那两种换个时间真会好，接着跑是对的。
+    bool is_config_error() const {
+        return status_ == 401 || status_ == 403 || status_ == 404;
+    }
+
+private:
+    int status_ = 0;
 };
 
 /// 一次请求。

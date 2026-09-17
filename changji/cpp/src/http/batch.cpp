@@ -146,6 +146,31 @@ std::vector<std::string> character_names(const AssetLibrary& assets) {
 
 double round1(double x) { return std::nearbyint(x * 10.0) / 10.0; }
 
+/// 这个错是不是"配错了"——换一件活重来还是一样。
+///
+/// ⚠️ **批量那几条都要问它一句。** 2026-09-17 实撞：一次补七集分镜，第三集
+/// 开始密钥失效，而「一集砸了不拖垮后面几集」这条让它**又试了五集，每集
+/// 同一个 401**——人白等二十分钟，回来看到五条一模一样的报错。
+///
+/// 那条规矩针对的是**内容**问题（这一集模型没写好，下一集换个剧本也许就
+/// 好了）；而密钥不对、地址不对、模型名不存在，不会在下一集自己变好。
+/// 限流（429）和 5xx 不算——那两种换个时间真会好，接着跑是对的。
+bool hopeless(const std::exception& e) {
+    const auto* le = dynamic_cast<const llm::LlmError*>(&e);
+    return le != nullptr && le->is_config_error();
+}
+
+/// 整批停在这儿的那句话。**要说清"停了"和"还剩几件"**——不然人看到的是一
+/// 条孤零零的报错，不知道后面那几件是跑过了还是压根没跑。
+std::string stopped_because(const std::exception& e, std::size_t left) {
+    std::string out = e.what();
+    out += "\n\n这一条换一件活重来也一样，所以整批停在这儿了";
+    if (left > 0) out += "——还有 " + std::to_string(left) + " 件没做";
+    out += "。改完再按一次，做过的不会重做。";
+    return out;
+}
+
+
 }  // namespace
 
 ApiResult post_story_chapters(const json& body,
@@ -253,6 +278,7 @@ ApiResult post_story_chapters(const json& body,
                 // 每轮清掉 1~3 章。最后一次收下它，软闸就只提分不清零。
                 Story next;
                 std::string last_error;
+                bool last_hopeless = false;
                 constexpr int kAttempts = 3;
                 for (int attempt = 0; attempt < kAttempts; ++attempt) {
                     // 点了停就别再来一次了——重试的那一次一样会当场被取消，
@@ -324,14 +350,25 @@ ApiResult post_story_chapters(const json& body,
                         break;
                     } catch (const std::exception& e) {
                         last_error = e.what();
+                        // 配错了的话连这一章的两次重试都不用跑完。
+                        last_hopeless = hopeless(e);
+                        if (last_hopeless) break;
                     }
                     if (p.cancelled()) break;
                 }
                 if (!last_error.empty()) {
                     // 一章写砸了不该让前面几章白写，记下来接着往下写。
+                    // **但配错了的除外**，见 hopeless：那种重来还是一样，
+                    // 接着写只是让人多等十几分钟再看到同一句话。
                     p.add_episode(json{{"chapter_id", id},
                                        {"error", last_error + "（重试过两次）"}});
                     p.set_done(++done);
+                    if (last_hopeless) {
+                        p.set_error(stopped_because(
+                            std::runtime_error(last_error),
+                            todo.size() - static_cast<std::size_t>(done)));
+                        return;
+                    }
                     continue;
                 }
 
@@ -465,6 +502,12 @@ ApiResult post_script_series(const json& body,
                     // episode_id 留空——这一集根本没建出来。
                     p.add_episode(json{{"episode_id", ""}, {"error", e.what()}});
                     p.set_done(++done);
+                    // **配错了就别再试**，见 hopeless。
+                    if (hopeless(e)) {
+                        p.set_error(stopped_because(
+                            e, static_cast<std::size_t>(episodes - done)));
+                        return;
+                    }
                     continue;
                 }
 
@@ -728,6 +771,13 @@ ApiResult post_plan_all(const json& body, std::shared_ptr<llm::Client> client) {
                     p.add_episode(
                         json{{"episode_id", episode_id}, {"error", e.what()}});
                     p.set_done(++done);
+                    // **配错了就别再试**，见 hopeless：2026-09-17 就是这儿
+                    // 连着报了五集一模一样的 401。
+                    if (hopeless(e)) {
+                        p.set_error(stopped_because(
+                            e, todo.size() - static_cast<std::size_t>(done)));
+                        return;
+                    }
                     continue;
                 }
 
