@@ -2338,13 +2338,23 @@ async function stopWriting() {
               {{ draft.story?.locations?.length ?? 0 }} 个地方。
               采用之前原来那份一个字不动。
             </p>
-            <div class="draft__list">
-              <div v-for="c in draft.story?.chapters ?? []" :key="c.chapter_id" class="dch">
-                <b>{{ c.title }}</b>
-                <span class="small dim">{{ c.summary }}</span>
-              </div>
-            </div>
-            <div class="row">
+            <!-- **一章一行，章号、标题、梗概各占各的位置。**
+                 原来是个裸 flex，标题被梗概挤到零宽——中文于是竖着一个字
+                 一个字码下来（「对不上的那一页」六行）。标题这一栏不许压缩。 -->
+            <ol class="draft__list">
+              <li
+                v-for="(c, i) in draft.story?.chapters ?? []"
+                :key="c.chapter_id"
+                class="dch"
+              >
+                <span class="dch__no numeric">{{ i + 1 }}</span>
+                <b class="dch__t">{{ c.title }}</b>
+                <span class="dch__s small dim">{{ c.summary }}</span>
+              </li>
+            </ol>
+            <!-- **钉在底下。** 十六章的大纲要滚很久才够得着「采用」，而这一
+                 屏上人要做的决定只有"收不收"。 -->
+            <div class="row draft__act">
               <button
                 class="btn btn--primary"
                 type="button"
@@ -2354,6 +2364,8 @@ async function stopWriting() {
                 采用这一份
               </button>
               <button class="btn btn--ghost" type="button" @click="dropDraft">丢弃</button>
+              <span class="spacer" />
+              <span class="tiny dim">采用之后原来那份就没了</span>
             </div>
           </div>
 
@@ -2372,155 +2384,6 @@ async function stopWriting() {
                 回到正文
               </button>
             </div>
-            <textarea
-              v-model="premise"
-              class="textarea start__premise"
-              rows="4"
-              placeholder="这部剧讲什么？想好了就写一句，比如：深夜便利店，前任推门进来，手里拿着五年前她送的那把伞。&#10;没想好就空着，让 AI 想几个给你挑。"
-              @blur="savePremise"
-            />
-            <!-- 「想几个给我挑」。**紧贴梗概框**：它回答的就是这个框里该写
-                 什么，隔一块就成了另一件事。十几秒回来三个方向，比一口气
-                 出一整份大纲（一分多钟，只能整份收整份扔）轻得多。 -->
-            <div class="row row--wrap">
-              <button
-                class="btn btn--ai btn--sm"
-                type="button"
-                :disabled="isBusy('ideas')"
-                @click="suggestIdeas"
-              >
-                <AppIcon name="sparkle" :size="14" />
-                {{ isBusy('ideas') ? '正在想…' : ideas.length ? '再想三个' : '想几个给我挑' }}
-              </button>
-              <template v-if="ideas.length">
-                <span class="small dim">挑一个就填进上面那个框</span>
-                <span class="spacer" />
-                <button class="btn btn--ghost btn--sm" type="button" @click="ideas = []">
-                  都不要
-                </button>
-              </template>
-            </div>
-            <div v-if="ideas.length" class="ideas">
-              <button
-                v-for="(it, i) in ideas"
-                :key="i"
-                class="idea"
-                type="button"
-                @click="pickIdea(it)"
-              >
-                <b class="idea__t">{{ it.title }}</b>
-                <span class="idea__p">{{ it.premise }}</span>
-                <span v-if="it.hook" class="idea__h">钩子 · {{ it.hook }}</span>
-              </button>
-            </div>
-            <!-- 关键词和篇幅只在**出大纲**的时候有用。没故事时它们就是起手式，
-                 摊开；有了故事之后重出是破坏性又少用的事，连按钮一起折进
-                 「▸ 让 AI 重出一份大纲」里，这一屏只剩梗概和加一章。
-                 「分几集在设定·分集那儿定」那句删了：在解释什么不在这儿。 -->
-            <component :is="hasStory ? 'details' : 'div'" class="regen stack stack--sm">
-            <summary v-if="hasStory" class="fold__t">让 AI 重出一份大纲</summary>
-            <input
-              v-model="keywords"
-              class="input"
-              placeholder="往哪个方向？热点词、题材都行，可留空（比如：重生复仇、破镜重圆）"
-            />
-            <div class="row row--wrap">
-              <div class="scales">
-                <button
-                  v-for="sc in SCALES"
-                  :key="sc.key"
-                  class="scale"
-                  :class="{ 'is-on': scale === sc.key }"
-                  type="button"
-                  :title="sc.hint"
-                  @click="scale = sc.key"
-                >
-                  {{ sc.label }}
-                </button>
-              </div>
-            </div>
-            <div class="row row--wrap">
-              <template v-if="!hasStory">
-                <!-- **摆在最前面。** 开始写之前不需要配置任何东西；
-                     想自己写的人应该一眼看见"从这儿进去"。 -->
-                <button
-                  class="btn btn--primary"
-                  type="button"
-                  :disabled="isBusy('blank')"
-                  @click="startBlank"
-                >
-                  直接开写
-                </button>
-                <!-- **outlineLive 也要算在忙里。** 异步那条 run() 一拿到
-                     202 就结束了，光看 isBusy('write') 的话按钮立刻变回
-                     "让 AI 写一份大纲"——再点一下就是第二份在跑，而两份
-                     写完会互相顶掉。 -->
-                <button
-                  class="btn btn--ai"
-                  type="button"
-                  :disabled="isBusy('write') || !!outlineLive"
-                  @click="writeStory"
-                >
-                  <AppIcon name="sparkle" :size="15" />
-                  {{ isBusy('write') || outlineLive ? '正在写…' : '让 AI 写一份大纲' }}
-                </button>
-                <button class="btn btn--ghost" type="button" @click="pasting = !pasting">
-                  粘一份现成的
-                </button>
-                <!-- 抄走这一步真正要发的那段字，拿到别处去跑。
-                     总开关在设置页「界面」那一节。 -->
-                <CopyPrompt
-                  path="/api/story/outline"
-                  :payload="{
-                    project: session.projectPath,
-                    premise: premise.trim(),
-                    scale,
-                    keywords: keywords.trim(),
-                  }"
-                />
-                <button
-                  v-if="canReverse"
-                  class="btn btn--ghost"
-                  type="button"
-                  :disabled="isBusy('reverse')"
-                  @click="reverseFromEpisodes"
-                >
-                  {{
-                    isBusy('reverse')
-                      ? '正在反推…'
-                      : `从已有的 ${session.episodes.length} 集反推`
-                  }}
-                </button>
-              </template>
-              <template v-else>
-                <button
-                  class="btn btn--ai"
-                  type="button"
-                  :disabled="isBusy('write') || !!outlineLive"
-                  @click="writeStory"
-                >
-                  <AppIcon name="sparkle" :size="15" />
-                  {{ isBusy('write') || outlineLive ? '正在写…' : '重出' }}
-                </button>
-                <span class="tiny dim">出来先是草稿，采用了才会换掉现在这 {{ chapters.length }} 章</span>
-              </template>
-            </div>
-            </component>
-
-            <!-- 从左栏页脚搬来的。整本书的事，配在整本书这一屏 -->
-            <div v-if="hasStory" class="row">
-              <button
-                class="btn btn--ghost btn--sm"
-                type="button"
-                :disabled="isBusy('addch')"
-                title="加一章空的，接着写"
-                @click="addChapter"
-              >
-                <AppIcon name="plus" :size="13" />
-                加一章
-              </button>
-            </div>
-
             <!-- 正在长出来的那份大纲。**边写边看**，见 outlineLive。
                  只摆已经有字的那几项：一上来全是空框的话，看着像坏了。 -->
             <div v-if="outlineLive" class="live stack stack--sm">
@@ -2573,6 +2436,192 @@ async function stopWriting() {
                 </li>
               </ol>
             </div>
+            <textarea
+              v-model="premise"
+              class="textarea start__premise"
+              rows="4"
+              placeholder="这部剧讲什么？想好了就写一句，比如：深夜便利店，前任推门进来，手里拿着五年前她送的那把伞。&#10;没想好就空着，让 AI 想几个给你挑。"
+              @blur="savePremise"
+            />
+            <!-- 「想几个给我挑」。**紧贴梗概框**：它回答的就是这个框里该写
+                 什么，隔一块就成了另一件事。十几秒回来三个方向，比一口气
+                 出一整份大纲（一分多钟，只能整份收整份扔）轻得多。 -->
+            <div class="row row--wrap">
+              <button
+                class="btn btn--ai btn--sm"
+                type="button"
+                :disabled="isBusy('ideas')"
+                @click="suggestIdeas"
+              >
+                <AppIcon name="sparkle" :size="14" />
+                {{ isBusy('ideas') ? '正在想…' : ideas.length ? '再想三个' : '想几个给我挑' }}
+              </button>
+              <template v-if="ideas.length">
+                <span class="small dim">挑一个就填进上面那个框</span>
+                <span class="spacer" />
+                <button class="btn btn--ghost btn--sm" type="button" @click="ideas = []">
+                  都不要
+                </button>
+              </template>
+            </div>
+            <div v-if="ideas.length" class="ideas">
+              <button
+                v-for="(it, i) in ideas"
+                :key="i"
+                class="idea"
+                type="button"
+                @click="pickIdea(it)"
+              >
+                <b class="idea__t">{{ it.title }}</b>
+                <span class="idea__p">{{ it.premise }}</span>
+                <span v-if="it.hook" class="idea__h">钩子 · {{ it.hook }}</span>
+              </button>
+            </div>
+            <!-- 关键词和篇幅只在**出大纲**的时候有用。没故事时它们就是起手式，
+                 摊开；有了故事之后重出是破坏性又少用的事，连按钮一起折进
+                 「▸ 让 AI 重出一份大纲」里，这一屏只剩梗概和加一章。
+                 「分几集在设定·分集那儿定」那句删了：在解释什么不在这儿。 -->
+            <component :is="hasStory ? 'details' : 'div'" class="regen stack stack--sm">
+            <summary v-if="hasStory" class="fold__t">让 AI 重出一份大纲</summary>
+            <!-- **说清这两样是给谁用的。** 方向和体量只有「让 AI 写一份
+                 大纲」这条路读得到，而「直接开写」「粘一份现成的」跟它们
+                 没关系——不写一句的话，第一次来的人会以为这是必填项。 -->
+            <p v-if="!hasStory" class="tiny dim">下面两样只在让 AI 写大纲时用得上</p>
+            <input
+              v-model="keywords"
+              class="input"
+              placeholder="往哪个方向？热点词、题材都行，可留空（比如：重生复仇、破镜重圆）"
+            />
+            <div class="row row--wrap">
+              <div class="scales">
+                <button
+                  v-for="sc in SCALES"
+                  :key="sc.key"
+                  class="scale"
+                  :class="{ 'is-on': scale === sc.key }"
+                  type="button"
+                  :title="sc.hint"
+                  @click="scale = sc.key"
+                >
+                  {{ sc.label }}
+                </button>
+              </div>
+            </div>
+            <div class="row row--wrap">
+              <template v-if="!hasStory">
+                <!-- **一条路一行，底下一句话说它干什么。**
+                     原来三颗按钮和「复制提示词」挤在同一排，第一次来的人
+                     分不出「直接开写」和「让 AI 写一份大纲」差在哪。 -->
+                <div class="ways">
+                  <!-- **outlineLive 也要算在忙里。** 异步那条 run() 一拿到
+                       202 就结束了，光看 isBusy('write') 的话按钮立刻变回
+                       "让 AI 写一份大纲"——再点一下就是第二份在跑，而两份
+                       写完会互相顶掉。 -->
+                  <div class="way">
+                    <button
+                      class="btn btn--ai"
+                      type="button"
+                      :disabled="isBusy('write') || !!outlineLive"
+                      @click="writeStory"
+                    >
+                      <AppIcon name="sparkle" :size="15" />
+                      {{ isBusy('write') || outlineLive ? '正在写…' : '让 AI 写一份大纲' }}
+                    </button>
+                    <span class="way__why">
+                      一分钟上下，回来一整本书的骨架：分几章、每章讲什么、有哪些人。
+                      看过再决定收不收。
+                    </span>
+                  </div>
+                  <!-- **想自己写的人应该一眼看见"从这儿进去"**，
+                       开始写之前不需要配置任何东西。 -->
+                  <div class="way">
+                    <!-- **大纲在跑的时候按灰。** 这时候建一章空的，
+                         等大纲回来会和它撞在一起。 -->
+                    <button
+                      class="btn"
+                      type="button"
+                      :disabled="isBusy('blank') || isBusy('write') || !!outlineLive"
+                      @click="startBlank"
+                    >
+                      直接开写
+                    </button>
+                    <span class="way__why">
+                      建一章空的就进编辑器。不用先想梗概，也不用等 AI。
+                    </span>
+                  </div>
+                  <div class="way">
+                    <button
+                      class="btn btn--ghost"
+                      type="button"
+                      :disabled="isBusy('write') || !!outlineLive"
+                      @click="pasting = !pasting"
+                    >
+                      粘一份现成的
+                    </button>
+                    <span class="way__why">
+                      已经写好的稿子贴进来，引擎自己分章。
+                    </span>
+                  </div>
+                  <!-- 抄走这一步真正要发的那段字，拿到别处去跑。
+                       总开关在设置页「界面」那一节。 -->
+                  <div class="way">
+                    <CopyPrompt
+                      path="/api/story/outline"
+                      :payload="{
+                        project: session.projectPath,
+                        premise: premise.trim(),
+                        scale,
+                        keywords: keywords.trim(),
+                      }"
+                    />
+                    <span class="way__why">
+                      把上面那些拼成的提示词抄走，在别处跑完再回来粘。
+                    </span>
+                  </div>
+                </div>
+                <button
+                  v-if="canReverse"
+                  class="btn btn--ghost"
+                  type="button"
+                  :disabled="isBusy('reverse')"
+                  @click="reverseFromEpisodes"
+                >
+                  {{
+                    isBusy('reverse')
+                      ? '正在反推…'
+                      : `从已有的 ${session.episodes.length} 集反推`
+                  }}
+                </button>
+              </template>
+              <template v-else>
+                <button
+                  class="btn btn--ai"
+                  type="button"
+                  :disabled="isBusy('write') || !!outlineLive"
+                  @click="writeStory"
+                >
+                  <AppIcon name="sparkle" :size="15" />
+                  {{ isBusy('write') || outlineLive ? '正在写…' : '重出' }}
+                </button>
+                <span class="tiny dim">出来先是草稿，采用了才会换掉现在这 {{ chapters.length }} 章</span>
+              </template>
+            </div>
+            </component>
+
+            <!-- 从左栏页脚搬来的。整本书的事，配在整本书这一屏 -->
+            <div v-if="hasStory" class="row">
+              <button
+                class="btn btn--ghost btn--sm"
+                type="button"
+                :disabled="isBusy('addch')"
+                title="加一章空的，接着写"
+                @click="addChapter"
+              >
+                <AppIcon name="plus" :size="13" />
+                加一章
+              </button>
+            </div>
+
 
             <div v-if="pasting" class="stack stack--sm">
               <textarea
@@ -2991,9 +3040,11 @@ async function stopWriting() {
 /* 「正在写」那块板子。刻意做得轻：它是过程，不是结果——
    一会儿就被真正的草稿顶掉，做重了反而让人以为已经写完了。 */
 .live {
-  border: 1px dashed var(--line);
+  /* **跑起来的时候这块是主角。** 原来它是最底下一条细灰条，而上面那张表单
+     原样杵着不变——看着像按了没反应。挪到最上面，边框给足存在感。 */
+  border: 1px solid var(--accent-soft, var(--line));
   border-radius: var(--r);
-  padding: 0.75rem 0.9rem;
+  padding: var(--s3) var(--s4, 16px);
   /* 没有 --bg-soft 这个变量（tokens.css 里是 --bg-sunken）。写错的变量
      在 CSS 里不报错，只是整条声明作废——这块板子一直是透明的，而它靠底色
      和虚线边把"这是过程不是结果"说出来。 */
@@ -3622,13 +3673,51 @@ async function stopWriting() {
 }
 
 /* ---------- 从这儿开始 / 草稿 ---------- */
+/* 「从这儿开始」这一屏。
+   原来是七个控件平铺在整幅宽度上、贴着左上角，下面三分之二一片空——
+   看不出哪条是主路，也不像个"开始"。现在收成一栏读得下来的宽度，
+   往中间靠，三条路各自说清楚干什么。 */
 .start {
   display: grid;
-  gap: var(--s3);
+  gap: var(--s4, 16px);
+  max-width: 44rem;
+  margin-inline: auto;
+  /* 上面留一点，别贴着顶栏；不用 center，内容一长就会把标题顶出屏幕 */
+  padding-block: clamp(var(--s3), 6vh, 64px) var(--s4, 16px);
 }
 .start__premise {
   min-height: 7em;
   font-size: var(--fs-md);
+}
+/* 出大纲才用得上的那两样（往哪个方向、写多长）。围起来，和上面那句
+   梗概分开——它们回答的不是同一个问题。 */
+.start .regen {
+  padding: var(--s3);
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--surface-2);
+}
+/* 三条路。**一条一行，每条底下一句话说它干什么。**
+   原来三颗按钮和"复制提示词"挤在同一排，第一次来的人分不出
+   "直接开写"和"让 AI 写一份大纲"差在哪。 */
+.ways {
+  display: grid;
+  gap: var(--s2);
+}
+.way {
+  display: grid;
+  /* **按钮那一栏定宽**，不然四条说明各从一个地方起头，看着是参差的。 */
+  grid-template-columns: 10.5rem 1fr;
+  gap: var(--s3);
+  align-items: center;
+}
+.way > :first-child {
+  justify-self: start;
+}
+.way__why {
+  color: var(--text-3);
+  font-size: var(--fs-sm);
+  line-height: 1.5;
 }
 
 /* AI 想的那几个选题。**一列不是一排**：梗概是两三行字，并排三列就要
@@ -3674,12 +3763,53 @@ async function stopWriting() {
 }
 .draft__list {
   display: grid;
-  gap: var(--s2);
+  gap: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
 }
+/* 一章一行：章号 / 标题 / 梗概。
+   **标题这一栏不许压缩**（原来是 flex 里的裸 <b>，被梗概挤到零宽，中文就
+   竖着码了）。给一个下限再让它按内容长，长标题换行也还是横着的。 */
 .dch {
-  display: flex;
+  display: grid;
+  grid-template-columns: 1.6rem minmax(5.5rem, 9rem) 1fr;
   gap: var(--s3);
   align-items: baseline;
+  padding: var(--s2) 0;
+  border-top: 1px solid var(--line);
+}
+.dch:first-child {
+  border-top: 0;
+}
+.dch__no {
+  color: var(--text-3, var(--text-2));
+  text-align: right;
+  font-size: var(--fs-sm);
+}
+.dch__t {
+  /* 标题短的时候不要被拉开成稀稀拉拉的一行 */
+  line-height: 1.5;
+}
+.dch__s {
+  line-height: 1.7;
+}
+.draft__act {
+  position: sticky;
+  bottom: 0;
+  z-index: 1;
+  padding: var(--s2) 0;
+  background: var(--bg);
+  border-top: 1px solid var(--line);
+}
+@media (max-width: 720px) {
+  /* 窄屏上三栏挤不下：章号和标题并一行，梗概整行接在下面。 */
+  .dch {
+    grid-template-columns: 1.6rem 1fr;
+  }
+  .dch__s {
+    grid-column: 2;
+  }
 }
 .scales {
   display: inline-flex;
