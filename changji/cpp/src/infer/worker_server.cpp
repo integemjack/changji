@@ -53,10 +53,19 @@ struct Live {
 
 struct State {
     std::mutex mu;
-    /// **一次只有一个。** 多了就 409，不排队——排队会让协调者那边的
-    /// 并发上限失效：它以为派出去的都在跑，实际有几个在这儿排着。
-    std::shared_ptr<Live> current;
-    std::string current_id;
+    /// 手上正在跑的那几件，按任务 id。
+    ///
+    /// **满了就 409，不排队**——排队会让协调者那边的并发上限失效：
+    /// 它以为派出去的都在跑，实际有几个在这儿排着。
+    ///
+    /// ⚠️ **槽数不是 1。** 2026-09-17 之前这儿写死一件，那对
+    /// `--worker` 是对的（一个进程绑一张卡）。可主程序也挂这套接口之后
+    /// （一台机器一个进程、一条连接），**一台双卡机就成了单槽节点**——
+    /// 派活那头的首帧池和出片池各拿着同一个 URL，第二个任务当场 409。
+    /// 实撞：19 镜栽在「工作进程 … 正忙。**这不该发生**」上。
+    /// 槽数跟着卡数走，见 slots 的赋值处。
+    std::map<std::string, std::shared_ptr<Live>> running;
+    std::size_t slots = 1;
     std::atomic<std::uint64_t> next_id{1};
 };
 
@@ -112,7 +121,7 @@ void mount_worker_api_impl(crow::SimpleApp& app,
         std::lock_guard lg(state->mu);
         return json_res({{"ok", true},
                          {"gpu", opts.gpu},
-                         {"busy", state->current != nullptr}});
+                         {"busy", state->running.size() >= state->slots}});
     });
 
     // ---- 装模型：让派活那头能指挥这台去补齐 ----
@@ -253,7 +262,7 @@ void mount_worker_api_impl(crow::SimpleApp& app,
             }
 
             std::lock_guard lg(state->mu);
-            if (state->current) {
+            if (state->running.size() >= state->slots) {
                 // **不排队。** 见文件头。
                 return json_res({{"detail", "正忙"}, {"busy", true}}, 409);
             }
@@ -300,8 +309,7 @@ void mount_worker_api_impl(crow::SimpleApp& app,
                 live->progress.result = result;
             }).detach();
 
-            state->current = live;
-            state->current_id = id;
+            state->running[id] = live;
             return json_res({{"id", id}}, 202);
         });
 
@@ -309,14 +317,14 @@ void mount_worker_api_impl(crow::SimpleApp& app,
         [state, gate](const crow::request& req, const std::string& id) {
         if (auto deny = gate(req)) return std::move(*deny);
         std::lock_guard lg(state->mu);
-        if (!state->current || state->current_id != id) {
+        const auto it = state->running.find(id);
+        if (it == state->running.end()) {
             return json_res({{"detail", "没有这个任务"}}, 404);
         }
-        auto p = state->current->progress;
+        auto p = it->second->progress;
         if (p.state == "done" || p.state == "failed") {
             // 收完就放，好接下一个
-            state->current.reset();
-            state->current_id.clear();
+            state->running.erase(it);
         }
         // 预览只在问了、而且比它手里那张新时才带（几十 KB 一张，见
         // TaskProgress::preview）。没问的轮询一个字节都不多。
@@ -330,10 +338,11 @@ void mount_worker_api_impl(crow::SimpleApp& app,
             [state, gate](const crow::request& req, const std::string& id) {
             if (auto deny = gate(req)) return std::move(*deny);
             std::lock_guard lg(state->mu);
-            if (!state->current || state->current_id != id) {
+            const auto it = state->running.find(id);
+            if (it == state->running.end()) {
                 return json_res({{"detail", "没有这个任务"}}, 404);
             }
-            state->current->tok.request();
+            it->second->tok.request();
             return json_res({{"ok", true}});
         });
 
@@ -351,8 +360,20 @@ bool mount_worker_api(crow::SimpleApp& app, const config::Settings& settings,
     // 只探一次，理由同 run_worker：detect 会跑 nvidia-smi。
     static const auto profile =
         models::HardwareProfile::detect(settings.vram_gb_override);
-    // 一次只跑一件，和工作进程同一条规矩（见 State 上面那段）。
+    // **槽数跟着卡数走。**
+    //
+    // `--worker` 那条是一个进程绑一张卡，所以它一次只跑一件。主程序不一样：
+    // 它管着这台机器的全部卡（多卡时 WorkerFarm 给每张卡拉一个子进程），
+    // 而对外它只是**一个**节点、一条连接——这正是用户要的形状。
+    // 那么它能同时接的件数就该是卡数，否则一台双卡机在派活那头是单槽，
+    // 首帧池和出片池各拿着同一个 URL，第二个当场 409
+    // （2026-09-17 实撞，19 镜栽在「正忙。**这不该发生**」上）。
+    //
+    // 探不到卡就按 1：CPU 机上本来也只跑得动一件。
     static auto state = std::make_shared<State>();
+    state->slots = profile.gpu.has_value()
+                       ? static_cast<std::size_t>(std::max(1, profile.gpu->count))
+                       : 1;
     mount_worker_api_impl(app, settings, opts, profile, state);
     return true;
 }
@@ -455,19 +476,19 @@ bool run_worker(const config::Settings& settings, const WorkerOptions& opts) {
     // 最多等 30 秒，然后 _Exit：跳过所有析构。工作进程没有任何值得析构的
     // 东西——它的全部状态是内存里的模型缓存，进程一没就没了。
     {
-        std::shared_ptr<Live> running;
+        std::vector<std::shared_ptr<Live>> running;
         {
             std::lock_guard lg(state->mu);
-            running = state->current;
+            for (auto& [_, live] : state->running) running.push_back(live);
         }
-        if (running) {
-            running->tok.request();
+        for (const auto& one : running) {
+            one->tok.request();
             const auto deadline =
                 std::chrono::steady_clock::now() + std::chrono::seconds(30);
             for (;;) {
                 {
                     std::lock_guard lg(state->mu);
-                    const auto& st = running->progress.state;
+                    const auto& st = one->progress.state;
                     if (st == "done" || st == "failed") break;
                 }
                 if (std::chrono::steady_clock::now() > deadline) break;
