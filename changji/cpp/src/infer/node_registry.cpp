@@ -1,5 +1,7 @@
 #include "infer/node_registry.hpp"
 
+#include <thread>
+
 #include "config/runtime.hpp"
 #include "infer/local_exec.hpp"
 #include "infer/node_prefs.hpp"
@@ -84,15 +86,32 @@ NodeState local_node(const config::Settings& s) {
 std::vector<NodeState> NodeRegistry::snapshot(const config::Settings& s,
                                               std::chrono::seconds max_age) {
     std::vector<NodeState> out;
+    bool stale = false;
     {
         std::lock_guard lg(mu_);
         const auto age = std::chrono::steady_clock::now() - fetched_at_;
-        if (!nodes_.empty() && age < max_age) out = nodes_;
-    }
-    if (out.empty()) {
-        refresh(s);
-        std::lock_guard lg(mu_);
         out = nodes_;
+        stale = nodes_.empty() || age >= max_age;
+    }
+    if (stale) {
+        if (out.empty()) {
+            // 手上一份都没有，只能等这一趟。
+            refresh(s);
+            std::lock_guard lg(mu_);
+            out = nodes_;
+        } else if (!refreshing_.exchange(true)) {
+            // **有旧的就先给旧的，刷新放后台。** 理由见头文件：关着的机器
+            // 一定会走满探活超时，而那是每一次请求都要付的。
+            std::thread([this, s] {
+                try {
+                    refresh(s);
+                } catch (...) {
+                    // 刷不动就保持上一份，下一拍再试。别让一条后台线程
+                    // 把整个进程带走。
+                }
+                refreshing_.store(false);
+            }).detach();
+        }
     }
 
     // **开关不进缓存，每次现算。** 缓存的是"问出来的事实"（在线没有、
@@ -107,93 +126,134 @@ std::vector<NodeState> NodeRegistry::snapshot(const config::Settings& s,
     return out;
 }
 
-void NodeRegistry::refresh(const config::Settings& s) {
-    std::vector<NodeState> fresh;
-    fresh.push_back(local_node(s));
+namespace {
 
-    for (const config::PeerNodeConfig& cfg : s.peer.nodes) {
-        NodeState n;
-        n.url = cfg.url;
-        n.name = cfg.url;   // 连上了再换成它自报的名字
-        std::string complaint;
-        // 配置里那份是锁着的：改它要动配置文件。界面上点的那份在
-        // snapshot 里合进来。
-        n.off_locked = parse_off(cfg.off, complaint);
-        n.off = n.off_locked;
+/// 问一台机器的 /status，填出它那一行。**纯粹一台，不碰别人**——
+/// 下面要拿它一台开一条线程。
+NodeState probe_peer(const config::Settings& s,
+                     const config::PeerNodeConfig& cfg) {
+    NodeState n;
+    n.url = cfg.url;
+    n.name = cfg.url;   // 连上了再换成它自报的名字
+    std::string complaint;
+    // 配置里那份是锁着的：改它要动配置文件。界面上点的那份在
+    // snapshot 里合进来。
+    n.off_locked = parse_off(cfg.off, complaint);
+    n.off = n.off_locked;
 
-        const auto [origin, prefix] = split_url(cfg.url);
-        httplib::Client cli(origin);
-        cli.set_connection_timeout(kProbeTimeoutS, 0);
-        cli.set_read_timeout(kProbeTimeoutS, 0);
-        const std::string token = cfg.token.empty() ? s.peer.token : cfg.token;
-        if (!token.empty()) cli.set_bearer_token_auth(token);
+    const auto [origin, prefix] = split_url(cfg.url);
+    httplib::Client cli(origin);
+    cli.set_connection_timeout(kProbeTimeoutS, 0);
+    cli.set_read_timeout(kProbeTimeoutS, 0);
+    const std::string token = cfg.token.empty() ? s.peer.token : cfg.token;
+    if (!token.empty()) cli.set_bearer_token_auth(token);
 
-        auto res = cli.Get(prefix + "/status");
-        if (!res) {
+    auto res = cli.Get(prefix + "/status");
+    if (!res) {
+        n.online = false;
+        n.error = "连不上：" + httplib::to_string(res.error());
+    } else if (res->status == 401) {
+        // **单独认这一种。** 「口令不对」和「连不上」要做的事完全不同，
+        // 而两边显示成同一句话的话，用户会去查网络。
+        n.online = false;
+        n.error = "口令不对。这台的 [peer].token 和你这边填的对不上";
+    } else if (res->status != 200) {
+        n.online = false;
+        n.error = "答的不是 200：" + std::to_string(res->status);
+    } else {
+        const auto js = json::parse(res->body, nullptr, false);
+        if (js.is_discarded()) {
             n.online = false;
-            n.error = "连不上：" + httplib::to_string(res.error());
-        } else if (res->status == 401) {
-            // **单独认这一种。** 「口令不对」和「连不上」要做的事完全不同，
-            // 而两边显示成同一句话的话，用户会去查网络。
-            n.online = false;
-            n.error = "口令不对。这台的 [peer].token 和你这边填的对不上";
-        } else if (res->status != 200) {
-            n.online = false;
-            n.error = "答的不是 200：" + std::to_string(res->status);
-        } else {
-            const auto js = json::parse(res->body, nullptr, false);
-            if (js.is_discarded()) {
-                n.online = false;
-                // **最常犯的那个错要单独认出来。** 理由同上面 401 那一条。
-                //
-                // 用户手上刚装好、刚在浏览器里打开的那一个，就是完整服务
-                // （`changji --port 8080`）。把它的地址填到这张表里是第一
-                // 反应——而完整服务的 `/status` 落在前端的兜底路由上，
-                // 回的是 200 + 那张 index.html。于是这里解析失败，原来一律
-                // 说「那头多半不是 changji」：**结论正好说反了**，对面正是
-                // changji，只是起错了模式。用户照这句话去查地址、查端口、
-                // 查防火墙，而要改的是那台的起法。
-                if (looks_like_webapp(res->body)) {
-                    n.error =
-                        "这台起的是完整服务，不是工作进程。派活要的是 "
-                        "`changji --worker --port 9101`（只算不发界面）；"
-                        "现在这个端口上是网页界面，填它没用";
-                } else {
-                    n.error = "答的不是 JSON，那头多半不是 changji";
-                }
+            // **最常犯的那个错要单独认出来。** 理由同上面 401 那一条。
+            //
+            // 用户手上刚装好、刚在浏览器里打开的那一个，就是完整服务
+            // （`changji --port 8080`）。把它的地址填到这张表里是第一
+            // 反应——而完整服务的 `/status` 落在前端的兜底路由上，
+            // 回的是 200 + 那张 index.html。于是这里解析失败，原来一律
+            // 说「那头多半不是 changji」：**结论正好说反了**，对面正是
+            // changji，只是起错了模式。用户照这句话去查地址、查端口、
+            // 查防火墙，而要改的是那台的起法。
+            if (looks_like_webapp(res->body)) {
+                n.error =
+                    "这台起的是完整服务，不是工作进程。派活要的是 "
+                    "`changji --worker --port 9101`（只算不发界面）；"
+                    "现在这个端口上是网页界面，填它没用";
             } else {
-                n.online = true;
-                n.name = js.value("name", cfg.url);
-                n.busy = js.value("busy", false);
-                // 那台同时收得下几件。没报（老版本）按 1。
-                n.slots = std::max<std::size_t>(
-                    1, js.value("slots", std::size_t{1}));
-                if (js.contains("capabilities") &&
-                    js["capabilities"].is_array()) {
-                    for (const auto& item : js["capabilities"]) {
-                        const auto c = capability_from(item.value("cap", ""));
-                        if (!c) continue;
-                        if (item.value("able", false)) {
-                            n.able.insert(*c);
-                        } else {
-                            // **那句话得跟着一起过来。** 它是那台自己算的
-                            // （缺哪个文件、编没编进去，只有它知道），这边
-                            // 除了原样传没有别的办法补出来。
-                            n.why[*c] = item.value("why", std::string());
-                        }
+                n.error = "答的不是 JSON，那头多半不是 changji";
+            }
+        } else {
+            n.online = true;
+            n.name = js.value("name", cfg.url);
+            n.busy = js.value("busy", false);
+            // 那台同时收得下几件。没报（老版本）按 1。
+            n.slots = std::max<std::size_t>(
+                1, js.value("slots", std::size_t{1}));
+            if (js.contains("capabilities") &&
+                js["capabilities"].is_array()) {
+                for (const auto& item : js["capabilities"]) {
+                    const auto c = capability_from(item.value("cap", ""));
+                    if (!c) continue;
+                    if (item.value("able", false)) {
+                        n.able.insert(*c);
+                    } else {
+                        // **那句话得跟着一起过来。** 它是那台自己算的
+                        // （缺哪个文件、编没编进去，只有它知道），这边
+                        // 除了原样传没有别的办法补出来。
+                        n.why[*c] = item.value("why", std::string());
                     }
                 }
             }
         }
-        if (!complaint.empty()) {
-            n.error = n.error.empty() ? complaint : n.error + "；" + complaint;
-        }
-        fresh.push_back(std::move(n));
     }
+    if (!complaint.empty()) {
+        n.error = n.error.empty() ? complaint : n.error + "；" + complaint;
+    }
+    return n;
+}
+
+}  // namespace
+
+void NodeRegistry::refresh(const config::Settings& s) {
+    std::vector<NodeState> fresh;
+    fresh.push_back(local_node(s));
+
+    // **并行问，不要一台一台排队。**
+    //
+    // 每台都是一次跨网 HTTP，探活超时 kProbeTimeoutS 秒。串着问的话总时间是
+    // **加起来**：2026-09-17 实测一台本机加一台跨境远程，`/api/nodes` 要
+    // 3.2 秒，而设置页开着就等它——那一页恰恰是"出事了才打开"的那一页。
+    // 再加一台机器就再加一份（用户 2026-09-16 问过「再加一个电脑怎么分配
+    // 任务」，加机器是常态）。
+    //
+    // 并行之后总时间是**最慢那一台**。顺序照配置里的顺序，不按谁先回来
+    // ——那张表上的行不该每次刷新都跳。
+    const auto& peers = s.peer.nodes;
+    std::vector<NodeState> got(peers.size());
+    {
+        std::vector<std::thread> pool;
+        pool.reserve(peers.size());
+        for (std::size_t i = 0; i < peers.size(); ++i) {
+            pool.emplace_back([&s, &peers, &got, i] {
+                got[i] = probe_peer(s, peers[i]);
+            });
+        }
+        for (auto& t : pool) t.join();
+    }
+    for (auto& n : got) fresh.push_back(std::move(n));
 
     std::lock_guard lg(mu_);
     nodes_ = std::move(fresh);
     fetched_at_ = std::chrono::steady_clock::now();
+}
+void NodeRegistry::warm(const config::Settings& s) {
+    if (refreshing_.exchange(true)) return;
+    std::thread([this, s] {
+        try {
+            refresh(s);
+        } catch (...) {
+        }
+        refreshing_.store(false);
+    }).detach();
 }
 
 NodeRegistry& node_registry() {

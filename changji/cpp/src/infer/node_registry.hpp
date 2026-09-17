@@ -13,6 +13,7 @@
 // 缓存 + 按需刷新：问一遍要发几个 HTTP，页面每秒刷一次的话纯属给对面
 // 添乱；而缓存太久的话，一台刚上线的机器要等半天才出现在表上。
 
+#include <atomic>
 #include <chrono>
 #include <mutex>
 #include <string>
@@ -30,7 +31,14 @@ public:
     /// 默认缓存多久。5 秒：页面点开时基本是新的，连着刷也不会把对面问烦。
     static constexpr std::chrono::seconds kDefaultMaxAge{5};
 
-    /// 拿一份快照，超过 `max_age` 就先刷一遍。
+    /// 拿一份快照。
+    ///
+    /// **过期了先把旧的给出去，刷新放后台。** 只有手上一份都没有时才等。
+    ///
+    /// ⚠️ 等一趟的代价是"最慢那台的超时"，而**关着的机器一定会走满超时**：
+    /// 2026-09-17 实测远端那台关着，`/api/nodes` 每次 3.2 秒——而设置页开着
+    /// 就等它，那一页恰恰是"出事了才打开"的那一页。旧数据最多旧五秒，
+    /// 而且下一拍就新了；等三秒是每一次都要付。
     std::vector<NodeState> snapshot(
         const config::Settings& s,
         std::chrono::seconds max_age = kDefaultMaxAge);
@@ -38,10 +46,16 @@ public:
     /// 不管缓存，现在就问一遍。配置改了之后要调它。
     void refresh(const config::Settings& s);
 
+    /// 起服务时在后台先问一遍，别让第一个开页面的人等。
+    void warm(const config::Settings& s);
+
 private:
     mutable std::mutex mu_;
     std::vector<NodeState> nodes_;
     std::chrono::steady_clock::time_point fetched_at_{};
+    /// 后台已经有一趟在刷了。**不加这个的话每次请求都开一条线程**——
+    /// 页面那几处两秒一拍，关着的那台又要三秒，线程会越堆越多。
+    std::atomic<bool> refreshing_{false};
 };
 
 /// 进程内那一份。

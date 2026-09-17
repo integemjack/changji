@@ -375,6 +375,11 @@ void run(const config::Settings& settings, const Options& opts) {
     // 界面上说得出来（age_s）。
     sysstat::start_sampler();
 
+    // 机器表也在起服务时先问一遍。**关着的那台要走满探活超时**（实测
+    // 3.2 秒），不预热的话第一个打开设置页的人就得等它——而那一页恰恰是
+    // "出事了才打开"的那一页。和上面多卡子进程预热是同一条理由。
+    infer::node_registry().warm(settings);
+
     // 停的方式：run() 回来后析构，析构里先立旗再 join。
     // 睡眠切成 100ms 一段，Ctrl+C 之后最多再等零点一秒。
     std::atomic<bool> stop_pump{false};
