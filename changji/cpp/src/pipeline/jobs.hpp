@@ -299,6 +299,19 @@ public:
     /// 请求取消。没在跑返回 false，对应 Python 的 {"stopped": false}。
     bool cancel(JobKind kind);
 
+    /// 按**账本上那一行的 id** 取消。找不到对应的槽返回 false。
+    ///
+    /// **给任务页面上那个叉用的。** 那个叉走 `pipeline::cancel_task(id)`，
+    /// 而它只点亮那一行自己的令牌——长跑这一族的 worker 查的是
+    /// `p.cancelled()`，也就是**槽**上那个令牌。两个不同的对象，于是叉按
+    /// 下去行上写着"正在停…"，活照跑。2026-09-17 实测：批量补分镜按了叉，
+    /// 三十多分钟一直跑到自己结束。
+    ///
+    /// 链接那条（jobs.cpp 里 `act.task().token().link(&slot.token)`）方向是
+    /// 反的：它管的是"顶栏按停也能停这一行"，反过来管不着。而 link 不能对
+    /// 着挂回去——两个令牌互指，`cancelled()` 会无限递归。
+    bool cancel_by_task(std::uint64_t task_id);
+
     /// 快照。形状与 Python 侧对应的 State.snapshot() 一致。
     nlohmann::json snapshot(JobKind kind) const;
 

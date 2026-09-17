@@ -303,11 +303,25 @@ void set_task_note(std::uint64_t id, std::string note) {
 }
 
 bool cancel_task(std::uint64_t id) {
-    Board& b = board();
-    std::lock_guard lg(b.mu);
-    auto it = b.live.find(id);
-    if (it == b.live.end()) return false;
-    it->second->tok.request();
+    // **长跑那一族要多走一步。** 这儿点亮的是行自己的令牌，而长跑的 worker
+    // 查的是**槽**上那个（`JobProgress::cancelled()`）——只点行的话，叉按下去
+    // 行上写着"正在停…"，活照跑。2026-09-17 实测：批量补分镜按了叉，三十多
+    // 分钟一直跑到自己结束，而长跑正是最需要能停的那一种。
+    //
+    // 短活那一族不用：它们的令牌由 `CancelLink` 挂在这一行下面（见
+    // activity.hpp），点亮这一个就够。
+    bool long_job = false;
+    {
+        Board& b = board();
+        std::lock_guard lg(b.mu);
+        auto it = b.live.find(id);
+        if (it == b.live.end()) return false;
+        it->second->tok.request();
+        long_job = it->second->long_job;
+    }
+    // **出了锁再喊。** 任务表那头自己有一把锁，套着 board 那把进去就是两把
+    // 锁的固定顺序，早晚和别处撞上。
+    if (long_job) jobs().cancel_by_task(id);
     return true;
 }
 

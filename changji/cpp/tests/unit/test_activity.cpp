@@ -8,11 +8,15 @@
 
 #include <doctest/doctest.h>
 
+#include <atomic>
+#include <chrono>
+#include <cstdint>
 #include <string>
 #include <thread>
 #include <vector>
 
 #include "pipeline/activity.hpp"
+#include "pipeline/jobs.hpp"
 #include "pipeline/task_board.hpp"
 
 using changji::pipeline::Activity;
@@ -411,4 +415,65 @@ TEST_CASE("思考那个数报的是字，不是字节") {
         CHECK(r.value("thinking_chars", 0) == 7);   // 不是 21
     }
     CHECK(seen);
+}
+
+// ---------------------------------------------------------------------------
+// 任务页面上长跑那一行的叉
+//
+// 短活那一族靠 CancelLink 接好了。长跑这一族的链接方向是**反的**：
+// jobs.cpp 里 `act.task().token().link(&slot.token)` 管的是"顶栏按停也能停
+// 这一行"，而任务页面上那一行的叉点的是行自己的令牌，长跑的 worker 查的是
+// 槽上那个，从来不读行上这个。
+//
+// 2026-09-17 实测的坏样子：批量补分镜按了叉，行上写着"正在停…"，三十多分钟
+// 一直跑到自己结束。长跑正是最需要能停的那一种。
+// ---------------------------------------------------------------------------
+
+TEST_CASE("长跑那一行的叉，按下去要真的停") {
+    auto& jt = pipeline::jobs();
+    std::atomic<bool> saw_cancel{false};
+    std::atomic<bool> started{false};
+
+    REQUIRE(jt.start(
+        pipeline::JobKind::Write, "",
+        [&](pipeline::JobProgress& p) {
+            started = true;
+            // 真实的长跑就是这个形状：每个检查点问一次 p.cancelled()。
+            for (int i = 0; i < 2000; ++i) {
+                if (p.cancelled()) {
+                    saw_cancel = true;
+                    return;
+                }
+                std::this_thread::sleep_for(std::chrono::milliseconds(5));
+            }
+        },
+        "停了", "/tmp/cancel-long", "写整季正文"));
+
+    // **等它登记上账本再找那一行。** 起线程和开 Activity 之间有个窗口，
+    // 上来就查会偶发查不到（第一版就是这么飘的）。
+    std::uint64_t row_id = 0;
+    for (int i = 0; i < 400 && row_id == 0; ++i) {
+        // ⚠️ **先落地再遍历。** `task_board()` 回的是临时对象，
+        // `for (auto& r : task_board(...).at("running"))` 绑的是它内部的
+        // 引用，而那个临时在整条表达式结束时就析构了——遍历的是悬空内存，
+        // 表现是"行明明在账本里，却一条都数不出来"。
+        const nlohmann::json board = pipeline::task_board("/tmp/cancel-long");
+        for (const auto& r : board.at("running")) {
+            if (r.value("title", std::string{}) == "写整季正文") {
+                row_id = r.value("id", std::uint64_t{0});
+            }
+        }
+        if (row_id == 0) std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    REQUIRE(started);
+    REQUIRE(row_id != 0);
+
+    // 这一下就是任务页面上那个叉。
+    CHECK(pipeline::cancel_task(row_id));
+
+    for (int i = 0; i < 400 && !saw_cancel; ++i) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    CHECK(saw_cancel);
+    jt.wait_idle();
 }

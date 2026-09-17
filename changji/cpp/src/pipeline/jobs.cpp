@@ -348,6 +348,21 @@ std::vector<std::string> JobTable::pending(JobKind kind) const {
     return slot(kind).state.pending;
 }
 
+bool JobTable::cancel_by_task(std::uint64_t task_id) {
+    if (task_id == 0) return false;
+    for (const JobKind k : {JobKind::Run, JobKind::Write}) {
+        bool hit = false;
+        {
+            // **查完就放锁。** 下面 cancel() 自己要拿同一把锁，
+            // 攥着进去就是自锁。
+            std::lock_guard lg(mu_);
+            hit = slot(k).task_id == task_id;
+        }
+        if (hit) return cancel(k);
+    }
+    return false;
+}
+
 json JobTable::running_jobs() const {
     std::lock_guard lg(mu_);
     json out = json::array();
