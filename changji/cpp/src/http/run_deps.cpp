@@ -314,6 +314,10 @@ RunDeps default_run_deps() {
                     with_tokens(remote_tts), local_runner, s.models.pick)) {
                 b.tts = stages::TTSBackend{"peer", tts_pool->tts_synthesizer(),
                                            {}};
+                // **池有几个位置就同时跑几镜。** 不带这一句的话配音那一层
+                // 逐镜串行，池里第二个位置从头闲到尾——一台双卡机只有一张
+                // 卡在配音。本机那条 TTS 不走这儿，保持 1。
+                b.audio_lanes = static_cast<int>(tts_pool->lanes());
                 b.keepalive.push_back(tts_pool);
             }
         }

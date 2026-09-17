@@ -9,6 +9,9 @@
 //   **锁定时长**——有台词的镜头向上吸附，没台词的不动。
 
 #include <doctest/doctest.h>
+#include <mutex>
+#include <thread>
+#include <atomic>
 
 #include <nlohmann/json.hpp>
 #include <memory>
@@ -506,4 +509,107 @@ TEST_CASE("配音阶段的时长回写和状态变化和 Python 一样") {
             }
         }
     }
+}
+
+TEST_CASE("配音并发：几路一起跑，结果和串行一模一样") {
+    // 用户 2026-09-17：「配音是不是没有走多 gpu」。配音早就走池
+    // （run_deps.cpp 的 tts_pool），可这一层写死串行，一台双卡机上第二个
+    // 位置从头闲到尾。
+    //
+    // 并发的风险在**写回**：process_shot 就地改台词（重切）和时长。
+    // 所以并行那一段只动副本，写回等收完在调用线程上按原顺序做。
+    // 这一条钉的就是"并发跑出来的和串行跑出来的一样"。
+    const auto paths = make_paths("并发");
+
+    std::atomic<int> live{0};
+    std::atomic<int> peak{0};
+    stages::TTSBackend b;
+    b.synthesize = [&](const std::string&, const fs::path& out,
+                       const std::optional<std::string>&, const std::string&,
+                       double) -> stages::SynthesisResult {
+        const int now = ++live;
+        int want = peak.load();
+        while (now > want && !peak.compare_exchange_weak(want, now)) {}
+        std::this_thread::sleep_for(std::chrono::milliseconds(40));
+        --live;
+        stages::SynthesisResult r;
+        r.duration_s = 1.0;
+        stages::write_silence(out, 1.0, 24000);
+        r.audio_path = out;
+        return r;
+    };
+
+    const auto go = [&](int lanes, std::vector<models::Shot>& owned) {
+        std::vector<models::Shot*> shots;
+        for (auto& s : owned) shots.push_back(&s);
+        stages::AudioStage stage(b, config::TTSConfig{}, paths);
+        pipeline::JobTable table;
+        pipeline::CancelToken tok;
+        std::vector<stages::ShotAudioPlan> plans;
+        table.start(pipeline::JobKind::Run, "ep01",
+                    [&](pipeline::JobProgress& p) {
+                        plans = stage.run(shots, make_assets(), p, tok, lanes);
+                    });
+        table.wait_idle();
+        return plans;
+    };
+
+    std::vector<models::Shot> a = {make_shot("sh001", {line("第一句")}),
+                                   make_shot("sh002", {line("第二句")}),
+                                   make_shot("sh003", {line("第三句")}),
+                                   make_shot("sh004", {line("第四句")})};
+    std::vector<models::Shot> b2 = a;   // 同一批，串行再跑一遍
+
+    const auto par = go(3, a);
+    CHECK(peak.load() > 1);             // 真的几路一起在跑
+    const auto seq = go(1, b2);
+
+    REQUIRE(par.size() == seq.size());
+    REQUIRE(par.size() == 4);
+    for (std::size_t i = 0; i < a.size(); ++i) {
+        CAPTURE(i);
+        // 写回按原顺序，一镜不错位
+        CHECK(a[i].shot_id == b2[i].shot_id);
+        CHECK(a[i].status == b2[i].status);
+        CHECK(a[i].duration_s == doctest::Approx(b2[i].duration_s));
+        CHECK(par[i].shot_id == seq[i].shot_id);
+    }
+}
+
+TEST_CASE("配音并发：开跑就取消，镜头一个字节都不许改") {
+    // 同 render / frames 那两层的教训（2026-09-17 丢过一集数据）：
+    // 没跑过的一格装的是默认值，照着写回去就是把镜头抹平。
+    const auto paths = make_paths("并发取消");
+    stages::TTSBackend b;
+    b.synthesize = [](const std::string&, const fs::path& out,
+                      const std::optional<std::string>&, const std::string&,
+                      double) -> stages::SynthesisResult {
+        stages::SynthesisResult r;
+        r.duration_s = 1.0;
+        stages::write_silence(out, 1.0, 24000);
+        r.audio_path = out;
+        return r;
+    };
+    auto s1 = make_shot("sh001", {line("一")});
+    auto s2 = make_shot("sh002", {line("二")});
+    const auto before1 = s1;
+    const auto before2 = s2;
+    std::vector<models::Shot*> shots = {&s1, &s2};
+
+    stages::AudioStage stage(b, config::TTSConfig{}, paths);
+    pipeline::JobTable table;
+    pipeline::CancelToken tok;
+    tok.request();
+    std::vector<stages::ShotAudioPlan> plans;
+    table.start(pipeline::JobKind::Run, "ep01", [&](pipeline::JobProgress& p) {
+        plans = stage.run(shots, make_assets(), p, tok, 2);
+    });
+    table.wait_idle();
+
+    CHECK(plans.empty());
+    CHECK(s1.shot_id == before1.shot_id);
+    CHECK_FALSE(s1.shot_id.empty());
+    CHECK(s1.status == before1.status);
+    CHECK(s2.shot_id == before2.shot_id);
+    CHECK(s2.status == before2.status);
 }

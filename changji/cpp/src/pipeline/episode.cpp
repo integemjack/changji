@@ -879,7 +879,9 @@ RunReport run_episode(const ProjectStore& store,
                 }
 
                 stages::AudioStage stage(backend, settings.tts, store.paths());
-                report.audio = stage.run(todo, assets, progress, tok);
+                // 同时跑几镜：走别人家的池时是池的位置数，本机那条是 1。
+                report.audio = stage.run(todo, assets, progress, tok,
+                                            backends.audio_lanes);
                 save();
 
                 // 台词太多装不下的镜头，在这里拆成连着的几镜。

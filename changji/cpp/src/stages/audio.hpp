@@ -13,6 +13,7 @@
 // 那 1 秒会盖到下一镜上去。这条逻辑要能在毫秒级反复跑才测得动。
 
 #include <functional>
+#include <mutex>
 #include <optional>
 #include <set>
 #include <string>
@@ -121,13 +122,23 @@ public:
 
     /// 给这些镜头配音，然后反推锁定时长。
     ///
-    /// **顺序跑，不并发。** Python 那边有个 concurrency 参数，但配音服务
-    /// 通常就一张卡，并发只会让每句都变慢；而且并发时 shot.dialogue
-    /// 被就地改，两条线程改同一个镜头的话结果是乱的。
+    /// `concurrency` 是同时跑几镜。**1 就是原来的行为**（逐镜串行），
+    /// 逐字节一样。
+    ///
+    /// 这儿原来写死串行，理由两条：「配音服务通常就一张卡，并发只会让每句
+    /// 都变慢」和「shot.dialogue 被就地改，两条线程改同一个镜头就乱了」。
+    /// 2026-09-17 第一条不成立了——配音早就走池（run_deps.cpp 里
+    /// `tts_pool`），一台双卡机报两个位置，串行就是**空着一张卡**。
+    /// 用户：「配音是不是没有走多 gpu」。
+    ///
+    /// 第二条是真的，所以照 frames / render 那两层的规矩来：并行那一段
+    /// **一个字节都不往 Shot 里写**，每一路在自己的副本上跑；写回等全部
+    /// 收完，在调用线程上按镜头原顺序做。
     std::vector<ShotAudioPlan> run(std::vector<models::Shot*>& shots,
                                    const models::AssetLibrary& assets,
                                    pipeline::JobProgress& progress,
-                                   pipeline::CancelToken& tok);
+                                   pipeline::CancelToken& tok,
+                                   int concurrency = 1);
 
     /// 处理一个镜头。公开是为了能单独测重切循环。
     ShotAudioPlan process_shot(models::Shot& shot,
@@ -151,7 +162,11 @@ private:
     config::TTSConfig config_;
     models::ProjectPaths paths_;
     std::optional<std::vector<std::string>> voices_;
+    /// 认不出的音色名。**并行时多路一起写**，所以带锁（见 unknown_mu_）。
     std::set<std::string> unknown_;
+    /// 只护 unknown_。voices_ 不靠它——开跑前先预热一次，
+    /// 那之后就只读（见 run 里那句 available_voices()）。
+    std::mutex unknown_mu_;
 };
 
 /// 一句台词最多重切几次。

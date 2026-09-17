@@ -41,6 +41,29 @@ const session = useSession()
 const ui = useUi()
 const { run, isBusy } = useAction()
 
+/**
+ * 把全项目还没剧本的章一次改编完。
+ *
+ * **2026-09-17 从镜头页搬来这儿。** 它原来和「批量补分镜」并排摆在镜头页
+ * 的动作条上，理由写着「和它右边那颗是一对」；那颗上一轮并进主按钮之后，
+ * 这条理由就没了，而它本身是剧本上的事——剧本在这一页。
+ * 动作条因此从五颗降到三颗（出分镜 / 只出首帧 / 出片）。
+ */
+async function scriptAll() {
+  const result = await run(
+    () => api.scriptAll({ project: session.projectPath, overwrite: false }),
+    { key: 'scriptAll' },
+  )
+  // 进度走"写"那个槽，所以看的是顶栏那块「AI 作业中」。
+  // **一章都不用改编不是错**：引擎回 200 + started:false（见 batch.cpp），
+  // 这儿平铺直叙说一句，别弹红框。
+  if (result && !result.episodes?.length) {
+    ui.info('每一章都已经有剧本了，没有要改编的')
+  } else if (result) {
+    ui.info(`正在改编 ${result.episodes.join('、')}，顶栏那块「AI 作业中」里看进度`)
+  }
+}
+
 const script = ref('')
 const savedScript = ref('')
 const ctx = ref(null)
@@ -445,6 +468,21 @@ async function save() {
       >
         <AppIcon name="sparkle" :size="14" />
         {{ writeLabel }}
+      </button>
+      <!-- 全项目还没剧本的章一次改编完。2026-09-17 从镜头页搬来，见
+           scriptAll 上那段。 -->
+      <button
+        class="btn btn--ghost btn--sm"
+        type="button"
+        :disabled="isBusy('scriptAll') || !session.episodes.length"
+        :title="
+          session.episodes.length
+            ? '把全项目还没有剧本的章一次改编完，已经有剧本的不动'
+            : '这部剧还一集都没有——章是自动对上集的，先去故事页写一份大纲'
+        "
+        @click="scriptAll"
+      >
+        {{ isBusy('scriptAll') ? '改编中…' : '批量改编' }}
       </button>
     </div>
 

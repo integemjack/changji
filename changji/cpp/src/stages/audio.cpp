@@ -1,6 +1,8 @@
 #include "stages/audio.hpp"
 
 #include <algorithm>
+#include <atomic>
+#include <thread>
 #include <cmath>
 #include <vector>
 #include <cstdint>
@@ -415,7 +417,10 @@ std::optional<std::string> AudioStage::voice_for(
         // 老项目里存的可能是 v_角色名 这种早年自造的 id，服务端不认。
         // 原样提交上去节点会拒绝，整条流水线断在配音这一步。
         // 退回自动挑选，让老项目还能跑，而不是让人先去挨个改一遍音色。
-        unknown_.insert(*wanted);
+        {
+            std::lock_guard<std::mutex> lg(unknown_mu_);
+            unknown_.insert(*wanted);
+        }
     }
 
     if (ch == nullptr) {
@@ -558,52 +563,104 @@ ShotAudioPlan AudioStage::process_shot(models::Shot& shot,
 std::vector<ShotAudioPlan> AudioStage::run(std::vector<models::Shot*>& shots,
                                            const models::AssetLibrary& assets,
                                            pipeline::JobProgress& progress,
-                                           pipeline::CancelToken& tok) {
-    std::vector<ShotAudioPlan> plans;
+                                           pipeline::CancelToken& tok,
+                                           int concurrency) {
     const int total = static_cast<int>(shots.size());
-    int index = 0;
 
-    for (models::Shot* shot : shots) {
-        ++index;
-        if (tok.cancelled()) break;
+    /// 一镜的结果。**只装数据，不碰 Shot**——写回统一放到后面在调用线程上做。
+    struct Done {
+        /// 这一格真跑过没有。**写回的唯一凭据。**
+        /// 同 render.cpp / frames.cpp 的 `Done::ran`：那两处 2026-09-17
+        /// 丢过一集的数据（没跑过的一格装的是默认构造的空壳，照样被写回去）。
+        /// 这一层从一开始就用正面判据。
+        bool ran = false;
+        bool ok = false;
+        ShotAudioPlan plan;
+        /// 跑完的那份副本。process_shot 就地改的是它，不是原镜头。
+        models::Shot shot;
+    };
+    std::vector<Done> done(shots.size());
 
-        {
-            pipeline::Event e;
-            e.stage = "audio";
-            e.kind = "progress";
-            e.current = index;
-            e.total = total;
-            e.shot_id = shot->shot_id;
-            e.message = "配音 " + shot->shot_id;
-            progress.report(e);
-        }
+    // **音色表开跑前先查一次。** 它是懒加载的（available_voices），
+    // 几路同时撞上去就是几次重复请求，还得给 voices_ 加锁；
+    // 预热之后那一份只读，锁一把都不用。
+    available_voices();
 
-        try {
-            plans.push_back(process_shot(*shot, assets, tok));
-            shot->status = models::ShotStatus::AUDIO_DONE;
+    // 同时跑几镜。上限是镜头数——池里两个位置而只有一镜时，起两条线程只是白占。
+    const int lanes = std::max(1, std::min(concurrency, total));
+    std::atomic<int> next{0};
+
+    const auto lane = [&] {
+        for (;;) {
+            const int i = next.fetch_add(1);
+            if (i >= total) return;
+            if (tok.cancelled()) continue;   // 剩下的都不跑，ran 留假
+
+            models::Shot* shot = shots[i];
+            const int index = i + 1;
+            // **本地副本。** process_shot 会就地改台词（重切）和时长，
+            // 并行那一段一个字节都不往 shots 里写。
+            models::Shot local = *shot;
+            done[i].ran = true;
+
+            {
+                pipeline::Event e;
+                e.stage = "audio";
+                e.kind = "progress";
+                e.current = index;
+                e.total = total;
+                e.shot_id = local.shot_id;
+                e.message = "配音 " + local.shot_id;
+                progress.report(e);
+            }
+
+            try {
+                done[i].plan = process_shot(local, assets, tok);
+                done[i].ok = true;
+                local.status = models::ShotStatus::AUDIO_DONE;
             // **这一镜完了要说一声。** 界面把"带 shot_id 的 progress"当成
             // "这一镜正在跑"，靠一条非 progress 的事件把它移出去。
             // 只报 progress 不报完成的话，这一镜会永远挂在"正在配音"上——
             // 一集二十二镜跑完配音之后，整面墙都写着「配音」，包括那些
             // 其实只是在等的。用户看到的就是这个（2026-09-10 报的）。
-            pipeline::Event done;
-            done.stage = "audio";
-            done.kind = "shot_done";
-            done.current = index;
-            done.total = total;
-            done.shot_id = shot->shot_id;
-            done.message = shot->shot_id + " 配音完成";
-            progress.report(done);
-        } catch (const std::exception& e) {
-            // 一镜配音失败不拖垮后面几镜。这一镜的状态不推进，
-            // 后面的闸门会看出"有台词但没有配音时长"。
-            pipeline::Event ev;
-            ev.stage = "audio";
-            ev.kind = "warn";
-            ev.shot_id = shot->shot_id;
-            ev.message = shot->shot_id + " 配音失败：" + e.what();
-            progress.report(ev);
+                pipeline::Event fin;
+                fin.stage = "audio";
+                fin.kind = "shot_done";
+                fin.current = index;
+                fin.total = total;
+                fin.shot_id = local.shot_id;
+                fin.message = local.shot_id + " 配音完成";
+                progress.report(fin);
+            } catch (const std::exception& e) {
+                // 一镜配音失败不拖垮后面几镜。这一镜的状态不推进，
+                // 后面的闸门会看出"有台词但没有配音时长"。
+                done[i].ok = false;
+                pipeline::Event ev;
+                ev.stage = "audio";
+                ev.kind = "warn";
+                ev.shot_id = local.shot_id;
+                ev.message = local.shot_id + " 配音失败：" + e.what();
+                progress.report(ev);
+            }
+            done[i].shot = std::move(local);
         }
+    };
+
+    if (lanes == 1) {
+        lane();   // 串行那条路一个线程都不起，行为和以前逐字节一样
+    } else {
+        std::vector<std::thread> pool;
+        pool.reserve(static_cast<std::size_t>(lanes));
+        for (int k = 0; k < lanes; ++k) pool.emplace_back(lane);
+        for (auto& t : pool) t.join();
+    }
+
+    // ---- 收。**在调用线程上按镜头原顺序改 Shot** ----
+    std::vector<ShotAudioPlan> plans;
+    for (int i = 0; i < total; ++i) {
+        if (!done[i].ran) continue;   // 没跑过的一格都不碰
+        *shots[i] = std::move(done[i].shot);
+        if (done[i].ok) plans.push_back(std::move(done[i].plan));
     }
 
     if (!unknown_.empty()) {
