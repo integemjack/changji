@@ -1,5 +1,7 @@
 #include "pipeline/task_board.hpp"
 
+#include "util/text.hpp"   // utf8_len：思考那个数报字，不报字节
+
 #include <algorithm>
 #include <chrono>
 #include <deque>
@@ -117,7 +119,15 @@ nlohmann::json to_json_locked(Board& b, const Row& r, Clock::time_point now) {
         // **思考只报有没有，不报正文**：一次写作的思考几千字，而这份账两秒
         // 推一次。页面点开那一下再单独去取（见 /api/task/thinking）。
         {"thinking", !r.thinking.empty()},
-        {"thinking_chars", static_cast<int>(r.thinking.size())},
+        // **报字，不是报字节。** `std::string::size()` 数的是字节，而
+        // 页面上那句写的是"想了 N 字"——中文一个字三个字节，这个数当场
+        // 虚报三倍。2026-09-17 实测一条大纲：这儿报 101817，真实是
+        // 66277 个字（中英混着想，所以是一点五倍不是三倍）。
+        //
+        // 只有这一处用它，而且只用在那句提示气泡上（TasksView）。增量
+        // 拉思考用的偏移量是另一个数（/api/task/thinking 的 end），
+        // **那个必须还是字节**，别顺手一起改。
+        {"thinking_chars", static_cast<int>(text::utf8_len(r.thinking))},
         // **按了叉之后它还在名单上待一会儿。**
         //
         // 排着的那几件是"有空位了才被领走"的，取消只是把令牌立起来——真正

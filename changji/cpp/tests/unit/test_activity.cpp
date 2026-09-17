@@ -392,3 +392,23 @@ TEST_CASE("没接的时候，停账本那一行停不了手上的活") {
     act.task().token().request();
     CHECK_FALSE(worker.cancelled());
 }
+
+TEST_CASE("思考那个数报的是字，不是字节") {
+    // 页面上那句写的是"想了 N 字"。std::string::size() 数字节，中文一个字
+    // 三个字节——照字节报的话当场虚报三倍。
+    // 2026-09-17 实测一条大纲：账本报 101817，真实 66277 个字。
+    Activity act{"outline", "/tmp/p", "", "正在出大纲"};
+    act.set_thinking("这一句十个字啊");   // 7 个字，21 字节
+
+    // **这个数在账本那一份里，不在顶栏那一份里**：running_activities()
+    // 报的是顶栏要的形状（没有 title 也没有 thinking_chars）。
+    const auto board = pipeline::task_board("/tmp/p");
+    bool seen = false;
+    for (const auto& r : board.value("running", nlohmann::json::array())) {
+        if (r.value("title", std::string{}) != "正在出大纲") continue;
+        seen = true;
+        CHECK(r.value("thinking", false));
+        CHECK(r.value("thinking_chars", 0) == 7);   // 不是 21
+    }
+    CHECK(seen);
+}
