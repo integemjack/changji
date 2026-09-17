@@ -241,13 +241,45 @@ std::string render_script_context(const Story& story, const EpisodePlan& plan,
         }
     }
 
+    // 本章在故事里的下标。前情提要和下面筛地点都要用。
+    const int first = [&] {
+        for (std::size_t i = 0; i < story.chapters.size(); ++i) {
+            if (story.chapters[i].chapter_id == plan.from_chapter) {
+                return static_cast<int>(i);
+            }
+        }
+        return 0;
+    }();
+
+    // ---- 地方：**只发这一章用得着的那几个** ----
+    //
+    // 同 stages/chapter_write.cpp 里【地方】那一段，理由一样：发全剧清单
+    // 等于请模型跑遍全城，然后只能拿话去拦。章自己带着 locations 名单，
+    // 照它筛。筛不出来（大纲那条路上这一栏可空）就照旧给全份。
     if (!story.locations.empty()) {
-        out += "\n【地方】（场次头只能使用这里的名字，一字不改）\n";
-        for (const auto& l : story.locations) {
-            out += l.name;
-            if (!l.what.empty()) out += "：" + l.what;
+        std::vector<const models::StoryLocation*> use;
+        if (first >= 0 && first < static_cast<int>(story.chapters.size())) {
+            const Chapter& me = story.chapters[static_cast<std::size_t>(first)];
+            for (const auto& l : story.locations) {
+                for (const auto& want : me.locations) {
+                    if (l.name == want) { use.push_back(&l); break; }
+                }
+            }
+        }
+        const bool all = use.empty();
+        if (all) {
+            for (const auto& l : story.locations) use.push_back(&l);
+        }
+        out += all
+                   ? "\n【地方】（整个故事的清单；场次头只能使用这里的名字，"
+                     "一字不改，这一章用得着哪一两个就只写那一两个）\n"
+                   : "\n【地方】（这一章用得着的；场次头只能使用这里的名字，"
+                     "一字不改）\n";
+        for (const models::StoryLocation* l : use) {
+            out += l->name;
+            if (!l->what.empty()) out += "：" + l->what;
             out += "。";
-            if (!l.when.empty()) out += l.when + "。";
+            if (!l->when.empty()) out += l->when + "。";
             out += "\n";
         }
     }
@@ -259,14 +291,6 @@ std::string render_script_context(const Story& story, const EpisodePlan& plan,
     //
     // **只取之前的。** 把后面的章也塞进去，模型会把还没发生的事当成已经
     // 发生的写——这个错在成片里表现成"剧透了自己"。
-    const int first = [&] {
-        for (std::size_t i = 0; i < story.chapters.size(); ++i) {
-            if (story.chapters[i].chapter_id == plan.from_chapter) {
-                return static_cast<int>(i);
-            }
-        }
-        return 0;
-    }();
     // **从最近的章往前攒，攒满为止。** 原来是从第 1 章往后拼再截尾——
     // 章一多，截掉的正是最近几章，而那几章恰恰是连贯最需要的。
     std::vector<std::string> recap_lines;

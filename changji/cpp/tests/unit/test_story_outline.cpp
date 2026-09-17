@@ -3868,3 +3868,56 @@ TEST_CASE("写章正文：章里没填地点时照旧给全份，提醒贴在名
     CHECK(p.find("天台") != std::string::npos);
     CHECK(p.find("便利店") != std::string::npos);
 }
+
+TEST_CASE("写剧本：【地方】只发这一章用得着的") {
+    // 同 stages/chapter_write.cpp 那一处：发全剧清单等于请模型跑遍全城，
+    // 然后只能拿话去拦。章自己带着 locations 名单，照它筛。
+    Story st = sample_story();
+    st.locations.clear();
+    for (const char* n : {"天台", "便利店", "停车场"}) {
+        models::StoryLocation l;
+        l.name = n;
+        st.locations.push_back(l);
+    }
+    REQUIRE(!st.chapters.empty());
+    st.chapters[0].locations = {"天台"};
+
+    const auto plan = stages::chapter_plan(st, st.chapters[0].chapter_id, 60.0);
+    const auto scenes = stages::chapter_scene_plan(st, plan);
+    const std::string p =
+        stages::render_script_context(st, plan, "", &scenes);
+
+    const std::size_t from = p.find("【地方】（这一章用得着的");
+    REQUIRE(from != std::string::npos);
+    std::size_t to = p.find("【", from + 3);
+    if (to == std::string::npos) to = p.size();
+    const std::string block = p.substr(from, to - from);
+    CHECK(block.find("天台") != std::string::npos);
+    CHECK(block.find("便利店") == std::string::npos);
+    CHECK(block.find("停车场") == std::string::npos);
+    // 场次头只能用清单里的名字这一条，筛不筛都要在
+    CHECK(block.find("一字不改") != std::string::npos);
+}
+
+TEST_CASE("写剧本：章里没填地点就照旧给全份") {
+    Story st = sample_story();
+    st.locations.clear();
+    for (const char* n : {"天台", "便利店"}) {
+        models::StoryLocation l;
+        l.name = n;
+        st.locations.push_back(l);
+    }
+    st.chapters[0].locations.clear();
+
+    const auto plan = stages::chapter_plan(st, st.chapters[0].chapter_id, 60.0);
+    const auto scenes = stages::chapter_scene_plan(st, plan);
+    const std::string p =
+        stages::render_script_context(st, plan, "", &scenes);
+    const std::size_t from = p.find("【地方】（整个故事的清单");
+    REQUIRE(from != std::string::npos);
+    std::size_t to = p.find("【", from + 3);
+    if (to == std::string::npos) to = p.size();
+    const std::string block = p.substr(from, to - from);
+    CHECK(block.find("天台") != std::string::npos);
+    CHECK(block.find("便利店") != std::string::npos);
+}
