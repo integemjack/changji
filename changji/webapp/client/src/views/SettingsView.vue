@@ -959,15 +959,29 @@ function scrollTo(id) {
 
       </div>
     </div>
+    <!-- 挑模型目录。**摆在根 div 里面，靠 Teleport 挂到 body 上。**
+
+         它是个遮罩弹窗，嵌在某一节里会被那一节的 overflow 裁掉，所以原来
+         和根 div **并排**摆在最外层——而那让这一页成了**多根组件**。
+
+         ⚠️ 代价大得离谱，2026-09-17 才查出来：App.vue 里路由那一层是
+         `<Transition name="fade" mode="out-in">`，而 `<Transition>` 要的是
+         **单个根元素**。多根的那一页离开时那次 leave 永远不结束，`out-in`
+         于是再也不放新的进来——**从设置页切到任何一页都是白的，而且之后
+         每一次跳页都白，直到整页刷新**（用户 2026-09-17：「在设置页面切到
+         别的页面要刷新才能看到内容」）。一个字的报错都没有。
+
+         Teleport 两头都满足：DOM 上它仍然挂在 body 底下、不被谁的 overflow
+         裁；模板这头它在根 div 里面，这一页回到单根。 -->
+    <Teleport to="body">
+      <DirPicker
+        :open="browsing"
+        :start="modelsDir"
+        @close="browsing = false"
+        @pick="pickDir"
+      />
+    </Teleport>
   </div>
-  <!-- 挑模型目录。挂在最外层：它是个遮罩弹窗，嵌在某一节里的话
-       会被那一节的 overflow 裁掉。 -->
-  <DirPicker
-    :open="browsing"
-    :start="modelsDir"
-    @close="browsing = false"
-    @pick="pickDir"
-  />
 </template>
 
 <style scoped>

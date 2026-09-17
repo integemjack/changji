@@ -305,7 +305,11 @@ export const api = {
   referenceQueue: (project) => get('/api/assets/references', { project }),
   saveStyle: (payload) => post('/api/style', payload),
   voices: (path) => get('/api/voices', { path }),
-  llmModels: () => get('/api/llm/models'),
+  // 不给参数就问配置里存着的那一家；给了 `base_url` 就问**那一家**。
+  // 换平台那一下必须给——那会儿配置里还是旧地址，照旧问回来的是上一家的
+  // 列表，而且一声不响。密钥走请求体，不进查询串。
+  llmModels: (probe) =>
+    probe ? post('/api/llm/models', probe) : get('/api/llm/models'),
   llmProviders: () => get('/api/llm/providers'),
 
   // ---- 引擎：分镜 ----

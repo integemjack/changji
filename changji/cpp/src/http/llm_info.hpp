@@ -50,6 +50,21 @@ using HttpGet = std::function<llm::HttpResponse(
 /// 问不到就返回空列表并说明原因，界面退回手打，不至于因为列不出来就没法填。
 ApiResult get_llm_models(const config::Settings& settings, const HttpGet& fetch);
 
+/// 同上，但**问指定的那一家**，不是配置里存着的那一家。
+///
+/// ⚠️ **换平台那一下必须用它。** 模型窗里挑了另一家之后，界面上的地址已经
+/// 换了，而配置里还是旧的——照旧问 `get_llm_models` 的话，回来的是**上一家
+/// 的模型列表**，而且一声不响（用户 2026-09-17：「大语言模型选择平台后无法
+/// 立即刷新模型列表」）。
+///
+/// `base_url` 留空就用配置里那个；`api_key` 留空也用配置里那把——刚换一家、
+/// 密钥还没填的时候，回来多半是 401，而那条路本来就返回"空列表加一句原因"。
+///
+/// **密钥只走请求体，不进查询串**：查询串会落进访问日志和浏览器历史。
+ApiResult post_llm_models(const nlohmann::json& body,
+                          const config::Settings& settings,
+                          const HttpGet& fetch);
+
 /// 用 cpp-httplib 发 GET。定义在 client_http.cpp 里。
 HttpGet default_http_get();
 

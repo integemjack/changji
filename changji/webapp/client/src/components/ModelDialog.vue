@@ -165,7 +165,17 @@ async function pickProvider(id) {
   const p = providers.value.find((x) => x.id === id)
   if (!p) return
   baseUrl.value = p.base_url
-  await reloadModels()
+  // ⚠️ **要带着新地址去问。**
+  //
+  // `/api/llm/models` 不带参数时读的是**配置里存着的**那一家，而这会儿配置
+  // 里还是旧的（换平台只改了这个框，还没按保存）。于是下拉里刷出来的是
+  // **上一家的模型**，一声不响——用户 2026-09-17：「大语言模型选择平台后
+  // 无法立即刷新模型列表」。
+  //
+  // 密钥也一起带上：换了一家，旧密钥多半不认，不带的话必然 401，而 401 那
+  // 条路回的是空列表。用户还没填新密钥时带的是空串，那就退回配置里那把，
+  // 照样是 401——但那时候屏幕上会有引擎给的原话，说得清楚。
+  await reloadModels({ base_url: p.base_url, api_key: apiKey.value.trim() })
 }
 
 const llmChoices = computed(() => {
@@ -358,9 +368,9 @@ watch(
  * 留着的话下拉里摆的是一串这家根本没有的名字，而点保存要到第一次生成
  * 才报错。
  */
-async function reloadModels() {
+async function reloadModels(probe) {
   try {
-    llm.value = await api.llmModels()
+    llm.value = await api.llmModels(probe)
     llmPick.value = llm.value.current || ''
     // **问不到也是 200。** llm_info.cpp 那三条失败（连不上 / 对面回
     // 4xx、5xx / 回的不是 JSON）一律「返回空列表加一句原因」，刻意不抛

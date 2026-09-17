@@ -102,6 +102,9 @@ Option none_option(const std::string& label, const std::string& note,
 // ---------------------------------------------------------------------------
 
 constexpr const char* kH3GgufRepo = "leejet/MiniMax-H3-GGUF";
+/// unsloth 那份把**裁过的 fl2va** 量到了更低的几档（leejet 只到 Q4_K_M）。
+/// 16 GB 的卡上要的就是这几档，见下面 kH3 表里那两条。
+constexpr const char* kH3SmallRepo = "unsloth/MiniMax-H3-GGUF";
 constexpr const char* kH3ComfyRepo = "Comfy-Org/MiniMax-H3";
 constexpr const char* kH3LoraRepo = "larryvrh/MiniMax-H3-Turbo-Lora";
 
@@ -137,6 +140,27 @@ constexpr H3Spec kH3[] = {
      40225724176ULL, 25},
     {"h3-pruned-q4_k_m", "MiniMax-H3 精简", "Q4_K_M",
      "minimax_h3_fl2va_pruned-Q4_K_M.gguf", kH3GgufRepo, 11420663904ULL, 20},
+    // ---- 16 GB 的卡（2026-09-17 用户要的）----
+    //
+    // ⚠️ **先说清楚 16 GB 上会发生什么，别让人以为加了这两档就快了。**
+    //
+    // `resident_vram` 算出来的门槛是**模型大小 + 15 GB 上下**（那 15 GB 是
+    // 视频解码和采样缓冲），所以**H3 没有任何一档能在 16 GB 上常驻显存**
+    // ——连 1 GB 的模型都要 16 GB。16 GB 上走的一定是"权重放内存"那条
+    //（`weights = smart` 自己会选 `cpu`），每一步从内存往显卡搬权重。
+    //
+    // 那这两档的意义在哪：**搬的东西少一半**。同样走流式，6.3 GiB 比
+    // 10.6 GiB 每步少搬四成多，而 PCIe 正是那条路的瓶颈（settings.hpp 里
+    // 那段实测：权重放内存时 GPU 利用率 18%，常驻是 82%）。在这之前 16 GB
+    // 的卡上 H3 最小只有 10.6 GiB 那一档可挑。
+    //
+    // **只收标准 K 量化，不收 unsloth 的 UD-*_XL 那几档**：那是它自己的
+    // 动态混合精度方案，我们没法确认 sd.cpp 读得对——而读不对这件事
+    // 没有任何报错（上面那段 fp8_scaled 的教训）。
+    {"h3-pruned-q3_k", "MiniMax-H3 精简", "Q3_K",
+     "minimax_h3_fl2va_pruned-Q3_K.gguf", kH3SmallRepo, 8759328864ULL, 16},
+    {"h3-pruned-q2_k", "MiniMax-H3 精简", "Q2_K",
+     "minimax_h3_fl2va_pruned-Q2_K.gguf", kH3SmallRepo, 6724190304ULL, 12},
 };
 
 constexpr const char* kWanFamilyNote =

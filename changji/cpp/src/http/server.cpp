@@ -1250,13 +1250,22 @@ void run(const config::Settings& settings, const Options& opts) {
         return json_response(get_llm_providers().body);
     });
 
-    CROW_ROUTE(app, "/api/llm/models")([] {
-        static const auto fetch = default_http_get();
-        auto r = guard([&] {
-            return get_llm_models(config::runtime().snapshot(), fetch);
-        });
-        return json_response(r.body, r.status);
-    });
+    // GET = 问配置里存着的那一家；POST = 问 body 里指定的那一家。
+    // **换平台那一下要用 POST**：那会儿配置里还是旧地址（见 llm_info.hpp）。
+    // 密钥只走请求体，不进查询串——查询串会落进访问日志和浏览器历史。
+    CROW_ROUTE(app, "/api/llm/models")
+        .methods(crow::HTTPMethod::GET, crow::HTTPMethod::POST)(
+            [](const crow::request& req) {
+                static const auto fetch = default_http_get();
+                auto r = guard([&] {
+                    const auto s = config::runtime().snapshot();
+                    if (req.method == crow::HTTPMethod::GET) {
+                        return get_llm_models(s, fetch);
+                    }
+                    return post_llm_models(parse_body(req.body), s, fetch);
+                });
+                return json_response(r.body, r.status);
+            });
 
     // ---- 根路径 ----
     //

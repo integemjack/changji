@@ -26,6 +26,27 @@ ApiResult get_llm_providers() {
     return {200, {{"providers", providers}}};
 }
 
+ApiResult post_llm_models(const nlohmann::json& body,
+                          const config::Settings& settings,
+                          const HttpGet& fetch) {
+    // 覆盖一份再走原来那条路：下面所有的判断（known_models 按地址给小抄、
+    // 四条失败路径的说法）都按"这一家"来，不用抄第二遍。
+    config::Settings s = settings;
+    if (body.is_object()) {
+        if (const auto it = body.find("base_url");
+            it != body.end() && it->is_string()) {
+            const std::string u = text::strip_ws(it->get<std::string>());
+            if (!u.empty()) s.llm.base_url = u;
+        }
+        if (const auto it = body.find("api_key");
+            it != body.end() && it->is_string()) {
+            const std::string k = text::strip_ws(it->get<std::string>());
+            if (!k.empty()) s.llm.api_key = k;
+        }
+    }
+    return get_llm_models(s, fetch);
+}
+
 ApiResult get_llm_models(const config::Settings& settings, const HttpGet& fetch) {
     const std::string url = settings.llm.base_url + "/models";
     const std::map<std::string, std::string> headers = {

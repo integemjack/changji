@@ -608,3 +608,38 @@ TEST_CASE("下全了没改名的 .part 启动时收编") {
     }
     fs::remove_all(dir);
 }
+
+TEST_CASE("H3 要有 16 GB 卡上挑得动的那几档") {
+    // 用户 2026-09-17：「minimax-h3 增加支持 16g 显存可用的模型」。
+    //
+    // ⚠️ **先说清 16 GB 上会发生什么**：`resident_vram` 算出来的门槛是
+    // 模型大小 + 15 GB 上下（那 15 GB 是视频解码和采样缓冲），所以 **H3 没有
+    // 任何一档能在 16 GB 上常驻显存**——连 1 GB 的模型都要 16 GB。16 GB 上
+    // 走的一定是"权重放内存"那条（`weights = smart` 自己会选 cpu）。
+    //
+    // 这几档的意义是**每一步搬的东西少一半**：同样走流式，6.3 GiB 比
+    // 10.6 GiB 少搬四成多，而 PCIe 正是那条路的瓶颈。在这之前 16 GB 的卡上
+    // H3 最小只有 10.6 GiB 那一档可挑。
+    const auto cat = setup::catalog();
+    const setup::Group* video = nullptr;
+    for (const auto& g : cat) {
+        if (g.key == "video") video = &g;
+    }
+    REQUIRE(video != nullptr);
+
+    double smallest = 1e18;
+    bool has_q3 = false, has_q2 = false;
+    for (const auto& o : video->options) {
+        if (o.family.rfind("MiniMax-H3", 0) != 0) continue;
+        if (o.quant == "Q3_K") has_q3 = true;
+        if (o.quant == "Q2_K") has_q2 = true;
+        // 扩散模型那一份的大小（第一个文件就是它，见 catalog.cpp）
+        if (!o.files.empty()) {
+            smallest = std::min(smallest, static_cast<double>(o.files[0].bytes));
+        }
+    }
+    CHECK(has_q3);
+    CHECK(has_q2);
+    // 最小那一档不该再是 10.6 GiB 那个
+    CHECK(smallest < 7.0 * 1024 * 1024 * 1024);
+}
