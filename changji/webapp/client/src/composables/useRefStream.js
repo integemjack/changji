@@ -59,6 +59,37 @@ const drawn = reactive({})
  * 一次一下，所以这里用一个全局的数，让所有图一起换代。
  */
 const touched = ref(0)
+/**
+ * 整批出图排到哪儿了。引擎那头的队列，原样搬过来。
+ *
+ * `{project, active, total, done, failed, queued, running:[{target,label}],
+ *   error, by_hand}`，没在跑时是 null。
+ *
+ * **这张表在引擎那头，不在这儿。** 原来是页面自己开几条道、自己数，于是
+ * 说不出还排着几张，两条道恰好都在同一个人身上时那一行还会显示成
+ * 「唐海、唐海」（用户 2026-09-17：「光作业中还显示同一个名字，排队被你
+ * 吃了？」）。现在页面只管画它收到的这一份。
+ */
+const queue = ref(null)
+/**
+ * target → 「排着还没开画」。
+ *
+ * 两种都算：**派出去了还在等位置的**（池开的路数比位置数多，见
+ * `infer::pool_lanes`）和**还没轮到的**。对看的人来说没区别——那一格就是
+ * 还没开始动。用户 2026-09-17：「明明没有开始的，不是应该显示等待中吗」。
+ *
+ * 一格一开画就从这儿掉出去（`live` 接手），画完两边都没有。
+ */
+const waiting = reactive({})
+
+/** 按最新一份队列重算 `waiting`。 */
+function setWaiting(msg) {
+  const now = new Set()
+  for (const r of msg?.running ?? []) if (!live[r.target]) now.add(r.target)
+  for (const r of msg?.pending ?? []) now.add(r.target)
+  for (const t of Object.keys(waiting)) if (!now.has(t)) delete waiting[t]
+  for (const t of now) waiting[t] = true
+}
 
 let sock = null
 let retry = null
@@ -77,6 +108,8 @@ let wsOk = false
 let wsTried = false
 /** 那条 watch 只挂一次。三个格子都会调 useRefStream()。 */
 let wired = false
+/** 最后一份队列快照，包括跑完那一份。页面靠它说「画好了 N 张」。 */
+const lastQueue = ref(null)
 
 function forget(target) {
   delete pct[target]
@@ -103,13 +136,25 @@ function connect() {
   sock = openJobSocket(
     'refs',
     (msg) => {
+      // **这一条不带 target**：它说的是整批，不是某一格。所以要在下面那句
+      // 「没有 target 就不看」之前接住。
+      if (msg.type === 'ref_queue') {
+        queue.value = msg.active ? msg : null
+        lastQueue.value = msg
+        setWaiting(msg.active ? msg : null)
+        return
+      }
       const t = msg.target
       if (!t) return
       if (msg.type === 'ref_progress') {
         live[t] = true
+        // 开画了就不再是"等着"。**这一下不能等下一份队列**：队列是每派出
+        // 一件才播一份，而一件要跑几十秒——那一格会顶着「等待中」画完。
+        delete waiting[t]
         pct[t] = msg.total > 0 ? Math.round((msg.current / msg.total) * 100) : 0
       } else if (msg.type === 'ref_preview') {
         live[t] = true
+        delete waiting[t]
         preview[t] = msg.image ?? ''
       } else if (msg.type === 'ref_done') {
         forget(t)
@@ -126,6 +171,10 @@ function connect() {
       wsOk = false
       wsTried = true
       for (const t of Object.keys(live)) forget(t)
+      // 队列那一行也松开：留着的话它会永远停在断线那一刻的数字上，
+      // 而那一批可能早画完了。重连之后引擎会再播一份。
+      queue.value = null
+      for (const t of Object.keys(waiting)) delete waiting[t]
       // 退路那边从零开始认：留着上一轮的话，接管的第一拍会把它们全当成
       // "画完了"，白白让三个格子各重拉一遍图。
       seen = new Set()
@@ -234,5 +283,5 @@ export function useRefStream() {
       },
     )
   }
-  return { pct, preview, live, finished, touch, bustOf, forgetAll }
+  return { pct, preview, live, waiting, finished, touch, bustOf, forgetAll, queue, lastQueue, setWaiting }
 }

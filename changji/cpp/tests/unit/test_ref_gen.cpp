@@ -12,8 +12,10 @@
 
 #include <filesystem>
 #include <fstream>
+#include <chrono>
 #include <functional>
 #include <string>
+#include <thread>
 
 #include <nlohmann/json.hpp>
 
@@ -143,13 +145,15 @@ TEST_CASE("画参考图走首帧那条后端：要基础权重、种子定死、
     stages::PromptBundle seen;
     std::string seen_shot;
     http::set_ref_renderer([&](const config::Settings&, const models::ProjectStore&) {
-        return [&](const models::Shot& shot, const stages::PromptBundle& prompts,
-                   const models::TierSpec&, const fs::path& dest,
-                   pipeline::CancelToken&, const infer::StepCallback&) {
+        http::RefBackend b;
+        b.render = [&](const models::Shot& shot, const stages::PromptBundle& prompts,
+                       const models::TierSpec&, const fs::path& dest,
+                       pipeline::CancelToken&, const infer::StepCallback&) {
             seen = prompts;
             seen_shot = shot.shot_id;
             std::ofstream(dest, std::ios::binary) << "png";
         };
+        return b;
     });
 
     const auto r = http::post_character_reference_generate(
@@ -188,4 +192,104 @@ TEST_CASE("「人按的停」那两句话必须还含着界面认的那两个词
             msg.find(changji::util::kStopToken2) != std::string::npos;
         CHECK_MESSAGE(hit, "界面那条正则认不出这句话了");
     }
+}
+
+// ---------------------------------------------------------------------------
+// 一键出图：队列在引擎这头
+// ---------------------------------------------------------------------------
+
+TEST_CASE("一键出图：一次交一整批，排着的那几张报得出来") {
+    // 用户 2026-09-17：「应该将所有图片放到队列里，然后一个一个分配才对」，
+    // 以及「明明没有开始的，不是应该显示等待中吗，还有后面名字都一样，谁
+    // 知道你在出哪个」。**那两句话问的都是同一件事：排队的那几张说不说得
+    // 出来。** 页面自己开几条道的那一版说不出——它手里只有"正在画的那几
+    // 张"。所以这儿钉住三样：整批画完、每一张的名字带位置、还没派出去的
+    // 那几张在快照里报得出来。
+    const fs::path root = fresh_copy("一键出图");
+    const models::ProjectStore store{root};
+    const std::string path = paths::to_utf8(root);
+
+    // 先把已有的参考图全撤掉，好让这一批真有活干。
+    {
+        auto assets = store.load_assets();
+        for (auto& [id, c] : assets.characters) {
+            c.ref_front.reset();
+            c.ref_three_quarter.reset();
+            c.ref_back.reset();
+        }
+        for (auto& [id, l] : assets.locations) l.ref_empty.reset();
+        store.save_assets(assets);
+    }
+    const auto before = store.load_assets();
+    const std::size_t want =
+        before.characters.size() * 3 + before.locations.size();
+    REQUIRE(want > 1);
+
+    // **慢一点的假后端**：真跑得太快的话，下面那次快照会落在"已经全画完"
+    // 上，而要看的正是"还排着几张"。
+    http::set_ref_renderer([&](const config::Settings&, const models::ProjectStore&) {
+        http::RefBackend b;
+        b.lanes = 1;   // 一条道，好让"排着的"确定地存在
+        b.render = [](const models::Shot&, const stages::PromptBundle&,
+                      const models::TierSpec&, const fs::path& dest,
+                      pipeline::CancelToken&, const infer::StepCallback&) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(60));
+            std::ofstream(dest, std::ios::binary) << "png";
+        };
+        return b;
+    });
+
+    const auto started = http::post_references_generate_all({{"project", path}});
+    CHECK(started.status == 202);
+    CHECK(started.body.at("total") == want);
+
+    // 跑着的时候问一次：**排着的那几张要报得出名字**。
+    bool saw_pending = false;
+    bool saw_label_with_slot = false;
+    for (int i = 0; i < 200; ++i) {
+        const auto snap = http::get_references_queue(path);
+        if (!snap.body.value("active", false)) break;
+        const auto pending = snap.body.value("pending", json::array());
+        if (!pending.empty()) {
+            saw_pending = true;
+            for (const auto& it : pending) {
+                CHECK(!it.at("target").get<std::string>().empty());
+                CHECK(!it.at("label").get<std::string>().empty());
+            }
+        }
+        for (const auto& it : snap.body.value("running", json::array())) {
+            // 「董平 正面」——**带位置**。只有名字的话，同一个人的三张在
+            // 那一行上长得一模一样（用户：「后面名字都一样」）。
+            const auto label = it.at("label").get<std::string>();
+            if (label.find(' ') != std::string::npos) saw_label_with_slot = true;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
+    CHECK(saw_pending);
+    CHECK(saw_label_with_slot);
+
+    // 等它跑完
+    for (int i = 0; i < 400; ++i) {
+        if (!http::get_references_queue(path).body.value("active", false)) break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
+    const auto done = http::get_references_queue(path);
+    CHECK(done.body.value("active", true) == false);
+    CHECK(done.body.value("done", std::size_t{0}) == want);
+    CHECK(done.body.value("failed", std::size_t{1}) == 0);
+
+    // 一张不缺了就该当场说"都齐了"，而不是再排一批空活。
+    const auto again = http::post_references_generate_all({{"project", path}});
+    CHECK(again.status == 200);
+    CHECK(again.body.at("total") == 0);
+
+    const auto after = store.load_assets();
+    for (const auto& [id, c] : after.characters) {
+        CHECK_MESSAGE(c.ref_front.has_value(), id);
+        CHECK_MESSAGE(c.ref_three_quarter.has_value(), id);
+        CHECK_MESSAGE(c.ref_back.has_value(), id);
+    }
+    for (const auto& [id, l] : after.locations) CHECK_MESSAGE(l.ref_empty.has_value(), id);
+
+    http::set_ref_renderer({});
 }

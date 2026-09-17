@@ -37,7 +37,17 @@ namespace changji::http {
 /// 「一键出图」整个不可用，而首帧却能派出去。server.cpp 启动时把
 /// default_run_deps().backends(...).frame 装进来；测试塞假的；没装时
 /// 退回进程内的 sd_renderer。
-using RefRendererProvider = std::function<stages::FrameRenderer(
+/// 一条出图后端，外加**它同时能接几件**。
+///
+/// 位置数和后端得一起给：只给后端的话，「一键出图」不知道该同时开几张，
+/// 而那正是 2026-09-17 那条「一键出图也没用多 gpu」的根子。
+struct RefBackend {
+    stages::FrameRenderer render;
+    /// 池里有几个位置。1 = 就地一张一张跑（单卡机、没搭池的测试）。
+    int lanes = 1;
+};
+
+using RefRendererProvider = std::function<RefBackend(
     const config::Settings&, const models::ProjectStore&)>;
 void set_ref_renderer(RefRendererProvider provider);
 
@@ -63,5 +73,38 @@ ApiResult post_character_reference_generate(const nlohmann::json& body);
 ///
 /// body: {project, location_id, seed?}。场景只有一张空景图，没有 slot。
 ApiResult post_location_reference_generate(const nlohmann::json& body);
+
+// ---------------------------------------------------------------------------
+// 「一键出图」：**队列在引擎这头**
+// ---------------------------------------------------------------------------
+//
+// 用户 2026-09-17：「应该将所有图片放到队列里，然后一个一个分配才对」。
+//
+// 原来这一圈在浏览器里：页面问一遍池里有几个位置，照着开几条道，每条道
+// 自己往下取下一张、各发各的 POST。三处不对：
+//
+//   1. **排队这件事没人记。** 页面手里只有"正在画的那几张"，说不出还排着
+//      几张；两条道恰好都在同一个人身上时，那一行显示成「唐海、唐海」，
+//      看着像卡住了（用户：「光作业中还显示同一个名字，排队被你吃了？」）。
+//   2. **关掉页面就散了。** 队列活在那个标签页的闭包里。
+//   3. **位置数是按下去那一刻的快照。** 中途多连一台机器不会多开一条道，
+//      掉一台也不会缩。
+//
+// 收到引擎这头之后：一次请求交一整批，引擎按池里的位置数**一件一件派**，
+// 派完一件补一件；页面只管订那条 `refs` 频道上的 `ref_queue`，上面写着
+// 「正在画哪几张、还排着几张、已经好了几张」。
+//
+// POST /api/assets/references —— body {project, force?}
+//   force 为真时连已有的一起重画。回 202 {total, started}；
+//   一张都不缺时回 200 {total: 0}；同一个项目已经在跑时回 409。
+ApiResult post_references_generate_all(const nlohmann::json& body);
+
+/// POST /api/assets/references/stop —— body {project}。整批停下。
+ApiResult post_references_generate_all_stop(const nlohmann::json& body);
+
+/// GET /api/assets/references —— 这一批现在跑到哪儿了。
+///
+/// **刷新过页面的人靠它把进度接回来**：`ref_queue` 是广播，错过就错过。
+ApiResult get_references_queue(const std::string& project);
 
 }  // namespace changji::http

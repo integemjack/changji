@@ -292,6 +292,11 @@ export const api = {
   clearLocationReference: (payload) => post('/api/location/reference/clear', payload),
   generateLocationReference: (payload) =>
     post('/api/location/reference/generate', payload),
+  // 「一键出图」：**一次把还缺的全交出去，队列在引擎那头**。
+  // 回 202 就走了，进度从 refs 频道上的 ref_queue 来。
+  generateAllReferences: (payload) => post('/api/assets/references', payload),
+  stopAllReferences: (payload) => post('/api/assets/references/stop', payload),
+  referenceQueue: (project) => get('/api/assets/references', { project }),
   saveStyle: (payload) => post('/api/style', payload),
   voices: (path) => get('/api/voices', { path }),
   llmModels: () => get('/api/llm/models'),

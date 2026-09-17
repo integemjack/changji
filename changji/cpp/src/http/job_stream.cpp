@@ -277,4 +277,10 @@ void ref_error(const std::string& target, const std::string& message) {
     ref_send(target, {{"type", "ref_error"}, {"message", message}});
 }
 
+void ref_queue(nlohmann::json state) {
+    state["type"] = "ref_queue";
+    state["job_id"] = kRefChannel;
+    ws::hub().broadcast(kRefChannel, state);
+}
+
 }  // namespace changji::http

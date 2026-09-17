@@ -1,7 +1,13 @@
 #include "http/ref_gen.hpp"
 
 #include <chrono>
+#include <condition_variable>
 #include <cstdint>
+#include <map>
+#include <mutex>
+#include <optional>
+#include <thread>
+#include <vector>
 #include <filesystem>
 #include <set>
 #include <string>
@@ -78,7 +84,8 @@ struct Rendered {
 /// 实测 5090 上多花一倍（544×928 约一分钟，1088×1920 要两分钟）。
 Rendered render_ref(const ProjectStore& store, const std::string& stem,
                     const std::string& positive, const std::string& negative,
-                    std::int64_t seed, const std::string& stream_id) {
+                    std::int64_t seed, const std::string& stream_id,
+                    const stages::FrameRenderer* shared = nullptr) {
     // **项目自己的 changji.toml 盖在全局上**，和跑流水线走同一条路。
     config::Settings settings = config::load_settings(store.root());
     HardwareProfile profile = config::runtime().profile();
@@ -125,9 +132,13 @@ Rendered render_ref(const ProjectStore& store, const std::string& stem,
     // 预览小图也靠这个 tag 挂到设定页对的那一格。
     Shot fake;
     fake.shot_id = stem;
+    // **整批那条把后端搭一次就传下来。** 搭一次要建池、探活、连每台机器，
+    // 一张一张各搭一次的话，十六张图就是十六次——而它们本来就该跑在同一个
+    // 池的同一批位置上。
     const stages::FrameRenderer render =
-        ref_renderer() ? ref_renderer()(settings, store)
-                       : stages::sd_renderer(settings);
+        shared ? *shared
+        : ref_renderer() ? ref_renderer()(settings, store).render
+                         : stages::sd_renderer(settings);
 
     // 只认自己那件活的预览。**同时可以有别人挂着**（出片那条就挂着一个），
     // 不认 tag 的话镜头墙的小图会飘到参考图这边来。
@@ -217,7 +228,8 @@ namespace {
 /// 就是读两个 json 文件，比起几十秒的出图不值一提。
 json character_ref_job(const std::string& project_path,
                        const std::string& char_id, const std::string& slot,
-                       std::int64_t seed, const std::string& stream_id) {
+                       std::int64_t seed, const std::string& stream_id,
+                       const stages::FrameRenderer* shared = nullptr) {
     ProjectStore store = open_project(project_path);
     AssetLibrary assets = store.load_assets();
     const auto it = assets.characters.find(char_id);
@@ -227,7 +239,7 @@ json character_ref_job(const std::string& project_path,
     const Rendered out = render_ref(
         store, char_id + "_" + slot,
         stages::build_character_ref_prompt(c, assets.style, slot),
-        stages::ref_negative(assets.style), seed, stream_id);
+        stages::ref_negative(assets.style), seed, stream_id, shared);
 
     // **先出图再存盘。** 反过来的话出图失败会留下一条指向不存在的文件的
     // 路径，而界面上那个位置会显示成"已有参考图"——比没有更糟。
@@ -326,7 +338,8 @@ namespace {
 /// 真画一张空景图并存盘。见 character_ref_job 上面那段。
 json location_ref_job(const std::string& project_path,
                       const std::string& location_id, std::int64_t seed,
-                      const std::string& stream_id) {
+                      const std::string& stream_id,
+                      const stages::FrameRenderer* shared = nullptr) {
     ProjectStore store = open_project(project_path);
     AssetLibrary assets = store.load_assets();
     const auto it = assets.locations.find(location_id);
@@ -338,7 +351,7 @@ json location_ref_job(const std::string& project_path,
     const Rendered out = render_ref(
         store, location_id + "_empty",
         stages::build_location_ref_prompt(l, assets.style),
-        stages::ref_negative(assets.style), seed, stream_id);
+        stages::ref_negative(assets.style), seed, stream_id, shared);
 
     // 同 character_ref_job：重新读一份，只填这一格。理由见那儿。
     AssetLibrary latest = store.load_assets();
@@ -393,6 +406,307 @@ ApiResult post_location_reference_generate(const json& body) {
     }
 
     return {200, location_ref_job(project_path, location_id, seed, stream_id)};
+}
+
+// ---------------------------------------------------------------------------
+// 「一键出图」：队列在这儿
+// ---------------------------------------------------------------------------
+
+namespace {
+
+struct QueueItem {
+    bool character = false;
+    std::string id;
+    std::string slot;    ///< 角色才有
+    std::string label;   ///< 「唐海 正面」，给界面那行用
+    std::string target;  ///< `char_id_slot` / `location_id_empty`
+};
+
+/// 全进程一条队列。
+///
+/// **一条就够，而且必须只有一条**：同时跑两批等于同一批位置上挤两倍的活，
+/// 而位置是按显卡数开的。第二个项目按下去时回 409，界面照着说一句
+/// 「另一部剧正在出图」——比让两批互相抢着变慢、谁也说不清好。
+struct RefQueue {
+    std::mutex mu;
+    std::condition_variable cv;
+
+    bool active = false;
+    std::string project;          ///< 正在跑的那个项目目录
+    std::vector<QueueItem> items;
+    std::size_t next = 0;         ///< 下一件派谁
+    std::size_t done = 0;
+    std::size_t failed = 0;
+    std::map<std::string, std::string> running;  ///< target → label
+    std::string error;            ///< 第一句报错，原话
+    bool by_hand = false;         ///< 是人按的停，不是砸了
+    pipeline::CancelToken tok;
+
+    /// 最后一次广播出去的那份，留着给刷新过页面的人补一份。
+    json last_state;
+
+    static RefQueue& instance() {
+        static RefQueue q;
+        return q;
+    }
+
+    /// 已经上锁时用。
+    json snapshot_locked() const {
+        json running_arr = json::array();
+        for (const auto& [t, l] : running) {
+            running_arr.push_back({{"target", t}, {"label", l}});
+        }
+        // **还没派出去的那几张也要报名字。**
+        //
+        // 不报的话，界面上那几格和"根本没排上"长得一模一样——用户
+        // 2026-09-17：「明明没有开始的，不是应该显示等待中吗」。
+        // 一批至多几十条，每条两个短字符串，播一份不值得心疼。
+        json pending_arr = json::array();
+        for (std::size_t i = next; i < items.size(); ++i) {
+            pending_arr.push_back(
+                {{"target", items[i].target}, {"label", items[i].label}});
+        }
+        const std::size_t total = items.size();
+        const std::size_t settled = done + failed;
+        return {
+            {"project", project},
+            {"active", active},
+            {"total", total},
+            {"done", done},
+            {"failed", failed},
+            // **排队的那几张自己算，别让界面去减。** 界面减出来的数在
+            // "正在画的那几张还没落进 done" 那一瞬间会是负的。
+            {"queued", total > settled + running.size()
+                           ? total - settled - running.size()
+                           : std::size_t{0}},
+            {"running", running_arr},
+            {"pending", pending_arr},
+            {"error", error},
+            {"by_hand", by_hand},
+        };
+    }
+};
+
+/// 两个路径指的是不是同一个项目。
+///
+/// **不能拿字符串直接比。** 队列里存的是 `ProjectStore::root()`（规范化
+/// 过的），而问的那一头给的是界面手里那串——macOS 上临时目录
+/// `/var/folders/…` 是 `/private/var/folders/…` 的软链，两串字不一样而指
+/// 的是同一个地方。比错的后果是"问了等于没问"：这一批明明在跑，快照回的
+/// 是「没在跑」，界面于是让人再按一次，回来一句 409。
+bool same_project(const std::string& a, const std::string& b) {
+    if (a == b) return true;
+    if (a.empty() || b.empty()) return false;
+    std::error_code ec;
+    const fs::path pa = fs::weakly_canonical(paths::from_utf8(a), ec);
+    if (ec) return false;
+    const fs::path pb = fs::weakly_canonical(paths::from_utf8(b), ec);
+    if (ec) return false;
+    return pa == pb;
+}
+
+/// 广播一份，并留底。
+void publish(RefQueue& q) {
+    json state;
+    {
+        std::lock_guard<std::mutex> lg(q.mu);
+        state = q.snapshot_locked();
+        q.last_state = state;
+    }
+    ref_queue(state);
+}
+
+/// 这一批要画哪些。**顺序是固定的**：角色按资产库的顺序、每人三格，
+/// 然后是场景。固定顺序才谈得上"接着上次跑"。
+std::vector<QueueItem> missing_refs(const AssetLibrary& assets, bool force) {
+    static const char* kSlots[] = {"front", "three_quarter", "back"};
+    static const char* kSlotNames[] = {"正面", "四分之三侧面", "背面"};
+    std::vector<QueueItem> out;
+    for (const auto& [id, c] : assets.characters) {
+        for (int i = 0; i < 3; ++i) {
+            const std::string slot = kSlots[i];
+            const std::optional<std::string>& have =
+                slot == "front"          ? c.ref_front
+                : slot == "three_quarter" ? c.ref_three_quarter
+                                          : c.ref_back;
+            if (!force && have.has_value() && !have->empty()) continue;
+            QueueItem it;
+            it.character = true;
+            it.id = id;
+            it.slot = slot;
+            it.label = (c.name.empty() ? id : c.name) + " " + kSlotNames[i];
+            it.target = id + "_" + slot;
+            out.push_back(std::move(it));
+        }
+    }
+    for (const auto& [id, l] : assets.locations) {
+        if (!force && l.ref_empty.has_value() && !l.ref_empty->empty()) continue;
+        QueueItem it;
+        it.character = false;
+        it.id = id;
+        it.label = l.name.empty() ? id : l.name;
+        it.target = id + "_empty";
+        out.push_back(std::move(it));
+    }
+    return out;
+}
+
+/// 整批跑完为止。**在自己的线程上**，接口早就回去了。
+void run_queue(std::string project_path) {
+    RefQueue& q = RefQueue::instance();
+
+    // 后端搭一次，整批共用——见 render_ref 里那段。搭不起来（没配模型）
+    // 时下面每一张都会自己退回 sd_renderer，报错也是一张一张报。
+    int lanes = 1;
+    std::shared_ptr<stages::FrameRenderer> shared;
+    try {
+        ProjectStore store = open_project(project_path);
+        config::Settings settings = config::load_settings(store.root());
+        if (ref_renderer()) {
+            RefBackend b = ref_renderer()(settings, store);
+            shared = std::make_shared<stages::FrameRenderer>(std::move(b.render));
+            lanes = std::max(1, b.lanes);
+        }
+    } catch (const std::exception&) {
+        // 搭后端这一步失败不该把整批判死：让第一张图去报那句真正的原因。
+    }
+
+    const auto worker = [&] {
+        for (;;) {
+            QueueItem item;
+            {
+                std::unique_lock<std::mutex> lk(q.mu);
+                if (q.tok.cancelled() || q.next >= q.items.size()) return;
+                item = q.items[q.next++];
+                q.running[item.target] = item.label;
+            }
+            publish(q);
+
+            std::string err;
+            try {
+                // **每一张自己的种子还是按 stem 算**，和单张那条一样：
+                // 整批重跑一次得到的还是同一批脸。
+                const std::int64_t seed = ref_seed(json::object(), item.target);
+                if (item.character) {
+                    character_ref_job(project_path, item.id, item.slot, seed, "",
+                                      shared.get());
+                } else {
+                    location_ref_job(project_path, item.id, seed, "", shared.get());
+                }
+                ref_done(item.target);
+            } catch (const std::exception& e) {
+                // ApiError 也是 runtime_error，what() 就是那句原话。
+                err = e.what();
+            }
+
+            {
+                std::lock_guard<std::mutex> lg(q.mu);
+                q.running.erase(item.target);
+                if (err.empty()) {
+                    q.done += 1;
+                } else {
+                    q.failed += 1;
+                    if (q.error.empty()) {
+                        q.error = err;
+                        // **人按的停不是失败**，说法不一样：引擎给取消回的
+                        // 是「已停下这一张」，报成红的会让人去找哪儿出错了。
+                        q.by_hand = util::is_cancel_word(err);
+                    }
+                    // 第一件砸了就别接着派：后面那些多半栽在同一件事上
+                    // （模型没配、显存不够），接着画只是让人多等十几分钟
+                    // 再看到同一句话。
+                    q.tok.request();
+                }
+            }
+            if (!err.empty()) ref_error(item.target, err);
+            publish(q);
+        }
+    };
+
+    std::vector<std::thread> pool;
+    pool.reserve(static_cast<std::size_t>(lanes));
+    for (int i = 0; i < lanes; ++i) pool.emplace_back(worker);
+    for (auto& t : pool) t.join();
+
+    {
+        std::lock_guard<std::mutex> lg(q.mu);
+        q.active = false;
+        q.running.clear();
+    }
+    publish(q);
+}
+
+}  // namespace
+
+ApiResult post_references_generate_all(const json& body) {
+    // 能当场判的先当场判，见 post_character_reference_generate 那段。
+    ProjectStore store = open_project(need_str(body, "project"));
+    const AssetLibrary assets = store.load_assets();
+    const bool force = opt_bool(body, "force");
+    const std::string project_path = paths::to_utf8(store.root());
+
+    std::vector<QueueItem> items = missing_refs(assets, force);
+
+    RefQueue& q = RefQueue::instance();
+    {
+        std::lock_guard<std::mutex> lg(q.mu);
+        if (q.active) {
+            throw ApiError(409, same_project(q.project, project_path)
+                                    ? "这一批已经在画了"
+                                    : "另一部剧正在出图，等它画完再来");
+        }
+        if (items.empty()) {
+            return {200, {{"total", 0}, {"started", false}}};
+        }
+        q.project = project_path;
+        q.items = std::move(items);
+        q.next = 0;
+        q.done = 0;
+        q.failed = 0;
+        q.running.clear();
+        q.error.clear();
+        q.by_hand = false;
+        q.tok.reset();
+        q.active = true;
+    }
+    const std::size_t total = q.items.size();
+    publish(q);
+
+    std::thread(run_queue, project_path).detach();
+    return {202, {{"total", total}, {"started", true}}};
+}
+
+ApiResult post_references_generate_all_stop(const json& body) {
+    RefQueue& q = RefQueue::instance();
+    const std::string project = opt_str(body, "project");
+    {
+        std::lock_guard<std::mutex> lg(q.mu);
+        if (!q.active) return {200, {{"stopped", false}}};
+        if (!project.empty() && !same_project(q.project, project)) {
+            return {200, {{"stopped", false}}};
+        }
+        q.tok.request();
+        q.by_hand = true;
+    }
+    // 正在画的那几张也要停：它们各自在 render_ref 里查的是自己那条令牌。
+    // 这儿只拦住"还没派出去的"，已经在画的那一两张画完就收——一张几十秒，
+    // 比留下半张写坏的图强。
+    return {200, {{"stopped", true}}};
+}
+
+ApiResult get_references_queue(const std::string& project) {
+    RefQueue& q = RefQueue::instance();
+    std::lock_guard<std::mutex> lg(q.mu);
+    if (!q.active && q.last_state.is_null()) {
+        return {200, {{"active", false}, {"total", 0}}};
+    }
+    json state = q.active ? q.snapshot_locked() : q.last_state;
+    // 问的是别的项目就别把这一批的数报过去。
+    if (!project.empty() &&
+        !same_project(state.value("project", std::string{}), project)) {
+        return {200, {{"active", false}, {"total", 0}}};
+    }
+    return {200, state};
 }
 
 }  // namespace changji::http

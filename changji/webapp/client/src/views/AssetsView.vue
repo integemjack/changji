@@ -39,7 +39,6 @@ import AssetLocations from '@/views/assets/AssetLocations.vue'
 import { api } from '@/api'
 import { useAction } from '@/composables/useAction'
 import { runAsyncJob } from '@/composables/useAsyncJob'
-import { stoppedByHand } from '@/composables/stopped-by-hand'
 import { useRefStream } from '@/composables/useRefStream'
 import { useLongRunning } from '@/composables/useSystemFeed'
 import { pickProjectHint } from '@/composables/pick-project-hint'
@@ -56,7 +55,8 @@ const route = useRoute()
 const router = useRouter()
 const ui = useUi()
 const { run, isBusy } = useAction()
-const { finished, touch } = useRefStream()
+const { finished, touch, live, queue: refQueue, lastQueue, setWaiting } =
+  useRefStream()
 /** 长跑任务在不在跑。见下面那条下降沿。 */
 const longRunning = useLongRunning()
 
@@ -70,8 +70,36 @@ const story = ref(null)
  */
 const assets = ref(null)
 
-/** 一键出图跑到第几张。空 = 没在跑。 */
-const bulk = ref(null)
+/**
+ * 一键出图排到哪儿了。**引擎那份队列的投影，页面自己不记账。**
+ *
+ * 空 = 没在跑。字段见 useRefStream 里 `queue` 那段。
+ */
+const bulk = computed(() => {
+  const q = refQueue.value
+  if (!q || !q.active) return null
+  // 换了项目就不认这一份：队列是全进程一条，可能是别的剧在跑。
+  if (q.project && session.projectPath && q.project !== session.projectPath) return null
+
+  // ⚠️ **"派出去了"不等于"正在画"。**
+  //
+  // 池开的路数比位置数多（`infer::pool_lanes`：跨机的每台再加一路，为的是
+  // 一镜跑完拉产物那几十秒里把下一镜先派出去）。一台双卡机于是有四路，而
+  // 卡只有两张——多派的那两张堵在池里等位置。
+  //
+  // 照实报四张"正在画"，就又回到了用户 2026-09-17 说的那件事：那一行读起
+  // 来像有四张在动，而实际只有两张。**真在画的那几张自己会报进度**
+  // （`live[target]`，引擎每采一步播一条 ref_progress），拿它分开。
+  const all = q.running ?? []
+  const drawing = all.filter((r) => live[r.target])
+  const settled = (q.done ?? 0) + (q.failed ?? 0)
+  return {
+    ...q,
+    drawing,
+    // 还没轮到的 + 派出去了还在等位置的，对人来说都是"排着"。
+    waiting: Math.max(0, (q.total ?? 0) - settled - drawing.length),
+  }
+})
 
 /**
  * 「覆盖已有」。**一个勾，两个按钮。**
@@ -285,65 +313,21 @@ async function bible() {
  * **一张一张来。** 显存只够一张，并发只会在引擎那边排队（现在是真排队
  * 了），而排着的看不出进度。
  */
-/**
- * 出参考图能几张一起画——**池里有几个位置就是几**。
- *
- * 出参考图走的是出首帧那个池（server.cpp 的 set_ref_renderer 拿的就是
- * `Backends::frame`），所以判据和引擎那边挑位置是同一套：在线、能出首帧、
- * 而且没被关掉的机器，各自报几个槽（一台双卡机报 2，见
- * `infer::remote_slots_for`）。
- *
- * **拍脑袋定个 3 是不行的**：单卡机上并发只会让每张都更慢、还容易爆显存
- * （两个上下文同时占显存正是 6GB 卡上跑不动的原因）。问来的数在单卡机上
- * 就是 1，行为和以前逐字节一样。
- *
- * 问不到就按 1——宁可慢，不要在不知道对面有几张卡的时候乱开并发。
- */
-async function frameLanes() {
-  try {
-    const d = await api.nodes()
-    let n = 0
-    for (const node of d?.nodes ?? []) {
-      if (!node.online) continue
-      const frame = (node.capabilities ?? []).find((c) => c.cap === 'frame')
-      if (!frame?.on) continue
-      n += Math.max(1, node.slots ?? 1)
-    }
-    return n > 0 ? n : 1
-  } catch {
-    return 1
-  }
-}
-
 async function genAll() {
   const force = overwrite.value
-  // **开跑那一刻把项目钉死。**
-  //
-  // 这一轮要跑十几分钟，而下面每一张图原来都现读一次 `session.projectPath`。
-  // 中途在项目库里点了另一部剧，接着那几张就拿**上一部**的角色 id 去新这一
-  // 部出图：id 在新项目里不存在，一路 404，`run` 报一句看不懂的错然后 break
-  // ——而人只是换了个项目看看。活儿是替那一部排的，就一直替那一部跑完。
+  // **开跑那一刻把项目钉死。** 这一轮要跑十几分钟，中途在项目库里点了另一
+  // 部剧，活儿还是替按下去那一部排的。
   const project = session.projectPath
-  // **这一读要包起来。** 它原来是裸的 `await api.assets(...)`：引擎打个嗝、
-  // 项目被别处删了，这一下就抛出去成了没人接的 Promise 拒绝——按钮点下去
-  // 一点反应都没有，也不报错。而下面每一张图那次调用都是包着的，只有
-  // 开头这一读漏了。用同一个 key，读的那几百毫秒里按钮也是灰的。
+  // 先读一遍资产库，只为两件事：**一张都不缺时说句话**，以及重画时那个
+  // 确认框里的张数和分钟数。真正的队列在引擎那头排（见下面那一 POST）。
   const data = await run(() => api.assets(project), { key: 'genall' })
   if (!data) return
-  const jobs = []
+  let count = 0
   for (const c of data.characters ?? []) {
-    for (const slot of SLOTS) {
-      if (force || !c['ref_' + slot]) {
-        jobs.push({ kind: 'char', id: c.char_id, slot, name: c.name || c.char_id })
-      }
-    }
+    for (const slot of SLOTS) if (force || !c['ref_' + slot]) count += 1
   }
-  for (const l of data.locations ?? []) {
-    if (force || !l.ref_empty) {
-      jobs.push({ kind: 'loc', id: l.location_id, name: l.name || l.location_id })
-    }
-  }
-  if (!jobs.length) {
+  for (const l of data.locations ?? []) if (force || !l.ref_empty) count += 1
+  if (!count) {
     // **别写「在那一格点「重画」」。** 两处都对不上：
     //   · 重画的按钮在**抽屉里**，墙上那张卡只是点开抽屉的入口；
     //   · 「重画」这个字只有场景那一格有。角色那三张挤在一行里，按钮上
@@ -355,157 +339,83 @@ async function genAll() {
   if (
     force &&
     !confirm(
-      `会把 ${jobs.length} 张参考图全部重画，手传上去的也会被顶掉。` +
+      `会把 ${count} 张参考图全部重画，手传上去的也会被顶掉。` +
         // **最大的那一项代价原来没说。** 出一张参考图引擎就调一次
         // reset_all_shots（参考图直接决定画面长什么样），也就是说这一下
         // 会把**全项目**已经渲染好的镜头退回待跑。一部已经出过片的剧，
         // 这句话的分量比"大约 8 分钟"重得多。
         `已经渲染好的镜头也会退回重跑。` +
-        `一张几十秒，大约 ${Math.ceil((jobs.length * 30) / 60)} 分钟。确定？`,
+        `一张几十秒，大约 ${Math.ceil((count * 30) / 60)} 分钟。确定？`,
     )
   ) {
     return
   }
 
-  let made = 0
-  /** 半路停在第几件上。-1 = 一件不落地跑完了。 */
-  let stoppedAt = -1
-  /** 停在那一件上是人按的「停下」，不是砸了。两种说法不一样。 */
-  let byHand = false
-
-  // **几张一起画，张数按池里有几个位置。**
+  // ⚠️ **一次请求交一整批，剩下的不归页面管。**
   //
-  // 这一圈原来是 `for` 里一张一张 `await`——出参考图走的是出首帧那个池
-  // （server.cpp 的 set_ref_renderer 用的就是 Backends::frame），池里两个
-  // 位置也只喂一个，一台双卡机从头到尾只有一张卡在动。22 张图要 11 分钟
-  // 而不是 6 分钟。用户 2026-09-17：「一键出图也没用多 gpu」。
+  // 这儿原来是页面自己问引擎有几个位置、自己开几条道、每条道自己往下取下
+  // 一张。三处不对，2026-09-17 一天里全撞上了：
   //
-  // 位置数问引擎要（laneCount 那段），不是拍脑袋定：单卡机上它就是 1，
-  // 行为和以前逐字节一样；一张卡上并发只会让每张都更慢还容易爆显存。
-  const lanes = await frameLanes()
-  let next = 0
-  /** 正在画的那几张，给顶上那行进度用。 */
-  const running = new Map()
-  const paint = () => {
-    bulk.value = made + running.size === 0 ? null : {
-      done: made,
-      total: jobs.length,
-      names: [...running.values()],
-      pct: 0,
-    }
-  }
-
-  /** 半路砸了/停了留下的那句话。并发之后不能再借 useAction 那个共享的。 */
-  let lastError = ''
-
-  const one = async (i) => {
-    const j = jobs[i]
-    running.set(i, j.name)
-    paint()
-    // ⚠️ **这儿不能套 `run()`。**
-    //
-    // `useAction` 的 run 对同一个 key 是**互斥**的（`if (running.has(key))
-    // return undefined`），几条道用同一个 'genall' 的话，第二条一进来就拿到
-    // undefined——而 undefined 在下面被当成"这张砸了"，于是整圈当场停住。
-    // 2026-09-17 改成并发的第一版就是这样，页面卡在「0/16」一动不动。
-    //
-    // 按钮的灰不靠它：模板判的是 `!!bulk`（这一圈自己在维护）。
-    // 错误也自己接——那个共享的 error 是给单发用的，并发时会互相盖掉。
-    let ok = null
-    try {
-      ok = await runAsyncJob(
-          (extra) =>
-            j.kind === 'char'
-              ? api.generateReference({
-                  project,
-                  char_id: j.id,
-                  slot: j.slot,
-                  ...extra,
-                })
-              : api.generateLocationReference({
-                  project,
-                  location_id: j.id,
-                  ...extra,
-                }),
-          { prefix: 'ref' },
-        )
-    } catch (e) {
-      lastError = e?.message || String(e)
-      ok = null
-    }
-    // **这一圈不自己弹红条**：人按「停下」也会走到这儿，而「停」不是失败。
-    // 引擎那头分得很清——ref_gen.cpp 里专门写着「**人按的停不是失败。**
-    // 报成「出图失败：已取消」的话，人会去找哪儿出错了」，取消回的是 400
-    // 「已停下这一张」。所以这儿收住，到下面按「是停的还是砸的」分两种说法。
-    running.delete(i)
-    if (!ok) {
-      // 中间砸了就不再开新的：后面那些多半栽在同一件事上（模型没配、
-      // 显存不够），接着画只是让人多等十几分钟再看到同一句报错。
-      // **已经在画的那几张让它们画完**——半路掐掉只是白扔已经花掉的时间。
-      if (stoppedAt < 0) {
-        stoppedAt = i
-        // 引擎给取消留的是 400「已停下这一张」；别的都算真砸了。
-        byHand = stoppedByHand(lastError)
-      }
-    } else {
-      made += 1
-    }
-    paint()
-    // 不用在这儿招呼两格重拉：引擎画完每一张都会往 refs 频道播一条
-    // ref_done，那两格和这儿的数都订着它。见 useRefStream。
-  }
-
-  // 几条并排跑，谁空了谁领下一张——先到先得，不按固定分片，
-  // 快的那张卡自然多画几张。
-  const lane = async () => {
-    for (;;) {
-      if (stoppedAt >= 0) return
-      const i = next
-      next += 1
-      if (i >= jobs.length) return
-      await one(i)
-    }
-  }
-  await Promise.all(Array.from({ length: Math.max(1, lanes) }, lane))
-  bulk.value = null
-  // 这一轮十几分钟，中途在项目库里点别的剧很自然——活儿是替 `project`
-  // 排的、也一直替它跑完（上面那段把项目钉死了）。所以这句话要说清是替谁
-  // 画的，不然它落在新这一部的屏幕上，而这一部一张新图都没有。
-  // 照 AssetEpisodes / EpisodeView 那几条现成的说法。
-  // **半路停了就别报一句绿的。**
+  //   1. **排队没人记。** 页面手里只有"正在画的那几张"，说不出还排着几张；
+  //      两条道恰好都在同一个人身上时，那一行显示成「唐海、唐海」
+  //      （用户：「光作业中还显示同一个名字，排队被你吃了？」）。
+  //   2. **关掉页面就散了。** 队列活在这个标签页的闭包里，刷新一下没人
+  //      接着派剩下的。
+  //   3. **位置数是按下去那一刻的快照。** 中途多连一台机器不会多开一条道。
   //
-  // 上面那句 `if (!ok) break` 是对的（后面那些多半栽在同一件事上），可
-  // 报出来的一直是「画好了 2 张」——绿的、句号。`run` 那头确实先弹了一句
-  // 红的说为什么，但最后落在屏幕上的是那句绿的，而它读起来像"这一轮完了"。
-  // 排了 12 张只画了 2 张，剩下 10 张一个字没提。
-  //
-  // 说法照投递那一页现成的（「投了 N 条，M 条失败，看下面的记录」）：
-  // 数字要齐，还要指一句去哪儿看原因。
-  const left = stoppedAt >= 0 ? jobs.length - made : 0
-  const where = project !== session.projectPath ? '那一部剧' : ''
-  const tail = project !== session.projectPath ? '，但你已经切走了——回去就能看到' : ''
-  if (left && byHand) {
-    // **人自己按的停。** 说清停在哪儿、剩多少就够，不报错——他知道自己
-    // 按了什么。同 useShots / useWriter 里那条（「自己按的停，别再红一次」）。
-    ui.info(
-      made
-        ? `${where}停下了，已经画好 ${made} 张，还剩 ${left} 张没画${tail}`
-        : `${where}停下了，一张都还没画完`,
-    )
-  } else if (left) {
-    // 真砸了。上面那一圈是 quiet 的，报错这件事得自己来——原话照引擎给的。
-    if (lastError) ui.error(lastError)
-    // 一张都没画成时也要说——原来 `if (made)` 把这种整个吞了，屏幕上只有
-    // `run` 那句红的，而那句话不提"这一轮一共要画几张、停在哪儿"。
-    const head = made ? `${where}画好了 ${made} 张，还差 ${left} 张没画` : `${where}一张都没画成，排着的 ${left} 张都还在`
-    ui.warn(`${head}——上面那句说了为什么${tail}`)
-  } else if (made) {
-    if (project !== session.projectPath) {
-      ui.info(`那一部剧画好了 ${made} 张${tail}`)
-    } else {
-      ui.ok(`画好了 ${made} 张`)
+  // 引擎那头一件一件派（ref_gen.cpp 的 RefQueue），页面只订 `ref_queue`：
+  // 正在画哪几张、还排着几张、已经好了几张，全是它说了算。
+  await run(() => api.generateAllReferences({ project, force }), { key: 'genall' })
+}
+
+/**
+ * 整批跑完了说一句。**订的是引擎那份队列的下降沿**，不是那次 POST 的返回
+ * ——POST 一交完就回来了，那时候一张还没画。
+ *
+ * 说法照投递那一页现成的（「投了 N 条，M 条失败，看下面的记录」）：数字要
+ * 齐，还要指一句去哪儿看原因。**半路停了就别报一句绿的**：排了 12 张只画
+ * 了 2 张而屏幕上是「画好了 2 张」加句号，读起来像"这一轮完了"。
+ */
+watch(
+  () => bulk.value !== null,
+  (now, before) => {
+    if (now || !before) return
+    const q = lastQueue.value
+    if (!q || !q.total) return
+    const made = q.done ?? 0
+    const left = Math.max(0, (q.total ?? 0) - made)
+    // 这一轮十几分钟，中途在项目库里点别的剧很自然。所以要说清是替谁画的，
+    // 不然这句话落在新这一部的屏幕上，而这一部一张新图都没有。
+    const mine = q.project === session.projectPath
+    const where = mine ? '' : '那一部剧'
+    const tail = mine ? '' : '，但你已经切走了——回去就能看到'
+    if (left && q.by_hand) {
+      // **人自己按的停。** 说清停在哪儿、剩多少就够，不报错——他知道自己
+      // 按了什么。同 useShots / useWriter 里那条（「自己按的停，别再红一次」）。
+      ui.info(
+        made
+          ? `${where}停下了，已经画好 ${made} 张，还剩 ${left} 张没画${tail}`
+          : `${where}停下了，一张都还没画完`,
+      )
+    } else if (left) {
+      if (q.error) ui.error(q.error)
+      const head = made
+        ? `${where}画好了 ${made} 张，还差 ${left} 张没画`
+        : `${where}一张都没画成，排着的 ${left} 张都还在`
+      ui.warn(`${head}——上面那句说了为什么${tail}`)
+    } else if (made) {
+      if (mine) ui.ok(`画好了 ${made} 张`)
+      else ui.info(`那一部剧画好了 ${made} 张${tail}`)
     }
-  }
+  },
+)
+
+/** 整批停下。按的是队列那一行上的「停下」。 */
+async function stopAll() {
+  await run(() => api.stopAllReferences({ project: session.projectPath }), {
+    key: 'genallstop',
+    quiet: true,
+  })
 }
 
 /** `/api/assets` 那一趟读砸了的那句话。空串 = 没砸。见 loadAssets。 */
@@ -604,6 +514,29 @@ function loadAll() {
   }
   loadStory()
   loadAssets()
+  loadQueue()
+}
+
+/**
+ * 进这一页先问一次「整批出图跑到哪儿了」。
+ *
+ * **`ref_queue` 是广播，错过就错过。** 队列在引擎那头，一分钟才动一次
+ * （一张图几十秒），刷新一下浏览器的话，下一条要等到下一张画完才来——
+ * 这一分钟里按钮写着「一键出图」、点下去回 409「这一批已经在画了」。
+ */
+async function loadQueue() {
+  const project = session.projectPath
+  if (!project) return
+  try {
+    const q = await api.referenceQueue(project)
+    refQueue.value = q?.active ? q : null
+    if (q?.total) lastQueue.value = q
+    // 墙上那几格的「等待中」也要跟着接回来，不然刷新之后它们要等下一张
+    // 画完（几十秒）才会重新标上。
+    setWaiting(q?.active ? q : null)
+  } catch {
+    // 问不到就当没在跑：下一条广播会把它接回来。
+  }
 }
 
 onMounted(loadAll)
@@ -733,11 +666,27 @@ watch(longRunning, (now, before) => {
           >
             <AppIcon name="sparkle" :size="13" />
             <template v-if="bulk">
-              <!-- 几张一起画，所以报的是"画完几张"和"正在画哪几张"，
-                   不是"第几张"——并发之后"第几张"没有意义了。 -->
-              {{ bulk.done }}/{{ bulk.total }} {{ bulk.names.join('、') }}
+              <!-- 三个数一起报：**画好了几张 / 一共几张 / 正在画哪几张**。
+                   「还排着 N 张」在旁边那一行，见下面。 -->
+              {{ bulk.done }}/{{ bulk.total }}
+              {{ bulk.drawing.map((r) => r.label).join('、') }}
             </template>
             <template v-else>{{ overwrite ? '全部重画' : '一键出图' }}</template>
+          </button>
+          <!-- **排队的那几张要说出来。** 页面自己开几条道的那一版说不出这个数，
+               两条道恰好在同一个人身上时那一行读起来像卡住了（用户
+               2026-09-17：「光作业中还显示同一个名字，排队被你吃了？」）。 -->
+          <span v-if="bulk && bulk.waiting > 0" class="tiny dim">
+            还排着 {{ bulk.waiting }} 张
+          </span>
+          <button
+            v-if="bulk"
+            class="btn btn--sm btn--ghost"
+            type="button"
+            title="排着的不再往下派；正在画的那几张画完就收"
+            @click="stopAll"
+          >
+            停下
           </button>
         </template>
       </nav>

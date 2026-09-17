@@ -295,12 +295,16 @@ void run(const config::Settings& settings, const Options& opts) {
         // 池本身由 Backends::keepalive 持有——只取 `.frame` 的话临时对象一析构
         // 池就没了，下一步就是段错误（2026-09-16 一键出图当场把引擎打崩）。
         auto b = std::make_shared<pipeline::Backends>(default_run_deps().backends(s, store));
-        return stages::FrameRenderer(
+        RefBackend out;
+        out.render = stages::FrameRenderer(
             [b](const models::Shot& shot, const stages::PromptBundle& prompts,
                 const models::TierSpec& spec, const std::filesystem::path& dest,
                 pipeline::CancelToken& tok, const infer::StepCallback& on_step) {
                 b->frame(shot, prompts, spec, dest, tok, on_step);
             });
+        // **和出首帧同一个数**：参考图走的就是那个池的那批位置。
+        out.lanes = std::max(1, b->render_lanes);
+        return out;
     });
 
     // job 表往 WebSocket 推消息，但它不认识 WebSocket——中间靠这个回调接上。
@@ -1023,6 +1027,30 @@ void run(const config::Settings& settings, const Options& opts) {
             return json_response(r.body, r.status);
         };
     };
+
+    // 「一键出图」：**一次交一整批，队列在引擎这头**（见 ref_gen.hpp）。
+    // 同一条路两个动作：POST 交一批，GET 问这批跑到哪儿了。
+    // **一条 rule 只能注册一次**，两条 CROW_ROUTE 写同一个路径会在起服务时
+    // 撞车，所以合在一起按方法分。
+    CROW_ROUTE(app, "/api/assets/references")
+        .methods(crow::HTTPMethod::GET, crow::HTTPMethod::POST)(
+            [](const crow::request& req) {
+                auto r = guard([&] {
+                    if (req.method == crow::HTTPMethod::GET) {
+                        const char* p = req.url_params.get("project");
+                        return get_references_queue(p ? p : "");
+                    }
+                    return post_references_generate_all(parse_body(req.body));
+                });
+                return json_response(r.body, r.status);
+            });
+    CROW_ROUTE(app, "/api/assets/references/stop").methods("POST"_method)
+        ([](const crow::request& req) {
+            auto r = guard([&] {
+                return post_references_generate_all_stop(parse_body(req.body));
+            });
+            return json_response(r.body, r.status);
+        });
 
     CROW_ROUTE(app, "/api/script/premise").methods("POST"_method)(
         script_route(&post_script_premise));

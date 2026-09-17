@@ -33,7 +33,8 @@ const ui = useUi()
 const { run, isBusy } = useAction()
 
 /** 进度、预览、在不在跑——都从那条固定频道来。见 useRefStream。 */
-const { pct: genPct, preview, live, finished, touch, bustOf, forgetAll } = useRefStream()
+const { pct: genPct, preview, live, waiting, finished, touch, bustOf, forgetAll } =
+  useRefStream()
 
 /** 引擎那边怎么叫这一格。改这里就得改 ref_gen.cpp 里拼 stem 那一行。 */
 const targetOf = (id) => `${id}_empty`
@@ -621,7 +622,10 @@ async function clearEmpty(locationId) {
               :key="l.location_id"
               class="cell"
               :class="{
-                'cell--live': isBusy('gen:' + l.location_id) || live[targetOf(l.location_id)],
+                'cell--live':
+                  isBusy('gen:' + l.location_id) ||
+                  live[targetOf(l.location_id)] ||
+                  waiting[targetOf(l.location_id)],
                 'cell--open': openId === l.location_id,
                 'cell--flat': flat(l),
               }"
@@ -648,6 +652,11 @@ async function clearEmpty(locationId) {
                 <span v-if="genPct[targetOf(l.location_id)]" class="cell__pct numeric">
                   {{ genPct[targetOf(l.location_id)] }}%
                 </span>
+                <!-- 排上了还没开画。见 AssetCharacters 里同一处。 -->
+                <span
+                  v-else-if="waiting[targetOf(l.location_id)]"
+                  class="cell__pct tiny"
+                >等待中</span>
                 <span v-if="usage.get(l.location_id)" class="loc__count pill pill--neutral">
                   本集 {{ usage.get(l.location_id) }} 镜
                 </span>
@@ -655,7 +664,11 @@ async function clearEmpty(locationId) {
 
               <div class="cell__bottom">
                 <span
-                  v-if="isBusy('gen:' + l.location_id) || live[targetOf(l.location_id)]"
+                  v-if="
+                    isBusy('gen:' + l.location_id) ||
+                    live[targetOf(l.location_id)] ||
+                    waiting[targetOf(l.location_id)]
+                  "
                   class="cell__fill"
                   :class="{ 'cell__fill--idle': !genPct[targetOf(l.location_id)] }"
                   :style="

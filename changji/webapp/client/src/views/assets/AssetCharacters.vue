@@ -45,7 +45,8 @@ const { run, isBusy } = useAction()
  *
  * key 是 `char_id_slot`——**和引擎那边的 target 逐字一样**，不然对不上。
  */
-const { pct: genPct, preview, live, finished, touch, bustOf, forgetAll } = useRefStream()
+const { pct: genPct, preview, live, waiting, finished, touch, bustOf, forgetAll } =
+  useRefStream()
 
 /** 引擎那边怎么叫这一格。改这里就得改 ref_gen.cpp 里拼 stem 那一行。 */
 const targetOf = (charId, slot) => `${charId}_${slot}`
@@ -66,7 +67,12 @@ const openChar = computed(
 function cellBusy(charId) {
   if (isBusy('genall:' + charId)) return true
   return SLOTS.some(
-    (s) => isBusy('gen:' + charId + s.key) || live[targetOf(charId, s.key)],
+    (s) =>
+      isBusy('gen:' + charId + s.key) ||
+      live[targetOf(charId, s.key)] ||
+      // **排着还没开画的也算在跑。** 不算的话，一键出图排了十几张，墙上
+      // 除了正在画的那两格全是静的，看不出它们已经排上了。
+      waiting[targetOf(charId, s.key)],
   )
 }
 
@@ -955,6 +961,13 @@ async function clearRef(charId, slot) {
               <span v-if="genPct[targetOf(c.char_id, s.key)]" class="trio__pct numeric">
                 {{ genPct[targetOf(c.char_id, s.key)] }}%
               </span>
+              <!-- 排上了还没开画。**不摆这一下的话它和"根本没排上"长得
+                   一模一样**（用户 2026-09-17：「明明没有开始的，不是应该
+                   显示等待中吗」）。开画那一刻换成百分比。 -->
+              <span
+                v-else-if="waiting[targetOf(c.char_id, s.key)]"
+                class="trio__pct trio__pct--wait tiny"
+              >等待中</span>
               <span class="trio__label tiny">{{ s.label }}</span>
             </span>
           </div>
@@ -1509,6 +1522,12 @@ async function clearRef(charId, slot) {
   color: var(--accent);
   font-size: var(--fs-xs);
   pointer-events: none;
+}
+/* 「等待中」比百分比长一截，三张挤着的时候要收着点；颜色也别用强调色
+   ——那一格还没开始动，抢不过真在画的那两格。 */
+.trio__pct--wait {
+  padding: 0 4px;
+  color: var(--text-2);
 }
 /* 位置名只在摊开的那张上写出来：三张挤着的时候写不下，
    而摊开之后正需要知道现在看的是哪一面。 */

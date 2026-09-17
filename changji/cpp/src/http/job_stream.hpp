@@ -222,4 +222,10 @@ void ref_preview(const std::string& target, int step, std::string data_url);
 void ref_done(const std::string& target);
 void ref_error(const std::string& target, const std::string& message);
 
+/// 整批出图排到哪儿了：`{project, total, done, failed, queued, running:[…]}`。
+///
+/// **和上面那几条不一样，这条不带 target**——它说的是整批，不是某一格。
+/// 页面上那一行「正在画 X、Y，还排着 N 张」就是照它画的。
+void ref_queue(nlohmann::json state);
+
 }  // namespace changji::http

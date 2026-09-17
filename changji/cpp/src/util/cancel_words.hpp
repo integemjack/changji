@@ -15,6 +15,8 @@
 //
 // 真要换词：连 stopped-by-hand.js 那个正则一起换，那边的用例也跟着。
 
+#include <string>
+
 namespace changji::util {
 
 /// 出参考图那条：`ApiError(400, …)`。
@@ -26,5 +28,14 @@ inline constexpr const char* kCancelled = "已取消";
 /// 界面那个正则认的两个词。用例拿它比对上面两句。
 inline constexpr const char* kStopToken1 = "已停下";
 inline constexpr const char* kStopToken2 = "已取消";
+
+/// 这句话是不是「人按的停」。
+///
+/// **`stopped-by-hand.js` 那个正则的 C++ 这一份。** 引擎这头也要分这两种
+/// ——整批出图停下时，报「出图失败」和报「停下了，还差 N 张」是两回事。
+inline bool is_cancel_word(const std::string& message) {
+    return message.find(kStopToken1) != std::string::npos ||
+           message.find(kStopToken2) != std::string::npos;
+}
 
 }  // namespace changji::util
