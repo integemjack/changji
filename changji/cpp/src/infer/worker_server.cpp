@@ -49,6 +49,16 @@ using nlohmann::json;
 struct Live {
     TaskProgress progress;
     pipeline::CancelToken tok;
+    /// 上一次派活方来问它的时间（建的时候也算一次）。
+    ///
+    /// **槽是靠"派活方回来收"才放的**（`/task/<id>` 见到 done/failed 才
+    /// erase）。派活方要是没了——进程重启、任务被人取消、网络断了——那条
+    /// 记录就**永远占着一个槽**。2026-09-17 实撞：本机引擎重启了几次，每次
+    /// 丢下远端两件没人认领的活，之后一切派活都 409；而 409 当天刚改成
+    /// 「等它空」（worker_pool.cpp），于是**永远等下去**，两张卡闲着，
+    /// 界面上只显示「0/16」一动不动。
+    std::chrono::steady_clock::time_point seen =
+        std::chrono::steady_clock::now();
 };
 
 struct State {
@@ -278,6 +288,33 @@ void mount_worker_api_impl(crow::SimpleApp& app,
             }
 
             std::lock_guard lg(state->mu);
+            // **先回收没人认领的。** 见 Live::seen。
+            //
+            // 两种都收：跑完了没人来取的（产物还在磁盘上，blob 那条照样
+            // 取得到，删的只是这条记录）；还有"还在跑但派活方早没影了"的
+            // ——那种先取消再删，不然那张卡一直在替一个没人要的活干活。
+            //
+            // 两档时间差得远：跑完的那种五分钟就够（派活方活着的话轮询
+            // 间隔是秒级）；还在跑的那种给足半小时，一镜成片档本来就要
+            // 几分钟，别把正干着的活收了。
+            {
+                using namespace std::chrono;
+                const auto now = steady_clock::now();
+                for (auto it = state->running.begin();
+                     it != state->running.end();) {
+                    const bool settled = it->second->progress.state == "done" ||
+                                         it->second->progress.state == "failed";
+                    const auto idle = now - it->second->seen;
+                    if (settled && idle > minutes(5)) {
+                        it = state->running.erase(it);
+                    } else if (!settled && idle > minutes(30)) {
+                        it->second->tok.request();
+                        it = state->running.erase(it);
+                    } else {
+                        ++it;
+                    }
+                }
+            }
             if (state->running.size() >= state->slots()) {
                 // **不排队。** 见文件头。
                 return json_res({{"detail", "正忙"}, {"busy", true}}, 409);
@@ -367,6 +404,7 @@ void mount_worker_api_impl(crow::SimpleApp& app,
         if (it == state->running.end()) {
             return json_res({{"detail", "没有这个任务"}}, 404);
         }
+        it->second->seen = std::chrono::steady_clock::now();
         auto p = it->second->progress;
         if (p.state == "done" || p.state == "failed") {
             // 收完就放，好接下一个
