@@ -1075,7 +1075,11 @@ ordered script_schema_for_chapter(const std::vector<ScenePlan>& scenes,
         beats["description"] =
             (p.where.empty() ? std::string("这一场") : p.where) +
             "。第一拍是 kind=scene 的场次头";
-        beats["items"] = beat_item_schema(true, characters, /*rich=*/true);
+        // **一份定义，各场 $ref 它。** 每场各塞一份完整的 beat 定义时，
+        // 一章三场就把那一千三百字的东西（七个字段、两串枚举、几段描述）
+        // 抄三遍贴给模型——2026-09-17 量的。schema 是以文字贴在提示词后面
+        // 发的（llm::schema_as_prompt），抄几遍就是几遍的字。
+        beats["items"] = ordered{{"$ref", "#/$defs/Beat"}};
 
         ordered sc = ordered::object();
         sc["type"] = "object";
@@ -1098,6 +1102,9 @@ ordered script_schema_for_chapter(const std::vector<ScenePlan>& scenes,
     out["additionalProperties"] = false;
     out["required"] = {"title", "logline", "scenes"};
     out["properties"] = props;
+    // 各场共用这一份。**$ref 这套分镜那份 schema 一直在用**（CharacterInShot
+    // / DialogueLine / ShotSize 都是这么引的），模型认得。
+    out["$defs"] = ordered{{"Beat", beat_item_schema(true, characters, /*rich=*/true)}};
     return out;
 }
 

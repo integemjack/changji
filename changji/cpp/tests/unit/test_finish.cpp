@@ -1117,7 +1117,10 @@ TEST_CASE("章模式：按场给拍数地板，没有秒数，也没有四段") 
             const auto& beats = scenes.at("properties").at(p.key).at("properties").at("beats");
             CHECK(beats.at("minItems").get<int>() == p.min_beats);
             CHECK(beats.at("maxItems").get<int>() == p.max_beats);
-            const auto& item = beats.at("items");
+            // **拍子的定义只有一份，各场 $ref 它**（2026-09-17）：原来每场
+            // 各塞一份完整的，一章三场就把那一千三百字抄三遍贴给模型。
+            CHECK(beats.at("items").at("$ref") == "#/$defs/Beat");
+            const auto& item = sc.at("$defs").at("Beat");
             for (const char* f : {"kind", "speaker", "text", "characters", "delivery", "subtext", "fx"}) {
                 bool found = false;
                 for (const auto& r : item.at("required")) found = found || r == f;
