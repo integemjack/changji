@@ -189,6 +189,29 @@ std::vector<std::string> character_names(const AssetLibrary& assets) {
 
 }  // namespace
 
+std::string previous_scripts(const models::Project& project,
+                             const std::string& before, std::size_t keep) {
+    std::vector<std::string> earlier;
+    for (const auto& ep : project.episodes) {
+        // **到这一集为止。** 把后面几集也塞进去的话，模型会把还没发生的事
+        // 当成已经发生的写。
+        if (!before.empty() && ep.episode_id == before) break;
+        // 预告片是从正片里剪出来的，再拿它当写正片的上下文，模型会开始抄
+        // 自己的预告，越写越像宣传语。
+        if (ep.episode_id == kTrailerEpisodeId) continue;
+        const std::string s = text::strip_ws(ep.script);
+        if (s.empty()) continue;
+        earlier.push_back("【" + ep.episode_id + "】\n" + s);
+    }
+    const std::size_t skip = earlier.size() > keep ? earlier.size() - keep : 0;
+    std::string out;
+    for (std::size_t i = skip; i < earlier.size(); ++i) {
+        if (i > skip) out += "\n\n";
+        out += earlier[i];
+    }
+    return out;
+}
+
 ApiResult post_script_premise(const json& body, llm::Client& client,
                               pipeline::CancelToken& tok) {
     forbid_extra(body, {"project", "keywords", "count"});
@@ -298,27 +321,9 @@ ApiResult post_script_write(const json& body, llm::Client& client,
         }
     }
 
-    std::string previous;
-    if (continue_prev && plan == nullptr) {
-        // 只取这一集**之前**的几集。把后面的也塞进去，模型会把还没发生的
-        // 事当成已经发生的写。
-        std::vector<std::string> earlier;
-        for (const auto& ep : project.episodes) {
-            if (!episode_id.empty() && ep.episode_id == episode_id) break;
-            // 预告片是从正片里剪出来的，再拿它当写正片的上下文，
-            // 模型会开始抄自己的预告，越写越像宣传语
-            if (ep.episode_id == kTrailerEpisodeId) continue;
-            const std::string s = text::strip_ws(ep.script);
-            if (s.empty()) continue;
-            earlier.push_back("【" + ep.episode_id + "】\n" + s);
-        }
-        // 只要最近三集。给多了模型会顾此失彼，而且提示词会撑爆上下文。
-        const std::size_t skip = earlier.size() > 3 ? earlier.size() - 3 : 0;
-        for (std::size_t i = skip; i < earlier.size(); ++i) {
-            if (i > skip) previous += "\n\n";
-            previous += earlier[i];
-        }
-    }
+    const std::string previous = (continue_prev && plan == nullptr)
+                                     ? previous_scripts(project, episode_id)
+                                     : std::string{};
 
     const std::vector<std::string> names =
         reuse_chars ? character_names(assets) : std::vector<std::string>{};

@@ -17,6 +17,7 @@
 #include <nlohmann/json.hpp>
 
 #include "models/character.hpp"
+#include "http/scripting.hpp"
 #include "stages/script.hpp"
 #include "util/text.hpp"
 
@@ -805,4 +806,43 @@ TEST_CASE("摇出来的形状要和 schema、解析用的是同一个") {
     REQUIRE(d.acts.size() == 4);
     CHECK(d.acts[1].from_s == acts[1].from_s);
     CHECK(d.acts[1].to_s == acts[1].to_s);
+}
+
+TEST_CASE("前情只取这一集之前的几集，预告片不算") {
+    // ⚠️ **这段原来在两处各写了一遍，取法还不一样**（CLAUDE.md 第七条）：
+    // `batch.cpp` 那份取"最近三集写好的"，不管在这一集前面还是后面；
+    // `scripting.cpp` 那份取"这一集之前的最近三集"。写整季时两者恰好相等
+    // （那一集是写完才建出来的），所以谁也没发现——而**单写一集时前一种会
+    // 把后面几集当成已经发生的事喂给模型**，模型就照着写。
+    models::Project p;
+    for (const char* id : {"ep01", "ep02", "trailer", "ep03", "ep04"}) {
+        models::Episode ep;
+        ep.episode_id = id;
+        ep.script = std::string(id) + " 的剧本正文";
+        p.episodes.push_back(ep);
+    }
+
+    SUBCASE("到这一集为止") {
+        const std::string out = http::previous_scripts(p, "ep03");
+        CHECK(out.find("ep01") != std::string::npos);
+        CHECK(out.find("ep02") != std::string::npos);
+        // **后面那两集一个字都不能进来**，这是这条用例的要害。
+        CHECK(out.find("ep03") == std::string::npos);
+        CHECK(out.find("ep04") == std::string::npos);
+        // 预告片是从正片里剪出来的，拿它当上下文模型会开始抄自己的预告。
+        CHECK(out.find("trailer") == std::string::npos);
+    }
+
+    SUBCASE("终点留空 = 全部已写的") {
+        const std::string out = http::previous_scripts(p);
+        CHECK(out.find("ep04") != std::string::npos);
+        CHECK(out.find("trailer") == std::string::npos);
+    }
+
+    SUBCASE("只要最近几集：整季塞进去撑不住") {
+        const std::string out = http::previous_scripts(p, "", /*keep=*/2);
+        CHECK(out.find("ep01") == std::string::npos);
+        CHECK(out.find("ep03") != std::string::npos);
+        CHECK(out.find("ep04") != std::string::npos);
+    }
 }

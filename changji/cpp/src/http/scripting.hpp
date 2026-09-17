@@ -16,12 +16,33 @@
 #include "config/settings.hpp"
 #include "http/readonly.hpp"
 #include "llm/client.hpp"
+#include "models/project.hpp"
 #include "pipeline/jobs.hpp"
 
 namespace changji::http {
 
 /// 预告片挂的剧集 id。它在好几处要被特殊对待，所以是个常量。
 inline constexpr const char* kTrailerEpisodeId = "trailer";
+
+/// 写这一集剧本时带上的前情：**这一集之前**最近三集的剧本原文。
+///
+/// ⚠️ **原来这段在两处各写了一遍，而且行为不一样**（CLAUDE.md 第七条）：
+/// `batch.cpp` 那份取"最近三集写好的"（不管在这一集前面还是后面），
+/// `scripting.cpp` 那份取"这一集之前的最近三集"。写整季时两者恰好相等，
+/// 所以谁也没发现——而单写一集时前一种会把**后面几集**当成已经发生的事
+/// 喂给模型，模型就照着写。收成一处，按后一种。
+///
+/// `before` 留空表示"写在末尾"，此时全部已写的都算在前面。
+/// 预告片永远不算：它是从正片里剪出来的，拿它当上下文模型会开始抄自己的
+/// 预告，越写越像宣传语。
+///
+/// **只要最近三集**：整季塞进去小模型撑不住，离得远的剧情对下一集的连贯
+/// 性也没什么帮助。2026-09-17 实测这一段是剧本那条提示词里最大的一块
+/// （三集 7200 字符，而同一条里的 schema 才 1701）——真要再砍，砍的是
+/// 这个数，而**那是个会动到成片质量的决定**，得先拿两版实际剧本比过。
+std::string previous_scripts(const models::Project& project,
+                             const std::string& before = "",
+                             std::size_t keep = 3);
 
 /// POST /api/script/premise —— 想几个选题给人挑。不落库。
 ApiResult post_script_premise(const nlohmann::json& body, llm::Client& client,

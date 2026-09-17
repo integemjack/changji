@@ -144,25 +144,6 @@ std::vector<std::string> character_names(const AssetLibrary& assets) {
     return names;
 }
 
-/// 前几集当上下文。只取最近三集——整季塞进去小模型撑不住，
-/// 离得远的剧情对下一集的连贯性也没什么帮助。
-std::string previous_context(const Project& project) {
-    std::vector<std::string> written;
-    for (const auto& ep : project.episodes) {
-        const std::string s = text::strip_ws(ep.script);
-        if (s.empty()) continue;
-        if (ep.episode_id == kTrailerEpisodeId) continue;
-        written.push_back("【" + ep.episode_id + "】\n" + s);
-    }
-    const std::size_t skip = written.size() > 3 ? written.size() - 3 : 0;
-    std::string out;
-    for (std::size_t i = skip; i < written.size(); ++i) {
-        if (i > skip) out += "\n\n";
-        out += written[i];
-    }
-    return out;
-}
-
 double round1(double x) { return std::nearbyint(x * 10.0) / 10.0; }
 
 }  // namespace
@@ -461,7 +442,13 @@ ApiResult post_script_series(const json& body,
                 llm::Request req;
                 req.prompt = stages::build_script_prompt(
                     premise, duration_s, project.style_line,
-                    previous_context(project), names, variation);
+                    // 前情收在 scripting.hpp 的 previous_scripts 里。
+                    // **这儿原来自己抄了一份**，两份的取法还不一样：这份取
+                    // "最近三集写好的"、不管在这一集前面还是后面。写整季时
+                    // 两者恰好相等（这一集是写完才建出来的，见下面
+                    // next_episode_id——所以"已经写好的"就是"这一集之前
+                    // 的"），所以谁也没发现。终点留空就是全部已写的。
+                    previous_scripts(project), names, variation);
                 req.schema =
                     stages::script_schema(duration_s, names, variation);
                 req.schema_name = "script";
