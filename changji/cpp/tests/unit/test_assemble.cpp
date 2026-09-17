@@ -131,6 +131,54 @@ TEST_CASE("一章按每集时长切成几集：只在镜头边界切，每集重
         at += 10.0;
     }
 
+    SUBCASE("短得不像一集的尾巴并回上一集") {
+        // 2026-09-17 实测 hulian-test：每集目标 60 秒，ep01 切成 57.2 秒 +
+        // **4.5 秒**——后一个不是一集，是个片段，发出去就是一条四秒半的
+        // 视频。并回去 61.7 秒，比目标多一点点，正好。
+        media::Timeline t2;
+        double at2 = 0.0;
+        for (const double d : {28.0, 28.0, 3.0}) {
+            t2.entries.push_back(entry("sh", at2, d));
+            at2 += d;
+        }
+        const auto eps = media::split_into_episodes(t2, 60.0);
+        REQUIRE(eps.size() == 1);            // 3 秒那一镜没有单独成集
+        CHECK(eps[0].entries.size() == 3);
+        // 并回去的那几镜时间戳要接着走，不能还停在 0
+        CHECK(eps[0].entries.back().start_s == doctest::Approx(56.0));
+        REQUIRE_FALSE(eps[0].entries.back().cues.empty());
+        CHECK(eps[0].entries.back().cues.front().start_s == doctest::Approx(56.0));
+    }
+
+    SUBCASE("尾巴够长就留着：短是短，还是一集") {
+        // ep06 那次是 48.9 + 27.4。27 秒短，但它是一集。
+        media::Timeline t3;
+        double at3 = 0.0;
+        for (const double d : {25.0, 24.0, 27.0}) {
+            t3.entries.push_back(entry("sh", at3, d));
+            at3 += d;
+        }
+        const auto eps = media::split_into_episodes(t3, 60.0);
+        REQUIRE(eps.size() == 2);
+        CHECK(eps[1].entries.size() == 1);
+    }
+
+    SUBCASE("并完会撑成怪物就不并：宁可留那个短尾巴") {
+        // 一条四秒的片子难看，一条两分钟的"短剧"是另一种难看。
+        // 一镜本身就超过一集时长时它自己成一集（上面那条「至少留一镜」），
+        // 于是上一集可能比目标长得多——88 + 5 = 93 超过 60×1.5，不并。
+        media::Timeline t4;
+        double at4 = 0.0;
+        for (const double d : {88.0, 5.0}) {
+            t4.entries.push_back(entry("sh", at4, d));
+            at4 += d;
+        }
+        const auto eps = media::split_into_episodes(t4, 60.0);
+        REQUIRE(eps.size() == 2);
+        CHECK(eps[1].entries.size() == 1);
+        CHECK(eps[1].entries.front().duration_s == doctest::Approx(5.0));
+    }
+
     SUBCASE("70 秒按 30 秒一集切：3 集，3/3/1 镜") {
         const auto eps = media::split_into_episodes(t, 30.0);
         REQUIRE(eps.size() == 3);

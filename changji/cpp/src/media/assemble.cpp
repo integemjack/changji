@@ -171,6 +171,50 @@ std::vector<Timeline> split_into_episodes(const Timeline& timeline,
         cur.entries.push_back(std::move(moved));
     }
     if (!cur.entries.empty()) out.push_back(std::move(cur));
+
+    // ---- 太短的尾巴并回上一集 ----
+    //
+    // 上面是贪心填充：装不下就开下一集，于是**最后一集剩多少算多少**。
+    // 2026-09-17 实测 hulian-test：每集目标 60 秒，ep01 切成 57.2 秒 +
+    // **4.5 秒**——后一个不是一集，是个片段，发出去就是一条四秒半的视频。
+    //
+    // 判据两条，都得满足才并：
+    //   · 尾巴短得不像一集（不到目标的四分之一）。ep06 那次是 48.9 + 27.4，
+    //     27 秒短是短，还是一集，不并；4.5 秒（目标的 7%）并。
+    //     **四分之一不是三分之一**：既有的用例里 70 秒按 30 秒切，尾巴正好
+    //     10 秒 = 三分之一，拿三分之一当界的话它卡在刀刃上，靠
+    //     `30.0*(1.0/3.0)` 算出 9.999999999999998 才没并——那不是能依赖的
+    //     性质。四分之一离两边都远。
+    //   · 并完不至于撑成一个怪物（不超过目标的一倍半）。57.2+4.5=61.7 秒，
+    //     比目标多一点点，正好。真遇到并完太长的，宁可留着那个短尾巴——
+    //     一条四秒的片子难看，一条两分钟的"短剧"是另一种难看。
+    constexpr double kTailFloorRatio = 0.25;
+    constexpr double kMergedCapRatio = 1.5;
+    if (out.size() >= 2) {
+        const auto total = [](const Timeline& t) {
+            double n = 0.0;
+            for (const TimelineEntry& e : t.entries) n += e.duration_s;
+            return n;
+        };
+        const double tail = total(out.back());
+        const double prev = total(out[out.size() - 2]);
+        if (tail < per_episode_s * kTailFloorRatio &&
+            tail + prev <= per_episode_s * kMergedCapRatio) {
+            Timeline moved_tail = std::move(out.back());
+            out.pop_back();
+            Timeline& into = out.back();
+            // 尾巴那几镜的时间戳是从 0 重起算的（上面那段），并回去要
+            // 按上一集已经用掉的长度整体后移，字幕跟着走。
+            for (TimelineEntry& e : moved_tail.entries) {
+                e.start_s += prev;
+                for (SubtitleCue& c : e.cues) {
+                    c.start_s += prev;
+                    c.end_s += prev;
+                }
+                into.entries.push_back(std::move(e));
+            }
+        }
+    }
     return out;
 }
 
