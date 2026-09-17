@@ -268,6 +268,23 @@ const projectNoShots = computed(
  * 在第三页，每次等完回来再点下一个。用户定的：并成一颗，一路跑到底。
  */
 const showTodo = computed(() => projectNoShots.value > 0 || projectPending.value > 0)
+
+/**
+ * 这台机器出不了片，但还有**纯文字的活**能干。
+ *
+ * 2026-09-17 在只能写文的 Mac 上撞见：剧集页三颗按钮全灰，悬停写着
+ * 「还不能开工：进程内配音 · 缺模型 [models].tts」——**缺一个配音模型，
+ * 把拆分镜也一起拦了**。而「跑完整部剧」前两步（没剧本的改编、没分镜的
+ * 补上）跟配音、跟出图都没有关系：同一时刻我从接口起的那批分镜正跑得
+ * 好好的，体检自己也写着「能产什么：写文、装配」。
+ *
+ * 后果是纯文字那台机器上，整部剧的分镜只能一集一集点「AI 重出分镜」——
+ * 能一次干完的事被逼成按五次，正是要简化掉的那个形状。
+ *
+ * 所以：还有章没分镜的时候，这颗按钮照亮，只跑前两步，跑完说清为什么停。
+ * 分镜都齐了就没有纯文字的活了，那时候该灰还是灰。
+ */
+const textOnlyTodo = computed(() => blocked.value && projectNoShots.value > 0)
 /**
  * 按钮上那句「还差 …」。**为零的那一项不印。**
  *
@@ -627,6 +644,21 @@ async function runWholeShow() {
         ui.info(`正在给 ${pl.episodes.join('、')} 补分镜`)
         if (!(await waitWrite())) return null
       }
+      // ---- 2.5 出不了片的机器到这儿为止 ----
+      //
+      // 前两步是纯文字活，第 3、4 步要出图、要配音。只能写文的那台机器
+      // 上（见 textOnlyTodo）这颗按钮是亮的，为的就是把前两步跑完——
+      // 不在这儿停的话，第 3 步会拿一个出不了图的后端去画参考图，
+      // 一路 400 到底，而人刚看着分镜拆完、以为一切正常。
+      //
+      // **说清停在哪、为什么。** 只说"跑完了"的话，下一步他会去找片子。
+      if (blocked.value) {
+        ui.ok(
+          `分镜补齐了。出片这一步这台机器还做不了：${blockedWhy.value}`,
+        )
+        return null
+      }
+
       // ---- 3. 还缺的参考图 ----
       //
       // **不补的话第 4 步会被 400 挡回来**，而那句话是「先去设定页把这几镜
@@ -1388,12 +1420,14 @@ onDeactivated(() => {
           class="btn btn--primary"
           type="button"
           :title="
-            blockedWhy ||
+            (textOnlyTodo
+              ? `这台机器还出不了片（${blockedWhy}）。这一颗先把还差的 ${projectNoShots} 章分镜拆完——拆分镜只用大语言模型，不用出图和配音。`
+              : blockedWhy) ||
             (showTodo
               ? `一路跑完整部剧：没剧本的先改编、没分镜的补上、缺的参考图画好，还差的 ${todoLabel} 一次跑完——中途不用回来点；跑起来之后这颗按钮自己变成「停下」`
               : '每一镜都有片了；点了会全部重出')
           "
-          :disabled="(blocked || starting) && !isBusy('whole')"
+          :disabled="((blocked && !textOnlyTodo) || starting) && !isBusy('whole')"
           @click="
             isBusy('whole')
               ? stopWholeShow()
@@ -1408,9 +1442,11 @@ onDeactivated(() => {
               ? wholeAbort
                 ? '停着…'
                 : '停下（跑着整部剧）'
-              : showTodo
-                ? `跑完整部剧（还差 ${todoLabel}）`
-                : '全部重出'
+              : textOnlyTodo
+                ? `先把 ${projectNoShots} 章分镜拆完`
+                : showTodo
+                  ? `跑完整部剧（还差 ${todoLabel}）`
+                  : '全部重出'
           }}
         </button>
       </template>
