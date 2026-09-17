@@ -895,6 +895,40 @@ jobs:
           sha256sum changji-* | tee SHA256SUMS
           ls -lh
 
+      # ---- version.json ----
+      #
+      # **给自动更新用的那一份。** 程序要判断"手上这个是不是最新"，靠的不能
+      # 是解析发布说明里那张 Markdown 表——那张表是给人读的，改一次措辞就把
+      # 更新检查弄坏，而且不会报错。
+      #
+      # 两个通道都出一份，字段一样：程序按 `[update].channel` 去取哪一个，
+      # 拿到的形状必须一致，不然两条路要写两套解析。
+      #
+      # 每个包都带上大小和 sha256：下完要对得上才敢用（半路断掉的包装上去
+      # 的表现是「Exec format error」，那个报错和网络问题看不出关系——
+      # SHA256SUMS 那一段的注释里写的是同一件事）。
+      - name: 写 version.json
+        working-directory: dist
+        env:
+          CJ_VERSION: ${{ needs.meta.outputs.version }}
+          CJ_CHANNEL: ${{ needs.meta.outputs.channel }}
+        run: |
+          python3 - <<'PY' > version.json
+          import hashlib, json, os, pathlib, time
+          assets = []
+          for p in sorted(pathlib.Path('.').glob('changji-*')):
+              h = hashlib.sha256(p.read_bytes()).hexdigest()
+              assets.append({'name': p.name, 'bytes': p.stat().st_size, 'sha256': h})
+          print(json.dumps({
+              'version': os.environ['CJ_VERSION'],
+              'channel': os.environ['CJ_CHANNEL'],
+              'commit': os.environ.get('GITHUB_SHA', ''),
+              'built_at': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()),
+              'assets': assets,
+          }, ensure_ascii=False, indent=1))
+          PY
+          cat version.json
+
       # **表是照 dist/ 里真有的东西生成的，不是写死的。**
       # GPU 那四格挂几个都照发（见上面 publish 的 if），写死一张表的话
       # 里面会有点下去 404 的链接——而那正是用户最需要分清"这次有没有编
@@ -941,12 +975,42 @@ jobs:
           } > notes.md
           cat notes.md
 
+      # ---- 正式版：**永远只有一个 Release**，和 beta 一样删了重建 ----
+      #
+      # 2026-09-17 改的（用户：「以后 release 也只有一个」）。原来是每推一个
+      # `v*` tag 就建一个同名 Release，攒着一长串。
+      #
+      # **换成固定的一个，是自动更新要的。** 更新检查要一个**不随版本变的
+      # 地址**去取 `version.json`：
+      #
+      #   .../releases/download/release/version.json
+      #   .../releases/download/beta/version.json
+      #
+      # 每版一个 Release 的话，那个地址每次都变，程序只能去翻 API 列表、
+      # 再猜哪个是最新的（`--generate-notes` 那种发布说明还不好解析）。
+      #
+      # 版本号没丢：`v*` 那个 tag 照旧留在 git 历史里，Release 的标题和
+      # `version.json` 里的 `version` 都是它。
+      #
+      # 删了重建而不是往上加（`--clobber`），理由和下面 beta 那段一模一样：
+      # tag 会一直钉在第一次建它的那个提交上，而某个平台这一趟没编出来时，
+      # 上面会留着**上一趟那个平台的包**，下载的人分不出哪个是新的。
       - name: 建 Release（正式版）
         if: needs.meta.outputs.channel == 'release'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          gh release delete release --repo "$GITHUB_REPOSITORY" --yes --cleanup-tag \
+            || echo "没有旧的 release Release，跳过"
+          gh api -X DELETE "repos/$GITHUB_REPOSITORY/git/refs/tags/release" --silent \
+            || echo "没有残留的 release tag，跳过"
           {
+            echo "| | |"
+            echo "|---|---|"
+            echo "| 版本号 | \`${{ needs.meta.outputs.version }}\`（\`changji --version\` 打印这个） |"
+            echo "| 提交 | ${GITHUB_SHA} |"
+            echo "| 编于 | $(date -u '+%Y-%m-%d %H:%M UTC') |"
+            echo
             echo "## 下载"
             echo
             cat notes.md
@@ -956,14 +1020,12 @@ jobs:
             echo '```bash'
             echo "curl -fsSL https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/main/changji/install.sh | bash"
             echo '```'
-            echo
-            echo "---"
           } > body.md
-          gh release create "${{ github.ref_name }}" \
+          gh release create release \
             --repo "$GITHUB_REPOSITORY" \
-            --title "${{ github.ref_name }}" \
+            --target "$GITHUB_SHA" \
+            --title "${{ needs.meta.outputs.version }}" \
             --notes-file body.md \
-            --generate-notes \
             dist/*
 
       # **beta 是删掉重建，不是往上加。**

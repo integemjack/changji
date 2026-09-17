@@ -3,11 +3,16 @@
 #
 # 用法：
 #   curl -fsSL https://raw.githubusercontent.com/integemjack/changji/main/changji/install.sh | bash
-# 装某一版而不是最新版：
-#   CHANGJI_VERSION=v1.2.0 bash install.sh
 # 装每次推分支都会刷新的滚动预发布：
 #   CHANGJI_VERSION=beta bash install.sh
 # （默认走 /releases/latest，而预发布不在那里面，所以不写就永远是正式版）
+#
+# ⚠️ **2026-09-17 起 Release 只有一个**（用户：「以后 release 也只有一个」）：
+# 正式版永远发在固定的 `release` 这个 tag 上，每次删了重建；旧的
+# `CHANGJI_VERSION=v1.2.0` 那种写法不再指得到东西（`v*` 那些 tag 还在 git
+# 历史里，但没有对应的 Release 了）。要装正式版就不写，或者写 `release`。
+# 换成固定的一个，是**自动更新**要的：更新检查得有一个不随版本变的地址去取
+# `version.json`。
 # 已经有本地编好的二进制：
 #   CHANGJI_BINARY=/path/to/changji bash install.sh
 #
