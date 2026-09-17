@@ -55,7 +55,7 @@ const projects = useProjects()
 const route = useRoute()
 const router = useRouter()
 const ui = useUi()
-const { run, isBusy, error: actionError } = useAction()
+const { run, isBusy } = useAction()
 const { finished, touch } = useRefStream()
 /** 长跑任务在不在跑。见下面那条下降沿。 */
 const longRunning = useLongRunning()
@@ -395,13 +395,25 @@ async function genAll() {
     }
   }
 
+  /** 半路砸了/停了留下的那句话。并发之后不能再借 useAction 那个共享的。 */
+  let lastError = ''
+
   const one = async (i) => {
     const j = jobs[i]
     running.set(i, j.name)
     paint()
-    const ok = await run(
-      () =>
-        runAsyncJob(
+    // ⚠️ **这儿不能套 `run()`。**
+    //
+    // `useAction` 的 run 对同一个 key 是**互斥**的（`if (running.has(key))
+    // return undefined`），几条道用同一个 'genall' 的话，第二条一进来就拿到
+    // undefined——而 undefined 在下面被当成"这张砸了"，于是整圈当场停住。
+    // 2026-09-17 改成并发的第一版就是这样，页面卡在「0/16」一动不动。
+    //
+    // 按钮的灰不靠它：模板判的是 `!!bulk`（这一圈自己在维护）。
+    // 错误也自己接——那个共享的 error 是给单发用的，并发时会互相盖掉。
+    let ok = null
+    try {
+      ok = await runAsyncJob(
           (extra) =>
             j.kind === 'char'
               ? api.generateReference({
@@ -416,19 +428,15 @@ async function genAll() {
                   ...extra,
                 }),
           { prefix: 'ref' },
-        ),
-      // **这一圈不自己弹红条**（quiet）：人按「停下」也会走到这儿，而
-      // 「停」不是失败。引擎那头分得很清——ref_gen.cpp 里专门写着「**人按
-      // 的停不是失败。** 报成「出图失败：已取消」的话，人会去找哪儿出错
-      // 了」，取消回的是 400「已停下这一张」。而 run() 见到抛错一律
-      // ui.error，于是主动按的停在屏幕上是一条红的，底下还跟一句橙的
-      // 「还差 N 张没画」——两条都在说出事了，而什么都没出事。
-      //
-      // 所以这儿收住，到下面按「是停的还是砸的」分两种说法。
-      { key: 'genall', quiet: true },
-    )
-    // 中间砸了就停：后面那些多半栽在同一件事上（模型没配、显存不够），
-    // 接着画只是让人多等十几分钟再看到同一句报错。
+        )
+    } catch (e) {
+      lastError = e?.message || String(e)
+      ok = null
+    }
+    // **这一圈不自己弹红条**：人按「停下」也会走到这儿，而「停」不是失败。
+    // 引擎那头分得很清——ref_gen.cpp 里专门写着「**人按的停不是失败。**
+    // 报成「出图失败：已取消」的话，人会去找哪儿出错了」，取消回的是 400
+    // 「已停下这一张」。所以这儿收住，到下面按「是停的还是砸的」分两种说法。
     running.delete(i)
     if (!ok) {
       // 中间砸了就不再开新的：后面那些多半栽在同一件事上（模型没配、
@@ -437,7 +445,7 @@ async function genAll() {
       if (stoppedAt < 0) {
         stoppedAt = i
         // 引擎给取消留的是 400「已停下这一张」；别的都算真砸了。
-        byHand = stoppedByHand(actionError.value)
+        byHand = stoppedByHand(lastError)
       }
     } else {
       made += 1
@@ -486,7 +494,7 @@ async function genAll() {
     )
   } else if (left) {
     // 真砸了。上面那一圈是 quiet 的，报错这件事得自己来——原话照引擎给的。
-    if (actionError.value) ui.error(actionError.value)
+    if (lastError) ui.error(lastError)
     // 一张都没画成时也要说——原来 `if (made)` 把这种整个吞了，屏幕上只有
     // `run` 那句红的，而那句话不提"这一轮一共要画几张、停在哪儿"。
     const head = made ? `${where}画好了 ${made} 张，还差 ${left} 张没画` : `${where}一张都没画成，排着的 ${left} 张都还在`
