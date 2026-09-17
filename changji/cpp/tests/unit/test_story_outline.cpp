@@ -1543,8 +1543,12 @@ TEST_CASE("提示词：读，不要改写") {
     // 正文本身要带过去
     CHECK(p.find("ch01") != std::string::npos);
 
+    // 「不要写长相」留在表里：**字段描述只管得住那一栏**，而长相会写进
+    // summary（下面「提示词：写大纲」那条上记着实测结论）。原著里本来就
+    // 写着长相，读这一步顺手就抄过来了。
+    CHECK(p.find("不要写长相") != std::string::npos);
+
     // 这几条从表里砍掉了，**但模型照样收得到**——在 schema 那一半里
-    CHECK(full.find("不要写长相") != std::string::npos);
     CHECK(full.find("chapter_id") != std::string::npos);
     CHECK(full.find("归纳不是摘抄") != std::string::npos);
     CHECK(full.find("别只给章尾那一个") != std::string::npos);

@@ -89,12 +89,17 @@ const ordered& outline_schema() {
         relation_props["kind"] = {{"type", "string"}, {"description", "前任、母女、上下级"}};
         relation_props["tension"] = {
             {"type", "string"},
-            {"description", "这段关系里绷着的是什么。只写关系名不够"}};
+            {"description",
+             "这段关系里绷着的是什么。只写关系名不够——"
+             "「前任」不算，「谁欠谁一句没说出口的道歉」才算"}};
 
         ordered location_props = ordered::object();
         location_props["name"] = {{"type", "string"}, {"description", "中文地点名"}};
         location_props["what"] = {
-            {"type", "string"}, {"description", "什么地方，具体到看得见"}};
+            {"type", "string"},
+            {"description",
+             "什么地方，具体到看得见：在当地什么位置、什么时候开放、"
+             "进去先感知到什么，写成只可能是这一处的样子"}};
         location_props["when"] = {
             {"type", "string"}, {"description", "什么时间、什么光"}};
 
