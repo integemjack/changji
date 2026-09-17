@@ -698,8 +698,169 @@ std::string RemoteClient::complete(const Request& req,
 
 // ---- ReplayClient ----
 
+namespace {
+
+ordered message_json(const Message& m) {
+    ordered j = ordered::object();
+    j["role"] = m.role;
+    if (m.role == "assistant" && !m.tool_calls.empty()) {
+        // OpenAI 那套：带 tool_calls 的那条 content 可以是 null
+        if (m.content.empty()) j["content"] = nullptr;
+        else j["content"] = m.content;
+        ordered calls = ordered::array();
+        for (const auto& c : m.tool_calls) {
+            calls.push_back(ordered{{"id", c.id},
+                                    {"type", "function"},
+                                    {"function", ordered{{"name", c.name},
+                                                         {"arguments", c.arguments}}}});
+        }
+        j["tool_calls"] = calls;
+    } else {
+        j["content"] = m.content;
+    }
+    if (m.role == "tool") j["tool_call_id"] = m.tool_call_id;
+    return j;
+}
+
+ChatReply parse_chat_reply(const std::string& raw_body) {
+    nlohmann::json body;
+    try {
+        body = nlohmann::json::parse(raw_body);
+    } catch (const std::exception&) {
+        throw LlmError("大模型返回的不是 JSON：" + text::truncate_utf8(raw_body, 400));
+    }
+    const auto choices = body.find("choices");
+    if (choices == body.end() || !choices->is_array() || choices->empty()) {
+        throw LlmError("大模型返回格式异常：" + text::truncate_utf8(body.dump(), 400));
+    }
+    const auto& first = (*choices)[0];
+    const auto msg = first.find("message");
+    if (msg == first.end() || !msg->is_object()) {
+        throw LlmError("大模型返回格式异常：" + text::truncate_utf8(body.dump(), 400));
+    }
+    ChatReply r;
+    if (const auto c = msg->find("content"); c != msg->end() && c->is_string()) {
+        r.content = c->get<std::string>();
+    }
+    if (const auto fr = first.find("finish_reason"); fr != first.end() && fr->is_string()) {
+        r.finish_reason = fr->get<std::string>();
+    }
+    if (const auto tc = msg->find("tool_calls"); tc != msg->end() && tc->is_array()) {
+        for (const auto& item : *tc) {
+            if (!item.is_object()) continue;
+            ToolCall call;
+            call.id = item.value("id", std::string());
+            const auto fn = item.find("function");
+            if (fn != item.end() && fn->is_object()) {
+                call.name = fn->value("name", std::string());
+                const auto args = fn->find("arguments");
+                if (args != fn->end()) {
+                    call.arguments = args->is_string() ? args->get<std::string>() : args->dump();
+                }
+            }
+            if (!call.name.empty()) r.tool_calls.push_back(std::move(call));
+        }
+    }
+    return r;
+}
+
+}  // namespace
+
+ChatReply Client::chat(const std::vector<Message>&, const ordered&, const Request&,
+                       pipeline::CancelToken&) {
+    throw LlmError("这个大模型后端不带工具调用");
+}
+
+ChatReply RemoteClient::chat(const std::vector<Message>& messages, const ordered& tools,
+                             const Request& opts, pipeline::CancelToken& tok) {
+    if (tok.cancelled()) throw LlmError(util::kCancelled);
+
+    config::LLMConfig cfg = cfg_();
+    cfg.model = cfg.model_for(opts.schema_name);
+    cfg.temperature = cfg.temperature_for(opts.schema_name);
+    const std::string url = cfg.base_url + "/chat/completions";
+    const std::map<std::string, std::string> headers = {
+        {"Authorization", "Bearer " + cfg.api_key},
+        {"Content-Type", "application/json"},
+    };
+
+    // 和 build_payload 同一套：模型、温度、GLM-5 的 thinking。多的只是
+    // messages 是整段来回、外加 tools。
+    ordered payload = ordered::object();
+    payload["model"] = cfg.model;
+    ordered msgs = ordered::array();
+    for (const auto& m : messages) msgs.push_back(message_json(m));
+    payload["messages"] = msgs;
+    payload["temperature"] = opts.temperature.value_or(cfg.temperature);
+    if (tools.is_array() && !tools.empty()) {
+        payload["tools"] = tools;
+        payload["tool_choice"] = "auto";
+    }
+    if (!opts.reasoning_effort.empty()) {
+        std::string m = cfg.model;
+        for (char& c : m) {
+            if (c >= 'A' && c <= 'Z') c = static_cast<char>(c - 'A' + 'a');
+        }
+        if (m.rfind("glm-5", 0) == 0) {
+            payload["thinking"] = ordered{{"type", "enabled"}};
+            payload["reasoning_effort"] = opts.reasoning_effort;
+        }
+    }
+
+    HttpResponse r = post_(url, payload.dump(), headers, cfg.timeout_s);
+    if (r.transport_error.has_value()) {
+        throw LlmError(connect_failed(cfg, *r.transport_error));
+    }
+    if (r.status >= 400) {
+        throw LlmError(explain_status(cfg, r.status, r.body), r.status);
+    }
+    if (tok.cancelled()) throw LlmError(util::kCancelled);
+    if (opts.on_thinking) {
+        const std::string think = extract_thinking(r.body);
+        if (!think.empty()) opts.on_thinking(think);
+    }
+    return parse_chat_reply(r.body);
+}
+
 ReplayClient::ReplayClient(std::vector<std::string> responses)
     : responses_(std::move(responses)) {}
+
+ChatReply ReplayClient::chat(const std::vector<Message>& messages, const ordered&,
+                            const Request& opts, pipeline::CancelToken& tok) {
+    if (tok.cancelled()) throw LlmError(util::kCancelled);
+    Request seen = opts;
+    seen.prompt = messages.empty() ? std::string() : messages.back().content;
+    calls_.push_back(seen);
+    last_messages_ = messages;
+    if (next_ >= responses_.size()) {
+        throw LlmError("回放录到头了：这是第 " + std::to_string(next_ + 1) +
+                       " 次调用，只录了 " + std::to_string(responses_.size()) +
+                       " 条");
+    }
+    const std::string raw = responses_[next_++];
+    ChatReply r;
+    try {
+        const nlohmann::json j = nlohmann::json::parse(raw);
+        if (j.is_object() && j.contains("tool_calls") && j["tool_calls"].is_array()) {
+            int k = 0;
+            for (const auto& item : j["tool_calls"]) {
+                ToolCall c;
+                c.id = item.value("id", "call_" + std::to_string(++k));
+                c.name = item.value("name", std::string());
+                const auto a = item.find("arguments");
+                if (a != item.end()) c.arguments = a->is_string() ? a->get<std::string>() : a->dump();
+                r.tool_calls.push_back(std::move(c));
+            }
+            r.finish_reason = "tool_calls";
+            return r;
+        }
+    } catch (const std::exception&) {
+        // 不是 JSON：就是一段话
+    }
+    r.content = raw;
+    r.finish_reason = "stop";
+    return r;
+}
 
 std::string ReplayClient::complete(const Request& req,
                                    pipeline::CancelToken& tok) {

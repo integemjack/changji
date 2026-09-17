@@ -73,4 +73,14 @@ ApiResult post_plan_all(const nlohmann::json& body,
 ApiResult post_story_understand(const nlohmann::json& body,
                                 std::shared_ptr<llm::Client> client);
 
+/// POST /api/story/from_web —— 从网上找热点，写眼前这一章，直接落盘。
+///
+/// 用户 2026-09-18：故事页右下角那颗「点击直接让大语言模型使用 tools 从网上
+/// 获取热门内容改写成一个完整的故事」，接着定「这次写的就只是这一章内容」。
+/// 一条带工具的对话（stages/story_from_web），写完只换这一章的正文；这一章
+/// 已经有字的要带 overwrite。
+/// body: {project, chapter_id, overwrite?}。`get` 是上网那一层，主程序给真的。
+ApiResult post_story_from_web(const nlohmann::json& body,
+                              std::shared_ptr<llm::Client> client, llm::HttpGet get);
+
 }  // namespace changji::http

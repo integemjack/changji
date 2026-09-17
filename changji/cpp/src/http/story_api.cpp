@@ -289,10 +289,18 @@ json commit_story(const ProjectStore& store, Project project, Story story,
     sync_episodes_to_chapters(store, story);
     // 上一轮写砸的那句话到此为止：新的一份已经进去了。
     OutlineRegistry::instance().clear_error(paths::to_utf8(store.root()));
-    if (!story.premise.empty() && project.premise != story.premise) {
-        project.premise = story.premise;
-        store.save_project(project);
+    // **梗概要写回 project.json 的话，先把项目重读一遍。** 上面那句 sync 刚
+    // 把剧集写进去了，拿进来时那份旧的盖回去，剧集就没了——2026-09-18 从
+    // 网上写故事那条用例抓到的：故事两章、剧集零集。（老的 adopt 也是这个
+    // 顺序，只是走它的路梗概多半没变，没露出来。）
+    if (!story.premise.empty()) {
+        Project fresh = load_or_400(store);
+        if (fresh.premise != story.premise) {
+            fresh.premise = story.premise;
+            store.save_project(fresh);
+        }
     }
+    (void)project;
     json out = story_response(story);
     out["adopted"] = true;
     return out;

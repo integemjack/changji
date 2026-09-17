@@ -62,6 +62,31 @@ HttpPost default_http_post() {
     };
 }
 
+HttpGet default_http_get() {
+    return [](const std::string& url, const std::map<std::string, std::string>& headers,
+              double timeout_s) -> HttpResponse {
+        HttpResponse out;
+        const auto [origin, path] = split_base(url);
+        httplib::Client cli(origin);
+        const int secs = static_cast<int>(timeout_s);
+        cli.set_connection_timeout(secs, 0);
+        cli.set_read_timeout(secs, 0);
+        cli.set_write_timeout(secs, 0);
+        cli.set_follow_location(true);
+        cli.set_decompress(true);
+        httplib::Headers h;
+        for (const auto& kv : headers) h.emplace(kv.first, kv.second);
+        const auto res = cli.Get(path, h);
+        if (!res) {
+            out.transport_error = httplib::to_string(res.error());
+            return out;
+        }
+        out.status = res->status;
+        out.body = res->body;
+        return out;
+    };
+}
+
 HttpPostStream default_http_post_stream() {
     return [](const std::string& url, const std::string& body,
               const std::map<std::string, std::string>& headers,

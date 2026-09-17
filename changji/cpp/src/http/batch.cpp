@@ -7,6 +7,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <cstring>
 #include <set>
 #include <string>
 #include <vector>
@@ -14,6 +15,9 @@
 #include "http/job_stream.hpp"
 #include "http/episodes.hpp"
 #include "http/planning.hpp"
+#include "pipeline/activity.hpp"
+#include "stages/story_from_web.hpp"
+#include "stages/web_tools.hpp"
 #include "http/scripting.hpp"
 #include "models/project.hpp"
 #include "pipeline/jobs.hpp"
@@ -742,6 +746,111 @@ ApiResult post_story_understand(const json& body,
         "理解故事 · " + std::to_string(chapters) + " 章");
     if (!started) throw ApiError(409, "剧本那边还在忙");
     return {202, {{"started", true}, {"total", total}}};
+}
+
+namespace {
+
+/// 「第 3 章」「第三章」这种默认名才算默认；「第二章 五年前那把伞」不算——
+/// 后半截是人起的。
+bool is_default_chapter_title(const std::string& title_in) {
+    const std::string t = text::strip_ws(title_in);
+    if (t.empty()) return true;
+    const std::string head = "第";
+    const std::string tail = "章";
+    if (t.size() < head.size() + tail.size()) return false;
+    if (t.compare(0, head.size(), head) != 0) return false;
+    if (t.compare(t.size() - tail.size(), tail.size(), tail) != 0) return false;
+    std::string mid = t.substr(head.size(), t.size() - head.size() - tail.size());
+    // 中间只许数字、空格、汉字数字
+    static const char* kNumerals[] = {"一", "二", "三", "四", "五", "六", "七", "八", "九",
+                                      "十", "百", "零", "两"};
+    while (!mid.empty()) {
+        if (mid[0] == ' ' || (mid[0] >= '0' && mid[0] <= '9')) {
+            mid.erase(0, 1);
+            continue;
+        }
+        bool hit = false;
+        for (const char* n : kNumerals) {
+            const std::size_t len = std::strlen(n);
+            if (mid.compare(0, len, n) == 0) {
+                mid.erase(0, len);
+                hit = true;
+                break;
+            }
+        }
+        if (!hit) return false;
+    }
+    return true;
+}
+
+}  // namespace
+
+ApiResult post_story_from_web(const json& body, std::shared_ptr<llm::Client> client,
+                              llm::HttpGet get) {
+    forbid_extra(body, {"project", "chapter_id", "overwrite"});
+    std::string chapter_id;
+    if (const auto it = body.find("chapter_id"); it != body.end() && it->is_string()) {
+        chapter_id = text::strip_ws(it->get<std::string>());
+    }
+    if (chapter_id.empty()) throw ApiError(422, "缺 chapter_id：写的是哪一章");
+    const bool overwrite = opt_bool(body, "overwrite", false);
+    if (pipeline::jobs().running(pipeline::JobKind::Write)) {
+        throw ApiError(409, "剧本那边还在忙");
+    }
+    ProjectStore store = open_project(body);
+    const Project project = load_or_400(store);
+    Story story;
+    try {
+        story = store.load_story();
+    } catch (const std::exception&) {
+        throw ApiError(400, "这个项目还没有故事");
+    }
+    const Chapter* mine = story.chapter_by_id(chapter_id);
+    if (mine == nullptr) throw ApiError(404, "没有这一章：" + chapter_id);
+    if (!text::strip_ws(mine->text).empty() && !overwrite) {
+        throw ApiError(409, "这一章已经有正文了，换掉的话带上 overwrite");
+    }
+
+    const std::string root = paths::to_utf8(store.root());
+    const bool started = pipeline::jobs().start(
+        pipeline::JobKind::Write, "",
+        [store, client, get, root, chapter_id, project](pipeline::JobProgress& p) {
+            const JobScope scope{
+                pipeline::jobs().job_id(pipeline::JobKind::Write), p.token()};
+            pipeline::CancelToken& tok = p.token();
+            pipeline::Activity act{"story_web", root, "", "从网上热点写 " + chapter_id};
+            const pipeline::CancelLink stop_here{tok, act};
+            p.set_total(1);
+            p.set_message("在看网上什么热");
+
+            // 故事现读：从按下去到开跑之间人可能改了别的章
+            const Story before = store.load_story();
+            stages::WebTools web;
+            web.get = get;
+            stages::WebStoryHooks hooks;
+            hooks.on_step = [&p](const std::string& s) { p.set_message(s); };
+            hooks.on_thinking = thinking_sink();
+            const stages::WebChapter wc = stages::write_chapter_from_web(
+                *client, web, project.style_line, before, chapter_id, tok, hooks);
+
+            // 只动这一章：正文换掉，标题只在原来是"第 N 章"这种默认名时才换。
+            Story next = store.load_story();
+            Chapter* c = next.chapter_by_id(chapter_id);
+            if (c == nullptr) throw ApiError(404, "写着写着这一章没了：" + chapter_id);
+            c->text = wc.text;
+            if (is_default_chapter_title(c->title) && !wc.title.empty()) c->title = wc.title;
+            if (next.premise.empty() && next.logline.empty() && !wc.source.empty()) {
+                // 这部剧还没一句话的话，先拿来源顶上——理解故事那一步会重写它
+                next.logline = wc.source;
+            }
+            commit_story(store, project, std::move(next), before);
+            p.set_done(1);
+            p.set_message("写好了 " + chapter_id + " · " + std::to_string(text::utf8_len(wc.text)) +
+                          " 字" + (wc.source.empty() ? "" : " · 来自「" + wc.source + "」"));
+        },
+        "已手动停止。这一章没写完，原来的留着。", root, "从网上热点写 " + chapter_id);
+    if (!started) throw ApiError(409, "剧本那边还在忙");
+    return {202, {{"started", true}, {"chapter_id", chapter_id}}};
 }
 
 ApiResult post_plan_all(const json& body, std::shared_ptr<llm::Client> client) {

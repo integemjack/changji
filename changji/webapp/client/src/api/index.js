@@ -237,6 +237,8 @@ export const api = {
   // 理解故事：一件活——提结构、定长相、章对集、逐章写剧本。进度走
   // seriesStatus（同一个槽），writer store 直接能用。
   understandStory: (payload) => post('/api/story/understand', payload),
+  // 从网上找热点写眼前这一章：一条带工具的对话，写完只换这一章的正文。同一个槽。
+  storyFromWeb: (payload) => post('/api/story/from_web', payload),
 
   /**
    * 「只看不发」：把某一步真正要发给大模型的那段字取回来。

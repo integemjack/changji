@@ -173,4 +173,12 @@ ApiResult post_story_understand_once(const nlohmann::json& body,
                                      llm::Client& client,
                                      pipeline::CancelToken& tok);
 
+/// 写过正文的故事被整份换掉之前挡一下（带 overwrite 才放）。
+void refuse_to_clobber(const models::Story& existing, const nlohmann::json& body);
+
+/// 把一份故事落成正式的那份：算分集、存盘、剧集对齐、梗概同步。
+/// 出大纲、粘一份、理解、从网上写——收尾都是它。
+nlohmann::json commit_story(const models::ProjectStore& store, models::Project project,
+                            models::Story story, const models::Story& existing);
+
 }  // namespace changji::http

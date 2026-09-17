@@ -2418,6 +2418,15 @@ void run(const config::Settings& settings, const Options& opts) {
     // 理解故事：一件活串起提结构、定长相、逐章写剧本。同一个槽，同一条进度。
     CROW_ROUTE(app, "/api/story/understand").methods("POST"_method)(
         batch_route(&post_story_understand));
+    // 从网上找热点写一个故事。上网那一层在这儿给真的（测试塞假的）。
+    CROW_ROUTE(app, "/api/story/from_web").methods("POST"_method)(
+        [](const crow::request& req) {
+            auto r = guard([&] {
+                return post_story_from_web(parse_body(req.body), batch_client,
+                                           llm::default_http_get());
+            });
+            return json_response(r.body, r.status);
+        });
 
     // ---- 成片：每章都出片了，按每集时长切 ----
     CROW_ROUTE(app, "/api/film")([](const crow::request& req) {

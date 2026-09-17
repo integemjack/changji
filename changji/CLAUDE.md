@@ -18,6 +18,9 @@ cpp/src/
   stages/             每一步的纯逻辑：story_outline / story_analyze / story_understand /
                       chapter_write / script_story / storyboard / frames /
                       render / audio / bible / assemble
+  stages/web_tools    上网那几个工具：热榜、搜索、读网页（给模型的工具表 +
+                      引擎这头真跑的）；stages/story_from_web 是用它们写眼前
+                      这一章那条对话。llm::Client::chat 是带工具的多轮对话
   pipeline/series_cut 成片：所有章接成一条，按每集时长在镜头边界切。
                       "集"只在这儿出现一次（写作、出片都按章）
   infer/              派活：worker_pool（池）、worker_farm（本机多卡拉子进程）、
@@ -51,7 +54,7 @@ pkill -f 'build/changji [-]-port'
 
 ## 测试基线
 
-**全量 1188 条，应该全绿。** 红了就是真红了，别当背景噪声。
+**全量 1195 条，应该全绿。** 红了就是真红了，别当背景噪声。
 
 2026-09-17 之前这儿写的是「4 条红」——那是四份当年冻下来的 Python 答案，
 用来证明移植没走样。**Python 引擎 2026-09-10 就删了**，那个用途从那天起就

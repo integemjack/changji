@@ -145,6 +145,34 @@ using HttpPostStream = std::function<HttpResponse(
 using OnToken = std::function<void(const std::string& piece)>;
 
 /// 客户端接口。
+/// GET 一个网址。给"从网上找热点"那几个工具用（stages/web_tools）。
+using HttpGet = std::function<HttpResponse(
+    const std::string& url, const std::map<std::string, std::string>& headers,
+    double timeout_s)>;
+
+/// 模型要调的一个工具（OpenAI 那套 tool_calls 的一项）。arguments 是 JSON 文本。
+struct ToolCall {
+    std::string id;
+    std::string name;
+    std::string arguments;
+};
+
+/// 对话里的一条。role 是 system / user / assistant / tool。
+/// assistant 那条可能带 tool_calls；tool 那条要带 tool_call_id 说它回的是哪一次。
+struct Message {
+    std::string role;
+    std::string content;
+    std::vector<ToolCall> tool_calls;
+    std::string tool_call_id;
+};
+
+/// 一轮对话的回复：要么是话（content），要么是"帮我调这几个工具"。
+struct ChatReply {
+    std::string content;
+    std::vector<ToolCall> tool_calls;
+    std::string finish_reason;
+};
+
 class Client {
 public:
     virtual ~Client() = default;
@@ -167,6 +195,15 @@ public:
     /// 拿不到的后端照样能用，只是那一下是整段到的。
     virtual std::string complete(const Request& req, pipeline::CancelToken& tok,
                                  const OnToken& on_token);
+
+    /// **带工具的多轮对话。** `messages` 是到此为止的整段来回，`tools` 是
+    /// 给模型的工具表（OpenAI 那套 function 格式）。`opts` 只用 schema_name
+    /// （挑模型）、temperature、reasoning_effort、on_thinking。
+    /// 回来的要么是话，要么是一批 tool_calls——调用方自己跑工具、把结果
+    /// 以 role=tool 追加进 messages、再来一轮。默认实现不支持，抛 LlmError。
+    virtual ChatReply chat(const std::vector<Message>& messages,
+                           const nlohmann::ordered_json& tools, const Request& opts,
+                           pipeline::CancelToken& tok);
 };
 
 /// 拼请求体。
@@ -258,6 +295,10 @@ public:
     std::string complete(const Request& req, pipeline::CancelToken& tok,
                          const OnToken& on_token) override;
 
+    ChatReply chat(const std::vector<Message>& messages,
+                   const nlohmann::ordered_json& tools, const Request& opts,
+                   pipeline::CancelToken& tok) override;
+
 private:
     ConfigProvider cfg_;
     HttpPost post_;
@@ -276,9 +317,18 @@ public:
     /// 录下的每一次请求。测试要拿它检查提示词拼对没有。
     const std::vector<Request>& calls() const { return calls_; }
 
+    /// 回放也能演工具：录的那条要是个带 tool_calls 数组的 JSON 对象，就当模型
+    /// 要调工具；不然整条当它说的话。calls() 里记的 prompt 是最后一条消息。
+    ChatReply chat(const std::vector<Message>& messages,
+                   const nlohmann::ordered_json& tools, const Request& opts,
+                   pipeline::CancelToken& tok) override;
+    /// chat 那条路最后一次收到的整段来回。用例拿它看工具结果有没有喂回去。
+    const std::vector<Message>& last_messages() const { return last_messages_; }
+
 private:
     std::vector<std::string> responses_;
     std::vector<Request> calls_;
+    std::vector<Message> last_messages_;
     std::size_t next_ = 0;
 };
 
@@ -287,6 +337,10 @@ HttpPost default_http_post();
 
 /// 同上，但响应边到边给。SSE 那条走它。
 HttpPostStream default_http_post_stream();
+
+/// 真上网的 GET（httplib，跟着跳转，带 UA）。只在主程序里有（测试目标不链
+/// 这一层）；工具那头收一个 HttpGet，测试塞假的。
+HttpGet default_http_get();
 
 /// 造一个大模型客户端。
 ///

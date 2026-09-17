@@ -1020,10 +1020,6 @@ function openBar() {
   liveSel.value = false
   nextTick(() => askBox.value?.focus())
 }
-function toggleBar() {
-  if (barOpen.value) barOpen.value = false
-  else openBar()
-}
 
 /**
  * 让 AI 改。**选中了就只改那一段，没选就改整章。** 边生边写进编辑器。
@@ -1472,6 +1468,32 @@ async function send() {
   await revise()
 }
 
+/**
+ * 右下角那颗：从网上找热点，写眼前这一章。
+ *
+ * 用户 2026-09-18：「不需要点击右下角的 ai 图标弹出输入框了，而是点击直接
+ * 让大语言模型使用 tools 从网上获取热门内容改写成一个完整的故事」，接着定
+ * 「这次写的就只是这一章内容」。一条带工具的对话在引擎里跑
+ * （stages/story_from_web），写完只换这一章的正文，这一页那个 writer.running
+ * 的 watch 会重读。输入框还在——Ctrl+K 或者选中一段浮出来的那颗——那是改
+ * 这一章里某一段用的。
+ */
+async function writeFromWeb() {
+  const id = current.value
+  if (!id) return
+  if (body.value.trim() && !confirm(`会换掉这一章现在的 ${chars.value} 字。确定？`)) return
+  // 排着的那次自动存要取消：写完落盘的是新正文，那一存会把老的写回去
+  clearTimeout(timers[id]?.t)
+  delete timers[id]
+  const started = await run(
+    () => api.storyFromWeb({ project: session.projectPath, chapter_id: id, overwrite: true }),
+    { key: 'fromweb' },
+  )
+  if (!started) return
+  ui.ok('去网上看热点了。写好会直接落进这一章')
+  writer.start()
+}
+
 /** 停手里这一件。批量那条走它自己的停。 */
 async function stopBar() {
   if (writer.running && !activeStream.value) return stopWriting()
@@ -1542,11 +1564,14 @@ const thinkLine = computed(() => {
   }
   if (mine) return { label: '在想', secs, tail, stop: true }
   if (writer.running) {
+    // 批量那个槽上跑着的活（展开正文、从网上写故事）：账上那句话 + 思考尾巴
     const w = writer.state ?? {}
+    const n = w.total > 1 ? ` ${w.done ?? 0}/${w.total}` : ''
+    const board = thinking.items[0]?.text ?? ''
     return {
-      label: `展开中 ${w.done ?? 0}/${w.total ?? 0}`,
+      label: `${w.message || '在写'}${n}`,
       secs: null,
-      tail: w.message ?? '',
+      tail: board.replace(/\s+/g, ' ').trim().slice(-200),
       stop: true,
     }
   }
@@ -1884,17 +1909,29 @@ const thinkLine = computed(() => {
           </button>
         </div>
 
-        <!-- 右下角那颗 AI：点一下开，再点收。 -->
+        <!-- 右下角那颗 AI：点一下，让大模型自己上网看热点、写成这一章的正文。
+             输入框（改这一章里的某一段）走 Ctrl+K 或者选中一段浮出来的那颗。 -->
         <button
           v-if="chapter"
           class="ed__fab"
-          :class="{ 'is-on': barOpen }"
+          :class="{ 'is-on': writer.running }"
           type="button"
-          title="让 AI 写或改这一章（Ctrl+K）"
-          @click="toggleBar"
+          :disabled="writer.running || isBusy('fromweb')"
+          :title="writer.running ? (writer.state?.message || '正在写…') : '让 AI 上网看热点，写成这一章（Ctrl+K 是改这一章里的一段）'"
+          @click="writeFromWeb"
         >
           <AppIcon name="sparkle" :size="16" />
         </button>
+
+        <!-- 从网上写的时候输入框多半是收着的，进度就单独摆那一行。 -->
+        <div v-if="!barOpen && writer.running" class="ed__bar">
+          <div class="bar__line is-live">
+            <span class="dot" />
+            <span class="bar__label">{{ thinkLine?.label }}</span>
+            <span class="bar__tail truncate" :title="thinkLine?.tail">{{ thinkLine?.tail }}</span>
+            <button class="status__btn" type="button" @click="stopBar">停</button>
+          </div>
+        </div>
 
         <!-- 底部浮着的那个输入框。用户 2026-09-17：「只要输入框（自适应高度和
              输入框里面的按钮）」。它在干什么的那一行只在真有事时才冒出来。 -->

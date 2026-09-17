@@ -371,6 +371,8 @@ TEST_CASE("POST /api/story/outline：写完直接落盘") {
     CHECK(store.load_story().chapters.size() == 2);
     CHECK(store.load_story().plan.size() == 2);
     CHECK(store.load_project().premise == "深夜便利店");
+    // 梗概写回去的那一下不能把刚同步出来的剧集盖掉（2026-09-18 抓到的）
+    CHECK(store.load_project().episodes.size() == 2);
 
     // 提示词确实拼过并发出去了
     REQUIRE(client.calls().size() == 1);
@@ -2020,6 +2022,60 @@ TEST_CASE("POST /api/story/understand：一件活，读一遍全出来") {
         CHECK(r2.body.at("total").get<int>() == 3);
         pipeline::jobs().wait_idle();
         CHECK(analyzed(again) == 1);
+    }
+
+    std::error_code ec;
+    fs::remove_all(root, ec);
+}
+
+TEST_CASE("POST /api/story/from_web：写好只换这一章") {
+    pipeline::jobs().cancel(pipeline::JobKind::Write);
+    pipeline::jobs().wait_idle();
+    const fs::path root = fresh_project("从网上写");
+    ProjectStore store(root);
+    store.save_story(pasted_story());   // 两章，都有字
+    const Story was = store.load_story();
+
+    // 模型不用工具，直接写；上网那一层给个永远 404 的
+    const std::string reply = json{{"title", "雨夜"},
+                                   {"source", "百度热搜：某条"},
+                                   {"text", "凌晨两点，走廊只亮一半。"}}
+                                  .dump();
+    auto client = std::make_shared<llm::ReplayClient>(std::vector<std::string>{reply});
+    const llm::HttpGet dead = [](const std::string&, const std::map<std::string, std::string>&,
+                                 double) { return llm::HttpResponse{404, "", std::nullopt}; };
+
+    SUBCASE("这一章有字：要带 overwrite") {
+        CHECK_THROWS_AS(http::post_story_from_web(
+                            json{{"project", p_str(root)}, {"chapter_id", "ch02"}}, client, dead),
+                        http::ApiError);
+        CHECK(client->calls().empty());
+    }
+
+    SUBCASE("带了：只换 ch02，ch01 一个字不动") {
+        const auto r = http::post_story_from_web(
+            json{{"project", p_str(root)}, {"chapter_id", "ch02"}, {"overwrite", true}}, client,
+            dead);
+        CHECK(r.status == 202);
+        pipeline::jobs().wait_idle();
+        const json snap = pipeline::jobs().snapshot(pipeline::JobKind::Write);
+        CHECK_MESSAGE(snap.at("error").is_null(), snap.dump());
+
+        const Story s = store.load_story();
+        REQUIRE(s.chapters.size() == 2);
+        CHECK(s.chapters[0].text == was.chapters[0].text);
+        CHECK(s.chapters[1].text == "凌晨两点，走廊只亮一半。");
+        // 粘进来的章标题「五年前那把伞」不是默认名，不换
+        CHECK(s.chapters[1].title == was.chapters[1].title);
+        CHECK(store.load_project().episodes.size() == 2);
+        // 开场带着前一章的结尾
+        CHECK(client->calls()[0].prompt.find("林晚认出了那把伞") != std::string::npos);
+    }
+
+    SUBCASE("没这一章：404") {
+        CHECK_THROWS_AS(http::post_story_from_web(
+                            json{{"project", p_str(root)}, {"chapter_id", "ch09"}}, client, dead),
+                        http::ApiError);
     }
 
     std::error_code ec;

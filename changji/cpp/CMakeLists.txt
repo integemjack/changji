@@ -716,6 +716,8 @@ add_executable(changji
     src/stages/story_import.cpp
     src/stages/story_analyze.cpp
     src/stages/story_understand.cpp
+    src/stages/web_tools.cpp
+    src/stages/story_from_web.cpp
     src/stages/chapter_write.cpp
     src/stages/ref_images.cpp
     src/stages/prompt_compose.cpp
@@ -1067,6 +1069,7 @@ if(CHANGJI_BUILD_TESTS)
         tests/unit/test_models_pick.cpp
         tests/unit/test_flow.cpp
         tests/unit/test_series_cut.cpp
+        tests/unit/test_web_story.cpp
         tests/unit/test_webapp.cpp
         tests/unit/test_shot.cpp
         tests/unit/test_character.cpp
@@ -1194,6 +1197,8 @@ if(CHANGJI_BUILD_TESTS)
         src/stages/story_import.cpp
         src/stages/story_analyze.cpp
         src/stages/story_understand.cpp
+        src/stages/web_tools.cpp
+        src/stages/story_from_web.cpp
         src/stages/chapter_write.cpp
         src/stages/ref_images.cpp
         src/stages/prompt_compose.cpp
