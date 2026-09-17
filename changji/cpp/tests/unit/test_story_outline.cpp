@@ -1519,14 +1519,38 @@ TEST_CASE("节选：每章都在，中间省略要标出来") {
 }
 
 TEST_CASE("提示词：读，不要改写") {
+    // **要盯的是模型真正收到的那一整份，不是指令那一半。**
+    //
+    // schema 不走 response_format，是**以文字贴在提示词后面**发的
+    // （llm::schema_as_prompt，2026-09-14 起只有这一种发法）。所以字段的
+    // description 和硬性要求那张表一样都到模型手上——这正是"这条规则能
+    // 从表里砍掉"的前提。这一条原来只查 build_analyze_prompt 的输出，
+    // 于是 2026-09-17 把「不要写长相」「chapter_id 照抄」从表里砍掉
+    // （identity / chapter_id 的 description 里逐字就有）时它当场红了，
+    // 而模型收到的东西一个字没少。改成查合起来那一份。
     const Story s = pasted_story();
     const std::string p =
         changji::stages::build_analyze_prompt(s, StyleLine::REALISTIC);
-    CHECK(p.find("不要改写正文") != std::string::npos);
+    const std::string full =
+        llm::schema_as_prompt(p, changji::stages::analyze_schema());
+
+    // 这几条只有硬性要求那张表里有——schema 一点忙都帮不上
     CHECK(p.find("只提文本里真实出现的东西") != std::string::npos);
-    CHECK(p.find("不要写长相") != std::string::npos);
-    CHECK(p.find("chapter_id 照抄") != std::string::npos);
+    CHECK(p.find("统一用出现得最多的那个") != std::string::npos);
+    // after 抄不到原句时那条钩子被静默丢掉，schema 拦不住
+    CHECK(p.find("一字不差") != std::string::npos);
+    CHECK(p.find("不要把省略号当成情节") != std::string::npos);
+    // 正文本身要带过去
     CHECK(p.find("ch01") != std::string::npos);
+
+    // 这几条从表里砍掉了，**但模型照样收得到**——在 schema 那一半里
+    CHECK(full.find("不要写长相") != std::string::npos);
+    CHECK(full.find("chapter_id") != std::string::npos);
+    CHECK(full.find("归纳不是摘抄") != std::string::npos);
+    CHECK(full.find("别只给章尾那一个") != std::string::npos);
+    // 「不要改写正文、不要续写」那一条：**靠 schema 的形状**，不靠措辞
+    // ——输出里根本没有正文那一类字段，而且多编一个键语法层就过不去。
+    CHECK(full.find("additionalProperties") != std::string::npos);
 }
 
 TEST_CASE("人物表里要有「他说话什么样」") {
