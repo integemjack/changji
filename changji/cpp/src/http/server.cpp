@@ -39,6 +39,7 @@
 #include "util/sysstat.hpp"
 #include "http/webapp.hpp"
 #include "http/ws.hpp"
+#include "infer/worker_server.hpp"
 #include "infer/node_prefs.hpp"
 #include "infer/worker_pool.hpp"
 #include "infer/node_proxy.hpp"
@@ -319,6 +320,27 @@ void run(const config::Settings& settings, const Options& opts) {
     infer::sd_log_to_stderr();
     infer::register_sd_slots([] { return config::runtime().snapshot(); },
                              config::runtime().profile());
+
+    // **把工作进程那套接口也挂上：一台机器一个进程、一条连接。**
+    //
+    // 用户 2026-09-17：「我不说了只起一个，互联一个机器只连一次」。
+    // 在这之前做不到——那几条路由只长在 `--worker` 那个独立 app 上，
+    // 主程序的 /health、/task 会被下面单页应用的兜底路由接走、回一段 HTML，
+    // 派活那头判成"不在线"（当天实撞：curl 回 200 而 body 是网页，
+    // 我照着那个 200 得出过一个错结论）。于是远程要当节点用，只能手动起
+    // worker，还得一张卡一个、各带 --host。
+    //
+    // 挂上之后，别的机器在 `[[peer.nodes]]` 里填这台的**主程序地址**即可。
+    // 对外监听而 [peer].token 空着时它自己不挂（见 mount_worker_api）。
+    {
+        infer::WorkerOptions wo;
+        wo.host = opts.host;
+        wo.port = opts.port;
+        // 主程序不绑卡（不设 CUDA_VISIBLE_DEVICES），这个数只进 /status
+        // 那份自我介绍。-1 = 不声称自己是哪张卡。
+        wo.gpu = -1;
+        infer::mount_worker_api(app, settings, wo);
+    }
     // **不在这儿预装大模型。** 注册不等于加载，调度器是**借出时**才装的
     // ——用户 2026-09-11 重申："用的时候才加载是对的，不做启动预载"。
     //

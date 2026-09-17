@@ -1,5 +1,7 @@
 #pragma once
 
+#include <crow.h>
+
 // 工作进程：一张卡，一次一个任务。
 //
 // 起法：`changji --worker --gpu 0 --port 9001`
@@ -39,5 +41,20 @@ struct WorkerOptions {
 /// 调用方要把它变成一个非零退出码——起没起来必须能从退出码看出来，
 /// 不然拿脚本拉起一堆工作进程时，"没起来"和"起来了"长得一模一样。
 bool run_worker(const config::Settings& settings, const WorkerOptions& opts);
+
+/// 把这套接口挂到**别的** app 上，让主程序也能当节点用。回是否挂上了。
+///
+/// **一台机器一个进程、一条连接。** 用户 2026-09-17：「我不说了只起一个，
+/// 互联一个机器只连一次」。在这之前做不到：这几条路由只长在 `--worker`
+/// 那个独立 app 上，主程序的同名路径会被单页应用的兜底路由接走、回一段
+/// HTML，派活那头判成"不在线"（当天实撞：curl 回 200，body 是网页）。
+/// 于是远程要当节点用，只能手动起 worker，还得一张卡一个。
+///
+/// 挂上之后，`[[peer.nodes]]` 里填那台的**主程序地址**就行。
+///
+/// 对外监听而 `[peer].token` 是空的时候**不挂**并回 false——那种情况下谁都
+/// 能派活过来烧卡。判据和 run_worker 同一个（peer_auth.hpp）。
+bool mount_worker_api(crow::SimpleApp& app, const config::Settings& settings,
+                      const WorkerOptions& opts);
 
 }  // namespace changji::infer

@@ -74,70 +74,11 @@ crow::response json_res(const json& body, int code = 200) {
 
 }  // namespace
 
-bool run_worker(const config::Settings& settings, const WorkerOptions& opts) {
-    // **先看这个地址开不开得起。** 对外监听而没设口令的话当场拒绝——
-    // 那种情况下谁都能派活过来烧这张卡、读走这台有哪些模型。
-    // 理由和判据在 peer_auth.hpp。
-    if (const auto why = refuse_to_listen(opts.host, settings.peer.token);
-        !why.empty()) {
-        std::cerr << why << std::endl;
-        return false;
-    }
-
-    // **绑卡靠 CUDA_VISIBLE_DEVICES。** 在建任何 ggml 上下文之前设，
-    // 之后再设没用——后端初始化的时候就把设备列表读走了。
-    //
-    // ⚠️ 这一条在只有一张卡的机器上验不了。要是它对 ggml 的 CUDA 后端
-    // 不生效，表现是**八个进程全挤在卡 0 上，看着在并行实际在排队，
-    // 而且一声不吭**。上多卡机器第一件事就是验它。
-    paths::set_env("CUDA_VISIBLE_DEVICES", std::to_string(opts.gpu));
-
-    // 和主进程一样注册两个槽。**每个工作进程一份**——
-    // 进程边界把"每卡一份预算"白送了，Scheduler 一行没改。
-    // **把 sd.cpp 的日志接到 stderr。** 不接的话一条都不会落地，而出图失败
-    // 时抛的是"看一眼上面 sd.cpp 打的日志"——上面什么都没有。工作进程是
-    // 独立进程，它的 stderr 就是排查出图问题唯一的地方。
-    sd_log_to_stderr();
-
-    // **只探一次。** detect 会跑 nvidia-smi，一百毫秒上下；
-    // /status 每次重探的话，别的机器轮询一下就是白白拖慢这台。
-    const auto profile =
-        models::HardwareProfile::detect(settings.vram_gb_override);
-
-    // **把启动时这一份装进 runtime，工作进程里原来没人做这件事。**
-    //
-    // `config::runtime()` 是个单例，完整服务在 server.cpp 起来时会
-    // `replace(settings)`，工作进程这条路一处都没有——于是它一直是默认
-    // 构造的空配置。后果有两层，都指向同一个症状：
-    //
-    // 一，从界面把模型下到这台机器上，下完那一下 `on_item_done` 会调
-    //     setup_api 的 `persist()`。那个函数写文件之外还要
-    //     `runtime().snapshot()` → 打补丁 → `replace()`，而它拿到的是空配置，
-    //     于是内存里那份变成"默认值 + 这一组"，别的键全丢了。
-    // 二，下面 `/status` 和出图槽读的都是**启动那一刻**的拷贝，配置文件
-    //     后来写对了也看不见。
-    //
-    // 实测（2026-09-15）：Qwen-Image-Edit 20 GB 下完、config.toml 里
-    // `image` 也写上了、文件就在盘上，这台仍然一直报「[models].image
-    // 没配，或者文件不在」，派活那头永远不会把首帧派过来——除非重启它。
-    // 而整个「在界面上给远程机器装模型」就是为了不用去碰那台机器。
-    config::runtime().replace(settings);
-    // 上一轮被杀时孤儿 curl 下全的 `.part` 收编进来，见 adopt_finished_parts。
-    setup::adopt_finished_parts(settings.models.dir_path(settings.workspace_path()));
-
-    // 槽也读活的那一份，理由同上：下完模型不重启就该能用。
-    register_sd_slots([] { return config::runtime().snapshot(); }, profile);
-
-    auto state = std::make_shared<State>();
-    crow::SimpleApp app;
-    app.loglevel(crow::LogLevel::Warning);
-    // 连接计时器放宽到 60 秒：一段 blob 在 10 KB/s 的链路上也要二十多秒，
-    // 默认 5 秒会把它切断（见上面 /blob 那条）。
-    app.timeout(60);
-    // 几个 io_service：一条慢连接（往外发 blob、收 blob）只占住一个，
-    // 别的连接上的 /task、轮询照常有人接。
-    app.concurrency(4);
-
+void mount_worker_api_impl(crow::SimpleApp& app,
+                           const config::Settings& settings,
+                           const WorkerOptions& opts,
+                           const models::HardwareProfile& profile,
+                           const std::shared_ptr<State>& state) {
     // **这台的自我介绍。** 别的机器靠它决定派不派活过来：能力齐不齐、
     // 卡多大、模型目录还剩多少。拼的地方只有一处（node_status.cpp），
     // 界面上那张表和 --doctor 末尾那句用的是同一份。
@@ -395,6 +336,92 @@ bool run_worker(const config::Settings& settings, const WorkerOptions& opts) {
             state->current->tok.request();
             return json_res({{"ok", true}});
         });
+
+}
+
+bool mount_worker_api(crow::SimpleApp& app, const config::Settings& settings,
+                      const WorkerOptions& opts) {
+    // **对外监听而没设口令就不挂。** 挂了等于谁都能派活过来烧这张卡、
+    // 读走这台有哪些模型。判据和 run_worker 用的是同一个。
+    if (const auto why = refuse_to_listen(opts.host, settings.peer.token);
+        !why.empty()) {
+        CROW_LOG_WARNING << "没有开放对等互联的接口：" << why;
+        return false;
+    }
+    // 只探一次，理由同 run_worker：detect 会跑 nvidia-smi。
+    static const auto profile =
+        models::HardwareProfile::detect(settings.vram_gb_override);
+    // 一次只跑一件，和工作进程同一条规矩（见 State 上面那段）。
+    static auto state = std::make_shared<State>();
+    mount_worker_api_impl(app, settings, opts, profile, state);
+    return true;
+}
+
+bool run_worker(const config::Settings& settings, const WorkerOptions& opts) {
+    // **先看这个地址开不开得起。** 对外监听而没设口令的话当场拒绝——
+    // 那种情况下谁都能派活过来烧这张卡、读走这台有哪些模型。
+    // 理由和判据在 peer_auth.hpp。
+    if (const auto why = refuse_to_listen(opts.host, settings.peer.token);
+        !why.empty()) {
+        std::cerr << why << std::endl;
+        return false;
+    }
+
+    // **绑卡靠 CUDA_VISIBLE_DEVICES。** 在建任何 ggml 上下文之前设，
+    // 之后再设没用——后端初始化的时候就把设备列表读走了。
+    //
+    // ⚠️ 这一条在只有一张卡的机器上验不了。要是它对 ggml 的 CUDA 后端
+    // 不生效，表现是**八个进程全挤在卡 0 上，看着在并行实际在排队，
+    // 而且一声不吭**。上多卡机器第一件事就是验它。
+    paths::set_env("CUDA_VISIBLE_DEVICES", std::to_string(opts.gpu));
+
+    // 和主进程一样注册两个槽。**每个工作进程一份**——
+    // 进程边界把"每卡一份预算"白送了，Scheduler 一行没改。
+    // **把 sd.cpp 的日志接到 stderr。** 不接的话一条都不会落地，而出图失败
+    // 时抛的是"看一眼上面 sd.cpp 打的日志"——上面什么都没有。工作进程是
+    // 独立进程，它的 stderr 就是排查出图问题唯一的地方。
+    sd_log_to_stderr();
+
+    // **只探一次。** detect 会跑 nvidia-smi，一百毫秒上下；
+    // /status 每次重探的话，别的机器轮询一下就是白白拖慢这台。
+    const auto profile =
+        models::HardwareProfile::detect(settings.vram_gb_override);
+
+    // **把启动时这一份装进 runtime，工作进程里原来没人做这件事。**
+    //
+    // `config::runtime()` 是个单例，完整服务在 server.cpp 起来时会
+    // `replace(settings)`，工作进程这条路一处都没有——于是它一直是默认
+    // 构造的空配置。后果有两层，都指向同一个症状：
+    //
+    // 一，从界面把模型下到这台机器上，下完那一下 `on_item_done` 会调
+    //     setup_api 的 `persist()`。那个函数写文件之外还要
+    //     `runtime().snapshot()` → 打补丁 → `replace()`，而它拿到的是空配置，
+    //     于是内存里那份变成"默认值 + 这一组"，别的键全丢了。
+    // 二，下面 `/status` 和出图槽读的都是**启动那一刻**的拷贝，配置文件
+    //     后来写对了也看不见。
+    //
+    // 实测（2026-09-15）：Qwen-Image-Edit 20 GB 下完、config.toml 里
+    // `image` 也写上了、文件就在盘上，这台仍然一直报「[models].image
+    // 没配，或者文件不在」，派活那头永远不会把首帧派过来——除非重启它。
+    // 而整个「在界面上给远程机器装模型」就是为了不用去碰那台机器。
+    config::runtime().replace(settings);
+    // 上一轮被杀时孤儿 curl 下全的 `.part` 收编进来，见 adopt_finished_parts。
+    setup::adopt_finished_parts(settings.models.dir_path(settings.workspace_path()));
+
+    // 槽也读活的那一份，理由同上：下完模型不重启就该能用。
+    register_sd_slots([] { return config::runtime().snapshot(); }, profile);
+
+    auto state = std::make_shared<State>();
+    crow::SimpleApp app;
+    app.loglevel(crow::LogLevel::Warning);
+    // 连接计时器放宽到 60 秒：一段 blob 在 10 KB/s 的链路上也要二十多秒，
+    // 默认 5 秒会把它切断（见上面 /blob 那条）。
+    app.timeout(60);
+    // 几个 io_service：一条慢连接（往外发 blob、收 blob）只占住一个，
+    // 别的连接上的 /task、轮询照常有人接。
+    app.concurrency(4);
+
+    mount_worker_api_impl(app, settings, opts, profile, state);
 
     CROW_LOG_INFO << "工作进程 gpu=" << opts.gpu << " 听 " << opts.host << ":"
                   << opts.port;
