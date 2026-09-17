@@ -1031,3 +1031,21 @@ TEST_CASE("时间线的排期和字幕时间戳和 Python 一样") {
         }
     }
 }
+
+TEST_CASE("成片文件名属于哪一集") {
+    // **装配有两套名字**：一集时 ep01.mp4，切成几集时 ep01_01.mp4 /
+    // ep01_02.mp4。而切几集是内容的结果、会变，于是"这个文件属于哪一集"
+    // 有两处要判：装配时清上一版留下的孤儿，列表时数"几集出片了"。
+    // 2026-09-17 撞过：两处各写一遍，清理那边认两种、计数那边只认一种，
+    // 切过的章在「N/M 集已出片」里全被漏掉。判法收在这一个函数上。
+    using media::episode_of_output;
+    CHECK(episode_of_output("ep01") == "ep01");
+    CHECK(episode_of_output("ep01_01") == "ep01");
+    CHECK(episode_of_output("ep01_12") == "ep01");
+    // **不用子串**：短 id 拿子串会命中所有 epNN
+    CHECK(episode_of_output("ep") == "ep");
+    CHECK(episode_of_output("ep0112") == "ep0112");   // 没有下划线，不是切出来的
+    CHECK(episode_of_output("ep01_ab") == "ep01_ab"); // 后两位不是数字
+    CHECK(episode_of_output("ep01_1") == "ep01_1");   // 只有一位数字
+    CHECK_FALSE(episode_of_output("").has_value());
+}

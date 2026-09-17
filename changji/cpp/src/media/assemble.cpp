@@ -1,6 +1,7 @@
 #include "media/assemble.hpp"
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <cstdio>
 #include <fstream>
@@ -139,6 +140,17 @@ Timeline build_timeline(const std::vector<models::Shot>& shots,
         timeline.entries.push_back(std::move(entry));
     }
     return timeline;
+}
+
+std::optional<std::string> episode_of_output(const std::string& stem) {
+    if (stem.empty()) return std::nullopt;
+    // `ep01_02` → `ep01`；`ep01` → `ep01`
+    if (stem.size() >= 4 && stem[stem.size() - 3] == '_' &&
+        std::isdigit(static_cast<unsigned char>(stem[stem.size() - 2])) != 0 &&
+        std::isdigit(static_cast<unsigned char>(stem.back())) != 0) {
+        return stem.substr(0, stem.size() - 3);
+    }
+    return stem;
 }
 
 std::vector<Timeline> split_into_episodes(const Timeline& timeline,

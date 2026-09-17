@@ -10,6 +10,7 @@
 
 #include "config/runtime.hpp"
 #include "config/settings.hpp"
+#include "media/assemble.hpp"
 #include "models/hardware.hpp"
 #include "models/project.hpp"
 #include "stages/storyboard.hpp"
@@ -606,16 +607,30 @@ ApiResult get_projects(const config::Settings& settings) {
                     regular_ids.insert(ep.episode_id);
                 }
             }
-            int outputs = 0;
+            //
+            // ⚠️ **切成几集的那些也得算。** 装配有两套名字：一集时
+            // `ep01.mp4`，切成几集时 `ep01_01.mp4` / `ep01_02.mp4`
+            // （pipeline/episode.cpp）。原来只认前一种，于是一章切成两集
+            // 之后它算 0 集出片——顶栏那句「N/M 集已出片」把切过的章全漏了。
+            // 2026-09-17 实见：ep01、ep06 各切两集，两章都没算进去。
+            //
+            // **一章算一次**，不是一个文件算一次：切成两集仍然是一章出完了。
+            // 判法照上面那条注释的告诫，**不用子串**：要么整个 stem 就是
+            // 那个 id，要么是 id + '_' + 两位数字。短 id 不会误伤。
+            std::set<std::string> produced;
             const fs::path out_dir = store.paths().output();
             if (fs::is_directory(out_dir, ec)) {
                 for (const auto& f : fs::directory_iterator(out_dir, ec)) {
                     if (f.path().extension() != ".mp4") continue;
-                    if (regular_ids.count(paths::to_utf8(f.path().stem())) != 0) {
-                        ++outputs;
+                    // 判法只有一份，在 media::episode_of_output 上
+                    const auto owner =
+                        media::episode_of_output(paths::to_utf8(f.path().stem()));
+                    if (owner && regular_ids.count(*owner) != 0) {
+                        produced.insert(*owner);
                     }
                 }
             }
+            const int outputs = static_cast<int>(produced.size());
 
             // Unix 秒。**不能直接用 time_since_epoch()**：
             // file_time_type 的纪元由实现定，MSVC 用的是 1601-01-01，

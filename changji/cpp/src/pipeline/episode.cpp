@@ -3,6 +3,7 @@
 #include "pipeline/shot_flow.hpp"
 
 #include <algorithm>
+#include <cctype>
 #include <exception>
 #include <thread>
 #include <cstdio>
@@ -410,6 +411,9 @@ std::string run_assemble(const ProjectStore& store,
     const std::vector<media::Timeline> parts =
         media::split_into_episodes(timeline, settings.assembly.episode_s);
     std::vector<std::filesystem::path> outputs;
+    // 这一轮要写出去的那几个名字。写完拿它去清同一集**另一种命名**留下的
+    // 旧成片——见下面那段。
+    std::set<std::string> keep;
     for (std::size_t k = 0; k < parts.size(); ++k) {
         // 一集就叫 ep.mp4；切成几集叫 ep_01.mp4 / ep_02.mp4……
         std::string name = ep.episode_id;
@@ -421,6 +425,7 @@ std::string run_assemble(const ProjectStore& store,
         name += ".mp4";
         const auto out_k = assembler.assemble(parts[k], name, can_burn);
         outputs.push_back(out_k);
+        keep.insert(name);
         // 成片检查同样只报不拦：片子已经出来了，人可以自己看一眼再决定。
         const auto result = gates::gate_episode(out_k, ff, settings.gates,
                                                 parts[k].total_duration_s());
@@ -432,6 +437,39 @@ std::string run_assemble(const ProjectStore& store,
             progress.report(e);
         }
     }
+    // ---- 清掉这一集**另一种命名**留下的旧成片 ----
+    //
+    // 装配有两套名字：一集时 `ep01.mp4`，切成几集时 `ep01_01.mp4` /
+    // `ep01_02.mp4`。切几集是内容的结果，会变——而原来谁都不清理对方，
+    // 于是磁盘上同时躺着 `ep01.mp4`（上一版整章一集）和 `ep01_01/_02`
+    // （这一版切两集），三份里两份是过时的。2026-09-17 实见。
+    //
+    // 2026-09-17 那条「太短的尾巴并回上一集」让这件事更常发生：以前切两集
+    // 的章现在只出一集，`_01/_02` 正好成了孤儿。
+    //
+    // **只删这一集自己那两种名字、而且这一轮没写的那些。** 别的集、别的
+    // 文件一个不碰；刚写出去的当然留着。
+    {
+        std::error_code ec;
+        const auto dir = store.paths().output();
+        for (const auto& f : std::filesystem::directory_iterator(dir, ec)) {
+            if (f.path().extension() != ".mp4") continue;
+            // 判法只有一份，在 media::episode_of_output 上（那儿能测）
+            const auto owner =
+                media::episode_of_output(paths::to_utf8(f.path().stem()));
+            if (!owner || *owner != ep.episode_id) continue;
+            if (keep.count(paths::to_utf8(f.path().filename())) != 0) continue;
+            std::error_code rm;
+            std::filesystem::remove(f.path(), rm);
+            if (!rm) {
+                emit(progress, "assemble", "info",
+                     "清掉上一版留下的 " + paths::to_utf8(f.path().filename()) +
+                         "——这一章这次切成 " + std::to_string(parts.size()) +
+                         " 集，名字换了");
+            }
+        }
+    }
+
     const std::filesystem::path output = outputs.empty() ? std::filesystem::path{} : outputs.front();
 
     // **降级的镜头要在最后这句里说出来。**

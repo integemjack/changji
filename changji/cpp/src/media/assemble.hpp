@@ -87,6 +87,18 @@ Timeline build_timeline(
 std::vector<Timeline> split_into_episodes(const Timeline& timeline,
                                           double per_episode_s);
 
+/// 一个成片文件名（不带扩展名）是哪一集的。不是成片就回空。
+///
+/// **装配有两套名字**：一集时 `ep01`，切成几集时 `ep01_01` / `ep01_02`
+/// （见 pipeline/episode.cpp 里那段）。而切几集是内容的结果、会变，于是
+/// "这个文件属于哪一集"这件事有两处要判：装配时清上一版留下的孤儿，
+/// 列表时数"几集出片了"。**两处各写一遍就是改一处要改两处**——2026-09-17
+/// 就撞过：清理那边认两种，计数那边只认一种，切过的章全被漏掉。
+///
+/// 判法**不用子串**：短 id（`ep`、`e` 这种，建集接口不拦长度）拿子串会
+/// 命中所有 epNN。要么整个名字就是那个 id，要么是 id + '_' + 两位数字。
+std::optional<std::string> episode_of_output(const std::string& stem);
+
 // ---- 各步的参数。纯函数，测得死。 ----
 
 /// 统一编码规格。
