@@ -80,6 +80,57 @@ export const useModels = defineStore('models', () => {
   }
 
   /**
+   * 替换档（编码器、VAE）在 `picks` 里用的键。**和引擎认的是同一个**
+   * （catalog.cpp 的 `alt_key`），所以整份直接发过去就行，不用另开通道。
+   */
+  const altKey = (groupKey, role) => `${groupKey}/${role}`
+
+  /** 这一组此刻挑的那几个替换档，形如 {"video/video_llm": "…gguf"}。 */
+  function altPicks(key) {
+    const out = {}
+    const o = pickedOption(group(key))
+    for (const alt of o?.alts ?? []) {
+      const k = altKey(key, alt.role)
+      // 没挑过就用默认那份（choices 的第一项），和引擎那边一个意思。
+      const v = picks.value[k] ?? alt.choices?.[0]?.name
+      if (v) out[k] = v
+    }
+    return out
+  }
+
+  /**
+   * 这一组此刻要下多少字节。**替换档换过之后要跟着变**——引擎那份
+   * totalBytes 是按"配置里现在填的那份"算的，而用户刚在下拉里换的那一份
+   * 还没写进配置。
+   */
+  function pickedFiles(key) {
+    const o = pickedOption(group(key))
+    if (!o?.files?.length) return []
+    const chosen = altPicks(key)
+    return o.files.map((f) => {
+      const alt = (o.alts ?? []).find((a) =>
+        (a.choices ?? []).some((c) => c.name === f.name),
+      )
+      if (!alt) return f
+      const want = chosen[altKey(key, alt.role)]
+      // 替换档那几份只带 present，不带 haveBytes（下了一半的算不出来）：
+      // 在盘上就按整份算，不在就算 0。比服务端那份粗，但和"换了档之后
+      // 界面上的数要立刻跟上"比起来，粗一点没关系。
+      const hit = (alt.choices ?? []).find((c) => c.name === want)
+      return hit ? { ...hit, haveBytes: hit.present ? hit.bytes : 0 } : f
+    })
+  }
+
+  function pickedBytes(key) {
+    return pickedFiles(key).reduce((n, f) => n + (Number(f.bytes) || 0), 0)
+  }
+
+  /** 这一组已经在盘上多少字节，**按下拉里挑的那几份算**。 */
+  function pickedHave(key) {
+    return pickedFiles(key).reduce((n, f) => n + (Number(f.haveBytes) || 0), 0)
+  }
+
+  /**
    * 按流水线顺序排：编剧 → 首帧 → 出片 → 配音。
    *
    * 目录里是 llm / video / image / tts，出片排在首帧前面——而实际是先出
@@ -120,7 +171,13 @@ export const useModels = defineStore('models', () => {
   function needOf(g) {
     const o = pickedOption(g) ?? g?.options?.find((x) => x.id === state.value?.selected?.[g.key])
     if (!o || o.id === 'none') return 0
-    return Math.max(0, (o.totalBytes ?? 0) - (o.haveBytes ?? 0))
+    // **总量按下拉里挑的那几份算。** 引擎回的 totalBytes 是按配置里现在
+    // 填的那份算的，用户刚换的替换档还没写进配置——不换算的话，界面上
+    // 总量已经降到 38.5 GB，下载按钮上还写着 43.6 GB。
+    if (!g?.key) return Math.max(0, (o.totalBytes ?? 0) - (o.haveBytes ?? 0))
+    const total = pickedBytes(g.key) || o.totalBytes || 0
+    const have = pickedBytes(g.key) ? pickedHave(g.key) : (o.haveBytes ?? 0)
+    return Math.max(0, total - have)
   }
 
   /** 把一组的档位按家族拢一拢。一个家族十几档，只该说一遍好话。 */
@@ -325,7 +382,7 @@ export const useModels = defineStore('models', () => {
 
   async function saveGroup(key) {
     const res = await api.startSetupDownload({
-      selections: { [key]: picks.value[key] },
+      selections: { [key]: picks.value[key], ...altPicks(key) },
       download: false,
       ...owner(),
     })
@@ -337,7 +394,7 @@ export const useModels = defineStore('models', () => {
   /** 下这一组缺的。理由同上：只报这一组。 */
   async function downloadGroup(key) {
     const res = await api.startSetupDownload({
-      selections: { [key]: picks.value[key] },
+      selections: { [key]: picks.value[key], ...altPicks(key) },
       ...owner(),
     })
     progress.value = res.progress
@@ -356,7 +413,7 @@ export const useModels = defineStore('models', () => {
   }
 
   return {
-    state, picks, progress, loading, error, pollError,
+    state, picks, progress, loading, error, pollError, altKey, altPicks, pickedBytes, pickedHave, pickedFiles,
     llmModel, llmKeyNeeded, llmKeySet, llmBaseUrl, llmTemperature,
     groups, running, inUse,
     group, pickedOption, needOf, familyChoices, currentFamily, currentFamilyChoice,

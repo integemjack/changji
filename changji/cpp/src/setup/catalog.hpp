@@ -63,6 +63,24 @@ struct FileSpec {
     std::string note;
 };
 
+/// 同一个角色下可以换的几份。
+///
+/// **为什么要有这个。** 一档 H3 要下五个文件，而其中**文本编码器一个人
+/// 就占四成多**（43.6 GB 里的 18.2 GB），视频 VAE 再占 5.2 GB。这两样
+/// 上游都有更小的一档，而在这之前它们是按扩散模型大小自动挑的，用户
+/// 连名字都看不见。用户 2026-09-17：「我要选」。
+///
+/// 和文件头第二条规则（文件必须配套）不冲突：这里换的是**同一个模型自己
+/// 的不同量化**，不是换一家的零件。跨家族的搭配仍然不许。
+struct FileAlt {
+    /// 换的是哪个键：`video_llm` / `video_vae`。
+    std::string role;
+    /// 界面上这一行叫什么：「文本编码器」「视频 VAE」。
+    std::string title;
+    /// 可挑的几份，**第一项是默认**。
+    std::vector<FileSpec> choices;
+};
+
 /// 一个「版本」：一套配套的文件，加上它要的旋钮。
 struct Option {
     std::string id;
@@ -93,6 +111,9 @@ struct Option {
     /// 同组里的高低排序，大的更好。挑默认值时在够得上的里面取最大的。
     int rank = 0;
     std::vector<FileSpec> files;
+    /// 这一档里可以换的那几个角色。`files` 里放的是每个 alt 的默认那份，
+    /// 换了之后用 `effective_files` 取真正要下的清单。
+    std::vector<FileAlt> alts;
     /// 额外要写回的配置项，键是带小节的全名（`models.video_rng`）。
     /// **不是可有可无的**：H3 不设 `video_rng = "cpu"` 出来的片和提示词
     /// 对不上，而且不报错。
@@ -138,6 +159,22 @@ std::map<std::string, std::string> recommend(double vram_gb);
 /// 它自己的 `settings`，`owned_roles` 一概不动——用户可能本来就手配了
 /// 一套模型，只是这次不想重下。
 nlohmann::json config_patch(const std::map<std::string, std::string>& selections);
+
+/// 替换档在 `selections` 里用的键：`"video/video_llm"`。
+///
+/// **和组键共用一张表**，这样从界面到写配置一路只有一个 map，不用为了
+/// 两个下拉再开一条通道。认不出的键一律忽略。
+std::string alt_key(const std::string& group_key, const std::string& role);
+
+/// 这一档真正要下的文件：`o.files` 按 `selections` 里挑的替换档换过之后。
+///
+/// 没挑、或者挑了个不认识的，就用 `files` 里原来那份（也就是每个 alt 的
+/// 第一项）。**下载、算总量、写配置三处必须都走它**，只走一处的话会出现
+/// "下的是小编码器、配置里写的是大编码器"，而那种错加载时报的是
+/// "权重读不对"，指向完全错误的方向。
+std::vector<FileSpec> effective_files(
+    const std::string& group_key, const Option& o,
+    const std::map<std::string, std::string>& selections);
 
 /// 按这几档在内存里覆一层，回一份新的配置。**不落盘、不动 `base`。**
 ///

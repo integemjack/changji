@@ -204,6 +204,16 @@ const fam = computed(() => models.currentFamilyChoice(g.value))
 /** 这一档有几档可挑。只有一档就不摆那个下拉——摆一个没得选的框是噪音。 */
 const hasQuants = computed(() => (fam.value?.options?.length ?? 0) > 1)
 
+/**
+ * 清单里该摆哪几份：替换档换过之后要跟着换。
+ *
+ * `opt.files` 里放的是每个替换档的默认那份（引擎那边按配置算的），
+ * 而用户刚在下拉里挑的还没写进配置。
+ */
+const shownFiles = computed(() =>
+  g.value?.key ? models.pickedFiles(g.value.key) : [],
+)
+
 const diskFree = computed(() => Number(models.state?.diskFreeBytes ?? 0))
 /**
  * 那句范围说明的悬停。**把两个文件都摆出来最省口舌**：挑哪一档写项目那份，
@@ -597,14 +607,57 @@ async function download() {
           </select>
         </label>
 
+        <!-- **可以换的那几件。**
+             一档 H3 要下五个文件，而文本编码器一个人就占四成多（43.6 GB
+             里的 18.2 GB），视频 VAE 再占 5.2 GB。这两样上游都有小一档的，
+             在这之前是按扩散模型大小自动挑的，用户连名字都看不见。
+             用户 2026-09-17：「我要选」。 -->
+        <label v-for="alt in opt?.alts ?? []" :key="alt.role" class="field">
+          <span class="field__label">{{ alt.title }}</span>
+          <select
+            class="select"
+            :disabled="models.running"
+            :value="models.picks[models.altKey(g.key, alt.role)]
+              ?? alt.choices?.[0]?.name"
+            @change="models.picks[models.altKey(g.key, alt.role)] =
+              $event.target.value"
+          >
+            <option v-for="c in alt.choices" :key="c.name" :value="c.name">
+              {{ c.note }} · {{ humanBytes(c.bytes) }}{{ c.present ? ' · 盘上已有' : '' }}
+            </option>
+          </select>
+        </label>
+
         <!-- 这一档的读数。**给结论，不给你两个数自己比。** -->
         <!-- 云端那一档一个字节都不下，这一行整个不出现——
              摆一句「· 不占显存」在那儿，读起来像少了半句话。 -->
+        <!-- **这个数按下拉里挑的那几份算**（models.pickedBytes），不是引擎
+             回的 totalBytes——那个是按配置里现在填的那份算的，而用户刚换的
+             还没写进配置，两个数会对不上。 -->
         <p v-if="opt?.totalBytes" class="row tiny">
-          <span class="numeric">{{ humanBytes(opt.totalBytes) }}</span>
+          <span class="numeric">{{
+            humanBytes(models.pickedBytes(g.key) || opt.totalBytes)
+          }}</span>
           <span v-if="models.verdict(opt)" class="dim">· {{ models.verdict(opt) }}</span>
           <span v-if="opt.complete" class="dim">· 盘上已有</span>
         </p>
+
+        <!-- **这一档到底下哪几个文件。**
+             catalog.hpp 里 FileSpec::note 的注释写着"界面上逐条显示"，
+             而这儿一条都没画过——于是「43.6 GB」这个数里，编码器占 18.2 GB
+             （四成多）、视频 VAE 占 5.2 GB，用户既看不见名字也看不见大小，
+             只看到一个总数。用户 2026-09-17：「怎么少了一个文本编码器模型
+             选择」「还有 vae」。
+             编剧那一组不下权重，整块不出现。 -->
+        <ul v-if="!isLlm && shownFiles.length" class="files tiny dim">
+          <li v-for="f in shownFiles" :key="f.name" class="files__row">
+            <span class="files__name truncate" :title="f.note || f.name">
+              {{ f.note || f.name }}
+            </span>
+            <span class="files__size numeric">{{ humanBytes(f.bytes) }}</span>
+            <span v-if="f.present" class="files__have">已有</span>
+          </li>
+        </ul>
 
         <!-- 那一档的一句话。**编剧那一组不显示**：它挑的是云上哪个模型，
              而那一段是在讲"云端这条路好在哪"——和此刻要做的决定没关系。
@@ -780,6 +833,30 @@ async function download() {
 .dlg__body {
   padding: 14px;
   overflow-y: auto;
+}
+
+.files {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 2px;
+}
+.files__row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+.files__name {
+  flex: 1;
+  min-width: 0;
+}
+.files__size {
+  flex: none;
+}
+.files__have {
+  flex: none;
+  opacity: 0.7;
 }
 
 .note {

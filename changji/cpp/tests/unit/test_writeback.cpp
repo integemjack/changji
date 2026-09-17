@@ -474,3 +474,44 @@ TEST_CASE("口令空着就不写那一行") {
     std::error_code ec;
     fs::remove_all(dir, ec);
 }
+
+// ---------------------------------------------------------------------------
+// 裸键放不下的字符要加引号，而且下一次还认得出来
+//
+// 2026-09-17 栽过：出片那一组的替换档（编码器、VAE）按 `video/video_llm`
+// 这种键记进 `[models.pick]`，写出来是裸的 `video/video_llm = "…"`，
+// 下一次读配置直接 "Error while parsing key-value pair"——**整个项目打不
+// 开了**，而写的时候一声不吭。
+// ---------------------------------------------------------------------------
+
+TEST_CASE("带斜杠的键：写出去加引号，重写时替换不追加") {
+    const fs::path dir = tmp_dir("引号键");
+    const fs::path cfg = dir / "changji.toml";
+    put(cfg, "[models.pick]\nvideo = \"h3-full-q4_k_m\"\n");
+
+    config::save_user_config(
+        json{{"models.pick", {{"video/video_llm", "small.gguf"}}}}, cfg);
+    const std::string once = slurp(cfg);
+    CHECK(once.find("\"video/video_llm\" = \"small.gguf\"") != std::string::npos);
+    // 裸的那种一个都不能有，有一个整份就读不出来了。
+    CHECK(once.find("\nvideo/video_llm") == std::string::npos);
+    // 最要紧的一条：写完还读得回来。
+    CHECK_NOTHROW(reload(dir));
+
+    // 再写一次同一个键：替换那一行，不是又追加一行。
+    config::save_user_config(
+        json{{"models.pick", {{"video/video_llm", "big.gguf"}}}}, cfg);
+    const std::string twice = slurp(cfg);
+    CHECK(twice.find("big.gguf") != std::string::npos);
+    CHECK(twice.find("small.gguf") == std::string::npos);
+    std::size_t n = 0;
+    for (std::size_t i = twice.find("video/video_llm"); i != std::string::npos;
+         i = twice.find("video/video_llm", i + 1)) {
+        ++n;
+    }
+    CHECK(n == 1);
+
+    // 同一节里本来就有的裸键不许被加上引号——那是无谓的改动，
+    // 而这一层的全部价值就是"没碰的地方一个字节都不动"。
+    CHECK(twice.find("video = \"h3-full-q4_k_m\"") != std::string::npos);
+}

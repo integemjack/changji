@@ -39,7 +39,20 @@ bool key_line(const std::string& line, std::string& key) {
     if (eq == std::string::npos) return false;
     key = text::strip_ws(t.substr(0, eq));
     if (key.empty()) return false;
-    // 键名只允许这些字符。写成别的多半是我没认出来的语法，宁可不动它。
+    // **带引号的键也要认出来。** 裸键放不下的字符（比如 `video/video_llm`
+    // 里的斜杠）写出去时会加引号（见 toml_key）；这儿不认的话，下一次写
+    // 同一个键会当成"文件里没有"再追加一行，同一个键越攒越多。
+    if (key.size() >= 2 && key.front() == '"' && key.back() == '"') {
+        std::string inner;
+        for (std::size_t i = 1; i + 1 < key.size(); ++i) {
+            if (key[i] == '\\' && i + 2 < key.size()) ++i;
+            inner += key[i];
+        }
+        if (inner.empty()) return false;
+        key = inner;
+        return true;
+    }
+    // 裸键只允许这些字符。写成别的多半是我没认出来的语法，宁可不动它。
     return std::all_of(key.begin(), key.end(), [](unsigned char c) {
         return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
                (c >= '0' && c <= '9') || c == '_' || c == '-';
@@ -87,6 +100,31 @@ std::string read_file(const fs::path& p) {
 }
 
 }  // namespace
+
+/// TOML 的裸键只允许 A-Z a-z 0-9 _ -，别的都要加引号。
+///
+/// **不加就把整份配置写坏了。** 2026-09-17 实测：出片那一组的替换档按
+/// `video/video_llm` 这种键记进 `[models.pick]`，写出来是裸的
+/// `video/video_llm = "…"`，下一次读配置直接 "Error while parsing
+/// key-value pair"——**整个项目打不开了**，而写的时候一声不吭。
+std::string toml_key(const std::string& key) {
+    const auto bare = [](char c) {
+        return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
+               (c >= '0' && c <= '9') || c == '_' || c == '-';
+    };
+    bool ok = !key.empty();
+    for (const char c : key) {
+        if (!bare(c)) { ok = false; break; }
+    }
+    if (ok) return key;
+    std::string out = "\"";
+    for (const char c : key) {
+        if (c == '"' || c == '\\') out += '\\';
+        out += c;
+    }
+    out += '"';
+    return out;
+}
 
 std::string to_toml_literal(const json& v) {
     if (v.is_string()) {
@@ -200,7 +238,7 @@ fs::path save_peer_nodes(const json& nodes,
     while (!kept.empty() && text::strip_ws(kept.back()).empty()) kept.pop_back();
 
     const auto emit = [&](const std::string& key, const json& v) {
-        kept.push_back(key + " = " + to_toml_literal(v) + eol);
+        kept.push_back(toml_key(key) + " = " + to_toml_literal(v) + eol);
     };
     if (nodes.is_array()) {
         for (const auto& n : nodes) {
@@ -300,7 +338,7 @@ fs::path save_user_config(const json& patch,
 
     const auto make_line = [](const std::string& key, const json& value,
                               bool crlf) {
-        return key + " = " + to_toml_literal(value) + (crlf ? "\r" : "");
+        return toml_key(key) + " = " + to_toml_literal(value) + (crlf ? "\r" : "");
     };
 
     for (const auto& item : patch.items()) {

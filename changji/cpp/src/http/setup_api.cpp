@@ -66,11 +66,33 @@ std::pair<std::uint64_t, std::uint64_t> disk_space(fs::path dir) {
     return {0, 0};
 }
 
-json option_json(const Option& o, const fs::path& models_dir, double vram_gb) {
+/// 这一档此刻**按配置**该用哪几份文件。
+///
+/// 替换档（编码器、VAE）挑的是哪一份，看配置里那个键填的是什么名字——
+/// 这样"还没下全 / 已有"算的就是用户真正要用的那几份，而不是默认那几份。
+std::map<std::string, std::string> alts_from_config(
+    const std::string& group_key, const Option& o, config::ModelsConfig cur) {
+    std::map<std::string, std::string> picks;
+    for (const auto& alt : o.alts) {
+        const std::string* v = config::models_field(cur, alt.role);
+        if (v == nullptr || v->empty()) continue;
+        for (const auto& c : alt.choices) {
+            if (c.name == *v) picks[setup::alt_key(group_key, alt.role)] = *v;
+        }
+    }
+    return picks;
+}
+
+json option_json(const Option& o, const fs::path& models_dir, double vram_gb,
+                 const std::string& group_key,
+                 const config::ModelsConfig& cur) {
     json files = json::array();
     std::uint64_t have = 0;
-    bool complete = !o.files.empty();
-    for (const auto& f : o.files) {
+    const std::vector<setup::FileSpec> use =
+        setup::effective_files(group_key, o, alts_from_config(group_key, o, cur));
+    bool complete = !use.empty();
+    std::uint64_t total = 0;
+    for (const auto& f : use) {
         const fs::path full = models_dir / paths::from_utf8(f.name);
         const std::uint64_t on_disk = size_of(full);
         // 还在下就一律不算齐，哪怕大小已经对上了（预分配，见上面）。
@@ -82,12 +104,31 @@ json option_json(const Option& o, const fs::path& models_dir, double vram_gb) {
         // 界面上进度偏小——比显示"已完成"好，后者会让人拿一份零文件去出片。
         else if (on_disk > 0 && on_disk < f.bytes) have += on_disk;
         if (!present) complete = false;
+        total += f.bytes;
         files.push_back({{"name", f.name},
                          {"note", f.note},
                          {"bytes", f.bytes},
                          {"haveBytes", on_disk},
                          {"present", present}});
     }
+    // 可以换的那几个角色，连同每一份的名字、大小、说明、在不在盘上。
+    json alts = json::array();
+    for (const auto& alt : o.alts) {
+        json choices = json::array();
+        for (const auto& c : alt.choices) {
+            const fs::path full = models_dir / paths::from_utf8(c.name);
+            choices.push_back(
+                {{"name", c.name},
+                 {"note", c.note},
+                 {"bytes", c.bytes},
+                 {"present", c.bytes > 0 && size_of(full) == c.bytes &&
+                                 !download_in_progress(full)}});
+        }
+        alts.push_back({{"role", alt.role},
+                        {"title", alt.title},
+                        {"choices", choices}});
+    }
+
     return {{"id", o.id},
             {"family", o.family},
             {"label", o.label},
@@ -102,10 +143,13 @@ json option_json(const Option& o, const fs::path& models_dir, double vram_gb) {
             // fits 只是"推荐不推荐"，**不禁止选**：卡小但内存大的机器
             // 把权重放内存照样跑得动，只是慢。挡住不如把代价说清楚。
             {"fits", o.min_vram_gb <= vram_gb},
-            {"totalBytes", o.total_bytes()},
+            // **按此刻选中的替换档算，不是 o.total_bytes()。** 换成小编码器
+            // 之后总量要跟着降，否则界面上那个数和真要下的对不上。
+            {"totalBytes", total},
             {"haveBytes", have},
             {"complete", complete},
-            {"files", files}};
+            {"files", files},
+            {"alts", alts}};
 }
 
 /// 两个接口地址是不是同一家。只差结尾的斜杠不算两家。
@@ -277,7 +321,10 @@ ApiResult get_setup_state(const config::Settings& settings,
         if (g.required && !ok) needed = true;
 
         json options = json::array();
-        for (const auto& o : g.options) options.push_back(option_json(o, models_dir, vram_gb));
+        for (const auto& o : g.options) {
+            options.push_back(
+                option_json(o, models_dir, vram_gb, g.key, settings.models));
+        }
 
         // 界面上先选中的那一项：已经配着的优先，没有就用推荐的。
         // **顺序不能反**——反过来的话，用户上次特意挑了小一档的模型，
@@ -507,7 +554,10 @@ ApiResult post_setup_download(const config::Settings& settings, const json& body
         // 用途就是配置手改坏了拿它修回来。少了这一支，那个功能会变成
         // 一个什么都不做的按钮。
         if (!opt->settings.empty() && (changed || !any_changed)) {
-            json patch = setup::config_patch({{g.key, opt->id}});
+            // **整份 selections 传进去，不是只传这一组的 id。** 替换档
+            // （编码器、VAE）挑的是哪一份就在里面，只传 id 的话写回配置的
+            // 永远是默认那份——下的是小编码器、配置里写的是大编码器。
+            json patch = setup::config_patch(selections);
             // **已经在这家了就别动模型名。** 上面那条「一组都没变时全写」
             // 是留给「重写配置」的，但它会连 `llm.model` 一起重写成这一项
             // 写死的那个默认值——而模型名恰恰是用户在那个窗口里自己
@@ -531,7 +581,9 @@ ApiResult post_setup_download(const config::Settings& settings, const json& body
         // 判据是"有没有文件"，不是"是不是 kNoneOption"：走云端 API
         // 那一项（zhipu-free）也一个文件都不下，但它带着三个必须写的旋钮。
         if (opt->files.empty()) continue;
-        for (const auto& f : opt->files) {
+        // **和写配置走同一份解析。** 只改一处的话会出现"下的是小编码器、
+        // 配置里写的是大编码器"。
+        for (const auto& f : setup::effective_files(g.key, *opt, selections)) {
             items.push_back(
                 {g.key, opt->id, f, setup::resolve_url(source, f.repo, f.path)});
         }
@@ -600,8 +652,28 @@ ApiResult post_setup_download(const config::Settings& settings, const json& body
                 return;  // 这一组还没齐
             }
         }
+        // **替换档要从下完的这几个文件反推。** 这条回调只拿得到 group 和
+        // option，而编码器、VAE 挑了哪一份只有文件名知道；不反推的话，
+        // 下的是小编码器、写进配置的是大编码器，加载时报"权重读不对"。
+        std::map<std::string, std::string> sel{{done.group, done.option}};
+        for (const auto& g : setup::catalog()) {
+            if (g.key != done.group) continue;
+            const setup::Option* o = g.find(done.option);
+            if (o == nullptr) break;
+            for (const auto& alt : o->alts) {
+                for (const auto& p : snap.items) {
+                    if (p.group != done.group || p.option != done.option) continue;
+                    for (const auto& c : alt.choices) {
+                        if (c.name == p.name) {
+                            sel[setup::alt_key(g.key, alt.role)] = c.name;
+                        }
+                    }
+                }
+            }
+            break;
+        }
         try {
-            persist(setup::config_patch({{done.group, done.option}}));
+            persist(setup::config_patch(sel));
         } catch (const std::exception&) {
             // 写不进去不该把下载也停掉——文件是有用的，
             // 配置用户还能自己填。真正的报错留给下一次 state 请求：

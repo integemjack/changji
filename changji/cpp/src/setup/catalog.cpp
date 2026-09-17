@@ -478,18 +478,46 @@ std::vector<Group> build() {
                 slash == std::string::npos ? path : path.substr(slash + 1);
             o.files.push_back({file, spec.repo, path, spec.bytes, "video",
                                "扩散模型。画面和立体声一起生成"});
-            // 编码器按扩散模型那一档配。它常驻内存，不影响显存门槛。
+            // ---- 编码器：**这一项一个人就占四成多，所以给选** ----
+            //
+            // 43.6 GB 那一档里，编码器 18.2 GB、扩散模型 18.8 GB——两边
+            // 一样重。小一档 13.1 GB，省五个 G。在这之前它是按扩散模型
+            // 大小自动挑的，用户连名字都看不见（用户 2026-09-17：「我要选」）。
+            //
+            // 默认还是按扩散模型那一档配：挑了大模型的人多半不想在编码器
+            // 上省。它常驻内存，不影响显存门槛。
             const bool big = gb(spec.bytes) >= 15.0;
-            const std::string enc = big ? "qwen3vl_32b_minimax_h3-Q4_K_M.gguf"
-                                        : "qwen3vl_32b_minimax_h3-Q2_K_M.gguf";
-            o.files.push_back(
-                {enc, kH3GgufRepo, enc,
-                 big ? 18218065024ULL : 13102161024ULL, "video_llm",
-                 "文本编码器（裁过的 Qwen3-VL-32B）。每镜只跑一次，权重常驻内存"});
-            o.files.push_back({"minimax_h3_video_vae_fp16.safetensors",
-                               kH3ComfyRepo,
-                               "vae/minimax_h3_video_vae_fp16.safetensors",
-                               5207808496ULL, "video_vae", "视频 VAE"});
+            const FileSpec enc_big{
+                "qwen3vl_32b_minimax_h3-Q4_K_M.gguf", kH3GgufRepo,
+                "qwen3vl_32b_minimax_h3-Q4_K_M.gguf", 18218065024ULL,
+                "video_llm",
+                "文本编码器 Q4_K_M（裁过的 Qwen3-VL-32B）。每镜只跑一次，"
+                "权重常驻内存"};
+            const FileSpec enc_small{
+                "qwen3vl_32b_minimax_h3-Q2_K_M.gguf", kH3GgufRepo,
+                "qwen3vl_32b_minimax_h3-Q2_K_M.gguf", 13102161024ULL,
+                "video_llm",
+                "文本编码器 Q2_K_M。比 Q4_K_M 省五个 G，读提示词的细腻度差一档"};
+            o.files.push_back(big ? enc_big : enc_small);
+            o.alts.push_back({"video_llm", "文本编码器",
+                              big ? std::vector<FileSpec>{enc_big, enc_small}
+                                  : std::vector<FileSpec>{enc_small, enc_big}});
+
+            // ---- 视频 VAE：int8 那份省两个多 G ----
+            //
+            // int8_convrot 走的是 ComfyUI 那套 `int8_tensorwise` + convrot，
+            // 这版 sd.cpp 认（safetensors_io.cpp 的 read_comfy_quant_config）。
+            const FileSpec vae_fp16{
+                "minimax_h3_video_vae_fp16.safetensors", kH3ComfyRepo,
+                "vae/minimax_h3_video_vae_fp16.safetensors", 5207808496ULL,
+                "video_vae", "视频 VAE（fp16 原版）"};
+            const FileSpec vae_int8{
+                "minimax_h3_video_vae_int8_convrot.safetensors", kH3ComfyRepo,
+                "vae/minimax_h3_video_vae_int8_convrot.safetensors",
+                2811065184ULL, "video_vae",
+                "视频 VAE（int8_convrot）。省两个多 G，解码出来的画面略糙"};
+            o.files.push_back(vae_fp16);
+            o.alts.push_back({"video_vae", "视频 VAE", {vae_fp16, vae_int8}});
             o.files.push_back({"minimax_h3_audio_vae_fp32.safetensors",
                                kH3ComfyRepo,
                                "vae/minimax_h3_audio_vae_fp32.safetensors",
@@ -741,6 +769,31 @@ std::map<std::string, std::string> recommend(double vram_gb) {
     return out;
 }
 
+std::string alt_key(const std::string& group_key, const std::string& role) {
+    return group_key + "/" + role;
+}
+
+std::vector<FileSpec> effective_files(
+    const std::string& group_key, const Option& o,
+    const std::map<std::string, std::string>& selections) {
+    if (o.alts.empty() || selections.empty()) return o.files;
+    std::vector<FileSpec> out = o.files;
+    for (const auto& alt : o.alts) {
+        const auto it = selections.find(alt_key(group_key, alt.role));
+        if (it == selections.end()) continue;
+        // 按文件名认。**不认识就当没挑**——老界面提交一个已经换掉的名字时，
+        // 用默认那份比整组不写强（同 config_patch 里对陌生 id 的处理）。
+        const auto pick = std::find_if(
+            alt.choices.begin(), alt.choices.end(),
+            [&it](const FileSpec& f) { return f.name == it->second; });
+        if (pick == alt.choices.end()) continue;
+        for (auto& f : out) {
+            if (f.role == alt.role) f = *pick;
+        }
+    }
+    return out;
+}
+
 json config_patch(const std::map<std::string, std::string>& selections) {
     json patch = json::object();
 
@@ -781,7 +834,10 @@ json config_patch(const std::map<std::string, std::string>& selections) {
         // **每个键都写。** 没用到的写空串，否则上一次选的模型会留在配置里
         // 被当成这一次的一部分——video_lora 就是这么栽的。
         std::map<std::string, std::string> filled;
-        for (const auto& f : opt->files) {
+        // **走 effective_files，不是 opt->files。** 只走一处的话会出现
+        // "下的是小编码器、配置里写的是大编码器"，而那种错加载时报的是
+        // "权重读不对"，指向完全错误的方向。
+        for (const auto& f : effective_files(g.key, *opt, selections)) {
             if (!f.role.empty()) filled[f.role] = f.name;
         }
         for (const auto& role : g.owned_roles) {
