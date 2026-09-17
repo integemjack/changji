@@ -205,7 +205,16 @@ onUnmounted(() => clearTimeout(timer))
         <span class="tiny dim numeric">{{ board.running.length }}</span>
       </h2>
       <p v-if="!board.running.length" class="tiny dim tasks__empty">
-        {{ loaded ? '这会儿没有活在跑。' : '正在问引擎…' }}
+        <!-- **过滤着的时候要说清"是没有，还是被这个勾挡住了"。**
+             一台机器上常开着好几部剧，跑着的那部不一定是当前这部——那时候
+             这一页整片空白，而顶栏那块牌子还写着「任务 6」，两处对不上。 -->
+        {{
+          !loaded
+            ? '正在问引擎…'
+            : mineOnly
+              ? '这一部这会儿没有活在跑。别的剧有没有，把「只看这一部」取消了就知道。'
+              : '这会儿没有活在跑。'
+        }}
       </p>
       <ul v-else class="rows">
         <li v-for="r in board.running" :key="r.id" class="row row--live">

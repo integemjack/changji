@@ -417,8 +417,13 @@ ApiResult post_script_write(const json& body, llm::Client& client,
     // 走故事那条叫「改编」，照梗概写叫「写」——按钮上的字就是这么分的
     // （EpScript.vue 里那个 writeLabel），这儿跟着它说，不然顶栏说的和
     // 用户刚点的那个按钮对不上。
-    pipeline::Activity act{"script", paths::to_utf8(store.root()), episode_id,
-                           plan != nullptr ? "正在改编成剧本" : "正在写剧本"};
+    // **名字要说清是哪一集。** 任务页面上一排下来，「正在改编成剧本」五个
+    // 字每一行都一样，说不出是哪一章（用户 2026-09-17：「任务名要显示清楚
+    // 干什么的」）。
+    pipeline::Activity act{
+        "script", paths::to_utf8(store.root()), episode_id,
+        std::string(plan != nullptr ? "改编成剧本" : "写剧本") +
+            (episode_id.empty() ? std::string{} : " · " + episode_id)};
     const stages::ScriptDraft draft = llm_guard([&] {
         const std::string raw = client.complete(req, tok);
         return chapter_script

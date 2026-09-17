@@ -54,6 +54,7 @@ const ui = useUi()
 const stepKey = computed(() => route.meta?.step ?? '')
 const current = computed(() => STEP_ROUTES.find((s) => s.key === stepKey.value) ?? null)
 const isSettings = computed(() => route.name === 'settings')
+const isTasks = computed(() => route.name === 'tasks')
 // 宽页（故事）：页面不滚，滚的是页面里那一格。见 router 里那条注释。
 const wide = computed(() => route.meta?.wide === true)
 
@@ -278,6 +279,20 @@ function cycleTheme() {
       >
         <AppIcon :name="ui.theme === 'light' ? 'sun' : 'moon'" :size="17" />
       </button>
+
+      <!-- **任务这一页要一直进得去。**
+           它旁边那块牌子（JobBadge）只在有活在跑的时候才出现——没活的时候
+           整个顶栏一个入口都没有，而那一页最有用的一栏恰恰是「做完的」：
+           刚才那几件各花了多久、哪一件砸了、大模型当时想了什么。干完了才
+           想去看，正是常态。 -->
+      <RouterLink
+        to="/tasks"
+        class="btn btn--ghost topbar__icon"
+        :class="{ 'is-on': isTasks }"
+        title="任务：在跑的、排着的、刚做完的"
+      >
+        <AppIcon name="board" :size="17" />
+      </RouterLink>
 
       <RouterLink
         to="/settings"

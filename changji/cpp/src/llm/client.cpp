@@ -500,9 +500,11 @@ RemoteClient::RemoteClient(config::LLMConfig cfg, HttpPost post,
 std::string RemoteClient::complete(const Request& req,
                                    pipeline::CancelToken& tok,
                                    const OnToken& on_token) {
-    // 没人要逐字、或者没注入流式发送函数，就走整段那条。
+    // 没人要逐字、也没人要看思考，或者没注入流式发送函数，就走整段那条。
     // 基类那个默认实现会把整段回调一次，形状是一样的。
-    if (!on_token || !stream_post_) return Client::complete(req, tok, on_token);
+    if ((!on_token && !req.on_thinking) || !stream_post_) {
+        return Client::complete(req, tok, on_token);
+    }
     if (tok.cancelled()) throw LlmError(util::kCancelled);
 
     config::LLMConfig cfg = cfg_();
@@ -556,7 +558,7 @@ std::string RemoteClient::complete(const Request& req,
                 }
                 if (piece.empty()) return true;
                 a.text += piece;
-                on_token(piece);
+                if (on_token) on_token(piece);
                 return true;
             });
         a.status = r.status;
@@ -571,7 +573,7 @@ std::string RemoteClient::complete(const Request& req,
             try {
                 a.finish_reason = completion_reason(r.body);
                 a.text = extract_content(r.body);
-                if (!a.text.empty()) on_token(a.text);
+                if (on_token && !a.text.empty()) on_token(a.text);
             } catch (const std::exception&) {
                 // 解不出来就由下面按本次响应直接报错；不重复发送同一个请求。
             }
@@ -615,6 +617,22 @@ std::string Client::complete(const Request& req, pipeline::CancelToken& tok,
 
 std::string RemoteClient::complete(const Request& req,
                                    pipeline::CancelToken& tok) {
+    // ⚠️ **有人要看思考，就走流式那条，哪怕没人要逐字。**
+    //
+    // 这一条**只能写在这儿**：不带 `on_token` 的调用方（改编成剧本、拆
+    // 分镜、定妆）走的就是这个两参重载，根本到不了上面那个三参的分流点。
+    // 我 2026-09-17 第一次就改错了地方，用例当场红。
+    //
+    // 为什么非流式不行：整段那条只能在**收完之后**把整段思考一次性给出去
+    // （见下面那段）。而「改编成剧本」实测跑 11 分半——这 11 分半里任务
+    // 页面上那一行一个字都没有，跑完那一下才蹦出 19 万字。用户
+    // 2026-09-17：「思考的内容还是看不到」。**思考的用处全在跑的过程里**，
+    // 它是唯一能回答"它还活着吗、在想什么"的东西，跑完再给等于没给。
+    //
+    // 走流式不多花什么：除了 `stream: true`，发的是同一份；服务端不理会
+    // stream 的情况那条路上本来就有退路。
+    if (stream_post_ && req.on_thinking) return complete(req, tok, OnToken{});
+
     if (tok.cancelled()) throw LlmError(util::kCancelled);
 
     // 每次取一份当前配置。中途 /api/connections 换了地址的话，

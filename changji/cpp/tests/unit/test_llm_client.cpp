@@ -1046,3 +1046,39 @@ TEST_CASE("schema 贴过去：换行留着，缩进的空格不留") {
         CHECK_MESSAGE(flush, "行首还有缩进");
     }
 }
+
+TEST_CASE("有人要看思考就走流式，哪怕没人要逐字") {
+    // ⚠️ **整段那条只能在收完之后把整段思考给出去。**
+    //
+    // 「改编成剧本」这一步实测跑 11 分半，而这 11 分半里任务页面上那一行
+    // 一个字都没有，跑完那一下才蹦出 19 万字（用户 2026-09-17：「思考的
+    // 内容还是看不到」）。思考的用处全在跑的过程里——它是唯一能回答
+    // "它还活着吗、在想什么"的东西，跑完再给等于没给。
+    //
+    // 这条钉的是**那个分流判据**：以前只看 `on_token`，于是所有不需要逐字
+    // 的调用（改编、分镜、定妆）全走整段那条。
+    bool streamed = false;
+    llm::RemoteClient c(
+        test_cfg(),
+        // 整段那条：走到这儿就说明判错了
+        [](const std::string&, const std::string&,
+           const std::map<std::string, std::string>&,
+           double) { return ok("{}"); },
+        // 流式那条
+        [&streamed](const std::string&, const std::string&,
+                    const std::map<std::string, std::string>&, double,
+                    const llm::OnChunk& on_chunk) {
+            streamed = true;
+            const std::string sse =
+                "data: {\"choices\":[{\"delta\":{\"content\":\"{}\"}}]}\n\n"
+                "data: [DONE]\n\n";
+            on_chunk(sse.data(), sse.size());
+            return llm::HttpResponse{200, "", std::nullopt};
+        });
+
+    llm::Request r = simple_req();
+    r.on_thinking = [](const std::string&) {};
+    pipeline::CancelToken tok;
+    c.complete(r, tok);
+    CHECK(streamed);
+}
