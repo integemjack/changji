@@ -35,6 +35,18 @@ import { placementRows as buildPlacementRows } from '@/composables/placement-row
 
 const session = useSession()
 const ui = useUi()
+
+/**
+ * 这台机器能产什么（「写文、装配」这种）。体检自己算好的那一条，见
+ * doctor.cpp 的 check_produces——这儿只是把它捞出来给顶上那颗丸子用。
+ *
+ * 取不到就是空串：那时候丸子照旧按 can_run 说话。
+ */
+const produces = computed(
+  () =>
+    (overview.value?.doctor?.checks ?? []).find((c) => c.name === '能产什么')
+      ?.detail ?? '',
+)
 const { run, isBusy } = useAction()
 
 const overview = ref(null)
@@ -533,12 +545,29 @@ function scrollTo(id) {
         <section id="sec-doctor" class="sec">
           <div class="sec__head">
             <h2 class="sec__t">体检</h2>
+            <!-- **能干什么就写什么，别一句「还不能跑」把能干的也否了。**
+                 `can_run` 的定义是"本机没有一条 FAIL"，而一台只写文不出片的
+                 机器是完全正当的用法——doctor.cpp 的 check_produces 上那段
+                 注释白纸黑字写着这句，它自己也算好了「能产什么：写文、装配」。
+                 于是这颗丸子红着说"还不能跑"，而同一页往下三行就写着这台能
+                 写文能装配，两句话打架。
+                 现在：全绿就是「可以开工」；不全绿但还能干活，就把能干的
+                 报出来；什么都干不了才是红的。 -->
             <span
               v-if="overview?.doctor"
               class="pill"
-              :class="overview.doctor.can_run ? 'pill--ok' : 'pill--danger'"
+              :class="
+                overview.doctor.can_run
+                  ? 'pill--ok'
+                  : produces
+                    ? 'pill--warn'
+                    : 'pill--danger'
+              "
+              :title="produces ? '有几步这台机器还干不了，往下看「能产什么」那一条' : ''"
             >
-              {{ overview.doctor.can_run ? '可以开工' : '还不能跑' }}
+              {{
+                overview.doctor.can_run ? '可以开工' : produces ? `能${produces}` : '还不能跑'
+              }}
             </span>
             <!-- **没读回来之前不能说"连不上"。** `engineOnline` 是
                  `overview?.engine?.online`，而 overview 一开始是 null——
