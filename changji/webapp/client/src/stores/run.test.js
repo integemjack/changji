@@ -101,27 +101,32 @@ describe('applyMessage', () => {
     expect(s.settledBy.get('sh2')).toBe(1)
   })
 
-  it('换阶段时，上一阶段留下的全清掉', () => {
-    // **这一条是被一个真 bug 逼出来的。** 配音和首帧两个阶段只报 progress、
-    // 不报 shot_done，于是跑过的镜头全部永久挂在表里——一集跑完配音之后
-    // 整面墙都写着「配音」，包括那些其实只是在等的。用户报的就是这个。
+  it('两个阶段可以同时挂着；同一镜换阶段才换掉', () => {
+    // **2026-09-17 反过来了。** 这儿原来钉的是「换阶段就把上一阶段留下的
+    // 全清掉」，依据是"流水线严格分阶段"。首帧和出片改成同时跑
+    //（cpp 的 pipeline/shot_flow.hpp）之后那个前提没了：两个阶段的消息
+    // 交替着来，照旧那条规矩就是每条消息擦对方一遍，墙上正在跑的那几格
+    // 来回闪、一次只剩一格有状态。用户：「显示都有问题」。
     //
-    // 引擎那边已经补了 shot_done。这里是兜底：流水线是严格分阶段的
-    // （所有镜头先配音、再所有镜头出首帧），所以一收到新阶段的消息，
-    // 上一阶段还挂着的必然已经跑完了。
+    // 那条规矩当初是为了兜一个真 bug（配音和首帧只报 progress 不报
+    // shot_done，跑过的镜头永久挂在墙上）。引擎三个阶段现在都报
+    // shot_done，兜底挪到那边去了——**改那边的时候要记得这边没有兜底**。
     const s = useRun()
     const at = (shot, stage) =>
       s.applyMessage({ type: 'progress', kind: 'progress', stage,
                        shot_id: shot, step: 1, total: 3 })
-    at('sh1', 'audio')
-    at('sh2', 'audio')
-    at('sh3', 'audio')
-    expect(s.inflight).toHaveLength(3)
-
-    // 进首帧阶段了，配音那三条不该再挂着
     at('sh1', 'frames')
-    expect(s.inflight.map((x) => x.shot_id)).toEqual(['sh1'])
-    expect(s.inflight[0].stage).toBe('frames')
+    at('sh2', 'frames')
+    // sh3 已经出到片了，而 sh1、sh2 还在出首帧——流水时的常态
+    at('sh3', 'final')
+    expect(s.inflight).toHaveLength(3)
+    expect(s.inflight.find((x) => x.shot_id === 'sh3').stage).toBe('final')
+    expect(s.inflight.find((x) => x.shot_id === 'sh1').stage).toBe('frames')
+
+    // 同一镜换阶段：整条换掉，不是多一条
+    at('sh1', 'final')
+    expect(s.inflight).toHaveLength(3)
+    expect(s.inflight.find((x) => x.shot_id === 'sh1').stage).toBe('final')
   })
 
   it('老引擎不带 kind：全当 progress，表只进不出', () => {

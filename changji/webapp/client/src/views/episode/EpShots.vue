@@ -251,6 +251,25 @@ const projectPending = computed(() =>
  */
 const goAll = computed(() => !pending.value && projectPending.value > 0)
 /**
+ * 全项目还有几章没分镜。
+ *
+ * 一章有没有分镜看 `shots` 是不是 0——`/api/project` 每一集本来就带这个数，
+ * 和上面 projectPending 用的是同一份，不用再发一趟请求。
+ */
+const projectNoShots = computed(
+  () => session.episodes.filter((e) => !(e.shots ?? 0)).length,
+)
+/**
+ * 分镜这一下该跑整个项目，还是只跑这一章。**判据和 goAll 一模一样**：
+ * 这一章有了、别的章还差着，人想要的就是"接着下一章"。
+ *
+ * 这一条 2026-09-17 才有。在那之前「批量补分镜」是常驻的第三颗按钮，
+ * 而出片那边同一件事是靠主按钮自己变身做的——**同一件事两套规矩**，
+ * 动作条上因此常年五颗按钮。用户：「交互过程也太繁琐。」
+ * 现在两边同一条规矩：这一章做完了，那颗按钮就变成全项目的。
+ */
+const planGoAll = computed(() => shots.value.length > 0 && projectNoShots.value > 0)
+/**
  * 锁着的有几镜。**「全部重出」要把这个数说出来。**
  *
  * 锁是人工确认过的意思，而批量那几颗按钮教给人的正是"锁着的动不了"——
@@ -1195,14 +1214,37 @@ onDeactivated(() => {
         停下
       </button>
       <template v-else>
+        <!-- **三态，和右边那颗出片按钮同一条规矩**（见 planGoAll）：
+             这一章还没分镜 → 拆这一章；这一章有了而别的章还差着 →
+             接着把那几章补完；全项目都有了 → 才是「重出这一章」。 -->
         <button
           class="btn btn--ai"
           type="button"
-          :disabled="!session.episodeId || isBusy('plan')"
-          @click="generate"
+          :disabled="
+            isBusy('plan') || isBusy('planAll') ||
+            (planGoAll ? !session.episodes.length : !session.episodeId)
+          "
+          :title="
+            planGoAll
+              ? `这一章的分镜有了；接着把全项目还差的 ${projectNoShots} 章一次补完，已经有分镜的不动`
+              : shots.length
+                ? '把这一章的分镜整个重拆一遍'
+                : '把这一章的剧本拆成镜头'
+          "
+          @click="planGoAll ? planAll() : generate()"
         >
           <AppIcon name="sparkle" :size="15" />
-          {{ isBusy('plan') ? '拆镜头中…' : shots.length ? 'AI 重出分镜' : 'AI 出分镜' }}
+          {{
+            isBusy('plan')
+              ? '拆镜头中…'
+              : isBusy('planAll')
+                ? '排着…'
+                : planGoAll
+                  ? `全项目补分镜（差 ${projectNoShots} 章）`
+                  : shots.length
+                    ? 'AI 重出分镜'
+                    : 'AI 出分镜'
+          }}
         </button>
         <!-- 全项目还没剧本的章一次改编完。**和它右边那颗是一对**：
              原来一章要「改编」等一轮、回来点「采用」，八章就是十六下点击
@@ -1220,23 +1262,6 @@ onDeactivated(() => {
           @click="scriptAll"
         >
           {{ isBusy('scriptAll') ? '改编中…' : '批量改编' }}
-        </button>
-        <!-- 全项目还没分镜的章一次补完。**2026-09-16 搬回这儿**：它之前
-             在设定的章节那一格，理由是「那一格就是所有集摆在一起的地方」
-             ——而那一格现在只讲章节和人物场景的关系，不再有集的概念了。
-             这是一件生产上的事，属于这一页。 -->
-        <button
-          class="btn btn--ghost btn--sm"
-          type="button"
-          :disabled="isBusy('planAll') || !session.episodes.length"
-          :title="
-            session.episodes.length
-              ? '把全项目还没有分镜的章一次补完，已经有分镜的不动'
-              : '这部剧还一集都没有——章是自动对上集的，先去故事页写一份大纲'
-          "
-          @click="planAll"
-        >
-          {{ isBusy('planAll') ? '排着…' : '批量补分镜' }}
         </button>
         <!-- 先出首帧，看一眼构图再决定要不要花那两分钟出视频。 -->
         <button

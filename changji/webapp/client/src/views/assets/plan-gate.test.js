@@ -58,10 +58,17 @@ describe('章节那一格没有集的概念', () => {
   })
 })
 
-describe('批量补分镜搬到了「这一章」那一页', () => {
+describe('补全项目分镜这件事在「这一章」那一页', () => {
   const shots = code(read('../episode/EpShots.vue'))
-  it('按钮和处理函数都在那边', () => {
-    expect(shots).toContain('批量补分镜')
+  it('处理函数在那边', () => {
     expect(shots).toContain('planAll')
+  })
+  it('不是常驻的第三颗按钮，是主按钮做完这一章之后变身', () => {
+    // 2026-09-17：原来「批量补分镜」和「AI 出分镜」并排常驻，而出片那边
+    // 同一件事是主按钮自己变身。同一件事两套规矩，动作条上常年五颗按钮。
+    // 现在两边同一条规矩，见 EpShots.vue 的 planGoAll。
+    expect(shots).not.toContain('批量补分镜')
+    expect(shots).toContain('planGoAll')
+    expect(shots).toContain('全项目补分镜')
   })
 })
