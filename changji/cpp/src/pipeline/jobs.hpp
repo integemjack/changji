@@ -92,11 +92,29 @@ struct Event {
 class CancelToken {
 public:
     void request() { cancelled_.store(true, std::memory_order_relaxed); }
-    bool cancelled() const { return cancelled_.load(std::memory_order_relaxed); }
+    bool cancelled() const {
+        if (cancelled_.load(std::memory_order_relaxed)) return true;
+        const CancelToken* p = parent_.load(std::memory_order_relaxed);
+        return p != nullptr && p->cancelled();
+    }
     void reset() { cancelled_.store(false, std::memory_order_relaxed); }
+
+    /// 挂到上一级那个令牌上。**自己被立起来、或者上一级被立起来，都算停。**
+    ///
+    /// 为的是"停一件"和"停一整批"能同时成立：任务页面上每一行有自己的叉
+    /// （停这一镜），而整批那头还有一个停（停全部）。没有这条的话两者只能
+    /// 选一个——把批令牌传给渲染器，单镜就停不了；把单镜令牌传过去，批停
+    /// 又要等这一镜跑完，而成片档一镜是几分钟。
+    ///
+    /// ⚠️ **上一级必须活得比自己久。** 用法只有一种：批跑那一层的令牌在
+    /// 栈上，每一镜的令牌挂上去，镜子跑完就没了。
+    void link(const CancelToken* parent) {
+        parent_.store(parent, std::memory_order_relaxed);
+    }
 
 private:
     std::atomic<bool> cancelled_{false};
+    std::atomic<const CancelToken*> parent_{nullptr};
 };
 
 /// 一个任务槽的状态。

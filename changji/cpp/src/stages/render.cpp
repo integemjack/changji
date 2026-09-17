@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <memory>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
@@ -12,6 +13,7 @@
 
 #include "gates/checks.hpp"
 #include "util/human_time.hpp"
+#include "pipeline/task_board.hpp"
 #include "util/paths.hpp"
 #include "util/text.hpp"
 #include "infer/scheduler.hpp"
@@ -207,6 +209,19 @@ std::vector<RenderOutcome> render_batch(std::vector<Shot*>& shots,
     // 起八个线程只是白占。
     const int lanes = std::max(1, std::min(concurrency, total));
 
+    // 每一镜在任务账本上占一行，**开工之前就全部登记**。理由和 frames.cpp
+    // 那处一样：任务页面那一栏问的是"还排着哪几镜"。
+    // `stage_name` 是 draft / final，标题里写清楚是哪一档。
+    const std::string project_path = paths::to_utf8(paths.root());
+    const std::string tier_cn = stage_name == "draft" ? "草稿档" : "成片档";
+    std::vector<std::unique_ptr<pipeline::Task>> tasks;
+    tasks.reserve(static_cast<std::size_t>(total));
+    for (int i = 0; i < total; ++i) {
+        tasks.push_back(std::make_unique<pipeline::Task>(
+            "video", "出片" + tier_cn + " · " + shots[i]->shot_id, project_path));
+        tasks.back()->token().link(&tok);
+    }
+
     std::atomic<int> next{0};
     std::atomic<int> finished{0};
 
@@ -242,6 +257,10 @@ std::vector<RenderOutcome> render_batch(std::vector<Shot*>& shots,
             // **本地副本。** 重试要改 attempts，而 attempts 进种子——
             // 不换种子的重试就是把同一张牌再打一遍。改副本是为了让
             // 并行那一段仍然一个字节都不往 shots 里写。
+            pipeline::Task& task = *tasks[i];
+            if (task.cancelled()) { done[i].skipped = true; continue; }
+            task.begin();
+
             Shot local = *shot;
             done[i].ran = true;   // 副本装上了，收尾那一段才敢写回
 
@@ -457,7 +476,7 @@ std::vector<RenderOutcome> render_batch(std::vector<Shot*>& shots,
                                                 (k == 0 ? std::string{}
                                                         : "（补第 " + std::to_string(k + 1) +
                                                               " 条）"));
-                            render(take, plan, start, d, tok, on_step);
+                            render(take, plan, start, d, task.token(), on_step);
                             files.push_back(d);
                             results.push_back(gate.check(take, d, plan));
                             if (take_good_enough(results.back())) break;
@@ -482,7 +501,7 @@ std::vector<RenderOutcome> render_batch(std::vector<Shot*>& shots,
                                             gates::motion_note(*picked));
                         }
                     } else {
-                        render(local, plan, start, dest, tok, on_step);
+                        render(local, plan, start, dest, task.token(), on_step);
                     }
                     local.video_path = paths.rel(dest);
                 } catch (const std::exception& e) {
@@ -578,6 +597,9 @@ std::vector<RenderOutcome> render_batch(std::vector<Shot*>& shots,
             done[i].shot = std::move(local);
 
             done[i].elapsed_s = now_seconds() - started;
+            if (!done[i].ok && !done[i].error.empty()) task.fail(done[i].error);
+            // 边跑边结账，见 frames.cpp 同一处。
+            tasks[i].reset();
 
             // **出完一镜就落一次盘。** 一集二十二镜、一镜两分钟，
             // 不落的话这一个小时里镜头墙上看到的还是开跑那一刻：

@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <memory>
 #include <thread>
 #include <cmath>
 #include <vector>
@@ -13,6 +14,7 @@
 #include <fstream>
 
 #include "stages/storyboard.hpp"
+#include "pipeline/task_board.hpp"
 #include "util/paths.hpp"
 #include "util/text.hpp"
 
@@ -588,6 +590,28 @@ std::vector<ShotAudioPlan> AudioStage::run(std::vector<models::Shot*>& shots,
 
     // 同时跑几镜。上限是镜头数——池里两个位置而只有一镜时，起两条线程只是白占。
     const int lanes = std::max(1, std::min(concurrency, total));
+
+    // 每一镜在任务账本上占一行，**开工之前就全部登记**。理由见 frames.cpp
+    // 那处。标题里带上这一镜第一句台词——配音那一族光报镜头号，页面上
+    // 二十行长得一模一样（用户 2026-09-17：「任务名要显示清楚干什么的」）。
+    const std::string project_path = paths::to_utf8(paths_.root());
+    std::vector<std::unique_ptr<pipeline::Task>> tasks;
+    tasks.reserve(static_cast<std::size_t>(total));
+    for (int i = 0; i < total; ++i) {
+        std::string line;
+        if (!shots[i]->dialogue.empty()) {
+            line = shots[i]->dialogue.front().text;
+            // 一行放得下的长度。截了要说一声，不然读起来像台词本来就断了。
+            if (line.size() > 30) line = line.substr(0, 30) + "…";
+        }
+        tasks.push_back(std::make_unique<pipeline::Task>(
+            "tts",
+            line.empty() ? "配音 · " + shots[i]->shot_id
+                         : "配音 · " + shots[i]->shot_id + "「" + line + "」",
+            project_path));
+        tasks.back()->token().link(&tok);
+    }
+
     std::atomic<int> next{0};
 
     const auto lane = [&] {
@@ -598,6 +622,9 @@ std::vector<ShotAudioPlan> AudioStage::run(std::vector<models::Shot*>& shots,
 
             models::Shot* shot = shots[i];
             const int index = i + 1;
+            pipeline::Task& task = *tasks[i];
+            if (task.cancelled()) continue;   // 单独取消了这一镜，ran 留假
+            task.begin();
             // **本地副本。** process_shot 会就地改台词（重切）和时长，
             // 并行那一段一个字节都不往 shots 里写。
             models::Shot local = *shot;
@@ -615,7 +642,7 @@ std::vector<ShotAudioPlan> AudioStage::run(std::vector<models::Shot*>& shots,
             }
 
             try {
-                done[i].plan = process_shot(local, assets, tok);
+                done[i].plan = process_shot(local, assets, task.token());
                 done[i].ok = true;
                 local.status = models::ShotStatus::AUDIO_DONE;
             // **这一镜完了要说一声。** 界面把"带 shot_id 的 progress"当成
@@ -635,6 +662,7 @@ std::vector<ShotAudioPlan> AudioStage::run(std::vector<models::Shot*>& shots,
                 // 一镜配音失败不拖垮后面几镜。这一镜的状态不推进，
                 // 后面的闸门会看出"有台词但没有配音时长"。
                 done[i].ok = false;
+                task.fail(e.what());
                 pipeline::Event ev;
                 ev.stage = "audio";
                 ev.kind = "warn";
@@ -643,6 +671,8 @@ std::vector<ShotAudioPlan> AudioStage::run(std::vector<models::Shot*>& shots,
                 progress.report(ev);
             }
             done[i].shot = std::move(local);
+            // 边跑边结账，见 frames.cpp 同一处。
+            tasks[i].reset();
         }
     };
 

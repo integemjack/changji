@@ -2,6 +2,8 @@
 
 #include <crow.h>
 
+#include <cstdlib>
+
 #include <algorithm>
 #include <cctype>
 #include <filesystem>
@@ -52,6 +54,7 @@
 #include "http/job_stream.hpp"
 #include "http/offload.hpp"
 #include "pipeline/activity.hpp"
+#include "pipeline/task_board.hpp"
 #include "pipeline/jobs.hpp"
 #include <atomic>
 #include <chrono>
@@ -693,6 +696,52 @@ void run(const config::Settings& settings, const Options& opts) {
         });
         return json_response(r.body, r.status);
     });
+
+    // ---- 任务页面 ----
+    //
+    // 用户 2026-09-17：「增加任务页面显示正在做的（已经用时，结束图标按钮）、
+    // 排队中的（预计什么时候开始，取消图标按钮）、已经做完的（耗时），如果是
+    // 大模型有思考的还得显示思考点击展开思考内容」。
+    //
+    // 账在 pipeline/task_board.hpp，这儿只是三个出口。
+    CROW_ROUTE(app, "/api/tasks")([](const crow::request& req) {
+        auto r = guard([&]() -> ApiResult {
+            const char* p = req.url_params.get("project");
+            return {200, pipeline::task_board(p ? p : "")};
+        });
+        return json_response(r.body, r.status);
+    });
+
+    // **思考正文单独取。** 一次写作的思考几千字，塞进上面那份两秒推一次的
+    // 账里的话，它一件就能把整条通道占满。页面点开那一下才来要。
+    CROW_ROUTE(app, "/api/task/thinking")([](const crow::request& req) {
+        auto r = guard([&]() -> ApiResult {
+            const char* id = req.url_params.get("id");
+            if (id == nullptr) throw ApiError(400, "要给 id");
+            return {200,
+                    {{"thinking", pipeline::task_thinking(
+                                      std::strtoull(id, nullptr, 10))}}};
+        });
+        return json_response(r.body, r.status);
+    });
+
+    CROW_ROUTE(app, "/api/task/cancel").methods("POST"_method)(
+        [](const crow::request& req) {
+            auto r = guard([&]() -> ApiResult {
+                const json body = parse_body(req.body);
+                if (!body.is_object() || !body.contains("id")) {
+                    throw ApiError(400, "要给 id");
+                }
+                const auto id = body.at("id").is_string()
+                                    ? std::strtoull(
+                                          body.at("id").get<std::string>().c_str(),
+                                          nullptr, 10)
+                                    : body.at("id").get<std::uint64_t>();
+                // 找不到不报错：按下去那一刻可能刚好干完，重复点也不该弹框。
+                return ApiResult{200, {{"stopped", pipeline::cancel_task(id)}}};
+            });
+            return json_response(r.body, r.status);
+        });
 
     CROW_ROUTE(app, "/api/settings")([] {
         auto r = guard([] {

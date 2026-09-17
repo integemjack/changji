@@ -1,9 +1,11 @@
 #include "pipeline/activity.hpp"
 
 #include "pipeline/jobs.hpp"
+#include "pipeline/task_board.hpp"
 
 #include <iterator>
-#include <map>
+#include <memory>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -11,54 +13,49 @@
 namespace changji::pipeline {
 namespace {
 
-struct Row {
-    std::string kind;
-    std::string project;
-    std::string episode_id;
-    std::string message;
-    std::string note;
-    /// 这件活画的是哪一格参考图（`char_id_slot` / `location_id_empty`）。
-    /// 只有出参考图那一族填，别的活是空串。见 Activity::set_target。
-    std::string target;
-    int current = 0;
-    int total = 0;
-};
-
 /// 这个线程的活，最里层的在最后。
 ///
 /// 是个栈不是一个指针：以后真出现"一件活里面套一件"的时候（比如写整季
 /// 里面单独登记每一章），深处的代码该改的是最里层那件，不是最外层。
 thread_local std::vector<Activity*> t_stack;
 
-struct Registry {
-    std::mutex mu;
-    // **有序表，不是哈希表**：id 递增，遍历出来就是开工顺序。顶栏那个列表
-    // 每两秒重画一次，行的顺序要是每次都跳，看着像有活在闪。
-    std::map<std::uint64_t, Row> rows;
-    std::uint64_t next = 1;
-};
-
-Registry& reg() {
-    static Registry r;
-    return r;
-}
-
 }  // namespace
 
-Activity::Activity(std::string kind, std::string project, std::string episode_id,
-                   std::string message) {
-    Registry& r = reg();
-    std::lock_guard lg(r.mu);
-    id_ = r.next++;
-    // **按名字写，不是按位置。** 这儿原来是一串裸的位置实参
-    // （`Row{kind, project, episode_id, message, "", 0, 0}`），而往 Row 中间
-    // 插一个字段的后果是**把 0 塞进一个 std::string**——`std::string(nullptr)`
-    // 是未定义行为，实际表现是构造 Activity 当场 SIGSEGV。加 `target` 那一次
-    // 就这么炸了四个测试。指名道姓写，以后加字段只会编不过，不会崩。
-    r.rows.emplace(id_, Row{.kind = std::move(kind),
-                            .project = std::move(project),
-                            .episode_id = std::move(episode_id),
-                            .message = std::move(message)});
+// ⚠️ **这一层现在只是 `Task` 的壳。**
+//
+// 2026-09-17 之前它自己管一本账（一个 map、一个递增 id）。那本账答得了
+// "此刻在忙什么"，答不了另外三件事：排着还没开始的、已经用了多久、干完的
+// 那件花了多少时间——而用户要的任务页面三样都要
+// （「正在做的（已经用时…）、排队中的（预计什么时候开始…）、已经做完的
+// （耗时）」）。
+//
+// 两本账并排放着是最糟的一种：同一件活在两处各登记一遍，迟早只改一边。
+// 所以这儿整个搬到 `task_board.hpp` 上，**构造即 begin**（短活本来就是
+// 拿到就干），老调用点一个字没改就有了用时和完成记录。
+struct Activity::Impl {
+    /// 自己开的那一件。接管别人的时候是空的。
+    std::optional<Task> owned;
+    /// 真正操作的那一件。指向 `owned`，或者别人那件。
+    Task* task = nullptr;
+
+    Impl(std::string kind, std::string project, std::string episode_id,
+         std::string message) {
+        owned.emplace(std::move(kind), std::move(message), std::move(project),
+                      std::move(episode_id));
+        task = &*owned;
+        task->begin();
+    }
+    explicit Impl(Task& existing) : task(&existing) {}
+};
+
+Activity::Activity(std::string kind, std::string project,
+                   std::string episode_id, std::string message)
+    : impl_(std::make_unique<Impl>(std::move(kind), std::move(project),
+                                   std::move(episode_id), std::move(message))) {
+    t_stack.push_back(this);
+}
+
+Activity::Activity(Task& existing) : impl_(std::make_unique<Impl>(existing)) {
     t_stack.push_back(this);
 }
 
@@ -72,40 +69,15 @@ Activity::~Activity() {
             break;
         }
     }
-    Registry& r = reg();
-    std::lock_guard lg(r.mu);
-    r.rows.erase(id_);
 }
 
-void Activity::set_message(std::string m) {
-    Registry& r = reg();
-    std::lock_guard lg(r.mu);
-    auto it = r.rows.find(id_);
-    if (it != r.rows.end()) it->second.message = std::move(m);
-}
+void Activity::set_message(std::string m) { impl_->task->set_title(std::move(m)); }
+void Activity::set_progress(int c, int t) { impl_->task->set_progress(c, t); }
+void Activity::set_target(std::string t) { impl_->task->set_target(std::move(t)); }
+void Activity::set_note(std::string n) { impl_->task->set_note(std::move(n)); }
+void Activity::set_thinking(std::string a) { impl_->task->set_thinking(std::move(a)); }
 
-void Activity::set_progress(int current, int total) {
-    Registry& r = reg();
-    std::lock_guard lg(r.mu);
-    auto it = r.rows.find(id_);
-    if (it == r.rows.end()) return;
-    it->second.current = current;
-    it->second.total = total;
-}
-
-void Activity::set_target(std::string t) {
-    Registry& r = reg();
-    std::lock_guard lg(r.mu);
-    auto it = r.rows.find(id_);
-    if (it != r.rows.end()) it->second.target = std::move(t);
-}
-
-void Activity::set_note(std::string n) {
-    Registry& r = reg();
-    std::lock_guard lg(r.mu);
-    auto it = r.rows.find(id_);
-    if (it != r.rows.end()) it->second.note = std::move(n);
-}
+Task& Activity::task() { return *impl_->task; }
 
 Activity* current_activity() {
     return t_stack.empty() ? nullptr : t_stack.back();
@@ -125,37 +97,6 @@ void note_queued(int ahead, const std::string& blocker) {
     // 轮到自己了，但显存还腾不动——挡路的那个槽正被用着。
     a->set_note(blocker.empty() ? "排队中"
                                 : "排队中，等「" + blocker + "」用完");
-}
-
-nlohmann::json running_activities() {
-    Registry& r = reg();
-    std::lock_guard lg(r.mu);
-    nlohmann::json out = nlohmann::json::array();
-    for (const auto& [id, row] : r.rows) {
-        out.push_back({
-            {"kind", row.kind},
-            {"project", row.project},
-            {"episode_id", row.episode_id},
-            // stage 这一格短活没有，但形状要和长跑任务那边一样——
-            // 前端一套代码画两边，少一个键就得在模板里到处判空。
-            {"stage", ""},
-            // 画的是哪一格参考图。**没有 WebSocket 的时候设定页就靠它**
-            // 认出那一格在画（见前端 useRefStream）：`refs` 那条固定频道是
-            // 纯 socket 的，代理掐了 Upgrade 就一条消息都不来。别的活是空串。
-            {"target", row.target},
-            {"current", row.current},
-            {"total", row.total},
-            // 排队那句盖在上面。**顶栏只有一行**，两句都塞进去会挤掉
-            // 后面的项目名，而正在排队的时候"在排队"比"要干什么"更要紧。
-            {"message", row.note.empty() ? row.message
-                                         : row.note + "：" + row.message},
-            // **在跑还是在排，给个字段，别让前端去猜那句话。** 用户要的
-            // 就是"正在作业的"和"排队中的"两拨分得清；靠前缀匹配中文的话，
-            // 哪天那句话改一个字，界面就悄悄全算成在跑的了。
-            {"queued", !row.note.empty()},
-        });
-    }
-    return out;
 }
 
 nlohmann::json running_work() {

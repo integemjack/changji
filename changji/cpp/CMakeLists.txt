@@ -756,6 +756,7 @@ add_executable(changji
     src/http/job_stream.cpp
     src/pipeline/jobs.cpp
     src/pipeline/activity.cpp
+    src/pipeline/task_board.cpp
     src/pipeline/episode.cpp
     src/pipeline/storyboard_run.cpp
     src/media/ffmpeg.cpp
@@ -1212,6 +1213,7 @@ if(CHANGJI_BUILD_TESTS)
         src/infer/sd_upscale.cpp
         src/pipeline/jobs.cpp
         src/pipeline/activity.cpp
+        src/pipeline/task_board.cpp
         src/pipeline/episode.cpp
         src/pipeline/storyboard_run.cpp
         src/media/ffmpeg.cpp

@@ -295,6 +295,10 @@ export const api = {
   // 「一键出图」：**一次把还缺的全交出去，队列在引擎那头**。
   // 回 202 就走了，进度从 refs 频道上的 ref_queue 来。
   generateAllReferences: (payload) => post('/api/assets/references', payload),
+  // 任务账本。见 cpp/src/pipeline/task_board.hpp。
+  tasks: (project) => get('/api/tasks', project ? { project } : undefined),
+  taskThinking: (id) => get('/api/task/thinking', { id }),
+  cancelTask: (id) => post('/api/task/cancel', { id: String(id) }),
   stopAllReferences: (payload) => post('/api/assets/references/stop', payload),
   referenceQueue: (project) => get('/api/assets/references', { project }),
   saveStyle: (payload) => post('/api/style', payload),

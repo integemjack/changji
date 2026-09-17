@@ -27,7 +27,7 @@
  * （409「已经在写了」）。那是另一个层面的事，要排也得先有个任务队列。
  */
 import { computed, onMounted, onUnmounted, ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { RouterLink, useRouter } from 'vue-router'
 
 import AppIcon from '@/components/AppIcon.vue'
 import { STAGE_LABELS } from '@/api/labels'
@@ -234,6 +234,12 @@ async function go(row) {
              外面。 -->
         <span class="jb__msg truncate" :title="r.message">{{ r.message }}</span>
       </button>
+      <!-- **这块牌子只有一行的地方，任务页面有一整页。** 排着的那几件、
+           已经用了多久、刚才那几件花了多少、大模型想了什么，都在那儿
+           （用户 2026-09-17）。 -->
+      <RouterLink class="jb__all tiny" to="/tasks" @click="open = false">
+        全部任务 · 排队和做完的
+      </RouterLink>
     </div>
   </div>
 </template>
@@ -242,6 +248,17 @@ async function go(row) {
 .jb {
   position: relative;
   flex: none;
+}
+.jb__all {
+  display: block;
+  padding: 7px 10px;
+  border-top: 1px solid var(--line);
+  color: var(--text-2);
+  text-decoration: none;
+}
+.jb__all:hover {
+  background: var(--bg-2);
+  color: var(--text);
 }
 .jb__btn {
   display: inline-flex;

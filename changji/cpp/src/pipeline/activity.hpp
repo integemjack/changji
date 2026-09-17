@@ -20,12 +20,15 @@
 // 它只回答一个问题，就是顶栏那一行字。
 
 #include <cstdint>
+#include <memory>
 #include <mutex>
 #include <string>
 
 #include <nlohmann/json.hpp>
 
 namespace changji::pipeline {
+
+class Task;
 
 /// 一件正在干的短活。构造即登记，析构即划掉。
 ///
@@ -40,6 +43,18 @@ public:
     /// `project` 是项目目录的绝对路径（顶栏靠它点过去），留空就只显示名字。
     Activity(std::string kind, std::string project, std::string episode_id,
              std::string message);
+
+    /// 接管一件**已经登记过**的活。
+    ///
+    /// 批量那条是"排进队的那一刻就登记，轮到了才开工"（见
+    /// `http/ref_gen.cpp` 的 `enroll`）。到了真干活那一层，那儿本来会自己
+    /// `Activity act{...}` 再登记一行——**同一件活在页面上就出现两次**，
+    /// 一行叫「画参考图 · 董平 正面」、一行叫「正在画参考图」。
+    ///
+    /// 接管这一条只把它推上本线程那个栈（`note_queued` 要找的就是它），
+    /// 不新开一行，也不负责结账——账是排队那头开的，也由那头放手。
+    explicit Activity(Task& existing);
+
     ~Activity();
 
     Activity(const Activity&) = delete;
@@ -67,8 +82,15 @@ public:
     /// 图"），而那句话是谁写的、写的什么，排队这一层不知道也不该知道。
     void set_note(std::string n);
 
+    /// 大模型想到哪儿了。页面上那个「思考」点开看的就是它。
+    void set_thinking(std::string all);
+
+    /// 底下那件 `Task`。取消令牌、id 都在它身上。
+    Task& task();
+
 private:
-    std::uint64_t id_ = 0;
+    struct Impl;
+    std::unique_ptr<Impl> impl_;
 };
 
 /// 这个线程此刻在干的那件活。没有就是 nullptr。
@@ -83,7 +105,8 @@ Activity* current_activity();
 void note_queued(int ahead, const std::string& blocker);
 
 /// 此刻在干的那些短活，一行一个。形状和 JobTable::running_jobs() 一样，
-/// 顶栏把两边接成一个列表。
+/// 顶栏把两边接成一个列表。**实现在 task_board.cpp**——那本账才是数据在
+/// 的地方，这儿只是个老名字的出口。
 nlohmann::json running_activities();
 
 /// 引擎此刻在干的**全部** AI 活：长跑任务加短活，接成一个列表。

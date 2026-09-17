@@ -1,6 +1,7 @@
 #include "stages/frames.hpp"
 
 #include <atomic>
+#include <memory>
 #include <mutex>
 #include <thread>
 #include <optional>
@@ -11,6 +12,7 @@
 #include "infer/local_exec.hpp"
 #include "infer/scheduler.hpp"
 #include "pipeline/activity.hpp"
+#include "pipeline/task_board.hpp"
 #include "util/paths.hpp"
 #include "util/text.hpp"
 
@@ -201,6 +203,23 @@ std::vector<FrameOutcome> run_frames(std::vector<Shot*>& shots,
     // 起八个线程只是白占。
     const int lanes = std::max(1, std::min(concurrency, total));
 
+    // **每一镜在任务账本上占一行，开工之前就全部登记。**
+    //
+    // 任务页面那一栏问的正是"还排着哪几镜"（用户 2026-08-17：「排队中的
+    // （预计什么时候开始，取消图标按钮）」）。等领到活才登记的话，那一栏
+    // 永远只有正在跑的那两三行，而排着的二十镜一行都没有。
+    //
+    // 每一行自己的令牌挂在整批那个令牌上（`link`）：停这一镜只停这一镜，
+    // 停整批照样一按就全停。
+    const std::string project_path = paths::to_utf8(paths.root());
+    std::vector<std::unique_ptr<pipeline::Task>> tasks;
+    tasks.reserve(static_cast<std::size_t>(total));
+    for (int i = 0; i < total; ++i) {
+        tasks.push_back(std::make_unique<pipeline::Task>(
+            "image", "出首帧 · " + shots[i]->shot_id, project_path));
+        tasks.back()->token().link(&tok);
+    }
+
     std::atomic<int> next{0};
     const auto worker = [&] {
         for (;;) {
@@ -212,6 +231,11 @@ std::vector<FrameOutcome> run_frames(std::vector<Shot*>& shots,
             if (tok.cancelled()) { done[i].skipped = true; continue; }
 
             Shot* shot = shots[i];
+            pipeline::Task& task = *tasks[i];
+            // 排着的时候被单独取消了，就当跳过——和整批被停是同一个下场，
+            // 只是范围不同。
+            if (task.cancelled()) { done[i].skipped = true; continue; }
+            task.begin();
             done[i].ran = true;   // 真领了这一格，收尾那一段才敢动它
             const double started = now_seconds();
             const int index = i + 1;
@@ -267,6 +291,8 @@ std::vector<FrameOutcome> run_frames(std::vector<Shot*>& shots,
                     // 镜头墙上那条进度条要的是这个。见 Event::shot_steps。
                     e.shot_step = step;
                     e.shot_steps = steps;
+                    // 任务页面那条进度条要的是这两个数。
+                    if (phase == infer::Phase::Sample) task.set_progress(step, steps);
                     e.shot_phase = infer::phase_name(phase);
                     // 三种阶段的文案在 infer::phase_note 里，和 render.cpp 共用。
                     // **第一个采样步上把腾显存的结论带出来。**
@@ -284,7 +310,7 @@ std::vector<FrameOutcome> run_frames(std::vector<Shot*>& shots,
                     progress.report(e);
                 };
 
-                render(*shot, prompts, scaled, dest, tok, on_step);
+                render(*shot, prompts, scaled, dest, task.token(), on_step);
                 done[i].ok = true;
                 done[i].rel_path = paths.rel(dest);
 
@@ -307,7 +333,8 @@ std::vector<FrameOutcome> run_frames(std::vector<Shot*>& shots,
                         // 墙上首帧那一格。
                         Shot end_shot = *shot;
                         end_shot.shot_id = shot->shot_id + "_end";
-                        render(end_shot, end_prompts, scaled, edest, tok, on_step);
+                        render(end_shot, end_prompts, scaled, edest, task.token(),
+                               on_step);
                         done[i].end_rel = paths.rel(edest);
                     } catch (const std::exception& e) {
                         pipeline::Event ev;
@@ -324,6 +351,7 @@ std::vector<FrameOutcome> run_frames(std::vector<Shot*>& shots,
                 // 导致后面三十镜都没动，那这一晚上就白熬了。
                 done[i].ok = false;
                 done[i].error = e.what();
+                task.fail(done[i].error);
 
                 pipeline::Event ev;
                 ev.stage = "frames";
@@ -333,6 +361,9 @@ std::vector<FrameOutcome> run_frames(std::vector<Shot*>& shots,
                 progress.report(ev);
             }
             done[i].elapsed_s = now_seconds() - started;
+            // **在这儿结账**，不是等整批跑完：页面上「做完的」那一栏要边跑
+            // 边长出来，一集二十二镜等到最后才一起冒出来等于没有。
+            tasks[i].reset();
 
             // **出完一镜就落一次盘。** 不落的话这一批（一集二十二镜）
             // 跑完之前，镜头墙问到的永远是开跑那一刻的样子——

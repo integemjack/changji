@@ -117,6 +117,14 @@ const routes = [
     component: () => import('@/views/SettingsView.vue'),
     meta: { title: '设置' },
   },
+  // 任务页面。**不在 STEP_ROUTES 里**：它不是"做片子的第几步"，是随时
+  // 可以翻开看的一本账（顶栏那块「AI 作业中」点进来的就是它）。
+  {
+    path: '/tasks',
+    name: 'tasks',
+    component: () => import('@/views/TasksView.vue'),
+    meta: { title: '任务' },
+  },
   // 老路径。合并之前它们是两页，收藏夹里可能还留着。
   // 「剧本大纲」那一页 2026-09-11 删了：全剧那半（梗概、分集、章节）
   // 在故事页，单集那半在「这一集」的剧本视图，预告片和手动加一集收进了

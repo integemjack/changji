@@ -1,5 +1,8 @@
 #include "http/job_stream.hpp"
 
+#include "pipeline/activity.hpp"
+#include "pipeline/task_board.hpp"
+
 #include <chrono>
 #include <deque>
 #include <map>
@@ -229,9 +232,20 @@ JobScope::~JobScope() {
 
 std::function<void(const std::string&)> thinking_sink(std::string stream_id) {
     if (stream_id.empty()) stream_id = current_stream();
-    if (stream_id.empty()) return {};
+    // ⚠️ **没有 stream 也要回一个函数。**
+    //
+    // 这儿原来是 `if (stream_id.empty()) return {}`——没人点过的那条路
+    // （批量写作、后台补分镜）于是一个字的思考都不留。而任务页面上那个
+    // 「思考」正是给这种活看的：它一跑几分钟，屏幕上只有一句"正在写"。
+    //
+    // 账本那一份按**当前线程在干的那件活**挂（`current_activity`），
+    // 和 stream 是两条独立的路：有 stream 就两边都喂。
     return [stream_id](const std::string& piece) {
-        job_thinking(stream_id, piece);
+        if (piece.empty()) return;
+        if (!stream_id.empty()) job_thinking(stream_id, piece);
+        if (auto* a = pipeline::current_activity()) {
+            a->task().append_thinking(piece);
+        }
     };
 }
 

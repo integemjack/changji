@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <map>
 #include <mutex>
+#include <memory>
 #include <optional>
 #include <thread>
 #include <vector>
@@ -22,6 +23,7 @@
 #include "pipeline/episode.hpp"  // frame_spec
 #include "pipeline/activity.hpp"
 #include "pipeline/jobs.hpp"
+#include "pipeline/task_board.hpp"
 #include "stages/frames.hpp"
 #include "stages/ref_images.hpp"
 #include "util/cancel_words.hpp"
@@ -85,7 +87,8 @@ struct Rendered {
 Rendered render_ref(const ProjectStore& store, const std::string& stem,
                     const std::string& positive, const std::string& negative,
                     std::int64_t seed, const std::string& stream_id,
-                    const stages::FrameRenderer* shared = nullptr) {
+                    const stages::FrameRenderer* shared = nullptr,
+                    pipeline::Task* enrolled = nullptr) {
     // **项目自己的 changji.toml 盖在全局上**，和跑流水线走同一条路。
     config::Settings settings = config::load_settings(store.root());
     HardwareProfile profile = config::runtime().profile();
@@ -110,8 +113,16 @@ Rendered render_ref(const ProjectStore& store, const std::string& stem,
     // 登记在出图之前，是因为**等显存也是在忙**：头一张要先把出图模型
     // 读进显存（十几秒到一分钟），这段时间 sd.cpp 的回调一次都不触发，
     // 界面上就是一个不动的转圈——那正是最需要顶栏说句话的时候。
-    pipeline::Activity act{"image", paths::to_utf8(store.root()), "",
-                           "正在画参考图"};
+    // 批量那条**排进队的时候就登记过一行**（`enroll`），这儿接管它就好；
+    // 再登记一行的话同一件活在任务页面上会出现两次。单张那条照旧自己开。
+    std::optional<pipeline::Activity> own_act;
+    if (enrolled == nullptr) {
+        own_act.emplace("image", paths::to_utf8(store.root()), std::string{},
+                        "正在画参考图");
+    }
+    pipeline::Activity adopt_act = pipeline::Activity(
+        enrolled != nullptr ? *enrolled : own_act->task());
+    pipeline::Activity& act = adopt_act;
     // **说清楚画的是哪一格。** `stem` 就是那条固定频道上用的 target
     // （下面 ref_progress 发的也是它）。没有 WebSocket 的时候设定页只能从
     // `/api/system` 那份表里认这一格，见 Activity::set_target。
@@ -160,7 +171,12 @@ Rendered render_ref(const ProjectStore& store, const std::string& stem,
     //
     // `current_cancel()` 没有 JobScope 时回的是哑元（见 job_stream.hpp），
     // 所以同步那条路（老客户端、curl、对拍）一个字没变。
-    pipeline::CancelToken& tok = current_cancel();
+    //
+    // 批量那条没有 JobScope（没人点过某一张），`current_cancel()` 回的是
+    // 哑元——那样的话任务页面上那个叉按下去什么也不会发生。**那一族的令牌
+    // 挂在账本那件活上**，按 id 取消立起来的就是它。
+    pipeline::CancelToken& tok =
+        enrolled != nullptr ? enrolled->token() : current_cancel();
     try {
         render(fake, prompts, spec, dest, tok,
                [&act, &stream_id, &stem](int step, int steps, double,
@@ -229,7 +245,8 @@ namespace {
 json character_ref_job(const std::string& project_path,
                        const std::string& char_id, const std::string& slot,
                        std::int64_t seed, const std::string& stream_id,
-                       const stages::FrameRenderer* shared = nullptr) {
+                       const stages::FrameRenderer* shared = nullptr,
+                       pipeline::Task* enrolled = nullptr) {
     ProjectStore store = open_project(project_path);
     AssetLibrary assets = store.load_assets();
     const auto it = assets.characters.find(char_id);
@@ -239,7 +256,7 @@ json character_ref_job(const std::string& project_path,
     const Rendered out = render_ref(
         store, char_id + "_" + slot,
         stages::build_character_ref_prompt(c, assets.style, slot),
-        stages::ref_negative(assets.style), seed, stream_id, shared);
+        stages::ref_negative(assets.style), seed, stream_id, shared, enrolled);
 
     // **先出图再存盘。** 反过来的话出图失败会留下一条指向不存在的文件的
     // 路径，而界面上那个位置会显示成"已有参考图"——比没有更糟。
@@ -339,7 +356,8 @@ namespace {
 json location_ref_job(const std::string& project_path,
                       const std::string& location_id, std::int64_t seed,
                       const std::string& stream_id,
-                      const stages::FrameRenderer* shared = nullptr) {
+                      const stages::FrameRenderer* shared = nullptr,
+                      pipeline::Task* enrolled = nullptr) {
     ProjectStore store = open_project(project_path);
     AssetLibrary assets = store.load_assets();
     const auto it = assets.locations.find(location_id);
@@ -351,7 +369,7 @@ json location_ref_job(const std::string& project_path,
     const Rendered out = render_ref(
         store, location_id + "_empty",
         stages::build_location_ref_prompt(l, assets.style),
-        stages::ref_negative(assets.style), seed, stream_id, shared);
+        stages::ref_negative(assets.style), seed, stream_id, shared, enrolled);
 
     // 同 character_ref_job：重新读一份，只填这一格。理由见那儿。
     AssetLibrary latest = store.load_assets();
@@ -420,6 +438,10 @@ struct QueueItem {
     std::string slot;    ///< 角色才有
     std::string label;   ///< 「唐海 正面」，给界面那行用
     std::string target;  ///< `char_id_slot` / `location_id_empty`
+    /// 这一件在任务账本上的那一行。**排进队的那一刻就登记**，任务页面
+    /// 于是能把还没开始的那几件也列出来（用户 2026-09-17：「排队中的
+    /// （预计什么时候开始，取消图标按钮）」）。轮到了 `begin()`。
+    std::shared_ptr<pipeline::Task> task;
 };
 
 /// 全进程一条队列。
@@ -560,6 +582,18 @@ std::vector<QueueItem> missing_refs(const AssetLibrary& assets, bool force) {
     return out;
 }
 
+/// 给这一批每一件登记一行「排队中」。
+///
+/// **在接口那一帧里登记，不是等派出去才登记**：任务页面要回答的正是
+/// 「还排着哪几件」，派出去才登记的话那一栏永远是空的。
+void enroll(std::vector<QueueItem>& items, const std::string& project) {
+    for (auto& it : items) {
+        it.task = std::make_shared<pipeline::Task>(
+            "image", "画参考图 · " + it.label, project);
+        it.task->set_target(it.target);
+    }
+}
+
 /// 整批跑完为止。**在自己的线程上**，接口早就回去了。
 void run_queue(std::string project_path) {
     RefQueue& q = RefQueue::instance();
@@ -583,12 +617,23 @@ void run_queue(std::string project_path) {
     const auto worker = [&] {
         for (;;) {
             QueueItem item;
+            std::size_t idx = 0;
             {
                 std::unique_lock<std::mutex> lk(q.mu);
                 if (q.tok.cancelled() || q.next >= q.items.size()) return;
-                item = q.items[q.next++];
+                idx = q.next++;
+                item = q.items[idx];
+                // **领到一件已经被单独取消的，就地划掉，接着领下一件。**
+                // 放手即结账（记成"取消了"），不占位置也不算失败。
+                if (item.task && item.task->cancelled()) {
+                    q.items[idx].task.reset();
+                    item.task.reset();
+                    continue;
+                }
                 q.running[item.target] = item.label;
             }
+            // 轮到它了，开始计时。
+            if (item.task) item.task->begin();
             publish(q);
 
             std::string err;
@@ -598,9 +643,10 @@ void run_queue(std::string project_path) {
                 const std::int64_t seed = ref_seed(json::object(), item.target);
                 if (item.character) {
                     character_ref_job(project_path, item.id, item.slot, seed, "",
-                                      shared.get());
+                                      shared.get(), item.task.get());
                 } else {
-                    location_ref_job(project_path, item.id, seed, "", shared.get());
+                    location_ref_job(project_path, item.id, seed, "",
+                                     shared.get(), item.task.get());
                 }
                 ref_done(item.target);
             } catch (const std::exception& e) {
@@ -608,9 +654,18 @@ void run_queue(std::string project_path) {
                 err = e.what();
             }
 
+            if (item.task && !err.empty()) item.task->fail(err);
             {
                 std::lock_guard<std::mutex> lg(q.mu);
                 q.running.erase(item.target);
+                // ⚠️ **这一张干完就结账，别拖到整批收尾。**
+                //
+                // `Task` 是析构的时候记耗时的。留到整批收尾一起放手的话，
+                // 六张图的"耗时"全等于"从自己开工到整批结束"——实测六张
+                // 一模一样的 96.9 秒，而它们真实是四五十秒到一分半不等。
+                //
+                // 两个持有者都要放：队列里那份和手上这份。
+                q.items[idx].task.reset();
                 if (err.empty()) {
                     q.done += 1;
                 } else {
@@ -627,6 +682,8 @@ void run_queue(std::string project_path) {
                     q.tok.request();
                 }
             }
+            // 手上这份最后放。放完这一件就进"做完的"了。
+            item.task.reset();
             if (!err.empty()) ref_error(item.target, err);
             publish(q);
         }
@@ -641,6 +698,9 @@ void run_queue(std::string project_path) {
         std::lock_guard<std::mutex> lg(q.mu);
         q.active = false;
         q.running.clear();
+        // 到这儿还留着 task 的，是**一次都没轮到**的那几件（按了停、或者
+        // 前面砸了）。放手即结账，它们记成"取消了"。
+        q.items.clear();
     }
     publish(q);
 }
@@ -668,6 +728,7 @@ ApiResult post_references_generate_all(const json& body) {
             return {200, {{"total", 0}, {"started", false}}};
         }
         q.project = project_path;
+        enroll(items, project_path);
         q.items = std::move(items);
         q.next = 0;
         q.done = 0;
