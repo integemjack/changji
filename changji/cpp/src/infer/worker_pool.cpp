@@ -370,7 +370,7 @@ struct WorkerPool::Impl {
         for (;;) {
             const auto got = take(tried);
             if (!got) {
-                throw std::runtime_error(
+                throw PoolUnreachable(
                     "池里每一个工作进程都连不上（试过 " +
                     std::to_string(tried.size()) + " 个）：" + last_error);
             }

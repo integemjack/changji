@@ -1,3 +1,4 @@
+#include "infer/worker_pool.hpp"
 #include "stages/render.hpp"
 #include "stages/storyboard.hpp"  // defuse_motion
 
@@ -449,6 +450,22 @@ std::vector<RenderOutcome> render_batch(std::vector<Shot*>& shots,
                         render(local, plan, start, dest, tok, on_step);
                     }
                     local.video_path = paths.rel(dest);
+                } catch (const infer::PoolUnreachable& e) {
+                    // **整池连不上是全局故障，不是这一镜的事。**
+                    //
+                    // 2026-09-17 实撞：唯一那台远程工作机在出片中途掉线
+                    // （连 ssh 都拒了），于是 17 镜挨个撞同一堵墙、各自重试
+                    // 三次、各自降级——人回来看到的是「16 个镜头已降级」，
+                    // 而不是一句「机器掉线了，这一轮没跑」。那 16 次重试
+                    // 一秒钟的活都没干成，纯粹是把一个全局故障演了十六遍，
+                    // 还把每一镜的状态都弄脏了（降级是"尽力了"的意思，
+                    // 而这儿根本没尽力）。
+                    //
+                    // 换台机器能好的才值得往下走；池里一台都不剩时，
+                    // 下一镜必然撞同一堵墙。停下，把话说清楚。
+                    say("error", "所有工作进程都连不上，这一轮停在 " +
+                                     local.shot_id + "。" + e.what());
+                    throw;
                 } catch (const std::exception& e) {
                     // 一镜失败不拖垮后面几镜。跑一晚上，早上发现第三镜挂了
                     // 导致后面三十镜都没动，那这一晚上就白熬了。

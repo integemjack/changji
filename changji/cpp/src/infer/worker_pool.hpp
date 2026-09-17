@@ -16,6 +16,7 @@
 
 #include <map>
 #include <memory>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -55,6 +56,19 @@ struct WorkerEndpoint {
 };
 
 /// 池。**线程安全**：阶段那一层会从多个线程同时借。
+/// 池里一台工作机都连不上。
+///
+/// **和"这一镜渲染失败"是两回事**：后者换台机器可能就好了，值得往下走；
+/// 这个不是——下一镜必然撞同一堵墙。2026-09-17 实撞：唯一那台远程工作机
+/// 在出片中途掉线，17 镜挨个撞墙、各自重试三次、各自降级，人回来看到的是
+/// 「16 个镜头已降级」而不是「机器掉线了」。降级是"尽力了"的意思，
+/// 而那 16 镜一秒钟的活都没干成。
+///
+/// 单独一个类型，**不要靠认错误里的那句中文**：措辞会改，类型不会。
+struct PoolUnreachable : std::runtime_error {
+    using std::runtime_error::runtime_error;
+};
+
 class WorkerPool {
 public:
     /// `pick` 是这部剧挑的档位（项目的 `[models.pick]`，{组: 选项 id}）。
