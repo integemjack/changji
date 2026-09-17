@@ -144,8 +144,32 @@ TEST_CASE("「故事」这一格") {
                     .at("story")
                     .get<bool>());
 
+    // **有内容才算写了故事。** 空章不算——「直接开写」建的正是一章空的
+    // （summary 和 text 都是空串），按"有没有章节"判的话它一按下去这一步
+    // 就打勾、「下一步」那个点跳到设定去，而人正要开始写第一章。
+    const json blank_chapter = json{
+        {"chapters", json::array({json{{"chapter_id", "ch01"},
+                                       {"title", "第一章"},
+                                       {"summary", ""},
+                                       {"text", ""}}})},
+        {"plan", json::array()}};
+    CHECK_FALSE(http::flow_assess(a_project(), json::array(), json::array(),
+                                  "ep01", blank_chapter)
+                    .at("done").at("story").get<bool>());
+
+    // 只有正文没有梗概也算（从别处粘正文进来那条路）
+    const json pasted = json{
+        {"chapters", json::array({json{{"chapter_id", "ch01"},
+                                       {"summary", ""},
+                                       {"text", "那天晚上……"}}})},
+        {"plan", json::array()}};
+    CHECK(http::flow_assess(a_project(), json::array(), json::array(),
+                            "ep01", pasted)
+              .at("done").at("story").get<bool>());
+
     const json with_chapters = json{
-        {"chapters", json::array({json{{"chapter_id", "ch01"}}})},
+        {"chapters", json::array({json{{"chapter_id", "ch01"},
+                                       {"summary", "这一章发生了什么"}}})},
         {"plan", json::array({json{{"episode_id", "ep01"}},
                               json{{"episode_id", "ep02"}}})}};
     const auto got = http::flow_assess(a_project(), json::array(),

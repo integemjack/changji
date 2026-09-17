@@ -1,3 +1,4 @@
+#include <algorithm>
 #include "http/flow.hpp"
 
 #include <set>
@@ -66,12 +67,23 @@ json flow_assess(const json& project, const json& shots, const json& outputs,
     // ---- 项目 ----
     done["project"] = !str_of(project, "project_id").empty();
 
-    // ---- 故事：有章节就算有 ----
+    // ---- 故事：**至少一章有内容**，不是"有章节" ----
     //
     // 判据不看梗概：梗概是写故事的输入，光有梗概什么都还没发生。
-    // 有章节就说明大纲写出来并且被采用过了。
+    //
+    // 也不能只看"有没有章节"。故事页那颗「直接开写」建的正是**一章空的**
+    // （`{title:"第一章", summary:"", text:""}`，那一条的用意是"开始写之前
+    // 不需要配置任何东西"）——按章节数判的话，它一按下去这一步就打上勾、
+    // 上面那个「下一步」的点跳到「设定」去，而人正要开始写第一章。
+    //
+    // 内容 = summary 或 text 非空。**两个都要认**：采用大纲那条路先有
+    // summary、正文还没写；从别处粘正文进来那条先有 text、没有 summary。
+    // 只认其中一个，另一条路就会在真写完之后还显示成没做。
     const auto& story_chapters = arr_of(story, "chapters");
-    done["story"] = !story_chapters.empty();
+    done["story"] = std::any_of(
+        story_chapters.begin(), story_chapters.end(), [](const auto& c) {
+            return !str_of(c, "summary").empty() || !str_of(c, "text").empty();
+        });
     counters["chapters"] = story_chapters.size();
     counters["plannedEpisodes"] = arr_of(story, "plan").size();
 
