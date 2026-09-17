@@ -2330,6 +2330,11 @@ async function stopWriting() {
           <!-- 草稿。AI 写完先摆出来给人看，点了采用才落库 -->
           <div v-if="draft" class="doc draft">
             <div class="doc__head">
+              <!-- **先说这是什么，再放那句话。** logline 是一整句话，不是标题：
+                   原来它顶着 h1 的字号横铺整幅宽度，六十个字折成四行粗体，
+                   第一眼是一堵墙；而且整屏没有一个字说"这是一份还没采用的
+                   草稿"——左栏那个「草稿」窄屏下根本不渲染。 -->
+              <span class="doc__kicker">大纲草稿</span>
               <h1 class="doc__title">{{ draft.story?.logline || '一份新的故事' }}</h1>
             </div>
             <p class="doc__sum">
@@ -2340,7 +2345,10 @@ async function stopWriting() {
             </p>
             <!-- **一章一行，章号、标题、梗概各占各的位置。**
                  原来是个裸 flex，标题被梗概挤到零宽——中文于是竖着一个字
-                 一个字码下来（「对不上的那一页」六行）。标题这一栏不许压缩。 -->
+                 一个字码下来（「对不上的那一页」六行）。标题这一栏不许压缩。
+                 梗概那一栏原来挂着 small dim（12 号、最淡的灰）：可这一屏要人
+                 决定的就是"这几章讲得对不对"，判据不能是最看不清的那行字。
+                 字号和颜色归 .dch__s 管，「正在写」那块板子也用同一套。 -->
             <ol class="draft__list">
               <li
                 v-for="(c, i) in draft.story?.chapters ?? []"
@@ -2349,7 +2357,7 @@ async function stopWriting() {
               >
                 <span class="dch__no numeric">{{ i + 1 }}</span>
                 <b class="dch__t">{{ c.title }}</b>
-                <span class="dch__s small dim">{{ c.summary }}</span>
+                <span class="dch__s">{{ c.summary }}</span>
               </li>
             </ol>
             <!-- **钉在底下。** 十六章的大纲要滚很久才够得着「采用」，而这一
@@ -2365,7 +2373,7 @@ async function stopWriting() {
               </button>
               <button class="btn btn--ghost" type="button" @click="dropDraft">丢弃</button>
               <span class="spacer" />
-              <span class="tiny dim">采用之后原来那份就没了</span>
+              <span class="draft__note tiny dim">采用之后原来那份就没了</span>
             </div>
           </div>
 
@@ -2387,7 +2395,7 @@ async function stopWriting() {
             <!-- 正在长出来的那份大纲。**边写边看**，见 outlineLive。
                  只摆已经有字的那几项：一上来全是空框的话，看着像坏了。 -->
             <div v-if="outlineLive" class="live stack stack--sm">
-              <div class="row tiny dim">
+              <div class="row live__head">
                 <span class="live__dot" />
                 <!-- **落笔前先说在想。** 会推理的模型要想几分钟才发第一个
                      字，这期间说"正在写…（先出什么看它自己）"是两头都不对：
@@ -2401,10 +2409,14 @@ async function stopWriting() {
                 <!-- **这个数是空窗期唯一看得见的活口。** 只有它在涨，人才
                      知道没卡死。正文还没有的时候就数思考——见
                      outlineThinkingChars。 -->
-                <template v-if="liveChars">· 已经写了 {{ liveChars }} 字</template>
-                <template v-else-if="outlineThinkingChars">
-                  · 已经想了 {{ outlineThinkingChars }} 字
-                </template>
+                <!-- 推到右头、用等宽数字：这个数一秒跳几次，跟在句子屁股
+                     后面的话每跳一次整行字都往右挪一格。 -->
+                <span class="live__n numeric">
+                  <template v-if="liveChars">已经写了 {{ liveChars }} 字</template>
+                  <template v-else-if="outlineThinkingChars">
+                    已经想了 {{ outlineThinkingChars }} 字
+                  </template>
+                </span>
               </div>
               <p v-if="outlineLive.logline" class="live__line">
                 {{ outlineLive.logline }}
@@ -2412,10 +2424,10 @@ async function stopWriting() {
               <p v-else-if="outlineLive.premise" class="live__line">
                 {{ outlineLive.premise }}
               </p>
-              <p v-if="outlineLive.genre || outlineLive.tone" class="tiny dim">
+              <p v-if="outlineLive.genre || outlineLive.tone" class="live__meta">
                 {{ [outlineLive.genre, outlineLive.tone].filter(Boolean).join(' · ') }}
               </p>
-              <p v-if="outlineLive.characters?.length" class="tiny dim">
+              <p v-if="outlineLive.characters?.length" class="live__meta">
                 {{
                   outlineLive.characters
                     .filter((c) => c.name)
@@ -2427,12 +2439,16 @@ async function stopWriting() {
                    数组里会先冒出一个 title 和 summary 都还没写的空对象，
                    原来那句 `c.title || '…'` 把它渲成一个孤零零的「…」，
                    一挂二三十秒，看着就像坏了。 -->
+              <!-- **和底下那份草稿一个形状**：同一套 .dch，章号 / 标题 / 梗概
+                   三栏。写完那一刻草稿会把这块顶掉，两边长得一样的话人眼看到的
+                   只是"定住了"，不是换了一屏。原来标题和梗概挤在一行、中间靠
+                   一个点隔开（不隔的话「双面人生林雨报警未果」连成一句），
+                   草稿一来整块重排。各占一格之后那个点也不用了。 -->
               <ol v-if="liveChapters.length" class="live__chapters">
-                <li v-for="(c, i) in liveChapters" :key="i">
-                  <b>{{ c.title || '…' }}</b>
-                  <!-- 中间那个点不能省：HTML 会把标签之间的空白折掉，
-                       写成「双面人生林雨报警未果」连成一句读不出断在哪。 -->
-                  <span v-if="c.summary" class="dim">&nbsp;·&nbsp;{{ c.summary }}</span>
+                <li v-for="(c, i) in liveChapters" :key="i" class="dch">
+                  <span class="dch__no numeric">{{ i + 1 }}</span>
+                  <b class="dch__t">{{ c.title || '…' }}</b>
+                  <span v-if="c.summary" class="dch__s">{{ c.summary }}</span>
                 </li>
               </ol>
             </div>
@@ -2486,7 +2502,7 @@ async function stopWriting() {
             <!-- **说清这两样是给谁用的。** 方向和体量只有「让 AI 写一份
                  大纲」这条路读得到，而「直接开写」「粘一份现成的」跟它们
                  没关系——不写一句的话，第一次来的人会以为这是必填项。 -->
-            <p v-if="!hasStory" class="tiny dim">下面两样只在让 AI 写大纲时用得上</p>
+            <p v-if="!hasStory" class="small dim">下面两样只在让 AI 写大纲时用得上</p>
             <input
               v-model="keywords"
               class="input"
@@ -3029,31 +3045,53 @@ async function stopWriting() {
 </template>
 
 <style scoped>
+/* 「▸ 让 AI 重出一份大纲」那一行。它现在顶在一道横线底下（.start .regen
+   不再是卡片），11 号最淡的灰在那儿就像一行脚注，找不到入口。 */
 .regen > .fold__t {
-  color: var(--text-3);
-  font-size: var(--fs-xs);
+  color: var(--text-2);
+  font-size: var(--fs-sm);
   cursor: pointer;
 }
 .regen[open] > .fold__t {
   margin-bottom: 4px;
 }
-/* 「正在写」那块板子。刻意做得轻：它是过程，不是结果——
-   一会儿就被真正的草稿顶掉，做重了反而让人以为已经写完了。 */
+/* 「正在写」那块板子。**和底下那份草稿一个形状**：一句引子、一行题材和
+   人物、一章一行的 .dch——写完那一刻草稿顶上来，人眼看到的只是"定住了"。
+   它和草稿的差别只剩一圈橙线和一个呼吸点，那是"还在长"的记号；
+   做重了反而让人以为已经写完了。 */
 .live {
   /* **跑起来的时候这块是主角。** 原来它是最底下一条细灰条，而上面那张表单
-     原样杵着不变——看着像按了没反应。挪到最上面，边框给足存在感。 */
-  border: 1px solid var(--accent-soft, var(--line));
-  border-radius: var(--r);
-  padding: var(--s3) var(--s4, 16px);
+     原样杵着不变——看着像按了没反应。挪到最上面，边框给足存在感。
+     边线用 --accent-line 不用 --accent-soft：后者是 14% 的橙，铺成底色看
+     得见，画成 1px 的线就和 --line 分不出来了，等于没画。 */
+  border: 1px solid var(--accent-line);
+  border-radius: var(--r-lg);
+  padding: var(--s4) var(--s5);
+  gap: var(--s3);
   /* 没有 --bg-soft 这个变量（tokens.css 里是 --bg-sunken）。写错的变量
      在 CSS 里不报错，只是整条声明作废——这块板子一直是透明的，而它靠底色
-     和虚线边把"这是过程不是结果"说出来。 */
+     和那圈橙线把"这是过程不是结果"说出来。 */
   background: var(--bg-sunken);
 }
+/* 状态那一行。原来是 tiny dim（11 号、最淡的灰）——整块板子唯一在动的
+   两样东西（呼吸点、字数）就在这一行，把它做成最看不清的一行是反的。 */
+.live__head {
+  font-size: var(--fs-sm);
+  color: var(--text-2);
+}
+/* 字数是空窗期唯一的活口，靠右、正文色、等宽数字：它一秒跳几次，
+   跟在句子后面的话每跳一次整行字都往右挪。 */
+.live__n {
+  margin-left: auto;
+  color: var(--text);
+}
 .live__dot {
-  width: 7px;
-  height: 7px;
+  width: 8px;
+  height: 8px;
   border-radius: 50%;
+  /* 外面一圈淡橙：7px 的实心点在 --bg-sunken 上太小，闪到最暗那一格时
+     整块板子就没有"活着"的记号了 */
+  box-shadow: 0 0 0 3px var(--accent-soft);
   /* ⚠️ 原来这儿是 `var(--ai, #7c5cff)`——**`--ai` 这个变量全仓没有**，
      于是一直走的是那个写死的紫。和上面 --bg-soft 那条是同一种错，只是
      这条有兜底值，不作废、改成另一个颜色，所以更难看出来。
@@ -3064,7 +3102,6 @@ async function stopWriting() {
      注释写着「整套流程里每一步都有一个，**样子必须统一**」。这个紫是
      唯一一处例外，还是个写死的十六进制：深浅两套主题下都不跟着变。 */
   background: var(--accent);
-  margin-right: 0.4rem;
   animation: live-pulse 1.1s ease-in-out infinite;
 }
 @keyframes live-pulse {
@@ -3075,17 +3112,27 @@ async function stopWriting() {
 @media (prefers-reduced-motion: reduce) {
   .live__dot { animation: none; opacity: 0.7; }
 }
+/* 引子那一句和草稿头上那句一个样子（见 .draft .doc__title）。 */
 .live__line {
   margin: 0;
+  font-size: var(--fs-lg);
+  font-weight: 600;
+  line-height: 1.65;
+}
+.live__meta {
+  margin: 0;
+  color: var(--text-2);
+  font-size: var(--fs-sm);
   line-height: 1.6;
 }
 .live__chapters {
-  margin: 0;
-  padding-left: 1.2rem;
-  line-height: 1.7;
+  margin: var(--s1) 0 0;
+  padding: 0;
+  list-style: none;
 }
-.live__chapters li + li {
-  margin-top: 0.2rem;
+/* 板子里的行比草稿里的紧一格：它还在长，不用给读的余量 */
+.live .dch {
+  padding: var(--s2) 0;
 }
 /* 整块就是纸。三栏之间只有细线，没有卡片、没有圆角——那一圈线本身就是
    "这是页面里的一个控件"的提示，而这一页它就是整个页面。 */
@@ -3673,51 +3720,107 @@ async function stopWriting() {
 }
 
 /* ---------- 从这儿开始 / 草稿 ---------- */
+/* 这两屏共用一个宽度：大纲是在「从这儿开始」里长出来的（.live），长完就
+   变成草稿那一屏。两边一样宽，人眼看到的是同一栏纸换了内容，不是换了一页。 */
+.start,
+.draft {
+  max-width: 48rem;
+  margin-inline: auto;
+}
 /* 「从这儿开始」这一屏。
    原来是七个控件平铺在整幅宽度上、贴着左上角，下面三分之二一片空——
    看不出哪条是主路，也不像个"开始"。现在收成一栏读得下来的宽度，
    往中间靠，三条路各自说清楚干什么。 */
 .start {
   display: grid;
-  gap: var(--s4, 16px);
-  max-width: 44rem;
-  margin-inline: auto;
+  /* 行距默认收到一格，段和段之间各自再往下加（.doc__head、.regen）。
+     原来一律 16px：梗概框和它自己的「想几个给我挑」之间、和"往哪个方向"
+     那一节之间是同一个距离，哪几样是一伙的就看不出来。 */
+  gap: var(--s3);
   /* 上面留一点，别贴着顶栏；不用 center，内容一长就会把标题顶出屏幕 */
-  padding-block: clamp(var(--s3), 6vh, 64px) var(--s4, 16px);
+  padding-block: clamp(var(--s4), 7vh, 72px) var(--s8);
 }
+.start > .doc__head {
+  margin-bottom: var(--s2);
+}
+/* 标题比章节页那个大一号：这是整部剧的第一屏，不是某一章的抬头 */
+.start .doc__title {
+  font-size: var(--fs-2xl);
+  letter-spacing: -0.01em;
+}
+/* 梗概框用正文的字号。它装的是这部剧的第一句话——是稿纸不是表单，
+   和 .ed__area 那个 16px 对齐，别让人在 13 号的框里写开头。 */
 .start__premise {
-  min-height: 7em;
-  font-size: var(--fs-md);
+  min-height: 8.5em;
+  padding: var(--s4);
+  font-size: var(--fs-lg);
+  line-height: 1.8;
 }
-/* 出大纲才用得上的那两样（往哪个方向、写多长）。围起来，和上面那句
-   梗概分开——它们回答的不是同一个问题。 */
+/* 出大纲才用得上的那两样（往哪个方向、写多长）和四条路。
+   原来围成一块带底色的卡片，看着像一块设置面板嵌在页面里——这一页整个
+   是纸，纸上只有细线（见 .ed 那条注释）。改成一道横线起一节。 */
 .start .regen {
-  padding: var(--s3);
-  border: 1px solid var(--line);
-  border-radius: var(--r-sm);
-  background: var(--surface-2);
+  margin-top: var(--s4);
+  padding-top: var(--s5);
+  border-top: 1px solid var(--line);
+  gap: var(--s3);
 }
-/* 三条路。**一条一行，每条底下一句话说它干什么。**
+/* 四条路。**一条一行，每条底下一句话说它干什么。**
    原来三颗按钮和"复制提示词"挤在同一排，第一次来的人分不出
    "直接开写"和"让 AI 写一份大纲"差在哪。 */
 .ways {
   display: grid;
-  gap: var(--s2);
+  gap: 0;
+  /* 它躺在一个 .row 里。不占满的话，说明短的那几行右边空一截，
+     后面「从已有的 N 集反推」还会挤到它旁边来。 */
+  flex: 1 1 100%;
+  margin-top: var(--s2);
+  border-top: 1px solid var(--line);
 }
 .way {
   display: grid;
   /* **按钮那一栏定宽**，不然四条说明各从一个地方起头，看着是参差的。 */
-  grid-template-columns: 10.5rem 1fr;
-  gap: var(--s3);
+  grid-template-columns: 11rem 1fr;
+  gap: var(--s4);
   align-items: center;
+  padding: var(--s3) 0;
+  border-bottom: 1px solid var(--line);
 }
+/* 四颗按钮撑满那一栏。它们本来是四种样式四种宽度（渐变、描边、透明、
+   透明带图标的小号），左对齐摆成一列就是四块碎片；同宽同高之后样式的
+   差别才读成"主次"，不是"乱"。 */
 .way > :first-child {
-  justify-self: start;
+  justify-self: stretch;
+  width: 100%;
+}
+/* 「复制提示词」那颗是 CopyPrompt 自带的 btn--sm，比另外三颗矮七个像素、
+   字小一号。抬到和 .btn 一样（数字照 base.css 那份：34，触屏 40）——
+   一列四颗里独它一颗矮的话，看着像没对齐。 */
+.way > .btn--sm {
+  height: 34px;
+  padding: 0 var(--s4);
+  font-size: var(--fs-base);
+}
+@media (pointer: coarse) {
+  .way > .btn--sm {
+    height: 40px;
+  }
+}
+/* 透明按钮在这一列里要有边——没有的话它夹在两颗描边按钮之间就是一行字 */
+.ways .way > .btn--ghost {
+  border-color: var(--line);
 }
 .way__why {
-  color: var(--text-3);
+  color: var(--text-2);
   font-size: var(--fs-sm);
-  line-height: 1.5;
+  line-height: 1.6;
+}
+@media (max-width: 520px) {
+  /* 手机宽度下 11rem 的按钮旁边剩不下几个字，说明整行接在按钮底下 */
+  .way {
+    grid-template-columns: 1fr;
+    gap: var(--s2);
+  }
 }
 
 /* AI 想的那几个选题。**一列不是一排**：梗概是两三行字，并排三列就要
@@ -3757,9 +3860,50 @@ async function stopWriting() {
   color: var(--text-3);
   font-size: 12px;
 }
+/* 草稿：一份等着点头的大纲。宽度和 .start 共用，见上面那条。 */
 .draft {
   display: grid;
-  gap: var(--s3);
+  gap: var(--s4);
+  padding-top: var(--s2);
+}
+.draft .doc__head {
+  display: grid;
+  gap: var(--s2);
+  min-height: 0;
+}
+/* 草稿头上那个「大纲草稿」。橙色小字加一个点——和「正在写」的呼吸点是
+   同一个记号，只是不闪了：从"还在长"到"长完了，等你点头"。 */
+.doc__kicker {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s2);
+  color: var(--accent);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  letter-spacing: 0.08em;
+}
+.doc__kicker::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
+/* logline 当一句引子，不当标题：正文那档字号、粗一点、行距松一点，
+   四十个字就折行。原来 20 号横铺整幅，六十个字四行粗体，是一堵墙。
+   .live__line 和它一个样子。 */
+.draft .doc__title {
+  max-width: 40em;
+  font-size: var(--fs-lg);
+  line-height: 1.65;
+  letter-spacing: 0;
+}
+.draft .doc__sum {
+  margin: 0;
+  color: var(--text-2);
+  font-size: var(--fs-sm);
+  /* 章节页那份点了会折叠，这份不会，别给人一只手 */
+  cursor: default;
 }
 .draft__list {
   display: grid;
@@ -3770,42 +3914,60 @@ async function stopWriting() {
 }
 /* 一章一行：章号 / 标题 / 梗概。
    **标题这一栏不许压缩**（原来是 flex 里的裸 <b>，被梗概挤到零宽，中文就
-   竖着码了）。给一个下限再让它按内容长，长标题换行也还是横着的。 */
+   竖着码了）。给一个下限再让它按内容长，长标题换行也还是横着的。
+   「正在写」那块板子里的行也是它（.live .dch 只把上下距离收紧一格）。 */
 .dch {
   display: grid;
-  grid-template-columns: 1.6rem minmax(5.5rem, 9rem) 1fr;
-  gap: var(--s3);
+  grid-template-columns: 2rem minmax(6rem, 10rem) 1fr;
+  gap: var(--s4);
   align-items: baseline;
-  padding: var(--s2) 0;
+  padding: var(--s3) 0;
   border-top: 1px solid var(--line);
 }
 .dch:first-child {
   border-top: 0;
 }
 .dch__no {
-  color: var(--text-3, var(--text-2));
+  color: var(--text-3);
   text-align: right;
   font-size: var(--fs-sm);
 }
 .dch__t {
+  font-size: var(--fs-md);
+  font-weight: 600;
   /* 标题短的时候不要被拉开成稀稀拉拉的一行 */
-  line-height: 1.5;
+  line-height: 1.6;
 }
+/* 梗概是这一屏的判据：正文那档字号、第二档的灰。原来是 12 号最淡的灰，
+   一屏看下来只有章名认得出，讲什么全糊在一起。 */
 .dch__s {
+  color: var(--text-2);
+  font-size: var(--fs-base);
   line-height: 1.7;
 }
 .draft__act {
   position: sticky;
   bottom: 0;
   z-index: 1;
-  padding: var(--s2) 0;
-  background: var(--bg);
+  /* 挤不下就折行。两颗按钮加那句提示在 400px 上摆不开，而 .row 不折行的
+     话，提示那一句会被压成一个字一行竖着码下来——中文没有空格，flex 项
+     的最小宽度就是一个字。 */
+  flex-wrap: wrap;
+  row-gap: var(--s2);
+  padding: var(--s3) 0;
+  /* 底色跟纸（.ed 是 --surface）。原来是 --bg，比纸深一截，吸在底下像
+     另一块东西压着页面。 */
+  background: var(--surface);
   border-top: 1px solid var(--line);
+}
+/* 整句不许折：折了就是上面说的一个字一行。放不下时整句挪到下一行去 */
+.draft__note {
+  white-space: nowrap;
 }
 @media (max-width: 720px) {
   /* 窄屏上三栏挤不下：章号和标题并一行，梗概整行接在下面。 */
   .dch {
-    grid-template-columns: 1.6rem 1fr;
+    grid-template-columns: 2rem 1fr;
   }
   .dch__s {
     grid-column: 2;
