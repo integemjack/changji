@@ -110,20 +110,22 @@ export const useRun = defineStore('run', () => {
     const kind = msg.kind ?? (msg.type === 'error' ? 'error' : 'progress')
     const next = new Map(inflightMap.value)
 
-    // **换阶段了就把上一阶段留下的全清掉。**
+    // **别的镜头挂在别的阶段上，是正常的，不能擦。**
     //
-    // 流水线是严格分阶段的：所有镜头先配音，再所有镜头出首帧，再出成片。
-    // 所以一收到新阶段的消息，上一阶段还挂在表里的那些必然已经跑完了。
+    // 这儿原来是「一收到新阶段的消息，就把还挂在上一阶段的全删掉」，
+    // 依据是"流水线严格分阶段：所有镜头先出首帧，再出成片"。
+    // 2026-09-17 首帧和出片改成同时跑（pipeline/shot_flow.hpp）之后这条
+    // 前提没了：两个阶段的消息交替着来，于是每一条都把对方的牌子擦一遍，
+    // 墙上正在跑的那几格来回闪，一次只剩一格有状态。
     //
-    // 这是一道兜底。正路是引擎每跑完一镜报一条 shot_done（三个阶段现在
-    // 都报了）。但漏报的代价太大——2026-09-10 配音和首帧两个阶段都只报
-    // progress 不报完成，于是跑过的镜头全部永久挂在表里，整面墙都写着
-    // 「配音」，包括那些其实只是在等的。而这件事不报错，只是显示得不对。
-    if (msg.stage) {
-      for (const [id, x] of next) {
-        if (x.stage && x.stage !== msg.stage) next.delete(id)
-      }
-    }
+    // 同一镜换阶段仍然会被覆盖——下面 next.set(msg.shot_id, …) 本来就是
+    // 整条换掉，用不着这个循环。这个循环唯一的作用是**跨镜头**擦，
+    // 而那正是现在错的那一半。
+    //
+    // 擦不掉的那种漏报（某个阶段只报 progress 不报 shot_done，跑过的镜头
+    // 永久挂在墙上，2026-09-10 配音和首帧就是这样）靠引擎那边保证：
+    // 三个阶段现在都报 shot_done，frames.cpp / render.cpp / audio.cpp 各
+    // 一条，改那儿的时候要记得这边没有兜底了。
 
     if (kind === 'progress') {
       const prev = next.get(msg.shot_id)

@@ -56,3 +56,42 @@ TEST_CASE("等的过程里按了停下：回 false，而且不用等到划") {
     t.join();
     CHECK_FALSE(got.load());
 }
+
+TEST_CASE("首帧还有下一张可派时，出片那层不去抢位置") {
+    // 两边从头就抢的话，第一镜的视频会和第二张首帧争同一张卡，
+    // 首帧整体更晚出完——而后面每一镜的视频都等着首帧。
+    ShotFlow flow({"sh1", "sh2", "sh3"});
+    CancelToken tok;
+    std::atomic<bool> opened{false};
+    std::thread t([&] { flow.wait_slack(tok); opened.store(true); });
+
+    flow.frame_started();   // sh1 开跑，还有两张没派
+    std::this_thread::sleep_for(std::chrono::milliseconds(150));
+    CHECK_FALSE(opened.load());
+    flow.frame_started();   // sh2 开跑，还有一张
+    std::this_thread::sleep_for(std::chrono::milliseconds(150));
+    CHECK_FALSE(opened.load());
+
+    // 最后一张被领走：**不等它跑完**，这一刻就该放行去捡空位
+    flow.frame_started();
+    t.join();
+    CHECK(opened.load());
+}
+
+TEST_CASE("等空位的时候按了停下：回 false") {
+    ShotFlow flow({"sh1"});
+    CancelToken tok;
+    std::atomic<bool> got{true};
+    std::thread t([&] { got.store(flow.wait_slack(tok)); });
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    tok.request();
+    t.join();
+    CHECK_FALSE(got.load());
+}
+
+TEST_CASE("首帧那层收工：等空位的也放行") {
+    ShotFlow flow({"sh1", "sh2"});
+    CancelToken tok;
+    flow.close();
+    CHECK(flow.wait_slack(tok));
+}

@@ -672,6 +672,11 @@ RunReport run_episode(const ProjectStore& store,
                 static_cast<int>(todo.size()), tier)) {
             msg += "，粗估 " + util::human_time(*est);
         }
+        // **流水时这一句得说清"还没开始"。** 这一档和首帧同时开着，但按
+        // 排位（shot_flow.hpp）：首帧还有下一张可派时，出片一个位置都不抢。
+        // 照旧那句写法，顶栏在第 0 秒就写着「final 档渲染 17 个镜头」，
+        // 而那一刻跑的全是首帧。
+        if (flow) msg += "。先让首帧吃满卡，腾出一张就开出片";
         emit(progress, stage_name, "start", msg, 0,
              static_cast<int>(todo.size()));
 

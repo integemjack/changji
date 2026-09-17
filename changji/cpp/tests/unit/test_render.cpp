@@ -938,6 +938,9 @@ TEST_CASE("流水：首帧没写回的镜头不出片，写回了立刻出，别
     std::vector<models::Shot*> shots = {&owned[0], &owned[1]};
     // sh001 手里已经有首帧；sh002 的首帧还在出
     pipeline::ShotFlow flow({"ep01_sh002"});
+    // 首帧那层已经把最后一张领走了（没有下一张可派），出片这才去捡空位。
+    // **不叫这一下就是死等**——排位那道闸在 wait_slack 上。
+    flow.frame_started();
 
     std::mutex mu;
     std::vector<std::string> order;

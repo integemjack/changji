@@ -139,6 +139,10 @@ struct Recorder {
             if (frame_delay_ms > 0) {
                 std::this_thread::sleep_for(
                     std::chrono::milliseconds(frame_delay_ms));
+                // 跑完也记一笔：**"重叠"要看的是出片有没有插在某张首帧
+                // 还没跑完的时候**，光看开跑那一笔看不出来
+                std::lock_guard<std::mutex> lg(mu);
+                calls.push_back({"frame_end", shot.shot_id, false});
             }
             if (std::find(frame_fails.begin(), frame_fails.end(),
                           shot.shot_id) != frame_fails.end()) {
@@ -256,10 +260,14 @@ TEST_CASE("单个位置时阶段之间分批，不是按镜头串行") {
     CHECK(last_frame < first_draft);
 }
 
-TEST_CASE("不止一个位置时流水：首帧没全出完就开始出片") {
-    // 用户 2026-09-17：「首帧图全部都处理完才能到成片，这样会让大量的
-    // GPU 空闲」。两个位置、四镜、每张首帧 60ms：第一批两张首帧一写回，
-    // 出片那层就该动，而不是等最后一张。
+TEST_CASE("不止一个位置时流水：最后几张首帧还在跑，空出来的位置就去出片") {
+    // 用户 2026-09-17：「最后一张在 gpu1 上运行，但是 gpu0 没工作了应该
+    // 直接派成片处理」。**不是对半交错**——排位是首帧优先：还有下一张
+    // 首帧可派时出片一个位置都不抢（shot_flow.hpp 的 wait_slack）；最后
+    // 几张都已经在跑、没有下一张可派了，空出来的位置才拿去出片。
+    //
+    // 两个位置、四镜、每张首帧 60ms：1、2 跑完，3、4 领走（没有下一张了）
+    // → 出片这时候动，而 3、4 还在跑。
     const auto store = make_store("流水", 4);
     Recorder rec;
     rec.frame_delay_ms = 60;
@@ -270,16 +278,16 @@ TEST_CASE("不止一个位置时流水：首帧没全出完就开始出片") {
 
     run_it(store, opts, rec, tok, nullptr, /*lanes=*/2);
 
-    std::size_t last_frame = 0;
+    std::size_t last_frame_end = 0;
     std::size_t first_draft = rec.calls.size();
     for (std::size_t i = 0; i < rec.calls.size(); ++i) {
-        if (rec.calls[i].kind == "frame") last_frame = i;
+        if (rec.calls[i].kind == "frame_end") last_frame_end = i;
         if (rec.calls[i].kind == "draft" && i < first_draft) first_draft = i;
     }
     CHECK(rec.ids_of("frame").size() == 4);
     CHECK(rec.ids_of("draft").size() == 4);
-    // 交错了：有草稿在最后一张首帧之前就开跑
-    CHECK(first_draft < last_frame);
+    // **重叠了**：最后几张首帧还没跑完，出片已经在动
+    CHECK(first_draft < last_frame_end);
 
     // 结果和分批时一样：四镜都到草稿完成，首帧和视频都记在盘上
     const models::Episode ep = reload(store);

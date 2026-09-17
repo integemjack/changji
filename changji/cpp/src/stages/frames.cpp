@@ -199,6 +199,9 @@ std::vector<FrameOutcome> run_frames(std::vector<Shot*>& shots,
     const auto worker = [&] {
         for (;;) {
             const int i = next.fetch_add(1);
+            // 领走了就报一声（取消跳过的也算领走）。领完最后一镜时出片
+            // 那层醒过来捡空位——见 pipeline/shot_flow.hpp。
+            if (flow && i < total) flow->frame_started();
             if (i >= total) return;
             if (tok.cancelled()) { done[i].skipped = true; continue; }
 

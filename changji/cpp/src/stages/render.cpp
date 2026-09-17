@@ -196,7 +196,24 @@ std::vector<RenderOutcome> render_batch(std::vector<Shot*>& shots,
     std::atomic<int> next{0};
     std::atomic<int> finished{0};
 
+    // 流水时"排队中"那份名单要在**出片真开跑的那一刻**重登一次。
+    //
+    // 名单是引擎登记、每落定一镜划掉一个（jobs.cpp）。流水时首帧那层先
+    // 把 17 镜全登上，再一镜一镜划掉——等轮到出片，名单已经空了，墙上
+    // 一格「排队中」都没有，而那 17 镜明明都在排队等出片。
+    std::once_flag pending_once;
     const auto lane = [&] {
+        // 流水：首帧那层还有下一张可派时，这几路一个位置都不抢
+        //（在条件变量上等，不占池）。见 pipeline/shot_flow.hpp。
+        if (extras.flow && !extras.flow->wait_slack(tok)) return;
+        if (extras.flow) {
+            std::call_once(pending_once, [&] {
+                std::vector<std::string> ids;
+                ids.reserve(shots.size());
+                for (const Shot* s : shots) ids.push_back(s->shot_id);
+                progress.set_pending(std::move(ids));
+            });
+        }
         for (;;) {
             const int i = next.fetch_add(1);
             if (i >= total) return;
