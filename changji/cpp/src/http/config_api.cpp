@@ -59,15 +59,9 @@ json labels_for(const std::vector<std::string>& keys) {
     return out;
 }
 
+// 形状收在 `doctor::to_json` 里，见那儿的说明。这一处只取 checks 那一半。
 json checks_json(const doctor::Report& r) {
-    json out = json::array();
-    for (const auto& c : r.checks) {
-        out.push_back({{"name", c.name},
-                       {"level", doctor::to_string(c.level)},
-                       {"detail", c.detail},
-                       {"fix", c.fix}});
-    }
-    return out;
+    return doctor::to_json(r).at("checks");
 }
 
 void forbid_extra(const json& body, const std::set<std::string>& allowed,

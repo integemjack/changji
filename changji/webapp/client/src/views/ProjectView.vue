@@ -23,6 +23,7 @@
  * 看不见反而难。
  */
 import { computed, onMounted, ref, watch } from 'vue'
+import { useRoute } from 'vue-router'
 
 import AppIcon from '@/components/AppIcon.vue'
 import EmptyState from '@/components/EmptyState.vue'
@@ -47,7 +48,23 @@ const { run, isBusy } = useAction()
 const removing = ref(false)
 const confirmName = ref('')
 const showOpen = ref(false)
+const route = useRoute()
 const modelKey = ref('') // 打开的是哪一组的弹窗，空串是没开
+
+/**
+ * `?model=tts` 这种进来就直接开那一组的窗。
+ *
+ * **给体检那几条用的。** 设置页上「进程内配音 · 缺模型」那种项，`fix` 里写
+ * 的是「填 [models].tts」——叫人去手改配置文件，而挑模型下模型那套界面本来
+ * 就有。有了这个参数，那儿就能摆一颗直接落到配音模型窗的按钮，不用人自己
+ * 走到项目页、再从五个按钮里认出该点哪个。
+ *
+ * 认不出的组名当没给：地址是可以手打的，写错一个字不该弹一个空窗。
+ */
+onMounted(() => {
+  const want = String(route.query.model || '')
+  if (want && models.group(want)) modelKey.value = want
+})
 
 /** 项目库里这一条。统计和阶段都从它来，和右边那条栏读的是同一份。 */
 const me = computed(() => store.byPath(session.projectPath))

@@ -9,6 +9,8 @@
 #pragma once
 
 #include <string>
+
+#include <nlohmann/json.hpp>
 #include <vector>
 
 #include "config/settings.hpp"
@@ -38,6 +40,22 @@ struct Check {
     Level level = Level::OK;
     std::string detail;
     std::string fix;  ///< 怎么补。空表示不需要动作
+
+    /// 要补的是哪一组模型（`tts` / `image` / `video` / `llm` / `image_base`）。
+    /// 空 = 这一项和模型无关。
+    ///
+    /// ⚠️ **这一栏是给界面用的，不是给人读的。**
+    ///
+    /// 那几条没过的项，`fix` 里写的都是「填 `[models].tts`」「检查 `[models]`
+    /// 里的文件名」——**叫人去手改配置文件**，而产品里本来就有一整套挑模型、
+    /// 下模型的窗。2026-09-17 实测一台什么都没装的机器：三条没过的项，三条
+    /// 都在说配置键名，没有一条给得出"点这儿"。
+    ///
+    /// 有了这一栏，设置页就能摆一颗直接跳到那一组模型窗的按钮。**别让界面
+    /// 去正则匹配 `fix` 里的中文**——那几句话一直在调，匹配挂了不会报错，
+    /// 只会悄悄少一颗按钮（同 `Activity::queued` 那条：在跑还是在排给个字段，
+    /// 别让前端去猜那句话）。
+    std::string group;
 };
 
 struct Report {
@@ -59,5 +77,13 @@ struct Report {
 /// 最坏情况这个函数会阻塞二十多秒。Python 侧也是同样的行为。
 /// TODO(阶段 2): 三个网络检查改成并发，把最坏情况压到单次超时。
 Report run_checks(const config::Settings& settings);
+
+/// 体检报告的 JSON 形状。**只此一份。**
+///
+/// ⚠️ 2026-09-17 之前这段在两处各写了一遍（`http/server.cpp` 的 `to_json`
+/// 和 `http/config_api.cpp` 的 `checks_json`），字段列表一模一样。加一栏
+/// （`group`）就要改两处，而漏改一处**不会报错**——只是那一条路上的界面
+/// 少一颗按钮。CLAUDE.md 第八条说的就是这个。
+nlohmann::json to_json(const Report& r);
 
 }  // namespace changji::doctor

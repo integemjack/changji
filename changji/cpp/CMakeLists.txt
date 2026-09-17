@@ -691,6 +691,7 @@ add_executable(changji
     src/config/writeback.cpp
     src/config/runtime.cpp
     src/doctor/doctor.cpp
+    src/doctor/doctor_json.cpp
     src/models/shot.cpp
     src/models/character.cpp
     src/models/project.cpp
@@ -1133,6 +1134,8 @@ if(CHANGJI_BUILD_TESTS)
         # llm/client_http.cpp、comfy/client_http.cpp、http/run_deps.cpp
         # 和 http/tts_api.cpp ——它们链 httplib、asio 或 Crow，而各自的
         # 逻辑部分都已经拆到不依赖网络库的文件里了。
+        # 体检报告那段序列化就是这么拆出来的（同 infer/node_json.cpp）。
+        src/doctor/doctor_json.cpp
         src/infer/worker_proto.cpp
         src/infer/worker_farm.cpp
         # 执行位：frames / sd_video / ref_gen 三个都用它，而它们都在这个目标里

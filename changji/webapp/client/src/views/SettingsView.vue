@@ -529,6 +529,18 @@ function scrollTo(id) {
               >
                 {{ isBusy('llmbackend') ? '改着…' : '改成外接' }}
               </button>
+              <!-- **缺模型那几条要给一颗按钮，不能只写「填 [models].tts」。**
+                   那句话是叫人去手改配置文件，而挑模型下模型那套界面本来就
+                   有。哪一组由引擎给（`c.group`），不是在这儿正则匹配那句
+                   中文——那几句话一直在调，匹配挂了不会报错，只会悄悄少一颗
+                   按钮。 -->
+              <RouterLink
+                v-else-if="c.group"
+                class="btn btn--primary btn--sm check__act"
+                :to="{ path: '/project', query: { model: c.group } }"
+              >
+                去挑模型
+              </RouterLink>
             </div>
             <details class="fold">
               <summary class="fold__t">

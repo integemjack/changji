@@ -191,18 +191,7 @@ ApiResult start_async(const std::string& stream_id, Work work) {
     return {202, {{"started", true}, {"stream", stream_id}}};
 }
 
-json to_json(const doctor::Report& report) {
-    json checks = json::array();
-    for (const auto& c : report.checks) {
-        checks.push_back({
-            {"name", c.name},
-            {"level", doctor::to_string(c.level)},
-            {"detail", c.detail},
-            {"fix", c.fix},
-        });
-    }
-    return {{"can_run", report.can_run()}, {"checks", checks}};
-}
+
 
 /// 跑一遍体检。给了项目路径就按**这部剧**的配置跑。
 ///
@@ -662,7 +651,7 @@ void run(const config::Settings& settings, const Options& opts) {
         // 体检里有三项要发网络请求，最坏情况阻塞二十多秒。
         // Crow 是线程池模型，这只占住一个工作线程，不影响其它请求。
         return json_response(
-            to_json(doctor_for(req.url_params.get("path"))));
+            doctor::to_json(doctor_for(req.url_params.get("path"))));
     });
 
     // ---- 阶段 2：只读接口 ----
@@ -1499,7 +1488,7 @@ void run(const config::Settings& settings, const Options& opts) {
         //
         // 前端把顶栏选中的那部剧的路径带上来（api.settingsOverview(project)）。
         // 没带就还是全局那份，和以前一样。
-        out["doctor"] = to_json(doctor_for(req.url_params.get("path")));
+        out["doctor"] = doctor::to_json(doctor_for(req.url_params.get("path")));
         out["errors"] = json::object();
         return json_response(out);
     });

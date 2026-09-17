@@ -463,8 +463,12 @@ Check check_local_tts(const config::Settings& settings) {
                     "。这一步会派给别的机器（机器表里有能配音的）。" +
                     probe.detail,
                 "本机也想跑的话，填 [models].tts 和 [models].tts_decoder；"
-                "只靠别的机器就不用管这条。"};
+                "只靠别的机器就不用管这条。",
+                "tts"};
     }
+    // group = tts：设置页据此摆一颗直接跳到配音模型那个窗的按钮。
+    // 不摆的话 `fix` 里写的是「填 [models].tts」——叫人去手改配置文件，
+    // 而挑模型下模型那套界面本来就有。
     return {"进程内配音", selected ? Level::FAIL : Level::OK,
             "缺模型：" + missing +
                 (selected ? "，配音会出静音。" : "（当前没选它）。") +
@@ -478,7 +482,8 @@ Check check_local_tts(const config::Settings& settings) {
                        "GGUF。\n"
                        "  外接：把上面的「后端」改成「独立 HTTP 服务」并填"
                        "服务地址，本机就不用装配音模型、也不占显存。"
-                     : ""};
+                     : "",
+            selected ? "tts" : ""};
 }
 
 Check check_sd() {
@@ -573,7 +578,10 @@ Check check_models(const config::Settings& s) {
                 "至少要 [models].image（首帧）和 [models].video + "
                 "video_vae（视频）。\n"
                 "相对路径是相对 dir 解析的，dir 留空时是项目库下的 models/。\n"
-                "当前 dir：" + paths::to_utf8(m.dir_path(ws))};
+                "当前 dir：" + paths::to_utf8(m.dir_path(ws)),
+                // 一个都没配时先指向出图那一组：它是第一个非它不可的
+                //（没有首帧就没有画面），下完它界面会接着指下一个。
+                "image"};
     }
 
     if (!missing.empty()) {
@@ -584,7 +592,8 @@ Check check_models(const config::Settings& s) {
         return {"本地模型", Level::WARN, detail,
                 "检查 [models] 里的文件名，以及 dir 指的目录对不对。\n"
                 "相对路径是相对 dir 解析的，dir 留空时是项目库下的 models/。\n"
-                "当前 dir：" + paths::to_utf8(m.dir_path(ws))};
+                "当前 dir：" + paths::to_utf8(m.dir_path(ws)),
+                "image"};
     }
 
     return {"本地模型", Level::OK,
@@ -805,5 +814,6 @@ Report run_checks(const config::Settings& settings) {
     r.checks.push_back(guarded("能产什么", [&] { return check_produces(settings); }));
     return r;
 }
+
 
 }  // namespace changji::doctor
