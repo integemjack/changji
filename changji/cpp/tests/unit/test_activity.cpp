@@ -294,3 +294,21 @@ TEST_CASE("任务账本：思考接起来存，取的时候是整份") {
     // 结完账也还找得到：页面上「做完的」那几行也能点开看。
     CHECK(pipeline::task_thinking(id) == "先想再想");
 }
+
+TEST_CASE("任务账本：预计等多久按「这是哪一族」算，不按 kind") {
+    // `image` 这一族里既有「画参考图 · …」也有「出首帧 · …」，两者的耗时
+    // 不是一个量级。混一个桶算出来的中位数报给谁都不对。
+    const std::string proj = "/tmp/任务账本用例5";
+    {
+        pipeline::Task ref{"image", "画参考图 · 甲 正面", proj};
+        ref.begin();
+    }
+    {
+        // 同一个 kind、另一族。**它没跑过，所以报不出预计**——报得出的话
+        // 说明它借了参考图那一族的数。
+        pipeline::Task frame{"image", "出首帧 · sh001", proj};
+        const auto b = pipeline::task_board(proj);
+        REQUIRE(b.at("queued").size() == 1);
+        CHECK(b.at("queued")[0].at("eta") == 0.0);
+    }
+}

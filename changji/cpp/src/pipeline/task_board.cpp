@@ -67,7 +67,20 @@ double secs(Clock::time_point a, Clock::time_point b) {
 
 double round1(double v) { return std::round(v * 10.0) / 10.0; }
 
-/// 这一种活一件大概多久。没跑过就回 0（页面上不报预计）。
+/// 同一族活按什么归类算耗时。
+///
+/// **不能只按 kind。** `image` 这一族里既有「画参考图 · 董平 正面」也有
+/// 「出首帧 · ep08_sh001」，两者的耗时不是一个量级（参考图一分钟上下，
+/// 首帧带着参考图去编辑要更久）。混在一个桶里算出来的中位数，报给谁都不对。
+///
+/// 标题里 `· ` 前面那一截正是"这是哪一族"（「画参考图」「出首帧」
+/// 「出片成片档」「配音」），拿它当桶名。没有那个分隔就退回 kind。
+std::string bucket_of(const Row& r) {
+    const auto pos = r.title.find(" · ");
+    return pos == std::string::npos ? r.kind : r.kind + "/" + r.title.substr(0, pos);
+}
+
+/// 这一族活一件大概多久。没跑过就回 0（页面上不报预计）。
 /// **取中位数不是平均**：一件卡住的（等显存、等对面机器）能把平均拖成两倍。
 double typical_locked(Board& b, const std::string& kind) {
     auto it = b.recent.find(kind);
@@ -112,7 +125,7 @@ nlohmann::json to_json_locked(Board& b, const Row& r, Clock::time_point now) {
         // 排了多久了。**光有"预计还要等多久"不够**：等得久的那几件，人想
         // 知道的是"它是不是被忘了"。
         j["waited"] = round1(secs(r.queued_at, now));
-        j["eta"] = round1(typical_locked(b, r.kind));
+        j["eta"] = round1(typical_locked(b, bucket_of(r)));
     }
     return j;
 }
@@ -161,7 +174,7 @@ Task::~Task() {
                      : row->error.empty() ? TaskState::Done
                                           : TaskState::Failed;
         if (row->state == TaskState::Done) {
-            auto& q = b.recent[row->kind];
+            auto& q = b.recent[bucket_of(*row)];
             q.push_back(secs(row->started_at, row->ended_at));
             if (q.size() > 20) q.pop_front();
         }
