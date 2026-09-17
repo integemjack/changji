@@ -790,13 +790,21 @@ TEST_CASE("从故事出的圣经提示词：名单给定，只定妆") {
 
     // 这条是新老两条路的分界：老的是"找出角色"，新的是"给这份名单定妆"
     CHECK(p.find("一个不许多，一个不许少") != std::string::npos);
-    // 名字必须照抄，后面每一镜按名字找角色
+    // 名字必须照抄，后面每一镜按名字找角色。**真正管住它的是语法**：
+    // name 上挂着真名单的 enum（bible.cpp），名单外的名字生成不出来；
+    // 表里这句是给模型一个说法，两边都在。
     CHECK(p.find("逐字一样") != std::string::npos);
     // 剧作信息不许写进外观
     CHECK(p.find("不要把它们写进外观") != std::string::npos);
-    // 画风和 face 那条老规矩要留着
     CHECK(p.find("真人写实") != std::string::npos);
-    CHECK(p.find("face") != std::string::npos);
+    // **face 那条 2026-09-17 从表里搬走了**：它只管 face 一栏，而那一栏的
+    // description 里本来就写着「这段会在几十个镜头里逐字复用，写得具体且
+    // 不要含糊」。schema 是以文字贴在提示词后面发的（llm::schema_as_prompt），
+    // 所以模型照样收得到——查的是合起来那一份。
+    const std::string full =
+        llm::schema_as_prompt(p, stages::bible_schema());
+    CHECK(full.find("face") != std::string::npos);
+    CHECK(full.find("逐字复用") != std::string::npos);
     // 故事那一段确实拼进去了
     CHECK(p.find(stages::render_story_for_bible(story)) != std::string::npos);
 
