@@ -1497,6 +1497,31 @@ const liveChars = computed(() => {
   )
 })
 
+/**
+ * 空窗期里它想了多少字。
+ *
+ * **上面那个数在最需要它的时候正好是 0。** 它数的是正文，而空窗期的定义
+ * 就是正文一个字都还没有——会推理的模型先想完再落笔，中间什么都不发。
+ * 上面那段注释里写的"那二三十秒"是没有推理模型时候的经验：2026-09-17
+ * 实测一份八章中篇的大纲，落笔前想了 **六分多钟、八万多字**，这六分钟里
+ * 板子上只有一句"正在写…"和一个转着的点——正是那段注释想避免的样子。
+ *
+ * 思考的量引擎一直在发（顶栏那个浮层就靠它），这一页只是没接。
+ */
+const outlineThinkingChars = computed(() => {
+  if (!outlineLive.value) return 0
+  // 认名字，别认"最新那条"：这一页上改一段、写正文也会开思考流。
+  //
+  // **两个名字都要认。** socket 那条的 label 是这一页自己起的（'写大纲'），
+  // 而刷新之后走的是账本那条退路（thinking.js 的 fromBoard），那边的 label
+  // 是任务标题「正在出大纲」。只认前一个的话，这七分钟里刷一下页面，
+  // 数就再也不涨了——而刷新正好是人等得不耐烦时会做的那一下。
+  const mine = thinking.items.find(
+    (it) => it.label === '写大纲' || (it.label ?? '').includes('大纲'),
+  )
+  return [...(mine?.text ?? '')].length
+})
+
 function emptyOutlineLive() {
   return { premise: '', logline: '', genre: '', tone: '', characters: [], chapters: [] }
 }
@@ -2482,11 +2507,22 @@ async function stopWriting() {
             <div v-if="outlineLive" class="live stack stack--sm">
               <div class="row tiny dim">
                 <span class="live__dot" />
-                正在写…（键序每次不一样，先出什么看它自己）
-                <!-- **这个数是空窗期唯一看得见的活口。** 模型有时先写章节
-                     摘要，那几十秒里上面几栏全是空的——只有这个数在涨，
-                     人才知道它没卡死。 -->
+                <!-- **落笔前先说在想。** 会推理的模型要想几分钟才发第一个
+                     字，这期间说"正在写…（先出什么看它自己）"是两头都不对：
+                     它没在写，也不会有栏目蹦出来。 -->
+                <template v-if="!liveChars && outlineThinkingChars">
+                  正在想…（想完才落笔）
+                </template>
+                <template v-else>
+                  正在写…（键序每次不一样，先出什么看它自己）
+                </template>
+                <!-- **这个数是空窗期唯一看得见的活口。** 只有它在涨，人才
+                     知道没卡死。正文还没有的时候就数思考——见
+                     outlineThinkingChars。 -->
                 <template v-if="liveChars">· 已经写了 {{ liveChars }} 字</template>
+                <template v-else-if="outlineThinkingChars">
+                  · 已经想了 {{ outlineThinkingChars }} 字
+                </template>
               </div>
               <p v-if="outlineLive.logline" class="live__line">
                 {{ outlineLive.logline }}
