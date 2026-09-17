@@ -575,6 +575,25 @@ async function runWholeShow() {
     stopped || wholeAbort.value || !session.projectPath ||
     session.projectPath !== project
 
+  // 等那一批参考图画完。**问引擎那本队列**（ref_gen.cpp 的 RefQueue），
+  // 不是定时器猜——它自己知道还剩几张。
+  const waitRefs = async () => {
+    for (;;) {
+      if (cancelled()) return false
+      let q = null
+      try {
+        q = await api.referenceQueue(project)
+      } catch {
+        // 引擎打个嗝那几拍会连着失败。不当成画完了——当成画完了的话下一步
+        // 会在图还没出齐时发出去，又被那道闸挡回来。
+        await new Promise((r) => setTimeout(r, 2000))
+        continue
+      }
+      if (!q?.active) return true
+      await new Promise((r) => setTimeout(r, 1500))
+    }
+  }
+
   // 等"写"那个槽闲下来。**不是定时器猜**：seriesStatus 就是那个槽的实况。
   const waitWrite = async () => {
     for (;;) {
@@ -608,7 +627,27 @@ async function runWholeShow() {
         ui.info(`正在给 ${pl.episodes.join('、')} 补分镜`)
         if (!(await waitWrite())) return null
       }
-      // ---- 3. 出片：整个项目，不 force ----
+      // ---- 3. 还缺的参考图 ----
+      //
+      // **不补的话第 4 步会被 400 挡回来**，而那句话是「先去设定页把这几镜
+      // 用到的角色定妆、给场景出空景图，再回来跑」——一颗「跑完整部剧」把人
+      // 支去另一页按两个按钮，再走回来。CLAUDE.md 第一条：能自动解决的就
+      // 别报错。
+      //
+      // **放在补分镜之后**：角色和场景是补分镜那一步顺带定下来的（batch.cpp
+      // 里「角色设定全剧共用，第一次缺的时候补一次就够」），在那之前资产库
+      // 可能还是空的，出图也无从出起。
+      //
+      // 引擎那头挡人的那道闸留着不动：直接按「出片」的人还得撞它，而那时候
+      // 那句话是对的。
+      if (cancelled()) return null
+      const refs = await api.generateAllReferences({ project, force: false })
+      if (refs?.started) {
+        ui.info(`正在把还缺的 ${refs.total} 张参考图画完`)
+        if (!(await waitRefs())) return null
+      }
+
+      // ---- 4. 出片：整个项目，不 force ----
       if (cancelled()) return null
       const r = await start([], null, false, true)
       if (r.ok) return r

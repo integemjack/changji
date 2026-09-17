@@ -73,15 +73,32 @@ describe('补全项目分镜这件事在「这一章」那一页', () => {
     expect(shots).toContain('runWholeShow')
     expect(shots).toContain('跑完整部剧')
   })
-  it('三步一次点完，而且中途按停下就不再往下发', () => {
+  it('四步一次点完，而且中途按停下就不再往下发', () => {
     const at = shots.indexOf('async function runWholeShow')
     expect(at).toBeGreaterThan(0)
-    const fn = shots.slice(at, at + 1800)
+    const fn = shots.slice(at, at + 3200)
     expect(fn, '少了改编那一步').toContain('scriptAll')
     expect(fn, '少了补分镜那一步').toContain('planAll')
+    // ⚠️ **参考图那一步 2026-09-17 补的。** 不补的话最后一步会被引擎那道闸
+    // 400 挡回来，而那句话是「先去设定页把这几镜用到的角色定妆、给场景出空
+    // 景图，再回来跑」——一颗「跑完整部剧」把人支去另一页按两个按钮再走
+    // 回来。CLAUDE.md 第一条：能自动解决的就别报错。
+    expect(fn, '少了补参考图那一步').toContain('generateAllReferences')
     // 前两件事跑在同一个"写"槽上，必须等上一件闲下来再发下一件
     expect(fn, '没等写那个槽').toContain('seriesStatus')
+    expect(fn, '没等参考图画完').toContain('referenceQueue')
     expect(fn, '没认取消').toContain('cancelled()')
+  })
+
+  it('补参考图必须排在补分镜之后', () => {
+    // 角色和场景是补分镜那一步顺带定下来的（batch.cpp 里「角色设定全剧共用，
+    // 第一次缺的时候补一次就够」）。排在它前面的话，新项目上资产库还是空的，
+    // 出图无从出起——而那一下不报错，只是什么都没画。
+    const at = shots.indexOf('async function runWholeShow')
+    const fn = shots.slice(at, at + 3200)
+    expect(fn.indexOf('generateAllReferences')).toBeGreaterThan(fn.indexOf('planAll'))
+    // 而且要排在出片之前
+    expect(fn.indexOf('generateAllReferences')).toBeLessThan(fn.indexOf('await start('))
   })
   it('跑起来之后主按钮自己变成「停下」——前两步在这一页本来按不停', () => {
     // 前两步跑在"写"那个槽上，而页面上原来那颗「停下」只在出片那个槽跑着
