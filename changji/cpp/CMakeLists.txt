@@ -1072,6 +1072,7 @@ if(CHANGJI_BUILD_TESTS)
         tests/unit/test_upload.cpp
         tests/unit/test_ref_gen.cpp
         tests/unit/test_jobs.cpp
+        tests/unit/test_shot_flow.cpp
         tests/unit/test_models_config.cpp
         tests/unit/test_lora_names.cpp
         tests/unit/test_bible.cpp

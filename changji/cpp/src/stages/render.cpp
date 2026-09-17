@@ -181,6 +181,9 @@ std::vector<RenderOutcome> render_batch(std::vector<Shot*>& shots,
     };
     std::vector<Done> done(shots.size());
     std::mutex commit_mu;
+    // 流水时锁用两层共用的那把，理由见 frames.cpp 同一处
+    std::mutex& commit_lock =
+        extras.flow ? extras.flow->commit_mutex() : commit_mu;
 
     // 开跑前的预计来自一张按显存推的静态表，实测能差一倍。
     // 跑起来之后用真实耗时重算，等的人才知道还要等多久。
@@ -204,6 +207,12 @@ std::vector<RenderOutcome> render_batch(std::vector<Shot*>& shots,
 
             Shot* shot = shots[i];
             const int index = i + 1;
+            // 流水：这一镜的首帧还没写回就等。等的是 ShotFlow 的条件变量，
+            // 不是工作进程——池里的位置留给正在出首帧的那几路。
+            if (extras.flow && !extras.flow->wait_ready(shot->shot_id, tok)) {
+                done[i].skipped = true;
+                continue;
+            }
             const double started = now_seconds();
 
             // **本地副本。** 重试要改 attempts，而 attempts 进种子——
@@ -552,7 +561,7 @@ std::vector<RenderOutcome> render_batch(std::vector<Shot*>& shots,
             //
             // **拷贝，不是移动**：下面收尾那一段还要用 done[i].shot。
             if (commit) {
-                std::lock_guard<std::mutex> lg(commit_mu);
+                std::lock_guard<std::mutex> lg(commit_lock);
                 *shots[i] = done[i].shot;
                 done[i].committed = true;
                 commit();

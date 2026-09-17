@@ -145,7 +145,8 @@ std::vector<FrameOutcome> run_frames(std::vector<Shot*>& shots,
                                      pipeline::JobProgress& progress,
                                      pipeline::CancelToken& tok,
                                      int concurrency,
-                                     const pipeline::ShotCommit& commit) {
+                                     const pipeline::ShotCommit& commit,
+                                     pipeline::ShotFlow* flow) {
     const PromptComposer composer(assets);
     // 按画幅缩放。分辨率必须是 32 的倍数，否则潜空间对不齐。
     const TierSpec scaled = spec.scaled_to(assets.style.aspect_ratio);
@@ -326,10 +327,16 @@ std::vector<FrameOutcome> run_frames(std::vector<Shot*>& shots,
             // **出完一镜就落一次盘。** 不落的话这一批（一集二十二镜）
             // 跑完之前，镜头墙问到的永远是开跑那一刻的样子——
             // 一张缩略图都没有。
-            if (commit) {
-                std::lock_guard<std::mutex> lg(commit_mu);
+            if (commit || flow) {
+                // 流水时锁用两层共用的那把：一层在改镜头 i、另一层在把
+                // 整集序列化存盘，撞上就是脏数据。
+                std::unique_lock<std::mutex> lg(flow ? flow->commit_mutex()
+                                                     : commit_mu);
                 apply(i);
-                commit();
+                if (commit) commit();
+                lg.unlock();
+                // 写回之后才划：出片那层一放行就会去读 frame_path
+                if (flow) flow->mark_ready(shot->shot_id);
             }
 
             // **这一张完了要说一声。** 同 audio.cpp 那处：界面把"带 shot_id

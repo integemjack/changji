@@ -21,6 +21,7 @@
 #include "models/project.hpp"
 #include "models/shot.hpp"
 #include "pipeline/jobs.hpp"
+#include "pipeline/shot_flow.hpp"
 #include "stages/prompt_compose.hpp"
 
 namespace changji::stages {
@@ -105,6 +106,11 @@ std::vector<FrameOutcome> run_frames(
     int concurrency,
     /// 每出完一镜调一次（写回之后）。见 pipeline::ShotCommit。
     /// **不给就是老行为**：整批跑完再统一写回。
-    const pipeline::ShotCommit& commit = {});
+    const pipeline::ShotCommit& commit = {},
+    /// 首帧和出片同时跑时两层之间的那根线（pipeline/shot_flow.hpp）。
+    /// 给了就每写回一镜划一下；**给了就一定逐镜写回**（不然出片那层
+    /// 拿到的是没有 frame_path 的旧样子），写回和存盘用它那把锁。
+    /// 跑完由调用方 close()。
+    pipeline::ShotFlow* flow = nullptr);
 
 }  // namespace changji::stages

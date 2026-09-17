@@ -1,6 +1,10 @@
 #include "pipeline/episode.hpp"
 
+#include "pipeline/shot_flow.hpp"
+
 #include <algorithm>
+#include <exception>
+#include <thread>
 #include <cstdio>
 #include <chrono>
 #include <filesystem>
@@ -630,10 +634,25 @@ RunReport run_episode(const ProjectStore& store,
     bool ran = false;
 
     // 渲染一个档位。草稿和成片只差三个东西：入口状态、档位参数、事件名。
-    const auto render_tier = [&](Tier tier, bool force) {
+    const auto render_tier = [&](Tier tier, bool force,
+                                 pipeline::ShotFlow* flow = nullptr,
+                                 const std::vector<Shot*>& coming = {}) {
         const char* stage_name = tier == Tier::FINAL ? "final" : "draft";
         auto todo = pick(*ep, render_entry_states(tier, opts.skip_draft), force,
                          opts.only_shots);
+        if (flow) {
+            // 流水时首帧那批也算进来：它们此刻还停在配音完成上，按状态挑
+            // 挑不到，可首帧一写回就该出片。已经在 todo 里的不重复。
+            for (Shot* s : coming) {
+                if (std::find(todo.begin(), todo.end(), s) == todo.end()) {
+                    todo.push_back(s);
+                }
+            }
+            std::stable_sort(todo.begin(), todo.end(),
+                             [](const Shot* a, const Shot* b) {
+                                 return a->order < b->order;
+                             });
+        }
         progress.set_pending(ids_of(todo));
         if (todo.empty()) return std::vector<stages::RenderOutcome>{};
         ran = true;
@@ -707,6 +726,7 @@ RunReport run_episode(const ProjectStore& store,
         // 的最后一帧，没有 ffmpeg 就不串；上一镜按剧集顺序找，不按这一批
         // 的顺序——单跑几镜时前一镜不在这一批里。
         stages::RenderExtras extras;
+        extras.flow = flow;
         extras.hero_takes = settings.video.hero_takes;
         extras.chain_frames = settings.video.chain_frames;
         extras.keep_ambient = settings.sound.ambient;
@@ -915,6 +935,18 @@ RunReport run_episode(const ProjectStore& store,
             }
         }
 
+        // **跑全流程时成片档不吃 force，只有单跑这个阶段时才吃。**
+        // 照抄 Python：run() 里给的是 force=False，run_stages() 里
+        // 给的是 force=force。
+        //
+        // 差别在草稿失败的那几镜：force 重跑草稿之后它们状态没变，
+        // 成片阶段跳过它们是对的——拿一个没渲出来的草稿去出成片，
+        // 出来的是另一段没有首帧参考的片子，混在成片目录里最难发现。
+        const bool force_final = opts.only.has_value() ? opts.force : false;
+        // 流水里已经跟着首帧跑过的那一档，下面不再跑一遍
+        bool did_draft = false;
+        bool did_final = false;
+
         // ---- 首帧 ----
         if (wants(opts, Stage::Frames) && !tok.cancelled()) {
             // **入口状态只有 AUDIO_DONE。** 配音跑完锁了时长才出首帧——
@@ -951,6 +983,124 @@ RunReport run_episode(const ProjectStore& store,
                 emit(progress, "frames", "start", head, 0,
                      static_cast<int>(todo.size()));
 
+                // 首帧那批跑完之后说的话（首帧完成几个、失败几个、哪几个
+                // 还留着旧首帧）。**流水时在首帧那条线程里说**，不然要等到
+                // 整集出完片才轮到它，人看到的顺序是"成片完成"在"首帧完成"
+                // 前面。读的是 todo 里各镜的 frame_path，而出片那层会整份
+                // 写回 Shot——流水时调用方拿着 flow 的锁再叫它。
+                const auto say_frames_done = [&] {
+
+                    const int n = static_cast<int>(report.frames.size());
+                    int failed = 0;
+                    // **失败之后不一定就是纯文生视频。**
+                    //
+                    // 出首帧失败时只记 attempts，`frame_path` 原样留着（见
+                    // stages/frames.cpp 的 apply）。只要那个旧文件还在，
+                    // 出片阶段照样会拿它当起点——于是这一句"会退回纯文生视频"
+                    // 是错的，而错得很隐蔽：用户以为这几镜是文生的，实际是
+                    // 拿一张**上一次的、可能还是另一个画幅的**图生出来的。
+                    // 2026-09-13 就是这么撞上的：项目从 720p 改成 hd 之后，
+                    // 首帧全部失败，成片却拿 544×928 的旧图生出了 704×1280。
+                    int stale = 0;
+                    for (const auto& o : report.frames) {
+                        if (o.ok) continue;
+                        ++failed;
+                        const auto it = std::find_if(
+                            todo.begin(), todo.end(), [&](const models::Shot* s) {
+                                return s->shot_id == o.shot_id;
+                            });
+                        if (it == todo.end()) continue;
+                        const models::Shot* s = *it;
+                        if (!s->frame_path.has_value() || s->frame_path->empty()) {
+                            continue;
+                        }
+                        std::error_code ec;
+                        if (fs::is_regular_file(store.paths().abs(*s->frame_path),
+                                                ec)) {
+                            ++stale;
+                        }
+                    }
+                    std::string done_msg =
+                        "首帧完成 " + std::to_string(n - failed) + " 个";
+                    if (failed > 0) {
+                        done_msg += "，失败 " + std::to_string(failed) + " 个";
+                        if (stale > 0) {
+                            done_msg +=
+                                "。其中 " + std::to_string(stale) +
+                                " 个还留着上一次出的首帧，出片会直接拿它当起点"
+                                "——如果这中间改过画幅或者改过画面描述，出来的"
+                                "东西不是你现在要的，先把这几镜的首帧重出一遍";
+                        }
+                        if (failed > stale) {
+                            done_msg += "。另外 " + std::to_string(failed - stale) +
+                                        " 个没有可用的首帧，会退回纯文生视频";
+                        }
+                    }
+                    emit(progress, "frames", "done", done_msg, n, n);
+                };
+
+                // ---- 首帧和出片同时开（流水）----
+                //
+                // 见 pipeline/shot_flow.hpp 开头。哪一档跟着首帧走：要草稿就是
+                // 草稿档，不要草稿就是成片档；两档都要时成片档仍在草稿之后
+                // 串着跑（它收的是 DRAFT_DONE，得等草稿落定）。只出首帧
+                //（skip 两档）时没有流水，和以前一样。
+                //
+                // **只有池里不止一个位置时才流水。** 单卡单进程时按阶段分批
+                // 只在图像模型和视频模型之间切 2 次，逐镜交错要切 2N 次，
+                // 而那台 6GB 的机器会把绝大部分时间花在加载模型上（用例
+                // 「阶段之间分批」钉的就是这一条）；一个位置也没有第二张
+                // 卡可填，流水没有任何收益。多个位置时才是"最后几张首帧在
+                // 跑、别的卡闲着"这种局面。
+                const bool flow_worth = backends.render_lanes > 1;
+                const std::optional<Tier> flow_tier =
+                    !flow_worth ? std::nullopt
+                    : (!opts.skip_draft && wants(opts, Stage::Draft))
+                        ? std::optional<Tier>(Tier::DRAFT)
+                    : (!opts.skip_final && wants(opts, Stage::Final))
+                        ? std::optional<Tier>(Tier::FINAL)
+                        : std::nullopt;
+                if (flow_tier && !tok.cancelled()) {
+                    std::set<std::string> waiting;
+                    for (const Shot* s : todo) waiting.insert(s->shot_id);
+                    pipeline::ShotFlow flow(std::move(waiting));
+                    std::exception_ptr frames_err;
+                    std::thread frames_thread([&] {
+                        try {
+                            report.frames = stages::run_frames(
+                                todo, assets, frame_spec(profile, settings),
+                                store.paths(), backends.frame, progress, tok,
+                                backends.render_lanes, save, &flow);
+                            std::lock_guard<std::mutex> lg(flow.commit_mutex());
+                            save();
+                            say_frames_done();
+                        } catch (...) {
+                            frames_err = std::current_exception();
+                        }
+                        // 正常、取消、抛异常都要放行，别让出片那层吊着
+                        flow.close();
+                    });
+                    std::vector<stages::RenderOutcome> outs;
+                    try {
+                        outs = render_tier(*flow_tier,
+                                           *flow_tier == Tier::FINAL ? force_final
+                                                                     : opts.force,
+                                           &flow, todo);
+                    } catch (...) {
+                        frames_thread.join();
+                        throw;
+                    }
+                    frames_thread.join();
+                    if (frames_err) std::rethrow_exception(frames_err);
+                    if (*flow_tier == Tier::FINAL) {
+                        report.final_ = std::move(outs);
+                        did_final = true;
+                    } else {
+                        report.draft = std::move(outs);
+                        did_draft = true;
+                    }
+                    save();
+                } else {
                 report.frames = stages::run_frames(
                     todo, assets, frame_spec(profile, settings),
                     store.paths(), backends.frame, progress, tok,
@@ -962,54 +1112,8 @@ RunReport run_episode(const ProjectStore& store,
                     // 不存的话这一批跑完之前镜头墙上一张缩略图都没有。
                     save);
                 save();
-
-                const int n = static_cast<int>(report.frames.size());
-                int failed = 0;
-                // **失败之后不一定就是纯文生视频。**
-                //
-                // 出首帧失败时只记 attempts，`frame_path` 原样留着（见
-                // stages/frames.cpp 的 apply）。只要那个旧文件还在，
-                // 出片阶段照样会拿它当起点——于是这一句"会退回纯文生视频"
-                // 是错的，而错得很隐蔽：用户以为这几镜是文生的，实际是
-                // 拿一张**上一次的、可能还是另一个画幅的**图生出来的。
-                // 2026-09-13 就是这么撞上的：项目从 720p 改成 hd 之后，
-                // 首帧全部失败，成片却拿 544×928 的旧图生出了 704×1280。
-                int stale = 0;
-                for (const auto& o : report.frames) {
-                    if (o.ok) continue;
-                    ++failed;
-                    const auto it = std::find_if(
-                        todo.begin(), todo.end(), [&](const models::Shot* s) {
-                            return s->shot_id == o.shot_id;
-                        });
-                    if (it == todo.end()) continue;
-                    const models::Shot* s = *it;
-                    if (!s->frame_path.has_value() || s->frame_path->empty()) {
-                        continue;
-                    }
-                    std::error_code ec;
-                    if (fs::is_regular_file(store.paths().abs(*s->frame_path),
-                                            ec)) {
-                        ++stale;
-                    }
+                    say_frames_done();
                 }
-                std::string done_msg =
-                    "首帧完成 " + std::to_string(n - failed) + " 个";
-                if (failed > 0) {
-                    done_msg += "，失败 " + std::to_string(failed) + " 个";
-                    if (stale > 0) {
-                        done_msg +=
-                            "。其中 " + std::to_string(stale) +
-                            " 个还留着上一次出的首帧，出片会直接拿它当起点"
-                            "——如果这中间改过画幅或者改过画面描述，出来的"
-                            "东西不是你现在要的，先把这几镜的首帧重出一遍";
-                    }
-                    if (failed > stale) {
-                        done_msg += "。另外 " + std::to_string(failed - stale) +
-                                    " 个没有可用的首帧，会退回纯文生视频";
-                    }
-                }
-                emit(progress, "frames", "done", done_msg, n, n);
             }
         }
 
@@ -1018,7 +1122,8 @@ RunReport run_episode(const ProjectStore& store,
         // skip_draft：两档拉不开差距时它就是白跑一遍（挂 Turbo LoRA 之后
         // 正是这个局面）。跳过之后成片档会收 FRAME_DONE 那批，
         // 见 render_entry_states。
-        if (!opts.skip_draft && wants(opts, Stage::Draft) && !tok.cancelled()) {
+        if (!did_draft && !opts.skip_draft && wants(opts, Stage::Draft) &&
+            !tok.cancelled()) {
             report.draft = render_tier(Tier::DRAFT, opts.force);
             save();
         }
@@ -1027,15 +1132,8 @@ RunReport run_episode(const ProjectStore& store,
         //
         // skip_final 是为了快速验证叙事：成片档一个镜头几分钟，
         // 而叙事对不对看草稿就够了。
-        if (!opts.skip_final && wants(opts, Stage::Final) && !tok.cancelled()) {
-            // **跑全流程时成片档不吃 force，只有单跑这个阶段时才吃。**
-            // 照抄 Python：run() 里给的是 force=False，run_stages() 里
-            // 给的是 force=force。
-            //
-            // 差别在草稿失败的那几镜：force 重跑草稿之后它们状态没变，
-            // 成片阶段跳过它们是对的——拿一个没渲出来的草稿去出成片，
-            // 出来的是另一段没有首帧参考的片子，混在成片目录里最难发现。
-            const bool force_final = opts.only.has_value() ? opts.force : false;
+        if (!did_final && !opts.skip_final && wants(opts, Stage::Final) &&
+            !tok.cancelled()) {
             report.final_ = render_tier(Tier::FINAL, force_final);
             save();
         }

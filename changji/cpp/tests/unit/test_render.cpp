@@ -11,6 +11,9 @@
 #include <filesystem>
 #include <fstream>
 #include <string>
+#include <thread>
+#include <mutex>
+#include <atomic>
 #include <vector>
 
 #include "config/settings.hpp"
@@ -925,4 +928,59 @@ TEST_CASE("关键镜头：第一条干净就不再多出") {
     CHECK_FALSE(stages::take_good_enough(cut));
     gates::GateResult bad = r;    bad.verdict = gates::Verdict::Retry;
     CHECK_FALSE(stages::take_good_enough(bad));
+}
+
+TEST_CASE("流水：首帧没写回的镜头不出片，写回了立刻出，别的镜头不受影响") {
+    const fs::path root = temp_root("流水");
+    const models::ProjectPaths paths(root);
+    auto owned = std::vector<models::Shot>{make_shot("ep01_sh001"),
+                                           make_shot("ep01_sh002")};
+    std::vector<models::Shot*> shots = {&owned[0], &owned[1]};
+    // sh001 手里已经有首帧；sh002 的首帧还在出
+    pipeline::ShotFlow flow({"ep01_sh002"});
+
+    std::mutex mu;
+    std::vector<std::string> order;
+    const auto inner = fake_ok();
+    const stages::VideoRenderer render = [&](const models::Shot& s, auto&&... a) {
+        {
+            std::lock_guard<std::mutex> lg(mu);
+            order.push_back(s.shot_id);
+        }
+        inner(s, a...);
+    };
+
+    pipeline::JobTable table;
+    pipeline::CancelToken tok;
+    std::vector<stages::RenderOutcome> outs;
+    stages::RenderExtras extras;
+    extras.flow = &flow;
+    table.start(pipeline::JobKind::Run, "ep01",
+                [&](pipeline::JobProgress& p) {
+                    outs = stages::render_batch(shots, make_assets(),
+                                                make_spec(models::Tier::FINAL),
+                                                paths, render, p, tok, 24,
+                                                /*concurrency=*/2, {}, {},
+                                                extras);
+                });
+    // sh001 该先出；sh002 在等
+    for (int k = 0; k < 50; ++k) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        std::lock_guard<std::mutex> lg(mu);
+        if (!order.empty()) break;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    {
+        std::lock_guard<std::mutex> lg(mu);
+        REQUIRE(order.size() == 1);
+        CHECK(order[0] == "ep01_sh001");
+    }
+    flow.mark_ready("ep01_sh002");
+    table.wait_idle();
+    REQUIRE(outs.size() == 2);
+    CHECK(outs[0].ok);
+    CHECK(outs[1].ok);
+    std::lock_guard<std::mutex> lg(mu);
+    REQUIRE(order.size() == 2);
+    CHECK(order[1] == "ep01_sh002");
 }

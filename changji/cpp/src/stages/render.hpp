@@ -19,6 +19,7 @@
 #include "models/project.hpp"
 #include "models/shot.hpp"
 #include "pipeline/jobs.hpp"
+#include "pipeline/shot_flow.hpp"
 #include "stages/limits.hpp"
 #include "stages/prompt_compose.hpp"
 
@@ -133,6 +134,10 @@ struct RenderExtras {
     /// 单跑几镜时前一镜不在这一批里，得回剧集里找。
     std::function<std::optional<std::filesystem::path>(const models::Shot&)>
         prev_video;
+    /// 首帧和出片同时跑时两层之间的那根线（pipeline/shot_flow.hpp）。
+    /// 给了就每拿到一镜先等它的首帧写回（等的时候不占池里的位置），
+    /// 写回和存盘用它那把锁。空 = 老行为，首帧早就全出完了。
+    pipeline::ShotFlow* flow = nullptr;
 };
 
 /// 这一镜算不算关键镜头：第一镜、最后一镜，以及 beat 里写着钩子、留扣、

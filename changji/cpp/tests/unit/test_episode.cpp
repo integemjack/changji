@@ -10,6 +10,10 @@
 
 #include <doctest/doctest.h>
 
+#include <chrono>
+#include <mutex>
+#include <thread>
+
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
@@ -104,7 +108,11 @@ struct Call {
 /// 两个后端都往同一个 log 里记，这样调用顺序是可比的。
 /// 分成两个 log 的话就只知道各自内部的顺序，而要测的恰恰是**交错与否**。
 struct Recorder {
+    /// 流水时首帧和出片两条线程同时往这儿记，得有锁
+    std::mutex mu;
     std::vector<Call> calls;
+    /// 每张首帧假装跑这么久。流水那条用例靠它把两层错开。
+    int frame_delay_ms = 0;
     /// 这些镜头的首帧要失败。
     std::vector<std::string> frame_fails;
     /// 这些镜头的视频要失败。
@@ -124,7 +132,14 @@ struct Recorder {
         return [this](const models::Shot& shot, const stages::PromptBundle&,
                       const models::TierSpec&, const fs::path& dest,
                       pipeline::CancelToken&, const infer::StepCallback&) {
-            calls.push_back({"frame", shot.shot_id, false});
+            {
+                std::lock_guard<std::mutex> lg(mu);
+                calls.push_back({"frame", shot.shot_id, false});
+            }
+            if (frame_delay_ms > 0) {
+                std::this_thread::sleep_for(
+                    std::chrono::milliseconds(frame_delay_ms));
+            }
             if (std::find(frame_fails.begin(), frame_fails.end(),
                           shot.shot_id) != frame_fails.end()) {
                 throw std::runtime_error("假装出图失败");
@@ -138,11 +153,14 @@ struct Recorder {
                       const std::optional<fs::path>& start,
                       const fs::path& dest, pipeline::CancelToken&,
                       const infer::StepCallback&) {
-            calls.push_back({plan.tier == models::Tier::FINAL ? "final" : "draft",
-                             shot.shot_id, start.has_value()});
             int videos = 0;
-            for (const auto& c : calls) {
-                if (c.kind != "frame") ++videos;
+            {
+                std::lock_guard<std::mutex> lg(mu);
+                calls.push_back({plan.tier == models::Tier::FINAL ? "final" : "draft",
+                                 shot.shot_id, start.has_value()});
+                for (const auto& c : calls) {
+                    if (c.kind != "frame") ++videos;
+                }
             }
             if (cancel_at_video > 0 && videos >= cancel_at_video && tok) {
                 tok->request();
@@ -168,7 +186,8 @@ struct Recorder {
 pipeline::RunReport run_it(const models::ProjectStore& store,
                            const pipeline::RunOptions& opts, Recorder& rec,
                            pipeline::CancelToken& tok,
-                           std::vector<nlohmann::json>* msgs = nullptr) {
+                           std::vector<nlohmann::json>* msgs = nullptr,
+                           int lanes = 1) {
     pipeline::JobTable table;
     if (msgs) {
         table.set_sink([msgs](const std::string&, const nlohmann::json& m) {
@@ -180,6 +199,7 @@ pipeline::RunReport run_it(const models::ProjectStore& store,
     pipeline::Backends backends;
     backends.frame = rec.frame();
     backends.video = rec.video();
+    backends.render_lanes = lanes;
 
     pipeline::RunReport report;
     std::string thrown;
@@ -207,12 +227,14 @@ models::Episode reload(const models::ProjectStore& store) {
 
 }  // namespace
 
-TEST_CASE("阶段之间分批，不是按镜头串行") {
+TEST_CASE("单个位置时阶段之间分批，不是按镜头串行") {
     // **这一条钉的是方案里的一个结论，不只是当前实现。**
     // 预算只装得下一个模型时，按镜头串行要在图像模型和视频模型之间
     // 来回切 2N 次；按阶段分批只切 2 次。四十个镜头就是 80 次对 2 次。
     // 改成"出一张图就出一段视频"看起来更自然，但那会让这台 6GB 的机器
     // 把绝大部分时间花在加载模型上。
+    //
+    // 池里不止一个位置时是另一回事，见下一条。
     const auto store = make_store("分批", 4);
     Recorder rec;
     pipeline::CancelToken tok;
@@ -232,6 +254,41 @@ TEST_CASE("阶段之间分批，不是按镜头串行") {
     CHECK(rec.ids_of("frame").size() == 4);
     CHECK(rec.ids_of("draft").size() == 4);
     CHECK(last_frame < first_draft);
+}
+
+TEST_CASE("不止一个位置时流水：首帧没全出完就开始出片") {
+    // 用户 2026-09-17：「首帧图全部都处理完才能到成片，这样会让大量的
+    // GPU 空闲」。两个位置、四镜、每张首帧 60ms：第一批两张首帧一写回，
+    // 出片那层就该动，而不是等最后一张。
+    const auto store = make_store("流水", 4);
+    Recorder rec;
+    rec.frame_delay_ms = 60;
+    pipeline::CancelToken tok;
+    pipeline::RunOptions opts;
+    opts.episode_id = "ep01";
+    opts.skip_final = true;
+
+    run_it(store, opts, rec, tok, nullptr, /*lanes=*/2);
+
+    std::size_t last_frame = 0;
+    std::size_t first_draft = rec.calls.size();
+    for (std::size_t i = 0; i < rec.calls.size(); ++i) {
+        if (rec.calls[i].kind == "frame") last_frame = i;
+        if (rec.calls[i].kind == "draft" && i < first_draft) first_draft = i;
+    }
+    CHECK(rec.ids_of("frame").size() == 4);
+    CHECK(rec.ids_of("draft").size() == 4);
+    // 交错了：有草稿在最后一张首帧之前就开跑
+    CHECK(first_draft < last_frame);
+
+    // 结果和分批时一样：四镜都到草稿完成，首帧和视频都记在盘上
+    const models::Episode ep = reload(store);
+    for (const auto& s : ep.shots) {
+        CAPTURE(s.shot_id);
+        CHECK(s.status == models::ShotStatus::DRAFT_DONE);
+        CHECK(s.frame_path.has_value());
+        CHECK(s.video_path.has_value());
+    }
 }
 
 TEST_CASE("镜头按 order 跑，不按在数组里的位置") {

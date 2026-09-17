@@ -773,3 +773,26 @@ TEST_CASE("逐镜落盘时 attempts 只加一次") {
     CHECK(owned[0].attempts == before + 1);
     CHECK_FALSE(owned[0].frame_path.has_value());
 }
+
+TEST_CASE("流水：每写回一镜就划一下，没给 commit 也逐镜写回") {
+    const fs::path root = temp_root("流水");
+    const models::ProjectPaths paths(root);
+    auto owned = std::vector<models::Shot>{make_shot("ep01_sh001"),
+                                           make_shot("ep01_sh002")};
+    std::vector<models::Shot*> shots = {&owned[0], &owned[1]};
+    pipeline::ShotFlow flow({"ep01_sh001", "ep01_sh002"});
+
+    pipeline::JobTable table;
+    pipeline::CancelToken tok;
+    table.start(pipeline::JobKind::Run, "ep01",
+                [&](pipeline::JobProgress& p) {
+                    stages::run_frames(shots, make_assets(), make_spec(), paths,
+                                       fake_ok(), p, tok, 1, {}, &flow);
+                });
+    table.wait_idle();
+    CHECK(flow.ready("ep01_sh001"));
+    CHECK(flow.ready("ep01_sh002"));
+    // 划的时候 frame_path 已经在了——出片那层一放行就去读它
+    CHECK(owned[0].frame_path.has_value());
+    CHECK(owned[1].frame_path.has_value());
+}
