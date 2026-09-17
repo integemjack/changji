@@ -339,9 +339,38 @@ async function load() {
   }
 }
 
+/** 开机自启的现状。null = 还没问到 / 这个平台不支持。 */
+const autostart = ref(null)
+
+async function loadAutostart() {
+  try {
+    autostart.value = await api.autostart()
+  } catch {
+    // 问不到就不摆那个开关：摆一个点了没反应的开关比不摆更糟。
+    autostart.value = null
+  }
+}
+
+async function toggleAutostart(on) {
+  const r = await run(() => api.setAutostart(on), {
+    key: 'autostart',
+    // **失败要说原话。** 写不进去的原因（没权限、目录建不了）只有引擎
+    // 知道，这儿编不出来。
+  })
+  if (r) {
+    autostart.value = r
+    ui.ok(on ? '开机会自己起来了（下次登录生效）' : '不再随系统启动')
+  } else {
+    // 没改成的话把开关拨回去——不拨的话它显示的是人点的那一下，
+    // 而实际状态没变。
+    await loadAutostart()
+  }
+}
+
 onMounted(() => {
   loadModelsDir()
   load()
+  loadAutostart()
 })
 
 // 换一部剧，体检里那条「出片画布」的答案就变了（画幅是每部剧自己的）。
@@ -628,6 +657,35 @@ function scrollTo(id) {
               <option value="left">左边</option>
             </select>
           </label>
+
+          <!-- **开机自启。** 三个平台都只是往登录时系统会扫的那个目录写一个
+               文件（见 cpp/src/setup/autostart.hpp）。
+               ⚠️ **那句「下次登录才生效」必须写出来**：写完文件这一次并不会
+               自动起，人打开开关之后去别处看不到任何变化，会以为开关没用。 -->
+          <label v-if="autostart?.supported" class="field">
+            <span class="field__label">随系统启动</span>
+            <span class="row row--wrap">
+              <label class="switch tiny">
+                <input
+                  type="checkbox"
+                  :checked="autostart.enabled"
+                  :disabled="isBusy('autostart')"
+                  @change="toggleAutostart($event.target.checked)"
+                />
+                <span>{{ autostart.enabled ? '开着' : '关着' }}</span>
+              </label>
+              <span class="tiny dim">
+                {{
+                  autostart.enabled
+                    ? '下次登录这台机器时自己起来。这一次不会自动起。'
+                    : '登录后要自己开一次。'
+                }}
+              </span>
+            </span>
+          </label>
+          <p v-if="autostart?.enabled" class="tiny dim" :title="autostart.path">
+            开机跑的是 <code class="mono">{{ autostart.command }}</code>
+          </p>
         </section>
 
         <!-- 引擎 -->

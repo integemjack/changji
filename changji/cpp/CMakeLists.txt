@@ -786,6 +786,7 @@ add_executable(changji
     src/http/voices.cpp
     src/http/run_deps.cpp
     src/setup/catalog.cpp
+    src/setup/autostart.cpp
     src/setup/source.cpp
     src/setup/downloader.cpp
     src/http/setup_api.cpp
@@ -1251,6 +1252,7 @@ if(CHANGJI_BUILD_TESTS)
         # （走 util/proc），接口层碰的是 config 和 catalog——三个文件
         # 一个网络库都不链。
         src/setup/catalog.cpp
+        src/setup/autostart.cpp
         src/setup/source.cpp
         src/setup/downloader.cpp
         src/http/setup_api.cpp

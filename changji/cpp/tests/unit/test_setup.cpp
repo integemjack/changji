@@ -30,6 +30,7 @@
 
 #include "config/settings.hpp"
 #include "http/setup_api.hpp"
+#include "setup/autostart.hpp"
 #include "setup/catalog.hpp"
 #include "setup/downloader.hpp"
 #include "setup/source.hpp"
@@ -642,4 +643,61 @@ TEST_CASE("H3 要有 16 GB 卡上挑得动的那几档") {
     CHECK(has_q2);
     // 最小那一档不该再是 10.6 GiB 那个
     CHECK(smallest < 7.0 * 1024 * 1024 * 1024);
+}
+
+TEST_CASE("开机自启：写出去的那个文件按平台是对的形状") {
+    // ⚠️ **三套模板各自的语法错了不会报错**，只是开机不起来——而那要重启
+    // 一次才发现。所以逐平台钉住形状。
+    const auto body = setup::autostart_file_body("/tmp/有空格 的/changji", 8123);
+    const auto path = setup::autostart_file_path().generic_string();
+    CAPTURE(path);
+
+    // 端口和可执行文件路径三个平台都要在。
+    CHECK(body.find("8123") != std::string::npos);
+    CHECK(body.find("changji") != std::string::npos);
+
+#if defined(_WIN32)
+    CHECK(path.find("Startup") != std::string::npos);
+    // **`start ""` 那个空标题不能省**：`start "C:\path\x.exe"` 会把第一个
+    // 带引号的参数当成窗口标题，于是什么都没起来，而且不报错。
+    CHECK(body.find("start \"\"") != std::string::npos);
+    // 路径有空格，必须带引号
+    CHECK(body.find("\"/tmp/有空格 的/changji\"") != std::string::npos);
+#elif defined(__APPLE__)
+    CHECK(path.find("LaunchAgents") != std::string::npos);
+    CHECK(path.find("com.changji.server.plist") != std::string::npos);
+    CHECK(body.find("<key>RunAtLoad</key><true/>") != std::string::npos);
+    // **不能有 KeepAlive**：设了的话人从界面上把服务停掉，launchd 会立刻
+    // 再拉起来——「我明明关了它还在」，而没有任何地方说得清为什么。
+    CHECK(body.find("KeepAlive") == std::string::npos);
+    // plist 里参数是一个个 <string>，不靠空格分词，所以路径不用引号
+    CHECK(body.find("<string>--port</string>") != std::string::npos);
+#else
+    CHECK(path.find(".config/autostart") != std::string::npos);
+    CHECK(body.find("[Desktop Entry]") != std::string::npos);
+    CHECK(body.find("Type=Application") != std::string::npos);
+#endif
+}
+
+TEST_CASE("开机自启：开了关了都读得回来") {
+    const int port = 8125;
+    const auto before = setup::autostart_status(port);
+    if (!before.supported) return;   // 取不到 self_exe 的环境，跳过
+
+    // **测完要还原**：这台机器上的真实状态不能被用例改掉。
+    struct Restore {
+        bool was;
+        int port;
+        ~Restore() { setup::set_autostart(was, port); }
+    } restore{before.enabled, port};
+
+    const auto on = setup::set_autostart(true, port);
+    CHECK(on.error.empty());
+    CHECK(on.state.enabled);
+    CHECK(setup::autostart_status(port).enabled);
+
+    const auto off = setup::set_autostart(false, port);
+    CHECK(off.error.empty());
+    CHECK_FALSE(off.state.enabled);
+    CHECK_FALSE(setup::autostart_status(port).enabled);
 }

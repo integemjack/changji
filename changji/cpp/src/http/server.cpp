@@ -34,6 +34,7 @@
 #include "http/scripting.hpp"
 #include "http/story_api.hpp"
 #include "http/setup_api.hpp"
+#include "setup/autostart.hpp"
 #include "setup/downloader.hpp"
 #include "llm/client.hpp"
 #include "http/flow.hpp"
@@ -743,6 +744,40 @@ void run(const config::Settings& settings, const Options& opts) {
             });
             return json_response(r.body, r.status);
         });
+
+    // ---- 随系统启动 ----
+    //
+    // 用户 2026-09-17：「增加在设置中随系统启动开关」。三个平台都只是往登录
+    // 时系统会扫的那个目录写一个文件，见 setup/autostart.hpp。
+    CROW_ROUTE(app, "/api/autostart")
+        .methods(crow::HTTPMethod::GET, crow::HTTPMethod::POST)(
+            [opts](const crow::request& req) {
+                auto r = guard([&]() -> ApiResult {
+                    if (req.method == crow::HTTPMethod::GET) {
+                        const auto st = setup::autostart_status(opts.port);
+                        return {200,
+                                {{"supported", st.supported},
+                                 {"enabled", st.enabled},
+                                 {"path", st.path},
+                                 {"command", st.command}}};
+                    }
+                    const json body = parse_body(req.body);
+                    if (!body.is_object() || !body.contains("enabled") ||
+                        !body.at("enabled").is_boolean()) {
+                        throw ApiError(400, "要给 enabled（true / false）");
+                    }
+                    const auto res = setup::set_autostart(
+                        body.at("enabled").get<bool>(), opts.port);
+                    // **改不成要当场说，不要回一个"成了"再让人自己发现。**
+                    if (!res.error.empty()) throw ApiError(500, res.error);
+                    return {200,
+                            {{"supported", res.state.supported},
+                             {"enabled", res.state.enabled},
+                             {"path", res.state.path},
+                             {"command", res.state.command}}};
+                });
+                return json_response(r.body, r.status);
+            });
 
     CROW_ROUTE(app, "/api/settings")([] {
         auto r = guard([] {
