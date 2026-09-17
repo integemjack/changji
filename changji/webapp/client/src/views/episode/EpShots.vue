@@ -198,9 +198,29 @@ const DONE_STATUS = ['final_done', 'locked', 'fallback']
  * 2026-09-16 实测 ep06：三镜被闸门退回，成片只装了 46.6 秒（计划 76.2），
  * 而页面上没有任何一个按钮是「把那三镜补上」。
  */
-const pending = computed(
-  () => shots.value.filter((s) => !DONE_STATUS.includes(s.status)).length,
-)
+/**
+ * 这一镜算不算做完了。
+ *
+ * **降级了却一个视频都没有的，不算。** `fallback` 的意思是"重试用尽，
+ * 留最后那一版"——而根本没产出过任何一版时，没有什么可留的，它是"没跑成"
+ * 不是"跑过了、质量不行"。
+ *
+ * 2026-09-17 实撞：唯一那台工作机在出片中途掉线，17 镜里 16 镜被标成
+ * fallback（每一镜都只是撞了同一堵墙，一帧都没渲出来）。于是页面上那颗
+ * 主按钮写着「这一章出完了」，而这一集**一个视频都没有**——按钮还顺手把
+ * 它跳过去，人永远等不到它被重跑。
+ *
+ * 引擎那头掉线不再这么标了（PoolUnreachable 会停下整轮），但盘上已经存下
+ * 的那些还在，而且别的原因也可能留下没有视频的 fallback。这儿按有没有东西
+ * 判，比按状态名判稳。
+ */
+function shotDone(s) {
+  if (!DONE_STATUS.includes(s.status)) return false
+  if (s.status === 'fallback' && !s.video_path) return false
+  return true
+}
+
+const pending = computed(() => shots.value.filter((s) => !shotDone(s)).length)
 /** 还没有首帧的镜头数。「只出首帧」那个按钮按它显示。 */
 const pendingFrames = computed(() => shots.value.filter((s) => !s.frame_path).length)
 /**

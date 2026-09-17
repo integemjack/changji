@@ -402,6 +402,48 @@ TEST_CASE("首帧失败的镜头退回纯文生视频，不被跳过") {
     CHECK(failed_frames == 1);
 }
 
+TEST_CASE("降级了却一个视频都没有的，下一轮要接着跑") {
+    // 2026-09-17 实撞：唯一那台工作机在出片中途掉线，17 镜里 16 镜被标成
+    // fallback——每一镜都只是撞了同一堵墙，一帧都没渲出来。`fallback` 算
+    // 终态，于是之后再点出片这 16 镜全被跳过，人永远等不到它们被重跑，
+    // 而镜头页那颗主按钮还写着「这一章出完了」：一集零个视频，按钮说做完了。
+    //
+    // 判据是**有没有东西**，不是状态名：留最后那一版的前提是真有一版。
+    const auto store = make_store("空降级", 3);
+    {
+        auto p = store.load_project();
+        auto& sh = p.episodes[0].shots;
+        // 第一镜：降级但真有视频——那是"跑过了、质量不行"，不该动它
+        sh[0].status = models::ShotStatus::FALLBACK;
+        sh[0].video_path = "videos/ep01_sh001.mp4";
+        // 第二镜：降级却什么都没有——那是"没跑成"
+        sh[1].status = models::ShotStatus::FALLBACK;
+        sh[1].video_path.reset();
+        sh[1].attempts = 3;
+        store.save_project(p);
+    }
+
+    Recorder rec;
+    pipeline::CancelToken tok;
+    pipeline::RunOptions opts;
+    opts.episode_id = "ep01";
+    run_it(store, opts, rec, tok);
+
+    const auto p = store.load_project();
+    const auto& sh = p.episodes[0].shots;
+    // **只钉这一条**：空降级那一镜被接着跑了，不管跑成什么样，总之不再是
+    // "降级且没东西"。
+    //
+    // 第一镜（降级但有视频）这儿不钉：夹具里那个 video_path 指向一个并不
+    // 存在的文件，而 has_usable_frame 之类的判据是连磁盘一起看的，于是
+    // 它在这套夹具里会被重新跑一遍。那是夹具的事，不是这个改动的事——
+    // 真实现里的判据只有一条：**有没有东西**，写在 run_episode 开头那段。
+    const bool still_empty_fallback =
+        sh[1].status == models::ShotStatus::FALLBACK &&
+        (!sh[1].video_path.has_value() || sh[1].video_path->empty());
+    CHECK_FALSE(still_empty_fallback);
+}
+
 TEST_CASE("跑全流程时成片档不吃 force") {
     // 照抄 Python：run() 给成片档的是 force=False。
     // 草稿失败的镜头状态没推进，成片档该跳过它——拿一个没渲出来的草稿

@@ -550,6 +550,44 @@ RunReport run_episode(const ProjectStore& store,
 
     progress.set_episode_id(opts.episode_id);
 
+    // **开跑之前把「降级了却一个视频都没有」的那些归位。**
+    //
+    // `fallback` 的意思是"重试用尽，留最后那一版"，所以它算终态、下一轮
+    // 挑镜头时跳过。可**根本没产出过任何一版时，没有什么可留的**——
+    // 那是"没跑成"，不是"跑过了、质量不行"。
+    //
+    // 2026-09-17 实撞：唯一那台工作机在出片中途掉线，17 镜里 16 镜被标成
+    // fallback（每一镜都只是撞了同一堵墙，一帧都没渲出来）。之后再点出片，
+    // 这 16 镜被当成终态跳过，人永远等不到它们被重跑；而镜头页那颗主按钮
+    // 还写着「这一章出完了」——一集零个视频，按钮说做完了。
+    //
+    // 掉线那条已经不再这么标了（PoolUnreachable 会停下整轮），但盘上存下的
+    // 那些还在，别的原因也可能留下没有视频的 fallback。
+    //
+    // **归位到配音完成，不是从头来过**：配音和首帧可能是好的，只有出片那
+    // 一步没成。退到 AUDIO_DONE 之后，正常的入口判据会带着它往下走，
+    // 有首帧就用首帧。**这儿只改状态、不删任何文件。**
+    //
+    // 只在这儿做、不在 pick 里做：pick 是每个阶段都叫的，在那儿放行会让
+    // 「草稿没渲出来的镜头不该在同一轮里被推去出成片」那条规矩失效
+    // （test_episode 的「跑全流程时成片档不吃 force」钉着它）。
+    {
+        int repaired = 0;
+        for (Shot& s : ep->shots) {
+            if (s.status != ShotStatus::FALLBACK) continue;
+            if (s.video_path.has_value() && !s.video_path->empty()) continue;
+            s.status = ShotStatus::AUDIO_DONE;
+            s.attempts = 0;
+            ++repaired;
+        }
+        if (repaired > 0) {
+            emit(progress, "audio", "info",
+                 "有 " + std::to_string(repaired) +
+                     " 镜标着已降级却一个视频都没有（多半是上一轮所有工作进程"
+                     "都掉线了），这一轮把它们接着跑");
+        }
+    }
+
     // 每个阶段跑完立刻存盘。不存的话中途断电或者点了停止，
     // 前面几十分钟的产出全部作废——文件还在磁盘上，但项目文件里没记，
     // 下次跑会当成没跑过。
