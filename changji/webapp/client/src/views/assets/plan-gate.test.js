@@ -94,4 +94,12 @@ describe('补全项目分镜这件事在「这一章」那一页', () => {
     expect(at).toBeGreaterThan(0)
     expect(shots.slice(at, at + 200)).toContain('wholeAbort.value')
   })
+  it('最后那一步起不来要说一声，不能吞掉', () => {
+    // start() 只回 {ok:false, error}，自己不弹框。吞了的话第三步被 400
+    // 挡回来时，人看到的是按钮转一圈又变回去，屏幕上一个字没有。
+    const at = shots.indexOf('async function runWholeShow')
+    const fn = shots.slice(at, at + 2600)
+    expect(fn).toContain('出片这一步起不来')
+    expect(fn, '409 不是错，别报成错').toContain('409')
+  })
 })

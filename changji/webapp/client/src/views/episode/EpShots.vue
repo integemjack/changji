@@ -583,7 +583,14 @@ async function runWholeShow() {
       // ---- 3. 出片：整个项目，不 force ----
       if (cancelled()) return null
       const r = await start([], null, false, true)
-      if (!r.ok) stopped = true
+      if (r.ok) return r
+      stopped = true
+      // **起不来要说一声。** start() 只回 {ok:false, error}，自己不弹框；
+      // 这儿原来把它吞了，于是第三步被 400 挡回来（比如有镜头拿不到参考图）
+      // 时，人看到的是按钮转了一圈又变回去，屏幕上一个字没有。判法照
+      // startAll 那条，两处一致。
+      if (r.error?.status === 409) ui.info('已经在跑了，下面跟着看进度就行')
+      else if (r.error) ui.error('出片这一步起不来：' + r.error.message)
       return r
     },
     { key: 'whole', refresh: true },
