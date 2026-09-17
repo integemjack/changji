@@ -858,6 +858,23 @@ jobs:
             cp -L "$so" stage/
             echo "带上 $so"
           done
+          # **和 Windows 那边同一道关：按 ldd 说的再对一遍。**
+          # 上面那条 awk 规则哪天和新的库名对不上（CUDA 改过一次 so 名就够了），
+          # `LIBS` 就是空的——**而空的 for 循环什么都不做、也不报错**，包照样
+          # 打出来、照样发，解开才发现跑不了。Windows 那格 2026-09-17 就是这么
+          # 发出去一个只有 exe 的 cuda 包的（见「打包（Windows）」那段注释）。
+          # libcuda.so.1 不在此列：那是**显卡驱动**装的，本来就不该进包。
+          MISSING=""
+          for need in $(ldd out/changji | awk '{print $1}' |
+                        grep -E '^lib(cu|nv)' | grep -v '^libcuda\.so'); do
+            [ -f "stage/$need" ] || MISSING="$MISSING $need"
+          done
+          if [ -n "$MISSING" ]; then
+            echo "**包里缺:$MISSING**"
+            echo "ldd 说这个二进制起来就要它们，而 stage 里没有——解开跑起来是"
+            echo "「error while loading shared libraries」，看不出和打包有关系。"
+            exit 1
+          fi
           ls -lh stage/
           tar -czf "dist/changji-${{ matrix.target }}.tar.gz" -C stage .
           ls -lh dist/
@@ -870,13 +887,81 @@ jobs:
           Copy-Item out/changji.exe stage/
           Copy-Item changji/README.md stage/
           if ("${{ matrix.gpu }}" -eq "cuda") {
+            # **DLL 不在 `bin\` 里，在 `bin\x64\` 里。**
+            #
+            # CUDA 13 在 Windows 上把运行时 DLL 挪进了 `bin\x64\`
+            #（NVIDIA 自己的 redist 包里就是这个路径：
+            # `libcublas-windows-x86_64-13.4.1.3-archive/bin/x64/cublas64_13.dll`），
+            # 而 nvcc.exe 这类**可执行文件还留在 `bin\`**——所以上面那个
+            # 「验一下 `bin\nvcc.exe` 在不在」照样过，看不出有问题。
+            #
+            # 这一步原来写死的是 `"$env:CUDA_PATH\bin"`，于是一个都没拷到。
+            # **而 Get-ChildItem 匹配不上是不报错的**：这一格绿着跑完，zip 照发，
+            # 里面只有 changji.exe 和 README.md。2026-09-17 run #103 发出去的
+            # changji-windows-x64-cuda.zip 就是这么来的——97 MB、两个文件，
+            # 用户解开双击弹的是「找不到 cublas64_13.dll」，一个字都没提 CUDA，
+            # 而 Actions 上从头到尾一片绿。
+            #
+            # 所以改成**整个 toolkit 底下递归找**（`bin\` 和 `bin\x64\` 哪边都行，
+            # 下次再挪也不用改这儿），并且**找不到就当场红**。
+            $missing = @()
             foreach ($pat in @("cudart64_*.dll","cublas64_*.dll","cublasLt64_*.dll")) {
-              Get-ChildItem "$env:CUDA_PATH\bin" -Filter $pat |
-                ForEach-Object { Copy-Item $_.FullName stage/; Write-Host "带上 $($_.Name)" }
+              $hit = Get-ChildItem $env:CUDA_PATH -Recurse -File -Filter $pat `
+                       -ErrorAction SilentlyContinue | Select-Object -First 1
+              if (-not $hit) { $missing += $pat; continue }
+              Copy-Item $hit.FullName stage/
+              Write-Host "带上 $($hit.FullName)"
+            }
+            if ($missing.Count) {
+              throw "这些 CUDA 运行时 DLL 在 $env:CUDA_PATH 底下没找到：" +
+                    ($missing -join ", ") + "。目录结构或者组件名又变了——" +
+                    "不能就这么打包，发出去是个双击什么都不发生的包。"
+            }
+
+            # **别只信「我拷了三个文件」，按 exe 真正要的那份清单对一遍。**
+            #
+            # Linux 那边这道关是 `ldd`：它说缺什么就带什么，带完还能再看一眼。
+            # Windows 上没有 ldd，但 exe 要加载哪些 DLL 是以**明文**躺在文件里的
+            # （扫法和上面数 ggml_cuda_ 那段一样，分块读，别整个进内存）。
+            # 驱动带的那两个（nvcuda.dll / nvml.dll）本来就不该进包，它们名字里
+            # 没有「64_版本号」，下面这条正则自然把它们挡在外面。
+            #
+            # 上面那个 throw 管的是「toolkit 里找不到」，这一条管的是另一半：
+            # **exe 要的和包里有的对不上**——比如哪天又多依赖一个 nvrtc64_*.dll。
+            $want = @{}
+            $fs = [IO.File]::OpenRead((Resolve-Path stage/changji.exe))
+            $size = 16MB
+            $buf = New-Object byte[] $size
+            $carry = ''
+            while (($read = $fs.Read($buf, 0, $size)) -gt 0) {
+              $s = $carry + [Text.Encoding]::Latin1.GetString($buf, 0, $read)
+              foreach ($m in [regex]::Matches($s, '(?i)(cu|nv)[a-z0-9_]*64_[0-9_]+\.dll')) {
+                # 键小写只为了比对不分大小写（Windows 的文件名本来就不分），
+                # 值留原样——报错里要出现的是 DLL 真正的名字，用户拿着它去找文件。
+                $want[$m.Value.ToLower()] = $m.Value
+              }
+              # 名字最长也就三十来个字符，留 64 个足够接住跨块断开的那一个。
+              $carry = $s.Substring([Math]::Max(0, $s.Length - 64))
+            }
+            $fs.Close()
+            Write-Host "exe 要这些 DLL：$(($want.Values | Sort-Object) -join ', ')"
+            $have = @(Get-ChildItem stage -Filter *.dll | ForEach-Object { $_.Name.ToLower() })
+            $lack = @($want.Keys | Where-Object { $have -notcontains $_ } |
+                      ForEach-Object { $want[$_] } | Sort-Object)
+            if ($lack.Count) {
+              throw "包里缺 " + ($lack -join ", ") +
+                    "——exe 一启动就要这几个，用户解开双击会弹「找不到 …dll」。"
             }
           }
           Get-ChildItem stage | Format-Table Name, Length
-          Compress-Archive -Path stage/* -DestinationPath "dist/changji-${{ matrix.target }}.zip"
+          # **不用 Compress-Archive。** 带上 cublasLt 之后 stage 是六百多兆，
+          # 而 Compress-Archive 在这个量级上慢得离谱（它按 PowerShell 对象逐个
+          # 塞）。.NET 这个直接流到盘上，几十秒的事。
+          $src = (Resolve-Path stage).Path
+          $zip = Join-Path (Get-Location).Path "dist/changji-${{ matrix.target }}.zip"
+          [IO.Compression.ZipFile]::CreateFromDirectory(
+            $src, $zip, [IO.Compression.CompressionLevel]::Optimal, $false)
+          Get-ChildItem dist | Format-Table Name, Length
 
       - uses: actions/upload-artifact@v4
         with:
