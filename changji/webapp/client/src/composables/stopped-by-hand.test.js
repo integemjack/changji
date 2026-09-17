@@ -35,23 +35,22 @@ describe('stoppedByHand', () => {
     expect(stoppedByHand('大模型没写出能用的正文：少了 body 这一栏')).toBe(false)
   })
 
-  it('大模型那条路取消时抛的就是这句', () => {
-    // llm/client.cpp: `if (tok.cancelled()) throw LlmError("已取消");`
-    // 它穿过 story_api 的 catch 变成 ApiError(502)，再由 start_async 播成
-    // job_error——写大纲 / 写正文 / 改一段 / 写剧本按「停下」走的都是这条。
-    const src = read('../../../../cpp/src/llm/client.cpp')
-    const said = [...src.matchAll(/LlmError\("([^"]+)"\)/g)].map((m) => m[1])
-    const cancels = said.filter((s) => /取消|停下/.test(s))
-    expect(cancels.length).toBeGreaterThan(0)
-    for (const s of cancels) expect(stoppedByHand(s)).toBe(true)
-  })
-
-  it('出参考图那条路取消时回的也认得', () => {
-    // ref_gen.cpp: `if (tok.cancelled()) throw ApiError(400, "已停下这一张");`
-    const src = read('../../../../cpp/src/http/ref_gen.cpp')
-    const m = src.match(/tok\.cancelled\(\)\)\s*throw ApiError\(400,\s*"([^"]+)"\)/)
-    expect(m).toBeTruthy()
-    expect(stoppedByHand(m[1])).toBe(true)
+  it('引擎那两句话，这边的正则都得认得', () => {
+    // **这一条读的是真的 C++ 源码**，不是把字符串抄一份在用例里——
+    // 抄一份的话引擎改了词这儿照样绿，等于没有告警。
+    //
+    // 2026-09-17 这两条原来分别在 llm/client.cpp 和 http/ref_gen.cpp 上按
+    // 调用点的形状抠字面量（`LlmError("…")` / `ApiError(400, "…")`）。那天
+    // 把两句话收进了 util/cancel_words.hpp（一处定义、五处引用），调用点
+    // 上没有字面量了，这两条当场红——**它们红得对，是这个告警在干活**。
+    // 现在读那个头文件，比按调用点形状抠更稳：改文案只会动那一处。
+    const src = read('../../../../cpp/src/util/cancel_words.hpp')
+    const said = [...src.matchAll(/inline constexpr const char\* k\w+ = "([^"]+)";/g)]
+      .map((m) => m[1])
+    // kStopToken1/2 是这边正则里那两个词，一并读出来，下面按"是不是完整
+    // 句子"分开——两类都得认得。
+    expect(said.length).toBeGreaterThanOrEqual(2)
+    for (const s of said) expect(stoppedByHand(s)).toBe(true)
   })
 })
 

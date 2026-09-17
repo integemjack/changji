@@ -17,6 +17,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include "util/cancel_words.hpp"
 #include "http/ref_gen.hpp"
 #include "infer/sd_image.hpp"
 #include "stages/frames.hpp"
@@ -165,4 +166,26 @@ TEST_CASE("画参考图走首帧那条后端：要基础权重、种子定死、
 
     std::error_code ec;
     fs::remove_all(root, ec);
+}
+
+TEST_CASE("「人按的停」那两句话必须还含着界面认的那两个词") {
+    // **界面靠正则认它**：stopped-by-hand.js 里是 `/已停下|已取消/`，认出来
+    // 才不把它弹成红色报错——「人按的停不是失败」。那边没有别的判据可用
+    // （停是从顶栏那块徽标按的，发请求的是另一个页面里的另一个函数，两边
+    // 碰不着面；取消也可能来自另一个标签页）。
+    //
+    // 这条耦合最坏的性质是**会静默失效**：引擎换个说法，界面一声不响地
+    // 开始把取消显示成报错。所以两句话收成了常量（util/cancel_words.hpp），
+    // 这儿钉住"换词可以，但得还含着那两个词之一"——**第一版这条用例把
+    // 字符串硬编在用例里，改源码根本不会红，是自欺**。
+    //
+    // 真要彻底换：连 stopped-by-hand.js 那个正则一起换，那边的用例也跟着。
+    for (const std::string msg : {std::string(changji::util::kStoppedOne),
+                                  std::string(changji::util::kCancelled)}) {
+        CAPTURE(msg);
+        const bool hit =
+            msg.find(changji::util::kStopToken1) != std::string::npos ||
+            msg.find(changji::util::kStopToken2) != std::string::npos;
+        CHECK_MESSAGE(hit, "界面那条正则认不出这句话了");
+    }
 }

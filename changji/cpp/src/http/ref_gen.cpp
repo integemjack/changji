@@ -18,6 +18,7 @@
 #include "pipeline/jobs.hpp"
 #include "stages/frames.hpp"
 #include "stages/ref_images.hpp"
+#include "util/cancel_words.hpp"
 #include "util/paths.hpp"
 #include "util/text.hpp"
 
@@ -168,7 +169,7 @@ Rendered render_ref(const ProjectStore& store, const std::string& stem,
         // 儿出错了。和大模型那一族一致：取消回 400（见 planning.cpp 里
         // stage_guard 那段，LlmError 的「已取消」也是 400）。
         // 派出去那条路抛的是 runtime_error，进程内是 SdError，都在这儿接。
-        if (tok.cancelled()) throw ApiError(400, "已停下这一张");
+        if (tok.cancelled()) throw ApiError(400, util::kStoppedOne);
         throw ApiError(500, std::string("出图失败：") + e.what());
     }
     const double seconds =

@@ -15,6 +15,7 @@
 #include "llm/schema_validate.hpp"
 #include "llm/sse.hpp"
 #include "stages/prompts.inc.hpp"
+#include "util/cancel_words.hpp"
 #include "util/text.hpp"
 
 using json = nlohmann::json;
@@ -454,7 +455,7 @@ std::string RemoteClient::complete(const Request& req,
     // 没人要逐字、或者没注入流式发送函数，就走整段那条。
     // 基类那个默认实现会把整段回调一次，形状是一样的。
     if (!on_token || !stream_post_) return Client::complete(req, tok, on_token);
-    if (tok.cancelled()) throw LlmError("已取消");
+    if (tok.cancelled()) throw LlmError(util::kCancelled);
 
     config::LLMConfig cfg = cfg_();
     // **按任务分流。** 哪一步用哪个模型由 [llm.models] 定，见
@@ -534,7 +535,7 @@ std::string RemoteClient::complete(const Request& req,
     // run() 里就地解析同一份响应；空响应和错误响应都不会自动再发一次，
     // 避免重复生成和重复计费。
     Attempt a = run();
-    if (a.canceled) throw LlmError("已取消");
+    if (a.canceled) throw LlmError(util::kCancelled);
     if (a.transport_error.has_value()) {
         throw LlmError(connect_failed(cfg, *a.transport_error));
     }
@@ -566,7 +567,7 @@ std::string Client::complete(const Request& req, pipeline::CancelToken& tok,
 
 std::string RemoteClient::complete(const Request& req,
                                    pipeline::CancelToken& tok) {
-    if (tok.cancelled()) throw LlmError("已取消");
+    if (tok.cancelled()) throw LlmError(util::kCancelled);
 
     // 每次取一份当前配置。中途 /api/connections 换了地址的话，
     // 下一次调用就走新地址——这正是那个接口的意义。
@@ -596,7 +597,7 @@ std::string RemoteClient::complete(const Request& req,
     }
 
     if (r.status >= 400) throw LlmError(explain_status(cfg, r.status, r.body));
-    if (tok.cancelled()) throw LlmError("已取消");
+    if (tok.cancelled()) throw LlmError(util::kCancelled);
     if (req.on_thinking) {
         const std::string think = extract_thinking(r.body);
         if (!think.empty()) req.on_thinking(think);
@@ -612,7 +613,7 @@ ReplayClient::ReplayClient(std::vector<std::string> responses)
 
 std::string ReplayClient::complete(const Request& req,
                                    pipeline::CancelToken& tok) {
-    if (tok.cancelled()) throw LlmError("已取消");
+    if (tok.cancelled()) throw LlmError(util::kCancelled);
     calls_.push_back(req);
     if (next_ >= responses_.size()) {
         throw LlmError("回放录到头了：这是第 " + std::to_string(next_ + 1) +
