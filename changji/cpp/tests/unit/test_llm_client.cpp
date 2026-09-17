@@ -385,14 +385,15 @@ TEST_CASE("退回 json_object 时 schema 要写进提示词") {
     CHECK(out.find("\"hook\"") != std::string::npos);
     // 抄的是**原始** schema：这里它是给模型读的文字，minLength 读得懂就有用
     CHECK(out.find("minLength") != std::string::npos);
-    // **换行留着、缩进只留一格。** 这份 schema 是整条提示词里最大的一块
-    // （分镜那份 8529 字符，近一半是缩进空格），而两格没有比一格多说明
-    // 任何事。压成一行才是真的看不出嵌套——所以换行必须在。
+    // **换行留着、缩进的空格不留。** 这份 schema 是整条提示词里最大的一
+    // 块（分镜那份真正发出去的 7438 字符，两千上下是缩进），而缩进一个字
+    // 都不告诉人任何事。压成一行才是真的看不出嵌套——连括号配对都要一个
+    // 一个数——所以换行必须在。2026-09-17 从两格一路降到零格，
+    // 每一步都只动排版，一个约束都没动。
     CHECK(out.find("\n") != std::string::npos);
-    // 顶层那一层：一个空格。**钉顶层**——里层的缩进随深度累加，
-    // 拿它判缩进档位会把"深两层的一格"认成"浅一层的两格"。
-    CHECK(out.find("{\n \"type\"") != std::string::npos);
-    CHECK(out.find("{\n  \"type\"") == std::string::npos);   // 不是两格
+    CHECK(out.find("{\n\"type\"") != std::string::npos);
+    CHECK(out.find("{\n \"type\"") == std::string::npos);    // 不是一格
+    CHECK(out.find("{\n  \"type\"") == std::string::npos);   // 更不是两格
 
     SUBCASE("没有 schema 就原样返回，不要平白多一段废话") {
         CHECK(llm::schema_as_prompt("就这一句", nlohmann::ordered_json()) ==
@@ -996,5 +997,52 @@ TEST_CASE("没人引用的 $defs 不贴给模型看") {
           "$defs": {"A": {"enum": ["x"]}}
         })");
         CHECK(llm::schema_as_prompt("写一句", s3).find("\"A\"") != std::string::npos);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// schema 贴过去那一份：摘掉排版和噪声，一个约束都不许丢
+// ---------------------------------------------------------------------------
+
+TEST_CASE("schema 贴过去：pydantic 的 title 摘掉，叫 title 的字段留着") {
+    // ⚠️ **这两件事只差一层。** `title` 作为**注解**是纯噪声（值就是键名换
+    // 个写法）；而 `properties` 底下那一层的键是**字段名**——剧本那份
+    // schema 里就真有一个叫 title 的字段（一集的标题）。递归摘的话会把它
+    // 整个删掉，模型于是再也不填标题，而且一声不响。
+    const nlohmann::ordered_json schema = {
+        {"type", "object"},
+        {"title", "Episode"},            // 注解：该摘
+        {"properties",
+         {{"title",                       // 字段名：该留
+           {{"type", "string"}, {"title", "Title"}, {"description", "这一集叫什么"}}},
+          {"shot_id", {{"type", "string"}, {"title", "Shot Id"}}}}},
+        {"required", {"title", "shot_id"}},
+    };
+    const std::string sent = llm::schema_as_prompt("提示词", schema);
+
+    CHECK(sent.find("\"Episode\"") == std::string::npos);
+    CHECK(sent.find("\"Shot Id\"") == std::string::npos);
+    CHECK(sent.find("\"Title\"") == std::string::npos);
+    // 字段本身、它的约束和描述一条不少
+    CHECK(sent.find("\"title\"") != std::string::npos);
+    CHECK(sent.find("这一集叫什么") != std::string::npos);
+    CHECK(sent.find("\"required\"") != std::string::npos);
+}
+
+TEST_CASE("schema 贴过去：换行留着，缩进的空格不留") {
+    // 换行要留：压成一行之后连括号配对都要一个一个数。而缩进的空格一个字
+    // 都不告诉人任何事，它却是整条提示词里最大的一块里最没用的那一层。
+    const nlohmann::ordered_json schema = {
+        {"type", "object"},
+        {"properties", {{"a", {{"type", "string"}}}}},
+    };
+    const std::string sent = llm::schema_as_prompt("提示词", schema);
+    CHECK(sent.find('\n') != std::string::npos);
+    // 行首不许有空格
+    std::size_t at = 0;
+    while ((at = sent.find('\n', at)) != std::string::npos) {
+        ++at;
+        const bool flush = at >= sent.size() || sent[at] != ' ';
+        CHECK_MESSAGE(flush, "行首还有缩进");
     }
 }

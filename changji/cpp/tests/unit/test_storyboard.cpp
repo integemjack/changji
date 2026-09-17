@@ -24,6 +24,7 @@
 #include "stages/limits.hpp"
 // frames_for：帧数的格子跟着模型走
 #include "stages/render.hpp"
+#include "llm/client.hpp"
 #include "stages/storyboard.hpp"
 
 using namespace changji;
@@ -1478,4 +1479,41 @@ TEST_CASE("排分镜时就把进画出画摘掉，不等崩了再补救") {
     CHECK(shots[0].motion_prompt.find("镜头轻微向右平移") != std::string::npos);
     // 干净的一个字不动
     CHECK(shots[1].motion_prompt == "[0-3秒] 雨点砸在窗上，越来越密");
+}
+
+TEST_CASE("分镜那份 schema 贴过去有多大——这是整条提示词里最大的一块") {
+    // **量了再动手**（CLAUDE.md 第三条）。说"提示词臃肿"的时候，臃肿几乎
+    // 总是长在没人看的地方：这份 schema 贴过去比同一条提示词里那张硬性
+    // 要求表大将近十倍，而 2026-09-17 之前它有一半是缩进空格和 pydantic
+    // 自动生成的 title。
+    //
+    // 这条用例**不是在钉一个魔数**，是一道预算线：schema 一旦悄悄涨回去
+    // （加字段、加 $defs、又把 title 带进来），这儿会先红。真要涨，改这个
+    // 数并在提交信息里说清楚多出来的是什么。
+    models::AssetLibrary assets;
+    for (int i = 0; i < 5; ++i) {
+        models::Character c;
+        c.char_id = "c_" + std::to_string(i);
+        c.name = "角色" + std::to_string(i);
+        assets.characters[c.char_id] = c;
+    }
+    for (int i = 0; i < 7; ++i) {
+        models::Location l;
+        l.location_id = "loc_" + std::to_string(i);
+        l.name = "地方" + std::to_string(i);
+        assets.locations[l.location_id] = l;
+    }
+    const auto schema = stages::llm_shot_schema(assets, {});
+    const std::size_t sent = changji::llm::schema_as_prompt("", schema).size();
+    INFO("分镜 schema 贴过去 " << sent << " 字符");
+    // 2026-09-17 实测 5500 上下（缩进两格那一版是 9300 上下）。
+    CHECK(sent < 6200);
+    // 顺手钉住那两样已经摘掉的，别哪天又带回来。
+    const std::string text = changji::llm::schema_as_prompt("", schema);
+    CHECK(text.find("\"title\"") == std::string::npos);
+    CHECK(text.find("\n ") == std::string::npos);
+    // 约束一条都不许丢。
+    CHECK(text.find("enum") != std::string::npos);
+    CHECK(text.find("required") != std::string::npos);
+    CHECK(text.find("description") != std::string::npos);
 }

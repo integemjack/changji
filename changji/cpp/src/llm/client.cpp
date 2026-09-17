@@ -120,6 +120,49 @@ std::string checked_output(const Request& req, std::string out) {
 
 namespace {
 
+/// 把 pydantic 自动生成的 `title` 摘掉。
+///
+/// **它是纯噪声。** 那一栏的值就是键名换个写法——`shot_id` 配
+/// 「"title": "Shot Id"」、`visual_desc` 配「"title": "Visual Desc"」，
+/// 模型从键名已经知道的东西再说一遍。2026-09-17 量的：分镜那份里 17 个，
+/// 369 字符；这份 schema 是整条提示词里最大的一块。
+///
+/// 仓库里**没有一个手写的 title 注解**（`{"title", …}` 在各阶段的
+/// 构造里一次都没出现），所以摘掉不会丢掉谁写的话。
+///
+/// ⚠️ **`properties` 底下那一层的键是字段名，不是关键字。** 剧本那份
+/// schema 里就真有一个叫 `title` 的字段（`props["title"]`，一集的标题）。
+/// 不分这一层的话，递归摘 title 会把那个字段整个删掉——模型于是再也不
+/// 会填标题，而且一声不响。`required` 数组里的 "title" 是值不是键，
+/// 下面数组那一支原样留着。
+///
+/// 只摘文字这一份，校验那边拿到的还是原样。
+ordered strip_titles(const ordered& node) {
+    if (node.is_array()) {
+        ordered out = ordered::array();
+        for (const auto& v : node) out.push_back(strip_titles(v));
+        return out;
+    }
+    if (!node.is_object()) return node;
+    ordered out = ordered::object();
+    for (auto it = node.begin(); it != node.end(); ++it) {
+        const std::string& k = it.key();
+        if (k == "title" && it.value().is_string()) continue;
+        // 这几个底下一层是名字，原样留着，只往各自的值里走。
+        if (k == "properties" || k == "$defs" || k == "definitions" ||
+            k == "patternProperties") {
+            ordered kids = ordered::object();
+            for (auto c = it.value().begin(); c != it.value().end(); ++c) {
+                kids[c.key()] = strip_titles(c.value());
+            }
+            out[k] = std::move(kids);
+            continue;
+        }
+        out[k] = strip_titles(it.value());
+    }
+    return out;
+}
+
 /// 把没人 $ref 的 $defs 摘掉。
 ///
 /// **这些定义是随模型的 JSON Schema 整份带进来的**，而各阶段只挑用得上的
@@ -192,21 +235,26 @@ ordered prune_unused_defs(const ordered& schema) {
 
 std::string schema_as_prompt(const std::string& prompt, const ordered& schema) {
     if (schema.is_null() || schema.empty()) return prompt;
-    // **缩进一格**：这份东西是给模型读的，分镜那份有几十个字段，压成一行
-    // 之后连人都看不出哪个字段套在哪个里面——所以换行要留。但两格没有比
-    // 一格多告诉任何人任何事，而它是这份提示词里最大的一块：
+    // **换行留着，缩进的空格不留。**
     //
-    //   分镜那份 schema（2026-09-17 量的）
-    //     压成一行   4568 字符
-    //     缩进 1     6818 字符（空白 2282，33%）
-    //     缩进 2     8529 字符（空白 3993，46%）  ← 原来这样
+    // 这份东西是给模型读的，分镜那份有几十个字段；压成一行之后连括号配对
+    // 都要一个一个数，所以换行要留。但**缩进的空格一个字都不告诉人任何
+    // 事**——它是这份提示词里最大的一块里最没用的那一层：
+    //
+    //   分镜那份 schema，真正发出去的（剪过没人引用的 $defs）
+    //     缩进 2   ~9300 字符                      ← 2026-09-17 之前
+    //     缩进 1    7438 字符（空白 2000 上下）    ← 上一版
+    //     缩进 0    5600 上下（只剩换行）          ← 现在
+    //     压成一行  5000 上下
     //
     // 同一份提示词里那张硬性要求表才 859 字符。**真正臃肿的是 schema，
-    // 而且近一半是缩进空格。** 降到一格省 1711 字符，嵌套照样看得出来；
-    // 每一个带 schema 的阶段都省这一份（2026-09-14 起 schema 只有这一种
-    // 发法，见下面 build_payload）。
+    // 而且一大半是排版。** 每一个带 schema 的阶段都省这一份（2026-09-14
+    // 起 schema 只有这一种发法，见下面 build_payload）。
+    //
+    // 一个约束都没动：摘掉的是缩进和 pydantic 自动生成的 title，
+    // enum / required / minItems / description 一条不少。
     return prompt + stages::prompt::llm::kSchemaSuffix +
-           prune_unused_defs(schema).dump(1);
+           strip_titles(prune_unused_defs(schema)).dump(0);
 }
 
 ordered build_payload(const config::LLMConfig& cfg, const Request& req) {
