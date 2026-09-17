@@ -382,6 +382,12 @@ std::vector<RenderOutcome> render_batch(std::vector<Shot*>& shots,
                     // JobProgress::report 自己有锁。
                     const auto on_step = [&](int step, int steps, double,
                                              infer::Phase phase) {
+                        // 任务页面那条进度条要的是这两个数。**只画采样那一
+                        // 段**：读权重和解码不是一个量级（几百个张量 vs 几步），
+                        // 画在同一条上会像"跑到头又倒回去了"。
+                        if (phase == infer::Phase::Sample) {
+                            task.set_progress(step, steps);
+                        }
                         // 三种阶段的文案在 infer::phase_note 里，和 frames.cpp
                         // 共用。第一个采样步上把"卸没卸大模型"带出来，那是
                         // 用户点完出片最想知道的一件事，而它以前只在设置页上。

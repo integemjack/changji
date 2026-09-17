@@ -4,10 +4,9 @@
  *
  * 用户 2026-09-17：「增加任务页面显示正在做的（已经用时，结束图标按钮）、
  * 排队中的（预计什么时候开始，取消图标按钮）、已经做完的（耗时），如果是
- * 大模型有思考的还得显示思考点击展开思考内容」。
+ * 大模型有思考的还得显示思考点击展开思考内容」，随后「任务页面也要显示实际
+ * 进度」「完善任务页面内容显示和美化 ui」。
  *
- * 在这之前，"引擎在忙什么"只有顶栏那一行小字（JobBadge），而它回答不了
- * 另外三件事：排着还没开始的、这一件已经跑了多久、刚才那件花了多少时间。
  * 账在引擎那头（`cpp/src/pipeline/task_board.hpp`），这一页只是画它。
  *
  * **不自己记账。** 页面不维护任何"我以为在跑的那几件"——那正是出图那一版
@@ -29,40 +28,56 @@ const board = ref({ running: [], queued: [], done: [] })
 const opened = ref({})
 /** 只看这一部剧的。**默认只看**：一台机器上常常开着好几部。 */
 const mineOnly = ref(true)
+/** 第一拍还没回来。空表和"真的没活"要分开说。 */
+const loaded = ref(false)
 
 let timer = null
 
 /**
- * 这一族活叫什么。和顶栏 JobBadge 里那张表是同一套说法——**同一件事在两处
- * 用两个词**是这个仓库栽过好几次的坑（CLAUDE.md 第七条）。
+ * 这一族活叫什么、用哪个图标。
+ *
+ * 和顶栏那块牌子（JobBadge 的 KIND）是同一套说法——**同一件事在两处用两个
+ * 词**是这个仓库栽过好几次的坑（CLAUDE.md 第七条）。
  */
 const KIND = {
-  run: '出片',
-  write: '批量',
-  write_one: '写这一章',
-  revise: '改稿',
-  outline: '出大纲',
-  analyze: '读故事',
-  image: '出图',
-  video: '出片',
-  tts: '配音',
-  llm: '写文',
-  say: '朗读',
-  premise: '想梗概',
-  script: '写剧本',
-  trailer: '剪预告',
-  bible: '定角色场景',
-  plan: '拆镜头',
+  run: { label: '出片', icon: 'film' },
+  write: { label: '批量', icon: 'sparkle' },
+  write_one: { label: '写这一章', icon: 'sparkle' },
+  revise: { label: '改稿', icon: 'sparkle' },
+  outline: { label: '出大纲', icon: 'sparkle' },
+  analyze: { label: '读故事', icon: 'sparkle' },
+  image: { label: '出图', icon: 'image' },
+  video: { label: '出片', icon: 'film' },
+  tts: { label: '配音', icon: 'play' },
+  llm: { label: '写文', icon: 'sparkle' },
+  say: { label: '朗读', icon: 'play' },
+  premise: { label: '想梗概', icon: 'sparkle' },
+  script: { label: '写剧本', icon: 'script' },
+  trailer: { label: '剪预告', icon: 'film' },
+  bible: { label: '定角色场景', icon: 'user' },
+  plan: { label: '拆镜头', icon: 'board' },
 }
+const kindOf = (k) => KIND[k] ?? { label: k, icon: 'sparkle' }
 
 /** 秒数写成人看的。**一分钟以内只报秒**：「0:47」读起来比「47 秒」慢。 */
 function dur(s) {
   const n = Math.max(0, Math.round(Number(s) || 0))
   if (n < 60) return n + ' 秒'
   const m = Math.floor(n / 60)
-  const r = n % 60
-  if (m < 60) return `${m} 分 ${r} 秒`
+  if (m < 60) return `${m} 分 ${n % 60} 秒`
   return `${Math.floor(m / 60)} 小时 ${m % 60} 分`
+}
+
+/**
+ * 这一件画到百分之几。没有步数就回 null，界面画一条来回跑的条。
+ *
+ * **一格的不算进度。** 出片那条总任务报的是「第几集 / 一共几集」，一次只
+ * 跑一集时就是 0/1——画出来是一条 0% 的条加一句「0% 0/1」，它既不说明在
+ * 干什么也不说明还有多久，而这一行真正有用的是下面那句引擎现说的话。
+ */
+function pct(r) {
+  if (!r.total || r.total <= 1) return null
+  return Math.min(100, Math.round((r.current / r.total) * 100))
 }
 
 /**
@@ -70,15 +85,31 @@ function dur(s) {
  *
  * **不报一个准点，报一个量级。** 前面排着几件、每件大概多久，两样都是估
  * 的；报「大约 3 分钟后」会被当成承诺，而它取决于对面机器忙不忙。所以只在
- * 引擎给得出 `eta`（同一种活最近几次的中位耗时）时才说一句。
+ * 引擎给得出 `eta`（同一族活最近几次的中位耗时）时才说一句。
  */
 function waitHint(row, index) {
   if (!row.eta) return ''
-  const running = board.value.running.length || 1
-  const ahead = Math.floor(index / running)
+  const lanes = board.value.running.length || 1
+  const ahead = Math.floor(index / lanes)
   if (ahead <= 0) return '马上轮到'
   return `大约还要等 ${dur(row.eta * ahead)}`
 }
+
+/** 做完的那几行：一句话说清是什么下场。 */
+const STATE = {
+  done: { label: '', cls: '' },
+  failed: { label: '失败', cls: 'is-failed' },
+  cancelled: { label: '停下了', cls: 'is-cancelled' },
+}
+
+/** 这一轮做完的活加起来花了多久、有几件没成。给"做完的"那个小结用。 */
+const doneSummary = computed(() => {
+  const rows = board.value.done
+  const secs = rows.reduce((a, r) => a + (Number(r.seconds) || 0), 0)
+  const bad = rows.filter((r) => r.state === 'failed').length
+  const stopped = rows.filter((r) => r.state === 'cancelled').length
+  return { secs, bad, stopped }
+})
 
 async function load() {
   try {
@@ -88,6 +119,7 @@ async function load() {
       queued: d?.queued ?? [],
       done: d?.done ?? [],
     }
+    loaded.value = true
     // 已经展开的那几件，思考还在长——跟着刷。**只刷展开的那几件**：
     // 一份思考几千字，全刷等于每两秒把整本账拖一遍。
     for (const id of Object.keys(opened.value)) await loadThinking(id, true)
@@ -118,8 +150,7 @@ function toggleThinking(row) {
 async function stop(row) {
   try {
     await api.cancelTask(row.id)
-    // 不等下一拍：按下去要当场有反应。
-    await load()
+    await load()   // 不等下一拍：按下去要当场有反应
   } catch (e) {
     ui.error(e?.message || String(e))
   }
@@ -133,10 +164,13 @@ const busy = computed(() => board.value.running.length + board.value.queued.leng
  */
 function tick() {
   clearTimeout(timer)
-  timer = setTimeout(async () => {
-    await load()
-    tick()
-  }, busy.value ? 1500 : 5000)
+  timer = setTimeout(
+    async () => {
+      await load()
+      tick()
+    },
+    busy.value ? 1500 : 5000,
+  )
 }
 
 onMounted(async () => {
@@ -150,6 +184,13 @@ onUnmounted(() => clearTimeout(timer))
   <div class="page tasks">
     <header class="tasks__head">
       <h1 class="h2">任务</h1>
+      <!-- 一眼看完的三个数。**摆在标题旁边**：底下三节各自还会重复一次，
+           但人进这一页最先问的是"还有多少没干完"。 -->
+      <span v-if="busy" class="tasks__sum tiny">
+        <b>{{ board.running.length }}</b> 件在跑<template v-if="board.queued.length">
+          · <b>{{ board.queued.length }}</b> 件排着</template>
+      </span>
+      <span v-else-if="loaded" class="tasks__sum tiny dim">闲着</span>
       <span class="spacer" />
       <label class="switch tiny" title="只看当前这一部剧的活">
         <input v-model="mineOnly" type="checkbox" @change="load" />
@@ -157,23 +198,42 @@ onUnmounted(() => clearTimeout(timer))
       </label>
     </header>
 
-    <!-- 正在做的 -->
-    <section class="card">
-      <h2 class="h3">
-        正在做
-        <span class="tiny dim">{{ board.running.length }}</span>
+    <!-- ── 正在做 ── -->
+    <section class="card tasks__sec">
+      <h2 class="tasks__h">
+        <span class="dot dot--live" />正在做
+        <span class="tiny dim numeric">{{ board.running.length }}</span>
       </h2>
-      <p v-if="!board.running.length" class="tiny dim">这会儿没有活在跑。</p>
+      <p v-if="!board.running.length" class="tiny dim tasks__empty">
+        {{ loaded ? '这会儿没有活在跑。' : '正在问引擎…' }}
+      </p>
       <ul v-else class="rows">
-        <li v-for="r in board.running" :key="r.id" class="row">
-          <span class="pill pill--neutral tiny nowrap">{{ KIND[r.kind] ?? r.kind }}</span>
-          <span class="row__title truncate" :title="r.title">{{ r.title }}</span>
-          <!-- 采样那条进度。没有步数的时候（读权重、等对面机器）不画，
-               免得一条不动的条看着像卡死。 -->
-          <span v-if="r.total > 0" class="tiny dim numeric nowrap">
-            {{ r.current }}/{{ r.total }}
+        <li v-for="r in board.running" :key="r.id" class="row row--live">
+          <!-- 进度铺成整行的底色，和镜头墙一个规矩：既不占地方，也比一条
+               细线看得清。**没有步数时画一条来回跑的**——读权重、等对面
+               机器那十几秒一次回调都没有，画一条停在 0 的条像卡死了。 -->
+          <span
+            class="row__fill"
+            :class="{ 'row__fill--idle': pct(r) === null }"
+            :style="pct(r) !== null ? { width: pct(r) + '%' } : null"
+          />
+          <span class="chip tiny nowrap">
+            <AppIcon :name="kindOf(r.kind).icon" :size="12" />
+            {{ kindOf(r.kind).label }}
           </span>
-          <span class="tiny dim numeric nowrap">已经 {{ dur(r.seconds) }}</span>
+          <span class="row__main">
+            <span class="row__title truncate" :title="r.title">{{ r.title }}</span>
+            <!-- 引擎现说的那句（「正在写 ch03（厂长的回执）」）。长跑那条
+                 的名字是固定的，真正在干哪一步只有这一句说得出。 -->
+            <span v-if="r.note" class="row__note tiny dim truncate" :title="r.note">
+              {{ r.note }}
+            </span>
+          </span>
+          <span v-if="pct(r) !== null" class="tiny numeric nowrap row__pct">
+            {{ pct(r) }}%
+            <span class="dim">{{ r.current }}/{{ r.total }}</span>
+          </span>
+          <span class="tiny dim numeric nowrap">{{ dur(r.seconds) }}</span>
           <button
             v-if="r.thinking"
             class="btn btn--sm btn--ghost"
@@ -200,17 +260,22 @@ onUnmounted(() => clearTimeout(timer))
       </ul>
     </section>
 
-    <!-- 排队中的 -->
-    <section class="card">
-      <h2 class="h3">
-        排队中
-        <span class="tiny dim">{{ board.queued.length }}</span>
+    <!-- ── 排队中 ── -->
+    <section v-if="board.queued.length || busy" class="card tasks__sec">
+      <h2 class="tasks__h">
+        <span class="dot dot--wait" />排队中
+        <span class="tiny dim numeric">{{ board.queued.length }}</span>
       </h2>
-      <p v-if="!board.queued.length" class="tiny dim">没有排着的。</p>
+      <p v-if="!board.queued.length" class="tiny dim tasks__empty">没有排着的。</p>
       <ul v-else class="rows">
         <li v-for="(r, i) in board.queued" :key="r.id" class="row">
-          <span class="pill pill--neutral tiny nowrap">{{ KIND[r.kind] ?? r.kind }}</span>
-          <span class="row__title truncate" :title="r.title">{{ r.title }}</span>
+          <span class="chip tiny nowrap">
+            <AppIcon :name="kindOf(r.kind).icon" :size="12" />
+            {{ kindOf(r.kind).label }}
+          </span>
+          <span class="row__main">
+            <span class="row__title truncate" :title="r.title">{{ r.title }}</span>
+          </span>
           <span class="tiny dim nowrap">{{ waitHint(r, i) }}</span>
           <span v-if="r.waited > 5" class="tiny dim numeric nowrap">
             排了 {{ dur(r.waited) }}
@@ -232,22 +297,41 @@ onUnmounted(() => clearTimeout(timer))
       </ul>
     </section>
 
-    <!-- 做完的 -->
-    <section class="card">
-      <h2 class="h3">
-        做完的
-        <span class="tiny dim">{{ board.done.length }}</span>
+    <!-- ── 做完的 ── -->
+    <section class="card tasks__sec">
+      <h2 class="tasks__h">
+        <span class="dot" />做完的
+        <span class="tiny dim numeric">{{ board.done.length }}</span>
+        <span v-if="board.done.length" class="tiny dim">
+          · 一共 {{ dur(doneSummary.secs) }}<template v-if="doneSummary.bad">
+            · {{ doneSummary.bad }} 件失败</template
+          ><template v-if="doneSummary.stopped">
+            · {{ doneSummary.stopped }} 件停下</template
+          >
+        </span>
       </h2>
-      <p v-if="!board.done.length" class="tiny dim">还没有干完的活。</p>
+      <p v-if="!board.done.length" class="tiny dim tasks__empty">还没有干完的活。</p>
       <ul v-else class="rows">
-        <li v-for="r in board.done" :key="r.id" class="row">
-          <span class="pill pill--neutral tiny nowrap">{{ KIND[r.kind] ?? r.kind }}</span>
-          <span class="row__title truncate" :title="r.title">{{ r.title }}</span>
-          <!-- **停和砸分两种说法。** 「人按的停不是失败」，报成红的会让人
-               去找哪儿出错了——引擎那头也是这么分的（TaskState）。 -->
-          <span v-if="r.state === 'failed'" class="pill pill--warn tiny nowrap">失败</span>
-          <span v-else-if="r.state === 'cancelled'" class="pill pill--neutral tiny nowrap">
-            停下了
+        <li
+          v-for="r in board.done"
+          :key="r.id"
+          class="row"
+          :class="STATE[r.state]?.cls"
+        >
+          <span class="chip tiny nowrap">
+            <AppIcon :name="kindOf(r.kind).icon" :size="12" />
+            {{ kindOf(r.kind).label }}
+          </span>
+          <span class="row__main">
+            <span class="row__title truncate" :title="r.title">{{ r.title }}</span>
+            <!-- **停和砸分两种说法。** 「人按的停不是失败」，报成红的会让
+                 人去找哪儿出错了——引擎那头也是这么分的（TaskState）。 -->
+            <span v-if="r.error" class="row__note tiny truncate" :title="r.error">
+              {{ r.error }}
+            </span>
+          </span>
+          <span v-if="STATE[r.state]?.label" class="pill tiny nowrap">
+            {{ STATE[r.state].label }}
           </span>
           <span class="tiny dim numeric nowrap">{{ dur(r.seconds) }}</span>
           <button
@@ -259,7 +343,6 @@ onUnmounted(() => clearTimeout(timer))
           >
             思考
           </button>
-          <span v-if="r.error" class="tiny warn truncate" :title="r.error">{{ r.error }}</span>
           <pre v-if="opened[r.id] !== undefined" class="think">{{
             opened[r.id] || '没有留下思考'
           }}</pre>
@@ -272,41 +355,160 @@ onUnmounted(() => clearTimeout(timer))
 <style scoped>
 .tasks__head {
   display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 12px;
+  align-items: baseline;
+  gap: var(--s3);
+  margin-bottom: var(--s3);
 }
+.tasks__sum b {
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+}
+.tasks__sec + .tasks__sec {
+  margin-top: var(--s3);
+}
+.tasks__h {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  margin: 0 0 var(--s2);
+  font-size: var(--fs-md);
+  font-weight: 600;
+}
+.tasks__empty {
+  margin: 0;
+}
+/* 三节各一个小圆点：在跑的会呼吸，排着的是空心，做完的是灰实心。
+   标题文字都是一样的字号字重，**颜色和形状才是区分**——三行大标题
+   堆在一起时，人先看到的是左边那一列点。 */
+.dot {
+  width: 7px;
+  height: 7px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--text-3, var(--text-2));
+}
+.dot--live {
+  background: var(--accent);
+  animation: taskpulse 1.6s ease-in-out infinite;
+}
+.dot--wait {
+  background: transparent;
+  border: 1.5px solid var(--text-2);
+}
+@keyframes taskpulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.25;
+  }
+}
+/* 动画对"减少动态效果"那档系统设置要让步。 */
+@media (prefers-reduced-motion: reduce) {
+  .dot--live,
+  .row__fill--idle {
+    animation: none;
+  }
+}
+
 .rows {
   list-style: none;
   margin: 0;
   padding: 0;
 }
 .row {
+  position: relative;
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 6px 0;
-  border-top: 1px solid var(--line);
+  gap: var(--s2);
+  padding: 7px var(--s2);
+  border-radius: var(--r-sm);
   /* 思考展开之后要换行铺满，所以这一行是可换行的 flex。 */
   flex-wrap: wrap;
 }
-.row:first-child {
-  border-top: 0;
+.row + .row {
+  border-top: 1px solid var(--line);
 }
-.row__title {
-  flex: 1 1 200px;
+.row:hover {
+  background: var(--bg-2);
+}
+.row--live {
+  /* 底色那条要压在内容底下，所以这一行自己开一个层叠上下文 */
+  isolation: isolate;
+}
+.row__fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  z-index: -1;
+  border-radius: var(--r-sm);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  transition: width 0.4s ease;
+}
+.row__fill--idle {
+  width: 100%;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    color-mix(in srgb, var(--accent) 10%, transparent),
+    transparent
+  );
+  background-size: 40% 100%;
+  background-repeat: no-repeat;
+  animation: taskslide 1.4s linear infinite;
+}
+@keyframes taskslide {
+  from {
+    background-position: -40% 0;
+  }
+  to {
+    background-position: 140% 0;
+  }
+}
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  flex: none;
+  width: 84px;
+  padding: 1px 6px;
+  border-radius: var(--r-sm);
+  background: var(--surface-2);
+  color: var(--text-2);
+}
+/* **类别那一格宽度钉死**：十几行堆在一起时，名字左边缘对齐比省几像素
+   重要得多——不对齐的话每一行都要重新找从哪儿开始读。 */
+.row__main {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 220px;
   min-width: 0;
+  line-height: 1.35;
+}
+.row__note {
+  color: var(--text-2);
+}
+.row__pct {
+  color: var(--accent);
+}
+.is-failed .row__note {
+  color: var(--warn, var(--text-2));
+}
+.is-failed .row__title,
+.is-cancelled .row__title {
+  color: var(--text-2);
 }
 .think {
   flex: 1 0 100%;
   max-height: 40vh;
   overflow: auto;
-  margin: 4px 0 8px;
-  padding: 8px;
+  margin: var(--s2) 0 var(--s1);
+  padding: var(--s2);
   border-radius: var(--r-sm);
   background: var(--bg-2);
   color: var(--text-2);
   font-size: var(--fs-xs);
+  line-height: 1.6;
   /* 思考是一大段没有换行的字，不裹住的话整页会被它撑宽。 */
   white-space: pre-wrap;
   word-break: break-word;

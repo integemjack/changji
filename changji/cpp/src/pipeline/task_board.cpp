@@ -253,6 +253,24 @@ std::string task_thinking(std::uint64_t id) {
     return {};
 }
 
+namespace {
+template <class F>
+void mutate_by_id(std::uint64_t id, F&& fn) {
+    Board& b = board();
+    std::lock_guard lg(b.mu);
+    auto it = b.live.find(id);
+    if (it != b.live.end()) fn(*it->second);
+}
+}  // namespace
+
+void set_task_progress(std::uint64_t id, int current, int total) {
+    mutate_by_id(id, [&](Row& r) { r.current = current; r.total = total; });
+}
+
+void set_task_note(std::uint64_t id, std::string note) {
+    mutate_by_id(id, [&](Row& r) { r.note = std::move(note); });
+}
+
 bool cancel_task(std::uint64_t id) {
     Board& b = board();
     std::lock_guard lg(b.mu);

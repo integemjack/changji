@@ -332,6 +332,9 @@ private:
         JobState state;
         CancelToken token;
         std::thread worker;
+    /// 这一轮在账本上那一行的 id。**进度和那句现说的话要同步过去**，
+    /// 页面上那条进度条画的就是它。0 = 还没起或者已经结完账。
+    std::uint64_t task_id = 0;
         /// 线程是否还在跑。
         ///
         /// 跟 state.running 不是一回事：手动停止后 running 立刻变 false

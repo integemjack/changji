@@ -112,6 +112,14 @@ private:
     std::uint64_t id_ = 0;
 };
 
+/// 按 id 改进度 / 改那句现说的话。
+///
+/// **给长跑任务那条用的。** 它的进度在 `JobTable` 那张表里（第几镜、第几
+/// 章），而账本这份要拿来画进度条；两处各记一份必然只改一边，所以由任务表
+/// 每次改完顺手同步过来。找不到（已经结完账）就什么都不做。
+void set_task_progress(std::uint64_t id, int current, int total);
+void set_task_note(std::uint64_t id, std::string note);
+
 /// 页面上按了「取消」/「结束」。找不到（已经结完账了）就回 false。
 ///
 /// **排队中的直接从队里划掉，正在做的把令牌立起来**——两种都叫"取消"，

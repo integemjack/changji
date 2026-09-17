@@ -137,6 +137,10 @@ bool JobTable::start(JobKind kind, const std::string& episode_id, Body body,
         // 顶栏那块牌子把任务表和短活接成一个列表，这一件两边都在——
         // 打个记号，短活那一份跳过它，别数两遍。
         act.task().mark_long_job();
+        {
+            std::lock_guard lg(mu_);
+            slot(kind).task_id = act.task().id();
+        }
         JobProgress progress(this, kind);
         try {
             body(progress);
@@ -485,6 +489,10 @@ void JobTable::mutate(JobKind kind, F&& fn) {
     // 正在写 ch02。
     std::string job_id;
     nlohmann::json msg;
+    // 账本那一行也要跟着走，见下面那段。
+    std::uint64_t task_id = 0;
+    int cur = 0, tot = 0;
+    std::string note;
     {
         std::lock_guard lg(mu_);
         JobState& st = slot(kind).state;
@@ -494,6 +502,21 @@ void JobTable::mutate(JobKind kind, F&& fn) {
         if (!st.running) return;
         job_id = st.job_id;
         msg = progress_of(kind, job_id, st);
+        task_id = slot(kind).task_id;
+        // Run 用 current（第几镜），Write 用 done（第几章）——和
+        // `running_jobs` 那儿抹平成一套是同一个道理。
+        cur = kind == JobKind::Run ? st.current : st.done;
+        tot = st.total;
+        note = st.message;
+    }
+    // **进度同步到账本，出了锁再做。**
+    //
+    // 任务页面要画的是"这一条跑到哪儿了"，而那个数只在这张表里。两处各记
+    // 一份必然只改一边，所以由这儿每次改完顺手推过去——它本来就是所有
+    // set_done / set_total / set_message 的必经之路。
+    if (task_id != 0) {
+        set_task_progress(task_id, cur, tot);
+        set_task_note(task_id, note);
     }
     // **出了锁再推。** emit 自己要取这把锁拷 sink，在锁里调就是自锁。
     emit(job_id, msg);
