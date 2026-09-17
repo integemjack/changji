@@ -234,6 +234,15 @@ export const api = {
   getStory: (path) => get('/api/story', { path }),
   saveStory: (payload) => post('/api/story', payload),
   writeOutline: (payload) => post('/api/story/outline', payload),
+
+  /**
+   * 「只看不发」：把某一步真正要发给大模型的那段字取回来。
+   *
+   * **走的是那一步自己的接口**，不是另开一条。引擎那头在 `req` 拼好之后、
+   * 调模型之前原样回来（见 cpp/src/http/prompt_peek.hpp）——另开一条就得
+   * 另拼一份提示词，而两份迟早只改一边。
+   */
+  peekPrompt: (path, payload) => post(path, { ...payload, peek: true }),
   adoptStory: (payload) => post('/api/story/adopt', payload),
   // 丢掉还没采用的那份大纲。**草稿是落库的**，所以「丢弃」不能只清
   // 浏览器里那个 ref——不清服务端那份的话刷新一下它又回来了。

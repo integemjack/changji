@@ -48,6 +48,10 @@ StoryboardRunResult run_storyboard(const StoryboardRunOptions& opts,
         //
         // 撤掉就是删这一行。真觉得镜头变差了，先撤这一行再谈别的。
         req.reasoning_effort = "high";
+        if (opts.peek) {
+            result.peeked = llm::schema_as_prompt(req.prompt, req.schema);
+            return result;
+        }
         shots = stages::parse_storyboard(client.complete(req, tok), assets);
     } else {
         // ---- 按场拆 ----
@@ -80,6 +84,16 @@ StoryboardRunResult run_storyboard(const StoryboardRunOptions& opts,
             req.on_thinking = opts.on_thinking;
             // 同上面整集那条，理由写在那儿。
             req.reasoning_effort = "high";
+            if (opts.peek) {
+                // 场次头写清楚是哪一场：三份提示词贴到别处去跑，得认得出
+                // 哪份对哪份。
+                result.peeked += "\n\n===== 第 " + std::to_string(scene.index) +
+                                 "/" + std::to_string(scenes.size()) + " 场" +
+                                 (scene.body.empty() ? "" : "：" + scene.body) +
+                                 " =====\n\n" +
+                                 llm::schema_as_prompt(req.prompt, req.schema);
+                continue;
+            }
 
             std::vector<Shot> part =
                 stages::parse_storyboard(client.complete(req, tok), assets);
@@ -97,6 +111,10 @@ StoryboardRunResult run_storyboard(const StoryboardRunOptions& opts,
                             : last.first_frame_prompt;
             shots.insert(shots.end(), part.begin(), part.end());
         }
+        // **只看不发到此为止。** 底下那几道（补台词、查覆盖、重编号）都是
+        // 对着真镜头做的，零镜头走过去会报"分镜表不完整"——而这一下本来
+        // 就没打算生成任何镜头。
+        if (opts.peek) return result;
     }
 
     // **先把剧本里漏掉的台词补进去，再查。** 分镜模型不搬台词——实跑

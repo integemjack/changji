@@ -755,6 +755,7 @@ add_executable(changji
     src/http/ws.cpp
     src/http/offload.cpp
     src/http/job_stream.cpp
+    src/http/prompt_peek.cpp
     src/pipeline/jobs.cpp
     src/pipeline/activity.cpp
     src/pipeline/task_board.cpp
@@ -1238,6 +1239,7 @@ if(CHANGJI_BUILD_TESTS)
         src/http/media.cpp
         src/http/upload.cpp
     src/http/ref_gen.cpp
+        src/http/prompt_peek.cpp
         src/http/scripting.cpp
         src/http/story_api.cpp
         src/http/planning.cpp

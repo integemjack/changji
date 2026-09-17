@@ -51,6 +51,7 @@ import { openJobFeed } from '@/composables/useJobFeed'
 import { useRetryWhenBack } from '@/composables/useSystemFeed'
 import { stoppedByHand } from '@/composables/stopped-by-hand'
 import { openJobSocket } from '@/composables/useJobSocket'
+import CopyPrompt from '@/components/CopyPrompt.vue'
 import { useThinking } from '@/stores/thinking'
 import { readLocal, writeLocal } from '@/composables/local-storage'
 import { pickProjectHint } from '@/composables/pick-project-hint'
@@ -2308,6 +2309,13 @@ async function stopWriting() {
           >
             {{ isBusy('analyze') ? '正在读…' : '提人物' }}
           </button>
+          <CopyPrompt
+            v-if="hasStory"
+            compact
+            path="/api/story/analyze"
+            :payload="{ project: session.projectPath }"
+            title="抄走「提人物」这一步的提示词"
+          />
         </div>
       </aside>
 
@@ -2459,6 +2467,17 @@ async function stopWriting() {
                 <button class="btn btn--ghost" type="button" @click="pasting = !pasting">
                   粘一份现成的
                 </button>
+                <!-- 抄走这一步真正要发的那段字，拿到别处去跑。
+                     总开关在设置页「界面」那一节。 -->
+                <CopyPrompt
+                  path="/api/story/outline"
+                  :payload="{
+                    project: session.projectPath,
+                    premise: premise.trim(),
+                    scale,
+                    keywords: keywords.trim(),
+                  }"
+                />
                 <button
                   v-if="canReverse"
                   class="btn btn--ghost"
@@ -2675,6 +2694,16 @@ async function stopWriting() {
                       : '让 AI 写这一章'
                 }}
               </button>
+              <!-- **写过的章也摆。** 想把这一步拿到别处去跑，多半正是因为
+                   本地这一版不满意要重做——那时候「还缺几章」恰好是 0。
+                   总开关在设置页「界面」那一节。 -->
+              <CopyPrompt
+                v-if="current"
+                compact
+                path="/api/story/chapter"
+                :payload="{ project: session.projectPath, chapter_id: current }"
+                :title="`抄走写 ${current} 正文那一步的提示词`"
+              />
 
               <div class="menu">
                 <button

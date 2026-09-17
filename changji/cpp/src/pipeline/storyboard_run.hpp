@@ -35,6 +35,12 @@ struct StoryboardRunOptions {
     std::function<void(const std::string&)> on_thinking;
     /// 「正在拆第 2/3 场：夜 · 内 · 天台」这类话往哪儿报。可空。
     std::function<void(const std::string&)> on_progress;
+    /// **只看不发**：把每一场真正要发的那段字拼进 `peeked`，一个模型都不调。
+    ///
+    /// 用户 2026-09-17 要"复制提示词拿到别处去跑"。这一步是按场跑的，
+    /// 一集三场就是三份不同的提示词——所以给的是三份，各带一个场次头，
+    /// 不是只给第一份。
+    bool peek = false;
 };
 
 struct StoryboardRunResult {
@@ -43,6 +49,8 @@ struct StoryboardRunResult {
     int placed_lines = 0;
     /// 拆成了几场。1 = 整集一次拆（没有场次头）。
     int scenes = 1;
+    /// `opts.peek` 为真时，每一场那段提示词拼起来的全文。别的时候是空串。
+    std::string peeked;
 };
 
 /// 出一集的分镜。分镜表废了抛 stages::StoryboardError，模型那边的错抛

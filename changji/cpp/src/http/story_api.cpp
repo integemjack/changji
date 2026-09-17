@@ -22,6 +22,7 @@
 #include "stages/story_reverse.hpp"
 #include "http/job_stream.hpp"
 #include "http/offload.hpp"
+#include "http/prompt_peek.hpp"
 #include "pipeline/activity.hpp"
 #include "stages/json_partial.hpp"
 #include "stages/json_stream.hpp"
@@ -351,7 +352,7 @@ json write_outline(ProjectStore& store, const Project& project,
                    const Story& existing, std::string premise, StoryScale scale,
                    const std::string& keywords, const std::string& stream_id,
                    std::uint32_t variation, llm::Client& client,
-                   pipeline::CancelToken& tok) {
+                   pipeline::CancelToken& tok, bool peek) {
     pipeline::Activity act{"outline", paths::to_utf8(store.root()), "",
                            "正在出大纲"};
     const pipeline::CancelLink stop_here{tok, act};
@@ -384,6 +385,9 @@ json write_outline(ProjectStore& store, const Project& project,
     req.schema = stages::outline_schema();
     req.schema_name = "story_outline";
     req.on_thinking = thinking_sink();
+    // **摆在 Activity 之后、调模型之前。** 摆在前面的话账本上会多一行
+    // 秒开秒关的"正在出大纲"，而这一下根本没干活。
+    if (peek) return peek_prompt(req).body;
 
     Story draft;
     try {
@@ -467,8 +471,12 @@ json write_outline(ProjectStore& store, const Project& project,
     return out;
 }
 
-ApiResult post_story_outline(const json& body, llm::Client& client,
+ApiResult post_story_outline(const json& body_in, llm::Client& client,
                              pipeline::CancelToken& tok) {
+    json body = body_in;
+    // 「只看不发」。**要在起异步那一支之前判**：这一下不调模型，几毫秒就回，
+    // 起个后台活再回 202 的话，界面还得去轮询一段根本不会变的进度。
+    const bool peek = take_peek(body);
     forbid_extra(body, {"project", "premise", "scale", "keywords", "stream",
                         "async", "variation"});
     ProjectStore store = open_project(body);
@@ -538,7 +546,7 @@ ApiResult post_story_outline(const json& body, llm::Client& client,
                 pipeline::CancelToken own;
                 job_done(stream_id, write_outline(st, pj, ex, premise, scale,
                                                   keywords, stream_id, variation,
-                                                  client, own));
+                                                  client, own, /*peek=*/false));
             } catch (const ApiError& e) {
                 job_error(stream_id, e.what());
             } catch (const std::exception& e) {
@@ -549,7 +557,7 @@ ApiResult post_story_outline(const json& body, llm::Client& client,
     }
 
     return {200, write_outline(store, project, existing, premise, scale,
-                               keywords, stream_id, variation, client, tok)};
+                               keywords, stream_id, variation, client, tok, peek)};
 }
 
 /// 丢掉还没采用的那份大纲。
@@ -669,8 +677,11 @@ ApiResult post_story_import(const json& body) {
     return {200, out};
 }
 
-ApiResult post_story_analyze(const json& body, llm::Client& client,
+ApiResult post_story_analyze(const json& body_in, llm::Client& client,
                              pipeline::CancelToken& tok) {
+    json body = body_in;
+    // 「只看不发」：带了就把这一步的提示词原样回去，不调模型。见 prompt_peek。
+    const bool peek = take_peek(body);
     forbid_extra(body, {"project", "stream"});   // stream 同上，只为异步外壳
     ProjectStore store = open_project(body);
     const Project project = load_or_400(store);
@@ -694,6 +705,7 @@ ApiResult post_story_analyze(const json& body, llm::Client& client,
     req.schema = stages::analyze_schema();
     req.schema_name = "story_analysis";
     req.on_thinking = thinking_sink();
+    if (peek) return peek_prompt(req);
 
     Story draft;
     try {
@@ -723,7 +735,7 @@ ApiResult post_story_analyze(const json& body, llm::Client& client,
 json write_one_chapter(ProjectStore& store, const Project& project, Story story,
                        const std::string& chapter_id,
                        const std::string& stream_id, llm::Client& client,
-                       pipeline::CancelToken& tok) {
+                       pipeline::CancelToken& tok, bool peek) {
     const Chapter* me = story.chapter_by_id(chapter_id);
     if (me == nullptr) throw ApiError(404, "没有这一章：" + chapter_id);
 
@@ -750,6 +762,7 @@ json write_one_chapter(ProjectStore& store, const Project& project, Story story,
     req.schema_name = "chapter";
     req.on_thinking = thinking_sink();
     req.temperature = stages::kChapterTemperature;
+    if (peek) return peek_prompt(req).body;
 
     // 给了 stream_id 就**边写边推**。写一章要一两分钟，攒齐了再蹦出来的话
     // 那一两分钟界面上什么都没有——而那正是用户要看的"写作的过程"。
@@ -841,8 +854,10 @@ json write_one_chapter(ProjectStore& store, const Project& project, Story story,
     return out;
 }
 
-ApiResult post_story_chapter(const json& body, llm::Client& client,
+ApiResult post_story_chapter(const json& body_in, llm::Client& client,
                              pipeline::CancelToken& tok) {
+    json body = body_in;
+    const bool peek = take_peek(body);
     forbid_extra(body, {"project", "chapter_id", "overwrite", "stream"});
     ProjectStore store = open_project(body);
     const Project project = load_or_400(store);
@@ -851,14 +866,17 @@ ApiResult post_story_chapter(const json& body, llm::Client& client,
     const std::string chapter_id = need_str(body, "chapter_id");
     const Chapter* me = story.chapter_by_id(chapter_id);
     if (me == nullptr) throw ApiError(404, "没有这一章：" + chapter_id);
-    if (!text::strip_ws(me->text).empty() && !opt_bool(body, "overwrite", false)) {
+    if (!peek && !text::strip_ws(me->text).empty() &&
+        !opt_bool(body, "overwrite", false)) {
         throw ApiError(409, "这一章已经有正文了。要重写就带上 overwrite");
     }
 
     const std::string stream_id = text::strip_ws(opt_str(body, "stream"));
 
+    // **只看不发那一下要绕过"已经有正文了"那道 409。** 想复制提示词的人
+    // 多半正是因为这一章写砸了要去别处重跑，而那时候正文是有的。
     return {200, write_one_chapter(store, project, std::move(story), chapter_id,
-                                   stream_id, client, tok)};
+                                   stream_id, client, tok, peek)};
 }
 
 /// `ch07` → `ep07`。认不出编号就按它在章节表里的位置排（从 1 起）。

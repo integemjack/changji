@@ -16,6 +16,7 @@
 #include <nlohmann/json.hpp>
 
 #include "config/settings.hpp"
+#include "http/prompt_peek.hpp"
 #include "http/llm_info.hpp"
 #include "util/paths.hpp"
 
@@ -373,4 +374,59 @@ TEST_CASE("reasoning_effort：认得的模型才发") {
         CHECK_FALSE(p.contains("reasoning_effort"));
         CHECK_FALSE(p.contains("thinking"));
     }
+}
+
+// ---------------------------------------------------------------------------
+// 「只看不发」拿到的，必须就是真发出去的那一份
+//
+// 用户 2026-09-17 要"复制提示词拿到别处去跑，再把内容粘回来"。复制出去的
+// 那段字差一个字，他在别处跑出来的东西就对不上我们的解析器——而那种错没有
+// 任何报错：要么"粘回来解析失败"，要么更糟，"解析成功但内容不是我要的"。
+//
+// 所以这儿钉的是 peek_prompt 用的就是 schema_as_prompt，而不是另拼一份。
+// ---------------------------------------------------------------------------
+
+TEST_CASE("只看不发：回的就是 schema_as_prompt 拼的那一份") {
+    changji::llm::Request req;
+    req.prompt = "把这段话改成剧本";
+    req.schema_name = "script";
+    req.schema = nlohmann::json{{"type", "object"},
+                                {"properties", {{"text", {{"type", "string"}}}}}};
+
+    const auto r = changji::http::peek_prompt(req);
+    CHECK(r.status == 200);
+    CHECK(r.body["peek"] == true);
+    CHECK(r.body["stage"] == "script");
+    CHECK(r.body["prompt"] ==
+          changji::llm::schema_as_prompt(req.prompt, req.schema));
+    // schema 是贴在提示词后面的文字（不走 response_format），所以字段名要在。
+    CHECK(r.body["prompt"].get<std::string>().find("把这段话改成剧本") !=
+          std::string::npos);
+    CHECK(r.body["prompt"].get<std::string>().find("\"text\"") !=
+          std::string::npos);
+}
+
+TEST_CASE("只看不发：空 schema 不二次包壳") {
+    // 拆分镜那条把三场拼好的全文当 prompt 传进来、schema 留空，
+    // 再包一层"只输出一个 JSON 对象"的话，复制出去的那段就多了一段废话。
+    changji::llm::Request req;
+    req.prompt = "===== 第 1/3 场 =====\n已经拼好的那一大段";
+    req.schema_name = "storyboard";
+    const auto r = changji::http::peek_prompt(req);
+    CHECK(r.body["prompt"] == req.prompt);
+}
+
+TEST_CASE("只看不发：take_peek 取完要把那个键删掉") {
+    // 不删的话下游的 forbid_extra 会把整个请求拒成 422——而那时候界面上
+    // 只会说"多了一个字段"，看不出和这颗按钮有关系。
+    nlohmann::json body{{"project", "/tmp/p"}, {"peek", true}};
+    CHECK(changji::http::take_peek(body));
+    CHECK_FALSE(body.contains("peek"));
+
+    nlohmann::json off{{"project", "/tmp/p"}, {"peek", false}};
+    CHECK_FALSE(changji::http::take_peek(off));
+    CHECK_FALSE(off.contains("peek"));
+
+    nlohmann::json none{{"project", "/tmp/p"}};
+    CHECK_FALSE(changji::http::take_peek(none));
 }

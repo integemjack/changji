@@ -46,6 +46,23 @@ export const useUi = defineStore('ui', () => {
   const focusMode = ref(readLocal('changji.focusMode') === '1')
   watch(focusMode, (v) => writeLocal('changji.focusMode', v ? '1' : '0'))
 
+  /**
+   * 每个用大模型的地方摆不摆那颗「复制提示词」。
+   *
+   * 用户 2026-09-17 要的：「我可以复制放到别的地方生产后粘贴内容过来」，
+   * 外加「增加一个统一的控制开关，后期可以直接关闭」。
+   *
+   * **默认开着**——他现在就要用。关掉之后所有那些按钮一起消失，一处改、
+   * 全局生效，不用一页页去关。
+   *
+   * 记在这台机器上，和上面几项一个规矩：它是"我这台机器上怎么用"，
+   * 不是"这部剧怎么拍"。
+   */
+  const showCopyPrompt = ref(readLocal('changji.showCopyPrompt') !== '0')
+  watch(showCopyPrompt, (v) =>
+    writeLocal('changji.showCopyPrompt', v ? '1' : '0'),
+  )
+
   function applyTheme(value) {
     const root = document.documentElement
     if (value === 'system') root.removeAttribute('data-theme')
@@ -76,7 +93,7 @@ export const useUi = defineStore('ui', () => {
   }
 
   return {
-    toasts, theme, railSide, focusMode,
+    toasts, theme, railSide, focusMode, showCopyPrompt,
     push, ok, info, warn, error, dismiss,
   }
 })

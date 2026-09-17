@@ -675,6 +675,28 @@ function scrollTo(id) {
             </select>
           </label>
 
+          <!-- **「复制提示词」那一排按钮的总开关。**
+               用户 2026-09-17 要的第二句：「增加一个统一的控制开关，后期可以
+               直接关闭」。关掉之后每个用大模型的地方那颗按钮一起消失。
+               记在这台机器上（localStorage），和上面靠哪边一个规矩——它是
+               "我这台机器上怎么用"，不是"这部剧怎么拍"。 -->
+          <label class="field">
+            <span class="field__label">复制提示词按钮</span>
+            <span class="row row--wrap">
+              <label class="switch tiny">
+                <input v-model="ui.showCopyPrompt" type="checkbox" />
+                <span>{{ ui.showCopyPrompt ? '开着' : '关着' }}</span>
+              </label>
+              <span class="tiny dim">
+                {{
+                  ui.showCopyPrompt
+                    ? '每个用大模型的地方旁边有一颗，抄走那一步真正要发的提示词，可以拿到别处去跑。'
+                    : '那几颗按钮都不显示。'
+                }}
+              </span>
+            </span>
+          </label>
+
           <!-- **开机自启。** 三个平台都只是往登录时系统会扫的那个目录写一个
                文件（见 cpp/src/setup/autostart.hpp）。
                ⚠️ **那句「下次登录才生效」必须写出来**：写完文件这一次并不会

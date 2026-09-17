@@ -46,6 +46,7 @@ import {
 import { humanTime, useAction } from '@/composables/useAction'
 import { STEPS, useShots } from '@/composables/useShots'
 import { useSession } from '@/stores/session'
+import CopyPrompt from '@/components/CopyPrompt.vue'
 import { useUi } from '@/stores/ui'
 
 /**
@@ -696,6 +697,32 @@ async function runWholeShow() {
   )
 }
 
+
+/**
+ * 「复制提示词」那颗要的入参：拆分镜这一步要带这一集的剧本。
+ *
+ * 剧本得先去引擎取一趟——摆不进一个静态 payload 里，所以走 CopyPrompt 的
+ * resolve。取不到就回 null，那颗按钮安静地什么都不做（提示条已经弹过了）。
+ */
+async function peekPlanPayload() {
+  const project = session.projectPath
+  const episodeId = session.episodeId
+  if (!project || !episodeId) return null
+  const scriptData = await run(() => api.getScript(project, episodeId), {
+    key: 'peek',
+    quiet: true,
+  })
+  if (!scriptData?.script?.trim()) {
+    ui.warn('这一集还没有剧本，拆分镜那一步的提示词也就拼不出来')
+    return null
+  }
+  return {
+    project,
+    script: scriptData.script,
+    episode_id: episodeId,
+    duration_s: scriptData.target_duration_s || 60,
+  }
+}
 
 async function generate() {
   if (!session.episodeId) {
@@ -1379,6 +1406,14 @@ onDeactivated(() => {
           <AppIcon name="sparkle" :size="15" />
           {{ isBusy('plan') ? '拆镜头中…' : shots.length ? 'AI 重出分镜' : 'AI 出分镜' }}
         </button>
+        <!-- 抄走拆分镜那一步的提示词。**按场跑的话这儿是三份**，各带场次头
+             （见 StoryboardRunOptions::peek）。总开关在设置页「界面」那一节。 -->
+        <CopyPrompt
+          compact
+          path="/api/plan"
+          :resolve="peekPlanPayload"
+          title="抄走「拆分镜」这一步的提示词（按场跑时是每一场一份）"
+        />
         <!-- 先出首帧，看一眼构图再决定要不要花那两分钟出视频。 -->
         <button
           v-if="shots.length"

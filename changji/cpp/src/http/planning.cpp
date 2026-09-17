@@ -10,6 +10,7 @@
 #include "http/job_stream.hpp"
 #include "http/reset.hpp"
 #include "models/project.hpp"
+#include "http/prompt_peek.hpp"
 #include "pipeline/activity.hpp"
 #include "pipeline/storyboard_run.hpp"
 #include "stages/bible.hpp"
@@ -459,6 +460,7 @@ ApiResult post_plan(const json& body, llm::Client& client,
     // 注意这里**没有** forbid_extra。Python 的 PlanRequest 没写
     // model_config = {"extra": "forbid"}，pydantic 默认是忽略多余字段。
     // 加上校验就会拒掉 Python 能接受的请求。
+    const bool peek = body.is_object() && body.value("peek", false);
     const std::string script = text::strip_ws(need_str(body, "script"));
     if (script.empty()) throw ApiError(400, "剧本是空的");
 
@@ -507,6 +509,17 @@ ApiResult post_plan(const json& body, llm::Client& client,
     sb.duration_s = duration_s;
     sb.on_thinking = thinking_sink();
     sb.on_progress = [&act](const std::string& m) { act.set_message(m); };
+    sb.peek = peek;
+
+    if (peek) {
+        // 按场跑的话这儿是三份拼起来的，各带场次头。见 StoryboardRunOptions::peek。
+        const pipeline::StoryboardRunResult r =
+            pipeline::run_storyboard(sb, client, tok);
+        llm::Request shown;
+        shown.schema_name = "storyboard";
+        shown.prompt = r.peeked;
+        return peek_prompt(shown);
+    }
 
     std::vector<Shot> shots = stage_guard([&] {
         pipeline::StoryboardRunResult r = pipeline::run_storyboard(sb, client, tok);
