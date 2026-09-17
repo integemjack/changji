@@ -268,6 +268,19 @@ const projectNoShots = computed(
  */
 const showTodo = computed(() => projectNoShots.value > 0 || projectPending.value > 0)
 /**
+ * 按钮上那句「还差 …」。**为零的那一项不印。**
+ *
+ * 原来无条件写「还差 N 章分镜 · M 镜出片」，于是全项目分镜都齐了的时候
+ * 按钮上摆着「还差 0 章分镜 · 68 镜出片」——让人先读一个 0 再自己忽略它。
+ * 两项都有才用「·」连起来。
+ */
+const todoLabel = computed(() => {
+  const parts = []
+  if (projectNoShots.value > 0) parts.push(`${projectNoShots.value} 章分镜`)
+  if (projectPending.value > 0) parts.push(`${projectPending.value} 镜出片`)
+  return parts.join(' · ')
+})
+/**
  * 锁着的有几镜。**「全部重出」要把这个数说出来。**
  *
  * 锁是人工确认过的意思，而批量那几颗按钮教给人的正是"锁着的动不了"——
@@ -1306,7 +1319,7 @@ onDeactivated(() => {
             (pending
               ? '把还没出片的那几镜跑完'
               : showTodo
-                ? `这一章出完了。接着一路跑完整部剧：没剧本的先改编、没分镜的补上、再把还差的 ${projectPending} 镜出完——中途不用回来点；跑起来之后这颗按钮自己变成「停下」`
+                ? `这一章出完了。接着一路跑完整部剧：没剧本的先改编、没分镜的补上、再把还差的 ${todoLabel} 跑完——中途不用回来点；跑起来之后这颗按钮自己变成「停下」`
                 : '每一镜都有片了；点了会全部重出')
           "
           :disabled="(blocked || starting) && !isBusy('whole')"
@@ -1327,7 +1340,7 @@ onDeactivated(() => {
               : pending
                 ? `出片（差 ${pending}）`
                 : showTodo
-                  ? `跑完整部剧（还差 ${projectNoShots} 章分镜 · ${projectPending} 镜出片）`
+                  ? `跑完整部剧（还差 ${todoLabel}）`
                   : '全部重出'
           }}
         </button>

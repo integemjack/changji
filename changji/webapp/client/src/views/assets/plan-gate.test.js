@@ -94,6 +94,19 @@ describe('补全项目分镜这件事在「这一章」那一页', () => {
     expect(at).toBeGreaterThan(0)
     expect(shots.slice(at, at + 200)).toContain('wholeAbort.value')
   })
+  it('按钮上不印为零的那一项', () => {
+    // 全项目分镜都齐了的时候，原来按钮上摆着「还差 0 章分镜 · 68 镜出片」
+    // ——让人先读一个 0 再自己忽略它。
+    const at = shots.indexOf('const todoLabel = computed')
+    expect(at).toBeGreaterThan(0)
+    const fn = shots.slice(at, at + 320)
+    expect(fn).toContain('projectNoShots.value > 0')
+    expect(fn).toContain('projectPending.value > 0')
+    expect(fn, '两项都有才用「·」连').toContain("join(' · ')")
+    // 模板里不再直接拼那两个数
+    expect(shots).not.toContain('章分镜 · ${projectPending}')
+  })
+
   it('最后那一步起不来要说一声，不能吞掉', () => {
     // start() 只回 {ok:false, error}，自己不弹框。吞了的话第三步被 400
     // 挡回来时，人看到的是按钮转一圈又变回去，屏幕上一个字没有。
