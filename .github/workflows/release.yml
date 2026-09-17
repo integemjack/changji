@@ -517,10 +517,22 @@ jobs:
 
       # 版本钉死，理由同 CMakeLists 里那几个 GIT_TAG。
       # CUDA 要 ≥ 12.8，不然 sm_120（5090）编不出来。
-      CUDA_APT: '12-8'
-      CUDA_DIR: '/usr/local/cuda-12.8'
-      CUDA_WIN_VER: '12.8.1'
-      CUDA_WIN_COMP: '12.8'
+      #
+      # **2026-09-17 从 12.8 升到 13.2**（用户要求上 CUDA 13）。
+      #
+      # ⚠️ **为什么是 13.2 而不是更新的 13.3 / 13.4**：Linux 那边装的四个包
+      # 里有 `cuda-cccl`（ggml-cuda 用了 cub/thrust），而它在 NVIDIA 的
+      # ubuntu2204 仓库里**只出到 13-2**，13-3 之后整个没有了，也看不出是哪个
+      # 包接手的。往上钉的话这一格会在 apt 那一步挂。四个包在 13-2 全都齐，
+      # 版本也对得上（nvcc / cudart-dev / cccl 都是 13.2.86）。
+      #
+      # 架构那一行不用动：CUDA 13 砍掉的是 Maxwell / Pascal / Volta
+      #（发行说明原话 "corresponding to compute capabilities earlier than
+      # Turing"），而我们最低那一档就是 75-virtual（Turing）。
+      CUDA_APT: '13-2'
+      CUDA_DIR: '/usr/local/cuda-13.2'
+      CUDA_WIN_VER: '13.2.2'
+      CUDA_WIN_COMP: '13.2'
     strategy:
       fail-fast: false
       matrix:
@@ -597,7 +609,9 @@ jobs:
           curl.exe -fL --retry 3 -o cuda.exe $url
           if ($LASTEXITCODE -ne 0) { throw "CUDA 安装器下载失败：$url" }
           $c = $env:CUDA_WIN_COMP
-          $comp = @("nvcc","cudart","cublas","cublas_dev","thrust",
+          # `crt` 是 CUDA 13 才拆出来的独立组件（编译器运行时那套头）。
+          # 12.x 上它在 nvcc 里，所以这一行原来没有它。
+          $comp = @("nvcc","crt","cudart","cublas","cublas_dev","thrust",
                     "cuda_profiler_api","visual_studio_integration") |
                   ForEach-Object { "${_}_$c" }
           Start-Process -Wait -FilePath .\cuda.exe -ArgumentList (@("-s") + $comp)
@@ -606,7 +620,7 @@ jobs:
             throw "CUDA 装完了但 $cuda\bin\nvcc.exe 不在。组件名或者版本号对不上了。"
           }
           # **两个变量都要设。** MSBuild 的 CUDA 集成查的是带版本号的那个
-          # （CUDA_PATH_V12_8），CMake 的 find_program 查的是 CUDA_PATH。
+          # （CUDA_PATH_V13_2），CMake 的 find_program 查的是 CUDA_PATH。
           # 只设一个的表现是"配置过了，编的时候说找不到 CUDA toolset"。
           "CUDA_PATH=$cuda" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
           "CUDA_PATH_V$($c -replace '\.','_')=$cuda" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
