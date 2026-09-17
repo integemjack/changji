@@ -7,6 +7,7 @@
 #include <optional>
 #include <random>
 #include <set>
+#include <functional>
 #include <string>
 #include <utility>
 
@@ -116,6 +117,78 @@ std::string checked_output(const Request& req, std::string out) {
 
 }  // namespace
 
+namespace {
+
+/// 把没人 $ref 的 $defs 摘掉。
+///
+/// **这些定义是随模型的 JSON Schema 整份带进来的**，而各阶段只挑用得上的
+/// 那几个字段、还把枚举内联在属性上（storyboard.cpp 里
+/// `defs["CameraMove"]["enum"]` 读出来再写进 kept）。于是定义本身成了没人
+/// 指向的孤儿，却照样贴给模型读。2026-09-17 量的分镜那份：CameraAngle、
+/// CameraMove、ShotStatus、Transition、Lens 五个一次都没被引用，合计 635
+/// 字符（带缩进一千出头），其中 CameraMove 那串枚举还和属性上内联的那份
+/// 一模一样——**同一串东西模型读两遍**。
+///
+/// 只摘文字这一份，校验那边拿到的还是原样（它也只解析引用得到的那些）。
+/// 传递闭包：被引用的定义自己再引用别的，那些也得留。
+ordered prune_unused_defs(const ordered& schema) {
+    const auto defs = schema.find("$defs");
+    if (defs == schema.end() || !defs->is_object()) return schema;
+
+    const auto refs_in = [](const ordered& node, std::set<std::string>& out) {
+        const std::function<void(const ordered&)> walk = [&](const ordered& n) {
+            if (n.is_object()) {
+                for (auto it = n.begin(); it != n.end(); ++it) {
+                    if (it.key() == "$ref" && it.value().is_string()) {
+                        const std::string r = it.value().get<std::string>();
+                        const std::string head = "#/$defs/";
+                        if (r.rfind(head, 0) == 0) out.insert(r.substr(head.size()));
+                    }
+                    walk(it.value());
+                }
+            } else if (n.is_array()) {
+                for (const auto& v : n) walk(v);
+            }
+        };
+        walk(node);
+    };
+
+    // 先看正文引用了谁（不含 $defs 自己）
+    ordered body = schema;
+    body.erase("$defs");
+    std::set<std::string> want;
+    refs_in(body, want);
+    // 传递闭包
+    for (bool grew = true; grew;) {
+        grew = false;
+        const std::set<std::string> seen = want;
+        for (const auto& name : seen) {
+            const auto it = defs->find(name);
+            if (it == defs->end()) continue;
+            std::set<std::string> more;
+            refs_in(*it, more);
+            for (const auto& m : more) {
+                if (want.insert(m).second) grew = true;
+            }
+        }
+    }
+    if (want.size() == defs->size()) return schema;
+
+    ordered out = schema;
+    ordered kept = ordered::object();
+    for (auto it = defs->begin(); it != defs->end(); ++it) {
+        if (want.count(it.key()) != 0) kept[it.key()] = it.value();
+    }
+    if (kept.empty()) {
+        out.erase("$defs");
+    } else {
+        out["$defs"] = std::move(kept);
+    }
+    return out;
+}
+
+}  // namespace
+
 std::string schema_as_prompt(const std::string& prompt, const ordered& schema) {
     if (schema.is_null() || schema.empty()) return prompt;
     // **缩进一格**：这份东西是给模型读的，分镜那份有几十个字段，压成一行
@@ -131,7 +204,8 @@ std::string schema_as_prompt(const std::string& prompt, const ordered& schema) {
     // 而且近一半是缩进空格。** 降到一格省 1711 字符，嵌套照样看得出来；
     // 每一个带 schema 的阶段都省这一份（2026-09-14 起 schema 只有这一种
     // 发法，见下面 build_payload）。
-    return prompt + stages::prompt::llm::kSchemaSuffix + schema.dump(1);
+    return prompt + stages::prompt::llm::kSchemaSuffix +
+           prune_unused_defs(schema).dump(1);
 }
 
 ordered build_payload(const config::LLMConfig& cfg, const Request& req) {

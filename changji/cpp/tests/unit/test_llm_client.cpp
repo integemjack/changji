@@ -949,3 +949,52 @@ TEST_CASE("校验层：一个字段没填好，不该把整份输出作废") {
                   .has_value());
     }
 }
+
+TEST_CASE("没人引用的 $defs 不贴给模型看") {
+    // **这些定义是随模型的 JSON Schema 整份带进来的**，而各阶段只挑用得上
+    // 的那几个字段、还把枚举内联在属性上。于是定义本身成了孤儿，却照样
+    // 占着提示词。2026-09-17 量的分镜那份：CameraAngle / CameraMove /
+    // ShotStatus / Transition / Lens 五个一次都没被引用，合计 635 字符，
+    // 其中 CameraMove 那串枚举和属性上内联的那份一模一样——模型读两遍。
+    const auto schema = nlohmann::ordered_json::parse(R"({
+      "type": "object",
+      "properties": {
+        "size": {"$ref": "#/$defs/ShotSize"},
+        "move": {"type": "string", "enum": ["static", "push_in"]}
+      },
+      "$defs": {
+        "ShotSize": {"enum": ["MS", "CU"]},
+        "CameraMove": {"enum": ["static", "push_in"]},
+        "ShotStatus": {"enum": ["planned", "final_done"]}
+      }
+    })");
+    const std::string out = llm::schema_as_prompt("写一句", schema);
+    CHECK(out.find("ShotSize") != std::string::npos);       // 被引用，留着
+    CHECK(out.find("CameraMove") == std::string::npos);     // 没人引用，摘掉
+    CHECK(out.find("ShotStatus") == std::string::npos);
+    // 内联在属性上的那串枚举不受影响
+    CHECK(out.find("push_in") != std::string::npos);
+
+    SUBCASE("传递引用也要留：被留下的定义自己引用的那些") {
+        const auto s2 = nlohmann::ordered_json::parse(R"({
+          "type": "object",
+          "properties": {"a": {"$ref": "#/$defs/A"}},
+          "$defs": {
+            "A": {"type": "object", "properties": {"b": {"$ref": "#/$defs/B"}}},
+            "B": {"enum": ["x"]},
+            "C": {"enum": ["never"]}
+          }
+        })");
+        const std::string o2 = llm::schema_as_prompt("写一句", s2);
+        CHECK(o2.find("\"B\"") != std::string::npos);
+        CHECK(o2.find("never") == std::string::npos);
+    }
+
+    SUBCASE("全都用得上就原样不动") {
+        const auto s3 = nlohmann::ordered_json::parse(R"({
+          "properties": {"a": {"$ref": "#/$defs/A"}},
+          "$defs": {"A": {"enum": ["x"]}}
+        })");
+        CHECK(llm::schema_as_prompt("写一句", s3).find("\"A\"") != std::string::npos);
+    }
+}
