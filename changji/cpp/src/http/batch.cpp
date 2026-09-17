@@ -373,7 +373,10 @@ ApiResult post_story_chapters(const json& body,
         },
         "已手动停止。已经写好的几章留着。",
         // 顶栏那块"AI 作业中"要靠它说清是哪部剧、点了往哪儿跳。
-        paths::to_utf8(store.root()));
+        paths::to_utf8(store.root()),
+        // 任务页面那一行。**`JobKind::Write` 一个槽里跑着三种活**，
+        // 不各自报名字的话那一行只会写「批量」。
+        "写正文 · 还缺的 " + std::to_string(todo.size()) + " 章");
 
     if (!started) throw ApiError(409, "已经在写了");
     return {200, {{"started", true}, {"chapters", todo.size()}}};
@@ -510,7 +513,7 @@ ApiResult post_script_series(const json& body,
             p.set_message("写完了 " + std::to_string(done) + " 集");
         },
         "已手动停止。已经写好的几集留着。",
-        paths::to_utf8(store.root()));
+        paths::to_utf8(store.root()), "写整季 · " + std::to_string(episodes) + " 集");
 
     if (!started) throw ApiError(409, "已经在写了");
     return {200, {{"started", true}, {"total", episodes}}};
@@ -595,7 +598,9 @@ ApiResult post_script_all(const json& body, std::shared_ptr<llm::Client> client)
                 }
                 p.set_done(++done);
             }
-        });
+        },
+        "已手动停止。已经写好的几集剧本留着。", root,
+        "写剧本 · 还缺的 " + std::to_string(todo.size()) + " 集");
     if (!started) throw ApiError(409, "剧本那边还在忙");
     return {202, {{"started", true}, {"episodes", todo}}};
 }
@@ -750,7 +755,8 @@ ApiResult post_plan_all(const json& body, std::shared_ptr<llm::Client> client) {
             p.set_message("出完了 " + std::to_string(done) + " 集的分镜");
         },
         "已手动停止。已经出好的分镜留着。",
-        paths::to_utf8(store.root()));
+        paths::to_utf8(store.root()),
+        "补分镜 · 还缺的 " + std::to_string(todo.size()) + " 集");
 
     if (!started) throw ApiError(409, "剧本那边还在忙");
     return {200, {{"started", true}, {"episodes", todo}}};

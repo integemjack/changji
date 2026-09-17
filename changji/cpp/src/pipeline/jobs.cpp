@@ -1,5 +1,8 @@
 #include "pipeline/jobs.hpp"
 
+#include "pipeline/activity.hpp"
+#include "pipeline/task_board.hpp"
+
 #include <algorithm>
 #include <cmath>
 #include <random>
@@ -79,7 +82,7 @@ const JobTable::Slot& JobTable::slot(JobKind k) const {
 
 bool JobTable::start(JobKind kind, const std::string& episode_id, Body body,
                      const std::string& stop_message,
-                     const std::string& project) {
+                     const std::string& project, const std::string& title) {
     std::unique_lock lk(mu_);
     Slot& s = slot(kind);
     if (s.state.running) return false;
@@ -111,7 +114,26 @@ bool JobTable::start(JobKind kind, const std::string& episode_id, Body body,
 
     const std::string job_id = s.state.job_id;
 
-    s.worker = std::thread([this, kind, job_id, body = std::move(body)]() {
+    const std::string task_title =
+        !title.empty() ? title
+        : kind == JobKind::Run ? std::string("出片")
+                               : std::string("批量写作");
+    s.worker = std::thread([this, kind, job_id, project, task_title,
+                            body = std::move(body)]() {
+        // **长跑任务也要进那本任务账。**
+        //
+        // 它原来只在自己这张表里（`running_jobs`），于是任务页面上一行都
+        // 没有——而「写整季」「出片」正是最该在那儿看的两件：一跑十几分钟、
+        // 有思考、要能停。
+        //
+        // 这儿开一个 `Activity`（它是 `Task` 的壳，构造即开工）：
+        //   · 页面上有名字、有已经用时、有那个「结束」；
+        //   · **思考自动接上**——`thinking_sink` 认的是"当前线程在干的那件
+        //     活"，而底下每一次大模型调用都跑在这条线程上。
+        //   · 令牌挂到这个槽的令牌上，页面上按「结束」等于按顶栏那个停。
+        pipeline::Activity act{to_string(kind), project, std::string{},
+                               task_title};
+        act.task().token().link(&slot(kind).token);
         JobProgress progress(this, kind);
         try {
             body(progress);

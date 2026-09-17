@@ -285,9 +285,16 @@ public:
     ///
     /// `project` 是这一轮跑的项目目录，留空表示不知道（顶栏那块就只显示
     /// 名字、不给跳转）。
+    /// `title` 是**这一条长跑任务干什么**，给任务页面那一行用：
+    /// 「写整季正文」「给还缺的几集补分镜」「出片 · 第 3 集」。
+    ///
+    /// **不给就按 kind 报个类别**（「批量写作」「出片」）。类别不够用是
+    /// 因为 `JobKind::Write` 这一个槽里跑着三种活（展开正文、写整季、批量
+    /// 补分镜），一律写「批量」的话，页面上那一行说不出正在干哪一件。
     bool start(JobKind kind, const std::string& episode_id, Body body,
                const std::string& stop_message = "",
-               const std::string& project = "");
+               const std::string& project = "",
+               const std::string& title = "");
 
     /// 请求取消。没在跑返回 false，对应 Python 的 {"stopped": false}。
     bool cancel(JobKind kind);

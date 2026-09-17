@@ -406,7 +406,10 @@ ApiResult post_run(const json& body, const RunDeps& deps) {
         },
         /*stop_message=*/"",
         // 顶栏那块"AI 作业中"要靠它说清是哪部剧、点了往哪儿跳。
-        paths::to_utf8(store.root()));
+        paths::to_utf8(store.root()),
+        // 任务页面那一行。一次跑几集就说几集。
+        queue.size() == 1 ? "出片 · " + queue[0]
+                          : "出片 · " + std::to_string(queue.size()) + " 集");
 
     // start() 只在同种任务已经在跑时返回 false，而上面刚判过。
     // 还是要判：那两步之间没有锁，两个请求同时进来时后一个要拿到 409，
