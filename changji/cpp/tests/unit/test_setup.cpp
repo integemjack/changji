@@ -288,8 +288,14 @@ TEST_CASE("每个家族的每一档精度都在表里") {
     // 上游只放了 GGUF 梯队，2026-09-15 从基础版 Qwen-Image 换过来时
     // 那两档就没了（基础版在 city96 有 14 档 + Comfy 的 fp8）。
     CHECK(by_family.at("Qwen-Image-Edit 2509").size() == 13);
-    // QuantStack 的 13 档量化 + Comfy 的 fp16
-    CHECK(by_family.at("Wan 2.2 TI2V-5B").size() == 14);
+    // **Wan 2.2 TI2V-5B 2026-09-17 从清单里去掉了**（用户要求）：它出的
+    // 成片用户看过，原话是「图生视频还是太差了」，留着只会让人下三个 G 再
+    // 得出同一个结论。引擎那头认 Wan 权重的代码没动，已经配了的照跑。
+    CHECK(by_family.count("Wan 2.2 TI2V-5B") == 0);
+    // 出片只剩 H3 两支。完整 9 档、精简 9 档，两支都是
+    // bf16 / Q8_0 / int8_convrot(/fp8_scaled) / Q6_K / Q5* / Q4* / Q3* (/Q2_K)。
+    CHECK(by_family.at("MiniMax-H3 完整").size() == 9);
+    CHECK(by_family.at("MiniMax-H3 精简").size() == 9);
     // 编剧模型那一组现在一个权重都不下（进程内后端删了），所以这儿
     // 不再有 Qwen3-* 那几家。
 }
@@ -308,16 +314,21 @@ TEST_CASE("写回配置：选中的键填上，同一组没用到的键清空") 
     CHECK(h3["models"]["video_rng"] == "cpu");
     CHECK(h3["models"]["video_cfg"] == 1.0);
 
-    const json wan = setup::config_patch({{"video", "wan22-ti2v-5b-fp16"}});
-    CHECK(wan["models"]["video"] == "wan2.2_ti2v_5B_fp16.safetensors");
-    CHECK(wan["models"]["video_text_encoder"] == "umt5_xxl_fp16.safetensors");
-    // **这一条是这组用例的重点。** video_lora 的默认值指着 H3 的
-    // Turbo LoRA；不清空的话它会被挂到 Wan 上——加载不上而已，
-    // 画面照出、耗时照旧，没有任何报错。
-    CHECK(wan["models"]["video_lora"] == "");
-    CHECK(wan["models"]["video_llm"] == "");
-    CHECK(wan["models"]["video_audio_vae"] == "");
-    CHECK(wan["models"]["video_cfg"] == 6.0);
+    // **「不下载」那一档接着管这组用例的重点。** Wan 去掉之后出片只剩 H3
+    // 一家，而 `owned_roles` 那八个键要清空这件事一点没变：从 H3 换到
+    // 「不下载」时，video_lora 里留着的 Turbo LoRA 会被挂到人家自己手配的
+    // 模型上——加载不上而已，画面照出、耗时照旧，没有任何报错。
+    const json none = setup::config_patch({{"video", setup::kNoneOption}});
+    CHECK_FALSE(none.contains("models"));
+
+    // int8_convrot 那两档走的是 safetensors，不是 GGUF，但同一组的键该填
+    // 的填、该清的清，和上面那档一模一样。
+    const json cr = setup::config_patch({{"video", "h3-pruned-int8_convrot"}});
+    CHECK(cr["models"]["video"] ==
+          "minimax_h3_fl2va_pruned_int8_convrot.safetensors");
+    CHECK(cr["models"]["video_llm"] != "");
+    CHECK(cr["models"]["video_text_encoder"] == "");
+    CHECK(cr["models"]["video_high_noise"] == "");
 }
 
 TEST_CASE("写回配置：步数一律写 0，交给引擎按 Turbo 和档位表自己算") {
@@ -330,7 +341,7 @@ TEST_CASE("写回配置：步数一律写 0，交给引擎按 Turbo 和档位表
     // 2026-09-10 在这一版上真栽过：设置页从「出片 6 Turbo · 首帧 30」
     // 变成了「出片 6 Turbo · 首帧 6」。
     for (const char* id : {"h3-full-q4_k_m", "h3-pruned-q4_k_m",
-                           "wan22-ti2v-5b-fp16", "wan22-ti2v-5b-q4_k_m"}) {
+                           "h3-full-int8_convrot", "h3-pruned-q2_k"}) {
         CAPTURE(id);
         const json patch = setup::config_patch({{"video", id}});
         REQUIRE(patch["tiers"].contains("final_steps"));
@@ -372,12 +383,16 @@ TEST_CASE("apply_setup_patch 把 patch 落到内存里那份配置上") {
     // 0 = 没填，按显存推的档位表走。见上面那条用例。
     CHECK(s.tiers.final_steps == 0);
 
-    // 再换成 Wan，上一家的键必须真的被清掉——只清 patch 不清内存的话，
+    // 再换一档，上一家的键必须真的被清掉——只清 patch 不清内存的话，
     // 界面显示的是新的、跑的是旧的。
-    config::apply_setup_patch(s, setup::config_patch({{"video", "wan22-ti2v-5b-fp16"}}));
-    CHECK(s.models.video_llm.empty());
-    CHECK(s.models.video_lora.empty());
-    CHECK(s.models.video_cfg == doctest::Approx(6.0));
+    //
+    // **2026-09-17 从 Wan 换成 int8_convrot 这一档**（Wan 从清单里去掉了）。
+    // 这一档走 safetensors 不走 GGUF，正好也钉住换格式时路径真的跟着换。
+    config::apply_setup_patch(
+        s, setup::config_patch({{"video", "h3-pruned-int8_convrot"}}));
+    CHECK(s.models.video == "minimax_h3_fl2va_pruned_int8_convrot.safetensors");
+    CHECK(s.models.video_text_encoder.empty());
+    CHECK(s.models.video_high_noise.empty());
 
     config::apply_setup_patch(s, json{{"llm", {{"backend", "remote"}}}});
     CHECK(s.llm.backend == "remote");

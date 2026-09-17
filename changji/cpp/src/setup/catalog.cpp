@@ -64,6 +64,13 @@ std::string quant_note(const std::string& q) {
         return "原始精度，不损失任何东西。体积也是最大的。";
     }
     if (q == "fp8") return "半精度再对折，画质接近原始精度。";
+    if (q == "int8_convrot") {
+        return "八比特整数（ComfyUI 那套 int8_tensorwise + convrot）。体积和 "
+               "Q8_0 一档，画质接近原始精度。";
+    }
+    if (q == "fp8_scaled") {
+        return "八比特浮点带缩放（ComfyUI 那套）。体积和 Q8_0 一档。";
+    }
     if (q == "Q8_0") return "最接近原始精度的一档量化，几乎看不出差别。";
     if (q == "Q6_K") return "画质和体积最平衡的一档，多数机器挑它。";
     if (q.rfind("Q5", 0) == 0) return "比 Q6_K 再小一点，差别要仔细看才看得出。";
@@ -98,7 +105,14 @@ Option none_option(const std::string& label, const std::string& note,
 }
 
 // ---------------------------------------------------------------------------
-// 出片：MiniMax-H3 / Wan 2.2 TI2V-5B
+// 出片：MiniMax-H3
+//
+// **Wan 2.2 TI2V-5B 2026-09-17 从清单里去掉了**（用户要求）。它曾是最省显存
+// 的一条路（8 GB 的卡也跑得动），但用户看过它出的成片，原话是「图生视频还是
+// 太差了」——留在选择器里只会让人下三个 G 再得出同一个结论。
+//
+// **引擎那头没动**：sd_image / settings 里认 Wan 权重的代码都留着，已经配了
+// Wan 的机器照跑不误，只是不再从这儿推荐和下载。
 // ---------------------------------------------------------------------------
 
 constexpr const char* kH3GgufRepo = "leejet/MiniMax-H3-GGUF";
@@ -162,143 +176,66 @@ struct H3Spec {
 // 所以**同一个量化级别上，完整并不更好，只是更大**。于是排法是：先按量化
 // 级别（bf16 > Q8 > Q6 > Q5 > Q4 > Q3 > Q2），同一级别里精简在前。
 constexpr H3Spec kH3[] = {
+    // ---- 完整（33B）----
     {"h3-full-bf16", "MiniMax-H3 完整", "bf16",
      "diffusion_models/minimax_h3_fl2va_bf16.safetensors", kH3ComfyRepo,
-     66280487368ULL, 39},
-    // ---- 完整那一支的量化（2026-09-17 用户：「把 33b 版本全部量化版本也
-    //      加上」）----
-    //
-    // leejet 只出了 Q4_K_M 一档，别的档只有 Abiray 那家有。
-    //
-    // **两对没收**：FL2VA 的 Q3_K_M 和 Q3_K_S 字节数一模一样
-    //（15567048992），Q5_K_M 和 Q5_K_S 也一样（23887484192）。_S 和 _M 的
-    // 区别就在哪些张量留高精度，大小不可能相同——这两对里必有一个是贴错
-    // 标签的重复文件。每个量化级别都收到了，只是那两级各收标准的 _M。
-    //
-    // （FL2VA 和 Ref2VA 之间大小相同是**正常的**，不是重复：GGUF 体积只由
-    // 张量形状和量化类型决定，跟权重数值无关。别拿它当证据。）
+     66280487368ULL, 98},
     {"h3-full-q8_0", "MiniMax-H3 完整", "Q8_0",
-     "unet/MiniMax-H3-FL2VA-Q8_0.gguf", kH3FullQuantRepo, 36035216640ULL, 37},
+     "unet/MiniMax-H3-FL2VA-Q8_0.gguf", kH3FullQuantRepo, 36035216640ULL, 92},
+    {"h3-full-int8_convrot", "MiniMax-H3 完整", "int8_convrot",
+     "diffusion_models/minimax_h3_fl2va_int8_convrot.safetensors", kH3ComfyRepo,
+     34038892334ULL, 91},
     {"h3-full-q6_k", "MiniMax-H3 完整", "Q6_K",
-     "unet/MiniMax-H3-FL2VA-Q6_K.gguf", kH3FullQuantRepo, 28219050240ULL, 35},
+     "unet/MiniMax-H3-FL2VA-Q6_K.gguf", kH3FullQuantRepo, 28219050240ULL, 87},
     {"h3-full-q5_k_m", "MiniMax-H3 完整", "Q5_K_M",
-     "unet/MiniMax-H3-FL2VA-Q5_K_M.gguf", kH3FullQuantRepo, 23887484192ULL, 33},
+     "unet/MiniMax-H3-FL2VA-Q5_K_M.gguf", kH3FullQuantRepo, 23887484192ULL, 83},
     {"h3-full-q5_0", "MiniMax-H3 完整", "Q5_0",
-     "unet/MiniMax-H3-FL2VA-Q5_0.gguf", kH3FullQuantRepo, 22779297056ULL, 32},
+     "unet/MiniMax-H3-FL2VA-Q5_0.gguf", kH3FullQuantRepo, 22779297056ULL, 82},
     // leejet 的那一份比 Abiray 的 Q4_K_M（19864208217）小一个 G，是 sd.cpp
     // 作者自己出的，留着它当这一级，不收另一份同名的。
     {"h3-full-q4_k_m", "MiniMax-H3 完整", "Q4_K_M",
-     "minimax_h3_fl2va-Q4_K_M.gguf", kH3GgufRepo, 18779848448ULL, 30},
+     "minimax_h3_fl2va-Q4_K_M.gguf", kH3GgufRepo, 18779848448ULL, 79},
     {"h3-full-q4_0", "MiniMax-H3 完整", "Q4_0",
-     "unet/MiniMax-H3-FL2VA-Q4_0.gguf", kH3FullQuantRepo, 18639605024ULL, 29},
+     "unet/MiniMax-H3-FL2VA-Q4_0.gguf", kH3FullQuantRepo, 18639605024ULL, 78},
     {"h3-full-q3_k_m", "MiniMax-H3 完整", "Q3_K_M",
-     "unet/MiniMax-H3-FL2VA-Q3_K_M.gguf", kH3FullQuantRepo, 15567048992ULL, 27},
-    // ---- 精简那一支，**从大到小排** ----
-    //
-    // 顺序就是下拉框里的顺序（见 setup_api 那头按组吐选项），所以这一串
-    // 必须单调读得下来。2026-09-17 补完档位时先把新的三条缀在了末尾，
-    // 界面上出来是「bf16 / Q4_K_M / Q3_K / Q2_K / Q8_0 / Q6_K / Q5_0」
-    // ——要从中间跳回去读。
-    //
-    // 挑默认值不看这个顺序，看 rank（见 recommend）。
+     "unet/MiniMax-H3-FL2VA-Q3_K_M.gguf", kH3FullQuantRepo, 15567048992ULL, 75},
+
+    // ---- 精简（20B，只做推理）----
     {"h3-pruned-bf16", "MiniMax-H3 精简", "bf16",
      "diffusion_models/minimax_h3_fl2va_pruned_bf16.safetensors", kH3ComfyRepo,
-     40225724176ULL, 40},
-    // ---- 下面五档都在 unsloth 那个仓库（2026-09-17 用户：「增加全部档位」）----
-    //
-    // Q4_K_M 那一条是 leejet 的，和 unsloth 的 `-Q4_K.gguf` 字节数一模一样
-    // （11420663904），是同一份，不重复收。
-    //
-    // **字节数是从仓库清单拉的真数**，不是估的：填错了要等用户点下载、
-    // 等它下到一半对不上才发现。
-    //
-    // 仓库里还有 `ref2va` 那一整组同样的档位——**那不是档位，是另一个模型**
-    // （参考图转视频，我们这条路用的是首帧转视频 fl2va），不混进来。
+     40225724176ULL, 100},
     {"h3-pruned-q8_0", "MiniMax-H3 精简", "Q8_0",
-     "minimax_h3_fl2va_pruned-Q8_0.gguf", kH3SmallRepo, 21437786208ULL, 38},
+     "minimax_h3_fl2va_pruned-Q8_0.gguf", kH3SmallRepo, 21437786208ULL, 96},
+    {"h3-pruned-int8_convrot", "MiniMax-H3 精简", "int8_convrot",
+     "diffusion_models/minimax_h3_fl2va_pruned_int8_convrot.safetensors",
+     kH3ComfyRepo, 20970379616ULL, 95},
+    {"h3-pruned-fp8_scaled", "MiniMax-H3 精简", "fp8_scaled",
+     "diffusion_models/minimax_h3_fl2va_pruned_fp8_scaled.safetensors",
+     kH3ComfyRepo, 20958205608ULL, 94},
     {"h3-pruned-q6_k", "MiniMax-H3 精简", "Q6_K",
-     "minimax_h3_fl2va_pruned-Q6_K.gguf", kH3SmallRepo, 16586784864ULL, 36},
+     "minimax_h3_fl2va_pruned-Q6_K.gguf", kH3SmallRepo, 16586784864ULL, 88},
     {"h3-pruned-q5_0", "MiniMax-H3 精简", "Q5_0",
-     "minimax_h3_fl2va_pruned-Q5_0.gguf", kH3SmallRepo, 13923170400ULL, 34},
+     "minimax_h3_fl2va_pruned-Q5_0.gguf", kH3SmallRepo, 13923170400ULL, 84},
     {"h3-pruned-q4_k_m", "MiniMax-H3 精简", "Q4_K_M",
-     "minimax_h3_fl2va_pruned-Q4_K_M.gguf", kH3GgufRepo, 11420663904ULL, 31},
-    // ---- 16 GB 的卡（2026-09-17 用户要的）----
+     "minimax_h3_fl2va_pruned-Q4_K_M.gguf", kH3GgufRepo, 11420663904ULL, 80},
+    // ---- 16 GB 的卡 ----
     //
-    // ⚠️ **先说清楚 16 GB 上会发生什么，别让人以为加了这两档就快了。**
+    // ⚠️ **H3 没有任何一档能在 16 GB 上常驻显存**：`resident_vram` 算出来的
+    // 门槛是模型大小 + 15 GB 上下（那 15 GB 是视频解码和采样缓冲）。16 GB
+    // 上走的一定是"权重放内存"那条，每一步从内存往显卡搬权重。
     //
-    // `resident_vram` 算出来的门槛是**模型大小 + 15 GB 上下**（那 15 GB 是
-    // 视频解码和采样缓冲），所以**H3 没有任何一档能在 16 GB 上常驻显存**
-    // ——连 1 GB 的模型都要 16 GB。16 GB 上走的一定是"权重放内存"那条
-    //（`weights = smart` 自己会选 `cpu`），每一步从内存往显卡搬权重。
+    // 这两档的意义是**搬的东西少一半**：6.3 GiB 比 10.6 GiB 每步少搬四成多，
+    // 而 PCIe 正是那条路的瓶颈（settings.hpp 里那段实测：权重放内存时 GPU
+    // 利用率 18%，常驻是 82%）。
     //
-    // 那这两档的意义在哪：**搬的东西少一半**。同样走流式，6.3 GiB 比
-    // 10.6 GiB 每步少搬四成多，而 PCIe 正是那条路的瓶颈（settings.hpp 里
-    // 那段实测：权重放内存时 GPU 利用率 18%，常驻是 82%）。在这之前 16 GB
-    // 的卡上 H3 最小只有 10.6 GiB 那一档可挑。
-    //
-    // **只收标准 K 量化，不收 unsloth 的 UD-*_XL 那几档**：那是它自己的
-    // 动态混合精度方案，我们没法确认 sd.cpp 读得对——而读不对这件事
-    // 没有任何报错（上面那段 fp8_scaled 的教训）。
+    // **不收 unsloth 的 UD-*_XL**：那是它自己的动态混合精度方案，没法确认
+    // sd.cpp 读得对——而读不对这件事没有任何报错。
     {"h3-pruned-q3_k", "MiniMax-H3 精简", "Q3_K",
-     "minimax_h3_fl2va_pruned-Q3_K.gguf", kH3SmallRepo, 8759328864ULL, 28},
+     "minimax_h3_fl2va_pruned-Q3_K.gguf", kH3SmallRepo, 8759328864ULL, 76},
     {"h3-pruned-q2_k", "MiniMax-H3 精简", "Q2_K",
-     "minimax_h3_fl2va_pruned-Q2_K.gguf", kH3SmallRepo, 6724190304ULL, 26},
+     "minimax_h3_fl2va_pruned-Q2_K.gguf", kH3SmallRepo, 6724190304ULL, 72},
 };
 
-constexpr const char* kWanFamilyNote =
-    "最省显存的一条路，8 GB 的卡也跑得动，整套下载量只有 H3 的三分之一。"
-    "代价是动作质量——用户看过它出的成片，原话是「图生视频还是太差了」。";
-
-struct WanSpec {
-    const char* quant;
-    const char* file;
-    std::uint64_t bytes;
-    bool safetensors;  // fp16 那份在 Comfy 的仓库，量化版在 QuantStack
-    int rank;
-};
-
-constexpr WanSpec kWan[] = {
-    {"fp16", "wan2.2_ti2v_5B_fp16.safetensors", 9999658848ULL, true, 14},
-    {"Q8_0", "Wan2.2-TI2V-5B-Q8_0.gguf", 5400179040ULL, false, 13},
-    {"Q6_K", "Wan2.2-TI2V-5B-Q6_K.gguf", 4211683680ULL, false, 12},
-    {"Q5_1", "Wan2.2-TI2V-5B-Q5_1.gguf", 3866636640ULL, false, 11},
-    {"Q5_K_M", "Wan2.2-TI2V-5B-Q5_K_M.gguf", 3810603360ULL, false, 10},
-    {"Q5_0", "Wan2.2-TI2V-5B-Q5_0.gguf", 3642503520ULL, false, 9},
-    {"Q5_K_S", "Wan2.2-TI2V-5B-Q5_K_S.gguf", 3559928160ULL, false, 8},
-    {"Q4_K_M", "Wan2.2-TI2V-5B-Q4_K_M.gguf", 3433116000ULL, false, 7},
-    {"Q4_1", "Wan2.2-TI2V-5B-Q4_1.gguf", 3253219680ULL, false, 6},
-    {"Q4_K_S", "Wan2.2-TI2V-5B-Q4_K_S.gguf", 3116380512ULL, false, 5},
-    {"Q4_0", "Wan2.2-TI2V-5B-Q4_0.gguf", 3029086560ULL, false, 4},
-    {"Q3_K_M", "Wan2.2-TI2V-5B-Q3_K_M.gguf", 2547790176ULL, false, 3},
-    {"Q3_K_S", "Wan2.2-TI2V-5B-Q3_K_S.gguf", 2294755680ULL, false, 2},
-    {"Q2_K", "Wan2.2-TI2V-5B-Q2_K.gguf", 1853862240ULL, false, 1},
-};
-
-/// Wan 的文本编码器（UMT5-XXL）按扩散模型那一档配。
-///
-/// **编码器的大小不影响显存门槛**：`weights_for` 里写着"文本编码器永远
-/// 放内存"——它每镜只跑一次（实测 8 到 9 秒），而它常常是这一套里最大的
-/// 一块。所以这里按"别让下载量失衡"来配：扩散模型都压到 3 GB 了，
-/// 再配一个 11 GB 的编码器没道理。
-FileSpec wan_encoder(double diff_gb) {
-    if (diff_gb >= 9.0) {
-        return {"umt5_xxl_fp16.safetensors",
-                "Comfy-Org/Wan_2.1_ComfyUI_repackaged",
-                "split_files/text_encoders/umt5_xxl_fp16.safetensors",
-                11366399385ULL, "video_text_encoder",
-                "文本编码器 UMT5-XXL（fp16 原版）。权重常驻内存"};
-    }
-    if (diff_gb >= 3.4) {
-        return {"umt5-xxl-encoder-Q8_0.gguf", "city96/umt5-xxl-encoder-gguf",
-                "umt5-xxl-encoder-Q8_0.gguf",
-                6043068256ULL, "video_text_encoder",
-                "文本编码器 UMT5-XXL（Q8_0）。权重常驻内存"};
-    }
-    return {"umt5-xxl-encoder-Q5_K_M.gguf", "city96/umt5-xxl-encoder-gguf",
-            "umt5-xxl-encoder-Q5_K_M.gguf",
-            4145878880ULL, "video_text_encoder",
-            "文本编码器 UMT5-XXL（Q5_K_M）。权重常驻内存"};
-}
 
 // ---------------------------------------------------------------------------
 // 出首帧：Qwen-Image
@@ -589,44 +526,6 @@ std::vector<Group> build() {
             //
             // 实测踩到过（2026-09-10，就在这一版上）：设置页从
             // 「出片 6 Turbo · 首帧 30」变成了「出片 6 Turbo · 首帧 6」。
-            o.settings.push_back({"tiers.final_steps", 0});
-            g.options.push_back(std::move(o));
-        }
-
-        for (const auto& spec : kWan) {
-            Option o;
-            o.id = lower_id(std::string("wan22-ti2v-5b-") + spec.quant);
-            o.family = "Wan 2.2 TI2V-5B";
-            o.label = std::string("Wan 2.2 TI2V-5B · ") + spec.quant;
-            o.quant = spec.quant;
-            o.family_note = kWanFamilyNote;
-            o.note = quant_note(spec.quant);
-            o.min_vram_gb = resident_vram(false, gb(spec.bytes));
-            o.rank = spec.rank;
-
-            o.files.push_back(
-                {spec.file,
-                 spec.safetensors ? "Comfy-Org/Wan_2.2_ComfyUI_Repackaged"
-                                  : "QuantStack/Wan2.2-TI2V-5B-GGUF",
-                 spec.safetensors
-                     ? "split_files/diffusion_models/" + std::string(spec.file)
-                     : std::string(spec.file),
-                 spec.bytes, "video", "扩散模型"});
-            // **VAE 必须是 2.2 那份，不是 2.1 的。** 只有 TI2V-5B 用这一份，
-            // 拿错了出来的是花屏。镜像上的文件名是小写的，落盘按上游习惯存。
-            o.files.push_back(
-                {"Wan2.2_VAE.safetensors", "Comfy-Org/Wan_2.2_ComfyUI_Repackaged",
-                 "split_files/vae/wan2.2_vae.safetensors",
-                 1409400960ULL, "video_vae", "VAE。是 2.2 那份，2.1 的不通用"});
-            o.files.push_back(wan_encoder(gb(spec.bytes)));
-
-            // 上游 docs/wan.md 给 TI2V-5B 的命令行就是这两个数。
-            o.settings.push_back({"models.video_cfg", 6.0});
-            o.settings.push_back({"models.video_flow_shift", 3.0});
-            o.settings.push_back({"models.video_rng", "cuda"});
-            // 同 H3 那条：0 = 没填，按显存推的档位表走。写死 30 的话换台卡
-            // （8 GB 的机器档位表推的是 25 步）就不对了，而且一样会把首帧的
-            // 步数一起钉死。
             o.settings.push_back({"tiers.final_steps", 0});
             g.options.push_back(std::move(o));
         }
