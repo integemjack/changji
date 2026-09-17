@@ -285,8 +285,21 @@ ApiResult post_story_chapters(const json& body,
                     // 白跑一趟提示词。
                     if (p.cancelled()) break;
                     if (attempt > 0) {
+                        // **说上一次到底砸在哪。**
+                        //
+                        // 这句原来写死是"只写出几个字"。那是最常见的一种砸
+                        // 法，不是唯一一种：守卫会因为整章没对白、两场撞车、
+                        // 正文复读、贴情绪标签打回，每一种 StoryError 都自带
+                        // 一句能直接给人看的话（"整章几乎没有对白（65 段里
+                        // 0 段有人说话）"）。写死那句的代价是，一章要跑五分
+                        // 钟，人盯着看的那五分钟里读到的是个假理由——而真理由
+                        // 就在手边的 last_error 里。
+                        const std::string why =
+                            last_error.empty()
+                                ? std::string("只写出几个字")
+                                : text::truncate_utf8(last_error, 80);
                         p.set_message("重写 " + id + "（" + me->title +
-                                      "）——上一次只写出几个字");
+                                      "）——上一次" + why);
                     }
                     try {
                         const int floor_chars = static_cast<int>(
