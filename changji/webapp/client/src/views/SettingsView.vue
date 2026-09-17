@@ -1015,18 +1015,6 @@ function scrollTo(id) {
                 min="1" max="120" />
               </label>
               <label class="field">
-                <span class="field__label">每集多长（秒）</span>
-                <input
-                  v-model.number="params.episode_s"
-                  class="input numeric"
-                  type="number"
-                  min="0"
-                  max="3600"
-                  step="5"
-                  title="填了就是章模式：一章按它自己的内容写完、拍完，最后按这个数切成几集，能切出几集是这一章内容的结果。0 = 老的一集一章：剧本按目标时长写，不够凑、超了压。"
-                />
-              </label>
-              <label class="field">
                 <span class="field__label">CRF</span>
                 <input
                   v-model.number="params.crf"

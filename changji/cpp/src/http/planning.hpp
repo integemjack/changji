@@ -12,6 +12,8 @@
 #include <nlohmann/json.hpp>
 
 #include "http/readonly.hpp"
+#include "models/character.hpp"
+#include "models/project.hpp"
 #include "llm/client.hpp"
 #include "pipeline/jobs.hpp"
 
@@ -28,6 +30,12 @@ namespace changji::http {
 /// POST /api/assets/dedupe —— 把同名的场景/角色收成一条，镜头引用跟着改。
 /// 不叫模型，只收不出。定妆那条路顺手也做，这是给存量项目的快路。
 ApiResult post_assets_dedupe(const nlohmann::json& body);
+
+/// 把一份新出的人物 / 场景设定并进项目的资产库（同名的按 overwrite 决定
+/// 顶不顶掉，顺手去重、把镜头的指向改过来）。定妆和理解故事共用。
+ApiResult merge_assets(const models::ProjectStore& store,
+                       const models::AssetLibrary& fresh, bool overwrite,
+                       const char* source);
 
 ApiResult post_bible(const nlohmann::json& body, llm::Client& client,
                      pipeline::CancelToken& tok);

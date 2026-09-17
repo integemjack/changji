@@ -713,7 +713,7 @@ async function peekPlanPayload() {
     quiet: true,
   })
   if (!scriptData?.script?.trim()) {
-    ui.warn('这一集还没有剧本，拆分镜那一步的提示词也就拼不出来')
+    ui.warn('这一章还没有剧本，拆分镜那一步的提示词也就拼不出来')
     return null
   }
   return {
@@ -738,7 +738,7 @@ async function onPastedShots() {
 
 async function generate() {
   if (!session.episodeId) {
-    ui.warn('先选一集')
+    ui.warn('先选一章')
     return
   }
   // **开工那一刻把项目和集号钉死。**
@@ -764,12 +764,12 @@ async function generate() {
     // 所以这会儿它装的就是这一趟的。
     ui.warn(
       error.value
-        ? `读不到这一集的剧本：${error.value}`
+        ? `读不到这一章的剧本：${error.value}`
         // **不要写「回第二步」。** 那是八步那会儿的编号，剧本当时自己占
         // 一页；现在剧本就在这一页上面那一排的第一格（同一个 EpisodeView
         // 的「剧本」那格），而「第二步」现在是故事。照旧那句话找，人会走到
         // 一个跟这一集无关的地方去。
-        : '这一集还没有剧本。上面切到「剧本」那一格，自己写或者让 AI 改编一版',
+        : '这一章还没有剧本。上面切到「剧本」那一格，自己写或者让 AI 改编一版',
     )
     return
   }
@@ -1090,7 +1090,7 @@ async function startAll() {
     const locked = lockedCount.value
     // 锁着的也会跟着重跑——见 lockedCount 上面那段。
     const note = locked ? `（含锁定的 ${locked} 镜）` : ''
-    if (!confirm(`这一集已经全部出完了。重出会把每一镜${note}从头再跑一遍，确定？`)) {
+    if (!confirm(`这一章已经全部出完了。重出会把每一镜${note}从头再跑一遍，确定？`)) {
       return
     }
   }
@@ -1426,7 +1426,7 @@ onDeactivated(() => {
           path="/api/plan"
           :resolve="peekPlanPayload"
           title="抄走「拆分镜」这一步的提示词（按场跑时是每一场一份）"
-          paste-hint="这一集按场拆的话，每一场之间要留着复制出去时那一行「===== 第 N/M 场 …… =====」——引擎按它把几段分回各场。少一段会整体错位，那种错不报错。"
+          paste-hint="这一章按场拆的话，每一场之间要留着复制出去时那一行「===== 第 N/M 场 …… =====」——引擎按它把几段分回各场。少一段会整体错位，那种错不报错。"
           @done="onPastedShots"
         />
         <!-- 先出首帧，看一眼构图再决定要不要花那两分钟出视频。 -->
@@ -1516,10 +1516,10 @@ onDeactivated(() => {
            才会动」——而这一集根本还没有镜头，「全部重出」也不在那儿。
            接口回的 shots 就是镜头数，分开说。 -->
       <template v-if="preview.shots === 0">
-        这一集还没有分镜，先点上面的「AI 出分镜」。
+        这一章还没有分镜，先点上面的「AI 出分镜」。
       </template>
       <template v-else-if="preview.idle">
-        这一集每一镜都出到头了，点「全部重出」才会动。
+        这一章每一镜都出到头了，点「全部重出」才会动。
       </template>
       <template v-else>
         这一次要跑：<template v-for="(st, i) in preview.stages" :key="st.stage"
@@ -1579,8 +1579,8 @@ onDeactivated(() => {
             没有参考图它会退化成文生图、出来是噪点，而闸门拦不住。
           </span>
           <span class="alert__fix tiny dim">
-            去设定页把这几镜用到的角色定妆、给场景出空景图（「照故事定妆」+
-            「一键出图」）
+            去设定页把这几镜用到的角色和场景定下来、把参考图画出来（「理解故事」+
+            「出图」）
           </span>
           <RouterLink to="/assets" class="btn btn--sm">去设定页</RouterLink>
         </p>
@@ -1611,14 +1611,14 @@ onDeactivated(() => {
       v-if="!loading && loadError"
       icon="warn"
       tone="warn"
-      title="读不到这一集的分镜"
+      title="读不到这一章的分镜"
       :hint="loadError"
     />
 
     <EmptyState
       v-else-if="!loading && !shots.length && props.scriptChars === 0"
       icon="script"
-      title="这一集还没有剧本"
+      title="这一章还没有剧本"
       hint="分镜是照着剧本一场一场拆的，先把剧本写出来"
     >
       <button class="btn btn--primary btn--sm" type="button" @click="emit('go', 'script')">

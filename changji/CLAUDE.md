@@ -15,9 +15,11 @@ cpp/src/
                       /config_api 各管一摊；run_deps.cpp 组装后端（池、farm）
   pipeline/           一集怎么跑：episode.cpp（阶段编排）、jobs.hpp（作业表、
                       进度、取消）、shot_flow.hpp（首帧和出片的排位）
-  stages/             每一步的纯逻辑：story_outline / story_analyze /
+  stages/             每一步的纯逻辑：story_outline / story_analyze / story_understand /
                       chapter_write / script_story / storyboard / frames /
                       render / audio / bible / assemble
+  pipeline/series_cut 成片：所有章接成一条，按每集时长在镜头边界切。
+                      "集"只在这儿出现一次（写作、出片都按章）
   infer/              派活：worker_pool（池）、worker_farm（本机多卡拉子进程）、
                       worker_server（工作进程那套接口）、node_registry（机器表）
   llm/                大模型客户端。**schema 以文字贴在提示词后面**，见下
@@ -49,7 +51,7 @@ pkill -f 'build/changji [-]-port'
 
 ## 测试基线
 
-**全量 1175 条，应该全绿。** 红了就是真红了，别当背景噪声。
+**全量 1188 条，应该全绿。** 红了就是真红了，别当背景噪声。
 
 2026-09-17 之前这儿写的是「4 条红」——那是四份当年冻下来的 Python 答案，
 用来证明移植没走样。**Python 引擎 2026-09-10 就删了**，那个用途从那天起就

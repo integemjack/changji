@@ -58,20 +58,102 @@ TEST_CASE("每一格都得有对应的判定，一个都不能少") {
     }
 }
 
-TEST_CASE("镜头、成片、上传合成了一步「这一集」") {
+TEST_CASE("「设定」这一格：理解过、图也画齐了才打勾") {
+    // 用户 2026-09-17 定的顺序：理解故事 → 出图 → 这一章。前端拿这两个数
+    // 决定「出图」那颗按钮和顶栏「这一章」出不出现。
+    const json project =
+        json{{"project_id", "p1"},
+             {"episodes", json::array({json{{"episode_id", "ep01"},
+                                            {"chapter_refs", json::array({"ch01"})},
+                                            {"script_chars", 120}}})}};
+    const json story = json{{"characters", json::array({json{{"name", "林晚"}}})}};
+    json assets = json{
+        {"characters", json::array({json{{"char_id", "lin_wan"},
+                                         {"ref_front", "refs/a.png"},
+                                         {"ref_three_quarter", "refs/b.png"},
+                                         {"ref_back", "refs/c.png"}}})},
+        {"locations", json::array({json{{"location_id", "store"},
+                                        {"ref_empty", "refs/d.png"}}})}};
+
+    const json full = http::flow_assess(project, json::array(), json::array(),
+                                        "ep01", story, assets);
+    CHECK(full.at("done").at("assets") == true);
+    CHECK(full.at("counters").at("understood") == true);
+    CHECK(full.at("counters").at("refsOk") == true);
+    CHECK(full.at("counters").at("refsMissing") == 0);
+
+    SUBCASE("缺一张图：理解过了，但没画齐") {
+        assets["characters"][0]["ref_back"] = nullptr;
+        const json r = http::flow_assess(project, json::array(), json::array(),
+                                         "ep01", story, assets);
+        CHECK(r.at("counters").at("understood") == true);
+        CHECK(r.at("counters").at("refsMissing") == 1);
+        CHECK(r.at("counters").at("refsOk") == false);
+        CHECK(r.at("done").at("assets") == false);
+    }
+
+    SUBCASE("剧本没写：没理解完") {
+        json p2 = project;
+        p2["episodes"][0]["script_chars"] = 0;
+        const json r = http::flow_assess(p2, json::array(), json::array(), "ep01",
+                                         story, assets);
+        CHECK(r.at("counters").at("understood") == false);
+        CHECK(r.at("done").at("assets") == false);
+    }
+
+    SUBCASE("没传资产（老调用）：当没理解过") {
+        const json r = http::flow_assess(project, json::array(), json::array(),
+                                         "ep01", story);
+        CHECK(r.at("counters").at("understood") == false);
+        CHECK(r.at("done").at("assets") == false);
+    }
+}
+
+TEST_CASE("「成片」这一格：每章都出片了才轮到它，切出来了才打勾") {
+    const json project =
+        json{{"project_id", "p1"},
+             {"episodes", json::array({json{{"episode_id", "ep01"},
+                                            {"chapter_refs", json::array({"ch01"})}},
+                                       json{{"episode_id", "ep02"},
+                                            {"chapter_refs", json::array({"ch02"})}}})}};
+    const json one = json::array({json{{"name", "ep01.mp4"}}});
+    const json both = json::array({json{{"name", "ep01.mp4"}}, json{{"name", "ep02_01.mp4"}}});
+
+    SUBCASE("出了一章：还不算") {
+        const json r = http::flow_assess(project, json::array(), one, "ep01");
+        CHECK(r.at("counters").at("filmedChapters") == 1);
+        CHECK(r.at("counters").at("allFilmed") == false);
+        CHECK(r.at("done").at("film") == false);
+    }
+    SUBCASE("每章都出了：轮到它，但还没切") {
+        const json r = http::flow_assess(project, json::array(), both, "ep01");
+        CHECK(r.at("counters").at("allFilmed") == true);
+        CHECK(r.at("done").at("film") == false);
+    }
+    SUBCASE("切出来了：打勾") {
+        const json film = json{{"files", json::array({json{{"name", "第01集.mp4"}}})}};
+        const json r = http::flow_assess(project, json::array(), both, "ep01", json(),
+                                         json(), film);
+        CHECK(r.at("done").at("film") == true);
+    }
+}
+
+TEST_CASE("镜头、出片合成了一步「这一章」；成片是整部剧最后单独的一步") {
     // 几页合成一页之后，侧边栏留几格指向同一个地方只会让人以为点错了。
+    // 2026-09-17 又拆出一格「成片」：它不是某一章的事——每章都出片了，把
+    // 所有章接成一条、按每集时长切。集只在那一格出现。
     const auto steps = keys_of(http::flow_steps());
     CHECK(steps.count("episode") == 1);
     CHECK(steps.count("storyboard") == 0);
     CHECK(steps.count("production") == 0);
     CHECK(steps.count("shots") == 0);
-    CHECK(steps.count("film") == 0);
+    CHECK(steps.count("film") == 1);
     CHECK(steps.count("publish") == 0);
     CHECK(steps.count("script") == 0);  // 剧本大纲那一格也没有了
     CHECK(steps.count("characters") == 0);  // 角色和场景并进「设定」了
     CHECK(steps.count("scenes") == 0);
     CHECK(steps.count("assets") == 1);
-    CHECK(http::flow_steps().size() == 4);
+    CHECK(http::flow_steps().size() == 5);
 }
 
 TEST_CASE("「这一集」打勾看的是**这一集自己**的成片，三位集号不许串到两位上") {

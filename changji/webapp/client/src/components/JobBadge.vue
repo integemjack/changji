@@ -124,7 +124,7 @@ const KIND = {
   // 而草稿就在你没去的那一页上等着按「采用」，退出去就没了。
   premise: { label: '想梗概', page: '/story', icon: 'sparkle' },
   script: { label: '写剧本', page: '/episode', icon: 'sparkle' },
-  trailer: { label: '剪预告', page: '/assets?tab=episodes', icon: 'film' },
+  trailer: { label: '剪预告', page: '/assets', icon: 'film' },
   bible: { label: '定角色场景', page: '/assets', icon: 'sparkle' },
   plan: { label: '拆镜头', page: '/episode', icon: 'board' },
 }

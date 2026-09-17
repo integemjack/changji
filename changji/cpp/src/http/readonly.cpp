@@ -241,6 +241,9 @@ ApiResult get_project(const std::string& path) {
             // 在下拉里长得一模一样——2026-09-16 实见 ep08 和 ep09 都写着
             // 「了结（17 镜）」，选哪个全靠猜。
             {"chapter_refs", e.chapter_refs},
+            // 「理解过没有」的判据之一：每一章的剧本写了没有。只报字数，
+            // 正文另走 /api/script——这份回包每一页都在拉。
+            {"script_chars", static_cast<int>(text::utf8_len(e.script))},
             // **界面上这个数标着"时长"，那它就得是成片的长度。**
             //
             // 不是 planned_duration_s()——那是分镜表里那串名义值的和，而

@@ -902,7 +902,7 @@ async function clearRef(charId, slot) {
         v-else-if="!loading && !characters.length && !session.done.story"
         icon="user"
         title="还没有角色"
-        hint="先写故事，再点右上角「照故事定妆」"
+        hint="先写故事，再点右上角「理解故事」"
       >
         <RouterLink to="/story" class="btn btn--sm">去写故事</RouterLink>
       </EmptyState>
@@ -911,7 +911,7 @@ async function clearRef(charId, slot) {
         v-else-if="!loading && !characters.length"
         icon="user"
         title="还没有角色"
-        hint="故事写好了，点右上角「照故事定妆」，让 AI 读一遍把人和地方定下来"
+        hint="故事写好了，点右上角「理解故事」，让 AI 读一遍：人、地方、长相、剧本一次出来"
       />
 
       <!-- **一人一张牌，和「这一集」那面镜头墙一个样子。**
@@ -1177,7 +1177,7 @@ async function clearRef(charId, slot) {
                   <span
                     v-if="openChar.voice_gender"
                     class="pill pill--neutral tiny"
-                    title="「照故事定妆」那一下照身份那段文字猜的，之后改身份不会重猜。音色留空时按它挑一把嗓子；猜错了就在下面填一个音色，填了就不看它。"
+                    title="「理解故事」那一下照身份那段文字猜的，之后改身份不会重猜。音色留空时按它挑一把嗓子；猜错了就在下面填一个音色，填了就不看它。"
                   >
                     猜的性别：{{ openChar.voice_gender === 'female' ? '女' : '男' }}
                   </span>

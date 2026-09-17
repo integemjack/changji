@@ -54,4 +54,23 @@ ApiResult post_script_all(const nlohmann::json& body,
 ApiResult post_plan_all(const nlohmann::json& body,
                         std::shared_ptr<llm::Client> client);
 
+/// POST /api/story/understand —— 理解故事：一件活，把整本书读一遍，拍片
+/// 要的全出来。
+///
+/// 用户 2026-09-17：设定页只留一颗「理解故事」，跑完人物、关系、场景、长相
+/// 和剧本都有了；「出图」只是画。理解和定妆合成一件（两件都是把整本书读一
+/// 遍，第二遍的输入就是第一遍的输出）；剧本一章一章接着写——一次调用写不出
+/// 整部，第二章要看着第一章写。
+///
+/// 三步：读一遍（post_story_understand_once：结构和长相一次出来）→ 章对集
+/// （存故事时自动做，这儿再对一次）→ 逐章写剧本（同 script/all 那个循环）。
+/// 跑在 JobKind::Write 那个槽上，进度走 GET /api/script/series；能停，停了
+/// 已经出来的留着。
+///
+/// overwrite=false：故事里已有人物表就不再读，剧本只补缺的。
+/// overwrite=true：全部重来。
+/// body: {project, overwrite?}
+ApiResult post_story_understand(const nlohmann::json& body,
+                                std::shared_ptr<llm::Client> client);
+
 }  // namespace changji::http

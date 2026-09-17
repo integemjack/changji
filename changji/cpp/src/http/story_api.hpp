@@ -164,4 +164,13 @@ EpisodeSync sync_episodes_to_chapters(const models::ProjectStore& store,
 
 ApiResult post_story_episodes(const nlohmann::json& body);
 
+/// 理解故事那**一次**模型调用：读一遍，人物（含长相）、关系、地点（含样貌）、
+/// 每章梗概和钩子、全剧调子一次出来。结构那半落进 story.json（同 analyze），
+/// 长相那半并进 assets.json（同 bible）。同一份回答喂两个解析器，名单天然
+/// 一致。整件活（再加逐章写剧本）是 batch.hpp 的 post_story_understand。
+/// body: {project, overwrite?}；带 peek 只回提示词，带 paste 收别处跑出来的。
+ApiResult post_story_understand_once(const nlohmann::json& body,
+                                     llm::Client& client,
+                                     pipeline::CancelToken& tok);
+
 }  // namespace changji::http

@@ -145,7 +145,8 @@ const VIEWS = computed(() => {
   const list = [
     { key: 'script', label: '剧本', n: scriptChars.value ? `${scriptChars.value} 字` : '', gap: '', comp: EpScript },
     { key: 'shots', label: '镜头', n: n ? String(n) : '', gap, comp: EpShots },
-    { key: 'film', label: '成片', n: outputs.value ? String(outputs.value) : '', gap: '', comp: EpFilm },
+    // 叫「出片」不叫「成片」：成片是顶栏最后那一格（整部剧按时长切集），这儿是这一章自己的片。
+    { key: 'film', label: '出片', n: outputs.value ? String(outputs.value) : '', gap: '', comp: EpFilm },
   ]
   if (publishOk.value) list.push({ key: 'publish', label: '发布', n: '', gap: '', comp: EpPublish })
   return list
@@ -404,11 +405,11 @@ watch(longRunning, (now, before) => {
       v-else-if="!session.episodeId"
       icon="script"
       tone="warn"
-      title="还没选到某一集"
+      title="还没选到某一章"
       :hint="
         session.episodes.length
-          ? '顶上挑一集'
-          : '这部剧还一集都没有——章是自动对上集的，所以多半是还没有章节。去故事页写一份大纲，章出来了这儿就有了'
+          ? '顶上挑一章'
+          : '这部剧还一章都没有——章是自动对上集的，所以多半是还没有章节。去故事页写一份大纲，章出来了这儿就有了'
       "
     >
       <RouterLink to="/story" class="btn btn--sm">去写故事</RouterLink>
@@ -463,7 +464,7 @@ watch(longRunning, (now, before) => {
                 class="menu__item menu__item--danger"
                 type="button"
                 :disabled="session.episodes.length <= 1"
-                :title="session.episodes.length <= 1 ? '至少要留一集' : ''"
+                :title="session.episodes.length <= 1 ? '至少要留一章' : ''"
                 @click="askRemove"
               >
                 删掉

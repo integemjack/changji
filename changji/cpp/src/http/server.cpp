@@ -38,6 +38,7 @@
 #include "setup/update_check.hpp"
 #include "setup/downloader.hpp"
 #include "llm/client.hpp"
+#include "http/film.hpp"
 #include "http/flow.hpp"
 #include "util/paths.hpp"
 #include "util/sysstat.hpp"
@@ -2138,8 +2139,22 @@ void run(const config::Settings& settings, const Options& opts) {
             }
         }
 
+        // 资产库也要：「理解过没有」看库里有没有人，「图画齐没有」看每个人
+        // 三张脸、每个地方一张空景在不在——这些字段只有 /api/assets 带。
+        json assets = json::object();
+        {
+            auto r = guard([&] { return get_assets(path); });
+            if (r.status == 200 && r.body.is_object()) assets = r.body;
+        }
+        // 成片那一格：切出来的几集在不在。
+        json film = json::object();
+        {
+            auto r = guard([&] { return get_film(path); });
+            if (r.status == 200 && r.body.is_object()) film = r.body;
+        }
+
         const json assessed =
-            flow_assess(project, shots, outputs, episode_id, story);
+            flow_assess(project, shots, outputs, episode_id, story, assets, film);
         body["done"] = assessed["done"];
         body["counters"] = assessed["counters"];
         body["project"] = project;
@@ -2400,6 +2415,20 @@ void run(const config::Settings& settings, const Options& opts) {
     // GET /api/script/series，前端那个 writer store 直接能用。
     CROW_ROUTE(app, "/api/story/chapters").methods("POST"_method)(
         batch_route(&post_story_chapters));
+    // 理解故事：一件活串起提结构、定长相、逐章写剧本。同一个槽，同一条进度。
+    CROW_ROUTE(app, "/api/story/understand").methods("POST"_method)(
+        batch_route(&post_story_understand));
+
+    // ---- 成片：每章都出片了，按每集时长切 ----
+    CROW_ROUTE(app, "/api/film")([](const crow::request& req) {
+        auto r = guard([&] { return get_film(required_query(req, "path")); });
+        return json_response(r.body, r.status);
+    });
+    CROW_ROUTE(app, "/api/film/cut").methods("POST"_method)(
+        [](const crow::request& req) {
+            auto r = guard([&] { return post_film_cut(parse_body(req.body)); });
+            return json_response(r.body, r.status);
+        });
 
     // ---- 任务状态与开跑 ----
 

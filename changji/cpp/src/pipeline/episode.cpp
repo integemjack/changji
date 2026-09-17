@@ -408,8 +408,12 @@ std::string run_assemble(const ProjectStore& store,
     // 2026-09-16 之前这儿有个 `episode_s > 0` 的岔口，0 表示"不切、整章一集"
     // ——那是集模式，当天整个删了。episode_s 现在恒 > 0（老配置里的 0 在
     // 读取时抬到默认值，见 config::Settings），这一岔永远走同一边。
+    // **一章一个文件，不在章内切。** 2026-09-17 起集是最后在成片那一步按
+    // 用户选的时长、把所有章接成一条再切的（pipeline/series_cut）；这儿按
+    // [assembly].episode_s 切的话，同一段片子会被切两次，第二次切在第一次
+    // 的缝上。split_into_episodes 给 0 就是原样一条。
     const std::vector<media::Timeline> parts =
-        media::split_into_episodes(timeline, settings.assembly.episode_s);
+        media::split_into_episodes(timeline, 0.0);
     std::vector<std::filesystem::path> outputs;
     // 这一轮要写出去的那几个名字。写完拿它去清同一集**另一种命名**留下的
     // 旧成片——见下面那段。

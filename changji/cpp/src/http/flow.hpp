@@ -55,6 +55,8 @@ nlohmann::json flow_assess(const nlohmann::json& project,
                            const nlohmann::json& shots,
                            const nlohmann::json& outputs,
                            const std::string& episode_id,
-                           const nlohmann::json& story = nlohmann::json::object());
+                           const nlohmann::json& story = nlohmann::json(),
+                           const nlohmann::json& assets = nlohmann::json(),
+                           const nlohmann::json& film = nlohmann::json());
 
 }  // namespace changji::http

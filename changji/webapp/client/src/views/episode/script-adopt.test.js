@@ -29,8 +29,8 @@ describe('空章写完直接落盘', () => {
     expect(code).toContain('整份换掉')
   })
 
-  it('人在这一趟里换了集就不落盘，只提示一句', () => {
+  it('人在这一趟里换了章就不落盘，只提示一句', () => {
     // 落到别的集上比多点一下严重得多
-    expect(code).toContain('切回那一集就能看')
+    expect(code).toContain('切回那一章就能看')
   })
 })

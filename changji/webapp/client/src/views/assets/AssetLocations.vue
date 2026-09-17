@@ -590,7 +590,7 @@ async function clearEmpty(locationId) {
         v-else-if="!loading && !locations.length && !session.done.story"
         icon="scene"
         title="场景库还是空的"
-        hint="先写故事，再点右上角「照故事定妆」"
+        hint="先写故事，再点右上角「理解故事」"
       >
         <RouterLink to="/story" class="btn btn--sm">去写故事</RouterLink>
       </EmptyState>
@@ -599,7 +599,7 @@ async function clearEmpty(locationId) {
         v-else-if="!loading && !locations.length"
         icon="scene"
         title="场景库还是空的"
-        hint="故事写好了，点右上角「照故事定妆」，让 AI 读一遍把人和地方定下来"
+        hint="故事写好了，点右上角「理解故事」，让 AI 读一遍：人、地方、长相、剧本一次出来"
       />
 
       <EmptyState

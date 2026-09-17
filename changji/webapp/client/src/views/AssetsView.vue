@@ -13,7 +13,7 @@
  *
  *   · **tab 就是状态行**：「角色 2 · 缺 6」「场景 25 · 缺 25」「分集 10 ·
  *     8 章没正文」。站在角色格也知道场景格一张都没画。
- *   · **右上一排是流水线**：定妆 → 出图（→ 分集格换成落成剧集）。三个都是
+ *   · **右上一排是流水线**：理解故事 → 出图。三个都是
  *     页级动作，原来「照故事定妆」在角色格和场景格各有一份、按的是同一个
  *     接口。「覆盖已有」一个勾管两个按钮——对定妆和出图它是同一个意思：
  *     已有的也顶掉。勾上，定妆变「重新定妆」、出图变「全部重画」。
@@ -34,29 +34,26 @@ import { useRoute, useRouter } from 'vue-router'
 import AppIcon from '@/components/AppIcon.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import AssetCharacters from '@/views/assets/AssetCharacters.vue'
-import AssetEpisodes from '@/views/assets/AssetEpisodes.vue'
 import AssetLocations from '@/views/assets/AssetLocations.vue'
 import { api } from '@/api'
 import { useAction } from '@/composables/useAction'
-import { runAsyncJob } from '@/composables/useAsyncJob'
 import { useRefStream } from '@/composables/useRefStream'
 import { useLongRunning } from '@/composables/useSystemFeed'
 import { pickProjectHint } from '@/composables/pick-project-hint'
 import { useProjects } from '@/stores/projects'
 import { useSession } from '@/stores/session'
-import { useThinking } from '@/stores/thinking'
 import { useUi } from '@/stores/ui'
+import { useWriter } from '@/stores/run'
 
 const session = useSession()
-const thinking = useThinking()
+const writer = useWriter()
 /** 只为那一屏「还没选项目」的提示：一个都没有时该说的是「建一个」。 */
 const projects = useProjects()
 const route = useRoute()
 const router = useRouter()
 const ui = useUi()
 const { run, isBusy } = useAction()
-const { finished, touch, live, queue: refQueue, lastQueue, setWaiting } =
-  useRefStream()
+const { finished, live, queue: refQueue, lastQueue, setWaiting } = useRefStream()
 /** 长跑任务在不在跑。见下面那条下降沿。 */
 const longRunning = useLongRunning()
 
@@ -130,9 +127,11 @@ const relations = computed(() => story.value?.relations ?? [])
  * 用的是流程那份（每一页都在读、两秒一拍），不是这一页自己的 story：
  * 老项目可能只有剧本没有故事，那时候 `chapters` 是空的而定妆照样能跑。
  */
-const hasSource = computed(
-  () => !!session.done.story || (session.counters.writtenEpisodes ?? 0) > 0,
-)
+/**
+ * 「理解故事」有没有料可读：故事得有正文。**只认故事**——2026-09-17 起剧本
+ * 是理解故事写出来的，不再是它的另一条来源。
+ */
+const canUnderstand = computed(() => chapters.value.some((c) => (c.text ?? '').trim()))
 
 /** 还差几张脸。三视图一人三张，缺一张算一张。 */
 const charMissing = computed(() =>
@@ -167,9 +166,6 @@ const locGap = computed(() => {
   if (unlinkedShots.value) return `${unlinkedShots.value} 镜没接上`
   return locMissing.value ? `缺 ${locMissing.value}` : ''
 })
-const unwritten = computed(
-  () => chapters.value.filter((c) => !(c.text ?? '').trim()).length,
-)
 
 /**
  * tab 上写什么。**数是答案，缺才是重点**——齐了就只有一个数，
@@ -188,15 +184,6 @@ const TABS = computed(() => [
     n: locations.value.length,
     gap: locGap.value,
   },
-  {
-    key: 'episodes',
-    label: '章节',
-    // **数章，不数集。** 用户 2026-09-16：这一格不需要集的概念了。
-    // 原来这儿数的是 plan.length（分集条目），于是页签上写着 10 而
-    // 底下列着 8 章。
-    n: chapters.value.length,
-    gap: chapters.value.length && unwritten.value ? `${unwritten.value} 章没正文` : '',
-  },
 ])
 
 const tab = computed(() => {
@@ -210,27 +197,17 @@ function pick(key) {
 }
 
 /**
- * 照故事定妆。**一次把人和地方都定了**——引擎那边 post_bible 一次出
- * 整本圣经，回包里 added_characters 和 added_locations 都有。原来两格
- * 各放一个按钮，看着像两件事，其实按的是同一个接口。
+ * 理解故事。**一颗按钮，一件活**：提结构 → 定长相 → 章对集 → 逐章写剧本，
+ * 引擎那头串好了（post_story_understand），这儿只按一下、然后看进度。
+ * 进度走 writer store——和批量展开正文同一个槽、同一条进度。
  *
- * episode_id 带着是为老项目：没有故事的项目退回"从一集剧本里找"那条
- * 路，得知道拿哪一集。有故事的项目引擎不看它。
+ * 用户 2026-09-17：理解和定妆合成一件（两件都是把整本书读一遍，第二遍的
+ * 输入就是第一遍的输出）；剧本是理解的产物，不是「这一章」页上另写的一步。
  */
-async function bible() {
-  // **确认框里报的代价是这一部剧的，那这一趟就得落在这一部上。**
-  //
-  // `runAsyncJob` 要等那条 socket 开（最多两秒）才发请求，而下面原来现读
-  // session：这两秒里在项目库点了另一部剧，`overwrite` 那一下就带着"会冲
-  // 掉 15 张参考图"的确认，落到一部**没被问过**的剧上——而那一下是没有撤
-  // 销的。一键出图那条早就把项目钉死了，理由写在它旁边。
+async function understand() {
   const project = session.projectPath
-  const episodeId = session.episodeId
   const over = overwrite.value
   if (over) {
-    // **把代价写成数字。** 「会冲掉参考图」听着像一句免责声明，而实际
-    // 发生的是十几张图连同画它们的十几分钟一起没了，且没有撤销。
-    // 2026-09-12 就这么丢过一次（15 张）。
     const lost =
       characters.value.reduce(
         (n, c) => n + SLOTS.filter((s) => c['ref_' + s]).length,
@@ -239,80 +216,30 @@ async function bible() {
     const cost = lost
       ? `会冲掉 ${lost} 张参考图（重画一遍约 ${Math.ceil((lost * 30) / 60)} 分钟），`
       : ''
-    if (!confirm(`${cost}手改过的设定也会被顶掉，已渲染的镜头要重跑。继续？`)) {
+    if (
+      !confirm(`${cost}手改过的设定和每一章的剧本都会被顶掉，已渲染的镜头要重跑。继续？`)
+    ) {
       return
     }
   }
-  const result = await run(
-    () =>
-      runAsyncJob(
-        (extra) =>
-          api.makeBible({
-            project,
-            overwrite: over,
-            ...(episodeId ? { episode_id: episodeId } : {}),
-            ...extra,
-          }),
-        { prefix: 'bible', label: '照故事定妆' },
-      ),
-    { key: 'bible', refresh: true },
+  const started = await run(
+    () => api.understandStory({ project, overwrite: over }),
+    { key: 'understand' },
   )
-  if (!result) return
-  // **把 id 翻回人话。** `added_characters` 回的是 `c_lin_wan` 这种 id，
-  // 直接 join 出去就是「2 个新角色：c_lin_wan、c_chen_mo」——而这一条正是
-  // 定妆完人第一眼看的东西。这套系统的规矩本来就写着「分镜表里只有 id，
-  // 界面负责把它翻回人话」（见 EpShots 里 charName 那段），这儿漏了。
-  // 名字不用另外去问：同一个回包里的 `characters` 每条都带着 name。
-  const nameOf = new Map(
-    (result.characters ?? []).map((x) => [x.char_id, x.name]).filter(([, n]) => n),
-  )
-  const c = (result.added_characters ?? []).map((id) => nameOf.get(id) || id)
-  const l = result.added_locations ?? []
-  const parts = []
-  if (c.length) parts.push(`${c.length} 个新角色：${c.join('、')}`)
-  if (l.length) parts.push(`${l.length} 个新场景`)
-  // 收掉了几条同名的要说出来——"场景从 25 变成 15"不解释的话看着像丢了东西
-  if (result.merged) parts.push(`收掉 ${result.merged} 条重名的`)
-  // **后面这两个数一直没人读，而引擎是特意回的。**
-  //
-  // 它们说的是这一下**动了已经存在的东西**，而上面那几句说的都是新增：
-  //
-  //   · remapped_shots：收掉重名的之后，原来指着被收那一条的镜头要改指向
-  //     （引擎 planning.cpp 那句注释就写着「跟着改了几镜……界面上要说出来」）。
-  //   · reset_shots：勾了覆盖时，全项目已经渲染过的镜头被退回「待重跑」、
-  //     重试次数清零。按之前弹的那个确认框只说了「已渲染的镜头要重跑」，
-  //     没说几个；真跑完更该报实数——场景格那条关联的提示早就是这个规矩
-  //     （只提真的发生了的重置）。
-  if (result.remapped_shots) parts.push(`${result.remapped_shots} 个镜头跟着改了指向`)
-  if (result.reset_shots) parts.push(`${result.reset_shots} 个镜头退回重跑`)
-  // 定妆要叫一趟模型，几十秒到几分钟；中途在项目库里点别的剧很自然。
-  // 活儿是替钉住的 `project` 干的、结果也写在它身上，所以这句话要说清是
-  // 替谁干的——照 genAll 和 AssetEpisodes 那几条现成的说法。
-  const summary = parts.length
-    ? parts.join('；')
-    : '故事里的人和地方库里都有了，没补新的'
-  if (project !== session.projectPath) {
-    ui.info(`那一部剧定完妆了（${summary}），但你已经切走了——回去就能看到`)
-  } else {
-    ui.ok(summary)
-  }
-  touch() // 三个格子和这儿的数一起重拉
+  if (!started) return
+  ui.ok(`开始理解这个故事，${started.total} 步`)
+  writer.start()
 }
 
-/**
- * 把参考图一次画完。
- *
- * 不勾覆盖：**只补缺的，不重画已有的。** 已经画好的那些多半是挑过的——
- * 有的还是手传上去的真人照片。一键把它们全顶掉，等于一次点击毁掉半小时
- * 的挑选，而这种事没有撤销。
- *
- * 勾了覆盖：连已有的一起重画，问一句再动手。**改了画风之后需要它**：
- * 那时候在磁盘上的每一张都还是老提示词出的，只补缺的等于什么都没变——
- * 而"改了设置却看不出变化"是最容易让人以为功能坏了的一种。
- *
- * **一张一张来。** 显存只够一张，并发只会在引擎那边排队（现在是真排队
- * 了），而排着的看不出进度。
- */
+/** 停手里这件。招呼先打（引擎把「已手动停止」写进 error，不打招呼会红一次）。 */
+async function stopUnderstand() {
+  if (isBusy('stopWrite')) return
+  writer.markStopped()
+  const ok = await run(() => api.stopSeries(), { key: 'stopWrite', success: '已停' })
+  if (!ok) writer.markStopped(false)
+  writer.poll()
+}
+
 async function genAll() {
   const force = overwrite.value
   // **开跑那一刻把项目钉死。** 这一轮要跑十几分钟，中途在项目库里点了另一
@@ -561,8 +488,13 @@ watch(finished, loadAssets)
  * 还是开跑之前的数，正是上面那段话要治的事。
  * 换成那份系统表：它在每一页上都两秒一拍地拉。见 useLongRunning。
  */
+// 长活跑完（理解故事、出图都算）：库、故事、顶栏的判据一起重拉——
+// 「出图」那颗按钮就是靠 counters.understood 出现的。
 watch(longRunning, (now, before) => {
-  if (before === true && now === false) loadAll()
+  if (before === true && now === false) {
+    loadAll()
+    session.refresh()
+  }
 })
 </script>
 
@@ -593,65 +525,64 @@ watch(longRunning, (now, before) => {
 
         <span class="tabs__gap" />
 
-        <!-- 流水线：定妆 → 出图。分集格不显示——它一张参考图都不出，
-             而一个按下去要跑十几分钟、跟这一格毫无关系的按钮摆在那儿，
-             只会让人以为它是「落成剧集」。
-             ⚠️ **这儿不要再放"种子"。** 放过一次，用户 2026-09-12 说不用：
-             种子是"这一张不满意，换一张脸"，是一张图的事；而这一行上的
-             东西一按就是十几张，给它们定同一个种子既没意义也没人想要。
-             要换某一张，那一格自己有「重画」。 -->
-        <template v-if="tab !== 'episodes'">
-          <label
-            class="switch tiny"
-            title="定妆：同名的用新出的顶掉，手改过的设定和参考图会丢。出图：已有的也重画，手传的会被顶掉"
-          >
-            <input v-model="overwrite" type="checkbox" :disabled="isBusy('bible') || !!bulk" />
-            <span>覆盖已有</span>
-          </label>
+        <!-- 流水线：理解故事 → 出图。用户 2026-09-17 定的：设定页只有这两颗，
+             「出图」要等理解完才出现，顶栏「这一章」要等图画齐。
+             ⚠️ **这儿不要再放"种子"。** 用户 2026-09-12 说不用：种子是"这一张
+             不满意，换一张脸"，是一张图的事；这一行上的东西一按就是十几张。 -->
+        <label
+          class="switch tiny"
+          title="理解：同名的用新出的顶掉，手改过的设定、参考图、每章剧本都会丢。出图：已有的也重画，手传的会被顶掉"
+        >
+          <input
+            v-model="overwrite"
+            type="checkbox"
+            :disabled="writer.running || isBusy('understand') || !!bulk"
+          />
+          <span>覆盖已有</span>
+        </label>
 
-          <!-- **读砸了就别摆成"新项目那颗主按钮"。** 见 loadAssets 里那段：
-               这一刻有没有设定根本不知道，而定妆是往库里写。
-
-               **没料的时候按不动**：定妆要么读故事、要么读某一集的剧本
-               （引擎 post_bible 的 source=auto 就是这个顺序），两样都没有
-               时它回 400「还没有剧本，先去写一集」——而新项目缺的是**故事**，
-               那句话把人支去一个更靠后的步骤。底下那个空状态说的才对
-               （「先写故事」），按钮得和它一致。 -->
-          <button
-            class="btn btn--sm"
-            :class="characters.length || assetsError ? 'btn--ghost' : 'btn--ai'"
-            type="button"
-            :disabled="isBusy('bible') || !!bulk || !!assetsError || !hasSource"
-            :title="
-              assetsError
-                ? `这部剧的设定读不出来，先别往里写：${assetsError}`
-                : !hasSource
-                  ? '还没有故事，也没有写好的剧本——定妆要照着其中一样来。先去写故事'
-                  : '让 AI 读一遍故事，把人和地方定下来'
-            "
-            @click="bible"
-          >
-            <AppIcon v-if="!characters.length" name="sparkle" :size="13" />
-            {{ isBusy('bible') ? '正在读故事…' : overwrite ? '重新定妆' : '照故事定妆' }}
-          </button>
-          <!-- **定妆要读完 8 章大纲再产出一整套人和地方，实测六分钟。**
-               这六分钟里原来屏幕上只有按钮上那句「正在读故事…」——看不出
-               它在不在干活。思考流本来就在发（planning.cpp 挂了
-               thinking_sink，这条走的又是 runAsyncJob），只是全流进了顶栏
-               那块徽标，人得先知道去点「看看在跑什么」。故事页早就自己在
-               原地画了一份（StoryView 里那段 `story_token → paint`），
-               这儿照它，只是定妆没有可画的画布，就报"想到哪儿了"。 -->
-          <span v-if="isBusy('bible') && thinking.latest" class="tiny dim think">
-            已经想了 {{ thinking.latest.length }} 字 ·
-            {{ thinking.latest.slice(-40) }}
+        <!-- **读砸了就别摆成"新项目那颗主按钮"。** 见 loadAssets 里那段：
+             这一刻有没有设定根本不知道，而理解是往库里写。
+             **没正文按不动**：理解读的是故事的正文，大纲阶段没什么可读，
+             悬停那句要说清缺的是什么、去哪儿补。 -->
+        <button
+          class="btn btn--sm"
+          :class="characters.length || assetsError ? 'btn--ghost' : 'btn--ai'"
+          type="button"
+          :disabled="
+            writer.running || isBusy('understand') || !!bulk || !!assetsError || !canUnderstand
+          "
+          :title="
+            assetsError
+              ? `这部剧的设定读不出来，先别往里写：${assetsError}`
+              : !canUnderstand
+                ? '故事还没有正文——理解读的是正文。先去故事页写'
+                : '读一遍整本书：人物、关系、场景、长相，再把每一章的剧本写出来'
+          "
+          @click="understand"
+        >
+          <AppIcon v-if="!characters.length" name="sparkle" :size="13" />
+          {{ writer.running ? '正在理解…' : overwrite ? '重新理解' : '理解故事' }}
+        </button>
+        <!-- 二十分钟上下。进度是引擎那本账上的（几步里的第几步、正在干哪件），
+             不数思考的字——那个数 4000 字就封顶不动了（见 StoryView 底栏）。 -->
+        <template v-if="writer.running">
+          <span class="tiny dim think">
+            {{ writer.state?.done ?? 0 }}/{{ writer.state?.total ?? 0 }} ·
+            {{ writer.state?.message }}
           </span>
+          <button class="btn btn--sm btn--ghost" type="button" @click="stopUnderstand">
+            停下
+          </button>
+        </template>
 
+        <template v-if="session.counters.understood">
           <button
             class="btn btn--sm btn--ai"
             type="button"
             :disabled="
               isBusy('genall') ||
-              isBusy('bible') ||
+              writer.running ||
               !!assetsError ||
               (!characters.length && !locations.length)
             "
@@ -671,13 +602,12 @@ watch(longRunning, (now, before) => {
               {{ bulk.done }}/{{ bulk.total }}
               {{ bulk.drawing.map((r) => r.label).join('、') }}
             </template>
-            <template v-else>{{ overwrite ? '全部重画' : '一键出图' }}</template>
+            <template v-else>{{ overwrite ? '全部重画' : '出图' }}</template>
           </button>
           <!-- **排队的那几张要说出来。** 页面自己开几条道的那一版说不出这个数，
                两条道恰好在同一个人身上时那一行读起来像卡住了（用户
-               2026-09-17：「光作业中还显示同一个名字，排队被你吃了？」）。 -->
-          <!-- 按了停之后说法要换：排着的那几张已经不会再派了，还写
-               「还排着 N 张」的话看着像没按上。 -->
+               2026-09-17：「光作业中还显示同一个名字，排队被你吃了？」）。
+               按了停之后说法要换：排着的那几张已经不会再派了。 -->
           <span v-if="bulk && bulk.stopping" class="tiny dim">
             停下了，手上这
             {{ bulk.drawing.length || (bulk.running ?? []).length }} 张画完就收
@@ -701,8 +631,7 @@ watch(longRunning, (now, before) => {
            一堆展开状态和没保存的编辑，切一下就丢的话没人敢切。 -->
       <KeepAlive>
         <AssetCharacters v-if="tab === 'characters'" :relations="relations" />
-        <AssetLocations v-else-if="tab === 'locations'" />
-        <AssetEpisodes v-else />
+        <AssetLocations v-else />
       </KeepAlive>
     </template>
   </div>

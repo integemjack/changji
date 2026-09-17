@@ -341,10 +341,10 @@ watch(currentRel, () => {
       title="还没有成片"
       :hint="
         shotsUnknown
-          ? '这一集的分镜表这会儿读不出来，所以说不准镜头跑到哪儿了。去镜头页看一眼'
+          ? '这一章的分镜表这会儿读不出来，所以说不准镜头跑到哪儿了。去镜头页看一眼'
           : shotsLeft
-            ? `这一集还差 ${shotsLeft} 镜没出视频，跑完自动装配成片`
-            : '这一集的镜头还没跑出来，跑完自动装配成片'
+            ? `这一章还差 ${shotsLeft} 镜没出视频，跑完自动装配成片`
+            : '这一章的镜头还没跑出来，跑完自动装配成片'
       "
     >
       <button class="btn btn--primary" type="button" @click="emit('go', 'shots')">

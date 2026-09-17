@@ -344,6 +344,11 @@ double round1(double x) { return std::nearbyint(x * 10.0) / 10.0; }
 
 }  // namespace
 
+ApiResult merge_assets(const ProjectStore& store, const AssetLibrary& fresh,
+                       bool overwrite, const char* source) {
+    return merge_bible(store, fresh, overwrite, source);
+}
+
 ApiResult post_assets_dedupe(const json& body) {
     // 把库里同名的场景/角色收成一条，镜头上的引用跟着改。**不叫模型。**
     //

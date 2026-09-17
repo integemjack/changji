@@ -35,6 +35,7 @@
 #include "models/project.hpp"
 #include "models/story.hpp"
 #include "stages/bible.hpp"
+#include "stages/story_understand.hpp"
 #include "stages/script_story.hpp"
 #include "stages/chapter_write.hpp"
 #include "stages/story_analyze.hpp"
@@ -1868,6 +1869,174 @@ TEST_CASE("并回去：模型糊弄时的几种情况") {
         CHECK_THROWS_AS(changji::stages::apply_analysis(s, j.dump()),
                         stages::StoryError);
     }
+}
+
+/// 理解故事那一次调用的回答：结构（good_analysis）加上长相和样貌。
+json good_understanding() {
+    json u = good_analysis();
+    for (auto& c : u["characters"]) {
+        c["key"] = "lin_wan";
+        c["body"] = "偏瘦，肩背挺";
+        c["face"] = "齐肩黑直发，圆眼，单眼皮";
+        c["attire"] = "便利店藏青制服外套";
+    }
+    int k = 0;
+    for (auto& l : u["locations"]) {
+        l["key"] = "place_" + std::to_string(k++);
+        l["space"] = "临街玻璃门，两排货架";
+        l["lighting"] = "夜间冷白顶光";
+        l["palette"] = "冷青加一点暖黄";
+    }
+    u["global_style"] = "夜戏，低饱和，轻微颗粒";
+    return u;
+}
+
+TEST_CASE("理解故事：一句话提示词，没有规矩表；结构和长相在同一份里") {
+    // 用户 2026-09-17：「理解故事本来就不应该给很多提示词……只要让它输出
+    // 结构化的内容就行」。规矩表没有了，结构在 schema 里；故事里有两个人
+    // 就是两个人，不许硬要三到五个。
+    const std::string p =
+        changji::stages::build_understand_prompt(pasted_story(), StyleLine::REALISTIC);
+    CHECK(p.find("按你的理解补") != std::string::npos);
+    CHECK(p.find("雨夜重逢") != std::string::npos);   // 章节在
+    CHECK(p.find("硬性要求") == std::string::npos);
+    // 章节前面一条禁令都没有；唯一一个「不要」是尾巴上那句"只输出 JSON，
+    // 不要任何解释文字"——那是输出格式，不是读法。
+    CHECK(p.find("不要") > p.find("章节如下"));
+    CHECK(p.find("只输出 JSON") != std::string::npos);
+
+    const json s = changji::stages::understand_schema();
+    const std::string dumped = s.dump();
+    CHECK(dumped.find("minItems") == std::string::npos);
+    CHECK(dumped.find("maxItems") == std::string::npos);
+    const auto& cp = s.at("properties").at("characters").at("items").at("properties");
+    for (const char* k : {"name", "want", "arc", "key", "body", "face", "attire"}) {
+        CAPTURE(k);
+        CHECK(cp.contains(k));
+    }
+    const auto& lp = s.at("properties").at("locations").at("items").at("properties");
+    for (const char* k : {"name", "key", "space", "lighting", "palette"}) {
+        CAPTURE(k);
+        CHECK(lp.contains(k));
+    }
+    CHECK(s.at("properties").contains("global_style"));
+    CHECK(s.at("properties").at("chapters").at("items").at("properties").contains("hooks"));
+}
+
+TEST_CASE("POST /api/story/understand_once：一份回答，结构进故事、长相进库") {
+    const fs::path root = fresh_project("理解一次");
+    ProjectStore store(root);
+    store.save_story(pasted_story());
+
+    llm::ReplayClient client({good_understanding().dump()});
+    pipeline::CancelToken tok;
+    const auto r = http::post_story_understand_once(json{{"project", p_str(root)}}, client, tok);
+    CHECK(r.status == 200);
+    REQUIRE(client.calls().size() == 1);   // 一次调用，不是两次
+    CHECK(client.calls()[0].schema_name == "story_understanding");
+
+    const Story s = store.load_story();
+    REQUIRE(s.characters.size() == 1);
+    CHECK(s.characters[0].name == "林晚");
+    CHECK(s.chapters[0].summary.size() > 0);
+
+    const AssetLibrary lib = store.load_assets();
+    REQUIRE(lib.characters.size() == 1);
+    CHECK(lib.characters.begin()->second.name == "林晚");
+    CHECK(lib.characters.begin()->second.appearance.face == "齐肩黑直发，圆眼，单眼皮");
+    CHECK_FALSE(lib.locations.empty());
+
+    SUBCASE("没正文不让读") {
+        const fs::path bare = fresh_project("理解没正文");
+        ProjectStore(bare).save_story(
+            parse_outline(good_outline().dump(), "梗概", StoryScale::MEDIUM));
+        CHECK_THROWS_AS(http::post_story_understand_once(json{{"project", p_str(bare)}},
+                                                         client, tok),
+                        http::ApiError);
+        std::error_code e2;
+        fs::remove_all(bare, e2);
+    }
+
+    std::error_code ec;
+    fs::remove_all(root, ec);
+}
+
+TEST_CASE("POST /api/story/understand：一件活，读一遍全出来") {
+    // 设定页只有一颗「理解故事」：提结构 → 定长相 → 章对集 → 逐章写剧本。
+    pipeline::jobs().cancel(pipeline::JobKind::Write);
+    pipeline::jobs().wait_idle();
+
+    const fs::path root = fresh_project("理解故事");
+    ProjectStore store(root);
+    Story s = pasted_story();
+    s.plan = changji::stages::plan_episodes(s, 60.0);
+    store.save_story(s);
+    http::sync_episodes_to_chapters(store, s);   // 章对集：剧本那一步按它挑
+
+    // 读那一趟的提示词，只该出现在第一趟里
+    const auto analyzed = [](const std::shared_ptr<llm::ReplayClient>& c) {
+        int n = 0;
+        for (const auto& call : c->calls()) {
+            if (call.prompt.find("按你的理解补") != std::string::npos) ++n;
+        }
+        return n;
+    };
+
+    // 剧本那两条回的是坏的：一章写砸不拖垮整件活（同 script/all 的规矩）
+    auto client = std::make_shared<llm::ReplayClient>(std::vector<std::string>{
+        good_understanding().dump(), "这不是 JSON", "这不是 JSON", "这不是 JSON",
+        "这不是 JSON"});
+    const auto r = http::post_story_understand(json{{"project", p_str(root)}}, client);
+    CHECK(r.status == 202);
+    CHECK(r.body.at("started") == true);
+    // 读一遍 + 两章
+    CHECK(r.body.at("total").get<int>() == 3);
+    pipeline::jobs().wait_idle();
+
+    const json snap = pipeline::jobs().snapshot(pipeline::JobKind::Write);
+    CHECK(snap.at("running") == false);
+    CHECK_MESSAGE(snap.at("error").is_null(), snap.dump());
+    CHECK(snap.at("done") == snap.at("total"));
+    // 结构进了故事，长相进了库
+    CHECK_FALSE(store.load_story().characters.empty());
+    CHECK_FALSE(store.load_assets().characters.empty());
+    CHECK(analyzed(client) == 1);
+
+    SUBCASE("再点一次不重读：只补缺的剧本") {
+        auto again = std::make_shared<llm::ReplayClient>(std::vector<std::string>{
+            "这不是 JSON", "这不是 JSON", "这不是 JSON", "这不是 JSON"});
+        const auto r2 = http::post_story_understand(json{{"project", p_str(root)}}, again);
+        CHECK(r2.body.at("total").get<int>() == 2);   // 只剩两章剧本
+        pipeline::jobs().wait_idle();
+        CHECK(analyzed(again) == 0);
+    }
+
+    SUBCASE("overwrite 才重来") {
+        auto again = std::make_shared<llm::ReplayClient>(std::vector<std::string>{
+            good_understanding().dump(), "这不是 JSON", "这不是 JSON", "这不是 JSON",
+            "这不是 JSON"});
+        const auto r2 = http::post_story_understand(
+            json{{"project", p_str(root)}, {"overwrite", true}}, again);
+        CHECK(r2.body.at("total").get<int>() == 3);
+        pipeline::jobs().wait_idle();
+        CHECK(analyzed(again) == 1);
+    }
+
+    std::error_code ec;
+    fs::remove_all(root, ec);
+}
+
+TEST_CASE("POST /api/story/understand：没正文不让理解") {
+    // 大纲写出来的故事只有梗概没正文，读一遍读的是空气。
+    const fs::path root = fresh_project("没正文别理解");
+    ProjectStore store(root);
+    store.save_story(parse_outline(good_outline().dump(), "梗概", StoryScale::MEDIUM));
+    auto client = std::make_shared<llm::ReplayClient>(std::vector<std::string>{});
+    CHECK_THROWS_AS(http::post_story_understand(json{{"project", p_str(root)}}, client),
+                    http::ApiError);
+    CHECK(client->calls().empty());
+    std::error_code ec;
+    fs::remove_all(root, ec);
 }
 
 TEST_CASE("POST /api/story/analyze：落盘，而且重算了分集") {

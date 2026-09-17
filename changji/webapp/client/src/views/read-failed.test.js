@@ -42,8 +42,8 @@ describe('设定页：读不出来就别往里写', () => {
     // 认模板里那两行**按钮文字**（同样的字在注释里出现过好几次，所以要
     // 连着那个三元一起找），再往前看它自己那一段属性。
     for (const [label, mark] of [
-      ['照故事定妆', "overwrite ? '重新定妆' : '照故事定妆'"],
-      ['一键出图', "overwrite ? '全部重画' : '一键出图'"],
+      ['理解故事', "overwrite ? '重新理解' : '理解故事'"],
+      ['出图', "overwrite ? '全部重画' : '出图'"],
     ]) {
       const at = view.indexOf(mark)
       expect(at, `${label} 那颗按钮不见了`).toBeGreaterThan(0)
@@ -52,7 +52,7 @@ describe('设定页：读不出来就别往里写', () => {
     }
   })
 
-  it('读砸了的时候「定妆」不能还摆成新项目那颗主按钮', () => {
+  it('读砸了的时候「理解故事」不能还摆成新项目那颗主按钮', () => {
     expect(view).toContain("characters.length || assetsError ? 'btn--ghost' : 'btn--ai'")
   })
 })
@@ -60,7 +60,7 @@ describe('设定页：读不出来就别往里写', () => {
 describe('镜头页和故事页：那一屏的先后不能反', () => {
   it('镜头页：先「读不到」，后「还没有」', () => {
     const view = read('views/episode/EpShots.vue')
-    const bad = view.indexOf('title="读不到这一集的分镜"')
+    const bad = view.indexOf('title="读不到这一章的分镜"')
     const empty = view.indexOf('title="还没有分镜"')
     expect(bad).toBeGreaterThan(0)
     expect(empty).toBeGreaterThan(0)

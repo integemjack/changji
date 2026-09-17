@@ -42,25 +42,29 @@ json flow_steps() {
         // 拿一句梗概逐集续写——集数人填、上下文只带前三集。故事这一步
         // 先把完整故事和分集定下来，剧本才有得可写。
         json{{"key", "story"}, {"phase", "series"}, {"title", "故事"},
-             {"hint", "讲什么、分几章、按每集时长切成几集"}},
+             {"hint", "一章一章写；让 AI 写或改的都是眼前这一章"}},
         // **角色和场景 2026-09-11 合成一步「设定」。** 它们本来就是同一件
         // 事：人和地方在同一个 assets.json 里，都从故事提。而场景那一格
         // 原来还挂在「分集」阶段——那是个错位，场景库是全剧共用的。
         json{{"key", "assets"}, {"phase", "series"}, {"title", "设定"},
-             {"hint", "给故事里的人和地方定妆，全剧共用一套"}},
+             {"hint", "理解故事：人物、场景、长相、剧本一次出来；再把参考图画齐"}},
         // **镜头、成片、上传 2026-09-11 合成一步「这一集」。**
         //
         // 2026-09-10 已经把分镜和制作合过一次（同一张分镜表，一页排一页跑，
         // 而人在同一镜上来回）。这次是同一条理由再往外一层：人做的事是
         // **对照着看**——对着这句台词看这一镜对不对，看完整集顺手发出去。
         // 分成几页，来回换页才知道这一镜出自哪句话。
-        json{{"key", "episode"}, {"phase", "episode"}, {"title", "这一集"},
-             {"hint", "剧本、镜头、成片、发布，都在这一集上"}},
+        json{{"key", "episode"}, {"phase", "episode"}, {"title", "这一章"},
+             {"hint", "剧本、镜头、出片，都在这一章上；集是最后按时长切出来的"}},
+        // 集只在这儿出现一次：每章都出片了，选每集多长，切成几集。
+        json{{"key", "film"}, {"phase", "series"}, {"title", "成片"},
+             {"hint", "每章都出片了，选每集多长，切成几集"}},
     });
 }
 
 json flow_assess(const json& project, const json& shots, const json& outputs,
-                 const std::string& episode_id, const json& story) {
+                 const std::string& episode_id, const json& story,
+                 const json& assets, const json& film) {
     json done = json::object();
     json counters = json::object();
 
@@ -140,16 +144,43 @@ json flow_assess(const json& project, const json& shots, const json& outputs,
     }
     const bool scenes_ok = !known.empty() && missing.empty() && unlinked == 0;
 
-    // **两半都要过。** 人物和场景在同一个资产库里，缺哪一半分镜都指不到，
-    // 而下一步（出首帧）会直接报「场景未注册」或者拿不到角色的外观块。
-    done["assets"] = !characters.empty() && scenes_ok;
-    // 哪一半没过各报一个布尔。**界面上没有一处读这两个**：设定页那排
-    // tab 上"是缺人还是缺景"确实说得出来，但它靠的是下面 unlinkedShots /
-    // missingLocations 那两个数（AssetsView 里 locGap 那段），因为要说的
-    // 不只是"没过"，还得是"几个没登记 / 几镜没接上"。这两个布尔到今天
-    // 一个读者都没有。
+    // ---- 理解过没有 ----
+    // 三样都在才算：结构在故事里（人物表）、长相在库里（assets 的人物）、
+    // 每一章的剧本都写了。少一样，「出图」和「这一章」都还没到时候。
+    // 用户 2026-09-17 定的顺序：理解故事 → 出图 → 这一章。
+    const auto& story_chars = arr_of(story, "characters");
+    const auto& lib_chars = arr_of(assets, "characters");
+    int linked = 0;
+    bool scripts_ok = true;
+    for (const auto& e : episodes) {
+        if (arr_of(e, "chapter_refs").empty()) continue;
+        ++linked;
+        if (!(e.is_object() && e.value("script_chars", 0) > 0)) scripts_ok = false;
+    }
+    const bool understood =
+        !story_chars.empty() && !lib_chars.empty() && linked > 0 && scripts_ok;
+
+    // ---- 参考图画齐了没有 ----
+    // 每个人三张脸、每个地方一张空景。**数缺的，不数有的**——「有没有一张
+    // 缺」才是正面判据（CLAUDE.md：别拿数量当判据）。
+    int refs_missing = 0;
+    for (const auto& c : lib_chars) {
+        for (const char* slot : {"ref_front", "ref_three_quarter", "ref_back"}) {
+            if (str_of(c, slot).empty()) ++refs_missing;
+        }
+    }
+    for (const auto& l : arr_of(assets, "locations")) {
+        if (str_of(l, "ref_empty").empty()) ++refs_missing;
+    }
+    const bool refs_ok = !lib_chars.empty() && refs_missing == 0;
+
+    // 「设定」打勾 = 理解过 + 图画齐。原来只看"库里有人、场景对得上"。
+    done["assets"] = understood && refs_ok;
     counters["charactersOk"] = !characters.empty();
     counters["scenesOk"] = scenes_ok;
+    counters["understood"] = understood;
+    counters["refsMissing"] = refs_missing;
+    counters["refsOk"] = refs_ok;
 
     // ---- 镜头：每一镜都出到成片状态才算完 ----
     //
@@ -228,6 +259,27 @@ json flow_assess(const json& project, const json& shots, const json& outputs,
     // 拿 /api/shots 数的），但 test_flow 有四条用例盯着它，是这个文件里
     // 被测得最细的一条判据——「光有分镜表不算出完」说的就是它。
     counters["shotsDone"] = shots_done;
+
+    // ---- 每一章都出片了没有：成片那一格出不出现看它 ----
+    int filmed = 0;
+    int linked_all = 0;
+    for (const auto& e : episodes) {
+        if (arr_of(e, "chapter_refs").empty()) continue;
+        ++linked_all;
+        const auto id = str_of(e, "episode_id");
+        bool mine = false;
+        for (const auto& o : outputs) {
+            if (film_of(str_of(o, "name"), id)) {
+                mine = true;
+                break;
+            }
+        }
+        if (mine) ++filmed;
+    }
+    counters["filmedChapters"] = filmed;
+    counters["allFilmed"] = linked_all > 0 && filmed == linked_all;
+    // 切出来的几集在不在
+    done["film"] = !arr_of(film, "files").empty();
 
     counters["shots"] = static_cast<int>(shots.size());
     counters["produced"] = produced;

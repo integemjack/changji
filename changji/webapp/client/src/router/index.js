@@ -101,6 +101,16 @@ export const STEP_ROUTES = [
     icon: 'board',
     component: () => import('@/views/EpisodeView.vue'),
   },
+  // 成片：整部剧的最后一步。集只在这儿出现——每章都出片了，按每集时长切。
+  {
+    key: 'film',
+    path: '/film',
+    name: 'film',
+    phase: 'series',
+    title: '成片',
+    icon: 'film',
+    component: () => import('@/views/FilmView.vue'),
+  },
 ]
 
 const routes = [

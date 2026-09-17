@@ -345,7 +345,7 @@ async function write() {
   setDraft(key, result)
   // 人已经走了：别把它画在别的集上，也别当它没发生过——这一份没落盘。
   if (key !== ctxKey()) {
-    ui.info(`${episodeId} 的剧本写好了，切回那一集就能看`)
+    ui.info(`${episodeId} 的剧本写好了，切回那一章就能看`)
     return
   }
   // **这一章原来是空的，就直接落盘，不用再点一下「采用」。**
@@ -410,7 +410,7 @@ async function adopt() {
   )
   if (!done) return
   setDraft(key, null)
-  if (key !== ctxKey()) return   // 人已经走了：那一集自己的编辑器下次读就是新的
+  if (key !== ctxKey()) return   // 人已经走了：那一章自己的编辑器下次读就是新的
   script.value = taking.script
   savedScript.value = script.value
   mode.value = 'read'
@@ -491,7 +491,7 @@ async function save() {
         :title="
           session.episodes.length
             ? '把全项目还没有剧本的章一次改编完，已经有剧本的不动'
-            : '这部剧还一集都没有——章是自动对上集的，先去故事页写一份大纲'
+            : '这部剧还一章都没有——章是自动对上集的，先去故事页写一份大纲'
         "
         @click="scriptAll"
       >

@@ -16,6 +16,9 @@
 #include "stages/chapter_write.hpp"
 #include "stages/script.hpp"   // random_shape
 #include "stages/story_analyze.hpp"
+#include "stages/story_understand.hpp"
+#include "stages/bible.hpp"
+#include "http/planning.hpp"
 #include "stages/story_import.hpp"
 #include "stages/story_outline.hpp"
 #include "stages/story_plan.hpp"
@@ -724,6 +727,55 @@ ApiResult post_story_analyze(const json& body_in, llm::Client& client,
     const bool needs_analysis = read.characters.empty();
     json out = commit_story(store, project, std::move(read), story);
     out["needs_analysis"] = needs_analysis;
+    return {200, out};
+}
+
+ApiResult post_story_understand_once(const json& body_in, llm::Client& client,
+                                     pipeline::CancelToken& tok) {
+    json body = body_in;
+    const bool peek = take_peek(body);
+    const std::string pasted = take_paste(body);
+    forbid_extra(body, {"project", "overwrite", "stream"});
+    const bool overwrite = opt_bool(body, "overwrite", false);
+    ProjectStore store = open_project(body);
+    const Project project = load_or_400(store);
+    const Story story = load_story_or_400(store);
+    if (story.written_chapters() == 0) {
+        throw ApiError(400, "故事还没有正文，没什么可理解的。先去故事页写");
+    }
+
+    pipeline::Activity act{"understand", paths::to_utf8(store.root()), "",
+                           "正在理解这个故事"};
+    const pipeline::CancelLink stop_here{tok, act};
+
+    llm::Request req;
+    req.prompt = stages::build_understand_prompt(story, project.style_line);
+    req.schema = stages::understand_schema();
+    req.schema_name = "story_understanding";
+    req.on_thinking = thinking_sink();
+    if (peek) return peek_prompt(req);
+
+    const std::string ratio =
+        config::load_settings(store.root()).video.aspect_ratio();
+    Story read;
+    AssetLibrary looks;
+    try {
+        const std::string raw = pasted.empty() ? client.complete(req, tok) : pasted;
+        // **同一份回答喂两个解析器。** 结构那半和长相那半是同一批人、同一批
+        // 地方——不需要再比一遍名单。
+        read = stages::apply_analysis(story, raw);
+        looks = stages::parse_bible(raw, project.style_line, ratio);
+    } catch (const stages::StoryError& e) {
+        throw ApiError(502, std::string("大模型没读出能用的结构：") + e.what());
+    } catch (const stages::BibleError& e) {
+        throw ApiError(502, std::string("大模型没给出能用的长相：") + e.what());
+    } catch (const std::exception& e) {
+        throw ApiError(502, e.what());
+    }
+
+    json out = commit_story(store, project, std::move(read), story);
+    const ApiResult merged = merge_assets(store, looks, overwrite, "story");
+    out["assets"] = merged.body;
     return {200, out};
 }
 

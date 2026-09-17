@@ -171,13 +171,37 @@ const projectName = computed(() => {
  */
 const stepsUnknown = computed(() => session.failed && !session.flow)
 
+/**
+ * 顶栏上哪几步显示。**按状态来，不按历史**（用户 2026-09-17）：
+ *   项目、故事一直在；故事有字了才有「设定」；参考图画齐了才有「这一章」；
+ *   每一章都出片了才有「成片」。
+ * 流程读不出来（stepsUnknown）就全显示——藏起来的话人连去哪儿都不知道。
+ * 正站着的那一步永远显示，不然直接输地址进来会看到一条没有自己的导航。
+ */
+const visibleSteps = computed(() =>
+  STEP_ROUTES.filter((s) => {
+    if (stepsUnknown.value || s.key === stepKey.value) return true
+    if (s.key === 'assets') return !!session.done.story
+    if (s.key === 'episode') return !!session.counters.refsOk
+    if (s.key === 'film') return !!session.counters.allFilmed
+    return true
+  }),
+)
+
 /** 第一个还没做完的那一步。导航上给它一个点，代替原来那条 stepbar。 */
 const nextKey = computed(() => {
   // 不知道做到哪儿了，就别指路——指错的那一下会把人支回第一步。
   if (stepsUnknown.value) return ''
-  const step = STEP_ROUTES.find((s) => !session.done[s.key])
+  const step = visibleSteps.value.find((s) => !session.done[s.key])
   return step ? step.key : ''
 })
+
+/** 顶栏下拉里一集的名字：按章说，不按集说——集是最后按时长切出来的。 */
+function chapterLabel(ep, i) {
+  const ref = (ep?.chapter_refs ?? [])[0] || ''
+  const n = Number(/^ch(\d+)$/.exec(ref)?.[1] ?? i + 1)
+  return `第 ${n} 章${ep?.title ? ' · ' + ep.title : ''}（${ep?.shots ?? 0} 镜）`
+}
 
 // 换项目、换集都要重新算一遍进度，否则导航上的对勾会停在上一个项目上
 watch(
@@ -227,7 +251,7 @@ function cycleTheme() {
         :title="stepsUnknown ? '流程这会儿读不出来，这几个对勾说明不了什么' : ''"
       >
         <RouterLink
-          v-for="s in STEP_ROUTES"
+          v-for="s in visibleSteps"
           :key="s.key"
           :to="s.path"
           class="nav__item"
@@ -249,13 +273,13 @@ function cycleTheme() {
           :disabled="!session.episodes.length"
           @change="onPickEpisode"
         >
-          <option v-if="!session.episodes.length" value="">还没有剧集</option>
+          <option v-if="!session.episodes.length" value="">还没有章</option>
           <!-- **两个集挂同一章时要能分辨。** 一章一集是现在的规矩，而规矩
                立起来之前留下的重复在这儿长得一模一样：2026-09-16 实见
                ep08 和 ep09 都写着「了结（17 镜）」，选哪个全靠猜。
                只在真撞车时才多显示那一句，平时不加长。 -->
-          <option v-for="ep in session.episodes" :key="ep.episode_id" :value="ep.episode_id">
-            {{ ep.episode_id }} · {{ ep.title || '未命名' }}（{{ ep.shots }} 镜）{{ dupChapterNote(ep) }}
+          <option v-for="(ep, i) in session.episodes" :key="ep.episode_id" :value="ep.episode_id">
+            {{ chapterLabel(ep, i) }}{{ dupChapterNote(ep) }}
           </option>
         </select>
       </label>

@@ -234,6 +234,9 @@ export const api = {
   getStory: (path) => get('/api/story', { path }),
   saveStory: (payload) => post('/api/story', payload),
   writeOutline: (payload) => post('/api/story/outline', payload),
+  // 理解故事：一件活——提结构、定长相、章对集、逐章写剧本。进度走
+  // seriesStatus（同一个槽），writer store 直接能用。
+  understandStory: (payload) => post('/api/story/understand', payload),
 
   /**
    * 「只看不发」：把某一步真正要发给大模型的那段字取回来。
@@ -395,6 +398,9 @@ export const api = {
    */
   jobEvents: (stream, since) => get('/api/job/events', { stream, since }),
   outputs: (path) => get('/api/outputs', { path }),
+  // 成片：每章都出片了，按每集时长切成几集。集只在这儿出现一次。
+  film: (path) => get('/api/film', { path }),
+  cutFilm: (payload) => post('/api/film/cut', payload),
   // 那张「机器 × 能力」的表。**答得慢是正常的**：引擎要挨个问
   // 别的机器的 /status（每台最多 3 秒），结果缓存五秒。
   nodes: () => get('/api/nodes'),

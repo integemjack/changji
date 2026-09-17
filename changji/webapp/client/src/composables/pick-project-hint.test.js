@@ -53,17 +53,17 @@ describe('四页都从这一处取', () => {
   })
 })
 
-describe('「还没选到某一集」底下那句', () => {
+describe('「还没选到某一章」底下那句', () => {
   const SRC = fileURLToPath(new URL('..', import.meta.url))
 
-  it('一集都没有时不能说"顶上挑一集"', () => {
+  it('一章都没有时不能说"顶上挑一章"', () => {
     const src = fs.readFileSync(path.join(SRC, 'views', 'EpisodeView.vue'), 'utf8')
-    const at = src.indexOf('title="还没选到某一集"')
+    const at = src.indexOf('title="还没选到某一章"')
     expect(at, '那一屏不见了').toBeGreaterThan(0)
     const near = src.slice(at, at + 260)
     // 判据得是"这部剧有没有集"，不是写死一句
     expect(near).toContain('session.episodes.length')
-    expect(near).toContain('顶上挑一集')
-    expect(near).toMatch(/一集都没有/)
+    expect(near).toContain('顶上挑一章')
+    expect(near).toMatch(/一章都没有/)
   })
 })

@@ -13,6 +13,7 @@
 
 #include "http/job_stream.hpp"
 #include "http/episodes.hpp"
+#include "http/planning.hpp"
 #include "http/scripting.hpp"
 #include "models/project.hpp"
 #include "pipeline/jobs.hpp"
@@ -646,6 +647,101 @@ ApiResult post_script_all(const json& body, std::shared_ptr<llm::Client> client)
         "写剧本 · 还缺的 " + std::to_string(todo.size()) + " 集");
     if (!started) throw ApiError(409, "剧本那边还在忙");
     return {202, {{"started", true}, {"episodes", todo}}};
+}
+
+ApiResult post_story_understand(const json& body,
+                                std::shared_ptr<llm::Client> client) {
+    forbid_extra(body, {"project", "overwrite"});
+    const bool overwrite = opt_bool(body, "overwrite", false);
+
+    if (pipeline::jobs().running(pipeline::JobKind::Write)) {
+        throw ApiError(409, "剧本那边还在忙");
+    }
+    ProjectStore store = open_project(body);
+    load_or_400(store);
+    Story story;
+    try {
+        story = store.load_story();
+    } catch (const std::exception&) {
+        throw ApiError(400, "这个项目还没有故事。先去故事页写");
+    }
+    if (story.written_chapters() == 0) {
+        throw ApiError(400, "故事还没有正文，没什么可理解的。先去故事页写");
+    }
+
+    const std::string root = paths::to_utf8(store.root());
+    // 已经理解过的话不再读（overwrite 除外）：那是几分钟、读整本书的一趟。
+    const bool need_read = overwrite || story.characters.empty();
+    const int chapters = static_cast<int>(story.chapters.size());
+    const int total = (need_read ? 1 : 0) + chapters;
+
+    const bool started = pipeline::jobs().start(
+        pipeline::JobKind::Write, "",
+        [store, client, root, overwrite, need_read, total](pipeline::JobProgress& p) {
+            p.set_total(total);
+            const JobScope scope{
+                pipeline::jobs().job_id(pipeline::JobKind::Write), p.token()};
+            pipeline::CancelToken& tok = p.token();
+            int done = 0;
+
+            // 读那一趟砸了就整件活砸：没有人物表就没有剧本里能指得到的人。
+            // 让它抛，JobTable 会把那句话记到 error 上。
+            if (need_read) {
+                if (p.cancelled()) return;
+                p.set_message("读故事：人物、关系、场景、长相");
+                post_story_understand_once(
+                    json{{"project", root}, {"overwrite", overwrite}}, *client, tok);
+                p.set_done(++done);
+            }
+
+            // 章对集是存故事时自动做的（commit_story → sync）；这儿再对一次，
+            // 老项目、手改过 project.json 的都兜住。
+            try {
+                post_story_episodes(json{{"project", root}});
+            } catch (const std::exception&) {
+            }
+
+            // 逐章写剧本。**和 script/all 同一个循环，同一条规矩**：一章写砸
+            // 了不拖垮后面的，跳过去接着写。
+            const Project project = store.load_project();
+            for (const auto& ep : project.episodes) {
+                if (p.cancelled()) return;
+                if (ep.chapter_refs.empty()) continue;
+                if (!overwrite && !text::strip_ws(ep.script).empty()) {
+                    p.set_done(++done);
+                    continue;
+                }
+                p.set_message("写剧本 · " + ep.chapter_refs.front());
+                try {
+                    json req = json::object();
+                    req["project"] = root;
+                    req["episode_id"] = ep.episode_id;
+                    req["premise"] = "";
+                    const ApiResult wrote = post_script_write(req, *client, tok);
+                    if (wrote.status == 200 && wrote.body.is_object()) {
+                        const auto sit = wrote.body.find("script");
+                        if (sit != wrote.body.end() && sit->is_string()) {
+                            json save = json::object();
+                            save["project"] = root;
+                            save["episode_id"] = ep.episode_id;
+                            save["script"] = *sit;
+                            if (const auto lit = wrote.body.find("logline");
+                                lit != wrote.body.end() && lit->is_string()) {
+                                save["synopsis"] = *lit;
+                            }
+                            post_script(save, *client, tok);
+                        }
+                    }
+                } catch (const std::exception&) {
+                }
+                p.set_done(++done);
+            }
+            p.set_message("理解完了");
+        },
+        "已手动停止。已经理解出来的留着。", root,
+        "理解故事 · " + std::to_string(chapters) + " 章");
+    if (!started) throw ApiError(409, "剧本那边还在忙");
+    return {202, {{"started", true}, {"total", total}}};
 }
 
 ApiResult post_plan_all(const json& body, std::shared_ptr<llm::Client> client) {

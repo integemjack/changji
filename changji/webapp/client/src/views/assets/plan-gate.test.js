@@ -28,33 +28,22 @@ function code(text) {
     .replace(/^\s*\/\/.*$/gm, '')
 }
 
-const chapters = code(read('./AssetEpisodes.vue'))
+const assetsView = code(read('../AssetsView.vue'))
 
-describe('章节那一格没有集的概念', () => {
-  it('没有「落成剧集」那颗按钮，也没有它的处理函数', () => {
-    expect(chapters).not.toContain('makeEpisodes')
-    expect(chapters).not.toContain('落成剧集')
+describe('设定页没有「章节」那一格了', () => {
+  // 2026-09-17：集是最后按时长切出来的，章节的人和地方在故事页和角色格里
+  // 都看得到；那一格（AssetEpisodes.vue）连同预告片那截一起下了。
+  it('文件没了', () => {
+    expect(
+      fs.existsSync(fileURLToPath(new URL('./AssetEpisodes.vue', import.meta.url))),
+    ).toBe(false)
   })
 
-  it('没有「批量补分镜」——那是生产上的事，在「这一章」那一页', () => {
-    expect(chapters).not.toContain('planAll')
-    expect(chapters).not.toContain('批量补分镜')
-  })
-
-  it('没有「每集几秒」那个下拉：切集是拍完之后按每集时长切的', () => {
-    expect(chapters).not.toContain('pickDuration')
-    expect(chapters).not.toContain('DURATIONS')
-    expect(chapters).not.toContain('每集')
-  })
-
-  it('也不再预告集数（「N 章 → M 集」那行）', () => {
-    expect(chapters).not.toContain('→ ')
-    expect(chapters).not.toContain('集停在悬念上')
-  })
-
-  it('章节行上摆的是人和地方——这一格存在的理由', () => {
-    expect(chapters).toContain('chapterFaces')
-    expect(chapters).toContain('chapterScenes')
+  it('设定页不再挂它，tab 里也没有', () => {
+    expect(assetsView).not.toContain('AssetEpisodes')
+    expect(assetsView).not.toContain("key: 'episodes'")
+    expect(assetsView).not.toContain('落成剧集')
+    expect(assetsView).not.toContain('每集')
   })
 })
 
