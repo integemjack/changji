@@ -344,7 +344,20 @@ async function write() {
   if (!result) return
   setDraft(key, result)
   // 人已经走了：别把它画在别的集上，也别当它没发生过——这一份没落盘。
-  if (key !== ctxKey()) ui.info(`${episodeId} 的剧本写好了，切回那一集就能看`)
+  if (key !== ctxKey()) {
+    ui.info(`${episodeId} 的剧本写好了，切回那一集就能看`)
+    return
+  }
+  // **这一章原来是空的，就直接落盘，不用再点一下「采用」。**
+  //
+  // 「采用」这一步存在的理由只有一个：它会**盖掉已经存下的那一版**，而那
+  // 一版可能是人一句句改过的（见 adopt 里那段）。空章上没有任何东西会被
+  // 盖掉——那一下点击什么也没保住，纯粹是多一步。一部剧八章就是八下。
+  // 用户 2026-09-16 起反复说的「交互过程也太繁琐」，这是其中一处。
+  //
+  // 有剧本的时候照旧：出草稿、人看过再点采用（那时候按钮上写的是
+  // 「重新改编」/「AI 重写」，见 writeLabel）。
+  if (!savedScript.value.trim()) await adopt()
 }
 
 async function adopt() {
