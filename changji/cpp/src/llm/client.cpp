@@ -118,9 +118,20 @@ std::string checked_output(const Request& req, std::string out) {
 
 std::string schema_as_prompt(const std::string& prompt, const ordered& schema) {
     if (schema.is_null() || schema.empty()) return prompt;
-    // 缩进两格而不是压成一行：这份东西是给模型读的，分镜那份有几十个字段，
-    // 压成一行之后连人都看不出哪个字段套在哪个里面。
-    return prompt + stages::prompt::llm::kSchemaSuffix + schema.dump(2);
+    // **缩进一格**：这份东西是给模型读的，分镜那份有几十个字段，压成一行
+    // 之后连人都看不出哪个字段套在哪个里面——所以换行要留。但两格没有比
+    // 一格多告诉任何人任何事，而它是这份提示词里最大的一块：
+    //
+    //   分镜那份 schema（2026-09-17 量的）
+    //     压成一行   4568 字符
+    //     缩进 1     6818 字符（空白 2282，33%）
+    //     缩进 2     8529 字符（空白 3993，46%）  ← 原来这样
+    //
+    // 同一份提示词里那张硬性要求表才 859 字符。**真正臃肿的是 schema，
+    // 而且近一半是缩进空格。** 降到一格省 1711 字符，嵌套照样看得出来；
+    // 每一个带 schema 的阶段都省这一份（2026-09-14 起 schema 只有这一种
+    // 发法，见下面 build_payload）。
+    return prompt + stages::prompt::llm::kSchemaSuffix + schema.dump(1);
 }
 
 ordered build_payload(const config::LLMConfig& cfg, const Request& req) {

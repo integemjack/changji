@@ -385,6 +385,14 @@ TEST_CASE("退回 json_object 时 schema 要写进提示词") {
     CHECK(out.find("\"hook\"") != std::string::npos);
     // 抄的是**原始** schema：这里它是给模型读的文字，minLength 读得懂就有用
     CHECK(out.find("minLength") != std::string::npos);
+    // **换行留着、缩进只留一格。** 这份 schema 是整条提示词里最大的一块
+    // （分镜那份 8529 字符，近一半是缩进空格），而两格没有比一格多说明
+    // 任何事。压成一行才是真的看不出嵌套——所以换行必须在。
+    CHECK(out.find("\n") != std::string::npos);
+    // 顶层那一层：一个空格。**钉顶层**——里层的缩进随深度累加，
+    // 拿它判缩进档位会把"深两层的一格"认成"浅一层的两格"。
+    CHECK(out.find("{\n \"type\"") != std::string::npos);
+    CHECK(out.find("{\n  \"type\"") == std::string::npos);   // 不是两格
 
     SUBCASE("没有 schema 就原样返回，不要平白多一段废话") {
         CHECK(llm::schema_as_prompt("就这一句", nlohmann::ordered_json()) ==
