@@ -135,9 +135,33 @@ constexpr H3Spec kH3[] = {
      66280487368ULL, 40},
     {"h3-full-q4_k_m", "MiniMax-H3 完整", "Q4_K_M",
      "minimax_h3_fl2va-Q4_K_M.gguf", kH3GgufRepo, 18779848448ULL, 30},
+    // ---- 精简那一支，**从大到小排** ----
+    //
+    // 顺序就是下拉框里的顺序（见 setup_api 那头按组吐选项），所以这一串
+    // 必须单调读得下来。2026-09-17 补完档位时先把新的三条缀在了末尾，
+    // 界面上出来是「bf16 / Q4_K_M / Q3_K / Q2_K / Q8_0 / Q6_K / Q5_0」
+    // ——要从中间跳回去读。
+    //
+    // 挑默认值不看这个顺序，看 rank（见 recommend）。
     {"h3-pruned-bf16", "MiniMax-H3 精简", "bf16",
      "diffusion_models/minimax_h3_fl2va_pruned_bf16.safetensors", kH3ComfyRepo,
      40225724176ULL, 25},
+    // ---- 下面五档都在 unsloth 那个仓库（2026-09-17 用户：「增加全部档位」）----
+    //
+    // Q4_K_M 那一条是 leejet 的，和 unsloth 的 `-Q4_K.gguf` 字节数一模一样
+    // （11420663904），是同一份，不重复收。
+    //
+    // **字节数是从仓库清单拉的真数**，不是估的：填错了要等用户点下载、
+    // 等它下到一半对不上才发现。
+    //
+    // 仓库里还有 `ref2va` 那一整组同样的档位——**那不是档位，是另一个模型**
+    // （参考图转视频，我们这条路用的是首帧转视频 fl2va），不混进来。
+    {"h3-pruned-q8_0", "MiniMax-H3 精简", "Q8_0",
+     "minimax_h3_fl2va_pruned-Q8_0.gguf", kH3SmallRepo, 21437786208ULL, 24},
+    {"h3-pruned-q6_k", "MiniMax-H3 精简", "Q6_K",
+     "minimax_h3_fl2va_pruned-Q6_K.gguf", kH3SmallRepo, 16586784864ULL, 23},
+    {"h3-pruned-q5_0", "MiniMax-H3 精简", "Q5_0",
+     "minimax_h3_fl2va_pruned-Q5_0.gguf", kH3SmallRepo, 13923170400ULL, 22},
     {"h3-pruned-q4_k_m", "MiniMax-H3 精简", "Q4_K_M",
      "minimax_h3_fl2va_pruned-Q4_K_M.gguf", kH3GgufRepo, 11420663904ULL, 20},
     // ---- 16 GB 的卡（2026-09-17 用户要的）----
