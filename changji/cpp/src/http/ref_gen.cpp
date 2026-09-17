@@ -461,10 +461,16 @@ struct RefQueue {
         // 不报的话，界面上那几格和"根本没排上"长得一模一样——用户
         // 2026-09-17：「明明没有开始的，不是应该显示等待中吗」。
         // 一批至多几十条，每条两个短字符串，播一份不值得心疼。
+        //
+        // **按了停就一条都不报。** 那几张不会再派出去了，还挂着「等待中」
+        // 的话人会一直等它们动。
         json pending_arr = json::array();
-        for (std::size_t i = next; i < items.size(); ++i) {
-            pending_arr.push_back(
-                {{"target", items[i].target}, {"label", items[i].label}});
+        const bool stopping = tok.cancelled();
+        if (!stopping) {
+            for (std::size_t i = next; i < items.size(); ++i) {
+                pending_arr.push_back(
+                    {{"target", items[i].target}, {"label", items[i].label}});
+            }
         }
         const std::size_t total = items.size();
         const std::size_t settled = done + failed;
@@ -476,9 +482,12 @@ struct RefQueue {
             {"failed", failed},
             // **排队的那几张自己算，别让界面去减。** 界面减出来的数在
             // "正在画的那几张还没落进 done" 那一瞬间会是负的。
-            {"queued", total > settled + running.size()
-                           ? total - settled - running.size()
-                           : std::size_t{0}},
+            {"queued", stopping || total <= settled + running.size()
+                           ? std::size_t{0}
+                           : total - settled - running.size()},
+            // 按了停，手上这几张画完就收——那一行得当场改口，不能等下一张
+            // 画完（几十秒）才变。
+            {"stopping", stopping},
             {"running", running_arr},
             {"pending", pending_arr},
             {"error", error},
@@ -688,6 +697,9 @@ ApiResult post_references_generate_all_stop(const json& body) {
         q.tok.request();
         q.by_hand = true;
     }
+    // **当场重播一份。** 队列本来是每settle一件才播一次，而一件几十秒——
+    // 不播的话按完「停下」那一行还写着「还排着 4 张」，看着像没按上。
+    publish(q);
     // 正在画的那几张也要停：它们各自在 render_ref 里查的是自己那条令牌。
     // 这儿只拦住"还没派出去的"，已经在画的那一两张画完就收——一张几十秒，
     // 比留下半张写坏的图强。

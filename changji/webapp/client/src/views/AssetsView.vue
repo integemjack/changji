@@ -676,11 +676,17 @@ watch(longRunning, (now, before) => {
           <!-- **排队的那几张要说出来。** 页面自己开几条道的那一版说不出这个数，
                两条道恰好在同一个人身上时那一行读起来像卡住了（用户
                2026-09-17：「光作业中还显示同一个名字，排队被你吃了？」）。 -->
-          <span v-if="bulk && bulk.waiting > 0" class="tiny dim">
+          <!-- 按了停之后说法要换：排着的那几张已经不会再派了，还写
+               「还排着 N 张」的话看着像没按上。 -->
+          <span v-if="bulk && bulk.stopping" class="tiny dim">
+            停下了，手上这
+            {{ bulk.drawing.length || (bulk.running ?? []).length }} 张画完就收
+          </span>
+          <span v-else-if="bulk && bulk.waiting > 0" class="tiny dim">
             还排着 {{ bulk.waiting }} 张
           </span>
           <button
-            v-if="bulk"
+            v-if="bulk && !bulk.stopping"
             class="btn btn--sm btn--ghost"
             type="button"
             title="排着的不再往下派；正在画的那几张画完就收"
