@@ -206,8 +206,16 @@ ApiResult get_project(const std::string& path) {
     }
     json episodes = json::array();
     for (const auto& e : p.episodes) {
+        // **和下面那个 `shots` 数的是同一批镜头。** 两个数在同一份回包里，
+        // 界面拿它们相减算「还差几镜出片」（EpShots 的 projectPending）——
+        // 一个数全部、一个数能用的，就会算出负数或者漏算。空壳镜头
+        //（shot_id 是空串）两处一起不算，理由见下面那段。
         json status = json::object();
-        for (const auto& kv : e.counts_by_status()) status[kv.first] = kv.second;
+        for (const auto& sh : e.shots) {
+            if (text::strip_ws(sh.shot_id).empty()) continue;
+            const std::string k = models::to_string(sh.status);
+            status[k] = status.value(k, 0) + 1;
+        }
         episodes.push_back({
             {"episode_id", e.episode_id},
             {"title", e.title},

@@ -667,5 +667,13 @@ TEST_CASE("每一集报的「几镜」数的是能用的，不是数组长度") 
     const auto& eps = r.body.at("episodes");
     REQUIRE(eps.size() == 1);
     CHECK(eps[0].at("shots") == 1);   // 三镜里只有一镜能用
+
+    // **状态计数要和它数同一批镜头。** 界面拿这两个数相减算「还差几镜
+    // 出片」（EpShots 的 projectPending）——一个数全部、一个数能用的，
+    // 就会漏算或者算出负数。
+    const auto& st = eps[0].at("status");
+    int counted = 0;
+    for (auto it = st.begin(); it != st.end(); ++it) counted += it.value().get<int>();
+    CHECK(counted == eps[0].at("shots").get<int>());
 }
 
