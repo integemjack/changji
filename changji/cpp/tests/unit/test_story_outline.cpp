@@ -350,7 +350,7 @@ TEST_CASE("POST /api/story：体量拼错了要报错，不能悄悄当成短篇
     fs::remove_all(root, ec);
 }
 
-TEST_CASE("POST /api/story/outline：只回草稿，不落库") {
+TEST_CASE("POST /api/story/outline：写完直接落盘") {
     const fs::path root = fresh_project("草稿");
     llm::ReplayClient client({good_outline().dump()});
     pipeline::CancelToken tok;
@@ -359,83 +359,22 @@ TEST_CASE("POST /api/story/outline：只回草稿，不落库") {
         json{{"project", p_str(root)}, {"premise", "深夜便利店"}}, client, tok);
 
     CHECK(r.status == 200);
-    CHECK_FALSE(r.body.at("adopted").get<bool>());
+    CHECK(r.body.at("adopted").get<bool>());
     CHECK(r.body.at("chapters").get<int>() == 2);
     // 大纲阶段没正文，一章一集
     CHECK(r.body.at("episodes").get<int>() == 2);
 
-    // **正式那份还是空的。** 源头没人审过就落库，后面几十分钟渲染全是白跑。
+    // **直接进 story.json。** 草稿那一屏 2026-09-17 退役（理由在
+    // write_outline 上）：刷新、切页、换台机器看，都从正式那份读。
     ProjectStore store(root);
-    CHECK(store.load_story().empty());
-
-    // **但草稿落库了。** 出一份大纲要三四十秒到一分多钟，而它原来只活在
-    // 浏览器的一个 ref 里——刷新一下那一分钟就白花了，界面上连刚才写了
-    // 什么都不剩（用户 2026-09-13 报的原话：「点击让 ai 写大纲，刷新后
-    // 什么都没有了」）。落库不改变"要不要采用"归谁决定，只是让它活过刷新。
-    const Story kept = store.load_story_draft();
-    CHECK_FALSE(kept.empty());
-    CHECK(kept.chapters.size() == 2);
+    CHECK(store.load_story().chapters.size() == 2);
+    CHECK(store.load_story().plan.size() == 2);
+    CHECK(store.load_project().premise == "深夜便利店");
 
     // 提示词确实拼过并发出去了
     REQUIRE(client.calls().size() == 1);
     CHECK(client.calls()[0].prompt.find("深夜便利店") != std::string::npos);
     CHECK(client.calls()[0].schema_name == "story_outline");
-
-    std::error_code ec;
-    fs::remove_all(root, ec);
-}
-
-TEST_CASE("GET /api/story：还没采用的那份大纲跟着回去") {
-    // 这是"刷新之后草稿还在"的那一半：写完落库只解决了存，读的时候
-    // 不带回去的话故事页照样恢复不出来。
-    const fs::path root = fresh_project("草稿回读");
-    llm::ReplayClient client({good_outline().dump()});
-    pipeline::CancelToken tok;
-    http::post_story_outline(
-        json{{"project", p_str(root)}, {"premise", "深夜便利店"}}, client, tok);
-
-    const auto r = http::get_story(p_str(root));
-    CHECK(r.status == 200);
-    // 正式那份还是空的
-    CHECK(r.body.at("empty").get<bool>());
-    CHECK(r.body.at("chapters").get<int>() == 0);
-    // 草稿在
-    REQUIRE(r.body.contains("draft"));
-    CHECK(r.body.at("draft").at("chapters").get<int>() == 2);
-    CHECK_FALSE(r.body.at("draft").at("adopted").get<bool>());
-
-    SUBCASE("没有草稿时不带这个键") {
-        // "有没有草稿"靠键在不在表达。带一个 null 回去的话，前端那句
-        // `payload?.draft` 判起来还得再分一层。
-        const fs::path clean = fresh_project("没草稿");
-        CHECK_FALSE(http::get_story(p_str(clean)).body.contains("draft"));
-        std::error_code ec2;
-        fs::remove_all(clean, ec2);
-    }
-
-    std::error_code ec;
-    fs::remove_all(root, ec);
-}
-
-TEST_CASE("POST /api/story/draft/drop：丢弃要真的丢掉") {
-    // 界面上那个「丢弃」原来只是把浏览器里的 ref 清成 null。草稿落库之后
-    // 不清服务端那份的话，刷新一下它又回来了——而用户刚明确说了不要。
-    const fs::path root = fresh_project("丢弃");
-    llm::ReplayClient client({good_outline().dump()});
-    pipeline::CancelToken tok;
-    http::post_story_outline(
-        json{{"project", p_str(root)}, {"premise", "深夜便利店"}}, client, tok);
-    REQUIRE_FALSE(ProjectStore(root).load_story_draft().empty());
-
-    const auto r = http::post_story_draft_drop(json{{"project", p_str(root)}});
-    CHECK(r.status == 200);
-    CHECK(ProjectStore(root).load_story_draft().empty());
-    CHECK_FALSE(http::get_story(p_str(root)).body.contains("draft"));
-
-    SUBCASE("没有草稿时丢一下也不报错") {
-        CHECK(http::post_story_draft_drop(json{{"project", p_str(root)}}).status ==
-              200);
-    }
 
     std::error_code ec;
     fs::remove_all(root, ec);
@@ -493,12 +432,12 @@ TEST_CASE("生成中途刷新：GET /api/story 要说有一轮在跑、听哪条
     REQUIRE(right_after.body.contains("outline_running"));
     CHECK(right_after.body.at("outline_running") == "outline-test-1");
 
-    // 放行。写完：草稿落盘，账擦掉
+    // 放行。写完：落盘，账擦掉
     client.release();
     bool settled = false;
     for (int i = 0; i < 200 && !settled; ++i) {
         const auto now = http::get_story(p_str(root));
-        settled = now.body.contains("draft") &&
+        settled = now.body.at("chapters").get<int>() == 2 &&
                   !now.body.contains("outline_running");
         if (!settled) std::this_thread::sleep_for(std::chrono::milliseconds(25));
     }
@@ -536,10 +475,10 @@ TEST_CASE("生成中途刷新：经路由那条路（async 被剥掉）也要记
 
     client.release();
     worker.join();
-    // 写完：账擦掉，草稿落盘
+    // 写完：账擦掉，落盘
     const auto after = http::get_story(p_str(root));
     CHECK_FALSE(after.body.contains("outline_running"));
-    CHECK(after.body.contains("draft"));
+    CHECK(after.body.at("chapters").get<int>() == 2);
 
     std::error_code ec;
     fs::remove_all(root, ec);
@@ -572,33 +511,88 @@ TEST_CASE("生成中途刷新：写砸了那句话也要留给下一眼") {
     // **留着，不清**：两台设备同时开着，读一次就清只有先问到的那台看得见。
     CHECK(http::get_story(p_str(root)).body.contains("outline_error"));
     CHECK_FALSE(http::get_story(p_str(root)).body.contains("outline_running"));
-    // 丢弃草稿那一下顺手把错也清掉
-    http::post_story_draft_drop(json{{"project", p_str(root)}});
+    // 下一份写成了，那句话就该没了（commit_story 里清）
+    llm::ReplayClient good({good_outline().dump()});
+    http::post_story_outline(
+        json{{"project", p_str(root)}, {"premise", "深夜便利店"}}, good, tok);
     CHECK_FALSE(http::get_story(p_str(root)).body.contains("outline_error"));
 
     std::error_code ec;
     fs::remove_all(root, ec);
 }
 
-TEST_CASE("采用之后草稿要清掉") {
-    // 留着的话下次打开故事页会**同时**看到"这本书"和一份和它一模一样的
-    // 草稿，而那份草稿上还挂着「采用 / 丢弃」两个按钮。
-    const fs::path root = fresh_project("采用清草稿");
+TEST_CASE("POST /api/story/outline：会顶掉写好的正文时要拦在按下去之前") {
+    // 大纲直接落盘，所以这道闸只能在**开跑之前**——八分钟之后再 409
+    // 等于白跑一趟模型。
+    const fs::path root = fresh_project("大纲顶掉");
+    ProjectStore store(root);
+    Story old;
+    old.premise = "老故事";
+    Chapter c;
+    c.chapter_id = "ch01";
+    c.title = "写过的一章";
+    c.text = "这一章已经有正文了。";
+    old.chapters.push_back(c);
+    store.save_story(old);
+
     llm::ReplayClient client({good_outline().dump()});
     pipeline::CancelToken tok;
-    const auto drafted = http::post_story_outline(
-        json{{"project", p_str(root)}, {"premise", "深夜便利店"}}, client, tok);
-    REQUIRE_FALSE(ProjectStore(root).load_story_draft().empty());
+    // 不带 overwrite：409，而且模型一次都没调
+    CHECK_THROWS_AS(http::post_story_outline(
+                        json{{"project", p_str(root)}, {"premise", "新梗概"}},
+                        client, tok),
+                    http::ApiError);
+    CHECK(client.calls().empty());
+    CHECK(store.load_story().written_chapters() == 1);
 
-    http::post_story_adopt(
-        json{{"project", p_str(root)},
-             {"story", drafted.body.at("story")},
-             {"overwrite", true}});
+    // 带上 overwrite 才写
+    const auto r = http::post_story_outline(
+        json{{"project", p_str(root)}, {"premise", "新梗概"}, {"overwrite", true}},
+        client, tok);
+    CHECK(r.status == 200);
+    CHECK(store.load_story().chapters.size() == 2);
 
-    ProjectStore store(root);
-    CHECK(store.load_story().chapters.size() == 2);   // 正式那份进去了
-    CHECK(store.load_story_draft().empty());          // 草稿没了
-    CHECK_FALSE(http::get_story(p_str(root)).body.contains("draft"));
+    std::error_code ec;
+    fs::remove_all(root, ec);
+}
+
+TEST_CASE("POST /api/story/revise：空章上的 [0, 0) 是「从头写」，不是范围不对") {
+    // 故事页 2026-09-17 起只有这一条 AI 路：选中了改选中的，没选就整章，
+    // 章还是空的就是从头写——都走这条接口。空区间要认。
+    const fs::path root = fresh_project("空章从头写");
+    http::post_story_adopt(json{
+        {"project", p_str(root)},
+        {"story", json{{"premise", ""},
+                       {"scale", "medium"},
+                       {"episode_duration_s", 60},
+                       {"chapters", json::array({json{{"chapter_id", "ch01"},
+                                                      {"title", "第一章"},
+                                                      {"summary", ""},
+                                                      {"text", ""}}})}}},
+        {"overwrite", true}});
+
+    llm::ReplayClient client(
+        {json{{"text", "深夜，便利店的灯还亮着。"}, {"note", "开了个头"}}.dump()});
+    pipeline::CancelToken tok;
+    const auto r = http::post_story_revise(json{{"project", p_str(root)},
+                                                {"chapter_id", "ch01"},
+                                                {"from_char", 0},
+                                                {"to_char", 0},
+                                                {"instruction", "写个开头"}},
+                                           client, tok);
+    CHECK(r.status == 200);
+    CHECK(r.body.at("text").get<std::string>() == "深夜，便利店的灯还亮着。");
+    REQUIRE(client.calls().size() == 1);
+    CHECK(client.calls()[0].prompt.find("这一章还是空的") != std::string::npos);
+
+    // 位置真错了照样拒
+    CHECK_THROWS_AS(http::post_story_revise(json{{"project", p_str(root)},
+                                                 {"chapter_id", "ch01"},
+                                                 {"from_char", 3},
+                                                 {"to_char", 1},
+                                                 {"instruction", "x"}},
+                                            client, tok),
+                    http::ApiError);
 
     std::error_code ec;
     fs::remove_all(root, ec);
@@ -1396,7 +1390,7 @@ TEST_CASE("空的和切不出来的") {
     CHECK(changji::stages::split_pasted("就这一句。").size() == 1);
 }
 
-TEST_CASE("POST /api/story/import：只回草稿，不落库") {
+TEST_CASE("POST /api/story/import：切完直接落盘") {
     const fs::path root = fresh_project("粘贴");
     const std::string novel =
         "第一章 雨夜重逢\n他推门进来。\n第二章 五年前\n回到五年前。";
@@ -1404,7 +1398,7 @@ TEST_CASE("POST /api/story/import：只回草稿，不落库") {
     const auto r = http::post_story_import(
         json{{"project", p_str(root)}, {"text", novel}});
     CHECK(r.status == 200);
-    CHECK_FALSE(r.body.at("adopted").get<bool>());
+    CHECK(r.body.at("adopted").get<bool>());
     CHECK(r.body.at("chapters").get<int>() == 2);
     CHECK(r.body.at("written").get<int>() == 2);  // 粘进来的就是有正文的
     CHECK(r.body.at("story").at("source").get<std::string>() == "pasted");
@@ -1412,7 +1406,17 @@ TEST_CASE("POST /api/story/import：只回草稿，不落库") {
     CHECK(r.body.at("needs_analysis").get<bool>());
 
     ProjectStore store(root);
-    CHECK(store.load_story().empty());
+    CHECK(store.load_story().chapters.size() == 2);
+
+    SUBCASE("会顶掉写好的正文时要拦一下") {
+        CHECK_THROWS_AS(http::post_story_import(
+                            json{{"project", p_str(root)}, {"text", novel}}),
+                        http::ApiError);
+        CHECK(http::post_story_import(json{{"project", p_str(root)},
+                                           {"text", novel},
+                                           {"overwrite", true}})
+                  .status == 200);
+    }
 
     std::error_code ec;
     fs::remove_all(root, ec);
@@ -1866,7 +1870,7 @@ TEST_CASE("并回去：模型糊弄时的几种情况") {
     }
 }
 
-TEST_CASE("POST /api/story/analyze：只回草稿，而且重算了分集") {
+TEST_CASE("POST /api/story/analyze：落盘，而且重算了分集") {
     const fs::path root = fresh_project("读一遍");
     ProjectStore store(root);
     Story s = pasted_story();
@@ -1879,11 +1883,12 @@ TEST_CASE("POST /api/story/analyze：只回草稿，而且重算了分集") {
         http::post_story_analyze(json{{"project", p_str(root)}}, client, tok);
 
     CHECK(r.status == 200);
-    CHECK_FALSE(r.body.at("adopted").get<bool>());
+    CHECK(r.body.at("adopted").get<bool>());
     CHECK_FALSE(r.body.at("needs_analysis").get<bool>());
     CHECK(r.body.at("story").at("characters").size() == 1);
-    // 盘上还是原来那份
-    CHECK(store.load_story().characters.empty());
+    // 正文一个字不动，人物直接进盘
+    CHECK(store.load_story().characters.size() == 1);
+    CHECK(store.load_story().written_chapters() == s.written_chapters());
 
     std::error_code ec;
     fs::remove_all(root, ec);

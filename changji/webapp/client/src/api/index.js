@@ -229,8 +229,8 @@ export const api = {
 
   // ---- 引擎：故事 ----
   //
-  // 写和采用是两个接口：/outline 只回草稿不落库，人点了采用才走 /adopt。
-  // 源头没人审过就往下跑，后面几十分钟的渲染全是白跑。
+  // /outline 写完直接落盘（2026-09-17 起，草稿那一屏退役了）；/adopt 留给
+  // 「建一章空的」「加一章」这种整份写回的事。
   getStory: (path) => get('/api/story', { path }),
   saveStory: (payload) => post('/api/story', payload),
   writeOutline: (payload) => post('/api/story/outline', payload),
@@ -252,9 +252,6 @@ export const api = {
    */
   applyPrompt: (path, payload, raw) => post(path, { ...payload, paste: raw }),
   adoptStory: (payload) => post('/api/story/adopt', payload),
-  // 丢掉还没采用的那份大纲。**草稿是落库的**，所以「丢弃」不能只清
-  // 浏览器里那个 ref——不清服务端那份的话刷新一下它又回来了。
-  dropStoryDraft: (payload) => post('/api/story/draft/drop', payload),
   planEpisodes: (payload) => post('/api/story/plan', payload),
   // 分集表是计划，这一步才把它变成流水线真正在跑的剧集。
   // 已有的同号剧集只补元数据，写好的剧本和出过的片一个字不动。

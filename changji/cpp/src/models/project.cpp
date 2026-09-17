@@ -238,9 +238,6 @@ void ProjectPaths::ensure() const {
 fs::path ProjectPaths::project_file() const { return root_ / kProjectFile; }
 fs::path ProjectPaths::assets_file() const { return root_ / kAssetsFile; }
 fs::path ProjectPaths::story_file() const { return root_ / kStoryFile; }
-fs::path ProjectPaths::story_draft_file() const {
-    return root_ / "story_draft.json";
-}
 fs::path ProjectPaths::refs() const { return root_ / "refs"; }
 fs::path ProjectPaths::voices() const { return root_ / "voices"; }
 fs::path ProjectPaths::audio() const { return root_ / "audio"; }
@@ -399,29 +396,6 @@ void ProjectStore::save_assets(const AssetLibrary& assets) const {
 
 void ProjectStore::save_story(const Story& story) const {
     write_json_atomic(paths_.story_file(), json(story));
-}
-
-Story ProjectStore::load_story_draft() const {
-    std::error_code ec;
-    if (!fs::is_regular_file(paths_.story_draft_file(), ec)) {
-        return Story{};
-    }
-    // **读坏了当没有，不抛。** 这是一份可以随时丢的中间产物，为它把整个
-    // 故事页打不开不值当——老版本写的、写到一半断电的，都归到"没草稿"。
-    try {
-        return read_json_file<json>(paths_.story_draft_file()).get<Story>();
-    } catch (const std::exception&) {
-        return Story{};
-    }
-}
-
-void ProjectStore::save_story_draft(const Story& draft) const {
-    write_json_atomic(paths_.story_draft_file(), json(draft));
-}
-
-void ProjectStore::clear_story_draft() const {
-    std::error_code ec;
-    fs::remove(paths_.story_draft_file(), ec);
 }
 
 std::string ProjectStore::copy_into(const fs::path& src,

@@ -253,20 +253,55 @@ private:
 
 }  // namespace
 
+/// 已经展开过正文的故事被一份新大纲整份顶掉，那些正文就没了。
+/// 章节 id 是按位置生成的，没法靠合并保住——只能挡在这里。
+///
+/// **出大纲那条要在开跑之前挡**：大纲直接落盘（见 write_outline 上那段），
+/// 八分钟之后再 409 等于白跑一趟模型。
+void refuse_to_clobber(const Story& existing, const json& body) {
+    const int written = existing.written_chapters();
+    if (written > 0 && !opt_bool(body, "overwrite", false)) {
+        throw ApiError(409, "这个项目里已经有 " + std::to_string(written) +
+                                " 章写好了正文，换一份大纲会把它们顶掉。"
+                                "确认要换的话带上 overwrite。");
+    }
+}
+
+/// 把一份故事**落成正式的那份**：算分集、存盘、剧集对齐、梗概同步回
+/// project.json。
+///
+/// 出大纲、粘一份、提人物、采用——四条路的收尾是同一段。2026-09-17 之前
+/// 前三条只回"草稿"，人点了「采用」才走到这儿；草稿那一屏当天退役（理由
+/// 在 write_outline 上），它们直接落盘。四处各写一遍的话迟早只改一边。
+json commit_story(const ProjectStore& store, Project project, Story story,
+                  const Story& existing) {
+    if (story.episode_duration_s <= 0.0) {
+        story.episode_duration_s = existing.episode_duration_s;
+    }
+    story.plan = stages::plan_episodes(story, story.episode_duration_s);
+    validate_or_400(story);
+    store.save_story(story);
+    // **章节动了，剧集跟着对齐。** 一章一集是机械映射，用户 2026-09-16
+    // 选的是「自动做，不要按钮」。非章模式下这一句什么都不做。
+    sync_episodes_to_chapters(store, story);
+    // 上一轮写砸的那句话到此为止：新的一份已经进去了。
+    OutlineRegistry::instance().clear_error(paths::to_utf8(store.root()));
+    if (!story.premise.empty() && project.premise != story.premise) {
+        project.premise = story.premise;
+        store.save_project(project);
+    }
+    json out = story_response(story);
+    out["adopted"] = true;
+    return out;
+}
+
 ApiResult get_story(const std::string& path) {
     ProjectStore store = open_project(path);
     load_or_400(store); // 只为了验证这是个项目目录，结果不用
     json out = story_response(load_story_or_400(store));
-    // **还没采用的那份大纲跟着回去**，故事页才恢复得出来。没有就不带这个
-    // 键——前端拿 `?? null` 兜着，但"有没有草稿"这件事靠键在不在表达。
-    const Story draft = store.load_story_draft();
-    if (!draft.empty()) {
-        json d = story_response(draft);
-        d["adopted"] = false;
-        out["draft"] = std::move(d);
-    }
     // 正跑着一份大纲的话把那条流的 id 带回去，页面好重新接上。
-    // 没有就不带这个键，理由同 draft。
+    // 没有就不带这个键——"有没有"靠键在不在表达，带个 null 回去前端还得
+    // 再分一层。
     const std::string running = OutlineRegistry::instance().running_for(
         paths::to_utf8(store.root()));
     if (!running.empty()) out["outline_running"] = running;
@@ -390,7 +425,7 @@ json write_outline(ProjectStore& store, const Project& project,
     // 秒开秒关的"正在出大纲"，而这一下根本没干活。
     if (peek) return peek_prompt(req).body;
 
-    Story draft;
+    Story story;
     try {
         std::string raw;
         if (!pasted.empty()) {
@@ -445,7 +480,7 @@ json write_outline(ProjectStore& store, const Project& project,
                 job_relay(stream_id, std::move(msg));
             });
         }
-        draft = stages::parse_outline(raw, premise, scale);
+        story = stages::parse_outline(raw, premise, scale);
     } catch (const stages::StoryError& e) {
         const std::string msg = std::string("大模型没写出能用的大纲：") + e.what();
         // job_error 只往流上广播一次，页面刷新过就没人听见——记下来，
@@ -457,23 +492,23 @@ json write_outline(ProjectStore& store, const Project& project,
         throw ApiError(502, e.what());
     }
 
-    // 每集时长沿用项目上已经定过的那个，草稿里就能看到分成几集。
-    draft.episode_duration_s = existing.episode_duration_s;
-    draft.plan = stages::plan_episodes(draft, draft.episode_duration_s);
-
-    // **落库，但只落在草稿那份上。** 正式的 story.json 一个字不动——
-    // 要不要拿它换掉现在这几章，仍然由人点「采用」决定。
+    // **直接落盘，不再经过草稿。**
     //
-    // 这一步 2026-09-13 补的。原来这份草稿只活在浏览器的一个 ref 里，
-    // 而出一份大纲要三四十秒到一分多钟：刷新一下、切个页面、换台机器看，
-    // 那一分钟就白花了，界面上连刚才写了什么都不剩。用户报的原话是
-    // 「点击让 ai 写大纲，刷新后什么都没有了」。
-    store.save_story_draft(draft);
-
-    json out = story_response(draft);
-    // 还是草稿：没进 story.json。前端要拿它去 /api/story/adopt 才算数。
-    out["adopted"] = false;
-    return out;
+    // 2026-09-13 到 09-17 之间这儿只存 story_draft.json，人在页面上点了
+    // 「采用」才进 story.json——为的是"源头没人审过就落库，后面几十分钟
+    // 渲染全是白跑"。用户 09-17 拍板退掉那一屏：
+    //
+    //   · 对刚建的项目，「采用」什么都不保护。它那两道闸（写过正文才 409、
+    //     有故事才弹确认）在新项目上都是假的，点下去发生的事和直接落盘
+    //     一模一样。
+    //   · 对已经有正文的项目，那道闸挪到**按下去之前**（post_story_outline
+    //     里的 refuse_to_clobber）。八分钟之后再问，问的是一件已经花掉
+    //     的事。
+    //   · 落盘之后能做的事（展开正文、删章、加章、再来一份）比草稿态多，
+    //     不比它少；"看一眼再决定"这件事在正式那份上照样能做。
+    //
+    // 刷新、切页、换台机器看，都从 story.json 读——不用再为草稿另存一份。
+    return commit_story(store, project, std::move(story), existing);
 }
 
 ApiResult post_story_outline(const json& body_in, llm::Client& client,
@@ -484,10 +519,12 @@ ApiResult post_story_outline(const json& body_in, llm::Client& client,
     const bool peek = take_peek(body);
     const std::string pasted = take_paste(body);
     forbid_extra(body, {"project", "premise", "scale", "keywords", "stream",
-                        "async", "variation"});
+                        "async", "variation", "overwrite"});
     ProjectStore store = open_project(body);
     const Project project = load_or_400(store);
     const Story existing = load_story_or_400(store);
+    // 大纲直接落盘（见 write_outline），所以这道闸只能在这儿。
+    refuse_to_clobber(existing, body);
 
     // 梗概没给就用存着的那份。隔天回来接着写大纲时不用重打一遍。
     std::string premise = text::strip_ws(opt_str(body, "premise", ""));
@@ -568,19 +605,6 @@ ApiResult post_story_outline(const json& body_in, llm::Client& client,
                                pasted)};
 }
 
-/// 丢掉还没采用的那份大纲。
-///
-/// 界面上那个「丢弃」按钮原来只是把浏览器里的 ref 清成 null——草稿落库
-/// 之后不清服务端那份的话，刷新一下它又回来了，而用户刚刚明确说了不要。
-ApiResult post_story_draft_drop(const json& body) {
-    forbid_extra(body, {"project"});
-    ProjectStore store = open_project(body);
-    load_or_400(store);
-    store.clear_story_draft();
-    OutlineRegistry::instance().clear_error(paths::to_utf8(store.root()));
-    return {200, {{"dropped", true}}};
-}
-
 ApiResult post_story_chapter_delete(const json& body) {
     forbid_extra(body, {"project", "chapter_id"});
     ProjectStore store = open_project(body);
@@ -622,66 +646,34 @@ ApiResult post_story_adopt(const json& body) {
         throw ApiError(400, std::string("这份大纲读不了：") + e.what());
     }
 
-    // 已经展开过正文的故事被一份新大纲整份顶掉，那些正文就没了。
-    // 章节 id 是按位置生成的，没法靠合并保住——只能挡在这里。
-    const int written = existing.written_chapters();
-    if (written > 0 && !opt_bool(body, "overwrite", false)) {
-        throw ApiError(409, "这个项目里已经有 " + std::to_string(written) +
-                                " 章写好了正文，采用新大纲会把它们顶掉。"
-                                "确认要换的话带上 overwrite。");
-    }
-
-    if (story.episode_duration_s <= 0.0) {
-        story.episode_duration_s = existing.episode_duration_s;
-    }
-    story.plan = stages::plan_episodes(story, story.episode_duration_s);
-
-    validate_or_400(story);
-    store.save_story(story);
-    // **章节动了，剧集跟着对齐。** 一章一集是机械映射，用户 2026-09-16
-    // 选的是「自动做，不要按钮」。非章模式下这一句什么都不做。
-    sync_episodes_to_chapters(store, story);
-    // 采用了，草稿的使命就完了。留着的话下次打开故事页会**同时**看到
-    // "这本书"和一份和它一模一样的草稿。
-    store.clear_story_draft();
-    OutlineRegistry::instance().clear_error(paths::to_utf8(store.root()));
-
-    if (!story.premise.empty() && project.premise != story.premise) {
-        project.premise = story.premise;
-        store.save_project(project);
-    }
-
-    json out = story_response(story);
-    out["adopted"] = true;
-    return {200, out};
+    refuse_to_clobber(existing, body);
+    return {200, commit_story(store, project, std::move(story), existing)};
 }
 
 ApiResult post_story_import(const json& body) {
-    forbid_extra(body, {"project", "text", "scale", "title"});
+    forbid_extra(body, {"project", "text", "scale", "title", "overwrite"});
     ProjectStore store = open_project(body);
-    load_or_400(store);
+    const Project project = load_or_400(store);
     const Story existing = load_story_or_400(store);
+    // 切出来的章节会把现在这几章整份换掉，和出大纲一样先挡。
+    refuse_to_clobber(existing, body);
 
     const std::string raw = need_str(body, "text");
     if (text::strip_ws(raw).empty()) throw ApiError(400, "粘进来的是空的");
 
-    Story draft;
-    draft.source = StorySource::PASTED;
-    draft.scale = opt_scale(body, "scale", existing.scale);
-    draft.premise = existing.premise;
-    draft.logline = text::clean_field(opt_str(body, "title", ""));
-    draft.chapters = stages::split_pasted(raw);
-    if (draft.chapters.empty()) throw ApiError(400, "这段文本切不出章节来");
+    Story story;
+    story.source = StorySource::PASTED;
+    story.scale = opt_scale(body, "scale", existing.scale);
+    story.premise = existing.premise;
+    story.logline = text::clean_field(opt_str(body, "title", ""));
+    story.chapters = stages::split_pasted(raw);
+    if (story.chapters.empty()) throw ApiError(400, "这段文本切不出章节来");
 
-    draft.episode_duration_s = existing.episode_duration_s;
-    draft.plan = stages::plan_episodes(draft, draft.episode_duration_s);
-
-    json out = story_response(draft);
-    out["adopted"] = false;
     // 人物、关系、地点都还是空的——那些要读懂内容才提得出来。前端靠这个
-    // 数提醒人「下一步让 AI 读一遍」，不然采用之后会一路走到分镜才发现
-    // 资产库是空的。
-    out["needs_analysis"] = draft.characters.empty();
+    // 数提醒人「下一步让 AI 读一遍」，不然会一路走到分镜才发现资产库是空的。
+    const bool needs_analysis = story.characters.empty();
+    json out = commit_story(store, project, std::move(story), existing);
+    out["needs_analysis"] = needs_analysis;
     return {200, out};
 }
 
@@ -716,9 +708,9 @@ ApiResult post_story_analyze(const json& body_in, llm::Client& client,
     req.on_thinking = thinking_sink();
     if (peek) return peek_prompt(req);
 
-    Story draft;
+    Story read;
     try {
-        draft = stages::apply_analysis(
+        read = stages::apply_analysis(
             story, pasted.empty() ? client.complete(req, tok) : pasted);
     } catch (const stages::StoryError& e) {
         throw ApiError(502, std::string("大模型没读出能用的结构：") + e.what());
@@ -726,13 +718,12 @@ ApiResult post_story_analyze(const json& body_in, llm::Client& client,
         throw ApiError(502, e.what());
     }
 
-    // 钩子变了，切点就变了——重算一遍分集表。这正是这一步的价值：
-    // 机械切点只保证不切在半句话中间，现在能切在真正的悬念上了。
-    draft.plan = stages::plan_episodes(draft, draft.episode_duration_s);
-
-    json out = story_response(draft);
-    out["adopted"] = false;
-    out["needs_analysis"] = draft.characters.empty();
+    // 正文一个字不动，只多了人物、关系、地点和钩子——不用挡，直接落。
+    // 钩子变了切点就变了，commit_story 里会重算分集表：这正是这一步的
+    // 价值，机械切点只保证不切在半句话中间，现在能切在真正的悬念上了。
+    const bool needs_analysis = read.characters.empty();
+    json out = commit_story(store, project, std::move(read), story);
+    out["needs_analysis"] = needs_analysis;
     return {200, out};
 }
 
@@ -1028,7 +1019,10 @@ stages::Span need_span(const json& body, const Story& story) {
         num_in_range(body, "from_char", 0.0, -1.0, 1e9));
     span.to_char = static_cast<int>(
         num_in_range(body, "to_char", static_cast<double>(len), -1.0, 1e9));
-    if (span.from_char < 0 || span.to_char > len || span.from_char >= span.to_char) {
+    // **空区间 [k, k) 是合法的：那是"在这儿写一段"**，章还是空的时候就是
+    // [0, 0)。故事页 2026-09-17 起只有这一条 AI 路（选中了改选中的，没选就
+    // 整章，空章从头写），三种都走这儿，只差区间。
+    if (span.from_char < 0 || span.to_char > len || span.from_char > span.to_char) {
         // **位置对不上就拒**，别夹到合法范围里硬改。夹过之后改的是另一段
         // 字，而用户看到的是"改好了"——他得自己一段段核对才发现改错了地方。
         throw ApiError(400, "选中的范围不对：这一章有 " + std::to_string(len) +

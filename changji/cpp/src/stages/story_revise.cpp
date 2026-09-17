@@ -52,7 +52,17 @@ const Chapter* find(const Story& story, const std::string& chapter_id) {
 /// `whole_chars` 是这一章现在一共多少字，给 0 表示不知道（那就只剩倍数
 /// 那条，和以前一样）。
 void guard_length(const std::string& text_in, int span_chars, int whole_chars) {
-    if (span_chars <= 0) return;
+    if (span_chars <= 0) {
+        // 空区间（从头写 / 在光标处插一段）没有"选中的六倍"可算。原来直接
+        // 放行——模型跑飞了会吐两万字进一章。顶按一章的量给。
+        const int got = static_cast<int>(text::utf8_len(text_in));
+        if (got > 8000) {
+            throw std::runtime_error("写了 " + std::to_string(got) +
+                                     " 个字，一章装不下这么多（上限 8000）。"
+                                     "让它分几次写，或者说清篇幅");
+        }
+        return;
+    }
     const int by_span = span_chars * 6;
     const int by_whole = whole_chars > 0 ? whole_chars * 3 / 5 : 0;
     const int cap = std::max(600, std::max(by_span, by_whole));
@@ -142,7 +152,11 @@ std::string build_revise_prompt(const Story& story, const Span& span,
     out += prompt::story_revise::kHead;
     out += style_line == StyleLine::ANIME ? prompt::story_revise::kHintAnime
                                           : prompt::story_revise::kHintRealistic;
-    out += prompt::story_revise::kRules;
+    // **没圈字就是"写"，不是"改"。** 空区间 [k, k)：章还是空的（[0, 0)）
+    // 从头写，不然就在那个位置插一段。规矩换一套——「只改选中的那一段」
+    // 对着一段空的没意义，而「篇幅和原来差不多」会让它写零个字。
+    const bool insert = span.from_char >= span.to_char;
+    out += insert ? prompt::story_revise::kRulesInsert : prompt::story_revise::kRules;
 
     // ---- 压缩的全局记忆。只要名字和身份 ----
     //
@@ -169,9 +183,17 @@ std::string build_revise_prompt(const Story& story, const Span& span,
     const std::string after =
         slice_chars(c->text, span.to_char, span.to_char + kReviseContextChars);
     out += "\n【这一章】" + c->title + "\n";
-    if (!before.empty()) out += "\n【选中那段前面】\n……" + before + "\n";
-    out += "\n【选中要改的那一段】\n" + span_text(story, span) + "\n";
-    if (!after.empty()) out += "\n【选中那段后面】\n" + after + "……\n";
+    if (insert && c->text_len() == 0) {
+        out += "\n【这一章还是空的】从头写。\n";
+    } else if (insert) {
+        if (!before.empty()) out += "\n【光标前面】\n……" + before + "\n";
+        out += "\n【光标在这儿：新写的那段插在这里】\n";
+        if (!after.empty()) out += "\n【光标后面】\n" + after + "……\n";
+    } else {
+        if (!before.empty()) out += "\n【选中那段前面】\n……" + before + "\n";
+        out += "\n【选中要改的那一段】\n" + span_text(story, span) + "\n";
+        if (!after.empty()) out += "\n【选中那段后面】\n" + after + "……\n";
+    }
 
     // ---- 来回 ----
     //

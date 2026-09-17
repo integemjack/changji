@@ -67,17 +67,17 @@ describe('镜头页和故事页：那一屏的先后不能反', () => {
     expect(bad).toBeLessThan(empty)
   })
 
-  it('故事页：先「读不到」，后「开始写」那一屏', () => {
+  it('故事页：先「读不到」，后稿纸', () => {
     const view = read('views/StoryView.vue')
     const bad = view.indexOf('title="读不到这部剧的故事"')
     const empty = view.indexOf('loadError')
     expect(bad).toBeGreaterThan(0)
     expect(empty).toBeGreaterThan(0)
-    // 那一屏挂的就是 loadError，而且在「开始写」那一屏之前
-    // （「从这儿开始」这几个字在注释里也出现，所以认模板里那个三元）
-    const start = view.indexOf("hasStory ? '这本书' : '从这儿开始'")
-    expect(start).toBeGreaterThan(0)
-    expect(bad).toBeLessThan(start)
+    // 那一屏挂的就是 loadError，而且在稿纸（一章）之前——2026-09-17 起进来
+    // 就是稿纸，一章都没有时 load() 会先建一章空的；读砸了不能去建。
+    const paper = view.indexOf('class="doc doc--chapter"')
+    expect(paper).toBeGreaterThan(0)
+    expect(bad).toBeLessThan(paper)
   })
 })
 

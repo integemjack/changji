@@ -57,62 +57,9 @@ describe('stoppedByHand', () => {
 describe('按停之后留下的那几个字', () => {
   const STORY = read('../views/StoryView.vue')
 
-  /**
-   * 按停那一支的开头。
-   *
-   * **按分支名找，别按 `buf[chapterId] = acc` 找。** 那一句在这个文件里
-   * 出现三次：流式一边收一边画、按停留下、断线留下（story-lost-link）。
-   * 原来这两条用的是 `lastIndexOf`，断线那一支加进来之后就指错了地方
-   * ——用例当场红给我看了，好过悄悄测着另一段。
-   */
-  const BY_HAND = STORY.indexOf(
-    'if (byHand && acc.trim()) {',
-    STORY.indexOf('async function writeChapter('),
-  )
-
-  it('写正文：先留、后退——两条分支的顺序不能反', () => {
-    // 反了的话按停就走进后面那几支，而那几支**都不存盘**（理由见它们
-    // 各自的注释：引擎那头没落库、字也没过守卫）。按停是确定的，它那一支
-    // 存；所以它必须排在最前面。
-    //
-    // 2026-09-16 这条用例原来钉的是 `// 写砸了：把流出来那半截清掉` 那句
-    // 注释，而"写砸了就清掉"这件事本身已经不做了（写砸的字现在也留着，
-    // 只是不存）。钉注释文字太脆，改成钉**分支自己的判据**。
-    const keep = STORY.indexOf('buf[chapterId] = acc', BY_HAND)
-    // 一个字都没流出来那一支：这时候才轮到把原来那份放回去
-    const drop = STORY.indexOf(
-      "// 一个字都没流出来：放回原来那份",
-      BY_HAND,
-    )
-    expect(BY_HAND).toBeGreaterThan(0)
-    expect(keep).toBeGreaterThan(0)
-    expect(drop).toBeGreaterThan(0)
-    expect(keep).toBeLessThan(drop)
-  })
-
-  it('写正文：写砸了也把流出来的字留着，但不存', () => {
-    // 2026-09-16 连砸三次都是收尾那一下出的事（一句话复读三遍、一个字段
-    // 短几个字、JSON 结尾没闭合），而正文本身一千多字整整齐齐。每砸一次
-    // 十分钟，人看着它一个字一个字写完，然后眼睁睁全没了。
-    // 用户 2026-09-15 定的规矩：「点停下来之前写的内容应该保留」——
-    // 按停和写砸是同一件事的两种触发，字都是同样的字。
-    const fail = STORY.indexOf("if (acc.trim()) {", BY_HAND)
-    expect(fail).toBeGreaterThan(BY_HAND)
-    const tail = STORY.slice(fail, fail + 1400)
-    // 留：把流出来那份装回编辑器
-    expect(tail).toContain('buf[chapterId] = acc')
-    // 但**不存**——引擎那头这一趟明确没落库，而这份没过守卫
-    expect(tail).not.toContain('scheduleSave')
-    // 原来那份要能退回去
-    expect(tail).toContain('pending.value')
-  })
-
-  it('写正文：留下来的那份要存，不然刷一下就没了', () => {
-    // ⚠️ 只有**按停**这一支该存。断线那一支特意不存（那头可能已经写完
-    // 落库了，存半截等于盖掉完整那份），见 story-lost-link.test.js。
-    const tail = STORY.slice(BY_HAND, STORY.indexOf('if (lostLink', BY_HAND))
-    expect(tail).toContain('scheduleSave(chapterId, 0)')
-  })
+  // 2026-09-17 之前这儿还钉着「写正文」那条流的三支收尾。「所有让 AI 做的
+  // 都只是这一个章的内容」之后 writeChapter 没了，只剩改一段（空章从头写
+  // 也走它），下面这一条就是全部。
 
   it('改一段：留下来的同时要摆底稿，「撤销」才有东西可退', () => {
     const at = STORY.indexOf("ui.info(`停下了，改出来的")

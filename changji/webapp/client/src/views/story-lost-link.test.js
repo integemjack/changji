@@ -40,13 +40,16 @@ function code(text) {
 
 const body = code(SRC)
 
+// 2026-09-17 之前这一页有两条流式写作（写一章、改一段），两处各一份收尾。
+// 「所有让 AI 做的都只是这一个章的内容」之后只剩改一段那一条（空章从头写
+// 也走它），所以下面数的都是一处。
 describe('写到一半断线', () => {
-  it('两条路都认得出"断了"这一种，而且和"按停"分开', () => {
+  it('认得出"断了"这一种，而且和"按停"分开', () => {
     // onLost 只在"我们跟丢了"时叫（socket 掉了 / 信箱取不到 / 收尾那条没
     // 看见），和引擎明说的 job_error 是两回事。
-    expect((body.match(/lostLink = true/g) || []).length, '两处都要记').toBe(2)
-    expect((body.match(/let lostLink = false/g) || []).length).toBe(2)
-    expect((body.match(/if \(lostLink && acc\.trim\(\)\)/g) || []).length).toBe(2)
+    expect((body.match(/lostLink = true/g) || []).length).toBe(1)
+    expect((body.match(/let lostLink = false/g) || []).length).toBe(1)
+    expect((body.match(/if \(lostLink && acc\.trim\(\)\)/g) || []).length).toBe(1)
   })
 
   it('⚠️ 那面旗要**声明在 openJobFeed 之前**', () => {
@@ -54,9 +57,9 @@ describe('写到一半断线', () => {
     // 声明留在后面踩的是 TDZ——ReferenceError，而且只在"刚好那一刻断了"
     // 才现，平时一次都撞不到。
     //
-    // 不变式：每一处都是 声明 → openJobFeed( → lostLink = true。
+    // 不变式：声明 → openJobFeed( → lostLink = true。
     let at = 0
-    for (let i = 0; i < 2; i += 1) {
+    for (let i = 0; i < 1; i += 1) {
       const decl = body.indexOf('let lostLink = false', at)
       expect(decl, `第 ${i + 1} 处声明没了`).toBeGreaterThan(0)
       const call = body.indexOf('openJobFeed(', decl)
@@ -80,9 +83,9 @@ describe('写到一半断线', () => {
     return out
   }
 
-  it('两处都是"留字、摆底稿，但**不存**"', () => {
+  it('"留字、摆底稿，但**不存**"', () => {
     const blocks = keepBlocks()
-    expect(blocks.length, '不是两处').toBe(2)
+    expect(blocks.length, '不是一处').toBe(1)
     for (const f of blocks) {
       expect(f.length).toBeGreaterThan(50)
       expect(f, '没摆底稿，Ctrl+Z / 撤销就退不回原来那份').toContain('pending.value =')
@@ -93,21 +96,16 @@ describe('写到一半断线', () => {
     }
   })
 
-  it('写正文那一处留的是流出来那一份', () => {
-    expect(keepBlocks().some((f) => f.includes('buf[chapterId] = acc'))).toBe(true)
-  })
-
   it('断线不再弹那条红的：话由下面那两支说', () => {
     // 两条一起弹的话，人先看到的是红的那句，而它只说"不好说"，
     // 不说字还在不在、也不说该怎么办。
     expect(body).toMatch(/if \(!fin\.ok && !byHand && !lostLink\) ui\.error/)
-    expect((body.match(/!byHand && !lostLink/g) || []).length).toBe(2)
+    expect((body.match(/!byHand && !lostLink/g) || []).length).toBe(1)
   })
 
   it('一个字都没流出来也要说清是"断了"不是"写砸了"', () => {
     // 两者该做的事不一样：前者刷新看看，后者重来一次。
-    expect((body.match(/if \(lostLink\) \{/g) || []).length).toBe(2)
-    expect(body).toMatch(/连接断了，这一章写没写完不好说/)
+    expect((body.match(/if \(lostLink\) \{/g) || []).length).toBe(1)
     expect(body).toMatch(/连接断了，这一段改没改完不好说/)
   })
 })

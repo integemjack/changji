@@ -82,6 +82,36 @@ TEST_CASE("提示词里要有选中那段、前后文、和人物名") {
     CHECK(p.find("只改选中的那一段") != std::string::npos);
 }
 
+TEST_CASE("没圈字：走「写」那套规矩，不是「改」") {
+    // 空区间 [k, k)：章还是空的（[0, 0)）从头写，不然在那个位置插一段。
+    // 「只改选中的那一段」对着一段空的没意义，而「篇幅和原来差不多」会让
+    // 它写零个字——所以换一套规矩，上下文照带。
+    Story s = a_story();
+    const std::string mid = build_revise_prompt(s, Span{"ch01", 6, 6}, "这儿补一段环境",
+                                                {}, StyleLine::REALISTIC);
+    CHECK(mid.find("他要你在光标那个位置写一段") != std::string::npos);
+    CHECK(mid.find("只改选中的那一段") == std::string::npos);
+    CHECK(mid.find("第一段。") != std::string::npos);
+    CHECK(mid.find("第三段。") != std::string::npos);
+    CHECK(mid.find("这儿补一段环境") != std::string::npos);
+
+    s.chapters[0].text.clear();
+    s.chapters[0].hooks.clear();
+    const std::string blank = build_revise_prompt(s, Span{"ch01", 0, 0}, "写个开头", {},
+                                                  StyleLine::REALISTIC);
+    CHECK(blank.find("这一章还是空的") != std::string::npos);
+    // 人物名照带：不带的话它会自己起名
+    CHECK(blank.find("林晚") != std::string::npos);
+}
+
+TEST_CASE("长度上限：从头写也有个顶") {
+    // 空区间没有"选中的六倍"可算，原来直接放行——模型跑飞了会吐两万字。
+    std::string got;
+    for (int i = 0; i < 8001; ++i) got += "字";
+    CHECK_THROWS(parse_plain_revision(got, 0, 0));
+    CHECK_NOTHROW(parse_plain_revision(got.substr(0, 3 * 3000), 0, 0));
+}
+
 TEST_CASE("对话形式：之前的来回要带上") {
     const Story s = a_story();
     const std::vector<ReviseTurn> history = {

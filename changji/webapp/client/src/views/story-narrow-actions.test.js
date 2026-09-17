@@ -7,8 +7,8 @@
  * 掉了），这两件事却一直没给窝。
  *
  * **后果是整条流水线走不下去**：「提人物」够不着的话人物和地点永远是空的，
- * 设定页空着、拆分镜没人可引用。而「反推」「采用大纲」之后那两句提示还在
- * 说「接着点左边「提人物」」——左边什么都没有。
+ * 设定页空着、拆分镜没人可引用。而「反推」「切成章节」之后那两句提示还在
+ * 说「接着点「提人物」」——左边什么都没有。
  *
  * 1100px 不是个偏门尺寸：笔记本半屏、并排开两个窗口就到了。
  */
@@ -27,19 +27,20 @@ function code(text) {
 }
 const src = code(VIEW)
 
-describe('窄屏也要够得着整本书那两件事', () => {
+describe('窄屏也要够得着整本书那件事', () => {
   it('左栏在窄屏下确实不渲染——这是前提', () => {
     expect(src).toMatch(/listShown = computed\(\(\) => listOpen\.value && !narrow\.value/)
-    expect(src).toMatch(/v-if="listShown && \(hasStory \|\| draft\)"/)
+    expect(src).toMatch(/v-if="listShown && hasStory"/)
   })
 
-  it('两颗按钮各有两处：左栏底下一处，正文抬头一处', () => {
+  it('那颗按钮有两处：左栏底下一处，正文抬头一处', () => {
+    // 「提人物」2026-09-17 从这一页拿掉了（用户：「提取任务……放这里干什么」），
+    // 只剩「展开剩下 N 章」——而且只有老项目带着大纲时才出现。
     expect((src.match(/@click="writeAllChapters"/g) ?? []).length, '展开剩下 N 章只有一处').toBe(2)
-    expect((src.match(/@click="analyzeStory"/g) ?? []).length, '提人物只有一处').toBe(2)
   })
 
   it('抬头那一处只在左栏不在的时候出现，否则同一件事摆两遍', () => {
-    expect(src).toMatch(/v-if="!listShown && !draft && !writer\.running"/)
+    expect(src).toMatch(/v-if="!listShown && !writer\.running"/)
   })
 
   it('那一行要能折——挤不下就顶出屏幕，等于还是够不着', () => {
