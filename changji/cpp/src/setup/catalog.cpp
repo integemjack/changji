@@ -107,11 +107,34 @@ constexpr const char* kH3GgufRepo = "leejet/MiniMax-H3-GGUF";
 constexpr const char* kH3SmallRepo = "unsloth/MiniMax-H3-GGUF";
 constexpr const char* kH3ComfyRepo = "Comfy-Org/MiniMax-H3";
 constexpr const char* kH3LoraRepo = "larryvrh/MiniMax-H3-Turbo-Lora";
+/// 完整版（33B）那一支的量化。leejet 只出了 Q4_K_M 一档，别的档只有这家有。
+constexpr const char* kH3FullQuantRepo = "Abiray/MiniMax-H3-GGUF";
 
 constexpr const char* kH3FamilyNote =
     "画面和立体声一起生成，动作真实感这一档里最好，用户 2026-09-10 选定的"
     "就是它。两处代价：整套下载量最小也要 31 GB；授权禁止美国、欧盟、英国、"
     "韩国的创作者分发用它生成的视频。";
+
+// **「完整」和「精简」不是高配低配，是"能不能拿去继续训练"。**
+//
+// 光看名字谁都会挑「完整」——用户 2026-09-17 就在问"是不是还有个低配版"，
+// 而他找的那个就是「精简」，只是名字没告诉他这一点。他那台机器上跑的正是
+// 「完整」，实测 124 秒一镜，白扛 26 GB。
+//
+// 官方 README 写得很清楚：H3-Omni-Transformer 是 33B，其中约 13B 在
+// AdaLN 分支上，而"AdaLN 的调制输出可以预先算好缓存，**只做推理的部署
+// 不需要载入这些参数**"。「精简」就是把那 13B 去掉的那一版。
+//
+// 对得上：完整 bf16 66.28 GB、精简 bf16 40.23 GB，比值 0.607；
+// 20B/33B = 0.606。
+constexpr const char* kH3FullNote =
+    "⚠️ 出片不需要这一支。「完整」比「精简」多出来的那 13B 参数在 AdaLN "
+    "分支上，官方说明里写着只做推理的部署不需要载入它们——出片挑它只是多占"
+    "二十多 GB。要拿这个模型继续训练（微调、练 LoRA）才用得上完整权重。";
+
+constexpr const char* kH3PrunedNote =
+    "出片就挑这一支：官方的只做推理版，33B 里去掉 13B 只在微调时"
+    "才用到的 AdaLN 分支，剩 20B，体积小四成，出片该有的都在。";
 
 struct H3Spec {
     const char* id;
@@ -129,12 +152,47 @@ struct H3Spec {
 // 张量——sd.cpp 的加载器里没有一行处理 scaled，会按普通 fp8 读，不报错，
 // 只是出来的东西全是垃圾（Qwen2.5-VL 的 fp8_scaled 上已经栽过一次）。
 // 清单里只放能确定读得对的：读不对这件事没有任何报错。
+// **rank 按"出片出来什么样"排，不按"哪一支更完整"。**
+//
+// 原来完整那一支的 rank 整段高于精简，2026-09-17 给完整补上量化档之后
+// 当场出事：5090 上推荐落到了 `h3-full-q3_k_m`——一个严重退化的完整版，
+// 压过高精度的 `h3-pruned-q6_k`。测试抓住了。
+//
+// 按上面 kH3FullNote 里那段官方说明，完整多出来的 13B 在推理时根本不加载，
+// 所以**同一个量化级别上，完整并不更好，只是更大**。于是排法是：先按量化
+// 级别（bf16 > Q8 > Q6 > Q5 > Q4 > Q3 > Q2），同一级别里精简在前。
 constexpr H3Spec kH3[] = {
     {"h3-full-bf16", "MiniMax-H3 完整", "bf16",
      "diffusion_models/minimax_h3_fl2va_bf16.safetensors", kH3ComfyRepo,
-     66280487368ULL, 40},
+     66280487368ULL, 39},
+    // ---- 完整那一支的量化（2026-09-17 用户：「把 33b 版本全部量化版本也
+    //      加上」）----
+    //
+    // leejet 只出了 Q4_K_M 一档，别的档只有 Abiray 那家有。
+    //
+    // **两对没收**：FL2VA 的 Q3_K_M 和 Q3_K_S 字节数一模一样
+    //（15567048992），Q5_K_M 和 Q5_K_S 也一样（23887484192）。_S 和 _M 的
+    // 区别就在哪些张量留高精度，大小不可能相同——这两对里必有一个是贴错
+    // 标签的重复文件。每个量化级别都收到了，只是那两级各收标准的 _M。
+    //
+    // （FL2VA 和 Ref2VA 之间大小相同是**正常的**，不是重复：GGUF 体积只由
+    // 张量形状和量化类型决定，跟权重数值无关。别拿它当证据。）
+    {"h3-full-q8_0", "MiniMax-H3 完整", "Q8_0",
+     "unet/MiniMax-H3-FL2VA-Q8_0.gguf", kH3FullQuantRepo, 36035216640ULL, 37},
+    {"h3-full-q6_k", "MiniMax-H3 完整", "Q6_K",
+     "unet/MiniMax-H3-FL2VA-Q6_K.gguf", kH3FullQuantRepo, 28219050240ULL, 35},
+    {"h3-full-q5_k_m", "MiniMax-H3 完整", "Q5_K_M",
+     "unet/MiniMax-H3-FL2VA-Q5_K_M.gguf", kH3FullQuantRepo, 23887484192ULL, 33},
+    {"h3-full-q5_0", "MiniMax-H3 完整", "Q5_0",
+     "unet/MiniMax-H3-FL2VA-Q5_0.gguf", kH3FullQuantRepo, 22779297056ULL, 32},
+    // leejet 的那一份比 Abiray 的 Q4_K_M（19864208217）小一个 G，是 sd.cpp
+    // 作者自己出的，留着它当这一级，不收另一份同名的。
     {"h3-full-q4_k_m", "MiniMax-H3 完整", "Q4_K_M",
      "minimax_h3_fl2va-Q4_K_M.gguf", kH3GgufRepo, 18779848448ULL, 30},
+    {"h3-full-q4_0", "MiniMax-H3 完整", "Q4_0",
+     "unet/MiniMax-H3-FL2VA-Q4_0.gguf", kH3FullQuantRepo, 18639605024ULL, 29},
+    {"h3-full-q3_k_m", "MiniMax-H3 完整", "Q3_K_M",
+     "unet/MiniMax-H3-FL2VA-Q3_K_M.gguf", kH3FullQuantRepo, 15567048992ULL, 27},
     // ---- 精简那一支，**从大到小排** ----
     //
     // 顺序就是下拉框里的顺序（见 setup_api 那头按组吐选项），所以这一串
@@ -145,7 +203,7 @@ constexpr H3Spec kH3[] = {
     // 挑默认值不看这个顺序，看 rank（见 recommend）。
     {"h3-pruned-bf16", "MiniMax-H3 精简", "bf16",
      "diffusion_models/minimax_h3_fl2va_pruned_bf16.safetensors", kH3ComfyRepo,
-     40225724176ULL, 25},
+     40225724176ULL, 40},
     // ---- 下面五档都在 unsloth 那个仓库（2026-09-17 用户：「增加全部档位」）----
     //
     // Q4_K_M 那一条是 leejet 的，和 unsloth 的 `-Q4_K.gguf` 字节数一模一样
@@ -157,13 +215,13 @@ constexpr H3Spec kH3[] = {
     // 仓库里还有 `ref2va` 那一整组同样的档位——**那不是档位，是另一个模型**
     // （参考图转视频，我们这条路用的是首帧转视频 fl2va），不混进来。
     {"h3-pruned-q8_0", "MiniMax-H3 精简", "Q8_0",
-     "minimax_h3_fl2va_pruned-Q8_0.gguf", kH3SmallRepo, 21437786208ULL, 24},
+     "minimax_h3_fl2va_pruned-Q8_0.gguf", kH3SmallRepo, 21437786208ULL, 38},
     {"h3-pruned-q6_k", "MiniMax-H3 精简", "Q6_K",
-     "minimax_h3_fl2va_pruned-Q6_K.gguf", kH3SmallRepo, 16586784864ULL, 23},
+     "minimax_h3_fl2va_pruned-Q6_K.gguf", kH3SmallRepo, 16586784864ULL, 36},
     {"h3-pruned-q5_0", "MiniMax-H3 精简", "Q5_0",
-     "minimax_h3_fl2va_pruned-Q5_0.gguf", kH3SmallRepo, 13923170400ULL, 22},
+     "minimax_h3_fl2va_pruned-Q5_0.gguf", kH3SmallRepo, 13923170400ULL, 34},
     {"h3-pruned-q4_k_m", "MiniMax-H3 精简", "Q4_K_M",
-     "minimax_h3_fl2va_pruned-Q4_K_M.gguf", kH3GgufRepo, 11420663904ULL, 20},
+     "minimax_h3_fl2va_pruned-Q4_K_M.gguf", kH3GgufRepo, 11420663904ULL, 31},
     // ---- 16 GB 的卡（2026-09-17 用户要的）----
     //
     // ⚠️ **先说清楚 16 GB 上会发生什么，别让人以为加了这两档就快了。**
@@ -182,9 +240,9 @@ constexpr H3Spec kH3[] = {
     // 动态混合精度方案，我们没法确认 sd.cpp 读得对——而读不对这件事
     // 没有任何报错（上面那段 fp8_scaled 的教训）。
     {"h3-pruned-q3_k", "MiniMax-H3 精简", "Q3_K",
-     "minimax_h3_fl2va_pruned-Q3_K.gguf", kH3SmallRepo, 8759328864ULL, 16},
+     "minimax_h3_fl2va_pruned-Q3_K.gguf", kH3SmallRepo, 8759328864ULL, 28},
     {"h3-pruned-q2_k", "MiniMax-H3 精简", "Q2_K",
-     "minimax_h3_fl2va_pruned-Q2_K.gguf", kH3SmallRepo, 6724190304ULL, 12},
+     "minimax_h3_fl2va_pruned-Q2_K.gguf", kH3SmallRepo, 6724190304ULL, 26},
 };
 
 constexpr const char* kWanFamilyNote =
@@ -466,7 +524,13 @@ std::vector<Group> build() {
             o.family = spec.family;
             o.label = std::string(spec.family) + " · " + spec.quant;
             o.quant = spec.quant;
-            o.family_note = kH3FamilyNote;
+            // 家族说明分两份：光看「完整 / 精简」这两个名字，人一定会挑
+            // 前者，而出片这件事上前者只是多占二十多 GB。见上面那两段。
+            o.family_note =
+                std::string(kH3FamilyNote) +
+                (std::string(spec.family).find("精简") != std::string::npos
+                     ? kH3PrunedNote
+                     : kH3FullNote);
             o.note = quant_note(spec.quant);
             o.min_vram_gb = resident_vram(false, gb(spec.bytes));
             o.rank = spec.rank;

@@ -580,6 +580,14 @@ async function download() {
           />
         </label>
 
+        <!-- **这一支是干什么的。** 引擎一直在发这句话（option.familyNote），
+             而这儿从来没渲染过——挑「完整 / 精简」正是在这个框里做的决定，
+             而光看这两个名字谁都会挑前者。2026-09-17 用户在问「是不是还有
+             个低配版」，他要找的就是「精简」，只是没有一个字告诉他。
+             （编剧那一组不显示：那一段在讲"云端这条路好在哪"，和此刻挑哪个
+             模型没关系，判法照下面那句 note 的。） -->
+        <p v-if="!isLlm && fam?.note" class="tiny dim note">{{ fam.note }}</p>
+
         <label v-if="hasQuants" class="field">
           <span class="field__label">精度</span>
           <select v-model="models.picks[g.key]" class="select" :disabled="models.running">
