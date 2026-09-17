@@ -369,6 +369,34 @@ TEST_CASE("批量出分镜只挑有剧本又没分镜的") {
     CHECK(r.body.at("started") == false);
     CHECK(r.body.at("episodes").empty());
 
+    SUBCASE("镜头是空壳的那一章，照样算没分镜") {
+        // **判据是"有能用的镜头"，不是"shots 数组非空"。** 空壳镜头
+        //（shot_id 是空串）指不到任何文件、进不了任何一步，可数组非空就把
+        // 这一章挡在补分镜之外——人看到「没有要补的」，而那一章明明是空的，
+        // 一键跑完整部剧也救不回来。
+        //
+        // 正常流程产不出这种东西（2026-09-17 那个"写回空壳"的 bug 已修，
+        // 见 stages/render.cpp 的 Done::ran），但存盘被截断、手工改坏
+        // project.json 一样留得下，而**这条判据本来就该这么写**。
+        {
+            models::ProjectStore store(root);
+            models::Project pj = store.load_project();
+            models::Episode* ep = pj.episode_by_id("ep01");
+            REQUIRE(ep != nullptr);
+            REQUIRE_FALSE(ep->shots.empty());
+            for (auto& sh : ep->shots) sh = models::Shot{};   // 抹成空壳
+            store.save_project(pj);
+        }
+        auto c3 = std::make_shared<llm::ReplayClient>(
+            std::vector<std::string>{"{}"});
+        const auto r3 = http::guard([&] {
+            return http::post_plan_all(
+                json{{"project", paths::to_utf8(root)}}, c3);
+        });
+        REQUIRE(r3.status == 200);
+        CHECK(r3.body.at("episodes") == json::array({"ep01"}));
+    }
+
     SUBCASE("勾了覆盖就把有剧本的都算上") {
         std::vector<std::string> many;
         for (int i = 0; i < 10; ++i) many.push_back("{}");

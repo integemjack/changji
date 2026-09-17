@@ -1,3 +1,4 @@
+#include <algorithm>
 #include "http/batch.hpp"
 
 #include "http/story_api.hpp"
@@ -614,7 +615,21 @@ ApiResult post_plan_all(const json& body, std::shared_ptr<llm::Client> client) {
     std::vector<std::string> todo;
     for (const auto& ep : project.episodes) {
         if (text::strip_ws(ep.script).empty()) continue;
-        if (!overwrite && !ep.shots.empty()) continue;
+        // **判据是"有能用的镜头"，不是"shots 数组非空"。**
+        //
+        // 空壳镜头（shot_id 是空串）不该算数：它们指不到任何文件、进不了
+        // 任何一步，可数组非空就把这一章挡在补分镜之外——人看到的是
+        // 「没有要补的」，而那一章明明是空的，一键跑完整部剧也救不回来。
+        //
+        // 正常流程产不出这种东西（2026-09-17 那个"写回空壳"的 bug 修掉了，
+        // 见 stages/render.cpp 的 Done::ran）。但存盘被截断、手工改坏
+        // project.json 一样能留下它，而**判据写成"有没有能用的"本来就更对**
+        // ——数组长度从来不是这一章有没有分镜的答案。
+        const bool has_usable =
+            std::any_of(ep.shots.begin(), ep.shots.end(), [](const auto& s) {
+                return !text::strip_ws(s.shot_id).empty();
+            });
+        if (!overwrite && has_usable) continue;
         todo.push_back(ep.episode_id);
     }
     // **"没有要做的"不是错。**
