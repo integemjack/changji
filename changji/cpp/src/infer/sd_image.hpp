@@ -104,9 +104,12 @@ struct ImageRequest {
 /// 没有任何意义。**解码不是准备**：它在采样之后，VAE 放显存时只要
 /// 两三秒、放内存时二十几秒，牌子上写"准备"用户会以为模型又在重载
 /// （2026-09-15 报的）。
-enum class Phase { Prep, Sample, Decode };
+///
+/// `Wait`：池里每一台工作机都连不上，这一镜**在队列里等它们回来**（不判
+/// 失败、不停整轮）。step 传已等的分钟数，steps 传 0。
+enum class Phase { Prep, Sample, Decode, Wait };
 
-/// 进 JSON / 事件用的名字："prep" / "sample" / "decode"。
+/// 进 JSON / 事件用的名字："prep" / "sample" / "decode" / "wait"。
 const char* phase_name(Phase p);
 /// 反过来；认不出的一律按 Sample（老进程不带这个字段）。
 Phase phase_from(const std::string& name);

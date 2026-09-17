@@ -60,6 +60,7 @@ const char* phase_name(Phase p) {
     switch (p) {
         case Phase::Prep: return "prep";
         case Phase::Decode: return "decode";
+        case Phase::Wait: return "wait";
         case Phase::Sample: break;
     }
     return "sample";
@@ -68,6 +69,7 @@ const char* phase_name(Phase p) {
 Phase phase_from(const std::string& name) {
     if (name == "prep") return Phase::Prep;
     if (name == "decode") return Phase::Decode;
+    if (name == "wait") return Phase::Wait;
     return Phase::Sample;
 }
 
@@ -79,6 +81,12 @@ std::string phase_note(Phase p, int step, int steps) {
             return steps == 0 ? "（正在准备模型，可能要先腾出显存）"
                               : "（准备 " + n + "）";
         case Phase::Decode: return "（解码 " + n + "）";
+        case Phase::Wait:
+            // 不是这一镜的错，也不是停了：说清"在等谁"，人才知道该去
+            // 看机器而不是看镜头。
+            return step > 0 ? "（工作机都连不上，排着队等它们回来，已等 " +
+                                  std::to_string(step) + " 分钟）"
+                            : "（工作机都连不上，排着队等它们回来）";
         case Phase::Sample: break;
     }
     return "（第 " + n + " 步）";

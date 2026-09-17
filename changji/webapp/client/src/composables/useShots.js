@@ -262,6 +262,15 @@ export function useShots() {
     const x = inflightBy.value[shot.shot_id]
     if (x) {
       const stage = STAGE_LABELS[x.stage] || x.stage || ''
+      // 池里每一台工作机都连不上：这一镜在队列里等它们回来（引擎那边
+      // Phase::Wait，shot_step 是已等的分钟数）。**不是卡死、不是失败**，
+      // 牌子上得让人去看机器而不是盯着镜头。**要排在步数那条前面**：
+      // 掉线前的 shotSteps（比如 535）还留在手里，先看步数会印成
+      // 「3/535 步」。
+      if (x.shotPhase === 'wait') {
+        return `${stage}·工作机都连不上，等它们回来` +
+          (x.shotStep > 0 ? `（已等 ${x.shotStep} 分钟）` : '')
+      }
       if (typeof x.shotStep === 'number' && x.shotSteps) {
         if (x.shotPhase === 'prep') return `${stage}·准备 ${x.shotStep}/${x.shotSteps}`
         if (x.shotPhase === 'decode') return `${stage}·解码 ${x.shotStep}/${x.shotSteps}`

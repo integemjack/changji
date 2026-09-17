@@ -75,7 +75,8 @@ struct WorkerPool::Impl {
     /// 借一个能用的。没有就等——**不是失败**：
     /// 阶段那一层的并发上限就是靠这个卡住的。
     ///
-    /// 返回空表示**每一个都试过了、都连不上**，那才轮到调用方把这一镜判失败。
+    /// 返回空表示**每一个都试过了、都连不上**。那也不是失败：run_task
+    /// 在队列里等它们回来（见那儿）。
     std::optional<std::size_t> take(const std::set<std::size_t>& skip = {}) {
         std::unique_lock lk(mu);
         if (skip.size() >= workers.size()) return std::nullopt;
@@ -367,12 +368,37 @@ struct WorkerPool::Impl {
         task.pick = pick;
         std::set<std::size_t> tried;
         std::string last_error;
+        // 每一台都连不上是从什么时候开始的；连上过一次就清零
+        std::optional<std::chrono::steady_clock::time_point> down_since;
         for (;;) {
             const auto got = take(tried);
             if (!got) {
-                throw PoolUnreachable(
-                    "池里每一个工作进程都连不上（试过 " +
-                    std::to_string(tried.size()) + " 个）：" + last_error);
+                // **每一个都试过了、都连不上。不判失败、不停整轮：这一镜
+                // 在队列里等它们回来。**
+                //
+                // 以前这儿抛 PoolUnreachable、render 那层接住停整轮——那是
+                // 为了不让 17 镜各自撞墙、各自降级（2026-09-17）。但停下
+                // 意味着人回来得再点一次出片，而机器掉线多半是几分钟的事
+                // （重启、公网抖、断电重来）。用户 2026-09-17：「不是应该
+                // 停下来，而是一直在队列中」。所以：等。等多久都行，
+                // 只有「停下」能打断。
+                //
+                // 卡片上写的是 Phase::Wait 那句话，和"渲染失败"分得开；
+                // 隔 kDownRetry 再把每一台都试一遍，回来一台就接着跑。
+                // 试一遍的代价是每台一个连接超时，和不试的代价（人回来
+                // 发现什么都没跑）比不值一提。
+                if (!down_since) down_since = std::chrono::steady_clock::now();
+                const auto waited = std::chrono::duration_cast<std::chrono::minutes>(
+                    std::chrono::steady_clock::now() - *down_since);
+                on_step(static_cast<int>(waited.count()), 0, 0.0, Phase::Wait);
+                constexpr auto kDownRetry = std::chrono::seconds(20);
+                const auto until = std::chrono::steady_clock::now() + kDownRetry;
+                while (std::chrono::steady_clock::now() < until) {
+                    if (tok.cancelled()) throw std::runtime_error("取消了");
+                    std::this_thread::sleep_for(std::chrono::seconds(1));
+                }
+                tried.clear();
+                continue;
             }
             const std::size_t idx = *got;
             // 还槽只还一次：正常路上在取产物前就还了（见 run_on），

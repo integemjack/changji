@@ -482,3 +482,14 @@ TEST_CASE("publish_preview 发给每个挂着的落点，各认各的 tag") {
     infer::publish_preview("sh1", 5, "x");
     CHECK(got_a.size() == 1);
 }
+
+TEST_CASE("等机器回来那一档：卡片上说清在等谁，名字来回不丢") {
+    using changji::infer::Phase;
+    // 不是这一镜的错，也不是停了——文案得让人去看机器而不是看镜头
+    CHECK(changji::infer::phase_note(Phase::Wait, 0, 0) ==
+          "（工作机都连不上，排着队等它们回来）");
+    CHECK(changji::infer::phase_note(Phase::Wait, 3, 0) ==
+          "（工作机都连不上，排着队等它们回来，已等 3 分钟）");
+    // 跨机时这一档要经过 JSON 再回来，认不出会被当成 sample
+    CHECK(changji::infer::phase_from(changji::infer::phase_name(Phase::Wait)) == Phase::Wait);
+}

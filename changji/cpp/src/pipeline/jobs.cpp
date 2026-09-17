@@ -297,6 +297,13 @@ void JobTable::record(JobKind kind, Event ev) {
             // 只给阶段、不给步数：上面那条"补个 0 会挂一条空进度槽"
             // 的规矩还在，进度条照样不画。
             msg["shot_phase"] = "prep";
+        } else if (ev.shot_phase == "wait") {
+            // **工作机都连不上、排着队等它们回来。** 同样没有步数；
+            // shot_step 借来装已等的分钟数，**必须带上**——不带的话界面
+            // 沿用上一条的步数（掉线前正跑到 30/535），牌子上就成了
+            // 「已等 30 分钟」。
+            msg["shot_phase"] = "wait";
+            msg["shot_step"] = ev.shot_step;
         }
     }
     // 广播放在锁外：Hub 自己有锁，嵌套两把锁是死锁的常见来源。

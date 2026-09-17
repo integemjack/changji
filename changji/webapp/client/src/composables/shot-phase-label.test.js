@@ -90,4 +90,22 @@ describe('牌子上的阶段文案', () => {
     runStore.applyMessage(msg({ shot_phase: 'prep' }))
     expect(wall.shotState({ shot_id: 's1' })).toBe('首帧·正在准备模型')
   })
+
+  it('工作机都连不上：说在等机器，不是卡死也不是失败', async () => {
+    const { runStore, wall } = fresh()
+    await runStore.poll()
+    runStore.applyMessage(msg({ shot_step: 0, shot_steps: 0, shot_phase: 'wait' }))
+    expect(wall.shotState({ shot_id: 's1' })).toBe('首帧·工作机都连不上，等它们回来')
+    runStore.applyMessage(msg({ shot_step: 3, shot_steps: 0, shot_phase: 'wait' }))
+    expect(wall.shotState({ shot_id: 's1' })).toBe('首帧·工作机都连不上，等它们回来（已等 3 分钟）')
+  })
+
+  it('掉线前跑到 30/535，等机器时不能印成「3/535 步」', async () => {
+    const { runStore, wall } = fresh()
+    await runStore.poll()
+    runStore.applyMessage(msg({ shot_step: 30, shot_steps: 535, shot_phase: 'prep' }))
+    // 引擎那条 wait 事件只带 shot_step（分钟数）、不带 shot_steps
+    runStore.applyMessage(msg({ shot_step: 3, shot_phase: 'wait' }))
+    expect(wall.shotState({ shot_id: 's1' })).toBe('首帧·工作机都连不上，等它们回来（已等 3 分钟）')
+  })
 })

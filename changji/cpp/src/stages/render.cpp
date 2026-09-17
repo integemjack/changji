@@ -238,9 +238,10 @@ std::vector<RenderOutcome> render_batch(std::vector<Shot*>& shots,
                 e.message = msg;
                 e.shot_step = shot_step;
                 e.shot_steps = shot_steps;
-                // 只有带步数、或者明说在准备的那条才标阶段；
+                // 只有带步数、或者明说在准备／在等机器的那条才标阶段；
                 // 别的事件（shot_done、warn）没有阶段这回事。
-                if (shot_steps > 0 || phase == infer::Phase::Prep) {
+                if (shot_steps > 0 || phase == infer::Phase::Prep ||
+                    phase == infer::Phase::Wait) {
                     e.shot_phase = infer::phase_name(phase);
                 }
                 progress.report(e);
@@ -450,23 +451,11 @@ std::vector<RenderOutcome> render_batch(std::vector<Shot*>& shots,
                         render(local, plan, start, dest, tok, on_step);
                     }
                     local.video_path = paths.rel(dest);
-                } catch (const infer::PoolUnreachable& e) {
-                    // **整池连不上是全局故障，不是这一镜的事。**
-                    //
-                    // 2026-09-17 实撞：唯一那台远程工作机在出片中途掉线
-                    // （连 ssh 都拒了），于是 17 镜挨个撞同一堵墙、各自重试
-                    // 三次、各自降级——人回来看到的是「16 个镜头已降级」，
-                    // 而不是一句「机器掉线了，这一轮没跑」。那 16 次重试
-                    // 一秒钟的活都没干成，纯粹是把一个全局故障演了十六遍，
-                    // 还把每一镜的状态都弄脏了（降级是"尽力了"的意思，
-                    // 而这儿根本没尽力）。
-                    //
-                    // 换台机器能好的才值得往下走；池里一台都不剩时，
-                    // 下一镜必然撞同一堵墙。停下，把话说清楚。
-                    say("error", "所有工作进程都连不上，这一轮停在 " +
-                                     local.shot_id + "。" + e.what());
-                    throw;
                 } catch (const std::exception& e) {
+                    // **整池连不上不会到这儿**：池自己在队列里等机器回来
+                    // （worker_pool.cpp run_task），卡片上是 Phase::Wait 那句。
+                    // 到这儿的是真的渲染失败——换台机器也一样的那种。
+                    //
                     // 一镜失败不拖垮后面几镜。跑一晚上，早上发现第三镜挂了
                     // 导致后面三十镜都没动，那这一晚上就白熬了。
                     local.attempts += 1;
