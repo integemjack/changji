@@ -609,15 +609,30 @@ jobs:
           curl.exe -fL --retry 3 -o cuda.exe $url
           if ($LASTEXITCODE -ne 0) { throw "CUDA 安装器下载失败：$url" }
           $c = $env:CUDA_WIN_COMP
-          # `crt` 是 CUDA 13 才拆出来的独立组件（编译器运行时那套头）。
-          # 12.x 上它在 nvcc 里，所以这一行原来没有它。
-          $comp = @("nvcc","crt","cudart","cublas","cublas_dev","thrust",
+          # **`crt` 和 `nvvm` 是 CUDA 13 才从 nvcc 里拆出去的**，12.x 上
+          # 不用单列。漏了 `nvvm` 的表现特别不像缺组件：装得下、nvcc.exe
+          # 也在，五分钟后 CMake 在 `enable_language(CUDA)` 那一步失败，
+          # 日志里只有一行
+          #     #$ ""%CICC_PATH%\cicc" … The system cannot find the path
+          # ——`cicc`（设备端前端）住在 nvvm\bin 里，而 %CICC_PATH% 是
+          # nvcc.profile 按它的位置算出来的，包不在就展不开。
+          # 2026-09-17 的 run #102 windows-x64-cuda 就是这么挂的。
+          $comp = @("nvcc","crt","nvvm","cudart","cublas","cublas_dev","thrust",
                     "cuda_profiler_api","visual_studio_integration") |
                   ForEach-Object { "${_}_$c" }
           Start-Process -Wait -FilePath .\cuda.exe -ArgumentList (@("-s") + $comp)
           $cuda = "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v$c"
-          if (-not (Test-Path "$cuda\bin\nvcc.exe")) {
-            throw "CUDA 装完了但 $cuda\bin\nvcc.exe 不在。组件名或者版本号对不上了。"
+          # **一件一件验，别只验 nvcc。** 只验 nvcc 的话，缺 nvvm 这种
+          # 要等到五分钟后 CMake 探测编译器时才炸，而那句报错看不出和这一步
+          # 有关系（见上面那段）。这儿多花一秒，省的是一整趟 CI。
+          # **只验确定的两样。** ptxas / fatbinary 在 CUDA 13 里可能挪进了
+          # nvptxcompiler / nvfatbin 那两个新子包，没核实过——照着猜写进
+          # 检查里，会把本来能过的构建判死，那比漏检更糟。
+          foreach ($need in @("bin\nvcc.exe", "nvvm\bin\cicc.exe")) {
+            if (-not (Test-Path "$cuda\$need")) {
+              throw "CUDA 装完了但 $cuda\$need 不在。组件名或者版本号对不上了——" +
+                    "子包清单见 CUDA 安装指南的 Possible Subpackage Names。"
+            }
           }
           # **两个变量都要设。** MSBuild 的 CUDA 集成查的是带版本号的那个
           # （CUDA_PATH_V13_2），CMake 的 find_program 查的是 CUDA_PATH。
