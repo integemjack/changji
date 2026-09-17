@@ -449,24 +449,36 @@ std::string run_assemble(const ProjectStore& store,
     //
     // **只删这一集自己那两种名字、而且这一轮没写的那些。** 别的集、别的
     // 文件一个不碰；刚写出去的当然留着。
+    //
+    // **字幕跟着片子一起清。** 外挂字幕和成片同名（media/assemble.cpp 里
+    // `final_path.stem() + ".ass"`），孤儿的形状一模一样：磁盘上实见
+    // ep01.ass 和 ep01_01.ass / ep01_02.ass 并存。只清片子的话，播放器
+    // 挂字幕时挑到的可能正是那份过时的。
     {
-        std::error_code ec;
-        const auto dir = store.paths().output();
-        for (const auto& f : std::filesystem::directory_iterator(dir, ec)) {
-            if (f.path().extension() != ".mp4") continue;
-            // 判法只有一份，在 media::episode_of_output 上（那儿能测）
-            const auto owner =
-                media::episode_of_output(paths::to_utf8(f.path().stem()));
-            if (!owner || *owner != ep.episode_id) continue;
-            if (keep.count(paths::to_utf8(f.path().filename())) != 0) continue;
-            std::error_code rm;
-            std::filesystem::remove(f.path(), rm);
-            if (!rm) {
-                emit(progress, "assemble", "info",
-                     "清掉上一版留下的 " + paths::to_utf8(f.path().filename()) +
-                         "——这一章这次切成 " + std::to_string(parts.size()) +
-                         " 集，名字换了");
+        int gone = 0;
+        for (const auto& [dir, ext] :
+             {std::pair{store.paths().output(), std::string(".mp4")},
+              std::pair{store.paths().subtitles(), std::string(".ass")}}) {
+            std::error_code ec;
+            for (const auto& f : std::filesystem::directory_iterator(dir, ec)) {
+                if (f.path().extension() != ext) continue;
+                // 判法只有一份，在 media::episode_of_output 上（那儿能测）
+                const auto owner =
+                    media::episode_of_output(paths::to_utf8(f.path().stem()));
+                if (!owner || *owner != ep.episode_id) continue;
+                // keep 里记的是这一轮写出去的片子名；字幕同名换后缀
+                const std::string stem = paths::to_utf8(f.path().stem());
+                if (keep.count(stem + ".mp4") != 0) continue;
+                std::error_code rm;
+                std::filesystem::remove(f.path(), rm);
+                if (!rm) ++gone;
             }
+        }
+        if (gone > 0) {
+            emit(progress, "assemble", "info",
+                 "清掉上一版留下的 " + std::to_string(gone) +
+                     " 个文件（成片和字幕）——这一章这次切成 " +
+                     std::to_string(parts.size()) + " 集，名字换了");
         }
     }
 
