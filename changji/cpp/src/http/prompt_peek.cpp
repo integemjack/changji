@@ -13,6 +13,15 @@ bool take_peek(nlohmann::json& body) {
     return on;
 }
 
+std::string take_paste(nlohmann::json& body) {
+    if (!body.is_object()) return {};
+    const auto it = body.find("paste");
+    if (it == body.end()) return {};
+    std::string raw = it->is_string() ? it->get<std::string>() : std::string();
+    body.erase(it);
+    return raw;
+}
+
 ApiResult peek_prompt(const llm::Request& req) {
     return {200,
             {{"peek", true},

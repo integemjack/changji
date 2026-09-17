@@ -25,6 +25,14 @@ namespace changji::http {
 /// 请求体里带没带 `peek`。**取完就删掉**，免得下游的 forbid_extra 拦下来。
 bool take_peek(nlohmann::json& body);
 
+/// 请求体里带没带 `paste`：用户在别处跑完、粘回来的那段模型原文。
+///
+/// **取完就删掉**，同 take_peek。空串 = 没粘，照常去问模型。
+///
+/// 粘回来的东西走的是**同一条解析和守卫**——不是绕过检查的后门。整章没
+/// 对白、正文复读、镜头没台词，在别处跑出来的一样会被打回，理由也一样。
+std::string take_paste(nlohmann::json& body);
+
 /// 这一步的提示词，连 schema 一起（`llm::schema_as_prompt` 拼的那一份，
 /// 也就是真正落进 user 消息里的那段）。
 ApiResult peek_prompt(const llm::Request& req);

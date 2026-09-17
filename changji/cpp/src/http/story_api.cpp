@@ -352,7 +352,8 @@ json write_outline(ProjectStore& store, const Project& project,
                    const Story& existing, std::string premise, StoryScale scale,
                    const std::string& keywords, const std::string& stream_id,
                    std::uint32_t variation, llm::Client& client,
-                   pipeline::CancelToken& tok, bool peek) {
+                   pipeline::CancelToken& tok, bool peek,
+                   const std::string& pasted) {
     pipeline::Activity act{"outline", paths::to_utf8(store.root()), "",
                            "正在出大纲"};
     const pipeline::CancelLink stop_here{tok, act};
@@ -392,7 +393,11 @@ json write_outline(ProjectStore& store, const Project& project,
     Story draft;
     try {
         std::string raw;
-        if (stream_id.empty()) {
+        if (!pasted.empty()) {
+            // **粘回来的那一份。** 走下面同一套解析和守卫——不是绕过检查的
+            // 后门：在别处跑出来的东西一样要过 parse_outline。
+            raw = pasted;
+        } else if (stream_id.empty()) {
             raw = client.complete(req, tok);
         } else {
             // **边写边推。** 出一份大纲三四十秒，攒齐了再蹦出来的话那几十秒
@@ -477,6 +482,7 @@ ApiResult post_story_outline(const json& body_in, llm::Client& client,
     // 「只看不发」。**要在起异步那一支之前判**：这一下不调模型，几毫秒就回，
     // 起个后台活再回 202 的话，界面还得去轮询一段根本不会变的进度。
     const bool peek = take_peek(body);
+    const std::string pasted = take_paste(body);
     forbid_extra(body, {"project", "premise", "scale", "keywords", "stream",
                         "async", "variation"});
     ProjectStore store = open_project(body);
@@ -546,7 +552,8 @@ ApiResult post_story_outline(const json& body_in, llm::Client& client,
                 pipeline::CancelToken own;
                 job_done(stream_id, write_outline(st, pj, ex, premise, scale,
                                                   keywords, stream_id, variation,
-                                                  client, own, /*peek=*/false));
+                                                  client, own, /*peek=*/false,
+                                                  /*pasted=*/std::string()));
             } catch (const ApiError& e) {
                 job_error(stream_id, e.what());
             } catch (const std::exception& e) {
@@ -557,7 +564,8 @@ ApiResult post_story_outline(const json& body_in, llm::Client& client,
     }
 
     return {200, write_outline(store, project, existing, premise, scale,
-                               keywords, stream_id, variation, client, tok, peek)};
+                               keywords, stream_id, variation, client, tok, peek,
+                               pasted)};
 }
 
 /// 丢掉还没采用的那份大纲。
@@ -682,6 +690,7 @@ ApiResult post_story_analyze(const json& body_in, llm::Client& client,
     json body = body_in;
     // 「只看不发」：带了就把这一步的提示词原样回去，不调模型。见 prompt_peek。
     const bool peek = take_peek(body);
+    const std::string pasted = take_paste(body);
     forbid_extra(body, {"project", "stream"});   // stream 同上，只为异步外壳
     ProjectStore store = open_project(body);
     const Project project = load_or_400(store);
@@ -709,7 +718,8 @@ ApiResult post_story_analyze(const json& body_in, llm::Client& client,
 
     Story draft;
     try {
-        draft = stages::apply_analysis(story, client.complete(req, tok));
+        draft = stages::apply_analysis(
+            story, pasted.empty() ? client.complete(req, tok) : pasted);
     } catch (const stages::StoryError& e) {
         throw ApiError(502, std::string("大模型没读出能用的结构：") + e.what());
     } catch (const std::exception& e) {
@@ -735,7 +745,8 @@ ApiResult post_story_analyze(const json& body_in, llm::Client& client,
 json write_one_chapter(ProjectStore& store, const Project& project, Story story,
                        const std::string& chapter_id,
                        const std::string& stream_id, llm::Client& client,
-                       pipeline::CancelToken& tok, bool peek) {
+                       pipeline::CancelToken& tok, bool peek,
+                       const std::string& pasted) {
     const Chapter* me = story.chapter_by_id(chapter_id);
     if (me == nullptr) throw ApiError(404, "没有这一章：" + chapter_id);
 
@@ -779,7 +790,11 @@ json write_one_chapter(ProjectStore& store, const Project& project, Story story,
         const int floor_chars = static_cast<int>(
             stages::chapter_target_chars(story) * stages::kChapterMinRatio);
         std::string raw;
-        if (stream_id.empty()) {
+        if (!pasted.empty()) {
+            // 粘回来的那一份。守卫一道不少：整章没对白、正文复读、贴情绪
+            // 标签，在别处跑出来的一样打回。
+            raw = pasted;
+        } else if (stream_id.empty()) {
             raw = client.complete(req, tok);
         } else {
             // **抠的是 paragraphs，不是 text。** c41821d 把章节正文从一个
@@ -858,6 +873,7 @@ ApiResult post_story_chapter(const json& body_in, llm::Client& client,
                              pipeline::CancelToken& tok) {
     json body = body_in;
     const bool peek = take_peek(body);
+    const std::string pasted = take_paste(body);
     forbid_extra(body, {"project", "chapter_id", "overwrite", "stream"});
     ProjectStore store = open_project(body);
     const Project project = load_or_400(store);
@@ -876,7 +892,7 @@ ApiResult post_story_chapter(const json& body_in, llm::Client& client,
     // **只看不发那一下要绕过"已经有正文了"那道 409。** 想复制提示词的人
     // 多半正是因为这一章写砸了要去别处重跑，而那时候正文是有的。
     return {200, write_one_chapter(store, project, std::move(story), chapter_id,
-                                   stream_id, client, tok, peek)};
+                                   stream_id, client, tok, peek, pasted)};
 }
 
 /// `ch07` → `ep07`。认不出编号就按它在章节表里的位置排（从 1 起）。
