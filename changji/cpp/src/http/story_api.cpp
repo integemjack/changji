@@ -354,6 +354,7 @@ json write_outline(ProjectStore& store, const Project& project,
                    pipeline::CancelToken& tok) {
     pipeline::Activity act{"outline", paths::to_utf8(store.root()), "",
                            "正在出大纲"};
+    const pipeline::CancelLink stop_here{tok, act};
 
     // **账记在这儿，不记在 post_story_outline 的异步分支里。**
     //
@@ -686,6 +687,7 @@ ApiResult post_story_analyze(const json& body, llm::Client& client,
 
     pipeline::Activity act{"analyze", paths::to_utf8(store.root()), "",
                            "正在读这个故事"};
+    const pipeline::CancelLink stop_here{tok, act};
 
     llm::Request req;
     req.prompt = stages::build_analyze_prompt(story, project.style_line);
@@ -738,6 +740,7 @@ json write_one_chapter(ProjectStore& store, const Project& project, Story story,
     // 「这一集」整页没东西。章是全剧的，本来就不属于某一集，留空。
     pipeline::Activity act{"write_one", paths::to_utf8(store.root()), "",
                            "正在写 " + (me->title.empty() ? chapter_id : me->title)};
+    const pipeline::CancelLink stop_here{tok, act};
 
     llm::Request req;
     req.prompt =
@@ -1055,6 +1058,7 @@ ApiResult post_story_revise(const json& body, llm::Client& client,
     // 塞进去会把前端的集号卡死在一个不存在的集上。
     pipeline::Activity act{"revise", paths::to_utf8(store.root()), "",
                            "正在改这一段"};
+    const pipeline::CancelLink stop_here{tok, act};
 
     llm::Request req;
     // **流式那条不要 JSON。** 逐字插进编辑器的话，用户先看到的会是

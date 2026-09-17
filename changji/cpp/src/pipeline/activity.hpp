@@ -29,6 +29,9 @@
 namespace changji::pipeline {
 
 class Task;
+// 令牌本体在 pipeline/jobs.hpp。这儿只存引用，前置声明就够——
+// 这个头被 http 那边一大片文件包着，不想把 jobs.hpp 也拖进去。
+class CancelToken;
 
 /// 一件正在干的短活。构造即登记，析构即划掉。
 ///
@@ -91,6 +94,39 @@ public:
 private:
     struct Impl;
     std::unique_ptr<Impl> impl_;
+};
+
+/// 把账本那一行的叉，接到真正在干活的那个令牌上。
+///
+/// **不接的话，任务页面上那个叉是个摆设。** 2026-09-17 实测：点了"结束这
+/// 一件"，行上写着"正在停…"，而那条大纲又跑了一分半，思考字数从三万三一路
+/// 涨到三万五——它压根没停。
+///
+/// 断在哪儿：`Activity` 自带一个令牌（账本那一行的叉点的是它），而这一族
+/// 接口给大模型的是**外面传进来的那一个**（http 那边 script_route 里的）。
+/// 两个不同的对象，点灭一个，另一个照跑。流式那条其实每收一块都查
+/// `tok.cancelled()`（见 llm/client.cpp），查的是没人点的那一个。
+///
+/// 用法：紧跟在 Activity 后面摆一个，让它先于 Activity 析构。
+///
+///     pipeline::Activity act{"outline", project, "", "正在出大纲"};
+///     const pipeline::CancelLink stop_here{tok, act};
+///
+/// ⚠️ **走的时候一定要摘，这不是可选项。** `CancelToken::link` 那句注释写着
+/// "上一级必须活得比自己久"，而这里正好反过来：同步那一支的 `tok` 是
+/// script_route 里的 `static thread_local`，活得比 `act` 久得多。不摘的话
+/// 它攥着一个已经析构的令牌，下一个请求落到同一条线程上就是野指针。
+class CancelLink {
+public:
+    CancelLink(CancelToken& worker, Activity& act);
+    ~CancelLink();
+    CancelLink(const CancelLink&) = delete;
+    CancelLink& operator=(const CancelLink&) = delete;
+    CancelLink(CancelLink&&) = delete;
+    CancelLink& operator=(CancelLink&&) = delete;
+
+private:
+    CancelToken& worker_;
 };
 
 /// 这个线程此刻在干的那件活。没有就是 nullptr。

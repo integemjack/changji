@@ -250,6 +250,7 @@ ApiResult post_script_premise(const json& body, llm::Client& client,
     // 见 pipeline/activity.hpp 开头那段。
     pipeline::Activity act{"premise", paths::to_utf8(store.root()), "",
                            "正在想梗概"};
+    const pipeline::CancelLink stop_here{tok, act};
     const auto ideas = llm_guard([&] {
         return stages::parse_premises(client.complete(req, tok));
     });
@@ -429,6 +430,7 @@ ApiResult post_script_write(const json& body, llm::Client& client,
         "script", paths::to_utf8(store.root()), episode_id,
         std::string(plan != nullptr ? "改编成剧本" : "写剧本") +
             (episode_id.empty() ? std::string{} : " · " + episode_id)};
+    const pipeline::CancelLink stop_here{tok, act};
     const stages::ScriptDraft draft = llm_guard([&] {
         const std::string raw = client.complete(req, tok);
         return chapter_script
@@ -530,6 +532,7 @@ ApiResult post_script_trailer(const json& body, llm::Client& client,
 
     pipeline::Activity act{"trailer", paths::to_utf8(store.root()), "",
                            "正在剪预告"};
+    const pipeline::CancelLink stop_here{tok, act};
     const stages::ScriptDraft draft = llm_guard([&] {
         return stages::parse_script(client.complete(req, tok));
     });

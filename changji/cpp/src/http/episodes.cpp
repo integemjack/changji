@@ -249,6 +249,7 @@ ApiResult post_script(const json& body, llm::Client& client,
         // 它占着 LLM 槽，不露面的话别人挂在「显存不够」上而挡路的是谁查不到。
         pipeline::Activity act{"plan", paths::to_utf8(store.root()), episode_id,
                                "正在拆镜头"};
+        const pipeline::CancelLink stop_here{tok, act};
         // 切场、拆镜、补台词、查覆盖、重编号、拉回时长都在 run_storyboard 里，
         // 和 post_plan 是同一份（按场拆镜在那儿分岔）。
         pipeline::StoryboardRunOptions sb;

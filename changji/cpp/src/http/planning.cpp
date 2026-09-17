@@ -403,6 +403,7 @@ ApiResult post_bible(const json& body, llm::Client& client,
     // 见 pipeline/activity.hpp 开头那段。放在这儿盖住下面两条分支。
     pipeline::Activity act{"bible", paths::to_utf8(store.root()), episode_id,
                            "正在定角色和场景"};
+    const pipeline::CancelLink stop_here{tok, act};
 
     // 名单从哪来。默认看项目里有没有故事——有就从故事出，那份名单是全剧
     // 完整的；没有就退回老路径从一集剧本里找，老项目还得能用。
@@ -475,6 +476,7 @@ ApiResult post_plan(const json& body, llm::Client& client,
     // 对用户那是一件事，中途只换那句话。
     pipeline::Activity act{"plan", paths::to_utf8(store.root()), episode_id,
                            "正在拆镜头"};
+    const pipeline::CancelLink stop_here{tok, act};
 
     // 角色设定。已有就不重做，避免覆盖用户改过的设定。
     if (regenerate || assets.characters.empty()) {

@@ -341,3 +341,54 @@ TEST_CASE("思考按段取：只给新增，断了一截要说得出来") {
     const auto d = pipeline::task_thinking(t.id(), b.end + 999);
     CHECK(d.text.empty());
 }
+
+// ---------------------------------------------------------------------------
+// 账本那一行的叉，接到真正在干活的那个令牌上
+//
+// 2026-09-17 实测的坏样子：点了"结束这一件"，行上写着"正在停…"，而那条
+// 大纲又跑了一分半，思考字数从三万三涨到三万五。断在两个不同的令牌上——
+// 叉点的是 Activity 自带那个，大模型查的是外面传进来那个。
+// ---------------------------------------------------------------------------
+
+TEST_CASE("接上之后，停账本那一行就等于停手上的活") {
+    pipeline::CancelToken worker;
+    Activity act{"outline", "/tmp/p", "", "正在出大纲"};
+    const pipeline::CancelLink link{worker, act};
+
+    CHECK_FALSE(worker.cancelled());
+
+    // 任务页面上那个叉点的就是这个。
+    act.task().token().request();
+
+    // 干活那头查的是自己手上这个 —— 现在它也该说停。
+    CHECK(worker.cancelled());
+}
+
+TEST_CASE("Activity 走了之后，手上那个令牌不能再攥着它") {
+    // ⚠️ 这条钉的是**野指针**，不是行为。
+    //
+    // 同步那一支的 worker 令牌是 script_route 里的 static thread_local，
+    // 活得比 Activity 久得多。不摘钩的话它会攥着一个已经析构的令牌，
+    // 下一个请求落到同一条线程上就是读已经释放的内存。
+    pipeline::CancelToken worker;
+    {
+        Activity act{"outline", "/tmp/p", "", "正在出大纲"};
+        const pipeline::CancelLink link{worker, act};
+        CHECK_FALSE(worker.cancelled());
+    }
+    // 两个都没了，这一问不能碰到已经析构的那块。
+    CHECK_FALSE(worker.cancelled());
+
+    // 而且还能正常再用一次：自己被点亮还是算停。
+    worker.request();
+    CHECK(worker.cancelled());
+}
+
+TEST_CASE("没接的时候，停账本那一行停不了手上的活") {
+    // 这就是 2026-09-17 那条大纲的处境，留着当对照。
+    pipeline::CancelToken worker;
+    Activity act{"outline", "/tmp/p", "", "正在出大纲"};
+
+    act.task().token().request();
+    CHECK_FALSE(worker.cancelled());
+}

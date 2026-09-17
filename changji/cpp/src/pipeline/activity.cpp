@@ -106,4 +106,10 @@ nlohmann::json running_work() {
     return out;
 }
 
+CancelLink::CancelLink(CancelToken& worker, Activity& act) : worker_(worker) {
+    worker_.link(&act.task().token());
+}
+
+CancelLink::~CancelLink() { worker_.link(nullptr); }
+
 }  // namespace changji::pipeline
