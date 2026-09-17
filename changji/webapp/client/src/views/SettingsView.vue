@@ -371,7 +371,7 @@ async function toggleAutostart(on) {
 const update = ref(null)
 
 async function loadUpdate(manual) {
-  const fn = () => api.checkUpdate()
+  const fn = () => api.checkUpdate(manual)
   const r = manual ? await run(fn, { key: 'update' }) : await fn().catch(() => null)
   if (r) update.value = r
   // **手动点的那一下要有回音**，哪怕结论是"已经是最新的"——没有回音的话

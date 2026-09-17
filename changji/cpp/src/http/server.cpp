@@ -751,16 +751,22 @@ void run(const config::Settings& settings, const Options& opts) {
     // 用户 2026-09-17：「增加自动更新」。**这一条只答"是不是最新"，不换二进
     // 制**——理由见 setup/update_check.hpp（换掉正在跑的可执行文件三个平台
     // 三种做法，而换错了的后果是程序起不来，那时候界面也没了）。
-    CROW_ROUTE(app, "/api/update")([] {
+    CROW_ROUTE(app, "/api/update")([](const crow::request& req) {
         static const auto fetch = default_http_get();
+        // 缓存在这儿放一个，不在那个文件里放静态的（见 update_check.hpp）。
+        static setup::UpdateCache cache;
         auto r = guard([&]() -> ApiResult {
             const auto cfg = config::runtime().snapshot().update;
-            const auto info = setup::check_update(
+            // `?force=1` = 人点了「现在查一次」，那一下必须真去问。
+            const char* f = req.url_params.get("force");
+            const auto info = setup::cached_update(
+                cache,
                 cfg, CHANGJI_VERSION, [](const std::string& url) -> std::string {
                     // 超时写短：这是个后台检查，卡住不该让设置页跟着转。
                     const auto r = fetch(url, {}, 8.0);
                     return r.status == 200 ? r.body : std::string();
-                });
+                },
+                f != nullptr && std::string(f) != "0");
             return {200,
                     {{"current", info.current},
                      {"latest", info.latest},

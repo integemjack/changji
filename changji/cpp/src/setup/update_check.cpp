@@ -1,5 +1,9 @@
 #include "setup/update_check.hpp"
 
+#include <chrono>
+#include <mutex>
+#include <ratio>
+
 #include "util/text.hpp"
 
 namespace changji::setup {
@@ -54,6 +58,42 @@ UpdateInfo check_update(const config::UpdateConfig& cfg,
     }
     out.newer = is_different_version(out.current, out.latest);
     return out;
+}
+
+UpdateInfo cached_update(UpdateCache& c, const config::UpdateConfig& cfg,
+                         const std::string& current, const Fetch& fetch,
+                         bool force) {
+    {
+        std::lock_guard lg(c.mu);
+        if (!force) {
+            // 关着就一次都不问。**手上没有答案时也别编一个**——回一份只填了
+            // 「手上这个是哪一版」的，界面照着说"没查"。
+            if (!cfg.auto_check) {
+                UpdateInfo out;
+                out.current = current;
+                if (c.has) out = c.last;
+                out.error = c.has ? out.error : "自动检查关着";
+                return out;
+            }
+            if (c.has) {
+                const auto age = std::chrono::steady_clock::now() - c.at;
+                const double hours =
+                    std::chrono::duration<double, std::ratio<3600>>(age).count();
+                // every_hours <= 0：起服务后问过一次就不再自己问。
+                if (cfg.every_hours <= 0 || hours < cfg.every_hours) return c.last;
+            }
+        }
+    }
+    UpdateInfo fresh = check_update(cfg, current, fetch);
+    std::lock_guard lg(c.mu);
+    // **问砸了不要盖掉上一次问到的那份。** 网断一下就把"有新版"抹成
+    // "取不到"，而那条消息本来是对的。
+    if (fresh.error.empty() || !c.has) {
+        c.last = fresh;
+        c.has = true;
+        c.at = std::chrono::steady_clock::now();
+    }
+    return c.has ? c.last : fresh;
 }
 
 }  // namespace changji::setup

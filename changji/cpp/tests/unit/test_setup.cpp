@@ -761,3 +761,50 @@ TEST_CASE("更新检查：取不到、回的不是 JSON、缺字段，三种都�
     CHECK(ok.error.empty());
     CHECK(ok.url.find("releases") != std::string::npos);
 }
+
+TEST_CASE("更新检查带缓存：关着不问、没到点不问、问砸了不盖掉上一次") {
+    // ⚠️ **不带缓存的话，每打开一次设置页就是一次跨网请求**，超时 8 秒。
+    // GitHub 连不上的时候那一页每次都要多转 8 秒——而那一页恰恰是"出事了才
+    // 打开"的那一页。
+    config::UpdateConfig cfg;
+    cfg.every_hours = 24.0;
+    // **每条用例自己一份缓存。** 共用一个的话上一条填进去的东西会让下一条
+    // 根本不去问，而"到底问没问"正是这段唯一要测的东西。
+    setup::UpdateCache cache;
+    int calls = 0;
+    const auto good = [&](const std::string&) {
+        ++calls;
+        return std::string(R"({"version":"v9.9.9"})");
+    };
+
+    SUBCASE("关着就一次都不问") {
+        cfg.auto_check = false;
+        const auto a = setup::cached_update(cache, cfg, "v1.0.0", good, /*force=*/false);
+        CHECK(calls == 0);
+        CHECK_FALSE(a.newer);
+        // **手上没有答案时别编一个**：说清是"没查"，不是"已经是最新的"。
+        CHECK_FALSE(a.error.empty());
+
+        // 人点了「现在查一次」，那一下必须真去问，不然按钮等于没有。
+        const auto b = setup::cached_update(cache, cfg, "v1.0.0", good, /*force=*/true);
+        CHECK(calls == 1);
+        CHECK(b.newer);
+    }
+
+    SUBCASE("没到点就给上一次那份") {
+        const auto a = setup::cached_update(cache, cfg, "v1.0.0", good, false);
+        CHECK(calls == 1);
+        CHECK(a.newer);
+        for (int i = 0; i < 5; ++i) setup::cached_update(cache, cfg, "v1.0.0", good, false);
+        CHECK(calls == 1);   // 还是那一次
+    }
+
+    SUBCASE("问砸了不盖掉上一次问到的那份") {
+        // 网断一下就把"有新版"抹成"取不到"，而那条消息本来是对的。
+        setup::cached_update(cache, cfg, "v1.0.0", good, true);
+        const auto after = setup::cached_update(
+            cache, cfg, "v1.0.0", [](const std::string&) { return std::string(); }, true);
+        CHECK(after.newer);
+        CHECK(after.latest == "v9.9.9");
+    }
+}

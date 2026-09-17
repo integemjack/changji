@@ -20,7 +20,9 @@
 // 地址固定是 2026-09-17 把正式版也改成"永远只有一个 Release"换来的——
 // 每版一个 Release 的话这个地址每次都变，程序只能去翻 API 列表再猜。
 
+#include <chrono>
 #include <functional>
+#include <mutex>
 #include <string>
 
 #include <nlohmann/json.hpp>
@@ -56,6 +58,34 @@ std::string version_json_url(const config::UpdateConfig& cfg);
 /// 查一次。`fetch` 回空串表示没取到。
 UpdateInfo check_update(const config::UpdateConfig& cfg,
                         const std::string& current, const Fetch& fetch);
+
+/// 查一次，但**带缓存**。
+///
+/// ⚠️ **不带缓存的话，每打开一次设置页就是一次跨网请求**，超时 8 秒。
+/// GitHub 连不上的时候（公司网、断网、被墙），那一页每次都要多转 8 秒——
+/// 而那一页恰恰是"出事了才打开"的那一页（机器表那条 2026-09-17 刚为同一件
+/// 事改过：先给旧的、刷新放后台）。
+///
+/// · `auto_check` 关着时**一次都不问**，除非 `force`；
+/// · 上一次问过还不到 `every_hours` 就直接给上一次那份；
+/// · `every_hours <= 0` = 只在起服务后问一次，之后不再自己问。
+///
+/// `force` 是人点了「现在查一次」：那一下必须真去问，不然按钮等于没有。
+///
+/// **缓存由调用方持有**，不是文件里一个静态的。进程级静态跨不过用例
+/// ——上一条用例填进去的东西会让下一条根本不去问（2026-09-17 写这条用例时
+/// 当场撞上），而"到底问没问"正是这段唯一要测的东西。真实那一处在路由里
+/// 放一个函数级 static，效果一样。
+struct UpdateCache {
+    std::mutex mu;
+    bool has = false;
+    UpdateInfo last;
+    std::chrono::steady_clock::time_point at{};
+};
+
+UpdateInfo cached_update(UpdateCache& cache, const config::UpdateConfig& cfg,
+                         const std::string& current, const Fetch& fetch,
+                         bool force);
 
 /// 两个版本号，后一个是不是比前一个新。
 ///

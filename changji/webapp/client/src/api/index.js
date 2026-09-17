@@ -303,7 +303,9 @@ export const api = {
   setAutostart: (enabled) => post('/api/autostart', { enabled }),
   // 手上这个是不是最新。**只查，不换二进制**——换掉正在跑的可执行文件三个
   // 平台三种做法，见 cpp/src/setup/update_check.hpp。
-  checkUpdate: () => get('/api/update'),
+  // 不带参数走缓存（打开设置页那一下不该等一次跨网请求）；
+  // `force` 是人点了「现在查一次」，那一下必须真去问。
+  checkUpdate: (force) => get('/api/update', force ? { force: 1 } : undefined),
   // **只取新增**：`from` 是手上已经有的字节数。一件活的思考动辄十几万
   // 字，整份重取的话每一拍都要搬十几万字过去。
   taskThinking: (id, from) => get('/api/task/thinking', { id, from: from || 0 }),
