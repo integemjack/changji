@@ -31,6 +31,76 @@ namespace changji::http {
 
 using models::ProjectStore;
 
+namespace {
+
+/// 本机按显卡数拉起的那几个子进程。**全进程只拉一次。**
+///
+/// 原来这是 `backends()` 里的一个 static。**提出来是因为第二个用户来了**：
+/// 主程序挂上节点协议之后（一台机器一个进程、一条连接），外来任务也该交给
+/// 这几个子进程跑——不然一个进程只用得上一张卡（用户 2026-09-17：
+/// 「只用了一张卡」）。两处共用同一个 static，不能各拉一份：各拉一份就是
+/// 两套子进程抢同几张卡，端口还撞上。
+std::shared_ptr<infer::WorkerFarm> shared_farm(const config::Settings& s) {
+    static std::shared_ptr<infer::WorkerFarm> farm =
+        infer::WorkerFarm::start(
+            s, config::runtime().profile(),
+            [](const std::string& base, int seconds) {
+                // 工作进程的 /health 对 GET 和 POST 都答，
+                // 为一次探活单独引一条 HTTP 路径不值得。
+                auto post = llm::default_http_post();
+                const auto deadline =
+                    std::chrono::steady_clock::now() +
+                    std::chrono::seconds(seconds);
+                while (std::chrono::steady_clock::now() < deadline) {
+                    if (post(base + "/health", "", {}, 2.0).status == 200) {
+                        return true;
+                    }
+                    std::this_thread::sleep_for(
+                        std::chrono::milliseconds(400));
+                }
+                return false;
+            });;
+    return farm;
+}
+
+}  // namespace
+
+infer::TaskRunner local_farm_runner(const config::Settings& settings) {
+    // **拉起 farm 这件事必须是懒的。**
+    //
+    // 第一版在这儿就地 `shared_farm(settings)`，而那一步会同步拉起每张卡
+    // 一个子进程、再逐个探活（每个最多两分钟）。挂载发生在 `app.run()`
+    // 之前，于是主程序要等好几分钟才开始监听 8080——2026-09-17 实撞：
+    // 9001 已经听上了，8080 还没有。单卡机上更冤：白等、而且根本用不着。
+    //
+    // 现在回一个闭包，第一件外来任务到了才解析。
+    return [settings](const infer::Task& task, const infer::StepCallback& on_step,
+                      pipeline::CancelToken& tok) {
+        // 池是静态的：它握着连接和隔离状态（哪个子进程连着失败了几次），
+        // 每件任务新建一个的话那些账全丢。
+        //
+        // **只放本机那几个子进程，不含别的机器**：外来的活再派出去会绕
+        // 回来——A 派给 B、B 又派给 A，两台都在等对方。
+        static std::shared_ptr<infer::WorkerPool> pool = [&] {
+            const auto farm = shared_farm(settings);
+            const std::vector<std::string> eps =
+                farm ? farm->endpoints() : settings.workers.endpoints;
+            if (eps.empty()) return std::shared_ptr<infer::WorkerPool>{};
+            std::vector<infer::WorkerEndpoint> weps;
+            weps.reserve(eps.size());
+            // 本机那几个听回环、不查口令，token 留空。
+            for (const auto& u : eps) weps.push_back(infer::WorkerEndpoint{u, ""});
+            return std::make_shared<infer::WorkerPool>(std::move(weps));
+        }();
+        // 单卡机：没有子进程可派，就地跑，和以前一模一样。
+        if (!pool) {
+            return infer::run_task_locally(task, settings, infer::Origin::Local,
+                                           task.shot_id, on_step, tok);
+        }
+        return pool->run(task, on_step, tok);
+    };
+}
+
 RunDeps default_run_deps() {
     RunDeps d;
     d.settings = [] { return config::runtime().snapshot(); };
@@ -76,25 +146,7 @@ RunDeps default_run_deps() {
         //
         // farm 是静态的：拉起来的子进程要活到进程结束，每次建 Backends
         // 都拉一遍的话，跑第二集时会再起 N 个、端口还撞上。
-        static std::shared_ptr<infer::WorkerFarm> farm =
-            infer::WorkerFarm::start(
-                s, config::runtime().profile(),
-                [](const std::string& base, int seconds) {
-                    // 工作进程的 /health 对 GET 和 POST 都答，
-                    // 为一次探活单独引一条 HTTP 路径不值得。
-                    auto post = llm::default_http_post();
-                    const auto deadline =
-                        std::chrono::steady_clock::now() +
-                        std::chrono::seconds(seconds);
-                    while (std::chrono::steady_clock::now() < deadline) {
-                        if (post(base + "/health", "", {}, 2.0).status == 200) {
-                            return true;
-                        }
-                        std::this_thread::sleep_for(
-                            std::chrono::milliseconds(400));
-                    }
-                    return false;
-                });
+        const auto farm = shared_farm(s);
         const std::vector<std::string> farm_eps =
             farm ? farm->endpoints() : s.workers.endpoints;
 

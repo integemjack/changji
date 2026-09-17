@@ -13,6 +13,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include "infer/worker_server.hpp"
 #include "config/settings.hpp"
 #include "http/readonly.hpp"
 #include "models/hardware.hpp"
@@ -47,6 +48,19 @@ struct RunDeps {
 
 /// 默认的那套：配置从 runtime 取，后端是 sd.cpp。
 RunDeps default_run_deps();
+
+/// 外来任务怎么在这台机器上跑（主程序挂节点协议时用）。
+///
+/// **一个进程只能用一张卡**——CUDA_VISIBLE_DEVICES 在后端初始化时就读走
+/// 了，跑起来改不了。所以主程序就地跑外来任务时，双卡机上永远只有一张卡
+/// 在动（用户 2026-09-17：「只用了一张卡」）。这一个把任务交给本机那个
+/// 按卡拉起子进程的池，两张卡才都吃得到。
+///
+/// 单卡机上池是空的，回一个空的执行器——挂载那头看见空就就地跑，
+/// 和以前一模一样。
+///
+/// **只用本机那几个子进程，不含别的机器**：外来的活再派出去会绕回来。
+infer::TaskRunner local_farm_runner(const config::Settings& settings);
 
 ApiResult post_run(const nlohmann::json& body, const RunDeps& deps);
 

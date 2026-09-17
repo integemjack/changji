@@ -87,7 +87,8 @@ void mount_worker_api_impl(crow::SimpleApp& app,
                            const config::Settings& settings,
                            const WorkerOptions& opts,
                            const models::HardwareProfile& profile,
-                           const std::shared_ptr<State>& state) {
+                           const std::shared_ptr<State>& state,
+                           const TaskRunner& runner) {
     // **这台的自我介绍。** 别的机器靠它决定派不派活过来：能力齐不齐、
     // 卡多大、模型目录还剩多少。拼的地方只有一处（node_status.cpp），
     // 界面上那张表和 --doctor 末尾那句用的是同一份。
@@ -231,7 +232,7 @@ void mount_worker_api_impl(crow::SimpleApp& app,
     });
 
     CROW_ROUTE(app, "/task").methods(crow::HTTPMethod::POST)(
-        [state, settings, gate](const crow::request& req) {
+        [state, settings, gate, runner](const crow::request& req) {
             if (auto deny = gate(req)) return std::move(*deny);
             // **先看这串字节是不是合法 UTF-8。** 不是的话下面每一条
             // 路都会炸在同一个地方：nlohmann 解析时照单全收，而把出错
@@ -275,7 +276,7 @@ void mount_worker_api_impl(crow::SimpleApp& app,
             // **建完就 detach**，见 Live 的注释。live 是 shared_ptr，
             // 被 lambda 捕获一份，线程跑多久它就活多久。
             // id 也捕一份：跨机时沙箱按它起名（<cache>/tasks/<id>）。
-            std::thread([state, live, task, settings, id] {
+            std::thread([state, live, task, settings, id, runner] {
                 const auto on_step = [state, live](int step, int steps,
                                                   double, Phase phase) {
                     std::lock_guard lg(state->mu);
@@ -302,8 +303,14 @@ void mount_worker_api_impl(crow::SimpleApp& app,
                 //  `sd_renderer_with_seed(settings, task.seed)`——采样旋钮
                 //  要跟着这一集的 settings 走。搬进 run_task_locally 之后
                 //  那个参数还在，见 task_run.cpp 里那一行。）
-                const TaskResult result = run_task_locally(
-                    task, settings, Origin::Local, id, on_step, live->tok);
+                // **给了执行器就交给它。** 主程序传的是交给本机那几张卡
+                // （见头文件上 TaskRunner 那段）：一个进程只能用一张卡，
+                // 就地跑的话双卡机上永远只有一张在动。
+                // `--worker` 不传，照旧就地跑——它本来就绑着一张卡。
+                const TaskResult result =
+                    runner ? runner(task, on_step, live->tok)
+                           : run_task_locally(task, settings, Origin::Local, id,
+                                              on_step, live->tok);
                 std::lock_guard lg(state->mu);
                 live->progress.state = result.ok ? "done" : "failed";
                 live->progress.result = result;
@@ -349,7 +356,7 @@ void mount_worker_api_impl(crow::SimpleApp& app,
 }
 
 bool mount_worker_api(crow::SimpleApp& app, const config::Settings& settings,
-                      const WorkerOptions& opts) {
+                      const WorkerOptions& opts, TaskRunner runner) {
     // **对外监听而没设口令就不挂。** 挂了等于谁都能派活过来烧这张卡、
     // 读走这台有哪些模型。判据和 run_worker 用的是同一个。
     if (const auto why = refuse_to_listen(opts.host, settings.peer.token);
@@ -374,7 +381,7 @@ bool mount_worker_api(crow::SimpleApp& app, const config::Settings& settings,
     state->slots = profile.gpu.has_value()
                        ? static_cast<std::size_t>(std::max(1, profile.gpu->count))
                        : 1;
-    mount_worker_api_impl(app, settings, opts, profile, state);
+    mount_worker_api_impl(app, settings, opts, profile, state, runner);
     return true;
 }
 
@@ -442,7 +449,7 @@ bool run_worker(const config::Settings& settings, const WorkerOptions& opts) {
     // 别的连接上的 /task、轮询照常有人接。
     app.concurrency(4);
 
-    mount_worker_api_impl(app, settings, opts, profile, state);
+    mount_worker_api_impl(app, settings, opts, profile, state, {});
 
     CROW_LOG_INFO << "工作进程 gpu=" << opts.gpu << " 听 " << opts.host << ":"
                   << opts.port;
