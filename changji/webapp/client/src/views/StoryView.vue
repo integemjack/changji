@@ -1734,6 +1734,18 @@ async function writeStory() {
   }
 }
 
+/**
+ * 粘回来的那份大纲。**和真跑完走同一下**：摆成草稿等人点采用，不直接落库。
+ *
+ * 在别处跑出来的东西和模型自己写的一样要人看过——引擎那头也是这么做的
+ * （write_outline 回的是草稿，adopted=false）。
+ */
+function onPastedOutline(res) {
+  if (!res) return
+  draft.value = res
+  bookOpen.value = false
+}
+
 /** 粘一段现成的进来。切章节不走大模型——那是机械活，而且比模型稳。 */
 async function importPasted() {
   if (!pasted.value.trim()) {
@@ -2312,9 +2324,11 @@ async function stopWriting() {
           <CopyPrompt
             v-if="hasStory"
             compact
+            pasteable
             path="/api/story/analyze"
             :payload="{ project: session.projectPath }"
             title="抄走「提人物」这一步的提示词"
+            @done="load"
           />
         </div>
       </aside>
@@ -2582,6 +2596,7 @@ async function stopWriting() {
                        总开关在设置页「界面」那一节。 -->
                   <div class="way">
                     <CopyPrompt
+                      pasteable
                       path="/api/story/outline"
                       :payload="{
                         project: session.projectPath,
@@ -2589,6 +2604,7 @@ async function stopWriting() {
                         scale,
                         keywords: keywords.trim(),
                       }"
+                      @done="onPastedOutline"
                     />
                     <span class="way__why">
                       把上面那些拼成的提示词抄走，在别处跑完再回来粘。
@@ -2765,9 +2781,11 @@ async function stopWriting() {
               <CopyPrompt
                 v-if="current"
                 compact
+                pasteable
                 path="/api/story/chapter"
-                :payload="{ project: session.projectPath, chapter_id: current }"
+                :payload="{ project: session.projectPath, chapter_id: current, overwrite: true }"
                 :title="`抄走写 ${current} 正文那一步的提示词`"
+                @done="load"
               />
 
               <div class="menu">

@@ -13,7 +13,7 @@
  * 统一开关在 ui.showCopyPrompt（同一次要求里的第二句：「后期可以直接
  * 关闭」）。关掉之后这个组件整个不渲染，一处改、全局生效。
  */
-import { ref } from 'vue'
+import { nextTick, ref } from 'vue'
 
 import { api } from '@/api'
 import AppIcon from '@/components/AppIcon.vue'
@@ -35,10 +35,53 @@ const props = defineProps({
   title: { type: String, default: '' },
   /** 摆成一个只有图标的小按钮。 */
   compact: { type: Boolean, default: false },
+  /**
+   * 连「粘回结果」一起摆。
+   *
+   * 复制出去和粘回来是同一件事的两半——用户的原话是"复制放到别的地方生产后
+   * 粘贴内容过来"。只给复制不给粘，那半程就走不完。
+   */
+  pasteable: { type: Boolean, default: false },
 })
+
+const emit = defineEmits(['done'])
 
 const ui = useUi()
 const busy = ref(false)
+/** 粘贴框开着没有。 */
+const pasteOpen = ref(false)
+const pasted = ref('')
+const sending = ref(false)
+const box = ref(null)
+
+function openPaste() {
+  pasted.value = ''
+  pasteOpen.value = true
+  nextTick(() => box.value?.focus())
+}
+
+async function submitPaste() {
+  const raw = pasted.value.trim()
+  if (!raw || sending.value) return
+  sending.value = true
+  try {
+    const payload = props.resolve ? await props.resolve() : props.payload
+    if (!payload) return
+    // **走这一步自己那条接口**，只是把"找模型要那段原文"换成这段。
+    // 解析和守卫一道不少：整章没对白、正文复读那几道照样拦，粘回来的
+    // 东西和模型自己写的走同一条路。
+    const res = await api.applyPrompt(props.path, payload, raw)
+    ui.ok('收下了')
+    pasteOpen.value = false
+    emit('done', res)
+  } catch (e) {
+    // 引擎那头的话原样给他看——「正文只写出 18 个字，至少要 600 个」
+    // 这种正是他需要知道的，换成"粘贴失败"等于把理由吃掉。
+    ui.error(e?.message || String(e))
+  } finally {
+    sending.value = false
+  }
+}
 
 async function copy() {
   if (busy.value) return
@@ -87,4 +130,61 @@ async function copy() {
     <AppIcon name="script" :size="13" />
     <span v-if="!compact">{{ busy ? '取着…' : '复制提示词' }}</span>
   </button>
+  <button
+    v-if="ui.showCopyPrompt && pasteable"
+    class="btn btn--ghost btn--sm"
+    type="button"
+    title="把在别处跑出来的那段结果粘回来。解析和守卫一道不少，和模型自己写的走同一条路"
+    @click="openPaste"
+  >
+    <AppIcon name="upload" :size="13" />
+    <span v-if="!compact">粘回结果</span>
+  </button>
+
+  <Teleport to="body">
+    <div v-if="pasteOpen" class="modal" @click.self="pasteOpen = false">
+      <section class="card modal__panel paste">
+        <h2 class="h3">把结果粘回来</h2>
+        <p class="tiny dim">
+          贴模型吐出来的那段 JSON 原文，整段贴，别删花括号。
+          它走的是和真跑同一条解析和守卫——不合格一样会被打回，理由照说。
+        </p>
+        <textarea
+          ref="box"
+          v-model="pasted"
+          class="textarea mono paste__box"
+          rows="14"
+          placeholder="{ … }"
+        />
+        <div class="row">
+          <button
+            class="btn btn--primary"
+            type="button"
+            :disabled="!pasted.trim() || sending"
+            @click="submitPaste"
+          >
+            {{ sending ? '收着…' : '收下这一份' }}
+          </button>
+          <button class="btn btn--ghost" type="button" @click="pasteOpen = false">
+            取消
+          </button>
+          <span class="spacer" />
+          <span class="tiny dim numeric">{{ [...pasted].length }} 字</span>
+        </div>
+      </section>
+    </div>
+  </Teleport>
 </template>
+
+<style scoped>
+.paste {
+  display: grid;
+  gap: var(--s3);
+  width: min(52rem, 92vw);
+}
+.paste__box {
+  /* 贴进来的是几千字的 JSON，框小了等于让人在一条缝里对花括号 */
+  min-height: 18rem;
+  resize: vertical;
+}
+</style>

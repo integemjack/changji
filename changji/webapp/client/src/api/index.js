@@ -243,6 +243,14 @@ export const api = {
    * 另拼一份提示词，而两份迟早只改一边。
    */
   peekPrompt: (path, payload) => post(path, { ...payload, peek: true }),
+
+  /**
+   * 把在别处跑出来的那段原文送回这一步。
+   *
+   * 和 peekPrompt 对称，**走的也是那一步自己的接口**：解析、守卫、落库
+   * 全是同一条路，粘回来的东西不比模型自己写的少过一道检查。
+   */
+  applyPrompt: (path, payload, raw) => post(path, { ...payload, paste: raw }),
   adoptStory: (payload) => post('/api/story/adopt', payload),
   // 丢掉还没采用的那份大纲。**草稿是落库的**，所以「丢弃」不能只清
   // 浏览器里那个 ref——不清服务端那份的话刷新一下它又回来了。
