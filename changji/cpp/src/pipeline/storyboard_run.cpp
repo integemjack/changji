@@ -60,7 +60,10 @@ StoryboardRunResult run_storyboard(const StoryboardRunOptions& opts,
                 assets,
                 stages::shot_count_bounds(quota, scene.seconds,
                                           stages::count_beats(scene.text)),
-                scene.location_id);
+                scene.location_id,
+                // 第几场。拆完 `stamp_scene` 盖的就是这个数，提前告诉模型，
+                // 省得它为一个会被覆盖的值猜半天。
+                std::max(1, scene.index));
             req.schema_name = "storyboard";
             req.on_thinking = opts.on_thinking;
 

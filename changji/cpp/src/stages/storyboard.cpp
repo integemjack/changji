@@ -732,20 +732,35 @@ std::string build_scene_storyboard_prompt(const SceneBlock& scene,
 }
 
 ordered llm_scene_shot_schema(const AssetLibrary& assets, ShotCountBounds bounds,
-                              const std::optional<std::string>& location_id) {
+                              const std::optional<std::string>& location_id,
+                              int scene_index) {
     ordered s = llm_shot_schema(assets, bounds);
-    if (!location_id.has_value() || location_id->empty()) return s;
     ordered& item = s["properties"]["shots"]["items"];
-    item["properties"]["location_id"] = {
-        {"type", "string"},
-        {"enum", ordered::array({*location_id})},
-        {"description", "这一场的场景，一律填它"}};
     ordered& req = item["required"];
-    bool present = false;
-    for (const auto& v : req) {
-        if (v == "location_id") present = true;
+    const auto require = [&req](const char* key) {
+        for (const auto& v : req) {
+            if (v == key) return;
+        }
+        req.push_back(key);
+    };
+
+    if (location_id.has_value() && !location_id->empty()) {
+        item["properties"]["location_id"] = {
+            {"type", "string"},
+            {"enum", ordered::array({*location_id})},
+            {"description", "这一场的场景，一律填它"}};
+        require("location_id");
     }
-    if (!present) req.push_back("location_id");
+    // **scene_id 同样是定死的**，见头文件上那段：不钉的话模型要为一个会被
+    // `stamp_scene` 整个盖掉的值花一整段推理。
+    if (scene_index > 0) {
+        const std::string sid = "s" + std::to_string(scene_index);
+        item["properties"]["scene_id"] = {
+            {"type", "string"},
+            {"enum", ordered::array({sid})},
+            {"description", "这一场的编号，一律填它"}};
+        require("scene_id");
+    }
     return s;
 }
 

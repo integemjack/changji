@@ -458,3 +458,35 @@ TEST_CASE("两场：一场一次拆，各自钉地点，合起来重编号，第
     REQUIRE(r.shots[1].dialogue.size() == 1);
     CHECK(r.shots[1].dialogue[0].text == "我不该来。");
 }
+
+TEST_CASE("一场的 schema 把 scene_id 也钉死：模型不必为会被盖掉的值猜") {
+    // ⚠️ **拆完 `stamp_scene` 会把 scene_id 整个盖成 sN**——模型填什么都
+    // 不作数，可它在 required 里，非填不可。2026-09-17 从思考流里读到的原话：
+    // 「scene_id 可能填什么? 需要 pattern。可能填 ep01_sc01? …用户没指定。
+    // 得选择。」整整一段推理花在一个会被覆盖的字段上。
+    const auto a = make_assets();
+    const json s = json(stages::llm_scene_shot_schema(
+        a, {}, std::string("loc_cafe"), /*scene_index=*/3));
+    const auto& item = s.at("properties").at("shots").at("items");
+    const auto& sid = item.at("properties").at("scene_id");
+    REQUIRE(sid.contains("enum"));
+    CHECK(sid.at("enum").size() == 1);
+    CHECK(sid.at("enum")[0] == "s3");
+    // 两栏都得在 required 里，不然模型会整个略过（CLAUDE.md：管得住模型的
+    // 不是措辞，是 required）。
+    bool has_scene = false, has_loc = false;
+    for (const auto& v : item.at("required")) {
+        if (v == "scene_id") has_scene = true;
+        if (v == "location_id") has_loc = true;
+    }
+    CHECK(has_scene);
+    CHECK(has_loc);
+
+    SUBCASE("不知道第几场就不钉") {
+        const json t = json(stages::llm_scene_shot_schema(
+            a, {}, std::string("loc_cafe"), /*scene_index=*/0));
+        const auto& p = t.at("properties").at("shots").at("items")
+                            .at("properties").at("scene_id");
+        CHECK_FALSE(p.contains("enum"));
+    }
+}

@@ -1,6 +1,7 @@
-import { beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 
+import { api } from '@/api'
 import { useThinking } from '@/stores/thinking'
 
 describe('模型在想什么', () => {
@@ -69,5 +70,59 @@ describe('模型在想什么', () => {
     const t = useThinking()
     t.push('job-4', '')
     expect(t.busy).toBe(false)
+  })
+})
+
+describe('刷新之后靠引擎那本账接回来', () => {
+  beforeEach(() => setActivePinia(createPinia()))
+  afterEach(() => vi.restoreAllMocks())
+
+  it('socket 空的时候用账本那份', async () => {
+    // ⚠️ `live` 按点击生成的 streamId 存，**刷新一下就没了**（用户
+    // 2026-09-17：「顶部的思考刷新后就再也不显示」）。账本按任务 id 索引，
+    // 那个数刷新之后照样在。
+    vi.spyOn(api, 'tasks').mockResolvedValue({
+      running: [{ id: 7, title: '写正文 · 还缺的 7 章', thinking: true, seconds: 12 }],
+    })
+    vi.spyOn(api, 'taskThinking').mockResolvedValue({
+      thinking: '先想这个',
+      start: 0,
+      end: 4,
+    })
+    const t = useThinking()
+    await t.syncFromServer()
+    expect(t.busy).toBe(true)
+    expect(t.latest).toBe('先想这个')
+    expect(t.items[0].label).toBe('写正文 · 还缺的 7 章')
+  })
+
+  it('socket 上有东西就一行都不看账本', async () => {
+    // 本标签页自己点的那次 socket 快一拍半，两边同时显示会成双份。
+    const spy = vi.spyOn(api, 'tasks').mockResolvedValue({ running: [] })
+    const t = useThinking()
+    t.start('ref-abc', '出图')
+    t.push('ref-abc', '这是 socket 那份')
+    await t.syncFromServer()
+    expect(spy).not.toHaveBeenCalled()
+    expect(t.latest).toBe('这是 socket 那份')
+  })
+
+  it('只取新增，中间断了就丢掉重接', async () => {
+    const t = useThinking()
+    vi.spyOn(api, 'tasks').mockResolvedValue({
+      running: [{ id: 9, title: '拆镜头', thinking: true, seconds: 1 }],
+    })
+    const think = vi.spyOn(api, 'taskThinking')
+    think.mockResolvedValueOnce({ thinking: 'AAA', start: 0, end: 3 })
+    await t.syncFromServer()
+    expect(t.latest).toBe('AAA')
+    // 接着取：start 正好接上，拼起来
+    think.mockResolvedValueOnce({ thinking: 'BBB', start: 3, end: 6 })
+    await t.syncFromServer()
+    expect(t.latest).toBe('AAABBB')
+    // start 跳过去了 = 引擎那头从头截过，手上这份作废
+    think.mockResolvedValueOnce({ thinking: 'CCC', start: 99, end: 102 })
+    await t.syncFromServer()
+    expect(t.latest).toBe('CCC')
   })
 })

@@ -133,11 +133,26 @@ std::string build_scene_storyboard_prompt(const SceneBlock& scene,
                                           const std::string& episode_id,
                                           const std::string& prev_tail);
 
-/// 一场的 schema：整集那份之上把 location_id 钉成这一场的（接上了的话），
-/// 而且进 required——这一场所有镜头都在这个地方，模型没得选。
+/// 一场的 schema：整集那份之上，把**这一场已经定死的两栏**钉成定值，
+/// 而且进 required——这一场所有镜头都在这个地方、都属于这一场，模型没得选。
+///
+///   · `location_id`：接上了场景的话钉成它；
+///   · `scene_id`：钉成 `sN`（`scene_index`，1 起）。
+///
+/// ⚠️ **scene_id 不钉的话，模型要为一个它猜不出、而且猜了也白猜的值花力气。**
+/// 拆完之后 `stamp_scene` 会把这一栏整个盖成 `sN`——也就是说模型填什么都不
+/// 作数，可它在 required 里，非填不可。2026-09-17 从思考流里读到的原话：
+/// 「scene_id 可能填什么? 需要 pattern。可能填 ep01_sc01? …用户没指定。
+/// 得选择。」整整一段推理花在一个会被覆盖的字段上。
+///
+/// 顺带治住另一件早就记在案的事（见 `attach_scene_location` 那段）：
+/// 「模型十次有八次把场景 id 填进 scene_id 就完事了」。两栏都钉死，填错都
+/// 没地方填。
+///
+/// `scene_index <= 0` 表示不知道第几场，那时候不钉 scene_id。
 nlohmann::ordered_json llm_scene_shot_schema(
     const models::AssetLibrary& assets, ShotCountBounds bounds,
-    const std::optional<std::string>& location_id);
+    const std::optional<std::string>& location_id, int scene_index = 0);
 
 /// 拆出来的镜头盖上这一场的印：scene_id = "sN"、location_id 统一、
 /// 第一镜不接上一场的帧。

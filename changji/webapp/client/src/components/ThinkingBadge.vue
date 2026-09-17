@@ -40,6 +40,25 @@ import { useUi } from '@/stores/ui'
 
 const thinking = useThinking()
 const ui = useUi()
+
+/**
+ * 跟引擎那本任务账对拍子。**刷新之后这块徽标全靠它**——socket 那份按点击
+ * 生成的 stream id 存，刷新就没了（见 stores/thinking 里 fromBoard 那段）。
+ *
+ * socket 上有东西的时候 `syncFromServer` 自己会空转，所以这一拍不贵；
+ * 拍子按"在不在想"快慢分，和这套代码里别处那几条轮询一个规矩。
+ */
+let beat = null
+function tick() {
+  clearTimeout(beat)
+  beat = setTimeout(
+    async () => {
+      await thinking.syncFromServer()
+      tick()
+    },
+    thinking.busy ? 2000 : 6000,
+  )
+}
 /** 鼠标在上面。 */
 const hovering = ref(false)
 /** 点过了，钉住不收。 */
@@ -160,10 +179,16 @@ function onDocClick(e) {
 // 宽、盖在页面上，思考一段可能十几分钟。顶栏隔壁那块（JobBadge）为同一
 // 件事改过，理由那儿写着：捕获阶段先于它们拿到事件，且只读不拦。
 // 点徽标本身不受影响：那时候 e.target 在 root 里，上面那句就返回了。
-onMounted(() => document.addEventListener('click', onDocClick, true))
+onMounted(() => {
+  document.addEventListener('click', onDocClick, true)
+  // 进页面先对一次账：刷新之后 socket 那份是空的，这一下就是唯一的来源。
+  thinking.syncFromServer()
+  tick()
+})
 onUnmounted(() => {
   document.removeEventListener('click', onDocClick, true)
   clearInterval(timer)
+  clearTimeout(beat)
 })
 
 /** 正在想的那几条。一般只有一条，批量跑的时候会有好几条。 */
