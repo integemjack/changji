@@ -77,6 +77,23 @@ FarmRunner local_farm_runner(const config::Settings& settings) {
     };
     static auto warm = std::make_shared<Warm>();
     static std::once_flag once;
+
+    // 这台机器**会不会**有池子。和 `ready`（热好没有）是两回事：起服务后
+    // 那几秒里 `ready` 还是假，而答案已经定了。
+    //
+    // ⚠️ **这两个混用过一次，代价是一张卡闲着、另一张卡上挤两个。**
+    // 2026-09-17：双卡机上按下「一键出图」，第一件任务在 `ready` 变真前的
+    // 那一秒进来，走下面那条"还没热好就就地跑"，于是**主进程自己在卡 0 上
+    // 跑了一张**；一秒后 farm 就绪，第二件交给池子，池子挑了空着的
+    // 9001——那也是卡 0。结果卡 0 上两个 21 GB 挤在一起（`nvidia-smi` 报
+    // 43 GB），卡 1 上 3 MiB，用户看到的还是「没用多 GPU」。
+    //
+    // 就地跑那条路是给**单卡机**留的，不是给"还没热好"留的。会有池子就等，
+    // 等的那几秒有进度可看（capacity 这段时间报 1，最多压着一件）。
+    const bool pooled = !settings.workers.endpoints.empty() ||
+                        (settings.workers.auto_spawn &&
+                         config::runtime().profile().gpu.has_value() &&
+                         config::runtime().profile().gpu->count > 1);
     // **起服务时就在后台拉 farm**，不让任何一件任务去等它（见 run.hpp）。
     std::call_once(once, [settings] {
         std::thread([settings] {
@@ -96,12 +113,19 @@ FarmRunner local_farm_runner(const config::Settings& settings) {
     });
 
     FarmRunner r;
-    r.run = [settings](const infer::Task& task, const infer::StepCallback& on_step,
-                       pipeline::CancelToken& tok) {
+    r.run = [settings, pooled](const infer::Task& task,
+                               const infer::StepCallback& on_step,
+                               pipeline::CancelToken& tok) {
+        // 会有池子就等它热好。子进程起来加探活实测十秒上下，farm 起不来时
+        // `ready` 照样会变真（`pool` 是空的），所以这儿不会永远等。
+        while (pooled && !warm->ready.load(std::memory_order_acquire)) {
+            if (tok.cancelled()) break;
+            std::this_thread::sleep_for(std::chrono::milliseconds(200));
+        }
         if (warm->ready.load(std::memory_order_acquire) && warm->pool) {
             return warm->pool->run(task, on_step, tok);
         }
-        // 还没热好 / 单卡机：就地跑，和以前一模一样。
+        // 单卡机（以及双卡机上 farm 一张都没拉起来）：就地跑，和以前一样。
         return infer::run_task_locally(task, settings, infer::Origin::Local,
                                        task.shot_id, on_step, tok);
     };
