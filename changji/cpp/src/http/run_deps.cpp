@@ -204,9 +204,11 @@ RunDeps default_run_deps() {
                     }
                 }
             }
-            // 别的机器
-            for (const auto* n : infer::candidates_for(nodes, cap)) {
-                if (n->url != infer::kLocalEndpoint) out.push_back(n->url);
+            // 别的机器。**一台报几个槽就占几个位置**（同一个 url 出现几次）
+            // ——池按下标记忙闲，两条就是两条独立通道，一台双卡机两张卡
+            // 一起干靠的就是这一句。
+            for (auto& u : infer::remote_slots_for(nodes, cap)) {
+                out.push_back(std::move(u));
             }
             return out;
         };

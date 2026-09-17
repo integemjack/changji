@@ -7,6 +7,8 @@
 #include "util/httplib.hpp"
 #include "util/paths.hpp"
 
+#include <algorithm>
+
 namespace changji::infer {
 
 namespace {
@@ -163,6 +165,9 @@ void NodeRegistry::refresh(const config::Settings& s) {
                 n.online = true;
                 n.name = js.value("name", cfg.url);
                 n.busy = js.value("busy", false);
+                // 那台同时收得下几件。没报（老版本）按 1。
+                n.slots = std::max<std::size_t>(
+                    1, js.value("slots", std::size_t{1}));
                 if (js.contains("capabilities") &&
                     js["capabilities"].is_array()) {
                     for (const auto& item : js["capabilities"]) {

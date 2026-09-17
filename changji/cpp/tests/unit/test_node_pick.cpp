@@ -127,3 +127,25 @@ TEST_CASE("那句话里带着能力的中文名") {
     const std::string why = why_no_node({}, Capability::Tts);
     CHECK(why.find("配音") != std::string::npos);
 }
+
+TEST_CASE("一台报几个槽，派活就占几个位置") {
+    // 池按下标记忙闲，同一个 url 出现两次就是两条独立通道——
+    // 一台双卡机两张卡一起干靠的就是这一句。
+    auto two = node("http://box:8080", true, {Capability::Video});
+    two.slots = 2;
+    auto one = node("http://solo:8080", true, {Capability::Video});
+    auto local = node("local", true, {Capability::Video});
+    local.slots = 3;   // 本机那条不走这儿，几个槽都不算
+    const std::vector<NodeState> nodes = {two, local, one};
+    const auto eps = remote_slots_for(nodes, Capability::Video);
+    REQUIRE(eps.size() == 3);
+    CHECK(eps[0] == "http://box:8080");
+    CHECK(eps[1] == "http://box:8080");
+    CHECK(eps[2] == "http://solo:8080");
+}
+
+TEST_CASE("槽数报 0 按 1 算，一台在线的机器不能因此从池里消失") {
+    auto n = node("http://box:8080", true, {Capability::Frame});
+    n.slots = 0;
+    CHECK(remote_slots_for({n}, Capability::Frame).size() == 1);
+}

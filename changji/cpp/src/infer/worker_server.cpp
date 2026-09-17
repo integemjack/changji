@@ -114,10 +114,16 @@ void mount_worker_api_impl(crow::SimpleApp& app,
     // **读活的那一份，不是启动时捕获的拷贝。** 见上面 runtime().replace
     // 那段：这台自己下完模型之后，这份自我介绍必须跟着变，否则派活那头
     // 看到的永远是"干不了"。
-    CROW_ROUTE(app, "/status")([profile, gate](const crow::request& req) {
+    CROW_ROUTE(app, "/status")([profile, gate, state](const crow::request& req) {
         if (auto deny = gate(req)) return std::move(*deny);
-        return json_res(
-            node_status_json(config::runtime().snapshot(), profile));
+        auto js = node_status_json(config::runtime().snapshot(), profile);
+        // **同时收得下几件，得报出去。** 派活那边按这个数开槽（node_pick.hpp
+        // 的 remote_slots_for）；不报的话它按 1 开，一台双卡机就永远只用
+        // 一张卡——2026-09-17「只用了一张卡」的最后一截就在这儿。
+        // 数字和下面 /task 回 409 的门槛是同一个（state->slots()）：两边
+        // 各算一次迟早对不上，对不上的后果是 409 = 那一镜失败。
+        js["slots"] = state->slots();
+        return json_res(js);
     });
 
     // **GET 和 POST 都要答。** 多卡那条探活走的是 llm::default_http_post()

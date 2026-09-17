@@ -63,8 +63,13 @@ public:
     /// `--gpu 1 --port 9012` 并排起，两个都在 30 秒内应答 /health。它在
     /// farm 里两分钟不应答，是懒拉起时探活和拉起挤在一起拖的——正是第 2 条。
     ///
-    /// 那两条改动已回退（c6c92a9），线上是单槽就地跑：只用一张卡，但能出片。
-    /// 下次重做：先在本机把槽数和预热写对、过用例，再上远程。
+    /// 那两条回退过（c6c92a9），之后重做（977b056）——**真正的根因是第三处**：
+    /// 子进程 `/health` 只收 GET 而探活发 POST，405 当没应答，自动拉起
+    /// 从来没成功过。修掉之后两个子进程 30 秒内都就绪；槽数改成回调
+    /// （活着的子进程数，`http/run.hpp` 的 FarmRunner::capacity），预热挪到
+    /// 起服务时后台跑。最后一截在派活那边：那台在 `/status` 里报 `slots`，
+    /// 这边按它开槽（node_pick.hpp 的 `remote_slots_for`）——不然池只给它
+    /// 一个槽，第二张卡照样闲着。
     static std::shared_ptr<WorkerFarm> start(
         const config::Settings& settings,
         const models::HardwareProfile& profile, HealthProbe healthy = {});

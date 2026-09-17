@@ -16,6 +16,7 @@
 // 挑错了不会报错：挑了台干不了的，是那一镜失败；该挑的没挑，是那台
 // 一直闲着而界面上看不出为什么。所以这一段必须能反复撞。
 
+#include <cstddef>
 #include <map>
 #include <optional>
 #include <set>
@@ -28,8 +29,8 @@ namespace changji::infer {
 
 /// 一台节点在调度器眼里的样子。
 struct NodeState {
-    /// `http://gpu-box:9001`。**同时是它的身份**——同一台机器上的两张卡
-    /// 是两个节点，端口不同。
+    /// `http://gpu-box:8080`。**同时是它的身份**——一台机器一条；那台
+    /// 有几张卡是它自己的事，报在 `slots` 里。
     std::string url;
     /// 界面上显示的名字，节点自己报的。
     std::string name;
@@ -65,6 +66,14 @@ struct NodeState {
     /// 此刻有活在跑。
     bool busy = false;
 
+    /// 同时收得下几件活。**是它报的**（`/status` 里的 `slots`），等于那台
+    /// `POST /task` 开始回 409 的门槛：主程序带几张卡就拉起几个子进程，
+    /// 报的是活着的子进程数；`--worker` 单进程报 1；没报按 1。
+    ///
+    /// 派活那边按这个数开槽（`remote_slots_for`）。开多了不是"多等一会儿"
+    /// ——池收到 409 是判那一镜失败；开少了就是「只用了一张卡」。
+    std::size_t slots = 1;
+
     /// 连不上／口令不对／答的不是 JSON 时那句话。在线时是空的。
     ///
     /// **要分得出是哪一种**：口令不对和连不上要做的事完全不同，
@@ -75,6 +84,14 @@ struct NodeState {
 /// 能干这个能力、没被关掉、而且在线的那些，按传入顺序。
 std::vector<const NodeState*> candidates_for(
     const std::vector<NodeState>& nodes, Capability c);
+
+/// 派活时别的机器各占几个槽：候选里每台 `url` 重复 `slots` 次，本机那条不算。
+///
+/// 池那边一个下标一个槽、按下标记忙闲，所以同一个 url 出现两次就是两条
+/// 独立的通道——**这就是一台双卡机两张卡一起干的全部机制**，池和协议都
+/// 不用知道"卡"这回事。
+std::vector<std::string> remote_slots_for(const std::vector<NodeState>& nodes,
+                                          Capability c);
 
 /// 从候选里挑一台。
 ///

@@ -1,5 +1,9 @@
 #include "infer/node_pick.hpp"
 
+#include <algorithm>
+
+#include "infer/worker_pool.hpp"   // kLocalEndpoint
+
 namespace changji::infer {
 
 std::vector<const NodeState*> candidates_for(const std::vector<NodeState>& nodes,
@@ -10,6 +14,18 @@ std::vector<const NodeState*> candidates_for(const std::vector<NodeState>& nodes
         if (n.off.count(c) != 0) continue;
         if (n.able.count(c) == 0) continue;
         out.push_back(&n);
+    }
+    return out;
+}
+
+std::vector<std::string> remote_slots_for(const std::vector<NodeState>& nodes,
+                                          Capability c) {
+    std::vector<std::string> out;
+    for (const NodeState* n : candidates_for(nodes, c)) {
+        if (n->url == kLocalEndpoint) continue;
+        // 报 0 按 1：一台在线的机器不能因为少报一个数就从池里消失
+        const std::size_t k = std::max<std::size_t>(1, n->slots);
+        for (std::size_t i = 0; i < k; ++i) out.push_back(n->url);
     }
     return out;
 }

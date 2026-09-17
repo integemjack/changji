@@ -542,6 +542,11 @@ function cellTitle(cap, node) {
               <span v-if="n.local" class="pill pill--neutral tiny">本机</span>
               <span v-if="!n.online" class="pill pill--warn tiny">连不上</span>
               <span v-else-if="n.busy" class="pill pill--ok tiny">忙</span>
+              <!-- 一台多卡机同时收得下几件（它自己报的 `slots`：拉起了几个
+                   子进程）。单卡机不印——满屏「1 张卡」没有信息量；印出来
+                   是为了「只用了一张卡」这种事在表上一眼能看出是哪一环少了。 -->
+              <span v-if="n.online && n.slots > 1" class="pill pill--neutral tiny"
+                    title="这台同时收几件活：一张卡一个子进程，派活按这个数开位">{{ n.slots }} 张卡</span>
               </span>
               <!-- **地址单独一行。** 和名字挤在一行的时候，机器名一长
                    （真主机名二十几个字符是常事）这一列就把右边那几颗

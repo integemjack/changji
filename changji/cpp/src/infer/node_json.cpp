@@ -52,6 +52,7 @@ json nodes_json(const std::vector<NodeState>& nodes) {
                         {"name", n.name},
                         {"online", n.online},
                         {"busy", n.busy},
+                        {"slots", static_cast<int>(n.slots)},
                         {"error", n.error},
                         {"local", n.url == "local"},
                         {"capabilities", caps}});
