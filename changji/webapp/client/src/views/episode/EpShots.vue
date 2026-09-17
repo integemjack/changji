@@ -1361,6 +1361,25 @@ onDeactivated(() => {
           <AppIcon name="image" :size="14" />
           {{ pendingFrames ? `只出首帧（差 ${pendingFrames}）` : '重出首帧' }}
         </button>
+        <!-- **只跑这一章。**
+             2026-09-17 之前这是主按钮的第一岔：这一章还有镜头没出片时，主
+             按钮就只跑这一章，跑完（几小时）回来再按一次才轮到别的章。用户
+             定的是「并成一颗，一路跑到底」，所以主按钮改成只要项目里还有事
+             就一路跑完——而 `all_episodes` 本来就把这一章也排进队
+             （run.cpp：每一集有分镜的都进），覆盖得住。
+             只跑这一章这个用法留着，挪到这儿：改完一章想先看它一个的人要
+             得到。 -->
+        <button
+          v-if="pending && showTodo"
+          class="btn btn--ghost btn--sm"
+          type="button"
+          :title="blockedWhy || '只把这一章还没出片的那几镜跑完，不动别的章'"
+          :disabled="blocked || starting"
+          @click="startAll"
+        >
+          <AppIcon name="film" :size="14" />
+          只跑这一章（差 {{ pending }}）
+        </button>
         <!-- 都出完了的时候这个按钮是「全部重出」，那就**必须带 force**：
              不带的话每一镜都已经是终态，引擎一个都挑不到，跑完什么都没变
              而且不报错——按钮点了像是没反应。 -->
@@ -1370,19 +1389,17 @@ onDeactivated(() => {
           type="button"
           :title="
             blockedWhy ||
-            (pending
-              ? '把还没出片的那几镜跑完'
-              : showTodo
-                ? `这一章出完了。接着一路跑完整部剧：没剧本的先改编、没分镜的补上，还差的 ${todoLabel} 一次跑完——中途不用回来点；跑起来之后这颗按钮自己变成「停下」`
-                : '每一镜都有片了；点了会全部重出')
+            (showTodo
+              ? `一路跑完整部剧：没剧本的先改编、没分镜的补上、缺的参考图画好，还差的 ${todoLabel} 一次跑完——中途不用回来点；跑起来之后这颗按钮自己变成「停下」`
+              : '每一镜都有片了；点了会全部重出')
           "
           :disabled="(blocked || starting) && !isBusy('whole')"
           @click="
             isBusy('whole')
               ? stopWholeShow()
-              : pending || !showTodo
-                ? startAll()
-                : runWholeShow()
+              : showTodo
+                ? runWholeShow()
+                : startAll()
           "
         >
           <AppIcon :name="isBusy('whole') ? 'pause' : 'film'" :size="15" />
@@ -1391,11 +1408,9 @@ onDeactivated(() => {
               ? wholeAbort
                 ? '停着…'
                 : '停下（跑着整部剧）'
-              : pending
-                ? `出片（差 ${pending}）`
-                : showTodo
-                  ? `跑完整部剧（还差 ${todoLabel}）`
-                  : '全部重出'
+              : showTodo
+                ? `跑完整部剧（还差 ${todoLabel}）`
+                : '全部重出'
           }}
         </button>
       </template>

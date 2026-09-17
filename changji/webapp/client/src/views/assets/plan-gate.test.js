@@ -133,3 +133,32 @@ describe('补全项目分镜这件事在「这一章」那一页', () => {
     expect(fn, '409 不是错，别报成错').toContain('409')
   })
 })
+
+describe('主按钮一路跑到底，不再分两次点', () => {
+  const shots = code(read('../episode/EpShots.vue'))
+
+  it('只要项目里还有事，主按钮就走整部剧那条', () => {
+    // ⚠️ 2026-09-17 之前是三岔：**这一章还有镜头没出片时，主按钮只跑这一
+    // 章**，跑完（几小时）回来再按一次才轮到别的章。而用户定的是「并成一
+    // 颗，一路跑到底」。
+    //
+    // 换得掉是因为整部剧那条**本来就覆盖这一章**：`all_episodes` 把每一集
+    // 有分镜的都排进队（run.cpp），不 force，跑的就是还没跑的那些。
+    //
+    // 判据是**那个三元式里谁在前**：`pending` 排在 `showTodo` 前面就是退回
+    // 三岔了。空白无所谓，所以先把连续空白压成一个空格再比。
+    const flat = shots.replace(/\s+/g, ' ')
+    const at = flat.indexOf('isBusy(\'whole\') ? stopWholeShow()')
+    expect(at, '找不到主按钮那个 onclick').toBeGreaterThan(-1)
+    const handler = flat.slice(at, at + 160)
+    expect(handler, '主按钮没先判 showTodo').toContain(
+      'showTodo ? runWholeShow() : startAll()',
+    )
+    expect(handler, 'pending 又排到前面去了 = 退回三岔').not.toContain('pending ?')
+  })
+
+  it('“只跑这一章”没被丢掉，挪到旁边那排了', () => {
+    // 改完一章想先看它一个的人要得到。
+    expect(shots).toContain('只跑这一章')
+  })
+})
