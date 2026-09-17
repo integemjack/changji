@@ -134,6 +134,9 @@ bool JobTable::start(JobKind kind, const std::string& episode_id, Body body,
         pipeline::Activity act{to_string(kind), project, std::string{},
                                task_title};
         act.task().token().link(&slot(kind).token);
+        // 顶栏那块牌子把任务表和短活接成一个列表，这一件两边都在——
+        // 打个记号，短活那一份跳过它，别数两遍。
+        act.task().mark_long_job();
         JobProgress progress(this, kind);
         try {
             body(progress);

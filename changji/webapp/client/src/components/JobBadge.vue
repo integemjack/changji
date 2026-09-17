@@ -190,8 +190,13 @@ async function go(row) {
       @click.stop="open = !open"
     >
       <span class="jb__dot" />
-      <span class="jb__t">AI 作业中</span>
-      <span v-if="running > 1" class="jb__n">{{ running }}</span>
+      <!-- **写「任务」，不写「AI 作业中」**（用户 2026-09-17）：底下点进去
+           的那一页就叫任务，两处一个词。 -->
+      <span class="jb__t">任务</span>
+      <!-- **一件也要报数。** 原来是 `running > 1` 才显示，于是只有一件在跑
+           时顶栏不写数，而任务页面上「正在做 1」——两处对不上正是从这儿
+           开始看着别扭的。 -->
+      <span v-if="running" class="jb__n">{{ running }}</span>
       <!-- 排队的单独说。混进上面那个数的话，"3 件"里可能只有 1 件真在跑，
            而用户是照着这个数判断"还要等多久"的。 -->
       <span v-if="queued" class="jb__q">+{{ queued }} 排队</span>

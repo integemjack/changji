@@ -65,12 +65,11 @@ describe('没有 WebSocket 时那几格还得动', () => {
 
 describe('引擎那两头都要带 target', () => {
   it('短活那一行（出参考图走这条）', () => {
-    const src = cpp('src/pipeline/activity.cpp')
-    expect(src).toContain('{"target", row.target}')
-    expect(src).toContain('void Activity::set_target')
-    // **按名字写。** 往 Row 中间插字段时按位置那种写法会把 0 塞进
-    // std::string，构造当场 SIGSEGV——加这个字段那一次就炸了四个测试。
-    expect(src).toContain('.kind = std::move(kind)')
+    // 这一族的账 2026-09-17 整个搬到了 `task_board.cpp`（三个状态收成一
+    // 本，`Activity` 只剩一层壳）。这一栏跟着搬，**这条用例也跟着搬**，
+    // 别留在只剩壳的那个文件上——那样它会一直绿着，而数据早不在那儿了。
+    expect(cpp('src/pipeline/task_board.cpp')).toContain('{"target", row->target}')
+    expect(cpp('src/pipeline/activity.cpp')).toContain('void Activity::set_target')
   })
 
   it('长跑任务那一行也要有这一栏，哪怕是空串', () => {

@@ -66,8 +66,13 @@ onUnmounted(() => clearInterval(timer))
     :title="hint"
   >
     <span class="lamp__dot" :class="{ 'lamp__dot--pulse': checking }" />
-    <span class="lamp__text">
-      {{ status ? (status.online ? '引擎已连接' : '引擎离线') : '检查中' }}
+    <!-- **接上了就只剩那个点。**
+         用户 2026-09-17：「引擎已经连接只显示前面的状态」。「引擎已连接」
+         这四个字在顶栏上一直占着位置，而它说的是**常态**——常态不需要一行
+         字，一个亮着的点就够，全文在 title 上。
+         出事的两种照旧写出来：「引擎离线」要人看见，「检查中」要人别急。 -->
+    <span v-if="!status || !status.online" class="lamp__text">
+      {{ status ? '引擎离线' : '检查中' }}
     </span>
     <AppIcon v-if="status && !status.online" name="warn" :size="13" />
   </RouterLink>

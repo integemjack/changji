@@ -35,6 +35,8 @@ struct Row {
     std::string thinking;
     std::string error;
     TaskState state = TaskState::Queued;
+    /// 长跑任务表里也有一份，见 Task::mark_long_job。
+    bool long_job = false;
     int current = 0;
     int total = 0;
     Clock::time_point queued_at{};
@@ -216,6 +218,7 @@ void Task::append_thinking(const std::string& piece) {
         })
 }
 void Task::fail(std::string why) { CHANGJI_TASK_MUTATE(row.error = std::move(why);) }
+void Task::mark_long_job() { CHANGJI_TASK_MUTATE(row.long_job = true;) }
 void Task::set_progress(int current, int total) {
     CHANGJI_TASK_MUTATE(row.current = current; row.total = total;)
 }
@@ -267,6 +270,9 @@ nlohmann::json running_activities() {
     nlohmann::json out = nlohmann::json::array();
     for (const auto& [id, row] : b.live) {
         if (row->state != TaskState::Running) continue;
+        // **长跑那几条跳过**：`running_work` 把这份和任务表那份接成一个
+        // 列表，不跳的话同一件活在顶栏上数两遍。见 Task::mark_long_job。
+        if (row->long_job) continue;
         out.push_back({
             {"kind", row->kind},
             {"project", row->project},
