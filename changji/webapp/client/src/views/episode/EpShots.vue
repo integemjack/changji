@@ -731,24 +731,6 @@ async function peekPlanPayload() {
  *
  * 引擎那头已经落库了，这儿把这一集重新拉一遍。
  */
-/**
- * 时间轴上这一条占多宽（百分比）。
- *
- * **原来是 `Math.max(2, 真实占比)`**，那个 2% 是给短镜头留的可点面积。
- * 151 镜的时候它就成了 151×2% = 302%——一条本该"一眼看完整集"的带子
- * 冲出去两屏宽，后面的镜号叠成一片认不出的墨迹（用户 2026-09-17：
- * 「上面的分镜数字显示都超出屏幕了」）。
- *
- * 现在按真实占比铺，加起来正好 100%。可点面积交给 CSS 的 min-width
- * （2px，加上 2px 的间隙，一条 0.5 秒的镜头在十分钟的集里也还点得到），
- * 而**镜号显不显示由每条自己的宽度决定**，见 .tl 那段容器查询。
- */
-function barPct(s) {
-  const d = s.real_duration_s ?? s.duration_s ?? 0
-  const total = totalDuration.value || 1
-  return (d / total) * 100
-}
-
 async function onPastedShots() {
   await session.refresh()
   await load()
@@ -1657,10 +1639,11 @@ onDeactivated(() => {
     </EmptyState>
 
     <template v-else>
-      <!-- 时间轴：一集里哪几镜特别长、哪一段全是特写，扫一眼就知道，
-           而在一面等大的墙上是看不出来的。
-           ⚠️ **它的全部价值在"一眼看见整集"**，所以必须装得下。装不下的
-           那一版（151 镜挤成两屏宽）等于把这个价值整个抹掉了，见 barPct。 -->
+      <!-- 镜号带：一格一镜，颜色是状态，点了跳到那一镜。
+           **原来是按时长铺的时间轴**（长镜头占的格子宽），151 镜的时候
+           每格只剩 2~5px，"哪几镜特别长"这个信号本来就没了，而镜号叠成
+           一片墨迹。用户 2026-09-17：「用小方块，支持换行」——等大的方块
+           换行排，每个镜号都读得出来，时长交给指上去那句提示。 -->
       <div class="timeline">
         <div class="timeline__bars">
           <button
@@ -1669,7 +1652,6 @@ onDeactivated(() => {
             class="tl"
             :class="[`tl--${shotTone(s)}`, { 'tl--on': openId === s.shot_id }]"
             type="button"
-            :style="{ width: barPct(s) + '%' }"
             :title="`${s.order + 1}. ${sizeLabel(s.shot_size)} ${(s.real_duration_s ?? s.duration_s)}s`"
             @click="toggle(s)"
           >
@@ -2213,8 +2195,16 @@ onDeactivated(() => {
   flex: 1 1 320px;
   min-width: 0;
   display: flex;
-  gap: 2px;
-  height: 26px;
+  /* **换行。** 一集一百多镜，不换行只有两条路：挤成认不出的墨迹，
+     或者横着滚——前者是原来那样，后者就没法一眼看完整集了。 */
+  flex-wrap: wrap;
+  gap: 3px;
+  /* **封个顶，超了在自己框里滚。** 宽屏上 151 镜正好五行，碰不到这个顶；
+     而 375px 上一行只放得下六格，151 镜就是 26 行七百多像素——整屏被它
+     吃掉，真正要看的镜头格全被推到屏幕外面去了。 */
+  max-height: calc(24px * 5 + 3px * 4);
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 .timeline__legend {
   display: flex;
@@ -2222,38 +2212,27 @@ onDeactivated(() => {
   flex: none;
   white-space: nowrap;
 }
+/* 等大的小方块。**容得下三位数**：151 镜那集最后一格写的是「151」，
+   10px 字号下大约 16px 宽，给到 24 见方还剩点余量。 */
 .tl {
   border: none;
   border-radius: 3px;
   padding: 0;
-  /* 10px × 151 条就是 1510px，比这条带子宽一倍。2px 够点得到，
-     也够看出"这儿有一镜"。 */
-  min-width: 2px;
+  width: 24px;
+  height: 24px;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   cursor: pointer;
   background: var(--bg-sunken);
   color: var(--text-3);
   font-size: 10px;
-  overflow: hidden;
-  /* 每一条自己当一个容器，镜号按**这一条**有多宽来决定显不显示 */
-  container-type: inline-size;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
 }
-/* **默认不显示镜号。** 装不下的时候硬挤出来的是一片认不出的墨迹，比没有
-   更糟；而每一条本来就带 title（「12. 中景 4.0s」），指上去就知道是哪镜。
-   够宽了再露出来——判据是这一条自己的宽度，不是镜头总数：同样 151 镜，
-   宽屏上前几条长镜头照样容得下数字。
-   老浏览器不支持容器查询时这一条不生效，那时候是"都不显示"，
-   而不是回到那片墨迹。 */
-.tl__n {
-  display: none;
-}
-/* 13px：两位数在 10px 字号下大约 11~12px 宽，再留一点余量。定高了的话
-   这一条永远不会出现——151 镜那集最宽的一条也才 5px，而 81 镜那集的长镜头
-   在 14px 上下，正好卡在门槛两边。 */
-@container (min-width: 13px) {
-  .tl__n {
-    display: inline;
-  }
-}
+/* 方块等大之后镜号一律显示——它本来就是这一格的身份，藏起来就只能靠
+   指上去问了。 */
 .tl--info { background: color-mix(in srgb, var(--info) 45%, transparent); }
 .tl--warn { background: color-mix(in srgb, var(--warn) 45%, transparent); }
 .tl--ok   { background: color-mix(in srgb, var(--ok) 45%, transparent); }
