@@ -506,6 +506,26 @@ function onKey(event) {
 
 /** 给全项目还没分镜的章补分镜。2026-09-16 从设定的章节那一格搬回来的。 */
 /**
+ * 「跑完整部剧」跑到一半被按了停。
+ *
+ * **前两步（改编、补分镜）跑在"写"那个槽上，而页面上那颗「停下」只在出片
+ * 那个槽跑着时才出现**——也就是说链条的前两步原来在这一页上按不停，而
+ * 按钮的提示里却写着"按「停下」可以中断"。空头支票，2026-09-17 当天补的。
+ */
+const wholeAbort = ref(false)
+
+/** 中断整条链：先把旗子立起来（下一步不再发），再停掉"写"槽上那一件。 */
+async function stopWholeShow() {
+  wholeAbort.value = true
+  try {
+    await api.stopSeries()
+  } catch {
+    // 停不掉就算了：旗子已经立起来，链条走到下一步之前会自己收手。
+    // 当前这一件跑完为止——和出片那条「停下」是同一个语义。
+  }
+}
+
+/**
  * 跑完整部剧：没剧本的先改编、没分镜的补上、再把还差的镜头出完。
  *
  * **2026-09-17 用户定的：并成一颗，一路跑到底。** 在那之前这是三个页面上
@@ -521,8 +541,11 @@ function onKey(event) {
  */
 async function runWholeShow() {
   const project = session.projectPath
+  wholeAbort.value = false
   let stopped = false
-  const cancelled = () => stopped || !session.projectPath || session.projectPath !== project
+  const cancelled = () =>
+    stopped || wholeAbort.value || !session.projectPath ||
+    session.projectPath !== project
 
   // 等"写"那个槽闲下来。**不是定时器猜**：seriesStatus 就是那个槽的实况。
   const waitWrite = async () => {
@@ -1276,16 +1299,24 @@ onDeactivated(() => {
             (pending
               ? '把还没出片的那几镜跑完'
               : showTodo
-                ? `这一章出完了。接着一路跑完整部剧：没剧本的先改编、没分镜的补上、再把还差的 ${projectPending} 镜出完——中途不用回来点，按「停下」可以中断`
+                ? `这一章出完了。接着一路跑完整部剧：没剧本的先改编、没分镜的补上、再把还差的 ${projectPending} 镜出完——中途不用回来点；跑起来之后这颗按钮自己变成「停下」`
                 : '每一镜都有片了；点了会全部重出')
           "
-          :disabled="blocked || starting || isBusy('whole')"
-          @click="pending || !showTodo ? startAll() : runWholeShow()"
+          :disabled="(blocked || starting) && !isBusy('whole')"
+          @click="
+            isBusy('whole')
+              ? stopWholeShow()
+              : pending || !showTodo
+                ? startAll()
+                : runWholeShow()
+          "
         >
-          <AppIcon name="film" :size="15" />
+          <AppIcon :name="isBusy('whole') ? 'pause' : 'film'" :size="15" />
           {{
             isBusy('whole')
-              ? '跑着整部剧…'
+              ? wholeAbort
+                ? '停着…'
+                : '停下（跑着整部剧）'
               : pending
                 ? `出片（差 ${pending}）`
                 : showTodo

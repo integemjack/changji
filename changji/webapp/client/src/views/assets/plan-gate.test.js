@@ -83,4 +83,15 @@ describe('补全项目分镜这件事在「这一章」那一页', () => {
     expect(fn, '没等写那个槽').toContain('seriesStatus')
     expect(fn, '没认取消').toContain('cancelled()')
   })
+  it('跑起来之后主按钮自己变成「停下」——前两步在这一页本来按不停', () => {
+    // 前两步跑在"写"那个槽上，而页面上原来那颗「停下」只在出片那个槽跑着
+    // 时才出现。提示里却写着"按停下可以中断"——空头支票。
+    expect(shots).toContain('async function stopWholeShow')
+    expect(shots, '没停写那个槽').toContain('api.stopSeries()')
+    expect(shots, '旗子没立').toContain('wholeAbort')
+    // 按下去之后链条不再往下发：cancelled() 认这面旗子
+    const at = shots.indexOf('const cancelled = () =>')
+    expect(at).toBeGreaterThan(0)
+    expect(shots.slice(at, at + 200)).toContain('wholeAbort.value')
+  })
 })
