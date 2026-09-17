@@ -18,7 +18,9 @@
 
 #include "config/settings.hpp"
 #include "http/projects.hpp"
+#include "http/readonly.hpp"
 #include "models/project.hpp"
+#include "models/shot.hpp"
 #include "pipeline/jobs.hpp"
 #include "util/paths.hpp"
 #include "util/text.hpp"
@@ -638,3 +640,32 @@ TEST_CASE("新建项目时落一份标准的项目配置") {
         CHECK(after == before);
     }
 }
+
+TEST_CASE("每一集报的「几镜」数的是能用的，不是数组长度") {
+    // 这个数是三处的判据：顶栏那几个步骤对勾（http/flow.cpp 的 has_shots）、
+    // 镜头页按钮上的「还差 N 章分镜」、下拉里的「（17 镜）」。空壳镜头
+    // （shot_id 是空串）指不到任何文件、进不了任何一步——报数组长度的话，
+    // 一章空壳在这三处都显示成"已经有分镜了"。2026-09-17 实见 ep07。
+    Workspace ws("数镜头");
+    auto store = models::ProjectStore::create(ws.root / "剧", "p-1", "剧",
+                                              models::StyleLine::REALISTIC);
+    models::Project pj = store.load_project();
+    models::Episode ep;
+    ep.episode_id = "ep01";
+    models::Shot good;
+    good.shot_id = "ep01_sh001";
+    ep.shots.push_back(good);
+    ep.shots.push_back(models::Shot{});   // 空壳
+    ep.shots.push_back(models::Shot{});
+    pj.episodes.push_back(ep);
+    store.save_project(pj);
+
+    const auto r = http::guard([&] {
+        return http::get_project(paths::to_utf8(store.root()));
+    });
+    REQUIRE(r.status == 200);
+    const auto& eps = r.body.at("episodes");
+    REQUIRE(eps.size() == 1);
+    CHECK(eps[0].at("shots") == 1);   // 三镜里只有一镜能用
+}
+

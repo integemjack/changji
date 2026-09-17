@@ -212,7 +212,22 @@ ApiResult get_project(const std::string& path) {
             {"episode_id", e.episode_id},
             {"title", e.title},
             {"synopsis", e.synopsis},
-            {"shots", static_cast<int>(e.shots.size())},
+            // **数的是"能用的镜头"，不是数组长度。**
+            //
+            // 空壳镜头（shot_id 是空串）指不到任何文件、进不了任何一步。
+            // 而这个数是好几处的判据：顶栏那几个步骤对勾（http/flow.cpp 的
+            // has_shots）、镜头页那颗按钮上的「还差 N 章分镜」、下拉里的
+            // 「（17 镜）」。报数组长度的话，一章空壳在这三处都显示成
+            // "已经有分镜了"。2026-09-17 实见 ep07 就是这样。
+            //
+            // 正常流程产不出空壳（那个 bug 当天修了，见 stages/render.cpp
+            // 的 Done::ran），但存盘被截断、手工改坏一样留得下——而**"有
+            // 几镜"的答案本来就不是数组长度**。批量补分镜那条判据同日改成
+            // 一样的口径（http/batch.cpp）。
+            {"shots", static_cast<int>(std::count_if(
+                          e.shots.begin(), e.shots.end(), [](const auto& s) {
+                              return !text::strip_ws(s.shot_id).empty();
+                          }))},
             // **挂在哪一章。** 界面靠它分辨"两条看起来一样的集"：一章一集
             // 是现在的规矩，而规矩立起来之前留下的重复（两个集挂同一章）
             // 在下拉里长得一模一样——2026-09-16 实见 ep08 和 ep09 都写着
