@@ -249,17 +249,23 @@ struct WorkerPool::Impl {
             }
         }
 
-        auto res = cli.Post(prefix + "/task", to_json(t).dump(),
-                            "application/json");
-        if (!res) {
-            throw Unreachable("连不上工作进程 " + workers[idx].ep.url + "：" +
-                              httplib::to_string(res.error()));
-        }
-        if (res->status == 409) {
-            throw std::runtime_error("工作进程 " + workers[idx].ep.url +
-                                     " 正忙。**这不该发生**——"
-                                     "池这边已经不派给忙着的了，"
-                                     "多半是有别人也在用同一个工作进程");
+        const std::string body = to_json(t).dump();
+        httplib::Result res;
+        for (;;) {
+            res = cli.Post(prefix + "/task", body, "application/json");
+            if (!res) {
+                throw Unreachable("连不上工作进程 " + workers[idx].ep.url +
+                                  "：" + httplib::to_string(res.error()));
+            }
+            if (res->status != 409) break;
+            // **409 = 那台此刻满了，不是坏了，也不是这一镜的错。** 本池
+            // 不会派给自己标忙的位置，所以能撞上 409 的只有"别人也在往
+            // 它派"：另一个池（首帧和出片机器不同时各有一个池）、或者
+            // 另一台调度机。以前这儿抛错、当渲染失败记一次重试，三次就
+            // 降级——一镜一秒钟活都没干成就被判死。等几秒再问，它空了
+            // 就接；只有取消能打断。
+            if (tok.cancelled()) throw std::runtime_error("取消了");
+            std::this_thread::sleep_for(std::chrono::seconds(3));
         }
         if (res->status != 202 && res->status != 200) {
             // 这句话会进事件流再序列化成 JSON，body 得按字符截，

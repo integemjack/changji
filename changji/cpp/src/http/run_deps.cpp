@@ -244,7 +244,16 @@ RunDeps default_run_deps() {
                                                         local_runner,
                                                         s.models.pick)
                               : nullptr;
-        auto video_pool = worth_pooling(video_eps)
+        // **两边是同一批机器就共用一个池。** 首帧和出片现在同时跑
+        //（pipeline/shot_flow.hpp），各建一个池的话，同一台机器在两个池里
+        // 各占两个位置、加起来四个，而它只有两张卡——多出来的两件到了
+        // 那台就是 409，本地把 409 当渲染失败，一镜三次之后降级
+        //（2026-09-17 实撞：ep07 前两镜就是这么没的）。一个池，位置数
+        // 才是那台真有的卡数，首帧和出片在同一批位置上自然交错。
+        // 两边机器不一样（有台只装了出图模型）才各建各的。
+        auto video_pool = (frame_pool && video_eps == frame_eps)
+                              ? frame_pool
+                          : worth_pooling(video_eps)
                               ? infer::make_worker_pool(with_tokens(video_eps),
                                                         local_runner,
                                                         s.models.pick)
@@ -256,7 +265,8 @@ RunDeps default_run_deps() {
         }
         if (video_pool) {
             b.video = video_pool->video_renderer();
-            b.keepalive.push_back(video_pool);
+            // 共用时上面已经留过一次，别留两份
+            if (video_pool != frame_pool) b.keepalive.push_back(video_pool);
         }
         if (frame_pool || video_pool) {
             const std::size_t n =
