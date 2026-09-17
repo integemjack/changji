@@ -96,19 +96,6 @@ public:
     /// **别等跑到一半才发现有一个是死的**。
     std::size_t alive() const;
 
-    /// 把一件任务派给池里空着的那个工作进程，跑完回结果。
-    ///
-    /// **给"这台机器替别人干活"那条路用的。** 主程序挂着节点协议之后
-    /// （一台机器一个进程、一条连接），外来任务原来是在主进程里就地跑的
-    /// ——而一个进程只能用一张卡（CUDA_VISIBLE_DEVICES 在后端初始化时就
-    /// 读走了，跑起来改不了）。用户 2026-09-17：「只用了一张卡」。
-    ///
-    /// 交给池之后，多卡机上那几个按卡拉起的子进程才吃得到外来的活。
-    /// 三个 renderer 走的也是同一条路（它们各自拼好 Task 再进这儿），
-    /// 所以档位、重试、隔离那几条规矩一视同仁。
-    TaskResult run(const Task& task, const StepCallback& on_step,
-                   pipeline::CancelToken& tok);
-
     /// 出图。签名和 `stages::sd_renderer()` 回的那个一样，可以直接顶替。
     stages::FrameRenderer frame_renderer();
 

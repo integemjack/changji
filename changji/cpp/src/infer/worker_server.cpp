@@ -53,19 +53,10 @@ struct Live {
 
 struct State {
     std::mutex mu;
-    /// 手上正在跑的那几件，按任务 id。
-    ///
-    /// **满了就 409，不排队**——排队会让协调者那边的并发上限失效：
-    /// 它以为派出去的都在跑，实际有几个在这儿排着。
-    ///
-    /// ⚠️ **槽数不是 1。** 2026-09-17 之前这儿写死一件，那对
-    /// `--worker` 是对的（一个进程绑一张卡）。可主程序也挂这套接口之后
-    /// （一台机器一个进程、一条连接），**一台双卡机就成了单槽节点**——
-    /// 派活那头的首帧池和出片池各拿着同一个 URL，第二个任务当场 409。
-    /// 实撞：19 镜栽在「工作进程 … 正忙。**这不该发生**」上。
-    /// 槽数跟着卡数走，见 slots 的赋值处。
-    std::map<std::string, std::shared_ptr<Live>> running;
-    std::size_t slots = 1;
+    /// **一次只有一个。** 多了就 409，不排队——排队会让协调者那边的
+    /// 并发上限失效：它以为派出去的都在跑，实际有几个在这儿排着。
+    std::shared_ptr<Live> current;
+    std::string current_id;
     std::atomic<std::uint64_t> next_id{1};
 };
 
@@ -87,8 +78,7 @@ void mount_worker_api_impl(crow::SimpleApp& app,
                            const config::Settings& settings,
                            const WorkerOptions& opts,
                            const models::HardwareProfile& profile,
-                           const std::shared_ptr<State>& state,
-                           const TaskRunner& runner) {
+                           const std::shared_ptr<State>& state) {
     // **这台的自我介绍。** 别的机器靠它决定派不派活过来：能力齐不齐、
     // 卡多大、模型目录还剩多少。拼的地方只有一处（node_status.cpp），
     // 界面上那张表和 --doctor 末尾那句用的是同一份。
@@ -122,7 +112,7 @@ void mount_worker_api_impl(crow::SimpleApp& app,
         std::lock_guard lg(state->mu);
         return json_res({{"ok", true},
                          {"gpu", opts.gpu},
-                         {"busy", state->running.size() >= state->slots}});
+                         {"busy", state->current != nullptr}});
     });
 
     // ---- 装模型：让派活那头能指挥这台去补齐 ----
@@ -232,7 +222,7 @@ void mount_worker_api_impl(crow::SimpleApp& app,
     });
 
     CROW_ROUTE(app, "/task").methods(crow::HTTPMethod::POST)(
-        [state, settings, gate, runner](const crow::request& req) {
+        [state, settings, gate](const crow::request& req) {
             if (auto deny = gate(req)) return std::move(*deny);
             // **先看这串字节是不是合法 UTF-8。** 不是的话下面每一条
             // 路都会炸在同一个地方：nlohmann 解析时照单全收，而把出错
@@ -263,7 +253,7 @@ void mount_worker_api_impl(crow::SimpleApp& app,
             }
 
             std::lock_guard lg(state->mu);
-            if (state->running.size() >= state->slots) {
+            if (state->current) {
                 // **不排队。** 见文件头。
                 return json_res({{"detail", "正忙"}, {"busy", true}}, 409);
             }
@@ -276,7 +266,7 @@ void mount_worker_api_impl(crow::SimpleApp& app,
             // **建完就 detach**，见 Live 的注释。live 是 shared_ptr，
             // 被 lambda 捕获一份，线程跑多久它就活多久。
             // id 也捕一份：跨机时沙箱按它起名（<cache>/tasks/<id>）。
-            std::thread([state, live, task, settings, id, runner] {
+            std::thread([state, live, task, settings, id] {
                 const auto on_step = [state, live](int step, int steps,
                                                   double, Phase phase) {
                     std::lock_guard lg(state->mu);
@@ -303,20 +293,15 @@ void mount_worker_api_impl(crow::SimpleApp& app,
                 //  `sd_renderer_with_seed(settings, task.seed)`——采样旋钮
                 //  要跟着这一集的 settings 走。搬进 run_task_locally 之后
                 //  那个参数还在，见 task_run.cpp 里那一行。）
-                // **给了执行器就交给它。** 主程序传的是交给本机那几张卡
-                // （见头文件上 TaskRunner 那段）：一个进程只能用一张卡，
-                // 就地跑的话双卡机上永远只有一张在动。
-                // `--worker` 不传，照旧就地跑——它本来就绑着一张卡。
-                const TaskResult result =
-                    runner ? runner(task, on_step, live->tok)
-                           : run_task_locally(task, settings, Origin::Local, id,
-                                              on_step, live->tok);
+                const TaskResult result = run_task_locally(
+                    task, settings, Origin::Local, id, on_step, live->tok);
                 std::lock_guard lg(state->mu);
                 live->progress.state = result.ok ? "done" : "failed";
                 live->progress.result = result;
             }).detach();
 
-            state->running[id] = live;
+            state->current = live;
+            state->current_id = id;
             return json_res({{"id", id}}, 202);
         });
 
@@ -324,14 +309,14 @@ void mount_worker_api_impl(crow::SimpleApp& app,
         [state, gate](const crow::request& req, const std::string& id) {
         if (auto deny = gate(req)) return std::move(*deny);
         std::lock_guard lg(state->mu);
-        const auto it = state->running.find(id);
-        if (it == state->running.end()) {
+        if (!state->current || state->current_id != id) {
             return json_res({{"detail", "没有这个任务"}}, 404);
         }
-        auto p = it->second->progress;
+        auto p = state->current->progress;
         if (p.state == "done" || p.state == "failed") {
             // 收完就放，好接下一个
-            state->running.erase(it);
+            state->current.reset();
+            state->current_id.clear();
         }
         // 预览只在问了、而且比它手里那张新时才带（几十 KB 一张，见
         // TaskProgress::preview）。没问的轮询一个字节都不多。
@@ -345,18 +330,17 @@ void mount_worker_api_impl(crow::SimpleApp& app,
             [state, gate](const crow::request& req, const std::string& id) {
             if (auto deny = gate(req)) return std::move(*deny);
             std::lock_guard lg(state->mu);
-            const auto it = state->running.find(id);
-            if (it == state->running.end()) {
+            if (!state->current || state->current_id != id) {
                 return json_res({{"detail", "没有这个任务"}}, 404);
             }
-            it->second->tok.request();
+            state->current->tok.request();
             return json_res({{"ok", true}});
         });
 
 }
 
 bool mount_worker_api(crow::SimpleApp& app, const config::Settings& settings,
-                      const WorkerOptions& opts, TaskRunner runner) {
+                      const WorkerOptions& opts) {
     // **对外监听而没设口令就不挂。** 挂了等于谁都能派活过来烧这张卡、
     // 读走这台有哪些模型。判据和 run_worker 用的是同一个。
     if (const auto why = refuse_to_listen(opts.host, settings.peer.token);
@@ -367,21 +351,9 @@ bool mount_worker_api(crow::SimpleApp& app, const config::Settings& settings,
     // 只探一次，理由同 run_worker：detect 会跑 nvidia-smi。
     static const auto profile =
         models::HardwareProfile::detect(settings.vram_gb_override);
-    // **槽数跟着卡数走。**
-    //
-    // `--worker` 那条是一个进程绑一张卡，所以它一次只跑一件。主程序不一样：
-    // 它管着这台机器的全部卡（多卡时 WorkerFarm 给每张卡拉一个子进程），
-    // 而对外它只是**一个**节点、一条连接——这正是用户要的形状。
-    // 那么它能同时接的件数就该是卡数，否则一台双卡机在派活那头是单槽，
-    // 首帧池和出片池各拿着同一个 URL，第二个当场 409
-    // （2026-09-17 实撞，19 镜栽在「正忙。**这不该发生**」上）。
-    //
-    // 探不到卡就按 1：CPU 机上本来也只跑得动一件。
+    // 一次只跑一件，和工作进程同一条规矩（见 State 上面那段）。
     static auto state = std::make_shared<State>();
-    state->slots = profile.gpu.has_value()
-                       ? static_cast<std::size_t>(std::max(1, profile.gpu->count))
-                       : 1;
-    mount_worker_api_impl(app, settings, opts, profile, state, runner);
+    mount_worker_api_impl(app, settings, opts, profile, state);
     return true;
 }
 
@@ -449,7 +421,7 @@ bool run_worker(const config::Settings& settings, const WorkerOptions& opts) {
     // 别的连接上的 /task、轮询照常有人接。
     app.concurrency(4);
 
-    mount_worker_api_impl(app, settings, opts, profile, state, {});
+    mount_worker_api_impl(app, settings, opts, profile, state);
 
     CROW_LOG_INFO << "工作进程 gpu=" << opts.gpu << " 听 " << opts.host << ":"
                   << opts.port;
@@ -483,19 +455,19 @@ bool run_worker(const config::Settings& settings, const WorkerOptions& opts) {
     // 最多等 30 秒，然后 _Exit：跳过所有析构。工作进程没有任何值得析构的
     // 东西——它的全部状态是内存里的模型缓存，进程一没就没了。
     {
-        std::vector<std::shared_ptr<Live>> running;
+        std::shared_ptr<Live> running;
         {
             std::lock_guard lg(state->mu);
-            for (auto& [_, live] : state->running) running.push_back(live);
+            running = state->current;
         }
-        for (const auto& one : running) {
-            one->tok.request();
+        if (running) {
+            running->tok.request();
             const auto deadline =
                 std::chrono::steady_clock::now() + std::chrono::seconds(30);
             for (;;) {
                 {
                     std::lock_guard lg(state->mu);
-                    const auto& st = one->progress.state;
+                    const auto& st = running->progress.state;
                     if (st == "done" || st == "failed") break;
                 }
                 if (std::chrono::steady_clock::now() > deadline) break;
