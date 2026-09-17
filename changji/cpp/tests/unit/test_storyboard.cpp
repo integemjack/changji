@@ -9,6 +9,8 @@
 
 #include <doctest/doctest.h>
 
+#include <algorithm>
+
 #include <fstream>
 #include <set>
 #include <sstream>
@@ -160,29 +162,22 @@ TEST_CASE("配额描述里的时长不带小数点") {
     }
 }
 
-TEST_CASE("提示词和 Python 逐字节一致") {
-    for (const auto& c : golden().at("prompts")) {
-        const std::string ep = c.at("episode_id").get<std::string>();
-        CAPTURE(ep);
-        const bool no_loc = c.value("no_locations", false);
-        const models::AssetLibrary a = test_assets(!no_loc);
-        const stages::DurationQuota q =
-            stages::DurationQuota::for_duration(c.at("target_s").get<double>());
-
-        const std::string got = stages::build_storyboard_prompt(
-            c.at("script").get<std::string>(), a, q, ep);
-        const std::string want = c.at("prompt").get<std::string>();
-        if (got != want) {
-            std::size_t i = 0;
-            while (i < got.size() && i < want.size() && got[i] == want[i]) ++i;
-            MESSAGE("第一处不同在字节 " << i);
-            MESSAGE("期望…" << want.substr(i > 40 ? i - 40 : 0, 90));
-            MESSAGE("实得…" << got.substr(i > 40 ? i - 40 : 0, 90));
-        }
-        CHECK(got == want);
-    }
-}
-
+// ---------------------------------------------------------------------------
+// 「和 Python 逐字节一致」那几条，2026-09-17 退役
+// ---------------------------------------------------------------------------
+//
+// 语料是当年冻下来的 Python 答案，用来证明移植没走样。**Python 引擎
+// 2026-09-10 就删了**，那个用途从那天起就没了；断言还在，实际效果变成
+// 「提示词和 schema 永远改不动」。
+//
+// 这一天里它挡住了三处量出来的改进：`camera_move` 的分类式禁令（模型对每
+// 一镜重新论证一遍，一场戏想十五万字）、从没被填过的 `visual_desc`
+//（两个项目 76% 和 100% 是空的）、以及 schema 的排版。用户拍板退役。
+//
+// **换掉的不是"有守卫"，是"守卫钉的是什么"**：钉结构（字段在不在、必填掉
+// 没掉）而不是钉字节。前者是真出事——模型按错的名字产出、或者整个略过一栏，
+// 全程不报错；后者只是让人改不动一句话。
+//
 TEST_CASE("没有场景时提示词里有那句占位") {
     const models::AssetLibrary a = test_assets(/*with_locations=*/false);
     const auto q = stages::DurationQuota::for_duration(60.0);
@@ -191,23 +186,47 @@ TEST_CASE("没有场景时提示词里有那句占位") {
     CHECK(p.find("（未定义场景，location_id 留空）") != std::string::npos);
 }
 
-TEST_CASE("给大模型的 schema 和 Python 一致") {
-    // 字段名错一个，模型就按错的名字产出，解析阶段拿到一堆空值——
-    // 不报错，跑完一整集才发现。
-    for (const auto& c : golden().at("schemas")) {
-        const std::string name = c.at("name").get<std::string>();
-        CAPTURE(name);
-        const models::AssetLibrary a = test_assets(name == "带场景");
-        const json got = json(stages::llm_shot_schema(a));
-        if (got != c.at("schema")) {
-            // 整份 dump 太长，先报哪些顶层键对不上
-            for (const auto& item : c.at("schema").items()) {
-                if (!got.contains(item.key()) || got[item.key()] != item.value()) {
-                    MESSAGE("顶层键对不上：" << item.key());
-                }
-            }
+TEST_CASE("给大模型的 schema：该有的栏都在，必填的都在 required 里") {
+    // ⚠️ **这条原来叫「给大模型的 schema 和 Python 一致」**，整份逐字节比。
+    // Python 引擎 2026-09-10 就删了，那个用途早没了——剩下的效果只有一个：
+    // 这份 schema 的每一个字都改不动。2026-09-17 一天里它挡住了三处量出来的
+    // 改进（camera_move 的描述、摘掉从没被填过的 visual_desc、schema 排版），
+    // 用户拍板退役。
+    //
+    // 换成钉**结构**。真正会出事的是字段名错、或者某一栏掉出 required——
+    // 「不在 required 里的字段模型整个略过」是这套东西上反复出现的那条机制
+    //（2026-09-13 的 198/198、2026-09-17 的 visual_desc 151/151）。
+    // 而改一句描述不该红，那正是我们一直想做的事。
+    const models::AssetLibrary a = test_assets(true);
+    const auto s = stages::llm_shot_schema(a);
+    const auto& item = s.at("properties").at("shots").at("items");
+    const auto& props = item.at("properties");
+
+    // 少一栏就红。**这张名单是"模型该填什么"的唯一出口**（kLlmShotFields）。
+    for (const char* k : {"shot_id", "scene_id", "order", "first_frame_prompt",
+                          "motion_prompt", "shot_size", "camera_angle",
+                          "camera_move", "lens", "lighting", "duration_s",
+                          "characters", "dialogue", "beat"}) {
+        CAPTURE(k);
+        CHECK_MESSAGE(props.contains(k), "这一栏从 schema 里没了");
+        bool required = false;
+        for (const auto& v : item.at("required")) {
+            if (v == k) required = true;
         }
-        CHECK(got == c.at("schema"));
+        CHECK_MESSAGE(required, "这一栏掉出 required 了，模型会整个略过");
+    }
+
+    // 外观那几栏一个都不许有：角色长什么样由程序从资产库拼，模型没有字段可填。
+    for (const char* k : {"appearance", "wardrobe", "hair", "face", "outfit"}) {
+        CAPTURE(k);
+        CHECK_FALSE(props.contains(k));
+    }
+    // 没人读的那几栏也不许回来（2026-09-16 / 09-17 各拿掉一批）。
+    for (const char* k : {"camera_id", "transition_in", "transition_dur_s",
+                          "subtitle_text", "continuity_notes", "missing_info",
+                          "visual_desc", "status", "frame_path", "video_path"}) {
+        CAPTURE(k);
+        CHECK_MESSAGE(!props.contains(k), "没人读的栏又回到 schema 里了");
     }
 }
 
@@ -430,24 +449,22 @@ TEST_CASE("漏填的说话人被补进角色列表") {
     }
 }
 
-TEST_CASE("解析出的镜头和 Python 一致") {
-    const models::AssetLibrary a = test_assets();
-    for (const auto& c : golden().at("parses")) {
-        const std::string name = c.at("name").get<std::string>();
-        CAPTURE(name);
-        const std::vector<models::Shot> shots =
-            stages::parse_storyboard(c.at("raw").get<std::string>(), a);
-
-        json got = json::array();
-        for (const models::Shot& s : shots) got.push_back(s);
-        if (got != c.at("shots")) {
-            MESSAGE("期望 " << c.at("shots").dump(1));
-            MESSAGE("实得 " << got.dump(1));
-        }
-        CHECK(got == c.at("shots"));
-    }
-}
-
+// ---------------------------------------------------------------------------
+// 「和 Python 逐字节一致」那几条，2026-09-17 退役
+// ---------------------------------------------------------------------------
+//
+// 语料是当年冻下来的 Python 答案，用来证明移植没走样。**Python 引擎
+// 2026-09-10 就删了**，那个用途从那天起就没了；断言还在，实际效果变成
+// 「提示词和 schema 永远改不动」。
+//
+// 这一天里它挡住了三处量出来的改进：`camera_move` 的分类式禁令（模型对每
+// 一镜重新论证一遍，一场戏想十五万字）、从没被填过的 `visual_desc`
+//（两个项目 76% 和 100% 是空的）、以及 schema 的排版。用户拍板退役。
+//
+// **换掉的不是"有守卫"，是"守卫钉的是什么"**：钉结构（字段在不在、必填掉
+// 没掉）而不是钉字节。前者是真出事——模型按错的名字产出、或者整个略过一栏，
+// 全程不报错；后者只是让人改不动一句话。
+//
 TEST_CASE("解析时的三处兜底") {
     // 这三条都是"模型没填对但不该让整条流水线挂掉"的情况。
     // 语料里那份分镜刻意留了这三个坑。

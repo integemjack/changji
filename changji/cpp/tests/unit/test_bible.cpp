@@ -9,6 +9,8 @@
 
 #include <doctest/doctest.h>
 
+#include <algorithm>
+
 #include <fstream>
 #include <string>
 
@@ -43,27 +45,22 @@ models::StyleLine line_from(const std::string& s) {
 
 }  // namespace
 
-TEST_CASE("提示词和 Python 逐字节一致") {
-    for (const auto& c : golden().at("prompts")) {
-        const std::string style = c.at("style_line").get<std::string>();
-        const std::string script = c.at("script").get<std::string>();
-        const std::string want = c.at("prompt").get<std::string>();
-        CAPTURE(style);
-
-        const std::string got = stages::build_bible_prompt(script, line_from(style));
-        if (got != want) {
-            // 长文本直接比失败时看不出差在哪，先报第一个不同的位置
-            std::size_t i = 0;
-            while (i < got.size() && i < want.size() && got[i] == want[i]) ++i;
-            MESSAGE("第一处不同在字节 " << i);
-            MESSAGE("期望…" << want.substr(i > 40 ? i - 40 : 0, 90));
-            MESSAGE("实得…" << got.substr(i > 40 ? i - 40 : 0, 90));
-            MESSAGE("长度 期望 " << want.size() << " 实得 " << got.size());
-        }
-        CHECK(got == want);
-    }
-}
-
+// ---------------------------------------------------------------------------
+// 「和 Python 逐字节一致」那几条，2026-09-17 退役
+// ---------------------------------------------------------------------------
+//
+// 语料是当年冻下来的 Python 答案，用来证明移植没走样。**Python 引擎
+// 2026-09-10 就删了**，那个用途从那天起就没了；断言还在，实际效果变成
+// 「提示词和 schema 永远改不动」。
+//
+// 这一天里它挡住了三处量出来的改进：`camera_move` 的分类式禁令（模型对每
+// 一镜重新论证一遍，一场戏想十五万字）、从没被填过的 `visual_desc`
+//（两个项目 76% 和 100% 是空的）、以及 schema 的排版。用户拍板退役。
+//
+// **换掉的不是"有守卫"，是"守卫钉的是什么"**：钉结构（字段在不在、必填掉
+// 没掉）而不是钉字节。前者是真出事——模型按错的名字产出、或者整个略过一栏，
+// 全程不报错；后者只是让人改不动一句话。
+//
 TEST_CASE("slug 和 Python 一致") {
     for (const auto& c : golden().at("slugs")) {
         const std::string in = c.at("input").get<std::string>();
@@ -244,10 +241,39 @@ TEST_CASE("抠不出 JSON 时抛的是 BibleError，这是有意和 Python 不�
                   "Python 侧似乎已经修好了，这条差异说明该从方案里删掉");
 }
 
-TEST_CASE("schema 结构和 Python 一致") {
-    // 这个 schema 要塞进请求体约束模型输出。字段名错一个，
-    // 模型就会按错的名字产出，然后解析阶段拿到一堆空字符串。
-    CHECK(json(stages::bible_schema()) == golden().at("schema"));
+TEST_CASE("定妆 schema 该有的栏都在，而且都在 required 里") {
+    // ⚠️ **这条原来叫「schema 结构和 Python 一致」**，拿当年冻下来的 Python
+    // 答案整份逐字节比。Python 引擎 2026-09-10 就删了，那个用途早没了——
+    // 剩下的效果只有一个：**这份 schema 的每一个字都改不动**。2026-09-17
+    // 一天里它挡住了三处量出来的改进（见 CLAUDE.md 砍提示词那一节），用户
+    // 拍板退役。
+    //
+    // 换成钉**结构**：字段少一个、必填掉一个会红，而改一句描述不会。前者
+    // 是真出事（模型按错的名字产出，解析阶段拿到一堆空字符串，全程不报错），
+    // 后者正是我们一直想做的事。
+    const auto s = stages::bible_schema();
+    for (const char* k : {"characters", "locations"}) {
+        CAPTURE(k);
+        REQUIRE(s.at("properties").contains(k));
+        CHECK(s.at("properties").at(k).at("type") == "array");
+    }
+    const auto& req = s.at("required");
+    CHECK(std::find(req.begin(), req.end(), nlohmann::json("characters")) != req.end());
+    CHECK(std::find(req.begin(), req.end(), nlohmann::json("locations")) != req.end());
+
+    // 角色那一栏里，程序**必须**拿得到的几项——外观是由这几栏机械拼出来
+    // 的（`build_character_ref_prompt`），少一栏就是一整类描述凭空消失，
+    // 而且不报错。
+    const auto& ch = s.at("properties").at("characters").at("items");
+    for (const char* k : {"key", "name", "identity", "face", "attire"}) {
+        CAPTURE(k);
+        CHECK_MESSAGE(ch.at("properties").contains(k), "定妆少了一栏");
+        bool required = false;
+        for (const auto& v : ch.at("required")) {
+            if (v == k) required = true;
+        }
+        CHECK_MESSAGE(required, "这一栏掉出 required 了，模型会整个略过");
+    }
 }
 
 TEST_CASE("UTF-8 截断不会切出半个汉字") {

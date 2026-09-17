@@ -111,99 +111,22 @@ std::vector<std::string> replies_for(const json& c) {
 
 }  // namespace
 
-TEST_CASE("两个出片接口和 Python 逐条对拍") {
-    int idx = 0;
-    for (const auto& c : golden().at("cases")) {
-        const std::string name = c.at("name").get<std::string>();
-        const std::string url = c.at("url").get<std::string>();
-        CAPTURE(name);
-        CAPTURE(url);
-
-        const fs::path root =
-            fresh_copy(std::to_string(idx++), c.at("clear_assets").get<bool>());
-        const json body = localize(c.at("body"), root);
-
-        llm::ReplayClient client(replies_for(c));
-        pipeline::CancelToken tok;
-        const http::ApiResult got = http::guard([&] {
-            return url == "/api/bible" ? http::post_bible(body, client, tok)
-                                       : http::post_plan(body, client, tok);
-        });
-
-        const int want_status = c.at("cpp_status").get<int>();
-        if (got.status != want_status) MESSAGE("body: " << got.body.dump());
-        CHECK(got.status == want_status);
-
-        const std::string mode = c.at("compare").get<std::string>();
-        if (mode == "full") {
-            if (got.body != c.at("response")) {
-                MESSAGE("期望 " << c.at("response").dump(1));
-                MESSAGE("实得 " << got.body.dump(1));
-            }
-            CHECK(got.body == c.at("response"));
-        } else if (mode == "detail_arr") {
-            REQUIRE(got.body.is_object());
-            REQUIRE(got.body.at("detail").is_array());
-            REQUIRE_FALSE(got.body.at("detail").empty());
-            const json& mine = got.body.at("detail")[0];
-            const json& theirs = c.at("response").at("detail")[0];
-            CHECK(mine.at("type") == theirs.at("type"));
-            CHECK(mine.at("loc") == theirs.at("loc"));
-        } else {
-            REQUIRE(got.body.is_object());
-            REQUIRE(got.body.contains("detail"));
-            CHECK(got.body.at("detail").is_string());
-            CHECK_FALSE(got.body.at("detail").get<std::string>().empty());
-        }
-
-        // ---- 提示词 ----
-        const auto& want_prompts = c.at("prompts");
-        REQUIRE(client.calls().size() == want_prompts.size());
-        for (std::size_t i = 0; i < want_prompts.size(); ++i) {
-            const std::string want = want_prompts[i].at("prompt").get<std::string>();
-            const std::string mine = client.calls()[i].prompt;
-            if (mine != want) {
-                std::size_t k = 0;
-                while (k < mine.size() && k < want.size() && mine[k] == want[k]) ++k;
-                MESSAGE("提示词第 " << i << " 条（"
-                        << want_prompts[i].at("stage").get<std::string>()
-                        << "），第一处不同在字节 " << k);
-                MESSAGE("期望…" << want.substr(k > 40 ? k - 40 : 0, 110));
-                MESSAGE("实得…" << mine.substr(k > 40 ? k - 40 : 0, 110));
-            }
-            CHECK(mine == want);
-        }
-
-        // ---- 落盘 ----
-        //
-        // 响应体对了不代表存下去的东西对，而存错了要到下一步跑分镜时才发现。
-        if (!c.at("assets_after").is_null()) {
-            const json mine = read_json(root / "assets.json");
-            if (mine != c.at("assets_after")) {
-                MESSAGE("assets 期望 " << c.at("assets_after").dump(1));
-                MESSAGE("assets 实得 " << mine.dump(1));
-            }
-            CHECK(mine == c.at("assets_after"));
-        }
-        if (!c.at("project_after").is_null()) {
-            json mine = read_json(root / "project.json");
-            json want = c.at("project_after");
-            // updated_at 是墙上时钟，导出那一刻和跑测试这一刻必然不同。
-            // 它有没有被刷新另有一条用例管，这里只比内容。
-            mine.erase("updated_at");
-            want.erase("updated_at");
-            if (mine != want) {
-                MESSAGE("project 期望 " << want.dump(1));
-                MESSAGE("project 实得 " << mine.dump(1));
-            }
-            CHECK(mine == want);
-        }
-
-        std::error_code ec;
-        fs::remove_all(root, ec);
-    }
-}
-
+// ---------------------------------------------------------------------------
+// 「和 Python 逐字节一致」那几条，2026-09-17 退役
+// ---------------------------------------------------------------------------
+//
+// 语料是当年冻下来的 Python 答案，用来证明移植没走样。**Python 引擎
+// 2026-09-10 就删了**，那个用途从那天起就没了；断言还在，实际效果变成
+// 「提示词和 schema 永远改不动」。
+//
+// 这一天里它挡住了三处量出来的改进：`camera_move` 的分类式禁令（模型对每
+// 一镜重新论证一遍，一场戏想十五万字）、从没被填过的 `visual_desc`
+//（两个项目 76% 和 100% 是空的）、以及 schema 的排版。用户拍板退役。
+//
+// **换掉的不是"有守卫"，是"守卫钉的是什么"**：钉结构（字段在不在、必填掉
+// 没掉）而不是钉字节。前者是真出事——模型按错的名字产出、或者整个略过一栏，
+// 全程不报错；后者只是让人改不动一句话。
+//
 TEST_CASE("写盘要刷新 updated_at") {
     // 上面那条用例比对 project.json 时把 updated_at 剔掉了，
     // 那就得单独确认它真的被刷新了——不刷的话，前端靠它判断

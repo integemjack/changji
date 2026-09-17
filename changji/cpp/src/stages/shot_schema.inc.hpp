@@ -513,11 +513,25 @@ inline constexpr const char* kShotSchemaJson =
 // subtitle_text（成片字幕来自台词，不读它）、continuity_notes（只回显）、
 // missing_info（零消费者）。模型填了也白填，还占着提示词和 GBNF。结构体里
 // 那几栏留着（盘上格式），只是模型再也见不到。
+//
+// 2026-09-17 又拿掉 `visual_desc`，理由是**实测它一次都没被填过**：
+//
+//   | 项目 | 镜头 | visual_desc 是空的 |
+//   |---|---|---|
+//   | 互联测试剧（glm） | 142 | 108（76%） |
+//   | 横屏测试剧（deepseek） | 151 | 151（100%） |
+//
+// 根子还是那一条：**它不在 `required` 里，不在表里的字段模型整个略过**
+//（同一条机制 2026-09-13 从 198 镜里查出来过）。而它唯一的下游——按场拆镜
+// 时拿上一镜当尾巴（`storyboard_run.cpp` 的 prev_tail）——本来就写着"空了
+// 就退回 first_frame_prompt"，也就是说**今天百分之百走的是那条退路**。
+// 留在 schema 里只是让每一次调用多背 125 个字符。
+//
+// 结构体里那一栏留着：界面的镜头抽屉里能手改，存量数据也还有。
 inline constexpr const char* kLlmShotFields[] = {
     "shot_id",
     "scene_id",
     "order",
-    "visual_desc",
     "first_frame_prompt",
     "last_frame_prompt",
     "motion_prompt",

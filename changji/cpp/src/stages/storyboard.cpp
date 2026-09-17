@@ -886,27 +886,31 @@ ordered llm_shot_schema(const AssetLibrary& assets, ShotCountBounds bounds) {
     if (defs.contains("CameraMove") && defs["CameraMove"].contains("enum")) {
         move_enum = defs["CameraMove"]["enum"];
     }
-    // ⚠️ **这一栏的描述动不得**：`test_storyboard.cpp` 的「给大模型的 schema
-    // 和 Python 一致」是**绿的**，它把整份 schema 连描述一起钉住了
-    //（CLAUDE.md 砍提示词第二条说的就是这件事，2026-09-17 我没查就改了，
-    // 当场红）。要改的话先跟用户定那几份对拍语料退不退役。
+    // ⚠️ **这一栏原来只写 static 的禁令，而规则表那半只列了怎么挑、不提
+    // static。两半都不完整，模型于是对每一镜重新论证一遍**——2026-09-17
+    // 从它自己的思考流里读到的原话大意：「a hand pressing a button is an
+    // object close-up with motion… Strict compliance → no static. Use
+    // push_in. Eh — that's a lot of push_ins. Let me instead use handheld」。
     //
-    // 这一栏真有问题，问题在**同一件事分在两处，两处都不完整**：这儿只写
-    // static 的禁令、不提别的；而规则表里那条「按这一镜真正需要的运镜挑」
-    // 列了五种怎么选、偏偏不提 static。模型想要"不动"的时候手上只有一条要
-    // 做归类判断的禁令（这一镜算不算「定格的物件特写」），没有一步能答完的
-    // 判据——2026-09-17 从它自己的思考流里读出来的原话大意：「a hand
-    // pressing a button is an object close-up with motion… Strict compliance
-    // → no static. Use push_in. Eh — that's a lot of push_ins. Let me instead
-    // use handheld」，一场戏想了十五万字、十三分钟。
+    // 现在两半合成一句，照 `camera_angle` 那一栏的形状写——那一栏是个查表
+    //（「压迫用 low，脆弱用 high…」），模型从来不在它上面纠结。static 的判据
+    // 也从"归到哪一类"换成"画面里有没有东西在动"，一步就能答。
     //
-    // 既然这半边钉着，就把那一步能答完的判据补到**规则表那半边**去
-    //（prompts.toml 里那条运镜，现在它把 static 也一起说了）。
+    // 约束一条没松：static 照旧受限，enum 六种照旧，camera_move 照旧在
+    // required 里——2026-09-13 那次 198/198 全默认，治住它的是 required，
+    // 不是措辞（见上面那一大段）。
+    //
+    //（这一句和规则表那条是同一件事说两遍，而这次是有意的：CLAUDE.md 第七条
+    // 说的是"改了一处另一处静悄悄不跟"，而提示词这一族没有第三个地方能收——
+    // 规则表管整体分布、字段描述管这一栏怎么填，两处都得说得完整。）
     kept["camera_move"] = {
         {"type", "string"},
         {"enum", move_enum},
         {"description",
-         "这一镜的运镜。只有定格的物件特写、静止的空镜才填 static"}};
+         "这一镜的运镜。推进情绪用 push_in，交代环境用 pull_out 或 "
+         "pan_left / pan_right，跟着人走用 handheld，绕着看用 orbit；"
+         "画面里没有任何东西在动时才填 static（定格的物件特写、静止的空镜）。"
+         "一场里任何一种都不要超过三成"}};
 
     // ---- 机位、焦段、光：同样必填（2026-09-14）----
     //

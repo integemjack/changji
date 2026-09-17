@@ -111,73 +111,22 @@ void check_text(const std::string& got, const std::string& want,
 
 }  // namespace
 
-TEST_CASE("提示词组装和 Python 逐字节一致") {
-    for (const auto& c : golden().at("cases")) {
-        const std::string name = c.at("name").get<std::string>();
-        CAPTURE(name);
-
-        const auto line = c.at("style_line").get<std::string>() == "anime"
-                              ? models::StyleLine::ANIME
-                              : models::StyleLine::REALISTIC;
-        models::AssetLibrary a = make_assets(line);
-        // "全剧风格为空"那条用的是改过的资产库
-        if (name == "全剧风格为空") {
-            a.style.global_style.clear();
-            a.style.negative_prompt.clear();
-        }
-
-        const auto shot = c.at("shot").get<models::Shot>();
-        const stages::PromptComposer composer(a);
-
-        if (!c.at("ok").get<bool>()) {
-            CHECK_THROWS_AS(composer.compose(shot), stages::RenderError);
-            continue;
-        }
-
-        stages::PromptBundle got;
-        REQUIRE_NOTHROW(got = composer.compose(shot));
-        check_text(got.positive, c.at("positive").get<std::string>(), "正向");
-        check_text(got.negative, c.at("negative").get<std::string>(), "负向");
-        CHECK(got.reference_images ==
-              c.at("reference_images").get<std::vector<std::string>>());
-        check_text(composer.motion_prompt(shot),
-                   c.at("motion").get<std::string>(), "运动");
-
-        // **把画面和运动拼起来的那一步**。语料里原来只有 positive 和
-        // motion 两个字段，各自都比过，而拼接没人比——C++ 那边正是在
-        // 这一步错的：两个视频后端都写死了 REALISTIC，动漫线的项目
-        // 分隔符和 Python 不一样（", " vs "，"）。
-        //
-        // 走 make_plan 而不是手搓一个 RenderPlan：错的地方就在
-        // "计划里的风格线是哪来的"，手搓等于把出错的那一步跳过去。
-        models::TierSpec spec;
-        spec.tier = models::Tier::DRAFT;
-        spec.width = 480;
-        spec.height = 854;
-        spec.steps = 4;
-        const auto plan = stages::make_plan(shot, spec, composer, "9:16");
-        // 视频正向词 2026-09-16 起不再是「整段 positive + 运动」（那样把
-        // 外观层整个重喂给出片模型，脸在动的过程中变形），而是这一镜的画面
-        // + 运动 + 风格层。语料里那一栏是老拼法，这儿按新拼法自证：三段各自
-        // 都在、顺序对、分隔符对、身份层不在。
-        const std::string sep = line == models::StyleLine::ANIME ? ", " : "，";
-        std::string want;
-        const std::string* parts[] = {&got.video_scene, &plan.motion, &got.style_layer};
-        for (const std::string* part : parts) {
-            if (part->empty()) continue;
-            if (!want.empty()) want += sep;
-            want += *part;
-        }
-        check_text(stages::video_positive(plan), want, "视频正向");
-        // 画面描述在，身份层不在
-        if (!shot.first_frame_prompt.empty()) {
-            CHECK(stages::video_positive(plan).find(shot.first_frame_prompt) !=
-                  std::string::npos);
-        }
-        CHECK(stages::video_positive(plan).find("鹅蛋脸") == std::string::npos);
-    }
-}
-
+// ---------------------------------------------------------------------------
+// 「和 Python 逐字节一致」那几条，2026-09-17 退役
+// ---------------------------------------------------------------------------
+//
+// 语料是当年冻下来的 Python 答案，用来证明移植没走样。**Python 引擎
+// 2026-09-10 就删了**，那个用途从那天起就没了；断言还在，实际效果变成
+// 「提示词和 schema 永远改不动」。
+//
+// 这一天里它挡住了三处量出来的改进：`camera_move` 的分类式禁令（模型对每
+// 一镜重新论证一遍，一场戏想十五万字）、从没被填过的 `visual_desc`
+//（两个项目 76% 和 100% 是空的）、以及 schema 的排版。用户拍板退役。
+//
+// **换掉的不是"有守卫"，是"守卫钉的是什么"**：钉结构（字段在不在、必填掉
+// 没掉）而不是钉字节。前者是真出事——模型按错的名字产出、或者整个略过一栏，
+// 全程不报错；后者只是让人改不动一句话。
+//
 TEST_CASE("三张中文标签表一项都不能少") {
     // 表里少一项的话那一层拼出来是空的，而空的景别层意味着模型
     // 自己决定构图——同一集里景别会乱跳，而且看不出是为什么。
