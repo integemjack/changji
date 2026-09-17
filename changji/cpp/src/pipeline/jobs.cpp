@@ -245,7 +245,11 @@ void JobTable::record(JobKind kind, Event ev) {
         // 一镜落定（shot_done / warn / gate……任何带 shot_id 的非 progress）
         // 就从"还没落定"里划掉。和界面 trackInflight 的判据一字不差——
         // 两边判据不一样的话，刷新前后同一镜的「排队中」会不一样。
-        if (ev.shot_id.has_value() && ev.kind != "progress") {
+        //
+        // **但只认登记那个阶段报的。** 理由见 JobState::pending_stage：
+        // 首帧和出片同时跑时，首帧报的完成不该把出片那份名单划掉。
+        if (ev.shot_id.has_value() && ev.kind != "progress" &&
+            (st.pending_stage.empty() || ev.stage == st.pending_stage)) {
             auto& pend = st.pending;
             pend.erase(std::remove(pend.begin(), pend.end(), *ev.shot_id),
                        pend.end());
@@ -489,8 +493,12 @@ void JobProgress::add_episode(nlohmann::json ep) {
                    [&](JobState& s) { s.episodes.push_back(std::move(ep)); });
 }
 
-void JobProgress::set_pending(std::vector<std::string> shot_ids) {
-    table_->mutate(kind_, [&](JobState& s) { s.pending = std::move(shot_ids); });
+void JobProgress::set_pending(std::vector<std::string> shot_ids,
+                              std::string stage) {
+    table_->mutate(kind_, [&](JobState& s) {
+        s.pending = std::move(shot_ids);
+        s.pending_stage = std::move(stage);
+    });
 }
 
 void JobProgress::set_output(std::string path) {

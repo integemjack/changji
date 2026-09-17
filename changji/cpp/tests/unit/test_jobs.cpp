@@ -14,6 +14,7 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <future>
 #include <set>
 #include <string>
 #include <thread>
@@ -991,4 +992,65 @@ TEST_CASE("借槽那一下：只报「正在准备」，不挂空进度条") {
     // 步数一个都不许带——带了牌子上就多一条空槽。
     CHECK(it->find("shot_steps") == it->end());
     CHECK(it->find("shot_step") == it->end());
+}
+
+namespace {
+
+/// 跑一个任务，在它**还没结束**的时候把排队名单读出来。
+///
+/// 非读不可的时机：任务一结束 JobTable 就把 pending 清空（收工时那一下），
+/// wait_idle 之后读到的永远是空的。
+std::vector<std::string> pending_after(
+    const std::string& pending_stage,
+    const std::string& event_stage) {
+    changji::pipeline::JobTable table;
+    std::promise<void> reported;
+    std::promise<void> release;
+    auto reported_f = reported.get_future();
+    auto release_f = release.get_future();
+    table.start(changji::pipeline::JobKind::Run, "ep01",
+                [&](changji::pipeline::JobProgress& p) {
+                    if (pending_stage.empty()) {
+                        p.set_pending({"sh1", "sh2", "sh3"});
+                    } else {
+                        p.set_pending({"sh1", "sh2", "sh3"}, pending_stage);
+                    }
+                    changji::pipeline::Event e;
+                    e.stage = event_stage;
+                    e.kind = "shot_done";
+                    e.shot_id = "sh1";
+                    e.message = "sh1 完成";
+                    p.report(e);
+                    reported.set_value();
+                    release_f.wait();
+                });
+    reported_f.wait();
+    const auto pend = table.pending(changji::pipeline::JobKind::Run);
+    release.set_value();
+    table.wait_idle();
+    return pend;
+}
+
+}  // namespace
+
+TEST_CASE("排队名单只认登记它的那个阶段报的完成") {
+    // 首帧和出片同时跑（pipeline/shot_flow.hpp）之后，出片登了 17 镜，
+    // 首帧每出完一张就报一条 shot_done。照旧那条"谁报的都划"，刚出完
+    // 首帧的那几镜就从名单上没了——而它们和还没轮到的那几镜是同一个
+    // 状态（首帧好了、等出片）。墙上一半有排队条一半没有。
+    // 用户 2026-09-17：「排队显示还有有问题」。
+    const auto pend = pending_after("final", "frames");
+    CHECK(pend.size() == 3);
+    CHECK(std::find(pend.begin(), pend.end(), "sh1") != pend.end());
+}
+
+TEST_CASE("排队名单：登记它的那个阶段报的，照划") {
+    const auto pend = pending_after("final", "final");
+    CHECK(pend.size() == 2);
+    CHECK(std::find(pend.begin(), pend.end(), "sh1") == pend.end());
+}
+
+TEST_CASE("没传阶段的照老规矩：谁报的都划") {
+    const auto pend = pending_after("", "frames");
+    CHECK(pend.size() == 2);
 }

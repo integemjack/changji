@@ -147,6 +147,19 @@ struct JobState {
     /// 引擎自己一直知道这一轮还有哪几镜没跑完——每个阶段开工时登记一批，
     /// 每落定一镜（shot_done / warn / gate）划掉一个，`/bff/run/pending` 回它。
     std::vector<std::string> pending;
+
+    /// 这份名单是哪个阶段登的。
+    ///
+    /// **划掉只认这个阶段报的完成**。2026-09-17 之前是"任何带 shot_id 的
+    /// 非 progress 事件都划一个"，那会儿流水线严格分阶段，同一时刻只有
+    /// 一个阶段在报，这么写没错。首帧和出片改成同时跑之后就错了：出片
+    /// 登了 17 镜，首帧每出完一张就划掉一个——于是刚出完首帧的那几镜
+    /// 不再显示「排队中」，而**它们和还没轮到的那几镜是同一个状态**
+    /// （首帧好了、等出片）。用户 2026-09-17：「排队显示还有有问题」——
+    /// 墙上 1~4 号有排队条、5~8 号没有，两拨其实一模一样。
+    ///
+    /// 空 = 谁报的都划（老行为，给没传阶段的调用方留着）。
+    std::string pending_stage;
 };
 
 /// 消息汇。job 表产生的进度和终止消息往这里送。
@@ -207,7 +220,9 @@ public:
     void set_error(std::string e);
 
     /// 登记这一阶段要跑的镜头。见 JobState::pending。
-    void set_pending(std::vector<std::string> shot_ids);
+    /// 登记这一轮还没落定的镜头。`stage` 是登记方的阶段名——**只有它报的
+    /// 完成才划得掉**（见 JobState::pending_stage）。不传 = 谁报的都划。
+    void set_pending(std::vector<std::string> shot_ids, std::string stage = {});
 
     /// 该停了吗。耗时循环里要主动查。
     bool cancelled() const;

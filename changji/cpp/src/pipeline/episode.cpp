@@ -640,6 +640,7 @@ RunReport run_episode(const ProjectStore& store,
         const char* stage_name = tier == Tier::FINAL ? "final" : "draft";
         auto todo = pick(*ep, render_entry_states(tier, opts.skip_draft), force,
                          opts.only_shots);
+        // 名单登在这一档的名下：流水时首帧那层同时在报完成，别让它划掉
         if (flow) {
             // 流水时首帧那批也算进来：它们此刻还停在配音完成上，按状态挑
             // 挑不到，可首帧一写回就该出片。已经在 todo 里的不重复。
@@ -653,7 +654,7 @@ RunReport run_episode(const ProjectStore& store,
                                  return a->order < b->order;
                              });
         }
-        progress.set_pending(ids_of(todo));
+        progress.set_pending(ids_of(todo), stage_name);
         if (todo.empty()) return std::vector<stages::RenderOutcome>{};
         ran = true;
 
@@ -788,7 +789,7 @@ RunReport run_episode(const ProjectStore& store,
         // 顺序反过来的话，配音出来装不进已经渲好的视频里。
         if (wants(opts, Stage::Audio) && !tok.cancelled()) {
             auto todo = pick(*ep, {ShotStatus::PLANNED}, opts.force, opts.only_shots);
-            progress.set_pending(ids_of(todo));
+            progress.set_pending(ids_of(todo), "audio");
             if (!todo.empty()) {
                 ran = true;
                 const stages::TTSBackend backend =
@@ -963,7 +964,7 @@ RunReport run_episode(const ProjectStore& store,
             // 于是自动被挡在首帧之外——那是对的，它们带着错的时长。
             auto todo = pick_for_frames(*ep, store.paths(), opts.force,
                                         opts.only_shots);
-            progress.set_pending(ids_of(todo));
+            progress.set_pending(ids_of(todo), "frames");
             if (!todo.empty()) {
                 ran = true;
                 // **已经出过片的那几镜要说一声。**
