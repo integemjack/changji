@@ -41,18 +41,22 @@ std::vector<CutPart> plan_series_cut(
 /// 成片目录：output/final。每次切都清空重写。
 std::filesystem::path final_dir(const models::ProjectPaths& paths);
 
-/// 还不能切的话，为什么；空串 = 能。缺哪一章的成片就说哪一章。
+/// 还不能切的话，为什么；空串 = 能。**有一章出了片就能切**（用户 2026-09-18：
+/// 「这一章有片就可以成片了」），没片的章跳过、出了再切一次。
 std::string series_cut_blocker(const models::ProjectStore& store);
 
 struct SeriesCutReport {
     std::vector<std::filesystem::path> outputs;
     std::vector<CutPart> parts;
     double total_s = 0.0;
+    /// 这次切进去的章、还没出片被跳过的章（chapter_id）。
+    std::vector<std::string> chapters;
+    std::vector<std::string> skipped;
 };
 
-/// 真干：找齐每一章的成片（output/<ep>.mp4，切过的是 <ep>_NN.mp4），拼成一条，
-/// 按 plan 切，写进 output/final/，顺手写一份 cut.json（每一集从哪儿到哪儿）。
-/// 缺哪一章的成片就抛，一个字节都不写。
+/// 真干：把出了片的章（output/<ep>.mp4，切过的是 <ep>_NN.mp4）按章序拼成一条，
+/// 按 plan 切，写进 output/final/，顺手写一份 cut.json（每一集从哪儿到哪儿、
+/// 切了哪几章、跳过哪几章）。一章都没出片才抛。
 SeriesCutReport cut_series(const models::ProjectStore& store,
                            const config::Settings& settings,
                            const media::FFmpeg& ff, double per_episode_s,

@@ -58,7 +58,7 @@ json flow_steps() {
              {"hint", "剧本、镜头、出片，都在这一章上；集是最后按时长切出来的"}},
         // 集只在这儿出现一次：每章都出片了，选每集多长，切成几集。
         json{{"key", "film"}, {"phase", "series"}, {"title", "成片"},
-             {"hint", "每章都出片了，选每集多长，切成几集"}},
+             {"hint", "出了片的章接成一条，选每集多长，切成几集"}},
     });
 }
 
@@ -260,7 +260,8 @@ json flow_assess(const json& project, const json& shots, const json& outputs,
     // 被测得最细的一条判据——「光有分镜表不算出完」说的就是它。
     counters["shotsDone"] = shots_done;
 
-    // ---- 每一章都出片了没有：成片那一格出不出现看它 ----
+    // ---- 出了几章的片：有一章就能切（成片那一格出不出现看 filmedChapters），
+    //      allFilmed 只是给页面说"还有几章没出片"用 ----
     int filmed = 0;
     int linked_all = 0;
     for (const auto& e : episodes) {

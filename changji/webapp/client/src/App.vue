@@ -174,7 +174,7 @@ const stepsUnknown = computed(() => session.failed && !session.flow)
 /**
  * 顶栏上哪几步显示。**按状态来，不按历史**（用户 2026-09-17）：
  *   项目、故事一直在；故事有字了才有「设定」；参考图画齐了才有「这一章」；
- *   每一章都出片了才有「成片」。
+ *   有一章出了片就有「成片」（没片的章跳过，出了再切一次）。
  * 流程读不出来（stepsUnknown）就全显示——藏起来的话人连去哪儿都不知道。
  * 正站着的那一步永远显示，不然直接输地址进来会看到一条没有自己的导航。
  */
@@ -183,7 +183,7 @@ const visibleSteps = computed(() =>
     if (stepsUnknown.value || s.key === stepKey.value) return true
     if (s.key === 'assets') return !!session.done.story
     if (s.key === 'episode') return !!session.counters.refsOk
-    if (s.key === 'film') return !!session.counters.allFilmed
+    if (s.key === 'film') return Number(session.counters.filmedChapters ?? 0) > 0
     return true
   }),
 )

@@ -80,6 +80,9 @@ ApiResult get_film(const std::string& path) {
     const json manifest = read_manifest(dir);
     if (manifest.contains("per_episode_s")) out["per_episode_s"] = manifest["per_episode_s"];
     if (manifest.contains("total_s")) out["total_s"] = manifest["total_s"];
+    // 这次切了哪几章、跳过哪几章（还没出片的）。页面上要说清。
+    out["chapters"] = manifest.value("chapters", json::array());
+    out["skipped"] = manifest.value("skipped", json::array());
     std::map<std::string, json> parts;
     for (const auto& p : manifest.value("parts", json::array())) {
         if (p.is_object()) parts[p.value("name", std::string())] = p;

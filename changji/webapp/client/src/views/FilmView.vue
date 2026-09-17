@@ -1,14 +1,15 @@
 <script setup>
 /**
- * 成片。整部剧的最后一步：每一章都出片了，选每集多长，切成几集。
+ * 成片。整部剧的最后一步：出了片的章接成一条，选每集多长，切成几集。
  *
  * 用户 2026-09-17：「剧本不应该有集的概念，集是最后用户选择多长时间为一集，
  * 可以是 1 分钟，3 分钟，10 分钟，60 分钟，全部为一集那是用户的事情」。
  * 所以"集"整个应用里只在这一页出现：写作按章、出片按章，这儿把所有章接成
  * 一条、在镜头边界上按时长切。换个时长再切一次，前面什么都不用重跑。
  *
- * 顶栏上这一格要等每一章都出片了才出现（App.vue visibleSteps 看
- * counters.allFilmed）；直接输地址进来的话，这儿说清还差几章。
+ * 顶栏上这一格有一章出了片就出现（App.vue visibleSteps 看
+ * counters.filmedChapters）——用户 2026-09-18：「这一章有片就可以成片了」。
+ * 没片的章跳过，出了再切一次；这儿说清这次切的是哪几章。
  *
  * 切在出片那个槽上跑（JobKind::Run），进度走 run store；跑完看的是
  * useLongRunning 那张表，不盯 runner.running（undriven-stores 那条规矩）。
@@ -54,6 +55,8 @@ const chapters = computed(
   () => session.episodes.filter((e) => (e.chapter_refs ?? []).length).length,
 )
 const allFilmed = computed(() => !!session.counters.allFilmed)
+/** 有一章出了片就能切。 */
+const canCut = computed(() => filmed.value > 0)
 const perLabel = (s) => CHOICES.find((c) => c.s === s)?.label ?? `${s} 秒`
 
 async function load() {
@@ -158,11 +161,13 @@ watch(longRunning, (now, before) => {
         <button
           class="btn btn--ai btn--sm"
           type="button"
-          :disabled="runner.running || isBusy('cut') || !allFilmed"
+          :disabled="runner.running || isBusy('cut') || !canCut"
           :title="
-            allFilmed
-              ? '把所有章接成一条，按上面选的时长在镜头边界上切成几集'
-              : `还有 ${chapters - filmed} 章没出片，每一章都出了片才能切`
+            !canCut
+              ? '还没有一章出片。这一章出了片就能切'
+              : allFilmed
+                ? '把所有章接成一条，按上面选的时长在镜头边界上切成几集'
+                : `出了片的 ${filmed} 章接成一条切；还有 ${chapters - filmed} 章没出片，出了再切一次`
           "
           @click="cut"
         >
@@ -179,10 +184,10 @@ watch(longRunning, (now, before) => {
       </div>
 
       <EmptyState
-        v-if="!allFilmed"
+        v-if="!canCut"
         icon="film"
-        title="还没到切集的时候"
-        :hint="`${chapters} 章里出了 ${filmed} 章的片。每一章都出了片，这儿才有东西可切`"
+        title="还没有一章出片"
+        hint="去「这一章」把片出来。有一章出了片，这儿就能切"
       />
       <EmptyState
         v-else-if="!files.length"
@@ -193,6 +198,9 @@ watch(longRunning, (now, before) => {
       <template v-else>
         <div class="small dim">
           共 {{ files.length }} 集 · {{ fmt(film.total_s) }} · 按「{{ perLabel(film.per_episode_s) }}」切的
+          <template v-if="film.skipped?.length">
+            · 切的是出了片的 {{ film.chapters?.length ?? 0 }} 章，{{ film.skipped.length }} 章还没出片
+          </template>
         </div>
         <div class="films">
           <div class="list">

@@ -108,15 +108,9 @@ std::string series_cut_blocker(const ProjectStore& store) {
     const auto eps = chapter_episodes(project, story);
     if (eps.empty()) return "一章都没有，没什么可切";
     for (const Episode* e : eps) {
-        if (films_of(store.paths().output(), e->episode_id).empty()) {
-            const models::Chapter* c = story.chapter_by_id(e->chapter_refs.front());
-            const std::string label = c != nullptr && !c->title.empty()
-                                          ? c->title
-                                          : e->chapter_refs.front();
-            return "「" + label + "」还没出片。每一章都出了片才能切集";
-        }
+        if (!films_of(store.paths().output(), e->episode_id).empty()) return "";
     }
-    return "";
+    return "还没有一章出片。这一章出了片就能切";
 }
 
 SeriesCutReport cut_series(const ProjectStore& store, const config::Settings& settings,
@@ -129,11 +123,20 @@ SeriesCutReport cut_series(const ProjectStore& store, const config::Settings& se
     const models::Story story = story_or_empty(store);
     const fs::path out_dir = store.paths().output();
 
-    // 每一章的成片和时间线。时间线只用来定切点（在镜头边界上）。
+    // 出了片的章的成片和时间线（时间线只用来定切点，在镜头边界上）。
+    // **没片的章跳过**，不是停：用户 2026-09-18「这一章有片就可以成片了」。
+    // 跳过的记在清单里，页面上说清这次切的是哪几章。
     std::vector<fs::path> films;
     std::vector<std::pair<std::string, media::Timeline>> chapters;
+    SeriesCutReport report;
     for (const Episode* e : chapter_episodes(project, story)) {
-        for (auto& f : films_of(out_dir, e->episode_id)) films.push_back(f);
+        auto mine = films_of(out_dir, e->episode_id);
+        if (mine.empty()) {
+            report.skipped.push_back(e->chapter_refs.front());
+            continue;
+        }
+        report.chapters.push_back(e->chapter_refs.front());
+        for (auto& f : mine) films.push_back(f);
         chapters.emplace_back(
             e->chapter_refs.front(),
             media::build_timeline(e->shots, store.paths(), settings.assembly,
@@ -173,10 +176,12 @@ SeriesCutReport cut_series(const ProjectStore& store, const config::Settings& se
 
     // 一集一集切出来。**重编码**，不 -c copy：copy 只能落在关键帧上，
     // 切点会往前漂到上一个关键帧，也就是切进上一镜里。
-    SeriesCutReport report;
     report.parts = parts;
     const auto& a = settings.assembly;
-    json manifest{{"per_episode_s", per_episode_s}, {"parts", json::array()}};
+    json manifest{{"per_episode_s", per_episode_s},
+                  {"chapters", report.chapters},
+                  {"skipped", report.skipped},
+                  {"parts", json::array()}};
     for (std::size_t k = 0; k < parts.size(); ++k) {
         if (progress.cancelled()) throw std::runtime_error("已手动停止。已经切出来的留着");
         char name[32];

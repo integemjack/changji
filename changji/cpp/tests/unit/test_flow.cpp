@@ -109,7 +109,7 @@ TEST_CASE("「设定」这一格：理解过、图也画齐了才打勾") {
     }
 }
 
-TEST_CASE("「成片」这一格：每章都出片了才轮到它，切出来了才打勾") {
+TEST_CASE("「成片」这一格：出了一章的片就轮到它，切出来了才打勾") {
     const json project =
         json{{"project_id", "p1"},
              {"episodes", json::array({json{{"episode_id", "ep01"},
@@ -119,13 +119,13 @@ TEST_CASE("「成片」这一格：每章都出片了才轮到它，切出来了
     const json one = json::array({json{{"name", "ep01.mp4"}}});
     const json both = json::array({json{{"name", "ep01.mp4"}}, json{{"name", "ep02_01.mp4"}}});
 
-    SUBCASE("出了一章：还不算") {
+    SUBCASE("出了一章：轮到它（顶栏看 filmedChapters），只是还有章没出") {
         const json r = http::flow_assess(project, json::array(), one, "ep01");
         CHECK(r.at("counters").at("filmedChapters") == 1);
         CHECK(r.at("counters").at("allFilmed") == false);
         CHECK(r.at("done").at("film") == false);
     }
-    SUBCASE("每章都出了：轮到它，但还没切") {
+    SUBCASE("每章都出了：还没切") {
         const json r = http::flow_assess(project, json::array(), both, "ep01");
         CHECK(r.at("counters").at("allFilmed") == true);
         CHECK(r.at("done").at("film") == false);
