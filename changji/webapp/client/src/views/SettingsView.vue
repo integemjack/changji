@@ -157,11 +157,30 @@ const shownSections = computed(() =>
  * "warn / bad"、底下样式表里写的是 `check--error`——同一档东西三处三个
  * 名字，而三个里没有一个是线上真发的那个。见下面 .check--fail 那段。
  */
+/**
+ * 「能产什么」那一条在这一页上不显示——**同一页下面那张机器表画的就是它**。
+ *
+ * 体检里那条是一段文字：「写文、装配 / 配音：[models].tts 没配，或者文件
+ * 不在 / 首帧：… / 出片：…」。而机器表本机那一行是同样五格，干不了的画
+ * 一道短横、悬停给的是**同一句** why（引擎那边一处算的，node_json.cpp
+ * 原样带过来）——还多了别的机器、还能点着开关。
+ *
+ * 同一件事在一屏里用两种说法讲两遍，人得先分辨"这两处说的是不是一回事"。
+ * 表更全，留表。
+ *
+ * **不从体检里删掉**：命令行跑 doctor 的人没有那张表，那条对他们是唯一的
+ * 来源。只是这一页不重复画。
+ */
+const kShownInNodeTable = '能产什么'
 const failedChecks = computed(() =>
-  (overview.value?.doctor?.checks ?? []).filter((c) => c.level !== 'ok'),
+  (overview.value?.doctor?.checks ?? []).filter(
+    (c) => c.level !== 'ok' && c.name !== kShownInNodeTable,
+  ),
 )
 const okChecks = computed(() =>
-  (overview.value?.doctor?.checks ?? []).filter((c) => c.level === 'ok'),
+  (overview.value?.doctor?.checks ?? []).filter(
+    (c) => c.level === 'ok' && c.name !== kShownInNodeTable,
+  ),
 )
 
 /**
