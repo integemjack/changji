@@ -294,6 +294,23 @@ option(CHANGJI_SD_VULKAN "GPU 后端：Vulkan（N/A/I 都能用）"    OFF)
 set(CHANGJI_CUDA_ARCH "89" CACHE STRING
     "CUDA 架构号，分号隔开。L20/L40S/4090 是 89，A100 是 80，H100 是 90，5090 是 120")
 
+# **把 CUDA 的运行时库静态链进二进制**，解开就只有一个可执行文件。
+#
+# 默认关。装了 CUDA 的开发机上动态链本来就跑得好好的，而静态那一下要多花
+# 链接时间、峰值内存也高（几百兆的归档往里塞）。**这是发布包才需要的形态**，
+# CI 的 linux-x64-cuda 那格开着。
+#
+# ⚠️ **只有 Linux 做得到。NVIDIA 在 Windows 上根本不提供静态 cuBLAS**——
+# 13.4 的 redist 里只有 cublas64_13.dll（51.6 MB）、cublasLt64_13.dll
+#（455.7 MB）和几百 KB 的导入库，一个静态库都没有。上游 ggml 的注释说的是
+# 同一件事：「As of 12.3.1 CUDA Toolkit for Windows does not offer a static
+# cublas library」。所以 Windows 的 CUDA 包必然是 exe 加那两个 DLL，
+# 见 release.yml 里「打包（Windows）」那一段。
+#
+# 开了之后 ldd 上就没有 libcudart / libcublas / libcublasLt 了，只剩
+# libcuda.so.1——**那个永远来自显卡驱动**，哪种打包方式都塞不进包里。
+option(CHANGJI_CUDA_STATIC "CUDA 运行时静态链进去（发布包用，只 Linux 做得到）" OFF)
+
 # A 卡这边对应的东西叫 gfx 号，不是数字。查自己那张卡：`rocminfo | grep gfx`。
 #
 #   RX 6800/6900、W6800     → gfx1030（RDNA2）
@@ -403,6 +420,33 @@ if(CHANGJI_SD_CUDA)
                 "-DCMAKE_CUDA_COMPILER=/usr/local/cuda/bin/nvcc\n"
                 "  真不想用 CUDA 就关掉：-DCHANGJI_SD_CUDA=OFF")
         endif()
+    endif()
+
+    if(CHANGJI_CUDA_STATIC)
+        if(WIN32)
+            message(FATAL_ERROR
+                "CHANGJI_CUDA_STATIC 在 Windows 上做不到：NVIDIA 不提供静态 "
+                "cuBLAS（redist 里只有 cublas64_*.dll 和几百 KB 的导入库）。\n"
+                "  Windows 的 CUDA 包就是 exe 加 cublas64_*.dll / "
+                "cublasLt64_*.dll，打包那步会把它们带上，别在这儿较劲。")
+        endif()
+        # GGML_STATIC 换的就是 ggml-cuda 链哪一份 CUDA 库：
+        #   关 → CUDA::cudart / CUDA::cublas                    （.so，得跟着包走）
+        #   开 → CUDA::cudart_static / cublas_static / cublasLt_static
+        #
+        # 静态库在 `libcublas-dev` / `cuda-cudart-dev` 里（前者装完 893 MB，
+        # 比只有 .so 的运行时包多出来的那 344 MB 就是它们）。这两个包 CI 上
+        # 本来就装。缺了的话 CUDA::cublas_static 这个目标压根不存在，
+        # CMake 在生成阶段就会说「links to target ... but the target was not
+        # found」——响，不会悄悄退回动态。
+        #
+        # 它顺手还在 ggml/src 那层 add_link_options(-static)。**那行到不了
+        # changji**：add_link_options 是目录作用域、不传递，而 ggml 那几个
+        # 目标在这个配置下都是静态库，归档时根本不看链接选项。这正是要的
+        # 结果——**全静态 + CUDA 是跑不起来的**，libcuda.so.1 必须由显卡
+        # 驱动动态提供。
+        set(GGML_STATIC ON CACHE BOOL "" FORCE)
+        message(STATUS "CUDA 运行时：静态链接（产物是单个可执行文件）")
     endif()
 
     message(STATUS "CUDA 架构：${CHANGJI_CUDA_ARCH}"

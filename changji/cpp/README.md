@@ -59,6 +59,7 @@ cmake --build build
 | `CHANGJI_SD_SYCL` | OFF | GPU 后端走 SYCL（Intel 卡）。要 oneAPI 的 `icx`/`icpx`。**产物不是单文件**，跑的机器上要有 oneAPI 运行时 |
 | `CHANGJI_SD_VULKAN` | OFF | GPU 后端走 Vulkan，**N/A/I 三家都能用**。构建要 Vulkan SDK（`glslc`），跑的时候只要驱动自带的 Vulkan 运行时。A 卡和 Intel 卡想要"下载解开就能用"的话走这条 |
 | `CHANGJI_CUDA_ARCH` | `89` | 编给哪些 N 卡架构，分号隔开。发布包用的那一串在 release.yml 里 |
+| `CHANGJI_CUDA_STATIC` | OFF | CUDA 运行时（cudart / cuBLAS / cuBLASLt）静态链进二进制，**产物是单个可执行文件**。发布包用的形态，CI 的 linux-x64-cuda 那格开着。⚠️ **只有 Linux 做得到**：NVIDIA 在 Windows 上不提供静态 cuBLAS，那边的包必然是 exe 加两个 DLL |
 | `CHANGJI_HIP_ARCH` | `gfx1030;gfx1100;gfx1101;gfx1102` | 编给哪些 A 卡架构。**列表外的卡直接跑不了**——HIP 没有 CUDA 那种 PTX 兜底 |
 | `CHANGJI_LLAMA` | OFF | 链 llama.cpp + mtmd，**进程内配音**（阶段 9）。开着会让干净构建多编一份 llama.cpp 和一份打过补丁的 ggml |
 | `CHANGJI_SSL` | ON | 静态编进 OpenSSL，httplib 才发得了 https。**只认静态库**，见上面那段 |

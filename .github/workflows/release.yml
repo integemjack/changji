@@ -695,8 +695,16 @@ jobs:
           EXTRA=()
           case "${{ matrix.gpu }}" in
             cuda)
+              # **CHANGJI_CUDA_STATIC：把 CUDA 运行时链进二进制，解开就一个文件。**
+              # 不开的话包里是 exe 再加 537 MB 的 .so（其中 libcublasLt 一个就
+              # 485 MB），而那 537 MB 一个字节都不随代码变——beta 是每次推分支
+              # 删掉重建的，等于每趟重传一遍。静态链接只拉链接器真正引用到的
+              # 那些目标文件，所以大概率比现在还小。
+              # Windows 那格没有这一项：NVIDIA 不提供静态 cuBLAS，见 CMakeLists
+              # 里 CHANGJI_CUDA_STATIC 那段。
               EXTRA+=(-DCHANGJI_SD_CUDA=ON "-DCHANGJI_CUDA_ARCH=$CUDA_ARCH"
-                      "-DCMAKE_CUDA_COMPILER=$CUDA_DIR/bin/nvcc") ;;
+                      "-DCMAKE_CUDA_COMPILER=$CUDA_DIR/bin/nvcc"
+                      -DCHANGJI_CUDA_STATIC=ON) ;;
             vulkan)
               EXTRA+=(-DCHANGJI_SD_VULKAN=ON) ;;
           esac
@@ -864,6 +872,9 @@ jobs:
           # 打出来、照样发，解开才发现跑不了。Windows 那格 2026-09-17 就是这么
           # 发出去一个只有 exe 的 cuda 包的（见「打包（Windows）」那段注释）。
           # libcuda.so.1 不在此列：那是**显卡驱动**装的，本来就不该进包。
+          # cuda 那格开了 CHANGJI_CUDA_STATIC 之后 ldd 这几行本来就是空的
+          # （运行时已经在二进制里），这道关照样成立——它问的是"ldd 说要什么"，
+          # 不是"应该有三个文件"，所以静态那条路上它自己就让开了。
           MISSING=""
           for need in $(ldd out/changji | awk '{print $1}' |
                         grep -E '^lib(cu|nv)' | grep -v '^libcuda\.so'); do
