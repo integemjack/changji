@@ -45,9 +45,11 @@ import { useLongRunning } from '@/composables/useSystemFeed'
 import { pickProjectHint } from '@/composables/pick-project-hint'
 import { useProjects } from '@/stores/projects'
 import { useSession } from '@/stores/session'
+import { useThinking } from '@/stores/thinking'
 import { useUi } from '@/stores/ui'
 
 const session = useSession()
+const thinking = useThinking()
 /** 只为那一屏「还没选项目」的提示：一个都没有时该说的是「建一个」。 */
 const projects = useProjects()
 const route = useRoute()
@@ -622,6 +624,17 @@ watch(longRunning, (now, before) => {
             <AppIcon v-if="!characters.length" name="sparkle" :size="13" />
             {{ isBusy('bible') ? '正在读故事…' : overwrite ? '重新定妆' : '照故事定妆' }}
           </button>
+          <!-- **定妆要读完 8 章大纲再产出一整套人和地方，实测六分钟。**
+               这六分钟里原来屏幕上只有按钮上那句「正在读故事…」——看不出
+               它在不在干活。思考流本来就在发（planning.cpp 挂了
+               thinking_sink，这条走的又是 runAsyncJob），只是全流进了顶栏
+               那块徽标，人得先知道去点「看看在跑什么」。故事页早就自己在
+               原地画了一份（StoryView 里那段 `story_token → paint`），
+               这儿照它，只是定妆没有可画的画布，就报"想到哪儿了"。 -->
+          <span v-if="isBusy('bible') && thinking.latest" class="tiny dim think">
+            已经想了 {{ thinking.latest.length }} 字 ·
+            {{ thinking.latest.slice(-40) }}
+          </span>
 
           <button
             class="btn btn--sm btn--ai"
@@ -680,5 +693,12 @@ watch(longRunning, (now, before) => {
 }
 .tab.is-on .tab__gap {
   color: var(--warn, #f5a524);
+}
+.think {
+  /* 一行显示，长了截掉——它是"还活着"的信号，不是要读的正文 */
+  max-width: 28rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 </style>
