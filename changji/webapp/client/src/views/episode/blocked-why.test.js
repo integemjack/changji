@@ -62,7 +62,7 @@ describe('按不动的时候说为什么', () => {
   })
 
   it('「出片」：原来一个 title 都没有', () => {
-    const f = btn('@click="startAll"')
+    const f = btn('@click="pending || !showTodo ? startAll() : runWholeShow()"')
     expect(f).toMatch(/blockedWhy \|\|/)
     expect(f).toMatch(/:title=/)
   })

@@ -63,12 +63,24 @@ describe('补全项目分镜这件事在「这一章」那一页', () => {
   it('处理函数在那边', () => {
     expect(shots).toContain('planAll')
   })
-  it('不是常驻的第三颗按钮，是主按钮做完这一章之后变身', () => {
-    // 2026-09-17：原来「批量补分镜」和「AI 出分镜」并排常驻，而出片那边
-    // 同一件事是主按钮自己变身。同一件事两套规矩，动作条上常年五颗按钮。
-    // 现在两边同一条规矩，见 EpShots.vue 的 planGoAll。
+  it('不是单独一颗按钮，是「跑完整部剧」里的一步', () => {
+    // 2026-09-17 两次改动叠起来：先是「批量补分镜」从常驻按钮并进主按钮
+    // （同一件事不该有两套规矩），再是用户定「并成一颗，一路跑到底」——
+    // 全项目那三件事（改编 → 补分镜 → 出片）现在是主按钮一次点完，
+    // 见 EpShots.vue 的 runWholeShow。
     expect(shots).not.toContain('批量补分镜')
-    expect(shots).toContain('planGoAll')
-    expect(shots).toContain('全项目补分镜')
+    expect(shots).not.toContain('全项目补分镜')
+    expect(shots).toContain('runWholeShow')
+    expect(shots).toContain('跑完整部剧')
+  })
+  it('三步一次点完，而且中途按停下就不再往下发', () => {
+    const at = shots.indexOf('async function runWholeShow')
+    expect(at).toBeGreaterThan(0)
+    const fn = shots.slice(at, at + 1800)
+    expect(fn, '少了改编那一步').toContain('scriptAll')
+    expect(fn, '少了补分镜那一步').toContain('planAll')
+    // 前两件事跑在同一个"写"槽上，必须等上一件闲下来再发下一件
+    expect(fn, '没等写那个槽').toContain('seriesStatus')
+    expect(fn, '没认取消').toContain('cancelled()')
   })
 })

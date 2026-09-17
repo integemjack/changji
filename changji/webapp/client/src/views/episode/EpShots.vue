@@ -260,15 +260,13 @@ const projectNoShots = computed(
   () => session.episodes.filter((e) => !(e.shots ?? 0)).length,
 )
 /**
- * 分镜这一下该跑整个项目，还是只跑这一章。**判据和 goAll 一模一样**：
- * 这一章有了、别的章还差着，人想要的就是"接着下一章"。
+ * 整部剧还有事要做吗：有章没分镜，或者有镜头没出片。
  *
- * 这一条 2026-09-17 才有。在那之前「批量补分镜」是常驻的第三颗按钮，
- * 而出片那边同一件事是靠主按钮自己变身做的——**同一件事两套规矩**，
- * 动作条上因此常年五颗按钮。用户：「交互过程也太繁琐。」
- * 现在两边同一条规矩：这一章做完了，那颗按钮就变成全项目的。
+ * **主按钮靠它变成「跑完整部剧」**（见 runWholeShow）。2026-09-17 之前
+ * 全项目那几件事是分开点的：批量改编在一页、批量补分镜在一页、全项目出片
+ * 在第三页，每次等完回来再点下一个。用户定的：并成一颗，一路跑到底。
  */
-const planGoAll = computed(() => shots.value.length > 0 && projectNoShots.value > 0)
+const showTodo = computed(() => projectNoShots.value > 0 || projectPending.value > 0)
 /**
  * 锁着的有几镜。**「全部重出」要把这个数说出来。**
  *
@@ -507,22 +505,68 @@ function onKey(event) {
 }
 
 /** 给全项目还没分镜的章补分镜。2026-09-16 从设定的章节那一格搬回来的。 */
-async function planAll() {
-  const result = await run(
-    () => api.planAll({ project: session.projectPath, overwrite: false }),
-    { key: 'planAll' },
-  )
-  // **别写「在这一页看进度」。** 批量补分镜跑在"写"那个槽上（和写整季
-  // 同一个），而这一页盯的是"出片"那个槽——它那儿一动不动。真正一直
-  // 看得见的是顶栏那块「AI 作业中」。
-  if (result && !result.episodes?.length) {
-    ui.info('每一章都已经有分镜了，没有要补的')
-  } else if (result) {
-    ui.info(
-      `正在给 ${result.episodes.join('、')} 补分镜，顶栏那块「AI 作业中」里看进度`,
-    )
+/**
+ * 跑完整部剧：没剧本的先改编、没分镜的补上、再把还差的镜头出完。
+ *
+ * **2026-09-17 用户定的：并成一颗，一路跑到底。** 在那之前这是三个页面上
+ * 的三次点击（批量改编 → 批量补分镜 → 全项目出片），每次等完回来再点下
+ * 一个；而前两件事跑在同一个"写"槽上，本来就只能一件一件来。
+ *
+ * **三步各自是幂等的**：没要改编的章、没要补分镜的章，引擎回 200 +
+ * 空名单（batch.cpp 那两段），所以不用先判断"还差什么"再决定发不发。
+ *
+ * 中途按「停下」：`tok` 那一路停的是出片那个槽，写那个槽有自己的停止
+ * 接口，所以这儿每一步之前都看一眼 `cancelled`——**人按了停就别再往下
+ * 发下一步**，否则停掉出片、分镜又自己跑起来了。
+ */
+async function runWholeShow() {
+  const project = session.projectPath
+  let stopped = false
+  const cancelled = () => stopped || !session.projectPath || session.projectPath !== project
+
+  // 等"写"那个槽闲下来。**不是定时器猜**：seriesStatus 就是那个槽的实况。
+  const waitWrite = async () => {
+    for (;;) {
+      if (cancelled()) return false
+      let st = null
+      try {
+        st = await api.seriesStatus()
+      } catch {
+        // 引擎重启那几拍会连着失败。不当成结束——当成结束的话下一步会在
+        // 上一步还跑着的时候发出去，两件事抢同一个槽，后来那件直接 409。
+        await new Promise((r) => setTimeout(r, 2000))
+        continue
+      }
+      if (!st?.running) return true
+      await new Promise((r) => setTimeout(r, 1500))
+    }
   }
+
+  await run(
+    async () => {
+      // ---- 1. 没剧本的章 ----
+      const sc = await api.scriptAll({ project, overwrite: false })
+      if (sc?.episodes?.length) {
+        ui.info(`正在改编 ${sc.episodes.join('、')}`)
+        if (!(await waitWrite())) return null
+      }
+      // ---- 2. 没分镜的章 ----
+      if (cancelled()) return null
+      const pl = await api.planAll({ project, overwrite: false })
+      if (pl?.episodes?.length) {
+        ui.info(`正在给 ${pl.episodes.join('、')} 补分镜`)
+        if (!(await waitWrite())) return null
+      }
+      // ---- 3. 出片：整个项目，不 force ----
+      if (cancelled()) return null
+      const r = await start([], null, false, true)
+      if (!r.ok) stopped = true
+      return r
+    },
+    { key: 'whole', refresh: true },
+  )
 }
+
 
 async function generate() {
   if (!session.episodeId) {
@@ -1194,37 +1238,17 @@ onDeactivated(() => {
         停下
       </button>
       <template v-else>
-        <!-- **三态，和右边那颗出片按钮同一条规矩**（见 planGoAll）：
-             这一章还没分镜 → 拆这一章；这一章有了而别的章还差着 →
-             接着把那几章补完；全项目都有了 → 才是「重出这一章」。 -->
+        <!-- 只管这一章。**全项目那件事归主按钮**（「跑完整部剧」，
+             它自己会把没剧本的改编了、没分镜的补上、再出片）。 -->
         <button
           class="btn btn--ai"
           type="button"
-          :disabled="
-            isBusy('plan') || isBusy('planAll') ||
-            (planGoAll ? !session.episodes.length : !session.episodeId)
-          "
-          :title="
-            planGoAll
-              ? `这一章的分镜有了；接着把全项目还差的 ${projectNoShots} 章一次补完，已经有分镜的不动`
-              : shots.length
-                ? '把这一章的分镜整个重拆一遍'
-                : '把这一章的剧本拆成镜头'
-          "
-          @click="planGoAll ? planAll() : generate()"
+          :disabled="!session.episodeId || isBusy('plan')"
+          :title="shots.length ? '把这一章的分镜整个重拆一遍' : '把这一章的剧本拆成镜头'"
+          @click="generate"
         >
           <AppIcon name="sparkle" :size="15" />
-          {{
-            isBusy('plan')
-              ? '拆镜头中…'
-              : isBusy('planAll')
-                ? '排着…'
-                : planGoAll
-                  ? `全项目补分镜（差 ${projectNoShots} 章）`
-                  : shots.length
-                    ? 'AI 重出分镜'
-                    : 'AI 出分镜'
-          }}
+          {{ isBusy('plan') ? '拆镜头中…' : shots.length ? 'AI 重出分镜' : 'AI 出分镜' }}
         </button>
         <!-- 先出首帧，看一眼构图再决定要不要花那两分钟出视频。 -->
         <button
@@ -1251,20 +1275,22 @@ onDeactivated(() => {
             blockedWhy ||
             (pending
               ? '把还没出片的那几镜跑完'
-              : goAll
-                ? `这一章出完了；接着把全项目还差的 ${projectPending} 镜一口气跑完，已经出片的不动`
+              : showTodo
+                ? `这一章出完了。接着一路跑完整部剧：没剧本的先改编、没分镜的补上、再把还差的 ${projectPending} 镜出完——中途不用回来点，按「停下」可以中断`
                 : '每一镜都有片了；点了会全部重出')
           "
-          :disabled="blocked || starting"
-          @click="startAll"
+          :disabled="blocked || starting || isBusy('whole')"
+          @click="pending || !showTodo ? startAll() : runWholeShow()"
         >
           <AppIcon name="film" :size="15" />
           {{
-            pending
-              ? `出片（差 ${pending}）`
-              : goAll
-                ? `全项目出片（差 ${projectPending}）`
-                : '全部重出'
+            isBusy('whole')
+              ? '跑着整部剧…'
+              : pending
+                ? `出片（差 ${pending}）`
+                : showTodo
+                  ? `跑完整部剧（还差 ${projectNoShots} 章分镜 · ${projectPending} 镜出片）`
+                  : '全部重出'
           }}
         </button>
       </template>
