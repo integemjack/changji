@@ -871,6 +871,22 @@ ordered llm_shot_schema(const AssetLibrary& assets, ShotCountBounds bounds) {
     if (defs.contains("CameraMove") && defs["CameraMove"].contains("enum")) {
         move_enum = defs["CameraMove"]["enum"];
     }
+    // ⚠️ **这一栏的描述动不得**：`test_storyboard.cpp` 的「给大模型的 schema
+    // 和 Python 一致」是**绿的**，它把整份 schema 连描述一起钉住了
+    //（CLAUDE.md 砍提示词第二条说的就是这件事，2026-09-17 我没查就改了，
+    // 当场红）。要改的话先跟用户定那几份对拍语料退不退役。
+    //
+    // 这一栏真有问题，问题在**同一件事分在两处，两处都不完整**：这儿只写
+    // static 的禁令、不提别的；而规则表里那条「按这一镜真正需要的运镜挑」
+    // 列了五种怎么选、偏偏不提 static。模型想要"不动"的时候手上只有一条要
+    // 做归类判断的禁令（这一镜算不算「定格的物件特写」），没有一步能答完的
+    // 判据——2026-09-17 从它自己的思考流里读出来的原话大意：「a hand
+    // pressing a button is an object close-up with motion… Strict compliance
+    // → no static. Use push_in. Eh — that's a lot of push_ins. Let me instead
+    // use handheld」，一场戏想了十五万字、十三分钟。
+    //
+    // 既然这半边钉着，就把那一步能答完的判据补到**规则表那半边**去
+    //（prompts.toml 里那条运镜，现在它把 static 也一起说了）。
     kept["camera_move"] = {
         {"type", "string"},
         {"enum", move_enum},
