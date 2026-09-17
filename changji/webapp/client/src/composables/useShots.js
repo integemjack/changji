@@ -635,15 +635,33 @@ export function useShots() {
   // 镜头墙是唯一能看见「片子长什么样」的地方。不刷的话它停在开跑那一刻，
   // 几十分钟里画面一动不动——用户没法判断出来的东西对不对，
   // 只能等全跑完才发现方向就错了。六秒一次：首帧出一张要几十秒，跟得上。
+  //
+  // **WS 连着的时候放慢到 20 秒。** 那时候这个定时器是纯兜底：引擎每落定
+  // 一镜发一条 shot_done，下面那个 settled 监听立刻重拉，比六秒快得多。
+  // 六秒那一档留给"socket 没连上"——那是它真正要顶班的时候（标签页在后台
+  // 被 Chrome 压到一分钟一次，正是下面那段说的）。
+  // 2026-09-17 量的：一轮 53 分钟里 /api/shots 拉了 413 次，每次 14 KB。
+  const FAST_MS = 6000
+  const SLOW_MS = 20000
   let timer = null
+  let timerMs = 0
   function watchShots(on) {
-    if (on && !timer) timer = setInterval(load, 6000)
-    if (!on && timer) {
-      clearInterval(timer)
+    if (!on) {
+      if (timer) clearInterval(timer)
       timer = null
+      timerMs = 0
+      return
     }
+    const want = runStore.live ? SLOW_MS : FAST_MS
+    if (timer && timerMs === want) return
+    if (timer) clearInterval(timer)
+    timerMs = want
+    timer = setInterval(load, want)
   }
   watch(() => runStore.running, (now) => watchShots(now))
+  // 连上／断开都要调档——只认一个方向的话，断线之后会一直停在 20 秒，
+  // 而那正是它最需要顶班的时候。
+  watch(() => runStore.live, () => watchShots(runStore.running))
 
   // **落定一镜就立刻重拉，别等定时器。**
   //
