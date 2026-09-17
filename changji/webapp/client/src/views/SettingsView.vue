@@ -367,10 +367,27 @@ async function toggleAutostart(on) {
   }
 }
 
+/** 有没有新版。null = 还没问到。 */
+const update = ref(null)
+
+async function loadUpdate(manual) {
+  const fn = () => api.checkUpdate()
+  const r = manual ? await run(fn, { key: 'update' }) : await fn().catch(() => null)
+  if (r) update.value = r
+  // **手动点的那一下要有回音**，哪怕结论是"已经是最新的"——没有回音的话
+  // 人会以为按钮坏了。自动那一趟不吭声。
+  if (manual && r && !r.error) {
+    ui[r.newer ? 'info' : 'ok'](
+      r.newer ? `有新版 ${r.latest}，手上是 ${r.current}` : '已经是最新的',
+    )
+  }
+}
+
 onMounted(() => {
   loadModelsDir()
   load()
   loadAutostart()
+  loadUpdate(false)
 })
 
 // 换一部剧，体检里那条「出片画布」的答案就变了（画幅是每部剧自己的）。
@@ -686,6 +703,42 @@ function scrollTo(id) {
           <p v-if="autostart?.enabled" class="tiny dim" :title="autostart.path">
             开机跑的是 <code class="mono">{{ autostart.command }}</code>
           </p>
+
+          <!-- **更新。** 只查，不换二进制——换掉正在跑的可执行文件三个平台
+               三种做法，而换错了程序就起不来，那时候界面也没了。所以这儿给
+               的是"有没有新的"加一条过去的路。 -->
+          <label class="field">
+            <span class="field__label">更新</span>
+            <span class="row row--wrap">
+              <span v-if="!update" class="tiny dim">正在问…</span>
+              <template v-else-if="update.error">
+                <span class="tiny warn">{{ update.error }}</span>
+              </template>
+              <template v-else-if="update.newer">
+                <span class="pill pill--warn tiny nowrap">有新版</span>
+                <span class="tiny">
+                  <code class="mono">{{ update.latest }}</code>
+                  <span class="dim">（手上是 {{ update.current }}）</span>
+                </span>
+                <a class="btn btn--primary btn--sm" :href="update.url" target="_blank" rel="noreferrer">
+                  去下载
+                </a>
+              </template>
+              <template v-else>
+                <span class="tiny dim">
+                  已经是最新的（<code class="mono">{{ update.current }}</code>）
+                </span>
+              </template>
+              <button
+                class="btn btn--ghost btn--sm"
+                type="button"
+                :disabled="isBusy('update')"
+                @click="loadUpdate(true)"
+              >
+                {{ isBusy('update') ? '查着…' : '现在查一次' }}
+              </button>
+            </span>
+          </label>
         </section>
 
         <!-- 引擎 -->

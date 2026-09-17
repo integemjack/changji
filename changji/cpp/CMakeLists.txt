@@ -787,6 +787,7 @@ add_executable(changji
     src/http/run_deps.cpp
     src/setup/catalog.cpp
     src/setup/autostart.cpp
+    src/setup/update_check.cpp
     src/setup/source.cpp
     src/setup/downloader.cpp
     src/http/setup_api.cpp
@@ -1253,6 +1254,7 @@ if(CHANGJI_BUILD_TESTS)
         # 一个网络库都不链。
         src/setup/catalog.cpp
         src/setup/autostart.cpp
+        src/setup/update_check.cpp
         src/setup/source.cpp
         src/setup/downloader.cpp
         src/http/setup_api.cpp

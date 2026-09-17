@@ -1112,6 +1112,30 @@ struct PeerConfig {
 };
 
 /// 全部配置。
+/// 更新检查。
+///
+/// 用户 2026-09-17：「增加自动更新」。
+///
+/// **检查和替换是两件事，这儿只管检查。** 换掉一个正在跑的二进制在三个平台
+/// 上是三种做法（Windows 上根本不让覆盖正在运行的 exe），而检查在三处一样。
+/// 先把"手上这个是不是最新"答对，替换那一半留给装的那条路
+///（`install.sh` / 重新下一个包）。
+struct UpdateConfig {
+    /// 起服务时和之后每隔一阵去问一次。**默认开**：不开的话这件事等于没有
+    /// ——没人会想起来手动点检查。
+    bool auto_check = true;
+    /// 跟哪条线：`release`（默认）或 `beta`。
+    ///
+    /// 这两个字就是发布那头固定的 tag 名（见 .github/workflows/release.yml
+    /// 里那段「以后 release 也只有一个」），所以拼地址时直接用它，不做映射
+    /// ——多一层映射就多一个会对不上的地方。
+    std::string channel = "release";
+    /// 去哪个仓库取。换了发布地址的人要能改。
+    std::string repo = "integemjack/changji";
+    /// 隔多久问一次。默认一天；0 = 只在起服务时问一次。
+    double every_hours = 24.0;
+};
+
 struct Settings {
     LLMConfig llm;
     TiersConfig tiers;
@@ -1125,6 +1149,7 @@ struct Settings {
     ModelsConfig models;
     WorkersConfig workers;
     PeerConfig peer;
+    UpdateConfig update;
 
     /// 显存覆盖。推理服务在别的机器上时本机探测不到，用它手动指定
     std::optional<double> vram_gb_override;

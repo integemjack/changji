@@ -31,6 +31,7 @@
 #include "config/settings.hpp"
 #include "http/setup_api.hpp"
 #include "setup/autostart.hpp"
+#include "setup/update_check.hpp"
 #include "setup/catalog.hpp"
 #include "setup/downloader.hpp"
 #include "setup/source.hpp"
@@ -700,4 +701,63 @@ TEST_CASE("开机自启：开了关了都读得回来") {
     CHECK(off.error.empty());
     CHECK_FALSE(off.state.enabled);
     CHECK_FALSE(setup::autostart_status(port).enabled);
+}
+
+TEST_CASE("更新检查：地址固定、判据是「一不一样」") {
+    config::UpdateConfig cfg;
+    CHECK(cfg.auto_check);              // 不默认开等于这件事没有
+    CHECK(cfg.channel == "release");
+
+    // 地址里那两个字**就是发布那头固定的 tag 名**，不做映射——多一层映射就
+    // 多一个会对不上的地方。
+    CHECK(setup::version_json_url(cfg) ==
+          "https://github.com/integemjack/changji/releases/download/release/version.json");
+    cfg.channel = "beta";
+    CHECK(setup::version_json_url(cfg).find("/download/beta/version.json") !=
+          std::string::npos);
+    cfg.channel = "乱写的";
+    CHECK(setup::version_json_url(cfg).find("/download/release/") !=
+          std::string::npos);   // 认不出就回正式线
+
+    // ⚠️ **不做语义化版本比较，只比一不一样。** 这套东西的版本号有两种形状
+    // （`v1.2.0` 和 `beta-<分支>-<短 sha>`），后一种根本没有先后可言；而发布
+    // 那头永远只有一个 Release，那上面挂的就是最新的，不一样就是该换了。
+    CHECK(setup::is_different_version("v1.2.0", "v1.3.0"));
+    CHECK(setup::is_different_version("v1.3.0", "v1.2.0"));  // 回退也算"不一样"
+    CHECK_FALSE(setup::is_different_version("v1.2.0", "v1.2.0"));
+    // 任一边不知道就当没有新版：**报一个假的"有新版"比不报更糟**，
+    // 人点过去发现下不到。
+    CHECK_FALSE(setup::is_different_version("", "v1.2.0"));
+    CHECK_FALSE(setup::is_different_version("v1.2.0", ""));
+}
+
+TEST_CASE("更新检查：取不到、回的不是 JSON、缺字段，三种都不报假的新版") {
+    config::UpdateConfig cfg;
+
+    const auto none = setup::check_update(cfg, "v1.0.0",
+                                          [](const std::string&) { return std::string(); });
+    CHECK_FALSE(none.newer);
+    CHECK_FALSE(none.error.empty());
+
+    // 取到的多半是一张 404 页面。**不把原文贴进错误里**——几十 KB 的 HTML
+    // 摆进界面没人读得下去。
+    const std::string html(4000, 'x');
+    const auto junk = setup::check_update(cfg, "v1.0.0",
+                                          [&](const std::string&) { return "<html>" + html; });
+    CHECK_FALSE(junk.newer);
+    CHECK(junk.error.size() < 200);
+
+    const auto nover = setup::check_update(
+        cfg, "v1.0.0", [](const std::string&) { return R"({"channel":"release"})"; });
+    CHECK_FALSE(nover.newer);
+    CHECK_FALSE(nover.error.empty());
+
+    const auto ok = setup::check_update(cfg, "v1.0.0", [](const std::string&) {
+        return R"({"version":"v1.1.0","built_at":"2026-09-17T10:00:00Z"})";
+    });
+    CHECK(ok.newer);
+    CHECK(ok.latest == "v1.1.0");
+    CHECK(ok.built_at == "2026-09-17T10:00:00Z");
+    CHECK(ok.error.empty());
+    CHECK(ok.url.find("releases") != std::string::npos);
 }

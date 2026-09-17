@@ -815,6 +815,12 @@ void apply_table(const toml::table& doc, Settings& s) {
         take(t, "ffmpeg_path", s.assembly.ffmpeg_path);
         take(t, "ffprobe_path", s.assembly.ffprobe_path);
     }
+    if (auto t = doc["update"].as_table()) {
+        take(t, "auto_check", s.update.auto_check);
+        take(t, "channel", s.update.channel);
+        take(t, "repo", s.update.repo);
+        take(t, "every_hours", s.update.every_hours);
+    }
     if (auto t = doc["look"].as_table()) {
         take(t, "preset", s.look.preset);
         take(t, "lut", s.look.lut);

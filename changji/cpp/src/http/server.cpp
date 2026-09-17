@@ -35,6 +35,7 @@
 #include "http/story_api.hpp"
 #include "http/setup_api.hpp"
 #include "setup/autostart.hpp"
+#include "setup/update_check.hpp"
 #include "setup/downloader.hpp"
 #include "llm/client.hpp"
 #include "http/flow.hpp"
@@ -744,6 +745,34 @@ void run(const config::Settings& settings, const Options& opts) {
             });
             return json_response(r.body, r.status);
         });
+
+    // ---- 更新检查 ----
+    //
+    // 用户 2026-09-17：「增加自动更新」。**这一条只答"是不是最新"，不换二进
+    // 制**——理由见 setup/update_check.hpp（换掉正在跑的可执行文件三个平台
+    // 三种做法，而换错了的后果是程序起不来，那时候界面也没了）。
+    CROW_ROUTE(app, "/api/update")([] {
+        static const auto fetch = default_http_get();
+        auto r = guard([&]() -> ApiResult {
+            const auto cfg = config::runtime().snapshot().update;
+            const auto info = setup::check_update(
+                cfg, CHANGJI_VERSION, [](const std::string& url) -> std::string {
+                    // 超时写短：这是个后台检查，卡住不该让设置页跟着转。
+                    const auto r = fetch(url, {}, 8.0);
+                    return r.status == 200 ? r.body : std::string();
+                });
+            return {200,
+                    {{"current", info.current},
+                     {"latest", info.latest},
+                     {"newer", info.newer},
+                     {"url", info.url},
+                     {"built_at", info.built_at},
+                     {"channel", cfg.channel},
+                     {"auto_check", cfg.auto_check},
+                     {"error", info.error}}};
+        });
+        return json_response(r.body, r.status);
+    });
 
     // ---- 随系统启动 ----
     //

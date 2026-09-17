@@ -301,6 +301,9 @@ export const api = {
   // 那个目录写一个文件，见 cpp/src/setup/autostart.hpp。
   autostart: () => get('/api/autostart'),
   setAutostart: (enabled) => post('/api/autostart', { enabled }),
+  // 手上这个是不是最新。**只查，不换二进制**——换掉正在跑的可执行文件三个
+  // 平台三种做法，见 cpp/src/setup/update_check.hpp。
+  checkUpdate: () => get('/api/update'),
   // **只取新增**：`from` 是手上已经有的字节数。一件活的思考动辄十几万
   // 字，整份重取的话每一拍都要搬十几万字过去。
   taskThinking: (id, from) => get('/api/task/thinking', { id, from: from || 0 }),
