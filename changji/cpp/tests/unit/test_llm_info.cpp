@@ -324,3 +324,53 @@ TEST_CASE("连不上也要给小抄") {
         CHECK_FALSE(r.body.at("known").empty());
     }
 }
+
+// ---------------------------------------------------------------------------
+// 「少想一点」只发给认得它的模型
+//
+// 2026-09-17 加的。智谱的 reasoning_effort 默认是 max，而拆分镜那一步在思考
+// 里把整张分镜表逐镜写完了，再用 JSON 写一遍——同一份东西写两遍。
+//
+// ⚠️ 这儿钉的是**别发错家**：这是智谱家的参数，别家收到不认识的字段可能
+// 直接 400，而那会让所有生成一起挂，比"想得久"严重得多。
+// ---------------------------------------------------------------------------
+
+TEST_CASE("reasoning_effort：认得的模型才发") {
+    const auto payload = [](const std::string& model, const std::string& effort) {
+        changji::config::LLMConfig cfg;
+        cfg.model = model;
+        changji::llm::Request req;
+        req.prompt = "写点什么";
+        req.reasoning_effort = effort;
+        return changji::llm::build_payload(cfg, req);
+    };
+
+    SUBCASE("glm-5 那几个收") {
+        for (const char* m : {"glm-5.3-flash", "glm-5.3", "glm-5.2-air", "GLM-5.3"}) {
+            CAPTURE(m);
+            const auto p = payload(m, "high");
+            CHECK(p.contains("reasoning_effort"));
+            CHECK(p["reasoning_effort"] == "high");
+            // thinking 要一起开，不然 effort 那一项不生效（文档：
+            // "thinking 开启时生效"）。
+            REQUIRE(p.contains("thinking"));
+            CHECK(p["thinking"]["type"] == "enabled");
+        }
+    }
+
+    SUBCASE("别家一个字段都不多发") {
+        for (const char* m : {"deepseek-reasoner", "qwen3-32b", "moonshot-v1-8k",
+                              "glm-4.5-air", "gpt-4o"}) {
+            CAPTURE(m);
+            const auto p = payload(m, "high");
+            CHECK_FALSE(p.contains("reasoning_effort"));
+            CHECK_FALSE(p.contains("thinking"));
+        }
+    }
+
+    SUBCASE("不填就什么都不发，和加这一项之前一模一样") {
+        const auto p = payload("glm-5.3-flash", "");
+        CHECK_FALSE(p.contains("reasoning_effort"));
+        CHECK_FALSE(p.contains("thinking"));
+    }
+}

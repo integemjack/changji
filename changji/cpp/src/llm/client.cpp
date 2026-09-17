@@ -280,6 +280,28 @@ ordered build_payload(const config::LLMConfig& cfg, const Request& req) {
     // 正是现在的默认后端。两条路都返回 200，所以这件事只能靠读代码发现。
     // 见 Request::temperature 上那段。
     payload["temperature"] = req.temperature.value_or(cfg.temperature);
+
+    // **少想一点，只对认得这个参数的模型说。**
+    //
+    // 智谱的 `reasoning_effort` 默认是 max；文档写着 GLM-4.5 及以上支持
+    // `thinking`，GLM-5.2 及以上支持 `reasoning_effort`（5.3 / 5.3-Flash
+    // 只收 low / high / max）。这儿按**模型名**认，不按地址：同一个网关
+    // 后面可以挂别家的模型，而认错的代价是别家收到不认识的字段直接 400——
+    // 那会让所有生成一起挂，比"想得久"严重得多。
+    //
+    // 认不出就一个字段都不多发，和这一行加进来之前完全一样。
+    if (!req.reasoning_effort.empty()) {
+        std::string m = cfg.model;
+        for (char& c : m) {
+            if (c >= 'A' && c <= 'Z') c = static_cast<char>(c - 'A' + 'a');
+        }
+        // glm-5.2 及以上。glm-5.3、glm-5.3-flash、glm-5.2-air 都在内。
+        const bool glm5 = m.rfind("glm-5", 0) == 0;
+        if (glm5) {
+            payload["thinking"] = ordered{{"type", "enabled"}};
+            payload["reasoning_effort"] = req.reasoning_effort;
+        }
+    }
     return payload;
 }
 

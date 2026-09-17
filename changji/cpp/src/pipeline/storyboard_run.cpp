@@ -36,6 +36,18 @@ StoryboardRunResult run_storyboard(const StoryboardRunOptions& opts,
                                               stages::count_beats(script)));
         req.schema_name = "storyboard";
         req.on_thinking = opts.on_thinking;
+        // **让它少想一格。** 2026-09-17 把这一步的思考捞出来读了：它在思考
+        // 里把整张分镜表逐镜写完了（Shot 11 的 first_frame / dialogue /
+        // motion / characters 全是成品），然后才用 JSON 再写一遍——同一份
+        // 东西写两遍，而这一步是全流水线最贵的：一集七八分钟，采样下来思考
+        // 每秒涨约 190 字，一场跑了 410 秒还一个字正文都没落。
+        //
+        // 智谱的 reasoning_effort **默认是 max**，我们一直没说话。这儿往下
+        // 一格到 high，不是一步到 low——拆分镜要挑景别、挑运镜，不是纯转写。
+        // 认不得这个参数的模型一个字段都不多发（见 build_payload）。
+        //
+        // 撤掉就是删这一行。真觉得镜头变差了，先撤这一行再谈别的。
+        req.reasoning_effort = "high";
         shots = stages::parse_storyboard(client.complete(req, tok), assets);
     } else {
         // ---- 按场拆 ----
@@ -66,6 +78,8 @@ StoryboardRunResult run_storyboard(const StoryboardRunOptions& opts,
                 std::max(1, scene.index));
             req.schema_name = "storyboard";
             req.on_thinking = opts.on_thinking;
+            // 同上面整集那条，理由写在那儿。
+            req.reasoning_effort = "high";
 
             std::vector<Shot> part =
                 stages::parse_storyboard(client.complete(req, tok), assets);
