@@ -285,6 +285,36 @@ async function bible() {
  * **一张一张来。** 显存只够一张，并发只会在引擎那边排队（现在是真排队
  * 了），而排着的看不出进度。
  */
+/**
+ * 出参考图能几张一起画——**池里有几个位置就是几**。
+ *
+ * 出参考图走的是出首帧那个池（server.cpp 的 set_ref_renderer 拿的就是
+ * `Backends::frame`），所以判据和引擎那边挑位置是同一套：在线、能出首帧、
+ * 而且没被关掉的机器，各自报几个槽（一台双卡机报 2，见
+ * `infer::remote_slots_for`）。
+ *
+ * **拍脑袋定个 3 是不行的**：单卡机上并发只会让每张都更慢、还容易爆显存
+ * （两个上下文同时占显存正是 6GB 卡上跑不动的原因）。问来的数在单卡机上
+ * 就是 1，行为和以前逐字节一样。
+ *
+ * 问不到就按 1——宁可慢，不要在不知道对面有几张卡的时候乱开并发。
+ */
+async function frameLanes() {
+  try {
+    const d = await api.nodes()
+    let n = 0
+    for (const node of d?.nodes ?? []) {
+      if (!node.online) continue
+      const frame = (node.capabilities ?? []).find((c) => c.cap === 'frame')
+      if (!frame?.on) continue
+      n += Math.max(1, node.slots ?? 1)
+    }
+    return n > 0 ? n : 1
+  } catch {
+    return 1
+  }
+}
+
 async function genAll() {
   const force = overwrite.value
   // **开跑那一刻把项目钉死。**
@@ -342,9 +372,33 @@ async function genAll() {
   let stoppedAt = -1
   /** 停在那一件上是人按的「停下」，不是砸了。两种说法不一样。 */
   let byHand = false
-  for (let i = 0; i < jobs.length; i += 1) {
+
+  // **几张一起画，张数按池里有几个位置。**
+  //
+  // 这一圈原来是 `for` 里一张一张 `await`——出参考图走的是出首帧那个池
+  // （server.cpp 的 set_ref_renderer 用的就是 Backends::frame），池里两个
+  // 位置也只喂一个，一台双卡机从头到尾只有一张卡在动。22 张图要 11 分钟
+  // 而不是 6 分钟。用户 2026-09-17：「一键出图也没用多 gpu」。
+  //
+  // 位置数问引擎要（laneCount 那段），不是拍脑袋定：单卡机上它就是 1，
+  // 行为和以前逐字节一样；一张卡上并发只会让每张都更慢还容易爆显存。
+  const lanes = await frameLanes()
+  let next = 0
+  /** 正在画的那几张，给顶上那行进度用。 */
+  const running = new Map()
+  const paint = () => {
+    bulk.value = made + running.size === 0 ? null : {
+      done: made,
+      total: jobs.length,
+      names: [...running.values()],
+      pct: 0,
+    }
+  }
+
+  const one = async (i) => {
     const j = jobs[i]
-    bulk.value = { at: i + 1, total: jobs.length, name: j.name, pct: 0 }
+    running.set(i, j.name)
+    paint()
     const ok = await run(
       () =>
         runAsyncJob(
@@ -361,12 +415,7 @@ async function genAll() {
                   location_id: j.id,
                   ...extra,
                 }),
-          {
-            prefix: 'ref',
-            onProgress: (cur, total) => {
-              if (bulk.value) bulk.value.pct = total > 0 ? Math.round((cur / total) * 100) : 0
-            },
-          },
+          { prefix: 'ref' },
         ),
       // **这一圈不自己弹红条**（quiet）：人按「停下」也会走到这儿，而
       // 「停」不是失败。引擎那头分得很清——ref_gen.cpp 里专门写着「**人按
@@ -380,16 +429,36 @@ async function genAll() {
     )
     // 中间砸了就停：后面那些多半栽在同一件事上（模型没配、显存不够），
     // 接着画只是让人多等十几分钟再看到同一句报错。
+    running.delete(i)
     if (!ok) {
-      stoppedAt = i
-      // 引擎给取消留的是 400「已停下这一张」；别的都算真砸了。
-      byHand = stoppedByHand(actionError.value)
-      break
+      // 中间砸了就不再开新的：后面那些多半栽在同一件事上（模型没配、
+      // 显存不够），接着画只是让人多等十几分钟再看到同一句报错。
+      // **已经在画的那几张让它们画完**——半路掐掉只是白扔已经花掉的时间。
+      if (stoppedAt < 0) {
+        stoppedAt = i
+        // 引擎给取消留的是 400「已停下这一张」；别的都算真砸了。
+        byHand = stoppedByHand(actionError.value)
+      }
+    } else {
+      made += 1
     }
-    made += 1
+    paint()
     // 不用在这儿招呼两格重拉：引擎画完每一张都会往 refs 频道播一条
     // ref_done，那两格和这儿的数都订着它。见 useRefStream。
   }
+
+  // 几条并排跑，谁空了谁领下一张——先到先得，不按固定分片，
+  // 快的那张卡自然多画几张。
+  const lane = async () => {
+    for (;;) {
+      if (stoppedAt >= 0) return
+      const i = next
+      next += 1
+      if (i >= jobs.length) return
+      await one(i)
+    }
+  }
+  await Promise.all(Array.from({ length: Math.max(1, lanes) }, lane))
   bulk.value = null
   // 这一轮十几分钟，中途在项目库里点别的剧很自然——活儿是替 `project`
   // 排的、也一直替它跑完（上面那段把项目钉死了）。所以这句话要说清是替谁
@@ -656,8 +725,9 @@ watch(longRunning, (now, before) => {
           >
             <AppIcon name="sparkle" :size="13" />
             <template v-if="bulk">
-              {{ bulk.at }}/{{ bulk.total }} {{ bulk.name }}
-              <span v-if="bulk.pct" class="numeric">{{ bulk.pct }}%</span>
+              <!-- 几张一起画，所以报的是"画完几张"和"正在画哪几张"，
+                   不是"第几张"——并发之后"第几张"没有意义了。 -->
+              {{ bulk.done }}/{{ bulk.total }} {{ bulk.names.join('、') }}
             </template>
             <template v-else>{{ overwrite ? '全部重画' : '一键出图' }}</template>
           </button>
