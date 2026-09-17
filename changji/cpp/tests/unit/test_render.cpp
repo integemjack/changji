@@ -987,3 +987,45 @@ TEST_CASE("流水：首帧没写回的镜头不出片，写回了立刻出，别
     REQUIRE(order.size() == 2);
     CHECK(order[1] == "ep01_sh002");
 }
+
+TEST_CASE("一格都没跑就被取消：镜头一个字节都不许改") {
+    // ⚠️ **这一条钉的是一次真数据丢失。** 2026-09-17：流水那道排位闸
+    // （ShotFlow::wait_slack）在取消时让每一路直接 return，一格都没标
+    // skipped；而收尾那一段照着 `done` 数组整份写回，那个数组是按镜头数
+    // 默认构造的——于是 17 镜被 17 个**空壳 Shot** 盖掉（shot_id 是空串、
+    // 台词没了、status 回到 planned），最后那次 save 落了盘。
+    // 磁盘上的图还在，project.json 里指向它们的那一集没了。
+    const fs::path root = temp_root("空壳");
+    const models::ProjectPaths paths(root);
+    auto owned = std::vector<models::Shot>{make_shot("ep01_sh001"),
+                                           make_shot("ep01_sh002")};
+    const auto before = owned;
+    std::vector<models::Shot*> shots = {&owned[0], &owned[1]};
+
+    // 闸不开（首帧那层一张都没领走），而且当场取消
+    pipeline::ShotFlow flow({"ep01_sh001", "ep01_sh002"});
+    pipeline::JobTable table;
+    pipeline::CancelToken tok;
+    tok.request();
+    stages::RenderExtras extras;
+    extras.flow = &flow;
+    std::vector<stages::RenderOutcome> outs;
+    table.start(pipeline::JobKind::Run, "ep01",
+                [&](pipeline::JobProgress& p) {
+                    outs = stages::render_batch(shots, make_assets(),
+                                                make_spec(models::Tier::FINAL),
+                                                paths, fake_ok(), p, tok, 24,
+                                                /*concurrency=*/2, {}, {},
+                                                extras);
+                });
+    table.wait_idle();
+
+    CHECK(outs.empty());
+    for (std::size_t i = 0; i < owned.size(); ++i) {
+        CAPTURE(i);
+        CHECK(owned[i].shot_id == before[i].shot_id);
+        CHECK_FALSE(owned[i].shot_id.empty());
+        CHECK(owned[i].status == before[i].status);
+        CHECK(owned[i].attempts == before[i].attempts);
+    }
+}

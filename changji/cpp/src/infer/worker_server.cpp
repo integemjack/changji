@@ -322,10 +322,34 @@ void mount_worker_api_impl(crow::SimpleApp& app,
                 // （见头文件上 TaskRunner 那段）：一个进程只能用一张卡，
                 // 就地跑的话双卡机上永远只有一张在动。
                 // `--worker` 不传，照旧就地跑——它本来就绑着一张卡。
-                const TaskResult result =
-                    runner ? runner(task, on_step, live->tok)
-                           : run_task_locally(task, settings, Origin::Local, id,
-                                              on_step, live->tok);
+                //
+                // ⚠️ **整段必须包在 try 里。** 这是个 detach 出去的线程，
+                // 异常逃出线程函数就是 std::terminate——**整个进程死**，
+                // 连同它按显卡数拉起的那几个子进程。
+                //
+                // 2026-09-17 实撞：本机按了「停下」，派活那头给远端发
+                // `POST /task/<id>/cancel`，这儿的活抛出「取消了」，远端
+                // 主进程当场 terminate。日志里只有
+                //     terminate called after throwing an instance of
+                //     'std::runtime_error'  what(): 取消了
+                // 而界面上看到的是"那台机器掉线了"——**每按一次停下，
+                // 对面就死一次**，而且看不出这两件事有关系。
+                //
+                // 取消不是崩溃的理由：把这件活记成失败，进程接着服务。
+                TaskResult result;
+                try {
+                    result = runner ? runner(task, on_step, live->tok)
+                                    : run_task_locally(task, settings,
+                                                       Origin::Local, id,
+                                                       on_step, live->tok);
+                } catch (const std::exception& e) {
+                    result.ok = false;
+                    result.error = e.what();
+                } catch (...) {
+                    // 不是 std::exception 的也不能放它出去——出去就是死。
+                    result.ok = false;
+                    result.error = "工作进程里抛了个不认识的异常";
+                }
                 std::lock_guard lg(state->mu);
                 live->progress.state = result.ok ? "done" : "failed";
                 live->progress.result = result;

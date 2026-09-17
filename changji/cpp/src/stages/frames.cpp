@@ -163,6 +163,12 @@ std::vector<FrameOutcome> run_frames(std::vector<Shot*>& shots,
         std::string end_rel;
         double elapsed_s = 0.0;
         bool skipped = false;     ///< 取消了，没跑
+        /// 这一格真跑过没有。**写回的唯一凭据**，同 render.cpp 的
+        /// `Done::ran`（那儿 2026-09-17 丢过一集数据）。这一层写回不是
+        /// 整份覆盖而是改几个字段，漏标一格的后果轻些——`apply` 会给一镜
+        /// 白记一次 attempts，而 attempts 进种子、也进"重试超限就降级"
+        /// 的计数。判据一样换成正面的。
+        bool ran = false;
         bool committed = false;   ///< 已经写回 Shot 了，收尾时别再写一遍
     };
     std::vector<Done> done(shots.size());
@@ -206,6 +212,7 @@ std::vector<FrameOutcome> run_frames(std::vector<Shot*>& shots,
             if (tok.cancelled()) { done[i].skipped = true; continue; }
 
             Shot* shot = shots[i];
+            done[i].ran = true;   // 真领了这一格，收尾那一段才敢动它
             const double started = now_seconds();
             const int index = i + 1;
 
@@ -377,7 +384,7 @@ std::vector<FrameOutcome> run_frames(std::vector<Shot*>& shots,
     // 单线程、按镜头原顺序——存盘的那份 project.json 因此仍然只有一个写者。
     std::vector<FrameOutcome> outcomes;
     for (int i = 0; i < total; ++i) {
-        if (done[i].skipped) continue;
+        if (done[i].skipped || !done[i].ran) continue;
         Shot* shot = shots[i];
         FrameOutcome out;
         out.shot_id = shot->shot_id;

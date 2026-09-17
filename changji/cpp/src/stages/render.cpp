@@ -176,6 +176,20 @@ std::vector<RenderOutcome> render_batch(std::vector<Shot*>& shots,
         std::string rel_path;
         double elapsed_s = 0.0;
         bool skipped = false;  ///< 取消了，没跑
+        /// 这一格的副本装过东西没有。**写回的唯一凭据。**
+        ///
+        /// ⚠️ 2026-09-17 丢过一集的数据：收尾那一段原来只看 `skipped`，
+        /// 而这个数组是按镜头数**默认构造**出来的——一格没跑过、又没被
+        /// 标成 skipped 的话，`*shot = std::move(done[i].shot)` 写回去的
+        /// 是一个**空壳 Shot**（shot_id 是空串、没有台词、status 回到
+        /// planned）。当天就是这么把 ep07 的 17 镜整集抹平的：流水那道
+        /// 排位闸（wait_slack）在取消时让每一路直接 return，一格都没标
+        /// skipped，于是 17 格全被空壳盖掉，最后那次 save 落了盘。
+        ///
+        /// 光修那条 return 不够——**这一类错误的代价太大**，只要将来某条
+        /// 新路径再漏标一次，同样的事会再来一遍。所以判据换成正面的：
+        /// 装过东西才写回，而不是"没被标成跳过就写回"。
+        bool ran = false;
         Shot shot;
         bool committed = false;   ///< 已经写回去了，收尾时别再写一遍
     };
@@ -201,11 +215,16 @@ std::vector<RenderOutcome> render_batch(std::vector<Shot*>& shots,
     const auto lane = [&] {
         // 流水：首帧那层还有下一张可派时，这几路一个位置都不抢
         //（在条件变量上等，不占池）。见 pipeline/shot_flow.hpp。
-        if (extras.flow && !extras.flow->wait_slack(tok)) return;
+        //
+        // **等不到就往下走，不要 return。** 直接 return 的话这几路一格都
+        // 不领，`done` 里每一格都停在默认值上——收尾那一段照着走就把整集
+        // 写成空壳（见 Done::ran 上那段）。走下面那个循环，每一格老老实实
+        // 标成 skipped。
+        const bool slack = !extras.flow || extras.flow->wait_slack(tok);
         for (;;) {
             const int i = next.fetch_add(1);
             if (i >= total) return;
-            if (tok.cancelled()) {
+            if (!slack || tok.cancelled()) {
                 done[i].skipped = true;
                 continue;
             }
@@ -224,6 +243,7 @@ std::vector<RenderOutcome> render_batch(std::vector<Shot*>& shots,
             // 不换种子的重试就是把同一张牌再打一遍。改副本是为了让
             // 并行那一段仍然一个字节都不往 shots 里写。
             Shot local = *shot;
+            done[i].ran = true;   // 副本装上了，收尾那一段才敢写回
 
             {
                 pipeline::Event e;
@@ -610,7 +630,8 @@ std::vector<RenderOutcome> render_batch(std::vector<Shot*>& shots,
     // 单线程、按镜头原顺序——存盘的那份 project.json 因此仍然只有一个写者。
     std::vector<RenderOutcome> outcomes;
     for (int i = 0; i < total; ++i) {
-        if (done[i].skipped) continue;
+        // **没跑过的一格都不碰。** `ran` 是正面判据，见它的注释。
+        if (done[i].skipped || !done[i].ran) continue;
         Shot* shot = shots[i];
         RenderOutcome out;
         out.shot_id = shot->shot_id;

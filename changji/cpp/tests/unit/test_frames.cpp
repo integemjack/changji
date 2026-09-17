@@ -796,3 +796,31 @@ TEST_CASE("流水：每写回一镜就划一下，没给 commit 也逐镜写回"
     CHECK(owned[0].frame_path.has_value());
     CHECK(owned[1].frame_path.has_value());
 }
+
+TEST_CASE("一格都没跑就被取消：不许给镜头白记一次 attempts") {
+    // 同 test_render.cpp 那条。这一层写回是改几个字段不是整份覆盖，
+    // 漏标一格的后果是白记一次 attempts——而 attempts 进种子、也进
+    // "重试超限就降级"的计数。
+    const fs::path root = temp_root("空跑");
+    const models::ProjectPaths paths(root);
+    auto owned = std::vector<models::Shot>{make_shot("ep01_sh001"),
+                                           make_shot("ep01_sh002")};
+    const auto before = owned;
+    std::vector<models::Shot*> shots = {&owned[0], &owned[1]};
+
+    pipeline::JobTable table;
+    pipeline::CancelToken tok;
+    tok.request();
+    table.start(pipeline::JobKind::Run, "ep01",
+                [&](pipeline::JobProgress& p) {
+                    stages::run_frames(shots, make_assets(), make_spec(), paths,
+                                       fake_ok(), p, tok, 2);
+                });
+    table.wait_idle();
+    for (std::size_t i = 0; i < owned.size(); ++i) {
+        CAPTURE(i);
+        CHECK(owned[i].attempts == before[i].attempts);
+        CHECK(owned[i].shot_id == before[i].shot_id);
+        CHECK(owned[i].status == before[i].status);
+    }
+}
