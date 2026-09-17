@@ -443,6 +443,13 @@ ApiResult get_run_preview(const std::string& path,
 
     // 阶段的先后。**一个镜头从它现在的状态开始，会一路走完后面所有阶段。**
     static const char* kOrder[] = {"audio", "frames", "draft", "final"};
+    // **这几个词是兜底，不是文案的源头。** 界面按 `stage` 那个键去查自己
+    // 那张表（webapp 的 api/labels.js 的 STAGE_LABELS），查不到才用这儿的
+    // ——也就是"引擎加了个前端还不认识的阶段"那一种。
+    //
+    // 2026-09-17 分叉过一次：前端那份把「成片档」改成「出片」（草稿档默认
+    // 不跑，「档」字没有对立面了），而预估那一行走的是这儿，还写着旧词。
+    // 改文案去改那张表，别改这儿。
     static const char* kLabels[] = {"配音", "首帧", "草稿档", "成片档"};
     constexpr int kCount = 4;
 

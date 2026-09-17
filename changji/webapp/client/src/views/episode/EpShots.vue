@@ -39,6 +39,7 @@ import {
   CAMERA_ANGLES,
   CAMERA_MOVES,
   SHOT_SIZES,
+  STAGE_LABELS,
   TRANSITIONS,
   sizeLabel,
 } from '@/api/labels'
@@ -274,6 +275,20 @@ const showTodo = computed(() => projectNoShots.value > 0 || projectPending.value
  * 按钮上摆着「还差 0 章分镜 · 68 镜出片」——让人先读一个 0 再自己忽略它。
  * 两项都有才用「·」连起来。
  */
+/**
+ * 预估那一行上每个阶段叫什么。
+ *
+ * **文案只有一处：`STAGE_LABELS`。** 引擎在 /api/run/preview 里也带了一个
+ * `label`（run.cpp 的 kLabels），于是同一个词在两边各有一份——2026-09-17
+ * 当场分叉过：前端那份改成「出片」，预估行走的是引擎那份，还写着「成片档」。
+ *
+ * 引擎那份退居**兜底**，不是废字段：引擎将来加一个前端还不认识的阶段时，
+ * 它是唯一能显示出来的名字。
+ */
+function stageLabel(st) {
+  return STAGE_LABELS[st.stage] || st.label || st.stage
+}
+
 const todoLabel = computed(() => {
   const parts = []
   if (projectNoShots.value > 0) parts.push(`${projectNoShots.value} 章分镜`)
@@ -1368,7 +1383,7 @@ onDeactivated(() => {
       </template>
       <template v-else>
         这一次要跑：<template v-for="(st, i) in preview.stages" :key="st.stage"
-          ><template v-if="i"> · </template><b>{{ st.label }} {{ st.shots }}</b></template
+          ><template v-if="i"> · </template><b>{{ stageLabel(st) }} {{ st.shots }}</b></template
         ><template v-if="preview.estimate_s > 0">，约 {{ humanTime(preview.estimate_s) }}</template>
       </template>
     </p>
