@@ -430,3 +430,50 @@ TEST_CASE("只看不发：take_peek 取完要把那个键删掉") {
     nlohmann::json none{{"project", "/tmp/p"}};
     CHECK_FALSE(changji::http::take_peek(none));
 }
+
+// ---------------------------------------------------------------------------
+// 粘回来那一大段按场次头切开
+//
+// 拆分镜是**按场跑**的，一集三场就是三份提示词、三份结果。复制出去那份带
+// 「===== 第 N/M 场 …… =====」的头，粘回来按同一个头切回去。
+//
+// ⚠️ 切错的后果不报错：少一段的话后面几场整体错位一场，而错位出来的分镜表
+// 看着是合法的，人要等到出片才发现第二集的画面配着第三集的台词。
+// ---------------------------------------------------------------------------
+
+TEST_CASE("按场次头把粘回来的那段切开") {
+    const std::string blob =
+        "===== 第 1/3 场：夜 · 外 · 后门货场 =====\n"
+        "{\"shots\":[1]}\n"
+        "===== 第 2/3 场：日 · 外 · 后门货场 =====\n"
+        "{\"shots\":[2]}\n"
+        "===== 第 3/3 场：日 · 内 · 传达室 =====\n"
+        "{\"shots\":[3]}\n";
+    const auto parts = changji::http::split_by_scene(blob);
+    REQUIRE(parts.size() == 3);
+    CHECK(parts[0].find("[1]") != std::string::npos);
+    CHECK(parts[1].find("[2]") != std::string::npos);
+    CHECK(parts[2].find("[3]") != std::string::npos);
+    // 头那一行本身不能留在内容里——它不是 JSON，解析器会当垃圾。
+    CHECK(parts[0].find("=====") == std::string::npos);
+
+    SUBCASE("一个头都没有：整段当一段") {
+        // 整集一次拆那条路只有一段，那时候不该逼人去写一个分隔头。
+        const auto one = changji::http::split_by_scene("{\"shots\":[]}");
+        REQUIRE(one.size() == 1);
+        CHECK(one[0] == "{\"shots\":[]}");
+    }
+
+    SUBCASE("空的就是空的，不要凭空造一段") {
+        CHECK(changji::http::split_by_scene("").empty());
+    }
+
+    SUBCASE("头之前的话不算进任何一场") {
+        // 人从聊天窗口抄回来时前面常带一句"好的，这是结果："。
+        const auto p = changji::http::split_by_scene(
+            "好的，这是结果：\n===== 第 1/1 场：夜 =====\n{\"shots\":[9]}\n");
+        REQUIRE(p.size() == 1);
+        CHECK(p[0].find("好的") == std::string::npos);
+        CHECK(p[0].find("[9]") != std::string::npos);
+    }
+}

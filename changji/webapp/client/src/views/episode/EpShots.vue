@@ -724,6 +724,18 @@ async function peekPlanPayload() {
   }
 }
 
+/**
+ * 粘回来的分镜收下了。**这一步没有编辑器可贴**——一集上百个镜头、每镜十几
+ * 个字段，不像正文那样能直接贴进稿纸（用户 2026-09-17：「这个页面本来就是
+ * 编辑器，谁还用你那个粘贴框」，说的是正文那处，这处不一样）。
+ *
+ * 引擎那头已经落库了，这儿把这一集重新拉一遍。
+ */
+async function onPastedShots() {
+  await session.refresh()
+  await load()
+}
+
 async function generate() {
   if (!session.episodeId) {
     ui.warn('先选一集')
@@ -1410,9 +1422,12 @@ onDeactivated(() => {
              （见 StoryboardRunOptions::peek）。总开关在设置页「界面」那一节。 -->
         <CopyPrompt
           compact
+          pasteable
           path="/api/plan"
           :resolve="peekPlanPayload"
           title="抄走「拆分镜」这一步的提示词（按场跑时是每一场一份）"
+          paste-hint="这一集按场拆的话，每一场之间要留着复制出去时那一行「===== 第 N/M 场 …… =====」——引擎按它把几段分回各场。少一段会整体错位，那种错不报错。"
+          @done="onPastedShots"
         />
         <!-- 先出首帧，看一眼构图再决定要不要花那两分钟出视频。 -->
         <button

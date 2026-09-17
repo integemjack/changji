@@ -1734,18 +1734,6 @@ async function writeStory() {
   }
 }
 
-/**
- * 粘回来的那份大纲。**和真跑完走同一下**：摆成草稿等人点采用，不直接落库。
- *
- * 在别处跑出来的东西和模型自己写的一样要人看过——引擎那头也是这么做的
- * （write_outline 回的是草稿，adopted=false）。
- */
-function onPastedOutline(res) {
-  if (!res) return
-  draft.value = res
-  bookOpen.value = false
-}
-
 /** 粘一段现成的进来。切章节不走大模型——那是机械活，而且比模型稳。 */
 async function importPasted() {
   if (!pasted.value.trim()) {
@@ -2595,8 +2583,9 @@ async function stopWriting() {
                   <!-- 抄走这一步真正要发的那段字，拿到别处去跑。
                        总开关在设置页「界面」那一节。 -->
                   <div class="way">
+                    <!-- 大纲这条也不给粘：旁边那颗「粘一份现成的」本来就收
+                         文本，机械分章比让人对着 JSON 贴稳。 -->
                     <CopyPrompt
-                      pasteable
                       path="/api/story/outline"
                       :payload="{
                         project: session.projectPath,
@@ -2604,7 +2593,6 @@ async function stopWriting() {
                         scale,
                         keywords: keywords.trim(),
                       }"
-                      @done="onPastedOutline"
                     />
                     <span class="way__why">
                       把上面那些拼成的提示词抄走，在别处跑完再回来粘。
@@ -2778,14 +2766,18 @@ async function stopWriting() {
               <!-- **写过的章也摆。** 想把这一步拿到别处去跑，多半正是因为
                    本地这一版不满意要重做——那时候「还缺几章」恰好是 0。
                    总开关在设置页「界面」那一节。 -->
+              <!-- **只给复制，不给粘。** 用户 2026-09-17：「这个页面本来就是
+                   编辑器，谁还用你那个粘贴框？多此一举」——他是对的：在别处
+                   跑出来的正文直接贴进下面这张稿纸就完了，再开个框让人贴
+                   JSON 是绕远。
+                   粘贴那一半留给**没有编辑器可贴**的那两步：提人物（人物、
+                   关系、地点）和拆分镜（一集上百个镜头、几十个字段）。 -->
               <CopyPrompt
                 v-if="current"
                 compact
-                pasteable
                 path="/api/story/chapter"
-                :payload="{ project: session.projectPath, chapter_id: current, overwrite: true }"
+                :payload="{ project: session.projectPath, chapter_id: current }"
                 :title="`抄走写 ${current} 正文那一步的提示词`"
-                @done="load"
               />
 
               <div class="menu">

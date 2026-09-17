@@ -52,7 +52,9 @@ StoryboardRunResult run_storyboard(const StoryboardRunOptions& opts,
             result.peeked = llm::schema_as_prompt(req.prompt, req.schema);
             return result;
         }
-        shots = stages::parse_storyboard(client.complete(req, tok), assets);
+        shots = stages::parse_storyboard(
+            opts.pasted.empty() ? client.complete(req, tok) : opts.pasted.front(),
+            assets);
     } else {
         // ---- 按场拆 ----
         stages::assign_scene_seconds(scenes, target_s);
@@ -95,8 +97,13 @@ StoryboardRunResult run_storyboard(const StoryboardRunOptions& opts,
                 continue;
             }
 
-            std::vector<Shot> part =
-                stages::parse_storyboard(client.complete(req, tok), assets);
+            // 粘回来的那一段，或者去问模型。**数量在进来之前就核过**
+            //（见 post_plan）：少一段的话后面几场整体错位一场，而错位
+            // 出来的分镜表看着是合法的，没有任何报错。
+            const std::string raw = opts.pasted.empty()
+                                        ? client.complete(req, tok)
+                                        : opts.pasted.at(i);
+            std::vector<Shot> part = stages::parse_storyboard(raw, assets);
             stages::stamp_scene(part, scene);
             // 各场的 order 都从 0 起，合起来之前先排成全集的次序，
             // 不然最后重编号那一步按 order 稳定排序会把几场交错在一起。

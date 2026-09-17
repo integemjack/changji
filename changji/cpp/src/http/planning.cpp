@@ -461,6 +461,8 @@ ApiResult post_plan(const json& body, llm::Client& client,
     // model_config = {"extra": "forbid"}，pydantic 默认是忽略多余字段。
     // 加上校验就会拒掉 Python 能接受的请求。
     const bool peek = body.is_object() && body.value("peek", false);
+    const std::string pasted =
+        body.is_object() ? body.value("paste", std::string()) : std::string();
     const std::string script = text::strip_ws(need_str(body, "script"));
     if (script.empty()) throw ApiError(400, "剧本是空的");
 
@@ -510,6 +512,20 @@ ApiResult post_plan(const json& body, llm::Client& client,
     sb.on_thinking = thinking_sink();
     sb.on_progress = [&act](const std::string& m) { act.set_message(m); };
     sb.peek = peek;
+    if (!pasted.empty()) {
+        sb.pasted = split_by_scene(pasted);
+        // **数量对不上就当场说，别硬跑。** 少一段的话后面几场整体错位
+        // 一场，而错位出来的分镜表看着是合法的，没有任何报错——人要等到
+        // 出片才发现第二集的画面配着第三集的台词。
+        const std::size_t want = stages::split_scenes(script, assets).size();
+        if (want > 1 && sb.pasted.size() != want) {
+            throw ApiError(
+                400, "这一集拆成 " + std::to_string(want) + " 场，粘回来的只有 " +
+                         std::to_string(sb.pasted.size()) +
+                         " 段。每一场之间要留着复制出去时那一行"
+                         "「===== 第 N/M 场 …… =====」");
+        }
+    }
 
     if (peek) {
         // 按场跑的话这儿是三份拼起来的，各带场次头。见 StoryboardRunOptions::peek。

@@ -42,6 +42,8 @@ const props = defineProps({
    * 粘贴内容过来"。只给复制不给粘，那半程就走不完。
    */
   pasteable: { type: Boolean, default: false },
+  /** 粘贴框里那句额外的说明。拆分镜要说清"每一场之间留着那行分隔头"。 */
+  pasteHint: { type: String, default: '' },
 })
 
 const emit = defineEmits(['done'])
@@ -149,6 +151,7 @@ async function copy() {
           贴模型吐出来的那段 JSON 原文，整段贴，别删花括号。
           它走的是和真跑同一条解析和守卫——不合格一样会被打回，理由照说。
         </p>
+        <p v-if="pasteHint" class="tiny dim">{{ pasteHint }}</p>
         <textarea
           ref="box"
           v-model="pasted"
