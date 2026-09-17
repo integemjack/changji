@@ -339,7 +339,11 @@ void run(const config::Settings& settings, const Options& opts) {
         // 主程序不绑卡（不设 CUDA_VISIBLE_DEVICES），这个数只进 /status
         // 那份自我介绍。-1 = 不声称自己是哪张卡。
         wo.gpu = -1;
-        infer::mount_worker_api(app, settings, wo);
+        // **外来任务交给本机那几张卡**，别在主进程里就地跑——一个进程
+        // 只用得上一张卡（用户 2026-09-17：「只用了一张卡」）。
+        // 单卡机上这个回空，挂载那头就就地跑，和以前一样。
+        const FarmRunner fr = local_farm_runner(settings);
+        infer::mount_worker_api(app, settings, wo, fr.run, fr.capacity);
     }
     // **不在这儿预装大模型。** 注册不等于加载，调度器是**借出时**才装的
     // ——用户 2026-09-11 重申："用的时候才加载是对的，不做启动预载"。

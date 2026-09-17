@@ -13,6 +13,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include "infer/worker_server.hpp"
 #include "config/settings.hpp"
 #include "http/readonly.hpp"
 #include "models/hardware.hpp"
@@ -47,6 +48,28 @@ struct RunDeps {
 
 /// 默认的那套：配置从 runtime 取，后端是 sd.cpp。
 RunDeps default_run_deps();
+
+/// 外来任务怎么在这台机器上跑（主程序挂节点协议时用），以及能同时接几件。
+///
+/// **一个进程只能用一张卡**——CUDA_VISIBLE_DEVICES 在后端初始化时就读走
+/// 了，跑起来改不了。所以主程序就地跑外来任务时，双卡机上永远只有一张卡
+/// 在动（用户 2026-09-17：「只用了一张卡」）。这一个把任务交给本机那个
+/// 按卡拉起子进程的池，两张卡才都吃得到。
+///
+/// 2026-09-17 第一版做砸了两处，这一版照着改：
+///   · **farm 在起服务时就后台预热**，不是第一件任务到了才拉。第一版让
+///     任务线程堵在拉起和探活上（每个子进程最多两分钟），期间新来的全 409。
+///   · **capacity 跟活着的子进程数走**，不是卡数。第一版写死成卡数 2，
+///     而 farm 只拉起了一个，接了两件只有一个干得动，槽锁死。
+///
+/// farm 还没热好、或者单卡机上根本没有子进程时：就地跑、一次一件——
+/// 和以前一模一样。**只用本机那几个子进程，不含别的机器**：外来的活再
+/// 派出去会绕回来。
+struct FarmRunner {
+    infer::TaskRunner run;
+    infer::Capacity capacity;
+};
+FarmRunner local_farm_runner(const config::Settings& settings);
 
 ApiResult post_run(const nlohmann::json& body, const RunDeps& deps);
 

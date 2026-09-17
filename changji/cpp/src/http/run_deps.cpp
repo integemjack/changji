@@ -6,6 +6,8 @@
 //
 // 换句话说，这个文件里没有任何值得测的判断——它只是把
 // "配置说走哪条路" 翻译成 "装哪两个函数对象"。
+#include <mutex>
+#include <atomic>
 #include <algorithm>
 #include <chrono>
 #include <thread>
@@ -30,6 +32,87 @@
 namespace changji::http {
 
 using models::ProjectStore;
+
+namespace {
+
+/// 本机按显卡数拉起的那几个子进程。**全进程只拉一次。**
+///
+/// 原来这是 `backends()` 里的一个 static。**提出来是因为第二个用户来了**：
+/// 主程序挂上节点协议之后（一台机器一个进程、一条连接），外来任务也该交给
+/// 这几个子进程跑——不然一个进程只用得上一张卡（用户 2026-09-17：
+/// 「只用了一张卡」）。两处共用同一个 static，不能各拉一份：各拉一份就是
+/// 两套子进程抢同几张卡，端口还撞上。
+std::shared_ptr<infer::WorkerFarm> shared_farm(const config::Settings& s) {
+    static std::shared_ptr<infer::WorkerFarm> farm =
+        infer::WorkerFarm::start(
+            s, config::runtime().profile(),
+            [](const std::string& base, int seconds) {
+                // 工作进程的 /health 对 GET 和 POST 都答，
+                // 为一次探活单独引一条 HTTP 路径不值得。
+                auto post = llm::default_http_post();
+                const auto deadline =
+                    std::chrono::steady_clock::now() +
+                    std::chrono::seconds(seconds);
+                while (std::chrono::steady_clock::now() < deadline) {
+                    if (post(base + "/health", "", {}, 2.0).status == 200) {
+                        return true;
+                    }
+                    std::this_thread::sleep_for(
+                        std::chrono::milliseconds(400));
+                }
+                return false;
+            });;
+    return farm;
+}
+
+}  // namespace
+
+FarmRunner local_farm_runner(const config::Settings& settings) {
+    // 预热好之后的池和它的规模。**ready 是发布点**：写 pool、n 都在它之前，
+    // 读的一头看见 ready 为真才碰 pool。
+    struct Warm {
+        std::atomic<bool> ready{false};
+        std::shared_ptr<infer::WorkerPool> pool;
+        std::size_t n = 0;
+    };
+    static auto warm = std::make_shared<Warm>();
+    static std::once_flag once;
+    // **起服务时就在后台拉 farm**，不让任何一件任务去等它（见 run.hpp）。
+    std::call_once(once, [settings] {
+        std::thread([settings] {
+            const auto farm = shared_farm(settings);
+            const std::vector<std::string> eps =
+                farm ? farm->endpoints() : settings.workers.endpoints;
+            if (!eps.empty()) {
+                std::vector<infer::WorkerEndpoint> weps;
+                weps.reserve(eps.size());
+                // 本机那几个听回环、不查口令，token 留空。
+                for (const auto& u : eps) weps.push_back(infer::WorkerEndpoint{u, ""});
+                warm->pool = std::make_shared<infer::WorkerPool>(std::move(weps));
+                warm->n = eps.size();
+            }
+            warm->ready.store(true, std::memory_order_release);
+        }).detach();
+    });
+
+    FarmRunner r;
+    r.run = [settings](const infer::Task& task, const infer::StepCallback& on_step,
+                       pipeline::CancelToken& tok) {
+        if (warm->ready.load(std::memory_order_acquire) && warm->pool) {
+            return warm->pool->run(task, on_step, tok);
+        }
+        // 还没热好 / 单卡机：就地跑，和以前一模一样。
+        return infer::run_task_locally(task, settings, infer::Origin::Local,
+                                       task.shot_id, on_step, tok);
+    };
+    r.capacity = [] {
+        if (warm->ready.load(std::memory_order_acquire) && warm->pool) {
+            return std::max<std::size_t>(1, warm->n);
+        }
+        return std::size_t{1};
+    };
+    return r;
+}
 
 RunDeps default_run_deps() {
     RunDeps d;
@@ -76,25 +159,7 @@ RunDeps default_run_deps() {
         //
         // farm 是静态的：拉起来的子进程要活到进程结束，每次建 Backends
         // 都拉一遍的话，跑第二集时会再起 N 个、端口还撞上。
-        static std::shared_ptr<infer::WorkerFarm> farm =
-            infer::WorkerFarm::start(
-                s, config::runtime().profile(),
-                [](const std::string& base, int seconds) {
-                    // 工作进程的 /health 对 GET 和 POST 都答，
-                    // 为一次探活单独引一条 HTTP 路径不值得。
-                    auto post = llm::default_http_post();
-                    const auto deadline =
-                        std::chrono::steady_clock::now() +
-                        std::chrono::seconds(seconds);
-                    while (std::chrono::steady_clock::now() < deadline) {
-                        if (post(base + "/health", "", {}, 2.0).status == 200) {
-                            return true;
-                        }
-                        std::this_thread::sleep_for(
-                            std::chrono::milliseconds(400));
-                    }
-                    return false;
-                });
+        const auto farm = shared_farm(s);
         const std::vector<std::string> farm_eps =
             farm ? farm->endpoints() : s.workers.endpoints;
 

@@ -444,6 +444,11 @@ std::size_t WorkerPool::alive() const {
     return n;
 }
 
+TaskResult WorkerPool::run(const Task& task, const StepCallback& on_step,
+                           pipeline::CancelToken& tok) {
+    return impl_->run_task(task, tok, on_step);
+}
+
 stages::FrameRenderer WorkerPool::frame_renderer() {
     Impl* impl = impl_.get();
     return [impl](const models::Shot& shot, const stages::PromptBundle& prompts,

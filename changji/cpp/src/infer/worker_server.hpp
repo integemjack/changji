@@ -23,6 +23,7 @@
 #include <string>
 
 #include "config/settings.hpp"
+#include "infer/worker_pool.hpp"
 
 namespace changji::infer {
 
@@ -54,7 +55,26 @@ bool run_worker(const config::Settings& settings, const WorkerOptions& opts);
 ///
 /// 对外监听而 `[peer].token` 是空的时候**不挂**并回 false——那种情况下谁都
 /// 能派活过来烧卡。判据和 run_worker 同一个（peer_auth.hpp）。
+/// 外来任务怎么跑。空 = 在本进程里就地跑（`--worker` 那条就是这样）。
+///
+/// **主程序要传一个"交给自己那几张卡"的。** 一个进程只能用一张卡
+/// （CUDA_VISIBLE_DEVICES 在后端初始化时就读走了，跑起来改不了），所以
+/// 主程序就地跑外来任务时，双卡机上永远只有一张卡在动——用户 2026-09-17：
+/// 「只用了一张卡」。把它交给本机那个按卡拉起子进程的池，两张卡才都吃得到。
+/// 形状和池那边的 LocalRunner 一样，直接复用，别造第二个同形状的类型。
+using TaskRunner = LocalRunner;
+
+/// 这台此刻能**同时**接几件。空 = 1。
+///
+/// **是回调不是数字**：它跟着执行器背后真正的能力走。主程序那边是"本机
+/// 那几个按卡拉起的子进程里活着的有几个"——那个数在起服务后才知道、
+/// 中途还会变（有一个挂了就少一）。2026-09-17 做砸的那次就是把它写死成
+/// 卡数 2，而 farm 实际只拉起一个，接了两件却只有一个干得动，槽锁死、
+/// 后面 51 次全 409。
+using Capacity = std::function<std::size_t()>;
+
 bool mount_worker_api(crow::SimpleApp& app, const config::Settings& settings,
-                      const WorkerOptions& opts);
+                      const WorkerOptions& opts, TaskRunner runner = {},
+                      Capacity capacity = {});
 
 }  // namespace changji::infer
