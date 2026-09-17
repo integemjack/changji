@@ -3811,3 +3811,60 @@ TEST_CASE("POST /api/story/outline：带 stream 也照样回那份草稿") {
     std::error_code ec;
     fs::remove_all(root, ec);
 }
+
+TEST_CASE("写章正文：【地方】只给这一章用得着的那几个") {
+    // **拿措辞治"给多了"是治不好的。** 原来这儿发的是全剧地点清单，然后在
+    // 硬性要求里花一条叫模型「用得着哪一两个就只写那一两个，跑遍全城说明
+    // 是在拿地点凑场数」。二十个地方摆在眼前，模型自然会用。章自己带着
+    // locations 名单，照它筛就行——上下文小一截，那条规则也跟着没了。
+    Story st = sample_story();
+    st.locations.clear();
+    for (const char* n : {"天台", "便利店", "停车场", "警局"}) {
+        models::StoryLocation l;
+        l.name = n;
+        l.what = std::string(n) + "的样子";
+        st.locations.push_back(l);
+    }
+    REQUIRE(st.chapters.size() >= 1);
+    st.chapters[0].locations = {"天台", "警局"};
+
+    const std::string p =
+        stages::build_chapter_prompt(st, st.chapters[0].chapter_id,
+                                     StyleLine::REALISTIC);
+    // **只看【地方】那一段**：别处（梗概、章摘要）提到某个地名是另一回事，
+    // 这一条钉的是"清单里发了谁"。
+    const std::size_t from = p.find("【地方】（这一章用得着的）");
+    REQUIRE(from != std::string::npos);
+    std::size_t to = p.find("【", from + 3);
+    if (to == std::string::npos) to = p.size();
+    const std::string block = p.substr(from, to - from);
+    CHECK(block.find("天台") != std::string::npos);
+    CHECK(block.find("警局") != std::string::npos);
+    // 这一章用不着的不发过去
+    CHECK(block.find("便利店") == std::string::npos);
+    CHECK(block.find("停车场") == std::string::npos);
+    // 规则表里那一条没了
+    CHECK(p.find("跑遍全城") == std::string::npos);
+}
+
+TEST_CASE("写章正文：章里没填地点时照旧给全份，提醒贴在名单旁边") {
+    // 大纲那条路上 locations 是"给了就收、没给也不拦"（story_outline.cpp
+    // 里写着为什么不敢收紧）。空着的时候宁可多给，也不能让这一章没有地方
+    // 可写——那时候把那句提醒贴在名单上，比写在两千字之前的规则表里管用。
+    Story st = sample_story();
+    st.locations.clear();
+    for (const char* n : {"天台", "便利店"}) {
+        models::StoryLocation l;
+        l.name = n;
+        st.locations.push_back(l);
+    }
+    st.chapters[0].locations.clear();
+
+    const std::string p =
+        stages::build_chapter_prompt(st, st.chapters[0].chapter_id,
+                                     StyleLine::REALISTIC);
+    CHECK(p.find("整个故事的清单") != std::string::npos);
+    CHECK(p.find("跑遍全城") != std::string::npos);
+    CHECK(p.find("天台") != std::string::npos);
+    CHECK(p.find("便利店") != std::string::npos);
+}

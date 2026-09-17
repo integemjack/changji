@@ -444,13 +444,38 @@ std::string build_chapter_prompt(const Story& story,
             out += "\n";
         }
     }
+    // ---- 地方：**只给这一章用得着的那几个** ----
+    //
+    // 原来发的是全剧清单，然后在硬性要求里花一条（原第 14 条）叫模型
+    // 「用得着哪一两个就只写那一两个；跑遍全城，说明是在拿地点凑场数」。
+    // 那是拿措辞去治一个**给多了**造成的问题：二十个地方摆在眼前，模型
+    // 自然会用。章自己就带着 `locations`（读故事那条路上它在 required 里、
+    // minItems 1，见 stages/story_analyze.cpp），照它筛就是了——上下文小
+    // 一截，那条规则也跟着没了。
+    //
+    // **筛不出来就照旧给全份**：大纲那条路上这一栏是"给了就收、没给也不拦"
+    // （story_outline.cpp 里那段写着为什么不敢收紧），空着的时候宁可多给，
+    // 也不能让这一章没有地方可写。那时候把那句提醒贴在这儿——**贴在名单
+    // 旁边比写在两千字之前的规则表里管用**。
     if (!story.locations.empty()) {
-        out += "\n【地方】\n";
+        std::vector<const models::StoryLocation*> use;
         for (const auto& l : story.locations) {
-            out += l.name;
-            if (!l.what.empty()) out += "：" + l.what;
+            for (const auto& want : me.locations) {
+                if (l.name == want) { use.push_back(&l); break; }
+            }
+        }
+        const bool all = use.empty();
+        out += all ? "\n【地方】（整个故事的清单，不是这一章的；用得着哪一两个"
+                     "就只写那一两个，跑遍全城说明是在拿地点凑场数）\n"
+                   : "\n【地方】（这一章用得着的）\n";
+        if (all) {
+            for (const auto& l : story.locations) use.push_back(&l);
+        }
+        for (const models::StoryLocation* l : use) {
+            out += l->name;
+            if (!l->what.empty()) out += "：" + l->what;
             out += "。";
-            if (!l.when.empty()) out += l.when + "。";
+            if (!l->when.empty()) out += l->when + "。";
             out += "\n";
         }
     }
