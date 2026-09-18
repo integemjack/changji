@@ -114,10 +114,16 @@ function waitHint(row, index) {
 }
 
 /** 做完的那几行：一句话说清是什么下场。 */
+/**
+ * `pill`：那块牌子用哪一档颜色。
+ *
+ * **「停下了」不能和「失败」同色。** 引擎那头就是分开记的（TaskState），
+ * 人按的停不是出错；一样标红的话，人会去找哪儿坏了。红只留给真砸了的。
+ */
 const STATE = {
-  done: { label: '', cls: '' },
-  failed: { label: '失败', cls: 'is-failed' },
-  cancelled: { label: '停下了', cls: 'is-cancelled' },
+  done: { label: '', cls: '', pill: '' },
+  failed: { label: '失败', cls: 'is-failed', pill: 'pill--danger' },
+  cancelled: { label: '停下了', cls: 'is-cancelled', pill: 'pill--neutral' },
 }
 
 /** 这一轮做完的活加起来花了多久、有几件没成。给"做完的"那个小结用。 */
@@ -291,30 +297,40 @@ onUnmounted(() => clearTimeout(timer))
               {{ r.note }}
             </span>
           </span>
-          <span v-if="pct(r) !== null" class="tiny numeric nowrap row__pct">
-            {{ pct(r) }}%
-            <span class="dim">{{ r.current }}/{{ r.total }}</span>
+          <!-- **这一格没有数也要占着。** 读权重、等对面机器那种活报不出
+               步数，`v-if` 掉的话这一行后面全部左移，于是同一屏里时长那一
+               列落在四个不同的位置上，一列数没法竖着扫下来——而"哪件跑了
+               最久"正是这一页要一眼看出的事。空着，位置留住。 -->
+          <span class="tiny numeric nowrap row__pct">
+            <template v-if="pct(r) !== null">
+              {{ pct(r) }}%
+              <span class="dim">{{ r.current }}/{{ r.total }}</span>
+            </template>
           </span>
-          <span class="tiny dim numeric nowrap">{{ dur(r.seconds) }}</span>
-          <button
-            v-if="r.thinking"
-            class="btn btn--sm btn--ghost"
-            type="button"
-            :title="`想了 ${r.thinking_chars} 字，点开看`"
-            @click="toggleThinking(r)"
-          >
-            思考
-          </button>
-          <span v-if="r.cancelling" class="tiny dim nowrap">正在停…</span>
-          <button
-            v-else
-            class="iconbtn"
-            type="button"
-            title="结束这一件（正在跑的那一步会停下）"
-            @click="stop(r)"
-          >
-            <AppIcon name="stop" :size="14" />
-          </button>
+          <span class="tiny dim numeric nowrap row__time">{{ dur(r.seconds) }}</span>
+          <!-- 尾部这一格同理：有没有「思考」、停没停，各行不一样，
+               收进一个宽度钉死的格子里，右对齐。 -->
+          <span class="row__act">
+            <button
+              v-if="r.thinking"
+              class="btn btn--sm btn--ghost"
+              type="button"
+              :title="`想了 ${r.thinking_chars} 字，点开看`"
+              @click="toggleThinking(r)"
+            >
+              思考
+            </button>
+            <span v-if="r.cancelling" class="tiny dim nowrap">正在停…</span>
+            <button
+              v-else
+              class="iconbtn"
+              type="button"
+              title="结束这一件（正在跑的那一步会停下）"
+              @click="stop(r)"
+            >
+              <AppIcon name="stop" :size="14" />
+            </button>
+          </span>
           <pre
             v-if="opened[r.id] !== undefined"
             :ref="(el) => follow(el)"
@@ -341,7 +357,7 @@ onUnmounted(() => clearTimeout(timer))
             <span class="row__title truncate" :title="r.title">{{ r.title }}</span>
           </span>
           <span class="tiny dim nowrap">{{ waitHint(r, i) }}</span>
-          <span v-if="r.waited > 5" class="tiny dim numeric nowrap">
+          <span v-if="r.waited > 5" class="tiny dim numeric nowrap row__wait">
             排了 {{ dur(r.waited) }}
           </span>
           <!-- **按完叉它还会在名单上待一会儿。** 排着的是"有空位了才被领
@@ -394,19 +410,29 @@ onUnmounted(() => clearTimeout(timer))
               {{ r.error }}
             </span>
           </span>
-          <span v-if="STATE[r.state]?.label" class="pill tiny nowrap">
-            {{ STATE[r.state].label }}
+            <!-- 同上：干净跑完的那几件没有牌子，但位置要留着，
+               不然它们的时长和失败那几行对不齐。 -->
+          <span class="row__state">
+            <span
+              v-if="STATE[r.state]?.label"
+              class="pill tiny nowrap"
+              :class="STATE[r.state].pill"
+            >
+              {{ STATE[r.state].label }}
+            </span>
           </span>
-          <span class="tiny dim numeric nowrap">{{ dur(r.seconds) }}</span>
-          <button
-            v-if="r.thinking"
-            class="btn btn--sm btn--ghost"
-            type="button"
-            title="点开看它当时想了什么"
-            @click="toggleThinking(r)"
-          >
-            思考
-          </button>
+          <span class="tiny dim numeric nowrap row__time">{{ dur(r.seconds) }}</span>
+          <span class="row__act">
+            <button
+              v-if="r.thinking"
+              class="btn btn--sm btn--ghost"
+              type="button"
+              title="点开看它当时想了什么"
+              @click="toggleThinking(r)"
+            >
+              思考
+            </button>
+          </span>
           <pre
             v-if="opened[r.id] !== undefined"
             :ref="(el) => follow(el)"
@@ -496,6 +522,11 @@ onUnmounted(() => clearTimeout(timer))
 .row + .row {
   border-top: 1px solid var(--line);
 }
+/* **一行一格的节奏。** 带「正在写 ch05…」那句的行是两行高（48px），不带的
+   只有 35px，两种挨在一起像没排齐。给个下限，单行的那几件也占住同一格。 */
+.row {
+  min-height: 42px;
+}
 .row:hover {
   background: var(--bg-2);
 }
@@ -508,7 +539,15 @@ onUnmounted(() => clearTimeout(timer))
   inset: 0 auto 0 0;
   z-index: -1;
   border-radius: var(--r-sm);
-  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  /* **前沿要化开。** 原来是一整块纯色，于是行中间横着一道笔直的竖边——
+     读起来像"这一行被选中了一半"，而不是"跑到这儿了"。让最后 28px 渐隐，
+     那道边就变成了进度该有的样子。整体也压淡了一档（12% → 9%）：它是底色，
+     不该和 hover 抢，更不该盖过上面的字。 */
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--accent) 9%, transparent) calc(100% - 28px),
+    transparent
+  );
   transition: width 0.4s ease;
 }
 .row__fill--idle {
@@ -554,11 +593,49 @@ onUnmounted(() => clearTimeout(timer))
 .row__note {
   color: var(--text-2);
 }
+/* **右边这两列和左边的 .chip 是同一件事**：上面那段说"名字左边缘对齐比省
+   几像素重要"，而右边原来没人管——量过一屏：时长那一列的左缘在 528/565/
+   578/579 四个位置上游走，差 50px。每一行的数都落在不同地方，一列数就没法
+   竖着扫下来，而"哪件跑了最久"正是这一页要一眼看出的事。
+   钉死宽度 + 右对齐 + tabular-nums，三样缺一不可。 */
 .row__pct {
+  flex: none;
+  width: 86px;
+  text-align: right;
   color: var(--accent);
 }
+.row__time {
+  flex: none;
+  width: 66px;
+  text-align: right;
+}
+/* 排队那一节的「排了 X」多两个字，66px 会把它裁了，单开一格。 */
+.row__wait {
+  flex: none;
+  width: 92px;
+  text-align: right;
+}
+/* 尾部那一格：有没有「思考」、停没停，各行不一样。钉死宽度、靠右排，
+   前面那几列才不会被它顶得一行一个位置。 */
+.row__act {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--s1);
+  flex: none;
+  width: 96px;
+}
+/* 「失败 / 停下了」那块牌子。干净跑完的没有牌子，但格子留着。 */
+.row__state {
+  display: flex;
+  justify-content: flex-end;
+  flex: none;
+  width: 56px;
+}
+/* **错的那一行要读得出来。** 原来用的是 --warn（#ffcc4d，黄），白底上
+   几乎看不清；而且黄说的是"提醒"，一件跑砸了的活该说"错"。--danger 是红。 */
 .is-failed .row__note {
-  color: var(--warn, var(--text-2));
+  color: var(--danger, var(--text-2));
 }
 .is-failed .row__title,
 .is-cancelled .row__title {
