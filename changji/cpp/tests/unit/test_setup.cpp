@@ -839,3 +839,63 @@ TEST_CASE("更新检查带缓存：关着不问、没到点不问、问砸了不
         CHECK(after.latest == "v9.9.9");
     }
 }
+
+TEST_CASE("state 里的 selected 要带上替换档，不然弹窗一开就弹回默认") {
+    // 用户 2026-09-18：出片模型里把文本编码器换成 Q2_K_M、视频 VAE 换成
+    // int8_convrot，存下，**再打开两个都弹回默认**。
+    //
+    // `selected` 是界面上那几个下拉的初值（models.js 里 `picks` 就是拿它
+    // 拼的）。原来这儿只放组一级那个 id，替换档那两个键读不到，Vue 那边
+    // 回落到 `alt.choices[0]` —— 默认那档。
+    //
+    // 当时那一屏是自相矛盾的：精度那一列的体积按存下的小编码器算（走的是
+    // option_json → alts_from_config），下拉却显示大的那份。真正伤人的是
+    // 接着那一下——再点一次「保存」，发出去的是下拉里那份默认值，
+    // **用户特意挑的小编码器被自己的保存覆盖掉**。
+    const setup::Group* video = nullptr;
+    for (const auto& g : setup::catalog()) {
+        if (g.key == "video") video = &g;
+    }
+    REQUIRE(video != nullptr);
+
+    // 找一档带替换档的（H3 完整那一档）
+    const setup::Option* opt = nullptr;
+    for (const auto& o : video->options) {
+        if (!o.alts.empty()) { opt = &o; break; }
+    }
+    REQUIRE(opt != nullptr);
+    REQUIRE(opt->alts.size() >= 2);
+
+    // 每一组替换档都挑**不是第一个**的那一份——第一个是默认值，
+    // 拿它测的话，"回填了"和"回落到默认"两种情况长得一模一样。
+    config::Settings s;
+    std::map<std::string, std::string> want;
+    for (const auto& alt : opt->alts) {
+        REQUIRE(alt.choices.size() >= 2);
+        const auto& pick = alt.choices.back();
+        std::string* field = config::models_field(s.models, alt.role);
+        REQUIRE(field != nullptr);
+        *field = pick.name;
+        want[setup::alt_key(video->key, alt.role)] = pick.name;
+        // 选的确实不是默认那份，不然这条测试什么都证明不了
+        REQUIRE(pick.name != alt.choices.front().name);
+    }
+    // 组一级也得指着这一档，否则 selected[video] 会落到推荐档上，
+    // 而那一档的 alts 未必是这几个
+    {
+        std::string* f = config::models_field(s.models, "video");
+        REQUIRE(f != nullptr);
+        *f = opt->files.empty() ? std::string() : opt->files.front().name;
+    }
+
+    models::HardwareProfile profile;
+    profile.vram_gb = 48.0;
+    const auto res = http::get_setup_state(s, profile);
+    REQUIRE(res.status == 200);
+    const auto& sel = res.body.at("selected");
+
+    for (const auto& [k, v] : want) {
+        CHECK_MESSAGE(sel.contains(k), "selected 里没有替换档的键：" << k);
+        if (sel.contains(k)) CHECK(sel.at(k).get<std::string>() == v);
+    }
+}

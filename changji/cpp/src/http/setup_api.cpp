@@ -331,9 +331,36 @@ ApiResult get_setup_state(const config::Settings& settings,
         // 这一页会把它换回推荐的那档，而他多半不会注意到。
         const std::string current = current_option(g, settings);
         const auto rec = recommended.find(g.key);
-        selected[g.key] = !current.empty()
-                              ? current
-                              : (rec == recommended.end() ? std::string() : rec->second);
+        const std::string pick =
+            !current.empty()
+                ? current
+                : (rec == recommended.end() ? std::string() : rec->second);
+        selected[g.key] = pick;
+
+        // **替换档（编码器、VAE）也要回填。**
+        //
+        // 这张表是界面上那几个下拉的初值（models.js 的 `picks`）。原来这儿
+        // 只放组一级那一个 id，于是弹窗一打开，编码器和 VAE 两个下拉读不到
+        // 自己那个键，回落到 `alt.choices[0]` —— 也就是默认那档。
+        //
+        // 落地就是用户 2026-09-18 报的那件事：出片模型里把文本编码器换成
+        // Q2_K_M、视频 VAE 换成 int8_convrot，存下，再打开**两个都弹回默认**。
+        // 更难查的是当时那一屏是**自相矛盾**的：精度那一列的体积按存下的
+        // 小编码器算（45.5 GB，走的是 option_json → alts_from_config），
+        // 两个下拉却显示着大的那份，底下「下载」按钮又按大的算成 53.0 GB。
+        // 同一屏三个数三种说法，而没有一处报错。
+        //
+        // 真正伤人的是接着那一下：这时候再点「保存」，发出去的是下拉里那份
+        // **默认值**——用户特意挑的小编码器就这么被自己的一次保存覆盖掉了。
+        //
+        // 判据和算体积那条共用 `alts_from_config`（它按配置里填的文件名反查
+        // 是哪一档）。两处各写一份的话，迟早又回到"体积按这份算、下拉显示
+        // 那份"。
+        if (const Option* o = g.find(pick); o != nullptr) {
+            for (const auto& [k, v] : alts_from_config(g.key, *o, settings.models)) {
+                selected[k] = v;
+            }
+        }
 
         json grp{{"key", g.key},
                  {"title", g.title},
