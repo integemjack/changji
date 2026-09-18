@@ -53,6 +53,7 @@ changji --port 8080     # 起服务，浏览器打开就是界面
 | [docs/安装与运行.md](docs/安装与运行.md) | 装包、起服务、Web 界面那四步、外部依赖 |
 | [docs/配音.md](docs/配音.md) | 本地 / HTTP 两种后端，`--say` 单句试听，选型 |
 | [docs/显存与画幅.md](docs/显存与画幅.md) | 画幅三档、显存怎么判、CPU 基线、排障 |
+| [docs/提示词日志.md](docs/提示词日志.md) | 每次给模型发了什么、收回什么，怎么捞出来比 |
 | [docs/已知问题.md](docs/已知问题.md) | Windows / Docker Desktop 上那几个坑 |
 | [docs/选型结论.md](docs/选型结论.md) | 各环节模型选型和许可证核查 |
 | [docs/C++重构方案.md](docs/C++重构方案.md) | 从 Python 移植到单二进制的方案（历史） |

@@ -302,6 +302,17 @@ void set_task_note(std::uint64_t id, std::string note) {
     mutate_by_id(id, [&](Row& r) { r.note = std::move(note); });
 }
 
+std::optional<TaskFacts> task_facts(std::uint64_t id) {
+    // `mutate_by_id` 的只读版。**拷一份出来再出锁**：调用方（记提示词日志那头）
+    // 拿到之后还要去开文件，攥着 board 那把锁做 I/O 会把整本账卡住。
+    Board& b = board();
+    std::lock_guard lg(b.mu);
+    auto it = b.live.find(id);
+    if (it == b.live.end()) return std::nullopt;
+    const Row& r = *it->second;
+    return TaskFacts{r.kind, r.title, r.project, r.episode_id};
+}
+
 bool cancel_task(std::uint64_t id) {
     // **长跑那一族要多走一步。** 这儿点亮的是行自己的令牌，而长跑的 worker
     // 查的是**槽**上那个（`JobProgress::cancelled()`）——只点行的话，叉按下去

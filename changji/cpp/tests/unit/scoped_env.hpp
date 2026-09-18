@@ -22,6 +22,7 @@
 #include <filesystem>
 #include <memory>
 #include <string>
+#include <vector>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -90,7 +91,14 @@ private:
 ///   * macOS：**`HOME`**——`user_config_dir` 的 `__APPLE__` 分支走的是
 ///     `$HOME/Library/Application Support/changji`，一个字都不看
 ///     `XDG_CONFIG_HOME`；
-///   * 其它：`XDG_CONFIG_HOME`。
+///   * 其它：`XDG_CONFIG_HOME` **和 `XDG_DATA_HOME`**。
+///
+/// ⚠️ **数据目录和配置目录在 Linux 上不是同一个变量。** `user_config_dir` 读
+/// `XDG_CONFIG_HOME`，而 `user_data_dir` 读 **`XDG_DATA_HOME`**（退回
+/// `~/.local/share`）——只换前者的话，任何往数据目录写东西的用例都会写到那台
+/// 机器上真实的 `~/.local/share/changji/` 里。2026-09-18 提示词日志
+/// （`llm/call_log.cpp`）落的就是数据目录，跑一次单元测试就往人家家里写一堆
+/// 文件。Windows 和 macOS 上两者本来就是同一个根，所以只有这一支要补。
 ///
 /// ⚠️ **隔离目录用纯 ASCII 名。** 把带中文的路径塞进 `LOCALAPPDATA`，
 /// Windows 上会抛 "No mapping for the Unicode character exists in the
@@ -105,16 +113,17 @@ public:
         std::filesystem::create_directories(dir_, ec);
         const std::string v = paths::to_utf8(dir_);
 #ifdef _WIN32
-        guard_ = std::make_unique<ScopedEnv>("LOCALAPPDATA", v);
+        guards_.push_back(std::make_unique<ScopedEnv>("LOCALAPPDATA", v));
 #elif defined(__APPLE__)
-        guard_ = std::make_unique<ScopedEnv>("HOME", v);
+        guards_.push_back(std::make_unique<ScopedEnv>("HOME", v));
 #else
-        guard_ = std::make_unique<ScopedEnv>("XDG_CONFIG_HOME", v);
+        guards_.push_back(std::make_unique<ScopedEnv>("XDG_CONFIG_HOME", v));
+        guards_.push_back(std::make_unique<ScopedEnv>("XDG_DATA_HOME", v));
 #endif
     }
 
     ~ScopedUserConfigDir() {
-        guard_.reset();  // 先还原环境变量，再删目录
+        guards_.clear();  // 先还原环境变量，再删目录
         std::error_code ec;
         std::filesystem::remove_all(dir_, ec);
     }
@@ -126,7 +135,9 @@ public:
 
 private:
     std::filesystem::path dir_;
-    std::unique_ptr<ScopedEnv> guard_;
+    // **一个平台可能要换好几个变量**（Linux 上配置和数据分两个），所以存一列
+    // 而不是一个。析构按加进来的顺序还原，彼此不相干。
+    std::vector<std::unique_ptr<ScopedEnv>> guards_;
 };
 
 }  // namespace changji::test

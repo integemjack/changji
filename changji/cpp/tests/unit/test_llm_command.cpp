@@ -23,11 +23,20 @@
 
 #include <doctest/doctest.h>
 
+#include <filesystem>
+#include <fstream>
+#include <sstream>
 #include <string>
+#include <system_error>
+#include <vector>
+
+#include <nlohmann/json.hpp>
 
 #include "config/settings.hpp"
 #include "llm/client.hpp"
 #include "pipeline/jobs.hpp"
+
+#include "scoped_env.hpp"
 
 using namespace changji;
 
@@ -46,6 +55,41 @@ config::LLMConfig echo_cfg() {
 #endif
     c.command_timeout_s = 30.0;
     return c;
+}
+
+/// 把 `llm_log` 那棵树里的 `index.jsonl` 全读出来。
+/// **项目子目录名不写死**：这几条跑在没有活、没有项目的线程上。
+std::vector<nlohmann::json> read_log_index(const std::filesystem::path& root) {
+    std::vector<nlohmann::json> rows;
+    std::error_code ec;
+    for (std::filesystem::recursive_directory_iterator it(root, ec), end;
+         !ec && it != end; it.increment(ec)) {
+        if (!it->is_regular_file(ec) || it->path().filename() != "index.jsonl") {
+            continue;
+        }
+        std::ifstream f(it->path(), std::ios::binary);
+        std::string line;
+        while (std::getline(f, line)) {
+            if (!line.empty()) rows.push_back(nlohmann::json::parse(line));
+        }
+    }
+    return rows;
+}
+
+/// 那棵树里每个文件的内容接成一大串。问的是"这个字有没有落到盘上"。
+std::string slurp_log_tree(const std::filesystem::path& root) {
+    std::string all;
+    std::error_code ec;
+    for (std::filesystem::recursive_directory_iterator it(root, ec), end;
+         !ec && it != end; it.increment(ec)) {
+        if (!it->is_regular_file(ec)) continue;
+        std::ifstream f(it->path(), std::ios::binary);
+        std::ostringstream ss;
+        ss << f.rdbuf();
+        all += ss.str();
+        all += "\n";
+    }
+    return all;
 }
 
 }  // namespace
@@ -156,4 +200,168 @@ TEST_CASE("默认参数表：带路径、带扩展名、大小写都要认得出
     CHECK(!llm::default_command_args("codex").empty());
     // 认不出的不猜：交给用户自己在 command_args 里写
     CHECK(llm::default_command_args("my-own-llm").empty());
+}
+
+TEST_CASE("接上提示词日志之后，命令行这条的行为一个字没变") {
+    // 同 test_llm_client.cpp 里那条：钉的**不是日志写对了没有**，是
+    // 「接上记录器之后这个出入口对外还是原来那个样子」。
+    //
+    // 命令行这条尤其要钉 `proc::run` 的那几句翻译（找不到 / 超时 / 退出码
+    // 非零）：它们全是给用户看的原话，而记录器的 catch 里那句必须是**裸
+    // `throw;`**——`throw e;` 会把 LlmError 切片成 std::exception，
+    // 调用方 `catch (const LlmError&)` 就整个接不住了。
+    const std::filesystem::path root =
+        std::filesystem::temp_directory_path() / "cj_llm_log_command_test";
+    std::error_code ec;
+    std::filesystem::remove_all(root, ec);
+    // 把落盘路径挪到临时目录，**一个字节都不往用户真正的数据目录写**。
+    const test::ScopedEnv log_dir("CHANGJI_LLM_LOG_DIR", paths::to_utf8(root));
+
+    SUBCASE("开关关着：回显的还是那段字，而且一次盘都不碰") {
+        config::LLMConfig c = echo_cfg();
+        c.call_log = false;
+        llm::CommandClient cli(c);
+        pipeline::CancelToken tok;
+        llm::Request req;
+        req.prompt = "写一章剧本";
+        CHECK(cli.complete(req, tok) == "写一章剧本");
+        CHECK_MESSAGE(!std::filesystem::exists(root),
+                      "关着的时候连目录都不该建");
+    }
+
+    SUBCASE("开关开着：回显的还是那段字，schema 照旧贴在后面") {
+        config::LLMConfig c = echo_cfg();
+        c.call_log = true;
+        llm::CommandClient cli(c);
+        pipeline::CancelToken tok;
+        llm::Request req;
+        req.prompt = "写一章剧本";
+        req.schema = nlohmann::ordered_json{{"type", "object"}};
+        const std::string out = cli.complete(req, tok);
+        CHECK(out.rfind("写一章剧本", 0) == 0);
+        // 和远端那条共用同一个函数，记日志不许在中间插一手
+        CHECK(out.find(llm::schema_as_prompt(req.prompt, req.schema)) !=
+              std::string::npos);
+    }
+
+    SUBCASE("开关开着：没填 command 抛的还是那句，且照旧是 LlmError") {
+        // 记录器是**摆在这句抛之前**的（没配好也是一次真实的失败），
+        // 所以这一句最容易被接线弄坏。
+        config::LLMConfig c;
+        c.backend = "command";
+        c.command = "";
+        c.call_log = true;
+        llm::CommandClient cli(c);
+        pipeline::CancelToken tok;
+        llm::Request req;
+        req.prompt = "写一章剧本";
+        CHECK_THROWS_WITH_AS(cli.complete(req, tok),
+                             doctest::Contains("llm.command"), llm::LlmError);
+    }
+
+    SUBCASE("开关开着：找不到那个程序，说的还是「不在 PATH 上」") {
+        config::LLMConfig c = echo_cfg();
+        c.call_log = true;
+        c.command = "changji_一定不存在的命令_zzz";
+        c.command_args = {};
+        llm::CommandClient cli(c);
+        pipeline::CancelToken tok;
+        llm::Request req;
+        req.prompt = "写一章剧本";
+        CHECK_THROWS_WITH_AS(cli.complete(req, tok),
+                             doctest::Contains("找不到"), llm::LlmError);
+    }
+
+    std::filesystem::remove_all(root, ec);
+}
+
+
+TEST_CASE("命令行后端：参数里的密钥不许落进日志") {
+    // **这一条破了是不可逆的**：日志是拿来拷给别人一起看的（docs/提示词日志.md
+    // 上写着「拷这个目录给别人之前先想一下」），拷的人不会先逐份读一遍。
+    //
+    // 失败场景（真的）：`[llm].command_args` 在设置页上是自由文本、配置接口
+    // 一个字都不过滤。填成 `["-p","--api-key","d3b4f0a1e2.9Kx2mQ7v"]` 跑一次，
+    // 那行 `endpoint` 就是整把密钥。`redact_secrets` 拦不住它——它认的是
+    // `Bearer xxx`、`sk-` 打头的长串、JSON 里那几个键的值，而命令行参数是
+    // **两个独立的 argv**，智谱的密钥又形如 `d3b4f0a1e2.9Kx2mQ7v`，
+    // 三种形状一种都不沾。
+    const std::filesystem::path root =
+        std::filesystem::temp_directory_path() / "cj_llm_log_secret_test";
+    std::error_code ec;
+    std::filesystem::remove_all(root, ec);
+    const test::ScopedEnv log_dir("CHANGJI_LLM_LOG_DIR", paths::to_utf8(root));
+
+    // 拿一个**肯定不存在**的命令：这一次必然砸在"找不到"上，不碰这台机器上
+    // 任何真程序，而账还是照记（失败那一半正是最想研究的）。
+    config::LLMConfig c;
+    c.backend = "command";
+    c.command = "changji_一定不存在的命令_zzz";
+    c.command_args = {"-p", "--api-key", "d3b4f0a1e2.9Kx2mQ7v",
+                      "--auth-token=9Kx2mQ7vSECRET", "--restricted"};
+    c.call_log = true;
+    c.command_timeout_s = 30.0;
+
+    llm::CommandClient cli(c);
+    pipeline::CancelToken tok;
+    llm::Request req;
+    req.prompt = "写一章剧本";
+    CHECK_THROWS_AS(cli.complete(req, tok), llm::LlmError);
+
+    const auto rows = read_log_index(root);
+    REQUIRE(rows.size() == 1);
+    const std::string endpoint = rows[0].at("endpoint").get<std::string>();
+    CAPTURE(endpoint);
+    CHECK_MESSAGE(endpoint.find("d3b4f0a1e2.9Kx2mQ7v") == std::string::npos,
+                  "跟在 --api-key 后面的那个 argv 得整个换成 ***");
+    CHECK_MESSAGE(endpoint.find("9Kx2mQ7vSECRET") == std::string::npos,
+                  "--auth-token=VALUE 这种写法，等号后面也得换掉");
+    // 抹的是值，不是开关名：研究时要认的「这次带的哪几个开关」照样看得见。
+    CHECK(endpoint.find("--api-key") != std::string::npos);
+    CHECK(endpoint.find("--auth-token=") != std::string::npos);
+    CHECK(endpoint.find("***") != std::string::npos);
+    // 后面那个参数不许被连累
+    CHECK(endpoint.find("--restricted") != std::string::npos);
+    // 整棵树都不许有——那句翻给用户的话也会落进 error.txt
+    CHECK(slurp_log_tree(root).find("d3b4f0a1e2.9Kx2mQ7v") == std::string::npos);
+
+    std::filesystem::remove_all(root, ec);
+}
+
+TEST_CASE("命令行后端：只有开关才能点名下一个，值里带 token 不许连累后面那个开关") {
+    // **判的是"这个 argv 像不像密钥"而不是"它是不是开关"时，抹的就是错的那个。**
+    // `--append-system-prompt "回答要 token 精简"` 里那句话含 token，
+    // 于是紧跟的 `--restricted` 被整个换成 `***`——而 endpoint 那一栏的用处
+    // 正是「这次带了哪几个开关」，`--restricted` 恰好是关掉改文件那些工具的
+    // 那一条，日志上看不出带没带。同族的还有 `--max-tokens 8192`（值被抹）。
+    const std::filesystem::path root =
+        std::filesystem::temp_directory_path() / "cj_llm_log_flagpos_test";
+    std::error_code ec;
+    std::filesystem::remove_all(root, ec);
+    const test::ScopedEnv log_dir("CHANGJI_LLM_LOG_DIR", paths::to_utf8(root));
+
+    config::LLMConfig c;
+    c.backend = "command";
+    c.command = "changji_一定不存在的命令_zzz";
+    c.command_args = {"-p", "--append-system-prompt", "回答要 token 精简",
+                      "--restricted", "--max-tokens", "8192"};
+    c.call_log = true;
+    c.command_timeout_s = 30.0;
+
+    llm::CommandClient cli(c);
+    pipeline::CancelToken tok;
+    llm::Request req;
+    req.prompt = "写一章剧本";
+    CHECK_THROWS_AS(cli.complete(req, tok), llm::LlmError);
+
+    const auto rows = read_log_index(root);
+    REQUIRE(rows.size() == 1);
+    const std::string endpoint = rows[0].at("endpoint").get<std::string>();
+    CAPTURE(endpoint);
+    // 那句提示词是值不是开关，点名不了下一个。
+    CHECK(endpoint.find("--restricted") != std::string::npos);
+    // `--max-tokens` 是开关而且带 token，它后面那个数才该被抹。
+    CHECK(endpoint.find("--max-tokens ***") != std::string::npos);
+
+    std::filesystem::remove_all(root, ec);
 }

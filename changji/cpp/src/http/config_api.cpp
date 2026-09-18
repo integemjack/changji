@@ -184,6 +184,16 @@ ApiResult get_connections() {
         {"llm_api_key_set", !key.empty()},
         {"llm_api_key_hint", hint},
         {"llm_temperature", s.llm.temperature},
+        // 提示词日志：开关 + 正文文件的磁盘上限（MB）。
+        // **走接口而不是只留在 config.toml 里**，理由是这两项是「随手要动」
+        // 的：拷项目给别人之前先关掉、磁盘快满了先调小——让人为这个去改 toml
+        // 再重启，多半就不关了。
+        // ⚠️ **界面上还没有这两个控件**（`webapp/client/src` 里搜不到
+        // `call_log`），所以现在只有直接打 `/api/connections` 这一条路。
+        // 补界面的时候记着：`call_log_max_mb` 填离谱的数会被 `validate()`
+        // 挡在 400 上（见 settings.cpp 那段），控件给个数字框加上下界就够。
+        {"llm_call_log", s.llm.call_log},
+        {"llm_call_log_max_mb", s.llm.call_log_max_mb},
         {"tts_backend", s.tts.backend},
         {"tts_base_url", s.tts.base_url.value_or("")},
         {"vram_gb_override", s.vram_gb_override.has_value()
@@ -205,6 +215,7 @@ ApiResult post_connections(const json& body, const DoctorFn& check) {
     const json& patch = *pit;
     static const std::set<std::string> kAllowed = {
         "llm_base_url", "llm_model", "llm_api_key", "llm_temperature",
+        "llm_call_log", "llm_call_log_max_mb",
         "llm_backend", "llm_command", "llm_command_args", "llm_command_timeout_s",
         "tts_backend", "tts_base_url", "vram_gb_override"};
     forbid_extra(patch, kAllowed, "patch.");
@@ -252,6 +263,14 @@ ApiResult post_connections(const json& body, const DoctorFn& check) {
                 const auto x = need_num(v, key);
                 note(key, s.llm.temperature != x);
                 s.llm.temperature = x;
+            } else if (field == "call_log") {
+                const auto x = need_bool(v, key);
+                note(key, s.llm.call_log != x);
+                s.llm.call_log = x;
+            } else if (field == "call_log_max_mb") {
+                const auto x = need_num(v, key);
+                note(key, s.llm.call_log_max_mb != x);
+                s.llm.call_log_max_mb = x;
             } else if (field == "backend") {
                 const auto x = need_string(v, key);
                 note(key, s.llm.backend != x);
@@ -362,6 +381,8 @@ ApiResult post_connections(const json& body, const DoctorFn& check) {
                 if (field == "base_url") value = s.llm.base_url;
                 else if (field == "model") value = s.llm.model;
                 else if (field == "temperature") value = s.llm.temperature;
+                else if (field == "call_log") value = s.llm.call_log;
+                else if (field == "call_log_max_mb") value = s.llm.call_log_max_mb;
                 else if (field == "backend") value = s.llm.backend;
                 else if (field == "command") value = s.llm.command;
                 else if (field == "command_args") value = s.llm.command_args;

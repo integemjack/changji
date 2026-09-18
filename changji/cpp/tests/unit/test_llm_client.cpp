@@ -12,6 +12,8 @@
 
 #include <filesystem>
 #include <fstream>
+#include <sstream>
+#include <system_error>
 
 #include <map>
 #include <string>
@@ -79,6 +81,45 @@ llm::HttpResponse ok(const std::string& content) {
     const json body = {
         {"choices", json::array({json{{"message", {{"content", content}}}}})}};
     return llm::HttpResponse{200, body.dump(), std::nullopt};
+}
+
+/// 把 `llm_log` 那棵树里的 `index.jsonl` 全读出来。
+///
+/// **项目子目录名不写死。** 这几条用例跑在没有活、没有项目的线程上，落的是
+/// `_无项目`——把那个名字抄到用例里的话，哪天那个兜底名一改，这儿红的地方
+/// 会是"文件不存在"，看不出是改了名。
+std::vector<json> read_log_index(const std::filesystem::path& root) {
+    std::vector<json> rows;
+    std::error_code ec;
+    for (std::filesystem::recursive_directory_iterator it(root, ec), end;
+         !ec && it != end; it.increment(ec)) {
+        if (!it->is_regular_file(ec) || it->path().filename() != "index.jsonl") {
+            continue;
+        }
+        std::ifstream f(it->path(), std::ios::binary);
+        std::string line;
+        while (std::getline(f, line)) {
+            if (!line.empty()) rows.push_back(json::parse(line));
+        }
+    }
+    return rows;
+}
+
+/// 那棵树里每个文件的名字和内容接成一大串。
+/// 问的是"这个字有没有落到盘上"，问哪个文件里无关紧要。
+std::string slurp_log_tree(const std::filesystem::path& root) {
+    std::string all;
+    std::error_code ec;
+    for (std::filesystem::recursive_directory_iterator it(root, ec), end;
+         !ec && it != end; it.increment(ec)) {
+        if (!it->is_regular_file(ec)) continue;
+        all += paths::to_utf8(it->path().filename()) + "\n";
+        std::ifstream f(it->path(), std::ios::binary);
+        std::ostringstream ss;
+        ss << f.rdbuf();
+        all += ss.str() + "\n";
+    }
+    return all;
 }
 
 llm::Request simple_req() {
@@ -1126,4 +1167,386 @@ TEST_CASE("对面回 4xx 时，状态码要挂到异常上") {
         CHECK(e.status() == 401);
         CHECK(e.is_config_error());
     }
+}
+
+TEST_CASE("接上提示词日志之后，出入口的行为一个字没变") {
+    // 这一条钉的**不是日志写对了没有**（那在 test_llm_call_log.cpp 里），
+    // 是「四个出入口接上记录器之后对外还是原来那个样子」：同样的输入、
+    // 同样的返回、同样的异常。
+    //
+    // 异常那一半最值得钉：catch 里那句必须是**裸 `throw;`**。写成
+    // `throw e;` 会把 LlmError 切片成 std::exception，`status()` 和
+    // `is_config_error()` 当场失效——而批量那几条靠 is_config_error 止损
+    // （见 client.hpp 上那段「一次补七章分镜，第三章开始密钥失效，
+    // 又试了五章」）。切片了不会编译报错，只会让人白等二十分钟。
+    const std::filesystem::path root =
+        std::filesystem::temp_directory_path() / "cj_llm_log_client_test";
+    std::error_code ec;
+    std::filesystem::remove_all(root, ec);
+    // 研究用的那个环境变量（call_log.hpp §CallLogOptions::root）：这儿拿它
+    // 把整条落盘路径从用户真正的数据目录上挪开，**一个字节都不往那儿写**。
+    const test::ScopedEnv log_dir("CHANGJI_LLM_LOG_DIR", paths::to_utf8(root));
+
+    SUBCASE("开关关着：返回值照旧，而且一次盘都不碰") {
+        config::LLMConfig cfg = test_cfg();
+        cfg.call_log = false;
+        FakeHttp http;
+        http.responses.push_back(ok("{}"));
+        llm::RemoteClient c(cfg, http.fn());
+        pipeline::CancelToken tok;
+        CHECK(c.complete(simple_req(), tok) == "{}");
+        CHECK_MESSAGE(!std::filesystem::exists(root),
+                      "关着的时候连目录都不该建");
+    }
+
+    SUBCASE("开关开着：整段那条的返回值、发出去的那份都没变样") {
+        config::LLMConfig cfg = test_cfg();
+        cfg.call_log = true;
+        FakeHttp http;
+        http.responses.push_back(ok(R"({"a":1})"));
+        llm::RemoteClient c(cfg, http.fn());
+        pipeline::CancelToken tok;
+        CHECK(c.complete(simple_req(), tok) == R"({"a":1})");
+        REQUIRE(http.calls.size() == 1);
+        // 记日志不许往请求体里加东西，也不许多发一趟
+        CHECK(http.calls[0].body.at("messages").size() == 1);
+        CHECK_FALSE(http.calls[0].body.contains("response_format"));
+    }
+
+    SUBCASE("开关开着：401 那句话和 status 逐字不变") {
+        const llm::HttpResponse deny{401, R"({"error":"bad key"})", std::nullopt};
+        // 先问一遍"不记日志时它说什么"，再拿记日志时那句和它逐字比——
+        // 比死措辞的话，explain_status 那几句一调整这条就假红。
+        std::string plain;
+        {
+            config::LLMConfig off = test_cfg();
+            off.call_log = false;
+            FakeHttp h;
+            h.responses.push_back(deny);
+            llm::RemoteClient c(off, h.fn());
+            pipeline::CancelToken tok;
+            try {
+                c.complete(simple_req(), tok);
+                FAIL("该抛的没抛");
+            } catch (const llm::LlmError& e) {
+                plain = e.what();
+            }
+        }
+        config::LLMConfig cfg = test_cfg();
+        cfg.call_log = true;
+        FakeHttp http;
+        http.responses.push_back(deny);
+        llm::RemoteClient c(cfg, http.fn());
+        pipeline::CancelToken tok;
+        try {
+            c.complete(simple_req(), tok);
+            FAIL("该抛的没抛");
+        } catch (const llm::LlmError& e) {
+            CHECK(std::string(e.what()) == plain);
+            CHECK(e.status() == 401);
+            CHECK(e.is_config_error());   // 切片了这一条会红
+        }
+    }
+
+    SUBCASE("开关开着：schema 本地校验没过，抛的还是 LlmError") {
+        // 这一次对面好好地回了 200，是**我们这头**没认——研究最想看的正是
+        // 它，而记录器在这一步之前就该把正文收下了（见 client.cpp 里
+        // extract_content 提前那一段）。这条只管"行为没变"。
+        config::LLMConfig cfg = test_cfg();
+        cfg.call_log = true;
+        llm::Request r = simple_req();
+        r.schema = nlohmann::ordered_json{{"type", "object"}};
+        FakeHttp http;
+        http.responses.push_back(ok("这压根不是 JSON"));
+        llm::RemoteClient c(cfg, http.fn());
+        pipeline::CancelToken tok;
+        CHECK_THROWS_AS(c.complete(r, tok), llm::LlmError);
+    }
+
+    SUBCASE("开关开着：流式那条边生边给，一段都不少") {
+        config::LLMConfig cfg = test_cfg();
+        cfg.call_log = true;
+        llm::RemoteClient c(
+            cfg,
+            [](const std::string&, const std::string&,
+               const std::map<std::string, std::string>&,
+               double) { return ok("{}"); },
+            [](const std::string&, const std::string&,
+               const std::map<std::string, std::string>&, double,
+               const llm::OnChunk& on_chunk) {
+                const std::string sse =
+                    "data: {\"choices\":[{\"delta\":{\"content\":\"{\"}}]}\n\n"
+                    "data: {\"choices\":[{\"delta\":{\"content\":\"}\"}}]}\n\n"
+                    "data: [DONE]\n\n";
+                on_chunk(sse.data(), sse.size());
+                return llm::HttpResponse{200, "", std::nullopt};
+            });
+        pipeline::CancelToken tok;
+        std::string got;
+        CHECK(c.complete(simple_req(), tok,
+                         [&got](const std::string& p) { got += p; }) == "{}");
+        // 逐字那一路一段都不许被记录器吃掉
+        CHECK(got == "{}");
+    }
+
+    SUBCASE("开关开着：带工具那条回来的还是原来那个 ChatReply") {
+        config::LLMConfig cfg = test_cfg();
+        cfg.call_log = true;
+        FakeHttp http;
+        http.responses.push_back(ok("查到了"));
+        llm::RemoteClient c(cfg, http.fn());
+        pipeline::CancelToken tok;
+        std::vector<llm::Message> msgs{{"system", "你是场记", {}, ""},
+                                       {"user", "找找今天有什么热点", {}, ""}};
+        llm::Request opts;
+        opts.schema_name = "story_from_web";
+        const llm::ChatReply reply =
+            c.chat(msgs, nlohmann::ordered_json::array(), opts, tok);
+        CHECK(reply.content == "查到了");
+        CHECK(reply.tool_calls.empty());
+        REQUIRE(http.calls.size() == 1);
+        CHECK(http.calls[0].body.at("messages").size() == 2);
+        // 空工具表不许被塞进请求体里
+        CHECK_FALSE(http.calls[0].body.contains("tools"));
+    }
+
+    std::filesystem::remove_all(root, ec);
+}
+
+
+TEST_CASE("索引里那三栏记的是真发出去的那份，不是 req 里填的那份") {
+    // **这是整件事的目的所在。** 用户要研究的就是"换一个参数，出来的东西
+    // 差在哪儿"，而账上这一栏对不上的话，两桶数据发的其实是同一份请求，
+    // 差异全是噪声。
+    //
+    // 失败场景（真的）：`pipeline/storyboard_run.cpp` **无条件**写
+    // `req.reasoning_effort = "high"`；而 `build_payload` 只在模型名以
+    // `glm-5` 打头时才真把它写进请求体（见那儿「只对认得这个参数的模型说」
+    // 那段）。`task_models` 默认是空的，拆分镜落到兜底的 `glm-4.7-flash`,
+    // 请求体里一个 `reasoning_effort` 都没有，账上却写着 "high"。
+    // docs/提示词日志.md 上那句「真发出去才有值」说的就是这一栏。
+    //
+    // 所以这几条都**两头对着看**：发出去的那份里有没有、账上那一栏是什么。
+    // 只看账上的话，把 set_model 挪回 build_payload 前面这种改动照样过。
+    const std::filesystem::path root =
+        std::filesystem::temp_directory_path() / "cj_llm_log_payload_test";
+    std::error_code ec;
+    std::filesystem::remove_all(root, ec);
+    const test::ScopedEnv log_dir("CHANGJI_LLM_LOG_DIR", paths::to_utf8(root));
+
+    config::LLMConfig cfg = test_cfg();
+    cfg.call_log = true;
+    llm::Request req = simple_req();
+    req.reasoning_effort = "high";   // 上游那一下是无条件写的
+    req.temperature = 0.42;          // 盖过 cfg.temperature，账上该跟着它
+
+    SUBCASE("整段那条：模型不是 glm-5，请求体里没有，账上就得是空的") {
+        cfg.model = "glm-4.7-flash";
+        FakeHttp http;
+        http.responses.push_back(ok("{}"));
+        llm::RemoteClient c(cfg, http.fn());
+        pipeline::CancelToken tok;
+        CHECK(c.complete(req, tok) == "{}");
+        REQUIRE(http.calls.size() == 1);
+        REQUIRE_FALSE(http.calls[0].body.contains("reasoning_effort"));
+        const auto rows = read_log_index(root);
+        REQUIRE(rows.size() == 1);
+        CHECK_MESSAGE(rows[0].at("reasoning_effort") == "",
+                      "请求体里一个字都没发，账上不许写着 high");
+        CHECK(rows[0].at("model") == "glm-4.7-flash");
+        CHECK(rows[0].at("temperature").get<double>() == doctest::Approx(0.42));
+    }
+
+    SUBCASE("整段那条：模型是 glm-5，请求体里有，账上就得有") {
+        cfg.model = "glm-5.3-flash";
+        FakeHttp http;
+        http.responses.push_back(ok("{}"));
+        llm::RemoteClient c(cfg, http.fn());
+        pipeline::CancelToken tok;
+        CHECK(c.complete(req, tok) == "{}");
+        REQUIRE(http.calls.size() == 1);
+        CHECK(http.calls[0].body.at("reasoning_effort") == "high");
+        const auto rows = read_log_index(root);
+        REQUIRE(rows.size() == 1);
+        CHECK(rows[0].at("reasoning_effort") == "high");
+        CHECK(rows[0].at("model") == "glm-5.3-flash");
+    }
+
+    SUBCASE("流式那条：payload 在 run() 里才拼，记的还得是它") {
+        // 这一条的 set_model 原来在 run() 外面、build_payload 之前——
+        // 三条路里它最容易改错，所以单独钉一条。
+        cfg.model = "glm-4.7-flash";
+        json sent;
+        llm::RemoteClient c(
+            cfg,
+            [](const std::string&, const std::string&,
+               const std::map<std::string, std::string>&,
+               double) { return ok("{}"); },
+            [&sent](const std::string&, const std::string& body,
+                    const std::map<std::string, std::string>&, double,
+                    const llm::OnChunk& on_chunk) {
+                sent = json::parse(body, nullptr, false);
+                const std::string sse =
+                    "data: {\"choices\":[{\"delta\":{\"content\":\"{}\"}}]}\n\n"
+                    "data: [DONE]\n\n";
+                on_chunk(sse.data(), sse.size());
+                return llm::HttpResponse{200, "", std::nullopt};
+            });
+        pipeline::CancelToken tok;
+        CHECK(c.complete(req, tok, [](const std::string&) {}) == "{}");
+        REQUIRE(sent.is_object());
+        REQUIRE_FALSE(sent.contains("reasoning_effort"));
+        const auto rows = read_log_index(root);
+        REQUIRE(rows.size() == 1);
+        CHECK(rows[0].at("reasoning_effort") == "");
+        CHECK(rows[0].at("model") == "glm-4.7-flash");
+        CHECK(rows[0].at("temperature").get<double>() == doctest::Approx(0.42));
+    }
+
+    SUBCASE("带工具那条：同一个 glm-5 的门，同一条道理") {
+        cfg.model = "glm-4.7-flash";
+        FakeHttp http;
+        http.responses.push_back(ok("查到了"));
+        llm::RemoteClient c(cfg, http.fn());
+        pipeline::CancelToken tok;
+        std::vector<llm::Message> msgs{{"user", "找找今天有什么热点", {}, ""}};
+        llm::Request opts;
+        opts.schema_name = "story_from_web";
+        opts.reasoning_effort = "high";
+        opts.temperature = 0.42;
+        CHECK(c.chat(msgs, nlohmann::ordered_json::array(), opts, tok).content ==
+              "查到了");
+        REQUIRE(http.calls.size() == 1);
+        REQUIRE_FALSE(http.calls[0].body.contains("reasoning_effort"));
+        const auto rows = read_log_index(root);
+        REQUIRE(rows.size() == 1);
+        CHECK(rows[0].at("reasoning_effort") == "");
+        CHECK(rows[0].at("model") == "glm-4.7-flash");
+    }
+
+    std::filesystem::remove_all(root, ec);
+}
+
+TEST_CASE("网关收下 stream 却回一份普通 JSON：正文救回来，思考也要救回来") {
+    // 这条退路本来就在（build_payload 上那段注释说的就是这类网关），原来
+    // 里面只有 completion_reason + extract_content：正文救得回来，**思考
+    // 整段丢掉**——thinking.txt 不写、thinking_chars 是 0。另外两条路都已经
+    // 无条件抽了，只有这一支漏了。
+    const std::filesystem::path root =
+        std::filesystem::temp_directory_path() / "cj_llm_log_nostream_test";
+    std::error_code ec;
+    std::filesystem::remove_all(root, ec);
+    const test::ScopedEnv log_dir("CHANGJI_LLM_LOG_DIR", paths::to_utf8(root));
+
+    json msg;
+    msg["content"] = "{}";
+    msg["reasoning_content"] = "changji_think_marker 先看看这一章在说什么";
+    json choice;
+    choice["message"] = msg;
+    choice["finish_reason"] = "stop";
+    json body;
+    body["choices"] = json::array({choice});
+
+    config::LLMConfig cfg = test_cfg();
+    cfg.call_log = true;
+    // 一段 SSE 都不推，直接回一份普通的 JSON——这就是"收下了 stream 却当
+    // 整段回"的网关。
+    llm::RemoteClient c(
+        cfg,
+        [](const std::string&, const std::string&,
+           const std::map<std::string, std::string>&,
+           double) { return ok("{}"); },
+        [&body](const std::string&, const std::string&,
+                const std::map<std::string, std::string>&, double,
+                const llm::OnChunk&) {
+            return llm::HttpResponse{200, body.dump(), std::nullopt};
+        });
+
+    llm::Request req = simple_req();
+    std::string seen;
+    req.on_thinking = [&seen](const std::string& t) { seen += t; };
+    pipeline::CancelToken tok;
+    CHECK(c.complete(req, tok, [](const std::string&) {}) == "{}");
+
+    // 界面那一头照样收得到（另外两条路就是这么给的）
+    CHECK(seen.find("changji_think_marker") != std::string::npos);
+
+    const auto rows = read_log_index(root);
+    REQUIRE(rows.size() == 1);
+    CHECK_MESSAGE(rows[0].at("thinking_chars").get<int>() > 0,
+                  "正文救回来了，思考不能丢");
+    CHECK_MESSAGE(slurp_log_tree(root).find("changji_think_marker") !=
+                      std::string::npos,
+                  "thinking.txt 得真写出来，光记个字数没法拿去读");
+
+    std::filesystem::remove_all(root, ec);
+}
+
+TEST_CASE("日志那头怎么坏，都不许把这一次生成带走") {
+    // call_log.hpp 上那条「写盘出问题不许影响生成」原来只落在**析构**那一半，
+    // **构造**那一半是漏的：`call_log_options` 里那句
+    // `paths::from_utf8(paths::env("CHANGJI_LLM_LOG_DIR"))` 走
+    // `std::filesystem::u8path`，MSVC 上转不动的串会抛 `filesystem_error`,
+    // 而它**不是 LlmError**——批量那几条只 `catch (const LlmError&)`，
+    // 一整批当场终止。四个出入口现在都把构造包了一层（见 client.cpp 的
+    // open_call_log）。
+    //
+    // ⚠️ **这条用例在 POSIX 上触发不了那次转换失败**：u8path 在这儿不校验
+    // 字节。它钉的是能跨平台钉的那一半——日志目录根本建不出来时，成功那条
+    // 的返回值、砸了那条的异常类型和 status，都和"没开日志"时一个样。
+    const std::filesystem::path base =
+        std::filesystem::temp_directory_path() / "cj_llm_log_hostile";
+    std::error_code ec;
+    std::filesystem::remove_all(base, ec);
+    std::filesystem::create_directories(base, ec);
+    const std::filesystem::path blocker = base / "not_a_dir";
+    {
+        std::ofstream f(blocker, std::ios::binary);
+        f << "我是个普通文件，底下建不出目录";
+    }
+    // 根指到一个普通文件底下：建目录、写 index.jsonl 每一步都会失败。
+    const test::ScopedEnv log_dir("CHANGJI_LLM_LOG_DIR",
+                                  paths::to_utf8(blocker / "llm_log"));
+
+    SUBCASE("成功那条：返回值一个字没变") {
+        config::LLMConfig cfg = test_cfg();
+        cfg.call_log = true;
+        FakeHttp http;
+        http.responses.push_back(ok(R"({"a":1})"));
+        llm::RemoteClient c(cfg, http.fn());
+        pipeline::CancelToken tok;
+        CHECK(c.complete(simple_req(), tok) == R"({"a":1})");
+    }
+
+    SUBCASE("砸了那条：抛的还是 LlmError，status 还挂着") {
+        config::LLMConfig cfg = test_cfg();
+        cfg.call_log = true;
+        FakeHttp http;
+        http.responses.push_back(
+            llm::HttpResponse{401, R"({"error":"bad key"})", std::nullopt});
+        llm::RemoteClient c(cfg, http.fn());
+        pipeline::CancelToken tok;
+        try {
+            c.complete(simple_req(), tok);
+            FAIL("该抛的没抛");
+        } catch (const llm::LlmError& e) {
+            CHECK(e.status() == 401);
+            CHECK(e.is_config_error());
+        }
+    }
+
+    SUBCASE("命令行那条也一样") {
+        config::LLMConfig cfg;
+        cfg.backend = "command";
+        cfg.command = "";
+        cfg.call_log = true;
+        llm::CommandClient cli(cfg);
+        pipeline::CancelToken tok;
+        llm::Request req;
+        req.prompt = "写一章剧本";
+        CHECK_THROWS_WITH_AS(cli.complete(req, tok),
+                             doctest::Contains("llm.command"), llm::LlmError);
+    }
+
+    std::filesystem::remove_all(base, ec);
 }

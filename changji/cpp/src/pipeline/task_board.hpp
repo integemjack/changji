@@ -31,6 +31,7 @@
 
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -119,6 +120,26 @@ private:
 /// 每次改完顺手同步过来。找不到（已经结完账）就什么都不做。
 void set_task_progress(std::uint64_t id, int current, int total);
 void set_task_note(std::uint64_t id, std::string note);
+
+/// 一件活的身份。**给深处的代码认"我这一下是在给谁干活"用。**
+///
+/// `llm/call_log.cpp` 记提示词日志时要把这四样写进索引——研究那份日志时，
+/// 「这次调用是哪一步、为哪一部电影的哪一章发的」正是最先要回答的问题。
+///
+/// 为什么不从 `Activity` 上直接读：`Activity` 只露了 `task()`，`Task` 只露了
+/// `id()` / `cancelled()` / `token()`，这四样都躺在 task_board.cpp 里那个匿名
+/// 的 `Row` 上。加一个只读的出口比把 `Row` 搬出来省事得多，也不用动
+/// activity.hpp（它被 http 那边一大片文件包着）。
+struct TaskFacts {
+    std::string kind;
+    std::string title;
+    std::string project;     ///< 项目目录的绝对路径
+    std::string episode_id;
+};
+
+/// 按 id 取。**已经结完账（不在 live 里）就回空**——和 `set_task_progress`
+/// 找不到就什么都不做是同一个形状。
+std::optional<TaskFacts> task_facts(std::uint64_t id);
 
 /// 页面上按了「取消」/「结束」。找不到（已经结完账了）就回 false。
 ///

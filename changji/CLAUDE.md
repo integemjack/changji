@@ -25,7 +25,9 @@ cpp/src/
                       没片的章跳过不是停，跳了哪几章记在清单里交给页面说清
   infer/              派活：worker_pool（池）、worker_farm（本机多卡拉子进程）、
                       worker_server（工作进程那套接口）、node_registry（机器表）
-  llm/                大模型客户端。**schema 以文字贴在提示词后面**，见下
+  llm/                大模型客户端。**schema 以文字贴在提示词后面**，见下；
+                      call_log.cpp 把每次调用的提示词和回复落到
+                      <数据目录>/llm_log/，见 docs/提示词日志.md
   media/              时间轴、成片文件名归属、ffmpeg 参数
   models/             Shot / Project / AssetLibrary / Story 这些数据结构
   gates/              质量闸门（硬切、时长、响度、参考图）

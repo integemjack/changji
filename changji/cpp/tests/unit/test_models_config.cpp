@@ -11,6 +11,7 @@
 
 #include <cstdlib>
 #include <filesystem>
+#include <limits>
 #include <fstream>
 #include <map>
 #include <string>
@@ -1589,4 +1590,82 @@ TEST_CASE("干活那台按自己有没有 Turbo 定步数，人钉死的不动")
     bare.models.video_lora = "";
     CHECK(config::steps_on_node(bare, 20, false) == 20);
     std::filesystem::remove_all(dir);
+}
+
+TEST_CASE("[llm].call_log_max_mb：两头都夹住，填离谱的数不许过") {
+    // **上下界漏哪一头，症状都一模一样**：日志目录永远是空的，而人看到的是
+    // 开关明明开着、index.jsonl 还在一行一行地长。因为这个数乘 1024×1024
+    // 变成字节上限（llm/call_log.cpp 的 call_log_options），而「超了就剪」
+    // 紧跟在写完正文之后跑——上限算成 0 就是把刚写下的那一份当场删掉。
+    //   · 下界那头：0 和负数直接就是 0 字节。
+    //   · 上界那头：1e30 转 uintmax_t 是未定义行为，实测常得 0，
+    //     于是**填得越大反而一份都留不住**。设置页那条路上
+    //     /api/connections 只判是不是数，手滑多按几个 0 就到这儿。
+    // 所以两头各钉一条。
+    CHECK(config::LLMConfig{}.call_log_max_mb == doctest::Approx(1024.0));
+    CHECK(config::Settings{}.validate().empty());
+
+    auto says = [](double mb) {
+        config::Settings s;
+        s.llm.call_log_max_mb = mb;
+        for (const auto& e : s.validate()) {
+            if (e.find("call_log_max_mb") != std::string::npos) return true;
+        }
+        return false;
+    };
+
+    SUBCASE("下界") {
+        CHECK(says(0.0));
+        CHECK(says(-1.0));
+        // 比一次调用的正文还小的上限等于刚写下就被剪光，那和关掉没区别，
+        // 而关掉有它自己的开关（call_log = false）。
+        CHECK(says(0.5));
+    }
+    SUBCASE("上界") {
+        CHECK(says(1e30));
+        CHECK(says(1e9));
+        CHECK(says(102400.0 * 2));
+    }
+    SUBCASE("正常填法一句都不该说") {
+        CHECK_FALSE(says(1.0));
+        CHECK_FALSE(says(1024.0));
+        CHECK_FALSE(says(102400.0));
+    }
+    SUBCASE("nan 和 inf 也得挡住") {
+        // **NaN 和任何数比都是假**，所以 `v < lo || v > hi` 这种写法对它
+        // 一句话都不说。而 `nan` 是 toml 认的字面量（toml++ 直接给回
+        // quiet_NaN），于是 `call_log_max_mb = nan` 能静默过关，一路传到
+        // 记录器那边算出上限 0——**刚写下的正文当场被删光**，而开关明明开着、
+        // index.jsonl 还在长。`inf` 被 `> hi` 挡得住，`nan` 挡不住，
+        // 所以这两个要分开钉。判据收在 settings.cpp 的 check_range 里，
+        // 那儿一改，所有走它的字段一起受益。
+        CHECK(says(std::numeric_limits<double>::quiet_NaN()));
+        CHECK(says(std::numeric_limits<double>::infinity()));
+        CHECK(says(-std::numeric_limits<double>::infinity()));
+    }
+}
+
+TEST_CASE("模板的 [llm] 那一节给了提示词日志这两行") {
+    // 一个配置项要在**五处**同时在场才算真的有：settings.hpp 的字段、
+    // settings.cpp 的 apply_table 和 validate、这份模板、
+    // http/config_api.cpp 的可写字段表、field_names.inc.hpp 的中文名。
+    // 模板是最容易漏的那一处——漏了不会红、解析照样过，只是用户拿到的第一个
+    // 文件里根本没有这一项，于是"默认开着、会把整章正文写到磁盘上"这件事
+    // 他永远不会知道。所以在这儿钉一条会响的。
+    const std::string sec =
+        toml_section(config::default_config_template(), "llm");
+    REQUIRE_FALSE(sec.empty());
+
+    for (const char* key : {"call_log", "call_log_max_mb"}) {
+        CAPTURE(key);
+        // **按 `键 = ` 的形状找**：散文里提一嘴不等于给了用户一行能改的东西。
+        const std::string want = std::string("\n") + key + " = ";
+        CHECK_MESSAGE(sec.find(want) != std::string::npos,
+                      "[llm] 里没有 `" << key << " = ` 这一行");
+    }
+    // 这一节还得把「密钥不落盘」这句话说出来：提示词是原样落盘的，
+    // 人看到「把每一次给大模型的提示词都留下来」第一反应就是问密钥。
+    // **查的是那半句原话，不是「密钥」两个字**——这一节上面讲 api_key
+    // 的地方就有「同一把密钥」，只查两个字的话这条用例永远绿。
+    CHECK(sec.find("密钥不落盘") != std::string::npos);
 }

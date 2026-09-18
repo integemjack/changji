@@ -14,6 +14,12 @@ inline constexpr const char* kFieldNames[][2] = {
     {R"CJ(model)CJ", R"CJ(模型名)CJ"},
     {R"CJ(api_key)CJ", R"CJ(api key)CJ"},
     {R"CJ(temperature)CJ", R"CJ(温度)CJ"},
+    // 这一条是给 validate() 那句话用的：错误消息形如
+    // "llm.call_log_max_mb 必须大于 0"，config_api 的 readable() 按**最后
+    // 一段**（去掉 llm. 前缀）来查，所以这儿要的是不带前缀的名字。
+    // 下面 llm_call_log_max_mb 那条是另一条路（改完的回执 labels_for，
+    // 查的是整个键名），两条都要，和 temperature 一模一样。
+    {R"CJ(call_log_max_mb)CJ", R"CJ(提示词日志上限 MB)CJ"},
     {R"CJ(job_timeout_s)CJ", R"CJ(单镜超时)CJ"},
     {R"CJ(max_retries)CJ", R"CJ(重试次数)CJ"},
     {R"CJ(backend)CJ", R"CJ(后端)CJ"},
@@ -40,6 +46,8 @@ inline constexpr const char* kFieldNames[][2] = {
     {R"CJ(llm_model)CJ", R"CJ(模型名)CJ"},
     {R"CJ(llm_api_key)CJ", R"CJ(api key)CJ"},
     {R"CJ(llm_temperature)CJ", R"CJ(温度)CJ"},
+    {R"CJ(llm_call_log)CJ", R"CJ(提示词日志)CJ"},
+    {R"CJ(llm_call_log_max_mb)CJ", R"CJ(提示词日志上限 MB)CJ"},
     {R"CJ(tts_backend)CJ", R"CJ(配音后端)CJ"},
     {R"CJ(tts_base_url)CJ", R"CJ(配音服务地址)CJ"},
     {R"CJ(vram_gb_override)CJ", R"CJ(显存覆盖)CJ"},

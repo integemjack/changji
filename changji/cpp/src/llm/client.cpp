@@ -12,6 +12,7 @@
 #include <utility>
 
 #include "config/runtime.hpp"
+#include "llm/call_log.hpp"
 #include "llm/schema_validate.hpp"
 #include "llm/sse.hpp"
 #include "stages/prompts.inc.hpp"
@@ -114,6 +115,37 @@ std::string checked_output(const Request& req, std::string out) {
                        "：" + *err);
     }
     return out;
+}
+
+/// 开一份记录器。**构造这一下抛了，也不许把这一次生成带走。**
+///
+/// 构造真的会抛：`call_log_options` 里那句
+/// `paths::from_utf8(paths::env("CHANGJI_LLM_LOG_DIR"))` 走
+/// `std::filesystem::u8path`，MSVC 上转不动的串当场是 `filesystem_error`；
+/// 记录器自己那头还要取一次任务账本的锁、拷几个字符串。
+///
+/// 后果不是"少记一次"：`filesystem_error` **不是 `LlmError`**，而批量那几条
+/// 只 `catch (const LlmError&)`，一整批当场终止——等于为了记日志把本来会成功
+/// 的那一次生成弄砸了。call_log.hpp 上那条「写盘出问题不许影响生成」原来只落
+/// 在析构那一半，构造这一半是漏的。
+///
+/// 兜底那一支传的是**关掉的** `CallLogOptions`：记录器于是整个不动手（不建
+/// 目录、不取 id、不读线程局部的那两样），只剩几个字符串的拷贝。它再抛就是
+/// 这台机器没内存了，和记不记日志无关。
+///
+/// 返回 prvalue 是**有意的**：`CallLog` 既不可拷也不可移，C++17 保证就地
+/// 构造，所以这儿不能改成"先声明再 return 那个变量"。
+std::optional<CallLog> open_call_log(const char* backend, const char* kind,
+                                     const Request& req,
+                                     const config::LLMConfig& cfg) {
+    try {
+        return std::optional<CallLog>(std::in_place, backend, kind, req,
+                                      call_log_options(cfg));
+    } catch (...) {
+        CallLogOptions off;
+        off.enabled = false;
+        return std::optional<CallLog>(std::in_place, backend, kind, req, off);
+    }
 }
 
 }  // namespace
@@ -527,104 +559,184 @@ std::string RemoteClient::complete(const Request& req,
     if ((!on_token && !req.on_thinking) || !stream_post_) {
         return Client::complete(req, tok, on_token);
     }
-    if (tok.cancelled()) throw LlmError(util::kCancelled);
 
+    // ⚠️ **记录器摆在上面那句转手之后，不能摆到它前面。** 摆前面的话，
+    // 转手出去的那一次会在账上出现两行——这儿一行、整段那条再一行，
+    // 而这儿那行的 ms 是另一行的外壳，统计出来的耗时凭空翻倍。
+    //
+    // cfg_() 也提到取消检查之前：它只是取一份配置快照，没有副作用。这么排
+    // 是为了让**「已取消」也记得下来**——取消是一次调用真实的结束方式，
+    // 漏掉的话账上会凭空少一次。
     config::LLMConfig cfg = cfg_();
-    // **按任务分流。** 哪一步用哪个模型由 [llm.models] 定，见
-    // config::LLMConfig::task_models：写正文那几步走文采好的，分镜人物
-    // 那几步走听话的。认不出的任务落到 cfg.model。
-    cfg.model = cfg.model_for(req.schema_name);
-    // **温度也按任务分。** 编东西那几步要发散，拆分镜那几步要听话，
-    // 见 LLMConfig::temperature_for。放在这儿而不是 build_payload 里：
-    // 那个函数被一条「和 Python 逐字段一样」的语料钉着，加工混进去就分不清
-    // 差异是谁造成的——和 model_for 当初放在这儿是同一个理由。
-    // req 里自己填了温度的（比如写正文那步）照样盖过它，见 build_payload。
-    cfg.temperature = cfg.temperature_for(req.schema_name);
-    const std::string url = cfg.base_url + "/chat/completions";
-    const std::map<std::string, std::string> headers = {
-        {"Authorization", "Bearer " + cfg.api_key},
-        {"Content-Type", "application/json"},
-        // 有的网关看这个头决定要不要给你加缓冲。加了缓冲就等于没有流式。
-        {"Accept", "text/event-stream"},
-    };
+    // 构造整个包一层，见 open_call_log 上那段「构造这一下抛了，也不许把这一次
+    // 生成带走」。
+    auto log_box = open_call_log("remote", "complete_stream", req, cfg);
+    CallLog& log = *log_box;
+    try {
+        if (tok.cancelled()) throw LlmError(util::kCancelled);
 
-    // 跑一趟 SSE。回来的是「拿到了多少正文 / 出了什么事」。
-    struct Attempt {
-        std::string text;
-        std::string sse_error;   ///< 服务端在流里塞的 error
-        std::string response_body;
-        std::string finish_reason;
-        int status = 0;
-        std::optional<std::string> transport_error;
-        bool canceled = false;
-    };
-    const auto run = [&] {
-        Attempt a;
-        nlohmann::ordered_json payload = build_payload(cfg, req);
-        payload["stream"] = true;
+        // **按任务分流。** 哪一步用哪个模型由 [llm.models] 定，见
+        // config::LLMConfig::task_models：写正文那几步走文采好的，分镜人物
+        // 那几步走听话的。认不出的任务落到 cfg.model。
+        cfg.model = cfg.model_for(req.schema_name);
+        // **温度也按任务分。** 编东西那几步要发散，拆分镜那几步要听话，
+        // 见 LLMConfig::temperature_for。放在这儿而不是 build_payload 里：
+        // 那个函数被一条「和 Python 逐字段一样」的语料钉着，加工混进去就分不清
+        // 差异是谁造成的——和 model_for 当初放在这儿是同一个理由。
+        // req 里自己填了温度的（比如写正文那步）照样盖过它，见 build_payload。
+        cfg.temperature = cfg.temperature_for(req.schema_name);
+        // **只记地址，整个请求头一个字节都不记**——密钥在 Authorization 里。
+        log.set_endpoint(cfg.base_url);
+        // ⚠️ **分流之后那三样记在下面 run() 里**，payload 拼好之后——理由见
+        // 那儿那段「记的是 payload 里真有的那一份」。挪回这儿就又错了。
+        const std::string url = cfg.base_url + "/chat/completions";
+        const std::map<std::string, std::string> headers = {
+            {"Authorization", "Bearer " + cfg.api_key},
+            {"Content-Type", "application/json"},
+            // 有的网关看这个头决定要不要给你加缓冲。加了缓冲就等于没有流式。
+            {"Accept", "text/event-stream"},
+        };
 
-        SseDeltas sse;
-        HttpResponse r = stream_post_(
-            url, payload.dump(), headers, cfg.timeout_s,
-            [&](const char* data, std::size_t len) {
-                if (tok.cancelled()) {
-                    a.canceled = true;
-                    return false;   // 断掉，别让它继续生成
-                }
-                const std::string piece = sse.feed(data, len);
-                // **思考先推，正文后推。** 顺序反了的话，界面上会先冒出
-                // 第一句正文、再冒出"它正在想"，看着像倒放。
-                if (req.on_thinking) {
+        // 跑一趟 SSE。回来的是「拿到了多少正文 / 出了什么事」。
+        struct Attempt {
+            std::string text;
+            std::string sse_error;   ///< 服务端在流里塞的 error
+            std::string response_body;
+            std::string finish_reason;
+            int status = 0;
+            std::optional<std::string> transport_error;
+            bool canceled = false;
+        };
+        const auto run = [&] {
+            Attempt a;
+            nlohmann::ordered_json payload = build_payload(cfg, req);
+            payload["stream"] = true;
+            // **记的是 payload 里真有的那一份**，不是 cfg / req 里那份。
+            //
+            // `reasoning_effort` 尤其不能照 `req` 抄：build_payload 只在模型名
+            // 以 glm-5 打头时才真把它写进请求体（见那儿「只对认得这个参数的
+            // 模型说」那段），而上游是**无条件**填的——storyboard_run.cpp 每次
+            // 都写 high，落到兜底的 glm-4.7-flash 时请求体里一个
+            // reasoning_effort 都没有，账上却写着 "high"。用户按这一栏分两桶
+            // 比分镜质量，两桶发的其实是同一份请求，差异全是噪声——而这正是
+            // 这份日志存在的目的。docs/提示词日志.md 上那句「真发出去才有值」
+            // 说的也是这件事。
+            //
+            // model 和 temperature 一并从 payload 取：它俩本来就对得上
+            // （分流、req 覆盖都在 build_payload 之前算完），从同一处取只是
+            // 不留下第二个"可能对不上"的口子。
+            log.set_model(payload.value("model", std::string()),
+                          payload.value("temperature", 0.0),
+                          payload.value("reasoning_effort", std::string()));
+            // 记的是**真发出去的那一份**，不是照着 cfg / req 再拼一遍。
+            // build_payload 是纯函数不假，可多跑一遍就多出一处"日志里那份和
+            // 真发出去的那份可能不一样"的风险，而这次要研究的正是那段字。
+            log.set_prompt_from_payload(payload);
+
+            SseDeltas sse;
+            HttpResponse r = stream_post_(
+                url, payload.dump(), headers, cfg.timeout_s,
+                [&](const char* data, std::size_t len) {
+                    if (tok.cancelled()) {
+                        a.canceled = true;
+                        return false;   // 断掉，别让它继续生成
+                    }
+                    const std::string piece = sse.feed(data, len);
+                    // **思考先推，正文后推。** 顺序反了的话，界面上会先冒出
+                    // 第一句正文、再冒出"它正在想"，看着像倒放。
+                    //
+                    // **抽思考这一下无条件做。** 原来整段包在
+                    // `if (req.on_thinking)` 里，没人盯着的那些批处理跑出来的
+                    // 思考被直接丢掉——而研究最想看的正是那些。
+                    // take_thinking() 本来每块都在调，改的只是"结果给谁"。
+                    //
+                    // ⚠️ **这个回调里一个字节都不许落盘。** 它每来一小段就跑
+                    // 一次、跑在收流线程上，在这儿开文件等于把生成拖慢。下面
+                    // 那两句 log.* 一个是往内存里接、一个是看一眼表，都是 O(1)；
+                    // 真正的落盘在 log 析构那一下，也就是这一趟结束之后。
                     const std::string think = sse.take_thinking();
-                    if (!think.empty()) req.on_thinking(think);
+                    if (!think.empty()) {
+                        if (req.on_thinking) req.on_thinking(think);
+                        log.append_thinking(think);
+                    }
+                    if (piece.empty()) return true;
+                    log.mark_first_token();
+                    a.text += piece;
+                    if (on_token) on_token(piece);
+                    return true;
+                });
+            a.status = r.status;
+            a.response_body = r.body;
+            a.transport_error = r.transport_error;
+            a.sse_error = sse.error();
+            a.finish_reason = sse.finish_reason();
+            // **服务端没理会 stream 的情况**：它回了一份普通的 JSON，SSE 解不
+            // 出任何东西。那份 body 在 r.body 里（流式那条只在出错时收 body，
+            // 但"整份 JSON"和"错误体"在传输上没区别），试着按整段解一次。
+            if (a.text.empty() && a.status < 400 && !r.body.empty()) {
+                try {
+                    a.finish_reason = completion_reason(r.body);
+                    // **思考无条件抽一次**，和另外两条路一个写法：网关收下
+                    // stream 却回一份普通 JSON 时，正文能从 r.body 里救回来，
+                    // 思考原来是整段丢掉的（thinking.txt 不写、thinking_chars
+                    // 是 0）。抽在 extract_content 之前：那一句会抛，抛了思考
+                    // 就白捞了。
+                    //
+                    // 用 append 不用 set：这条路上思考是一段一段接进来的，
+                    // set 会把已经接到的那几段抹掉。
+                    const std::string think = extract_thinking(r.body);
+                    if (!think.empty()) {
+                        if (req.on_thinking) req.on_thinking(think);
+                        log.append_thinking(think);
+                    }
+                    a.text = extract_content(r.body);
+                    if (on_token && !a.text.empty()) on_token(a.text);
+                } catch (const std::exception&) {
+                    // 解不出来就由下面按本次响应直接报错；不重复发送同一个请求。
                 }
-                if (piece.empty()) return true;
-                a.text += piece;
-                if (on_token) on_token(piece);
-                return true;
-            });
-        a.status = r.status;
-        a.response_body = r.body;
-        a.transport_error = r.transport_error;
-        a.sse_error = sse.error();
-        a.finish_reason = sse.finish_reason();
-        // **服务端没理会 stream 的情况**：它回了一份普通的 JSON，SSE 解不
-        // 出任何东西。那份 body 在 r.body 里（流式那条只在出错时收 body，
-        // 但"整份 JSON"和"错误体"在传输上没区别），试着按整段解一次。
-        if (a.text.empty() && a.status < 400 && !r.body.empty()) {
-            try {
-                a.finish_reason = completion_reason(r.body);
-                a.text = extract_content(r.body);
-                if (on_token && !a.text.empty()) on_token(a.text);
-            } catch (const std::exception&) {
-                // 解不出来就由下面按本次响应直接报错；不重复发送同一个请求。
             }
+            return a;
+        };
+
+        // **只发一次。** 不支持 SSE 但直接返回普通 OpenAI JSON 的服务会在
+        // run() 里就地解析同一份响应；空响应和错误响应都不会自动再发一次，
+        // 避免重复生成和重复计费。
+        Attempt a = run();
+        log.note_response(a.status, a.response_body);
+        log.set_finish_reason(a.finish_reason);
+        // ⚠️ **正文赶在下面那几条 throw 之前交出去。**「服务在流里报错，而
+        // 前面已经吐过半份正文」正是要研究的情形（下面那段注释说的就是它）。
+        // 留到最后一句才交的话，最想看的那几次 reply.txt 恰好是空的。
+        log.set_reply(a.text);
+        if (a.canceled) throw LlmError(util::kCancelled);
+        if (a.transport_error.has_value()) {
+            throw LlmError(connect_failed(cfg, *a.transport_error));
         }
-        return a;
-    };
+        if (a.status >= 400) {
+            throw LlmError(explain_status(cfg, a.status, a.response_body), a.status);
+        }
 
-    // **只发一次。** 不支持 SSE 但直接返回普通 OpenAI JSON 的服务会在
-    // run() 里就地解析同一份响应；空响应和错误响应都不会自动再发一次，
-    // 避免重复生成和重复计费。
-    Attempt a = run();
-    if (a.canceled) throw LlmError(util::kCancelled);
-    if (a.transport_error.has_value()) {
-        throw LlmError(connect_failed(cfg, *a.transport_error));
+        // 服务在流里报错时，即使前面已经吐过半份正文也必须报真实错误。
+        // 把半份正文交给解析器，只会把它伪装成“JSON 格式错误”。
+        if (!a.sse_error.empty()) {
+            throw LlmError("大模型服务报错：" + a.sse_error);
+        }
+        require_complete_reason(a.finish_reason);
+        if (a.text.empty()) {
+            throw LlmError("大模型服务没有返回正文；本次请求不会自动重发，以免重复生成或重复计费");
+        }
+        return checked_output(req, std::move(a.text));
+    } catch (const LlmError& e) {
+        // ⚠️ **裸 `throw;`，异常对象原样往外走。** 写成 `throw e;` 会切片成
+        // std::exception，LlmError::status() / is_config_error() 当场失效——
+        // 批量那几条靠 is_config_error 止损（见 client.hpp 上那段
+        //「一次补七章分镜，第三章开始密钥失效，又试了五章」）。
+        log.fail(e.what(), e.status());
+        throw;
+    } catch (const std::exception& e) {
+        log.fail(e.what(), 0);
+        throw;
     }
-    if (a.status >= 400) {
-        throw LlmError(explain_status(cfg, a.status, a.response_body), a.status);
-    }
-
-    // 服务在流里报错时，即使前面已经吐过半份正文也必须报真实错误。
-    // 把半份正文交给解析器，只会把它伪装成“JSON 格式错误”。
-    if (!a.sse_error.empty()) {
-        throw LlmError("大模型服务报错：" + a.sse_error);
-    }
-    require_complete_reason(a.finish_reason);
-    if (a.text.empty()) {
-        throw LlmError("大模型服务没有返回正文；本次请求不会自动重发，以免重复生成或重复计费");
-    }
-    return checked_output(req, std::move(a.text));
 }
 
 std::string Client::complete(const Request& req, pipeline::CancelToken& tok,
@@ -655,45 +767,99 @@ std::string RemoteClient::complete(const Request& req,
     // stream 的情况那条路上本来就有退路。
     if (stream_post_ && req.on_thinking) return complete(req, tok, OnToken{});
 
-    if (tok.cancelled()) throw LlmError(util::kCancelled);
-
+    // ⚠️ **记录器摆在上面那句转手之后，不能摆到它前面。** 摆前面的话，
+    // 转手出去的那一次会在账上出现两行——这儿一行、SSE 那条再一行，
+    // 而这儿那行的 ms 是另一行的外壳，统计出来的耗时凭空翻倍。
+    //
+    // cfg_() 也提到取消检查之前：它只是取一份配置快照，没有副作用。这么排
+    // 是为了让**「已取消」也记得下来**——取消是一次调用真实的结束方式，
+    // 漏掉的话账上会凭空少一次。
+    //
     // 每次取一份当前配置。中途 /api/connections 换了地址的话，
     // 下一次调用就走新地址——这正是那个接口的意义。
     config::LLMConfig cfg = cfg_();
-    // **按任务分流。** 哪一步用哪个模型由 [llm.models] 定，见
-    // config::LLMConfig::task_models：写正文那几步走文采好的，分镜人物
-    // 那几步走听话的。认不出的任务落到 cfg.model。
-    cfg.model = cfg.model_for(req.schema_name);
-    // **温度也按任务分。** 编东西那几步要发散，拆分镜那几步要听话，
-    // 见 LLMConfig::temperature_for。放在这儿而不是 build_payload 里：
-    // 那个函数被一条「和 Python 逐字段一样」的语料钉着，加工混进去就分不清
-    // 差异是谁造成的——和 model_for 当初放在这儿是同一个理由。
-    // req 里自己填了温度的（比如写正文那步）照样盖过它，见 build_payload。
-    cfg.temperature = cfg.temperature_for(req.schema_name);
-    const std::string url = cfg.base_url + "/chat/completions";
-    const std::map<std::string, std::string> headers = {
-        {"Authorization", "Bearer " + cfg.api_key},
-        {"Content-Type", "application/json"},
-    };
+    // 构造整个包一层，见 open_call_log 上那段「构造这一下抛了，也不许把这一次
+    // 生成带走」。
+    auto log_box = open_call_log("remote", "complete", req, cfg);
+    CallLog& log = *log_box;
+    try {
+        if (tok.cancelled()) throw LlmError(util::kCancelled);
 
-    // **只发一次。** 退档梯子随 response_format 一起删了，理由见
-    // build_payload 里那段。
-    const nlohmann::ordered_json payload = build_payload(cfg, req);
-    HttpResponse r = post_(url, payload.dump(), headers, cfg.timeout_s);
-    if (r.transport_error.has_value()) {
-        throw LlmError(connect_failed(cfg, *r.transport_error));
-    }
+        // **按任务分流。** 哪一步用哪个模型由 [llm.models] 定，见
+        // config::LLMConfig::task_models：写正文那几步走文采好的，分镜人物
+        // 那几步走听话的。认不出的任务落到 cfg.model。
+        cfg.model = cfg.model_for(req.schema_name);
+        // **温度也按任务分。** 编东西那几步要发散，拆分镜那几步要听话，
+        // 见 LLMConfig::temperature_for。放在这儿而不是 build_payload 里：
+        // 那个函数被一条「和 Python 逐字段一样」的语料钉着，加工混进去就分不清
+        // 差异是谁造成的——和 model_for 当初放在这儿是同一个理由。
+        // req 里自己填了温度的（比如写正文那步）照样盖过它，见 build_payload。
+        cfg.temperature = cfg.temperature_for(req.schema_name);
+        // **只记地址，整个请求头一个字节都不记**——密钥在 Authorization 里。
+        log.set_endpoint(cfg.base_url);
+        // ⚠️ **分流之后那三样记在下面**，payload 拼好之后——理由见
+        // complete_stream 里那段「记的是 payload 里真有的那一份」。
+        const std::string url = cfg.base_url + "/chat/completions";
+        const std::map<std::string, std::string> headers = {
+            {"Authorization", "Bearer " + cfg.api_key},
+            {"Content-Type", "application/json"},
+        };
 
-    if (r.status >= 400) {
-        throw LlmError(explain_status(cfg, r.status, r.body), r.status);
-    }
-    if (tok.cancelled()) throw LlmError(util::kCancelled);
-    if (req.on_thinking) {
+        // **只发一次。** 退档梯子随 response_format 一起删了，理由见
+        // build_payload 里那段。
+        const nlohmann::ordered_json payload = build_payload(cfg, req);
+        // 分流之后那三样，从 payload 里取，**所以 set_model 在 build_payload
+        // 后面**，不能挪回前面去。理由见 complete_stream 里那段「记的是
+        // payload 里真有的那一份」。
+        log.set_model(payload.value("model", std::string()),
+                      payload.value("temperature", 0.0),
+                      payload.value("reasoning_effort", std::string()));
+        // 记的是**真发出去的那一份**，不是照着 cfg / req 再拼一遍。
+        // build_payload 是纯函数不假，可多跑一遍就多出一处"日志里那份和真
+        // 发出去的那份可能不一样"的风险，而这次要研究的正是那段字。
+        log.set_prompt_from_payload(payload);
+        HttpResponse r = post_(url, payload.dump(), headers, cfg.timeout_s);
+        // **拿到回包就立刻记，放在下面那句 transport_error 之前。** 连不上
+        // 时 r.status 是 0、r.body 是空，记下来无害；放到后面的话 400 那一支
+        // 就整个漏了，而"什么提示词换来一个 400"正是最想研究的。
+        log.note_response(r.status, r.body);
+        if (r.transport_error.has_value()) {
+            throw LlmError(connect_failed(cfg, *r.transport_error));
+        }
+
+        if (r.status >= 400) {
+            throw LlmError(explain_status(cfg, r.status, r.body), r.status);
+        }
+        if (tok.cancelled()) throw LlmError(util::kCancelled);
+        // **思考无条件抽一次。** 原来整段包在 `if (req.on_thinking)` 里，
+        // 没人盯着的那些批处理跑出来的思考一个字都留不下——而研究要的正是
+        // 那些。多的开销只是把一份已经在手里的 JSON 再解一次，不多跑一趟网络。
         const std::string think = extract_thinking(r.body);
-        if (!think.empty()) req.on_thinking(think);
+        if (req.on_thinking && !think.empty()) req.on_thinking(think);
+        log.set_thinking(think);
+        // 拆成两句：先算出来、记上、再校验。**require_complete_reason 会抛**
+        // （截断、内容过滤都从这儿抛），抛之前得先把 finish_reason 记上，
+        // 不然账上最该看的那几行这一栏恰好是空的。
+        const std::string reason = completion_reason(r.body);
+        log.set_finish_reason(reason);
+        require_complete_reason(reason);
+        // ⚠️ **抽出来的正文要赶在 checked_output 之前交给记录器**，否则
+        //「schema 本地校验没过」那一次 reply.txt 是空的——而那正是最想看的
+        // 一次（对面好好地回了 200，是我们这头没认）。
+        std::string raw = extract_content(r.body);
+        log.set_reply(raw);
+        return checked_output(req, std::move(raw));
+    } catch (const LlmError& e) {
+        // ⚠️ **裸 `throw;`，异常对象原样往外走。** 写成 `throw e;` 会切片成
+        // std::exception，LlmError::status() / is_config_error() 当场失效——
+        // 批量那几条靠 is_config_error 止损（见 client.hpp 上那段
+        //「一次补七章分镜，第三章开始密钥失效，又试了五章」）。
+        log.fail(e.what(), e.status());
+        throw;
+    } catch (const std::exception& e) {
+        log.fail(e.what(), 0);
+        throw;
     }
-    require_complete_reason(completion_reason(r.body));
-    return checked_output(req, extract_content(r.body));
 }
 
 // ---- ReplayClient ----
@@ -773,58 +939,105 @@ ChatReply Client::chat(const std::vector<Message>&, const ordered&, const Reques
 
 ChatReply RemoteClient::chat(const std::vector<Message>& messages, const ordered& tools,
                              const Request& opts, pipeline::CancelToken& tok) {
-    if (tok.cancelled()) throw LlmError(util::kCancelled);
-
+    // 这一条不转手，记录器直接摆在 cfg_() 之后。cfg_() 提到取消检查之前：
+    // 它只是取一份配置快照，没有副作用，这么排是为了让**「已取消」也记得
+    // 下来**——取消是一次调用真实的结束方式，漏掉的话账上会凭空少一次。
     config::LLMConfig cfg = cfg_();
-    cfg.model = cfg.model_for(opts.schema_name);
-    cfg.temperature = cfg.temperature_for(opts.schema_name);
-    const std::string url = cfg.base_url + "/chat/completions";
-    const std::map<std::string, std::string> headers = {
-        {"Authorization", "Bearer " + cfg.api_key},
-        {"Content-Type", "application/json"},
-    };
+    // 构造整个包一层，见 open_call_log 上那段「构造这一下抛了，也不许把这一次
+    // 生成带走」。
+    auto log_box = open_call_log("remote", "chat", opts, cfg);
+    CallLog& log = *log_box;
+    try {
+        if (tok.cancelled()) throw LlmError(util::kCancelled);
 
-    // 和 build_payload 同一套：模型、温度、GLM-5 的 thinking。多的只是
-    // messages 是整段来回、外加 tools。
-    ordered payload = ordered::object();
-    payload["model"] = cfg.model;
-    ordered msgs = ordered::array();
-    for (const auto& m : messages) msgs.push_back(message_json(m));
-    payload["messages"] = msgs;
-    payload["temperature"] = opts.temperature.value_or(cfg.temperature);
-    if (tools.is_array() && !tools.empty()) {
-        payload["tools"] = tools;
-        payload["tool_choice"] = "auto";
-    }
-    if (!opts.reasoning_effort.empty()) {
-        std::string m = cfg.model;
-        for (char& c : m) {
-            if (c >= 'A' && c <= 'Z') c = static_cast<char>(c - 'A' + 'a');
-        }
-        if (m.rfind("glm-5", 0) == 0) {
-            payload["thinking"] = ordered{{"type", "enabled"}};
-            payload["reasoning_effort"] = opts.reasoning_effort;
-        }
-    }
+        cfg.model = cfg.model_for(opts.schema_name);
+        cfg.temperature = cfg.temperature_for(opts.schema_name);
+        // **只记地址，整个请求头一个字节都不记**——密钥在 Authorization 里。
+        log.set_endpoint(cfg.base_url);
+        // ⚠️ **分流之后那三样记在下面**，payload 拼好之后——理由见
+        // complete_stream 里那段「记的是 payload 里真有的那一份」。
+        const std::string url = cfg.base_url + "/chat/completions";
+        const std::map<std::string, std::string> headers = {
+            {"Authorization", "Bearer " + cfg.api_key},
+            {"Content-Type", "application/json"},
+        };
 
-    HttpResponse r = post_(url, payload.dump(), headers, cfg.timeout_s);
-    if (r.transport_error.has_value()) {
-        throw LlmError(connect_failed(cfg, *r.transport_error));
-    }
-    if (r.status >= 400) {
-        throw LlmError(explain_status(cfg, r.status, r.body), r.status);
-    }
-    if (tok.cancelled()) throw LlmError(util::kCancelled);
-    if (opts.on_thinking) {
+        // 和 build_payload 同一套：模型、温度、GLM-5 的 thinking。多的只是
+        // messages 是整段来回、外加 tools。
+        ordered payload = ordered::object();
+        payload["model"] = cfg.model;
+        ordered msgs = ordered::array();
+        for (const auto& m : messages) msgs.push_back(message_json(m));
+        payload["messages"] = msgs;
+        payload["temperature"] = opts.temperature.value_or(cfg.temperature);
+        if (tools.is_array() && !tools.empty()) {
+            payload["tools"] = tools;
+            payload["tool_choice"] = "auto";
+        }
+        if (!opts.reasoning_effort.empty()) {
+            std::string m = cfg.model;
+            for (char& c : m) {
+                if (c >= 'A' && c <= 'Z') c = static_cast<char>(c - 'A' + 'a');
+            }
+            if (m.rfind("glm-5", 0) == 0) {
+                payload["thinking"] = ordered{{"type", "enabled"}};
+                payload["reasoning_effort"] = opts.reasoning_effort;
+            }
+        }
+        // 分流之后那三样，从 payload 里取，**所以这一句在 payload 拼完之后**。
+        // 上面那个 glm-5 的门和 build_payload 里是同一个：认不出的模型一个
+        // reasoning_effort 都不发，账上就不该写着有。
+        log.set_model(payload.value("model", std::string()),
+                      payload.value("temperature", 0.0),
+                      payload.value("reasoning_effort", std::string()));
+        // 记的是**真发出去的那一份**（下一句 dump 的就是它），整段来回渲染成
+        // `=== role ===` 那个形状；工具表另存一份。
+        log.set_prompt_from_payload(payload);
+        log.set_tools(tools);
+
+        HttpResponse r = post_(url, payload.dump(), headers, cfg.timeout_s);
+        // 拿到回包就立刻记，理由同整段那条：放到下面去就把 400 那一支漏了。
+        log.note_response(r.status, r.body);
+        if (r.transport_error.has_value()) {
+            throw LlmError(connect_failed(cfg, *r.transport_error));
+        }
+        if (r.status >= 400) {
+            throw LlmError(explain_status(cfg, r.status, r.body), r.status);
+        }
+        if (tok.cancelled()) throw LlmError(util::kCancelled);
+        // **思考无条件抽一次**，理由同整段那条：研究要的正是没人盯着的那些。
         const std::string think = extract_thinking(r.body);
-        if (!think.empty()) opts.on_thinking(think);
+        if (opts.on_thinking && !think.empty()) opts.on_thinking(think);
+        log.set_thinking(think);
+        // ⚠️ **parse_chat_reply 抛的时候 reply.txt 会是空的，这是对的**，
+        // 不是漏了：那一次「大模型返回的不是 JSON」的整份回包已经原样躺在
+        // error.txt 的第二段里（上面 note_response 把 r.body 留住了）。
+        //
+        // 另外，模型这一轮改成调工具时 reply.content 常常是空串、
+        // reply_chars 就是 0——也正常，它这一轮说的话在 tools_count
+        // 和下一轮的 prompt 里。
+        ChatReply reply = parse_chat_reply(r.body);
+        log.set_finish_reason(reply.finish_reason);
+        log.set_reply(reply.content);
+        return reply;
+    } catch (const LlmError& e) {
+        // ⚠️ **裸 `throw;`，异常对象原样往外走**（理由见上面两条 complete）。
+        log.fail(e.what(), e.status());
+        throw;
+    } catch (const std::exception& e) {
+        log.fail(e.what(), 0);
+        throw;
     }
-    return parse_chat_reply(r.body);
 }
 
 ReplayClient::ReplayClient(std::vector<std::string> responses)
     : responses_(std::move(responses)) {}
 
+/// ⚠️ **ReplayClient 的这两条一行日志都不接，这是有意的。**
+///
+/// 它只给用例和回放模式用。接上去的话，跑一次单元测试就往用户真正的数据
+/// 目录里写一千多份提示词和回复——账上那些行还全是假的（回放录好的），
+/// 混在真调用里只会把研究的那份数据弄脏。
 ChatReply ReplayClient::chat(const std::vector<Message>& messages, const ordered&,
                             const Request& opts, pipeline::CancelToken& tok) {
     if (tok.cancelled()) throw LlmError(util::kCancelled);
@@ -862,6 +1075,7 @@ ChatReply ReplayClient::chat(const std::vector<Message>& messages, const ordered
     return r;
 }
 
+/// 同上：**不接日志**，理由见 ReplayClient::chat 上方那段。
 std::string ReplayClient::complete(const Request& req,
                                    pipeline::CancelToken& tok) {
     if (tok.cancelled()) throw LlmError(util::kCancelled);

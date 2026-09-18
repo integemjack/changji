@@ -1,6 +1,7 @@
 #include "config/settings.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <fstream>
 #include <iterator>
@@ -43,25 +44,33 @@ bool starts_with(const std::string& s, const char* prefix) {
     return s.rfind(prefix, 0) == 0;
 }
 
+/// ⚠️ **先判有没有限，再比大小。** NaN 和任何数比都是假，所以
+/// `v < lo || v > hi` 对它一句话都不说——`nan` 是 toml 认的字面量
+/// （toml++ 的 parser 直接给回 quiet_NaN），于是 `call_log_max_mb = nan`
+/// 能静默过关，一路传到记录器那边算出上限 0，**刚写下的正文当场被删光**，
+/// 而开关明明开着、index.jsonl 还在一行一行地长。症状和「配置填错了」
+/// 完全对不上。`inf` 被 `> hi` 挡得住，`nan` 挡不住，所以要单独判。
 void check_range(std::vector<std::string>& errs, const char* name,
                  double v, double lo, double hi) {
-    if (v < lo || v > hi) {
+    if (!std::isfinite(v) || v < lo || v > hi) {
         std::ostringstream os;
         os << name << " 必须在 " << lo << " 到 " << hi << " 之间，当前是 " << v;
         errs.push_back(os.str());
     }
 }
 
+/// 同上：NaN 过不去这道门（`v <= lo` 对它也是假）。
 void check_gt(std::vector<std::string>& errs, const char* name, double v, double lo) {
-    if (v <= lo) {
+    if (!std::isfinite(v) || v <= lo) {
         std::ostringstream os;
         os << name << " 必须大于 " << lo << "，当前是 " << v;
         errs.push_back(os.str());
     }
 }
 
+/// 同上。**三道门要一起判**，不然 NaN 只是换一个字段溜进来。
 void check_ge(std::vector<std::string>& errs, const char* name, double v, double lo) {
-    if (v < lo) {
+    if (!std::isfinite(v) || v < lo) {
         std::ostringstream os;
         os << name << " 不能小于 " << lo << "，当前是 " << v;
         errs.push_back(os.str());
@@ -221,6 +230,23 @@ std::vector<std::string> LLMConfig::validate() const {
     check_gt(errs, "llm.command_timeout_s", command_timeout_s, 0);
     check_gt(errs, "llm.timeout_s", timeout_s, 0);
     check_range(errs, "llm.temperature", temperature, 0.0, 2.0);
+    // **两头都要夹**，症状是同一个：日志目录永远是空的，而人看到的是开关明明
+    // 开着、`index.jsonl` 还在一行一行地长。这个数要乘 1024×1024 变成一个
+    // `uintmax_t` 的字节上限（`llm/call_log.cpp` 的 `call_log_options`），
+    // 而「超了就剪」紧跟在写完正文之后跑，上限算成 0 就是把刚写下的那一份
+    // 当场删掉。
+    //   · 下界：0 和负数直接就是 0 字节。
+    //   · 上界：`call_log_max_mb = 1e30` 这种（设置页上手滑多按几个 0 也一样，
+    //     `/api/connections` 那头只判是不是数）转成 `uintmax_t` 是未定义行为，
+    //     实测常得 0 —— 填得越大反而一份都留不住。
+    // 判据写成正面的：**这个上限至少要装得下几十次调用，又要小到装得进磁盘**。
+    // 一次调用的正文（提示词 + 回复 + 思考）几十 KB，所以下界取 1 MB；想彻底
+    // 不留就关 `call_log`，那条路清楚得多，不用让人猜「填多小算关」。
+    // 上界取 100 GB：比这份日志在任何一台机器上该占的都大得多，而多按几个零
+    // 一定越过它。**别写成 1024*1024**（1 TB）：错误消息里那个数是
+    // `ostringstream` 默认精度打的，七位有效数字会变成 `1.04858e+06`，
+    // 而这句话是起服务时给人看的。
+    check_range(errs, "llm.call_log_max_mb", call_log_max_mb, 1.0, 102400.0);
     // 上限给 8：再多也开不出来（每个上下文一份 KV cache），而写得离谱
     // 会在起服务时白白试八次、每次失败都往 stderr 上打一行。
     check_range(errs, "llm.parallel", static_cast<double>(parallel), 1.0, 8.0);
@@ -755,6 +781,8 @@ void apply_table(const toml::table& doc, Settings& s) {
         take(t, "api_key", s.llm.api_key);
         take(t, "timeout_s", s.llm.timeout_s);
         take(t, "temperature", s.llm.temperature);
+        take(t, "call_log", s.llm.call_log);
+        take(t, "call_log_max_mb", s.llm.call_log_max_mb);
         take(t, "parallel", s.llm.parallel);
         take(t, "context_tokens", s.llm.context_tokens);
         // [llm.models] —— 按任务分流。**只覆盖写了的键**，没写的留着默认，
@@ -1447,6 +1475,21 @@ base_url = "https://open.bigmodel.cn/api/paas/v4"
 # 「先想再写」这一项 2026-09-14 去掉了：**现在的模型都要思考**，
 # 关不掉的越来越多（glm-5.3 / 5.3-flash 发关闭值直接回 400），
 # 而智谱把思考放在 reasoning_content 里、不混进正文，所以也不用关。
+
+# 把每一次给大模型的提示词和它的回答都留下来，放在
+#   <数据目录>/llm_log/<项目名>/
+# index.jsonl 一行一次调用（给统计用），提示词和回复各自原样存成 .txt
+# （想比两次提示词直接 diff，grep 也能直接搜）。字段表和几条现成的 jq
+# 在 docs/提示词日志.md 里。
+# **密钥不落盘**，整个请求头都不记，只记地址。
+# ⚠️ 提示词里是整章正文，拷这个目录给别人之前先想一下。
+call_log = true
+# 正文文件最多占多少磁盘（MB），超了从最旧的那次开始删。
+# index.jsonl 不在此列，它永远不删——统计的依据在它身上。
+# 收 1 到 102400（100 GB）之间的数，超出这个区间起服务时就会说。
+# 一次调用的正文几十 KB，比 1 MB 还小的上限等于刚写下就被剪光；
+# 真不想留就把上面那个 call_log 关掉。
+call_log_max_mb = 1024.0
 
 # 兜底模型：下面 [llm.models] 里没点名的任务用它。
 # glm-4.7-flash 是这家唯一免费的模型，也是默认——代价是限流很紧
