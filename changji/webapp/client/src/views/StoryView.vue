@@ -2690,26 +2690,38 @@ const thinkLine = computed(() => {
 /* 右下角那一组：AI 那颗 + 展开菜单那颗小的。
    **定位挪到容器上**：原来只有一颗，它自己 absolute；两颗还各自 absolute
    的话会叠在同一个点上。 */
+/* 右下角那一组。**一组，不是两颗。**
+   边框、底色、投影都摆在这一层，两半各自不再描边——两颗独立的圆分开浮着，
+   读起来是两件不相干的事；而「展开菜单」本来就是 ✨ 那颗的附件，它该长在
+   它身上。中间一道分隔线，是这一组里唯一的界。 */
 .ed__fabs {
   position: absolute;
   right: var(--s4);
   bottom: 44px;
   z-index: 5;
   display: flex;
-  align-items: center;
-  gap: 6px;
+  align-items: stretch;
+  height: 36px;
+  border: 1px solid var(--accent-line);
+  border-radius: 999px;
+  background: var(--accent-soft);
+  box-shadow: var(--shadow-2);
+}
+/* 菜单那半也要撑满这一组的高度，不然中间那道线只有半截。
+   ⚠️ **这一组不能 overflow: hidden**：菜单正是从它里面弹出来的，
+   裁掉的话按下去什么都不出现。两头的圆角由两半自己描。 */
+.ed__fabs .menu {
+  display: flex;
 }
 .ed__fab {
   width: 36px;
-  height: 36px;
   display: grid;
   place-items: center;
   padding: 0;
-  border: 1px solid var(--accent-line);
-  border-radius: 50%;
-  background: var(--accent-soft);
+  border: 0;
+  border-radius: 999px 0 0 999px;
+  background: transparent;
   color: var(--accent);
-  box-shadow: var(--shadow-2);
   cursor: pointer;
 }
 .ed__fab:hover,
@@ -2717,10 +2729,16 @@ const thinkLine = computed(() => {
   background: var(--accent);
   color: var(--bg);
 }
-/* 展开菜单那颗做小一号：主角是 ✨ 那颗，这颗是它的附件。 */
+/* 展开菜单那半窄一些：主角是 ✨ 那半，这半是它的附件。 */
 .ed__fab--more {
-  width: 28px;
-  height: 28px;
+  width: 26px;
+  border-left: 1px solid var(--accent-line);
+  border-radius: 0 999px 999px 0;
+}
+/* 亮起来的那一半会盖住中间那道线，把线补在它自己身上。 */
+.ed__fab--more:hover,
+.ed__fab--more.is-on {
+  border-left-color: color-mix(in srgb, var(--bg) 40%, var(--accent));
 }
 /* 菜单朝上弹——这两颗贴着窗底，朝下弹会掉出可视区。 */
 .menu__pop--up {
@@ -2746,9 +2764,9 @@ const thinkLine = computed(() => {
 .ed__bar {
   position: absolute;
   left: var(--s4);
-  /* 右边那一组现在是 28 + 6 + 36 = 70px，加上 16px 边距和一点空隙。
-     还写 64 的话输入框会钻到那两颗按钮底下。 */
-  right: 94px;
+  /* 右边那一组连成一体后是 36 + 26 + 2（边）= 64px，加 16px 边距和一点
+     空隙。还写 64 的话输入框会钻到它底下。 */
+  right: 88px;
   bottom: 40px;
   z-index: 6;
   display: grid;
