@@ -123,6 +123,35 @@ const baseUrl = ref('')
 const temp = ref(0.7)
 
 /**
+ * 编剧这一组跑在哪：`remote`（打 API）还是 `command`（跑本机的命令行）。
+ *
+ * 用户 2026-09-18：「增加对 claudecode 和 codex 命令版的支持」。那两个命令行
+ * 按**订阅**算钱，而 API 按 token——手上已经有订阅的人，走它等于写文这部分
+ * 不再额外花钱。账和限制见引擎的 `config::LLMConfig::command`。
+ */
+const llmBackend = ref('remote')
+const cmd = ref('')
+/** 参数在界面上是一行字（空格分开），存进配置是数组。 */
+const cmdArgs = ref('')
+const cmdTimeout = ref(1800)
+const isCmd = computed(() => llmBackend.value === 'command')
+
+/** 这两个命令行的预设参数，和引擎那张表（default_command_args）一个意思。 */
+const CMD_PRESET = {
+  claude: '-p --output-format text --no-session-persistence --restricted',
+  codex: 'exec -',
+}
+/** 换程序时把参数换成它的预设——**只在用户还没自己改过的时候**。 */
+function onCmdName() {
+  const name = (cmd.value || '').split(/[\\/]/).pop().replace(/\.[^.]*$/, '').toLowerCase()
+  const preset = CMD_PRESET[name]
+  const known = Object.values(CMD_PRESET)
+  if (preset && (!cmdArgs.value.trim() || known.includes(cmdArgs.value.trim()))) {
+    cmdArgs.value = preset
+  }
+}
+
+/**
  * 下拉里摆哪些。**只有模型名，不带任何说明。**
  *
  * 上一版每一项后面挂着一句评语（「这一档最会写：写作榜 81.8、套话 7.09，
@@ -360,6 +389,10 @@ watch(
     pickedAtOpen.value = models.picks[props.groupKey] ?? ''
     if (!isLlm.value) return
     apiKey.value = ''
+    llmBackend.value = models.llmBackend || 'remote'
+    cmd.value = models.llmCommand || ''
+    cmdArgs.value = (models.llmCommandArgs || []).join(' ')
+    cmdTimeout.value = Number(models.llmCommandTimeout ?? 1800)
     baseUrl.value = models.llmBaseUrl
     temp.value = models.llmTemperature
     try {
@@ -411,6 +444,23 @@ async function save() {
     // 预设没有任何还要它的理由。
     if (isLlm.value) {
       const patch = {}
+      // 后端换没换。**先写它**：引擎那边 validate 会检查"选了 command 就得
+      // 填 command"，两样要在同一个 patch 里一起过去。
+      if (llmBackend.value !== models.llmBackend) patch.llm_backend = llmBackend.value
+      if (isCmd.value) {
+        const c = cmd.value.trim()
+        if (!c) {
+          ui.error('选了命令行就得填要跑哪个程序，比如 claude')
+          return
+        }
+        if (c !== models.llmCommand) patch.llm_command = c
+        const args = cmdArgs.value.trim() ? cmdArgs.value.trim().split(/\s+/) : []
+        if (args.join('\u0000') !== (models.llmCommandArgs || []).join('\u0000')) {
+          patch.llm_command_args = args
+        }
+        const t = Number(cmdTimeout.value)
+        if (t > 0 && t !== models.llmCommandTimeout) patch.llm_command_timeout_s = t
+      }
       const url = baseUrl.value.trim()
       if (url && url !== models.llmBaseUrl) patch.llm_base_url = url
       if (llmPick.value && llmPick.value !== models.llmModel) {
@@ -543,8 +593,58 @@ async function download() {
       </div>
 
       <div class="dlg__body stack stack--sm">
-        <!-- 编剧：挑哪一家。清单从引擎来，十五家。 -->
+        <!-- **先问"跑在哪"，再问"哪一家"。**
+             这两条路要填的东西完全不一样（一条要地址和密钥，一条要一个
+             可执行文件），摆在同一屏里会变成八个框、一半和你无关。
+             用户 2026-09-18 要的 claude / codex 就是下面这条。 -->
         <label v-if="isLlm" class="field">
+          <span class="field__label">跑在哪</span>
+          <select v-model="llmBackend" class="select">
+            <option value="remote">打接口（按 token 计费）</option>
+            <option value="command">跑本机的命令行（claude / codex，按订阅）</option>
+          </select>
+        </label>
+
+        <!-- ---- 命令行那条 ---- -->
+        <template v-if="isLlm && isCmd">
+          <label class="field">
+            <span class="field__label">程序</span>
+            <input
+              v-model="cmd"
+              class="input mono"
+              placeholder="claude"
+              @change="onCmdName"
+            />
+          </label>
+          <!-- **说清它拿什么身份在跑。** 这条路不填密钥，用的是那个命令行
+               自己的登录——人得知道去哪儿登录，以及为什么这儿没有密钥框。 -->
+          <p class="tiny dim note">
+            用的是那个命令行自己的登录（不是这儿的 API Key）。没登录过的话，
+            先在终端里跑一次它、按它说的登录。提示词从标准输入喂进去。
+          </p>
+          <label class="field">
+            <span class="field__label">参数</span>
+            <input v-model="cmdArgs" class="input mono" placeholder="-p --output-format text" />
+          </label>
+          <!-- 认得出的名字会自动填好，所以这儿只解释那两个不显然的。 -->
+          <p class="tiny dim note">
+            填 claude 或 codex 会自动带上预设。claude 那串里
+            <code>--restricted</code> 是去掉会跑命令、改文件的那些工具（我们只要
+            一段字）；<b>别加 <code>--bare</code></b>，它会让订阅登录失效。
+          </p>
+          <label class="field">
+            <span class="field__label">最多等</span>
+            <input v-model.number="cmdTimeout" class="input" type="number" min="60" step="60" />
+          </label>
+          <p class="tiny dim note">
+            秒。命令行要自己起一个 agent 运行时，比直接打接口慢一档；而这条
+            流水线最大的一步（拆分镜）在接口上就要跑五分钟。
+            <b>这条路没有工具调用</b>——「上网看热点写这一章」那一步用不了。
+          </p>
+        </template>
+
+        <!-- 编剧：挑哪一家。清单从引擎来，十五家。 -->
+        <label v-if="isLlm && !isCmd" class="field">
           <span class="field__label">服务</span>
           <select :value="providerId" class="select" @change="pickProvider($event.target.value)">
             <option value="">自定义（自己填地址）</option>
@@ -571,7 +671,7 @@ async function download() {
 
         <!-- 编剧那一组：真正发出去的模型名。**这才是项目页上显示的那个**，
              上面那个下拉挑的只是"哪一家"。 -->
-        <label v-if="isLlm" class="field">
+        <label v-if="isLlm && !isCmd" class="field">
           <span class="field__label">模型</span>
           <select v-model="llmPick" class="select">
             <option v-for="m in llmChoices" :key="m" :value="m">{{ m }}</option>
@@ -580,7 +680,7 @@ async function download() {
 
         <!-- 地址。**它得在这儿**，不然上面那个下拉选了「用别的外接服务」
              就没地方填，用户点完发现是条死路。 -->
-        <label v-if="isLlm" class="field">
+        <label v-if="isLlm && !isCmd" class="field">
           <span class="field__label">接口地址</span>
           <input v-model="baseUrl" class="input mono" placeholder="https://…/v1" />
         </label>
@@ -589,7 +689,7 @@ async function download() {
              上一版是填过就藏起来，而在这儿能换服务之后那是个真 bug：
              从智谱换到 DeepSeek 时旧密钥还在，框就不出现——新家的密钥
              没地方填。留空表示不改。 -->
-        <label v-if="isLlm" class="field">
+        <label v-if="isLlm && !isCmd" class="field">
           <span class="field__label">API Key</span>
           <input
             v-model="apiKey"

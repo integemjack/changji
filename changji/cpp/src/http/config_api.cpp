@@ -173,6 +173,12 @@ ApiResult get_connections() {
     for (const auto& kv : env_overridden()) env[kv.first] = kv.second;
 
     return {200, {
+        // 大模型跑在哪：remote（打 API）或 command（跑本机的命令行）。
+        // 界面上那个「服务」下拉靠它决定摆哪一组输入框。
+        {"llm_backend", s.llm.backend},
+        {"llm_command", s.llm.command},
+        {"llm_command_args", s.llm.command_args},
+        {"llm_command_timeout_s", s.llm.command_timeout_s},
         {"llm_base_url", s.llm.base_url},
         {"llm_model", s.llm.model},
         {"llm_api_key_set", !key.empty()},
@@ -199,6 +205,7 @@ ApiResult post_connections(const json& body, const DoctorFn& check) {
     const json& patch = *pit;
     static const std::set<std::string> kAllowed = {
         "llm_base_url", "llm_model", "llm_api_key", "llm_temperature",
+        "llm_backend", "llm_command", "llm_command_args", "llm_command_timeout_s",
         "tts_backend", "tts_base_url", "vram_gb_override"};
     forbid_extra(patch, kAllowed, "patch.");
 
@@ -245,6 +252,35 @@ ApiResult post_connections(const json& body, const DoctorFn& check) {
                 const auto x = need_num(v, key);
                 note(key, s.llm.temperature != x);
                 s.llm.temperature = x;
+            } else if (field == "backend") {
+                const auto x = need_string(v, key);
+                note(key, s.llm.backend != x);
+                s.llm.backend = x;
+            } else if (field == "command") {
+                const auto x = need_string(v, key);
+                note(key, s.llm.command != x);
+                s.llm.command = x;
+            } else if (field == "command_args") {
+                // **整份替换，不合并。** 参数的顺序和配对（`--model` 跟着
+                // 它的值）是一体的，合并出来的组合谁也说不清。
+                if (!v.is_array()) {
+                    throw unprocessable("patch", key, "要是一个字符串数组", v,
+                                        "list_type");
+                }
+                std::vector<std::string> xs;
+                for (const auto& one : v) {
+                    if (!one.is_string()) {
+                        throw unprocessable("patch", key, "数组里每一项都要是字符串", v,
+                                            "string_type");
+                    }
+                    xs.push_back(one.get<std::string>());
+                }
+                note(key, s.llm.command_args != xs);
+                s.llm.command_args = xs;
+            } else if (field == "command_timeout_s") {
+                const auto x = need_num(v, key);
+                note(key, s.llm.command_timeout_s != x);
+                s.llm.command_timeout_s = x;
             }
         } else if (section == "tts") {
             if (field == "backend") {
@@ -326,10 +362,34 @@ ApiResult post_connections(const json& body, const DoctorFn& check) {
                 if (field == "base_url") value = s.llm.base_url;
                 else if (field == "model") value = s.llm.model;
                 else if (field == "temperature") value = s.llm.temperature;
+                else if (field == "backend") value = s.llm.backend;
+                else if (field == "command") value = s.llm.command;
+                else if (field == "command_args") value = s.llm.command_args;
+                else if (field == "command_timeout_s") value = s.llm.command_timeout_s;
             } else if (section == "tts") {
                 if (field == "backend") value = s.tts.backend;
                 // 对应 Python 的 "" if value is None else value
                 else if (field == "base_url") value = s.tts.base_url.value_or("");
+            }
+            // **漏一个键在这儿，症状是"这次改好了，重启就没了"。**
+            //
+            // 上面那张白名单（kAllowed）和这儿是两份表：前者管"收不收"，
+            // 后者管"写不写得回文件"。2026-09-18 加命令行后端时就漏了——
+            // 白名单放行了，改也落到内存里了（/api/connections 读出来是对的），
+            // 而这儿没有对应分支，`value` 是个 null，写进 config.toml 变成
+            //     backend = ""
+            //     command = ""
+            // 于是重启之后不但设置没了，连 validate 都过不去。
+            //
+            // 静默是最坏的部分：那一下界面还弹了「换好了」。所以这儿宁可当场
+            // 500——两份表对不上是代码的错，不是用户的错，而这句话直接指到
+            // 该改的地方。
+            if (value.is_null()) {
+                throw ApiError(500,
+                               "内部错误：" + key +
+                                   " 在白名单里放行了，但 persist 那段没有对应"
+                                   "分支，写回去会是个空值。改 config_api.cpp "
+                                   "里这个循环。");
             }
             payload[section][field] = value;
         }

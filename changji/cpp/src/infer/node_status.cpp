@@ -105,7 +105,12 @@ NodeFacts probe_facts(const config::Settings& s) {
             std::filesystem::is_regular_file(s.models.resolve(name, ws), ec);
     }
 
-    f.llm_remote = s.llm.backend == "remote" && !s.llm.base_url.empty();
+    // **「能写文」= 这台有一条走得通的大模型路**，不是"指到了远端"。
+    // 名字还叫 llm_remote 是历史（capability.hpp 那边一并说了）。
+    // 2026-09-18 多了命令行那条：跑本机的 claude / codex 一样能写文，
+    // 漏了的话跨机那张表会说这台不能写——而它明明能。
+    f.llm_remote = (s.llm.backend == "remote" && !s.llm.base_url.empty()) ||
+                   (s.llm.backend == "command" && !s.llm.command.empty());
     f.tts_remote = s.tts.backend == "http" && s.tts.base_url.has_value() &&
                    !s.tts.base_url->empty();
     return f;

@@ -503,3 +503,80 @@ TEST_CASE("设置接口认的配音后端，和配置文件认的是同一批") 
     });
     CHECK_MESSAGE(r.status == 400, r.body.dump());
 }
+
+// ---------------------------------------------------------------------------
+// 命令行后端（claude / codex）
+// ---------------------------------------------------------------------------
+
+TEST_CASE("改成跑本机命令行：收得下，也落到配置对象上") {
+    reset_runtime();
+    const auto r = http::guard([] {
+        return http::post_connections(
+            json{{"patch", {{"llm_backend", "command"},
+                            {"llm_command", "claude"},
+                            {"llm_command_args",
+                             json::array({"-p", "--output-format", "text"})},
+                            {"llm_command_timeout_s", 1200}}},
+                 {"persist", false}},
+            fake_doctor());
+    });
+    REQUIRE(r.status == 200);
+    const auto& s = config::runtime().snapshot();
+    CHECK(s.llm.backend == "command");
+    CHECK(s.llm.command == "claude");
+    REQUIRE(s.llm.command_args.size() == 3);
+    CHECK(s.llm.command_args[0] == "-p");
+    CHECK(s.llm.command_timeout_s == doctest::Approx(1200));
+}
+
+TEST_CASE("**白名单放行的每一个键，persist 那段都得写得回去**") {
+    // 2026-09-18 踩的就是这个：命令行那四个键进了白名单、改也落到内存上了
+    //（/api/connections 读出来是对的），而 persist 那个循环没有对应分支，
+    // `value` 是个 null——写进 config.toml 变成
+    //     backend = ""
+    //     command = ""
+    // 于是**这次改好了，重启就没了**，而且 backend = "" 连 validate 都过不去。
+    //
+    // 最坏的是它静默：界面上照样弹「换好了」。现在那段遇到 null 会当场 500，
+    // 这一条盯着那道闸——两份表（kAllowed 和 persist）对不上就红在这里，
+    // 而不是等到用户重启之后。
+    reset_runtime();
+    const auto r = http::guard([] {
+        return http::post_connections(
+            json{{"patch", {{"llm_backend", "command"},
+                            {"llm_command", "claude"},
+                            {"llm_command_args", json::array({"-p"})},
+                            {"llm_command_timeout_s", 900}}},
+                 {"persist", true}},
+            fake_doctor());
+    });
+    // 500 = 有键漏在 persist 那段外面（消息里写着是哪一个）
+    CHECK_MESSAGE(r.status == 200,
+                  "persist 那段漏了键：" << r.body.dump().substr(0, 300));
+}
+
+TEST_CASE("选了命令行却没说跑哪个，要挡下来") {
+    // 引擎那边 validate 管这条（LLMConfig::validate）。放过去的话，
+    // 每一次生成才失败，而这儿本可以一句话说清。
+    reset_runtime();
+    const auto r = http::guard([] {
+        return http::post_connections(
+            json{{"patch", {{"llm_backend", "command"}}}, {"persist", false}},
+            fake_doctor());
+    });
+    CHECK(r.status == 400);
+}
+
+TEST_CASE("command_args 要是字符串数组，别的形状要报 422") {
+    reset_runtime();
+    const auto r = http::guard([] {
+        return http::post_connections(
+            json{{"patch", {{"llm_backend", "command"},
+                            {"llm_command", "claude"},
+                            {"llm_command_args", "-p --output-format text"}}},
+                 {"persist", false}},
+            fake_doctor());
+    });
+    CHECK(r.status == 422);
+}
+

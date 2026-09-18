@@ -51,6 +51,15 @@ export const useModels = defineStore('models', () => {
   const llmKeySet = ref(false)
   const llmBaseUrl = ref('')
   const llmTemperature = ref(0.7)
+  /**
+   * 大模型跑在哪：`remote`（打 API）或 `command`（跑本机的命令行）。
+   * 用户 2026-09-18 要的那条 claude / codex 就是后者，账见引擎那边
+   * `config::LLMConfig::command` 的注释。
+   */
+  const llmBackend = ref('remote')
+  const llmCommand = ref('')
+  const llmCommandArgs = ref([])
+  const llmCommandTimeout = ref(1800)
   const picks = ref({}) // 组 → 选中的档位 id（还没保存的草稿）
   const progress = ref(null)
   const loading = ref(false)
@@ -284,6 +293,12 @@ export const useModels = defineStore('models', () => {
         llmKeySet.value = Boolean(c?.llm_api_key_set)
         llmBaseUrl.value = c?.llm_base_url || ''
         llmTemperature.value = Number(c?.llm_temperature ?? 0.7)
+        llmBackend.value = c?.llm_backend || 'remote'
+        llmCommand.value = c?.llm_command || ''
+        llmCommandArgs.value = Array.isArray(c?.llm_command_args)
+          ? c.llm_command_args
+          : []
+        llmCommandTimeout.value = Number(c?.llm_command_timeout_s ?? 1800)
         // 本机/局域网的服务不校验密钥（Ollama 那些），云端才要。
         //
         // ⚠️ **这张表要和引擎 `LLMConfig::needs_api_key()` 一模一样**
@@ -413,6 +428,7 @@ export const useModels = defineStore('models', () => {
   }
 
   return {
+    llmBackend, llmCommand, llmCommandArgs, llmCommandTimeout,
     state, picks, progress, loading, error, pollError, altKey, altPicks, pickedBytes, pickedHave, pickedFiles,
     llmModel, llmKeyNeeded, llmKeySet, llmBaseUrl, llmTemperature,
     groups, running, inUse,

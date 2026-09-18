@@ -187,6 +187,33 @@ Check check_llm(const config::Settings& s) {
                 "默认走智谱（bigmodel.cn），glm-4.7-flash 不要钱。"};
     }
 
+    // **命令行那条不去连地址。** 它根本不打接口——照旧走下面那段的话，
+    // 体检上印的是一个没在用的 base_url 和模型名，而人正是照着这一行判断
+    // "我配对了没有"。2026-09-18 加这条后端时就是这样：界面上写着
+    // 「https://open.bigmodel.cn … glm-5.3-flash」，而实际跑的是本机的 claude。
+    if (s.llm.backend == "command") {
+        if (s.llm.command.empty()) {
+            return {"大模型", Level::FAIL, "配的是跑本机命令行，但没说跑哪个",
+                    "去项目页「模型」那一行点一下编剧模型的名字，把「程序」填上"
+                    "（比如 claude）。"};
+        }
+        const auto found = proc::which(s.llm.command);
+        if (!found) {
+            return {"大模型", Level::FAIL,
+                    "找不到 " + s.llm.command + "：它不在 PATH 上",
+                    "装好它，或者把「程序」那一栏填成绝对路径。\n"
+                    "claude：npm i -g @anthropic-ai/claude-code\n"
+                    "装完先在终端里跑一次、按它说的登录——**这条路用的是那个"
+                    "命令行自己的登录，不是这儿的 API Key**。"};
+        }
+        // **不在体检里真跑一趟。** 跑一次就是一次真生成：要花订阅额度、
+        // 要等几十秒，而体检是每次打开设置页都跑的。
+        // 登录没登录只有真跑才知道，那句话留给第一次生成时它自己说
+        // （llm::CommandClient 会把它原样带出来）。
+        return {"大模型", Level::OK, "跑本机的 " + *found,
+                ""};
+    }
+
     const std::string& url = s.llm.base_url;
     const std::string& model = s.llm.model;
 
