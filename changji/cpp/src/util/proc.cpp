@@ -1,6 +1,8 @@
 #include "util/proc.hpp"
 
+#include <algorithm>
 #include <array>
+#include <cerrno>
 #include <cstdio>
 #include <filesystem>
 #include <string>
@@ -152,7 +154,8 @@ std::optional<std::string> which(const std::string& name) {
     return std::nullopt;
 }
 
-Result run(const std::string& exe, const std::vector<std::string>& args, int timeout_ms) {
+Result run(const std::string& exe, const std::vector<std::string>& args, int timeout_ms,
+           const std::string& stdin_data) {
     Result r;
 
     // 先确认这个程序存在。找不到就是 launched=false，
@@ -188,13 +191,27 @@ Result run(const std::string& exe, const std::vector<std::string>& args, int tim
     // 读端不给子进程继承，否则子进程退出后管道不会关，读到天荒地老。
     ::SetHandleInformation(rd, HANDLE_FLAG_INHERIT, 0);
 
+    // 要喂标准输入就再开一条。不喂就把父进程那个原样给它（老行为）。
+    HANDLE in_rd = nullptr;
+    HANDLE in_wr = nullptr;
+    const bool feed_stdin = !stdin_data.empty();
+    if (feed_stdin) {
+        if (!::CreatePipe(&in_rd, &in_wr, &sa, 0)) {
+            ::CloseHandle(rd);
+            ::CloseHandle(wr);
+            return r;
+        }
+        // 同上：写端不给子进程继承。
+        ::SetHandleInformation(in_wr, HANDLE_FLAG_INHERIT, 0);
+    }
+
     STARTUPINFOW si{};
     si.cb = sizeof(si);
     si.dwFlags = STARTF_USESTDHANDLES;
     si.hStdOutput = wr;
     // stderr 并进 stdout：ffmpeg -version 和 nvidia-smi 的正经输出都在 stderr。
     si.hStdError = wr;
-    si.hStdInput = ::GetStdHandle(STD_INPUT_HANDLE);
+    si.hStdInput = feed_stdin ? in_rd : ::GetStdHandle(STD_INPUT_HANDLE);
 
     PROCESS_INFORMATION pi{};
     // lpCommandLine 必须可写，CreateProcessW 会就地改它。
@@ -205,11 +222,34 @@ Result run(const std::string& exe, const std::vector<std::string>& args, int tim
                                      TRUE, CREATE_NO_WINDOW, nullptr, nullptr,
                                      &si, &pi);
     ::CloseHandle(wr);  // 父进程这一份写端要立刻关，否则读端永远等不到 EOF
+    if (feed_stdin) ::CloseHandle(in_rd);  // 同理，父进程不留读端
     if (!ok) {
         ::CloseHandle(rd);
+        if (feed_stdin) ::CloseHandle(in_wr);
         return r;
     }
     r.launched = true;
+
+    // **写也要在自己的线程上。** 理由和下面读那段是同一条：管道缓冲只有
+    // 几 KB，父进程闷头写完再去读的话，子进程先把 stdout 写满就双方互等。
+    std::thread writer;
+    if (feed_stdin) {
+        writer = std::thread([in_wr, &stdin_data] {
+            std::size_t off = 0;
+            while (off < stdin_data.size()) {
+                DWORD put = 0;
+                const DWORD want =
+                    static_cast<DWORD>(std::min<std::size_t>(stdin_data.size() - off, 1u << 16));
+                if (!::WriteFile(in_wr, stdin_data.data() + off, want, &put, nullptr) ||
+                    put == 0) {
+                    break;  // 子进程提前关了输入（很多命令读够了就不读了）
+                }
+                off += put;
+            }
+            // 关掉才有 EOF；不关的话子进程会一直等下一段。
+            ::CloseHandle(in_wr);
+        });
+    }
 
     // **读管道必须和等超时并行。**
     //
@@ -242,6 +282,7 @@ Result run(const std::string& exe, const std::vector<std::string>& args, int tim
         r.timed_out = true;
     }
     reader.join();
+    if (writer.joinable()) writer.join();
     ::CloseHandle(rd);
     r.out = std::move(collected);
 
@@ -259,6 +300,14 @@ Result run(const std::string& exe, const std::vector<std::string>& args, int tim
     // 引用规则在这边一条都用不上。
     int fds[2];
     if (::pipe(fds) != 0) return r;
+    // 要喂标准输入就再开一条。不喂就让子进程继承父进程那个（老行为）。
+    const bool feed_stdin = !stdin_data.empty();
+    int in_fds[2] = {-1, -1};
+    if (feed_stdin && ::pipe(in_fds) != 0) {
+        ::close(fds[0]);
+        ::close(fds[1]);
+        return r;
+    }
 
     // fork 之前算好，见 close_inherited_fds 上面那段。
     const int fd_max = fd_upper_bound();
@@ -267,6 +316,10 @@ Result run(const std::string& exe, const std::vector<std::string>& args, int tim
     if (pid < 0) {
         ::close(fds[0]);
         ::close(fds[1]);
+        if (feed_stdin) {
+            ::close(in_fds[0]);
+            ::close(in_fds[1]);
+        }
         return r;
     }
     if (pid == 0) {
@@ -274,6 +327,11 @@ Result run(const std::string& exe, const std::vector<std::string>& args, int tim
         ::dup2(fds[1], STDOUT_FILENO);
         ::dup2(fds[1], STDERR_FILENO);
         ::close(fds[1]);
+        if (feed_stdin) {
+            ::close(in_fds[1]);
+            ::dup2(in_fds[0], STDIN_FILENO);
+            ::close(in_fds[0]);
+        }
         close_inherited_fds(fd_max);
         std::vector<char*> argv;
         argv.push_back(const_cast<char*>(resolved->c_str()));
@@ -284,6 +342,33 @@ Result run(const std::string& exe, const std::vector<std::string>& args, int tim
     }
     ::close(fds[1]);
     r.launched = true;
+
+    // **写也要在自己的线程上。** 管道缓冲只有几 KB，父进程闷头写完再去读的
+    // 话，子进程先把 stdout 写满就双方互等，最后只能靠超时收场。
+    //
+    // ⚠️ **SIGPIPE 要挡掉。** 很多命令读够了就关掉输入（`head` 是极端例子），
+    // 那时候继续写会收到 SIGPIPE——默认处置是**杀掉整个进程**，也就是把引擎
+    // 自己打死。这里按字节写、忽略 EPIPE 退出即可。
+    std::thread writer;
+    if (feed_stdin) {
+        ::close(in_fds[0]);
+        writer = std::thread([fd = in_fds[1], &stdin_data] {
+#ifdef SIGPIPE
+            ::signal(SIGPIPE, SIG_IGN);
+#endif
+            std::size_t off = 0;
+            while (off < stdin_data.size()) {
+                const ssize_t put =
+                    ::write(fd, stdin_data.data() + off, stdin_data.size() - off);
+                if (put <= 0) {
+                    if (put < 0 && errno == EINTR) continue;
+                    break;  // EPIPE：对面不读了
+                }
+                off += static_cast<std::size_t>(put);
+            }
+            ::close(fd);  // 关掉才有 EOF
+        });
+    }
 
     // 同 Windows 那段：读和等要并行，否则超时形同虚设。
     std::string collected;
@@ -317,6 +402,7 @@ Result run(const std::string& exe, const std::vector<std::string>& args, int tim
         ::waitpid(pid, &status, 0);
     }
     reader.join();
+    if (writer.joinable()) writer.join();
     ::close(fds[0]);
     r.out = std::move(collected);
 

@@ -193,9 +193,17 @@ std::vector<std::string> LLMConfig::validate() const {
     // 是条死路——把 backend 敲错一个字母的人照着它填 local，配置过了检查、
     // 密钥也不再被要求（needs_api_key 对 local 返回 false），然后每一次叫
     // 模型都失败。这句只说真正能用的那一个。
-    if (backend != "remote" && backend != "local") {
-        errs.push_back("llm.backend 只能是 remote，当前是 " + backend);
+    if (backend != "remote" && backend != "local" && backend != "command") {
+        errs.push_back("llm.backend 只能是 remote 或 command，当前是 " + backend);
     }
+    // 选了命令行这条就得说清跑哪个程序。**不给默认值**：默认成 claude 的话，
+    // 没装它的机器会在每一次生成时才失败，而这儿本可以一句话说清。
+    if (backend == "command" && command.empty()) {
+        errs.push_back(
+            "llm.backend 是 command，但没填 llm.command（要跑哪个程序，"
+            "比如 claude 或 codex）");
+    }
+    check_gt(errs, "llm.command_timeout_s", command_timeout_s, 0);
     check_gt(errs, "llm.timeout_s", timeout_s, 0);
     check_range(errs, "llm.temperature", temperature, 0.0, 2.0);
     // 上限给 8：再多也开不出来（每个上下文一份 KV cache），而写得离谱
@@ -719,6 +727,18 @@ void apply_table(const toml::table& doc, Settings& s) {
     }
     if (auto t = doc["llm"].as_table()) {
         take(t, "backend", s.llm.backend);
+        take(t, "command", s.llm.command);
+        take(t, "command_timeout_s", s.llm.command_timeout_s);
+        // 参数是个数组。**写了就整份替换，不合并**——参数的顺序和配对
+        // （`--model` 跟着它的值）是一体的，合并出来的组合谁也说不清。
+        if (auto arr = (*t)["command_args"].as_array()) {
+            s.llm.command_args.clear();
+            for (const auto& v : *arr) {
+                if (auto sv = v.template value<std::string>()) {
+                    s.llm.command_args.push_back(*sv);
+                }
+            }
+        }
         take(t, "base_url", s.llm.base_url);
         take(t, "model", s.llm.model);
         take(t, "api_key", s.llm.api_key);

@@ -277,3 +277,78 @@ TEST_CASE("超时会把子进程杀掉，而不是把调用线程钉住") {
     // 800 毫秒的超时，不该等满 5 秒。给足余量，只证明"没等到自然结束"。
     CHECK_MESSAGE(elapsed < 4000, "实际等了 " << elapsed << " 毫秒");
 }
+
+// ---------------------------------------------------------------------------
+// 喂标准输入
+// ---------------------------------------------------------------------------
+//
+// 大模型的命令行后端（claude / codex）靠它把提示词送进去：几万字塞不进命令行
+// 参数（Windows 上整条命令行 32 KB 封顶），而 `claude -p` 的帮助写的就是
+// "useful for pipes"。
+//
+// 三条都是"错了不会当场报错"的那一类：
+//   · 不关写端 → 子进程一直等下一段，最后靠超时收场，看着像模型很慢；
+//   · 写和读不并行 → 管道缓冲（几 KB）一满就双方互等，同样只能靠超时；
+//   · POSIX 上不挡 SIGPIPE → 对面读够了就关输入，父进程继续写会**被信号
+//     打死**，也就是整个引擎没了。
+
+TEST_CASE("喂标准输入：子进程收得到，而且收得完整") {
+#ifdef _WIN32
+    const char* exe = "findstr.exe";
+    const std::vector<std::string> args{"/n", "^"};  // 每行前面加行号，原样回显
+#else
+    const char* exe = "cat";
+    const std::vector<std::string> args{};
+#endif
+    const auto r = proc::run(exe, args, 10000, "changji_stdin_ok\n");
+    REQUIRE(r.launched);
+    CHECK(r.timed_out == false);
+    CHECK(r.out.find("changji_stdin_ok") != std::string::npos);
+}
+
+TEST_CASE("喂标准输入：不喂的时候行为和以前一模一样") {
+    // 空串 = 不接管 stdin。老调用点一个都没改，这条盯着别把它们弄坏。
+#ifdef _WIN32
+    const auto r = proc::run("where.exe", {"cmd"});
+#else
+    const auto r = proc::run("echo", {"changji_proc_ok"});
+#endif
+    REQUIRE(r.launched);
+    CHECK(r.exit_code == 0);
+}
+
+TEST_CASE("喂标准输入：几十万字也要进得去，而且不会卡死") {
+    // **这一条才是真正要防的那件事。** 提示词就是这个量级（拆分镜那一步
+    // 光 schema 就几十个字段），而管道缓冲只有几 KB：写和读不并行的话，
+    // 这一条会卡到超时为止。给 20 秒，正常应当一秒内回来。
+    std::string big;
+    big.reserve(300000);
+    while (big.size() < 300000) big += "长提示词一行。\n";
+#ifdef _WIN32
+    const auto r = proc::run("findstr.exe", {"/c:长提示词一行"}, 20000, big);
+#else
+    const auto r = proc::run("cat", {}, 20000, big);
+#endif
+    REQUIRE(r.launched);
+    CHECK_MESSAGE(r.timed_out == false, "卡住了——写和读没有并行");
+    // 输出上限是 1 MB（见 run 里那段截断），所以只核对"确实回来了很多"
+    CHECK(r.out.size() > 100000);
+}
+
+TEST_CASE("喂标准输入：对面读够了就关掉，父进程不能被打死") {
+    // POSIX 上继续往已关闭的管道写会收到 SIGPIPE，默认处置是杀掉进程——
+    // 也就是把引擎自己打死。head 读够两行就退，正是这个形状。
+    // 能跑到断言这一行就说明没被信号带走。
+#ifdef _WIN32
+    // Windows 上没有 SIGPIPE，WriteFile 直接返回失败，这条不适用
+    WARN("Windows 上没有 SIGPIPE，跳过");
+#else
+    std::string big;
+    while (big.size() < 200000) big += "一行\n";
+    const auto r = proc::run("head", {"-n", "2"}, 10000, big);
+    REQUIRE(r.launched);
+    CHECK(r.timed_out == false);
+    CHECK(r.out.find("一行") != std::string::npos);
+#endif
+}
+

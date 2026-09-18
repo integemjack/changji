@@ -782,6 +782,7 @@ add_executable(changji
     src/llm/client.cpp
     src/llm/sse.cpp
     src/llm/client_http.cpp
+    src/llm/client_command.cpp
     src/infer/capability.cpp
     src/infer/blob.cpp
     src/infer/node_pick.cpp
@@ -1111,6 +1112,7 @@ if(CHANGJI_BUILD_TESTS)
         tests/unit/test_assets_shape.cpp
         tests/unit/test_fs_dirs.cpp
         tests/unit/test_models_pick.cpp
+        tests/unit/test_llm_command.cpp
         tests/unit/test_flow.cpp
         tests/unit/test_series_cut.cpp
         tests/unit/test_web_story.cpp
@@ -1284,6 +1286,7 @@ if(CHANGJI_BUILD_TESTS)
         src/media/assemble.cpp
         src/llm/client.cpp
         src/llm/sse.cpp
+        src/llm/client_command.cpp
         src/config/settings.cpp
         src/config/model_patch.cpp
         src/config/writeback.cpp

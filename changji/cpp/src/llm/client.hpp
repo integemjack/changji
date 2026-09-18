@@ -305,6 +305,34 @@ private:
     HttpPostStream stream_post_;
 };
 
+/// **把本机装着的大模型命令行当后端。** `[llm].backend = "command"`。
+///
+/// 用户 2026-09-18：「增加对 claudecode 和 codex 命令版的支持」。
+/// 那两个命令行按订阅算钱，而这条流水线最费的就是文字——手上已经有订阅的
+/// 人，走它等于这部分不再按 token 花钱。账和限制都写在
+/// `config::LLMConfig::command` 那一段。
+///
+/// 做的事只有一件：把提示词从**标准输入**喂给那个程序，把它印出来的东西
+/// 当模型的回答。schema 照旧是贴在提示词后面的文字（`schema_as_prompt`
+/// 那条路远端和这条共用），所以结构化输出这边一个字都不用另写。
+class CommandClient : public Client {
+public:
+    explicit CommandClient(ConfigProvider cfg);
+    /// 配置固定不变的版本。测试用。
+    explicit CommandClient(config::LLMConfig cfg);
+
+    std::string complete(const Request& req, pipeline::CancelToken& tok) override;
+
+private:
+    ConfigProvider cfg_;
+};
+
+/// 这个命令名对应的默认参数。认不出来回空。
+///
+/// **摆成一张表而不是写死在调用处**：两个命令行都在快速改版，而认不出的
+/// 名字照样能用——用户在 `[llm].command_args` 里自己写就是了。
+std::vector<std::string> default_command_args(const std::string& command);
+
 /// 回放。按调用顺序吐出预先录好的返回。
 ///
 /// 给测试和阶段 4 的"回放模式"用：同一段提示词，Python 和 C++ 各跑一遍

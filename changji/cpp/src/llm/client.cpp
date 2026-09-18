@@ -884,6 +884,17 @@ std::shared_ptr<Client> make_client(HttpPost post, HttpPostStream stream_post) {
     // 提示词了。留着它只是养一条没人跑、迟早腐烂的路。
     //
     // llama.cpp 本身还在链：进程内配音（llama_tts）用的是它。
+    //
+    // 2026-09-18 多了第二条：`backend = "command"`，把本机装着的大模型命令行
+    // （claude / codex）当后端。**在这儿分叉，不在每个调用点**——叫模型的地方
+    // 散在六七个文件里，它们只认 `Client` 这个接口。
+    //
+    // 判断放在工厂里而不是造一次记一次：`ConfigProvider` 每次都读最新配置，
+    // 用户在设置页上换了后端，下一趟就该走新的那条。
+    if (config::runtime().snapshot().llm.backend == "command") {
+        return std::make_shared<CommandClient>(
+            ConfigProvider([] { return config::runtime().snapshot().llm; }));
+    }
     return std::make_shared<RemoteClient>(
         ConfigProvider([] { return config::runtime().snapshot().llm; }),
         std::move(post), std::move(stream_post));

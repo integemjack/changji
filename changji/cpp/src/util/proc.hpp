@@ -46,9 +46,22 @@ std::optional<std::string> which(const std::string& name);
 /// 而且 popen 没法设超时。不经过 shell 之后这两类问题都不存在了。
 ///
 /// timeout_ms 为 0 表示不限时；超时会杀掉子进程并把 `timed_out` 置位。
+///
+/// `stdin_data` 非空就喂给子进程的标准输入，喂完关掉（子进程才看得到 EOF）。
+/// 空串 = 不接管，沿用父进程的 stdin，行为和以前一模一样。
+///
+/// **为什么要有它。** 大模型的命令行后端（claude / codex）要吃的提示词
+/// 动辄几万字，而命令行参数是有上限的——Windows 上整条命令行 32 KB 封顶，
+/// 超了 CreateProcessW 直接失败。走标准输入没有这个限制，而且 `claude -p`
+/// 的帮助里写的就是 "useful for pipes"。
+///
+/// ⚠️ **喂和读必须并行**：管道缓冲区只有几 KB，父进程闷头写完再去读的话，
+/// 一旦子进程先把 stdout 写满就双方互等——两边都不动，最后靠超时才收场。
+/// 所以下面是写一条线程、读一条线程。
 Result run(const std::string& exe,
            const std::vector<std::string>& args,
-           int timeout_ms = 15000);
+           int timeout_ms = 15000,
+           const std::string& stdin_data = {});
 
 /// 起一个**不等它结束**的子进程，返回一个能用来杀它的句柄。
 ///
