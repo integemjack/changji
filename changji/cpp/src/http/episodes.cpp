@@ -12,6 +12,7 @@
 #include "pipeline/activity.hpp"
 #include "stages/script.hpp"
 #include "stages/script_story.hpp"
+#include "stages/story_plan.hpp"
 #include "pipeline/storyboard_run.hpp"
 #include "stages/storyboard.hpp"
 #include "util/paths.hpp"
@@ -132,12 +133,35 @@ ApiResult get_script_context(const std::string& path,
         story = store.load_story();
     } catch (const std::exception&) {
     }
+    // 章模式：这一集就是一章，计划按章配（整章，钩子取最后一场的 turn）。
+    // **不按 episode_id 去分集表里查。** 写剧本那头（scripting.cpp）2026-09-16
+    // 就改成这样了，这儿漏了：老分集表把一章切成上/中/下，ep01 查到的是前
+    // 三分之一，剧本页的「原文」就只有半章（2026-09-18 用户撞到）。上一集
+    // 就是上一章那一集，id 按同一条规矩推。
+    EpisodePlan chapter_plan_storage;
     const EpisodePlan* plan = nullptr;
-    std::size_t plan_index = 0;
-    for (std::size_t i = 0; i < story.plan.size(); ++i) {
-        if (story.plan[i].episode_id == episode_id) {
+    std::string prev_episode_id;
+    if (!ep->chapter_refs.empty()) {
+        const std::string& cid = ep->chapter_refs.front();
+        for (std::size_t i = 0; i < story.chapters.size(); ++i) {
+            if (story.chapters[i].chapter_id != cid) continue;
+            chapter_plan_storage =
+                stages::chapter_plan(story, cid, ep->target_duration_s);
+            chapter_plan_storage.episode_id = episode_id;
+            plan = &chapter_plan_storage;
+            if (i > 0) {
+                prev_episode_id = stages::episode_id_for_chapter(
+                    story.chapters[i - 1].chapter_id, i - 1);
+            }
+            break;
+        }
+    }
+    if (plan == nullptr) {
+        // 老项目：剧集上没记章，只能按分集表的 id 查，上一集取表里的上一条。
+        for (std::size_t i = 0; i < story.plan.size(); ++i) {
+            if (story.plan[i].episode_id != episode_id) continue;
             plan = &story.plan[i];
-            plan_index = i;
+            if (i > 0) prev_episode_id = story.plan[i - 1].episode_id;
             break;
         }
     }
@@ -193,10 +217,9 @@ ApiResult get_script_context(const std::string& path,
         out["scenes"] = json(stages::episode_scenes(story, *plan));
         out["text"] = stages::episode_text(story, *plan);
         out["hook"] = plan->hook;
-        // 上一集的结尾。按分集表的顺序取上一条，和写剧本那一步一样。
-        if (plan_index > 0) {
-            const Episode* prev =
-                project.episode_by_id(story.plan[plan_index - 1].episode_id);
+        // 上一集的结尾——上一章那一集，和写剧本那一步一样。
+        if (!prev_episode_id.empty()) {
+            const Episode* prev = project.episode_by_id(prev_episode_id);
             if (prev != nullptr) {
                 out["previous_tail"] = stages::script_tail(prev->script);
             }

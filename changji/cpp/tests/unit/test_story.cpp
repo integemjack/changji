@@ -246,143 +246,53 @@ TEST_CASE("没展开正文时一章一集") {
     CHECK(plan[1].title == "五年前那把伞");
 }
 
-TEST_CASE("切点落在钩子上，不按字数硬切") {
-    // 容量 900。钩子在 850 和 1400，正文 2000 字。
-    Story s;
-    Chapter c = mk("ch01", "雨夜重逢", 2000);
-    c.hooks.push_back(hook(850, "她认出那把伞"));
-    c.hooks.push_back(hook(1400, "他没有回头"));
-    s.chapters.push_back(c);
-
-    const auto plan = plan_episodes(s, 60.0);
-    REQUIRE(plan.size() == 2);
-
-    // 第一刀切在 850 那个钩子上——离理想位置 900 最近的候选
-    CHECK(plan[0].from_char == 0);
-    CHECK(plan[0].to_char == 850);
-    CHECK(plan[0].hook == "她认出那把伞");
-
-    // 剩下 1150 字不到 1.3 个容量，并成一集而不是再切一刀
-    CHECK(plan[1].from_char == 850);
-    CHECK(plan[1].to_char == 2000);
-    CHECK(plan[1].hook.empty());
-
-    // 同一章切成两集，标题要分得开
-    CHECK(plan[0].title == "雨夜重逢（上）");
-    CHECK(plan[1].title == "雨夜重逢（下）");
-}
-
-TEST_CASE("切点优先落在一场戏演完的地方") {
-    // **一场戏是一个完整的戏剧单元**：谁想干什么、谁拦着、局面变成什么。
-    // 切在场中间等于把一集停在一件事的半当中，下一集开头接的是半场戏。
-    // 所以场边界让路的余地（kSceneSlack）比别的钩子大。
-    //
-    // 容量 900。场在 1200 收，另有一个普通钩子在 880——离理想位置近得多，
-    // 但它在这场戏的中间。
-    Story s;
-    Chapter c = mk("ch01", "雨夜重逢", 2600);
-    c.hooks.push_back(hook(880, "她攥紧了伞柄"));
-    Scene a;
-    a.from_char = 0;
-    a.to_char = 1200;
-    a.pov = "林晚";
-    a.turn = "伞柄上刻着别人的名字";
-    Scene b;
-    b.from_char = 1200;
-    b.to_char = 2600;
-    b.pov = "林晚";
-    b.turn = "他把伞从天台扔了下去";
-    c.scenes.push_back(a);
-    c.scenes.push_back(b);
-    s.chapters.push_back(c);
-
-    const auto plan = plan_episodes(s, 60.0);
-    REQUIRE(plan.size() == 2);
-    CHECK(plan[0].to_char == 1200);
-    CHECK(plan[0].hook == "伞柄上刻着别人的名字");
-    CHECK(plan[1].to_char == 2600);
-    CHECK(plan[1].hook == "他把伞从天台扔了下去");
-}
-
-TEST_CASE("场太远的时候不硬等，还是按钩子切") {
-    // 让路是有限度的：半个容量之外就不是这一集该停的地方了。
-    // 容量 900，场一直到 2400 才收，中间 900 处有个真钩子。
-    Story s;
-    Chapter c = mk("ch01", "雨夜重逢", 2400);
-    c.hooks.push_back(hook(900, "她认出那把伞"));
-    Scene a;
-    a.from_char = 0;
-    a.to_char = 2400;
-    a.turn = "他把伞扔了下去";
-    c.scenes.push_back(a);
-    s.chapters.push_back(c);
-
-    const auto plan = plan_episodes(s, 60.0);
-    REQUIRE(plan.size() == 2);
-    CHECK(plan[0].to_char == 900);
-    CHECK(plan[0].hook == "她认出那把伞");
-}
-
-TEST_CASE("尾巴不单切") {
-    // 1000 字、容量 900：切的话会留一个 100 字的尾巴，宁可并成一集
-    Story s;
-    s.chapters.push_back(mk("ch01", "雨夜重逢", 1000));
-
-    const auto plan = plan_episodes(s, 60.0);
-    REQUIRE(plan.size() == 1);
-    CHECK(plan[0].to_char == 1000);
-    CHECK(plan[0].title == "雨夜重逢");
-}
-
-TEST_CASE("短章合并成一集，跨章") {
-    Story s;
-    s.chapters.push_back(mk("ch01", "甲", 300));
-    s.chapters.push_back(mk("ch02", "乙", 300));
-
-    const auto plan = plan_episodes(s, 60.0);
-    REQUIRE(plan.size() == 1);
-    CHECK(plan[0].from_chapter == "ch01");
-    CHECK(plan[0].from_char == 0);
-    CHECK(plan[0].to_chapter == "ch02");
-    CHECK(plan[0].to_char == 300);
-}
-
-TEST_CASE("一章切三集用上中下") {
-    Story s;
-    Chapter c = mk("ch01", "雨夜重逢", 3000);
-    c.hooks.push_back(hook(900, "钩子一"));
-    c.hooks.push_back(hook(1800, "钩子二"));
-    s.chapters.push_back(c);
-
-    const auto plan = plan_episodes(s, 60.0);
-    REQUIRE(plan.size() == 3);
-    CHECK(plan[0].title == "雨夜重逢（上）");
-    CHECK(plan[1].title == "雨夜重逢（中）");
-    CHECK(plan[2].title == "雨夜重逢（下）");
-    CHECK(plan[0].hook == "钩子一");
-    CHECK(plan[1].hook == "钩子二");
-}
-
-TEST_CASE("每集时长变了，集数跟着变——集数是算出来的") {
+TEST_CASE("一章一集：正文再长、钩子再多也不切") {
+    // 用户 2026-09-16 定的：只留章模式，一章就是一集，多长由这一章自己的
+    // 内容定。这儿原来按每集容量（60 秒 = 900 字）找钩子把一章切成上/中/下，
+    // 剧集表那头当天就改成一章一集了，分集表这头没跟上——同一个 ep01，
+    // 剧集表说整章、分集表说前三分之一，剧本页的「原文」读的是分集表，
+    // 一章 1800 字只显示前一半（2026-09-18 用户撞到）。
     Story s;
     Chapter c = mk("ch01", "雨夜重逢", 3000);
     for (int at = 300; at < 3000; at += 300) {
         c.hooks.push_back(hook(at, "钩子" + std::to_string(at)));
     }
     s.chapters.push_back(c);
+    s.chapters.push_back(mk("ch02", "五年前那把伞", 300));
 
-    const auto long_eps = plan_episodes(s, 120.0); // 容量 1800
-    const auto short_eps = plan_episodes(s, 30.0); // 容量 450
-
-    CHECK(long_eps.size() < short_eps.size());
-    // 每集时长要落到分集表上，后面几步照着它排镜头
-    CHECK(long_eps[0].target_duration_s == doctest::Approx(120.0));
-    CHECK(short_eps[0].target_duration_s == doctest::Approx(30.0));
-
-    // 切点全都落在钩子上（300 的整数倍），一个都不许落在别处
-    for (const auto& p : short_eps) {
-        CHECK(p.to_char % 300 == 0);
+    for (double per : {30.0, 60.0, 120.0}) {
+        CAPTURE(per);
+        const auto plan = plan_episodes(s, per);
+        REQUIRE(plan.size() == 2);
+        CHECK(plan[0].episode_id == "ep01");
+        CHECK(plan[0].from_chapter == "ch01");
+        CHECK(plan[0].to_chapter == "ch01");
+        CHECK(plan[0].from_char == 0);
+        CHECK(plan[0].to_char == 3000);
+        CHECK(plan[0].title == "雨夜重逢");   // 不带上/中/下
+        CHECK(plan[0].hook == "钩子2700");     // 最后一条有说法的钩子
+        CHECK(plan[1].episode_id == "ep02");
+        CHECK(plan[1].from_chapter == "ch02");
+        CHECK(plan[1].from_char == 0);
+        CHECK(plan[1].to_char == 300);
     }
+}
+
+TEST_CASE("分集表的 id 和剧集表同一条规矩：ch07 → ep07") {
+    // 以前分集表的 id 是按切片顺序发的（ep01、ep02……），剧集表按章号推
+    // （ch07 → ep07），两套编号一错位，按 episode_id 查到的是隔壁章的半截。
+    Story s;
+    s.chapters.push_back(mk("ch01", "甲", 100));
+    s.chapters.push_back(mk("ch07", "乙", 100));
+    s.chapters.push_back(mk("intro", "丙", 100));   // 认不出编号：按位置，第 3 章
+
+    const auto plan = plan_episodes(s, 60.0);
+    REQUIRE(plan.size() == 3);
+    CHECK(plan[0].episode_id == "ep01");
+    CHECK(plan[1].episode_id == "ep07");
+    CHECK(plan[2].episode_id == "ep03");
+    CHECK(changji::stages::episode_id_for_chapter("ch7", 0) == "ep07");
+    CHECK(changji::stages::episode_id_for_chapter("ch12", 0) == "ep12");
 }
 
 TEST_CASE("有正文和没正文的章交替时顺序不乱") {
@@ -400,14 +310,19 @@ TEST_CASE("有正文和没正文的章交替时顺序不乱") {
     CHECK(plan[2].episode_id == "ep03");
 }
 
-TEST_CASE("时长没给就退回故事上存的那个") {
+TEST_CASE("一集值多长：有正文按字数估，没正文退回每集时长，再没有退回故事上存的") {
     Story s;
     s.episode_duration_s = 30.0;
-    s.chapters.push_back(mk("ch01", "雨夜重逢", 1000));
+    s.chapters.push_back(mk("ch01", "雨夜重逢", 1500));
+    s.chapters.push_back(outline_only("ch02", "五年前那把伞"));
 
     const auto plan = plan_episodes(s, 0.0);
-    REQUIRE(!plan.empty());
-    CHECK(plan[0].target_duration_s == doctest::Approx(30.0));
+    REQUIRE(plan.size() == 2);
+    // 1500 字 ÷ 每秒 15 字 = 100 秒——和 sync_episodes_to_chapters 给剧集
+    // 记的是同一个数，剧本页和剧集表才不会各说各的
+    CHECK(plan[0].target_duration_s ==
+          doctest::Approx(1500.0 / changji::stages::kProseCharsPerSecond));
+    CHECK(plan[1].target_duration_s == doctest::Approx(30.0));
 }
 
 TEST_CASE("切出来的分集表自己能过校验") {

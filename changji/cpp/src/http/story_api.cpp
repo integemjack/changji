@@ -946,26 +946,6 @@ ApiResult post_story_chapter(const json& body_in, llm::Client& client,
                                    stream_id, client, tok, peek, pasted)};
 }
 
-/// `ch07` → `ep07`。认不出编号就按它在章节表里的位置排（从 1 起）。
-///
-/// **不复用 story.plan 里的 episode_id**：那些是按切片取的，一章切两段就
-/// 有两个，和「一章一集」对不上。
-std::string episode_id_for_chapter(const std::string& chapter_id,
-                                   std::size_t index) {
-    std::string digits;
-    for (const char ch : chapter_id) {
-        if (ch >= '0' && ch <= '9') digits += ch;
-    }
-    if (digits.empty()) {
-        char buf[16];
-        std::snprintf(buf, sizeof buf, "%02d", static_cast<int>(index + 1));
-        digits = buf;
-    }
-    // 补到两位：ch7 和 ch07 要落在同一个 ep07 上
-    while (digits.size() < 2) digits.insert(digits.begin(), '0');
-    return "ep" + digits;
-}
-
 /// 章模式下把剧集对齐到章节：一章一个。
 ///
 /// 用户 2026-09-16 选的是「自动做，不要按钮」——一章一集是机械映射，
@@ -986,9 +966,9 @@ EpisodeSync sync_episodes_to_chapters(const ProjectStore& store, const Story& st
         const Chapter& c = story.chapters[i];
         if (c.chapter_id.empty()) continue;
 
-        // 一章一个 id：ch07 → ep07。**不复用 plan 里的 id**——那些是按切片
-        // 取的，一章切两段就有两个，和「一章一集」对不上。
-        const std::string ep_id = episode_id_for_chapter(c.chapter_id, i);
+        // 一章一个 id：ch07 → ep07。分集表（plan_episodes）发 id 用的是
+        // 同一条，两边对得上。
+        const std::string ep_id = stages::episode_id_for_chapter(c.chapter_id, i);
 
         // 这一章值多长。**按正文字数估**（story_plan 那个每秒消化多少字的
         // 系数），没正文按梗概的章数占比。原来数「结束在这一章」的分集条目，

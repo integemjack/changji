@@ -658,7 +658,7 @@ TEST_CASE("POST /api/story/adopt：会顶掉写好的正文时要拦一下") {
     fs::remove_all(root, ec);
 }
 
-TEST_CASE("POST /api/story/plan：改每集时长，集数跟着变") {
+TEST_CASE("POST /api/story/plan：改每集时长，集数不变（一章一集），时长落盘") {
     const fs::path root = fresh_project("重算");
     ProjectStore store(root);
 
@@ -685,10 +685,17 @@ TEST_CASE("POST /api/story/plan：改每集时长，集数跟着变") {
         json{{"project", p_str(root)}, {"duration_s", 30.0}});
     const int many_n = many.body.at("episodes").get<int>();
 
-    CHECK(few_n < many_n);
-    // 重算的结果要落盘，不是只回给前端
-    CHECK(store.load_story().plan.size() == static_cast<std::size_t>(many_n));
-    CHECK(store.load_story().episode_duration_s == doctest::Approx(30.0));
+    // 一章一集：每集时长改多少，集数都是章数。以前这儿钉的是「30 秒切出
+    // 的比 120 秒多」，那是切章那套算法的事，2026-09-16 起没有了。
+    CHECK(few_n == 1);
+    CHECK(many_n == 1);
+    // 重算的结果要落盘，不是只回给前端；整章都在
+    const Story saved = store.load_story();
+    REQUIRE(saved.plan.size() == 1);
+    CHECK(saved.plan[0].from_char == 0);
+    CHECK(saved.plan[0].to_char == 3000);
+    CHECK(saved.plan[0].title == "雨夜重逢");
+    CHECK(saved.episode_duration_s == doctest::Approx(30.0));
 
     std::error_code ec;
     fs::remove_all(root, ec);
@@ -1352,7 +1359,7 @@ TEST_CASE("一个标题都没有：按字数在段落边界上切") {
     CHECK(kept == 60 * 100);
 }
 
-TEST_CASE("切出来的章能直接拿去分集，而且切点落在段落上") {
+TEST_CASE("切出来的章直接一章一集，整章都在") {
     std::string novel;
     for (int i = 0; i < 40; ++i) {
         for (int k = 0; k < 100; ++k) novel += "字";
@@ -1360,29 +1367,19 @@ TEST_CASE("切出来的章能直接拿去分集，而且切点落在段落上") 
     }
     Story s;
     s.chapters = changji::stages::split_pasted(novel, 2000);
-    s.episode_duration_s = 60.0;  // 容量 900 字
+    s.episode_duration_s = 60.0;
     s.plan = changji::stages::plan_episodes(s, 60.0);
 
-    CHECK(s.plan.size() >= 3);
+    // 一章一集，不管一章多长：这儿每章约 2000 字，远超 60 秒的 900 字容量
+    REQUIRE(s.plan.size() == s.chapters.size());
     CHECK(s.validate().empty());
-
-    // **每一刀要么落在章尾，要么紧跟在一个换行后面。**
-    // 这是「不切在半句话中间」那条底线的可检查版本。
-    //
-    // 别写成 to_char % 100 == 0：每段是 100 字**加一个换行**，边界在 101
-    // 的倍数上，而且章首被 strip_ws 削过之后偏移还会挪——用整除去凑，
-    // 测的是算术不是那条性质。
-    for (const auto& p : s.plan) {
-        const Chapter* c = s.chapter_by_id(p.to_chapter);
-        REQUIRE(c != nullptr);
-        const auto chars = changji::text::utf8_chars(c->text);
-        CAPTURE(p.episode_id);
-        CAPTURE(p.to_char);
-        const bool at_end = p.to_char == static_cast<int>(chars.size());
-        const bool after_newline =
-            p.to_char > 0 && p.to_char <= static_cast<int>(chars.size()) &&
-            chars[static_cast<std::size_t>(p.to_char) - 1] == "\n";
-        CHECK((at_end || after_newline));
+    for (std::size_t i = 0; i < s.plan.size(); ++i) {
+        const auto& p = s.plan[i];
+        const Chapter& c = s.chapters[i];
+        CHECK(p.from_chapter == c.chapter_id);
+        CHECK(p.to_chapter == c.chapter_id);
+        CHECK(p.from_char == 0);
+        CHECK(p.to_char == c.text_len());
     }
 }
 
@@ -2245,11 +2242,12 @@ TEST_CASE("一章该写多长：章是故事单元，不是一集") {
     CHECK(changji::stages::chapter_target_chars(s) == no_plan);
 }
 
-TEST_CASE("写满一章的量，就该切出好几集") {
+TEST_CASE("写满一章的量也还是一集，整章都在") {
+    // 以前这条钉的是「写满一章就该切出好几集」。2026-09-16 起只留章模式，
+    // 一章一集，多长由内容定——集只在最后装配时按时长切。
     Story s = outline_only_story();
     s.episode_duration_s = 30.0;
 
-    // 一章写到基准篇幅（段落边界当候选切点）
     // **每一行都要不一样。** 三十行一模一样的一百个「字」是复读机，
     // 复读守卫判得对；这里要的只是"够长、段落边界够多"。
     std::string body;
@@ -2265,9 +2263,12 @@ TEST_CASE("写满一章的量，就该切出好几集") {
 
     int from_ch01 = 0;
     for (const auto& p : s.plan) {
-        if (p.from_chapter == "ch01") ++from_ch01;
+        if (p.from_chapter != "ch01") continue;
+        ++from_ch01;
+        CHECK(p.from_char == 0);
+        CHECK(p.to_char == s.chapter_by_id("ch01")->text_len());
     }
-    CHECK(from_ch01 >= 3);
+    CHECK(from_ch01 == 1);
 }
 
 TEST_CASE("模型的草稿纸摘掉：引用块和强调标记") {
@@ -3644,7 +3645,7 @@ TEST_CASE("并回去：hook_after 查不到就挂章尾") {
     CHECK(got.validate().empty());
 }
 
-TEST_CASE("POST /api/story/chapter：写完落库，分集跟着重算") {
+TEST_CASE("POST /api/story/chapter：写完落库，分集表跟着盖到整章") {
     const fs::path root = fresh_project("展开一章");
     ProjectStore store(root);
     Story s = outline_only_story();
@@ -3653,8 +3654,7 @@ TEST_CASE("POST /api/story/chapter：写完落库，分集跟着重算") {
     store.save_story(s);
     const std::size_t before = s.plan.size();
 
-    // 三千字的一章，配 60 秒（一集 900 字）该切出好几集。
-    // 每段都要不一样，理由同上面那处：一模一样的三十段是复读机。
+    // 三千字的一章。每段都要不一样，理由同上面那处：一模一样的三十段是复读机。
     std::string body;
     for (int i = 0; i < 30; ++i) {
         body += "第" + std::to_string(i) + "段：";
@@ -3675,8 +3675,19 @@ TEST_CASE("POST /api/story/chapter：写完落库，分集跟着重算") {
     // **这一个是直接落库的**，不像别的几个回草稿
     const Story saved = store.load_story();
     CHECK(saved.written_chapters() == 1);
-    // 一章变长了，分集表跟着变多
-    CHECK(saved.plan.size() > before);
+    // 一章一集：章变长了集数不变，但这一集的区间要盖到新写的整章——
+    // 分集表是存下来的，不重算就还是展开前那条 [0, 0)
+    CHECK(saved.plan.size() == before);
+    const Chapter* written = saved.chapter_by_id("ch01");
+    REQUIRE(written != nullptr);
+    bool found = false;
+    for (const auto& p : saved.plan) {
+        if (p.from_chapter != "ch01") continue;
+        found = true;
+        CHECK(p.from_char == 0);
+        CHECK(p.to_char == written->text_len());
+    }
+    CHECK(found);
     CHECK(saved.validate().empty());
 
     SUBCASE("已经有正文了要显式 overwrite") {
