@@ -1504,6 +1504,112 @@ async function send() {
  * 的 watch 会重读。输入框还在——Ctrl+K 或者选中一段浮出来的那颗——那是改
  * 这一章里某一段用的。
  */
+/* ------------------------------------------------------------------ *
+ * 一键处理：写这一章 → 理解故事 → 拆分镜头
+ * ------------------------------------------------------------------ */
+
+/** 右下角那颗角标展开的菜单开着没有。（章头那个「…」菜单是 menuOpen。） */
+const fabMenu = ref(false)
+/** 一键处理跑到第几步（0 = 没在跑）。菜单和按钮上的字都读它。 */
+const chainStep = ref(0)
+/** 按了「停」。三步之间靠它断开——引擎只知道停手里这一件。 */
+let chainAbort = false
+
+const CHAIN = ['写这一章', '理解故事', '拆分镜头']
+
+/**
+ * 等「写」那个槽闲下来。
+ *
+ * **不是定时器猜**：`seriesStatus` 就是那个槽的实况。抄的是 EpShots 里
+ * 那条一条龙（waitWrite），连"引擎打嗝那几拍不算结束"也一样——当成结束
+ * 的话下一步会在上一步还跑着的时候发出去，两件事抢同一个槽，后来那件
+ * 直接 409。
+ */
+async function waitSlot(project) {
+  for (;;) {
+    if (chainAbort || session.projectPath !== project) return false
+    let st = null
+    try {
+      st = await api.seriesStatus()
+    } catch {
+      await new Promise((r) => setTimeout(r, 2000))
+      continue
+    }
+    if (!st?.running) return true
+    await new Promise((r) => setTimeout(r, 1500))
+  }
+}
+
+/**
+ * 三件活串起来跑。**都是大模型的活，而且抢同一个槽**，所以只能一件一件来。
+ *
+ * 用户 2026-09-18：「一键处理内容是写这一个章节，理解故事，拆分镜头这几个
+ * 和大语言模型有关的内容」。
+ *
+ * **开跑那一刻把项目钉死。** 这一轮十几分钟起，中途在项目库里点了别的剧，
+ * 活儿还是替按下去那一部排的——每一步之间都对一次，不对就停手（story 页
+ * 别处那几条长活也是这么防的）。
+ */
+async function oneClick() {
+  fabMenu.value = false
+  const id = current.value
+  const project = session.projectPath
+  if (!id || !project) return
+  if (
+    !confirm(
+      `会依次跑：${CHAIN.join(' → ')}。\n` +
+        `第一步会换掉这一章现在的 ${chars.value} 字，理解故事会顶掉手改过的设定和每章剧本。\n` +
+        `十几分钟起。确定？`,
+    )
+  ) {
+    return
+  }
+  chainAbort = false
+  // 排着的那次自动存要取消：写完落盘的是新正文，那一存会把老的写回去
+  clearTimeout(timers[id]?.t)
+  delete timers[id]
+
+  const steps = [
+    () => api.storyFromWeb({ project, chapter_id: id, overwrite: true }),
+    () => api.understandStory({ project, overwrite: true }),
+    () => api.planAll({ project, overwrite: false }),
+  ]
+  try {
+    for (let i = 0; i < steps.length; i++) {
+      if (chainAbort || session.projectPath !== project) break
+      chainStep.value = i + 1
+      const started = await run(steps[i], { key: 'chain' })
+      // 那一步没发出去（409、参数不对、断线）就到此为止。**不往下走**：
+      // 后面两步吃的是前一步的产出，硬跑只会连着报一串看不懂的错。
+      if (!started) {
+        ui.error(`「${CHAIN[i]}」没能开始，一键处理停在这儿了`)
+        break
+      }
+      writer.start()
+      if (!(await waitSlot(project))) break
+      // 每一步都会改故事 / 分集 / 分镜，顶栏那几个判据跟着变
+      await refreshStory()
+      session.refresh()
+    }
+    if (!chainAbort && session.projectPath === project) {
+      ui.ok('一键处理跑完了：' + CHAIN.join(' → '))
+    }
+  } finally {
+    chainStep.value = 0
+    chainAbort = false
+  }
+}
+
+/**
+ * 停。**链子跑着的时候必须走这条**：`stopBar` 只让引擎停手里这一件，
+ * 而一键处理下一步会照常发出去——人按了停，屏幕上那件确实停了，两秒后
+ * 又自己开始跑下一件，看着像按钮坏了。
+ */
+async function stopNow() {
+  if (chainStep.value > 0) chainAbort = true
+  await stopBar()
+}
+
 async function writeFromWeb() {
   const id = current.value
   if (!id) return
@@ -1935,40 +2041,81 @@ const thinkLine = computed(() => {
           </button>
         </div>
 
-        <!-- 右下角那颗 AI：点一下，让大模型自己上网看热点、写成这一章的正文。
+        <!-- 右下角那两颗。
+             ✨ ：点一下，让大模型自己上网看热点、写成这一章的正文。
+             ⌄  ：展开菜单，里面是「一键处理」——把三件大模型的活串起来跑。
              输入框（改这一章里的某一段）走 Ctrl+K 或者选中一段浮出来的那颗。 -->
-        <button
-          v-if="chapter"
-          class="ed__fab"
-          :class="{ 'is-on': writer.running }"
-          type="button"
-          :disabled="writer.running || isBusy('fromweb')"
-          :title="writer.running ? (writer.state?.message || '正在写…') : '让 AI 上网看热点，写成这一章（Ctrl+K 是改这一章里的一段）'"
-          @click="writeFromWeb"
-        >
-          <AppIcon name="sparkle" :size="16" />
-        </button>
+        <div v-if="chapter" class="ed__fabs">
+          <button
+            class="ed__fab"
+            :class="{ 'is-on': writer.running }"
+            type="button"
+            :disabled="writer.running || isBusy('fromweb') || chainStep > 0"
+            :title="writer.running ? (writer.state?.message || '正在写…') : '让 AI 上网看热点，写成这一章（Ctrl+K 是改这一章里的一段）'"
+            @click="writeFromWeb"
+          >
+            <AppIcon name="sparkle" :size="16" />
+          </button>
+          <div class="menu">
+            <button
+              class="ed__fab ed__fab--more"
+              :class="{ 'is-on': chainStep > 0 }"
+              type="button"
+              :title="chainStep > 0
+                ? `一键处理：第 ${chainStep}/3 步 · ${CHAIN[chainStep - 1]}`
+                : '更多：一键处理'"
+              @click="fabMenu = !fabMenu"
+            >
+              <AppIcon name="chevron_down" :size="14" />
+            </button>
+            <template v-if="fabMenu">
+              <div class="menu__veil" @click="fabMenu = false" />
+              <div class="menu__pop menu__pop--up">
+                <!-- **一件一件写清楚，别只写「一键处理」。** 这一按就是十几
+                     分钟、而且会顶掉现有的正文和设定，人得先知道要跑什么。 -->
+                <button
+                  class="menu__item menu__item--tall"
+                  type="button"
+                  :disabled="writer.running || chainStep > 0 || !chapter"
+                  @click="oneClick"
+                >
+                  <span class="menu__t">一键处理</span>
+                  <span class="menu__sub">{{ CHAIN.join(' → ') }}</span>
+                </button>
+              </div>
+            </template>
+          </div>
+        </div>
 
         <!-- 从网上写的时候输入框多半是收着的，进度就单独摆那一行。 -->
-        <div v-if="!barOpen && writer.running" class="ed__bar">
+        <div v-if="!barOpen && (writer.running || chainStep)" class="ed__bar">
           <div class="bar__line is-live">
             <span class="dot" />
+            <span v-if="chainStep" class="pill pill--accent tiny nowrap">
+              一键处理 {{ chainStep }}/3 · {{ CHAIN[chainStep - 1] }}
+            </span>
             <span class="bar__label">{{ thinkLine?.label }}</span>
             <span class="bar__tail truncate" :title="thinkLine?.tail">{{ thinkLine?.tail }}</span>
-            <button class="status__btn" type="button" @click="stopBar">停</button>
+            <button class="status__btn" type="button" @click="stopNow">停</button>
           </div>
         </div>
 
         <!-- 底部浮着的那个输入框。用户 2026-09-17：「只要输入框（自适应高度和
              输入框里面的按钮）」。它在干什么的那一行只在真有事时才冒出来。 -->
         <div v-if="barOpen && chapter" class="ed__bar">
-          <div v-if="thinkLine || pending || lastNote" class="bar__line" :class="{ 'is-live': thinkLine }">
+          <div v-if="thinkLine || pending || lastNote || chainStep" class="bar__line" :class="{ 'is-live': thinkLine }">
+            <!-- **跑到第几步要摆出来。** 三件活各自的进度句子（thinkLine）
+                 长得都差不多，只看那一句说不出"这是一键处理的第二步、后面
+                 还有一步"，人会以为跑完了就走开。 -->
+            <span v-if="chainStep" class="pill pill--accent tiny nowrap">
+              一键处理 {{ chainStep }}/3 · {{ CHAIN[chainStep - 1] }}
+            </span>
             <template v-if="thinkLine">
               <span class="dot" />
               <span class="bar__label">{{ thinkLine.label }}</span>
               <span v-if="thinkLine.secs != null" class="bar__secs numeric">{{ fmtSecs(thinkLine.secs) }}</span>
               <span class="bar__tail truncate" :title="thinkLine.tail">{{ thinkLine.tail }}</span>
-              <button v-if="thinkLine.stop" class="status__btn" type="button" @click="stopBar">停</button>
+              <button v-if="thinkLine.stop" class="status__btn" type="button" @click="stopNow">停</button>
             </template>
             <template v-else-if="pending">
               <span class="bar__label">已经落进稿子里了</span>
@@ -2540,11 +2687,19 @@ const thinkLine = computed(() => {
 
 /* ---------- 底：AI 栏 ---------- */
 /* 右下角那颗。栏开着就不渲染。 */
-.ed__fab {
+/* 右下角那一组：AI 那颗 + 展开菜单那颗小的。
+   **定位挪到容器上**：原来只有一颗，它自己 absolute；两颗还各自 absolute
+   的话会叠在同一个点上。 */
+.ed__fabs {
   position: absolute;
   right: var(--s4);
   bottom: 44px;
   z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.ed__fab {
   width: 36px;
   height: 36px;
   display: grid;
@@ -2562,12 +2717,38 @@ const thinkLine = computed(() => {
   background: var(--accent);
   color: var(--bg);
 }
+/* 展开菜单那颗做小一号：主角是 ✨ 那颗，这颗是它的附件。 */
+.ed__fab--more {
+  width: 28px;
+  height: 28px;
+}
+/* 菜单朝上弹——这两颗贴着窗底，朝下弹会掉出可视区。 */
+.menu__pop--up {
+  top: auto;
+  bottom: calc(100% + 6px);
+  min-width: 13em;
+}
+/* 两行的菜单项：第一行是名字，第二行写清楚它到底要跑哪几步。 */
+.menu__item--tall {
+  display: grid;
+  gap: 2px;
+  padding: 8px 10px;
+}
+.menu__t {
+  font-weight: 600;
+}
+.menu__sub {
+  font-size: var(--fs-xs);
+  color: var(--text-2);
+}
 /* 浮在稿纸底部、状态栏上面。左边留 16px，右边给右下角那颗按钮留位。
    纸底下垫一段（.ed__scroll--bar），最后几行不会被它盖住。 */
 .ed__bar {
   position: absolute;
   left: var(--s4);
-  right: 64px;
+  /* 右边那一组现在是 28 + 6 + 36 = 70px，加上 16px 边距和一点空隙。
+     还写 64 的话输入框会钻到那两颗按钮底下。 */
+  right: 94px;
   bottom: 40px;
   z-index: 6;
   display: grid;
