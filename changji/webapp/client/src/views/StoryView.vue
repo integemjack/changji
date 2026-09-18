@@ -2704,7 +2704,16 @@ const thinkLine = computed(() => {
   height: 36px;
   border: 1px solid var(--accent-line);
   border-radius: 999px;
-  background: var(--accent-soft);
+  /* **底要压住，不能让正文透上来。**
+     `--accent-soft` 只有 10% 不透明度，而这一组浮在稿纸上——底下那几行字
+     直接透过图标，两样叠在一起谁都读不清。
+     照旁边那个输入框（.ed__bar）的做法：先垫一层近乎不透明的 surface，
+     再盖一层 accent 淡色保住它"这是 AI 那颗"的身份，最后加一层背景模糊。
+     两层背景的顺序是**先写的在上**，所以 accent 那层写在前面。 */
+  background:
+    linear-gradient(var(--accent-soft), var(--accent-soft)),
+    color-mix(in srgb, var(--surface-2) 92%, transparent);
+  backdrop-filter: blur(6px);
   box-shadow: var(--shadow-2);
 }
 /* 菜单那半也要撑满这一组的高度，不然中间那道线只有半截。
