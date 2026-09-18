@@ -59,7 +59,7 @@ config::Settings settings_for(const Task& t, const config::Settings& s) {
 
     // **盖不上就用这台自己装的那一档，别把活退回去。**
     //
-    // `t.pick` 是派活方那部剧挑的档位 id，这台按自己的模型目录解析。
+    // `t.pick` 是派活方那部电影挑的档位 id，这台按自己的模型目录解析。
     // 解析不出来（这台装的是同一族的另一个量化档）时，原来是把这一镜
     // 拒掉，回一句"去设置页给这台补上这一档"——于是整条流水线停在那儿，
     // 而这台机器明明装着一份能用的权重。
@@ -91,18 +91,18 @@ std::string cannot_do(const Task& t, const config::Settings& base) {
                            : t.kind == TaskKind::Tts  ? Capability::Tts
                                                       : Capability::Frame;
     if (const auto why = missing_for(cap, facts); !why.empty()) {
-        // **这台可能装着模型，只是不是这部剧要的那一档。**
+        // **这台可能装着模型，只是不是这部电影要的那一档。**
         // 不分开说的话，用户看到的是"这台没配模型"——而他明明在那台上
         // 装过、`/status` 上那一格也是亮的，接着就会去查网络和口令。
-        // 判据是「不盖这部剧那一层就干得成」。
+        // 判据是「不盖这部电影那一层就干得成」。
         const auto group = cap == Capability::Video  ? "video"
                            : cap == Capability::Tts  ? "tts"
                                                      : "image";
         const auto want = t.pick.find(group);
         if (want != t.pick.end() && !want->second.empty() &&
             missing_for(cap, probe_facts(base)).empty()) {
-            return why + "。这台装的是别的档——这部剧挑的是「" + want->second +
-                   "」，去设置页给这台补上这一档，或者给这部剧换一档";
+            return why + "。这台装的是别的档——这部电影挑的是「" + want->second +
+                   "」，去设置页给这台补上这一档，或者给这部电影换一档";
         }
         return why;
     }
@@ -127,7 +127,7 @@ TaskResult run_task_locally(const Task& t, const config::Settings& base,
                             Origin origin, const std::string& task_id,
                             const StepCallback& on_step,
                             pipeline::CancelToken& tok) {
-    // 这部剧挑的档位盖在这台自己的配置上。**盖的是文件名，不是路径**——
+    // 这部电影挑的档位盖在这台自己的配置上。**盖的是文件名，不是路径**——
     // 模型目录仍然是这台的（见 setup::with_selections）。
     const config::Settings s = settings_for(t, base);
     // 槽装模型时看这份（盖了派活方挑的档位），不看 runtime 那份。
@@ -165,7 +165,7 @@ TaskResult run_task_locally(const Task& t, const config::Settings& base,
             if (!backend) {
                 // **这儿不退回估算后端。** 派活方要的是真声音，
                 // 给它一段静音而且说"成功了"，是这条链路上最阴的故障——
-                // 整集配完才发现没声音。让它换一台。
+                // 整章配完才发现没声音。让它换一台。
                 throw std::runtime_error(
                     "这台的配音后端搭不起来（[tts].backend = " +
                     s.tts.backend + "）");

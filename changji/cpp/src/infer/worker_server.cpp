@@ -195,7 +195,7 @@ void mount_worker_api_impl(crow::SimpleApp& app,
     // ---- blob：跨机时输入和产物都走这三条 ----
     //
     // **为什么不把文件塞进任务的 JSON 里。** 一张参考图几 MB，base64 之后
-    // 还要涨三分之一，而一集里那几张图是同一批文件——塞进去就是同一张脸
+    // 还要涨三分之一，而一章里那几张图是同一批文件——塞进去就是同一张脸
     // 传二十二遍。分开之后，第二镜起 probe 一问就跳过了。
     const auto cache = infer::cache_root_of(settings.workspace_path());
 
@@ -353,7 +353,7 @@ void mount_worker_api_impl(crow::SimpleApp& app,
                 //
                 // （合并时这儿原来是一整段就地跑的代码，包括那句
                 //  `sd_renderer_with_seed(settings, task.seed)`——采样旋钮
-                //  要跟着这一集的 settings 走。搬进 run_task_locally 之后
+                //  要跟着这一章的 settings 走。搬进 run_task_locally 之后
                 //  那个参数还在，见 task_run.cpp 里那一行。）
                 // **给了执行器就交给它。** 主程序传的是交给本机那几张卡
                 // （见头文件上 TaskRunner 那段）：一个进程只能用一张卡，

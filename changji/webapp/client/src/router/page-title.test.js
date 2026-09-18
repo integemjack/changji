@@ -4,7 +4,7 @@
  * 站内换页现在拦得下来了（剧本页那篇没采用的稿子、设定页那条没存的预告片，
  * `onBeforeRouteLeave` 里问一句「确定？」）。人点取消之后 `afterEach` 照样
  * 会跑一趟，只是多带一个"这次没走成"——不认它的话，标签页上写着「故事」
- * 而屏幕上还是「这一集」。
+ * 而屏幕上还是「这一章」。
  *
  * 这条不报错、不崩，只是名字一直错着，所以钉一下。
  */
@@ -12,7 +12,7 @@ import { describe, expect, it } from 'vitest'
 
 import { applyTitle, titleOf } from './page-title'
 
-const doc = () => ({ title: '这一集 · 场记' })
+const doc = () => ({ title: '这一章 · 场记' })
 
 describe('applyTitle', () => {
   it('走成了就按新那一页写', () => {
@@ -32,7 +32,7 @@ describe('applyTitle', () => {
     const d = doc()
     // vue-router 的 NavigationFailureType.aborted：守卫返回了 false
     applyTitle({ meta: { title: '故事' } }, { type: 4 }, d)
-    expect(d.title).toBe('这一集 · 场记')
+    expect(d.title).toBe('这一章 · 场记')
   })
 })
 

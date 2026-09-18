@@ -92,10 +92,10 @@ const workspace = computed(() => store.workspace || '工作目录')
  */
 const inWorkspace = computed(() => {
   // ⚠️ **两种分隔符要先统一。** 这一页的占位符写的是
-  // `例如：E:\AI短剧\雨夜天台`，而引擎回的 workspace 也是反斜杠那一份；
+  // `例如：E:\AI电影\雨夜天台`，而引擎回的 workspace 也是反斜杠那一份；
   // 可是从资源管理器地址栏、别的工具、聊天记录里粘过来的经常是正斜杠，
-  // Windows 两种都认。原来是拿"原样的斜杠"逐字比：库是 `E:\AI短剧`、
-  // 填的是 `E:/AI短剧/雨夜天台`，两条 startsWith 都不中，于是**对一条
+  // Windows 两种都认。原来是拿"原样的斜杠"逐字比：库是 `E:\AI电影`、
+  // 填的是 `E:/AI电影/雨夜天台`，两条 startsWith 都不中，于是**对一条
   // 确实在库里的路径**弹出下面那句加粗的「切走就找不回来了」。
   // 一句吓人的假话比不说更糟。
   const norm = (x) => String(x || '').trim().replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase()
@@ -205,7 +205,7 @@ async function openExisting() {
               </span>
             </label>
             <label class="field">
-              <span class="field__label">剧名（可空）</span>
+              <span class="field__label">片名（可空）</span>
               <input v-model="draft.title" class="input" placeholder="不填就用目录名" />
             </label>
             <label class="field">
@@ -234,7 +234,7 @@ async function openExisting() {
               <input
                 v-model="openPath"
                 class="input mono"
-                placeholder="例如：E:\AI短剧\雨夜天台"
+                placeholder="例如：E:\AI电影\雨夜天台"
                 @keyup.enter="openExisting"
               />
               <!-- ⚠️ **别再写「它会出现在项目库里」。** 项目库那条栏只列

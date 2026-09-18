@@ -65,10 +65,10 @@ struct WorkerEndpoint {
 /// 机器掉线多半是几分钟的事，该等着，不该让人回来再点一次。
 class WorkerPool {
 public:
-    /// `pick` 是这部剧挑的档位（项目的 `[models.pick]`，{组: 选项 id}）。
+    /// `pick` 是这部电影挑的档位（项目的 `[models.pick]`，{组: 选项 id}）。
     /// 池给每个派出去的任务都盖上它——**跨机时这是唯一一条能让对面用对
     /// 模型的路**：那台的模型目录在别处，路径带过去没有意义，只能带 id
-    /// 让它自己去解析。空 = 这部剧没挑过，每台按自己 `[models]` 里的
+    /// 让它自己去解析。空 = 这部电影没挑过，每台按自己 `[models]` 里的
     /// 文件名跑（老行为）。
     explicit WorkerPool(std::vector<WorkerEndpoint> endpoints,
                         LocalRunner local_runner = {},

@@ -120,12 +120,12 @@ const ordered& analyze_schema() {
         hook_props["after"] = {
             {"type", "string"},
             {"description",
-             "这个位置前面那句的原文，照抄十到二十个字。程序靠它定位切点"}};
+             "这个位置前面那句的原文，照抄十到二十个字。程序靠它在正文里定位"}};
         chapter_props["hooks"] = {
             {"type", "array"},
             {"description",
-             "这一章里可以收一集的地方，按先后排，最后一个是章尾。"
-             "一章会切成好几集，别只给章尾那一个"},
+             "这一章里悬着的地方，按先后排，最后一个必须是章尾。"
+             "章尾那一个是这一章停在哪的唯一说法，写剧本那一步照着它收口"},
             {"items", {{"type", "object"},
                        {"properties", hook_props},
                        {"required", {"text", "after"}},
@@ -188,7 +188,7 @@ Story apply_analysis(const Story& story, const std::string& raw) {
     }
     if (!data.is_object()) throw StoryError("大模型没有返回对象");
 
-    // 从原来那份出发：正文、章名、章节 id、分集表全部照旧。
+    // 从原来那份出发：正文、章名、章节 id、章节计划全部照旧。
     Story out = story;
     const std::string logline = text::clean_field(get_str(data, "logline"));
     if (!logline.empty()) out.logline = logline;
@@ -291,7 +291,7 @@ Story apply_analysis(const Story& story, const std::string& raw) {
             for (auto& h : target->hooks) {
                 if (h.at_char == at) {
                     // 已经有说法的不覆盖：先到的是按先后给的那几个，
-                    // 盖掉等于把中间那一集的钩子丢了。
+                    // 盖掉等于把中间那一条钩子的说法丢了。
                     if (h.text.empty()) h.text = why;
                     return;
                 }

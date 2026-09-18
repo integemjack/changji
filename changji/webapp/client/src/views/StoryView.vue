@@ -82,7 +82,7 @@ const saver = useAction()
 
 const story = ref(null)
 const loading = ref(false)
-/** 手里这本书是哪部剧读回来的。null = 手上没有。 */
+/** 手里这本书是哪部电影读回来的。null = 手上没有。 */
 let loadedFor = null
 /** 上一趟为什么没读回来。空 = 没出事。提示条八秒就没，这一行不会。 */
 const loadError = ref('')
@@ -175,7 +175,7 @@ const hasStory = computed(() => chapters.value.length > 0)
  *
  * **不重读的后果**：顶栏那条导航里「设定」是按 `session.done.story` 显示的
  * （App.vue 的 visibleSteps），而 `session.refresh()` 只在挂载时、换项目 /
- * 换集时、以及带 `refresh: true` 的动作之后才跑。新建一部剧写完第一章，
+ * 换章时、以及带 `refresh: true` 的动作之后才跑。新建一部电影写完第一章，
  * 故事页自己是对的——可 done.story 还停在上一次那个 false，于是**「设定」
  * 那一格不出现，非得刷新一次页面才看得见**。用户 2026-09-18 报的就是它。
  *
@@ -230,9 +230,9 @@ const dirtyIds = computed(() =>
     .map((c) => c.chapter_id),
 )
 /**
- * 老项目：有老流程写好的剧集（带简介、不是从章节同步出来的），故事还没字。
- * 给它一条接回新流程的路。刚建的那一章同步出来的那一集不算——它有
- * chapter_refs。
+ * 老项目：`episodes` 里有老流程写好的条目（带简介、不是从章节同步出来的），
+ * 故事还没字。给它一条接回新流程的路。刚建的那一章同步出来的那一条不算
+ * ——它有 chapter_refs。
  */
 const canReverse = computed(
   () =>
@@ -329,10 +329,10 @@ function stateClass(id) {
 /**
  * 把一份故事装进这一页。
  *
- * `forProject` 是"这一份是哪部剧的"。**给了就认**：那几条改完故事回一份
+ * `forProject` 是"这一份是哪部电影的"。**给了就认**：那几条改完故事回一份
  * 新全文的接口（删章、加章、存梗概、直接开写、反推、采用）都是几百毫秒的
- * 来回，而这几百毫秒里在项目库点一下别的剧，回来这一装就是**上一部的整本
- * 书装进了新这一部的编辑器**——接着敲字，自动存按当前项目写回去，两部剧
+ * 来回，而这几百毫秒里在项目库点一下别的片，回来这一装就是**上一部的整本
+ * 书装进了新这一部的编辑器**——接着敲字，自动存按当前项目写回去，两部片
  * 里都有 ch01。和这一页上那几条长活（写正文、提人物）防的是同一件事，只是
  * 窗口短得多。
  *
@@ -341,7 +341,7 @@ function stateClass(id) {
 function setStory(payload, forProject) {
   if (forProject !== undefined && forProject !== session.projectPath) return
   story.value = payload?.story ?? null
-  // **只刷新没改过的那几章。** 引擎重算分集表也会回一份完整故事，照单
+  // **只刷新没改过的那几章。** 引擎重算章节计划也会回一份完整故事，照单
   // 全收的话，用户正在打字的那一章会被服务端那份盖掉。
   //
   // 脏的那几章里，手里那份已经和服务端一样的才摘掉——不能整个清空：
@@ -376,8 +376,8 @@ function setStory(payload, forProject) {
  * 为这个弹个红框只会让人以为批量挂了。
  */
 /**
- * 删当前这一章。引擎顺手把分集表改对（跨着这一章的条目收缩、只在它
- * 里面的丢掉），回包里说改了几条——改过的话落成剧集要重跑，得说出来。
+ * 删当前这一章。引擎顺手把章节计划改对（跨着这一章的条目收缩、只在它
+ * 里面的丢掉），回包里说改了几条——改过的话落成章节要重跑，得说出来。
  */
 async function deleteChapter() {
   const c = chapter.value
@@ -394,7 +394,7 @@ async function deleteChapter() {
   const result = await run(
     () => api.deleteChapter({ project, chapter_id: c.chapter_id }),
     // 反方向的同一件事：删掉最后一章之后 done.story 该灭，不重拉的话
-    // 导航上会给一部已经没有故事的剧一直打着勾。
+    // 导航上会给一部已经没有故事的电影一直打着勾。
     { key: 'delch', refresh: true },
   )
   if (!result) return
@@ -405,18 +405,18 @@ async function deleteChapter() {
   const rest = chapters.value
   current.value = rest.length ? rest[Math.min(i, rest.length - 1)].chapter_id : ''
   const touched = (result.plan_dropped ?? 0) + (result.plan_moved ?? 0)
-  ui.ok(touched ? `删了。分集表改了 ${touched} 处，落成剧集要重跑` : '删了')
+  ui.ok(touched ? `删了。章节计划改了 ${touched} 处，落成章节要重跑` : '删了')
 }
 
 async function refreshStory() {
   // **带上归属再交给 setStory。**
   //
-  // 这一趟的三个调用方都在调之前确认过"还在这部剧上"，但确认完之后还有
-  // 一个 GET 的来回——换剧就发生在那个来回里。而 setStory 的归属判断
+  // 这一趟的三个调用方都在调之前确认过"还在这部电影上"，但确认完之后还有
+  // 一个 GET 的来回——换片就发生在那个来回里。而 setStory 的归属判断
   // （`forProject !== session.projectPath` 就直接返回）只在**传了**第二个
   // 参数时才生效，这儿原来没传，于是全 setStory 里唯一一条不设防的路。
   //
-  // 落地就是 load() 上面那段写的那件事：上一部剧的正文装进这一部的编辑器，
+  // 落地就是 load() 上面那段写的那件事：上一部片的正文装进这一部的编辑器，
   // 接着敲字触发的自动存用的是**这一部**的路径，等于把上一部的章节内容
   // 写进这一部。最长的那条路是批量写——一跑一个多小时，中间十五次重读，
   // 每一次都是一扇窗。
@@ -435,8 +435,8 @@ async function load() {
     return
   }
   // 换项目那一下会连着起两趟，回来的顺序不保证。慢的那一趟后落地就是
-  // **上一部剧的正文装进了这一部的编辑器**——而接着敲字触发的自动存用的是
-  // 当前这部剧的路径，等于把上一部的章节内容写进这一部。
+  // **上一部片的正文装进了这一部的编辑器**——而接着敲字触发的自动存用的是
+  // 当前这部片的路径，等于把上一部的章节内容写进这一部。
   const want = session.projectPath
   loading.value = true
   try {
@@ -452,15 +452,15 @@ async function load() {
     if (!chapters.value.length) await ensureChapter()
   } catch (err) {
     if (want !== session.projectPath) return
-    // **手里这份要是上一部剧的，就得倒掉。**
+    // **手里这份要是上一部电影的，就得倒掉。**
     //
-    // 这儿原来只弹一句错，`story` 一个字不动。而这一趟在换剧那条路上跑，
+    // 这儿原来只弹一句错，`story` 一个字不动。而这一趟在换片那条路上跑，
     // 砸了的话新这一部的编辑器里**摆着上一部的正文**——接着敲字，自动存
-    // 用的是当前这部剧的路径加上那一章的章号，两部剧里都有 ch01，于是
+    // 用的是当前这部片的路径加上那一章的章号，两部片里都有 ch01，于是
     // 上一部的整章文字落进了这一部。这一页为这件事清过 draft / sel /
-    // chat / streaming / pending（见换剧那个 watch），唯独 story 本身没清。
+    // chat / streaming / pending（见换片那个 watch），唯独 story 本身没清。
     //
-    // 同一部剧自己重读失败（批量写完那条也叫 load）不倒——那时候屏幕上
+    // 同一部电影自己重读失败（批量写完那条也叫 load）不倒——那时候屏幕上
     // 的就是这一部自己的字，为一次抖动清空整本书更糟。
     if (loadedFor !== session.projectPath) {
       story.value = null
@@ -504,11 +504,11 @@ function watchBatch() {
     'write',
     async (msg) => {
       if (msg.type !== 'story_token' || !msg.chapter_id) return
-      // **这一条是哪部剧的。**
+      // **这一条是哪部电影的。**
       //
       // 这条订的是 "write" 那个**全局槽**（具体 job_id 不从接口暴露，只能
-      // 按类订），而批量一跑就是一个多小时。人中途去项目库点另一部剧的话，
-      // 收到的还是上一部的正文——章号是 ch01 这种、两部剧都有，光靠它分不
+      // 按类订），而批量一跑就是一个多小时。人中途去项目库点另一部片的话，
+      // 收到的还是上一部的正文——章号是 ch01 这种、两部片都有，光靠它分不
       // 出来，于是上一部的字一路长进这一部的编辑器，接着 current 还会跟着
       // 跳章。引擎 2026-09-15 起在这条消息里带上了 project（batch.cpp 那条
       // broadcast），比一下就知道该不该收。
@@ -669,21 +669,21 @@ onUnmounted(() => {
 })
 watch(() => session.projectPath, () => {
   // **先冲再读。** load() 会把 buf 和 dirtySnapshot 整个清掉；不先冲的话，
-  // 在故事页敲两个字、1.5 秒内在项目库里点了另一部剧，那几个字就没了。
-  // 每一次排队都带着自己那部剧的路径，所以冲出去落的是**原来那一部**。
+  // 在故事页敲两个字、1.5 秒内在项目库里点了另一部片，那几个字就没了。
+  // 每一次排队都带着自己那一部的路径，所以冲出去落的是**原来那一部**。
   flushAll()
-  // **这几样都是"上一部剧的"，得跟着走。** load() 只清 buf 和
-  // dirtySnapshot，下面这些原来一直留着，而它们都认章号——两部剧里都有
+  // **这几样都是"上一部的"，得跟着走。** load() 只清 buf 和
+  // dirtySnapshot，下面这些原来一直留着，而它们都认章号——两部片里都有
   // ch01，于是全落在新这一部头上：
   //
-  //   · sel / chat：改稿的选区是字符偏移，套到另一部剧的同名章上就是改错
+  //   · sel / chat：改稿的选区是字符偏移，套到另一部片的同名章上就是改错
   //     地方；旁边那串对话也还是上一部的。
   //   · streaming / pending：上一部那章的"正在写"锁和撤销底稿。锁尤其难受
   //     ——批量还在上一部跑着（writer.running 是全局的一个槽），新这一部的
   //     同名章会被锁成不能编辑，而这一部根本没人在写它。
   //   · instruction：输入框里那半句话说的是上一部的事。
   //   · audio：念出来那段音频落在上一部的目录里（URL 里钉着它的路径），
-  //     换了剧还挂在状态条上，按播放放的是上一部的声音。
+  //     换了片还挂在状态条上，按播放放的是上一部的声音。
   sel.value = null
   chat.value = []
   streaming.value = null
@@ -943,8 +943,8 @@ function toggleFollow() {
 
 // ---- 自动存 ----
 //
-// **每一次排队都记住这几个字属于哪部剧。** 存的时候只认 `session.projectPath`
-// 的话，排队那 1.5 秒里换了项目，这一存就写进**新打开的那部剧**里去了——
+// **每一次排队都记住这几个字属于哪部电影。** 存的时候只认 `session.projectPath`
+// 的话，排队那 1.5 秒里换了项目，这一存就写进**新打开的那一部**里去了——
 // 换项目走的是 watch，组件不卸载，定时器原样留着。
 const timers = {} // chapter_id -> { t, project }
 /**
@@ -989,7 +989,7 @@ async function saveChapter(id, project = session.projectPath, text) {
   if (saver.busy.value) {
     // 重排要带着两样东西：
     //
-    //   · **原来那部剧** —— 这 400 毫秒里换了项目的话，不带就存错地方；
+    //   · **原来那一部** —— 这 400 毫秒里换了项目的话，不带就存错地方；
     //   · **手里这份字** —— 换项目那一下 `load()` 会同步把 buf 整个清空
     //     （它就在 flushAll 后面一行），400 毫秒后再读 `buf[id]` 读到的是
     //     空串，而空串这个函数开头就 return 了——那几个字**一声不吭地没了**。
@@ -1017,8 +1017,8 @@ async function saveChapter(id, project = session.projectPath, text) {
   let result = await saver.run(() => save([...(c.text ?? '')].length),
                                { key: 'save:' + id, quiet: true })
   if (!result) {
-    // **界面已经换走的话就别重读了。** refreshStory 拿回来的是**现在**那部剧
-    // 的长度，照着它再存一次等于往新剧里写旧字。第一次没成就照实说一句。
+    // **界面已经换走的话就别重读了。** refreshStory 拿回来的是**现在**那一部
+    // 的长度，照着它再存一次等于往新这一部里写旧字。第一次没成就照实说一句。
     if (project !== session.projectPath) {
       ui.error(`「${c.title || id}」最后改的那几个字没存回去`)
       return
@@ -1029,8 +1029,8 @@ async function saveChapter(id, project = session.projectPath, text) {
                              { key: 'save:' + id })
   }
   if (!result) return
-  // 存进去了，但这一页已经在看别的剧（或者已经卸了）。下面那三句都是
-  // 拿这次的结果去动界面，这时候动就是拿旧数据盖掉新打开的那部剧。
+  // 存进去了，但这一页已经在看别的片（或者已经卸了）。下面那三句都是
+  // 拿这次的结果去动界面，这时候动就是拿旧数据盖掉新打开的那一部。
   if (project !== session.projectPath) return
   if ((buf[id] ?? '') !== sent) scheduleSave(id)
   else dirtySnapshot.delete(id)
@@ -1077,17 +1077,17 @@ async function revise() {
   const tail = allChars.slice(at.to).join('')
 
   /**
-   * **这一趟是替哪部剧写的。**
+   * **这一趟是替哪部电影写的。**
    *
    * 流式这三条路都要几十秒到一两分钟，而这期间人完全可能去项目库点另一部
-   * 剧。换剧时 `load()` 只清了 buf 和 dirtySnapshot，**没人管在途的这条
-   * 流**：它照样往 `buf[章号]` 上画，而章号是 ch01 这种、两部剧里都有，
+   * 片。换片时 `load()` 只清了 buf 和 dirtySnapshot，**没人管在途的这条
+   * 流**：它照样往 `buf[章号]` 上画，而章号是 ch01 这种、两部片里都有，
    * 于是上一部的字长在这一部的编辑器里，还被标成"改过了"。收尾那下更狠
    * ——`scheduleSave` 默认绑的是**当前**项目，A 的稿子就存进 B 的同名章。
    *
    * 所以：画之前认一次，收尾之前再认一次。换走了就把这一份丢掉，不画不存。
    * 丢是对的：这一段只活在客户端（改稿那条接口不落库），而把它塞进另一部
-   * 剧是实打实的破坏。
+   * 电影是实打实的破坏。
    */
   const owner = session.projectPath
   const mine = () => owner === session.projectPath
@@ -1099,7 +1099,7 @@ async function revise() {
   let live = false
 
   const paint = async (text) => {
-    if (!mine()) return // 换剧了，别往新这一部的编辑器上画
+    if (!mine()) return // 换片了，别往新这一部的编辑器上画
     buf[id] = head + text + tail
     dirtySnapshot.add(id)
     await nextTick()
@@ -1209,7 +1209,7 @@ async function revise() {
     finish()
   }
   if (!mine()) {
-    // 人已经在看别的剧了。这一段属于上一部，扔掉——留下只会写错地方。
+    // 人已经在看别的片了。这一段属于上一部，扔掉——留下只会写错地方。
     ui.warn('中途换了项目，刚才那一段改稿没有留下')
     return
   }
@@ -1319,7 +1319,7 @@ async function readAloud() {
   }
   if (!picked.trim()) picked = full
 
-  // 合成那一下也钉住项目：这一段字是这一部剧的，音频也该落在它的目录里
+  // 合成那一下也钉住项目：这一段字是这一部电影的，音频也该落在它的目录里
   // （下面那条 mediaUrl 同理）。
   const project = session.projectPath
   const result = await run(
@@ -1409,7 +1409,7 @@ async function addChapter() {
   boxes[id]?.focus()
 }
 
-/** 老项目：把已经写好的那几集反推成故事骨架。不碰大模型，也不重新分集。 */
+/** 老项目：把已经写好的那几章反推成故事骨架。不碰大模型，也不重排章节。 */
 async function reverseFromEpisodes() {
   const project = session.projectPath
   const result = await run(
@@ -1546,7 +1546,7 @@ async function waitSlot(project) {
  * 用户 2026-09-18：「一键处理内容是写这一个章节，理解故事，拆分镜头这几个
  * 和大语言模型有关的内容」。
  *
- * **开跑那一刻把项目钉死。** 这一轮十几分钟起，中途在项目库里点了别的剧，
+ * **开跑那一刻把项目钉死。** 这一轮十几分钟起，中途在项目库里点了别的电影，
  * 活儿还是替按下去那一部排的——每一步之间都对一次，不对就停手（story 页
  * 别处那几条长活也是这么防的）。
  */
@@ -1587,7 +1587,7 @@ async function oneClick() {
       }
       writer.start()
       if (!(await waitSlot(project))) break
-      // 每一步都会改故事 / 分集 / 分镜，顶栏那几个判据跟着变
+      // 每一步都会改故事 / 章节 / 分镜，顶栏那几个判据跟着变
       await refreshStory()
       session.refresh()
     }
@@ -1722,7 +1722,7 @@ const thinkLine = computed(() => {
       :hint="`故事挂在项目上。${pickProjectHint(projects)}。`"
     />
     <div v-else-if="loading && !hasStory" class="ed__center tiny dim">读取中…</div>
-    <!-- **读不出来的时候不能摆"开始写"那一屏。** 那一屏说的是「这部剧还
+    <!-- **读不出来的时候不能摆"开始写"那一屏。** 那一屏说的是「这部电影还
          没有故事」，而读砸了的时候有没有根本不知道——按下「直接开写」，
          要是刚才只是 story.json 一时读不出来（文件坏了引擎回 400），那
          一下就把它盖掉了。 -->
@@ -1731,7 +1731,7 @@ const thinkLine = computed(() => {
       class="ed__center"
       icon="warn"
       tone="warn"
-      title="读不到这部剧的故事"
+      title="读不到这部电影的故事"
       :hint="loadError"
     />
 
@@ -1800,7 +1800,7 @@ const thinkLine = computed(() => {
             :disabled="isBusy('reverse')"
             @click="reverseFromEpisodes"
           >
-            {{ isBusy('reverse') ? '正在反推…' : `从已有的 ${session.episodes.length} 集反推` }}
+            {{ isBusy('reverse') ? '正在反推…' : `从已有的 ${session.episodes.length} 章反推` }}
           </button>
           <button
             class="btn btn--ghost btn--sm"

@@ -80,7 +80,7 @@ bool is_valid_episode_id(const std::string& s) {
     });
 }
 
-/// 把 shot_id / scene_id 里的旧集号换成新的，**只换第一处**。
+/// 把 shot_id / scene_id 里的旧章号换成新的，**只换第一处**。
 /// 对应 Python 的 s.replace(old, new, 1)。
 std::string replace_first(const std::string& s, const std::string& from,
                           const std::string& to) {
@@ -112,7 +112,7 @@ ApiResult get_script(const std::string& path, const std::string& episode_id) {
     ProjectStore store = open_project(path);
     const Project project = load_or_400(store);
     const Episode* ep = project.episode_by_id(episode_id);
-    if (ep == nullptr) throw ApiError(404, "没有剧集 " + episode_id);
+    if (ep == nullptr) throw ApiError(404, "没有章节 " + episode_id);
     return {200, {
         {"script", ep->script},
         {"target_duration_s", ep->target_duration_s},
@@ -125,19 +125,19 @@ ApiResult get_script_context(const std::string& path,
     ProjectStore store = open_project(path);
     const Project project = load_or_400(store);
     const Episode* ep = project.episode_by_id(episode_id);
-    if (ep == nullptr) throw ApiError(404, "没有剧集 " + episode_id);
+    if (ep == nullptr) throw ApiError(404, "没有章节 " + episode_id);
 
-    // 读不了就当没有：老项目本来就没有 story.json，这一集照样有答案，只是短一些。
+    // 读不了就当没有：老项目本来就没有 story.json，这一章照样有答案，只是短一些。
     Story story;
     try {
         story = store.load_story();
     } catch (const std::exception&) {
     }
-    // 章模式：这一集就是一章，计划按章配（整章，钩子取最后一场的 turn）。
-    // **不按 episode_id 去分集表里查。** 写剧本那头（scripting.cpp）2026-09-16
-    // 就改成这样了，这儿漏了：老分集表把一章切成上/中/下，ep01 查到的是前
-    // 三分之一，剧本页的「原文」就只有半章（2026-09-18 用户撞到）。上一集
-    // 就是上一章那一集，id 按同一条规矩推。
+    // 一条章节记录就是整整一章，计划按章配（整章，钩子取最后一场的 turn）。
+    // **不按 episode_id 去章节计划里查。** 写剧本那头（scripting.cpp）2026-09-16
+    // 就改成这样了，这儿漏了：老项目盘上那份计划把一章切成上/中/下，ep01 查到
+    // 的是前三分之一，剧本页的「原文」就只有半章（2026-09-18 用户撞到）。
+    // 「上一章」取故事里的前一章，id 按同一条规矩推。
     EpisodePlan chapter_plan_storage;
     const EpisodePlan* plan = nullptr;
     std::string prev_episode_id;
@@ -157,7 +157,7 @@ ApiResult get_script_context(const std::string& path,
         }
     }
     if (plan == nullptr) {
-        // 老项目：剧集上没记章，只能按分集表的 id 查，上一集取表里的上一条。
+        // 老项目：章节记录上没记章，只能按盘上那份计划的 id 查，上一章取表里的上一条。
         for (std::size_t i = 0; i < story.plan.size(); ++i) {
             if (story.plan[i].episode_id != episode_id) continue;
             plan = &story.plan[i];
@@ -165,23 +165,23 @@ ApiResult get_script_context(const std::string& path,
             break;
         }
     }
-    // 时长和写剧本那一步同源：有分集表按分集表，没有按这一集自己的。
+    // 时长和写剧本那一步同源：有章节计划按章节计划，没有按这一章自己的。
     const double duration =
         plan != nullptr ? plan->target_duration_s : ep->target_duration_s;
 
     // 四段按秒怎么排。
     //
     // ⚠️ **这里只能按 variation = 0 算，也就是"步步紧逼"那一组**（开场钩子 /
-    // 冲突推进 / 情绪回报 / 集尾留扣）。真正写剧本那一下 variation 是
+    // 冲突推进 / 情绪回报 / 章尾留扣）。真正写剧本那一下 variation 是
     // `random_shape()` 现摇的（见 post_script_write），五组走法里挑一组，
-    // 而那个数**一个字节都没存下来**——这条接口没法知道那一集用的是哪一组。
+    // 而那个数**一个字节都没存下来**——这条接口没法知道那一章用的是哪一组。
     //
-    // 所以这几个 label 只在五分之一的情况下和剧本里的段头对得上：一集写的
+    // 所以这几个 label 只在五分之一的情况下和剧本里的段头对得上：一章写的
     // 是「【当头一击 0–5 秒】」，这儿报的却是「开场钩子」。秒数也一样，
     // 三个比例都随 variation 浮动。
     //
     // 界面今天不画这一段（四段读数是 ScriptReader 从**剧本正文里的段头**
-    // 解出来的，那才是这一集真正的那一组）。要画之前先想清楚上面这件事，
+    // 解出来的，那才是这一章真正的那一组）。要画之前先想清楚上面这件事，
     // 或者先把 variation 存进 Episode 里。
     json acts = json::array();
     for (const auto& a : stages::act_plan(duration)) {
@@ -217,7 +217,7 @@ ApiResult get_script_context(const std::string& path,
         out["scenes"] = json(stages::episode_scenes(story, *plan));
         out["text"] = stages::episode_text(story, *plan);
         out["hook"] = plan->hook;
-        // 上一集的结尾——上一章那一集，和写剧本那一步一样。
+        // 上一章的结尾——故事里的前一章，和写剧本那一步一样。
         if (!prev_episode_id.empty()) {
             const Episode* prev = project.episode_by_id(prev_episode_id);
             if (prev != nullptr) {
@@ -239,11 +239,11 @@ ApiResult post_script(const json& body, llm::Client& client,
     ProjectStore store = open_project(need_str(body, "project"));
     Project project = load_or_400(store);
     Episode* ep = project.episode_by_id(episode_id);
-    if (ep == nullptr) throw ApiError(404, "没有剧集 " + episode_id);
+    if (ep == nullptr) throw ApiError(404, "没有章节 " + episode_id);
 
     ep->script = script;
     // 注意是 `if req.duration_s:` 不是 `is not None`——**0 也算没给**。
-    // 照抄：给 0 的话下面按原时长走，不会把这一集设成零秒。
+    // 照抄：给 0 的话下面按原时长走，不会把这一章设成零秒。
     const auto dit = body.find("duration_s");
     if (dit != body.end() && dit->is_number() && dit->get<double>() != 0.0) {
         ep->target_duration_s = dit->get<double>();
@@ -251,11 +251,11 @@ ApiResult post_script(const json& body, llm::Client& client,
     // 梗概。**空字符串不算给了**——手工存剧本时前端不带这一项，
     // 带了也可能是空的，那种情况下不能把已有的梗概洗掉。
     //
-    // 以前这一项根本不收，结果单集这条路上 synopsis 永远是空的
-    // （只有「批量写整季」会写）。连着坏三处：剧本页的「已写 N 集」
-    // 一直是 0、「AI 剪一条预告片」永远点不亮、下次写新一集时
+    // 以前这一项根本不收，结果单章这条路上 synopsis 永远是空的
+    // （只有「写全片」会写）。连着坏三处：剧本页的「已写 N 章」
+    // 一直是 0、「AI 剪一条预告片」永远点不亮、下次写新一章时
     // build_premise_prompt/build_script_prompt 的 existing 也是空的——
-    // 「接着前几集写」勾了等于没勾，上下文断在这儿。
+    // 「接着前几章写」勾了等于没勾，上下文断在这儿。
     const std::string synopsis = text::strip_ws(opt_str(body, "synopsis", ""));
     if (!synopsis.empty()) {
         ep->synopsis = text::truncate_utf8(synopsis, 2000);
@@ -264,7 +264,7 @@ ApiResult post_script(const json& body, llm::Client& client,
     json out = {{"saved", true}, {"regenerated", false}};
     if (regenerate) {
         const AssetLibrary assets = store.load_assets();
-        // 单镜的时长档位是这部剧的属性（[video].max_shot_s），按项目那份设置
+        // 单镜的时长档位是这部电影的属性（[video].max_shot_s），按项目那份设置
         // 算一遍再拆镜头。见 config::apply_video_limits。
         config::apply_video_limits(config::load_settings(store.root()));
 
@@ -308,10 +308,10 @@ ApiResult post_episode(const json& body) {
     std::string ep_id = text::strip_ws(opt_str(body, "episode_id", ""));
     if (ep_id.empty()) ep_id = next_episode_id(project);
     if (!is_valid_episode_id(ep_id)) {
-        throw ApiError(400, "剧集 id 只能用小写字母、数字和下划线");
+        throw ApiError(400, "章节 id 只能用小写字母、数字和下划线");
     }
     if (project.episode_by_id(ep_id) != nullptr) {
-        throw ApiError(409, "剧集 " + ep_id + " 已存在");
+        throw ApiError(409, "章节 " + ep_id + " 已存在");
     }
 
     Episode ep;
@@ -330,12 +330,12 @@ ApiResult post_episode_action(const json& body) {
     ProjectStore store = open_project(need_str(body, "project"));
     Project project = load_or_400(store);
     Episode* ep = project.episode_by_id(episode_id);
-    if (ep == nullptr) throw ApiError(404, "没有剧集 " + episode_id);
+    if (ep == nullptr) throw ApiError(404, "没有章节 " + episode_id);
 
     if (action == "delete") {
-        // 至少留一集。删空了界面会退回"还没有项目"的状态，
+        // 至少留一章。删空了界面会退回"还没有项目"的状态，
         // 用户以为整个项目没了。
-        if (project.episodes.size() <= 1) throw ApiError(400, "至少要留一集");
+        if (project.episodes.size() <= 1) throw ApiError(400, "至少要留一章");
         project.episodes.erase(
             std::remove_if(project.episodes.begin(), project.episodes.end(),
                            [&](const Episode& e) {
@@ -354,7 +354,7 @@ ApiResult post_episode_action(const json& body) {
     }
 
     if (action == "duplicate") {
-        // 编号规则和 next_episode_id **不一样**：这里数的是全部剧集数，
+        // 编号规则和 next_episode_id **不一样**：这里数的是全部章节数，
         // 那边只数 epNN。Python 侧就是这么写的，照抄。
         //
         // 差别在于项目里有 trailer 时：新建走 next_episode_id 得到 ep03，

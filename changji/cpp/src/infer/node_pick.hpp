@@ -96,7 +96,7 @@ std::vector<std::string> remote_slots_for(const std::vector<NodeState>& nodes,
 /// 从候选里挑一台。
 ///
 /// **空闲的优先；全忙也要回一台**（排队等它，而不是判这一镜失败）——
-/// 一镜一两分钟，等得起；当场失败的话用户得到的是一集里随机几镜没了。
+/// 一镜一两分钟，等得起；当场失败的话用户得到的是一章里随机几镜没了。
 /// 一台候选都没有才回空。
 std::optional<std::string> pick_for(const std::vector<NodeState>& nodes,
                                     Capability c);

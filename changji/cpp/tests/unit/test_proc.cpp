@@ -260,7 +260,7 @@ TEST_CASE("参数里的特殊字符原样传过去") {
 TEST_CASE("超时会把子进程杀掉，而不是把调用线程钉住") {
     // **换掉 popen 之前根本做不到这一条**：popen 没有超时接口，
     // 一个卡死的 ffmpeg 会把整个工作线程钉住，而外面看到的只是
-    // "这一集一直在跑"，没有任何别的信号。proc.cpp 文件头那条 TODO
+    // "这一章一直在跑"，没有任何别的信号。proc.cpp 文件头那条 TODO
     // 写的就是"装配环节接进来之前必须换成 CreateProcess 加超时"。
     const auto t0 = std::chrono::steady_clock::now();
 #ifdef _WIN32

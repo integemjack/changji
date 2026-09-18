@@ -153,12 +153,12 @@ double round1(double x) { return std::nearbyint(x * 10.0) / 10.0; }
 
 /// 这个错是不是"配错了"——换一件活重来还是一样。
 ///
-/// ⚠️ **批量那几条都要问它一句。** 2026-09-17 实撞：一次补七集分镜，第三集
-/// 开始密钥失效，而「一集砸了不拖垮后面几集」这条让它**又试了五集，每集
+/// ⚠️ **批量那几条都要问它一句。** 2026-09-17 实撞：一次补七章分镜，第三章
+/// 开始密钥失效，而「一章砸了不拖垮后面几章」这条让它**又试了五章，每章
 /// 同一个 401**——人白等二十分钟，回来看到五条一模一样的报错。
 ///
-/// 那条规矩针对的是**内容**问题（这一集模型没写好，下一集换个剧本也许就
-/// 好了）；而密钥不对、地址不对、模型名不存在，不会在下一集自己变好。
+/// 那条规矩针对的是**内容**问题（这一章模型没写好，下一章换个剧本也许就
+/// 好了）；而密钥不对、地址不对、模型名不存在，不会在下一章自己变好。
 /// 限流（429）和 5xx 不算——那两种换个时间真会好，接着跑是对的。
 bool hopeless(const std::exception& e) {
     const auto* le = dynamic_cast<const llm::LlmError*>(&e);
@@ -194,7 +194,7 @@ ApiResult post_story_chapters(const json& body,
     // 不能用 `store.root()`：ProjectPaths 的构造会做 weakly_canonical
     // （见 project.cpp），而界面手里那串来自项目列表、不保证规范化过
     // ——macOS 上 /tmp 会解成 /private/tmp 这类符号链接，两串就对不上。
-    // 下面那条流式正文要靠这串让界面认"这是不是我这部剧的"；对不上的话
+    // 下面那条流式正文要靠这串让界面认"这是不是我这部电影的"；对不上的话
     // 收到的正文会被整个丢掉，而且是静默的。
     const std::string client_project = need_str(body, "project");
     const Project project = load_or_400(store);
@@ -337,10 +337,10 @@ ApiResult post_story_chapters(const json& body,
                                 // **带上项目。** 这条流广播在 "write" 这个
                                 // 槽上（客户端只订得到类名），而槽是全局
                                 // 的一个：界面那头常驻一条连接收它。人在
-                                // 批量跑着的时候去看另一部剧，收到的还是
+                                // 批量跑着的时候去看另一部电影，收到的还是
                                 // 这一部的正文——不说清是谁的，那边就会把
                                 // 它画进别人的编辑器里。章号是 ch01 这种，
-                                // 两部剧都有，光靠它分不出来。
+                                // 两部电影都有，光靠它分不出来。
                                 ws::hub().broadcast(
                                     job_id, {{"type", "story_token"},
                                              {"job_id", job_id},
@@ -392,8 +392,7 @@ ApiResult post_story_chapters(const json& body,
 
                 next.plan = stages::plan_episodes(next, next.episode_duration_s);
                 store.save_story(next);
-                // 正文扩写完，这一章的梗概和它值多长都变了——剧集跟着对齐。
-                // 非章模式下这一句什么都不做。
+                // 正文扩写完，这一章的梗概和它值多长都变了——章节记录跟着对齐。
                 sync_episodes_to_chapters(store, next);
 
                 const Chapter* written = next.chapter_by_id(id);
@@ -407,11 +406,14 @@ ApiResult post_story_chapters(const json& body,
             }
             p.set_message("写完了 " + std::to_string(done) + " 章");
         },
-        "已手动停止。已经写好的几章留着。",
-        // 顶栏那块"AI 作业中"要靠它说清是哪部剧、点了往哪儿跳。
+        // **不是 `kWriteStoppedMessage`。** 那是写作槽的兜底，眼下和这一条
+        // 同字——同字是巧合，展开的是章**正文**、不是剧本，两件事分开放
+        // （jobs.hpp 里那一族的注释说了为什么）。
+        pipeline::kStoryChaptersStoppedMessage,
+        // 顶栏那块"AI 作业中"要靠它说清是哪部电影、点了往哪儿跳。
         paths::to_utf8(store.root()),
-        // 任务页面那一行。**`JobKind::Write` 一个槽里跑着三种活**，
-        // 不各自报名字的话那一行只会写「批量」。
+        // 任务页面那一行。**`JobKind::Write` 一个槽里跑着六件活**（这个文件里
+        // 六处 start），不各自报名字的话那一行只会写「批量」。
         "写正文 · 还缺的 " + std::to_string(todo.size()) + " 章");
 
     if (!started) throw ApiError(409, "已经在写了");
@@ -442,7 +444,7 @@ ApiResult post_script_series(const json& body,
          reuse_chars](pipeline::JobProgress& p) {
             p.set_total(episodes);
             // **思考流挂到这条 job 的频道上。** 批量这几条是全流水线上跑得
-            // 最久的（一整季几十分钟），最需要"它到底在想还是卡死了"这个
+            // 最久的（整部电影几十分钟），最需要"它到底在想还是卡死了"这个
             // 信号；而它们不走 start_async，所以要自己挂一次。
             // 停这一族仍然走 /api/script/series/stop（JobKind::Write 那个槽），
             // 不是按 stream——这条 job 本来就只有一个。
@@ -468,24 +470,24 @@ ApiResult post_script_series(const json& body,
                     reuse_chars ? character_names(assets)
                                 : std::vector<std::string>{};
 
-                p.set_message("正在写第 " + std::to_string(i + 1) + " 集");
+                p.set_message("正在写第 " + std::to_string(i + 1) + " 章");
 
-                // **四段的 schema，和单集那条走同一份。**
+                // **四段的 schema，和单章那条走同一份。**
                 //
                 // 这儿原来用的是 `script_schema()`——**平的那份**，只有
                 // minItems 4 的地板，没有时间结构。那正是 2026-09-12 之前
-                // 的行为，也正是「60 秒的集写出 13 秒的剧本」的来源：
+                // 的行为，也正是「60 秒的章写出 13 秒的剧本」的来源：
                 // 提示词里说"要凑够"模型不听，minItems 写 4 它就写 4 拍。
                 //
-                // 2026-09-13 实跑这条路（三集，每集目标 60 秒）：
+                // 2026-09-13 实跑这条路（三章，每章目标 60 秒）：
                 //     ep01   7 行 /  3 句台词 / 293 字
                 //     ep02  19 行 /  8 句台词 / 477 字
                 //     ep03   3 行 /  1 句台词 / 122 字
-                // 而同一天走单集那条出的是 17 拍 / 对白 171 字 /「合适」。
+                // 而同一天走单章那条出的是 17 拍 / 对白 171 字 /「合适」。
                 // **当初改四段时漏了这一条路。**
                 //
-                // 形状每集重摇一个（random_shape，ComfyUI 的 randomize 那个
-                // 意思）：写死比例的话整季每集都是同一个模子，连着看就露馅。
+                // 形状每章重摇一个（random_shape，ComfyUI 的 randomize 那个
+                // 意思）：写死比例的话整部电影每章都是同一个模子，连着看就露馅。
                 //
                 // **三处都要带上同一个 variation：提示词、schema、解析。**
                 // 2026-09-14 发现提示词那一处漏了——它当时还不收这个参数，
@@ -499,9 +501,9 @@ ApiResult post_script_series(const json& body,
                     premise, duration_s, project.style_line,
                     // 前情收在 scripting.hpp 的 previous_scripts 里。
                     // **这儿原来自己抄了一份**，两份的取法还不一样：这份取
-                    // "最近三集写好的"、不管在这一集前面还是后面。写整季时
-                    // 两者恰好相等（这一集是写完才建出来的，见下面
-                    // next_episode_id——所以"已经写好的"就是"这一集之前
+                    // "最近三章写好的"、不管在这一章前面还是后面。写全片时
+                    // 两者恰好相等（这一章是写完才建出来的，见下面
+                    // next_episode_id——所以"已经写好的"就是"这一章之前
                     // 的"），所以谁也没发现。终点留空就是全部已写的。
                     previous_scripts(project), names, variation);
                 req.schema =
@@ -512,12 +514,12 @@ ApiResult post_script_series(const json& body,
                 stages::ScriptDraft draft;
                 try {
                     // 令牌给这个任务真正的那一个，理由同上面写章节那处：
-                    // 给 dummy 的话，"停"要等这一集写完才生效。
+                    // 给 dummy 的话，"停"要等这一章写完才生效。
                     draft = stages::parse_script(client->complete(req, p.token()),
                                                  duration_s, variation);
                 } catch (const std::exception& e) {
-                    // 一集写砸了不该让前面几集白写，记下来接着往下写。
-                    // episode_id 留空——这一集根本没建出来。
+                    // 一章写砸了不该让前面几章白写，记下来接着往下写。
+                    // episode_id 留空——这一章根本没建出来。
                     p.add_episode(json{{"episode_id", ""}, {"error", e.what()}});
                     p.set_done(++done);
                     // **配错了就别再试**，见 hopeless。
@@ -533,10 +535,10 @@ ApiResult post_script_series(const json& body,
                 //
                 // 上面那次生成跑了一两分钟，而 `project` 是那一两分钟**之前**
                 // 读的。把它整份写回去，这期间界面上改的东西全被悄悄吞掉：
-                // 镜头抽屉存的那一笔、改过的集名、手动加的一集、删掉的一集。
+                // 镜头抽屉存的那一笔、改过的章名、手动加的一章、删掉的一章。
                 // 同 post_story_chapters 和 post_plan_all 那两处，理由一样。
                 //
-                // 集号也要按新那份算：这几分钟里手动加过一集的话，照旧那份
+                // 章号也要按新那份算：这几分钟里手动加过一章的话，照旧那份
                 // 算出来的号会撞上它。
                 Project latest = store.load_project();
                 const std::string episode_id = next_episode_id(latest);
@@ -558,10 +560,11 @@ ApiResult post_script_series(const json& body,
                 });
                 p.set_done(++done);
             }
-            p.set_message("写完了 " + std::to_string(done) + " 集");
+            p.set_message("写完了 " + std::to_string(done) + " 章");
         },
-        "已手动停止。已经写好的几集留着。",
-        paths::to_utf8(store.root()), "写整季 · " + std::to_string(episodes) + " 集");
+        // 收在 `pipeline/jobs.hpp`：那边改了措辞，这儿跟着走。
+        pipeline::kScriptSeriesStoppedMessage,
+        paths::to_utf8(store.root()), "写全片 · " + std::to_string(episodes) + " 章");
 
     if (!started) throw ApiError(409, "已经在写了");
     return {200, {{"started", true}, {"total", episodes}}};
@@ -589,7 +592,7 @@ ApiResult post_script_all(const json& body, std::shared_ptr<llm::Client> client)
 
     std::vector<std::string> todo;
     for (const auto& ep : project.episodes) {
-        // 挂着章的才改编：手动加的一集、预告片那种没有章可照，跳过。
+        // 挂着章的才改编：手动加的一章、预告片那种没有章可照，跳过。
         if (ep.chapter_refs.empty()) continue;
         if (!overwrite && !text::strip_ws(ep.script).empty()) continue;
         todo.push_back(ep.episode_id);
@@ -647,8 +650,9 @@ ApiResult post_script_all(const json& body, std::shared_ptr<llm::Client> client)
                 p.set_done(++done);
             }
         },
-        "已手动停止。已经写好的几集剧本留着。", root,
-        "写剧本 · 还缺的 " + std::to_string(todo.size()) + " 集");
+        // 收在 `pipeline/jobs.hpp`，和另外两件写作活各是一条。
+        pipeline::kScriptAllStoppedMessage, root,
+        "写剧本 · 还缺的 " + std::to_string(todo.size()) + " 章");
     if (!started) throw ApiError(409, "剧本那边还在忙");
     return {202, {{"started", true}, {"episodes", todo}}};
 }
@@ -698,7 +702,7 @@ ApiResult post_story_understand(const json& body,
                 p.set_done(++done);
             }
 
-            // 章对集是存故事时自动做的（commit_story → sync）；这儿再对一次，
+            // 章节对齐是存故事时自动做的（commit_story → sync）；这儿再对一次，
             // 老项目、手改过 project.json 的都兜住。
             try {
                 post_story_episodes(json{{"project", root}});
@@ -840,7 +844,7 @@ ApiResult post_story_from_web(const json& body, std::shared_ptr<llm::Client> cli
             c->text = wc.text;
             if (is_default_chapter_title(c->title) && !wc.title.empty()) c->title = wc.title;
             if (next.premise.empty() && next.logline.empty() && !wc.source.empty()) {
-                // 这部剧还没一句话的话，先拿来源顶上——理解故事那一步会重写它
+                // 这部电影还没一句话的话，先拿来源顶上——理解故事那一步会重写它
                 next.logline = wc.source;
             }
             commit_story(store, project, std::move(next), before);
@@ -858,7 +862,7 @@ ApiResult post_plan_all(const json& body, std::shared_ptr<llm::Client> client) {
     const bool overwrite = opt_bool(body, "overwrite", false);
 
     if (pipeline::jobs().running(pipeline::JobKind::Write)) {
-        // 和写整季不是同一句话。用户看到"已经在写了"会去找哪里在写剧本，
+        // 和写全片不是同一句话。用户看到"已经在写了"会去找哪里在写剧本，
         // 而实际情况是那个槽被别的事占着。
         throw ApiError(409, "剧本那边还在忙");
     }
@@ -872,7 +876,7 @@ ApiResult post_plan_all(const json& body, std::shared_ptr<llm::Client> client) {
         //
         // 空壳镜头（shot_id 是空串）不该算数：它们指不到任何文件、进不了
         // 任何一步，可数组非空就把这一章挡在补分镜之外——人看到的是
-        // 「没有要补的」，而那一章明明是空的，一键跑完整部剧也救不回来。
+        // 「没有要补的」，而那一章明明是空的，一键跑完整部电影也救不回来。
         //
         // 正常流程产不出这种东西（2026-09-17 那个"写回空壳"的 bug 修掉了，
         // 见 stages/render.cpp 的 Done::ran）。但存盘被截断、手工改坏
@@ -903,14 +907,16 @@ ApiResult post_plan_all(const json& body, std::shared_ptr<llm::Client> client) {
         [store, client, todo](pipeline::JobProgress& p) {
             p.set_total(static_cast<int>(todo.size()));
             // **思考流挂到这条 job 的频道上。** 批量这几条是全流水线上跑得
-            // 最久的（一整季几十分钟），最需要"它到底在想还是卡死了"这个
+            // 最久的（整部电影几十分钟），最需要"它到底在想还是卡死了"这个
             // 信号；而它们不走 start_async，所以要自己挂一次。
             // 停这一族仍然走 /api/script/series/stop（JobKind::Write 那个槽），
             // 不是按 stream——这条 job 本来就只有一个。
             // 令牌借 p 那个，理由同上面展开正文那条。**这一条尤其要紧**：
-            // 批量补分镜是从设定页「分集」那一格按的，而那一页自己的提示
-            // 写着「顶栏那块「AI 作业中」里看进度」——顶栏那个「停下」是
-            // 它唯一看得见的出口。
+            // 批量补分镜今天是页面上那两条链子里的一步（镜头页「跑完整部
+            // 电影」的第二步、故事页「一键处理」的最后一步），按下去那颗
+            // 按钮自己变成「停下」，而那颗「停下」调的正是
+            // /api/script/series/stop。令牌不借 p 那个的话，它就是一张
+            // 空头支票：屏幕上那件看着停了，这一章的设定还在往下出。
             const JobScope scope{pipeline::jobs().job_id(pipeline::JobKind::Write),
                                  p.token()};
             int done = 0;
@@ -924,11 +930,11 @@ ApiResult post_plan_all(const json& body, std::shared_ptr<llm::Client> client) {
                 if (ep == nullptr) continue;
 
                 try {
-                    // 令牌同上：新建一个永远不会点亮的话，点了停要等这一集
+                    // 令牌同上：新建一个永远不会点亮的话，点了停要等这一章
                     // 的设定整套出完才有反应。
                     pipeline::CancelToken& tok = p.token();
-                    // 角色设定全剧共用，第一次缺的时候补一次就够。
-                    // 每集都重出的话，同一个角色前后长得不一样。
+                    // 角色设定全片共用，第一次缺的时候补一次就够。
+                    // 每章都重出的话，同一个角色前后长得不一样。
                     if (assets.characters.empty()) {
                         llm::Request breq;
                         breq.prompt = stages::build_bible_prompt(
@@ -943,7 +949,7 @@ ApiResult post_plan_all(const json& body, std::shared_ptr<llm::Client> client) {
                         // **写回之前看一眼：这一分钟里别处可能已经补上了。**
                         // 出这份圣经要跑一趟大模型，而这期间人完全可能在设
                         // 定页按了「照故事定妆」。那就用人家那份——它是照整
-                        // 个故事出的，比这儿照一集剧本出的全，而且人正看着
+                        // 个故事出的，比这儿照一章剧本出的全，而且人正看着
                         // 它。反过来拿这一份顶掉，人刚定完的角色当场全换。
                         AssetLibrary latest = store.load_assets();
                         if (latest.characters.empty()) {
@@ -954,7 +960,7 @@ ApiResult post_plan_all(const json& body, std::shared_ptr<llm::Client> client) {
                         }
                     }
 
-                    // 单镜的时长档位是这部剧的属性（[video].max_shot_s），
+                    // 单镜的时长档位是这部电影的属性（[video].max_shot_s），
                     // 按项目那份设置算一遍再拆镜头。见 config::apply_video_limits。
                     config::apply_video_limits(config::load_settings(store.root()));
                     // 切场、拆镜、补台词、查覆盖、重编号、拉回时长都在
@@ -970,13 +976,13 @@ ApiResult post_plan_all(const json& body, std::shared_ptr<llm::Client> client) {
                     };
                     ep->shots = pipeline::run_storyboard(sb, *client, tok).shots;
 
-                    // **写回之前重读一遍。** 理由同上面写整季那处：拆一集
-                    // 镜头要跑几分钟，而这几分钟里界面可能在改别的集的镜头、
-                    // 改集名、加一集——`project` 是循环开头那份快照，整份
-                    // 写回去就把那些改动吞了。只把这一集的镜头放进新读的
+                    // **写回之前重读一遍。** 理由同上面写全片那处：拆一章
+                    // 镜头要跑几分钟，而这几分钟里界面可能在改别的章的镜头、
+                    // 改章名、加一章——`project` 是循环开头那份快照，整份
+                    // 写回去就把那些改动吞了。只把这一章的镜头放进新读的
                     // 那一份。
                     //
-                    // 这一集在这期间被删了的话就别写了：拿旧快照写回去
+                    // 这一章在这期间被删了的话就别写了：拿旧快照写回去
                     // 等于把它从坟里刨出来。
                     Project latest = store.load_project();
                     if (Episode* target = latest.episode_by_id(episode_id)) {
@@ -984,13 +990,13 @@ ApiResult post_plan_all(const json& body, std::shared_ptr<llm::Client> client) {
                         store.save_project(latest);
                     }
                 } catch (const std::exception& e) {
-                    // 一集出错不拖垮后面几集。跑一晚上，早上发现第二集挂了
-                    // 导致后面十集都没动，那这一晚上就白熬了。
+                    // 一章出错不拖垮后面几章。跑一晚上，早上发现第二章挂了
+                    // 导致后面十章都没动，那这一晚上就白熬了。
                     p.add_episode(
                         json{{"episode_id", episode_id}, {"error", e.what()}});
                     p.set_done(++done);
                     // **配错了就别再试**，见 hopeless：2026-09-17 就是这儿
-                    // 连着报了五集一模一样的 401。
+                    // 连着报了五章一模一样的 401。
                     if (hopeless(e)) {
                         p.set_error(stopped_because(
                             e, todo.size() - static_cast<std::size_t>(done)));
@@ -1007,11 +1013,11 @@ ApiResult post_plan_all(const json& body, std::shared_ptr<llm::Client> client) {
                                    {"duration_s", round1(total)}});
                 p.set_done(++done);
             }
-            p.set_message("出完了 " + std::to_string(done) + " 集的分镜");
+            p.set_message("出完了 " + std::to_string(done) + " 章的分镜");
         },
         "已手动停止。已经出好的分镜留着。",
         paths::to_utf8(store.root()),
-        "补分镜 · 还缺的 " + std::to_string(todo.size()) + " 集");
+        "补分镜 · 还缺的 " + std::to_string(todo.size()) + " 章");
 
     if (!started) throw ApiError(409, "剧本那边还在忙");
     return {200, {{"started", true}, {"episodes", todo}}};

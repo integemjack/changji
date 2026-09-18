@@ -3,16 +3,16 @@
  * 场景。设定那一页的第二格。
  *
  * **不是"分集阶段"的东西**——这个抬头以前写着「第四步：场景。分集阶段的
- * 第一步」，而那正是 2026-09-11 修掉的错位：场景库是全剧共用的一份，挂在
- * 分集阶段会让人以为每集要重做一遍（router/index.js 里那段记着这件事）。
+ * 第一步」，而那正是 2026-09-11 修掉的错位：场景库是全片共用的一份，挂在
+ * 那一步会让人以为每一章要重做一遍（router/index.js 里那段记着这件事）。
  *
- * 场景库是全剧共用的一份——分镜表里只存 location_id，空间和光线的描述
- * 由程序从库里拼接，逐字节相同。每集各存一份拷贝的话，同一个安保室在
- * 第一集和第五集会长得不一样，而这正是这套系统要防的事。
+ * 场景库是全片共用的一份——分镜表里只存 location_id，空间和光线的描述
+ * 由程序从库里拼接，逐字节相同。每章各存一份拷贝的话，同一个安保室在
+ * 第一章和第五章会长得不一样，而这正是这套系统要防的事。
  *
- * 所以这一页不是「这一集自己的场景表」，而是把镜头对准库里属于这一集的
- * 那几个：出分镜之前，AI 按这一集的剧本补新场景；出了分镜之后，按镜头
- * 实际引用的 id 分成「本集用到」和「其他集的」两组。
+ * 所以这一页不是「这一章自己的场景表」，而是把镜头对准库里属于这一章的
+ * 那几个：出分镜之前，AI 按这一章的剧本补新场景；出了分镜之后，按镜头
+ * 实际引用的 id 分成「本章用到」和「其他章的」两组。
  */
 import { computed, onActivated, onDeactivated, onMounted, onUnmounted, ref, watch } from 'vue'
 import { onBeforeRouteLeave } from 'vue-router'
@@ -148,7 +148,7 @@ const FIELDS = [
   { key: 'palette', label: '色彩', hint: '主色和点缀色，可留空', rows: 2 },
 ]
 
-/** 手里这份场景是哪部剧读回来的。null = 手上没有。 */
+/** 手里这份场景是哪部电影读回来的。null = 手上没有。 */
 let loadedFor = null
 /** 上一趟为什么没读回来。空 = 没出事。提示条会消失，这一行不会。 */
 const loadError = ref('')
@@ -158,7 +158,7 @@ const locations = computed(() => assets.value?.locations ?? [])
 const knownIds = computed(() => new Set(locations.value.map((l) => l.location_id)))
 
 /**
- * 这一集的镜头引用了哪几个场景，各用了几镜。
+ * 这一章的镜头引用了哪几个场景，各用了几镜。
  *
  * 两个字段都认：schema 里 scene_id 和 location_id 是分开的，模型十次有
  * 八次只填了 scene_id。那种镜头渲染时拿不到场景描述——不报错，只是画面
@@ -196,7 +196,7 @@ async function linkLocations() {
   await load()
 }
 
-// 还没出分镜的时候无从知道这一集用哪几个，全都算本集的
+// 还没出分镜的时候无从知道这一章用哪几个，全都算本章的
 const hasShots = computed(() => shots.value.length > 0)
 const mine = computed(() =>
   (hasShots.value
@@ -222,7 +222,7 @@ async function load() {
     loading.value = false // 理由同镜头墙那处：被顶掉的那趟不会清它
     return
   }
-  // 换剧时两趟会叠在一起，慢的那趟后落地就把上一部的场景摆在这一部下面
+  // 换片时两趟会叠在一起，慢的那趟后落地就把上一部的场景摆在这一部下面
   const want = session.projectPath
   loading.value = true
   try {
@@ -253,14 +253,14 @@ async function load() {
     )
   } catch (err) {
     if (want !== session.projectPath) return
-    // **墙上这份要是上一部剧的，就得撤下来。**
+    // **墙上这份要是上一部电影的，就得撤下来。**
     //
-    // 这儿原来只弹一句错。而换剧这条路是先清 edits 再 load 的，load 砸了
+    // 这儿原来只弹一句错。而换片这条路是先清 edits 再 load 的，load 砸了
     // 的话 `assets` 一个字没动——新这一部的页面上摆着**上一部的场景墙**，
     // 点开一张，抽屉里是空的（edits 刚清过），而右上角那几个按钮按的是
     // 现在这一部。八秒之后提示条自己消失，剩下一面对不上号的墙。
     //
-    // 只在手里这份属于别的项目时撤。同一部剧自己刷新失败（画完一张图那条
+    // 只在手里这份属于别的项目时撤。同一部电影自己刷新失败（画完一张图那条
     // 订阅每几十秒就来一趟）不撤——那时候屏幕上的就是这一部自己的东西，
     // 为一次网络抖动把整面墙清掉更糟。
     if (loadedFor !== session.projectPath) {
@@ -315,10 +315,10 @@ function dirtyIds() {
 
 /**
  * **站内换页也要拦。** 上面那段注释里点了刷新和关标签页，漏的是第三种：
- * 点顶栏那排「项目 / 故事 / 设定 / 这一集」。
+ * 点顶栏那排「项目 / 故事 / 设定 / 这一章」。
  *
- * 那一下 `<KeepAlive>` 连同冻在里头的另外两格一起卸掉——AssetsView 那句
- * 注释写着「三格各自都有一堆展开状态和没保存的编辑，切一下就丢的话没人
+ * 那一下 `<KeepAlive>` 连同冻在里头的另一格一起卸掉——AssetsView 那句
+ * 注释写着「两格各自都有一堆展开状态和没保存的编辑，切一下就丢的话没人
  * 敢切」，说的就是这些东西，而它只保到了切格子那一层。`beforeunload`
  * 管不到站内换页（浏览器只在真的要离开这个文档时才问）。
  */
@@ -358,7 +358,7 @@ onDeactivated(() => document.removeEventListener('keydown', onEsc))
  * 一键出图一张接一张，每张几十秒就重拉一次，抽屉里正在改字的人不能被
  * 服务端那份一遍遍盖回去。
  *
- * 但**换项目走的是同一个 load**，而 edits 是按 id 索引的：两部剧里出现
+ * 但**换项目走的是同一个 load**，而 edits 是按 id 索引的：两部电影里出现
  * 同一个 id 不是稀奇事（id 是照名字生成的，续集、复制出来的项目、同名
  * 角色都会撞），撞上的那一条会被当成"这条人家改过、别刷新"，于是上一部
  * 的外观描述留在这一部的抽屉里，一存就写进去了。
@@ -370,12 +370,12 @@ onDeactivated(() => document.removeEventListener('keydown', onEsc))
 watch(
   () => [session.projectPath, session.episodeId],
   ([project], old) => {
-    // 只在**换项目**时清。换集不清：场景库是全剧共用的一份，换一集只是
-    // 换了"这一集用到哪几个"的分组，手里改着的那条还在同一部剧里。
+    // 只在**换项目**时清。换章不清：场景库是全片共用的一份，换一章只是
+    // 换了"这一章用到哪几个"的分组，手里改着的那条还在同一部电影里。
     if (old && project !== old[0]) {
       edits.value = {}
       openId.value = ''
-      // 「正在画」那几格也松开：它们按 location_id_empty 记，而两部剧里撞
+      // 「正在画」那几格也松开：它们按 location_id_empty 记，而两部电影里撞
       // 同一个 id 不稀奇。见 useRefStream 的 forgetAll。
       forgetAll()
     }
@@ -395,13 +395,13 @@ function changed(id) {
 }
 
 /**
- * 照故事给这一集的地方定妆。
+ * 照故事给这一章的地方定妆。
  *
  * **这一步不创作新的地方**——地方是故事里定的，这里只是把故事里那份名单
  * 翻成"长什么样"：空间结构、光线基调、色彩方案。
  *
  * 默认只补还没定过妆的：库里已有的同名场景保住，手改过的描述和传过的
- * 空景图都还在。勾了覆盖才让新出的顶掉，那会把全剧镜头退回重跑。
+ * 空景图都还在。勾了覆盖才让新出的顶掉，那会把全片镜头退回重跑。
  */
 
 async function save(id) {
@@ -411,9 +411,9 @@ async function save(id) {
     if (draft[key] !== undefined && draft[key] !== null) patch[key] = draft[key]
   }
   // 改名字要多说一句，和角色那一页同一件事：引擎只改资产库里这一条，而
-  // 故事那头每一章记的地点是**名字**（chapter.locations，不是 id），分集
-  // 线上那一排空景图正是拿章里的名字去查的（AssetEpisodes 的 castOf）。
-  // 镜头表不受影响：那里存的是 location_id。
+  // 故事那头每一章记的地点是**名字**（chapter.locations，不是 id），而这
+  // 张牌上「出现在哪几章」那一栏正是拿章里的名字去比的（useChapterIndex
+  // 的 chapterLabel）。镜头表不受影响：那里存的是 location_id。
   const was = locations.value.find((l) => l.location_id === id)
   const renamed = was && patch.name !== undefined && patch.name !== was.name
   const result = await run(
@@ -425,13 +425,13 @@ async function save(id) {
     ? `已保存，${result.reset_shots} 个镜头退回重跑。`
     : '已保存。'
   if (renamed) {
-    // 同角色那一页：分集线按 chapter.locations 的名字认地方，而重出分镜时
+    // 同角色那一页：「出现在哪几章」按 chapter.locations 的名字认地方，而重出分镜时
     // 场次头「【第1场 · 夜 · 内 · 天台】」里那个地名也是按名字认回 id 的
     // （storyboard.cpp 的 resolve_scene_location）。改名只动这一条。
     ui.push(
       'warn',
       saved +
-        '改的只是设定库这一条——故事和已经写好的剧本里还是旧名字：分集线上这个地方会认不出来，' +
+        '改的只是设定库这一条——故事和已经写好的剧本里还是旧名字：「出现在哪几章」那一栏会认不出来，' +
         '重出分镜时场次头里的地名也认不回来。去故事页点「提人物」能把故事那半对上。',
       12000,
     )
@@ -478,9 +478,9 @@ async function uploadEmpty(locationId, event) {
  */
 async function genEmpty(locationId) {
   // 开工那一刻把项目钉死：`runAsyncJob` 要等那条 socket 开（最多两秒）
-  // 才把请求发出去，这中间在项目库里点了别的剧的话，下面这个 `project`
+  // 才把请求发出去，这中间在项目库里点了别的电影的话，下面这个 `project`
   // 读到的就是新那一部。同文件里一键出图那条的理由。
-  // 同角色格：locationId 是上一部剧的 id，落到新那一部上就是 404。
+  // 同角色格：locationId 是上一部电影的 id，落到新那一部上就是 404。
   const project = session.projectPath
   const result = await run(
     () =>
@@ -510,7 +510,7 @@ async function clearEmpty(locationId) {
   //
   // 引擎撤完就调 reset_all_shots（参考图直接决定画面长什么样），而这颗按钮
   // 在界面上只是抽屉里一个小小的「撤掉」。这个库里比它轻的动作都问一句
-  // ——定妆覆盖、一键全部重画、三张一起画、删章删集删项目，全都问。
+  // ——定妆覆盖、一键全部重画、三张一起画、删章删项目，全都问。
   //
   // 顺带说清另一件事：文件本身留在盘上（引擎那儿写着"用户可能只是想先试试
   // 没有参考图的效果"），但界面上接不回来——要用回那张图得重新传一遍。
@@ -538,13 +538,13 @@ async function clearEmpty(locationId) {
 
 <template>
   <div class="locs">
-    <!-- 场景库是全剧共用的一份，分镜表里只存 id。这一页按「本集用到的」分组。
+    <!-- 场景库是全片共用的一份，分镜表里只存 id。这一页按「本章用到的」分组。
          工具行：刷新、重定、照故事定。 -->
     <!-- 只剩一个搜索框，理由见 AssetCharacters 里同一段。出了分镜之后
-         墙上只有本集用到的，那时候得说一句——不然 25 个场景只见 6 个，
+         墙上只有本章用到的，那时候得说一句——不然 25 个场景只见 6 个，
          像丢了。 -->
     <div class="toolbar">
-      <span v-if="hasShots" class="tiny dim">本集用到 {{ mine.length }} 个</span>
+      <span v-if="hasShots" class="tiny dim">本章用到 {{ mine.length }} 个</span>
       <span class="spacer" />
       <input v-model="q" class="input find" placeholder="找场景" />
     </div>
@@ -582,7 +582,7 @@ async function clearEmpty(locationId) {
         v-if="!loading && loadError"
         icon="warn"
         tone="warn"
-        title="读不到这部剧的设定"
+        title="读不到这部电影的设定"
         :hint="loadError"
       />
 
@@ -610,9 +610,9 @@ async function clearEmpty(locationId) {
       />
 
       <template v-else>
-        <!-- 本集场景 -->
+        <!-- 本章场景 -->
         <section>
-          <!-- 一处一张牌，和角色那面墙、和「这一集」那面镜头墙一个样子。
+          <!-- 一处一张牌，和角色那面墙、和「这一章」那面镜头墙一个样子。
                以前每张牌里都摊着名字输入框和三段描述——十来个场景就是三十
                多个输入框铺在一屏上，而这一页十次有九次只是来看一眼空景图
                对不对。改的时候点开抽屉。 -->
@@ -658,7 +658,7 @@ async function clearEmpty(locationId) {
                   class="cell__pct tiny"
                 >等待中</span>
                 <span v-if="usage.get(l.location_id)" class="loc__count pill pill--neutral">
-                  本集 {{ usage.get(l.location_id) }} 镜
+                  本章 {{ usage.get(l.location_id) }} 镜
                 </span>
               </div>
 
@@ -842,7 +842,7 @@ async function clearEmpty(locationId) {
         </div>
 
 
-        <!-- 其他集的场景 -->
+        <!-- 其他章的场景 -->
         <section v-if="others.length" class="stack stack--sm">
           <button
             class="fold"
@@ -851,7 +851,7 @@ async function clearEmpty(locationId) {
             @click="showOthers = !showOthers"
           >
             <AppIcon :name="showOthers ? 'arrowLeft' : 'arrowRight'" :size="14" />
-            <span>其他集的场景</span>
+            <span>其他章的场景</span>
             <span class="tab__n">{{ others.length }}</span>
           </button>
 
@@ -910,7 +910,7 @@ async function clearEmpty(locationId) {
   align-items: start;
 }
 
-/* 一处一张牌。和角色那面墙、和「这一集」那面镜头墙同一套——三处的尺寸
+/* 一处一张牌。和角色那面墙、和「这一章」那面镜头墙同一套——三处的尺寸
    和类名刻意长一样，改一处就该想到另外两处。 */
 .wall {
   display: grid;

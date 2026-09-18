@@ -70,7 +70,7 @@ describe('中文语速', () => {
   })
 
   it('对白占比也在 0 和 1 之间', () => {
-    // budget_chars = 时长 × 语速 × 这个数。超过 1 就是"整集全是对白还不够"
+    // budget_chars = 时长 × 语速 × 这个数。超过 1 就是"整章全是对白还不够"
     const share = engineNumber('dialogue_share')
     expect(share).toBeGreaterThan(0)
     expect(share).toBeLessThanOrEqual(1)

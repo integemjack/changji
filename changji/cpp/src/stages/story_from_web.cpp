@@ -54,7 +54,7 @@ std::vector<llm::Message> web_chapter_opening(StyleLine style_line, const Story&
     msgs.push_back(sys);
 
     std::string user = prompt::story_from_web::kUser;
-    user += style_line == StyleLine::ANIME ? "画风是动漫短剧。" : "画风是真人写实短剧。";
+    user += style_line == StyleLine::ANIME ? "画风是动漫电影。" : "画风是真人写实电影。";
     if (!story.logline.empty() || !story.premise.empty()) {
         user += prompt::story_from_web::kCtxStory;
         user += story.logline.empty() ? story.premise : story.logline;

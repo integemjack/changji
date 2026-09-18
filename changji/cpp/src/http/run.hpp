@@ -3,10 +3,10 @@
 // POST /api/run —— 开跑。
 //
 // 走 job 表：立刻返回 {"started": true, "queue": [...]}，进度靠
-// GET /api/run 轮询或者 WebSocket 推。一集跑几十分钟，同步返回没有意义。
+// GET /api/run 轮询或者 WebSocket 推。一章跑几十分钟，同步返回没有意义。
 //
-// 队列是为量产准备的：all_episodes 一次把整个项目有分镜的集都排上。
-// **一集出错不拖垮后面几集**——跑一晚上，早上发现第二集挂了导致后面十集
+// 队列是为量产准备的：all_episodes 一次把整个项目有分镜的章都排上。
+// **一章出错不拖垮后面几章**——跑一晚上，早上发现第二章挂了导致后面十章
 // 都没动，那这一晚上就白熬了。
 
 #include <functional>
@@ -26,7 +26,7 @@ namespace changji::http {
 ///
 /// 全都是回调而不是值，两个原因：一是**每次开跑现取配置**，用户改完
 /// 模型文件不用重启（这条是有代价学来的，见 sd_image.hpp 里那段注释）；
-/// 二是测试能塞假后端进来——真跑一集要几十分钟，而这一层要测的是
+/// 二是测试能塞假后端进来——真跑一章要几十分钟，而这一层要测的是
 /// 队列、错误汇总和状态码，那些几毫秒就能测完。
 struct RunDeps {
     std::function<config::Settings()> settings;
@@ -35,7 +35,7 @@ struct RunDeps {
     ///
     /// 要 store 是因为 ComfyUI 那条路的工作流在**项目里**
     /// （workflows/video.json 覆盖内置的那份）。只给 settings 的话，
-    /// "不同的剧用不同的模型"就没了。
+    /// "不同的电影用不同的模型"就没了。
     std::function<pipeline::Backends(const config::Settings&,
                                      const models::ProjectStore&)> backends;
     /// 还不能开工的话，为什么；空串 = 能。post_run 开跑前问一次。

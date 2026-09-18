@@ -34,7 +34,7 @@ function engineActLabels() {
 describe('四段段名', () => {
   it('引擎那份里的每一个名字，界面这份都有', () => {
     const engine = engineActLabels()
-    // 二十个槽（五组 × 四段），里面有重名（「集尾留扣」四组都用）
+    // 二十个槽（五组 × 四段），里面有重名（「章尾留扣」四组都用）
     expect(engine.length % 4).toBe(0)
     expect(engine.length).toBeGreaterThanOrEqual(8)
     const missing = [...new Set(engine)].filter((x) => !ACT_LABELS.includes(x))

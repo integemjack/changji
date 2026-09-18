@@ -27,7 +27,7 @@ const props = defineProps({
   /**
    * 入参要现算的时候给这个（可以是 async）。回 null 就当放弃，不报错。
    *
-   * 拆分镜那一步要的是这一集的剧本，而剧本得先去引擎取一趟——摆不进
+   * 拆分镜那一步要的是这一章的剧本，而剧本得先去引擎取一趟——摆不进
    * 一个静态的 payload 里。
    */
   resolve: { type: Function, default: null },

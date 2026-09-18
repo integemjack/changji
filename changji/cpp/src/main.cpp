@@ -1,4 +1,4 @@
-// changji —— AI 短剧生产流水线，C++ 后端。
+// changji —— AI 电影生产流水线，C++ 后端。
 //
 // 阶段 0：骨架。只有 /api/health、/api/doctor 和一个 WebSocket 端点，
 // 目的是把工具链和跨平台构建先跑通，别等写了两万行才发现某个依赖
@@ -344,7 +344,7 @@ int run(int argc, char** argv) {
     // --say 那一组。**这是阶段 9 唯一的实机判据**：进程内配音那条路
     // 有没有真的能出声，不跑一次是不知道的（代码写完了但一直没有权重）。
     // 做成命令行而不是接口，是因为它要在"整条流水线还跑不起来"的时候
-    // 就能单独验——出一集要模型、要 ffmpeg，那些是另外的坎。
+    // 就能单独验——出一章要模型、要 ffmpeg，那些是另外的坎。
     std::string say_text, say_voice, say_model, say_decoder;
     // 超分那条命令行的参数。见 sd_upscale.hpp 里为什么要有它。
     std::string up_in, up_out, up_model;
@@ -451,10 +451,10 @@ int run(int argc, char** argv) {
         return 1;
     }
 
-    // 超分：把出好的片子逐帧过 ESRGAN 再压到目标尺寸。
+    // 超分：把出好的成片逐帧过 ESRGAN 再压到目标尺寸。
     // **它是"不换硬件把分辨率拉上去"的那条路**——H3 在 32 GB 的卡上
     // 只出得了 960×544。风险是逐帧超分没有帧间一致性，细密纹理会闪，
-    // 所以做完一定要看片子，别只看单帧。
+    // 所以做完一定要看成片，别只看单帧。
     if (!up_in.empty()) {
         if (up_model.empty()) {
             std::cerr << "--upscale 还要 --upscale-model 指一个 ESRGAN 权重\n";

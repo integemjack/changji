@@ -40,7 +40,7 @@ public:
 ///
 ///   1. **项目自己的 `changji.toml` 完全不参与。** 建上下文用的是
 ///      `register_sd_slots` 里那个全局 `provider()`（`Runtime::snapshot()`），
-///      而出片每跑一集是拿 `load_settings(项目目录)` 的那一份跑的。
+///      而出片每跑一章是拿 `load_settings(项目目录)` 的那一份跑的。
 ///      于是我在项目里写 `video_flow_shift`，两次出片**字节完全相同**。
 ///   2. **上下文是 `Residency::Cached`**，改了全局配置也要等它被卸载才生效。
 ///      于是"改个参数重跑一镜看看"这件事根本不成立，而它不报错。
@@ -330,7 +330,7 @@ std::map<Slot, Scheduler::Measured> parse_measured_vram(
 /// sd.cpp 的上下文。**贵**：建一次要解析模型文件、建张量图、分配运行时缓冲。
 ///
 /// 所以它不是每次出图新建一个，而是挂在调度器的槽位上复用。
-/// 一集四十个镜头：复用是建一次用四十次，不复用是建四十次，
+/// 一章四十个镜头：复用是建一次用四十次，不复用是建四十次，
 /// 在 6GB 卡上后者慢到不可用。
 class SdContext {
 public:
@@ -384,7 +384,7 @@ using SettingsProvider = std::function<config::Settings()>;
 
 /// **这一趟活按哪份配置装模型。**
 ///
-/// 工作进程接活时，槽的 provider 读的是这台的 runtime 配置；而派活那部剧挑的
+/// 工作进程接活时，槽的 provider 读的是这台的 runtime 配置；而派活那部电影挑的
 /// 档位（Edit 还是基础、哪个量化）只盖在任务自己那份 settings 上
 /// （task_run.cpp 的 settings_for）。不盖到槽上的话，定妆图要基础权重、
 /// 槽却按 runtime 里的 `image` 装了 Edit——2026-09-16 实测：L20 上

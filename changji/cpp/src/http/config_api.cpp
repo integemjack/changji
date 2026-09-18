@@ -209,10 +209,10 @@ ApiResult post_connections(const json& body, const DoctorFn& check) {
         "tts_backend", "tts_base_url", "vram_gb_override"};
     forbid_extra(patch, kAllowed, "patch.");
 
-    // 正在跑的时候换机器会把这一集跑坏：前半集是一台机器出的，
-    // 后半集是另一台，画风对不上。
+    // 正在跑的时候换机器会把这一章跑坏：前半章是一台机器出的，
+    // 后半章是另一台，画风对不上。
     if (pipeline::jobs().running(pipeline::JobKind::Run)) {
-        throw ApiError(409, "正在跑，这时候换机器会把这一集跑坏");
+        throw ApiError(409, "正在跑，这时候换机器会把这一章跑坏");
     }
 
     // 值为 null 的当作没给，对应 pydantic 的 exclude_none=True
@@ -444,10 +444,10 @@ ApiResult post_connections(const json& body, const DoctorFn& check) {
 ApiResult post_settings(const json& body) {
     if (!body.is_object()) throw ApiError(400, "请求体要是一个对象");
 
-    // 正在跑的时候改参数会让这一集前后不一致：前十个镜头一种码率，
+    // 正在跑的时候改参数会让这一章前后不一致：前十个镜头一种码率，
     // 后十个另一种，拼起来能看出接缝。
     if (pipeline::jobs().running(pipeline::JobKind::Run)) {
-        throw ApiError(409, "正在跑，改参数会让这一集前后不一致");
+        throw ApiError(409, "正在跑，改参数会让这一章前后不一致");
     }
 
     // 老写法是把字段直接摊在请求体里，新写法包在 patch 里。两种都收，
@@ -470,7 +470,7 @@ ApiResult post_settings(const json& body) {
         "draft_width", "draft_height", "draft_steps",
         "final_width", "final_height", "final_steps",
         "fps", "crf", "subtitle_font", "subtitle_max_chars_per_line",
-        "subtitle_max_lines", "scene_transition_s", "episode_s",
+        "subtitle_max_lines", "scene_transition_s",
         "gates_enabled", "max_attempts_per_shot", "min_pixel_std",
         "min_frame_similarity", "max_audio_drift_s", "target_lufs",
         "fallback_on_exhausted"};
@@ -490,7 +490,7 @@ ApiResult post_settings(const json& body) {
     // **既在进程内生效，也写回 [tiers]。** 以前有意不写回，理由是"档位是
     // 按显存推的，写死等于把这台机器的显存刻进配置"。那个理由站不住：
     // 这个文件里 [models] 全是这台机器的模型路径，本来就是机器专属的。
-    // 真实后果是**设完重启就丢**——用户把成片档调成 1280×704 跑了一集，
+    // 真实后果是**设完重启就丢**——用户把成片档调成 1280×704 跑了一章，
     // 重启回到 960×544，而界面上没有任何提示。
     // 没填的项在 [tiers] 里是 0，照旧按显存推。
     for (const auto& [tier, prefix] :
@@ -573,7 +573,6 @@ ApiResult post_settings(const json& body) {
     take_int("subtitle_max_chars_per_line", s.assembly.subtitle_max_chars_per_line);
     take_int("subtitle_max_lines", s.assembly.subtitle_max_lines);
     take_num("scene_transition_s", s.assembly.scene_transition_s);
-    take_num("episode_s", s.assembly.episode_s);
 
     take_int("max_attempts_per_shot", s.gates.max_attempts_per_shot);
     take_num("min_pixel_std", s.gates.min_pixel_std);
@@ -675,8 +674,6 @@ ApiResult post_settings(const json& body) {
                     value = s.assembly.subtitle_max_lines;
                 else if (field == "scene_transition_s")
                     value = s.assembly.scene_transition_s;
-                else if (field == "episode_s")
-                    value = s.assembly.episode_s;
             } else if (section == "gates") {
                 if (field == "enabled") value = s.gates.enabled;
                 else if (field == "max_attempts_per_shot")

@@ -40,7 +40,7 @@ inline constexpr double kMinPlausibleDurationS = 1.05;
 ///
 /// ⚠️ 副作用：一个字的台词（"嗯。"估约 0.94 秒）配出来不到 1.05 秒时会被
 /// 误判成空音频。**照抄 Python，不在这里悄悄放宽**——放宽的代价是
-/// 一整集静音文件被当成配音成功，而那比偶尔误杀一句严重得多。
+/// 一整章静音文件被当成配音成功，而那比偶尔误杀一句严重得多。
 /// 真撞上了要改的是那个常数本身，并且要有实测支撑。
 void reject_silent_audio(const std::filesystem::path& path, double duration_s,
                          const std::string& text);
@@ -65,7 +65,7 @@ TTSBackend http_tts_backend(const std::string& base_url, double timeout_s,
 /// 进程内配音（阶段 9）。**要 CHANGJI_LLAMA=ON 编出来的二进制。**
 ///
 /// 和另外两个后端的区别在于**模型只载一次**：1.5 GB 的权重，
-/// 每句台词重载一遍的话，一集几十句就是几十次载入。
+/// 每句台词重载一遍的话，一章几十句就是几十次载入。
 /// 所以这里握着一个 shared_ptr，跟着 TTSBackend 的生命周期走。
 ///
 /// 载不起来返回 nullopt——调用方按"这条路搭不起来"处理，退回估算后端，
@@ -80,7 +80,7 @@ std::optional<TTSBackend> local_tts_backend(
 ///
 /// **顺带把调度器里的配音槽注册上。** 注册是 local_tts_backend 做的事，
 /// 而借槽的人（render_voice_take、AudioStage）自己不注册——引擎刚重启、
-/// 还没跑过任何一集时直接去借，报的是「槽 配音 还没注册」，指不到根因。
+/// 还没跑过任何一章时直接去借，报的是「槽 配音 还没注册」，指不到根因。
 /// 2026-09-13 实测撞到：八个种子全部摇不出来，就是这一条。
 ///
 /// 抽出来是因为 tts_api.cpp 和 voices.cpp 都要它，而这套代码里"同一段
@@ -134,7 +134,7 @@ const char* voice_sample_text();
 /// 人，而音色是 (种子, 文本) 的函数——换一句台词就是换一个人。
 /// 2026-09-13 在 walk_c 上量到的：同一个角色 c_lin_hao 的**同一句话被
 /// 拆成两半**，前半句 136 Hz、后半句 338 Hz，一句话说到一半换了个人。
-/// 整集每个角色每句话都是不同的人，而且全程不报错。
+/// 整章每个角色每句话都是不同的人，而且全程不报错。
 ///
 /// 按角色的 voice_gender 从预置表里挑（男声挑低的、女声挑高的），
 /// 用 voice_order 错开，免得两个男角色撞成同一个人。

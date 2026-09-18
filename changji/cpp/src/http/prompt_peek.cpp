@@ -115,7 +115,7 @@ std::vector<std::string> split_by_scene(const std::string& pasted) {
         i = nl + 1;
     }
     if (seen_head) out.push_back(cur);
-    // 一个头都没有：整集一次拆那条路只有一段，别逼人去写分隔头。
+    // 一个头都没有：整章一次拆那条路只有一段，别逼人去写分隔头。
     if (out.empty() && !pasted.empty()) out.push_back(pasted);
     return out;
 }

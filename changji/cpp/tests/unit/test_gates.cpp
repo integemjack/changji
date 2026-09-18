@@ -291,7 +291,7 @@ TEST_CASE("文件问题一律 RETRY") {
 }
 
 TEST_CASE("配音装不进镜头是 REGRESS") {
-    // 这个检查放在装配之前。装完再发现装不下就得重做整集。
+    // 这个检查放在装配之前。装完再发现装不下就得重做整章。
     models::Shot s = make_shot();
     models::DialogueLine line;
     line.char_id = "c_lin_wan";
@@ -374,7 +374,7 @@ TEST_CASE("成片检查：时长容差比单镜宽") {
 
 TEST_CASE("重试超限时降级，不是停下来") {
     // 无人值守跑一晚上，为一镜停住等于整晚白熬。降级（留着最后那一版）
-    // 至少整集能出片，问题记录下来事后查。
+    // 至少整章能出片，问题记录下来事后查。
     config::GateConfig cfg;
     cfg.max_attempts_per_shot = 3;
 

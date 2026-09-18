@@ -139,8 +139,8 @@ AssetLibrary generate_bible(const std::string& script, StyleLine style_line,
 
 /// 从故事出圣经。名单已经在故事里了，这一步只定妆。
 ///
-/// 和上面那个的区别见 stages/bible.hpp：老的那条是"读一集剧本找出角色"，
-/// 于是全剧共用的资产库其实是从第一集推出来的。
+/// 和上面那个的区别见 stages/bible.hpp：老的那条是"读一章剧本找出角色"，
+/// 于是全片共用的资产库其实是从第一章推出来的。
 AssetLibrary generate_bible_from_story(const Story& story, StyleLine style_line,
                                        const std::string& aspect_ratio,
                                        llm::Client& client,
@@ -292,7 +292,7 @@ ApiResult merge_bible(const ProjectStore& store, const AssetLibrary& fresh,
     const int remapped = remap_shots(project, remap);
     if (remapped > 0) store.save_project(project);
 
-    // 外观变了等于全剧提示词都变了，已渲染的镜头得退回重跑。
+    // 外观变了等于全片提示词都变了，已渲染的镜头得退回重跑。
     // 只新增没覆盖的话，老镜头用的还是原来那份设定，不用动。
     const int reset = overwrite ? reset_all_shots(store) : 0;
 
@@ -411,15 +411,15 @@ ApiResult post_bible(const json& body, llm::Client& client,
                            "正在定角色和场景"};
     const pipeline::CancelLink stop_here{tok, act};
 
-    // 名单从哪来。默认看项目里有没有故事——有就从故事出，那份名单是全剧
-    // 完整的；没有就退回老路径从一集剧本里找，老项目还得能用。
+    // 名单从哪来。默认看项目里有没有故事——有就从故事出，那份名单是全片
+    // 完整的；没有就退回老路径从一章剧本里找，老项目还得能用。
     const std::string source = opt_str(body, "source", "auto");
     if (source != "auto" && source != "story" && source != "script") {
         throw unprocessable_top("source",
                                 "Input should be 'auto', 'story' or 'script'",
                                 body.at("source"), "enum");
     }
-    // 定妆要知道这部剧是横是竖：比例由画幅派生，而它会写进资产库
+    // 定妆要知道这部电影是横是竖：比例由画幅派生，而它会写进资产库
     // （见 StyleProfile::aspect_ratio）。以前这儿吃 parse_bible 的默认值
     // "9:16"，横屏项目每定一次妆就被改回竖屏。
     const std::string ratio =
@@ -442,8 +442,8 @@ ApiResult post_bible(const json& body, llm::Client& client,
         script = ep ? text::strip_ws(ep->script) : std::string();
     }
     if (script.empty()) {
-        // 没指定就用第一集有内容的剧本。角色设定是全剧共用的，
-        // 拿哪一集出都行，但总得有一集写好了。
+        // 没指定就用第一章有内容的剧本。角色设定是全片共用的，
+        // 拿哪一章出都行，但总得有一章写好了。
         for (const auto& ep : project.episodes) {
             const std::string s = text::strip_ws(ep.script);
             if (!s.empty()) {
@@ -452,7 +452,7 @@ ApiResult post_bible(const json& body, llm::Client& client,
             }
         }
     }
-    if (script.empty()) throw ApiError(400, "还没有剧本，先去写一集");
+    if (script.empty()) throw ApiError(400, "还没有剧本，先去写一章");
 
     const AssetLibrary fresh =
         generate_bible(script, project.style_line, ratio, client, tok);
@@ -490,7 +490,7 @@ ApiResult post_plan(const json& body, llm::Client& client,
     // 角色设定。已有就不重做，避免覆盖用户改过的设定。
     if (regenerate || assets.characters.empty()) {
         act.set_message("正在定角色和场景");
-        // 有故事就从故事出——名单是全剧完整的，不是从这一集里找出来的。
+        // 有故事就从故事出——名单是全片完整的，不是从这一章里找出来的。
         const Story story = load_story_or_400(store);
         // 比例由画幅派生，理由同 post_bible 里那一段。
         const std::string ratio =
@@ -504,7 +504,7 @@ ApiResult post_plan(const json& body, llm::Client& client,
         act.set_message("正在拆镜头");
     }
 
-    // 单镜的时长档位是这部剧的属性（[video].max_shot_s），按项目那份设置
+    // 单镜的时长档位是这部电影的属性（[video].max_shot_s），按项目那份设置
     // 算一遍再拆镜头。见 config::apply_video_limits。
     config::apply_video_limits(config::load_settings(store.root()));
     // 切场、拆镜、补台词、查覆盖、重编号、拉回时长，都在 run_storyboard 里
@@ -521,11 +521,11 @@ ApiResult post_plan(const json& body, llm::Client& client,
         sb.pasted = split_by_scene(pasted);
         // **数量对不上就当场说，别硬跑。** 少一段的话后面几场整体错位
         // 一场，而错位出来的分镜表看着是合法的，没有任何报错——人要等到
-        // 出片才发现第二集的画面配着第三集的台词。
+        // 出片才发现第二章的画面配着第三章的台词。
         const std::size_t want = stages::split_scenes(script, assets).size();
         if (want > 1 && sb.pasted.size() != want) {
             throw ApiError(
-                400, "这一集拆成 " + std::to_string(want) + " 场，粘回来的只有 " +
+                400, "这一章拆成 " + std::to_string(want) + " 场，粘回来的只有 " +
                          std::to_string(sb.pasted.size()) +
                          " 段。每一场之间要留着复制出去时那一行"
                          "「===== 第 N/M 场 …… =====」");
@@ -552,8 +552,8 @@ ApiResult post_plan(const json& body, llm::Client& client,
     //
     // 上面拆一趟镜头要一到几分钟（`regenerate` 那条还要先跑一趟定妆），
     // 而 `project` 是那几分钟**之前**读的。把它整份写回去，这期间界面上改
-    // 的东西全被悄悄吞掉：别的集的镜头抽屉存的那一笔、改过的集名、手动加
-    // 的一集。批量那条（post_plan_all）和写整季那条都是这么修的。
+    // 的东西全被悄悄吞掉：别的章的镜头抽屉存的那一笔、改过的章名、手动加
+    // 的一章。批量那条（post_plan_all）和写全片那条都是这么修的。
     Project latest = store.load_project();
     Episode* ep = latest.episode_by_id(episode_id);
     if (ep == nullptr) {
@@ -571,7 +571,7 @@ ApiResult post_plan(const json& body, llm::Client& client,
     // **按成片长度报，不按分镜表那串名义值加。** 模型只能按格子出帧，
     // 名义 4 秒出来是 4.458 秒（见 stages::real_total_s）。这个数不只是
     // 显示：前端拿它判「只排到 X，分镜太少」（`< target * 0.8`），
-    // 名义值偏小会把排够了的一集误判成不够。
+    // 名义值偏小会把排够了的一章误判成不够。
     const double total = stages::real_total_s(shots);
     int lipsync = 0;
     for (const Shot& s : shots) {

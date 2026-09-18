@@ -75,7 +75,7 @@ TEST_CASE("提示词里要有选中那段、前后文、和人物名") {
     CHECK(p.find("第一段。") != std::string::npos);
     CHECK(p.find("第三段。") != std::string::npos);
     // **人物名必须带。** 不带的话模型会把"他"改成一个自己顺手起的名字，
-    // 而那个名字在全剧其它地方一次都没出现过
+    // 而那个名字在全片其它地方一次都没出现过
     CHECK(p.find("林晚") != std::string::npos);
     CHECK(p.find("这儿太赶了，铺一下情绪") != std::string::npos);
     // 这一条是整个设计的地基
@@ -179,12 +179,12 @@ TEST_CASE("写回去：有说法的钩子跟着挪，别被无名的顶掉") {
         return -1;
     };
 
-    // **有说法的钩子是一集停在哪的全部依据**（实跑里它把"停在真悬念上"
+    // **有说法的钩子是一章停在哪的全部依据**（实跑里它把"停在真悬念上"
     // 的比例从 25% 抬到 56%）。图省事整章重算 paragraph_hooks 的话，这些
     // 会被一批无名的段落边界悄悄顶掉——每改一段就掉一批，界面上毫无反应。
     CHECK(named_at(next, "他推门进来") == 15 + delta);
     CHECK(named_at(next, "伞留在门口") == 19 + delta);
-    // 位置是单调不减的：分集算法在有序集合里找最近切点，乱序会找错
+    // 位置是单调不减的：按位置对位的那几处都在有序集合里找最近的一条，乱序会找错
     for (std::size_t i = 1; i < next.chapters[0].hooks.size(); ++i) {
         CHECK(next.chapters[0].hooks[i - 1].at_char <=
               next.chapters[0].hooks[i].at_char);
@@ -198,7 +198,7 @@ TEST_CASE("写回去：落在被换掉那段里面的钩子丢掉") {
 
     const Story next = apply_revision(s, mid_span(), "换过的。");
     for (const auto& h : next.chapters[0].hooks) {
-        // 它指着的那句话已经不在了，留着的话分集会切在一个不存在的悬念上
+        // 它指着的那句话已经不在了，留着的话界面上会指着一句不存在的悬念
         CHECK(h.text != "这句话马上要没了");
     }
 }

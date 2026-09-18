@@ -1,20 +1,20 @@
 <script setup>
 /**
- * 这一集的剧本。
+ * 这一章的剧本。
  *
- * 一集的剧本是四层，前三层来自设定和故事，只有第四层要 AI：
+ * 一章的剧本是四层，前三层来自设定和故事，只有第四层要 AI：
  *
- *   场次头  在哪、什么光、跟着谁、谁在场、停在什么钩子上   ← 分集表压着的那几场
- *   原文    这一集要拍的那段小说                           ← 分集表切出来的 [from, to)
- *   四段    开场钩子 / 冲突推进 / 情绪回报 / 集尾留扣，按秒排
+ *   场次头  在哪、什么光、跟着谁、谁在场、停在什么钩子上   ← 章节计划压着的那几场
+ *   原文    这一章要拍的那段小说                           ← 章节计划圈出来的 [from, to)
+ *   四段    开场钩子 / 冲突推进 / 情绪回报 / 章尾留扣，按秒排
  *   拍子    动作行 + 「名字：台词」                         ← AI 改编出来的
  *
- * **2026-09-12 之前这一页只有第四层。** 一集在设定里切好了 900 字正文，到这儿
- * 看到的是「还没有剧本」加一个「AI 写这一集」——内容在，页面装作没有；而 AI
- * 那一步拿到的十样上下文（人物、关系、前情、这一集的场、原文、钩子）一样都
+ * **2026-09-12 之前这一页只有第四层。** 一章在设定里切好了 900 字正文，到这儿
+ * 看到的是「还没有剧本」加一个「AI 写这一章」——内容在，页面装作没有；而 AI
+ * 那一步拿到的十样上下文（人物、关系、前情、这一章的场、原文、钩子）一样都
  * 不给人看。用户的原话：「剧本不是在设定里已经处理获取了嘛？怎么还要 AI 重写？」
  *
- * 写这一集走 /api/script/write。这一集在分集表里有对应的一条时，引擎走故事
+ * 写这一章走 /api/script/write。这一章在章节计划里有对应的一条时，引擎走故事
  * 那条路：内容照着故事的那一段展开，结尾停在给定的钩子上。回包里的 source
  * 说的就是走了哪条。**按钮的字也跟着 source 走**：照着原文是「改编」，照着
  * 一句梗概才是「写」——「AI 重写」这三个字就是上面那个问题的来源。
@@ -70,14 +70,14 @@ const ctx = ref(null)
 const loading = ref(false)
 const mode = ref('read')
 /**
- * 写出来还没采用的那一份，**按「项目 + 集号」存**。
+ * 写出来还没采用的那一份，**按「项目 + 章号」存**。
  *
- * 原来是一个裸 ref，而写一篇要一两分钟：这中间在顶栏换一集，回包落地那
- * 一下 `draft.value = result` 就把**上一集的剧本**贴在新这一集的抽屉里，
- * 而「采用」发的是当前的集号——按下去就是 ep01 的稿子盖掉 ep02 的正文。
+ * 原来是一个裸 ref，而写一篇要一两分钟：这中间在顶栏换一章，回包落地那
+ * 一下 `draft.value = result` 就把**上一章的剧本**贴在新这一章的抽屉里，
+ * 而「采用」发的是当前的章号——按下去就是 ep01 的稿子盖掉 ep02 的正文。
  * `load()` 里那句 `draft.value = null` 挡不住它：清空发生在回包之前。
  *
- * 按集号存之后，落地那一下只填它自己那一格；人切回去还能接着看，不用再
+ * 按章号存之后，落地那一下只填它自己那一格；人切回去还能接着看，不用再
  * 等一两分钟。这一份**不落盘**（引擎只存大纲草稿，不存剧本草稿），所以
  * 丢掉就是白跑一趟。
  */
@@ -88,26 +88,26 @@ function setDraft(key, v) {
   else delete next[key]
   drafts.value = next
 }
-/** 当前这一集那一份。可写——模板里「丢弃」和下面几处照旧 `draft = null`。 */
+/** 当前这一章那一份。可写——模板里「丢弃」和下面几处照旧 `draft = null`。 */
 const draft = computed({
   get: () => drafts.value[ctxKey()] ?? null,
   set: (v) => setDraft(ctxKey(), v),
 })
 
 /**
- * 手里这份稿子是**哪一集**的。
+ * 手里这份稿子是**哪一章**的。
  *
  * 这一页是手动保存——敲完得自己点「保存」。有三条路能把没存的字弄丢，
  * 而且一声不吭：
  *
- *   · 顶栏换一集：下面那个 watch 直接 load()，把编辑器里的字盖掉；
- *   · 走到别的页（故事 / 设定）：这一格连同「这一集」整个卸掉；
+ *   · 顶栏换一章：下面那个 watch 直接 load()，把编辑器里的字盖掉；
+ *   · 走到别的页（故事 / 设定）：这一格连同「这一章」整个卸掉；
  *   · 刷新或者关标签页。
  *
- * 一集的剧本是几百上千字。故事页那边早就是「先冲再读」（见 StoryView 的
+ * 一章的剧本是几百上千字。故事页那边早就是「先冲再读」（见 StoryView 的
  * flushAll 和它 onUnmounted 上那段），这一页漏了，照它办。
  *
- * **换集之后 session 里的路径和集号已经是新的那一集了**，所以得记着这份
+ * **换章之后 session 里的路径和章号已经是新的那一章了**，所以得记着这份
  * 稿子原来是谁的，存的时候用记下的这一份——不然就把 ep01 的剧本写进
  * ep02 了。目标时长一起记：它是从 ctx 推出来的，而 ctx 也会被 load 换掉。
  */
@@ -116,10 +116,10 @@ let owner = null
 /** 这一趟读砸、而且手里那份也清掉了的话，那句话。 */
 const loadError = ref('')
 const dirty = computed(() => script.value !== savedScript.value)
-/** 「现在在看哪部剧的哪一集」。异步那几趟拿它认自己有没有过期。 */
+/** 「现在在看哪部电影的哪一章」。异步那几趟拿它认自己有没有过期。 */
 const ctxKey = () => `${session.projectPath}\u0000${session.episodeId}`
 const wordCount = computed(() => countScriptChars(script.value))
-// 时长和引擎写剧本时用的同源：有分集表按分集表，没有按这一集自己的
+// 时长和引擎写剧本时用的同源：有章节计划按章节计划，没有按这一章自己的
 const durationS = computed(
   () => ctx.value?.target_duration_s || session.episode?.target_duration_s || 60,
 )
@@ -128,14 +128,14 @@ const scenes = computed(() => ctx.value?.scenes ?? [])
 const sourceText = computed(() => ctx.value?.text ?? '')
 const sourceChars = computed(() => [...sourceText.value].length)
 /**
- * 上一集是怎么收的（按分集表的顺序取上一条，最多 300 字）。
+ * 上一章是怎么收的（按章节计划的顺序取上一条，最多 300 字）。
  *
- * **和喂给模型的是同一段**：引擎写这一集剧本时把它拼进提示词里
+ * **和喂给模型的是同一段**：引擎写这一章剧本时把它拼进提示词里
  * （`render_script_context` 的 previous_tail），这儿显示的就是那一段本身，
  * 不另算一份——两边各取各的话，人照着屏幕上这段判断"接得上不上"，而模型
  * 看的是另一段。
  *
- * 第一集、或者这一集不在分集表上时是空的，那时候整块不显示。
+ * 第一章、或者这一章不在章节计划上时是空的，那时候整块不显示。
  */
 const previousTail = computed(() => ctx.value?.previous_tail ?? '')
 const chapterNames = computed(() =>
@@ -157,18 +157,18 @@ async function load() {
     loading.value = false // 理由同镜头墙那处：被顶掉的那趟不会清它
     return
   }
-  // **这一趟是给哪一集读的。**
+  // **这一趟是给哪一章读的。**
   //
-  // 顶栏连着换两集，两趟请求都在路上，回来的顺序不保证——慢的那一趟后落地
-  // 就把上一集的剧本装进当前这一集的编辑器里。而 savedScript 也一起被设成
-  // 它，于是"有没有改过"显示的是没改过，人接着敲两个字一存，**上一集的
-  // 整篇剧本就写进这一集了**。原料那一份（story.json 可能几百 KB）比剧本
+  // 顶栏连着换两章，两趟请求都在路上，回来的顺序不保证——慢的那一趟后落地
+  // 就把上一章的剧本装进当前这一章的编辑器里。而 savedScript 也一起被设成
+  // 它，于是"有没有改过"显示的是没改过，人接着敲两个字一存，**上一章的
+  // 整篇剧本就写进这一章了**。原料那一份（story.json 可能几百 KB）比剧本
   // 本身慢，顺序反过来是真会发生的。
   const want = ctxKey()
   loading.value = true
   // **这儿原来有一句 `draft.value = null`。** 那时候草稿是个裸 ref、装的
-  // 是上一集那一份，进来先清是对的。现在草稿按集号存，这一句清的正好是
-  // **要进的这一集自己那一份**——在 ep02 写了一篇没采用、去 ep01 看一眼
+  // 是上一章那一份，进来先清是对的。现在草稿按章号存，这一句清的正好是
+  // **要进的这一章自己那一份**——在 ep02 写了一篇没采用、去 ep01 看一眼
   // 再回来，那一篇就没了，而它不落盘，等于白跑一两分钟。
   try {
     const [data, context] = await Promise.all([
@@ -191,14 +191,14 @@ async function load() {
     if (want !== ctxKey()) return
     // **读砸了就得把编辑器空出来。**
     //
-    // 这儿原来只弹一句错，编辑器一个字不动——而这一趟只在换集/换剧时跑，
+    // 这儿原来只弹一句错，编辑器一个字不动——而这一趟只在换章/换片时跑，
     // 于是砸了之后 ep02 的标签下面**摆着 ep01 的整篇剧本**，`savedScript`
     // 也还是它，所以连「未存」都不亮：看上去就是 ep02 本来就有这么一篇。
-    // 接着敲两个字按保存，写进去的是 ep02（save 用的是当前的集号）——
+    // 接着敲两个字按保存，写进去的是 ep02（save 用的是当前的章号）——
     // 上面 owner 那段防的正是这件事，只是防住了乱序那条路，没防住这条。
     //
-    // 引擎那头"这一集还没写剧本"回的是 200 加一个空串，不是错；能走到这儿
-    // 的是这一集根本不在了（404）、项目读不出来、或者引擎连不上。
+    // 引擎那头"这一章还没写剧本"回的是 200 加一个空串，不是错；能走到这儿
+    // 的是这一章根本不在了（404）、项目读不出来、或者引擎连不上。
     if (owner?.project !== session.projectPath || owner?.episode !== session.episodeId) {
       script.value = ''
       savedScript.value = ''
@@ -206,11 +206,11 @@ async function load() {
       owner = null
       mode.value = 'read'
       // **清空之后不能摆"还没有剧本"那一屏。** 手里既然一个字都没有，
-      // 「这一集还没有剧本 · AI 写这一集」和"读砸了"长得一模一样——而
+      // 「这一章还没有剧本 · AI 写这一章」和"读砸了"长得一模一样——而
       // 这会儿到底有没有根本不知道。按下去就是拿新写的盖掉可能还在的
       // 那篇。同 StoryView 上那段（「读不出来的时候不能摆"开始写"那一屏」）。
       //
-      // 只在**清了**的那一支记：owner 还对得上说明手里那份就是这一集的，
+      // 只在**清了**的那一支记：owner 还对得上说明手里那份就是这一章的，
       // 它照样显示，弹一句就够了——那时候摆个错误框反而把稿子挡住。
       loadError.value = err.message
     }
@@ -222,7 +222,7 @@ async function load() {
 }
 
 /**
- * 把手里这份没存的稿子冲出去，落在**它自己那一集**上。
+ * 把手里这份没存的稿子冲出去，落在**它自己那一章**上。
  *
  * 不等它回来：请求发出去闭包就还活着，这一页该卸卸、该换换。
  *
@@ -234,7 +234,7 @@ function flush() {
   const text = script.value
   if (!text.trim()) return
   const from = owner
-  owner = null // 换集和卸载可能接连来，别存两遍
+  owner = null // 换章和卸载可能接连来，别存两遍
   api
     .saveScript({
       project: from.project,
@@ -263,7 +263,7 @@ function flush() {
 function beforeUnload(e) {
   const unsaved = dirty.value && script.value.trim()
   const inFlight = isBusy('write')
-  // 草稿按集号存着，别只看当前这一格：在 ep01 写了一篇没采用、切到 ep02
+  // 草稿按章号存着，别只看当前这一格：在 ep01 写了一篇没采用、切到 ep02
   // 再刷新，丢的是 ep01 那一篇。
   if (!unsaved && !inFlight && !Object.keys(drafts.value).length) return
   e.preventDefault()
@@ -297,7 +297,7 @@ onUnmounted(() => {
  * 「拦的只有浏览器那一半」，这儿是另一半。
  */
 onBeforeRouteLeave(() => {
-  // 草稿按集号存着，别只看当前这一格：在 ep01 写了一篇没采用、切到 ep02
+  // 草稿按章号存着，别只看当前这一格：在 ep01 写了一篇没采用、切到 ep02
   // 再走开，丢的是 ep01 那一篇。
   const n = Object.keys(drafts.value).length
   if (!n && !isBusy('write')) return true
@@ -318,9 +318,9 @@ watch(
 )
 
 async function write() {
-  // 开工那一刻把四样都钉死。这一趟一两分钟，中途换集的话：请求本身会带
-  // 着新集号（`runAsyncJob` 要等 socket 开才发，最多两秒）、梗概和目标时
-  // 长也成了新那一集的，而写出来的东西还会落到新那一集的抽屉里。
+  // 开工那一刻把四样都钉死。这一趟一两分钟，中途换章的话：请求本身会带
+  // 着新章号（`runAsyncJob` 要等 socket 开才发，最多两秒）、梗概和目标时
+  // 长也成了新那一章的，而写出来的东西还会落到新那一章的抽屉里。
   const project = session.projectPath
   const episodeId = session.episodeId
   const key = ctxKey()
@@ -343,7 +343,7 @@ async function write() {
   )
   if (!result) return
   setDraft(key, result)
-  // 人已经走了：别把它画在别的集上，也别当它没发生过——这一份没落盘。
+  // 人已经走了：别把它画在别的章上，也别当它没发生过——这一份没落盘。
   if (key !== ctxKey()) {
     ui.info(`${episodeId} 的剧本写好了，切回那一章就能看`)
     return
@@ -352,7 +352,7 @@ async function write() {
   //
   // 「采用」这一步存在的理由只有一个：它会**盖掉已经存下的那一版**，而那
   // 一版可能是人一句句改过的（见 adopt 里那段）。空章上没有任何东西会被
-  // 盖掉——那一下点击什么也没保住，纯粹是多一步。一部剧八章就是八下。
+  // 盖掉——那一下点击什么也没保住，纯粹是多一步。一部电影八章就是八下。
   // 用户 2026-09-16 起反复说的「交互过程也太繁琐」，这是其中一处。
   //
   // 有剧本的时候照旧：出草稿、人看过再点采用（那时候按钮上写的是
@@ -367,7 +367,7 @@ async function adopt() {
   //
   // 有剧本的时候那颗按钮写的是「AI 重写」/「重新改编」，出来的草稿点
   // 「采用」就直接盖过去——引擎那头 `post_script` 一句 `ep->script =
-  // script` 就完了，没有回退。而这一集的剧本可能是人一句句改过的。
+  // script` 就完了，没有回退。而这一章的剧本可能是人一句句改过的。
   //
   // 故事页同一件事早就问了：「采用会把现在这 N 章整份换掉。确定？」，
   // 而且只在真的会换掉时才问（`replacing`）。这儿照它：没存过、或者草稿
@@ -385,14 +385,14 @@ async function adopt() {
       return
     }
   }
-  // **整件事钉在它自己那一集上。**
+  // **整件事钉在它自己那一章上。**
   //
-  // 一个来回之间在顶栏换一集：请求本身是同步拼好的（发的是对的那一集），
-  // 但落地这几句原来现读——`draft.value` 是按集号取的（见上面那段），换集
-  // 之后它是新那一集的那一份、多半是 null，`draft.value.script` 当场抛
-  // TypeError；就算不为 null，那也是把**上一集采用的稿子**画进新这一集的
+  // 一个来回之间在顶栏换一章：请求本身是同步拼好的（发的是对的那一章），
+  // 但落地这几句原来现读——`draft.value` 是按章号取的（见上面那段），换章
+  // 之后它是新那一章的那一份、多半是 null，`draft.value.script` 当场抛
+  // TypeError；就算不为 null，那也是把**上一章采用的稿子**画进新这一章的
   // 编辑器里，而 savedScript 一起被设成它，"有没有改过"显示没改过——接着
-  // 敲两个字一存，整篇就写进这一集了（和 load 那条防的是同一件事）。
+  // 敲两个字一存，整篇就写进这一章了（和 load 那条防的是同一件事）。
   const key = ctxKey()
   const project = session.projectPath
   const episodeId = session.episodeId
@@ -418,7 +418,7 @@ async function adopt() {
 }
 
 async function save() {
-  // 同 adopt：存的是这一集这一份，落地那几句也只能动这一集。
+  // 同 adopt：存的是这一章这一份，落地那几句也只能动这一章。
   const key = ctxKey()
   const sent = script.value
   const done = await run(
@@ -432,8 +432,8 @@ async function save() {
     { key: 'save', success: '剧本已保存', refresh: true },
   )
   if (!done) return
-  // 换集了就别动新这一集的状态：`savedScript` 被设成上一集那份的话，
-  // 新这一集会显示成"没改过"，而它可能正改着。
+  // 换章了就别动新这一章的状态：`savedScript` 被设成上一章那份的话，
+  // 新这一章会显示成"没改过"，而它可能正改着。
   if (key !== ctxKey()) return
   savedScript.value = sent
   if (sent.trim()) mode.value = 'read'
@@ -443,7 +443,7 @@ async function save() {
 <template>
   <div class="scr">
     <!-- 读砸了整条都不摆。两个理由：左边那个字数这会儿是 0，而那不是
-         "没写"是"不知道"；「AI 写这一集」按下去就是拿新写的盖掉可能还在
+         "没写"是"不知道"；「AI 写这一章」按下去就是拿新写的盖掉可能还在
          的那篇。 -->
     <div v-if="!loadError" class="toolbar">
       <!-- 章模式下不提目标时长：这一章多长由它的内容定，不是奔着一个数去写的。
@@ -491,7 +491,7 @@ async function save() {
         :title="
           session.episodes.length
             ? '把全项目还没有剧本的章一次改编完，已经有剧本的不动'
-            : '这部剧还一章都没有——章是自动对上集的，先去故事页写一份大纲'
+            : '这部电影还一章都没有，先去故事页写一份大纲'
         "
         @click="scriptAll"
       >
@@ -499,7 +499,7 @@ async function save() {
       </button>
     </div>
 
-    <!-- 场次头：写剧本的依据，来自分集表压着的那几场，不来自 AI。
+    <!-- 场次头：写剧本的依据，来自章节计划压着的那几场，不来自 AI。
          **没剧本时摊开，有了剧本折起来**——那时它说的话剧本已经说过了，
          和底下「原文」同一条规矩。 -->
     <details v-if="hasHead" class="head" :open="!script.trim()">
@@ -523,12 +523,12 @@ async function save() {
       <div class="head__foot tiny dim">
         <span v-if="chapterNames">照 {{ chapterNames }} 展开</span>
         <span v-if="ctx.hook">· 停在「{{ ctx.hook }}」</span>
-        <span v-if="!fromStory">这一章不在分集表上，照梗概写</span>
+        <span v-if="!fromStory">这一章不在章节计划上，照梗概写</span>
       </div>
     </details>
 
-    <!-- 上一集怎么收的。**摆在原文前面**：时间上它在前，而"接得上接不上"
-         是读这一集原文时心里带着的那个问题。
+    <!-- 上一章怎么收的。**摆在原文前面**：时间上它在前，而"接得上接不上"
+         是读这一章原文时心里带着的那个问题。
          默认收着——它是背景，不是这一页要读的正文（那是下面的原文）。 -->
     <details v-if="previousTail" class="source">
       <summary class="source__sum">
@@ -538,7 +538,7 @@ async function save() {
       <div class="source__body">{{ previousTail }}</div>
     </details>
 
-    <!-- 原文：这一集要拍的那段小说。没剧本时默认展开，人读的就是它 -->
+    <!-- 原文：这一章要拍的那段小说。没剧本时默认展开，人读的就是它 -->
     <details v-if="sourceText" class="source" :open="!script.trim()">
       <summary class="source__sum">
         <span>原文</span>
@@ -568,12 +568,12 @@ async function save() {
         </button>
         <button class="btn btn--ghost btn--sm" type="button" @click="draft = null">丢弃</button>
       </div>
-      <!-- 走的哪条路。「这一集为什么是这些内容」靠它解释 -->
+      <!-- 走的哪条路。「这一章为什么是这些内容」靠它解释 -->
       <p class="tiny dim">
         <template v-if="draft.source === 'story'">
           照 {{ (draft.chapters ?? []).join('、') }} 改编<template v-if="draft.hook">，停在「{{ draft.hook }}」</template>
         </template>
-        <template v-else>照梗概续写，这一章不在分集表上</template>
+        <template v-else>照梗概续写，这一章不在章节计划上</template>
       </p>
       <!-- **不摆「够不够」那个丸子**：一章写多长由它自己的内容定，没有
            目标时长，也就无所谓够不够。target-seconds / budget-chars / fit

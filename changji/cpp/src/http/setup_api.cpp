@@ -175,7 +175,7 @@ std::string pick_problem(const Group& g, const config::Settings& s) {
 }
 
 std::string current_option(const Group& g, const config::Settings& s) {
-    // **挑过的优先。** `[models.pick]` 记的是"这部剧要哪一档"，机器无关，
+    // **挑过的优先。** `[models.pick]` 记的是"这部电影要哪一档"，机器无关，
     // 项目里的 changji.toml 能盖全局（用户 2026-09-15 定的：项目优先）。
     // 认不出的 id 不在这儿处理，见 pick_problem——**别悄悄退回去**。
     if (const auto it = s.models.pick.find(g.key); it != s.models.pick.end()) {
@@ -622,15 +622,15 @@ ApiResult post_setup_download(const config::Settings& settings, const json& body
         throw ApiError(500, std::string("配置写不进去：") + e.what());
     }
 
-    // ---- 「这部剧要哪一档」写进项目 ----
+    // ---- 「这部电影要哪一档」写进项目 ----
     //
     // 上面那一趟写的是**文件名**（`[models].image = "…gguf"`），那是这台
-    // 机器的属性。而"要哪一档"是剧的属性、机器无关，写进项目里的
+    // 机器的属性。而"要哪一档"是电影的属性、机器无关，写进项目里的
     // changji.toml，跟着项目目录走——派到别的机器上时那台照这个 id 去自己
     // 的模型目录里找（用户 2026-09-15：模型配置跟项目走，项目优先）。
     //
     // **不给 project 就只写全局**，和以前一模一样：设置页那一节、以及给
-    // 对等机装模型那条路都不属于任何一部剧。
+    // 对等机装模型那条路都不属于任何一部电影。
     std::string wrote_pick;
     if (const auto pj = body.find("project");
         pj != body.end() && pj->is_string() && !pj->get<std::string>().empty()) {
@@ -651,7 +651,7 @@ ApiResult post_setup_download(const config::Settings& settings, const json& body
                 throw ApiError(500,
                                std::string("这一档记不进项目里：") + e.what() +
                                    "。文件和本机配置都已经写好了，"
-                                   "下次打开这部剧会退回按文件名认");
+                                   "下次打开这部电影会退回按文件名认");
             }
         }
     }

@@ -2,7 +2,7 @@
 //
 // 剧本多一种拍子 kind=scene，渲染成场次头「【第1场 · 夜 · 内 · 天台】」；
 // 分镜按场次头切成几场，两场以上一场一次拆，每场的地点由引擎盖上去。
-// 没有场次头的老剧本走整集那条路，一个字不变——那一条要钉死，它是三份
+// 没有场次头的老剧本走整章那条路，一个字不变——那一条要钉死，它是三份
 // 逐字节语料还能过的前提。
 
 #include <doctest/doctest.h>
@@ -308,7 +308,7 @@ TEST_CASE("一场的提示词：钉死地点和时段，带共用的硬性要求
     const std::string p = stages::build_scene_storyboard_prompt(
         scenes[1], 2, make_assets(), quota, "ep01", "林晚回头看向楼梯口");
     CAPTURE(p);
-    CHECK(has(p, "这一集共 2 场，这是第 2 场。"));
+    CHECK(has(p, "这一章共 2 场，这是第 2 场。"));
     CHECK(has(p, "这一场：日 · 外 · 咖啡馆门口"));
     CHECK(has(p, "location_id 一律填 loc_cafe。"));
     CHECK(has(p, "上一场收在：\n  林晚回头看向楼梯口"));
@@ -349,7 +349,7 @@ TEST_CASE("一场的 schema 把 location_id 钉成这一场的") {
         if (v == "location_id") req = true;
     }
     CHECK(req);
-    // 接不上就和整集那份一样
+    // 接不上就和整章那份一样
     CHECK(json(stages::llm_scene_shot_schema(a, {}, std::nullopt)) ==
           json(stages::llm_shot_schema(a, {})));
 }
@@ -373,7 +373,7 @@ TEST_CASE("盖场景的印：scene_id、location_id 统一，第一镜不接上�
 // 编排：一场走老路，两场以上一场一次
 // ---------------------------------------------------------------------------
 
-TEST_CASE("没有场次头：整集一次拆，提示词和以前逐字节一样") {
+TEST_CASE("没有场次头：整章一次拆，提示词和以前逐字节一样") {
     const auto a = make_assets();
     const std::string script = "林晚站在天台边缘。\n林晚：你来了。";
     ScriptedClient client({one_shot_reply("ep01_sh001", "c_lin_wan", "天台边缘", "你来了。")});
@@ -388,10 +388,9 @@ TEST_CASE("没有场次头：整集一次拆，提示词和以前逐字节一样
     const auto r = pipeline::run_storyboard(o, client, tok);
     REQUIRE(client.prompts.size() == 1);
     // **配额按剧本估的秒数，不按 duration_s。** 这儿原来钉的是
-    // `for_duration(10.0)`——那是集模式的做法：一集多长先定死，分镜按它拆、
-    // 拆完再压回去。2026-09-16 用户定了只留章模式，那条路删了：一章多长由
-    // 它自己的内容定，装配时再按每集时长切。duration_s 现在只在剧本估不出
-    // 秒数时兜底。
+    // `for_duration(10.0)`——那时是先把一章定死多长，分镜按它拆、拆完再
+    // 压回去。2026-09-16 用户定了只留章模式，那条路删了：一章多长由它自己
+    // 的内容定。duration_s 现在只在剧本估不出秒数时兜底。
     CHECK(client.prompts[0] ==
           stages::build_storyboard_prompt(
               script, a,

@@ -589,7 +589,7 @@ if(CHANGJI_LLAMA)
     # 只有吃 GBNF 文本的 `llama_sampler_init_grammar`。
     #
     # 不约束的后果不是"偶尔格式不对"：整条流水线是无人值守跑的，
-    # 一次解析失败就是一集卡住，而模型下一次未必吐得更好。
+    # 一次解析失败就是一章卡住，而模型下一次未必吐得更好。
     #
     # mtmd 那边**不能**链 common（它自己的 CMakeLists 里有断言），
     # 我们链在 changji 上，两者不冲突。
@@ -800,7 +800,7 @@ add_executable(changji
     src/infer/worker_proto.cpp
     src/http/flow.cpp
     src/http/film.cpp
-    src/pipeline/series_cut.cpp
+    src/pipeline/film_join.cpp
     src/http/webapp.cpp
     src/http/ws.cpp
     src/http/offload.cpp
@@ -1114,7 +1114,6 @@ if(CHANGJI_BUILD_TESTS)
         tests/unit/test_models_pick.cpp
         tests/unit/test_llm_command.cpp
         tests/unit/test_flow.cpp
-        tests/unit/test_series_cut.cpp
         tests/unit/test_web_story.cpp
         tests/unit/test_webapp.cpp
         tests/unit/test_shot.cpp
@@ -1166,6 +1165,7 @@ if(CHANGJI_BUILD_TESTS)
         tests/unit/test_subtitles.cpp
         tests/unit/test_gates.cpp
         tests/unit/test_assemble.cpp
+        tests/unit/test_film_join.cpp
         tests/unit/test_finish.cpp
         tests/unit/test_scenes.cpp
         tests/unit/test_upscale.cpp
@@ -1212,7 +1212,7 @@ if(CHANGJI_BUILD_TESTS)
         src/infer/node_prefs.cpp
         src/http/flow.cpp
         src/http/film.cpp
-        src/pipeline/series_cut.cpp
+        src/pipeline/film_join.cpp
         src/http/webapp.cpp
         src/models/shot.cpp
         src/models/character.cpp

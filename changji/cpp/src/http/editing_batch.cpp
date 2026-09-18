@@ -62,7 +62,7 @@ std::string join_cn(const std::vector<std::string>& v) {
 }  // namespace
 
 ApiResult post_shots_batch(const json& body) {
-    // 批量改状态。shot_ids 为空表示整集。
+    // 批量改状态。shot_ids 为空表示整章。
     static const std::set<std::string> kActions = {
         "reset", "lock", "unlock", "clear_notes",
     };
@@ -78,7 +78,7 @@ ApiResult post_shots_batch(const json& body) {
     const std::string episode_id = need_str(body, "episode_id");
     Project project = store.load_project();
     Episode* ep = project.episode_by_id(episode_id);
-    if (ep == nullptr) throw ApiError(404, "没有剧集 " + episode_id);
+    if (ep == nullptr) throw ApiError(404, "没有章节 " + episode_id);
 
     const std::vector<std::string> wanted = str_array(body, "shot_ids");
     const std::set<std::string> wanted_set(wanted.begin(), wanted.end());
@@ -157,7 +157,7 @@ ApiResult post_shots_reorder(const json& body) {
     // 按给定顺序重排镜头。
     //
     // 必须给出完整列表。只传"把 A 挪到第 3 位"这类增量指令的话，
-    // 界面和引擎对当前顺序的理解一旦对不上，结果就是把片子剪乱，
+    // 界面和引擎对当前顺序的理解一旦对不上，结果就是把成片剪乱，
     // 而且是那种要播一遍才发现的乱。
     //
     // 不重跑任何镜头：换顺序不改画面，已经渲染好的还能用。
@@ -171,7 +171,7 @@ ApiResult post_shots_reorder(const json& body) {
     const std::string episode_id = need_str(body, "episode_id");
     Project project = store.load_project();
     Episode* ep = project.episode_by_id(episode_id);
-    if (ep == nullptr) throw ApiError(404, "没有剧集 " + episode_id);
+    if (ep == nullptr) throw ApiError(404, "没有章节 " + episode_id);
 
     const std::vector<std::string> wanted = str_array(body, "shot_ids");
     const std::set<std::string> wanted_set(wanted.begin(), wanted.end());
@@ -190,7 +190,7 @@ ApiResult post_shots_reorder(const json& body) {
         for (const auto& id : wanted_set) {
             if (current.count(id) == 0) extra.push_back(id);
         }
-        std::string msg = "顺序表和这一集的镜头对不上。";
+        std::string msg = "顺序表和这一章的镜头对不上。";
         if (!missing.empty()) msg += "少了：" + join_cn(missing) + "。";
         if (!extra.empty()) msg += "多了：" + join_cn(extra) + "。";
         throw ApiError(400, msg);
@@ -234,7 +234,7 @@ ApiResult post_shots_link_locations(const json& body) {
     json linked = json::object();
     int total = 0;
     for (auto& ep : project.episodes) {
-        // 空集号表示整个项目都补
+        // 空章号表示整个项目都补
         if (!episode_id.empty() && ep.episode_id != episode_id) continue;
         int n = 0;
         for (auto& shot : ep.shots) {
@@ -253,11 +253,11 @@ ApiResult post_shots_link_locations(const json& body) {
 
     // 接上之后提示词才完整，已渲染的那些是按缺场景的提示词跑出来的。
     //
-    // **只退真接过的那几集。** 这儿原来是 reset_all_shots——接一集的场景，
-    // 整个项目已经渲染好的镜头全被退回待跑，而别的集的提示词一个字都没变
-    // （见 reset.hpp 开头那条判据）。用户按的那颗按钮上写的是这一集，
-    // 代价却是下一次「开始」把全剧重跑几小时。`linked` 里装的正好是
-    // "哪一集真接上了几镜"，没接上的集（n 为 0）也不该动。
+    // **只退真接过的那几章。** 这儿原来是 reset_all_shots——接一章的场景，
+    // 整个项目已经渲染好的镜头全被退回待跑，而别的章的提示词一个字都没变
+    // （见 reset.hpp 开头那条判据）。用户按的那颗按钮上写的是这一章，
+    // 代价却是下一次「开始」把全片重跑几小时。`linked` 里装的正好是
+    // "哪一章真接上了几镜"，没接上的章（n 为 0）也不该动。
     std::set<std::string> touched;
     for (const auto& kv : linked.items()) touched.insert(kv.key());
     const int reset = total ? reset_shots_in(store, touched) : 0;

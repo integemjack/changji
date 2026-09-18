@@ -176,13 +176,14 @@ sd.cpp 认这个给 ComfyUI 做的 LoRA（日志里有 `apply lora at runtime`�
 `weights = "smart"` 的收益比小卡大得多——41 + 8 = 49 秒一镜。
 
 **草稿档 2026-09-10 起默认不跑。** 两档都挂 Turbo 之后画质拉不开差距，
-那一遍就是白跑（一集 54 分钟）。想要的话 `POST /api/run` 传
+那一遍就是白跑（一章 54 分钟）。想要的话 `POST /api/run` 传
 `skip_draft: false`。
 
 ### 画幅和清晰度写在项目里
 
-**不在全局设置里。** 一台机器上可以同时有竖屏短剧和横屏片子——画幅是
-这部剧的属性，不是这台机器的属性。项目目录的 `changji.toml`：
+**不在全局设置里。** 一台机器上可以同时有一部横屏的正片和一批竖版的物料
+（竖屏预告、花絮），画幅是这部电影的属性，不是这台机器的属性。
+项目目录的 `changji.toml`：
 
     [video]
     orientation = "portrait"   # 或 landscape

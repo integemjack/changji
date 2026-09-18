@@ -20,6 +20,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include "config/settings.hpp"
 #include "models/project.hpp"
 #include "util/paths.hpp"
 
@@ -324,13 +325,13 @@ TEST_CASE("新建项目") {
     std::error_code ec;
     fs::remove_all(root, ec);
 
-    ProjectStore store = ProjectStore::create(root, "my-drama", "我的短剧",
+    ProjectStore store = ProjectStore::create(root, "my-drama", "我的电影",
                                               StyleLine::ANIME);
     CHECK(store.exists());
 
     const Project p = store.load_project();
     CHECK(p.project_id == "my-drama");
-    CHECK(p.title == "我的短剧");
+    CHECK(p.title == "我的电影");
     CHECK(p.style_line == StyleLine::ANIME);
     // 两者不会完全相同：Python 侧也是各自调一次 now()，然后 save_project
     // 又 touch 一次。只要求都非空且 updated_at 不早于 created_at。
@@ -340,6 +341,17 @@ TEST_CASE("新建项目") {
 
     // 资产库的风格线要跟着项目走
     CHECK(store.load_assets().style.style_line == StyleLine::ANIME);
+
+    // **画幅也跟着落到盘上**，不留给初值去答。
+    //
+    // `create` 不写 changji.toml（写它的是 http::post_new_project），所以
+    // 这份 assets.json 里的比例就是这个项目的画幅在盘上的唯一记录——
+    // `config::load_settings` 对没有 [video] 的项目正是从这一栏推回来的。
+    // 不写的话，新建的项目会靠 StyleProfile 那个**为老项目留的**初值
+    // （9:16）回答"我是什么画幅"，而内置默认 2026-09-18 已经是横屏了。
+    CHECK(store.load_assets().style.aspect_ratio ==
+          changji::config::VideoConfig{}.aspect_ratio());
+    CHECK(store.load_assets().style.aspect_ratio == "16:9");
 
     // 子目录都建出来了
     for (const auto& sub : project_subdirs()) {

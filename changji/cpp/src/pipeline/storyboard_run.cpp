@@ -23,13 +23,13 @@ StoryboardRunResult run_storyboard(const StoryboardRunOptions& opts,
     const double target_s = estimated > 0.0 ? estimated : opts.duration_s;
 
     if (scenes.size() <= 1) {
-        // ---- 整集一次拆：和 2026-09-15 之前逐字节一样 ----
+        // ---- 整章一次拆：和 2026-09-15 之前逐字节一样 ----
         const stages::DurationQuota quota =
             stages::DurationQuota::for_duration(target_s);
         llm::Request req;
         req.prompt = stages::build_storyboard_prompt(script, assets, quota,
                                                      opts.episode_id);
-        // 镜头数写进 schema。配额那句话模型不一定听——实测 60 秒的集出过
+        // 镜头数写进 schema。配额那句话模型不一定听——实测 60 秒的章出过
         // 两镜六秒，提示词里"合计 16 个镜头"一个字没少。
         req.schema = stages::llm_shot_schema(
             assets, stages::shot_count_bounds(quota, target_s,
@@ -39,7 +39,7 @@ StoryboardRunResult run_storyboard(const StoryboardRunOptions& opts,
         // **让它少想一格。** 2026-09-17 把这一步的思考捞出来读了：它在思考
         // 里把整张分镜表逐镜写完了（Shot 11 的 first_frame / dialogue /
         // motion / characters 全是成品），然后才用 JSON 再写一遍——同一份
-        // 东西写两遍，而这一步是全流水线最贵的：一集七八分钟，采样下来思考
+        // 东西写两遍，而这一步是全流水线最贵的：一章七八分钟，采样下来思考
         // 每秒涨约 190 字，一场跑了 410 秒还一个字正文都没落。
         //
         // 智谱的 reasoning_effort **默认是 max**，我们一直没说话。这儿往下
@@ -84,7 +84,7 @@ StoryboardRunResult run_storyboard(const StoryboardRunOptions& opts,
                 std::max(1, scene.index));
             req.schema_name = "storyboard";
             req.on_thinking = opts.on_thinking;
-            // 同上面整集那条，理由写在那儿。
+            // 同上面整章那条，理由写在那儿。
             req.reasoning_effort = "high";
             if (opts.peek) {
                 // 场次头写清楚是哪一场：三份提示词贴到别处去跑，得认得出
@@ -105,7 +105,7 @@ StoryboardRunResult run_storyboard(const StoryboardRunOptions& opts,
                                         : opts.pasted.at(i);
             std::vector<Shot> part = stages::parse_storyboard(raw, assets);
             stages::stamp_scene(part, scene);
-            // 各场的 order 都从 0 起，合起来之前先排成全集的次序，
+            // 各场的 order 都从 0 起，合起来之前先排成全章的次序，
             // 不然最后重编号那一步按 order 稳定排序会把几场交错在一起。
             std::stable_sort(part.begin(), part.end(),
                              [](const Shot& a, const Shot& b) {
@@ -140,11 +140,12 @@ StoryboardRunResult run_storyboard(const StoryboardRunOptions& opts,
         throw stages::StoryboardError(msg);
     }
     apply_lipsync_rules(shots);
-    // 编号和顺序按引擎的来。模型编出来的 id 有错集号、没补零、打错字的。
+    // 编号和顺序按引擎的来。模型编出来的 id 有错章号、没补零、打错字的。
     stages::renumber_shots(shots, opts.episode_id);
-    // **不压回目标时长。** 这一章多长由它自己的内容定，装配时再按每集
-    // 时长切成几集。2026-09-16 之前这儿有一道 rebalance_durations，
-    // 只在集模式下跑——那条路当天删了，这一道跟着没了。
+    // **不压回目标时长。** 这一章多长由它自己的内容定，整部电影是最后把
+    // 各章接起来，不在这儿也不在装配时切。2026-09-16 之前这儿有一道
+    // rebalance_durations，只在按时长切的那条路上跑——那条路当天删了，
+    // 这一道跟着没了。
     result.shots = std::move(shots);
     return result;
 }

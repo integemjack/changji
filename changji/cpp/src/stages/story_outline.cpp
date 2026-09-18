@@ -58,7 +58,7 @@ const ordered& outline_schema() {
     static const ordered schema = [] {
         ordered character_props = ordered::object();
         character_props["name"] = {
-            {"type", "string"}, {"description", "剧本里的中文称呼，全剧一字不改"}};
+            {"type", "string"}, {"description", "剧本里的中文称呼，全片一字不改"}};
         character_props["identity"] = {
             {"type", "string"}, {"description", "一句话身份。不要写长相、发型、服装"}};
         character_props["want"] = {
@@ -160,7 +160,7 @@ const ordered& outline_schema() {
         props["premise"] = {
             {"type", "string"},
             {"description",
-             "这部剧讲什么，一句话，具体到人物和处境。用户已经给了梗概时照抄"}};
+             "这部电影讲什么，一句话，具体到人物和处境。用户已经给了梗概时照抄"}};
         props["logline"] = {{"type", "string"}, {"description", "一句话说清这个故事"}};
         // **必填，而且要有内容。** 2026-09-12 拿一句规则怪谈的梗概实跑，
         // 大纲把规则、命案、顶罪、监控录像全写对了，伏笔也前后咬合，而
@@ -227,7 +227,7 @@ namespace {
 /// 从种子里取第 k 个 0~1 之间的数。
 ///
 /// 和 script.cpp 里那个 frac 是同一个（xorshift 混一道再取模）。**没有合成
-/// 一处**：那边混的理由是"集号只差一个字"，这边是"一次抽四五样，相邻的 k
+/// 一处**：那边混的理由是"`episode_id` 只差一个字"，这边是"一次抽四五样，相邻的 k
 /// 不能给出相邻的结果"，两边的需求将来会各自变。两份十行的纯函数比一个
 /// 两处都要迁就的公共函数好维护。
 double frac(std::uint32_t seed, int k) {

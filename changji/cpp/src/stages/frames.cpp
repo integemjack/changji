@@ -71,7 +71,7 @@ FrameRenderer make_sd_renderer(const config::Settings& settings,
         //
         // origin 现在一律是 Local：派给别的机器算的活走的是工作进程池
         // 那条路，根本不经过这儿。接上对等互联之后，外来的活在工作进程
-        // 那一侧标 Peer，本机自己的一集就排在它前面。
+        // 那一侧标 Peer，本机自己的那一章就排在它前面。
         auto hold = infer::local_exec().enter(origin, pipeline::note_queued,
                                               &tok);
         // 每次借一下。**不在外面借一次拿着不放**——那样跑首帧期间
@@ -166,7 +166,7 @@ std::vector<FrameOutcome> run_frames(std::vector<Shot*>& shots,
         double elapsed_s = 0.0;
         bool skipped = false;     ///< 取消了，没跑
         /// 这一格真跑过没有。**写回的唯一凭据**，同 render.cpp 的
-        /// `Done::ran`（那儿 2026-09-17 丢过一集数据）。这一层写回不是
+        /// `Done::ran`（那儿 2026-09-17 丢过一章数据）。这一层写回不是
         /// 整份覆盖而是改几个字段，漏标一格的后果轻些——`apply` 会给一镜
         /// 白记一次 attempts，而 attempts 进种子、也进"重试超限就降级"
         /// 的计数。判据一样换成正面的。
@@ -192,7 +192,7 @@ std::vector<FrameOutcome> run_frames(std::vector<Shot*>& shots,
             }
         } else {
             // attempts 加一是给闸门的重试计数用的：超限之后流水线会
-            // 留着最后那一版接着往下走，保证整集能出片。
+            // 留着最后那一版接着往下走，保证整章能出片。
             shot->attempts += 1;
         }
         done[i].committed = true;
@@ -287,7 +287,7 @@ std::vector<FrameOutcome> run_frames(std::vector<Shot*>& shots,
                     e.current = index;
                     e.total = total;
                     e.shot_id = shot->shot_id;
-                    // 这一张自己的进度。current/total 是整集第几镜，
+                    // 这一张自己的进度。current/total 是整章第几镜，
                     // 镜头墙上那条进度条要的是这个。见 Event::shot_steps。
                     e.shot_step = step;
                     e.shot_steps = steps;
@@ -362,15 +362,15 @@ std::vector<FrameOutcome> run_frames(std::vector<Shot*>& shots,
             }
             done[i].elapsed_s = now_seconds() - started;
             // **在这儿结账**，不是等整批跑完：页面上「做完的」那一栏要边跑
-            // 边长出来，一集二十二镜等到最后才一起冒出来等于没有。
+            // 边长出来，一章二十二镜等到最后才一起冒出来等于没有。
             tasks[i].reset();
 
-            // **出完一镜就落一次盘。** 不落的话这一批（一集二十二镜）
+            // **出完一镜就落一次盘。** 不落的话这一批（一章二十二镜）
             // 跑完之前，镜头墙问到的永远是开跑那一刻的样子——
             // 一张缩略图都没有。
             if (commit || flow) {
                 // 流水时锁用两层共用的那把：一层在改镜头 i、另一层在把
-                // 整集序列化存盘，撞上就是脏数据。
+                // 整章序列化存盘，撞上就是脏数据。
                 std::unique_lock<std::mutex> lg(flow ? flow->commit_mutex()
                                                      : commit_mu);
                 apply(i);

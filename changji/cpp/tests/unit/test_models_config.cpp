@@ -476,7 +476,7 @@ TEST_CASE("weights = smart：按视频模型多大和卡多大算，不用人填
     CHECK(m.weights_for(32.6, 10.0) == "te=cpu,vae=cpu");
     // 大卡全装得下 → 只有文本编码器留内存（18.8 + 14.6 + 5.5 = 38.9 ≤ 80，且 ≥ 40）
     CHECK(m.weights_for(80.0, h3) == "te=cpu");
-    // 拿不到模型大小：按装不下处理——猜错是整集出片失败，放内存只是慢
+    // 拿不到模型大小：按装不下处理——猜错是整章出片失败，放内存只是慢
     CHECK(m.weights_for(80.0, 0.0) == "cpu");
 
     // **文本编码器永远放内存**：它每镜只跑一次（H3 实测 8 到 9 秒），
@@ -781,7 +781,7 @@ TEST_CASE("[models].vram_reserve_gb：默认 6，负数拒") {
 
 TEST_CASE("[tiers]：填了以填的为准，没填按显存推") {
     // **这一节是被"设完重启就丢"逼出来的。** 档位以前只在进程内生效，
-    // 用户把成片档调成 1280×704 跑了一集，重启回到 960×544，界面没提示。
+    // 用户把成片档调成 1280×704 跑了一章，重启回到 960×544，界面没提示。
     config::TiersConfig t;
     CHECK(t.draft_width == 0);          // 0 = 没填
     CHECK(t.validate().empty());
@@ -817,24 +817,33 @@ TEST_CASE("[video]：横竖屏加清晰度，宽高算出来") {
     // "928 还是 1440、544 还是 920"。中间那层换算不该甩给用户——
     // 填错一个不是 32 倍数的数，报错要到出图那一步才出现。
     //
-    // 这一节放在**项目目录的 changji.toml** 里，一部剧一份：一台机器上
-    // 可以同时有竖屏短剧和横屏片子，画幅是剧的属性不是机器的属性。
+    // 这一节放在**项目目录的 changji.toml** 里，一部电影一份：一台机器上可以
+    // 同时有横屏的正片和竖版的物料，画幅是这部电影的属性不是这台机器的属性。
     // 不进 project.json——那份在对拍覆盖范围内，Python 没有这些字段。
-    SUBCASE("默认竖屏 720p") {
+    SUBCASE("默认横屏 720p") {
+        // 2026-09-18 默认从 portrait 翻成 landscape：用户把产品定位从短剧
+        // 改成电影制作平台，**电影是横的**。竖屏仍然是一个选项，只是不再是
+        // 「不说话就有」的那一档。
+        //
+        // ⚠️ 这一条钉的只是「**没有项目**的时候内置默认是横的」。老项目
+        // 不是靠"把画幅写进了自己的 changji.toml"躲开它的——很多老项目
+        // 目录里根本没有 [video]（ProjectStore::create 不写那份文件）。
+        // 它们靠的是 load_settings 从 assets.json 推，见下面那条
+        // 「老项目没有 [video]」。
         const config::VideoConfig v;
-        CHECK(v.orientation == "portrait");
+        CHECK(v.orientation == "landscape");
         CHECK(v.quality == "720p");
-        // **标准档 544×928**（2026-09-10 用户定的）。920 ÷ 32 = 28.75
-        // 除不尽，取最近的 928 = 32 × 29；544 = 32 × 17。
-        // 32 对齐是硬约束，不对齐 sd.cpp 直接出图失败。
-        CHECK(v.size() == std::pair<int, int>{544, 928});
-    }
-    SUBCASE("横屏把长短边调过来") {
-        config::VideoConfig v;
-        v.orientation = "landscape";
+        // **标准档的短边 544、长边 928**（2026-09-10 用户定的）。920 ÷ 32 =
+        // 28.75 除不尽，取最近的 928 = 32 × 29；544 = 32 × 17。
+        // 32 对齐是硬约束，不对齐 sd.cpp 直接出图失败。横屏是宽 928 高 544。
         CHECK(v.size() == std::pair<int, int>{928, 544});
+    }
+    SUBCASE("竖屏把长短边调过来") {
+        config::VideoConfig v;
+        v.orientation = "portrait";
+        CHECK(v.size() == std::pair<int, int>{544, 928});
         v.quality = "2k";
-        CHECK(v.size() == std::pair<int, int>{2560, 1440});
+        CHECK(v.size() == std::pair<int, int>{1440, 2560});
     }
     SUBCASE("**四种组合的宽高都得是 32 的倍数**") {
         // Wan 那一族的潜空间要求。不对齐出图直接失败，日志里指不到这儿，
@@ -875,6 +884,139 @@ TEST_CASE("[video]：横竖屏加清晰度，宽高算出来") {
             CHECK_FALSE(v.validate().empty());
         }
     }
+}
+
+TEST_CASE("老项目没有 [video]：画幅从它自己的 assets.json 推") {
+    // **判据是「这个项目自己说了算」。**
+    //
+    // 2026-09-18 内置默认从 portrait 翻成 landscape，理由是「老项目把画幅
+    // 写进了自己的 changji.toml」。那个前提不成立：写 changji.toml 的是
+    // http::post_new_project，ProjectStore::create 不写——手工建的、早于
+    // 项目模板的老项目目录里根本没有 [video]（仓库自己的夹具
+    // tests/golden/项目_雨夜天台/ 就是这一类，只有 assets.json 和
+    // project.json）。翻默认于是把它们全改成横屏：已经出了两百镜 544×928
+    // 的项目再补一镜出的是 928×544，同一章两种画幅而全程不报错。
+    //
+    // 画幅在盘上是有记录的——assets.json 里那份比例，是这个项目所有参考图
+    // 和已出镜头的实际比例。这条用例钉的就是「读它、而不是读内置默认」。
+    const changji::test::ScopedUserConfigDir iso("老项目画幅");
+    const fs::path root =
+        fs::temp_directory_path() / paths::from_utf8("changji_老项目画幅");
+    std::error_code ec;
+    fs::remove_all(root, ec);
+    fs::create_directories(root, ec);
+
+    const auto write_assets = [&](const std::string& style_body) {
+        std::ofstream out(root / "assets.json", std::ios::binary);
+        REQUIRE(out.good());
+        out << R"({"characters":{},"locations":{},"style":{)" << style_body
+            << "}}";
+    };
+
+    SUBCASE("assets.json 说 9:16，读出来就是竖屏") {
+        write_assets(R"("style_line":"realistic","aspect_ratio":"9:16")");
+        const auto s = config::load_settings(root);
+        CHECK(s.video.orientation == "portrait");
+        // 出图那两层拿的是比例不是画幅，两头得对得上——对不上的表现是
+        // 首帧竖的、成片横的，而参考图正是每一镜的底子。
+        CHECK(s.video.aspect_ratio() == "9:16");
+        CHECK(s.video.size() == std::pair<int, int>{544, 928});
+    }
+
+    SUBCASE("assets.json 说 16:9，读出来就是横屏") {
+        write_assets(R"("style_line":"realistic","aspect_ratio":"16:9")");
+        CHECK(config::load_settings(root).video.orientation == "landscape");
+    }
+
+    SUBCASE("比这个字段还老的 assets.json：没有那一栏也算数据") {
+        // 缺这一栏说明这份文件比 aspect_ratio 这个字段还老，而那个年代
+        // 建的项目全是竖屏的。按 StyleProfile 自己的初值算，正好答对。
+        write_assets(R"("style_line":"realistic","global_style":"")");
+        CHECK(config::load_settings(root).video.orientation == "portrait");
+    }
+
+    SUBCASE("读不出那一栏的一律按竖屏算") {
+        // **成因是同一个，答案就得是同一个。** 下面四种文件各有各的坏法，
+        // 说的却是同一件事：这份 assets.json 比 aspect_ratio 这个字段还老，
+        // 或者被手改歪了。它们和上面「缺那一栏」是一家的。
+        //
+        // 答横屏的后果正是这条推导本来要防的那件事：一份连 style 都没有的
+        // 极老竖屏项目补一镜走 scaled_to("16:9") 出 928×544，同一章两种
+        // 画幅而全程不报错。
+        //
+        // 对账的另一头是 ProjectStore::load_assets：它读同一份文件给的是
+        // 9:16（style 缺那一支回 def.style）或者直接抛，**没有一种会答
+        // 横屏**。两个读法对同一份盘给不同答案时谁也看不出来——一边是设置页
+        // 上显示的画幅，一边是出图那几层实际用的比例。
+        const auto write_raw = [&](const std::string& body) {
+            std::ofstream out(root / "assets.json", std::ios::binary);
+            REQUIRE(out.good());
+            out << body;
+        };
+        for (const std::string& body : {
+                 // 整个 style 对象都没有：比"缺 aspect_ratio 一栏"还老一辈
+                 std::string(R"({"characters":{},"locations":{}})"),
+                 // style 被手改成了别的形状
+                 std::string(R"({"characters":{},"style":"写实"})"),
+                 // 那一栏类型不对（手改时写成了数字）
+                 std::string(R"({"style":{"aspect_ratio":916}})"),
+                 // 文件根本不是合法 JSON
+                 std::string("{ 这不是 json"),
+             }) {
+            write_raw(body);
+            CAPTURE(body);
+            // 坏文件不能让配置加载整个失败——那会连设置页都打不开，
+            // 而用户看到的错和"画幅"八竿子打不着。
+            CHECK_NOTHROW(config::load_settings(root));
+            const auto s = config::load_settings(root);
+            CHECK(s.video.orientation == "portrait");
+            CHECK(s.video.size() == std::pair<int, int>{544, 928});
+        }
+    }
+
+    SUBCASE("比例认不出来才退回内置默认") {
+        // **唯一一种"真认不出"**：那一栏在、是字符串、却既不是 16:9 也不是
+        // 9:16（手改过，或者哪天加了档而 orientation_of_aspect 那张表没跟）。
+        // 这时候盘上说的是一件这个函数答不上来的事，不硬猜。
+        write_assets(R"("style_line":"realistic","aspect_ratio":"1:1")");
+        CHECK(config::load_settings(root).video.orientation == "landscape");
+    }
+
+    SUBCASE("项目自己写了 [video] 就以它为准，不看 assets.json") {
+        write_assets(R"("style_line":"realistic","aspect_ratio":"9:16")");
+        {
+            std::ofstream toml(root / "changji.toml", std::ios::binary);
+            toml << "[video]\norientation = \"landscape\"\n";
+        }
+        CHECK(config::load_settings(root).video.orientation == "landscape");
+    }
+
+    SUBCASE("目录里什么都没有：内置默认，横屏") {
+        // **"连 assets.json 都没有"和"assets.json 读不出来"不是一回事。**
+        // ProjectStore::create 建目录那一下就把 assets.json 写下来了（还顺手
+        // 把当时的画幅钉进那一栏），所以一个连它都没有的目录不是一份等着被
+        // 认出来的老项目，是盘上一个字都没说——那种交给内置默认答。
+        CHECK(config::load_settings(root).video.orientation == "landscape");
+    }
+
+    fs::remove_all(root, ec);
+}
+
+TEST_CASE("比例反推画幅：和 aspect_ratio() 是同一张表的两头") {
+    // 两头必须闭合。分家的表现是"这个项目读出来的画幅和它自己的参考图
+    // 对不上"，全程不报错。
+    for (const char* o : {"portrait", "landscape"}) {
+        config::VideoConfig v;
+        v.orientation = o;
+        const auto back = config::orientation_of_aspect(v.aspect_ratio());
+        CAPTURE(std::string(o));
+        REQUIRE(back.has_value());
+        CHECK(*back == o);
+    }
+    // 认不出来要说"认不出来"，不许挑一个当默认——挑了的话，哪天加一档
+    // 1:1，所有 1:1 的项目会被静悄悄当成横屏。
+    CHECK_FALSE(config::orientation_of_aspect("1:1").has_value());
+    CHECK_FALSE(config::orientation_of_aspect("").has_value());
 }
 
 TEST_CASE("老配置里的 comfy 自己换掉，不是让程序起不来") {
@@ -930,9 +1072,9 @@ TEST_CASE("没有老取值时迁移一句话都不说") {
 }
 
 TEST_CASE("帧率跟着出片模型纠回去，并且说一声") {
-    // **这一条堵的是第二条入口。** 出片那条路每跑一集都从项目的
+    // **这一条堵的是第二条入口。** 出片那条路每跑一章都从项目的
     // changji.toml 重读一遍设置（http/run.cpp 的 load_settings(store.root())），
-    // 根本不经过 Runtime::replace——只在 Runtime 里纠正的话，整集会带着
+    // 根本不经过 Runtime::replace——只在 Runtime 里纠正的话，整章会带着
     // 错的帧率跑完，而表现不是报错是**整片变速**。
     config::Settings s;
     s.models.video = "minimax_h3_fl2va-Q4_K_M.gguf";
@@ -1128,7 +1270,7 @@ TEST_CASE("大模型的老实数：权重 + KV 缓存和上下文") {
 // ---- 三档画幅 ----
 //
 // 2026-09-10 按用户要求把标准档从 704×1280 改成 544×928；9-11 他说
-// "糊掉、变形"。同一集里 sh001 是 704×1280、sh002 是 544×928，像素
+// "糊掉、变形"。同一章里 sh001 是 704×1280、sh002 是 544×928，像素
 // 90 万对 50 万，差 44%——就是这个。所以把 704×1280 作为「高清」加回来，
 // 让他自己挑，而不是我来回翻。
 
@@ -1242,12 +1384,24 @@ TEST_CASE("profile 报的步数是真正会跑的那个，不是档位表里的"
         // **上一版就只换了步数。** 于是 /api/hardware 报 1920×1088，而磁盘上
         // 的成片是 544×928（ffprobe 量出来的）——同一个函数里同一个毛病，
         // 修了一半，而画幅那一项差 4.13 倍像素，比步数还大。
-        const auto [want_w, want_h] = s.video.size();
-        CHECK(fin->second.width == want_w);
-        CHECK(fin->second.height == want_h);
-        // 竖屏短剧：高一定大于宽。档位表里推出来的是横的（1920×1088），
+        //
+        // **这一条必须显式选竖屏**。2026-09-18 默认翻成横屏之后，项目画幅和
+        // 档位表推出来的那个（1920×1088，横的）形状一样了——「没换」和
+        // 「换了」长得一模一样，下面那条朝向断言就白写了。竖屏是唯一能让
+        // 两者分得开的那一档。
+        config::Settings portrait = s;
+        portrait.video.orientation = "portrait";
+        config::runtime().replace(portrait);
+        const auto pp = config::runtime().profile();
+        const auto pfin = pp.tiers.find(models::Tier::FINAL);
+        REQUIRE(pfin != pp.tiers.end());
+
+        const auto [want_w, want_h] = portrait.video.size();
+        CHECK(pfin->second.width == want_w);
+        CHECK(pfin->second.height == want_h);
+        // 竖屏：高一定大于宽。档位表里推出来的是横的（1920×1088），
         // 没换的话这一条就挂了。
-        CHECK(fin->second.height > fin->second.width);
+        CHECK(pfin->second.height > pfin->second.width);
     }
 
     config::runtime().replace(config::Settings{});
@@ -1290,10 +1444,10 @@ TEST_CASE("workload_scale：档位表的耗时换算到真跑那一档") {
     }
 }
 
-TEST_CASE("单镜上限是剧的属性：[video].max_shot_s 往下夹，不往上抬") {
+TEST_CASE("单镜上限是这部电影的属性：[video].max_shot_s 往下夹，不往上抬") {
     // 2026-09-13 实测：H3 权重全放内存时峰值显存不随帧数涨，「按显存推
     // 单镜上限」推的是个不存在的量；而放开到 8 秒的镜头会中途硬切成另一
-    // 场戏。行业里竖屏短剧单镜 5 秒左右是标准单位。所以由剧定。
+    // 场戏。五秒上下本来就是一个镜头的常见长度。所以由这部电影自己定。
     config::Settings s;
     s.models.video = "minimax_h3_fl2va-Q4_K_M.gguf";   // 17k+5，模型上限 360
 
@@ -1303,18 +1457,18 @@ TEST_CASE("单镜上限是剧的属性：[video].max_shot_s 往下夹，不往�
     CHECK(auto_limits.frame_step == 17);
     CHECK(auto_limits.max_frames >= 124);
 
-    // 剧要 3 秒：3×24 = 72 → 17k+5 对齐到 73。任何卡上都比五秒那道地板低，
+    // 这部电影要 3 秒：3×24 = 72 → 17k+5 对齐到 73。任何卡上都比五秒那道地板低，
     // 所以这个数不受测试机有没有显卡影响
     s.video.max_shot_s = 3.0;
     CHECK(config::video_limits_for(s).max_frames == 73);
     CHECK(config::video_limits_for(s).duration_slots() ==
           std::vector<double>{2.0, 3.0});
 
-    // 剧要 15 秒：只能往下夹，不会把机器的上限抬上去
+    // 这部电影要 15 秒：只能往下夹，不会把机器的上限抬上去
     s.video.max_shot_s = 15.0;
     CHECK(config::video_limits_for(s).max_frames == auto_limits.max_frames);
 
-    // 手填的 video_max_frames 是机器的上限，剧的要求仍然只往下夹
+    // 手填的 video_max_frames 是机器的上限，这部电影的要求仍然只往下夹
     s.models.video_max_frames = 90;
     s.video.max_shot_s = 3.0;
     CHECK(config::video_limits_for(s).max_frames == 73);
@@ -1427,7 +1581,7 @@ TEST_CASE("干活那台按自己有没有 Turbo 定步数，人钉死的不动")
     CHECK(config::steps_on_node(node, 6, false) == 6);
     // 人钉死的一律不动
     CHECK(config::steps_on_node(node, 28, true) == 28);
-    // 这台自己的 final_steps 不算数——派来的活听派活那部剧的
+    // 这台自己的 final_steps 不算数——派来的活听派活那部电影的
     node.tiers.final_steps = 12;
     CHECK(config::steps_on_node(node, 20, false) == 6);
     // 这台没 Turbo：照派来的跑

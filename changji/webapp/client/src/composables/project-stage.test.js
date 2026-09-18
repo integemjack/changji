@@ -26,7 +26,7 @@ describe('projectStage', () => {
     expect(projectStage(P({ chapters: 8 })).label).toContain('8 章大纲')
     expect(projectStage(P({ chapters: 8, written_chapters: 3 })).label).toContain('3/8')
     expect(projectStage(P({ chapters: 8, written_chapters: 8, episodes: 12 })).label).toContain(
-      '12 集',
+      '12 章',
     )
   })
 
@@ -64,26 +64,26 @@ describe('projectStage', () => {
     expect(s.key).toBe('film')
   })
 
-  it('十二集只出了一条片，不该跟全出完了长得一样', () => {
+  it('十二章只出了一条片，不该跟全出完了长得一样', () => {
     // 原来 outputs > 0 就判 100%，进度条上两种都是满格
     const few = projectStage(P({ episodes: 12, shots: 100, done_shots: 100, outputs: 1 }))
     const all = projectStage(P({ episodes: 12, shots: 100, done_shots: 100, outputs: 12 }))
     expect(few.key).toBe('film')
     expect(few.percent).toBeLessThan(all.percent)
-    expect(few.label).toBe('1/12 集已出片')
-    expect(all.label).toBe('12 集已出片')
+    expect(few.label).toBe('1/12 章已出片')
+    expect(all.label).toBe('12 章已出片')
     expect(all.percent).toBe(100)
     expect(few.tone).toBe('accent')
     expect(all.tone).toBe('ok')
   })
 
-  it('分集表算了几集、真落成了几集，是两个数', () => {
+  it('章节计划算了几章、真落成了几章，是两个数', () => {
     // planned_episodes 引擎一直在算，2026-09-14 之前前端一处都没读
     const s = projectStage(P({ episodes: 3, planned_episodes: 10 }))
     expect(s.key).toBe('planned')
-    expect(s.label).toBe('10 集里落成 3 集，还没分镜')
+    expect(s.label).toBe('10 章里落成 3 章，还没分镜')
     // 两个数一样时不啰嗦
-    expect(projectStage(P({ episodes: 3, planned_episodes: 3 })).label).toBe('3 集，还没分镜')
+    expect(projectStage(P({ episodes: 3, planned_episodes: 3 })).label).toBe('3 章，还没分镜')
   })
 
   it('故事文件坏了，不能说成还没写故事', () => {

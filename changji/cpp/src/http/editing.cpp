@@ -134,7 +134,7 @@ ApiResult post_shot(const json& body) {
     Project project = store.load_project();
 
     Episode* ep = project.episode_by_id(episode_id);
-    if (ep == nullptr) throw ApiError(404, "没有剧集 " + episode_id);
+    if (ep == nullptr) throw ApiError(404, "没有章节 " + episode_id);
     Shot* shot = ep->shot_by_id(shot_id);
     if (shot == nullptr) throw ApiError(404, "没有镜头 " + shot_id);
 

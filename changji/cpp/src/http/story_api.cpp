@@ -170,7 +170,7 @@ json story_response(const Story& story) {
 ///
 /// 回 400 而不是 422：422 那条路的 detail 是 pydantic 形状的结构化数组，
 /// 前端按那个形状去高亮对应的输入框。这里的错是「故事内部对不上」
-/// （关系指向不存在的人、分集表指向不存在的章），没有哪个输入框对得上，
+/// （关系指向不存在的人、章节计划指向不存在的章），没有哪个输入框对得上，
 /// 挂成 422 前端只会显示成 [object Object]。
 void validate_or_400(const Story& story) {
     const auto errs = story.validate();
@@ -270,7 +270,7 @@ void refuse_to_clobber(const Story& existing, const json& body) {
     }
 }
 
-/// 把一份故事**落成正式的那份**：算分集、存盘、剧集对齐、梗概同步回
+/// 把一份故事**落成正式的那份**：算章节计划、存盘、章节对齐、梗概同步回
 /// project.json。
 ///
 /// 出大纲、粘一份、提人物、采用——四条路的收尾是同一段。2026-09-17 之前
@@ -284,14 +284,14 @@ json commit_story(const ProjectStore& store, Project project, Story story,
     story.plan = stages::plan_episodes(story, story.episode_duration_s);
     validate_or_400(story);
     store.save_story(story);
-    // **章节动了，剧集跟着对齐。** 一章一集是机械映射，用户 2026-09-16
-    // 选的是「自动做，不要按钮」。非章模式下这一句什么都不做。
+    // **章节动了，章节记录跟着对齐。** 一章一条是机械映射，用户 2026-09-16
+    // 选的是「自动做，不要按钮」。
     sync_episodes_to_chapters(store, story);
     // 上一轮写砸的那句话到此为止：新的一份已经进去了。
     OutlineRegistry::instance().clear_error(paths::to_utf8(store.root()));
     // **梗概要写回 project.json 的话，先把项目重读一遍。** 上面那句 sync 刚
-    // 把剧集写进去了，拿进来时那份旧的盖回去，剧集就没了——2026-09-18 从
-    // 网上写故事那条用例抓到的：故事两章、剧集零集。（老的 adopt 也是这个
+    // 把章节记录写进去了，拿进来时那份旧的盖回去，章节记录就没了——2026-09-18
+    // 从网上写故事那条用例抓到的：故事两章、章节零条。（老的 adopt 也是这个
     // 顺序，只是走它的路梗概多半没变，没露出来。）
     if (!story.premise.empty()) {
         Project fresh = load_or_400(store);
@@ -346,8 +346,8 @@ ApiResult post_story(const json& body) {
 
     validate_or_400(story);
     store.save_story(story);
-    // **章节动了，剧集跟着对齐。** 一章一集是机械映射，用户 2026-09-16
-    // 选的是「自动做，不要按钮」。非章模式下这一句什么都不做。
+    // **章节动了，章节记录跟着对齐。** 一章一条是机械映射，用户 2026-09-16
+    // 选的是「自动做，不要按钮」。
     sync_episodes_to_chapters(store, story);
     return {200, story_response(story)};
 }
@@ -628,8 +628,8 @@ ApiResult post_story_chapter_delete(const json& body) {
     const Story::ChapterRemoval r = story.remove_chapter(chapter_id);
     if (!r.removed) throw ApiError(404, "没有章节 " + chapter_id);
     store.save_story(story);
-    // **章节动了，剧集跟着对齐。** 一章一集是机械映射，用户 2026-09-16
-    // 选的是「自动做，不要按钮」。非章模式下这一句什么都不做。
+    // **章节动了，章节记录跟着对齐。** 一章一条是机械映射，用户 2026-09-16
+    // 选的是「自动做，不要按钮」。
     sync_episodes_to_chapters(store, story);
 
     json out = story_response(story);
@@ -730,7 +730,7 @@ ApiResult post_story_analyze(const json& body_in, llm::Client& client,
     }
 
     // 正文一个字不动，只多了人物、关系、地点和钩子——不用挡，直接落。
-    // 钩子变了切点就变了，commit_story 里会重算分集表：这正是这一步的
+    // 钩子变了切点就变了，commit_story 里会重算章节计划：这正是这一步的
     // 价值，机械切点只保证不切在半句话中间，现在能切在真正的悬念上了。
     const bool needs_analysis = read.characters.empty();
     json out = commit_story(store, project, std::move(read), story);
@@ -787,7 +787,7 @@ ApiResult post_story_understand_once(const json& body_in, llm::Client& client,
     return {200, out};
 }
 
-/// 真正写这一章：借大模型、边写边推、解析、落库、重算分集。
+/// 真正写这一章：借大模型、边写边推、解析、落库、重算章节计划。
 ///
 /// **从接口里抽出来的，因为它有两条调用路**：同步那条（老客户端）直接在
 /// Crow 的线程上跑完；异步那条在后台线程上跑，接口早就回过"开始了"。
@@ -807,11 +807,11 @@ json write_one_chapter(ProjectStore& store, const Project& project, Story story,
     // **第三个参数是 episode_id，不能塞 chapter_id。** 这两个是两套命名
     // （`^ch[0-9]+$` 对 `episode_id`），而前端拿这个字段干的事是
     // `session.selectEpisode(row.episode_id)`（JobBadge 的 go()，点这一行
-    // 就跳过去）。塞进去之后：集号变成 "ch03" → 写进 localStorage →
-    // `/bff/flow` 那边只在**空串**时才回落到第一集，非空但不认识的原样
+    // 就跳过去）。塞进去之后：章号变成 "ch03" → 写进 localStorage →
+    // `/bff/flow` 那边只在**空串**时才回落到第一章，非空但不认识的原样
     // 回给你 → 前端看见 `data.episodeId === episodeId.value` 就不改了。
-    // 于是集号永久卡在一个不存在的集上，刷新也还在：顶栏那个下拉空着、
-    // 「这一集」整页没东西。章是全剧的，本来就不属于某一集，留空。
+    // 于是章号永久卡在一个不存在的章上，刷新也还在：顶栏那个下拉空着、
+    // 「这一章」整页没东西。章是故事那一层的，本来就不属于某一条章节记录，留空。
     pipeline::Activity act{"write_one", paths::to_utf8(store.root()), "",
                            "正在写 " + (me->title.empty() ? chapter_id : me->title)};
     const pipeline::CancelLink stop_here{tok, act};
@@ -830,9 +830,9 @@ json write_one_chapter(ProjectStore& store, const Project& project, Story story,
     // 那一两分钟界面上什么都没有——而那正是用户要看的"写作的过程"。
     //
     // **这一步不能像改稿那样退回大白话。** 除了正文还要模型标出这一章里
-    // 哪几个地方可以收一集（hooks），而那些钩子是一集停在真悬念上的全部
+    // 哪几个地方可以收一章（hooks），而那些钩子是一章停在真悬念上的全部
     // 依据（实跑里把比例从 25% 抬到 56%）。为了能流式砍掉 hooks，等于拿
-    // 分集质量换一个动画。所以照旧约束成 JSON，只在 token 流上顺手把正文
+    // 切章的质量换一个动画。所以照旧约束成 JSON，只在 token 流上顺手把正文
     // 那个字段解出来推给编辑器——见 stages/json_stream。
     Story next;
     // 落地的时候这一章还在不在。见下面那段"接在刚读回来的那一份上"。
@@ -946,19 +946,15 @@ ApiResult post_story_chapter(const json& body_in, llm::Client& client,
                                    stream_id, client, tok, peek, pasted)};
 }
 
-/// 章模式下把剧集对齐到章节：一章一个。
+/// 把章节记录对齐到故事的章：一章一条。
 ///
-/// 用户 2026-09-16 选的是「自动做，不要按钮」——一章一集是机械映射，
+/// 用户 2026-09-16 选的是「自动做，不要按钮」——一章一条是机械映射，
 /// 不该让人去按一下。**所以每一处改动章节的接口，存完 story 都要叫它。**
 ///
 /// 返回这一轮建了几个、更新了几个、还有哪几个落了单（对不上任何一章）。
-/// **落单的不删**：它们可能已经出过片，删了就是把片子连着记录一起抹掉。
-///
-/// 非章模式（episode_s = 0）一个字不动：老路线由 post_story_episodes
-/// 按分集表来建。
+/// **落单的不删**：它们可能已经出过片，删了就是把成片连着记录一起抹掉。
 EpisodeSync sync_episodes_to_chapters(const ProjectStore& store, const Story& story) {
     EpisodeSync out;
-    const auto settings = config::load_settings(store.root());
     if (story.chapters.empty()) return out;                 // 还没有章节
 
     Project project = load_or_400(store);
@@ -966,20 +962,24 @@ EpisodeSync sync_episodes_to_chapters(const ProjectStore& store, const Story& st
         const Chapter& c = story.chapters[i];
         if (c.chapter_id.empty()) continue;
 
-        // 一章一个 id：ch07 → ep07。分集表（plan_episodes）发 id 用的是
+        // 一章一个 id：ch07 → ep07。章节计划（plan_episodes）发 id 用的是
         // 同一条，两边对得上。
         const std::string ep_id = stages::episode_id_for_chapter(c.chapter_id, i);
 
         // 这一章值多长。**按正文字数估**（story_plan 那个每秒消化多少字的
-        // 系数），没正文按梗概的章数占比。原来数「结束在这一章」的分集条目，
-        // 短章被并进多章一集时一条都数不到、跨章的条目把整段时长记到后一章
-        // 头上（2026-09-16 查出）。章模式下这个数不卡长度（分镜、配音那两次
+        // 系数），没正文按梗概的章数占比。原来数「结束在这一章」的计划条目，
+        // 短章被并进同一条时一条都数不到、跨章的条目把整段时长记到后一章
+        // 头上（2026-09-16 查出）。这个数不卡长度（分镜、配音那两次
         // rebalance 都跳过），它只是拆镜头的目标量。
+        //
+        // 没正文时的回落 2026-09-18 之前是 `[assembly].episode_s`；那一项的
+        // 正业（成片按每集 N 秒切）随电影平台一起拔掉了，回落改成代码里的
+        // 常量 stages::kDefaultChapterS。
         double dur = 0.0;
         if (c.text_len() > 0) {
             dur = static_cast<double>(c.text_len()) / stages::kProseCharsPerSecond;
         }
-        if (!(dur > 0.0)) dur = settings.assembly.episode_s;
+        if (!(dur > 0.0)) dur = stages::kDefaultChapterS;
 
         const std::string synopsis =
             text::truncate_utf8(text::collapse_ws(c.summary), 120);
@@ -1025,17 +1025,17 @@ ApiResult post_story_episodes(const json& body) {
     Project project = load_or_400(store);
     const Story story = load_story_or_400(store);
 
-    // **章模式：一章一集。** 实现在 sync_episodes_to_chapters 里——那件事
+    // **一章落一条章节记录。** 实现在 sync_episodes_to_chapters 里——那件事
     // 现在是自动做的（每一处改动章节的接口存完 story 都会叫它），这个接口
     // 留着是为了让老客户端和对拍脚本还能按一下。
 
 
-    // **一章一集，没有第二条路。** 这儿原来是个 `if (chapter_mode)`：
-    // 假那一边按 story.plan（分集表）一条一集地落。集模式 2026-09-16 整个
-    // 删了（用户当天定的），那一大块跟着删——分集表落集和一章一集是两种
-    // 落法，留着一条走不到的等于留一份会跟着腐烂的第二真相。
+    // **一章一条，没有第二条路。** 这儿原来是个 `if (chapter_mode)`：
+    // 假那一边按 story.plan（章节计划）一条落一条。按计划落和一章一条是两种
+    // 落法，2026-09-16 用户定了只留前者，那一大块跟着删——留着一条走不到的
+    // 等于留一份会跟着腐烂的第二真相。
     if (story.chapters.empty()) {
-        throw ApiError(400, "这部剧还没有章节。先去故事页写一份大纲");
+        throw ApiError(400, "这部电影还没有章节。先去故事页写一份大纲");
     }
     const EpisodeSync r = sync_episodes_to_chapters(store, story);
     json out = story_response(story);
@@ -1122,8 +1122,8 @@ ApiResult post_story_revise(const json& body, llm::Client& client,
     const std::string stream_id = text::strip_ws(opt_str(body, "stream"));
     const bool streaming = !stream_id.empty();
 
-    // 同 write_one：第三个参数是 episode_id，`span.chapter_id` 不是集号，
-    // 塞进去会把前端的集号卡死在一个不存在的集上。
+    // 同 write_one：第三个参数是 episode_id，`span.chapter_id` 不是章号，
+    // 塞进去会把前端的章号卡死在一个不存在的章上。
     pipeline::Activity act{"revise", paths::to_utf8(store.root()), "",
                            "正在改这一段"};
     const pipeline::CancelLink stop_here{tok, act};
@@ -1196,15 +1196,15 @@ ApiResult post_story_revise_apply(const json& body) {
     if (text_in.empty()) throw ApiError(400, "要写回去的那一段是空的");
 
     Story next = stages::apply_revision(story, span, text_in);
-    // **分集表跟着重算。** 正文长度变了，后面每一条的字符区间都错位了；
+    // **章节计划跟着重算。** 正文长度变了，后面每一条的字符区间都错位了；
     // 不重算的话切线会落在句子中间，而这件事不报错，只在成片里表现成
-    // "这一集从半句话开始"。
+    // "这一章从半句话开始"。
     next.plan = stages::plan_episodes(next, next.episode_duration_s);
 
     validate_or_400(next);
     store.save_story(next);
-    // **章节动了，剧集跟着对齐。** 一章一集是机械映射，用户 2026-09-16
-    // 选的是「自动做，不要按钮」。非章模式下这一句什么都不做。
+    // **章节动了，章节记录跟着对齐。** 一章一条是机械映射，用户 2026-09-16
+    // 选的是「自动做，不要按钮」。
     sync_episodes_to_chapters(store, next);
 
     json out = story_response(next);
@@ -1221,7 +1221,7 @@ ApiResult post_story_from_episodes(const json& body) {
     const Story existing = load_story_or_400(store);
 
     // 已经有故事了还反推，反推出来的那份会把它整份顶掉——而那一份里可能
-    // 有人工改过的人物关系和分集切线。和采用大纲同一条规矩。
+    // 有人工改过的人物关系和切章的线。和采用大纲同一条规矩。
     if (!existing.empty() && !opt_bool(body, "overwrite", false)) {
         throw ApiError(409,
                        "这个项目已经有故事了，反推会把它整份顶掉。"
@@ -1231,18 +1231,18 @@ ApiResult post_story_from_episodes(const json& body) {
     Story story = stages::story_from_episodes(project);
     if (story.chapters.empty()) {
         throw ApiError(400,
-                       "这个项目里一集剧本都没有，反推不出东西来。"
-                       "先写一集，或者直接在故事那一页写大纲");
+                       "这个项目里一章剧本都没有，反推不出东西来。"
+                       "先写一章，或者直接在故事那一页写大纲");
     }
 
     validate_or_400(story);
     store.save_story(story);
-    // **章节动了，剧集跟着对齐。** 一章一集是机械映射，用户 2026-09-16
-    // 选的是「自动做，不要按钮」。非章模式下这一句什么都不做。
+    // **章节动了，章节记录跟着对齐。** 一章一条是机械映射，用户 2026-09-16
+    // 选的是「自动做，不要按钮」。
     sync_episodes_to_chapters(store, story);
 
-    // **顺手把集和章接上。** 不接的话故事在这儿、剧集在那儿，两边看着都
-    // 齐全，只有写下一集时才发现它拿不到前情——而那时候没有任何报错。
+    // **顺手把章节记录和章接上。** 不接的话故事在这儿、章节记录在那儿，两边
+    // 看着都齐全，只有写下一章时才发现它拿不到前情——而那时候没有任何报错。
     Project linked = project;
     for (const auto& p : story.plan) {
         Episode* ep = linked.episode_by_id(p.episode_id);

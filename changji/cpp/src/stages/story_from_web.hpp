@@ -33,7 +33,7 @@ struct WebChapter {
 const nlohmann::ordered_json& web_chapter_schema();
 
 /// 开场那两条：system + user（user 里带着上下文和 schema）。
-/// 上下文 = 这部剧的一句话（有的话）+ 前一章的结尾 + 这一章的标题。
+/// 上下文 = 这部电影的一句话（有的话）+ 前一章的结尾 + 这一章的标题。
 std::vector<llm::Message> web_chapter_opening(models::StyleLine style_line,
                                               const models::Story& story,
                                               const std::string& chapter_id);

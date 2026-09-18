@@ -98,7 +98,7 @@ ApiResult post_new_project(const json& body, const config::Settings& settings) {
     const std::string name = paths::to_utf8(path.filename());
     const std::string title = opt_str(body, "title", "");
 
-    // 画幅可以在建项目时就定；没给就按内置默认（竖屏 720p）。
+    // 画幅可以在建项目时就定；没给就按内置默认（横屏 720p）。
     // **先校验再建目录**：目录建了再报 400，下次同名就是 409，用户会以为
     // 名字被占了。
     config::VideoConfig video;
@@ -111,7 +111,12 @@ ApiResult post_new_project(const json& body, const config::Settings& settings) {
     try {
         ProjectStore store = ProjectStore::create(
             path, text::project_slug(name), title.empty() ? name : title, line);
-        // 一部剧一份标准参数，建的时候就落下来。见 project_config_template。
+        // 一部电影一份标准参数，建的时候就落下来。见 project_config_template。
+        //
+        // **这一句也是新项目的画幅被钉在盘上的那一下。** 有了它，
+        // `config::load_settings` 读这个项目走的是「项目自己写了
+        // [video]」那一支，永远落不到内置默认上，也用不着去 assets.json
+        // 里推——推那条路是给没有这份文件的老项目留的。
         config::write_project_config(store.root(), video);
         // **派生那份拷贝也得在这儿写对。**
         //
@@ -151,9 +156,9 @@ namespace {
 /// 全程 200，界面上看着像"改名没生效"。
 ///
 /// 2026-09-14 之前这道闸只在删除那条路上，而且不看路径、只问「有没有 Run
-/// 在跑」：单卡上一集要跑很久，而「趁着在跑顺手把测试残留清了」恰恰是这段
+/// 在跑」：单卡上一章要跑很久，而「趁着在跑顺手把测试残留清了」恰恰是这段
 /// 时间最想干的事，人会收到一句和自己的操作对不上的 409；同时它**漏了
-/// Write**（写整季、批量排分镜），那类任务照样往项目目录里写盘。
+/// Write**（写全片、批量排分镜），那类任务照样往项目目录里写盘。
 ///
 /// ⚠️ **三种"不确定"一律按挡处理**（fail-closed）：
 ///   · 发起方没说在跑哪个（start 的 project 是尾参，默认空串）；
@@ -215,9 +220,9 @@ ApiResult post_delete_project(const json& body,
 
     // 闸三：名字一字不差。防的是"选错了一行然后顺手点了确认"。
     //
-    // **目录名和剧名都认。** 2026-09-14 之前只认目录名，而界面上到处显示
-    // 的是剧名（/api/projects 的 name 就是 `title.empty() ? dir : title`）：
-    // 一个目录叫 convenience-store、剧名叫「深夜便利店」的项目，确认框要
+    // **目录名和片名都认。** 2026-09-14 之前只认目录名，而界面上到处显示
+    // 的是片名（/api/projects 的 name 就是 `title.empty() ? dir : title`）：
+    // 一个目录叫 convenience-store、片名叫「深夜便利店」的项目，确认框要
     // 你打「深夜便利店」才解锁，打完提交引擎回 400 要目录名——**界面上
     // 唯一给你的那个名字正是引擎唯一不收的那个**，这条路彻底堵死。
     const std::string dir_name = paths::to_utf8(canon.filename());
@@ -276,7 +281,7 @@ ApiResult post_project_rename(const json& body) {
     // 空名字会让列表回落到目录名（readonly.cpp 的 name 字段），看起来像
     // "改名没生效"。直接拦住，让人知道这一步没做成。
     const std::string title = text::truncate_utf8(text::strip_ws(raw), 200);
-    if (title.empty()) throw ApiError(400, "剧名不能是空的");
+    if (title.empty()) throw ApiError(400, "片名不能是空的");
 
     project.title = title;
     store.save_project(project);

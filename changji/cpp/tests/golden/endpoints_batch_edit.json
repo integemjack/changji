@@ -7,7 +7,7 @@
         "total": 2
       },
       "compare": "full",
-      "name": "整集重置",
+      "name": "整章重置",
       "req": {
         "action": "reset",
         "episode_id": "ep01"
@@ -76,7 +76,7 @@
         "total": 2
       },
       "compare": "full",
-      "name": "整集加锁",
+      "name": "整章加锁",
       "req": {
         "action": "lock",
         "episode_id": "ep01"
@@ -111,7 +111,7 @@
         "total": 2
       },
       "compare": "full",
-      "name": "整集清闸门备注",
+      "name": "整章清闸门备注",
       "req": {
         "action": "clear_notes",
         "episode_id": "ep01"
@@ -170,10 +170,10 @@
     },
     {
       "body": {
-        "detail": "没有剧集 ep99"
+        "detail": "没有章节 ep99"
       },
       "compare": "full",
-      "name": "剧集不存在_404",
+      "name": "章节不存在_404",
       "req": {
         "action": "reset",
         "episode_id": "ep99"
@@ -275,7 +275,7 @@
     },
     {
       "body": {
-        "detail": "顺序表和这一集的镜头对不上。少了：ep01_s01_sh001。"
+        "detail": "顺序表和这一章的镜头对不上。少了：ep01_s01_sh001。"
       },
       "compare": "full",
       "name": "重排_少一个_400",
@@ -291,7 +291,7 @@
     },
     {
       "body": {
-        "detail": "顺序表和这一集的镜头对不上。多了：extra_one。"
+        "detail": "顺序表和这一章的镜头对不上。多了：extra_one。"
       },
       "compare": "full",
       "name": "重排_多一个_400",
@@ -348,7 +348,7 @@
         "reset_shots": 0
       },
       "compare": "full",
-      "name": "接场景_指定集",
+      "name": "接场景_指定章",
       "req": {
         "episode_id": "ep01"
       },

@@ -14,7 +14,7 @@
   * 用哪个模型：ACESTEP_CONFIG（默认 acestep-v15-turbo，最快，出配乐够用）。
 
 输出一律 wav（ffmpeg 转，PATH 上要有 ffmpeg；引擎本来就要它）。
-退出码非零 = 失败，stderr 里说原因——引擎会把最后几行带进「这一集没有配乐」
+退出码非零 = 失败，stderr 里说原因——引擎会把最后几行带进「这一章没有配乐」
 那句里。
 
 API 按 ACE-Step-1.5 的 docs/en/INFERENCE.md（2026-09）写的：

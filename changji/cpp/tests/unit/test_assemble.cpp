@@ -2,10 +2,10 @@
 //
 // **ffmpeg 的参数当契约来测。** 参数错了不会当场报错，只会让成片在
 // 某些播放器上打不开、音画错位、或者中间丢掉一整个镜头——那要等到
-// 成片出来、有人从头看一遍才发现，而一集是三分钟。
+// 成片出来、有人从头看一遍才发现，而那是一整部电影。
 //
 // 时间线那部分测的是**字幕时间戳来自配音的真实时长**。用估算时长的话，
-// 一集下来字幕会越飘越远，而每一条单看都"差不多对"。
+// 一章下来字幕会越飘越远，而每一条单看都"差不多对"。
 
 #include <doctest/doctest.h>
 
@@ -108,139 +108,6 @@ struct ExactFrames {
 
 }  // namespace
 
-TEST_CASE("一章按每集时长切成几集：只在镜头边界切，每集重新从 0 起算") {
-    // 用户 2026-09-16 的判词：一章按它自己的内容写完、拍完，最后按固定
-    // 的每集时长切成几集——**能切出几集是这一章内容的结果**，不是反过来
-    // 让内容去凑一集的长度（凑不满就注水，超了就压缩）。
-    const auto entry = [](const char* id, double start, double dur) {
-        media::TimelineEntry e;
-        e.shot_id = id;
-        e.start_s = start;
-        e.duration_s = dur;
-        media::SubtitleCue c;
-        c.start_s = start;
-        c.end_s = start + dur;
-        c.text = id;
-        e.cues.push_back(c);
-        return e;
-    };
-    media::Timeline t;
-    double at = 0.0;
-    for (int i = 0; i < 7; ++i) {
-        t.entries.push_back(entry(("sh" + std::to_string(i)).c_str(), at, 10.0));
-        at += 10.0;
-    }
-
-    SUBCASE("短得不像一集的尾巴并回上一集") {
-        // 2026-09-17 实测 hulian-test：每集目标 60 秒，ep01 切成 57.2 秒 +
-        // **4.5 秒**——后一个不是一集，是个片段，发出去就是一条四秒半的
-        // 视频。并回去 61.7 秒，比目标多一点点，正好。
-        media::Timeline t2;
-        double at2 = 0.0;
-        for (const double d : {28.0, 28.0, 3.0}) {
-            t2.entries.push_back(entry("sh", at2, d));
-            at2 += d;
-        }
-        const auto eps = media::split_into_episodes(t2, 60.0);
-        REQUIRE(eps.size() == 1);            // 3 秒那一镜没有单独成集
-        CHECK(eps[0].entries.size() == 3);
-        // 并回去的那几镜时间戳要接着走，不能还停在 0
-        CHECK(eps[0].entries.back().start_s == doctest::Approx(56.0));
-        REQUIRE_FALSE(eps[0].entries.back().cues.empty());
-        CHECK(eps[0].entries.back().cues.front().start_s == doctest::Approx(56.0));
-    }
-
-    SUBCASE("尾巴够长就留着：短是短，还是一集") {
-        // ep06 那次是 48.9 + 27.4。27 秒短，但它是一集。
-        media::Timeline t3;
-        double at3 = 0.0;
-        for (const double d : {25.0, 24.0, 27.0}) {
-            t3.entries.push_back(entry("sh", at3, d));
-            at3 += d;
-        }
-        const auto eps = media::split_into_episodes(t3, 60.0);
-        REQUIRE(eps.size() == 2);
-        CHECK(eps[1].entries.size() == 1);
-    }
-
-    SUBCASE("并完会撑成怪物就不并：宁可留那个短尾巴") {
-        // 一条四秒的片子难看，一条两分钟的"短剧"是另一种难看。
-        // 一镜本身就超过一集时长时它自己成一集（上面那条「至少留一镜」），
-        // 于是上一集可能比目标长得多——88 + 5 = 93 超过 60×1.5，不并。
-        media::Timeline t4;
-        double at4 = 0.0;
-        for (const double d : {88.0, 5.0}) {
-            t4.entries.push_back(entry("sh", at4, d));
-            at4 += d;
-        }
-        const auto eps = media::split_into_episodes(t4, 60.0);
-        REQUIRE(eps.size() == 2);
-        CHECK(eps[1].entries.size() == 1);
-        CHECK(eps[1].entries.front().duration_s == doctest::Approx(5.0));
-    }
-
-    SUBCASE("70 秒按 30 秒一集切：3 集，3/3/1 镜") {
-        const auto eps = media::split_into_episodes(t, 30.0);
-        REQUIRE(eps.size() == 3);
-        CHECK(eps[0].entries.size() == 3);
-        CHECK(eps[1].entries.size() == 3);
-        CHECK(eps[2].entries.size() == 1);
-        // 一镜都没丢，顺序也没乱
-        std::vector<std::string> ids;
-        for (const auto& e : eps) {
-            for (const auto& x : e.entries) ids.push_back(x.shot_id);
-        }
-        REQUIRE(ids.size() == 7);
-        for (int i = 0; i < 7; ++i) CHECK(ids[i] == "sh" + std::to_string(i));
-    }
-    SUBCASE("每一集自己从 0 起算，字幕跟着挪") {
-        const auto eps = media::split_into_episodes(t, 30.0);
-        REQUIRE(eps.size() >= 2);
-        for (const auto& e : eps) {
-            REQUIRE_FALSE(e.entries.empty());
-            CHECK(e.entries.front().start_s == doctest::Approx(0.0));
-            REQUIRE_FALSE(e.entries.front().cues.empty());
-            CHECK(e.entries.front().cues.front().start_s == doctest::Approx(0.0));
-            // 集内仍然首尾相接
-            double want = 0.0;
-            for (const auto& x : e.entries) {
-                CHECK(x.start_s == doctest::Approx(want));
-                REQUIRE_FALSE(x.cues.empty());
-                CHECK(x.cues.front().start_s == doctest::Approx(want));
-                want += x.duration_s;
-            }
-        }
-    }
-    SUBCASE("不许切在镜头中间：宁可这一集长一点") {
-        const auto eps = media::split_into_episodes(t, 25.0);
-        for (const auto& e : eps) {
-            for (const auto& x : e.entries) CHECK(x.duration_s == doctest::Approx(10.0));
-        }
-        // 25 秒装不下第三镜，所以每集两镜 20 秒，最后一集一镜
-        REQUIRE(eps.size() == 4);
-        CHECK(eps.back().entries.size() == 1);
-    }
-    SUBCASE("单镜就超过一集时长：它自己单独成一集，不留空集") {
-        media::Timeline big;
-        big.entries.push_back(entry("long1", 0.0, 40.0));
-        big.entries.push_back(entry("long2", 40.0, 40.0));
-        const auto eps = media::split_into_episodes(big, 30.0);
-        REQUIRE(eps.size() == 2);
-        CHECK(eps[0].entries.size() == 1);
-        CHECK(eps[1].entries.size() == 1);
-        for (const auto& e : eps) CHECK(e.entries.front().start_s == doctest::Approx(0.0));
-    }
-    SUBCASE("不切：每集时长给 0 或者根本装得下，原样一条") {
-        CHECK(media::split_into_episodes(t, 0.0).size() == 1);
-        CHECK(media::split_into_episodes(t, -5.0).size() == 1);
-        CHECK(media::split_into_episodes(t, 1000.0).size() == 1);
-        CHECK(media::split_into_episodes(t, 1000.0)[0].entries.size() == 7);
-    }
-    SUBCASE("空时间线：一集都不出，别出个空集") {
-        CHECK(media::split_into_episodes(media::Timeline{}, 30.0).empty());
-    }
-}
-
 TEST_CASE("时间轴按这一镜真正会生成的帧数排，不按分镜表的名义时长") {
     // 帧数要落在模型的格子上：名义 4 秒的镜头按 17k+5 对齐之后是 107 帧
     // = 4.458 秒。按名义值排的话，每镜差的那几百毫秒会**逐镜累积**——
@@ -266,7 +133,7 @@ TEST_CASE("时间轴按这一镜真正会生成的帧数排，不按分镜表的
 
 TEST_CASE("时间线：字幕时间戳来自配音的真实时长") {
     const ExactFrames exact;
-    // 用估算时长的话，一集下来字幕会越飘越远，而每一条单看都"差不多对"。
+    // 用估算时长的话，一章下来字幕会越飘越远，而每一条单看都"差不多对"。
     const auto paths = make_paths("时间线");
     touch(paths.shots("draft") / "a.mp4");
     touch(paths.shots("draft") / "b.mp4");
@@ -382,7 +249,7 @@ TEST_CASE("缺视频时说清是哪一镜") {
 }
 
 TEST_CASE("统一规格：先按比例缩到框内再补边") {
-    // 直接 scale 到目标尺寸会拉伸，而竖屏短剧里混进一个横屏镜头时，
+    // 直接 scale 到目标尺寸会拉伸，而竖屏的电影里混进一个横屏镜头时，
     // 拉伸出来的人脸一眼就不对。
     config::AssemblyConfig cfg;
     cfg.fps = 24;
@@ -424,7 +291,7 @@ TEST_CASE("项目名里带撇号也要拼得出来") {
     // 被当成别的记号。
     //
     // **代价不对称**：表现是最后装配那一步报一句 ffmpeg 的解析错，指的位置
-    // 离真正的原因（项目叫什么名）十万八千里，而且是在整集都跑完之后才炸。
+    // 离真正的原因（项目叫什么名）十万八千里，而且是在整章都跑完之后才炸。
     const fs::path work = paths::from_utf8("C:\\库\\don't\\output");
     const std::vector<fs::path> clips = {work / "norm_0000.mp4"};
     const std::string listing = media::concat_listing(clips);
@@ -915,7 +782,7 @@ TEST_CASE("时间线的起点和字幕时间戳和 Python 一样") {
 // `line.actual_duration_s`——配音阶段量出来写回台词的那个数
 // （那一步由 audio_stage.json 钉住），这里再把它累成时间轴。
 // 算错了不报错：字幕生成成功、成片渲染成功、总时长也对，
-// 只是字幕比人声早半秒或晚半秒，而且一集下来越飘越远，
+// 只是字幕比人声早半秒或晚半秒，而且一章下来越飘越远，
 // 每一条单看都"差不多对"。
 // ---------------------------------------------------------------------------
 
@@ -997,7 +864,7 @@ TEST_CASE("时间线的排期和字幕时间戳和 Python 一样") {
             const auto& got = tl.entries[i];
             const auto& w = want_entries[i];
             CHECK(got.shot_id == w.at("shot_id").get<std::string>());
-            // **起点**：溶解要把它往回挪，漏了这一步整集字幕全偏
+            // **起点**：溶解要把它往回挪，漏了这一步整章字幕全偏
             CHECK(got.start_s == doctest::Approx(w.at("start_s").get<double>()));
             CHECK(got.duration_s ==
                   doctest::Approx(w.at("duration_s").get<double>()));
@@ -1032,19 +899,20 @@ TEST_CASE("时间线的排期和字幕时间戳和 Python 一样") {
     }
 }
 
-TEST_CASE("成片文件名属于哪一集") {
-    // **装配有两套名字**：一集时 ep01.mp4，切成几集时 ep01_01.mp4 /
-    // ep01_02.mp4。而切几集是内容的结果、会变，于是"这个文件属于哪一集"
-    // 有两处要判：装配时清上一版留下的孤儿，列表时数"几集出片了"。
+TEST_CASE("成片文件名属于哪一章") {
+    // **`_NN` 是老项目留下的名字**：2026-09-18 之前一章会在章内切成几段，
+    // 切出来的叫 ep01_01 / ep01_02，不切的那次叫 ep01。今天一章只出一个
+    // ep01.mp4，可老项目盘上还躺着那种名字，于是"这个文件属于哪一章"
+    // 有两处要判：装配时清上一版留下的孤儿，列表时数"几章出片了"。
     // 2026-09-17 撞过：两处各写一遍，清理那边认两种、计数那边只认一种，
-    // 切过的章在「N/M 集已出片」里全被漏掉。判法收在这一个函数上。
+    // 切过的章在「N/M 章已出片」里全被漏掉。判法收在这一个函数上。
     using media::episode_of_output;
     CHECK(episode_of_output("ep01") == "ep01");
     CHECK(episode_of_output("ep01_01") == "ep01");
     CHECK(episode_of_output("ep01_12") == "ep01");
     // **不用子串**：短 id 拿子串会命中所有 epNN
     CHECK(episode_of_output("ep") == "ep");
-    CHECK(episode_of_output("ep0112") == "ep0112");   // 没有下划线，不是切出来的
+    CHECK(episode_of_output("ep0112") == "ep0112");   // 没有下划线，不是老项目切出来的
     CHECK(episode_of_output("ep01_ab") == "ep01_ab"); // 后两位不是数字
     CHECK(episode_of_output("ep01_1") == "ep01_1");   // 只有一位数字
     CHECK_FALSE(episode_of_output("").has_value());

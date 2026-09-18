@@ -267,10 +267,10 @@ const roomDecision = computed(() =>
 )
 
 /**
- * 这一趟是替哪部剧问的。
+ * 这一趟是替哪部电影问的。
  *
  * ⚠️ **这一页 2026-09-15 才变成"跟项目走"的**（体检里「出片画布」那一项
- * 要按这部剧的画幅查），同时挂上了换项目就重拉的 watch。而
+ * 要按这部电影的画幅查），同时挂上了换项目就重拉的 watch。而
  * `/bff/settings/overview` **是全应用最慢的一条**：它里面整跑一遍体检，
  * 其中三项要发网络请求、各自 8 秒超时，最坏二十多秒。
  *
@@ -285,12 +285,12 @@ let loadSeq = 0
 async function load() {
   const mine = ++loadSeq
   // **钉住路径再发**，不要在 await 之后现读：这一趟问的和下面写进去的
-  // 必须是同一部剧。
+  // 必须是同一部电影。
   const want = session.projectPath
   loading.value = true
   try {
-    // **带上顶栏选中的那部剧。** 这一份里的体检有一项是「出片画布」，
-    // 而画幅是每部剧自己的——不带的话查的是全局默认，2K 的项目上这一节
+    // **带上顶栏选中的那部电影。** 这一份里的体检有一项是「出片画布」，
+    // 而画幅是每部电影自己的——不带的话查的是全局默认，2K 的项目上这一节
     // 会说没问题、上面那颗牌子会写「可以开工」，而镜头页开跑前的体检
     // （走 /api/doctor，带了 path）会说超了。见 api.settingsOverview。
     const data = await api.settingsOverview(want)
@@ -339,7 +339,7 @@ async function load() {
       ui.warn(`${key} 读不到：${message}`)
     }
   } catch (err) {
-    // 过期那一趟的报错也不算数：上一部剧被删了回的 404 会在新这一部的
+    // 过期那一趟的报错也不算数：上一部电影被删了回的 404 会在新这一部的
     // 页面上弹一句莫名其妙的红字。同 session.refresh 那处。
     if (mine !== loadSeq) return
     loadError.value = err.message
@@ -402,9 +402,9 @@ onMounted(() => {
   loadUpdate(false)
 })
 
-// 换一部剧，体检里那条「出片画布」的答案就变了（画幅是每部剧自己的）。
+// 换一部电影，体检里那条「出片画布」的答案就变了（画幅是每部电影自己的）。
 // 不重拉的话这一节停在上一部那份上——而这一页没有任何地方写着它是给
-// 哪部剧看的，停着的那份看上去就是当前这部的。
+// 哪部电影看的，停着的那份看上去就是当前这部的。
 watch(() => session.projectPath, load)
 
 /**
@@ -708,7 +708,7 @@ function scrollTo(id) {
                用户 2026-09-17 要的第二句：「增加一个统一的控制开关，后期可以
                直接关闭」。关掉之后每个用大模型的地方那颗按钮一起消失。
                记在这台机器上（localStorage），和上面靠哪边一个规矩——它是
-               "我这台机器上怎么用"，不是"这部剧怎么拍"。 -->
+               "我这台机器上怎么用"，不是"这部电影怎么拍"。 -->
           <label class="field">
             <span class="field__label">复制提示词按钮</span>
             <span class="row row--wrap">
@@ -1109,7 +1109,7 @@ function scrollTo(id) {
                    zoompan 都没有（2026-09-13 查过）。 -->
               <label
                 class="switch"
-                title="关掉的话，重试超限的镜头会标成「未过闸门」，整集停在那儿等人"
+                title="关掉的话，重试超限的镜头会标成「未过闸门」，整章停在那儿等人"
               >
                 <input v-model="params.fallback_on_exhausted" type="checkbox" />
                 <span>重试超限就留着最后那一版（没过闸门也照用）</span>

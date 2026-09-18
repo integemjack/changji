@@ -80,7 +80,7 @@ struct Rendered {
 
 /// 真出一张图，写进 refs/。
 ///
-/// 画幅和步数**跟这部剧的首帧完全一样**（项目的 `[video]` 盖在档位表上，
+/// 画幅和步数**跟这部电影的首帧完全一样**（项目的 `[video]` 盖在档位表上，
 /// 见 pipeline::apply_project_spec）。刻意不另设一档：参考图是拿去喂首帧
 /// 的，比首帧小等于先把细节丢掉再让模型照着画，比首帧大只是白花时间——
 /// 实测 5090 上多花一倍（544×928 约一分钟，1088×1920 要两分钟）。
@@ -448,7 +448,7 @@ struct QueueItem {
 ///
 /// **一条就够，而且必须只有一条**：同时跑两批等于同一批位置上挤两倍的活，
 /// 而位置是按显卡数开的。第二个项目按下去时回 409，界面照着说一句
-/// 「另一部剧正在出图」——比让两批互相抢着变慢、谁也说不清好。
+/// 「另一部电影正在出图」——比让两批互相抢着变慢、谁也说不清好。
 struct RefQueue {
     std::mutex mu;
     std::condition_variable cv;
@@ -722,7 +722,7 @@ ApiResult post_references_generate_all(const json& body) {
         if (q.active) {
             throw ApiError(409, same_project(q.project, project_path)
                                     ? "这一批已经在画了"
-                                    : "另一部剧正在出图，等它画完再来");
+                                    : "另一部电影正在出图，等它画完再来");
         }
         if (items.empty()) {
             return {200, {{"total", 0}, {"started", false}}};

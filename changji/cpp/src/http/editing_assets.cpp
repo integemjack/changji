@@ -1,7 +1,7 @@
 // 资产类的编辑接口：/api/character /api/location /api/style。
 //
 // 和 editing.cpp（改镜头）分开放，因为这三个共享一条重要语义：
-// 它们改的是**全剧共用**的东西，所以要连带把未锁定的镜头退回未开工。
+// 它们改的是**全片共用**的东西，所以要连带把未锁定的镜头退回未开工。
 // 改镜头只影响那一个镜头，不需要。
 
 #include <set>
@@ -44,7 +44,7 @@ double need_num(const json& v, const char* field) {
 
 /// 把所有未锁定的镜头退回未开工，返回改了几个。
 ///
-/// 角色外观和场景是所有镜头共用的，改了它们等于全剧的提示词都变了。
+/// 角色外观和场景是所有镜头共用的，改了它们等于全片的提示词都变了。
 /// 不重置的话已完成的镜头会继续用旧设定，同一个角色前后长得不一样。
 ///
 /// 跳过 PLANNED（本来就没开工）和 LOCKED（人工确认过，不再重跑）。
@@ -52,7 +52,7 @@ double need_num(const json& v, const char* field) {
 ///
 /// 界面一次提交整张表单，所以"字段出现在请求里"不代表用户改了它。
 /// 按值比，值没变就不算改，也就不该触发重跑——光看字段在不在的话，
-/// 改个音色也会把全剧镜头退回重跑，已经渲染好的成片档白白重来一遍。
+/// 改个音色也会把全片镜头退回重跑，已经渲染好的成片档白白重来一遍。
 bool changed(const json& current, const json& patch,
              const std::set<std::string>& keys) {
     for (const auto& k : keys) {
@@ -78,7 +78,7 @@ void reject_extra(const json& patch, const std::set<std::string>& allowed) {
 ///
 /// CharacterUpdateRequest 和 LocationUpdateRequest 默认 true，
 /// StyleUpdateRequest 默认 **false**。这是 Python 里一处刻意的不对称：
-/// 改全剧风格是常做的事，默认把整部剧推翻重跑代价太大；
+/// 改全片风格是常做的事，默认把整部电影推翻重跑代价太大；
 /// 而改角色外观或场景是"这个东西定稿了"的动作，频率低得多。
 ///
 /// 我第一版三个都用了 true，对拍立刻抓到——两条 style 用例都是
@@ -227,7 +227,7 @@ ApiResult post_style(const json& body) {
     assets.style = std::move(draft);
     store.save_assets(assets);
 
-    // 全剧风格层所有镜头都会带上，这三个字段任一变了就得全部重跑。
+    // 全片风格层所有镜头都会带上，这三个字段任一变了就得全部重跑。
     const bool touched = changed(before, patch,
                                  {"global_style", "negative_prompt"});
     // 注意默认 false，和另外两个接口不一样

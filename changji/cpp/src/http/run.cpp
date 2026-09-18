@@ -97,7 +97,7 @@ Project load_or_400(const ProjectStore& store) {
     }
 }
 
-/// 正在跑的是哪一集。拼 409 那句话用。
+/// 正在跑的是哪一章。拼 409 那句话用。
 std::string running_episode() {
     const json snap = pipeline::jobs().snapshot(pipeline::JobKind::Run);
     const auto it = snap.find("episode_id");
@@ -141,9 +141,9 @@ ApiResult post_run(const json& body, const RunDeps& deps) {
     // **默认跳过。** 挂 Turbo LoRA 之后两档画质拉不开差距，草稿档就是
     // 白跑一遍。想留着的话显式传 skip_draft: false。
     const bool skip_draft = opt_bool(body, "skip_draft", true);
-    // 只跑这几个镜头。**空表示整集**——新界面上每个镜头自己有一个
+    // 只跑这几个镜头。**空表示整章**——新界面上每个镜头自己有一个
     // "重新生成"，用户看着某一镜不对，想重跑的就是那一个；
-    // 没有这一项的话只能整集重跑，而整集是一小时。
+    // 没有这一项的话只能整章重跑，而整章是一小时。
     std::set<std::string> only_shots;
     if (const auto it = body.find("shot_ids");
         it != body.end() && it->is_array()) {
@@ -154,8 +154,8 @@ ApiResult post_run(const json& body, const RunDeps& deps) {
     const bool force = opt_bool(body, "force", false);
     const bool all_episodes = opt_bool(body, "all_episodes", false);
     const auto stage_names = opt_str_list(body, "stages");
-    // **C++ 独有。** "episode"（默认）= 一集跑完再跑下一集，Python 就这样；
-    // "stage" = 所有集先配音，再所有集出首帧……多卡时用这个，见任务体里的注释。
+    // **C++ 独有。** "episode"（默认）= 一章跑完再跑下一章，Python 就这样；
+    // "stage" = 所有章先配音，再所有章出首帧……多卡时用这个，见任务体里的注释。
     std::string order = "episode";
     if (const auto it = body.find("order"); it != body.end() && it->is_string()) {
         order = it->get<std::string>();
@@ -169,7 +169,7 @@ ApiResult post_run(const json& body, const RunDeps& deps) {
     // 上面那段解释了为什么不 forbid：前端和引擎的版本不一定同步升，
     // 多一个键就 422 会让整个功能挂掉。那个取舍现在还成立，但**默不作声
     // 的代价是真的**：2026-09-13 我自己把 shot_ids 写成 only_shots，
-    // 引擎一声不吭地当成"没指定镜头"，于是「重出这一镜」变成了整集重渲
+    // 引擎一声不吭地当成"没指定镜头"，于是「重出这一镜」变成了整章重渲
     // 18 镜、跑了二十分钟——而且是在我以为它只渲了一镜的前提下，
     // 连着几轮拿它当证据。
     //
@@ -213,11 +213,11 @@ ApiResult post_run(const json& body, const RunDeps& deps) {
 
     std::vector<std::string> queue;
     if (all_episodes) {
-        // 做的就是量产，一集一集手点没有意义。给了这个就忽略 episode_id。
+        // 做的就是量产，一章一章手点没有意义。给了这个就忽略 episode_id。
         for (const auto& ep : project.episodes) {
             if (!ep.shots.empty()) queue.push_back(ep.episode_id);
         }
-        if (queue.empty()) throw ApiError(400, "这个项目还没有任何一集有分镜表");
+        if (queue.empty()) throw ApiError(400, "这个项目还没有任何一章有分镜表");
     } else {
         queue.push_back(episode_id);
     }
@@ -226,8 +226,8 @@ ApiResult post_run(const json& body, const RunDeps& deps) {
     //
     // 首帧那一族是图像**编辑**模型，手上没有编辑源时退化成文生图，出来的
     // 是彩色噪点——而闸门拦不住（方差比真图还大，「不是空图」那条一路绿灯）。
-    // 一镜两分钟、一集二十几镜，跑完再说就太晚了：那时候人已经等了一个钟头，
-    // 拿到的是一集雪花。
+    // 一镜两分钟、一章二十几镜，跑完再说就太晚了：那时候人已经等了一个钟头，
+    // 拿到的是一章雪花。
     //
     // **只在收参考图的模型上判**：纯文生图的本来就不传参考图，缺不缺一样跑。
     // 判据和出图那头是同一个函数（`accepts_reference_images`，认文件名）。
@@ -240,8 +240,8 @@ ApiResult post_run(const json& body, const RunDeps& deps) {
                 if (ep == nullptr) continue;
                 // **只看这一趟真要跑的那几镜。**
                 //
-                // 抽屉里「重出这一镜」发的是 `shot_ids`。拿整集去判的话，
-                // 同一集里另有一镜缺图就把它也挡了——而那一镜自己的参考图
+                // 抽屉里「重出这一镜」发的是 `shot_ids`。拿整章去判的话，
+                // 同一章里另有一镜缺图就把它也挡了——而那一镜自己的参考图
                 // 好好的，人想重出的也只有它。挡错的代价比漏挡大：漏挡最多
                 // 是那一镜出张噪点，挡错是**这一镜再也重出不了**，而屏幕上
                 // 说的还是另一镜的事。
@@ -277,7 +277,7 @@ ApiResult post_run(const json& body, const RunDeps& deps) {
          deps](pipeline::JobProgress& p) {
             // 配置和后端在**任务开始时**取一次，不是注册时。
             // 用户改完模型文件不用重启，但一次跑的中途不会换——
-            // 中途换的话同一集里前半段和后半段用的是不同的模型。
+            // 中途换的话同一章里前半段和后半段用的是不同的模型。
             config::Settings settings = deps.settings();
             HardwareProfile profile = deps.profile();
 
@@ -296,8 +296,8 @@ ApiResult post_run(const json& body, const RunDeps& deps) {
                 });
 
             // **项目自己的 changji.toml 盖在全局上。** 画幅和清晰度
-            // （[video]）写在那儿：一台机器上可以同时有竖屏短剧和横屏
-            // 片子，画幅是这部剧的属性。
+            // （[video]）写在那儿：一台机器上可以同时有一部横屏的正片和
+            // 一批竖版的物料（竖屏预告、花絮），画幅是这部电影的属性。
             //
             // 只在这一层合，不在 deps.settings() 里——那个函数不知道
             // 当前跑的是哪个项目，而同一个进程会轮流跑好几个。
@@ -307,7 +307,7 @@ ApiResult post_run(const json& body, const RunDeps& deps) {
             // 两处于是分叉：界面写"成片步数 28"，实际每一镜跑 Turbo 的 6 步。
             // 现在两边都调这一个函数，见 config::effective_spec。
             pipeline::apply_project_spec(settings, profile);
-            // 单镜上限也是这部剧的属性（[video].max_shot_s），这条路不经过
+            // 单镜上限也是这部电影的属性（[video].max_shot_s），这条路不经过
             // Runtime，要自己按项目那份设置算一遍。见 config::apply_video_limits。
             config::apply_video_limits(settings);
             const pipeline::Backends backends = deps.backends(settings, store);
@@ -326,7 +326,7 @@ ApiResult post_run(const json& body, const RunDeps& deps) {
             }
 
             std::vector<std::string> errors;
-            // 跑一集的某几个阶段。出错记下来，不拖垮后面的。
+            // 跑一章的某几个阶段。出错记下来，不拖垮后面的。
             const auto run_one = [&](const std::string& id,
                                      std::optional<std::vector<pipeline::Stage>> which) {
                 p.set_episode_id(id);
@@ -349,12 +349,12 @@ ApiResult post_run(const json& body, const RunDeps& deps) {
             };
 
             if (order == "stage") {
-                // **按阶段排。** 所有集先配音，再所有集出首帧……
+                // **按阶段排。** 所有章先配音，再所有章出首帧……
                 //
-                // 为什么多卡时要这样：按集排的话每一集都要经历一次配音
+                // 为什么多卡时要这样：按章排的话每一章都要经历一次配音
                 // （串行、协调者那张卡）→ 首帧 → 草稿 → 成片 → 装配（CPU），
                 // 其间八个工作进程反复空转；每个阶段结尾都有一条"等最慢那镜"
-                // 的尾巴；每换一个阶段所有工作进程都要换一次模型。十集就是
+                // 的尾巴；每换一个阶段所有工作进程都要换一次模型。十章就是
                 // 十遍。按阶段排，尾巴从十条变一条，模型每个阶段只换一次。
                 //
                 // 阶段内部的代码一行不动：每个阶段就是 run_episode 带
@@ -405,11 +405,11 @@ ApiResult post_run(const json& body, const RunDeps& deps) {
             if (!errors.empty()) p.set_error(join(errors, "；"));
         },
         /*stop_message=*/"",
-        // 顶栏那块"AI 作业中"要靠它说清是哪部剧、点了往哪儿跳。
+        // 顶栏那块"AI 作业中"要靠它说清是哪部电影、点了往哪儿跳。
         paths::to_utf8(store.root()),
-        // 任务页面那一行。一次跑几集就说几集。
+        // 任务页面那一行。一次跑几章就说几章。
         queue.size() == 1 ? "出片 · " + queue[0]
-                          : "出片 · " + std::to_string(queue.size()) + " 集");
+                          : "出片 · " + std::to_string(queue.size()) + " 章");
 
     // start() 只在同种任务已经在跑时返回 false，而上面刚判过。
     // 还是要判：那两步之间没有锁，两个请求同时进来时后一个要拿到 409，
@@ -442,7 +442,7 @@ ApiResult get_run_preview(const std::string& path,
     } else if (const Episode* ep = project.episode_by_id(episode_id)) {
         episodes.push_back(ep);
     }
-    if (episodes.empty()) throw ApiError(400, "没有可跑的剧集，先出分镜");
+    if (episodes.empty()) throw ApiError(400, "没有可跑的章节，先出分镜");
 
     // 阶段的先后。**一个镜头从它现在的状态开始，会一路走完后面所有阶段。**
     static const char* kOrder[] = {"audio", "frames", "draft", "final"};
@@ -590,7 +590,7 @@ ApiResult get_outputs(const std::string& path) {
     }
 
     // 新的在前。stable_sort 对齐 Python 的 sorted()——时间相同时保持
-    // 目录遍历的顺序，不然同一秒里出的两个片子每次刷新都换位置。
+    // 目录遍历的顺序，不然同一秒里出的两个成片每次刷新都换位置。
     std::stable_sort(items.begin(), items.end(),
                      [](const Item& a, const Item& b) { return a.mtime > b.mtime; });
 

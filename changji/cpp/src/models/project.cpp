@@ -9,6 +9,9 @@
 #include <sstream>
 #include <stdexcept>
 
+// 只为了新项目那份画幅：`create` 要把内置默认的比例钉进 assets.json，
+// 而那个默认只有一处（config::VideoConfig），不在这边抄一份。见 create()。
+#include "config/settings.hpp"
 #include "util/paths.hpp"
 #include "util/text.hpp"
 
@@ -174,7 +177,7 @@ std::vector<Shot> Episode::shots_needing(ShotStatus status) const {
 std::vector<std::string> Episode::validate() const {
     std::vector<std::string> errs;
     if (!is_slug(episode_id, false)) {
-        errs.push_back("剧集 id 只能是小写字母、数字和下划线，当前是 " + episode_id);
+        errs.push_back("章 id 只能是小写字母、数字和下划线，当前是 " + episode_id);
     }
     if (target_duration_s <= 0.0) {
         errs.push_back(episode_id + "：target_duration_s 必须大于 0");
@@ -306,6 +309,20 @@ ProjectStore ProjectStore::create(const fs::path& root,
 
     AssetLibrary assets;
     assets.style.style_line = style_line;
+    // **新项目的画幅当场钉在盘上，不留给初值去答。**
+    //
+    // `assets.json` 里这份比例平时是派生的拷贝（唯一的源是项目
+    // changji.toml 的 `[video].orientation`），但**反过来它也是这个项目
+    // 的画幅在盘上的记录**：`create` 不写 changji.toml（写的是
+    // `http::post_new_project`），而 `config::load_settings` 对没有
+    // `[video]` 的项目正是从这一栏把画幅推回来的。这儿不写的话，新建的
+    // 项目就靠 `StyleProfile::aspect_ratio` 那个**为老项目留的**初值
+    // （9:16）回答"我是什么画幅"——2026-09-18 默认翻成横屏之后，
+    // 那个答案是错的。
+    //
+    // 建项目时显式选了画幅的那条路会紧接着把这一栏改成它选的那一档
+    // （`http::post_new_project` 里 write_project_config 后面那几行）。
+    assets.style.aspect_ratio = config::VideoConfig{}.aspect_ratio();
     store.save_assets(assets);
     return store;
 }

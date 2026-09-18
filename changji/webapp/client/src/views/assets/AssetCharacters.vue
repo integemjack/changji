@@ -1,9 +1,9 @@
 <script setup>
 /**
- * 角色。设定那一页的第一格（三格：角色、场景、分集）。
+ * 角色。设定那一页的第一格（两格：角色、场景）。
  *
  * 角色外观只存在这里，分镜表里只有 id。所以这一页改一个字，
- * 全剧几十个镜头的提示词都跟着变——引擎会把已渲染的镜头退回重跑，
+ * 全片几十个镜头的提示词都跟着变——引擎会把已渲染的镜头退回重跑，
  * 界面必须把这件事说在前面，别让人改完才发现成片全没了。
  */
 import { computed, nextTick, onActivated, onDeactivated, onMounted, onUnmounted, ref, watch } from 'vue'
@@ -182,7 +182,7 @@ function relsOf(c) {
   return props.relations.filter((r) => r.a === c.name || r.b === c.name)
 }
 
-/** 手里这份角色是哪部剧读回来的。null = 手上没有。 */
+/** 手里这份角色是哪部电影读回来的。null = 手上没有。 */
 let loadedFor = null
 /** 上一趟为什么没读回来。空 = 没出事。提示条会消失，这一行不会。 */
 const loadError = ref('')
@@ -202,7 +202,7 @@ async function load() {
     loading.value = false // 理由同镜头墙那处：被顶掉的那趟不会清它
     return
   }
-  // 换剧时两趟会叠在一起，慢的那趟后落地就把上一部的角色摆在这一部下面
+  // 换片时两趟会叠在一起，慢的那趟后落地就把上一部的角色摆在这一部下面
   const want = session.projectPath
   loading.value = true
   try {
@@ -233,14 +233,14 @@ async function load() {
     )
   } catch (err) {
     if (want !== session.projectPath) return
-    // **墙上这份要是上一部剧的，就得撤下来。**
+    // **墙上这份要是上一部电影的，就得撤下来。**
     //
-    // 这儿原来只弹一句错。而换剧这条路是先清 edits 再 load 的，load 砸了
+    // 这儿原来只弹一句错。而换片这条路是先清 edits 再 load 的，load 砸了
     // 的话 `assets` 一个字没动——新这一部的页面上摆着**上一部的角色墙**，
     // 点开一张，抽屉里是空的（edits 刚清过），而右上角那几个按钮按的是
     // 现在这一部。八秒之后提示条自己消失，剩下一面对不上号的墙。
     //
-    // 只在手里这份属于别的项目时撤。同一部剧自己刷新失败（画完一张图那条
+    // 只在手里这份属于别的项目时撤。同一部电影自己刷新失败（画完一张图那条
     // 订阅每几十秒就来一趟）不撤——那时候屏幕上的就是这一部自己的东西，
     // 为一次网络抖动把整面墙清掉更糟。
     if (loadedFor !== session.projectPath) {
@@ -283,10 +283,10 @@ function dirtyIds() {
 
 /**
  * **站内换页也要拦。** 上面那段注释里点了刷新和关标签页，漏的是第三种：
- * 点顶栏那排「项目 / 故事 / 设定 / 这一集」。
+ * 点顶栏那排「项目 / 故事 / 设定 / 这一章」。
  *
- * 那一下 `<KeepAlive>` 连同冻在里头的另外两格一起卸掉——AssetsView 那句
- * 注释写着「三格各自都有一堆展开状态和没保存的编辑，切一下就丢的话没人
+ * 那一下 `<KeepAlive>` 连同冻在里头的另一格一起卸掉——AssetsView 那句
+ * 注释写着「两格各自都有一堆展开状态和没保存的编辑，切一下就丢的话没人
  * 敢切」，说的就是这些东西，而它只保到了切格子那一层。`beforeunload`
  * 管不到站内换页（浏览器只在真的要离开这个文档时才问）。
  */
@@ -345,7 +345,7 @@ let player = null
  * 一键出图一张接一张，每张几十秒就重拉一次，抽屉里正在改字的人不能被
  * 服务端那份一遍遍盖回去。
  *
- * 但**换项目走的是同一个 load**，而 edits 是按 id 索引的：两部剧里出现
+ * 但**换项目走的是同一个 load**，而 edits 是按 id 索引的：两部电影里出现
  * 同一个 id 不是稀奇事（id 是照名字生成的，续集、复制出来的项目、同名
  * 角色都会撞），撞上的那一条会被当成"这条人家改过、别刷新"，于是上一部
  * 的外观描述留在这一部的抽屉里，一存就写进去了。
@@ -366,14 +366,14 @@ watch(
     takeName.value = ''
     // 正在响的那一段同理——它是上一部的声音，而这一页已经换人了。
     stopAudio()
-    // 「正在画」那几格也松开：它们按 char_id_slot 记，而两部剧里撞同一个
+    // 「正在画」那几格也松开：它们按 char_id_slot 记，而两部电影里撞同一个
     // id 不稀奇。见 useRefStream 的 forgetAll。
     forgetAll()
     // **参考音色那份清单是按项目读的**（`/api/voices?path=`，扫的是
-    // 这部剧 voices/ 下的片段），也得跟着走。
+    // 这部电影 voices/ 下的片段），也得跟着走。
     //
     // 不清的后果不是"多显示几条"，是**再也不会刷新**：下面 toggle() 里那句
-    // 判据是 `if (!voices.length && !voicesError) loadVoices()`——上一部剧
+    // 判据是 `if (!voices.length && !voicesError) loadVoices()`——上一部电影
     // 有片段的话 `voices.length` 非零，于是换到新这一部之后**一次都不会
     // 重新问**。抽屉里那排可点的音色片和 datalist 摆的全是上一部的，点一下
     // 就把上一部的路径写进这一部角色的 voice_id，按保存就落盘了。
@@ -398,8 +398,8 @@ watch(finished, load)
  * 下拉框有用。「正在问」的状态也留着：接口本身还是异步的。
  */
 async function loadVoices() {
-  // **钉住是替哪部剧问的。** 这一趟是按项目读的，而抽屉开着的时候在项目库
-  // 里点另一部剧随时会发生；回来晚了不判的话，上一部的片段列表就摆在新这
+  // **钉住是替哪部电影问的。** 这一趟是按项目读的，而抽屉开着的时候在项目库
+  // 里点另一部电影随时会发生；回来晚了不判的话，上一部的片段列表就摆在新这
   // 一部的抽屉里。同 loadAssets 那条闸。
   const want = session.projectPath
   const mine = () => want === session.projectPath
@@ -454,8 +454,8 @@ function changed(charId) {
  * "长什么样"：身份、体型、五官发型、默认服装。有故事就从故事里读，没有
  * 才回落到剧本（引擎那边的 source=auto）。
  *
- * 角色是全剧共用的一批，所以不指定集号。默认只补还没定过妆的人：老角色
- * 的设定和参考图都留着。第五集冒出一个新角色时，不该把前四集主角的脸
+ * 角色是全片共用的一批，所以不指定章号。默认只补还没定过妆的人：老角色
+ * 的设定和参考图都留着。第五章冒出一个新角色时，不该把前四章主角的脸
  * 重新想一遍。
  */
 
@@ -469,9 +469,9 @@ async function save(charId) {
   //
   // 引擎这一下只改资产库里这一条（editing_assets.cpp 的 post_character），
   // 而故事那头每一章记的出场人物是**名字**（chapter.characters，不是 id）。
-  // 于是改完之后分集线上那一排脸认不出他了——那儿是拿章里的名字去资产库
-  // 里查的（AssetEpisodes 的 castOf），查不到就退成一个光名字的小牌子，
-  // 而且写的还是旧名字。**这个抽屉里那几条人物关系也一起没**：relsOf 比的
+  // 于是改完之后这张牌上「出现在哪几章」那一栏就空了——那一栏是拿章里的
+  // 名字去比的（useChapterIndex 的 chapterLabel），改完谁都对不上，而章里
+  // 写的还是旧名字。**这个抽屉里那几条人物关系也一起没**：relsOf 比的
   // 是 `r.a === c.name`，而 story.relations 里存的同样是名字。
   // 镜头表不受影响：那里存的是 char_id。
   //
@@ -490,7 +490,7 @@ async function save(charId) {
   if (renamed) {
     // **改名这一下的后果得说全，而且要留得住。**
     //
-    // 三处都是按名字认人的：分集线上那一排脸（chapter.characters）、这个
+    // 三处都是按名字认人的：「出现在哪几章」那一栏（chapter.characters）、这个
     // 抽屉里那几条关系（story.relations 的 a/b）、还有重出分镜时把剧本里
     // 的台词认回到这个人身上（storyboard.cpp 的 `id_of[name] = char_id`）。
     // 改名只动资产库这一条，那三处全指着旧名字。
@@ -499,7 +499,7 @@ async function save(charId) {
     ui.push(
       'warn',
       saved +
-        '改的只是设定库这一条——故事和已经写好的剧本里还是旧名字：分集线上这个人、' +
+        '改的只是设定库这一条——故事和已经写好的剧本里还是旧名字：「出现在哪几章」那一栏、' +
         '抽屉里那几条关系都会认不出来，重出分镜时他的台词也认不回来。' +
         '去故事页点「提人物」能把故事那半对上。',
       12000,
@@ -579,7 +579,7 @@ function playAudio(rel, url) {
  * 播一段刚摇出来的。加时间戳绕开缓存——落点是固定的那个 .take.wav。
  *
  * **项目路径是传进来的，不在这儿现读。** 摇和试听那两处都在 await 之后
- * （合成要几秒到几十秒），现读的话换过剧就是拿**新这一部**的路径去拼
+ * （合成要几秒到几十秒），现读的话换过片就是拿**新这一部**的路径去拼
  * 上一部那个 rel：两边的落点都是固定名字（`.take_<seed>.wav`、
  * `audio/say.wav`），于是不报 404，直接播出新这一部里那一段——听上去
  * 就是"这个角色的音色试听"，而它根本不是。
@@ -601,7 +601,7 @@ async function rollVoice(seed = null) {
     { key: 'take' },
   )
   if (!result) return
-  // 摇一段要跑一趟配音模型。中途换了剧的话这一段属于**上一部**：它落在
+  // 摇一段要跑一趟配音模型。中途换了片的话这一段属于**上一部**：它落在
   // 上一部的 voices/ 下，而「存成音色」发的是种子号、引擎照着种子去**当前
   // 这一部**找那个文件——找不到就是一句莫名其妙的报错。
   if (project !== session.projectPath) return
@@ -724,9 +724,9 @@ async function tryVoice(charId) {
  */
 async function genRef(charId, slot) {
   // 开工那一刻把项目钉死：`runAsyncJob` 要等那条 socket 开（最多两秒）
-  // 才把请求发出去，这中间在项目库里点了别的剧的话，下面这个 `project`
+  // 才把请求发出去，这中间在项目库里点了别的电影的话，下面这个 `project`
   // 读到的就是新那一部。同文件里一键出图那条的理由。
-  // 这儿还多一层：charId 是上一部剧的 id，在新那一部里多半不存在——
+  // 这儿还多一层：charId 是上一部电影的 id，在新那一部里多半不存在——
   // 落地就是一句看不懂的 404。三张一起画那条（genAllRefs）早钉了。
   const project = session.projectPath
   const result = await run(
@@ -781,7 +781,7 @@ async function genAllRefs(charId) {
   ) {
     return
   }
-  // 三张要跑一分多钟。中途换了剧的话，后面那两张会拿这一部的 char_id 去
+  // 三张要跑一分多钟。中途换了片的话，后面那两张会拿这一部的 char_id 去
   // 新那一部出图（id 在那边不存在，404）。活儿是替这一部排的，钉住它。
   const project = session.projectPath
   for (const s of SLOTS) {
@@ -823,7 +823,7 @@ async function clearRef(charId, slot) {
   //
   // 引擎撤完就调 reset_all_shots（参考图直接决定画面长什么样），而这颗按钮
   // 在界面上只是抽屉里一个小小的「撤掉」。这个库里比它轻的动作都问一句
-  // ——定妆覆盖、一键全部重画、三张一起画、删章删集删项目，全都问。
+  // ——定妆覆盖、一键全部重画、三张一起画、删章删项目，全都问。
   //
   // 顺带说清另一件事：文件本身留在盘上（引擎那儿写着"用户可能只是想先试试
   // 没有参考图的效果"），但界面上接不回来——要用回那张图得重新传一遍。
@@ -884,7 +884,7 @@ async function clearRef(charId, slot) {
         v-if="!loading && loadError"
         icon="warn"
         tone="warn"
-        title="读不到这部剧的设定"
+        title="读不到这部电影的设定"
         :hint="loadError"
       />
 
@@ -914,7 +914,7 @@ async function clearRef(charId, slot) {
         hint="故事写好了，点右上角「理解故事」，让 AI 读一遍：人、地方、长相、剧本一次出来"
       />
 
-      <!-- **一人一张牌，和「这一集」那面镜头墙一个样子。**
+      <!-- **一人一张牌，和「这一章」那面镜头墙一个样子。**
            用户 2026-09-12：「角色，场景的展示方式和这一集一样」。
            以前是一行一个人、头像只有三十几个像素——而这一页的产出就是图，
            把图做成一行里的小圆点，等于把要看的东西藏起来。 -->
@@ -999,7 +999,7 @@ async function clearRef(charId, slot) {
         </article>
       </div>
 
-      <!-- 点开一个角色，从右边滑出来改。**和「这一集」那面镜头墙一个做法**
+      <!-- 点开一个角色，从右边滑出来改。**和「这一章」那面镜头墙一个做法**
            （用户 2026-09-12：「展示方式和这一集一样」）：墙是用来挑的，
            抽屉是用来改的——把编辑器塞回牌子里会把那一格撑成一整行，
            一墙的牌子跟着重排，而人刚刚就是靠位置认出那张牌的。 -->
@@ -1299,7 +1299,7 @@ async function clearRef(charId, slot) {
                          里那句话就出来了——「浏览器挡住了自动播放」。于是这颗
                          按钮从来没响过，而屏幕上怪的是浏览器。
                          这儿现读 session 是对的（和摇、试听那两处不一样）：
-                         它不在 await 之后，而且 `take` 在换剧和换人时都清掉了
+                         它不在 await 之后，而且 `take` 在换片和换人时都清掉了
                          （上面那两个 watch），点得到的那一把一定属于眼下这一部。 -->
                     <button
                       v-if="take"
@@ -1432,7 +1432,7 @@ async function clearRef(charId, slot) {
   flex-direction: column;
   gap: var(--s2);
 }
-/* 一人一张牌，和「这一集」那面镜头墙一个样子。 */
+/* 一人一张牌，和「这一章」那面镜头墙一个样子。 */
 .wall {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
@@ -1608,7 +1608,7 @@ async function clearRef(charId, slot) {
   font-size: var(--fs-xs);
 }
 
-/* 抽屉。和「这一集」那面墙同一套尺寸，改一处两边就该一起改。 */
+/* 抽屉。和「这一章」那面墙同一套尺寸，改一处两边就该一起改。 */
 .drawer {
   position: fixed;
   inset: 0;

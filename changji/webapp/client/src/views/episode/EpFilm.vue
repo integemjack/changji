@@ -33,10 +33,10 @@ const runner = useRun()
  *
  * 首帧写在 `frames/<shot_id>.png` 上，重出是原地覆盖、地址不变，而
  * `/api/media` 一个缓存头都不发（见下面 srcOf 那段）——不挂换代号的话，
- * 重出过的那几镜在这条跳转条上一直是老图。片子本身按 mtime 换代，条上
+ * 重出过的那几镜在这条跳转条上一直是老图。成片本身按 mtime 换代，条上
  * 的缩略图原来什么都没有。
  *
- * 用 run store 按镜记的那个数（`settledBy`），只换这一集里真重跑过的那
+ * 用 run store 按镜记的那个数（`settledBy`），只换这一章里真重跑过的那
  * 几张；整条无条件换代的话，每切一次这一格就要重拉十几张全尺寸首帧。
  */
 const frameBust = (shotId) => runner.settledBy.get(shotId) ?? 0
@@ -51,24 +51,33 @@ const shots = ref([])
 const shotsUnknown = ref(false)
 const videoEl = ref(null)
 const playhead = ref(0)
-/** 这部剧的画面规格。只用来定跳转条上那排格子的长宽比，见 stripRatio。 */
+/** 这部电影的画面规格。只用来定跳转条上那排格子的长宽比，见 stripRatio。 */
 const spec = ref(null)
 
 /**
  * 跳转条每格的长宽比跟项目的 [video] 走，不是写死竖屏。
  *
  * 格子里是 `object-fit: cover` 的首帧：槽的比例和首帧对得上就一个像素都
- * 不裁，对不上是**裁**，不是留黑边。竖屏项目（默认那一种）正好对上，所以
- * 写死的 9:16 一直没露馅；**横屏项目整条就废了**——16:9 的首帧塞进 9:16
- * 的槽，左右各切掉三分之一还多，条上剩下一溜画面正中间的竖条，认不出哪
- * 一镜是哪一镜。而这条跳转条存在的全部意义就是"看着缩略图跳到那一镜"。
+ * 不裁，对不上是**裁**，不是留黑边——16:9 的首帧塞进 9:16 的槽，左右各切
+ * 掉三分之一还多，条上剩下一溜画面正中间的竖条，认不出哪一镜是哪一镜。
+ * 而这条跳转条存在的全部意义就是"看着缩略图跳到那一镜"。
  *
- * 镜头墙那一页早就为同一件事改过（EpShots 的 cellRatio：「写死 9:16 的
- * 话，横屏项目的每张牌都是上下两条黑、中间一小条画面」），做法照它。
+ * **读不到画幅那一支按 16:9，不按 9:16。** 上面那个故障原来只有横屏项目
+ * 撞得上，所以写死 9:16 一直没露馅；2026-09-18 新建项目默认改成 landscape
+ * 之后，`/bff/project/video` 读砸一次就够了——换项目那一下的竞态、老引擎
+ * 没这条接口、网络抖一下，`spec` 都会是 null。回落写竖屏，等于让现在**最
+ * 常见**的那种项目一读失败就整条废掉。
+ *
+ * 两个值都是猜，挑这个是因为它至少是引擎发给新项目的那一个，不是这一页
+ * 自己编的；「这部电影」那个弹窗读砸时也按同一个画幅显示。
+ *
+ * **回落只有这一份。** CSS 那边 `aspect-ratio` 直接读 `--cell-ratio`、不
+ * 再自带默认值：同一个默认值搁两处，改一处就漏一处，而 `.strip` 上这个
+ * 属性总有值——它就是这个 computed，每一支都返回一串比例。
  */
 const stripRatio = computed(() => {
   const v = spec.value
-  if (!v?.width || !v?.height) return '9 / 16'
+  if (!v?.width || !v?.height) return '16 / 9'
   return `${v.width} / ${v.height}`
 })
 
@@ -107,7 +116,7 @@ const current = computed(
 )
 
 /**
- * 这一集还差几镜没出视频。空状态那句话按它分两种说法。
+ * 这一章还差几镜没出视频。空状态那句话按它分两种说法。
  *
  * 一律说「镜头还没跑出来」是不对的：镜头全跑完、只差装配那一步的情况真实
  * 存在（装配要 ffmpeg，缺了引擎会跳过并明说"各镜头的视频已经在 shots/ 下"；
@@ -125,17 +134,17 @@ const forThisEpisode = computed(() =>
 )
 
 /**
- * 正在播的这条，是不是**这一集**的片。
+ * 正在播的这条，是不是**这一章**的片。
  *
- * 片单是全项目的（有意的，见下面那段），所以这一页上完全可能在播别的集：
- * 手点了片单里的另一条，或者这一集还没出片、load() 回落到了最新的那条。
+ * 片单是全项目的（有意的，见下面那段），所以这一页上完全可能在播别的章：
+ * 手点了片单里的另一条，或者这一章还没出片、load() 回落到了最新的那条。
  *
  * 两处都要认它：
- *   · 分镜跳转条画的是 `shots`——**永远是这一集的**。播着 ep02 的片、
+ *   · 分镜跳转条画的是 `shots`——**永远是这一章的**。播着 ep02 的片、
  *     底下摆着 ep01 的缩略图，点一下按 ep01 的时长跳，跳到哪儿全凭巧合。
  *   · 片名原来只在最上面那条工具栏里出现，而那条整条挂在 `canPublish` 上；
  *     投递那层不在（现在的默认构建就是）时它根本不渲染——于是页面上播着
- *     别的集的片，一个字都不说。
+ *     别的章的片，一个字都不说。
  */
 const isMine = computed(
   () => !!current.value && isFilmOf(current.value.name, session.episodeId),
@@ -147,7 +156,7 @@ async function load() {
     loading.value = false // 理由同镜头墙那处：被顶掉的那趟不会清它
     return
   }
-  // 这一趟是给哪部剧读的。换剧时两趟会叠在一起，慢的那趟后落地就把上
+  // 这一趟是给哪部电影读的。换片时两趟会叠在一起，慢的那趟后落地就把上
   // 一部的片单摆在这一部下面——而这一页是"审完再发出去"用的。
   const want = session.projectPath
   loading.value = true
@@ -156,7 +165,7 @@ async function load() {
     if (want !== session.projectPath) return
     files.value = data.files ?? []
     loadError.value = ''
-    // 默认选当前这一集的成片，没有就选最新的一条
+    // 默认选当前这一章的成片，没有就选最新的一条
     const mine = forThisEpisode.value[0] ?? files.value[0]
     currentRel.value = mine?.rel ?? ''
   } catch (err) {
@@ -174,13 +183,13 @@ async function load() {
   await Promise.all([loadShots(), loadSpec()])
 }
 
-/** 画面规格。读不到就退回竖屏——这一页不该因为它打不开。 */
+/** 画面规格。读不到就让 stripRatio 按默认画幅排——这一页不该因为它打不开。 */
 async function loadSpec() {
   if (!session.projectPath) {
     spec.value = null
     return
   }
-  // 换剧时两趟会叠，慢的那趟后落地就是拿上一部的画幅去排这一部的格子
+  // 换片时两趟会叠，慢的那趟后落地就是拿上一部的画幅去排这一部的格子
   const want = session.projectPath
   try {
     const got = await api.projectVideo(want)
@@ -208,7 +217,7 @@ async function loadShots() {
     // **空的分镜表和读不到分镜表是两回事。**
     //
     // 下面那两句空状态全靠 shots 分：有镜头且都出完了说「镜头都出完了，
-    // 还没装配」（并把 ffmpeg 那条出路讲清楚），没镜头说「这一集的镜头
+    // 还没装配」（并把 ffmpeg 那条出路讲清楚），没镜头说「这一章的镜头
     // 还没跑出来」。读砸了退成空的话，一定落到后一句上——而那是一句
     // **断言**：它替人回答了"镜头跑没跑"，答案来自一次失败的请求。
     //
@@ -222,20 +231,20 @@ async function loadShots() {
 }
 
 /**
- * 换剧、换集要重拉。
+ * 换片、换章要重拉。
  *
  * **不带 `immediate`**：这一格被 KeepAlive 冻着，头一次挂上来的时候
  * `onActivated(load)` 已经跑了一趟（Vue 对 KeepAlive 里的组件，初次挂载也
  * 会触发 activated）。两边都跑的结果是进这一格就发两遍 `/api/outputs`，
  * 而读砸的时候屏幕上是**两条一模一样的红字**——那一页自己已经摆着
- * 「读不到这部剧的成片」那一屏了，红字还来两条。
+ * 「读不到这一章的成片」那一屏了，红字还来两条。
  *
  * ⚠️ 这一条指望着上面那句 `onActivated`：哪天这一格不再被 KeepAlive 包着，
  * 它就不会在挂载时触发，这儿得换回 `immediate`。
  */
 watch(() => [session.projectPath, session.episodeId], load)
 /**
- * 那一轮跑完，片子就是这一刻落盘的——这一页要自己看见。
+ * 那一轮跑完，成片就是这一刻落盘的——这一页要自己看见。
  *
  * 这一格被 KeepAlive 冻着，进来时靠 `onActivated(load)` 重拉；但"开跑之后
  * 切到这一格等着看成片"是很自然的一种用法，而那样 onActivated 早就过去了
@@ -244,11 +253,11 @@ watch(() => [session.projectPath, session.episodeId], load)
  */
 /**
  * ⚠️ **这儿原来盯的是 `runner.running`，而它只有镜头格里的 `useShots` 在
- * 驱动。** 这一集默认落在哪一格是按进度挑的——落在「成片」那一格时，镜头
+ * 驱动。** 这一章默认落在哪一格是按进度挑的——落在「成片」那一格时，镜头
  * 那一格根本没挂载过，旗子永远是假的，下降沿一次都不来。而"开跑之后切到
  * 这一格等着看成片"正是上面那段话说的用法。
  *
- * 换成那份系统表，**只认 `run`**：片子只有出片那个槽会出，写整季跑完不该
+ * 换成那份系统表，**只认 `run`**：成片只有出片那个槽会出，写全片跑完不该
  * 让这一页白拉一趟。见 useLongRunning。
  */
 watch(useLongRunning(['run']), (now, before) => {
@@ -263,14 +272,14 @@ useRetryWhenBack(() => loadError.value, load)
  * 成片的地址，**带上这个文件的 mtime**。
  *
  * `/api/media` 一个 `Cache-Control` / `ETag` / `Last-Modified` 都不发，而
- * 装配出来的片子**每次都落在同一个路径上**（output/ep01.mp4）。地址一个字
+ * 装配出来的成片**每次都落在同一个路径上**（output/ep01.mp4）。地址一个字
  * 不变的话，重出一版之后在这一页看到的还是浏览器缓存里的上一版——而这一页
  * 存在的全部意义就是"让人真的看一遍再发出去"。
  *
  * 镜头墙早就在做这件事（useShots 的 bust：「刚跑完，磁盘上那几个 mp4 换过了
  * 但路径没变」），朗读和试听音色也各自加了时间戳。只有审片这一屏漏了。
  *
- * **用 mtime 不用 Date.now()**：随机数每次 load 都换一次地址，正在看的片子
+ * **用 mtime 不用 Date.now()**：随机数每次 load 都换一次地址，正在看的成片
  * 会被打回开头重新缓冲；mtime 只在文件真换过之后才变。
  */
 function srcOf(f) {
@@ -319,7 +328,7 @@ watch(currentRel, () => {
       v-else-if="!loading && loadError"
       icon="warn"
       tone="warn"
-      title="读不到这部剧的成片"
+      title="读不到这一章的成片"
       :hint="loadError"
     />
 
@@ -398,12 +407,12 @@ watch(currentRel, () => {
           <span class="truncate">{{ current.name }}</span>
           <span class="numeric">{{ current.size_mb }} MB</span>
           <span>{{ humanAgo(current.mtime) }}</span>
-          <!-- 播的不是这一集时要挑明：它同时也是上面那条跳转条不见了的原因 -->
-          <span v-if="!isMine" class="pill pill--warn tiny nowrap">别的集</span>
+          <!-- 播的不是这一章时要挑明：它同时也是上面那条跳转条不见了的原因 -->
+          <span v-if="!isMine" class="pill pill--warn tiny nowrap">别的章</span>
         </div>
       </section>
 
-      <!-- 片单。**只有一条时不显示**：这是全项目的成片清单摆在一集的页面上，
+      <!-- 片单。**只有一条时不显示**：这是全项目的成片清单摆在一章的页面上，
            一条的时候播放器本身就是答案，清单只是把同一件事再说一遍。 -->
       <section v-if="files.length > 1" class="sec reel">
         <div class="sec__head">
@@ -447,7 +456,7 @@ watch(currentRel, () => {
               v-if="isFilmOf(f.name, session.episodeId)"
               class="pill pill--accent tiny nowrap"
             >
-              本集
+              本章
             </span>
           </button>
         </div>
@@ -492,8 +501,9 @@ watch(currentRel, () => {
   position: relative;
   flex: none;
   width: 46px;
-  /* 跟项目的画幅走，不写死竖屏。见 stripRatio 那段。 */
-  aspect-ratio: var(--cell-ratio, 9 / 16);
+  /* 比例由 .strip 上的 --cell-ratio 定，读不到画幅走哪一支见 stripRatio
+     那段。这儿不再自带一个默认值：同一个默认值搁两处，改一处就漏一处。 */
+  aspect-ratio: var(--cell-ratio);
   padding: 0;
   border: 1px solid var(--line);
   border-radius: var(--r-sm);

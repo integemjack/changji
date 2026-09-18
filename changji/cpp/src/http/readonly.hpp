@@ -135,7 +135,7 @@ inline ApiError out_of_range(const std::string& key, const std::string& msg,
 /// loc 是 ["query", <参数名>]，和请求体那两个（["body", ...]）不是一回事。
 ///
 /// 这一条是实时对拍抓出来的：C++ 侧原先直接进处理函数，缺 episode_id 时
-/// 回的是 404「没有剧集 」（注意末尾那个空格，参数是空的）。而 FastAPI
+/// 回的是 404「没有章节 」（注意末尾那个空格，参数是空的）。而 FastAPI
 /// 在处理函数跑之前就把请求拦下来了，回 422 加一个结构化的 detail。
 /// 状态码和 detail 的形状都是契约的一部分。
 ///

@@ -65,7 +65,7 @@ struct WorkerPool::Impl {
     std::vector<Worker> workers;
     /// 本机那个槽怎么跑。空 = 池里没有本机这一档。
     LocalRunner local_runner;
-    /// 这部剧挑的档位。每个派出去的任务都盖上，见 WorkerPool 的构造函数。
+    /// 这部电影挑的档位。每个派出去的任务都盖上，见 WorkerPool 的构造函数。
     std::map<std::string, std::string> pick;
     /// 谁忙着、谁坏了。策略在 worker_roster.hpp，那份不含网络代码、能测。
     std::unique_ptr<WorkerRoster> roster;
@@ -112,7 +112,7 @@ struct WorkerPool::Impl {
     /// 在指定的工作进程上把任务跑完。连不上抛 Unreachable，其余照旧。
     /// 把一个输入文件送到对面去，回它的 `blob:` 记法。
     ///
-    /// **先问再传。** 一集 22 镜、每镜三五张参考图，而那几张是同一批文件；
+    /// **先问再传。** 一章 22 镜、每镜三五张参考图，而那几张是同一批文件；
     /// 不问的话就是同一张脸传二十二遍。
     std::string ship_input(httplib::Client& cli, const std::string& prefix,
                            const std::string& url, const std::string& path) {

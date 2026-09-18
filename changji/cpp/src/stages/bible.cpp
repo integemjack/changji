@@ -77,7 +77,7 @@ const ordered& bible_schema() {
                        {"required", {"key", "name", "space", "lighting"}},
                        {"additionalProperties", false}}}};
         props["global_style"] = {{"type", "string"},
-                                 {"description", "全剧统一的画风、色温、质感。一句话"}};
+                                 {"description", "全片统一的画风、色温、质感。一句话"}};
 
         ordered s = ordered::object();
         s["type"] = "object";

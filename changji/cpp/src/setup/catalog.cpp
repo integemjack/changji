@@ -522,7 +522,7 @@ std::vector<Group> build() {
                                kH3ComfyRepo,
                                "vae/minimax_h3_audio_vae_fp32.safetensors",
                                605254808ULL, "video_audio_vae",
-                               "音频 VAE。不下这份片子出来是没有音轨的"});
+                               "音频 VAE。不下这份，出来的电影是没有音轨的"});
             o.files.push_back(
                 {"loras/minimax_h3_turbo_v4_step600_ema.safetensors", kH3LoraRepo,
                  "minimax_h3_turbo_v4_step600_ema.safetensors",
@@ -704,7 +704,7 @@ std::vector<Group> build() {
         }
 
         g.options.push_back(none_option(
-            "不下载 · 整集先没有人声",
+            "不下载 · 整章先没有人声",
             "剧本、分镜、画面照常出，只是没有配音。之后随时可以回到设置页补下。"));
 
         gs.push_back(std::move(g));
@@ -741,7 +741,7 @@ std::map<std::string, std::string> recommend(double vram_gb) {
         // 它和出图出片模型共用这张卡。三者不同时跑（调度器会把上一个卸掉），
         // 所以"装不装得下"看的是单个；但**每次来回都要重载一遍**，而重载
         // 的代价随模型大小涨——5090 上实测 14B Q4_K_M 重载一次 4.6 秒，
-        // 32B 只会更久，而写剧本和出图在一集里要来回切几十次。
+        // 32B 只会更久，而写剧本和出图在一章里要来回切几十次。
         //
         // 挑推荐值时因此往小了留一档。**这只影响默认值**：用户想用 32B
         // 照样点得动，那一档的显存门槛也照实显示。

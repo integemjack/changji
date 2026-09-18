@@ -1,9 +1,9 @@
 /**
- * 这部剧到哪一步了。
+ * 这部电影到哪一步了。
  *
  * 项目页原来只有一条「出片百分比」的进度条，于是**刚建的空项目和故事写完
  * 还没分镜的项目长得一模一样**——都是 0%。而挑项目时真正想知道的就是
- * 「这部剧走到哪儿了」。
+ * 「这部电影走到哪儿了」。
  *
  * 做成纯函数是为了能测：这一串判断错了不会报错，只会让卡片上写着一句
  * 不对的话，而那种错没人会发现。
@@ -16,9 +16,9 @@
  * ⚠️ **rank 和 percent 是两个东西，别拿 percent 当排序键。**
  *
  * percent 是「这一条进度条画多长」，而它在 film 这一档是**档内比例**
- * （出了 3/12 集就是 25），别的档是跨档位置（outline 15、planned 45、
- * ready 60）。拿它排序的话，一部已经在发片的剧（25）会排到一部刚拉完
- * 分集表、一镜没跑的剧（45）后面——「走得越远的越靠前」正好反过来。
+ * （出了 3/12 章就是 25），别的档是跨档位置（outline 15、planned 45、
+ * ready 60）。拿它排序的话，一部已经在发片的电影（25）会排到一部刚拉完
+ * 章节计划、一镜没跑的电影（45）后面——「走得越远的越靠前」正好反过来。
  *
  * rank 是排序用的档次，越大越靠前。坏掉的排最前（出问题的东西正该最先
  * 看见，引擎那边把坏项目的 mtime 从 0.0 改回真值也是这个理由），空壳垫底。
@@ -43,14 +43,14 @@ export function projectStage(p) {
   }
 
   if (outputs > 0) {
-    // **按集数算，不是 outputs>0 就 100%。** 原来一部十二集只出了一条
-    // mp4 和全部出完，进度条上都是满格。分母用已落成的集数（引擎那边
+    // **按章数算，不是 outputs>0 就 100%。** 原来一部十二章只出了一条
+    // mp4 和全部出完，进度条上都是满格。分母用已落成的章数（引擎那边
     // 已经把预告排除在 episodes 和 outputs 之外了）。
     const total = Math.max(episodes, outputs)
     const pct = total > 0 ? Math.round((outputs / total) * 100) : 100
     return {
       key: 'film',
-      label: total > outputs ? `${outputs}/${total} 集已出片` : `${outputs} 集已出片`,
+      label: total > outputs ? `${outputs}/${total} 章已出片` : `${outputs} 章已出片`,
       percent: pct,
       rank: 90,
       tone: pct >= 100 ? 'ok' : 'accent',
@@ -78,13 +78,13 @@ export function projectStage(p) {
   }
 
   if (episodes > 0) {
-    // 分集表算了几集、真落成了几集，是两个数。「10 集里落成 3 集」比
-    // 「3 集，还没分镜」说得清楚——planned_episodes 引擎一直在算、
+    // 章节计划算了几章、真落成了几章，是两个数。「10 章里落成 3 章」比
+    // 「3 章，还没分镜」说得清楚——planned_episodes 引擎一直在算、
     // 2026-09-14 之前前端一处都没读。
     const label =
       planned > episodes
-        ? `${planned} 集里落成 ${episodes} 集，还没分镜`
-        : `${episodes} 集，还没分镜`
+        ? `${planned} 章里落成 ${episodes} 章，还没分镜`
+        : `${episodes} 章，还没分镜`
     return { key: 'planned', label, percent: 45, rank: 50, tone: 'accent' }
   }
 
@@ -92,7 +92,7 @@ export function projectStage(p) {
   if (written > 0) {
     return {
       key: 'written',
-      label: `正文 ${written}/${chapters} 章，还没落成剧集`,
+      label: `正文 ${written}/${chapters} 章，还没落成章节`,
       percent: 30,
       rank: 40,
       tone: 'accent',

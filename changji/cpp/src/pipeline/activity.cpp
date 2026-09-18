@@ -15,7 +15,7 @@ namespace {
 
 /// 这个线程的活，最里层的在最后。
 ///
-/// 是个栈不是一个指针：以后真出现"一件活里面套一件"的时候（比如写整季
+/// 是个栈不是一个指针：以后真出现"一件活里面套一件"的时候（比如写全片
 /// 里面单独登记每一章），深处的代码该改的是最里层那件，不是最外层。
 thread_local std::vector<Activity*> t_stack;
 
@@ -100,7 +100,7 @@ void note_queued(int ahead, const std::string& blocker) {
 }
 
 nlohmann::json running_work() {
-    // 长跑的排前面：出片、写整季这种一跑十几分钟的，才是人最想点进去看的。
+    // 长跑的排前面：出片、写全片这种一跑十几分钟的，才是人最想点进去看的。
     nlohmann::json out = jobs().running_jobs();
     for (auto& row : running_activities()) out.push_back(std::move(row));
     return out;

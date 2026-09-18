@@ -89,7 +89,7 @@ TEST_CASE("没有 JobScope 时给个哑元，别让调用方自己 new") {
 }
 
 TEST_CASE("两条线程各记各的，不串") {
-    // 同时写两集是常态。串了的话 A 的思考会推到 B 的频道上。
+    // 同时写两章是常态。串了的话 A 的思考会推到 B 的频道上。
     std::atomic<bool> ok_a{false};
     std::atomic<bool> ok_b{false};
     std::thread a([&] {
@@ -112,7 +112,7 @@ TEST_CASE("两条线程各记各的，不串") {
 TEST_CASE("借外面那个令牌：批量那几条真正管事的是 JobProgress::token()") {
     // **这条钉的是"停下按了没反应"那一类。**
     //
-    // 批量（写整季、展开正文、批量补分镜）的形状是：JobTable 起一条 job，
+    // 批量（写全片、展开正文、批量补分镜）的形状是：JobTable 起一条 job，
     // 循环里查 `p.cancelled()`、给大模型的是 `p.token()`；而 JobScope 是
     // 挂上去让思考流和顶栏那个「停下」找得到它的。
     //
@@ -196,7 +196,7 @@ TEST_CASE("信箱：结果送到就销号，再取是「没有这个信箱」") 
     CHECK(r.at("done").get<bool>());
     CHECK(r.at("events").size() == 1);
     CHECK(r.at("events")[0].at("result").at("shots") == 7);
-    // 送一次就够了。留着只会等着过期，而结果一份可能是整集剧本。
+    // 送一次就够了。留着只会等着过期，而结果一份可能是整章剧本。
     r = http::mail_take("box-done", 0);
     CHECK_FALSE(r.at("exists").get<bool>());
 

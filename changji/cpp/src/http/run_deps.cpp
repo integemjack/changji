@@ -155,23 +155,23 @@ RunDeps default_run_deps() {
         return why.empty() ? std::string("去设置页看体检那一节") : why;
     };
     // 第二个形参（项目目录）**故意不接名字**：RunDeps 的签名要求它在，而
-    // 这一套后端一个字都没用到——`s` 已经是这一集自己的设置了（出片那条路
-    // 每跑一集都 load_settings(项目目录) 重读）。接了名字不用，-Wall 每次
+    // 这一套后端一个字都没用到——`s` 已经是这一章自己的设置了（出片那条路
+    // 每跑一章都 load_settings(项目目录) 重读）。接了名字不用，-Wall 每次
     // 编译报一条 unused-parameter。
     d.backends = [](const config::Settings& machine, const ProjectStore&) {
-        // **先把这部剧挑的那几档盖上去。** `machine` 是这台自己的配置
-        // （模型目录、ffmpeg 在哪），`[models.pick]` 是这部剧要哪一档——
+        // **先把这部电影挑的那几档盖上去。** `machine` 是这台自己的配置
+        // （模型目录、ffmpeg 在哪），`[models.pick]` 是这部电影要哪一档——
         // 后者跟着项目目录走，机器换了也还是它。
         //
         // 盖在这一句上、而不是每条后端各盖一遍：进程内、本机工作进程、
-        // 跨机三条路都从这个 `s` 长出去，漏掉哪一条的表现都是"同一集里
+        // 跨机三条路都从这个 `s` 长出去，漏掉哪一条的表现都是"同一章里
         // 有的镜头用了这一档、有的用了上一档"——出来都是能看的画面，
         // 没有哪一层会去比。
         const config::Settings s = setup::with_selections(machine,
                                                           machine.models.pick);
         pipeline::Backends b;
         // 默认这一套：进程内 sd.cpp。
-        // 两边都拿 `s`：这是**这一集**的设置（出片那条路每跑一集
+        // 两边都拿 `s`：这是**这一章**的设置（出片那条路每跑一章
         // 都 load_settings(项目目录) 重读），采样旋钮要跟着它走。
         b.frame = stages::sd_renderer(s);
         b.video = infer::sd_video_renderer(s);
@@ -182,7 +182,7 @@ RunDeps default_run_deps() {
         // 为空、探到多于一张卡时才动手（见 WorkerFarm::start）。
         //
         // farm 是静态的：拉起来的子进程要活到进程结束，每次建 Backends
-        // 都拉一遍的话，跑第二集时会再起 N 个、端口还撞上。
+        // 都拉一遍的话，跑第二章时会再起 N 个、端口还撞上。
         const auto farm = shared_farm(s);
         const std::vector<std::string> farm_eps =
             farm ? farm->endpoints() : s.workers.endpoints;
@@ -314,12 +314,12 @@ RunDeps default_run_deps() {
 
         // 配音后端。**搭法只有一份**（infer::make_tts_backend），因为别的
         // 机器派配音任务过来时走的也是它——两份的话，"这台配音到底走哪条
-        // 路"迟早在两边不一样，表现是同一集里前半段有声、后半段静音。
+        // 路"迟早在两边不一样，表现是同一章里前半段有声、后半段静音。
         //
         // 任何一条路搭不起来都退回估算后端（留空即是），不抛：配音只是
         // 五个阶段之一，为它整条流水线跑不起来不值当，而估算后端会写出
         // 等长静音，画面那几步照样能验。真出不了声这件事在配音阶段的
-        // start 事件里说清楚了，不会跑完一整集才发现。
+        // start 事件里说清楚了，不会跑完一整章才发现。
         b.tts = infer::make_tts_backend(s, b.ffmpeg);
 
         // 配音也能派给别的机器：那张表上它是一列，能勾就得能派。

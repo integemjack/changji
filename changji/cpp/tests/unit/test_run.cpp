@@ -1,7 +1,7 @@
 // POST /api/run 的测试。
 //
 // 后端是注入的，所以整个队列几毫秒跑完。这里测的不是画面，是**编排**：
-// 谁能开跑、开不了跑时回什么码、一集挂了后面几集还跑不跑、
+// 谁能开跑、开不了跑时回什么码、一章挂了后面几章还跑不跑、
 // 阶段名写错了错误落在哪儿。最后一条尤其容易做错——做成 400 的话
 // 前端弹的是错误框，而 Python 那边它是任务列表里的一条失败记录。
 
@@ -48,7 +48,7 @@ models::Shot make_shot(const std::string& id, int order) {
     return s;
 }
 
-/// 建一个项目：episodes 里每一项是 {集号, 镜头数}。镜头数 0 表示没分镜。
+/// 建一个项目：episodes 里每一项是 {episode_id, 镜头数}。镜头数 0 表示没分镜。
 models::ProjectStore make_store(
     const std::string& tag,
     const std::vector<std::pair<std::string, int>>& episodes) {
@@ -147,7 +147,7 @@ TEST_CASE("开跑立刻返回，把队列一起给出来") {
     CHECK(r.body["queue"] == json::array({"ep01"}));
     CHECK(fakes.frames.size() == 2);
     // **两镜各一次，不是各两次。** 草稿档默认不跑了——挂 Turbo LoRA
-    // 之后两档画质拉不开差距，那一遍是白跑（一集 54 分钟）。
+    // 之后两档画质拉不开差距，那一遍是白跑（一章 54 分钟）。
     // 想要两档的显式传 skip_draft: false，下面那条用例钉的就是它。
     CHECK(fakes.videos.size() == 2);
 }
@@ -173,7 +173,7 @@ TEST_CASE("草稿档：默认不跑，显式要才跑") {
     }
 }
 
-TEST_CASE("已经在跑时回 409，而且说清在跑哪一集") {
+TEST_CASE("已经在跑时回 409，而且说清在跑哪一章") {
     // 只说"忙"的话用户不知道是自己刚点的那次还是昨晚那次还没停。
     quiesce();
     const auto store = make_store("撞车", {{"ep01", 1}});
@@ -210,7 +210,7 @@ TEST_CASE("已经在跑时回 409，而且说清在跑哪一集") {
 TEST_CASE("不认识的键照收，但要列回去") {
     // **不 forbid 是有意的**：前端和引擎的版本不一定同步升，多一个键就 422
     // 会让整个功能挂掉。但默不作声的代价是真的——2026-09-13 我把 shot_ids
-    // 写成 only_shots，引擎当成"没指定镜头"，于是「重出这一镜」变成整集
+    // 写成 only_shots，引擎当成"没指定镜头"，于是「重出这一镜」变成整章
     // 重渲 18 镜、跑了二十分钟，而我一直以为它只渲了一镜。
     quiesce();
     Fakes fakes;
@@ -307,12 +307,12 @@ TEST_CASE("项目路径为空或者读不出来是 400") {
     }
 }
 
-TEST_CASE("all_episodes 只排有分镜的集") {
-    // 没分镜的集排进去只会在任务里报一条"还没有分镜表"，
+TEST_CASE("all_episodes 只排有分镜的章") {
+    // 没分镜的章排进去只会在任务里报一条"还没有分镜表"，
     // 而用户点的是"跑整个项目"，看到一串失败会以为整个项目坏了。
     quiesce();
     const auto store =
-        make_store("整季", {{"ep01", 1}, {"ep02", 0}, {"ep03", 2}});
+        make_store("全片", {{"ep01", 1}, {"ep02", 0}, {"ep03", 2}});
     Fakes fakes;
 
     const auto r = run_and_wait({{"project", project_arg(store)},
@@ -331,7 +331,7 @@ TEST_CASE("all_episodes 只排有分镜的集") {
     }
 }
 
-TEST_CASE("all_episodes 但一集分镜都没有时 400") {
+TEST_CASE("all_episodes 但一章分镜都没有时 400") {
     quiesce();
     const auto store = make_store("空项目", {{"ep01", 0}});
     Fakes fakes;
@@ -347,8 +347,8 @@ TEST_CASE("all_episodes 但一集分镜都没有时 400") {
     }
 }
 
-TEST_CASE("一集出错不拖垮后面几集") {
-    // 量产时跑一晚上，早上发现第二集挂了导致后面十集都没动，
+TEST_CASE("一章出错不拖垮后面几章") {
+    // 量产时跑一晚上，早上发现第二章挂了导致后面十章都没动，
     // 那这一晚上就白熬了。
     quiesce();
     const auto store = make_store("挂一集", {{"ep01", 1}, {"ep02", 1}});
@@ -373,13 +373,13 @@ TEST_CASE("一集出错不拖垮后面几集") {
     CAPTURE(err);
     CHECK(err.find("ep02") != std::string::npos);
     CHECK(err.find("分镜表") != std::string::npos);
-    // 失败也算跑完一集，队列要往前走，否则进度条永远停在那儿
+    // 失败也算跑完一章，队列要往前走，否则进度条永远停在那儿
     CHECK(snap["queue_done"] == 1);
 }
 
 TEST_CASE("stages 空数组走全流程，给了内容才只跑那几个") {
     // Python 判的是 `if req.stages:`——空列表是假值。
-    // 把两者合并成"空就是全跑"会让 stages:["  "] 变成重跑整集，
+    // 把两者合并成"空就是全跑"会让 stages:["  "] 变成重跑整章，
     // 而那是几十分钟的差别。
     quiesce();
 
@@ -483,7 +483,7 @@ TEST_CASE("多余的键要忽略，不能 422") {
 // ---- GET /api/run/preview ----
 //
 // 预演的价值在于**报大不报小**。报小了的预演比没有预演更糟：
-// 人以为十几秒，走开了，回来发现还在跑第三集。
+// 人以为十几秒，走开了，回来发现还在跑第三章。
 
 namespace {
 
@@ -654,9 +654,9 @@ TEST_CASE("预演：没标定过就只算配音和首帧那部分") {
     CHECK(r.body["estimate_text"] == "20 秒");
 }
 
-TEST_CASE("预演：all_episodes 只看有分镜的集") {
+TEST_CASE("预演：all_episodes 只看有分镜的章") {
     const auto store =
-        make_store("预演整季", {{"ep01", 1}, {"ep02", 0}, {"ep03", 2}});
+        make_store("预演全片", {{"ep01", 1}, {"ep02", 0}, {"ep03", 2}});
     const auto r = http::get_run_preview(project_arg(store), "", true, false,
                                          /*skip_draft=*/false, false,
                                          preview_profile(false));
@@ -664,7 +664,7 @@ TEST_CASE("预演：all_episodes 只看有分镜的集") {
     CHECK(r.body["shots"] == 3);
 }
 
-TEST_CASE("预演：没有可跑的剧集时 400") {
+TEST_CASE("预演：没有可跑的章时 400") {
     const auto store = make_store("预演空", {{"ep01", 1}});
     try {
         http::get_run_preview(project_arg(store), "ep99", false, false, false, false,
@@ -750,12 +750,12 @@ TEST_CASE("成片列表：项目路径为空是 400") {
 // ---------------------------------------------------------------------------
 // 队列按阶段排（order = "stage"）。
 //
-// 多卡时按集排的代价：每一集都要经历一次配音 → 首帧 → 草稿 → 成片 → 装配，
+// 多卡时按章排的代价：每一章都要经历一次配音 → 首帧 → 草稿 → 成片 → 装配，
 // 其间工作进程反复空转、每个阶段结尾都有一条尾巴、每换阶段都换一次模型。
-// 按阶段排就是所有集先出首帧，再所有集出草稿……
+// 按阶段排就是所有章先出首帧，再所有章出草稿……
 //
 // 这里用一条**合并的**调用序列来证明顺序：Fakes 里 frames 和 videos 是
-// 两个表，分开记是看不出"第二集的首帧在第一集的视频之前"的。
+// 两个表，分开记是看不出"第二章的首帧在第一章的视频之前"的。
 // ---------------------------------------------------------------------------
 
 namespace {
@@ -800,7 +800,7 @@ std::size_t first_index(const std::vector<std::string>& v, const std::string& x)
 
 }  // namespace
 
-TEST_CASE("order=stage：所有集先出首帧，再所有集出视频") {
+TEST_CASE("order=stage：所有章先出首帧，再所有章出视频") {
     quiesce();
     const auto store = make_store("按阶段", {{"ep01", 2}, {"ep02", 2}});
     OrderedFakes f;
@@ -818,7 +818,7 @@ TEST_CASE("order=stage：所有集先出首帧，再所有集出视频") {
     pipeline::jobs().wait_idle();
     CHECK(r.status == 200);
 
-    // 两集四镜：四条首帧全在任何一条视频之前
+    // 两章四镜：四条首帧全在任何一条视频之前
     REQUIRE(f.seq.size() == 8);
     const std::size_t last_frame = std::max({
         first_index(f.seq, "F:ep01_sh1"), first_index(f.seq, "F:ep01_sh2"),
@@ -828,20 +828,20 @@ TEST_CASE("order=stage：所有集先出首帧，再所有集出视频") {
         first_index(f.seq, "V:ep02_sh1"), first_index(f.seq, "V:ep02_sh2")});
     CAPTURE(f.seq);
     CHECK(last_frame < first_video);
-    // 阶段之内仍然按集的顺序
+    // 阶段之内仍然按章的顺序
     CHECK(first_index(f.seq, "F:ep01_sh1") < first_index(f.seq, "F:ep02_sh1"));
     CHECK(first_index(f.seq, "V:ep01_sh1") < first_index(f.seq, "V:ep02_sh1"));
 
-    SUBCASE("队列进度按 阶段×集 计") {
-        // 跳了成片档：配音、首帧、草稿、装配 四个阶段 × 两集
+    SUBCASE("队列进度按 阶段×章 计") {
+        // 跳了成片档：配音、首帧、草稿、装配 四个阶段 × 两章
         const auto snap = pipeline::jobs().snapshot(pipeline::JobKind::Run);
         CHECK(snap["queue_total"] == 8);
         CHECK(snap["queue_done"] == 8);
     }
 }
 
-TEST_CASE("默认 order=episode：第一集的视频在第二集的首帧之前") {
-    // 这条钉的是"默认行为一个字没变"——Python 就是一集跑完再跑下一集。
+TEST_CASE("默认 order=episode：第一章的视频在第二章的首帧之前") {
+    // 这条钉的是"默认行为一个字没变"——Python 就是一章跑完再跑下一章。
     quiesce();
     const auto store = make_store("按集", {{"ep01", 1}, {"ep02", 1}});
     OrderedFakes f;

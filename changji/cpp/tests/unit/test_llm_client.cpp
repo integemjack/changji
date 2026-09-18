@@ -83,7 +83,7 @@ llm::HttpResponse ok(const std::string& content) {
 
 llm::Request simple_req() {
     llm::Request r;
-    r.prompt = "写一集短剧";
+    r.prompt = "写一章剧本";
     r.schema = nlohmann::ordered_json{{"type", "object"}};
     r.schema_name = "script";
     r.temperature = 0.7;
@@ -113,16 +113,16 @@ TEST_CASE("请求体的形状：schema 贴在提示词里，不发 response_form
     SUBCASE("schema 以文字接在提示词后面") {
         const std::string content =
             p.at("messages")[0].at("content").get<std::string>();
-        CHECK(content.rfind("写一集短剧", 0) == 0);   // 提示词本身在最前面
+        CHECK(content.rfind("写一章剧本", 0) == 0);   // 提示词本身在最前面
         CHECK(content.find("\"type\": \"object\"") != std::string::npos);
-        CHECK(content.size() > std::string("写一集短剧").size());
+        CHECK(content.size() > std::string("写一章剧本").size());
     }
 
     SUBCASE("没给 schema 就只发提示词本身") {
         llm::Request r = simple_req();
         r.schema = nlohmann::ordered_json();
         const json q = json(llm::build_payload(cfg, r));
-        CHECK(q.at("messages")[0].at("content") == "写一集短剧");
+        CHECK(q.at("messages")[0].at("content") == "写一章剧本");
         CHECK_FALSE(q.contains("response_format"));
     }
 }
@@ -381,7 +381,7 @@ TEST_CASE("退回 json_object 时 schema 要写进提示词") {
         R"({"type":"object","properties":{"hook":{"type":"string","minLength":6}}})");
 
     const std::string out = llm::schema_as_prompt(r.prompt, r.schema);
-    CHECK(out.find("写一集短剧") == 0);      // 原提示词在最前面，不能被挤走
+    CHECK(out.find("写一章剧本") == 0);      // 原提示词在最前面，不能被挤走
     CHECK(out.find("\"hook\"") != std::string::npos);
     // 抄的是**原始** schema：这里它是给模型读的文字，minLength 读得懂就有用
     CHECK(out.find("minLength") != std::string::npos);
@@ -648,7 +648,7 @@ TEST_CASE("回放客户端") {
     CHECK_THROWS_AS(c.complete(simple_req(), tok), llm::LlmError);
 
     CHECK(c.calls().size() == 3);
-    CHECK(c.calls()[0].prompt == "写一集短剧");
+    CHECK(c.calls()[0].prompt == "写一章剧本");
 }
 
 TEST_CASE("只有远端这一条后端了") {
@@ -674,7 +674,7 @@ TEST_CASE("只有远端这一条后端了") {
     // 加上结构化校验之后这条就一直红着。**红的是夹具不是实现**：一个带
     // schema 的请求回一段裸文本，本来就该被拒。
     llm::Request plain;
-    plain.prompt = "写一集短剧";
+    plain.prompt = "写一章剧本";
     plain.temperature = 0.7;
     CHECK(c->complete(plain, tok) == "好");
 }
@@ -845,7 +845,7 @@ TEST_CASE("远端 SSE：中途取消要断掉，别让它继续生成") {
 /**
  * 这一层是用来接住"整份输出坏了"的——被 length 截断、内容过滤掐掉、
  * 压根不是 JSON。**一个字段没填好不是那一类**，而在这儿 return 一个错的
- * 代价是整份作废：一集十七镜、或者一章十分钟，全没。
+ * 代价是整份作废：一章十七镜、十分钟的戏，全没。
  *
  * 两条都是实跑撞出来的，所以一起钉在这儿。
  */
@@ -855,7 +855,7 @@ TEST_CASE("校验层：一个字段没填好，不该把整份输出作废") {
     using ordered = nlohmann::ordered_json;
 
     SUBCASE("枚举填了表外的值：放行") {
-        // 2026-09-16 实测：一集十七镜里第三镜的 face_pose 填了个表外的值，
+        // 2026-09-16 实测：一章十七镜里第三镜的 face_pose 填了个表外的值，
         // 整个 /api/plan 回 400，十七镜全没了——而下游 drop_unknown_enums
         // 本来就会把它抹成默认值，一镜都不该丢。
         const auto schema = ordered::parse(
@@ -1007,14 +1007,14 @@ TEST_CASE("没人引用的 $defs 不贴给模型看") {
 TEST_CASE("schema 贴过去：pydantic 的 title 摘掉，叫 title 的字段留着") {
     // ⚠️ **这两件事只差一层。** `title` 作为**注解**是纯噪声（值就是键名换
     // 个写法）；而 `properties` 底下那一层的键是**字段名**——剧本那份
-    // schema 里就真有一个叫 title 的字段（一集的标题）。递归摘的话会把它
+    // schema 里就真有一个叫 title 的字段（一章的标题）。递归摘的话会把它
     // 整个删掉，模型于是再也不填标题，而且一声不响。
     const nlohmann::ordered_json schema = {
         {"type", "object"},
         {"title", "Episode"},            // 注解：该摘
         {"properties",
          {{"title",                       // 字段名：该留
-           {{"type", "string"}, {"title", "Title"}, {"description", "这一集叫什么"}}},
+           {{"type", "string"}, {"title", "Title"}, {"description", "这一章叫什么"}}},
           {"shot_id", {{"type", "string"}, {"title", "Shot Id"}}}}},
         {"required", {"title", "shot_id"}},
     };
@@ -1025,7 +1025,7 @@ TEST_CASE("schema 贴过去：pydantic 的 title 摘掉，叫 title 的字段留
     CHECK(sent.find("\"Title\"") == std::string::npos);
     // 字段本身、它的约束和描述一条不少
     CHECK(sent.find("\"title\"") != std::string::npos);
-    CHECK(sent.find("这一集叫什么") != std::string::npos);
+    CHECK(sent.find("这一章叫什么") != std::string::npos);
     CHECK(sent.find("\"required\"") != std::string::npos);
 }
 
@@ -1084,12 +1084,12 @@ TEST_CASE("有人要看思考就走流式，哪怕没人要逐字") {
 }
 
 TEST_CASE("配错了的错要认得出来：批量据此停下") {
-    // ⚠️ **2026-09-17 实撞：一次补七集分镜，第三集开始密钥失效，而「一集砸
-    // 了不拖垮后面几集」这条让它又试了五集，每集同一个 401**——人白等二十
+    // ⚠️ **2026-09-17 实撞：一次补七章分镜，第三章开始密钥失效，而「一章砸
+    // 了不拖垮后面几章」这条让它又试了五章，每章同一个 401**——人白等二十
     // 分钟，回来看到五条一模一样的报错。
     //
-    // 那条规矩针对的是**内容**问题（这一集模型没写好，下一集换个剧本也许就
-    // 好了）；而密钥不对、地址不对、模型名不存在，不会在下一集自己变好。
+    // 那条规矩针对的是**内容**问题（这一章模型没写好，下一章换个剧本也许就
+    // 好了）；而密钥不对、地址不对、模型名不存在，不会在下一章自己变好。
     SUBCASE("401 / 403 / 404 是配错了") {
         for (int code : {401, 403, 404}) {
             CAPTURE(code);

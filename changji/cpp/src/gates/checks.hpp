@@ -62,13 +62,13 @@ GateResult gate_video(const models::Shot& shot,
 
 /// 检查镜头时长能不能装下配音。
 ///
-/// **这个检查放在装配之前。** 装完再发现装不下就得重做整集。
+/// **这个检查放在装配之前。** 装完再发现装不下就得重做整章。
 GateResult gate_audio_sync(const models::Shot& shot,
                            const std::filesystem::path& video_path,
                            const media::FFmpeg& ff,
                            const config::GateConfig& cfg);
 
-/// 整集装配后的检查。
+/// 整章装配后的检查。
 struct EpisodeGateResult {
     Verdict verdict = Verdict::Pass;
     std::vector<std::string> reasons;
@@ -86,7 +86,7 @@ EpisodeGateResult gate_episode(const std::filesystem::path& video_path,
 /// 闸门失败后决定怎么办。
 ///
 /// **这是无人值守能不能不卡死的关键。** 重试超限时降级而不是停下来，
-/// 保证整集能出片，同时把问题记录下来供人事后查。
+/// 保证整章能出片，同时把问题记录下来供人事后查。
 Verdict decide_next(const GateResult& result, const models::Shot& shot,
                     const config::GateConfig& cfg);
 

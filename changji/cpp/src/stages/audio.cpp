@@ -271,7 +271,7 @@ double probe_wav_duration(const fs::path& path) {
     if (!in) throw AudioError("音频文件读不出时长：" + paths::to_utf8(path));
 
     // 只读头部。一段几十秒的 wav 是几兆，为了读时长全读进来是浪费，
-    // 而配音一集要读几十次。
+    // 而配音一章要读几十次。
     std::string head(1024, '\0');
     in.read(head.data(), static_cast<std::streamsize>(head.size()));
     head.resize(static_cast<std::size_t>(in.gcount()));
@@ -385,7 +385,7 @@ std::optional<std::string> resolve_voice(const std::optional<std::string>& voice
 
 const std::vector<std::string>& AudioStage::available_voices() {
     if (!voices_.has_value()) {
-        // 查一次就够，缓存住。一集四十镜、每镜两句，不缓存就是八十次请求。
+        // 查一次就够，缓存住。一章四十镜、每镜两句，不缓存就是八十次请求。
         voices_ = backend_.list_voices ? backend_.list_voices()
                                        : std::vector<std::string>{};
     }
@@ -454,7 +454,7 @@ double AudioStage::lock_duration(models::Shot& shot, double speech_s) const {
     // 为这一镜安排了好几件事要演，那个时长是它的判断，配音只知道"话有
     // 多长"，不该替它决定。这样改动只落在真正的长镜头上，别的一个不碰。
     //
-    // 整集时长超了由配音之后那次 rebalance 去收，而它动的正是没有台词的
+    // 整章时长超了由配音之后那次 rebalance 去收，而它动的正是没有台词的
     // 那些镜头。
     // **计划得明显长的镜头同样不压。** 只看分了几段的话，一个计划 12 秒、
     // 运动描述只写了一段的长镜头照样被一句两秒的台词压成 3 秒
@@ -573,7 +573,7 @@ std::vector<ShotAudioPlan> AudioStage::run(std::vector<models::Shot*>& shots,
     struct Done {
         /// 这一格真跑过没有。**写回的唯一凭据。**
         /// 同 render.cpp / frames.cpp 的 `Done::ran`：那两处 2026-09-17
-        /// 丢过一集的数据（没跑过的一格装的是默认构造的空壳，照样被写回去）。
+        /// 丢过一章的数据（没跑过的一格装的是默认构造的空壳，照样被写回去）。
         /// 这一层从一开始就用正面判据。
         bool ran = false;
         bool ok = false;
@@ -648,7 +648,7 @@ std::vector<ShotAudioPlan> AudioStage::run(std::vector<models::Shot*>& shots,
             // **这一镜完了要说一声。** 界面把"带 shot_id 的 progress"当成
             // "这一镜正在跑"，靠一条非 progress 的事件把它移出去。
             // 只报 progress 不报完成的话，这一镜会永远挂在"正在配音"上——
-            // 一集二十二镜跑完配音之后，整面墙都写着「配音」，包括那些
+            // 一章二十二镜跑完配音之后，整面墙都写着「配音」，包括那些
             // 其实只是在等的。用户看到的就是这个（2026-09-10 报的）。
                 pipeline::Event fin;
                 fin.stage = "audio";

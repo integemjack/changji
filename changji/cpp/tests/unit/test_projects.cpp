@@ -113,13 +113,89 @@ TEST_CASE("新建横屏项目：assets 里那份比例拷贝也要是横的") {
     const auto assets = models::ProjectStore(made).load_assets();
     CHECK(assets.style.aspect_ratio == "16:9");
 
-    SUBCASE("竖屏（默认）照旧是 9:16，没白写一次盘") {
+    SUBCASE("竖屏要显式选：aspect_ratio 跟着变 9:16") {
+        // 2026-09-18 默认翻成横屏之后，竖屏不再是「不说话就有」的那一档。
         const auto r2 = http::guard([&] {
-            return http::post_new_project(json{{"path", "竖屏剧"}}, ws.settings);
+            return http::post_new_project(
+                json{{"path", "竖屏片"}, {"orientation", "portrait"}}, ws.settings);
         });
         REQUIRE(r2.status == 200);
         const fs::path m2 = paths::from_utf8(r2.body.at("root").get<std::string>());
         CHECK(models::ProjectStore(m2).load_assets().style.aspect_ratio == "9:16");
+    }
+
+    SUBCASE("不给画幅就是横屏 16:9") {
+        // 用户 2026-09-18 把产品定位改成电影制作平台，默认从 portrait 翻成
+        // landscape。**源和那份派生的拷贝要一起翻**：只翻 [video].orientation
+        // 而 assets.json 里还写着 9:16 的话，成片横的、参考图竖的——而参考图
+        // 正是每一镜的底子（就是外层这条用例当年撞上的那件事）。
+        const auto r3 = http::guard([&] {
+            return http::post_new_project(json{{"path", "不说画幅"}}, ws.settings);
+        });
+        REQUIRE(r3.status == 200);
+        const fs::path m3 = paths::from_utf8(r3.body.at("root").get<std::string>());
+        CHECK(config::load_settings(m3).video.orientation == "landscape");
+        CHECK(models::ProjectStore(m3).load_assets().style.aspect_ratio == "16:9");
+
+        // **而且是钉在盘上的**，不是靠内置默认答出来的：新建那一下就把
+        // [video].orientation 写进了项目自己的 changji.toml。这样读它的人
+        // 走的是「项目自己说了」那一支，以后内置默认再翻也不动这个项目。
+        std::ifstream in(m3 / "changji.toml", std::ios::binary);
+        const std::string t3((std::istreambuf_iterator<char>(in)),
+                             std::istreambuf_iterator<char>());
+        CHECK(t3.find("orientation = \"landscape\"") != std::string::npos);
+    }
+}
+
+TEST_CASE("老项目的画幅：读出来是它自己那一档，在设置页存一次也不会被翻横") {
+    // **老项目目录里没有 changji.toml。** 写那份文件的是
+    // http::post_new_project，`ProjectStore::create` 不写——手工建的、
+    // 早于项目模板那一批，画幅在盘上的记录只有 assets.json 里那份比例
+    // （仓库自己的夹具 tests/golden/项目_雨夜天台/ 就是这一类）。
+    //
+    // 2026-09-18 内置默认翻成 landscape 之后，不从那儿推的话两件事会坏，
+    // 而且都不报错：
+    //   · 一个已经出了两百镜 544×928 的项目再补一镜出的是 928×544，
+    //     同一章两种画幅，装配时要么上下黑边要么直接拼坏；
+    //   · 用户在设置页碰一下「后期 / 画面」，引擎就把 landscape 永久写进
+    //     这个竖屏项目——不可逆，也没有任何提示。
+    Workspace ws("老项目画幅");
+    const fs::path root = ws.root / paths::from_utf8("老竖屏剧");
+    auto store = models::ProjectStore::create(root, "lao-shupin", "老竖屏剧");
+    {
+        // 这个项目所有参考图和已出镜头都是 9:16
+        auto assets = store.load_assets();
+        assets.style.aspect_ratio = "9:16";
+        store.save_assets(assets);
+    }
+    REQUIRE_FALSE(fs::exists(root / "changji.toml"));
+
+    // 设置页那两条路（GET /bff/project/video、GET /bff/project/finish）
+    // 报的都是这个值，用户看到的于是是竖屏。
+    const config::Settings s = config::load_settings(root);
+    CHECK(s.video.orientation == "portrait");
+
+    // 装配和出图那条路上对的那笔账（pipeline::run_episode 里那句
+    // `assets.style.aspect_ratio = settings.video.aspect_ratio()`）
+    // 对老项目**是恒等的**：两头相等，所以它翻不动这个项目。
+    CHECK(s.video.aspect_ratio() == store.load_assets().style.aspect_ratio);
+
+    SUBCASE("在设置页按一下保存，盘上落下的是竖屏那一档") {
+        // 下面这一句就是 /bff/project/finish 起底那一段真跑的东西
+        // （server.cpp 里 `write_project_config(root, s.video)`）——
+        // 用户改的是后期和声音，根本没碰画幅。
+        REQUIRE(config::write_project_config(root, s.video));
+
+        std::ifstream in(root / "changji.toml", std::ios::binary);
+        const std::string text((std::istreambuf_iterator<char>(in)),
+                               std::istreambuf_iterator<char>());
+        // 模板的注释里写着 `orientation = "portrait" | "landscape"`，所以
+        // 只能找**赋值那一行**的原样；带 = 号的这一串在注释里不成立。
+        CHECK(text.find("orientation = \"landscape\"") == std::string::npos);
+        // 再读一遍——这次答话的是文件本身，不是推出来的。
+        CHECK(config::load_settings(root).video.orientation == "portrait");
+        CHECK(config::load_settings(root).video.size() ==
+              std::pair<int, int>{544, 928});
     }
 }
 
@@ -314,15 +390,15 @@ TEST_CASE("正在跑的时候不让删项目") {
     pipeline::jobs().wait_idle();
 }
 
-TEST_CASE("确认名字：目录名和剧名都认") {
-    // 2026-09-14 之前只认目录名，而界面上到处显示的是剧名——一个目录叫
-    // convenience-store、剧名叫「深夜便利店」的项目，确认框要你打剧名才
+TEST_CASE("确认名字：目录名和片名都认") {
+    // 2026-09-14 之前只认目录名，而界面上到处显示的是片名——一个目录叫
+    // convenience-store、片名叫「深夜便利店」的项目，确认框要你打片名才
     // 解锁，打完提交引擎回 400 要目录名，这条路彻底堵死。
     Workspace ws("双名");
     const fs::path proj = ws.settings.workspace_path() / "convenience-store";
     models::ProjectStore::create(proj, "convenience-store", "深夜便利店");
 
-    // 剧名认
+    // 片名认
     auto r = http::guard([&] {
         return http::post_delete_project(
             json{{"path", paths::to_utf8(proj)}, {"confirm_name", "深夜便利店"}},
@@ -354,7 +430,7 @@ TEST_CASE("确认名字：目录名和剧名都认") {
 }
 
 TEST_CASE("跑片的闸只挡正在跑的那个项目") {
-    // 单卡上一集要跑很久，而「趁着在跑顺手把测试残留清了」恰恰是这段时间
+    // 单卡上一章要跑很久，而「趁着在跑顺手把测试残留清了」恰恰是这段时间
     // 最想干的事。原来这道闸不看路径，任何项目都删不掉。
     Workspace ws("跑着删别的");
     const fs::path busy = make_project(ws, "在跑的");
@@ -425,7 +501,7 @@ TEST_CASE("不知道在跑哪个项目时一律挡住") {
     pipeline::jobs().wait_idle();
 }
 
-TEST_CASE("改剧名：只动 title，目录一个字不改") {
+TEST_CASE("改片名：只动 title，目录一个字不改") {
     Workspace ws("改名");
     const fs::path proj = make_project(ws, "原来的名字");
 
@@ -573,7 +649,7 @@ TEST_CASE("项目 id 的 slug 规则和角色的不一样") {
 TEST_CASE("新建项目时落一份标准的项目配置") {
     // 以前项目目录里没有 changji.toml，只有用户在界面上改过画幅才冒出一个
     // 两行的；而那时 save_user_config 拿全局模板起底，项目配置里会出现
-    // [llm]、[workers] 这些机器的属性。现在建项目就写一份只含剧的属性的。
+    // [llm]、[workers] 这些机器的属性。现在建项目就写一份只含这部电影自己的属性的。
     Workspace ws("项目配置");
     const auto r = http::guard([&] {
         return http::post_new_project(json{{"path", "配置剧"}}, ws.settings);
@@ -586,7 +662,7 @@ TEST_CASE("新建项目时落一份标准的项目配置") {
     // 解析得动，画幅是内置默认，别的节解析出来就是默认值（模板没有夹带
     // 别的东西），而且机器的属性一个都不在里面。
     const config::Settings s = config::load_settings(made);
-    CHECK(s.video.orientation == "portrait");
+    CHECK(s.video.orientation == "landscape");
     CHECK(s.video.quality == "720p");
 
     // 2026-09-16 从 5.0 抬到 15.0：原来那个数的理由是「8 秒的镜头会中途
@@ -641,7 +717,7 @@ TEST_CASE("新建项目时落一份标准的项目配置") {
     }
 }
 
-TEST_CASE("每一集报的「几镜」数的是能用的，不是数组长度") {
+TEST_CASE("每一章报的「几镜」数的是能用的，不是数组长度") {
     // 这个数是三处的判据：顶栏那几个步骤对勾（http/flow.cpp 的 has_shots）、
     // 镜头页按钮上的「还差 N 章分镜」、下拉里的「（17 镜）」。空壳镜头
     // （shot_id 是空串）指不到任何文件、进不了任何一步——报数组长度的话，

@@ -251,9 +251,9 @@ std::vector<std::vector<models::DialogueLine>> group_lines(
 
 std::vector<models::Shot> split_overlong_shots(std::vector<models::Shot> shots,
                                                double max_seconds) {
-    // 编号要跟**全集**比对着发。同一集重跑一次配音会再拆一次，
+    // 编号要跟**整章**比对着发。同一章重跑一次配音会再拆一次，
     // 只按本次的序号取名的话第二次又会取出一个 sh001_b，
-    // 于是一集里出现两个同名镜头：按 id 找镜头只能找到头一个，
+    // 于是一章里出现两个同名镜头：按 id 找镜头只能找到头一个，
     // 音频和首帧的文件名也会互相覆盖。
     std::set<std::string> used;
     for (const auto& s : shots) used.insert(s.shot_id);
@@ -344,16 +344,16 @@ std::string summarize(const std::vector<ShotAudioPlan>& plans) {
     //
     // 原来写的是「锁定后镜头总长 X 秒」，是 plans 里所有镜头的和。两处错：
     //
-    //   * 听上去像整集，其实不是（没台词的过渡镜不一定在 plans 里）；
+    //   * 听上去像整章，其实不是（没台词的过渡镜不一定在 plans 里）；
     //   * 它是**配音刚锁完那一刻**的值，而 rebalance 在它之后才跑。
     //
-    // 实测 walk_c ep01：这句报 71.0 秒，而同一屏上一行刚说整集重排到了
+    // 实测 walk_c ep01：这句报 71.0 秒，而同一屏上一行刚说整章重排到了
     // 61.8 秒——同样是这 18 个镜头，两个数，人只能当其中一个是错的。
     //
     // 现在只报**有台词那几镜**的时长：rebalance 明确不动它们
     // （storyboard.cpp 里只挑 `dialogue.empty() && !duration_locked`），
-    // 所以这个数跑完之后还是对的。而且它正好解释了这一集为什么压不更短。
-    // 整集多长由 pipeline/episode.cpp 在 rebalance 之后单独报。
+    // 所以这个数跑完之后还是对的。而且它正好解释了这一章为什么压不更短。
+    // 整章多长由 pipeline/episode.cpp 在 rebalance 之后单独报。
     std::string out =
         "配音完成 " + std::to_string(total_lines) + " 句，覆盖 " +
         std::to_string(plans.size()) + " 个镜头\n语音总长 " +

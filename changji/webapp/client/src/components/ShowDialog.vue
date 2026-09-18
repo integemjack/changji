@@ -1,10 +1,10 @@
 <script setup>
 /**
- * 这部片子长什么样。弹窗。
+ * 这部电影长什么样。弹窗。
  *
  * **画面和风格是一件事，不是两件。** 页面上它们原来是两个各占 365px 的
  * 小节（画幅/清晰度 一个，画风/负向/比例 一个），而用户心里只有一个问题：
- * 这片子长什么样。合成一个弹窗之后，页面上只剩一行答案。
+ * 这部电影长什么样。合成一个弹窗之后，页面上只剩一行答案。
  *
  * ⚠️ **「比例」那四个按钮删掉了，别再加回来。** 它和「画幅」本来是同一件事
  * 存在两个地方：
@@ -41,7 +41,7 @@ const styleLine = ref('')
 const resetOnStyle = ref(false)
 /**
  * 成片工序：后期链（胶片 / 干净 / 关）和声音几层（环境声、配乐）。
- * 剧的属性，存在项目的 changji.toml 的 [look] / [sound]。
+ * 电影的属性，存在项目的 changji.toml 的 [look] / [sound]。
  * 配乐还要机器上配了生成命令（music_ready），没配的话勾了也出不来，
  * 所以那个勾旁边要说清。
  */
@@ -62,10 +62,10 @@ const sizeText = computed(() =>
 )
 
 /**
- * 面板里那几份是哪部剧读回来的。
+ * 面板里那几份是哪部电影读回来的。
  *
- * 不记的话换剧再开这个窗，门是照开的（`v-if="video"` 看的是有没有值，
- * 不是值属于谁）——**新剧的窗上写着上一部的画幅、清晰度、画风**，而这几
+ * 不记的话换一部再开这个窗，门是照开的（`v-if="video"` 看的是有没有值，
+ * 不是值属于谁）——**新那一部的窗上写着上一部的画幅、清晰度、画风**，而这几
  * 个框是可以直接改了按保存的：那一下把 A 的画幅写进了 B。就算手慢没按，
  * 读回来的那一趟也会把人刚敲的字顶掉。
  */
@@ -98,7 +98,7 @@ async function load() {
     if (!mine()) return
     // 读不到不该让弹窗开不了——项目可能是老的，还没有这一节。
     // 按默认显示，用户存一次就写进去了。
-    video.value = { orientation: 'portrait', quality: '720p', width: 544, height: 928 }
+    video.value = { orientation: 'landscape', quality: '720p', width: 928, height: 544 }
     ui.warn(`读不到画面设置，按默认显示：${err.message}`)
   }
   savedVideo.value = JSON.stringify(video.value)
@@ -115,7 +115,7 @@ async function load() {
     if (!mine()) return
     // 刚建好还没有资产库。两个空框，存一次就有了。
     style.value = { global_style: '', negative_prompt: '' }
-    // 这一句也要跟着清：不清的话，上一部剧读到的「动漫线 / 写实线」
+    // 这一句也要跟着清：不清的话，上一部电影读到的「动漫线 / 写实线」
     // 会顶在这一部的标题旁边，而这一部根本没读出来。
     styleLine.value = ''
   }
@@ -208,8 +208,8 @@ function tryClose() {
 }
 
 async function save() {
-  // **三趟写在同一部剧上。** 画面、风格、成片工序是串着发的，中间隔两个
-  // 来回；路径现读的话，这中间换了剧（遮罩挡着鼠标，但键盘 Tab 得到项目
+  // **三趟写在同一部电影上。** 画面、风格、成片工序是串着发的，中间隔两个
+  // 来回；路径现读的话，这中间换了一部（遮罩挡着鼠标，但键盘 Tab 得到项目
   // 库那几行）后两趟就落到新那一部上——画面存在这一部，画风存到了另一部。
   const project = loadedFor
   const v = await run(
@@ -260,11 +260,11 @@ async function save() {
   <div v-if="open" class="mask" @click.self="tryClose">
     <section v-if="video" ref="panel" class="dlg" tabindex="-1">
       <header class="dlg__head">
-        <h2 class="dlg__t">这部片子长什么样</h2>
+        <h2 class="dlg__t">这部电影长什么样</h2>
         <!-- **读不出来就不挂这个牌子。** 取值只有 "realistic" 和
              "anime" 两个（models::StyleLine），空串是"没读到"——资产库
              还没建、或者那一趟挂了。这儿原来是个二选一的三目，空串稳稳
-             落到「写实线」，于是一部动漫剧的窗上挂着"写实线"。下面那句
+             落到「写实线」，于是一部动漫片的窗上挂着"写实线"。下面那句
              catch 里把它清成空串正是为了别挂错，清了还照挂等于白清。 -->
         <span v-if="styleLine" class="pill pill--neutral tiny">
           {{ styleLine === 'anime' ? '动漫线' : '写实线' }}
@@ -340,7 +340,7 @@ async function save() {
               </label>
               <label
                 class="switch"
-                :title="finish.music_ready ? '一集一条器乐，压在台词底下' : '这台机器还没配配乐命令（全局配置 [sound].music_command），勾了也出不来'"
+                :title="finish.music_ready ? '一章一条器乐，压在台词底下' : '这台机器还没配配乐命令（全局配置 [sound].music_command），勾了也出不来'"
               >
                 <input v-model="finish.music" type="checkbox" />
                 <!-- **这一截要是黄的。** 原来写的是 `class="warn"`，而这个组件的

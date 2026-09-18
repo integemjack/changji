@@ -28,9 +28,9 @@ namespace changji::infer {
 
 /// 按配置搭本机的配音后端。搭不起来回 nullopt。
 ///
-/// **两个调用方**：跑一集时装进 `Backends`，以及别的机器派配音任务过来时。
+/// **两个调用方**：跑一章时装进 `Backends`，以及别的机器派配音任务过来时。
 /// 一份实现——两份的话，"这台配音到底走哪条路"迟早在两边不一样，
-/// 而那种不一样的表现是同一集里前半段有声、后半段静音。
+/// 而那种不一样的表现是同一章里前半段有声、后半段静音。
 ///
 /// 三条路按 `[tts].backend` 选：`http`（外接服务）／`local`（进程内
 /// llama.cpp）／别的都退回估算后端。**任何一条搭不起来都退回估算，不抛**：
@@ -60,8 +60,8 @@ std::string cannot_do(const Task& t, const config::Settings& base);
 /// `Task::return_artifact` 为假时用不上。
 ///
 /// `base` 是**这台自己**的配置：模型目录、ffmpeg 在哪、显卡几张。
-/// 这部剧挑的档位由 `Task::pick` 带过来，在这儿盖上去（只盖模型那几个
-/// 文件名，见 `setup::with_selections`）。**不落盘**——下一趟可能是另一部剧。
+/// 这部电影挑的档位由 `Task::pick` 带过来，在这儿盖上去（只盖模型那几个
+/// 文件名，见 `setup::with_selections`）。**不落盘**——下一趟可能是另一部电影。
 TaskResult run_task_locally(const Task& t, const config::Settings& base,
                             Origin origin, const std::string& task_id,
                             const StepCallback& on_step,

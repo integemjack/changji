@@ -63,7 +63,7 @@ void reject_silent_audio(const fs::path& path, double duration_s,
     if (duration_s >= kMinPlausibleDurationS && duration_s >= expected * 0.35) {
         return;
     }
-    // **短过绝对下限但真有声音的，放行。** 5090 上整集跑通时被这条误杀过
+    // **短过绝对下限但真有声音的，放行。** 5090 上整章跑通时被这条误杀过
     // 一句：「苏晚！」本地 TTS 出了 1.04 秒、五万字节的真声音，差 0.01 秒
     // 够不到 1.05。绝对下限挡的是 ComfyUI 节点失败时吐的那一秒占位音频，
     // 而那种是**全零**——看峰值就分开了：真话峰值有满幅的一成，占位是 0。
@@ -179,7 +179,7 @@ TTSBackend http_tts_backend(const std::string& base_url, double timeout_s,
         //
         // 二，**Python 的 HTTP 后端不做静音检查**，只有 Comfy 后端做。
         //     而"成功但没出声"和后端是谁没有关系：独立服务同样会在
-        //     模型没载好时回一个合法的空 wav。漏掉的代价是一整集静音
+        //     模型没载好时回一个合法的空 wav。漏掉的代价是一整章静音
         //     被当成配音成功，混音、字幕、时长锁全部照跑，
         //     等人听出来的时候前面几步都得重来。
         //
@@ -226,7 +226,7 @@ std::optional<TTSBackend> local_tts_backend(const fs::path& backbone,
     // 那段话就是死代码，用户永远看不到。而配音恰恰是四个槽里唯一一个
     // 有现成外部服务可换、不用改一行代码的。
     //
-    // 权重只载一次（Cached），每句台词重载一遍的话一集就是几十次。
+    // 权重只载一次（Cached），每句台词重载一遍的话一章就是几十次。
     tts_engine_paths() = {backbone, decoder, use_gpu};
     {
         infer::SlotSpec spec;
@@ -404,7 +404,7 @@ TTSBackend pick_tts_backend(const config::Settings& s,
 ///     中句（29 字 / 约 7 秒）      96 ~ 304 Hz   ← 定在这
 ///     长句（58 字 / 约 10 秒）    149 ~ 270 Hz   ← 低音男声整个没了
 ///
-/// 长句会把说话人往训练分布中间拽，而短剧最缺的恰恰是那一头。中句音域
+/// 长句会把说话人往训练分布中间拽，而电影最缺的恰恰是那一头。中句音域
 /// 最宽，片长 6~10 秒又还在"参考音频够用"的区间（社区实测 3 秒能认出来、
 /// 8~15 秒明显更好）。
 constexpr const char* kVoiceText =

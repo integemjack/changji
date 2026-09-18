@@ -59,7 +59,7 @@ TEST_CASE("POST /api/shot 与 Python 逐条对拍") {
         CAPTURE(name);
         const std::string tag = std::to_string(idx++);
 
-        // 剧集/镜头不存在那两条不写盘，直接用原始项目
+        // 章/镜头不存在那两条不写盘，直接用原始项目
         const bool mutates = !c.at("dir").is_null();
         const fs::path root = mutates ? fresh_copy(tag) : pristine_project();
 

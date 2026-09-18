@@ -5,7 +5,7 @@
 // 一个项目就是一个自包含的目录，换机器整个拷走即可。目录里只有相对路径，
 // 不含任何绝对路径，也不含模型文件（那些跟机器走，不跟项目走）。
 //
-//     我的短剧/
+//     我的电影/
 //     ├── project.json          项目元数据与分镜表
 //     ├── assets.json           角色与场景资产库
 //     ├── changji.toml          项目级配置覆盖（可选）
@@ -21,7 +21,7 @@
 // 移植自 src/changji/models/project.py。
 //
 // ⚠️ 这个文件里所有 std::string 与 fs::path 的互转必须走
-// paths::to_utf8 / paths::from_utf8。项目目录允许是 E:\AI短剧\ 这种路径，
+// paths::to_utf8 / paths::from_utf8。项目目录允许是 E:\AI电影\ 这种路径，
 // 直接用 path.string() 或 fs::path(str) 会在 MSVC 上抛异常，见 verify/RESULTS.md。
 
 #include <utility>
@@ -47,7 +47,10 @@ inline constexpr int kSchemaVersion = 1;
 /// 项目里要建出来的子目录。
 const std::vector<std::string>& project_subdirs();
 
-/// 一集。分镜表挂在这里。
+/// 一章。分镜表挂在这里。
+///
+/// **`Episode` / `episode_id` 是历史留下的名字**：老项目的 project.json 里
+/// 写的就是它们，改名等于让老项目打不开。说法按章，标识符照旧。
 struct Episode {
     std::string episode_id; ///< ^[a-z0-9_]+$
     std::string title;
@@ -56,12 +59,14 @@ struct Episode {
     std::string script;               ///< 剧本原文
     std::vector<Shot> shots;
 
-    /// 这一集是从故事的哪几章切出来的（story.json 里的 chapter_id）。
+    /// 它对着故事里的哪一章（story.json 里的 chapter_id）。**一章一条，
+    /// 所以正常只有一个**；数组这个形状是按时长切章那个年代留下的，老项目
+    /// 里可能真有两个，读的那几处一律取 `front()`。
     ///
-    /// 空表示这一集不是从故事切出来的——老项目、手动加的一集、预告片都是
-    /// 这样，它们照常走老路径。**确切的字符区间不存在这里**，在
-    /// story.plan 里按 episode_id 查；存两份迟早对不上，而对不上的表现是
-    /// 剧本写了隔壁章的内容。
+    /// 空表示它不是从故事来的——老项目、手动加的、预告片都是这样，它们
+    /// 照常走老路径。**确切的字符区间不存在这里**，在 story.plan 里按
+    /// episode_id 查；存两份迟早对不上，而对不上的表现是剧本写了隔壁章的
+    /// 内容。
     std::vector<std::string> chapter_refs;
 
     NLOHMANN_DEFINE_TYPE_INTRUSIVE_WITH_DEFAULT(
@@ -93,8 +98,8 @@ struct Project {
     std::string project_id; ///< ^[a-z0-9_-]+$（比镜头 id 多允许连字符）
     std::string title;
     StyleLine style_line = StyleLine::REALISTIC;
-    /// 这部剧讲什么。写下一集时当提示词用。
-    /// 不存的话，隔天想接着写第六集，得凭记忆把当初那句话重打一遍。
+    /// 这部电影讲什么。写下一章时当提示词用。
+    /// 不存的话，隔天想接着写第六章，得凭记忆把当初那句话重打一遍。
     std::string premise; ///< ≤2000 字
     std::string created_at;
     std::string updated_at;
@@ -160,10 +165,10 @@ private:
     std::filesystem::path root_;
 };
 
-/// 这个 id 是不是一集正片（`ep` 加纯数字）。
+/// 这个 id 是不是一章正片（`ep` 加纯数字）。
 ///
-/// **预告片和正片同住 `Project::episodes`。** 于是「这部剧有几集」这种话
-/// 一不留神就把预告数进去：一部只剪了预告的剧会显示成「1 集」。
+/// **预告片和正片同住 `Project::episodes`。** 于是「这部电影有几章」这种话
+/// 一不留神就把预告数进去：一部只剪了预告的电影会显示成「1 章」。
 /// 判据和 next_episode_id 里那段是同一条，提出来免得两处各写一遍。
 bool is_regular_episode(const std::string& episode_id);
 

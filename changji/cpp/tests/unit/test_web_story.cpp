@@ -160,7 +160,7 @@ TEST_CASE("那条对话：模型要看热榜、读一页，结果喂回去，最
     CHECK(tools_said.find("护士站的灯亮了一夜") != std::string::npos);
 
     // 开场那条是一句话 + 上下文 + schema，没有规矩表。写的是 ch02：带着
-    // 这部剧那句话、前一章的结尾、这一章的标题，不分章
+    // 这部电影那句话、前一章的结尾、这一章的标题，不分章
     const std::string opening = client.last_messages()[1].content;
     CHECK(opening.find("hot_topics") != std::string::npos);
     CHECK(opening.find("这一章的正文") != std::string::npos);

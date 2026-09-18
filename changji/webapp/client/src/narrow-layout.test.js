@@ -32,7 +32,7 @@ function rule(css, selector) {
 
 describe('窄屏上摆不下的那几排', () => {
   it('标签排摆不下就换行——右边挂着那一页的主按钮', () => {
-    // 设定页是「照故事定妆」「一键出图」，这一集是「AI 重出分镜」那几个
+    // 设定页是「照故事定妆」「一键出图」，这一章是「AI 重出分镜」那几个
     expect(rule(read('./styles/base.css'), '.tabs')).toMatch(/flex-wrap:\s*wrap/)
   })
 

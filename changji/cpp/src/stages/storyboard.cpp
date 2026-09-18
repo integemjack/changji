@@ -187,7 +187,7 @@ double VideoLimits::real_duration_s(double duration_s, int fps) const {
 
 std::vector<double> VideoLimits::duration_slots(int fps) const {
     // 候选一路排到 15 秒：换上能出长镜头的模型时（MiniMax-H3 能到 15 秒），
-    // 档位表跟着放开，一集就不必被切成十几个五秒片段。上限小的时候后面
+    // 档位表跟着放开，一章就不必被切成十几个五秒片段。上限小的时候后面
     // 那几档自然被滤掉，老项目一点不变。
     const double limit = max_duration_s(fps);
     const double all[] = {2.0, 3.0, 4.0, 5.0, 6.0, 8.0, 10.0, 12.0, 15.0};
@@ -481,8 +481,8 @@ std::vector<std::string> split_lines(const std::string& s) {
     return out;
 }
 
-/// 角色名单和场景名单那两段，整集那条路和按场那条路共用；
-/// 整集那条路的输出是逐字节对拍的，这两段就是从它里面抽出来的。
+/// 角色名单和场景名单那两段，整章那条路和按场那条路共用；
+/// 整章那条路的输出是逐字节对拍的，这两段就是从它里面抽出来的。
 std::string roster_text(const AssetLibrary& assets) {
     std::vector<std::string> lines;
     for (const std::string& cid : assets.character_ids()) {
@@ -992,7 +992,7 @@ ordered llm_shot_schema(const AssetLibrary& assets, ShotCountBounds bounds) {
             {"type", "string"},
             {"enum", beats},
             {"description",
-             "这一镜在戏里干什么。钩子 = 集尾留扣，高潮 = 情绪最高那一下，"
+             "这一镜在戏里干什么。钩子 = 章尾留扣，高潮 = 情绪最高那一下，"
              "反转 = 认知被推翻，对峙 = 两个人顶上，反应 = 听的人的脸，"
              "留白 = 空镜或过渡"}};
     }
@@ -1208,7 +1208,7 @@ void drop_unknown_enums(json& item) {
 ///
 ///   · `status` = final_done / locked —— 出片那一步整镜跳过（这两个不在
 ///     `render_entry_states` 里），表现是"跑完了，这一镜什么都没出"，而侧
-///     边栏还会把这一集打上勾；
+///     边栏还会把这一章打上勾；
 ///   · `frame_path` / `video_path` —— 墙上是破图，装配还会去拼一个根本不
 ///     存在的文件（`assembly_usable` 只看这个字段非空加状态）；
 ///   · `duration_locked` = true —— 配音回填的真实时长被挡在外面，画面按一个
@@ -1547,7 +1547,7 @@ void add_missing_speakers(json& item, const std::set<std::string>& known) {
 /// 之后模型确实每栏都填了，但挨个挑 enum[0] 交差。
 ///
 /// 后果不只是单调。大特写起幅本来就没有余地，视频模型再按运动描述一动，主体
-/// 直接出画：那一集里第 3 镜五秒钟从「人推门进来」漂成「一只手和一个文件袋悬在
+/// 直接出画：那一章里第 3 镜五秒钟从「人推门进来」漂成「一只手和一个文件袋悬在
 /// 楼梯间」，第 7 镜最后只剩地板和一条椅子腿。**景别塌了，成片就跟着塌。**
 ///
 /// ⚠️ **引用提示词里的规矩，引原话别引条号。** 2026-09-17 清过一次：
@@ -1573,9 +1573,9 @@ void diversify_shot_sizes(std::vector<Shot>& shots) {
     const bool collapsed = most * 10 >= n * 8;
     // **ECU 单独过半也算塌。** 大特写在 PromptComposer 里整个不带身份层和
     // 场景层（那一条是对的，2026-09-13 实测：带了就画成全身人像），也就是
-    // **不带参考图**。偶尔一个两秒的插入镜头这么干没问题，半集都这么干就是
-    // 整集丢掉角色一致性——而「缺参考图」那道闸门专门跳过 ECU，一声不吭。
-    // 2026-09-16 那一集 17 镜全 ECU，没有一张图拿到过定妆参考，远程日志里
+    // **不带参考图**。偶尔一个两秒的插入镜头这么干没问题，半章都这么干就是
+    // 整章丢掉角色一致性——而「缺参考图」那道闸门专门跳过 ECU，一声不吭。
+    // 2026-09-16 那一章 17 镜全 ECU，没有一张图拿到过定妆参考，远程日志里
     // 十几条「是图像编辑模型，而这一镜一张参考图都没有」。
     const bool too_many_ecu = hist[ShotSize::ECU] * 2 > n;
     if (!collapsed && !too_many_ecu) return;
@@ -1699,13 +1699,13 @@ void ensure_establishing_shots(std::vector<Shot>& shots) {
 
     // **一场一个是地板，不是节奏。**
     //
-    // 2026-09-16 量了这个项目里九集：模型自己排出来的大景占比是
-    // 0 / 12 / 11 / 27 / 20 / 21 / 0 / 23 / 5 百分比——排得好的那几集在两成
-    // 上下，砸了的那几集是 0 和 5。而上面那一条只保证「一场一个」，
-    // 一集只有一场的时候就是十七镜里一个大景（ep09 实测 5%），
+    // 2026-09-16 量了这个项目里九章：模型自己排出来的大景占比是
+    // 0 / 12 / 11 / 27 / 20 / 21 / 0 / 23 / 5 百分比——排得好的那几章在两成
+    // 上下，砸了的那几章是 0 和 5。而上面那一条只保证「一场一个」，
+    // 一章只有一场的时候就是十七镜里一个大景（ep09 实测 5%），
     // 用户那句「都是近景没有远景」照旧成立。
     //
-    // 所以再垫一道按镜数的地板：**每六镜至少一个大景**。对着那九集算：
+    // 所以再垫一道按镜数的地板：**每六镜至少一个大景**。对着那九章算：
     // ep04/05/06/08 本来就够，一镜不动；ep02/03 各补一镜，ep09 补两镜，
     // ep07 补三镜。只托底，不改已经排好的。
     //
@@ -1802,7 +1802,7 @@ std::vector<Shot> parse_storyboard(const std::string& raw,
         // **越界的也要兜。** 原来只管「没填或者填了 0」，填了 -0.4 就原样
         // 留着——然后 validate 说「要在 0 到 2 秒之间」，**整张分镜表连同
         // 另外十二个好镜头一起作废**。实跑撞上过一次，84 秒的显卡时间没了。
-        // 这一栏本来就不值得为它丢掉一整集：转场时长是个装饰。
+        // 这一栏本来就不值得为它丢掉一整章：转场时长是个装饰。
         if (str_or(item, "transition_in", "cut") == "cut") {
             item["transition_dur_s"] = 0.0;
         } else {
@@ -1817,7 +1817,7 @@ std::vector<Shot> parse_storyboard(const std::string& raw,
         // 会先把一个角色补进 characters，于是这一镜凭空多了个在场的人。
         // **进画出画的动作当场摘掉，不等崩了再补救。**
         //
-        // 提示词第 6 条明令禁止（不写走进/走出/开门/镜头穿过），三集 51 镜
+        // 提示词第 6 条明令禁止（不写走进/走出/开门/镜头穿过），三章 51 镜
         // 实测把这类写法从 3/3 压到 1/18 —— 但没清零，而残留的那一条照样崩：
         // 2026-09-16 的 ep04_sh009「曾老板走向门口」五秒里换成了另一间屋子
         // 另一个人。原来只在闸门判出「片中硬切」之后才摘（render.cpp），
@@ -2009,7 +2009,7 @@ std::vector<std::pair<std::string, std::string>> script_dialogue_pairs(
         // 渲染出来的台词是「名字：台词」，动作行是光秃秃一行，一旦动作行
         // 自己带了冒号，两者就分不开了。
         //
-        // 2026-09-13 量过：walk_c 四集剧本共 22 条冒号行，**认不出说话人的
+        // 2026-09-13 量过：walk_c 四章剧本共 22 条冒号行，**认不出说话人的
         // 0 条**（正片路径上模型一直老实用注册角色名）。唯一一次踩到是在
         // 预告片那条路：「黑屏前最后一帧：林浩抬头望向镜头……」——冒号前
         // 七个字，于是整句动作描写被当成一个人在说话，落成旁白后被念出来。
@@ -2046,7 +2046,7 @@ std::vector<std::string> script_dialogue_lines(const std::string& script) {
 ///
 /// **标点不能算数。** 模型把「我来了。晚了七年。」拆成两镜、或者把句号换成
 /// 逗号，都是同一句台词落地了；按标点较真的话，这一条会在模型只是换了个
-/// 停顿的时候把整集打回去。真丢了的那种是**整句话都不在**，那个照样查得出来。
+/// 停顿的时候把整章打回去。真丢了的那种是**整句话都不在**，那个照样查得出来。
 std::string squash(const std::string& s) {
     static const char* kDrop[] = {
         "，", "。", "！", "？", "、", "；", "：", "…", "—", "～",
@@ -2083,7 +2083,7 @@ std::vector<std::string> check_coverage(const std::string& script,
                                         const std::vector<Shot>& shots) {
     // 对应 re.search(r"[：:]\s*\S", script)：找一个冒号，后面跳过空白，
     // 再要求至少一个非空白字符。手写而不用 std::regex——那东西在长输入上
-    // 会递归到爆栈，而这里的输入是整集剧本。
+    // 会递归到爆栈，而这里的输入是整章剧本。
     const auto is_ws = [](unsigned char c) {
         return c == ' ' || c == '\t' || c == '\n' || c == '\r' ||
                c == '\v' || c == '\f';
@@ -2201,7 +2201,7 @@ int place_missing_dialogue(std::vector<Shot>& shots, const std::string& script,
                 break;
             }
         }
-        // 区间里都塞满了就往整集找——**次序略有出入，也比串音强**：
+        // 区间里都塞满了就往整章找——**次序略有出入，也比串音强**：
         // 台词的先后人一眼看得出来、拖一下就能改，声音叠在一起是听不清的。
         if (target < 0) {
             for (int off = 0; off < m && target < 0; ++off) {
@@ -2214,7 +2214,7 @@ int place_missing_dialogue(std::vector<Shot>& shots, const std::string& script,
                 }
             }
         }
-        // 整集都装不下（台词比镜头多得多）：挑最空的那一镜，至少别都堆一处。
+        // 整章都装不下（台词比镜头多得多）：挑最空的那一镜，至少别都堆一处。
         if (target < 0) {
             target = lo;
             for (int s = 0; s < m; ++s) {
@@ -2341,7 +2341,7 @@ std::vector<Shot>& rebalance_durations(std::vector<Shot>& shots, double target_s
     //
     // 上面这个循环为了凑总时长把镜头从 5 秒换成 2 秒，而 motion_prompt 还
     // 写着 `[0-5秒]`——解析时 cover_full_duration 对的是换档**之前**那个数。
-    // 2026-09-16 实测：新排的一集里 18 镜有 9 镜对不上，最离谱的一个 6 秒
+    // 2026-09-16 实测：新排的那一章里 18 镜有 9 镜对不上，最离谱的一个 6 秒
     // 镜头挂着 `[0-15秒]`。多出来那截没人描述，出片模型自由发挥，而它发挥
     // 的方式就是把主体丢掉（见 cover_full_duration 上面那段）。
     //

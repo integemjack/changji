@@ -35,18 +35,18 @@ std::string episode_id_for_chapter(const std::string& chapter_id,
     return "ep" + digits;
 }
 
-std::vector<EpisodePlan> plan_episodes(const Story& story, double per_episode_s) {
-    double per = per_episode_s;
+std::vector<EpisodePlan> plan_episodes(const Story& story, double fallback_duration_s) {
+    double per = fallback_duration_s;
     if (per <= 0.0) per = story.episode_duration_s;
-    if (per <= 0.0) per = 60.0;
+    if (per <= 0.0) per = kDefaultChapterS;
 
     std::vector<EpisodePlan> out;
     out.reserve(story.chapters.size());
     for (std::size_t i = 0; i < story.chapters.size(); ++i) {
         const Chapter& ch = story.chapters[i];
-        // 这一章值多长：有正文按字数估，没正文按每集时长。**和
-        // sync_episodes_to_chapters 给剧集记的是同一个数**——两边各算各的，
-        // 剧本页按分集表排四段、剧集表按自己的数拆镜头，迟早对不上。
+        // 这一章值多长：有正文按字数估，没正文按回落值。**和
+        // sync_episodes_to_chapters 给章节表记的是同一个数**——两边各算各的，
+        // 剧本页按章节计划排、章节表按自己的数拆镜头，迟早对不上。
         const int len = ch.text_len();
         const double dur = len > 0 ? static_cast<double>(len) / kProseCharsPerSecond
                                    : per;

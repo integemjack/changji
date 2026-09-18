@@ -2,11 +2,11 @@
 
 // 故事层的接口。整条流水线的新源头。
 //
-//   GET  /api/story          读故事（含分集表）
-//   POST /api/story          存可编辑的那几项：梗概、体量、每集时长
+//   GET  /api/story          读故事（含章节计划）
+//   POST /api/story          存可编辑的那几项：梗概、体量、每章时长
 //   POST /api/story/outline  让大模型写大纲——**只回草稿，不落库**
-//   POST /api/story/adopt    采用一份大纲，落库并算分集表
-//   POST /api/story/plan     按每集时长重算分集表
+//   POST /api/story/adopt    采用一份大纲，落库并算章节计划
+//   POST /api/story/plan     按每章时长重算章节计划
 //
 // 写和采用分开，是照着剧本那边已经立住的规矩：源头没人审过就往下跑，
 // 后面几十分钟的渲染全是白跑。所以 AI 写完先摆出来，点了采用才落库。
@@ -30,7 +30,7 @@ namespace changji::http {
 /// 而前端要靠「空不空」决定摆大纲页还是摆老的剧本页。404 会被当成出错。
 ApiResult get_story(const std::string& path);
 
-/// POST /api/story —— 存梗概、体量、每集时长。
+/// POST /api/story —— 存梗概、体量、每章时长。
 ///
 /// 梗概会**同时写回 project.json**。老流程的写剧本提示词读的是
 /// Project::premise，两边各存一份的话，在这一页改完梗概去写剧本
@@ -61,11 +61,11 @@ ApiResult post_story_adopt(const nlohmann::json& body);
 
 /// POST /api/story/chapter/delete —— 删一章。body: {project, chapter_id}
 ///
-/// 分集表跟着改（见 Story::remove_chapter），回包里说改了几条：改过的话
-/// 「落成剧集」要重跑，界面上要把这句说出来。没有这个 id 是 404。
+/// 章节计划跟着改（见 Story::remove_chapter），回包里说改了几条：改过的话
+/// 「落成章节」要重跑，界面上要把这句说出来。没有这个 id 是 404。
 ApiResult post_story_chapter_delete(const nlohmann::json& body);
 
-/// POST /api/story/plan —— 按每集时长重算分集表。
+/// POST /api/story/plan —— 按每章时长重算章节计划。
 ApiResult post_story_plan(const nlohmann::json& body);
 
 /// POST /api/story/revise —— 改原稿的某一段。**只回草稿，不落库。**
@@ -88,20 +88,21 @@ ApiResult post_story_revise(const nlohmann::json& body, llm::Client& client,
 ///
 /// body: {project, chapter_id, from_char, to_char, text}
 ///
-/// **不碰大模型**：这一步是机械的字符串替换 + 重算候选切点 + 重算分集表。
+/// **不碰大模型**：这一步是机械的字符串替换 + 重算候选切点 + 重算章节计划。
 /// 分出来是因为它必须能单独测——写回去写错位置的话，盖掉的是作者的原文。
 ///
 /// 有说法的钩子会跟着挪位置保住，落在被替换那一段里面的丢掉。
 ApiResult post_story_revise_apply(const nlohmann::json& body);
 
-/// POST /api/story/from_episodes —— 从已有剧集反推一份故事骨架。
+/// POST /api/story/from_episodes —— 从已有章节反推一份故事骨架。
 ///
-/// 给**老项目**用：它们手里只有一集集写好的剧本，没有 story.json，于是
+/// 给**老项目**用：它们手里只有一章章写好的剧本，没有 story.json，于是
 /// 人物关系、全局记忆这些新做的东西一样都用不上。
 ///
-/// **不碰大模型**，也**不重新分集**：一集一章、整章，老项目那几集的边界
-/// 一个字都不动——边界一挪，已经排好的分镜和出过的片就对不上它该在的那
-/// 一段了。反推完顺手把每一集的 chapter_refs 接到对应的章上。
+/// **不碰大模型**，也**不重新切章**：一条章节记录就是整整一章，老项目那
+/// 几章的边界一个字都不动——边界一挪，已经排好的分镜和出过的片就对不上它
+/// 该在的那一段了。反推完顺手把每条 `Episode` 的 chapter_refs 接到对应的
+/// 章上。
 ///
 /// 回来的故事里人物、关系、地点都是空的，接着点「读现成正文提结构」
 /// （/api/story/analyze）才有——那一步要模型读一遍内容。
@@ -121,7 +122,7 @@ ApiResult post_story_import(const nlohmann::json& body);
 /// 粘贴导入只切章节，切完人物关系地点全是空的，走到「设定」那一步资产库
 /// 还是空的。这一步补那个洞。
 ///
-/// **正文一个字不动**，只补 summary、hook 和全剧的人物/关系/地点。
+/// **正文一个字不动**，只补 summary、hook 和全片的人物/关系/地点。
 /// 和别的几个一样**只回草稿不落库**。
 ApiResult post_story_analyze(const nlohmann::json& body, llm::Client& client,
                              pipeline::CancelToken& tok);
@@ -133,19 +134,19 @@ ApiResult post_story_analyze(const nlohmann::json& body, llm::Client& client,
 /// 没有什么会被顶掉；二、一部十六章的故事要逐章展开，走草稿-采用就是
 /// 三十二次点击。已经有正文的章要显式 overwrite，否则 409。
 ///
-/// 正文落进去之后钩子要重建、分集表要重算——原来那些候选切点是对着空正文
+/// 正文落进去之后钩子要重建、章节计划要重算——原来那些候选切点是对着空正文
 /// 算出来的。
 ApiResult post_story_chapter(const nlohmann::json& body, llm::Client& client,
                              pipeline::CancelToken& tok);
 
-/// POST /api/story/episodes —— 把分集表落成真的剧集。
+/// POST /api/story/episodes —— 把章节计划落成真的章节。
 ///
-/// 分集表是计划，剧集是流水线真正在跑的东西。分成两步而不是采用大纲时
-/// 顺手建出来，是因为重算分集（改每集时长）是个随手的动作，而建剧集会
-/// 动到已经写好剧本、已经出过片的那些集。
+/// 章节计划是计划，章节是流水线真正在跑的东西。分成两步而不是采用大纲时
+/// 顺手建出来，是因为重算章节计划（改每章时长）是个随手的动作，而建章节会
+/// 动到已经写好剧本、已经出过片的那几章。
 ///
-/// 已经存在的同号剧集**只补元数据，绝不碰 script 和 shots**：改一次每集
-/// 时长就把写好的剧本冲掉，那是没法接受的。分集表里没有的老剧集一律留着。
+/// 已经存在的同号章节**只补元数据，绝不碰 script 和 shots**：改一次每章
+/// 时长就把写好的剧本冲掉，那是没法接受的。章节计划里没有的老章节一律留着。
 /// sync_episodes_to_chapters 的结果。落单的那几个只报不删。
 struct EpisodeSync {
     std::vector<std::string> created;
@@ -155,17 +156,17 @@ struct EpisodeSync {
     bool touched() const { return !created.empty() || !updated.empty(); }
 };
 
-/// 章模式（[assembly].episode_s > 0）下把剧集对齐到章节：一章一个。
+/// 把章节记录对齐到故事的章：一章一条。
 ///
-/// **每一处改动章节的接口，存完 story 都要叫它。** 一章一集是机械映射，
-/// 用户 2026-09-16 选的是「自动做，不要按钮」。非章模式下它什么都不做。
+/// **每一处改动章节的接口，存完 story 都要叫它。** 一章一条是机械映射，
+/// 用户 2026-09-16 选的是「自动做，不要按钮」。
 EpisodeSync sync_episodes_to_chapters(const models::ProjectStore& store,
                                       const models::Story& story);
 
 ApiResult post_story_episodes(const nlohmann::json& body);
 
 /// 理解故事那**一次**模型调用：读一遍，人物（含长相）、关系、地点（含样貌）、
-/// 每章梗概和钩子、全剧调子一次出来。结构那半落进 story.json（同 analyze），
+/// 每章梗概和钩子、全片调子一次出来。结构那半落进 story.json（同 analyze），
 /// 长相那半并进 assets.json（同 bible）。同一份回答喂两个解析器，名单天然
 /// 一致。整件活（再加逐章写剧本）是 batch.hpp 的 post_story_understand。
 /// body: {project, overwrite?}；带 peek 只回提示词，带 paste 收别处跑出来的。
@@ -176,7 +177,7 @@ ApiResult post_story_understand_once(const nlohmann::json& body,
 /// 写过正文的故事被整份换掉之前挡一下（带 overwrite 才放）。
 void refuse_to_clobber(const models::Story& existing, const nlohmann::json& body);
 
-/// 把一份故事落成正式的那份：算分集、存盘、剧集对齐、梗概同步。
+/// 把一份故事落成正式的那份：算章节计划、存盘、章节对齐、梗概同步。
 /// 出大纲、粘一份、理解、从网上写——收尾都是它。
 nlohmann::json commit_story(const models::ProjectStore& store, models::Project project,
                             models::Story story, const models::Story& existing);

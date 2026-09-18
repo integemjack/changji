@@ -1,4 +1,4 @@
-// 剧本读写和剧集增删改的对拍测试。
+// 剧本读写和章节增删改的对拍测试。
 //
 // 这几个接口是阶段 3 漏掉的。漏的原因不是手滑：阶段 3 按
 // test_web_editing.py 的覆盖面移植，而那个文件不测它们——
@@ -71,7 +71,7 @@ fs::path pristine_project() {
 /// 语料里 prep 标了名字，这里按名字做同样的改动。
 fs::path fresh_copy(const std::string& tag, const json& prep) {
     const fs::path dst =
-        fs::temp_directory_path() / paths::from_utf8("changji_剧集_" + tag);
+        fs::temp_directory_path() / paths::from_utf8("changji_章节_" + tag);
     std::error_code ec;
     fs::remove_all(dst, ec);
     fs::copy(pristine_project(), dst, fs::copy_options::recursive, ec);
@@ -100,7 +100,7 @@ fs::path fresh_copy(const std::string& tag, const json& prep) {
 
 }  // namespace
 
-TEST_CASE("剧本读写和剧集增删改，逐条对拍") {
+TEST_CASE("剧本读写和章节增删改，逐条对拍") {
     int idx = 0;
     for (const auto& c : golden().at("cases")) {
         const std::string name = c.at("name").get<std::string>();
@@ -185,7 +185,7 @@ TEST_CASE("剧本读写和剧集增删改，逐条对拍") {
 }
 
 TEST_CASE("复制不带走产出物和状态") {
-    // 带过去的话，复制出来的一集会显示成已完成但没有文件，点播放是黑的。
+    // 带过去的话，复制出来的一章会显示成已完成但没有文件，点播放是黑的。
     const fs::path root = fresh_copy("复制", json());
     models::ProjectStore store(root);
 
@@ -236,7 +236,7 @@ TEST_CASE("复制不带走产出物和状态") {
 
     for (const models::Shot& s : copy->shots) {
         CAPTURE(s.shot_id);
-        // 把新集号换回去，找出它是从哪个镜头复制来的
+        // 把新章号换回去，找出它是从哪个镜头复制来的
         std::string orig_id = s.shot_id;
         const std::size_t pos = orig_id.find(new_id);
         REQUIRE(pos != std::string::npos);
@@ -270,7 +270,7 @@ TEST_CASE("复制不带走产出物和状态") {
             CHECK(s.dialogue[k].char_id == o.dialogue[k].char_id);
         }
 
-        // shot_id 里的集号换成新的了
+        // shot_id 里的章号换成新的了
         CHECK(s.shot_id.find(new_id) != std::string::npos);
         CHECK(s.shot_id.rfind("ep01", 0) != 0);
     }
@@ -285,7 +285,7 @@ TEST_CASE("复制不带走产出物和状态") {
 TEST_CASE("新建和复制的编号规则不一样，这是照抄 Python 的") {
     // 项目里有预告时：
     //   新建走 next_episode_id —— 只数 epNN，得到 ep03
-    //   复制那条分支数的是全部剧集数 —— 得到 ep04
+    //   复制那条分支数的是全部章节数 —— 得到 ep04
     //
     // 看着像 bug，但两个入口在 Python 侧就是这么写的。改了会让两边的
     // 项目文件对不上，所以照抄，并在这里钉住。
@@ -315,8 +315,8 @@ TEST_CASE("新建和复制的编号规则不一样，这是照抄 Python 的") {
 
 TEST_CASE("改剧本时 duration_s 给 0 当作没给") {
     // Python 那边是 `if req.duration_s:` 不是 `is not None`。
-    // 给 0 的话按原时长走，不会把这一集设成零秒——
-    // 零秒的一集在后面配额分配时会直接抛异常。
+    // 给 0 的话按原时长走，不会把这一章设成零秒——
+    // 零秒的一章在后面配额分配时会直接抛异常。
     const fs::path root = fresh_copy("零时长", json());
     models::ProjectStore store(root);
     const double before =
@@ -366,9 +366,9 @@ TEST_CASE("重出分镜要显式勾选") {
     fs::remove_all(root, ec);
 }
 
-TEST_CASE("删最后一集要拒绝") {
+TEST_CASE("删最后一章要拒绝") {
     // 删空了界面会退回"还没有项目"的状态，用户以为整个项目没了。
-    const fs::path root = fresh_copy("最后一集", json("only_one"));
+    const fs::path root = fresh_copy("最后一章", json("only_one"));
     const auto r = http::guard([&] {
         return http::post_episode_action(
             json{{"project", paths::to_utf8(root)},
@@ -376,9 +376,9 @@ TEST_CASE("删最后一集要拒绝") {
                  {"action", "delete"}});
     });
     CHECK(r.status == 400);
-    CHECK(r.body.at("detail") == "至少要留一集");
+    CHECK(r.body.at("detail") == "至少要留一章");
 
-    // 那一集还在
+    // 那一章还在
     const models::ProjectStore store(root);
     CHECK(store.load_project().episodes.size() == 1);
 
@@ -386,7 +386,7 @@ TEST_CASE("删最后一集要拒绝") {
     fs::remove_all(root, ec);
 }
 
-TEST_CASE("剧集 id 的合法性") {
+TEST_CASE("章节 id 的合法性") {
     const fs::path root = fresh_copy("id校验", json());
     const std::string project = paths::to_utf8(root);
     const auto try_id = [&](const std::string& id) {
@@ -406,7 +406,7 @@ TEST_CASE("剧集 id 的合法性") {
     fs::remove_all(root, ec);
 }
 
-TEST_CASE("GET /api/script/context：不在分集表上的集也有答案") {
+TEST_CASE("GET /api/script/context：不在章节计划上的章也有答案") {
     // 语料项目没有 story.json：老项目就是这样。场和原文是空的，
     // 但时长、预算、四段的排法都在——剧本页靠它们画预算条和段头。
     const fs::path root = fresh_copy("context", json());

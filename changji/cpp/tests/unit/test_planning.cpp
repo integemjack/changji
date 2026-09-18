@@ -157,7 +157,7 @@ TEST_CASE("写盘要刷新 updated_at") {
 }
 
 TEST_CASE("角色圣经是合并不是替换") {
-    // 角色和场景是全剧共用的库。第五集的场景要出的时候，前四集的还在里面。
+    // 角色和场景是全片共用的库。第五章的场景要出的时候，前四章的还在里面。
     // 整个换掉的话，那些场景连同它们的空景图一起没了，而分镜表里还留着
     // 指向它们的 id，跑起来直接报「场景未注册」。
     const fs::path root = fresh_copy("合并", false);
@@ -207,7 +207,7 @@ TEST_CASE("不覆盖时不退回已渲染的镜头") {
     CHECK(r.body.at("reset_shots") == 0);
 
     SUBCASE("覆盖时要退回") {
-        // 外观变了等于全剧提示词都变了，已渲染的镜头和新设定对不上，
+        // 外观变了等于全片提示词都变了，已渲染的镜头和新设定对不上，
         // 留着比重跑更糟：用户以为改生效了，成片里却混着两套设定。
         const fs::path root2 = fresh_copy("要覆盖", false);
         llm::ReplayClient c2({c.at("llm_bible").get<std::string>()});
@@ -265,9 +265,9 @@ TEST_CASE("plan 不校验多余字段，bible 校验") {
 }
 
 TEST_CASE("圣经找剧本的三级回落") {
-    // 优先级：请求里给的 > 指定集的 > 第一集有内容的。
-    // 三级都空才报错。角色设定是全剧共用的，拿哪一集出都行，
-    // 但总得有一集写好了。
+    // 优先级：请求里给的 > 指定那一章的 > 第一章有内容的。
+    // 三级都空才报错。角色设定是全片共用的，拿哪一章出都行，
+    // 但总得有一章写好了。
     const fs::path root = fresh_copy("找剧本", false);
     const std::string project = paths::to_utf8(root);
     const json& c = golden().at("cases")[0];
@@ -283,7 +283,7 @@ TEST_CASE("圣经找剧本的三级回落") {
         CHECK(cl.calls()[0].prompt.find("请求里给的剧本") != std::string::npos);
     }
 
-    SUBCASE("没给就用项目里第一集有内容的") {
+    SUBCASE("没给就用项目里第一章有内容的") {
         llm::ReplayClient cl({c.at("llm_bible").get<std::string>()});
         http::guard([&] {
             return http::post_bible(json{{"project", project}}, cl, tok);
@@ -297,7 +297,7 @@ TEST_CASE("圣经找剧本的三级回落") {
         CHECK(cl.calls()[0].prompt.find(ep->script) != std::string::npos);
     }
 
-    SUBCASE("一集都没写就报错") {
+    SUBCASE("一章都没写就报错") {
         const fs::path empty = fresh_copy("没剧本", false);
         models::ProjectStore store(empty);
         models::Project p = store.load_project();

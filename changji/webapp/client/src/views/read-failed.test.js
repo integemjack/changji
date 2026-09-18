@@ -3,7 +3,7 @@
  *
  * 这条规矩镜头页和故事页都写下来过：
  *
- *   「**读砸了不能摆"还没有"那一屏。** 那一屏说的是"这一集还没分镜"，而读
+ *   「**读砸了不能摆"还没有"那一屏。** 那一屏说的是"这一章还没分镜"，而读
  *     砸的时候到底有没有根本不知道——按下「AI 出分镜」就是拿一份新的盖掉
  *     可能还在的那份。」
  *
@@ -69,7 +69,7 @@ describe('镜头页和故事页：那一屏的先后不能反', () => {
 
   it('故事页：先「读不到」，后稿纸', () => {
     const view = read('views/StoryView.vue')
-    const bad = view.indexOf('title="读不到这部剧的故事"')
+    const bad = view.indexOf('title="读不到这部电影的故事"')
     const empty = view.indexOf('loadError')
     expect(bad).toBeGreaterThan(0)
     expect(empty).toBeGreaterThan(0)
@@ -85,7 +85,7 @@ describe('镜头页和故事页：那一屏的先后不能反', () => {
  * 开工前那趟预检（`/api/run/preview`）读砸了。
  *
  * 它原来是吞掉的，注释写着「这一行是锦上添花」——那时候它确实只带一个
- * 时间估算。现在它还带着 `shots_without_refs`，也就是"这一集能不能开工"的
+ * 时间估算。现在它还带着 `shots_without_refs`，也就是"这一章能不能开工"的
  * 一半判据：读不到的时候 `blocked` 静悄悄变成假，两颗开跑的按钮照常亮着，
  * 屏幕上一个字不说。
  *
@@ -152,9 +152,9 @@ describe('镜头页：项目没读回来时那行「还没有角色和场景」'
  * 成片页读砸了，屏幕上是**两条一模一样的红字**。
  *
  * 那一格被 KeepAlive 冻着，进来时靠 `onActivated(load)` 重拉；而底下那条
- * 换剧换集的 watch 原来还带着 `immediate: true`——Vue 对 KeepAlive 里的
+ * 换片换章的 watch 原来还带着 `immediate: true`——Vue 对 KeepAlive 里的
  * 组件初次挂载也会触发 activated，于是两边都跑，进这一格发两遍
- * `/api/outputs`、`ui.error` 也弹两次。那一页自己已经摆着「读不到这部剧的
+ * `/api/outputs`、`ui.error` 也弹两次。那一页自己已经摆着「读不到这一章的
  * 成片」那一屏了。
  */
 describe('成片页：进这一格只该读一遍', () => {
@@ -163,7 +163,7 @@ describe('成片页：进这一格只该读一遍', () => {
   it('挂载那一趟交给 onActivated，watch 不要再 immediate 一次', () => {
     expect(view).toContain('onActivated(load)')
     const at = view.indexOf('watch(() => [session.projectPath, session.episodeId], load')
-    expect(at, '换剧换集那条 watch 不见了').toBeGreaterThan(0)
+    expect(at, '换片换章那条 watch 不见了').toBeGreaterThan(0)
     expect(view.slice(at, at + 120)).not.toContain('immediate')
   })
 })

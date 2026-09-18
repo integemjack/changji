@@ -349,7 +349,7 @@ EpisodeGateResult gate_episode(const fs::path& video_path,
     if (expected_duration_s.has_value() && *expected_duration_s != 0.0) {
         const double drift = std::abs(info.duration_s - *expected_duration_s);
         out.metrics["duration_drift_s"] = round_to(drift, 2);
-        // 整集的容差比单镜宽（5% 对 20%，下限 2 秒对 0.5 秒）：
+        // 整章的容差比单镜宽（5% 对 20%，下限 2 秒对 0.5 秒）：
         // 几十镜拼起来，每镜零点几秒的误差累积是正常的。
         if (drift > std::max(2.0, *expected_duration_s * 0.05)) {
             out.reasons.push_back("成片时长 " + fmt("%.1f", info.duration_s) +
@@ -394,7 +394,7 @@ Verdict decide_next(const GateResult& result, const models::Shot& shot,
     if (result.verdict == Verdict::Regress) return Verdict::Regress;
     if (shot.attempts + 1 >= cfg.max_attempts_per_shot) {
         // **降级而不是停下来。** 无人值守跑一晚上，为一镜停住等于
-        // 整晚白熬；留着最后那一版至少整集能出片，问题记录下来事后查。
+        // 整晚白熬；留着最后那一版至少整章能出片，问题记录下来事后查。
         return cfg.fallback_on_exhausted ? Verdict::Fallback : Verdict::Regress;
     }
     return Verdict::Retry;

@@ -53,7 +53,7 @@ struct RenderPlan {
     /// 尾帧（绝对路径）。有就走首尾帧，没有就是单帧图生视频。
     std::optional<std::filesystem::path> end_image;
     /// 留不留出片模型自己出的声音（[sound].ambient）。**跟着计划走**：
-    /// 派给别的机器时那台读的是它自己的设置，同一集会一半有环境声一半没有。
+    /// 派给别的机器时那台读的是它自己的设置，同一章会一半有环境声一半没有。
     /// 没填就按跑的那台的设置。
     std::optional<bool> keep_ambient;
 
@@ -113,7 +113,7 @@ struct GateHooks {
     std::function<gates::Verdict(const gates::GateResult&, const models::Shot&)>
         decide;
     /// 一个镜头最多试几次。到了就降级——**不是停下来**，
-    /// 无人值守时停下来等于整集废掉。
+    /// 无人值守时停下来等于整章废掉。
     int max_attempts = 3;
 };
 
@@ -130,8 +130,8 @@ struct RenderExtras {
     std::function<bool(const std::filesystem::path& video,
                        const std::filesystem::path& dest)>
         last_frame;
-    /// 按剧集顺序找上一镜的视频（绝对路径）。空 = 用这一批里的前一镜。
-    /// 单跑几镜时前一镜不在这一批里，得回剧集里找。
+    /// 按章节顺序找上一镜的视频（绝对路径）。空 = 用这一批里的前一镜。
+    /// 单跑几镜时前一镜不在这一批里，得回章节里找。
     std::function<std::optional<std::filesystem::path>(const models::Shot&)>
         prev_video;
     /// 首帧和出片同时跑时两层之间的那根线（pipeline/shot_flow.hpp）。
@@ -151,7 +151,7 @@ std::size_t pick_take(const std::vector<gates::GateResult>& results);
 
 /// 这一条已经干净了，不用再多出一条来挑：过了闸门、片中没硬切、运动量
 /// 在"像回事"那一档（0.8～15）。关键镜头的多出几条只在第一条不干净时才
-/// 接着出——每镜都无条件出两条，等于整集时间翻倍，而多数时候第一条就
+/// 接着出——每镜都无条件出两条，等于整章时间翻倍，而多数时候第一条就
 /// 是好的（2026-09-16 用户问"为什么要进行两次"）。
 bool take_good_enough(const gates::GateResult& r);
 

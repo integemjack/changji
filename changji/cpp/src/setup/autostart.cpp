@@ -78,7 +78,7 @@ std::string autostart_file_body(const fs::path& exe, int port) {
         "[Desktop Entry]\n"
         "Type=Application\n"
         "Name=changji\n"
-        "Comment=场记 · AI 短剧生产线\n"
+        "Comment=场记 · AI 电影制作平台\n"
         "Exec=" + paths::to_utf8(exe) + " --port " + p + "\n"
         // 没有图形界面的机器上也照起：这本来就是个服务。
         "Terminal=false\n"

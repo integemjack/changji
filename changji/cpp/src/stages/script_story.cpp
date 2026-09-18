@@ -6,7 +6,7 @@
 #include <vector>
 
 #include "stages/script.hpp"
-// 画风那两句和正片那一份共用——同一部剧不该因为换了条写作路线就换语气。
+// 画风那两句和正片那一份共用——同一部电影不该因为换了条写作路线就换语气。
 #include "stages/prompts.inc.hpp"
 #include "util/text.hpp"
 
@@ -55,7 +55,7 @@ std::vector<std::string> episode_chapters(const Story& story,
     std::vector<std::string> out;
     const int a = index_of(story, plan.from_chapter);
     if (a < 0) return out;
-    // 末章找不到时就只算起始那一章。分集表和故事对不上是坏数据，
+    // 末章找不到时就只算起始那一章。章节计划和故事对不上是坏数据，
     // 但不该让写剧本这件事整个做不成。
     const int b0 = index_of(story, plan.to_chapter);
     const int b = b0 < a ? a : b0;
@@ -75,8 +75,8 @@ std::vector<Scene> episode_scenes(const Story& story, const EpisodePlan& plan) {
         const int from = (i == a) ? plan.from_char : 0;
         const int to = (i == b) ? plan.to_char : len;
         for (const Scene& s : c.scenes) {
-            // 真的压上了才算。**端点相碰不算**：上一集正好收在这一场开头
-            // 的时候，两集会同时把它列出来，而下一集才是真要拍它的那个。
+            // 真的压上了才算。**端点相碰不算**：上一条正好收在这一场开
+            // 头的时候，两条会同时把它列出来，而下一条才是真要拍它的那个。
             if (s.to_char <= from || s.from_char >= to) continue;
             out.push_back(s);
         }
@@ -206,11 +206,18 @@ std::string truncate_middle(const std::string& body, std::size_t limit) {
     return out;
 }
 
+// 这里每一处小标题都写死「这一章」。2026-09-16 只留章模式那天，这个函数里
+// 按 `chapter_scenes == nullptr` 分岔的那一半（【这一集】【上一集是这么结束
+// 的】【这一集的场】、正文按 kEpisodeMaxChars 截尾）没跟着删，留成了残肢：
+// 生产上唯一的调用点 build_chapter_script_prompt 一直传着场次清单，走不进
+// 去；只有单元测试靠默认参数摸得着它，于是测出来的是发不出去的字。
+// 2026-09-18 定成电影平台时连参数的默认值一起拔掉——场次清单改成引用，
+// 「有另一种模式」这件事从签名上就不成立了；喂那半边的
+// `episode_max_chars` 同一天从 prompts.toml 里删掉，所以 kEpisodeMaxChars
+// 今天已经不存在了，别照着这段话去找。
 std::string render_script_context(const Story& story, const EpisodePlan& plan,
                                   const std::string& previous_tail,
-                                  const std::vector<ScenePlan>* chapter_scenes) {
-    const bool chapter_mode = chapter_scenes != nullptr;
-    const char* unit = chapter_mode ? "这一章" : "这一集";
+                                  const std::vector<ScenePlan>& chapter_scenes) {
     std::string out;
 
     if (!story.logline.empty()) out += "【这个故事】" + story.logline + "\n";
@@ -253,7 +260,7 @@ std::string render_script_context(const Story& story, const EpisodePlan& plan,
 
     // ---- 地方：**只发这一章用得着的那几个** ----
     //
-    // 同 stages/chapter_write.cpp 里【地方】那一段，理由一样：发全剧清单
+    // 同 stages/chapter_write.cpp 里【地方】那一段，理由一样：发全片清单
     // 等于请模型跑遍全城，然后只能拿话去拦。章自己带着 locations 名单，
     // 照它筛。筛不出来（大纲那条路上这一栏可空）就照旧给全份。
     if (!story.locations.empty()) {
@@ -284,10 +291,10 @@ std::string render_script_context(const Story& story, const EpisodePlan& plan,
         }
     }
 
-    // 前情提要：本集**之前**那些章，每章一句。
+    // 前情提要：这一章**之前**那些章，每章一句。
     //
-    // 这是治失忆的那一味药。老路线带的是前三集的原文，取三集、截 4000 字符，
-    // 写第五集时第一集已经不在上下文里了。压缩成每章一句之后，二十章也塞得下。
+    // 这是治失忆的那一味药。老路线带的是前三章的原文，取三章、截 4000 字符，
+    // 写第五章时第一章已经不在上下文里了。压缩成每章一句之后，二十章也塞得下。
     //
     // **只取之前的。** 把后面的章也塞进去，模型会把还没发生的事当成已经
     // 发生的写——这个错在成片里表现成"剧透了自己"。
@@ -322,49 +329,32 @@ std::string render_script_context(const Story& story, const EpisodePlan& plan,
 
     const std::string tail = text::strip_ws(previous_tail);
     if (!tail.empty()) {
-        out += std::string("\n【上一") + (chapter_mode ? "章" : "集") +
-               "是这么结束的】\n";
+        out += "\n【上一章是这么结束的】\n";
         out += text::truncate_utf8(tail, prompt::script_story::kPrevTailMaxChars);
         out += "\n";
     }
 
-    // **这一集在哪、跟着谁。** 正文里这些是化在叙述里的，模型顺着读容易
-    // 把地点写丢——而一集的每一镜都要照着地点画，丢了就镜镜不一样。
-    if (chapter_mode) {
-        // 章模式：场次清单就是 JSON 里 scenes 的形状，一场一行，带地板。
-        out += prompt::script_story::kScenesHead;
-        for (std::size_t i = 0; i < chapter_scenes->size(); ++i) {
-            const ScenePlan& p = (*chapter_scenes)[i];
-            out += prompt::script_story::kSceneLinePre + std::to_string(i + 1) +
-                   prompt::script_story::kSceneLineMid;
-            if (!p.where.empty()) out += p.where + "。";
-            out += prompt::script_story::kSceneLineBeatsPre +
-                   std::to_string(p.min_beats) +
-                   prompt::script_story::kSceneLineBeatsPost + "\n";
-        }
-    } else {
-        const std::vector<Scene> scenes = episode_scenes(story, plan);
-        if (!scenes.empty()) {
-            out += "\n【这一集的场】\n";
-            for (const Scene& s : scenes) {
-                if (!s.where.empty()) out += s.where;
-                if (!s.pov.empty()) out += "。跟着" + s.pov + "走";
-                if (!s.goal.empty()) out += "：他要" + s.goal;
-                if (!s.obstacle.empty()) out += "；拦着他的是" + s.obstacle;
-                out += "。\n";
-            }
-        }
+    // **这一章在哪、跟着谁。** 正文里这些是化在叙述里的，模型顺着读容易
+    // 把地点写丢——而每一镜都要照着地点画，丢了就镜镜不一样。
+    // 场次清单就是 JSON 里 scenes 的形状，一场一行，带地板。
+    out += prompt::script_story::kScenesHead;
+    for (std::size_t i = 0; i < chapter_scenes.size(); ++i) {
+        const ScenePlan& p = chapter_scenes[i];
+        out += prompt::script_story::kSceneLinePre + std::to_string(i + 1) +
+               prompt::script_story::kSceneLineMid;
+        if (!p.where.empty()) out += p.where + "。";
+        out += prompt::script_story::kSceneLineBeatsPre +
+               std::to_string(p.min_beats) +
+               prompt::script_story::kSceneLineBeatsPost + "\n";
     }
 
-    // 这一集要拍的。有正文用正文，没展开正文就用章节梗概——大纲阶段就
+    // 这一章要拍的。有正文用正文，没展开正文就用章节梗概——大纲阶段就
     // 能先把剧本写出来，不必等逐章展开。
-    out += std::string("\n【") + unit + "】\n";
+    out += "\n【这一章】\n";
     const std::string body = episode_text(story, plan);
     if (!body.empty()) {
-        // 章模式掐中间不掐尾巴：尾巴是钩子所在。
-        out += chapter_mode
-                   ? truncate_middle(body, prompt::script_story::kChapterMaxChars)
-                   : text::truncate_utf8(body, prompt::script_story::kEpisodeMaxChars);
+        // 掐中间不掐尾巴：尾巴是钩子所在。
+        out += truncate_middle(body, prompt::script_story::kChapterMaxChars);
     } else {
         for (const auto& id : episode_chapters(story, plan)) {
             const Chapter* c = story.chapter_by_id(id);
@@ -376,14 +366,11 @@ std::string render_script_context(const Story& story, const EpisodePlan& plan,
     }
 
     // 停在哪。**这一条是老路线完全没有的**：原来模型不知道自己该停在
-    // 什么地方，结尾全凭它自己找一个落点，下一集接不接得上看运气。
-    // 章模式没有钩子也要写一句，规则里说了「停在【要停在】写的地方」。
-    if (!plan.hook.empty()) {
-        out += std::string("\n【") + unit + "要停在】" + plan.hook + "\n";
-    } else if (chapter_mode) {
-        out += std::string("\n【") + unit + "要停在】" +
-               prompt::script_story::kNoHookChapter + "\n";
-    }
+    // 什么地方，结尾全凭它自己找一个落点，下一章接不接得上看运气。
+    // 没有钩子也要写一句，规则里说了「停在【要停在】写的地方」。
+    out += "\n【这一章要停在】";
+    out += plan.hook.empty() ? prompt::script_story::kNoHookChapter : plan.hook;
+    out += "\n";
 
     return out;
 }
@@ -411,7 +398,7 @@ std::string build_chapter_script_prompt(
         out += prompt::script_story::kCharsPost;
     }
     out += prompt::script_story::kContextHeadChapter;
-    out += render_script_context(story, plan, previous_tail, &scenes);
+    out += render_script_context(story, plan, previous_tail, scenes);
     out += prompt::script_story::kTail;
     return out;
 }

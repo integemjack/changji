@@ -70,7 +70,8 @@ struct AssOptions {
     int font_size = 54;
     int max_chars_per_line = 15;
     int max_lines = 2;
-    /// 竖屏短剧的字幕放在下方**偏上一点**，避开平台的界面元素。
+    /// 竖屏的电影，字幕放在下方**偏上一点**，避开播放器和平台压在底边的
+    /// 那些界面元素。
     /// 同样是 1920 高上的数，按高度缩。
     int margin_v = 180;
     /// 左右各留多少。同样是 1080 宽上的数。
@@ -88,7 +89,7 @@ struct AssStyleMetrics {
 
 /// 把 `opt` 里那几个参考画布上的数缩到 `opt.width/height` 上。
 ///
-/// 单拎出来是为了能直接测——切字幕这件事看成片才发现，而成片要跑一集。
+/// 单拎出来是为了能直接测——切字幕这件事看成片才发现，而成片要跑一章。
 AssStyleMetrics ass_metrics(const AssOptions& opt);
 
 std::string build_ass(const std::vector<SubtitleCue>& cues,

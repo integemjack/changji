@@ -599,7 +599,7 @@
       },
       "compare": "full",
       "extra": {},
-      "name": "改全剧画风_触发重跑",
+      "name": "改全片画风_触发重跑",
       "patch": {
         "global_style": "换成冷峻写实"
       },

@@ -6,7 +6,6 @@
 #include <cctype>
 #include <exception>
 #include <thread>
-#include <cstdio>
 #include <chrono>
 #include <filesystem>
 #include <set>
@@ -51,7 +50,7 @@ std::vector<Shot*> pick(Episode& ep, const std::set<ShotStatus>& want,
     std::vector<Shot*> todo;
     for (Shot* s : all) {
         // 指定了镜头就只认这几个。**先筛这一层**：不筛的话
-        // force 会把整集都拉进来，而用户点的是某一镜的"重新生成"。
+        // force 会把整章都拉进来，而用户点的是某一镜的"重新生成"。
         if (!only_shots.empty() && only_shots.count(s->shot_id) == 0) continue;
         if (force || want.count(s->status)) todo.push_back(s);
     }
@@ -124,7 +123,7 @@ models::TierSpec frame_spec(const models::HardwareProfile& profile,
         settings.models.frame_tier == "draft" ? Tier::DRAFT : Tier::FINAL;
     auto it = profile.tiers.find(tier);
     // 档位表里没有这一档就退回另一档。**不抛**：档位表是推出来的，
-    // 少一档也该照样出片，而不是让整集跑不起来。
+    // 少一档也该照样出片，而不是让整章跑不起来。
     if (it == profile.tiers.end()) {
         it = profile.tiers.find(tier == Tier::DRAFT ? Tier::FINAL : Tier::DRAFT);
     }
@@ -166,7 +165,7 @@ void apply_project_spec(config::Settings& settings,
 ///
 /// 首帧失败的镜头状态还停在 AUDIO_DONE（配音接上之前是 PLANNED）。
 /// **它们不该被跳过**，而是退回纯文生视频——画面一致性差一些，
-/// 但整集不会卡在这里。
+/// 但整章不会卡在这里。
 std::set<ShotStatus> render_entry_states(Tier tier, bool skip_draft) {
     if (tier == Tier::FINAL) {
         std::set<ShotStatus> in{ShotStatus::DRAFT_DONE,
@@ -275,7 +274,7 @@ std::string run_assemble(const ProjectStore& store,
     // 但要说出是谁、为什么、怎么办。判据见 assembly_left_out。
     const std::vector<std::string> left_out = assembly_left_out(ep);
     if (!left_out.empty()) {
-        std::string msg = "这一集有 " + std::to_string(ep.shots.size()) +
+        std::string msg = "这一章有 " + std::to_string(ep.shots.size()) +
                           " 个镜头，只有 " + std::to_string(shots.size()) +
                           " 个进了成片。没进去的：";
         for (std::size_t i = 0; i < left_out.size() && i < 3; ++i) {
@@ -284,12 +283,12 @@ std::string run_assemble(const ProjectStore& store,
         if (left_out.size() > 3) {
             msg += "\n  …… 还有 " + std::to_string(left_out.size() - 3) + " 个";
         }
-        msg += "\n这几镜出完片再装配一次，片子才是完整的。";
+        msg += "\n这几镜出完片再装配一次，这一章的成片才是完整的。";
         emit(progress, "assemble", "warn", msg);
     }
 
-    // **装配前先查音画能不能装下**，装完再发现就得重做整集。
-    // 查出问题只报不拦：拦下来的话一句台词长了一点整集就出不来，
+    // **装配前先查音画能不能装下**，装完再发现就得重做整章。
+    // 查出问题只报不拦：拦下来的话一句台词长了一点整章就出不来，
     // 而那一点多半是听不出来的。
     for (const auto& shot : shots) {
         if (shot.dialogue.empty()) continue;
@@ -315,7 +314,7 @@ std::string run_assemble(const ProjectStore& store,
     // 「装配后闸门要用」，可 2026-09-13 查下来**全代码库一处调用都没有**
     // ——只有单元测试碰过它。写了不接等于没写。
     //
-    // 和上面音画那条一样只报不拦：一条字幕短了 0.1 秒不该让整集出不来，
+    // 和上面音画那条一样只报不拦：一条字幕短了 0.1 秒不该让整章出不来，
     // 而人看见了可以自己回去改。
     for (const std::string& note :
          media::subtitle_problems(timeline, settings.assembly)) {
@@ -328,20 +327,20 @@ std::string run_assemble(const ProjectStore& store,
 
     // ---- 配乐 ----
     //
-    // 一集一条器乐，装配时压在台词底下。文件在就沿用（想重出就删掉它）。
+    // 一章一条器乐，装配时压在台词底下。文件在就沿用（想重出就删掉它）。
     // 没配命令只说一声，不拦装配。
     std::optional<fs::path> music;
     if (settings.sound.music) {
         if (text::strip_ws(settings.sound.music_command).empty()) {
             emit(progress, "assemble", "info",
                  "配乐开着，但全局配置里没有 [sound].music_command，"
-                 "这一集没有配乐。ACE-Step 的包装脚本在 tools/music_ace_step.py");
+                 "这一章没有配乐。ACE-Step 的包装脚本在 tools/music_ace_step.py");
         } else {
             const fs::path want =
                 stages::music_path_for(store.paths(), ep.episode_id);
             std::error_code mec;
             if (!fs::is_regular_file(want, mec)) {
-                emit(progress, "assemble", "progress", "生成这一集的配乐");
+                emit(progress, "assemble", "progress", "生成这一章的配乐");
             }
             const auto m = stages::ensure_music(settings, store.paths(), ep,
                                                 timeline.total_duration_s());
@@ -351,7 +350,7 @@ std::string run_assemble(const ProjectStore& store,
                      m.reused ? "沿用已有的配乐 " + paths::to_utf8(m.path.filename())
                               : "配乐已生成 " + paths::to_utf8(m.path.filename()));
             } else {
-                emit(progress, "assemble", "warn", "这一集没有配乐：" + m.error);
+                emit(progress, "assemble", "warn", "这一章没有配乐：" + m.error);
             }
         }
     }
@@ -385,11 +384,11 @@ std::string run_assemble(const ProjectStore& store,
         }
         emit(progress, "assemble", "info", how);
     }
-    // **这台的 ffmpeg 没编 libass 就别烧字幕，片子照出。**
+    // **这台的 ffmpeg 没编 libass 就别烧字幕，成片照出。**
     //
     // 2026-09-16 实撞：`brew install ffmpeg` 出来的 9.0.1 没有 `subtitles`
-    // 滤镜，于是一集十七镜全渲完、装配整个失败、输出目录空的——为了一条
-    // 可选的烧录，把整集扔了。而 ffmpeg 报的还是一句误导的
+    // 滤镜，于是一章十七镜全渲完、装配整个失败、输出目录空的——为了一条
+    // 可选的烧录，把整章扔了。而 ffmpeg 报的还是一句误导的
     // 「No option name near '/Users/…'」，人会去查路径里的空格
     // （macOS 默认目录里那个 "Application Support" 永远带空格）。
     //
@@ -399,64 +398,45 @@ std::string run_assemble(const ProjectStore& store,
     if (!can_burn) {
         emit(progress, "assemble", "info",
              "这台的 ffmpeg 没编 libass（没有 subtitles 滤镜），字幕没烧进画面。"
-             "片子照常出，字幕另存在 subtitles/ 下，播放器里挂上就能看。"
+             "成片照常出，字幕另存在 subtitles/ 下，播放器里挂上就能看。"
              "要烧进画面的话装一个带 libass 的 ffmpeg。");
     }
-    // **按每集时长切成几集，能切出几集是这一章内容的结果。**
-    // 见 media::split_into_episodes。
+    // **一章一个文件，这儿不切。**
     //
-    // 2026-09-16 之前这儿有个 `episode_s > 0` 的岔口，0 表示"不切、整章一集"
-    // ——那是集模式，当天整个删了。episode_s 现在恒 > 0（老配置里的 0 在
-    // 读取时抬到默认值，见 config::Settings），这一岔永远走同一边。
-    // **一章一个文件，不在章内切。** 2026-09-17 起集是最后在成片那一步按
-    // 用户选的时长、把所有章接成一条再切的（pipeline/series_cut）；这儿按
-    // [assembly].episode_s 切的话，同一段片子会被切两次，第二次切在第一次
-    // 的缝上。split_into_episodes 给 0 就是原样一条。
-    const std::vector<media::Timeline> parts =
-        media::split_into_episodes(timeline, 0.0);
-    std::vector<std::filesystem::path> outputs;
-    // 这一轮要写出去的那几个名字。写完拿它去清同一集**另一种命名**留下的
-    // 旧成片——见下面那段。
-    std::set<std::string> keep;
-    for (std::size_t k = 0; k < parts.size(); ++k) {
-        // 一集就叫 ep.mp4；切成几集叫 ep_01.mp4 / ep_02.mp4……
-        std::string name = ep.episode_id;
-        if (parts.size() > 1) {
-            char buf[8];
-            std::snprintf(buf, sizeof buf, "_%02d", static_cast<int>(k + 1));
-            name += buf;
-        }
-        name += ".mp4";
-        const auto out_k = assembler.assemble(parts[k], name, can_burn);
-        outputs.push_back(out_k);
-        keep.insert(name);
-        // 成片检查同样只报不拦：片子已经出来了，人可以自己看一眼再决定。
-        const auto result = gates::gate_episode(out_k, ff, settings.gates,
-                                                parts[k].total_duration_s());
-        for (const auto& reason : result.reasons) {
-            Event e;
-            e.stage = "assemble";
-            e.kind = "gate";
-            e.message = (parts.size() > 1 ? "第 " + std::to_string(k + 1) + " 集：" : "成片：") + reason;
-            progress.report(e);
-        }
+    // 三次拍板叠出来的结论：
+    //   · 2026-09-16 用户定「只留章模式」——那之前 [assembly].episode_s 有个
+    //     0 的岔口表示"不切、整章一集"，两条路两套提示词，内容大半重合。
+    //   · 2026-09-17 用户定「集是最后按用户选的时长切的」，于是这儿更不能切：
+    //     同一段片子切两次，第二次的刀正落在第一次的缝上。
+    //   · 2026-09-18 定成电影平台，成片就是一部完整的电影、一个文件，整条
+    //     切段链（media::split_into_episodes、pipeline/series_cut）拔掉。
+    //
+    // 所以这一步只做一件事：把这一章的时间线装成 <episode_id>.mp4。
+    const std::string name = ep.episode_id + ".mp4";
+    const std::filesystem::path output = assembler.assemble(timeline, name, can_burn);
+    // 成片检查同样只报不拦：成片已经出来了，人可以自己看一眼再决定。
+    for (const auto& reason :
+         gates::gate_episode(output, ff, settings.gates,
+                             timeline.total_duration_s()).reasons) {
+        Event e;
+        e.stage = "assemble";
+        e.kind = "gate";
+        e.message = "成片：" + reason;
+        progress.report(e);
     }
-    // ---- 清掉这一集**另一种命名**留下的旧成片 ----
+    // ---- 清掉老项目留下的孤儿成片 ----
     //
-    // 装配有两套名字：一集时 `ep01.mp4`，切成几集时 `ep01_01.mp4` /
-    // `ep01_02.mp4`。切几集是内容的结果，会变——而原来谁都不清理对方，
-    // 于是磁盘上同时躺着 `ep01.mp4`（上一版整章一集）和 `ep01_01/_02`
-    // （这一版切两集），三份里两份是过时的。2026-09-17 实见。
+    // 2026-09-18 之前装配有两套名字：不切时 `ep01.mp4`，按每集时长切成几集时
+    // `ep01_01.mp4` / `ep01_02.mp4`。切几集是内容的结果、会变，于是磁盘上
+    // 同时躺着三份、两份过时（2026-09-17 实见）。今天一章只出一个文件，
+    // `_NN` 不再产出——**但老项目的磁盘上还躺着**，这段清理还得认得出它们。
     //
-    // 2026-09-17 那条「太短的尾巴并回上一集」让这件事更常发生：以前切两集
-    // 的章现在只出一集，`_01/_02` 正好成了孤儿。
+    // **只删这一章自己那两种名字、而且不是这一轮刚写的那个。** 别的章、
+    // 别的文件一个不碰。
     //
-    // **只删这一集自己那两种名字、而且这一轮没写的那些。** 别的集、别的
-    // 文件一个不碰；刚写出去的当然留着。
-    //
-    // **字幕跟着片子一起清。** 外挂字幕和成片同名（media/assemble.cpp 里
+    // **字幕跟着成片一起清。** 外挂字幕和成片同名（media/assemble.cpp 里
     // `final_path.stem() + ".ass"`），孤儿的形状一模一样：磁盘上实见
-    // ep01.ass 和 ep01_01.ass / ep01_02.ass 并存。只清片子的话，播放器
+    // ep01.ass 和 ep01_01.ass / ep01_02.ass 并存。只清成片的话，播放器
     // 挂字幕时挑到的可能正是那份过时的。
     {
         int gone = 0;
@@ -470,9 +450,9 @@ std::string run_assemble(const ProjectStore& store,
                 const auto owner =
                     media::episode_of_output(paths::to_utf8(f.path().stem()));
                 if (!owner || *owner != ep.episode_id) continue;
-                // keep 里记的是这一轮写出去的片子名；字幕同名换后缀
+                // 这一轮刚写出去的那个当然留着；字幕同名换后缀
                 const std::string stem = paths::to_utf8(f.path().stem());
-                if (keep.count(stem + ".mp4") != 0) continue;
+                if (stem + ".mp4" == name) continue;
                 std::error_code rm;
                 std::filesystem::remove(f.path(), rm);
                 if (!rm) ++gone;
@@ -480,23 +460,26 @@ std::string run_assemble(const ProjectStore& store,
         }
         if (gone > 0) {
             emit(progress, "assemble", "info",
-                 "清掉上一版留下的 " + std::to_string(gone) +
-                     " 个文件（成片和字幕）——这一章这次切成 " +
-                     std::to_string(parts.size()) + " 集，名字换了");
+                 // 说法跟成片页那一句对齐（FilmView.vue：「上一版按时长切
+                 // 出来的几段（盘上叫「第01集.mp4」这种名字）」）。**要带上
+                 // 盘上的名字**，不然人在文件夹里对不上号：这儿报「清掉 3 个
+                 // 文件」，他打开 output/ 看到的是 第01集.mp4 这种名字。
+                 "清掉老项目留下的 " + std::to_string(gone) +
+                     " 个文件（成片和字幕）：那是上一版按时长切出来的几段"
+                     "（盘上叫「第01集.mp4」这种名字），"
+                     "今天这一章只出一个 " + name);
         }
     }
-
-    const std::filesystem::path output = outputs.empty() ? std::filesystem::path{} : outputs.front();
 
     // **降级的镜头要在最后这句里说出来。**
     //
     // 「重试超限，降级处理」那一句是在出片那一档报的，等装配跑完早滚出
     // 屏幕了；而人真正读的是最后这一行。2026-09-13 实测：walk_c ep01
-    // 十八镜里有一镜降级、ep02 十五镜里有一镜降级，两条片子和全程顺利的
-    // 片子说的是同一句「成片已生成」——**看不出这一集里有一镜是没过闸门
+    // 十八镜里有一镜降级、ep02 十五镜里有一镜降级，这两章的成片和全程顺利
+    // 那一章说的是同一句「成片已生成」——**看不出这一章里有一镜是没过闸门
     // 的**。
     //
-    // 降级本身是对的（gates.fallback_on_exhausted：保证整集能出片，而不是
+    // 降级本身是对的（gates.fallback_on_exhausted：保证整章能出片，而不是
     // 卡在某一镜上）。不对的是它悄悄发生。
     //
     // **说清楚降级到底做了什么。** 上一版这句写的是"降级成了静帧加运镜，
@@ -509,7 +492,7 @@ std::string run_assemble(const ProjectStore& store,
         if (s.status == models::ShotStatus::FALLBACK) degraded.push_back(&s);
     }
     if (!degraded.empty()) {
-        std::string msg = "这一集有 " + std::to_string(degraded.size()) +
+        std::string msg = "这一章有 " + std::to_string(degraded.size()) +
                           " 个镜头重试超限，用的是最后那一版——没过闸门，"
                           "但片子在，也进了成片。闸门当时说的是：";
         // **把闸门当时说的原话带上，不要猜原因。**
@@ -535,19 +518,8 @@ std::string run_assemble(const ProjectStore& store,
         emit(progress, "assemble", "warn", msg);
     }
 
-    if (outputs.size() > 1) {
-        std::string msg = "这一章切成了 " + std::to_string(outputs.size()) + " 集：";
-        for (std::size_t k = 0; k < outputs.size(); ++k) {
-            msg += "\n  " + paths::to_utf8(outputs[k].filename()) + "（" +
-                   util::human_time_precise_as(parts[k].total_duration_s(),
-                                               parts[k].total_duration_s()) + "）";
-        }
-        emit(progress, "assemble", "done", msg, static_cast<int>(shots.size()),
-             static_cast<int>(shots.size()));
-    } else {
-        emit(progress, "assemble", "done", "成片已生成：" + paths::to_utf8(output),
-             static_cast<int>(shots.size()), static_cast<int>(shots.size()));
-    }
+    emit(progress, "assemble", "done", "成片已生成：" + paths::to_utf8(output),
+         static_cast<int>(shots.size()), static_cast<int>(shots.size()));
     return paths::to_utf8(output);
 }
 
@@ -594,16 +566,22 @@ RunReport run_episode(const ProjectStore& store,
     // 而那份拷贝在 2026-09-14 之前是能单独改的，老项目里可能和画幅不一致
     // ——那样出来是首帧竖的、成片横的，全程不报错。
     //
-    // **只改内存里这一份，不回写盘。** 跑一集不该顺手改项目文件；真要
+    // **只改内存里这一份，不回写盘。** 跑一章不该顺手改项目文件；真要
     // 落盘由存画面那个接口做（见 /bff/project/video）。
+    //
+    // **对老项目来说这一句已经是恒等的**，而那正是它该有的样子：没写
+    // `[video]` 的项目，`settings.video.orientation` 本来就是
+    // `load_settings` 从这份 assets.json 推回来的。2026-09-18 默认翻成横屏
+    // 之前，这儿会把一个出了两百镜 544×928 的项目就地翻成 16:9，下一镜
+    // 出 928×544，同一章两种画幅而全程不报错。
     assets.style.aspect_ratio = settings.video.aspect_ratio();
 
     Episode* ep = project.episode_by_id(opts.episode_id);
     if (ep == nullptr) {
-        throw std::runtime_error("项目里没有剧集 " + opts.episode_id);
+        throw std::runtime_error("项目里没有这一章 " + opts.episode_id);
     }
     if (ep->shots.empty()) {
-        throw std::runtime_error("剧集 " + opts.episode_id + " 还没有分镜表");
+        throw std::runtime_error("这一章 " + opts.episode_id + " 还没有分镜表");
     }
 
     progress.set_episode_id(opts.episode_id);
@@ -617,7 +595,7 @@ RunReport run_episode(const ProjectStore& store,
     // 2026-09-17 实撞：唯一那台工作机在出片中途掉线，17 镜里 16 镜被标成
     // fallback（每一镜都只是撞了同一堵墙，一帧都没渲出来）。之后再点出片，
     // 这 16 镜被当成终态跳过，人永远等不到它们被重跑；而镜头页那颗主按钮
-    // 还写着「这一章出完了」——一集零个视频，按钮说做完了。
+    // 还写着「这一章出完了」——零个视频，按钮说做完了。
     //
     // 掉线那条已经不再这么标了（池在队列里等机器回来，不往上抛），但盘上存下的
     // 那些还在，别的原因也可能留下没有视频的 fallback。
@@ -650,32 +628,32 @@ RunReport run_episode(const ProjectStore& store,
     // 前面几十分钟的产出全部作废——文件还在磁盘上，但项目文件里没记，
     // 下次跑会当成没跑过。
     //
-    // ⚠️ **存的是"重新读一份、只把这一集的镜头换上去"，不是手里这份整份
+    // ⚠️ **存的是"重新读一份、只把这一章的镜头换上去"，不是手里这份整份
     // 写回。**
     //
     // 手里这份 `project` 是**开跑那一刻**读的，而一轮要几十分钟到几小时。
-    // 整份写回去的话，这期间界面上改的东西全被静默盖掉：另一集的镜头抽屉
-    // 存的那一笔、改过的集名、手动加的一集、写好的剧本。全程 200，屏幕上
+    // 整份写回去的话，这期间界面上改的东西全被静默盖掉：另一章的镜头抽屉
+    // 存的那一笔、改过的章名、手动加的一章、写好的剧本。全程 200，屏幕上
     // 什么都不会说——http 那边 guard_not_running 的注释描述的就是这个形状
     // （「新名字被静默盖回旧的，界面上看着像改名没生效」），只是那道闸只
     // 拦了删项目和改项目名两条路，别的写接口一条没拦。
     //
-    // 这一轮真正拥有的只有这一集的 shots（状态、产出路径、重试次数、拆出
+    // 这一轮真正拥有的只有这一章的 shots（状态、产出路径、重试次数、拆出
     // 来的新镜头、重排过的时长），所以只换这一格。
     //
-    // 同一集的镜头在跑的过程中被人改了，仍然会被这一轮盖掉——那是真冲突，
+    // 同一章的镜头在跑的过程中被人改了，仍然会被这一轮盖掉——那是真冲突，
     // 不在这儿解决。
     bool gone_said = false;
     const auto save = [&] {
         Project latest = store.load_project();
         Episode* target = latest.episode_by_id(opts.episode_id);
         if (target == nullptr) {
-            // 跑着跑着这一集被删了。**不能照旧那份写回去**——那等于把用户
+            // 跑着跑着这一章被删了。**不能照旧那份写回去**——那等于把用户
             // 的删除撤销掉，而且撤销出来的是一份几十分钟前的快照。
             if (!gone_said) {
                 gone_said = true;
                 report.errors.push_back(
-                    "这一集在跑的过程中被删掉了，这一轮的进度没有写回项目文件"
+                    "这一章在跑的过程中被删掉了，这一轮的进度没有写回项目文件"
                     "（已经出来的文件还在磁盘上）");
             }
             return;
@@ -782,8 +760,8 @@ RunReport run_episode(const ProjectStore& store,
 
         // ---- 关键镜头多出几条、尾帧串镜 ----
         //
-        // 都是剧的属性（[video].hero_takes / chain_frames）。串镜要抽上一镜
-        // 的最后一帧，没有 ffmpeg 就不串；上一镜按剧集顺序找，不按这一批
+        // 都是这部电影的属性（[video].hero_takes / chain_frames）。串镜要抽
+        // 上一镜的最后一帧，没有 ffmpeg 就不串；上一镜按镜头顺序找，不按这一批
         // 的顺序——单跑几镜时前一镜不在这一批里。
         stages::RenderExtras extras;
         extras.flow = flow;
@@ -849,7 +827,7 @@ RunReport run_episode(const ProjectStore& store,
                 const stages::TTSBackend backend =
                     backends.tts.value_or(stages::estimate_backend());
                 // **后端名字对用户没有意义，要说清楚这次到底出不出声音。**
-                // 只说 "estimate" 的话，用户跑完一整集才发现成片是静音的。
+                // 只说 "estimate" 的话，用户跑完一整章才发现成片是静音的。
                 const std::string how =
                     backend.name == "estimate" ? "只算时长不出声音，成片会是静音"
                     : backend.name == "http"   ? "走独立配音服务"
@@ -864,7 +842,7 @@ RunReport run_episode(const ProjectStore& store,
                 // (种子, 文本) 的函数——换一句台词就是换一个人。
                 // 2026-09-13 在 walk_c 上量到的：同一个角色的**同一句话被
                 // 拆成两半**，前半句 136 Hz、后半句 338 Hz，说到一半换了
-                // 个人。整集每个角色每句都是不同的人，而且全程不报错。
+                // 个人。整章每个角色每句都是不同的人，而且全程不报错。
                 //
                 // 定一次就落成一段参考音频存进 voices/，之后每句都克隆它。
                 // 一个角色只花一次（约八秒），而且人可以随时去角色页换掉。
@@ -894,7 +872,7 @@ RunReport run_episode(const ProjectStore& store,
                             stages::ensure_character_voice(store, it->second);
                             ++made;
                         } catch (const std::exception& e) {
-                            // 定不出来不拦着整集：退回原来那条（每句随机一个
+                            // 定不出来不拦着整章：退回原来那条（每句随机一个
                             // 说话人），难听但出得来。说一声就行。
                             emit(progress, "audio", "warn",
                                  it->second.name + " 的音色没定上：" + e.what() +
@@ -949,7 +927,7 @@ RunReport run_episode(const ProjectStore& store,
                 if (added > 0) {
                     emit(progress, "audio", "warn",
                          "有 " + std::to_string(added) +
-                             " 处台词一镜装不下，已拆成新的镜头。这一集现在是 " +
+                             " 处台词一镜装不下，已拆成新的镜头。这一章现在是 " +
                              std::to_string(ep->shots.size()) + " 个镜头");
                 }
 
@@ -963,31 +941,28 @@ RunReport run_episode(const ProjectStore& store,
                 //
                 // 实测（walk_c ep01，目标 60 秒）：分镜排出来是 60 秒，配音
                 // 把有台词的十镜从语音 30.6 秒撑到 48 秒——每一镜都要向上
-                // 吸附到视频模型能生成的档位，光量化就多出 17.4 秒——整集
+                // 吸附到视频模型能生成的档位，光量化就多出 17.4 秒——整章
                 // 变成 80 秒。超出的部分只能摊到那十个无台词的过渡镜上。
                 //
                 // **量的是成片长度，不是 planned_duration_s()。** 后者是
                 // 分镜表上那串名义值的和；模型按格子出帧，名义 4 秒出来是
                 // 4.458 秒。上一版这里用的就是名义值，于是 rebalance 报
-                // 「已经压到 57 秒」而片子是 62.5 秒——压错了对象，见
+                // 「已经压到 57 秒」而成片是 62.5 秒——压错了对象，见
                 // stages::real_total_s。
                 const int fps = settings.assembly.fps;
                 const double before_s = stages::real_total_s(ep->shots, fps);
-                // **不按目标时长挤。** 这一章多长由内容定，装配时再按每集时长
-                // 切成几集——在这儿把它压回一集的尺寸，就是把用户说的
-                // 「超了就压」从剧本挪到分镜。
+                // **不按目标时长挤。** 这一章多长由内容定，整部电影是最后把
+                // 各章接起来，不在这儿也不在装配时切——在这儿把它压回一个
+                // 目标尺寸，就是把用户说的「超了就压」从剧本挪到分镜。
                 //
                 // 2026-09-16 之前这儿是个 if/else：集模式那一边会跑
-                // rebalance_durations 把整集压回目标时长。那条路当天删了，
+                // rebalance_durations 把整章压回目标时长。那条路当天删了，
                 // else 那一整块（连同它那两句"压不到目标"的提示）跟着删。
                 {
                     emit(progress, "audio", "info",
-                         "章模式：按配音定下时长后不再压回一集的尺寸，这一章 " +
-                             util::human_time_precise_as(before_s, before_s) +
-                             "，装配时按每集 " +
-                             util::human_time_precise_as(settings.assembly.episode_s,
-                                                         settings.assembly.episode_s) +
-                             " 切");
+                         "这一章多长由它自己的内容定：按配音定下时长后不再压回"
+                         "目标尺寸，这一章 " +
+                             util::human_time_precise_as(before_s, before_s));
                 }
                 save();
 
@@ -1047,7 +1022,7 @@ RunReport run_episode(const ProjectStore& store,
 
                 // 首帧那批跑完之后说的话（首帧完成几个、失败几个、哪几个
                 // 还留着旧首帧）。**流水时在首帧那条线程里说**，不然要等到
-                // 整集出完片才轮到它，人看到的顺序是"成片完成"在"首帧完成"
+                // 整章出完片才轮到它，人看到的顺序是"成片完成"在"首帧完成"
                 // 前面。读的是 todo 里各镜的 frame_path，而出片那层会整份
                 // 写回 Shot——流水时调用方拿着 flow 的锁再叫它。
                 const auto say_frames_done = [&] {
@@ -1226,7 +1201,7 @@ RunReport run_episode(const ProjectStore& store,
     // 了"，分不清是续跑跳过了还是根本没跑起来。
     if (!ran && !tok.cancelled() && report.errors.empty()) {
         emit(progress, last_stage_name(opts), "done",
-             "这一集要的都已经出好了，这次没有要跑的，全部跳过");
+             "这一章要的都已经出好了，这次没有要跑的，全部跳过");
     }
 
     // 对齐 Python 的 finally：无论成功、失败还是中途停止都存一次。

@@ -1,13 +1,13 @@
 <script setup>
 /**
- * 这一部剧。
+ * 这一部电影。
  *
  * **这一页只显示答案，改东西一律在弹窗里。** 2026-09-14 重排的规矩：
  * 每次打开这一页都要回答的问题，才配留在页面上；其余三条出路——改的时候
  * 才要的进弹窗，出问题才要的条件出现，别处已经说了的删掉。
  *
- * 按这条过完，原来那 41 件东西剩 5 件：这是哪部剧（logline）、到哪一步了
- * （进度条）、这部片子长什么样（一行答案）、拿哪几个模型跑（四个名字）、
+ * 按这条过完，原来那 41 件东西剩 5 件：这是哪部电影（logline）、到哪一步了
+ * （进度条）、这部电影长什么样（一行答案）、拿哪几个模型跑（四个名字）、
  * 删掉它。整页从 1826px 压到一屏以内。
  *
  * 砍掉的里面值得记的几条：
@@ -84,14 +84,14 @@ const dirName = computed(() => {
   return path.split(/[\\/]+/).filter(Boolean).pop() || ''
 })
 
-/** 「这部片子」那一行的答案：画幅 · 尺寸 · 画风开头一句。 */
+/** 「这部电影」那一行的答案：画幅 · 尺寸 · 画风开头一句。 */
 const show = ref(null)
-/** show 里那份是哪部剧读回来的。换剧时用来决定要不要先擦掉。 */
+/** show 里那份是哪部电影读回来的。换片时用来决定要不要先擦掉。 */
 let shownFor = null
 
 async function loadShow() {
   const want = session.projectPath
-  // **换了一部剧，先把上一部的答案擦掉。**
+  // **换了一部电影，先把上一部的答案擦掉。**
   //
   // 下面那句 want !== projectPath 只挡住了"回来晚了别乱写"，挡不住这段
   // 空当里屏幕上印着什么：这一行只在 show 为空时才写「读取中…」，不擦的
@@ -105,7 +105,7 @@ async function loadShow() {
     shownFor = want
   }
   if (!want) return
-  // 这一趟是给哪部剧读的。在项目库里连着点两部，两趟都在路上，回来的顺序
+  // 这一趟是给哪部电影读的。在项目库里连着点两部，两趟都在路上，回来的顺序
   // 不保证——资产库（style 从那儿来）比 video 那一趟大得多，慢的那趟后
   // 落地就把**上一部**的画幅和画风写在这一部的行上，而这一行是这一页仅剩
   // 的五件东西之一，错了没有别处对得出来。
@@ -172,9 +172,9 @@ onMounted(() => {
 })
 
 watch(() => session.projectPath, loadShow, { immediate: true })
-// **「模型（这部剧）」那一行也要跟着项目换。** 挑哪一档是记在项目目录里的
+// **「模型（这部电影）」那一行也要跟着项目换。** 挑哪一档是记在项目目录里的
 // （/bff/setup/state 按 path 回），只在挂载时读一次的话，在项目库里点到
-// 另一部剧，这一行还挂着上一部的四个名字和缺件标记，而标题写的是"这部剧"。
+// 另一部电影，这一行还挂着上一部的四个名字和缺件标记，而标题写的是"这部电影"。
 watch(() => session.projectPath, () => models.load())
 </script>
 
@@ -184,7 +184,7 @@ watch(() => session.projectPath, () => models.load())
        整页被压成 176px 宽。栽过一次。 -->
   <div class="pj">
     <template v-if="session.hasProject">
-      <!-- 这是哪部剧 -->
+      <!-- 这是哪部电影 -->
       <div class="head">
         <!-- 没写故事时这一行直接不渲染。原来兜底印一句「还没写故事」，
              而栏里那条和下面进度条说的是同一件事，空话不占一行。 -->
@@ -204,10 +204,10 @@ watch(() => session.projectPath, () => models.load())
       </div>
 
       <div v-if="removing" class="row row--wrap confirm-row">
-        <!-- ⚠️ **要打的是目录名，不是剧名。** 引擎比的是目录名
+        <!-- ⚠️ **要打的是目录名，不是片名。** 引擎比的是目录名
              （post_delete_project 的闸三），而这儿原来比的是 title——
-             一个目录叫 convenience-store、剧名叫「深夜便利店」的项目，
-             按钮要你打剧名才解锁，打完提交引擎回 400 要目录名，这条路
+             一个目录叫 convenience-store、片名叫「深夜便利店」的项目，
+             按钮要你打片名才解锁，打完提交引擎回 400 要目录名，这条路
              彻底堵死。引擎现在两个都收，界面统一说目录名：它是磁盘上的
              身份，也是唯一不会被改名改掉的那个串。 -->
         <input
@@ -240,9 +240,9 @@ watch(() => session.projectPath, () => models.load())
         </div>
       </div>
 
-      <!-- 这部片子长什么样：一行答案，✎ 开弹窗 -->
+      <!-- 这部电影长什么样：一行答案，✎ 开弹窗 -->
       <button class="line" type="button" @click="showOpen = true">
-        <span class="line__k">这部片子</span>
+        <span class="line__k">这部电影</span>
         <span class="line__v truncate">
           <template v-if="show">
             <!-- 分隔符跟着后一段走：读不出画幅时 size 是空的，写死的
@@ -257,8 +257,8 @@ watch(() => session.projectPath, () => models.load())
 
     <!-- 拿哪几个模型跑。**没有项目也显示**，理由见文件开头。
 
-         **这一行一半是剧的、一半是机器的**，所以标「这部剧」。
-         挑哪一档（`[models.pick]`）记进这部剧的 changji.toml，跟着项目
+         **这一行一半是电影的、一半是机器的**，所以标「这部电影」。
+         挑哪一档（`[models.pick]`）记进这部电影的 changji.toml，跟着项目
          目录走，派到别的机器上也照这份来；而那一档的**文件在这台机器的
          哪儿**是机器的属性，走全局配置——项目模板里那句话说的是后者：
          「机器的属性（模型文件、显存…）在全局配置里，不要写到这儿——
@@ -268,8 +268,8 @@ watch(() => session.projectPath, () => models.load())
     <div class="line line--static">
       <span
         class="line__k"
-        title="挑哪一档是这部剧的设置，记在项目里、跟着项目目录走，派到别的机器上也照这份来；那一档的文件放在这台机器的哪儿是机器的设置，走全局配置"
-        >模型<span class="tiny dim scope">（这部剧）</span></span
+        title="挑哪一档是这部电影的设置，记在项目里、跟着项目目录走，派到别的机器上也照这份来；那一档的文件放在这台机器的哪儿是机器的设置，走全局配置"
+        >模型<span class="tiny dim scope">（这部电影）</span></span
       >
       <span class="line__v names">
         <button

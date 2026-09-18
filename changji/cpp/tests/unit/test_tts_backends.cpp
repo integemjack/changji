@@ -88,7 +88,7 @@ void write_tone(const fs::path& path, double seconds, double amplitude) {
 }  // namespace
 
 TEST_CASE("短台词的真声音不该被绝对下限误杀") {
-    // 5090 上整集跑通时被这条误杀过一句：「苏晚！」本地 TTS 出了 1.04 秒的
+    // 5090 上整章跑通时被这条误杀过一句：「苏晚！」本地 TTS 出了 1.04 秒的
     // 真声音，差 0.01 秒够不到 1.05 的绝对下限，整个镜头的配音就丢了，
     // 装配时闸门报"有台词但没有配音时长"。
     const fs::path dir = temp_dir("短台词");
@@ -130,7 +130,7 @@ TEST_CASE("两条下限都要过") {
     // 会被当成空音频拦下来。这是**照抄 Python 的行为**，不是这里引入的。
     // 实际影响有限——TTS 引擎自己会加头尾静音，真实的"嗯。"通常在一秒以上。
     // 真撞上了要改的是那个常数，而不是悄悄放宽，因为放宽的代价是
-    // 一整集静音文件被当成配音成功。
+    // 一整章静音文件被当成配音成功。
     const fs::path dir = temp_dir("下限");
     const fs::path p = dir / paths::from_utf8("嗯.wav");
     stages::write_silence(p, 1.2, 24000);
@@ -425,7 +425,7 @@ TEST_CASE("HTTP 后端：两处和 Python 不一样的地方，是故意的") {
         // 没有 _reject_silent_audio（audio.py:161）。只有它的 Comfy 后端有。
         //
         // 而"成功但没出声"和后端是谁没关系：独立服务同样会在模型没载好时
-        // 回一个合法的空 wav。放行的代价是一整集静音被当成配音成功。
+        // 回一个合法的空 wav。放行的代价是一整章静音被当成配音成功。
         const fs::path src = dir / paths::from_utf8("静音.wav");
         stages::write_silence(src, 0.3, 24000);   // 短过 1.05 秒的绝对下限
         std::ifstream in(src, std::ios::binary);

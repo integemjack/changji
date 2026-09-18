@@ -42,7 +42,7 @@ fs::path pristine() {
 }
 
 /// 复制一份语料项目，把 ep01 铺成九个镜头（九个状态各一个），
-/// attempts 和 gate_notes 都填上非空值。ep02 保持空集不动。
+/// attempts 和 gate_notes 都填上非空值。ep02 保持一个镜头都没有，不动。
 ProjectStore staged(const std::string& tag) {
     const fs::path dst = fs::temp_directory_path() /
                          paths::from_utf8("changji_重置_" + tag);
@@ -157,9 +157,9 @@ TEST_CASE("再点一次重置，返回 0") {
     CHECK(http::reset_all_shots(store) == 0);
 }
 
-TEST_CASE("空集不出事") {
-    // 语料里 ep02 是空集。新建的项目、或者刚加还没出分镜的一集
-    // 都是这样，而九个调用点里没有一个先查过集里有没有镜头。
+TEST_CASE("空章不出事") {
+    // 语料里 ep02 一个镜头都没有。新建的项目、或者刚加还没出分镜的一章
+    // 都是这样，而九个调用点里没有一个先查过那一章里有没有镜头。
     ProjectStore store = staged("空集");
     const Project before = store.load_project();
     REQUIRE(before.episodes[1].shots.empty());

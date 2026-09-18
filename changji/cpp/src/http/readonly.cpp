@@ -25,13 +25,13 @@ namespace changji::http {
 
 namespace {
 
-/// 这部剧自己的帧数格子。
+/// 这部电影自己的帧数格子。
 ///
 /// `stages::video_limits()` 是进程里那**一份**全局的，只有出片和拆分镜
 /// 那两条路会按项目重算（见 config::apply_video_limits）。这几个只读接口
-/// 从来不设它，读到的于是是「上一次跑的是哪部剧」——同一张分镜表，出片
+/// 从来不设它，读到的于是是「上一次跑的是哪部电影」——同一张分镜表，出片
 /// 前后报出来的时长能差三倍：本机那份上限是 124 帧，一个 15 秒的镜头在
-/// 镜头墙上写着 5.2 秒，整集时长跟着一起错，成片页那条跳转条也偏。
+/// 镜头墙上写着 5.2 秒，整章时长跟着一起错，成片页那条跳转条也偏。
 /// 2026-09-16 实测：hulian-test 的 ep06_sh019 计划 15 秒，接口报 5.2 秒。
 ///
 /// 这个接口跑得勤（出片时每 6 秒一次），所以按 changji.toml 的修改时间
@@ -122,7 +122,7 @@ ApiResult get_hardware(const config::Settings& settings,
                        const HardwareProfile& p) {
     // **单镜最长能出多久，要看得见。** 2026-09-16 撞到：用户说「分镜时间改到
     // 最大 15 秒」，而这个数是四道夹子连乘出来的——模型能出多少帧、这张卡的
-    // 显存、内核的像素×帧上限、这部剧的 [video].max_shot_s，再加上帧数必须
+    // 显存、内核的像素×帧上限、这部电影的 [video].max_shot_s，再加上帧数必须
     // 落在 17k+5 的格子上。中间任何一道把它压回 5 秒，界面上一个字都没有，
     // 只能靠翻源码倒推。摆出来之后，「为什么排不出长镜头」是一眼的事。
     const auto& limits = stages::video_limits();
@@ -162,7 +162,6 @@ ApiResult get_settings(const config::Settings& s, const HardwareProfile& p) {
             {"subtitle_max_chars_per_line", s.assembly.subtitle_max_chars_per_line},
             {"subtitle_max_lines", s.assembly.subtitle_max_lines},
             {"scene_transition_s", s.assembly.scene_transition_s},
-            {"episode_s", s.assembly.episode_s},
         }},
         {"gates", {
             {"enabled", s.gates.enabled},
@@ -236,8 +235,8 @@ ApiResult get_project(const std::string& path) {
                           e.shots.begin(), e.shots.end(), [](const auto& s) {
                               return !text::strip_ws(s.shot_id).empty();
                           }))},
-            // **挂在哪一章。** 界面靠它分辨"两条看起来一样的集"：一章一集
-            // 是现在的规矩，而规矩立起来之前留下的重复（两个集挂同一章）
+            // **挂在哪一章。** 界面靠它分辨"两条看起来一样的章节记录"：一章
+            // 一条是现在的规矩，而规矩立起来之前留下的重复（两条挂同一章）
             // 在下拉里长得一模一样——2026-09-16 实见 ep08 和 ep09 都写着
             // 「了结（17 镜）」，选哪个全靠猜。
             {"chapter_refs", e.chapter_refs},
@@ -248,7 +247,7 @@ ApiResult get_project(const std::string& path) {
             //
             // 不是 planned_duration_s()——那是分镜表里那串名义值的和，而
             // 模型只能按格子出帧（见 stages::real_total_s）。两者能差
-            // 10%：walk_c ep01 名义 58.0 秒，片子 61.8 秒。
+            // 10%：walk_c ep01 名义 58.0 秒，成片 61.8 秒。
             //
             // 副作用是这个数**跟着这台机器变**：卡小的时候 VideoLimits 被
             // 夹低，同一个项目报出来的时长会短一些。那是实话——在这台机器
@@ -265,7 +264,7 @@ ApiResult get_project(const std::string& path) {
         {"project_id", p.project_id},
         {"title", p.title},
         {"style_line", to_string(p.style_line)},
-        // 这部剧讲什么。剧本页拿它回填梗概框，不用凭记忆重打。
+        // 这部电影讲什么。剧本页拿它回填梗概框，不用凭记忆重打。
         {"premise", p.premise},
         {"root", paths::to_utf8(store.root())},
         {"characters", characters},
@@ -278,7 +277,7 @@ ApiResult get_shots(const std::string& path, const std::string& episode_id) {
     ProjectStore store = store_for(path);
     const Project p = store.load_project();
     const Episode* ep = p.episode_by_id(episode_id);
-    if (ep == nullptr) throw ApiError(404, "没有剧集 " + episode_id);
+    if (ep == nullptr) throw ApiError(404, "没有章节 " + episode_id);
 
     json shots = json::array();
     for (const auto& s : ep->sorted_shots()) {
@@ -304,9 +303,9 @@ ApiResult get_shots(const std::string& path, const std::string& episode_id) {
             {"shot_id", s.shot_id},
             {"order", s.order},
             {"scene_id", s.scene_id},
-            // 这一集用到哪几个场景，界面靠它算。缺了的话设定页的
-            // 「场景」那一格只能把全剧的场景一股脑列出来，看不出跟
-            // 本集的关系。
+            // 这一章用到哪几个场景，界面靠它算。缺了的话设定页的
+            // 「场景」那一格只能把全片的场景一股脑列出来，看不出跟
+            // 本章的关系。
             {"location_id", opt(s.location_id)},
             {"char_ids", char_ids},
             {"shot_size", to_string(s.shot_size)},
@@ -341,7 +340,7 @@ ApiResult get_shots(const std::string& path, const std::string& episode_id) {
             // 出来是 107 帧 = 4.458 秒。
             //
             // 界面上凡是给人看的时长都该用这个。前端原来是自己 reduce 累加
-            // `duration_s`，于是标题写「18 镜 · 58 秒」而片子是 61.8 秒
+            // `duration_s`，于是标题写「18 镜 · 58 秒」而成片是 61.8 秒
             // （ffprobe 量的）——**格子规则不能在前端复刻一份**，那是第三份
             // 副本，模型一换就全错。
             //
@@ -352,7 +351,7 @@ ApiResult get_shots(const std::string& path, const std::string& episode_id) {
             //
             // 哪天接一个 native_fps 不是 24 的模型、或者接一个不报 native_fps
             // 的模型而用户把 [assembly].fps 填成 30——这两个数就会对不上，
-            // 表现是成片页那条跳转条点哪一镜都偏、镜头页那句"这一集多长"也
+            // 表现是成片页那条跳转条点哪一镜都偏、镜头页那句"这一章多长"也
             // 偏，而全程不报错。那时候要把项目的 fps 传进来（注意这个接口
             // 跑得很勤：出片时每 6 秒一次，别顺手在里面读 TOML；而且对拍
             // 语料按现在这样钉着）。
@@ -361,7 +360,7 @@ ApiResult get_shots(const std::string& path, const std::string& episode_id) {
                  s.duration_s))},
         });
     }
-    // 整集多长。前端别自己加：单镜是四舍五入过的，逐镜加会带累积误差。
+    // 整章多长。前端别自己加：单镜是四舍五入过的，逐镜加会带累积误差。
     return {200,
             {{"shots", shots},
              {"duration_s",
@@ -558,7 +557,7 @@ ApiResult get_projects(const config::Settings& settings) {
     // 项目库里有哪些项目。
     //
     // 以前只能手打一条绝对路径。在容器里跑的时候那是
-    // /data/projects/剧名 这种路径，用户根本不知道该填什么。
+    // /data/projects/片名 这种路径，用户根本不知道该填什么。
     const fs::path root = settings.workspace_path();
     std::error_code ec;
 
@@ -601,7 +600,7 @@ ApiResult get_projects(const config::Settings& settings) {
             }
 
             // **正片和预告分开数。** 预告片和正片同住 project.episodes，
-            // 混在一起数的话，一部只剪了预告的剧在项目库里显示成「1 集」。
+            // 混在一起数的话，一部只剪了预告的电影在项目库里显示成「1 章」。
             int episode_count = 0;
             for (const auto& ep : project.episodes) {
                 if (is_regular_episode(ep.episode_id)) ++episode_count;
@@ -618,15 +617,15 @@ ApiResult get_projects(const config::Settings& settings) {
                 }
             }
 
-            // 成片数。**只认文件名恰好等于某一集正片 id 的那些。**
+            // 成片数。**只认文件名恰好等于某一章正片 id 的那些。**
             //
             // 装配写出去的名字就是 `episode_id + ".mp4"`（见 media/assemble
             // 那一头），所以正着匹配即可。反过来"排除预告"用子串判是错的：
             // 任何一个短 id（`ep`、`e` 这种，POST /api/episode 不拦长度）都会
-            // 命中全部 epNN.mp4，一部全出完的剧 outputs 恒为 0。
+            // 命中全部 epNN.mp4，一部全出完的电影 outputs 恒为 0。
             //
-            // 顺带把分母兜住：这么数出来的 outputs 天然 ≤ 正片集数，不会出现
-            // 「删了几集但 output 目录里的 mp4 还在」导致进度条永远满格。
+            // 顺带把分母兜住：这么数出来的 outputs 天然 ≤ 正片章数，不会出现
+            // 「删了几章但 output 目录里的 mp4 还在」导致进度条永远满格。
             std::set<std::string> regular_ids;
             for (const auto& ep : project.episodes) {
                 if (is_regular_episode(ep.episode_id)) {
@@ -634,13 +633,14 @@ ApiResult get_projects(const config::Settings& settings) {
                 }
             }
             //
-            // ⚠️ **切成几集的那些也得算。** 装配有两套名字：一集时
-            // `ep01.mp4`，切成几集时 `ep01_01.mp4` / `ep01_02.mp4`
-            // （pipeline/episode.cpp）。原来只认前一种，于是一章切成两集
-            // 之后它算 0 集出片——顶栏那句「N/M 集已出片」把切过的章全漏了。
-            // 2026-09-17 实见：ep01、ep06 各切两集，两章都没算进去。
+            // ⚠️ **老项目里带 `_NN` 的那些也得算。** 2026-09-18 之前一章会在
+            // 章内切成几段，叫 `ep01_01.mp4` / `ep01_02.mp4`；今天一章只出一个
+            // `ep01.mp4`，**再也不产出 `_NN`**（见 media/assemble.hpp 的
+            // `episode_of_output`），但老项目盘上还躺着那种名字。原来只认不带
+            // `_NN` 的那一种，于是切过的章算 0 章出片——顶栏那句「N/M 章已出片」
+            // 把它们全漏了。2026-09-17 实见：ep01、ep06 各切两段，两章都没算进去。
             //
-            // **一章算一次**，不是一个文件算一次：切成两集仍然是一章出完了。
+            // **一章算一次**，不是一个文件算一次：切成两段仍然是一章出完了。
             // 判法照上面那条注释的告诫，**不用子串**：要么整个 stem 就是
             // 那个 id，要么是 id + '_' + 两位数字。短 id 不会误伤。
             std::set<std::string> produced;
@@ -669,7 +669,7 @@ ApiResult get_projects(const config::Settings& settings) {
                 mtime = util::file_mtime_unix(pf);
             }
 
-            // 故事那几个数。**挑项目时真正想知道的是「这部剧讲什么、到哪
+            // 故事那几个数。**挑项目时真正想知道的是「这部电影讲什么、到哪
             // 一步了」**，而不是三个产出计数——刚建的空项目和故事写完还没
             // 分镜的项目，在「出片百分比」上都是 0%，看上去一模一样。
             //
@@ -717,7 +717,7 @@ ApiResult get_projects(const config::Settings& settings) {
 
             // **砍短了要说一声。**
             //
-            // 这一行是项目页上「这是哪部剧」的全部内容，而它常常不是一句
+            // 这一行是项目页上「这是哪部电影」的全部内容，而它常常不是一句
             // 真正的 logline：没写大纲的项目回落到梗概，而梗概能有两千字。
             // 砍到 80 字不加任何记号的话，屏幕上就是一句从中间断掉的话，
             // 看着像是内容写坏了——而这一页别处没有第二个地方能对出来。
@@ -734,8 +734,8 @@ ApiResult get_projects(const config::Settings& settings) {
                 {"dir", dir_name},
                 {"name", project.title.empty() ? dir_name : project.title},
                 // ⚠️ **style_line 2026-09-14 摘掉了。** 引擎每次列项目都算，
-                // 而前端全库零引用——画风属于「这一部剧的详情」，归项目页
-                // 的「这部片子」那个弹窗。
+                // 而前端全库零引用——画风属于「这一部电影的详情」，归项目页
+                // 的「这部电影长什么样」那个弹窗。
                 {"episodes", episode_count},
                 {"shots", shots},
                 {"done_shots", done},

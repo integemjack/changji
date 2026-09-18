@@ -45,7 +45,7 @@ const kOpenKey = 'changji.tasks.openThinking'
 function rememberOpen() {
   writeLocal(kOpenKey, JSON.stringify(Object.keys(opened.value)))
 }
-/** 只看这一部剧的。**默认只看**：一台机器上常常开着好几部。 */
+/** 只看这一部电影的。**默认只看**：一台机器上常常开着好几部。 */
 const mineOnly = ref(true)
 /** 第一拍还没回来。空表和"真的没活"要分开说。 */
 const loaded = ref(false)
@@ -90,8 +90,8 @@ function dur(s) {
 /**
  * 这一件画到百分之几。没有步数就回 null，界面画一条来回跑的条。
  *
- * **一格的不算进度。** 出片那条总任务报的是「第几集 / 一共几集」，一次只
- * 跑一集时就是 0/1——画出来是一条 0% 的条加一句「0% 0/1」，它既不说明在
+ * **一格的不算进度。** 出片那条总任务报的是「第几章 / 一共几章」，一次只
+ * 跑一章时就是 0/1——画出来是一条 0% 的条加一句「0% 0/1」，它既不说明在
  * 干什么也不说明还有多久，而这一行真正有用的是下面那句引擎现说的话。
  */
 function pct(r) {
@@ -252,7 +252,7 @@ onUnmounted(() => clearTimeout(timer))
       </span>
       <span v-else-if="loaded" class="tasks__sum tiny dim">闲着</span>
       <span class="spacer" />
-      <label class="switch tiny" title="只看当前这一部剧的活">
+      <label class="switch tiny" title="只看当前这一部电影的活">
         <input v-model="mineOnly" type="checkbox" @change="load" />
         <span>只看这一部</span>
       </label>
@@ -275,13 +275,13 @@ onUnmounted(() => clearTimeout(timer))
            留白，读起来像标题掉下来的半句话，不像"这儿本来该有东西"。
 
            **过滤着的时候要说清"是没有，还是被这个勾挡住了"。** 一台机器上常
-           开着好几部剧，跑着的那部不一定是当前这部——那时候这一页整片空白，
+           开着好几部电影，跑着的那部不一定是当前这部——那时候这一页整片空白，
            而顶栏那块牌子还写着「任务 6」，两处对不上。那句话进 hint。 -->
       <EmptyState
         v-if="!board.running.length"
         icon="play"
         :title="!loaded ? '正在问引擎…' : '这会儿没有活在跑'"
-        :hint="loaded && mineOnly ? '别的剧有没有，把「只看这一部」取消了就知道' : ''"
+        :hint="loaded && mineOnly ? '别的电影有没有，把「只看这一部」取消了就知道' : ''"
       />
       <ul v-else class="rows">
         <li v-for="r in board.running" :key="r.id" class="row row--live">

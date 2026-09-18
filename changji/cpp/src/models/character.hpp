@@ -156,7 +156,7 @@ struct Location {
     std::string render_prompt(StyleLine style_line, bool with_lighting = true) const;
 };
 
-/// 全剧统一的风格层。所有镜头共用，保证整体调性不漂。
+/// 全片统一的风格层。所有镜头共用，保证整体调性不漂。
 /// 这条线长什么样。**没有它，"写实线 / 动漫线"这个选择等于没选。**
 ///
 /// 2026-09-12 用户报的：同一个项目里三个角色，一个是皮克斯 3D、一个半写实、
@@ -174,7 +174,7 @@ std::string default_style(StyleLine style_line);
 
 struct StyleProfile {
     StyleLine style_line = StyleLine::REALISTIC;
-    std::string global_style;    ///< 全剧画风、色温、质感
+    std::string global_style;    ///< 全片画风、色温、质感
     std::string negative_prompt;
     /// 画面比例。**派生出来的，不是自己一份。**
     ///
@@ -184,8 +184,19 @@ struct StyleProfile {
     ///
     /// ⚠️ **别再给它开独立的写入口。** 它曾经是可以单独改的，于是能配成
     /// 「横屏 + 9:16」：不报错，出来参考图竖的、成片横的。写它的地方现在
-    /// 只有三处，都是从画幅算出来的——存画面（/bff/project/video）、
-    /// 定妆（parse_bible）、跑流水线之前对一次账（pipeline::run_episode）。
+    /// 只有四处，每一处写的都是从画幅算出来的值——建项目
+    /// （`ProjectStore::create` 和 `http::post_new_project`）、
+    /// 存画面（/bff/project/video）、定妆（parse_bible）、
+    /// 跑流水线之前对一次账（pipeline::run_episode）。
+    ///
+    /// ⚠️ **下面这个 "9:16" 是有人读的，别跟着新默认翻成 16:9。**
+    /// 2026-09-18 查过一遍谁读它：出图那两层
+    /// （`stages/frames.cpp` 的 `spec.scaled_to(assets.style.aspect_ratio)`、
+    /// `stages/render.cpp`）拿到的都是 `run_episode` 刚对过账的那一份，
+    /// 轮不到初值；真会落到初值上的只剩一条——`config::load_settings` 给
+    /// **没有 `[video]` 的老项目**推画幅时，遇到一份比这个字段还老、
+    /// 根本没有 `aspect_ratio` 那一栏的 assets.json。那种项目全是
+    /// 2026-09-18 之前建的，也就是全是竖屏的，9:16 正是那里要的答案。
     std::string aspect_ratio = "9:16";
 
     NLOHMANN_DEFINE_TYPE_INTRUSIVE_WITH_DEFAULT(

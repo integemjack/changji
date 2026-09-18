@@ -117,8 +117,8 @@ export const api = {
    * hardware / doctor 六块。
    *
    * **把项目路径带上**，理由和下面 `doctor` 那条一模一样：这份里的体检
-   * 有一项是「出片画布」，而画幅是每部剧自己的（项目目录的 changji.toml
-   * 里那个 [video]）。不带的话引擎查的是全局默认（竖屏 720p，544×928），
+   * 有一项是「出片画布」，而画幅是每部电影自己的（项目目录的 changji.toml
+   * 里那个 [video]）。不带的话引擎查的是全局默认（横屏 720p，928×544），
    * 那个数永远不会超上限——项目切到 2K 之后，设置页第一节照样说没问题、
    * 上面那颗牌子照样写「可以开工」，而镜头页开跑前的那次体检
    * （走 /api/doctor，带了 path）会说超了。同一条检查两个答案。
@@ -132,8 +132,8 @@ export const api = {
   // 函数的话，同一份数据有两条取法，而设置页走的是 overview 这条——
   // 另一条只会被将来某个人捡起来用，然后两处显示的东西开始不一样。
   // 四个都没人叫，删掉；接口本身留着（curl 排查、别的客户端）。
-  // 这部剧的画面规格。**一部剧一份**，不是全局设置——一台机器上可以
-  // 同时有竖屏短剧和横屏片子。
+  // 这部电影的画面规格。**一部电影一份**，不是全局设置——一台机器上可以
+  // 同时有横屏的正片和竖版的物料。
   projectVideo: (project) => get('/bff/project/video', { path: project }),
   /** 这一轮引擎还没落定的镜头。页面一进来靠它把「排队中」重新点亮。 */
   runPending: () => get('/bff/run/pending'),
@@ -166,7 +166,7 @@ export const api = {
   setupProgress: () => get('/bff/setup/progress'),
   cancelSetupDownload: () => post('/bff/setup/cancel', {}),
   saveProjectVideo: (payload) => post('/bff/project/video', payload),
-  /** 成片工序：后期链（[look]）和声音几层（[sound]）。剧的属性。 */
+  /** 成片工序：后期链（[look]）和声音几层（[sound]）。电影的属性。 */
   projectFinish: (project) => get('/bff/project/finish', { path: project }),
   saveProjectFinish: (payload) => post('/bff/project/finish', payload),
   saveNodeConfig: (patch) => post('/bff/settings/config', patch),
@@ -185,7 +185,7 @@ export const api = {
   project: (path) => get('/api/project', { path }),
   newProject: (payload) => post('/api/new', payload),
   deleteProject: (payload) => post('/api/project/delete', payload),
-  /** 改剧名。只动 project.json 的 title，目录不搬——目录名是项目的身份。 */
+  /** 改片名。只动 project.json 的 title，目录不搬——目录名是项目的身份。 */
   renameProject: (payload) => post('/api/project/rename', payload),
   // 「只改梗概」那条（POST /api/project/premise）**这儿不留绑定**。
   //
@@ -204,7 +204,7 @@ export const api = {
   writeTrailer: (payload) => post('/api/script/trailer', payload),
   seriesStatus: () => get('/api/script/series'),
   /**
-   * 一次把所有集的剧本写出来。
+   * 一次把所有章的剧本写出来。
    *
    * ⚠️ **界面上今天没有入口——这是全仓库两个"包了没人叫"之一**（另一个是
    * 下面的 `dedupeAssets`；90 个包装里就这两个）。引擎那一头是齐的
@@ -221,7 +221,7 @@ export const api = {
   stopSeries: () => post('/api/script/series/stop', {}),
   getScript: (path, episodeId) =>
     get('/api/script', { path, episode_id: episodeId }),
-  // 这一集的原料：分集表压着的场、原文切片、钩子、四段按秒的排法、对白预算。
+  // 这一章的原料：章节计划压着的场、原文切片、钩子、四段按秒的排法、对白预算。
   // 和 AI 改编时拿到的是同一份，只是给人看。
   getScriptContext: (path, episodeId) =>
     get('/api/script/context', { path, episode_id: episodeId }),
@@ -234,7 +234,7 @@ export const api = {
   getStory: (path) => get('/api/story', { path }),
   saveStory: (payload) => post('/api/story', payload),
   writeOutline: (payload) => post('/api/story/outline', payload),
-  // 理解故事：一件活——提结构、定长相、章对集、逐章写剧本。进度走
+  // 理解故事：一件活——提结构、定长相、落成章节、逐章写剧本。进度走
   // seriesStatus（同一个槽），writer store 直接能用。
   understandStory: (payload) => post('/api/story/understand', payload),
   // 从网上找热点写眼前这一章：一条带工具的对话，写完只换这一章的正文。同一个槽。
@@ -258,8 +258,8 @@ export const api = {
   applyPrompt: (path, payload, raw) => post(path, { ...payload, paste: raw }),
   adoptStory: (payload) => post('/api/story/adopt', payload),
   planEpisodes: (payload) => post('/api/story/plan', payload),
-  // 分集表是计划，这一步才把它变成流水线真正在跑的剧集。
-  // 已有的同号剧集只补元数据，写好的剧本和出过的片一个字不动。
+  // 章节计划是计划，这一步才把它变成流水线真正在跑的章节。
+  // 已有的同号章节只补元数据，写好的剧本和出过的片一个字不动。
   makeEpisodes: (payload) => post('/api/story/episodes', payload),
   // 粘进来的文本切成章节。不碰大模型，切章节是机械活。
   importStory: (payload) => post('/api/story/import', payload),
@@ -268,16 +268,16 @@ export const api = {
   // 展开一章的正文。**这个是直接落库的**，不回草稿——它只往空字段里填
   // 东西，而十六章走草稿-采用就是三十二次点击。
   writeChapter: (payload) => post('/api/story/chapter', payload),
-  /** 删一章。分集表跟着改，回包里说改了几条。 */
+  /** 删一章。章节计划跟着改，回包里说改了几条。 */
   deleteChapter: (payload) => post('/api/story/chapter/delete', payload),
   // 一口气展开所有还没正文的章。走长跑作业，进度在 seriesStatus 里，
-  // 和「写整季」共用同一个任务槽。
+  // 和「写全片」共用同一个任务槽。
   writeChapters: (payload) => post('/api/story/chapters', payload),
   // 选中一段让 AI 改。**只回草稿**——改稿落错了盖掉的是作者自己写的字。
   reviseStory: (payload) => post('/api/story/revise', payload),
-  // 把改好的那一段写回去。不碰大模型，纯字符串替换 + 重算切点和分集。
+  // 把改好的那一段写回去。不碰大模型，纯字符串替换 + 重算切点和章节。
   applyRevision: (payload) => post('/api/story/revise/apply', payload),
-  // 老项目：从已有剧集反推一份故事骨架。不碰大模型，也不重新分集。
+  // 老项目：从已有章节反推一份故事骨架。不碰大模型，也不重新排章节计划。
   storyFromEpisodes: (payload) => post('/api/story/from_episodes', payload),
   // 念一段字出来。**一次最多两百字**（模型一次合成的上限约 41 秒），
   // 超了回 truncated:true，界面照实说。
@@ -354,7 +354,7 @@ export const api = {
    *
    * ⚠️ **界面上今天没有入口**，同 `writeSeries`（全仓 90 个包装里只有这
    * 两个没人叫）。设定页那两格能看出重复——`character.hpp` 里那段就记着
-   * 实测撞到的例子：一部剧里三个 id 指着同一个后台
+   * 实测撞到的例子：一部电影里三个 id 指着同一个后台
    * （`loc_..._auditorium_backstage` / `..._old_stage_backstage` /
    * `loc_old_stage_backstage_daytime`）——但收不了。
    */
@@ -373,7 +373,7 @@ export const api = {
    * 把某一件正在后台跑的活停掉（写大纲、写正文、写剧本、拆分镜这一族）。
    *
    * **按 stream 停，不按种类停。** stopRun / stopSeries 停的是"出片"和
-   * "写整季"那两个长跑任务，一种只有一个槽；这一族是按请求起的，同时可以
+   * "写全片"那两个长跑任务，一种只有一个槽；这一族是按请求起的，同时可以
    * 有好几件，只能按它自己那条 stream 认。
    *
    * 找不到不是错（按下去那一刻可能刚好干完），回的是 {stopped: false}。
@@ -400,14 +400,14 @@ export const api = {
    */
   jobEvents: (stream, since) => get('/api/job/events', { stream, since }),
   outputs: (path) => get('/api/outputs', { path }),
-  // 成片：每章都出片了，按每集时长切成几集。集只在这儿出现一次。
+  // 成片：出了片的章按顺序接成一部完整的电影。一部电影一个文件。
   film: (path) => get('/api/film', { path }),
-  cutFilm: (payload) => post('/api/film/cut', payload),
+  joinFilm: (payload) => post('/api/film/join', payload),
   // 那张「机器 × 能力」的表。**答得慢是正常的**：引擎要挨个问
   // 别的机器的 /status（每台最多 3 秒），结果缓存五秒。
   nodes: () => get('/api/nodes'),
   // 关掉／打开某台的某个能力。**正在跑的时候会被拒（409）**：
-  // 半集换机器会让前后画风对不上。
+  // 半章换机器会让前后画风对不上。
   setNodeOff: (url, cap, off) => post('/api/nodes/off', { url, cap, off }),
   // 加一台 / 去掉一台。**写的是全局配置的 `[[peer.nodes]]`**——机器的属性，
   // 换个项目不该换一套机器（上面那条 off 写的是项目库里的 nodes.json）。
@@ -426,7 +426,7 @@ export const api = {
   //   全仓一个调用点都没有。NodeMatrix 用的是上面 nodeSetup 那几条。）
   // `project` 是**必须带的**：界面拿本机这一份当「标准那一套」发给别的
   // 机器，而「挑了哪一档」记在项目里（`[models.pick]`）。不带的话那个
-  // 标准是本机全局配着的那一档，派活时带过去的却是这部剧挑的那一档——
+  // 标准是本机全局配着的那一档，派活时带过去的却是这部电影挑的那一档——
   // 给对面装的和真要用的不是一个东西，而那要到那一镜被对面拒了才看得出来。
   nodeSetup: (url, project) => get('/api/nodes/setup', { url, path: project }),
   nodeSetupDownload: (url, selections) =>
@@ -440,8 +440,8 @@ export const api = {
    * 体检。**把项目路径带上。**
    *
    * 其中「出片画布」那一项查的是 `[video].quality` 算出来的宽高，而画幅是
-   * **每部剧自己的**。不带 path 的话引擎查的是全局默认（竖屏 720p，
-   * 544×928），那个数永远不会超上限——项目切到 2K 之后体检照样说没问题，
+   * **每部电影自己的**。不带 path 的话引擎查的是全局默认（横屏 720p，
+   * 928×544），那个数永远不会超上限——项目切到 2K 之后体检照样说没问题，
    * 这条检查等于没有。引擎那头 2026-09-14 就收这个参数了（见
    * `/api/doctor` 路由上那段注释：「实测撞到过」），界面一直没给。
    */

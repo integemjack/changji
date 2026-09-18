@@ -138,7 +138,7 @@ export const useRun = defineStore('run', () => {
         step: typeof msg.step === 'number' ? msg.step : (prev?.step ?? 0),
         total: typeof msg.total === 'number' ? msg.total : (prev?.total ?? 0),
         // **这一镜自己**跑到第几步。和上面那对不是一回事：
-        // step/total 是整集的位置（第 21 镜 / 共 22 镜），拿它画单镜的
+        // step/total 是整章的位置（第 21 镜 / 共 22 镜），拿它画单镜的
         // 进度条，那一镜从头到尾都停在 95%——一条不动而且是错的进度条。
         //
         // 引擎不带这两个字段时留 null，牌子上就画一条走马灯而不是
@@ -376,7 +376,7 @@ export const useRun = defineStore('run', () => {
 })
 
 
-/** 写整季剧本 / 批量出分镜的进度。跟流水线是两条独立的线。 */
+/** 写全片剧本 / 批量出分镜的进度。跟流水线是两条独立的线。 */
 export const useWriter = defineStore('writer', () => {
   const state = ref(null)
   const polling = ref(false)
@@ -535,7 +535,7 @@ export const useWriter = defineStore('writer', () => {
     // **批量这几条的思考流原来落在地上。**
     //
     // 引擎那头是特意挂的（batch.cpp：「思考流挂到这条 job 的频道上。批量
-    // 这几条是全流水线上跑得最久的（一整季几十分钟），最需要"它到底在想
+    // 这几条是全流水线上跑得最久的（写全片几十分钟），最需要"它到底在想
     // 还是卡死了"这个信号」），可这条 store 的 applyMessage 只认进度，
     // `job_thinking` 一路掉进下面那个合并分支里当成空进度。
     //

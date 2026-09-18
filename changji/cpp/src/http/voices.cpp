@@ -162,7 +162,7 @@ json render_into(const ProjectStore& store, const fs::path& dest,
 
     // **先把后端搭起来。** 注册调度器里那个配音槽是 local_tts_backend
     // 干的事，而下面 render_voice_take 是直接去借槽的——引擎刚重启、
-    // 还没跑过任何一集时，借到的是「槽 配音 还没注册」。
+    // 还没跑过任何一章时，借到的是「槽 配音 还没注册」。
     // 2026-09-13 实测撞到：八个预置种子全部摇不出来，就是这一条。
     const config::Settings cfg = config::runtime().snapshot();
     const auto ff = media::FFmpeg(cfg.assembly.ffmpeg_path,

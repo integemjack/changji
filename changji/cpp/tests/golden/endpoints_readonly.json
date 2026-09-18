@@ -46,8 +46,7 @@
           "scene_transition_s": 0.4,
           "subtitle_font": "Source Han Sans SC",
           "subtitle_max_chars_per_line": 15,
-          "subtitle_max_lines": 2,
-          "episode_s": 60.0
+          "subtitle_max_lines": 2
         },
         "gates": {
           "enabled": true,
@@ -94,7 +93,7 @@
               "planned": 1
             },
             "synopsis": "林渊在天台等一个不会来的人。",
-            "title": "第一集 · 雨",
+            "title": "第一章 · 雨",
             "chapter_refs": [],
             "script_chars": 19
           },
@@ -104,7 +103,7 @@
             "shots": 0,
             "status": {},
             "synopsis": "三年后，同一个天台。",
-            "title": "第二集 · 晴",
+            "title": "第二章 · 晴",
             "chapter_refs": [],
             "script_chars": 0
           }
@@ -119,7 +118,7 @@
             "name": "小巷"
           }
         ],
-        "premise": "一个关于错过与和解的都市短剧。每集三分钟，竖屏。",
+        "premise": "一个关于错过与和解的都市电影。全片九十分钟，横屏。",
         "project_id": "yuye-tiantai",
         "root": "C:\\Users\\ultra\\Desktop\\changji\\changji\\cpp\\tests\\golden\\项目_雨夜天台",
         "style_line": "realistic",
@@ -298,7 +297,7 @@
     },
     {
       "body": {
-        "detail": "没有剧集 ep99"
+        "detail": "没有章节 ep99"
       },
       "name": "shots_missing_episode",
       "params": {

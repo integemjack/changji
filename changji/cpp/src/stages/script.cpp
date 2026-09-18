@@ -485,7 +485,7 @@ namespace {
 
 /// 从种子里取第 k 个 0~1 之间的数。
 ///
-/// 混一道 xorshift：集号往往只差一个字（ep01 / ep02），不混的话
+/// 混一道 xorshift：`episode_id` 往往只差一个字（ep01 / ep02），不混的话
 /// FNV 的低位差不多，形状还是一个样。
 double frac(std::uint32_t seed, int k) {
     std::uint32_t x = seed + static_cast<std::uint32_t>(k) * 0x9E3779B9u;
@@ -526,10 +526,10 @@ std::vector<ActSpec> act_plan(double duration_s, std::uint32_t variation) {
     // 银行家舍入那几条用例会传 0.5 进来，不能在这儿除出负数。
     const int total = std::max(4, static_cast<int>(std::lround(duration_s)));
 
-    // **形状不写死。** 写死的话 60 秒永远是 5/28/21/6，连着看几集一个样。
-    // 非零种子就在这几个区间里挑一组：有的集开场慢、后半段炸，有的集从头
+    // **形状不写死。** 写死的话 60 秒永远是 5/28/21/6，连着看几章一个样。
+    // 非零种子就在这几个区间里挑一组：有的章开场慢、后半段炸，有的章从头
     // 压到尾。总拍数还是按时长来，所以「撑不满时长」那个毛病不会回来。
-    // **戏的走法也换，不只是秒数。** 只浮动秒数的话，十集看下来是同一出戏
+    // **戏的走法也换，不只是秒数。** 只浮动秒数的话，十章看下来是同一出戏
     // 演快一点演慢一点。第 0 组是老的那一套，variation = 0 时就走它。
     const std::size_t shapes = std::size(prompt::script::kActKeys) == 0
                                    ? 1
@@ -544,14 +544,14 @@ std::vector<ActSpec> act_plan(double duration_s, std::uint32_t variation) {
     const double cliff_r = variation ? pick(variation, 1, 0.07, 0.17) : 0.10;
     const double esc_share = variation ? pick(variation, 2, 0.45, 0.68) : 0.57;
 
-    // 开场和留扣是两头的硬件：三分钟的集开场也不能拖到十几秒，
+    // 开场和留扣是两头的硬件：三分钟的一章开场也不能拖到十几秒，
     // 钩子也不用留一分钟——封顶 8 / 10 秒。
     const int opening =
         std::clamp(static_cast<int>(std::lround(total * open_r)), 1, 8);
     const int cliff =
         std::clamp(static_cast<int>(std::lround(total * cliff_r)), 1, 10);
     const int middle = total - opening - cliff;  // total ≥ 4 时 ≥ 2
-    // 中段推进多于回报：压得久，放得才有劲。具体多多少随这一集变。
+    // 中段推进多于回报：压得久，放得才有劲。具体多多少随这一章变。
     int escalation =
         std::max(1, static_cast<int>(std::lround(middle * esc_share)));
     int payoff = middle - escalation;
@@ -993,10 +993,10 @@ ordered beat_item_schema(bool with_floor,
 
 void put_title_and_logline(ordered& props) {
     props["title"] = {{"type", "string"},
-                      {"description", "这一集的标题，六个字以内"}};
+                      {"description", "这一章的标题，六个字以内"}};
     props["logline"] = {
         {"type", "string"},
-        {"description", "一句话说清这一集发生了什么，给人看的，不进成片"}};
+        {"description", "一句话说清这一章发生了什么，给人看的，不进成片"}};
 }
 
 }  // namespace
@@ -1112,11 +1112,11 @@ const ordered& premise_schema() {
     static const ordered s = [] {
         ordered idea_props = ordered::object();
         idea_props["title"] = {{"type", "string"},
-                               {"description", "剧名，八个字以内"}};
+                               {"description", "片名，八个字以内"}};
         idea_props["premise"] = {
             {"type", "string"},
             {"description",
-             "一两句话说清这部剧讲什么。要具体到人物和处境，不要写题材标签"}};
+             "一两句话说清这部电影讲什么。要具体到人物和处境，不要写题材标签"}};
         idea_props["hook"] = {{"type", "string"},
                               {"description", "一句话说清观众为什么会看下去"}};
 
@@ -1210,7 +1210,7 @@ void parse_beats_into(const json& arr, std::vector<Beat>& out) {
         if (t.empty()) continue;
 
         Beat b{kind, speaker, t};
-        // 章模式的四栏。集模式的回包里没有，留空。
+        // 照着章写时多出来的四栏。按秒排那条路的回包里没有，留空。
         if (const auto it = item.find("characters");
             it != item.end() && it->is_array()) {
             for (const auto& n : *it) {
@@ -1256,7 +1256,7 @@ ScriptDraft parse_script(const std::string& raw, double duration_s,
     draft.logline = strip_ascii(get_str(data, "logline"));
 
     // 四段的回包：四个键都在才算。少一个就退回平的那条路——
-    // 模型偶尔会把四段拍成一个 beats 数组，那样解析出来还是一集，只是没段头。
+    // 模型偶尔会把四段拍成一个 beats 数组，那样解析出来还是一份完整剧本，只是没段头。
     // **种子要和出 schema、拼提示词时用的是同一个**，否则段头上的秒数
     // 和模型看到的对不上。
     const std::vector<ActSpec> specs = act_plan(duration_s, variation);
@@ -1294,7 +1294,7 @@ ScriptDraft parse_script(const std::string& raw, double duration_s,
         draft.beats.begin(), draft.beats.end(),
         [](const Beat& b) { return b.kind == "dialogue"; });
     if (!any_dialogue) {
-        throw ScriptError("整集一句台词都没有，这样出来的是默片");
+        throw ScriptError("整章一句台词都没有，这样出来的是默片");
     }
     return draft;
 }
@@ -1324,7 +1324,7 @@ ScriptDraft parse_chapter_script(const std::string& raw,
             std::vector<Beat> beats;
             parse_beats_into(arr, beats);
             if (beats.empty()) continue;
-            // 一场的第一拍必须是场次头：它是分镜切场、装配切集的切点。
+            // 一场的第一拍必须是场次头：它是分镜按场拆镜的切点。
             // 模型漏了就补一个空的——「【第N场】」仍是切点，只是没说在哪。
             if (beats.front().kind != "scene") {
                 beats.insert(beats.begin(), Beat{"scene", "", ""});

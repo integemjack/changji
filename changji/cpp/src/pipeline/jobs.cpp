@@ -123,7 +123,7 @@ bool JobTable::start(JobKind kind, const std::string& episode_id, Body body,
         // **长跑任务也要进那本任务账。**
         //
         // 它原来只在自己这张表里（`running_jobs`），于是任务页面上一行都
-        // 没有——而「写整季」「出片」正是最该在那儿看的两件：一跑十几分钟、
+        // 没有——而「写全片」「出片」正是最该在那儿看的两件：一跑十几分钟、
         // 有思考、要能停。
         //
         // 这儿开一个 `Activity`（它是 `Task` 的壳，构造即开工）：
@@ -216,8 +216,10 @@ bool JobTable::cancel(JobKind kind) {
     // 不能删：槽看着空了，上一条线程可能还在收尾。
     s.state.running = false;
     s.state.pending.clear();
-    // 任务自己指定的那句优先。同一个槽上跑的两件事说法不一样：
-    // 写整季停了是"已经写好的几集留着"，批量出分镜停了是"已经出好的分镜留着"。
+    // 任务自己指定的那句优先。**一个槽上跑着好几件活，各说各的**：展开正文
+    // 停了是"已经写好的几章留着"，批量写剧本停了是"已经写好的几章剧本留着"，
+    // 批量出分镜停了是"已经出好的分镜留着"。下面这句兜底只在任务没自报时用，
+    // 一件活一条常量见 jobs.hpp 里 kWriteStoppedMessage 那一族。
     s.state.error = s.state.stop_message.empty() ? stopped_message(kind)
                                                  : s.state.stop_message;
     return true;

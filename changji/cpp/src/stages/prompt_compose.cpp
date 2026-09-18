@@ -320,11 +320,11 @@ PromptBundle PromptComposer::compose_with(const Shot& shot,
     //   想要 -> 保持现状，顶多在拼完之后检一遍不配对的括号并告警；
     //   不想要 -> 把 ( ) [ ] 全转义成 \( 那种字面形式，一了百了。
     out.positive = join_nonempty(kept, sep_);
-    // 负向提示词是镜头自己的加上全剧的。镜头级的在前——
+    // 负向提示词是镜头自己的加上全片的。镜头级的在前——
     // 它是针对这一镜的具体问题加的，权重该更高。
     out.negative = join_nonempty(
         {shot.negative_prompt, assets_.style.negative_prompt}, sep_);
-    // 视频那份：镜头自己的 + 项目页「负向」框里用户自己加的 + 全剧的视频
+    // 视频那份：镜头自己的 + 项目页「负向」框里用户自己加的 + 全片的视频
     // 负向词（prompts.toml [style]）。图像那份的默认串（「多余的手指」）
     // 不带过去，理由见 PromptBundle::negative_video；但用户在那个框里
     // **自己加的**要带——文件里推荐它「再压一道」，而 2026-09-16 之前它一个
@@ -366,7 +366,7 @@ std::string PromptComposer::motion_prompt(const Shot& shot) const {
     // **用之前再夹一次时长。**
     //
     // 排分镜和改时长那两处已经对齐过（storyboard.cpp 的 motion_covering），
-    // 但**盘上的老分镜表不会自愈**：2026-09-16 实测，修复之前排的一集里
+    // 但**盘上的老分镜表不会自愈**：2026-09-16 实测，修复之前排的那一章里
     // 一个 6 秒的镜头挂着 `[0-15秒]`、一个 2 秒的挂着 `[0-5秒]`。那些表
     // 不重排就一直是错的，而重排会把人手改过的东西一起冲掉。
     //

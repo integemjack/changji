@@ -130,15 +130,15 @@ stages::VideoRenderer make_video_renderer(
     std::optional<std::int64_t> seed_override, Origin origin) {
     const config::AssemblyConfig assembly = settings.assembly;
     const std::string lora_tiers = settings.models.video_lora_tiers;
-    // **这一份是「这一集」的设置**（出片每跑一集都 load_settings(项目目录)
+    // **这一份是「这一章」的设置**（出片每跑一章都 load_settings(项目目录)
     // 重读一遍），而建 SD 上下文用的是全局那份。采样旋钮跟着请求走才对得上，
     // 见 SamplingKnobs。
     const SamplingKnobs knobs = sampling_knobs_for(settings, ModelRole::Video);
-    // 留不留模型自己出的声音是剧的属性（[sound].ambient）。计划里带了
-    // （派活方那部剧的设置）就按计划的，没带按本机的。
+    // 留不留模型自己出的声音是这部电影的属性（[sound].ambient）。计划里带了
+    // （派活方那部电影的设置）就按计划的，没带按本机的。
     const bool keep_ambient_default = settings.sound.ambient;
     // 合并时两边各往这个 lambda 里加了捕获，都要：knobs / keep_ambient 是
-    // 「这一集」那一份设置，origin 是"这活谁派的"（见下面 local_exec().enter）。
+    // 「这一章」那一份设置，origin 是"这活谁派的"（见下面 local_exec().enter）。
     return [assembly, seed_override, lora_tiers, origin, knobs, keep_ambient_default](
                const models::Shot& shot, const stages::RenderPlan& plan,
                       const std::optional<fs::path>& start_image,

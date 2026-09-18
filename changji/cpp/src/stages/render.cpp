@@ -180,11 +180,11 @@ std::vector<RenderOutcome> render_batch(std::vector<Shot*>& shots,
         bool skipped = false;  ///< 取消了，没跑
         /// 这一格的副本装过东西没有。**写回的唯一凭据。**
         ///
-        /// ⚠️ 2026-09-17 丢过一集的数据：收尾那一段原来只看 `skipped`，
+        /// ⚠️ 2026-09-17 丢过一章的数据：收尾那一段原来只看 `skipped`，
         /// 而这个数组是按镜头数**默认构造**出来的——一格没跑过、又没被
         /// 标成 skipped 的话，`*shot = std::move(done[i].shot)` 写回去的
         /// 是一个**空壳 Shot**（shot_id 是空串、没有台词、status 回到
-        /// planned）。当天就是这么把 ep07 的 17 镜整集抹平的：流水那道
+        /// planned）。当天就是这么把 ep07 的 17 镜整章抹平的：流水那道
         /// 排位闸（wait_slack）在取消时让每一路直接 return，一格都没标
         /// skipped，于是 17 格全被空壳盖掉，最后那次 save 落了盘。
         ///
@@ -232,7 +232,7 @@ std::vector<RenderOutcome> render_batch(std::vector<Shot*>& shots,
         //（在条件变量上等，不占池）。见 pipeline/shot_flow.hpp。
         //
         // **等不到就往下走，不要 return。** 直接 return 的话这几路一格都
-        // 不领，`done` 里每一格都停在默认值上——收尾那一段照着走就把整集
+        // 不领，`done` 里每一格都停在默认值上——收尾那一段照着走就把整章
         // 写成空壳（见 Done::ran 上那段）。走下面那个循环，每一格老老实实
         // 标成 skipped。
         const bool slack = !extras.flow || extras.flow->wait_slack(tok);
@@ -276,7 +276,7 @@ std::vector<RenderOutcome> render_batch(std::vector<Shot*>& shots,
             }
 
             // `shot_step` / `shot_steps` 是**这一镜自己**的进度，
-            // 和 current/total（整集第几镜）是两回事。镜头墙上每张牌
+            // 和 current/total（整章第几镜）是两回事。镜头墙上每张牌
             // 画的是前者——拿后者画的话，正在跑的那一镜从头到尾都显示
             // 21/22 那个百分比。默认 0，只有采样回调那条会填。
             const auto say = [&](const char* kind, const std::string& msg,
@@ -301,7 +301,7 @@ std::vector<RenderOutcome> render_batch(std::vector<Shot*>& shots,
             };
 
             // 重试超限，用能用的东西顶上。**不是停下来**——
-            // 无人值守时停下来等于整集废掉。
+            // 无人值守时停下来等于整章废掉。
             const auto fallback = [&](const std::string& reason) {
                 local.status = ShotStatus::FALLBACK;
                 local.gate_notes = {reason};
@@ -461,7 +461,7 @@ std::vector<RenderOutcome> render_batch(std::vector<Shot*>& shots,
                     // 每条换一个种子（attempts 拉开 100，别和重试的 +1 撞上），
                     // 各过一遍闸门，按 pick_take 留一条。要闸门在才有依据挑。
                     // **第一条就干净的话到此为止**（take_good_enough）：
-                    // 无条件出两条是整集时间翻倍。
+                    // 无条件出两条是整章时间翻倍。
                     const int takes =
                         (gate.check &&
                          is_hero_shot(local, i == 0, i == total - 1))
@@ -607,9 +607,9 @@ std::vector<RenderOutcome> render_batch(std::vector<Shot*>& shots,
             // 边跑边结账，见 frames.cpp 同一处。
             tasks[i].reset();
 
-            // **出完一镜就落一次盘。** 一集二十二镜、一镜两分钟，
+            // **出完一镜就落一次盘。** 一章二十二镜、一镜两分钟，
             // 不落的话这一个小时里镜头墙上看到的还是开跑那一刻：
-            // 没有能点开看的片子，而那正是用户要的。
+            // 没有能点开看的视频，而那正是用户要的。
             // 进程被杀掉时更糟——mp4 躺在磁盘上，project.json 一条没记。
             //
             // **拷贝，不是移动**：下面收尾那一段还要用 done[i].shot。

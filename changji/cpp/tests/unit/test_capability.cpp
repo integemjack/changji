@@ -114,7 +114,7 @@ TEST_CASE("VAE：图像那份没配就退回视频那份") {
 
 TEST_CASE("配音缺一个文件就不算能干") {
     // 缺了不会报错，只会退回估算后端出一段静音——那才是最阴的，
-    // 整集跑完才发现没声音。所以这里必须拦住。
+    // 整章跑完才发现没声音。所以这里必须拦住。
     NodeFacts f = full();
     f.models["tts_decoder"] = false;
     CHECK_FALSE(able(f, Capability::Tts));

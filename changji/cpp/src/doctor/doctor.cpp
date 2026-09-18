@@ -815,7 +815,7 @@ Check check_canvas(const config::Settings& s) {
             "    --upscale-model <RealESRGAN_x4plus.pth 的路径> \\\n"
             "    --upscale-size " + k2_arg + "\n"
             "那个权重要自己下（Real-ESRGAN 的 v0.1.0 release，67 MB），"
-            "清单里没有。逐帧超分没有帧间一致性，做完要看片子。"};
+            "清单里没有。逐帧超分没有帧间一致性，做完要看成片。"};
 }
 
 Report run_checks(const config::Settings& settings) {

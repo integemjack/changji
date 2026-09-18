@@ -54,7 +54,7 @@ fs::path pristine_project() {
            paths::from_utf8(exp.at("root_name").get<std::string>());
 }
 
-/// 每个用例一份干净拷贝。写一集那个接口会改 project.json 里的梗概，
+/// 每个用例一份干净拷贝。写一章那个接口会改 project.json 里的梗概，
 /// 不隔离的话后面的用例读到的就是被改过的项目。
 fs::path fresh_copy(const std::string& tag) {
     const fs::path dst =
@@ -190,8 +190,8 @@ TEST_CASE("模型吐垃圾时回 400 而不是 500，这是有意和 Python 不�
                   "那就该把方案里那一节删掉");
 }
 
-TEST_CASE("写一集会把梗概存回项目") {
-    // 下次写新一集时直接回填，不用凭记忆重打。
+TEST_CASE("写一章会把梗概存回项目") {
+    // 下次写新一章时直接回填，不用凭记忆重打。
     const fs::path root = fresh_copy("存梗概");
     const std::string premise = "林晚在天台等一个七年没出现的人。";
 
@@ -294,7 +294,7 @@ TEST_CASE("预告片不拿自己当素材") {
     fs::remove_all(root, ec);
 }
 
-TEST_CASE("写一集时不拿预告当前文") {
+TEST_CASE("写一章时不拿预告当前文") {
     // 同上一条的另一面：拿预告当写正片的上下文，模型会开始抄自己的预告。
     const fs::path root = fresh_copy("前文不含预告");
     models::ProjectStore store(root);
@@ -304,7 +304,7 @@ TEST_CASE("写一集时不拿预告当前文") {
     trailer.episode_id = http::kTrailerEpisodeId;
     trailer.title = "预告";
     trailer.script = "预告里的宣传语，不该进前文";
-    // 插在最前面，确保它排在被写的那一集之前
+    // 插在最前面，确保它排在被写的那一章之前
     p.episodes.insert(p.episodes.begin(), trailer);
     store.save_project(p);
 
@@ -326,7 +326,7 @@ TEST_CASE("写一集时不拿预告当前文") {
     fs::remove_all(root, ec);
 }
 
-TEST_CASE("前文只取这一集之前的几集") {
+TEST_CASE("前文只取这一章之前的几章") {
     // 把后面的也塞进去，模型会把还没发生的事当成已经发生的写。
     const fs::path root = fresh_copy("前文截断");
     models::ProjectStore store(root);

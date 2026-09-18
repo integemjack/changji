@@ -196,10 +196,10 @@ ApiResult start_async(const std::string& stream_id, Work work) {
 
 
 
-/// 跑一遍体检。给了项目路径就按**这部剧**的配置跑。
+/// 跑一遍体检。给了项目路径就按**这部电影**的配置跑。
 ///
-/// **画面规格是每部剧自己的**（项目目录的 changji.toml 里那个 [video]）。
-/// 不读它的话「出片画布」那一项查的是全局默认、而出片用的是这部剧的那个
+/// **画面规格是每部电影自己的**（项目目录的 changji.toml 里那个 [video]）。
+/// 不读它的话「出片画布」那一项查的是全局默认、而出片用的是这部电影的那个
 /// ——项目切到 2k 之后体检照样说 544×928 没问题，这条检查等于没有。
 /// 实测撞到过。
 ///
@@ -228,10 +228,10 @@ doctor::Report doctor_for(const char* raw_path) {
     if (!broken.empty()) {
         r.checks.insert(
             r.checks.begin(),
-            doctor::Check{"这部剧的配置", doctor::Level::FAIL, broken,
+            doctor::Check{"这部电影的配置", doctor::Level::FAIL, broken,
                           "改掉那个文件里的语法错误再刷新。在修好之前，"
                           "下面这些项查的是全局配置（用户目录那份），"
-                          "和这部剧真正会用的不是一回事。"});
+                          "和这部电影真正会用的不是一回事。"});
     }
     return r;
 }
@@ -256,7 +256,7 @@ bool query_bool(const crow::request& req, const char* key, bool def = false) {
 /// **"没给"和"给了个空的"是两回事。** FastAPI 对 `path: str` 这种没有默认值
 /// 的参数，缺了就在处理函数跑之前拦下来回 422；而 `?path=` 是一个合法的
 /// 空字符串，会进处理函数然后回 400。少了这个区分的话，缺参数时 C++ 回的是
-/// 404「没有剧集 」——注意末尾那个空格，那是拿空参数去查的结果。
+/// 404「没有章节 」——注意末尾那个空格，那是拿空参数去查的结果。
 ///
 /// 这一条是实时对拍抓出来的：单元测试直接调处理函数，天然绕过了这一层。
 std::string required_query(const crow::request& req, const char* key) {
@@ -471,11 +471,11 @@ void run(const config::Settings& settings, const Options& opts) {
             if (const auto why = bad_peer_url(url); !why.empty()) {
                 return json_response({{"detail", why}}, 422);
             }
-            // **正在跑的时候不许改。** 同 /api/nodes/off：半集换机器会让
+            // **正在跑的时候不许改。** 同 /api/nodes/off：半章换机器会让
             // 前后画风对不上。
             if (pipeline::jobs().running(pipeline::JobKind::Run)) {
                 return json_response(
-                    {{"detail", "正在跑，这时候改派活的机器会把这一集跑坏"}},
+                    {{"detail", "正在跑，这时候改派活的机器会把这一章跑坏"}},
                     409);
             }
 
@@ -514,7 +514,7 @@ void run(const config::Settings& settings, const Options& opts) {
             if (url.empty()) return json_response({{"detail", "要 url"}}, 422);
             if (pipeline::jobs().running(pipeline::JobKind::Run)) {
                 return json_response(
-                    {{"detail", "正在跑，这时候改派活的机器会把这一集跑坏"}},
+                    {{"detail", "正在跑，这时候改派活的机器会把这一章跑坏"}},
                     409);
             }
 
@@ -563,7 +563,7 @@ void run(const config::Settings& settings, const Options& opts) {
             }
             if (pipeline::jobs().running(pipeline::JobKind::Run)) {
                 return json_response(
-                    {{"detail", "正在跑，这时候改派活的机器会把这一集跑坏"}},
+                    {{"detail", "正在跑，这时候改派活的机器会把这一章跑坏"}},
                     409);
             }
 
@@ -621,11 +621,11 @@ void run(const config::Settings& settings, const Options& opts) {
                     {{"detail", "要 url 和 cap（llm/tts/frame/video/assemble）"}},
                     422);
             }
-            // **正在跑的时候不许改。** 半集换机器会让前后画风对不上——
+            // **正在跑的时候不许改。** 半章换机器会让前后画风对不上——
             // 和 /api/connections 那边"正在跑时不许换机器"是同一条规矩。
             if (pipeline::jobs().running(pipeline::JobKind::Run)) {
                 return json_response(
-                    {{"detail", "正在跑，这时候改派活的机器会把这一集跑坏"}},
+                    {{"detail", "正在跑，这时候改派活的机器会把这一章跑坏"}},
                     409);
             }
 
@@ -664,8 +664,8 @@ void run(const config::Settings& settings, const Options& opts) {
 
     CROW_ROUTE(app, "/api/hardware")([](const crow::request& req) {
         auto r = guard([&] {
-            // **给了项目就按这部剧算。** 单镜最长是四道夹子连乘出来的，
-            // 其中一道（[video].max_shot_s）是剧的属性——不按项目算的话，
+            // **给了项目就按这部电影算。** 单镜最长是四道夹子连乘出来的，
+            // 其中一道（[video].max_shot_s）是电影的属性——不按项目算的话，
             // 这一栏报的是全局默认，而排分镜用的是项目那一份，两个数对不上。
             const char* raw = req.url_params.get("path");
             const std::string path = raw ? raw : "";
@@ -1106,7 +1106,7 @@ void run(const config::Settings& settings, const Options& opts) {
 
     // ---- 剧本 ----
     //
-    // 三个都是同步的：调一次大模型，几十秒内返回。写整季不一样，
+    // 三个都是同步的：调一次大模型，几十秒内返回。写全片不一样，
     // 那个要跑几分钟，走下面的 job 表。
     //
     // 客户端在这里造一次，三个路由共用。每个请求造一个的话，
@@ -1193,7 +1193,9 @@ void run(const config::Settings& settings, const Options& opts) {
     // ---- 故事层 ----
     //
     // 整条流水线的新源头：先有完整故事，人物关系和场景从故事里提，
-    // 再按每集时长把故事切成集。见 docs/故事优先重构方案.md。
+    // 再照大纲的章一章一条排出章节计划（每章时长只在这一章还没正文时
+    // 当回落，见 stages/story_plan.cpp 的 plan_episodes）。
+    // 见 docs/故事优先重构方案.md。
     //
     // 写和采用分成两个接口，照的是剧本那边已经立住的规矩：源头没人审过
     // 就往下跑，后面几十分钟的渲染全是白跑。/outline 只回草稿不落库。
@@ -1255,7 +1257,7 @@ void run(const config::Settings& settings, const Options& opts) {
             return json_response(r.body, r.status);
         });
 
-    // 老项目接回新流程的那一步。不碰大模型，也不重新分集。
+    // 老项目接回新流程的那一步。不碰大模型，也不重新排章节计划。
     CROW_ROUTE(app, "/api/story/from_episodes").methods("POST"_method)(
         [](const crow::request& req) {
             auto r = guard([&] {
@@ -1335,8 +1337,8 @@ void run(const config::Settings& settings, const Options& opts) {
     // ---- Node 那个 BFF 的几条，引擎自己也答一份 ----
     //
     // **为什么引擎要管这个。** 引擎自己发前端之后，走这条路的人拿不到
-    // `/bff/*`——界面能打开、项目列表也在，但**剧集下拉框是空的**、
-    // 顶栏写着"引擎连不上"，「这一集」那一页点不动。那等于"打开端口就能看处理进度"
+    // `/bff/*`——界面能打开、项目列表也在，但**章节下拉框是空的**、
+    // 顶栏写着"引擎连不上"，「这一章」那一页点不动。那等于"打开端口就能看处理进度"
     // 没做完。
     //
     // 只搬**判定和状态**这几条。投递（`/bff/publish/*`）没搬：它要存投递
@@ -1544,13 +1546,13 @@ void run(const config::Settings& settings, const Options& opts) {
         //
         // ⚠️ **这里也要带项目路径。** 原来是 `run_checks(s)`——全局那份配置。
         // 于是同一条「出片画布」在两处给出两个答案：镜头页那个开跑前的体检
-        // 走 `/api/doctor?path=…`（查的是这部剧的 [video]，能说出"2K 超了
+        // 走 `/api/doctor?path=…`（查的是这部电影的 [video]，能说出"2K 超了
         // 模型上限"），而设置页这一节查的是全局默认的 544×928，永远说没问题
         // ——**而设置页正是产品把体检摆在第一节的那一页**，上面还挂着一颗
         // 「可以开工 / 还不能跑」的牌子。一个照着全局配置发的"可以开工"，
-        // 在当前这部剧上可能根本跑不出东西来。
+        // 在当前这部电影上可能根本跑不出东西来。
         //
-        // 前端把顶栏选中的那部剧的路径带上来（api.settingsOverview(project)）。
+        // 前端把顶栏选中的那部电影的路径带上来（api.settingsOverview(project)）。
         // 没带就还是全局那份，和以前一样。
         out["doctor"] = doctor::to_json(doctor_for(req.url_params.get("path")));
         out["errors"] = json::object();
@@ -1615,10 +1617,11 @@ void run(const config::Settings& settings, const Options& opts) {
             return json_response(r.body, r.status);
         });
 
-    // ---- 这部剧的画面规格 ----
+    // ---- 这部电影的画面规格 ----
     //
-    // 竖屏还是横屏、720p 还是 2K。**一部剧一份**，写在项目目录的
-    // changji.toml 里——一台机器上可以同时有竖屏短剧和横屏片子。
+    // 竖屏还是横屏、720p 还是 2K。**一部电影一份**，写在项目目录的
+    // changji.toml 里——一台机器上可以同时有一部横屏的正片和一批竖版的
+    // 物料（竖屏预告、花絮）。
     //
     // 走 /bff 不走 /api：这两项是 C++ 独有的，而 /api/project 那份 JSON
     // 在对拍覆盖范围内，Python 没有它们。
@@ -1643,13 +1646,13 @@ void run(const config::Settings& settings, const Options& opts) {
     // 才发现什么都跑不了——那时候用户手上只有一句"本地模型一个都没配"
     // 和一个配置文件路径。这四条接口把那段路变成"看推荐、点下载、等"。
 
-    // `path` 给了就**带上那部剧的 changji.toml**。
+    // `path` 给了就**带上那部电影的 changji.toml**。
     //
     // 「挑了哪一档」记在项目里（`[models.pick]`），而这条接口正是那个模型
     // 窗口读的。不带项目的话它只看全局——于是人在项目页挑完、写进了项目，
     // 再打开那个窗口看到的还是全局那一档，**看着像没保存上**。
     //
-    // 不给 path 照旧只看全局：设置页那一节不属于任何一部剧。
+    // 不给 path 照旧只看全局：设置页那一节不属于任何一部电影。
     CROW_ROUTE(app, "/bff/setup/state")([](const crow::request& req) {
         auto r = guard([&] {
             const std::string project = query(req, "path");
@@ -1705,11 +1708,11 @@ void run(const config::Settings& settings, const Options& opts) {
         return status == 0 ? 502 : status;
     };
 
-    // `path` 给了就带上那部剧的 `[models.pick]`，理由同 /bff/setup/state。
+    // `path` 给了就带上那部电影的 `[models.pick]`，理由同 /bff/setup/state。
     //
     // **这一条尤其要带。** 界面拿本机这一份当「标准那一套」发给别的机器
     // （NodeMatrix 的「装成和本机同一套」）。不带项目的话那个标准是**这台
-    // 机器全局配着的那一档**，而派活时带过去的是**这部剧挑的那一档**——
+    // 机器全局配着的那一档**，而派活时带过去的是**这部电影挑的那一档**——
     // 两者不同的时候，给对面装的和真要用的就不是一个东西，而表现要到
     // 那一镜被对面拒了才看得出来（「这台装的是别的档」，见 task_run.cpp）。
     CROW_ROUTE(app, "/api/nodes/setup")(
@@ -1797,6 +1800,9 @@ void run(const config::Settings& settings, const Options& opts) {
         auto r = guard([&] {
             const auto root =
                 changji::paths::from_utf8(required_query(req, "path"));
+            // 老项目没有 `[video]` 时，这儿报的是 load_settings 从它自己的
+            // assets.json 推出来的那一档，不是内置默认——设置页显示的、
+            // 和用户按保存时发回来的，于是都是这个项目自己的画幅。
             const auto s = config::load_settings(root);
             const auto [w, h] = s.video.size();
             return ApiResult{200,
@@ -1840,7 +1846,7 @@ void run(const config::Settings& settings, const Options& opts) {
 
                 // 老项目（建在有标准模板之前）没有这份文件时先按项目模板
                 // 起底。不然 save_user_config 拿**全局**模板起底，项目配置里
-                // 会冒出 [llm]、[workers] 这些和剧无关的节。
+                // 会冒出 [llm]、[workers] 这些和电影无关的节。
                 // 文件已经在的话这一步什么都不做，下面照常改那两行。
                 config::write_project_config(root, v);
                 config::save_user_config(
@@ -1881,9 +1887,9 @@ void run(const config::Settings& settings, const Options& opts) {
             return json_response(r.body, r.status);
         });
 
-    // ---- 这部剧的成片工序：后期链和声音 ----
+    // ---- 这部电影的成片工序：后期链和声音 ----
     //
-    // 剧的属性，住在项目的 changji.toml 的 [look] / [sound]。放大和配乐
+    // 电影的属性，住在项目的 changji.toml 的 [look] / [sound]。放大和配乐
     // 命令是机器属性，不在这儿（全局 [upscale] / [sound].music_command）。
     // 同 /bff/project/video：C++ 独有，所以在 /bff。
     const auto finish_json = [](const config::Settings& s) {
@@ -1998,6 +2004,13 @@ void run(const config::Settings& settings, const Options& opts) {
                 }
                 if (!patch.empty()) {
                     // 老项目没有这份文件时先按项目模板起底（同 /bff/project/video）。
+                    //
+                    // ⚠️ **起底那份写的是 `s.video`**，也就是
+                    // `load_settings` 给出的「这个项目自己的画幅」——老项目
+                    // 是从它的 assets.json 推回来的那一档。这一页调的是后期
+                    // 和声音，用户根本没碰画幅；写内置默认的话，2026-09-18
+                    // 默认翻成横屏之后，**在这一页点一下保存就把 landscape
+                    // 永久写进一个竖屏项目**，不可逆也没有提示。
                     config::write_project_config(root, s.video);
                     config::save_user_config(patch, root / "changji.toml");
                 }
@@ -2069,20 +2082,20 @@ void run(const config::Settings& settings, const Options& opts) {
         }
         const json& project = proj.body;
 
-        // 没指定就跟第一集走，和 Node 那边一样。
+        // 没指定就跟第一章走，和 Node 那边一样。
         //
         // **认不出来的也算"没指定"。** 原来的判据只有"空串"，于是非空但
-        // 不在这部剧里的集号（前端 localStorage 里躺着一个删掉的集号、
+        // 不在这部电影里的章号（前端 localStorage 里躺着一个删掉的章号、
         // 另一个标签页刚把它删了、或者别处传错了）会被**原样回给前端**。
-        // 而前端那句「引擎挑了哪一集就跟着它」比的是
+        // 而前端那句「引擎挑了哪一章就跟着它」比的是
         // `data.episodeId !== episodeId.value`——两边一样，它就不改；
         // `data.episodeId` 又非空，`if (!data.episodeId) selectEpisode('')`
-        // 那条兜底也不走。结果集号永久卡在一个不存在的集上，还写在
+        // 那条兜底也不走。结果章号永久卡在一个不存在的章上，还写在
         // localStorage 里，刷新也出不来：顶栏那个下拉 v-model 落空显示
-        // 空白，「这一集」整页没有东西，而界面上一个字都不会说。
+        // 空白，「这一章」整页没有东西，而界面上一个字都不会说。
         //
         // 前端是**指望这儿判**的（session.js：「省得前端自己再判一遍第一
-        // 集是谁」），那就真判到底：查不到就退回第一集；一集都没有就回
+        // 章是谁」），那就真判到底：查不到就退回第一章；一章都没有就回
         // 空串，让前端把它清掉。
         std::string episode_id;
         if (const char* e = req.url_params.get("episode_id")) episode_id = e;
@@ -2146,7 +2159,7 @@ void run(const config::Settings& settings, const Options& opts) {
             auto r = guard([&] { return get_assets(path); });
             if (r.status == 200 && r.body.is_object()) assets = r.body;
         }
-        // 成片那一格：切出来的几集在不在。
+        // 成片那一格：那一部电影在不在。
         json film = json::object();
         {
             auto r = guard([&] { return get_film(path); });
@@ -2341,7 +2354,7 @@ void run(const config::Settings& settings, const Options& opts) {
             return json_response(r.body, r.status);
         });
 
-    // ---- 剧本读写与剧集增删改 ----
+    // ---- 剧本读写与章节增删改 ----
     //
     // 这几个属于阶段 3，当时按 test_web_editing.py 的覆盖面移植而漏了。
     // 阶段 2 判据的实机验证里前端调出 404 才发现。
@@ -2354,7 +2367,7 @@ void run(const config::Settings& settings, const Options& opts) {
         return json_response(r.body, r.status);
     });
 
-    // 这一集的原料：场、原文、钩子、四段按秒的排法。和 AI 改编时拿到的
+    // 这一章的原料：场、原文、钩子、四段按秒的排法。和 AI 改编时拿到的
     // 是同一份，只是给人看。
     CROW_ROUTE(app, "/api/script/context")([](const crow::request& req) {
         auto r = guard([&] {
@@ -2428,14 +2441,18 @@ void run(const config::Settings& settings, const Options& opts) {
             return json_response(r.body, r.status);
         });
 
-    // ---- 成片：每章都出片了，按每集时长切 ----
+    // ---- 成片：有一章出了片，就把出了片的章接成一部完整的电影 ----
+    //
+    // 2026-09-18 定成电影平台，POST /api/film/cut（body 里带 per_episode_s）
+    // 换成了 /api/film/join。**旧路由不留兼容**：前端打包进这个二进制，
+    // 没有外部调用方，留一条空壳只会让下一个人以为切段还在。
     CROW_ROUTE(app, "/api/film")([](const crow::request& req) {
         auto r = guard([&] { return get_film(required_query(req, "path")); });
         return json_response(r.body, r.status);
     });
-    CROW_ROUTE(app, "/api/film/cut").methods("POST"_method)(
+    CROW_ROUTE(app, "/api/film/join").methods("POST"_method)(
         [](const crow::request& req) {
-            auto r = guard([&] { return post_film_cut(parse_body(req.body)); });
+            auto r = guard([&] { return post_film_join(parse_body(req.body)); });
             return json_response(r.body, r.status);
         });
 
@@ -2534,7 +2551,7 @@ void run(const config::Settings& settings, const Options& opts) {
 
     // 把某一件正在后台跑的活停掉。**按 stream 停，不按种类停。**
     //
-    // 上面 /api/stop 和 /api/script/series/stop 停的是"出片"和"写整季"那两个
+    // 上面 /api/stop 和 /api/script/series/stop 停的是"出片"和"写全片"那两个
     // 长跑任务，一种只有一个槽。而写大纲、写正文、拆分镜这一族是按请求起的，
     // 同时可以有好几件——只能按它自己那条 stream 认。
     CROW_ROUTE(app, "/api/job/cancel").methods("POST"_method)(

@@ -161,7 +161,7 @@ std::string build_revise_prompt(const Story& story, const Span& span,
     // ---- 压缩的全局记忆。只要名字和身份 ----
     //
     // 改一段话用不着整份人物表，但**名字必须带**：不带的话模型会把"他"
-    // 改成一个自己顺手起的名字，而那个名字在全剧其它地方一次都没出现过。
+    // 改成一个自己顺手起的名字，而那个名字在全片其它地方一次都没出现过。
     if (!story.logline.empty()) out += "【这个故事】" + story.logline + "\n";
     if (!story.tone.empty()) out += "【调子】" + story.tone + "\n";
     if (!story.characters.empty()) {
@@ -263,11 +263,12 @@ Story apply_revision(const Story& story, const Span& span,
     c->text = slice_chars(c->text, 0, a) + text_in +
               slice_chars(c->text, b, len);
 
-    // **候选切点必须跟着挪。** 它们是字符偏移，改一段字之后后面每一个都
-    // 错位了——不管的话分集的切线会落在句子中间，而这件事不报任何错，
-    // 只在成片里表现成"这一集从半句话开始"。
+    // **候选位置必须跟着挪。** 它们是字符偏移，改一段字之后后面每一个都
+    // 错位了——不管的话「这儿悬着什么」就挂到了另一句话上，而这件事不报
+    // 任何错：下次读一遍正文（story_analyze）按 at_char 对位时照着错的位置
+    // 对，章尾那条说法也跟着指歪。
     //
-    // **有说法的那些要保住。** 它们是读懂剧情标出来的真钩子，一集停在哪
+    // **有说法的那些要保住。** 它们是读懂剧情标出来的真钩子，一章停在哪
     // 全靠它们（实跑里有名钩子把"停在真悬念上"的比例从 25% 抬到 56%）。
     // 图省事整章重算 paragraph_hooks 的话，这些会被一批无名的段落边界
     // 悄悄顶掉——每改一段就掉一批，而界面上一点反应都没有。
@@ -275,7 +276,7 @@ Story apply_revision(const Story& story, const Span& span,
     for (const Hook& h : c->hooks) {
         if (h.text.empty()) continue;  // 无名的下面按新正文重算就是了
         if (h.at_char <= a) {
-            // 切点落在改动之前：它说的是"这儿之前那段字悬着什么"，
+            // 这一条落在改动之前：它说的是"这儿之前那段字悬着什么"，
             // 而那段字一个都没动。照留。
             kept.push_back(h);
         } else if (h.at_char > b) {
@@ -283,9 +284,10 @@ Story apply_revision(const Story& story, const Span& span,
             moved.at_char = h.at_char + delta;
             kept.push_back(moved);
         }
-        // (a, b] 这一段里的丢掉。**右端是闭的**：正好落在 b 上的那个切点，
+        // (a, b] 这一段里的丢掉。**右端是闭的**：正好落在 b 上的那一条，
         // 说的是"刚被换掉的那段字悬着什么"——字换了，那句说明就成了假的，
-        // 而假的比没有更糟：分集会照着它把一集停在一个已经不存在的悬念上。
+        // 而假的比没有更糟：写剧本那一步会照着它把这一章停在一个已经不
+        // 存在的悬念上。
     }
 
     // **场的边界也要跟着挪**，道理和钩子一样：它们是字符偏移，写剧本的

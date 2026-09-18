@@ -24,7 +24,7 @@ namespace changji::stages {
 
 /// 中文语速，字/秒。
 ///
-/// 4.6 是短剧对白的经验值。播音腔更慢，日常对话更快；
+/// 4.6 是电影对白的经验值。播音腔更慢，日常对话更快；
 /// 估高了镜头会留白太多，估低了配音装不进去——后者更糟。
 inline constexpr double kCharsPerSecond = 4.6;
 /// 每句前后的呼吸留白。不留的话拼接处听起来是抢话。
@@ -50,10 +50,10 @@ double max_line_seconds(int fps = 24);
 std::vector<std::string> split_long_text(const std::string& text,
                                          double max_seconds);
 
-/// 给拆出来的新镜取一个**全集没用过**的编号。
+/// 给拆出来的新镜取一个**整章没用过**的编号。
 ///
-/// 编号要跟全集比对着发。同一集重跑一次配音会再拆一次，只按本次的序号
-/// 取名的话第二次又会取出一个 sh001_b，于是一集里出现两个同名镜头：
+/// 编号要跟整章比对着发。同一章重跑一次配音会再拆一次，只按本次的序号
+/// 取名的话第二次又会取出一个 sh001_b，于是一章里出现两个同名镜头：
 /// 按 id 找镜头只能找到头一个，音频和首帧的文件名也会互相覆盖。
 std::string free_shot_id(const std::string& base,
                          const std::set<std::string>& used);

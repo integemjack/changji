@@ -279,7 +279,7 @@ struct HardwareProfile {
 
     std::string describe() const;
 
-    /// 估算一集的纯生成时间，单位秒。未标定返回空。
+    /// 估算一章的纯生成时间，单位秒。未标定返回空。
     std::optional<double> estimate_episode(int shot_count, Tier tier) const;
 };
 

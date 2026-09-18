@@ -14,8 +14,7 @@ import { useSession } from '@/stores/session'
  * **反过来**索引一遍：名字 → 出现在第几章。
  *
  * **靠名字对，不靠 id。** 章节里记的是正文里的称呼，资产库里存的是
- * char_id / location_id——两边唯一对得上的就是名字。分集线上那排人脸一直
- * 是这么对的（见 AssetEpisodes 的 facesOf），这里跟着同一条路，不另起一套。
+ * char_id / location_id——两边唯一对得上的就是名字。
  */
 export function useChapterIndex() {
   const session = useSession()

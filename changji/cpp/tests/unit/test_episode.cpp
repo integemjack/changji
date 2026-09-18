@@ -1,6 +1,6 @@
-// 整集流水线的测试。
+// 整章流水线的测试。
 //
-// 两个后端都是注入的，所以整条编排能在几毫秒里跑完——而真跑一集要几十分钟。
+// 两个后端都是注入的，所以整条编排能在几毫秒里跑完——而真跑一章要几十分钟。
 // 这里测的正是那几十分钟里看不出来、跑完才发现的东西：
 //
 //   * 阶段之间是**分批**的，不是按镜头串行的（预算只装得下一个模型时，
@@ -61,7 +61,7 @@ models::Shot make_shot(const std::string& id, int order) {
     return s;
 }
 
-/// 建一个能跑的项目：一集，n 个镜头，全都是 PLANNED。
+/// 建一个能跑的项目：一章，n 个镜头，全都是 PLANNED。
 models::ProjectStore make_store(const std::string& tag, int n) {
     const fs::path root = temp_root(tag);
     auto store = models::ProjectStore::create(root, "yu_ye", "雨夜天台");
@@ -186,7 +186,7 @@ struct Recorder {
     }
 };
 
-/// 在 job 表上跑一集，等它结束。
+/// 在 job 表上跑一章，等它结束。
 pipeline::RunReport run_it(const models::ProjectStore& store,
                            const pipeline::RunOptions& opts, Recorder& rec,
                            pipeline::CancelToken& tok,
@@ -433,8 +433,8 @@ TEST_CASE("only 指定阶段时只跑那一段") {
 }
 
 TEST_CASE("首帧失败的镜头退回纯文生视频，不被跳过") {
-    // 跳过的话整集会缺一镜，而缺的那一镜要到装配时才发现。
-    // 退回纯文生视频画面一致性会差一些，但整集能出来。
+    // 跳过的话整章会缺一镜，而缺的那一镜要到装配时才发现。
+    // 退回纯文生视频画面一致性会差一些，但整章能出来。
     const auto store = make_store("退回", 3);
     Recorder rec;
     rec.frame_fails = {"ep01_sh002"};
@@ -471,7 +471,7 @@ TEST_CASE("降级了却一个视频都没有的，下一轮要接着跑") {
     // 2026-09-17 实撞：唯一那台工作机在出片中途掉线，17 镜里 16 镜被标成
     // fallback——每一镜都只是撞了同一堵墙，一帧都没渲出来。`fallback` 算
     // 终态，于是之后再点出片这 16 镜全被跳过，人永远等不到它们被重跑，
-    // 而镜头页那颗主按钮还写着「这一章出完了」：一集零个视频，按钮说做完了。
+    // 而镜头页那颗主按钮还写着「这一章出完了」：一章零个视频，按钮说做完了。
     //
     // 判据是**有没有东西**，不是状态名：留最后那一版的前提是真有一版。
     const auto store = make_store("空降级", 3);
@@ -541,7 +541,7 @@ TEST_CASE("跑全流程时成片档不吃 force") {
 }
 
 TEST_CASE("跑过一遍之后再跑就跳过") {
-    // 断点续跑靠的就是这个。跳不掉的话点第二次会把整集重算一遍，
+    // 断点续跑靠的就是这个。跳不掉的话点第二次会把整章重算一遍，
     // 而用户点第二次通常是因为第一次中途停了。
     const auto store = make_store("续跑", 2);
     {
@@ -615,12 +615,12 @@ TEST_CASE("取消之后不再进下一个阶段") {
     CHECK(report.final_.empty());
 }
 
-TEST_CASE("剧集不存在或者没有分镜表时说清楚") {
+TEST_CASE("这一章不存在或者没有分镜表时说清楚") {
     const auto store = make_store("缺集", 1);
     Recorder rec;
     pipeline::CancelToken tok;
 
-    SUBCASE("没这一集") {
+    SUBCASE("没这一章") {
         pipeline::RunOptions opts;
         opts.episode_id = "ep99";
         try {
@@ -633,7 +633,7 @@ TEST_CASE("剧集不存在或者没有分镜表时说清楚") {
         }
     }
 
-    SUBCASE("有这一集但没分镜") {
+    SUBCASE("有这一章但没分镜") {
         models::Project p = store.load_project();
         models::Episode empty;
         empty.episode_id = "ep02";
@@ -955,7 +955,7 @@ TEST_CASE("出首帧挑的是「没有能用首帧」的，不只是 AUDIO_DONE"
 
 TEST_CASE("装配漏下谁要点名，不能只报一个数") {
     // **装配那道筛选本来是静默的。** 不可用的镜头直接不进片子，唯一的线索
-    // 是「装配 16 个镜头」这个数——人得自己记得这一集有 18 镜才看得出来。
+    // 是「装配 16 个镜头」这个数——人得自己记得这一章有 18 镜才看得出来。
     // 2026-09-13 实机：walk_c ep01 两镜重跑过配音退回 audio_done，
     // 成片从 18 镜 61.8 秒变成 16 镜 54.3 秒，消息一个字都没提。
     //
@@ -1097,7 +1097,7 @@ TEST_CASE("各阶段挑哪些镜头跑，和 Python 一样") {
     }
 }
 
-TEST_CASE("pick 返回的是指针，改了状态要能落到剧集上") {
+TEST_CASE("pick 返回的是指针，改了状态要能落到那一章上") {
     // 这一条不比 Python，钉的是 C++ 自己的一个坑：Python 那边
     // episode.sorted_shots() 返回的是同一批对象的引用，而 C++ 侧那个
     // 函数返回的是**拷贝**。照抄名字的话所有状态改动都写进临时对象，
@@ -1127,7 +1127,7 @@ TEST_CASE("跳过草稿档时，成片档要收首帧刚做完的那批") {
     const auto skipped = pipeline::render_entry_states(models::Tier::FINAL, true);
     CHECK(skipped.count(models::ShotStatus::DRAFT_DONE) == 1);
     CHECK(skipped.count(models::ShotStatus::FRAME_DONE) == 1);
-    // 首帧失败那批（状态停在 AUDIO_DONE）也要收，否则整集卡在它们身上
+    // 首帧失败那批（状态停在 AUDIO_DONE）也要收，否则整章卡在它们身上
     CHECK(skipped.count(models::ShotStatus::AUDIO_DONE) == 1);
 
     // 草稿档自己不受这个开关影响

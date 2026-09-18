@@ -99,9 +99,9 @@ Revision parse_revision(const std::string& raw, int span_chars,
 Revision parse_plain_revision(const std::string& raw, int span_chars,
                               int whole_chars = 0);
 
-/// 把新的一段接回故事里：替换正文、重算这一章的候选切点。
+/// 把新的一段接回故事里：替换正文、重算这一章的候选位置。
 ///
-/// **不重算分集表**——那是调用方的事，因为要不要重算取决于这几集有没有
+/// **不重算章节计划**——那是调用方的事，因为要不要重算取决于这几章有没有
 /// 已经排好的分镜，而这一层看不见项目。
 models::Story apply_revision(const models::Story& story, const Span& span,
                              const std::string& text);

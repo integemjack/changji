@@ -28,6 +28,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include "config/settings.hpp"
 #include "http/batch.hpp"
 #include "http/planning.hpp"
 #include "http/story_api.hpp"
@@ -130,8 +131,8 @@ TEST_CASE("schema 里不许有外观字段") {
     CHECK(ch.contains("name"));
     CHECK(ch.contains("want"));
 
-    // 章节必须有 hook：后面每一集的结尾都要落在钩子上，没有钩子就只能按
-    // 字数硬切，那是这套设计要避开的东西。
+    // 章节必须有 hook：这一章停在哪就看它。没有钩子的话写剧本那一步只能
+    // 退回「最后一场演完的那个落点」，收口就说不出为什么在那儿。
     const auto& chap = props.at("chapters").at("items");
     CHECK(chap.at("properties").contains("hook"));
     bool hook_required = false;
@@ -189,7 +190,7 @@ TEST_CASE("地点和出场人要写进 required，不然 14B 一个都不给") {
     CHECK(chap.at("properties").at("locations").at("minItems") == 1);
 }
 
-TEST_CASE("提示词：章数跟着体量走，不跟集数走") {
+TEST_CASE("提示词：章数跟着体量走，不跟时长走") {
     const std::string s = build_outline_prompt("深夜便利店", StoryScale::SHORT,
                                                StyleLine::REALISTIC);
     const std::string m = build_outline_prompt("深夜便利店", StoryScale::MEDIUM,
@@ -215,11 +216,11 @@ TEST_CASE("提示词：章数跟着体量走，不跟集数走") {
 TEST_CASE("提示词：画风和关键词") {
     const std::string anime =
         build_outline_prompt("梗概", StoryScale::MEDIUM, StyleLine::ANIME);
-    CHECK(anime.find("动漫短剧") != std::string::npos);
+    CHECK(anime.find("动漫电影") != std::string::npos);
 
     const std::string real =
         build_outline_prompt("梗概", StoryScale::MEDIUM, StyleLine::REALISTIC);
-    CHECK(real.find("真人写实短剧") != std::string::npos);
+    CHECK(real.find("真人写实电影") != std::string::npos);
 
     const std::string kw = build_outline_prompt("梗概", StoryScale::MEDIUM,
                                                 StyleLine::REALISTIC, "重生复仇");
@@ -362,7 +363,7 @@ TEST_CASE("POST /api/story/outline：写完直接落盘") {
     CHECK(r.status == 200);
     CHECK(r.body.at("adopted").get<bool>());
     CHECK(r.body.at("chapters").get<int>() == 2);
-    // 大纲阶段没正文，一章一集
+    // 大纲阶段没正文，一章一条
     CHECK(r.body.at("episodes").get<int>() == 2);
 
     // **直接进 story.json。** 草稿那一屏 2026-09-17 退役（理由在
@@ -371,7 +372,7 @@ TEST_CASE("POST /api/story/outline：写完直接落盘") {
     CHECK(store.load_story().chapters.size() == 2);
     CHECK(store.load_story().plan.size() == 2);
     CHECK(store.load_project().premise == "深夜便利店");
-    // 梗概写回去的那一下不能把刚同步出来的剧集盖掉（2026-09-18 抓到的）
+    // 梗概写回去的那一下不能把刚同步出来的章节表盖掉（2026-09-18 抓到的）
     CHECK(store.load_project().episodes.size() == 2);
 
     // 提示词确实拼过并发出去了
@@ -601,7 +602,7 @@ TEST_CASE("POST /api/story/revise：空章上的 [0, 0) 是「从头写」，不
     fs::remove_all(root, ec);
 }
 
-TEST_CASE("POST /api/story/adopt：落库并算出分集表") {
+TEST_CASE("POST /api/story/adopt：落库并算出章节计划") {
     const fs::path root = fresh_project("采用");
     const Story draft =
         parse_outline(good_outline().dump(), "深夜便利店", StoryScale::MEDIUM);
@@ -658,7 +659,7 @@ TEST_CASE("POST /api/story/adopt：会顶掉写好的正文时要拦一下") {
     fs::remove_all(root, ec);
 }
 
-TEST_CASE("POST /api/story/plan：改每集时长，集数不变（一章一集），时长落盘") {
+TEST_CASE("POST /api/story/plan：改每章时长，条数不变（一章一条），时长落盘") {
     const fs::path root = fresh_project("重算");
     ProjectStore store(root);
 
@@ -685,8 +686,8 @@ TEST_CASE("POST /api/story/plan：改每集时长，集数不变（一章一集�
         json{{"project", p_str(root)}, {"duration_s", 30.0}});
     const int many_n = many.body.at("episodes").get<int>();
 
-    // 一章一集：每集时长改多少，集数都是章数。以前这儿钉的是「30 秒切出
-    // 的比 120 秒多」，那是切章那套算法的事，2026-09-16 起没有了。
+    // 一章一条：时长改多少，条数都是章数。以前这儿钉的是「30 秒切出的比
+    // 120 秒多」，那是切章那套算法的事，2026-09-16 起没有了。
     CHECK(few_n == 1);
     CHECK(many_n == 1);
     // 重算的结果要落盘，不是只回给前端；整章都在
@@ -722,7 +723,7 @@ TEST_CASE("多余字段一律 422") {
     fs::remove_all(root, ec);
 }
 
-// ---- 期 3：圣经的名单从故事来，不再从第一集剧本里找 ----
+// ---- 期 3：圣经的名单从故事来，不再从第一章剧本里找 ----
 
 namespace {
 
@@ -836,7 +837,7 @@ TEST_CASE("POST /api/bible：项目里有故事就从故事出") {
     REQUIRE(client.calls().size() == 1);
     CHECK(client.calls()[0].prompt.find("一个不许多，一个不许少") !=
           std::string::npos);
-    // 而且**没有**去读任何一集剧本
+    // 而且**没有**去读任何一章剧本
     CHECK(client.calls()[0].prompt.find("读下面的剧本") == std::string::npos);
 
     CHECK(store.load_assets().characters.size() == 2);
@@ -930,13 +931,13 @@ TEST_CASE("POST /api/bible：点名要故事但项目里没有") {
 TEST_CASE("没给梗概：提示词让模型自己定选题") {
     const std::string none =
         build_outline_prompt("", StoryScale::MEDIUM, StyleLine::REALISTIC);
-    CHECK(none.find("这部剧讲什么**由你定**") != std::string::npos);
-    // 「这部剧讲的是：」后面本来要跟梗概，没梗概时整段都不该出现
-    CHECK(none.find("这部剧讲的是") == std::string::npos);
+    CHECK(none.find("这部电影讲什么**由你定**") != std::string::npos);
+    // 「这部电影讲的是：」后面本来要跟梗概，没梗概时整段都不该出现
+    CHECK(none.find("这部电影讲的是") == std::string::npos);
 
     const std::string with =
         build_outline_prompt("深夜便利店", StoryScale::MEDIUM, StyleLine::REALISTIC);
-    CHECK(with.find("这部剧讲的是") != std::string::npos);
+    CHECK(with.find("这部电影讲的是") != std::string::npos);
     CHECK(with.find("由你定") == std::string::npos);
 
     // 只给关键词也算「没给梗概」，方向照样带进去
@@ -992,7 +993,7 @@ TEST_CASE("POST /api/story/outline：一个字都没有也照写") {
     fs::remove_all(root, ec);
 }
 
-// ---- 期 4：从故事写一集 ----
+// ---- 期 4：从故事写一章 ----
 
 namespace {
 
@@ -1015,7 +1016,7 @@ Story written_story() {
 
 }  // namespace
 
-TEST_CASE("取一集覆盖的那段正文：按字符切，不按字节") {
+TEST_CASE("取一条计划覆盖的那段正文：按字符切，不按字节") {
     const Story s = written_story();
     REQUIRE(s.plan.size() >= 2);
 
@@ -1026,9 +1027,9 @@ TEST_CASE("取一集覆盖的那段正文：按字符切，不按字节") {
         CHECK_FALSE(t.empty());
     }
 
-    // 第一集从头开始
+    // 第一条从头开始
     CHECK(s.plan[0].from_char == 0);
-    // 相邻两集首尾相接，不重不漏
+    // 相邻两条首尾相接，不重不漏
     for (std::size_t i = 1; i < s.plan.size(); ++i) {
         if (s.plan[i].from_chapter == s.plan[i - 1].to_chapter) {
             CHECK(s.plan[i].from_char == s.plan[i - 1].to_char);
@@ -1036,9 +1037,9 @@ TEST_CASE("取一集覆盖的那段正文：按字符切，不按字节") {
     }
 }
 
-TEST_CASE("上下文：前情是压缩过的，而且只到这一集之前") {
+TEST_CASE("上下文：前情是压缩过的，而且只到这一章之前") {
     Story s = written_story();
-    // 手工造一条落在第二章的分集，好让前情里有东西
+    // 手工造一条落在第二章的计划条目，好让前情里有东西
     EpisodePlan p;
     p.episode_id = "ep09";
     p.target_duration_s = 60.0;
@@ -1048,7 +1049,8 @@ TEST_CASE("上下文：前情是压缩过的，而且只到这一集之前") {
     p.to_char = 1000;
     p.hook = "他没有回头";
 
-    const std::string ctx = changji::stages::render_script_context(s, p, "");
+    const auto scenes = changji::stages::chapter_scene_plan(s, p);
+    const std::string ctx = changji::stages::render_script_context(s, p, "", scenes);
 
     // 前情提要在，而且是**每章一句的梗概**，不是正文原文
     CHECK(ctx.find("【前情提要】") != std::string::npos);
@@ -1056,31 +1058,33 @@ TEST_CASE("上下文：前情是压缩过的，而且只到这一集之前") {
     // 第一章的正文（一千个「甲」）不该整段搬进来
     CHECK(ctx.find("甲甲甲甲甲甲甲甲甲甲") == std::string::npos);
 
-    // 这一集的正文在
-    CHECK(ctx.find("【这一集】") != std::string::npos);
+    // 这一章的正文在
+    CHECK(ctx.find("【这一章】") != std::string::npos);
     CHECK(ctx.find("乙乙乙") != std::string::npos);
 
     // **停在哪**——这一条老路线完全没有
-    CHECK(ctx.find("【这一集要停在】他没有回头") != std::string::npos);
+    CHECK(ctx.find("【这一章要停在】他没有回头") != std::string::npos);
 
     // 人物和关系是压缩的全局记忆
     CHECK(ctx.find("林晚") != std::string::npos);
     CHECK(ctx.find("前任") != std::string::npos);
 }
 
-TEST_CASE("第一集没有前情") {
+TEST_CASE("第一章没有前情") {
     const Story s = written_story();
+    const auto scenes = changji::stages::chapter_scene_plan(s, s.plan[0]);
     const std::string ctx =
-        changji::stages::render_script_context(s, s.plan[0], "");
+        changji::stages::render_script_context(s, s.plan[0], "", scenes);
     CHECK(ctx.find("【前情提要】") == std::string::npos);
 }
 
-TEST_CASE("上一集的结尾接得上，而且不从半行中间起") {
+TEST_CASE("上一章的结尾接得上，而且不从半行中间起") {
     const Story s = written_story();
     const std::string prev = "林晚：你还留着它。\n陈默把伞放在柜台上，没有说话。";
+    const auto scenes = changji::stages::chapter_scene_plan(s, s.plan[0]);
     const std::string ctx =
-        changji::stages::render_script_context(s, s.plan[0], prev);
-    CHECK(ctx.find("【上一集是这么结束的】") != std::string::npos);
+        changji::stages::render_script_context(s, s.plan[0], prev, scenes);
+    CHECK(ctx.find("【上一章是这么结束的】") != std::string::npos);
     CHECK(ctx.find("陈默把伞放在柜台上") != std::string::npos);
 
     // 很长的剧本只取尾巴，而且从行首起
@@ -1098,27 +1102,28 @@ TEST_CASE("上一集的结尾接得上，而且不从半行中间起") {
 // 和它独占的四串提示词一起删了。章模式那条的提示词由下面
 // 「照着章写剧本」那几条钉着。
 
-/// 往项目的 changji.toml 里写一行 [assembly].episode_s。
+/// 往老项目的 changji.toml 里写一行 `[assembly].episode_s`。
 ///
-/// **必须显式写**：这个数决定走「一章一集」还是「按分集表一条一集」，
-/// 而 load_settings 会先读开发机上那份用户配置——不写死的话，同一条用例
-/// 在开了章模式的机器上和没开的机器上跑出两种结果。项目那份压过用户那份。
-static void set_episode_s(const fs::path& root, double seconds) {
+/// **这一项 2026-09-18 已经没人读了**（成片切段随电影平台一起拔掉，
+/// 那之后它只剩一个回落值的用处，收成了 stages::kDefaultChapterS）。
+/// 写它只为证明一件事：老配置里留着它，项目照样打开、不报错。
+/// settings 的 take() 是「键存在才覆盖」，不 take 就是忽略——别引入校验。
+static void write_legacy_episode_s(const fs::path& root, double seconds) {
     std::ofstream f(root / "changji.toml", std::ios::app);
     f << "\n[assembly]\nepisode_s = " << seconds << "\n";
 }
 
-TEST_CASE("POST /api/story/episodes：落成剧集，一章一个") {
-    const fs::path root = fresh_project("落成剧集");
+TEST_CASE("POST /api/story/episodes：落成章节，一章一个") {
+    const fs::path root = fresh_project("落成章节");
     ProjectStore store(root);
     const Story s = written_story();
     store.save_story(s);
 
     const auto r = http::post_story_episodes(json{{"project", p_str(root)}});
     CHECK(r.status == 200);
-    // **一章一个，不照分集表。** 用户 2026-09-16：「落成剧集改成一章一个」，
-    // 同一天又定了只留章模式。这儿原来先 set_episode_s(root, 0) 切回老路线、
-    // 再钉「一条分集一个剧集」——那条路已经没有了。
+    // **一章一个，不照章节计划。** 用户 2026-09-16：「落成剧集改成一章一个」，
+    // 同一天又定了只留章模式。这儿原来先往 toml 里写 episode_s = 0 切回老路线、
+    // 再钉「一条计划一个章节」——那条路已经没有了。
     // 语料里 plan 有 4 条而章只有 2 章，所以这两个数不一样，钉的是章数。
     CHECK(r.body.at("created").size() == s.chapters.size());
 
@@ -1145,17 +1150,16 @@ TEST_CASE("POST /api/story/episodes：落成剧集，一章一个") {
     fs::remove_all(root, ec);
 }
 
-TEST_CASE("章模式下剧集自动跟着章节走，不用按任何按钮") {
-    // 用户 2026-09-16 选的是「自动做，不要按钮」——一章一集是机械映射。
+TEST_CASE("章节表自动跟着章走，不用按任何按钮") {
+    // 用户 2026-09-16 选的是「自动做，不要按钮」——一章一条是机械映射。
     // **这条从头到尾不叫 post_story_episodes**：它要证明的正是「不按也对齐」。
     const fs::path root = fresh_project("自动对齐");
     ProjectStore store(root);
-    set_episode_s(root, 60.0);
 
     Story s = written_story();
     REQUIRE(s.chapters.size() >= 2);
 
-    SUBCASE("存一次故事，剧集就出来了") {
+    SUBCASE("存一次故事，章节表就出来了") {
         store.save_story(s);
         // 走接口存（post_story 里挂着对齐那一句）
         const auto r = http::post_story(json{{"project", p_str(root)},
@@ -1169,51 +1173,59 @@ TEST_CASE("章模式下剧集自动跟着章节走，不用按任何按钮") {
         CHECK(project.episodes[0].chapter_refs[0] == "ch01");
     }
 
-    SUBCASE("老配置里写着 episode_s = 0 的，照样跟着章节走") {
-        // 这儿原来钉的是「老路线（episode_s = 0）一个剧集都不建」——那条路
-        // 2026-09-16 整个删了（用户当天定的：只留章模式）。0 现在不再表示
-        // "走老路线"，它在读配置时就被抬到默认值（settings.cpp 里那一句），
-        // 所以老项目打开之后和新项目走同一条路。
+    SUBCASE("老配置里写着 episode_s 的，照样打开、照样跟着章节走") {
+        // 两次迁移叠在这一条上：
+        //   · 2026-09-16 删掉「集模式 / 章模式」那个开关之后，0 不再表示
+        //     "走老路线"（老路线是「一个章节都不建」，正是这条要挡住的坑）。
+        //   · 2026-09-18 `[assembly].episode_s` 整个从配置里去掉了。
+        //     settings 的 take() 是「键存在才覆盖」，这一项不再 take 就是
+        //     **忽略**它——没有校验、不报错。用户 2026-09-18 定死的：
+        //     老项目的 changji.toml 里写着 episode_s 时不许报错。
         //
-        // **留着这个子用例而不是删掉**：它现在钉的是那次迁移——老配置不该
-        // 掉进"一个剧集都不建"的坑里，那正是删掉开关之前它会掉进去的地方。
-        const fs::path old_root = fresh_project("老配置迁移");
-        ProjectStore old_store(old_root);
-        set_episode_s(old_root, 0.0);
-        old_store.save_story(written_story());
-        http::post_story(json{{"project", p_str(old_root)}, {"premise", "老配置"}});
-        const Project migrated = old_store.load_project();
-        CHECK_FALSE(migrated.episodes.empty());
-        REQUIRE_FALSE(migrated.episodes[0].chapter_refs.empty());
-        CHECK(migrated.episodes[0].chapter_refs[0] == "ch01");
-        std::error_code ec2;
-        fs::remove_all(old_root, ec2);
+        // 所以这儿逐个值试：读得动、不抛，而且章节表照样跟着章走。
+        for (const double legacy : {0.0, 90.0}) {
+            CAPTURE(legacy);
+            const fs::path old_root =
+                fresh_project("老配置迁移" + std::to_string(static_cast<int>(legacy)));
+            ProjectStore old_store(old_root);
+            write_legacy_episode_s(old_root, legacy);
+            // 先单独钉「读得动」：下面走接口时抛的可能是别的原因，
+            // 分开写才说得清是配置本身没炸。
+            CHECK_NOTHROW(config::load_settings(old_root));
+            old_store.save_story(written_story());
+            http::post_story(json{{"project", p_str(old_root)}, {"premise", "老配置"}});
+            const Project migrated = old_store.load_project();
+            CHECK_FALSE(migrated.episodes.empty());
+            REQUIRE_FALSE(migrated.episodes[0].chapter_refs.empty());
+            CHECK(migrated.episodes[0].chapter_refs[0] == "ch01");
+            std::error_code ec2;
+            fs::remove_all(old_root, ec2);
+        }
     }
 
     std::error_code ec;
     fs::remove_all(root, ec);
 }
 
-TEST_CASE("POST /api/story/episodes：章模式下一章一集") {
+TEST_CASE("POST /api/story/episodes：一章一条") {
     // 用户 2026-09-16：「落成剧集改成一章一个。」原来按 story.plan 一条
-    // 一条建——那张表是把章正文按每集时长切出来的，一章能切成好几条。
-    const fs::path root = fresh_project("一章一集");
+    // 一条建——那张表当年是把章正文按时长切出来的，一章能切成好几条。
+    const fs::path root = fresh_project("一章一条");
     ProjectStore store(root);
     Story s = written_story();
-    // 让第 1 章值两集：分集表里两条都结束在 ch01
+    // 让第 1 章占两条：章节计划里两条都结束在 ch01
     REQUIRE(s.plan.size() >= 2);
     s.plan[0].to_chapter = "ch01";
     s.plan[1].to_chapter = "ch01";
     s.plan[0].target_duration_s = 60.0;
     s.plan[1].target_duration_s = 60.0;
     store.save_story(s);
-    set_episode_s(root, 60.0);
 
     const auto r = http::post_story_episodes(json{{"project", p_str(root)}});
     CHECK(r.status == 200);
 
     Project project = store.load_project();
-    // 一章一个，不是一条分集一个
+    // 一章一个，不是一条计划一个
     CHECK(project.episodes.size() == s.chapters.size());
     CHECK(r.body.at("created").size() == s.chapters.size());
 
@@ -1224,9 +1236,9 @@ TEST_CASE("POST /api/story/episodes：章模式下一章一集") {
     CHECK(first.chapter_refs[0] == "ch01");
     CHECK(first.title == s.chapters[0].title);
 
-    // 这一章值多长：分集表里结束在这一章的条目加起来（两条 60 秒 = 120）
-    // 2026-09-16 起按正文字数估（每秒消化多少字那个系数），不数分集条目
-    // ——短章被并进多章一集时一条都数不到、跨章的条目把整段记到后一章头上。
+    // 这一章值多长：原来数的是章节计划里结束在这一章的条目（两条 60 秒 = 120）。
+    // 2026-09-16 起按正文字数估（每秒消化多少字那个系数），不数计划条目
+    // ——短章被并进一条时一条都数不到、跨章的条目把整段记到后一章头上。
     const double want_s =
         s.chapters[0].text_len() > 0
             ? s.chapters[0].text_len() / changji::stages::kProseCharsPerSecond
@@ -1249,7 +1261,7 @@ TEST_CASE("POST /api/story/episodes：章模式下一章一集") {
         Project p2 = store.load_project();
         Episode stray;
         stray.episode_id = "ep99";
-        stray.script = "按分集表建的，已经出过片";
+        stray.script = "按章节计划建的，已经出过片";
         p2.episodes.push_back(stray);
         store.save_project(p2);
 
@@ -1272,16 +1284,14 @@ TEST_CASE("POST /api/story/episodes：章模式下一章一集") {
 
 TEST_CASE("POST /api/story/episodes：章模式下没有章节") {
     const fs::path root = fresh_project("章模式没章节");
-    set_episode_s(root, 60.0);
     CHECK_THROWS_AS(http::post_story_episodes(json{{"project", p_str(root)}}),
                     http::ApiError);
     std::error_code ec;
     fs::remove_all(root, ec);
 }
 
-TEST_CASE("POST /api/story/episodes：还没有分集表") {
-    const fs::path root = fresh_project("没分集表");
-    set_episode_s(root, 0.0);
+TEST_CASE("POST /api/story/episodes：还没有章节计划") {
+    const fs::path root = fresh_project("没章节计划");
     CHECK_THROWS_AS(http::post_story_episodes(json{{"project", p_str(root)}}),
                     http::ApiError);
     std::error_code ec;
@@ -1359,7 +1369,7 @@ TEST_CASE("一个标题都没有：按字数在段落边界上切") {
     CHECK(kept == 60 * 100);
 }
 
-TEST_CASE("切出来的章直接一章一集，整章都在") {
+TEST_CASE("切出来的章直接一章一条，整章都在") {
     std::string novel;
     for (int i = 0; i < 40; ++i) {
         for (int k = 0; k < 100; ++k) novel += "字";
@@ -1370,7 +1380,7 @@ TEST_CASE("切出来的章直接一章一集，整章都在") {
     s.episode_duration_s = 60.0;
     s.plan = changji::stages::plan_episodes(s, 60.0);
 
-    // 一章一集，不管一章多长：这儿每章约 2000 字，远超 60 秒的 900 字容量
+    // 一章一条，不管一章多长：这儿每章约 2000 字，远超 60 秒的 900 字容量
     REQUIRE(s.plan.size() == s.chapters.size());
     CHECK(s.validate().empty());
     for (std::size_t i = 0; i < s.plan.size(); ++i) {
@@ -1563,7 +1573,12 @@ TEST_CASE("提示词：读，不要改写") {
     // 这几条从表里砍掉了，**但模型照样收得到**——在 schema 那一半里
     CHECK(full.find("chapter_id") != std::string::npos);
     CHECK(full.find("归纳不是摘抄") != std::string::npos);
-    CHECK(full.find("别只给章尾那一个") != std::string::npos);
+    // 原来钉的是「一章会切成好几集，别只给章尾那一个」。2026-09-18 按时长
+    // 切集那条链拔掉之后那句话成了假话（一章就是一个片段，没有"好几集"），
+    // hooks 的描述改成了「最后一个必须是章尾」。钉的东西没变：**多标几个
+    // 钩子、并且章尾那一个要认得出来**，这话只在 schema 那一半里。
+    CHECK(full.find("最后一个必须是章尾") != std::string::npos);
+    CHECK(p.find("最后一个必须是章尾") == std::string::npos);
     // 「不要改写正文、不要续写」那一条：**靠 schema 的形状**，不靠措辞
     // ——输出里根本没有正文那一类字段，而且多编一个键语法层就过不去。
     CHECK(full.find("additionalProperties") != std::string::npos);
@@ -1572,7 +1587,7 @@ TEST_CASE("提示词：读，不要改写") {
 TEST_CASE("人物表里要有「他说话什么样」") {
     // **2026-09-12 加的，因为所有人说话都一个腔调。** 人物表里有身份、
     // 欲望、弧光，唯独没有「怎么开口」，于是正文里每个人的台词都像同一个
-    // 人写的——而对白是短剧最主要的东西。
+    // 人写的——而对白是电影最主要的东西。
     const auto& cs = outline_schema().at("properties").at("characters").at("items");
     REQUIRE(cs.at("properties").contains("voice"));
     bool required = false;
@@ -1585,8 +1600,8 @@ TEST_CASE("人物表里要有「他说话什么样」") {
     // JSON 字符串，语法采样照样让它过，那一轮的改动一个字都没生效。
     CHECK(cs.at("properties").at("voice").at("minLength").get<int>() >= 6);
 
-    // **「他怕什么」和「他要什么」是一对。** 短剧那边的说法是「爆款人设的
-    // 核心驱动力不是欲望而是恐惧」，90% 的人设翻车死于「全能感」。
+    // **怕什么和要什么一样重要**：人物的核心驱动力往往不是欲望而是恐惧，
+    // 90% 的人设翻车死于「全能感」。（原话在 models/story.hpp 的 fear 那一栏。）
     REQUIRE(cs.at("properties").contains("fear"));
     CHECK(cs.at("properties").at("fear").at("minLength").get<int>() >= 6);
     bool fear_required = false;
@@ -1613,8 +1628,8 @@ TEST_CASE("人物表里要有「他说话什么样」") {
 TEST_CASE("schema：每一章都要说清抖出什么") {
     // **2026-09-12 加的，因为四章零反转。** 实跑的大纲是「前任回来 → 打
     // 电话 → 坦白 → 和解」：每章都在推进，但没有一章让人重新理解前面发生
-    // 过的事。爆款短剧每几集一个身份/关系/事实/动机的反转，网文那边叫
-    // 「信息差」。措辞 14B 不一定听，进 required 它才没得选。
+    // 过的事。卖座的电影每隔几章抖出一个身份/关系/事实/动机的反转，
+    // 网文那边叫「信息差」。措辞 14B 不一定听，进 required 它才没得选。
     const auto& ch = outline_schema().at("properties").at("chapters").at("items");
     REQUIRE(ch.at("properties").contains("reveal"));
 
@@ -1644,9 +1659,13 @@ TEST_CASE("schema：人物那三块和大纲那份长一样") {
     CHECK(a.at("locations") == o.at("locations"));
     // 章名不给模型改——那是作者自己写的
     CHECK_FALSE(a.at("chapters").at("items").at("properties").contains("title"));
-    // **每章要标好几个钩子，不是只标章尾。** 一章会切成好几集，只给章尾
-    // 那一个的话前面几集只能收在无名的段落边界上——实跑时 12 集里只有 3 集
-    // 停在真悬念上，就是这么来的。
+    // **hooks 这一栏要在，而且每条都带 after。** after 是唯一的定位手段：
+    // 模型报不准字符偏移，只能抄一句原文回来、程序自己去正文里查
+    // （为什么见 chapter_write.hpp 的 DraftHook::after）。查出来的位置
+    // story_analyze 拿去和已有候选对位，对不上才新加一条。
+    // 最后那一条是章尾：写剧本那一步在场的 turn 都空着时，往回取它当这一
+    // 章的收口（script_story.cpp）。**别再拿「前面几集收在哪」当理由**
+    // ——按时长切集那条链 2026-09-18 拔掉了。
     const auto& ch = a.at("chapters").at("items").at("properties");
     CHECK(ch.contains("hooks"));
     CHECK(ch.at("hooks").at("type") == "array");
@@ -1666,8 +1685,8 @@ TEST_CASE("schema：正文一场一个数组，场数和段数都由语法卡住
     CHECK_FALSE(props.contains("text"));
     CHECK_FALSE(props.contains("paragraphs"));  // 正文不在顶层了
     REQUIRE(props.contains("scenes"));
-    // **下限就是目标值。** 让它少写一场，那一场会长到一千八百字，分集只能
-    // 在场中间连切四刀，每刀都落在说不出为什么的地方（2026-09-12 实跑）。
+    // **下限就是目标值。** 让它少写一场，那一场会长到一千八百字，收口只能
+    // 落在场中间说不出为什么的地方（2026-09-12 实跑）。
     CHECK(props.at("scenes").at("minItems").get<int>() == 3);
     CHECK(props.at("scenes").at("maxItems").get<int>() == 4);
 
@@ -1802,7 +1821,7 @@ TEST_CASE("并回去：模型糊弄时的几种情况") {
 
     SUBCASE("after 查不到——那一条丢掉，不能都堆到章尾") {
         // 一章有好几个钩子，查不到的全往章尾堆的话，章尾会被一个中间情节的
-        // 说法占掉，而那一集的结尾写的就是别处的事。
+        // 说法占掉，而这一章的结尾写的就是别处的事。
         json j = good_analysis();
         j["chapters"][0]["hooks"][0]["after"] = "正文里根本没有这句话";
         const Story got = changji::stages::apply_analysis(s, j.dump());
@@ -2092,7 +2111,7 @@ TEST_CASE("POST /api/story/understand：没正文不让理解") {
     fs::remove_all(root, ec);
 }
 
-TEST_CASE("POST /api/story/analyze：落盘，而且重算了分集") {
+TEST_CASE("POST /api/story/analyze：落盘，而且重算了章节计划") {
     const fs::path root = fresh_project("读一遍");
     ProjectStore store(root);
     Story s = pasted_story();
@@ -2167,7 +2186,7 @@ std::string long_body(const std::string& mark) {
     return s;
 }
 
-/// 模型写回来的一章：正文 + 几个可以收一集的地方。
+/// 模型写回来的一章：正文 + 几个可以收口的地方。
 json good_chapter(const std::string& body,
                   const std::vector<std::pair<std::string, std::string>>& hooks = {}) {
     json hs = json::array();
@@ -2184,10 +2203,11 @@ Story outline_only_story() {
 
 }  // namespace
 
-TEST_CASE("一场的篇幅跟着每集时长走") {
-    // **一场大致对着一集**，那一集的结尾正好是这场戏演完的地方。
-    // 写死一千字的时候，每集 30 秒那一档里一场横跨快两集，分集只能在场
-    // 中间下刀——2026-09-12 实跑，停在场尾从 86% 掉到 63%。
+TEST_CASE("一场的篇幅跟着时长走") {
+    // **一场的目标字数从 `episode_duration_s` 那个时长换算**（那个名字是
+    // 历史留下的，今天它是这一章打算演多久）。写死一千字的时候，30 秒
+    // 那一档里一场就长得盖过整段，收口只能落在场中间——2026-09-12 实跑，
+    // 停在场尾从 86% 掉到 63%。
     Story s = outline_only_story();
 
     for (double d : {30.0, 60.0, 120.0, 300.0}) {
@@ -2196,10 +2216,10 @@ TEST_CASE("一场的篇幅跟着每集时长走") {
         const int per_ep = changji::stages::prose_budget_chars(d);
         const int per_scene = changji::stages::scene_target_chars(s);
 
-        // 夹在 600 和 1500 之间：短了写不成一场戏，长了一场横跨好几集
+        // 夹在 600 和 1500 之间：短了写不成一场戏，长了一场就盖过好几段
         CHECK(per_scene >= changji::stages::kSceneMinChars);
         CHECK(per_scene <= changji::stages::kSceneMaxChars);
-        // 落在那个区间里的时长，一场就是一集
+        // 落在那个区间里的时长，一场正好是那一段
         if (per_ep >= changji::stages::kSceneMinChars &&
             per_ep <= changji::stages::kSceneMaxChars) {
             CHECK(per_scene == per_ep);
@@ -2211,19 +2231,20 @@ TEST_CASE("一场的篇幅跟着每集时长走") {
         CHECK(n <= 5);
     }
 
-    // 每集短的时候要多切几场才跟得上；每集长的时候场数回落
+    // 时长短的时候要多切几场才跟得上；时长长的时候场数回落
     s.episode_duration_s = 30.0;
     const int many = changji::stages::chapter_target_scenes(s);
     s.episode_duration_s = 120.0;
     CHECK(changji::stages::chapter_target_scenes(s) <= many);
 }
 
-TEST_CASE("一章该写多长：章是故事单元，不是一集") {
+TEST_CASE("一章该写多长：章是故事单元，不按时长量") {
     Story s = outline_only_story();
 
-    // **一章至少要切得出好几集**，否则分集算法就没活干了。
-    // 这条是端到端实跑时用户指出来的：早先按「它要撑起几集 × 每集容量」
-    // 算，而大纲阶段一章一集，于是每章正好写一集的量，四章切出来正好四集。
+    // **一章要比「一个时长单位的容量」厚得多**，否则章就薄得撑不起一个
+    // 故事单元。这条是端到端实跑时用户指出来的：早先按「它要撑起几段 ×
+    // 每段容量」算，而大纲阶段一章一条，于是每章正好写一条的量。
+    // （`kEpisodesPerChapter` 是历史留下的名字，今天它就是那个倍数。）
     for (double d : {30.0, 60.0, 90.0, 180.0}) {
         s.episode_duration_s = d;
         s.plan = changji::stages::plan_episodes(s, d);
@@ -2234,7 +2255,7 @@ TEST_CASE("一章该写多长：章是故事单元，不是一集") {
         CHECK(target >= changji::stages::kChapterTargetChars);
     }
 
-    // 分集表里排了几集不影响章的篇幅——章的长短是故事的事，不是时长的事
+    // 章节计划里排了几条不影响章的篇幅——章的长短是故事的事，不是时长的事
     s.episode_duration_s = 60.0;
     s.plan.clear();
     const int no_plan = changji::stages::chapter_target_chars(s);
@@ -2242,9 +2263,10 @@ TEST_CASE("一章该写多长：章是故事单元，不是一集") {
     CHECK(changji::stages::chapter_target_chars(s) == no_plan);
 }
 
-TEST_CASE("写满一章的量也还是一集，整章都在") {
-    // 以前这条钉的是「写满一章就该切出好几集」。2026-09-16 起只留章模式，
-    // 一章一集，多长由内容定——集只在最后装配时按时长切。
+TEST_CASE("写满一章的量也还是一条，整章都在") {
+    // 以前这条钉的是「写满一章就该切出好几集」。2026-09-16 起一章一条，
+    // 多长由内容定；2026-09-18 按时长切段那条链也整个拔掉了，一章就是
+    // 成片里的一段。
     Story s = outline_only_story();
     s.episode_duration_s = 30.0;
 
@@ -2307,7 +2329,7 @@ TEST_CASE("模型的草稿纸摘掉：引用块和强调标记") {
         // **2026-09-13 实跑正文里的原样**：
         //     --1层停尸间的门再次打开，手电筒的光束在黑暗中晃动……
         // 第一个减号是 markdown 列表符号，第二个是「负一层」的负号。
-        // 它会一路走进分集的钩子、剧本和字幕。
+        // 它会一路走进章节计划的钩子、剧本和字幕。
         const std::string marked =
             "--1层停尸间的门再次打开，手电筒的光束在黑暗中晃动。";
         const std::string neg = "-1层的空气冷得刺骨，福尔马林的味道浓重。";
@@ -2374,7 +2396,7 @@ TEST_CASE("提示词：只写这一章，带的是压缩的全局记忆") {
                  " 场戏") != std::string::npos);
     CHECK(p.find(std::to_string(changji::stages::chapter_scene_chars(s)) +
                  " 字上下") != std::string::npos);
-    // 每一场停在自己的 turn 上，那就是一集的收口
+    // 每一场停在自己的 turn 上，那就是这一场的收口
     CHECK(p.find("每一场停在它的 turn 上") != std::string::npos);
     CHECK(p.find("最后一场的 turn 要落到这件事上") != std::string::npos);
     // 不许贴情绪标签，但要写内心：拆成身体和当下那句心里话
@@ -2420,7 +2442,7 @@ TEST_CASE("提示词：只写这一章，带的是压缩的全局记忆") {
 
 TEST_CASE("并回去：场的位置是数出来的，不是模型报的") {
     // **上一版靠模型抄一句原文回来（hooks[].after），程序再去正文里查。**
-    // 抄错一个字那一集就落不下去，只能收在一个说不出为什么的段落边界上。
+    // 抄错一个字那一场就落不下去，只能收在一个说不出为什么的段落边界上。
     // 现在正文是一场一场写的，第几段结束就是第几场结束——程序自己数。
     Story s = outline_only_story();
 
@@ -2463,7 +2485,7 @@ TEST_CASE("并回去：场的位置是数出来的，不是模型报的") {
     CHECK(c->scenes[1].from_char == first_end);
     CHECK(c->scenes[1].to_char == c->text_len());
 
-    // 场的底子留着：写剧本那一步要知道这一集在哪、跟谁走
+    // 场的底子留着：写剧本那一步要知道这一场在哪、跟谁走
     CHECK(c->scenes[0].pov == "林晚");
     CHECK(c->scenes[0].where.find("便利店") != std::string::npos);
 
@@ -2493,7 +2515,7 @@ TEST_CASE("并回去：老形状还认（顶层 paragraphs、顶层 text）") {
     const Chapter* c = s.chapter_by_id("ch01");
     REQUIRE(c != nullptr);
     CHECK(c->text_len() > 20);
-    CHECK(c->scenes.empty());  // 没有场就是没有，分集退回按段落边界切
+    CHECK(c->scenes.empty());  // 没有场就是没有，收口退回按段落边界找
 }
 
 TEST_CASE("正文在贴情绪标签就打回") {
@@ -2732,9 +2754,9 @@ TEST_CASE("分镜的话按小句摘掉，不摘整段") {
 }
 
 TEST_CASE("一段里只有右引号就补回左引号") {
-    // 2026-09-12 实跑：最后一集的钩子是「苏妍点头微笑。”好的。”」——两个
+    // 2026-09-12 实跑：最后一章的钩子是「苏妍点头微笑。”好的。”」——两个
     // 都是右引号。normalize_quotes 只在整章没有 “ 时才动手，而这一章别处
-    // 是正常的，所以这一段漏过去了，原样落进正文、落进分集的钩子、落进
+    // 是正常的，所以这一段漏过去了，原样落进正文、落进章节计划的钩子、落进
     // 字幕。
     const auto body = [](const std::string& line) {
         json paras = json::array();
@@ -2772,10 +2794,10 @@ TEST_CASE("一段里只有右引号就补回左引号") {
 TEST_CASE("每一场都要说清局面更糟在哪儿") {
     // **2026-09-12 加的，因为一章三场原地打转。** 实跑那一章三场都在同一个
     // 地方对着同一样东西，三个收尾是同一个手势的变奏（手指僵在半空 /
-    // 手指在伞柄上方停住 / 指尖即将碰到又缩回），切出来三集的钩子长得一样。
+    // 手指在伞柄上方停住 / 指尖即将碰到又缩回），三场的收口长得一样。
     //
     // 编剧的老规矩是「通过事情的扭转，使情况比这场戏刚开始时更加恶劣」，
-    // 短剧那边叫「每一集都要有信息增量」。局面更糟这件事没法重复三遍。
+    // 电影那边叫「每一场都要有信息增量」。局面更糟这件事没法重复三遍。
     const auto s = changji::stages::chapter_schema(3, 22);
     const auto& sp = s.at("properties").at("scenes").at("items").at("properties");
     REQUIRE(sp.contains("worse"));
@@ -2804,7 +2826,7 @@ TEST_CASE("最后一句是单独一栏，落库之后接在这一场末尾") {
     // **禁令拦不住就别再加第四道。** 「写完 turn 就停，别再加一段点题」
     // 在提示词、schema 描述、解析守卫里各说了一遍，三道都没拦住——实跑里
     // 一半的章还是在 turn 后面补一段「那一刻，她终于可以告诉自己……」，
-    // 而那一段正好落在分集的切线上。把最后一句抬成一个字段，语法里就没有
+    // 而那一段正好落在这一场的收口上。把最后一句抬成一个字段，语法里就没有
     // 位置再写下一段了。
     const auto s = changji::stages::chapter_schema(3, 22);
     const auto& scene = s.at("properties").at("scenes").at("items");
@@ -2851,9 +2873,9 @@ TEST_CASE("最后一句是单独一栏，落库之后接在这一场末尾") {
 }
 
 TEST_CASE("换个说法的同一件事，也算撞车") {
-    // **2026-09-12 实跑，这两场的 turn 切出来就是相邻两集的钩子**：
+    // **2026-09-12 实跑，这两场的 turn 就是相邻两场的收口**：
     // 一个字都不连着一样，按字面比的守卫不响，而观众看到的是同一件事
-    // 演两遍——第二集的信息增量是零。
+    // 演两遍——第二场的信息增量是零。
     // **「换个说法的同一件事」抓不到，而且量过了：** 相邻两字的 Dice
     // 系数，这一对是 0.30，而下面那对真的不同的事是 0.27——分不开。
     // 那个信号在语义里，不在字面里。这一条钉住"我们知道它漏"。
@@ -2916,8 +2938,8 @@ TEST_CASE("一段话写两遍就打回") {
 
 TEST_CASE("整章一句对白都没有就打回") {
     // 2026-09-12 实跑四章里有一章通篇零对白（65 段全是叙述）。下一步是把
-    // 这段正文改成剧本——正文里没人说话，那一集出来就是默片。和剧本那边
-    // 「整集一句台词都没有」是同一道闸。
+    // 这段正文改成剧本——正文里没人说话，那一章出来就是默片。和剧本那边
+    // 「整章一句台词都没有」是同一道闸。
     const auto make = [](bool spoken) {
         json paras = json::array();
         for (int i = 0; i < 20; ++i) {
@@ -3003,7 +3025,7 @@ TEST_CASE("对白用 ASCII 单引号写的，也换成中文双引号") {
     // **2026-09-12 实跑：一个引号的写法吃掉了两道闸。** 整章对白写成
     // '这一次，我们不走回头路了。'，守卫只认弯引号，于是这一章算「一句
     // 对白都没有」，被打回两次；第三次宽松放行，而宽松那次连「两场不能
-    // 撞同一件事」也一并跳过——切出来两集的钩子一字不差。
+    // 撞同一件事」也一并跳过——两场的收口一字不差。
     const auto body = [](const std::string& line) {
         json paras = json::array();
         for (int i = 0; i < 14; ++i) {
@@ -3080,8 +3102,8 @@ TEST_CASE("整段复读先摘掉，摘不干净才打回") {
 
 TEST_CASE("收尾只说「说了一句」、不给内容，就打回") {
     // 2026-09-12 实跑的两个钩子：「他低声说了一句，没人回答。」「他又低声
-    // 说了一句，语气比刚才更坚定。」——都没说他说了什么。收尾那一句是整集
-    // 的钩子，观众听不见那句话，这一集就等于没有结尾。
+    // 说了一句，语气比刚才更坚定。」——都没说他说了什么。收尾那一句是整章
+    // 的钩子，观众听不见那句话，这一章就等于没有结尾。
     const auto make = [](const std::string& last) {
         json paras = json::array();
         for (int i = 0; i < 16; ++i) {
@@ -3331,7 +3353,7 @@ TEST_CASE("大纲提示词：选题空间只在什么都没填时才拼") {
 TEST_CASE("写正文用的温度比默认低") {
     // **默认 0.7 太散。** 2026-09-12 把同一份代码连跑两组三遍，四章里对白
     // 最低那一章，一组是 21%（19~27），另一组是 1%（0~32）——同样的提示词、
-    // 同样的 schema，一章能写成 35% 也能写成 0%。0% 的章切出来就是一集
+    // 同样的 schema，一章能写成 35% 也能写成 0%。0% 的章拍出来就是一段
     // 默片，对成片是坏掉的交付物。
     //
     // ⚠️ **这条用例只问这个常量是几，不问它有没有发出去。** 事实上它有很长
@@ -3403,8 +3425,8 @@ TEST_CASE("提示词：没有这一章就抛") {
 
 TEST_CASE("解析：正文短得离谱的不收") {
     // **实跑时真撞上了**：模型把章标题填进正文字段，四章各写出 1~2 个字，
-    // 而这些被静默存了下来——故事看着有四章，分集只切出一集，到写剧本
-    // 那一步才发现无米下锅。和剧本那边「整集一句台词都没有」一个道理。
+    // 而这些被静默存了下来——故事看着有四章，每章却只剩一两个字，到写剧本
+    // 那一步才发现无米下锅。和剧本那边「整章一句台词都没有」一个道理。
     const std::string tiny = json{{"text", "伞"}}.dump();
     CHECK_THROWS_AS(changji::stages::parse_chapter(tiny, 600), stages::StoryError);
     // 下限给 0 表示不查——拼提示词的单测用得着
@@ -3645,7 +3667,7 @@ TEST_CASE("并回去：hook_after 查不到就挂章尾") {
     CHECK(got.validate().empty());
 }
 
-TEST_CASE("POST /api/story/chapter：写完落库，分集表跟着盖到整章") {
+TEST_CASE("POST /api/story/chapter：写完落库，章节计划跟着盖到整章") {
     const fs::path root = fresh_project("展开一章");
     ProjectStore store(root);
     Story s = outline_only_story();
@@ -3668,15 +3690,15 @@ TEST_CASE("POST /api/story/chapter：写完落库，分集表跟着盖到整章"
         json{{"project", p_str(root)}, {"chapter_id", "ch01"}}, client, tok);
     CHECK(r.status == 200);
     CHECK(r.body.at("chars").get<int>() > 2000);
-    // 一集 900 字，但一章的目标是三千——章是故事单元，一章要切出好几集
+    // 60 秒的容量才 900 字，而一章的目标是三千——章是故事单元，不按时长量
     CHECK(r.body.at("target_chars").get<int>() ==
           changji::stages::kChapterTargetChars);
 
     // **这一个是直接落库的**，不像别的几个回草稿
     const Story saved = store.load_story();
     CHECK(saved.written_chapters() == 1);
-    // 一章一集：章变长了集数不变，但这一集的区间要盖到新写的整章——
-    // 分集表是存下来的，不重算就还是展开前那条 [0, 0)
+    // 一章一条：章变长了条数不变，但这一条的区间要盖到新写的整章——
+    // 章节计划是存下来的，不重算就还是展开前那条 [0, 0)
     CHECK(saved.plan.size() == before);
     const Chapter* written = saved.chapter_by_id("ch01");
     REQUIRE(written != nullptr);
@@ -3739,8 +3761,8 @@ TEST_CASE("展开正文之后，写剧本拿到的是真正文不是梗概") {
 
     // 没展开正文时，episode_text 返回空，上下文里只能摆梗概
     CHECK(changji::stages::episode_text(s, s.plan[0]).empty());
-    const std::string before =
-        changji::stages::render_script_context(s, s.plan[0], "");
+    const std::string before = changji::stages::render_script_context(
+        s, s.plan[0], "", changji::stages::chapter_scene_plan(s, s.plan[0]));
     CHECK(before.find("他推门进来，伞还在手里。") != std::string::npos);  // 梗概
 
     // 同 long_body 那段注释：合成的正文要真的不重样，否则复读守卫判废，
@@ -3751,8 +3773,8 @@ TEST_CASE("展开正文之后，写剧本拿到的是真正文不是梗概") {
     s.plan = changji::stages::plan_episodes(s, 60.0);
 
     CHECK_FALSE(changji::stages::episode_text(s, s.plan[0]).empty());
-    const std::string after =
-        changji::stages::render_script_context(s, s.plan[0], "");
+    const std::string after = changji::stages::render_script_context(
+        s, s.plan[0], "", changji::stages::chapter_scene_plan(s, s.plan[0]));
     CHECK(after.find("这是真正的正文内容") != std::string::npos);
 }
 
@@ -3865,6 +3887,37 @@ TEST_CASE("POST /api/story/chapters：两次都砸了才算砸，别的照写") 
     // 把一次失败变成一小时失败。第三次会把软闸关掉（能用但不够好的收下），
     // 而这里三次都不是 JSON——硬闸，收不了。
     CHECK(client->calls().size() == 4);
+
+    std::error_code ec;
+    fs::remove_all(root, ec);
+}
+
+TEST_CASE("POST /api/story/chapters：停下来说的是「正文」那一句，不是写作槽的兜底") {
+    // **2026-09-18 撞过。** 展开正文这条的停止文案一度被收编成
+    // `pipeline::kWriteStoppedMessage`（写作槽的兜底），理由是"字一样"。
+    // 字一样是巧合：展开的是章**正文**，另外两件写作活留下的是剧本。
+    // 收编之后，谁把那个兜底改得贴合「写全片」，这一条就一声不响地跟着
+    // 改口——而当时**没有任何用例会红**。
+    //
+    // 所以这儿比的是**字面量**、不是常量：改 `kStoryChaptersStoppedMessage`
+    // 会红（那正是要人停下来想一想的时刻），改兜底不会（它够不着这一条）。
+    const fs::path root = fresh_project("正文停止文案");
+    ProjectStore store(root);
+    Story s = parse_outline(good_outline().dump(), "梗概", StoryScale::MEDIUM);
+    store.save_story(s);
+    REQUIRE(s.chapters.size() == 2);
+
+    std::vector<std::string> many;
+    for (int i = 0; i < 8; ++i) {
+        many.push_back(json{{"text", long_body("正文。")}}.dump());
+    }
+    auto client = std::make_shared<llm::ReplayClient>(many);
+    REQUIRE(http::post_story_chapters(json{{"project", p_str(root)}}, client)
+                .status == 200);
+    pipeline::jobs().cancel(pipeline::JobKind::Write);
+    CHECK(pipeline::jobs().snapshot(pipeline::JobKind::Write).at("error") ==
+          "已手动停止。已经写好的几章留着。");
+    wait_writer_done();
 
     std::error_code ec;
     fs::remove_all(root, ec);
@@ -4054,7 +4107,7 @@ TEST_CASE("POST /api/story/outline：带 stream 也照样回那份草稿") {
 }
 
 TEST_CASE("写章正文：【地方】只给这一章用得着的那几个") {
-    // **拿措辞治"给多了"是治不好的。** 原来这儿发的是全剧地点清单，然后在
+    // **拿措辞治"给多了"是治不好的。** 原来这儿发的是全片地点清单，然后在
     // 硬性要求里花一条叫模型「用得着哪一两个就只写那一两个，跑遍全城说明
     // 是在拿地点凑场数」。二十个地方摆在眼前，模型自然会用。章自己带着
     // locations 名单，照它筛就行——上下文小一截，那条规则也跟着没了。
@@ -4111,7 +4164,7 @@ TEST_CASE("写章正文：章里没填地点时照旧给全份，提醒贴在名
 }
 
 TEST_CASE("写剧本：【地方】只发这一章用得着的") {
-    // 同 stages/chapter_write.cpp 那一处：发全剧清单等于请模型跑遍全城，
+    // 同 stages/chapter_write.cpp 那一处：发全片清单等于请模型跑遍全城，
     // 然后只能拿话去拦。章自己带着 locations 名单，照它筛。
     Story st = sample_story();
     st.locations.clear();
@@ -4126,7 +4179,7 @@ TEST_CASE("写剧本：【地方】只发这一章用得着的") {
     const auto plan = stages::chapter_plan(st, st.chapters[0].chapter_id, 60.0);
     const auto scenes = stages::chapter_scene_plan(st, plan);
     const std::string p =
-        stages::render_script_context(st, plan, "", &scenes);
+        stages::render_script_context(st, plan, "", scenes);
 
     const std::size_t from = p.find("【地方】（这一章用得着的");
     REQUIRE(from != std::string::npos);
@@ -4153,7 +4206,7 @@ TEST_CASE("写剧本：章里没填地点就照旧给全份") {
     const auto plan = stages::chapter_plan(st, st.chapters[0].chapter_id, 60.0);
     const auto scenes = stages::chapter_scene_plan(st, plan);
     const std::string p =
-        stages::render_script_context(st, plan, "", &scenes);
+        stages::render_script_context(st, plan, "", scenes);
     const std::size_t from = p.find("【地方】（整个故事的清单");
     REQUIRE(from != std::string::npos);
     std::size_t to = p.find("【", from + 3);

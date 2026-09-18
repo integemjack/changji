@@ -11,7 +11,7 @@ namespace {
 
 /// 章节 id 的形状：ch 开头，后面全是数字。
 ///
-/// 比剧集 id 严一档（那边允许任意小写下划线串）。章节 id 是程序生成的，
+/// 比 episode_id 严一档（那边允许任意小写下划线串）。章节 id 是程序生成的，
 /// 不经用户手，所以可以把形状钉死；钉死之后按 id 排序就等于按顺序排序。
 bool is_chapter_id(const std::string& s) {
     if (s.size() < 3) return false;
@@ -100,8 +100,9 @@ std::vector<std::string> Story::validate() const {
         if (!chapter_ids.insert(c.chapter_id).second) {
             errs.push_back("章节 id 重复：" + c.chapter_id);
         }
-        // 钩子越界是会真出事的一类错：切分算法拿它当切点，越界就会截出
-        // 空的一集，或者把切线落到下一章去。
+        // 钩子越界是会真出事的一类错：位置是拿来在正文里对位的
+        //（story_analyze 按它找回同一条钩子），指到正文外面去之后就再也
+        // 对不上任何地方，而且一声不响。
         const int len = c.text_len();
         for (const auto& h : c.hooks) {
             if (h.at_char < 0 || h.at_char > len) {
@@ -134,9 +135,9 @@ std::vector<std::string> Story::validate() const {
     std::set<std::string> ep_ids;
     for (const auto& p : plan) {
         if (p.episode_id.empty()) {
-            errs.push_back("分集表里有一条没有剧集 id");
+            errs.push_back("章节计划里有一条没有 id");
         } else if (!ep_ids.insert(p.episode_id).second) {
-            errs.push_back("分集表里剧集 id 重复：" + p.episode_id);
+            errs.push_back("章节计划里 id 重复：" + p.episode_id);
         }
         if (p.target_duration_s <= 0.0) {
             errs.push_back(p.episode_id + "：target_duration_s 必须大于 0");
@@ -159,10 +160,10 @@ Story::ChapterRemoval Story::remove_chapter(const std::string& chapter_id) {
     if (it == chapters.end()) return out;
     const std::size_t at = static_cast<std::size_t>(it - chapters.begin());
 
-    // 上一章 / 下一章：跨着这一章的分集条目要收缩到它们身上
+    // 上一章 / 下一章：跨着这一章的计划条目要收缩到它们身上
     const Chapter* prev = at > 0 ? &chapters[at - 1] : nullptr;
     const Chapter* next = at + 1 < chapters.size() ? &chapters[at + 1] : nullptr;
-    // 末尾字符按码点数——分集表里的 to_char 就是码点偏移（见 EpisodePlan）
+    // 末尾字符按码点数——计划里的 to_char 就是码点偏移（见 EpisodePlan）
     const auto cp_len = [](const std::string& t) {
         int n = 0;
         for (unsigned char ch : t) if ((ch & 0xC0) != 0x80) ++n;

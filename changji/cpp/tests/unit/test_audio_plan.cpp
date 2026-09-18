@@ -7,7 +7,7 @@
 //
 // **这一层错了的后果是成片里两个人同时说话。** 一个镜头装不下自己的台词，
 // 混音时后面的声音盖到下一镜上去。而这件事在装配之前没有任何迹象——
-// 分镜表看着正常，每一段音频单独听也正常，要把整集拼出来听一遍才发现。
+// 分镜表看着正常，每一段音频单独听也正常，要把整章拼出来听一遍才发现。
 
 #include <doctest/doctest.h>
 
@@ -67,7 +67,7 @@ models::Shot shot_of(const json& j) {
 }  // namespace
 
 TEST_CASE("常数和 Python 一致") {
-    // 这几个数一动，全集的镜头时长和拆分位置都跟着变。
+    // 这几个数一动，整章的镜头时长和拆分位置都跟着变。
     const json corpus = load_corpus();
     const auto& c = corpus.at("constants");
     CHECK(stages::kCharsPerSecond == doctest::Approx(c.at("chars_per_second")));
@@ -117,7 +117,7 @@ TEST_CASE("标点不发音但产生停顿") {
 
     SUBCASE("空串是 0，不是头尾留白那点") {
         // 返回 0.4 的话，没有台词的镜头也会占掉一点预算，
-        // 四十镜下来整集时长多出十几秒。
+        // 四十镜下来整章时长多出十几秒。
         CHECK(stages::estimate_speech_duration("") == 0.0);
         CHECK(stages::estimate_speech_duration("   ") == 0.0);
     }
@@ -170,9 +170,9 @@ TEST_CASE("切出来的每一段都不产出非法 UTF-8") {
     }
 }
 
-TEST_CASE("新镜编号跟全集比对着发") {
-    // 同一集重跑一次配音会再拆一次。只按本次的序号取名的话，
-    // 第二次又会取出一个 sh001_b，于是一集里出现两个同名镜头：
+TEST_CASE("新镜编号跟整章比对着发") {
+    // 同一章重跑一次配音会再拆一次。只按本次的序号取名的话，
+    // 第二次又会取出一个 sh001_b，于是一章里出现两个同名镜头：
     // 按 id 找镜头只能找到头一个，音频和首帧的文件名也会互相覆盖。
     const json corpus = load_corpus();
     for (const auto& c : corpus.at("free_id")) {
@@ -362,7 +362,7 @@ TEST_CASE("概览只列前五个紧的镜头") {
     SUBCASE("报的秒数必须是 rebalance 之后还成立的那个") {
         // **这句话是在 rebalance 之后才显示出去的。** 原来它报的是 plans
         // 里所有镜头的和，而 rebalance 恰恰会改其中没台词的那些——于是
-        // 实测 walk_c ep01 出现过：同一屏上一行说整集重排到 61.8 秒，
+        // 实测 walk_c ep01 出现过：同一屏上一行说整章重排到 61.8 秒，
         // 这行说这 18 个镜头共 71.0 秒。同样的 18 镜，两个数。
         //
         // 现在只报有台词那几镜：rebalance 明确不动它们，跑完还是对的。

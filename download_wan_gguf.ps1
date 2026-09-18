@@ -132,7 +132,7 @@ if ($ok) {
     }
     Write-Host ""
     Write-Host "然后 changji.exe --doctor 里「本地模型」那项应该报三份都在。"
-    Write-Host "出一集还要 ffmpeg：winget install Gyan.FFmpeg"
+    Write-Host "出一章还要 ffmpeg：winget install Gyan.FFmpeg"
 } else {
     Write-Host "有文件没下完。再跑一遍会接着下（断点续传），不会从头来。" -ForegroundColor Yellow
     exit 1

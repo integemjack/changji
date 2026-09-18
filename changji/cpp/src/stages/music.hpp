@@ -1,6 +1,6 @@
 #pragma once
 
-// 配乐：一集一条器乐，由外部命令生成，装配时压在台词底下。
+// 配乐：一章一条器乐，由外部命令生成，装配时压在台词底下。
 //
 // 为什么是「一条命令」而不是进程内跑：能本地出像样配乐的模型
 // （ACE-Step 1.5，Apache 2.0，<4 GB 显存，几秒一条）在 Python 里，
@@ -19,11 +19,11 @@
 
 namespace changji::stages {
 
-/// 这一集的配乐放哪：output/<集 id>_music.wav。
+/// 这一章的配乐放哪：output/<episode_id>_music.wav。
 std::filesystem::path music_path_for(const models::ProjectPaths& paths,
                                      const std::string& episode_id);
 
-/// 给配乐模型的描述。器乐、无人声、按剧的调子和这一集的梗概。
+/// 给配乐模型的描述。器乐、无人声、按整部电影的调子和这一章的梗概。
 ///
 /// 英文为主：配乐模型的训练语料是英文标签；梗概那一段照原文带上，
 /// 它只是给情绪定调，不要求逐字理解。
@@ -38,7 +38,7 @@ struct MusicOutcome {
     std::string error;
 };
 
-/// 保证这一集的配乐在：文件在就沿用（想重出就删掉它），不在就跑命令。
+/// 保证这一章的配乐在：文件在就沿用（想重出就删掉它），不在就跑命令。
 /// 命令没配返回 ok = false 并说清楚，不抛。
 MusicOutcome ensure_music(const config::Settings& settings,
                           const models::ProjectPaths& paths,

@@ -35,7 +35,7 @@ MediaTarget resolve_media(const std::string& project_path, const std::string& re
     //
     // 默认只监听 127.0.0.1，所以这不是敞着的洞；但 `--host` 放到局域网上
     // （文档里"电脑和手机都能开"就是这么用）之后，同网段的人本来只能看
-    // 这一部剧的图和片，不该顺手能读这台机器上任何一个文件。
+    // 这一部电影的图和片，不该顺手能读这台机器上任何一个文件。
     //
     // 界面上每一次 mediaUrl 都是拿 session.projectPath 拼的，那必然是个
     // 已经打开过的项目，这一道不会挡到正常用法。

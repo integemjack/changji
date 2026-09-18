@@ -193,7 +193,7 @@ std::string previous_scripts(const models::Project& project,
                              const std::string& before, std::size_t keep) {
     std::vector<std::string> earlier;
     for (const auto& ep : project.episodes) {
-        // **到这一集为止。** 把后面几集也塞进去的话，模型会把还没发生的事
+        // **到这一章为止。** 把后面几章也塞进去的话，模型会把还没发生的事
         // 当成已经发生的写。
         if (!before.empty() && ep.episode_id == before) break;
         // 预告片是从正片里剪出来的，再拿它当写正片的上下文，模型会开始抄
@@ -227,7 +227,7 @@ ApiResult post_script_premise(const json& body, llm::Client& client,
     const Project project = load_or_400(store);
 
     // 项目上已有的梗概算一个「已经想过的方向」，避免连点两次拿回同一批。
-    // 已经写了几集的话，那些也算。
+    // 已经写了几章的话，那些也算。
     std::vector<std::string> existing;
     if (!text::strip_ws(project.premise).empty()) existing.push_back(project.premise);
     for (const auto& ep : project.episodes) {
@@ -279,29 +279,28 @@ ApiResult post_script_write(const json& body, llm::Client& client,
     Project project = load_or_400(store);
     const AssetLibrary assets = load_assets_or_400(store);
 
-    // 这一集在分集表里有对应的一条吗？有就走故事那条：这一集要发生什么
+    // 这一章在章节计划里有对应的一条吗？有就走故事那条：这一章要发生什么
     // 已经定好了，模型只负责把那一段变成拍子。**失忆是在那条路上治好的**——
     // 带的上下文是压缩的全局记忆（大纲、人物、关系、前情提要每章一句），
-    // 不是下面那个「最近三集原文截 4000 字符」。
+    // 不是下面那个「最近三章原文截 4000 字符」。
     Story story;
     const EpisodePlan* plan = nullptr;
     EpisodePlan chapter_plan_storage;
-    // 没有秒数、没有字数：这一章写多长由内容定，分镜出片之后再按
-    // [assembly].episode_s 切成几集。
+    // 没有秒数、没有字数：这一章写多长由内容定。
     //
-    // 2026-09-16 之前这儿有个 `chapter_mode` 开关（episode_s > 0），关着
-    // 的时候走另一套：剧本按「这一集总时长约 N 秒」写，不够凑、超了压。
-    // 那条路当天整个删了（用户定的），开关跟着没了——下面几处原来都挂在
-    // 它上面，现在是无条件的。
+    // 2026-09-16 之前这儿有个 `chapter_mode` 开关，关着的时候走另一套：
+    // 剧本按「这一章总时长约 N 秒」写，不够凑、超了压。那条路当天整个
+    // 删了（用户定的），开关跟着没了——下面几处原来都挂在它上面，
+    // 现在是无条件的。
     if (!episode_id.empty()) {
         try {
             story = store.load_story();
         } catch (const std::exception&) {
             // 读不了就当没有，退回老路径。老项目本来就没有这个文件。
         }
-        // 章模式：这一集就是一章，计划按章配（整章、钩子取最后一场的
-        // turn）。**不按 episode_id 去分集表里查**——那张表的 id 是按切片
-        // 发的，一章切两段就有两条，和「ch07 → ep07」对不上，查到的是
+        // 一条章节记录就是整整一章，计划按章配（整章、钩子取最后一场的
+        // turn）。**不按 episode_id 去盘上那份章节计划里查**——那张表的 id 是
+        // 按切片发的，一章切两段就有两条，和「ch07 → ep07」对不上，查到的是
         // 隔壁章的半截（2026-09-16 实撞）。
         {
             const Episode* ep = project.episode_by_id(episode_id);
@@ -333,11 +332,11 @@ ApiResult post_script_write(const json& body, llm::Client& client,
 
     std::string prompt;
     const char* source = "premise";
-    // 这一集四段的形状（占几秒、每段是什么戏）。
+    // 这一章四段的形状（占几秒、每段是什么戏）。
     //
     // **两条路都摇。** 原来这儿写死 0，注释是「照梗概续写那条老路子保持
     // 原样」——那条路于是永远是 8%/10%/57% 加同一出戏（钩子 → 推进 →
-    // 回报 → 留扣）。保持原样保住的是"每集一个模子"，而那正是用户说的
+    // 回报 → 留扣）。保持原样保住的是"每章一个模子"，而那正是用户说的
     // 「剧本时间线也都差不多」。
     //
     // 摇一个就够：提示词、schema、解析三处共用这一个变量，形状和秒数
@@ -354,9 +353,9 @@ ApiResult post_script_write(const json& body, llm::Client& client,
                   num_in_range(body, "variation", 0.0, -1.0, 4294967295.0))
             : stages::random_shape();
     if (plan != nullptr) {
-        // 上一集的结尾拿来接语气。**按分集表的顺序取上一条**，不是按
-        // project.episodes 的顺序——后者可能被手动加过集、插过预告片。
-        // 章模式按章：上一章对应的那一集（chapter_refs 指着上一章的）。
+        // 上一章的结尾拿来接语气。**按盘上那份章节计划的顺序取上一条**，不是
+        // 按 project.episodes 的顺序——后者可能被手动加过章、插过预告片。
+        // 挂着章的那条按章走：找 chapter_refs 指着上一章的那条章节记录。
         std::string prev_tail;
         if (plan == &chapter_plan_storage) {
             const Chapter* prev_ch = nullptr;
@@ -388,9 +387,9 @@ ApiResult post_script_write(const json& body, llm::Client& client,
             }
         }
         // 形状每写一次摇一个新的（ComfyUI 的 randomize 那个意思）——**不是
-        // 按集号哈希**，那样同一集永远是同一个形状，人不喜欢这一集的节奏也
+        // 按章号哈希**，那样同一章永远是同一个形状，人不喜欢这一章的节奏也
         // 换不掉。不满意就再点一次「重新改编」，满意了点采用，形状跟着定下来。
-        // 章模式没有形状：剧本照正文的场走，见 build_chapter_script_prompt。
+        // 走故事这条没有形状：剧本照正文的场走，见 build_chapter_script_prompt。
         chapter_scenes = stages::chapter_scene_plan(story, *plan);
         prompt = stages::build_chapter_script_prompt(
             story, *plan, project.style_line, names, prev_tail, chapter_scenes);
@@ -400,16 +399,16 @@ ApiResult post_script_write(const json& body, llm::Client& client,
             premise, duration_s, project.style_line, previous, names, variation);
     }
 
-    // 走故事那条时时长以分集表为准：那份表是按每集时长算出来的，
+    // 走故事那条时时长以章节计划为准：那份表是按每章时长算出来的，
     // 请求里带的那个可能是页面上的旧值，用它算预算会和实际排的镜头对不上。
     const double used_duration =
         plan != nullptr ? plan->target_duration_s : duration_s;
 
     llm::Request req;
     req.prompt = prompt;
-    // 四段的 schema，每段的拍数地板按这一集的时长算。**地板是这一步唯一
+    // 四段的 schema，每段的拍数地板按这一章的时长算。**地板是这一步唯一
     // 管用的东西**：提示词里"要凑够"模型不听，minItems 4 它就写 4 拍——
-    // 实测 60 秒的集写出 13 秒的剧本，就是从这儿来的。
+    // 实测 60 秒的章写出 13 秒的剧本，就是从这儿来的。
     //
     // 名字同理：提示词里说了「一字不改」，实跑还是写出了林浩 / Lin Hao /
     // LinHao / Su Wan 四种。收成枚举，和分镜那边收 char_id 是一个道理。
@@ -423,7 +422,7 @@ ApiResult post_script_write(const json& body, llm::Client& client,
     // 走故事那条叫「改编」，照梗概写叫「写」——按钮上的字就是这么分的
     // （EpScript.vue 里那个 writeLabel），这儿跟着它说，不然顶栏说的和
     // 用户刚点的那个按钮对不上。
-    // **名字要说清是哪一集。** 任务页面上一排下来，「正在改编成剧本」五个
+    // **名字要说清是哪一章。** 任务页面上一排下来，「正在改编成剧本」五个
     // 字每一行都一样，说不出是哪一章（用户 2026-09-17：「任务名要显示清楚
     // 干什么的」）。
     pipeline::Activity act{
@@ -438,11 +437,11 @@ ApiResult post_script_write(const json& body, llm::Client& client,
                    : stages::parse_script(raw, used_duration, variation);
     });
 
-    // 梗概存到项目上。下次写新一集时直接回填，不用凭记忆重打。
+    // 梗概存到项目上。下次写新一章时直接回填，不用凭记忆重打。
     //
     // **写回之前重读一遍。** `project` 是这个请求一开头读的那一份，而上面
     // 那次生成跑了一两分钟——这几分钟里界面完全可能在改别的东西（镜头抽屉
-    // 存一笔、改个集名、加一集）。这儿真正要改的只有 premise 一个字段，
+    // 存一笔、改个章名、加一章）。这儿真正要改的只有 premise 一个字段，
     // 却要把整份旧 project 写回去，那些改动就被悄悄吞掉了。
     //
     // 同一个形状在批量那两条长任务上也有，理由写在 batch.cpp 里那两段。
@@ -468,8 +467,8 @@ ApiResult post_script_write(const json& body, llm::Client& client,
                                          : "合适";
     out["continued_from"] = !previous.empty();
     out["reused_characters"] = names;
-    // 这一集是照着故事写的还是照着一句梗概续的。前端靠它说清
-    // 「这一集为什么是这些内容」，也让人一眼看出有没有走上新路子。
+    // 这一章是照着故事写的还是照着一句梗概续的。前端靠它说清
+    // 「这一章为什么是这些内容」，也让人一眼看出有没有走上新路子。
     out["source"] = source;
     if (plan != nullptr) {
         out["chapters"] = stages::episode_chapters(story, *plan);
@@ -506,7 +505,7 @@ ApiResult post_script_trailer(const json& body, llm::Client& client,
         picked.push_back(&ep);
     }
     if (picked.empty()) {
-        throw ApiError(400, "没有可用来剪预告的剧集。先写几集正片，再回来剪预告");
+        throw ApiError(400, "没有可用来剪预告的章节。先写几章正片，再回来剪预告");
     }
 
 

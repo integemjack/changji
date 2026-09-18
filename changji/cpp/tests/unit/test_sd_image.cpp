@@ -172,7 +172,7 @@ TEST_CASE("出视频默认开 VAE 分块，参数是实测出来的那一组") {
 //
 // 2026-09-08 跑阶段 5 判据时撞上的：只配了 [models].video 没配 image，
 // 出首帧那一步**整个进程崩掉**——异常码 0xc0000094（整数除零），
-// HTTP 服务连同正在跑的整集一起没，日志里什么都没有。
+// HTTP 服务连同正在跑的整章一起没，日志里什么都没有。
 //
 // 原因看 API 就清楚：`sd_img_gen_params_t` 里**没有 video_frames 字段**
 // （只有 sd_vid_gen_params_t 有），压根没法告诉 generate_image 出几帧。

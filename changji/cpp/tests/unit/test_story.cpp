@@ -1,7 +1,8 @@
-// 故事层与分集算法。
+// 故事层与章节计划。
 //
-// 这里钉住的是「集数是算出来的」这条规矩的具体行为：同一个故事配不同的
-// 每集时长，切出来的集数必须跟着变，而切点只能落在钩子或章界上。
+// 这里钉住的是「一章一条」这条规矩的具体行为：章节计划里一章一条、
+// 条目的 id 从章号推（ch07 → ep07）、每条覆盖的是整章，一条值多长
+// 由这一章的正文字数算。
 //
 // 正文一律用汉字构造（zh(n) 给 n 个字），不用 ASCII：切分全程按 UTF-8
 // **字符**算，用 ASCII 的话字符数和字节数相等，这个测试就测不到那个区别了，
@@ -143,7 +144,7 @@ TEST_CASE("Story 往返序列化，中文原样进出") {
     REQUIRE(back.chapters[0].hooks.size() == 1);
     CHECK(back.chapters[0].hooks[0].at_char == 6);
     CHECK(back.chapters[0].hooks[0].text == "她认出那把伞");
-    // 场次也要原样进出：分集照着它下刀，写剧本那一步要拿它的 pov 和 where
+    // 场次也要原样进出：写剧本那一步要拿它的 pov 和 where
     REQUIRE(back.chapters[0].scenes.size() == 1);
     CHECK(back.chapters[0].scenes[0].to_char == 12);
     CHECK(back.chapters[0].scenes[0].pov == "林晚");
@@ -175,7 +176,7 @@ TEST_CASE("validate 拦住会让切分出事的那几种坏数据") {
         CHECK(errs[0].find("重复") != std::string::npos);
     }
 
-    SUBCASE("钩子越界——它会被当成切点，越界就切出空的一集") {
+    SUBCASE("钩子越界——正文里根本没有那个位置") {
         Story s;
         Chapter c = mk("ch01", "雨夜重逢", 10);
         c.hooks.push_back(hook(50, "越界了"));
@@ -199,7 +200,7 @@ TEST_CASE("validate 拦住会让切分出事的那几种坏数据") {
         CHECK(errs[0].find("陈默") != std::string::npos);
     }
 
-    SUBCASE("分集表指向不存在的章") {
+    SUBCASE("章节计划指向不存在的章") {
         Story s;
         s.chapters.push_back(mk("ch01", "甲", 10));
         EpisodePlan p;
@@ -222,14 +223,14 @@ TEST_CASE("validate 拦住会让切分出事的那几种坏数据") {
     }
 }
 
-TEST_CASE("每集容量按时长算") {
+TEST_CASE("一章的正文容量按时长算") {
     CHECK(prose_budget_chars(60.0) == 900);
     CHECK(prose_budget_chars(30.0) == 450);
     CHECK(prose_budget_chars(0.0) == 0);
     CHECK(prose_budget_chars(-1.0) == 0);
 }
 
-TEST_CASE("没展开正文时一章一集") {
+TEST_CASE("没展开正文时，章节计划一章一条") {
     Story s;
     s.chapters.push_back(outline_only("ch01", "雨夜重逢"));
     s.chapters.push_back(outline_only("ch02", "五年前那把伞"));
@@ -242,15 +243,15 @@ TEST_CASE("没展开正文时一章一集") {
     CHECK(plan[0].from_chapter == "ch01");
     CHECK(plan[2].episode_id == "ep03");
     CHECK(plan[2].to_chapter == "ch03");
-    // 一章一集时不加上/下后缀
+    // 一章一条，不加上/下后缀
     CHECK(plan[1].title == "五年前那把伞");
 }
 
-TEST_CASE("一章一集：正文再长、钩子再多也不切") {
-    // 用户 2026-09-16 定的：只留章模式，一章就是一集，多长由这一章自己的
-    // 内容定。这儿原来按每集容量（60 秒 = 900 字）找钩子把一章切成上/中/下，
-    // 剧集表那头当天就改成一章一集了，分集表这头没跟上——同一个 ep01，
-    // 剧集表说整章、分集表说前三分之一，剧本页的「原文」读的是分集表，
+TEST_CASE("一章一条：正文再长、钩子再多也不切") {
+    // 用户 2026-09-16 定的：一章就是一条，多长由这一章自己的内容定。
+    // 这儿原来按容量（60 秒 = 900 字）找钩子把一章切成上/中/下，
+    // 章节表那头当天就改成一章一条了，章节计划这头没跟上——同一个 ep01，
+    // 章节表说整章、章节计划说前三分之一，剧本页的「原文」读的是章节计划，
     // 一章 1800 字只显示前一半（2026-09-18 用户撞到）。
     Story s;
     Chapter c = mk("ch01", "雨夜重逢", 3000);
@@ -278,8 +279,8 @@ TEST_CASE("一章一集：正文再长、钩子再多也不切") {
     }
 }
 
-TEST_CASE("分集表的 id 和剧集表同一条规矩：ch07 → ep07") {
-    // 以前分集表的 id 是按切片顺序发的（ep01、ep02……），剧集表按章号推
+TEST_CASE("章节计划的 id 和章节表同一条规矩：ch07 → ep07") {
+    // 以前章节计划的 id 是按切片顺序发的（ep01、ep02……），章节表按章号推
     // （ch07 → ep07），两套编号一错位，按 episode_id 查到的是隔壁章的半截。
     Story s;
     s.chapters.push_back(mk("ch01", "甲", 100));
@@ -310,7 +311,7 @@ TEST_CASE("有正文和没正文的章交替时顺序不乱") {
     CHECK(plan[2].episode_id == "ep03");
 }
 
-TEST_CASE("一集值多长：有正文按字数估，没正文退回每集时长，再没有退回故事上存的") {
+TEST_CASE("一章值多长：有正文按字数估，没正文退回故事上存的那个数，再没有退回 kDefaultChapterS") {
     Story s;
     s.episode_duration_s = 30.0;
     s.chapters.push_back(mk("ch01", "雨夜重逢", 1500));
@@ -318,14 +319,29 @@ TEST_CASE("一集值多长：有正文按字数估，没正文退回每集时长
 
     const auto plan = plan_episodes(s, 0.0);
     REQUIRE(plan.size() == 2);
-    // 1500 字 ÷ 每秒 15 字 = 100 秒——和 sync_episodes_to_chapters 给剧集
-    // 记的是同一个数，剧本页和剧集表才不会各说各的
+    // 1500 字 ÷ 每秒 15 字 = 100 秒——和 sync_episodes_to_chapters 给章节
+    // 记的是同一个数，剧本页和章节表才不会各说各的
     CHECK(plan[0].target_duration_s ==
           doctest::Approx(1500.0 / changji::stages::kProseCharsPerSecond));
+    // 入参给 0：退到故事自己存的那个数
     CHECK(plan[1].target_duration_s == doctest::Approx(30.0));
+
+    SUBCASE("两个来源都没有：退到 kDefaultChapterS") {
+        // 2026-09-18 之前这最后一级回落是 `[assembly].episode_s`（一个用户
+        // 配置项）。那一项随成片切段一起拔掉，回落收成了代码里的常量——
+        // **收完没有任何一条用例钉它**，这条补上。
+        s.episode_duration_s = 0.0;
+        const auto fallen = plan_episodes(s, 0.0);
+        REQUIRE(fallen.size() == 2);
+        // 有正文的那一章轮不到回落，还是按字数估
+        CHECK(fallen[0].target_duration_s ==
+              doctest::Approx(1500.0 / changji::stages::kProseCharsPerSecond));
+        CHECK(fallen[1].target_duration_s ==
+              doctest::Approx(changji::stages::kDefaultChapterS));
+    }
 }
 
-TEST_CASE("切出来的分集表自己能过校验") {
+TEST_CASE("算出来的章节计划自己能过校验") {
     Story s;
     Chapter c = mk("ch01", "雨夜重逢", 3000);
     c.hooks.push_back(hook(900, "钩子一"));
@@ -391,7 +407,7 @@ EpisodePlan span(const std::string& id, const std::string& from, int from_char,
 
 }  // namespace
 
-TEST_CASE("删中间一章：跨着它的分集条目收缩，只在它里面的条目丢掉，id 不重排") {
+TEST_CASE("删中间一章：跨着它的计划条目收缩，只在它里面的条目丢掉，id 不重排") {
     Story s;
     s.chapters = {mk("ch01", "一", 100), mk("ch02", "二", 200), mk("ch03", "三", 300)};
     s.plan = {

@@ -184,7 +184,7 @@ TEST_CASE("时长格式化是银行家舍入") {
     CHECK(p2.find("总时长约 2 秒") != std::string::npos);
 }
 
-TEST_CASE("超长的前情和剧集要按字符截断") {
+TEST_CASE("超长的前情和章节要按字符截断") {
     // 按字节截会把最后一个汉字劈成半个，那半个字节直接进提示词。
     const std::string long_prev(5000, 'x');  // 先用 ASCII 确认长度逻辑
     const std::string p = stages::build_script_prompt(
@@ -326,7 +326,7 @@ TEST_CASE("渲染成后面几步认的写法") {
 
 TEST_CASE("对白字数按字符不按字节") {
     // 中文一个字三字节。用 size() 的话预算判断会偏大三倍，
-    // 每一集都会被判成"超出很多"。
+    // 每一章都会被判成"超出很多"。
     stages::ScriptDraft d;
     d.beats.push_back(stages::Beat{"dialogue", "林晚", "你说过会来的"});
     CHECK(d.dialogue_chars() == 6);
@@ -340,11 +340,11 @@ TEST_CASE("两个 schema 和 Python 一致") {
 
 // ---- 四段 ----
 //
-// 2026-09-12 加的。60 秒的集写出 13 秒的剧本，根子是剧本这一层没有承载
-// 时长的形状：一个平的 beats 数组，地板写死 4。行业里一集是四拍按秒排的，
+// 2026-09-12 加的。60 秒的章写出 13 秒的剧本，根子是剧本这一层没有承载
+// 时长的形状：一个平的 beats 数组，地板写死 4。一章是四拍按秒排的，
 // 时长是剧本自己长出来的——所以 schema 长成四段，每段自己的拍数地板。
 
-TEST_CASE("一集按秒切成四段，四段拼起来是整集") {
+TEST_CASE("一章按秒切成四段，四段拼起来是整章") {
     const auto acts = stages::act_plan(60.0);
     REQUIRE(acts.size() == 4);
     CHECK(acts[0].key == "opening");
@@ -426,7 +426,7 @@ TEST_CASE("平的回包照旧，没有段头") {
 }
 
 TEST_CASE("段头识别不误伤正常的拍子") {
-    CHECK(stages::is_act_header("【集尾留扣 54–60 秒】"));
+    CHECK(stages::is_act_header("【章尾留扣 54–60 秒】"));
     CHECK(stages::is_act_header("【情绪回报】"));
     std::string label;
     int from = -1, to = -1;
@@ -444,7 +444,7 @@ TEST_CASE("提示词里写明四段各占几秒、至少几拍") {
     const std::string p =
         stages::build_script_prompt("梗概", 60.0, models::StyleLine::REALISTIC);
     CHECK(p.find("开场钩子（0–5 秒）") != std::string::npos);
-    CHECK(p.find("集尾留扣（54–60 秒）") != std::string::npos);
+    CHECK(p.find("章尾留扣（54–60 秒）") != std::string::npos);
     const auto acts = stages::act_plan(60.0);
     CHECK(p.find("至少 " + std::to_string(acts[1].min_beats) + " 拍") !=
           std::string::npos);
@@ -669,7 +669,7 @@ TEST_CASE("给了角色名，speaker 就收成枚举") {
     // 空串留给动作行
     CHECK(names == std::vector<std::string>{"林浩", "苏婉", ""});
 
-    SUBCASE("没有角色名时不收，老项目和第一集照常") {
+    SUBCASE("没有角色名时不收，老项目和第一章照常") {
         const json bare = json(stages::script_schema(60.0));
         CHECK_FALSE(bare.at("properties").at("opening").at("properties")
                         .at("beats").at("items").at("properties")
@@ -684,8 +684,8 @@ TEST_CASE("给了角色名，speaker 就收成枚举") {
 }
 
 TEST_CASE("形状不写死：同一个时长能摇出不一样的节奏") {
-    // 写死的话 60 秒永远是 5/28/21/6，连着看几集是一个模子。
-    // 总拍数还是按时长来（防 13 秒那个毛病回来），但各段怎么分随这一集变。
+    // 写死的话 60 秒永远是 5/28/21/6，连着看几章是一个模子。
+    // 总拍数还是按时长来（防 13 秒那个毛病回来），但各段怎么分随这一章变。
     const auto base = stages::act_plan(60.0);        // 不浮动，老行为
     CHECK(base[0].to_s == 5);
     CHECK(base[3].from_s == 54);
@@ -694,7 +694,7 @@ TEST_CASE("形状不写死：同一个时长能摇出不一样的节奏") {
     for (int i = 0; i < 40; ++i) {
         const auto a = stages::act_plan(60.0, stages::random_shape());
         REQUIRE(a.size() == 4);
-        // 不管怎么摇，四段首尾相接、加起来正好一集
+        // 不管怎么摇，四段首尾相接、加起来正好一章
         CHECK(a[0].from_s == 0);
         CHECK(a[3].to_s == 60);
         int beats = 0;
@@ -714,8 +714,8 @@ TEST_CASE("形状不写死：同一个时长能摇出不一样的节奏") {
 }
 
 TEST_CASE("戏的走法也换，不只是秒数") {
-    // **只浮动秒数不够。** 上一条只问了"开场占几秒"，而十集下来仍然是同一出
-    // 戏演快一点演慢一点：钩子 → 推进 → 回报 → 留扣，一集不落。用户的判词
+    // **只浮动秒数不够。** 上一条只问了"开场占几秒"，而十章下来仍然是同一出
+    // 戏演快一点演慢一点：钩子 → 推进 → 回报 → 留扣，一章不落。用户的判词
     // 「提取出来剧本时间线也都差不多」说的正是这个。
     SUBCASE("variation = 0 还是老那一套，一个字没改") {
         const auto a = stages::act_plan(60.0);
@@ -723,7 +723,7 @@ TEST_CASE("戏的走法也换，不只是秒数") {
         CHECK(a[0].label == "开场钩子");
         CHECK(a[1].label == "冲突推进");
         CHECK(a[2].label == "情绪回报");
-        CHECK(a[3].label == "集尾留扣");
+        CHECK(a[3].label == "章尾留扣");
         CHECK(a[0].brief == "一句冲突台词或一个反常画面，三秒内有事发生，不铺垫");
     }
 
@@ -808,12 +808,12 @@ TEST_CASE("摇出来的形状要和 schema、解析用的是同一个") {
     CHECK(d.acts[1].to_s == acts[1].to_s);
 }
 
-TEST_CASE("前情只取这一集之前的几集，预告片不算") {
+TEST_CASE("前情只取这一章之前的几章，预告片不算") {
     // ⚠️ **这段原来在两处各写了一遍，取法还不一样**（CLAUDE.md 第七条）：
-    // `batch.cpp` 那份取"最近三集写好的"，不管在这一集前面还是后面；
-    // `scripting.cpp` 那份取"这一集之前的最近三集"。写整季时两者恰好相等
-    // （那一集是写完才建出来的），所以谁也没发现——而**单写一集时前一种会
-    // 把后面几集当成已经发生的事喂给模型**，模型就照着写。
+    // `batch.cpp` 那份取"最近三章写好的"，不管在这一章前面还是后面；
+    // `scripting.cpp` 那份取"这一章之前的最近三章"。整部写下来时两者恰好相等
+    // （那一章是写完才建出来的），所以谁也没发现——而**单写一章时前一种会
+    // 把后面几章当成已经发生的事喂给模型**，模型就照着写。
     models::Project p;
     for (const char* id : {"ep01", "ep02", "trailer", "ep03", "ep04"}) {
         models::Episode ep;
@@ -822,7 +822,7 @@ TEST_CASE("前情只取这一集之前的几集，预告片不算") {
         p.episodes.push_back(ep);
     }
 
-    SUBCASE("到这一集为止") {
+    SUBCASE("到这一章为止") {
         const std::string out = http::previous_scripts(p, "ep03");
         CHECK(out.find("ep01") != std::string::npos);
         CHECK(out.find("ep02") != std::string::npos);
@@ -839,7 +839,7 @@ TEST_CASE("前情只取这一集之前的几集，预告片不算") {
         CHECK(out.find("trailer") == std::string::npos);
     }
 
-    SUBCASE("只要最近几集：整季塞进去撑不住") {
+    SUBCASE("只要最近几章：整部塞进去撑不住") {
         const std::string out = http::previous_scripts(p, "", /*keep=*/2);
         CHECK(out.find("ep01") == std::string::npos);
         CHECK(out.find("ep03") != std::string::npos);

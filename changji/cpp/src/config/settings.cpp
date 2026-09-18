@@ -8,8 +8,13 @@
 #include <sstream>
 #include <stdexcept>
 
+#include <nlohmann/json.hpp>
 #include <toml++/toml.hpp>
 
+// 只为了 `ProjectPaths::assets_file()` 和 `StyleProfile` 那个初值：没写
+// `[video]` 的老项目，画幅要从它自己的 assets.json 推（见
+// orientation_from_assets）。文件名和初值都从这儿拿，不在这边再抄一份。
+#include "models/project.hpp"
 #include "stages/limits.hpp"
 #include "util/paths.hpp"
 
@@ -106,7 +111,7 @@ std::pair<int, int> VideoConfig::size() const {
     // **三档，全部 32 对齐。**
     //   720p → 544×928   省时间，一镜约 2 分钟
     //   hd   → 704×1280   2026-09-11 加回来的。改成 544×928 之后用户说
-    //                     "糊掉、变形"，而同一集里 sh001 是 704×1280、
+    //                     "糊掉、变形"，而同一章里 sh001 是 704×1280、
     //                     sh002 是 544×928，像素 90 万 vs 50 万，差 44%。
     //                     这一档是 9-10 之前一直在用、用户认可过的那个。
     //   2k   → 1440×2560  一张 32 GB 的卡跑不动，见下面
@@ -125,6 +130,16 @@ std::pair<int, int> VideoConfig::size() const {
     return orientation == "landscape"
                ? std::pair<int, int>{long_side, short_side}
                : std::pair<int, int>{short_side, long_side};
+}
+
+std::optional<std::string> orientation_of_aspect(const std::string& aspect_ratio) {
+    // **照着正向那个函数比**，不另写一份映射：这样这张表只有一处。
+    for (const char* o : {"landscape", "portrait"}) {
+        VideoConfig probe;
+        probe.orientation = o;
+        if (probe.aspect_ratio() == aspect_ratio) return std::string(o);
+    }
+    return std::nullopt;
 }
 
 std::vector<std::string> TiersConfig::validate() const {
@@ -253,10 +268,6 @@ std::vector<std::string> AssemblyConfig::validate() const {
     check_range(errs, "assembly.audio_sample_rate", audio_sample_rate, 8000, 192000);
     check_range(errs, "assembly.audio_channels", audio_channels, 1, 2);
     check_range(errs, "assembly.scene_transition_s", scene_transition_s, 0.0, 2.0);
-    // 一集能看的长度，十秒以下是手误。**不再允许 0**：0 原来表示"走老的
-    // 集模式"，而集模式 2026-09-16 已经删了（用户当天定的）。老配置里写着
-    // 0 的在读取时就抬到默认值，走不到这儿。
-    check_range(errs, "assembly.episode_s", episode_s, 10.0, 3600.0);
     check_range(errs, "assembly.subtitle_max_chars_per_line",
                 subtitle_max_chars_per_line, 6, 30);
     check_range(errs, "assembly.subtitle_max_lines", subtitle_max_lines, 1, 3);
@@ -411,7 +422,7 @@ std::string ModelsConfig::weights_for(double vram_gb, double model_gb,
     // 8 到 9 秒），而它是这一套里最大的一块（18.9 GB）。放显存换来的那几秒
     // 远不如把地方让给扩散模型。
     //
-    // 拿不到模型大小按装不下处理：猜错是整集出片失败，放内存只是慢。
+    // 拿不到模型大小按装不下处理：猜错是整章出片失败，放内存只是慢。
     if (model_gb <= 0.0) return "cpu";
     // 缓冲那个数是怎么来的写在 kVideoBuffer / video_buffer_gb 头上。
     if (model_gb + buffer > vram_gb) return "cpu";   // 权重都常驻不下
@@ -824,11 +835,9 @@ void apply_table(const toml::table& doc, Settings& s) {
         take(t, "audio_sample_rate", s.assembly.audio_sample_rate);
         take(t, "audio_channels", s.assembly.audio_channels);
         take(t, "scene_transition_s", s.assembly.scene_transition_s);
-        take(t, "episode_s", s.assembly.episode_s);
-        // **老配置里的 0 抬到默认值。** 0 原来的意思是"走老的一集一章"，
-        // 那条路已经没有了；留着 0 的话装配那一步拿它当每集时长，切不出集来。
-        // 负数同理（手误）。
-        if (s.assembly.episode_s <= 0.0) s.assembly.episode_s = kDefaultEpisodeS;
+        // 老项目的 changji.toml 里还写着 `episode_s`（成片按每集 N 秒切的
+        // 年代留下的）。take 是「键存在才覆盖」，这儿不 take 就是**忽略**它
+        // ——不校验、不报错，老项目照常打开。
         take(t, "subtitle_max_chars_per_line", s.assembly.subtitle_max_chars_per_line);
         take(t, "subtitle_max_lines", s.assembly.subtitle_max_lines);
         take(t, "subtitle_font", s.assembly.subtitle_font);
@@ -879,7 +888,7 @@ void apply_table(const toml::table& doc, Settings& s) {
         take(t, "tts", s.models.tts);
         take(t, "tts_decoder", s.models.tts_decoder);
 
-        // `[models.pick]`：这部剧要哪一档。**按键盖，不整份替换。**
+        // `[models.pick]`：这部电影要哪一档。**按键盖，不整份替换。**
         //
         // 这个函数会被调两次（先全局、后项目里那份），而项目多半只写了
         // 一两组。整份替换的话，项目里写一个 image 就等于把全局挑好的
@@ -923,12 +932,23 @@ void apply_table(const toml::table& doc, Settings& s) {
     }
 }
 
-void read_toml_into(const fs::path& path, Settings& s) {
+/// 把一份 toml 叠到 s 上。返回**这份文件里明写了 `[video].orientation` 吗**。
+///
+/// 那个返回值是 `load_settings` 分「项目自己说了画幅」和「项目没说」用的，
+/// 没说的那一支要去 assets.json 里推（见 orientation_from_assets）。
+/// **不能拿"读出来的值等于内置默认"当判据**：明写 landscape 和什么都没写，
+/// 读完一模一样，而这两件事要走不同的路。
+bool read_toml_into(const fs::path& path, Settings& s) {
     std::error_code ec;
-    if (!fs::is_regular_file(path, ec)) return;
+    if (!fs::is_regular_file(path, ec)) return false;
     try {
         auto doc = toml::parse_file(paths::to_utf8(path));
         apply_table(doc, s);
+        const auto* video = doc["video"].as_table();
+        // 类型不对（写成数字之类）算没说：那时候 take() 也没覆盖，
+        // 两边保持同一个口径。
+        return video != nullptr &&
+               video->get_as<std::string>("orientation") != nullptr;
     } catch (const toml::parse_error& e) {
         // 配置坏了要说清楚是哪个文件。只说「配置解析失败」的话，
         // 用户手上有用户级和项目级两份，只能挨个翻。
@@ -937,6 +957,90 @@ void read_toml_into(const fs::path& path, Settings& s) {
            << "（第 " << e.source().begin.line << " 行）";
         throw std::runtime_error(os.str());
     }
+}
+
+/// 没写 `[video]` 的老项目：画幅从它自己 assets.json 里那份比例反推。
+/// 推不出来回 nullopt，由内置默认接着。
+///
+/// **为什么要推。** 2026-09-18 内置默认从 portrait 翻成 landscape（用户把
+/// 产品定位从短剧改成电影制作平台），当时的理由是「老项目已经把画幅写进自己的
+/// changji.toml，不受影响」。那个前提不成立：写 changji.toml 的是
+/// `http::post_new_project`，`models::ProjectStore::create` 不写——手工建的、
+/// 以及早于项目模板那一批老项目，目录里根本没有 `[video]`，读出来的就是
+/// 内置默认。仓库自己的夹具 `tests/golden/项目_雨夜天台/` 就是这一类。
+/// 于是翻默认等于把它们全改成横屏，三件事一件比一件难救：
+///
+///   · 一个已经出了两百镜 544×928 的竖屏项目再补一镜，`run_frames` 走
+///     `scaled_to("16:9")` 出的是 928×544——**同一章里两种画幅**，装配时
+///     要么被 normalize 成上下黑边、要么直接拼坏，全程不报错；
+///   · 用户只要在设置页碰一下「后期 / 画面」，引擎就把
+///     `orientation = "landscape"` 永久写进那个竖屏项目——那两条路写盘时
+///     用的正是这个函数所在的 `load_settings` 读出来的值。不可逆，没提示；
+///   · `/api/assets` 报的比例跟着翻，重出参考图也跟着翻。
+///
+/// **判据是「这个项目自己说了算」。** 老项目虽然没有 `[video]`，画幅在盘上
+/// 仍然是有记录的：`assets.json` 里的 `style.aspect_ratio`。那份值是这个
+/// 项目所有参考图和已出镜头的实际比例——出图那两层直接拿它把档位表的宽高
+/// 转过来（`stages/frames.cpp` 里 `spec.scaled_to(assets.style.aspect_ratio)`
+/// 那一句）——比任何内置默认都可信。
+///
+/// **那一栏读不出来也是数据，不是"推不出来"。** 读不出来一共四种样子——
+/// 缺 `aspect_ratio` 那一栏、整个 `style` 对象缺、`style` 或那一栏类型不对、
+/// 文件根本不是合法 JSON——成因是同一个：这份文件比这个字段还老，或者被
+/// 手改歪了。而那个年代建的项目全是竖屏的，所以这四种都按 `StyleProfile`
+/// 自己那个初值（9:16）算，正好答对。
+///
+/// 反过来说：**"文件读不出来"推不出"这个项目是横屏"。** 一份连 `style` 都
+/// 没有的极老竖屏项目要是在这儿报了 landscape，补一镜就走
+/// `scaled_to("16:9")` 出 928×544——同一章两种画幅、全程不报错，正是上面那
+/// 三件事里最难救的第一件。
+///
+/// 还有一条对账：`ProjectStore::load_assets` 读**同一份盘**时，缺 `style`
+/// 给的是 9:16（`asset_library_from_json` 里 `def.style` 那一支），类型不对
+/// 和坏 JSON 直接抛——**没有一份会答"横屏"**。两个读法对同一份文件给不同的
+/// 答案时，谁对谁错没人看得出来：一边是设置页显示的画幅，一边是出图那几层
+/// 实际用的比例。
+///
+/// `nullopt` 只留给**真认不出**的那一种：那一栏在、是字符串、但既不是 16:9
+/// 也不是 9:16（手改过，或者哪天加了档而这张表没跟）。那时候硬猜一个是错的
+/// ——见 `orientation_of_aspect`。
+///
+/// **连 assets.json 都没有的目录不算老项目。** `ProjectStore::create` 建目录
+/// 那一下就把 assets.json 写下来了（还顺手把当时的画幅钉进去），所以一个连
+/// 它都没有的目录不是一份等着被认出来的老项目，是"盘上什么都没说"——那种
+/// 交给内置默认答。
+///
+/// ⚠️ **只读，不写盘。** 出片那条路每跑一章都要经过这儿
+/// （`http/run.cpp` 的 `load_settings(store.root())`），在一条读路径上顺手
+/// 改用户的项目文件是不行的。落盘的时机是用户在设置页按保存那一下，
+/// 见 `http/server.cpp` 的 `/bff/project/video` 和 `/bff/project/finish`
+/// ——它们写的就是这儿推出来的值。
+std::optional<std::string> orientation_from_assets(const fs::path& project_dir) {
+    const fs::path f = models::ProjectPaths(project_dir).assets_file();
+    std::error_code ec;
+    if (!fs::is_regular_file(f, ec)) return std::nullopt;
+
+    // **手改坏的 assets.json 在这儿一声不响地放过去。** 这是加载配置，
+    // 不是打开资产库；真去读资产库的 `ProjectStore::load_assets` 会抛，
+    // 而在这儿抛的后果是"文件歪了连设置页都打不开"。
+    //
+    // 放过去之后答的是 `StyleProfile` 的初值，不是内置默认——理由见上面
+    // 「读不出来也是数据」那一段。所以下面这一路**没有一个 return
+    // nullopt**：打不开、不是 JSON、没有 `style`、那一栏类型不对，全都停在
+    // 这个初值上。`nlohmann::json` 的 `find()` 对非对象（含 parse 失败那个
+    // discarded 值）回的就是 `end()`，四种情况因此能合成同一条路。
+    std::string ratio = models::StyleProfile{}.aspect_ratio;
+    if (std::ifstream in(f, std::ios::binary); in) {
+        const auto doc = nlohmann::json::parse(in, nullptr, false);
+        if (const auto style = doc.find("style");
+            style != doc.end() && style->is_object()) {
+            if (const auto it = style->find("aspect_ratio");
+                it != style->end() && it->is_string()) {
+                ratio = it->get<std::string>();
+            }
+        }
+    }
+    return orientation_of_aspect(ratio);
 }
 
 /// 环境变量覆盖。
@@ -992,7 +1096,18 @@ void apply_env(Settings& s) {
 Settings load_settings(const std::optional<fs::path>& project_dir) {
     Settings s;  // 内置默认值就是成员初始化器
     read_toml_into(user_config_path(), s);
-    if (project_dir) read_toml_into(*project_dir / "changji.toml", s);
+    if (project_dir) {
+        // **项目自己没写画幅时，从它自己的 assets.json 推**，而不是落到
+        // 内置默认。优先级照旧「项目 > 全局 > 内置默认」——推出来的这个值
+        // 也是项目级的记录，所以它压全局那份。见 orientation_from_assets。
+        const bool toml_says_orientation =
+            read_toml_into(*project_dir / "changji.toml", s);
+        if (!toml_says_orientation) {
+            if (const auto o = orientation_from_assets(*project_dir)) {
+                s.video.orientation = *o;
+            }
+        }
+    }
     // **密钥单独一个文件，压过 config.toml 里那份。**
     // 老配置里写了 [llm].api_key 的照样认（上面那行已经读进来了），
     // 但只要单独那个文件在，就以它为准——见 user_api_key_path。
@@ -1124,7 +1239,7 @@ int steps_on_node(const Settings& node, int dispatched_steps, bool steps_pinned)
     if (steps_pinned || dispatched_steps <= 0) return dispatched_steps;
     const auto eff = effective_spec(node, dispatched_steps);
     // 这台自己的 [tiers].final_steps 不算数：那是它本地跑时的偏好，
-    // 派来的活听派活那部剧的。只拿"挂没挂上 Turbo"这一个结论。
+    // 派来的活听派活那部电影的。只拿"挂没挂上 Turbo"这一个结论。
     return eff.turbo ? 6 : dispatched_steps;
 }
 
@@ -1190,7 +1305,7 @@ std::string normalize_fps_for_model(Settings& s) {
 std::vector<std::string> migrate_legacy(Settings& s) {
     std::vector<std::string> notes;
     // 帧率跟着出片模型走。放在这儿是因为这个函数正是"设置读进来之后
-    // 自己纠一遍并大声说一句"的那一处，而出片那条路每跑一集都会经过它
+    // 自己纠一遍并大声说一句"的那一处，而出片那条路每跑一章都会经过它
     // （http/run.cpp 的 load_settings(store.root())）。
     if (std::string note = normalize_fps_for_model(s); !note.empty()) {
         notes.push_back(std::move(note));
@@ -1243,14 +1358,14 @@ constexpr const char* kDefaultTomlHead = R"(# 场记配置文件
 
 # 项目库根目录。留空则用系统标准数据目录。
 # 换机器时把项目目录整个拷走即可，程序装在哪都不影响。
-# workspace = "D:/短剧项目"
+# workspace = "D:/电影项目"
 
 # 显存覆盖。推理服务跑在另一台机器时本机探测不到显卡，用它手动指定。
 # vram_gb_override = 16
 
 [video]
-# **这一节写在项目目录的 changji.toml 里**，一部剧一份——一台机器上可以
-# 同时有竖屏短剧和横屏片子，画幅是这部剧的属性不是这台机器的属性。
+# **这一节写在项目目录的 changji.toml 里**，一部电影一份——一台机器上可以
+# 同时有横屏的正片和竖版的物料，画幅是这部电影的属性不是这台机器的属性。
 #   orientation = "portrait" | "landscape"
 #   quality     = "720p" | "hd" | "2k"
 # 宽高由这两项算出来（短边 × 长边，横屏时反过来）：
@@ -1260,7 +1375,7 @@ constexpr const char* kDefaultTomlHead = R"(# 场记配置文件
 # 三个数都是 32 的倍数，这是硬约束，所以没有"自己填宽高"这一项。
 # **2K 一张 32 GB 的卡跑不动**，那时候要么换大卡，要么出 720p 再
 # `changji --upscale`。这里不会悄悄降档。
-# orientation = "portrait"
+# orientation = "landscape"
 # quality = "720p"
 
 [tiers]
@@ -1344,12 +1459,12 @@ model = "glm-4.7-flash"
 # 想要好的就把下面这段的注释去掉。两种本事分开买：
 #   写得好 —— 正文、梗概、大纲、预告。glm-5.3 在 EQ-Bench 长文创作榜上
 #             81.8 分、slop 7.09（全榜第二低），而且八章几乎不降——
-#             写连续剧最怕的就是往后越写越塌。默认那个 glm-4.7-flash
+#             一章接一章往下写最怕的就是越写越塌。默认那个 glm-4.7-flash
 #             在同一个榜上 47.8、slop 48.86。
 #   听话   —— 分镜、人物表、剧本四段、分析。分镜那份 schema 有六十多个
 #             类型定义和一串枚举，文采在这儿一点用都没有，够听话就行。
 #
-# 一部 11 集按输入 20 万 / 输出 15 万 token 估，这么配合计约 $0.73。
+# 一部 11 章按输入 20 万 / 输出 15 万 token 估，这么配合计约 $0.73。
 # ⚠️ glm-5.3-flash 榜上没测过，别拿 5.3 的分替它背书：上一代
 #    glm-4.7 → glm-4.7-flash 掉了 18.2 分。选型只能靠真发一次。
 # [llm.models]
@@ -1377,7 +1492,7 @@ backend = "local"
 # 质量闸门。全自动模式下这些阈值决定废片能不能被拦住。
 enabled = true
 max_attempts_per_shot = 3
-# 重试超限时保留最后那一版（闸门没过，但片子在），保证整集能出片而不是卡死。
+# 重试超限时保留最后那一版（闸门没过，但那一镜的视频在），保证整章能出片而不是卡死。
 fallback_on_exhausted = true
 
 [assembly]
@@ -1387,14 +1502,13 @@ crf = 18
 # 引擎里一处 xfade / acrossfade 都没有（见 media/assemble.cpp 里那段）。
 # 这个数还收着（改它不报错、也存得住），但改了不会有任何变化。
 scene_transition_s = 0.4
-# episode_s = 90   # 填了就是章模式：一章按内容写完、拍完，最后按这个数切成几集；0 = 老的一集一章
 # 中文字幕单行上限，全角字符数。
 subtitle_max_chars_per_line = 15
 subtitle_font = "Source Han Sans SC"
 
 [sound]
 # 声音那几层里**机器属性**的那一项：生成一条配乐的命令。别的（环境声、
-# 配乐开关、压多少 dB）是剧的属性，在项目目录的 changji.toml 里。
+# 配乐开关、压多少 dB）是这部电影的属性，在项目目录的 changji.toml 里。
 # 占位符：{prompt} 描述、{seconds} 时长、{out} 输出 wav。空 = 不生成配乐。
 # ACE-Step 1.5 的包装脚本在 cpp/tools/music_ace_step.py（<4 GB 显存，几秒一条）。
 # music_command = "python /path/to/changji/cpp/tools/music_ace_step.py --prompt {prompt} --seconds {seconds} --out {out}"
@@ -1583,46 +1697,48 @@ fs::path write_default_config(const std::optional<fs::path>& path) {
 
 namespace {
 
-// **只放这部剧的属性。** 模型文件、显存、端口、大模型地址是机器的属性，
+// **只放这部电影的属性。** 模型文件、显存、端口、大模型地址是机器的属性，
 // 在全局配置里；写到这儿的话把项目目录拷到另一台机器就跑不起来。
 //
-// 明写出来（而不是注释掉）的几项就是"一部剧的标准参数"：新建时按内置
-// 默认值落下来，以后全局默认再变也不影响已建的剧——每部剧自己说了算。
-// [models] 那一节全是注释：采样旋钮多数时候跟着模型走，按剧调才打开。
+// 明写出来（而不是注释掉）的几项就是"一部电影的标准参数"：新建时按内置
+// 默认值落下来，以后全局默认再变也不影响已建的电影——每部电影自己说了算。
+// [models] 那一节全是注释：采样旋钮多数时候跟着模型走，按这部电影调才打开。
 //
 // 两个占位符由 write_project_config 换成真实取值。
-constexpr const char* kProjectToml = R"(# 这部剧自己的配置（一个项目一份）。
+constexpr const char* kProjectToml = R"(# 这部电影自己的配置（一个项目一份）。
 #
-# 只放「这部剧的属性」：画幅、装配、闸门、按剧调的采样旋钮。
+# 只放「这部电影的属性」：画幅、装配、闸门、按这部电影调的采样旋钮。
 # 机器的属性（模型文件、显存、端口、大模型地址）在全局配置里，不要写到这儿——
 # 否则项目目录拷到另一台机器就跑不起来。
 # 优先级：环境变量 > 本文件 > 全局配置 > 内置默认值
 #
-# 这份是新建项目时按标准参数生成的。每部剧的差异在这里改，别去改全局。
+# 这份是新建项目时按标准参数生成的。每部电影的差异在这里改，别去改全局。
 
 [video]
-# 画幅是这部剧的属性，不是这台机器的：同一台机器上可以同时有竖屏短剧和横屏片子。
+# 画幅是这部电影的属性，不是这台机器的：同一台机器上可以同时有横屏的正片和竖版的物料。
 #   orientation = "portrait" | "landscape"
 #   quality     = "720p" | "hd" | "2k"
 #   720p → 544×928    hd → 704×1280    2k → 1440×2560（一张 32 GB 的卡跑不动）
+#   （**这几个是竖屏的写法，横屏时反过来**：928×544 / 1280×704 / 2560×1440）
 orientation = "@ORIENTATION@"
 quality = "@QUALITY@"
-# 单个镜头最长几秒。**这是剧的属性，不是显存的函数**：竖屏短剧单镜 5 秒左右
-# 是标准单位，一镜只保留一个核心动作。
+# 单个镜头最长几秒。**这是这部电影的属性，不是显存的函数**：一镜只保留一个
+# 核心动作。
 #
 # **2026-09-16 从 5.0 改成 15.0。** 原来这儿写着「实测 8 秒的镜头会中途硬切成
 # 另一场戏」，所以压到 5 秒。那条实测多半记的是别的病的症状：同一天查出来，
 # 中途硬切的根因是 motion_prompt 没盖满整镜时长（4 秒的镜头只写到 [0-2秒]，
 # 剩下那截模型自由发挥）和运动描述里写了进画出画（人走进来、开门露出门后）。
 # 两条都堵上了，闸门那句「首帧和提示词对不上，模型半路切到了提示词要的画面」
-# 说的正是这件事。上限不该替内容做决定——一镜只演一件事由提示词第 14、6 条
-# 管着，这里只管机器和剧允许多长。
+# 说的正是这件事。上限不该替内容做决定——一镜只演一件事由提示词那两句原话
+# 管着：分镜那头的「一镜只演一件事」、剧本那头的「每一拍只写一件事」。
+# 这里只管机器和这部电影允许多长。
 #
 # 真跑长镜头之前先看一眼 /api/hardware 的 shot.max_shot_s：它是四道夹子
 # （模型帧数、显存、内核像素×帧、这一行）连乘、再落到 17k+5 格子上的结果。
 # 0 = 按模型和这张卡自己定。
 max_shot_s = 15.0
-# 关键镜头（开场钩子、集尾留扣、反转，以及第一镜和最后一镜）多出几条换种子、
+# 关键镜头（开场钩子、章尾留扣、反转，以及第一镜和最后一镜）多出几条换种子、
 # 按闸门的数挑最好的一条。行业做法是关键镜多出 20～30%。1 = 不多出。
 hero_takes = 2
 # 连续动作的两镜（分镜里标了 continuous_with_prev 的），拿上一镜的最后一帧
@@ -1634,13 +1750,12 @@ chain_frames = true
 # 纠正**：MiniMax-H3 硬是 24，填别的会被改回去并在保存时说一句。
 # Wan 那一族不报原生帧率，填什么就是什么——而 `/api/shots` 回的
 # 「这一镜多长」目前写死按 24 算（readonly.cpp 里那段），两个数就对不上了：
-# 成片页那条跳转条点哪一镜都偏、镜头页那句「这一集多长」也偏，全程不报错。
+# 成片页那条跳转条点哪一镜都偏、镜头页那句「这一章多长」也偏，全程不报错。
 # 用 Wan 的话，帧率保持 24 最省事。
 crf = 18
 # ⚠️ 转场目前不生效：装配是 `-f concat -c copy` 直接拼，全程硬切。
 # 这个数还收着，但改了不会有任何变化。见 media/assemble.cpp。
 scene_transition_s = 0.4
-# episode_s = 90   # 填了就是章模式：一章按内容写完、拍完，最后按这个数切成几集；0 = 老的一集一章
 # 中文字幕单行上限（全角字符数）和字体。
 subtitle_max_chars_per_line = 15
 subtitle_font = "Source Han Sans SC"
@@ -1678,14 +1793,14 @@ music_style = ""
 # 质量闸门。全自动模式下这些阈值决定废片能不能被拦住。
 enabled = true
 max_attempts_per_shot = 3
-# 重试超限时保留最后那一版（闸门没过，但片子在），保证整集能出片而不是卡死。
+# 重试超限时保留最后那一版（闸门没过，但那一镜的视频在），保证整章能出片而不是卡死。
 fallback_on_exhausted = true
 
 [models]
 # **模型文件名不要写在这里**，那是机器的属性——每台的目录和文件名都不一样，
 # 写进来的话项目目录拷到另一台就跑不起来。
 #
-# 但**"这部剧要哪一档"可以**，那是剧的属性，而且机器无关：档位 id 来自内置
+# 但**"这部电影要哪一档"可以**，那是这部电影的属性，而且机器无关：档位 id 来自内置
 # 目录，每台都认得，各自去自己的模型目录里找对应的文件。写在下面的
 # [models.pick] 里，项目这一份盖全局（按键盖，没写的那几组照旧跟全局走）。
 #
@@ -1695,7 +1810,7 @@ fallback_on_exhausted = true
 #
 # 不写 = 没挑过，那时候"选了哪一档"从全局配置里的文件名反推，和以前一样。
 #
-# 这一节剩下的只放按剧调的采样旋钮，
+# 这一节剩下的只放按这部电影调的采样旋钮，
 # 全部注释掉 = 跟全局走。flow_shift 的 0 = 自动（按模型架构挑）。
 # video_cfg = 1.0
 # video_flow_shift = 0.0
@@ -1705,7 +1820,7 @@ fallback_on_exhausted = true
 #
 # 分档：草稿档挂 Turbo 跑 6 步看叙事，成片档不挂 LoRA 跑满步数（30 是手和
 # 纹理的甜点）。默认 both = 两档都挂 Turbo，最快；要成片质量就改成 draft，
-# 然后成片档只对留下的镜头跑（单集页上按镜头重跑）。
+# 然后成片档只对留下的镜头跑（单章页上按镜头重跑）。
 # video_lora_tiers = "draft"
 )";
 

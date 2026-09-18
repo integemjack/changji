@@ -79,7 +79,7 @@ TEST_CASE("命令行后端：schema 贴在提示词后面，和远端那条一�
     llm::CommandClient cli(echo_cfg());
     pipeline::CancelToken tok;
     llm::Request req;
-    req.prompt = "拆这一集的镜头";
+    req.prompt = "拆这一章的镜头";
     req.schema = nlohmann::ordered_json{
         {"type", "object"},
         {"properties", {{"changji_field_marker", {{"type", "string"}}}}}};

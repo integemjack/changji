@@ -31,17 +31,17 @@ ApiResult post_new_project(const nlohmann::json& body,
 ApiResult post_delete_project(const nlohmann::json& body,
                               const config::Settings& settings);
 
-/// POST /api/project/premise —— 存下这部剧讲什么。写下一集时当提示词用。
+/// POST /api/project/premise —— 存下这部电影讲什么。写下一章时当提示词用。
 ApiResult post_project_premise(const nlohmann::json& body);
 
-/// POST /api/project/rename —— 改剧名。body: {project, title}
+/// POST /api/project/rename —— 改片名。body: {project, title}
 ///
 /// **只改 project.json 里的 title，不动目录。** 目录名是项目的身份：
 /// 前端把它存在 localStorage、列表按 path 做 key、每个接口都拿 path 认项目，
 /// 目录一改全部失联。想让目录也整齐，只能自己在磁盘上搬。
 ///
-/// 加它是因为剧名原来是整条产品线上唯一一个「建的时候能填、建完再也改不了」
-/// 的字段——新建弹窗给了「剧名（可空）」那个框，之后没有任何路由写得了它，
+/// 加它是因为片名原来是整条产品线上唯一一个「建的时候能填、建完再也改不了」
+/// 的字段——新建弹窗给了「片名（可空）」那个框，之后没有任何路由写得了它，
 /// 手滑打错只能删掉重建，而重建意味着里面写的东西全丢。
 ApiResult post_project_rename(const nlohmann::json& body);
 

@@ -122,7 +122,7 @@ TEST_CASE("strip_ws 和 Python 的 str.strip() 一致") {
 
 TEST_CASE("rstrip_punct 按字符剥，不按字节") {
     // 中文标点每个 3 字节，按字节剥会把前一个汉字劈成半个，产出乱码——
-    // 而这个串会出现在**每一个镜头的提示词**里，坏掉是全剧性的。
+    // 而这个串会出现在**每一个镜头的提示词**里，坏掉是全片性的。
     for (const auto& c : text_golden().at("rstrip_punct")) {
         const std::string in = c.at("in").get<std::string>();
         CAPTURE(in);
@@ -192,7 +192,7 @@ TEST_CASE("标题自己带的编号削掉，界面上才不会编两次号") {
     // **2026-09-13 用全新项目走前三步时撞到的。** 模型出的大纲编号自己就
     // 不一致（章/部混用），而界面上本来就有编号前缀，于是显示成
     //     故事页   第 2 章 · 第二部：被折叠的时间
-    //     分集页   2   第1章：不该存在的呼吸
+    //     章节表   2   第1章：不该存在的呼吸
     CHECK(text::strip_leading_ordinal("第二部：被折叠的时间") == "被折叠的时间");
     CHECK(text::strip_leading_ordinal("第1章：不该存在的呼吸") ==
           "不该存在的呼吸");
@@ -265,7 +265,7 @@ TEST_CASE("human_time_precise_as：并排比较的几个数用同一个量纲") 
     // 按最大的定会得到「0 分 51.9 秒」，更糟——这条钉住方向别反。
     CHECK(util::human_time_precise_as(51.9, 60.0) == "0 分 51.9 秒");
 
-    // 整集本来就上分钟的，三个数照样一致。
+    // 整章本来就上分钟的，三个数照样一致。
     const double big = 175.0;    // min(175, 181.2, 180)
     CHECK(util::human_time_precise_as(175.0, big) == "2 分 55.0 秒");
     CHECK(util::human_time_precise_as(180.0, big) == "3 分");

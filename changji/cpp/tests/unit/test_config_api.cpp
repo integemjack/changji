@@ -291,7 +291,7 @@ TEST_CASE("写回配置文件") {
 }
 
 TEST_CASE("正在跑的时候不让换机器") {
-    // 前半集是一台机器出的，后半集是另一台，画风对不上。
+    // 前半章是一台机器出的，后半章是另一台，画风对不上。
     reset_runtime();
     pipeline::jobs().cancel(pipeline::JobKind::Run);
     pipeline::jobs().wait_idle();
@@ -310,14 +310,14 @@ TEST_CASE("正在跑的时候不让换机器") {
             json{{"patch", {{"llm_model", "x"}}}}, fake_doctor());
     });
     CHECK(r.status == 409);
-    CHECK(r.body.at("detail") == "正在跑，这时候换机器会把这一集跑坏");
+    CHECK(r.body.at("detail") == "正在跑，这时候换机器会把这一章跑坏");
 
     SUBCASE("改参数也不让") {
         const auto r2 = http::guard([] {
             return http::post_settings(json{{"fps", 30}});
         });
         CHECK(r2.status == 409);
-        CHECK(r2.body.at("detail") == "正在跑，改参数会让这一集前后不一致");
+        CHECK(r2.body.at("detail") == "正在跑，改参数会让这一章前后不一致");
     }
 
     release = true;
@@ -429,7 +429,7 @@ TEST_CASE("档位要写回配置文件——设完重启不能丢") {
     // 理由是"档位按显存推，写死等于把这台机器的显存刻进配置"。
     // 那个理由站不住：这个文件里 [models] 全是这台机器的模型路径。
     //
-    // 真实后果是用户把成片档调成 1280×704 跑了一集，重启回到 960×544，
+    // 真实后果是用户把成片档调成 1280×704 跑了一章，重启回到 960×544，
     // 而界面上没有任何提示。现在写进 [tiers]，没填的项还是 0（按显存推）。
     reset_runtime();
     const auto r = http::guard([] {

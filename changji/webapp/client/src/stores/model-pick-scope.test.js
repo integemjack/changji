@@ -1,5 +1,5 @@
 /**
- * 挑哪一档模型 = **这部剧**的设置，记进项目的 changji.toml。
+ * 挑哪一档模型 = **这部电影**的设置，记进项目的 changji.toml。
  *
  * 用户 2026-09-15 定的：模型配置跟项目走，派到远端也照这份来，冲突时项目
  * 优先。这个文件钉住前端这一半——**两条路都得把项目带上**：
@@ -42,13 +42,13 @@ function code(text) {
 
 const store = code(STORE)
 
-describe('挑哪一档归这部剧', () => {
-  it('有一个统一的"这趟属于哪部剧"，不是每处各写一遍', () => {
+describe('挑哪一档归这部电影', () => {
+  it('有一个统一的"这趟属于哪部电影"，不是每处各写一遍', () => {
     expect(store).toMatch(/function owner\(\)/)
     const at = store.indexOf('function owner()')
     const fn = store.slice(at, at + 200)
     expect(fn).toContain('projectPath')
-    // 没有项目时不带——设置页那一节和给对等机装模型都不属于任何一部剧
+    // 没有项目时不带——设置页那一节和给对等机装模型都不属于任何一部电影
     expect(fn).toMatch(/\?\s*\{ project: p \}\s*:\s*\{\}/)
   })
 
@@ -105,7 +105,7 @@ const SERVER = fs.readFileSync(
   'utf8',
 )
 
-describe('给别的机器装模型，标准是这部剧挑的那一档', () => {
+describe('给别的机器装模型，标准是这部电影挑的那一档', () => {
   // 「装成和本机同一套」拿本机的 selected 原样发过去。而派活时带给对面的
   // 是**项目**里那一档（worker_pool 的 pick）。问本机那一份时不带项目的
   // 话，两者就是两个东西——给对面装 A、真要用 B，而表现要到那一镜被对面
@@ -121,10 +121,10 @@ describe('给别的机器装模型，标准是这部剧挑的那一档', () => {
   })
 
   it('那颗按钮要说清照的是谁', () => {
-    // 开着项目照这部剧那一档、没开照本机全局那一档——同一颗按钮两个意思。
+    // 开着项目照这部电影那一档、没开照本机全局那一档——同一颗按钮两个意思。
     // 不说的话，用户以为一直照的是"本机"，而派活带过去的是项目那一档。
     expect(code(MATRIX), '按钮文案写死了').toMatch(/matchLabel/)
-    expect(code(MATRIX)).toMatch(/装成这部剧要的那一套/)
+    expect(code(MATRIX)).toMatch(/装成这部电影要的那一套/)
     expect(code(MATRIX)).toMatch(/装成和本机同一套/)
   })
 

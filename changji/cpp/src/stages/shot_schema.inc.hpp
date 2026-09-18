@@ -248,7 +248,7 @@ inline constexpr const char* kShotSchemaJson =
    "type": "string"
   },
   "order": {
-   "description": "集内顺序",
+   "description": "章内顺序",
    "minimum": 0,
    "title": "Order",
    "type": "integer"

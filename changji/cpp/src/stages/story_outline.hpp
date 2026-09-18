@@ -8,8 +8,9 @@
 //       ↓
 //     章节正文（逐章展开）
 //
-// **中间这层是压缩的全局记忆。** 原来逐集续写的失忆不是因为「逐集」，
-// 是因为没有一份压缩的全局状态可以每次都带上——只能带前三集原文，带不下
+// **中间这层是压缩的全局记忆。** 原来一章接一章往下写会失忆，不是因为
+// 「一章一章写」，是因为没有一份压缩的全局状态可以每次都带上——只能带前
+// 三章原文，带不下
 // 就截断。有了大纲，写第二十章时第二章埋的伏笔照样在上下文里。
 //
 // 和 bible/storyboard 一样，这里**不碰网络也不碰 llama.cpp**，只有拼提示词、
@@ -40,8 +41,8 @@ const nlohmann::ordered_json& outline_schema();
 
 /// 拼大纲提示词。
 ///
-/// 章数由体量推（models::suggested_chapters），**不由用户填集数**——
-/// 集数是后面按每集时长算出来的。
+/// 章数由体量推（models::suggested_chapters），**不让用户自己填**——
+/// 用户手里有的是「这个故事有多大」，不是「要写几章」。
 ///
 /// `variation` 非零时往提示词里拼两段随机的底子（见 build_outline_names /
 /// build_outline_spark）。**0 是不拼**，提示词回到老样子——语料和单测拿的
@@ -82,7 +83,7 @@ std::string build_outline_spark(std::uint32_t variation);
 /// 让模型复述一遍只会让它改写用户写的那句话。
 ///
 /// 章节 id 由这里生成（ch01、ch02…），不让模型取：模型给的 id 会重、会跳号、
-/// 会带中文，而分集表是按 id 指回章节的。
+/// 会带中文，而章节计划是按 id 指回章节的。
 models::Story parse_outline(const std::string& raw, const std::string& premise,
                             models::StoryScale scale);
 

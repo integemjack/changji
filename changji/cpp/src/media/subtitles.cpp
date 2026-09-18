@@ -141,7 +141,7 @@ std::size_t find_break(const std::vector<std::string>& chars, double max_width) 
 
 bool is_wide(char32_t cp) {
     // 区间表是有序的，二分。121 个区间线性扫也不慢，但断行要对每个字符
-    // 调一次，一集几千字就是几十万次。
+    // 调一次，一章几千字就是几十万次。
     std::size_t lo = 0;
     std::size_t hi = sizeof(kWideRanges) / sizeof(kWideRanges[0]);
     while (lo < hi) {
@@ -201,7 +201,7 @@ std::vector<std::string> wrap_chinese(const std::string& text, double max_width,
 ///
 /// **花括号是硬伤。** ASS 里 `{` 开始一个特效覆盖块、到 `}` 为止整段被
 /// 吞掉。台词里出现一个 `{`，那几个字在成片里就没了——**而且不报错**，
-/// 要盯着片子看才发现。剧本是大模型写的，它偶尔会吐出 ASCII 花括号。
+/// 要盯着成片看才发现。剧本是大模型写的，它偶尔会吐出 ASCII 花括号。
 /// libass 认 `\\{` 这种写法，渲染成一个字面的大括号。
 ///
 /// **裸换行会把这一行拆断。** Dialogue 是一行一条记录，文本里混进 CR/LF

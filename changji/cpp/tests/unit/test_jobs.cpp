@@ -71,7 +71,7 @@ TEST_CASE("Run 快照的字段和 Python 一致") {
     CHECK(s.at("output").is_null());
     CHECK(s.at("outputs").is_array());
     CHECK(s.at("events").is_array());
-    CHECK(s.at("queue_total") == 1);  // 只跑一集时是 1/1，不是 0/0
+    CHECK(s.at("queue_total") == 1);  // 只跑一章时是 1/1，不是 0/0
     CHECK(s.at("elapsed_s") == 0.0);
 }
 
@@ -617,7 +617,7 @@ TEST_CASE("两种任务的停止文案不一样") {
     CHECK(t.snapshot(JobKind::Run).at("error") ==
           "已手动停止。已完成的镜头会保留，下次从这里继续。");
     CHECK(t.snapshot(JobKind::Write).at("error") ==
-          "已手动停止。已经写好的几集留着。");
+          "已手动停止。已经写好的几章留着。");
 
     release = true;
     t.wait_idle();
@@ -641,18 +641,18 @@ TEST_CASE("job_id 每次都不一样") {
     REQUIRE(wait_done(t, JobKind::Write));
 }
 
-// ── 写整季那条路上的几个 setter ─────────────────────────────────────
+// ── 写全片那条路上的几个 setter ─────────────────────────────────────
 //
 // coverage_audit.py 查出来的：set_done / add_episode / add_output /
 // set_episode_id / set_error 一个都没被碰过。上面那些用例把快照形状、
 // 取消、事件环、并发都盖住了，唯独**累积**这件事没人验。
 //
 // 累积错了的表现都是"界面上少了东西"，不报错：
-//   - add_episode 要是覆盖而不是追加，写整季只看得到最后一集
-//   - set_error 要是终止任务，写砸一集会让前面几集白写
+//   - add_episode 要是覆盖而不是追加，写全片只看得到最后一章
+//   - set_error 要是终止任务，写砸一章会让前面几章白写
 //     （jobs.hpp 那行注释写的就是这条）
 
-TEST_CASE("写整季：每集追加一条，不是覆盖") {
+TEST_CASE("写全片：每章追加一条，不是覆盖") {
     JobTable t;
     CHECK(t.start(JobKind::Write, "", [](JobProgress& p) {
         p.set_total(3);
@@ -672,9 +672,9 @@ TEST_CASE("写整季：每集追加一条，不是覆盖") {
     CHECK(s.at("total") == 3);
 }
 
-TEST_CASE("set_error 不终止任务，后面几集照跑") {
-    // jobs.hpp：「记一条错误。**不终止任务**——写整季时一集写砸了
-    // 不该让前面几集白写。」跑一晚上，早上发现第二集挂了导致后面十集
+TEST_CASE("set_error 不终止任务，后面几章照跑") {
+    // jobs.hpp：「记一条错误。**不终止任务**——写全片时一章写砸了
+    // 不该让前面几章白写。」跑一晚上，早上发现第二章挂了导致后面十章
     // 都没动，那一晚上就白熬了。
     JobTable t;
     std::atomic<int> reached{0};
@@ -695,7 +695,7 @@ TEST_CASE("set_error 不终止任务，后面几集照跑") {
     CHECK(err.find("ep02") != std::string::npos);
 }
 
-TEST_CASE("跑流水线：产物是追加的，当前集号会更新") {
+TEST_CASE("跑流水线：产物是追加的，当前跑到哪一章会更新") {
     JobTable t;
     CHECK(t.start(JobKind::Run, "ep01", [](JobProgress& p) {
         p.set_episode_id("ep01");
@@ -706,7 +706,7 @@ TEST_CASE("跑流水线：产物是追加的，当前集号会更新") {
     REQUIRE(wait_done(t, JobKind::Run));
 
     const json s = t.snapshot(JobKind::Run);
-    // 集号是"当前跑到哪一集"，覆盖是对的。
+    // `episode_id` 记的是"当前跑到哪一章"，覆盖是对的。
     CHECK(s.at("episode_id") == "ep02");
     // 产物是整批的清单，必须都在——批量跑完之后界面靠它列出成片。
     REQUIRE(s.at("outputs").is_array());
@@ -787,7 +787,7 @@ TEST_CASE("WebSocket 消息原样带 kind") {
 
 TEST_CASE("这一镜自己的步数只走 WebSocket，不进 /api/run 的事件") {
     // **两个进度，别混。**
-    //   current/total = 整集的位置（第 21 镜 / 共 22 镜）
+    //   current/total = 整章的位置（第 21 镜 / 共 22 镜）
     //   shot_step/shot_steps = 这一镜自己（第 4 步 / 共 6 步）
     //
     // 镜头墙上每张牌画的是后者。以前 WebSocket 里只有前者，牌子上那条
@@ -833,7 +833,7 @@ TEST_CASE("这一镜自己的步数只走 WebSocket，不进 /api/run 的事件"
     REQUIRE(one != msgs.end());
     CHECK(one->value("shot_step", -1) == 4);
     CHECK(one->value("shot_steps", -1) == 6);
-    // 整集那一对没被顶掉
+    // 整章那一对没被顶掉
     CHECK(one->value("step", -1) == 21);
     CHECK(one->value("total", -1) == 22);
 

@@ -153,84 +153,6 @@ std::optional<std::string> episode_of_output(const std::string& stem) {
     return stem;
 }
 
-std::vector<Timeline> split_into_episodes(const Timeline& timeline,
-                                          double per_episode_s) {
-    if (timeline.entries.empty()) return {};
-    if (!(per_episode_s > 0.0)) return {timeline};
-
-    std::vector<Timeline> out;
-    Timeline cur;
-    double used = 0.0;
-    for (const TimelineEntry& e : timeline.entries) {
-        // **满了才开下一集，而且至少留一镜。**
-        // 不留这一条的话，一个本身就超过一集时长的长镜头会让每一集都空着
-        // 开头——它永远"装不下"，于是每次都先切一刀再放进去。
-        if (!cur.entries.empty() && used + e.duration_s > per_episode_s) {
-            out.push_back(std::move(cur));
-            cur = Timeline{};
-            used = 0.0;
-        }
-        TimelineEntry moved = e;
-        // 每一集自己从 0 起算：时间戳留着上一集的，第二集的字幕会挂在
-        // 第一集的时间轴上，越往后偏得越远。
-        const double shift = moved.start_s - used;
-        moved.start_s = used;
-        for (SubtitleCue& c : moved.cues) {
-            c.start_s -= shift;
-            c.end_s -= shift;
-        }
-        used += moved.duration_s;
-        cur.entries.push_back(std::move(moved));
-    }
-    if (!cur.entries.empty()) out.push_back(std::move(cur));
-
-    // ---- 太短的尾巴并回上一集 ----
-    //
-    // 上面是贪心填充：装不下就开下一集，于是**最后一集剩多少算多少**。
-    // 2026-09-17 实测 hulian-test：每集目标 60 秒，ep01 切成 57.2 秒 +
-    // **4.5 秒**——后一个不是一集，是个片段，发出去就是一条四秒半的视频。
-    //
-    // 判据两条，都得满足才并：
-    //   · 尾巴短得不像一集（不到目标的四分之一）。ep06 那次是 48.9 + 27.4，
-    //     27 秒短是短，还是一集，不并；4.5 秒（目标的 7%）并。
-    //     **四分之一不是三分之一**：既有的用例里 70 秒按 30 秒切，尾巴正好
-    //     10 秒 = 三分之一，拿三分之一当界的话它卡在刀刃上，靠
-    //     `30.0*(1.0/3.0)` 算出 9.999999999999998 才没并——那不是能依赖的
-    //     性质。四分之一离两边都远。
-    //   · 并完不至于撑成一个怪物（不超过目标的一倍半）。57.2+4.5=61.7 秒，
-    //     比目标多一点点，正好。真遇到并完太长的，宁可留着那个短尾巴——
-    //     一条四秒的片子难看，一条两分钟的"短剧"是另一种难看。
-    constexpr double kTailFloorRatio = 0.25;
-    constexpr double kMergedCapRatio = 1.5;
-    if (out.size() >= 2) {
-        const auto total = [](const Timeline& t) {
-            double n = 0.0;
-            for (const TimelineEntry& e : t.entries) n += e.duration_s;
-            return n;
-        };
-        const double tail = total(out.back());
-        const double prev = total(out[out.size() - 2]);
-        if (tail < per_episode_s * kTailFloorRatio &&
-            tail + prev <= per_episode_s * kMergedCapRatio) {
-            Timeline moved_tail = std::move(out.back());
-            out.pop_back();
-            Timeline& into = out.back();
-            // 尾巴那几镜的时间戳是从 0 重起算的（上面那段），并回去要
-            // 按上一集已经用掉的长度整体后移，字幕跟着走。
-            for (TimelineEntry& e : moved_tail.entries) {
-                e.start_s += prev;
-                for (SubtitleCue& c : e.cues) {
-                    c.start_s += prev;
-                    c.end_s += prev;
-                }
-                into.entries.push_back(std::move(e));
-            }
-        }
-    }
-    return out;
-}
-
-
 std::vector<std::string> normalize_args(const fs::path& src, int target_w,
                                         int target_h,
                                         const config::AssemblyConfig& config,
@@ -247,7 +169,7 @@ std::vector<std::string> normalize_args(const fs::path& src, int target_w,
     const std::string w = std::to_string(target_w);
     const std::string h = std::to_string(target_h);
     // 先按比例缩到框内，再补边到目标尺寸。直接 scale 到目标尺寸会拉伸，
-    // 而竖屏短剧里混进一个横屏镜头时，拉伸出来的人脸一眼就不对。
+    // 而竖屏的电影里混进一个横屏镜头时，拉伸出来的人脸一眼就不对。
     std::string vf = "scale=" + w + ":" + h +
                      ":force_original_aspect_ratio=decrease,"
                      "pad=" + w + ":" + h + ":(ow-iw)/2:(oh-ih)/2,"
@@ -376,7 +298,7 @@ std::string look_filters(const config::LookConfig& look, int target_w,
 /// Rock'n'Roll），这一行就断在半截，后面那截被当成别的记号。
 ///
 /// 表现是最后装配那一步报一句 ffmpeg 的解析错，而它指的位置离真正的原因
-/// （项目叫什么名）十万八千里——**而且是在整集都跑完之后才炸**。
+/// （项目叫什么名）十万八千里——**而且是在整章都跑完之后才炸**。
 ///
 /// 规矩：收掉引用、贴一个转义的单引号、再开回引用。反斜杠不用管，
 /// fwd() 已经把它全换成正斜杠了。
@@ -638,7 +560,7 @@ std::pair<int, int> Assembler::target_size(const Timeline& timeline) const {
                 bh = info.height;
             }
         } catch (const FFmpegError&) {
-            // 一镜读不出来不该让整集装不了：后面还有几十镜，
+            // 一镜读不出来不该让整章装不了：后面还有几十镜，
             // 取最大值这件事少一个样本没关系。
             continue;
         }
@@ -658,7 +580,7 @@ fs::path Assembler::assemble(const Timeline& timeline,
     std::error_code ec;
     fs::create_directories(work, ec);
 
-    // 中间文件不管成功失败都要清掉：一集的中间产物是几百兆，
+    // 中间文件不管成功失败都要清掉：一章的中间产物是几百兆，
     // 留在 output/.work 里几次之后磁盘就满了，而用户看不到那个目录。
     struct Cleanup {
         const fs::path& dir;
@@ -776,7 +698,7 @@ fs::path Assembler::assemble(const Timeline& timeline,
                 mo.music = *finish_->music;
                 mo.music_db = finish_->sound.music_db;
             } else {
-                warn("配乐文件不在，这一集没有配乐：" +
+                warn("配乐文件不在，这一章没有配乐：" +
                      paths::to_utf8(*finish_->music));
             }
         }

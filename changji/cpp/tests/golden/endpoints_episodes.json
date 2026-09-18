@@ -1,5 +1,5 @@
 {
- "note": "由 cpp/tests/export_episodes_golden.py 生成，不要手改 2026-09-11：Episode 加了 chapter_refs（这一集是从故事的哪几章切出来的），/api/script/write 的回包加了 source（照着故事写的还是照着一句梗概续的）。生成器随 Python 引擎一起删了，这份语料现在是回归夹具——接口有意改形状时照着改。",
+ "note": "由 cpp/tests/export_episodes_golden.py 生成，不要手改 2026-09-11：Episode 加了 chapter_refs（这一章是从故事的哪几章切出来的），/api/script/write 的回包加了 source（照着故事写的还是照着一句梗概续的）。生成器随 Python 引擎一起删了，这份语料现在是回归夹具——接口有意改形状时照着改。",
  "cases": [
   {
    "name": "读剧本：ep01",
@@ -15,13 +15,13 @@
    "response": {
     "script": "（雨声起）\n林渊站在栏杆前，没有回头。",
     "target_duration_s": 180.0,
-    "title": "第一集 · 雨"
+    "title": "第一章 · 雨"
    },
    "compare": "full",
    "project_after": null
   },
   {
-   "name": "读剧本：没剧本的那集",
+   "name": "读剧本：没剧本的那一章",
    "method": "GET",
    "url": "/api/script",
    "query": {
@@ -34,13 +34,13 @@
    "response": {
     "script": "",
     "target_duration_s": 200.0,
-    "title": "第二集 · 晴"
+    "title": "第二章 · 晴"
    },
    "compare": "full",
    "project_after": null
   },
   {
-   "name": "读剧本：不存在的集",
+   "name": "读剧本：不存在的章",
    "method": "GET",
    "url": "/api/script",
    "query": {
@@ -51,7 +51,7 @@
    "prep": null,
    "status": 404,
    "response": {
-    "detail": "没有剧集 ep99"
+    "detail": "没有章节 ep99"
    },
    "compare": "detail_str",
    "project_after": null
@@ -121,13 +121,13 @@
     "project_id": "yuye-tiantai",
     "title": "雨夜天台",
     "style_line": "realistic",
-    "premise": "一个关于错过与和解的都市短剧。每集三分钟，竖屏。",
+    "premise": "一个关于错过与和解的都市电影。全片九十分钟，横屏。",
     "created_at": "2026-09-07T14:56:29.511392+00:00",
     "updated_at": "2026-09-07T17:19:41.631631+00:00",
     "episodes": [
      {
       "episode_id": "ep01",
-      "title": "第一集 · 雨",
+      "title": "第一章 · 雨",
       "synopsis": "林渊在天台等一个不会来的人。",
       "target_duration_s": 180.0,
       "script": "改过的剧本",
@@ -259,7 +259,7 @@
      },
      {
       "episode_id": "ep02",
-      "title": "第二集 · 晴",
+      "title": "第二章 · 晴",
       "synopsis": "三年后，同一个天台。",
       "target_duration_s": 200.0,
       "script": "",
@@ -292,13 +292,13 @@
     "project_id": "yuye-tiantai",
     "title": "雨夜天台",
     "style_line": "realistic",
-    "premise": "一个关于错过与和解的都市短剧。每集三分钟，竖屏。",
+    "premise": "一个关于错过与和解的都市电影。全片九十分钟，横屏。",
     "created_at": "2026-09-07T14:56:29.511392+00:00",
     "updated_at": "2026-09-07T17:19:41.664189+00:00",
     "episodes": [
      {
       "episode_id": "ep01",
-      "title": "第一集 · 雨",
+      "title": "第一章 · 雨",
       "synopsis": "林渊在天台等一个不会来的人。",
       "target_duration_s": 90.0,
       "script": "x",
@@ -430,7 +430,7 @@
      },
      {
       "episode_id": "ep02",
-      "title": "第二集 · 晴",
+      "title": "第二章 · 晴",
       "synopsis": "三年后，同一个天台。",
       "target_duration_s": 200.0,
       "script": "",
@@ -463,13 +463,13 @@
     "project_id": "yuye-tiantai",
     "title": "雨夜天台",
     "style_line": "realistic",
-    "premise": "一个关于错过与和解的都市短剧。每集三分钟，竖屏。",
+    "premise": "一个关于错过与和解的都市电影。全片九十分钟，横屏。",
     "created_at": "2026-09-07T14:56:29.511392+00:00",
     "updated_at": "2026-09-07T17:19:41.698345+00:00",
     "episodes": [
      {
       "episode_id": "ep01",
-      "title": "第一集 · 雨",
+      "title": "第一章 · 雨",
       "synopsis": "林渊在天台等一个不会来的人。",
       "target_duration_s": 180.0,
       "script": "x",
@@ -601,7 +601,7 @@
      },
      {
       "episode_id": "ep02",
-      "title": "第二集 · 晴",
+      "title": "第二章 · 晴",
       "synopsis": "三年后，同一个天台。",
       "target_duration_s": 200.0,
       "script": "",
@@ -612,7 +612,7 @@
    }
   },
   {
-   "name": "改剧本：不存在的集",
+   "name": "改剧本：不存在的章",
    "method": "POST",
    "url": "/api/script",
    "query": null,
@@ -624,7 +624,7 @@
    "prep": null,
    "status": 404,
    "response": {
-    "detail": "没有剧集 ep99"
+    "detail": "没有章节 ep99"
    },
    "compare": "detail_str",
    "project_after": null
@@ -682,13 +682,13 @@
     "project_id": "yuye-tiantai",
     "title": "雨夜天台",
     "style_line": "realistic",
-    "premise": "一个关于错过与和解的都市短剧。每集三分钟，竖屏。",
+    "premise": "一个关于错过与和解的都市电影。全片九十分钟，横屏。",
     "created_at": "2026-09-07T14:56:29.511392+00:00",
     "updated_at": "2026-09-07T17:19:41.775012+00:00",
     "episodes": [
      {
       "episode_id": "ep01",
-      "title": "第一集 · 雨",
+      "title": "第一章 · 雨",
       "synopsis": "林渊在天台等一个不会来的人。",
       "target_duration_s": 180.0,
       "script": "x",
@@ -820,7 +820,7 @@
      },
      {
       "episode_id": "ep02",
-      "title": "第二集 · 晴",
+      "title": "第二章 · 晴",
       "synopsis": "三年后，同一个天台。",
       "target_duration_s": 200.0,
       "script": "",
@@ -831,19 +831,19 @@
    }
   },
   {
-   "name": "新建一集：自动编号",
+   "name": "新建一章：自动编号",
    "method": "POST",
    "url": "/api/episode",
    "query": null,
    "body": {
     "project": "C:\\Users\\ultra\\AppData\\Local\\Temp\\changji_episodes_8hbmemsa\\case12",
-    "title": "第三集"
+    "title": "第三章"
    },
    "prep": null,
    "status": 200,
    "response": {
     "episode_id": "ep03",
-    "title": "第三集"
+    "title": "第三章"
    },
    "compare": "full",
    "project_after": {
@@ -851,13 +851,13 @@
     "project_id": "yuye-tiantai",
     "title": "雨夜天台",
     "style_line": "realistic",
-    "premise": "一个关于错过与和解的都市短剧。每集三分钟，竖屏。",
+    "premise": "一个关于错过与和解的都市电影。全片九十分钟，横屏。",
     "created_at": "2026-09-07T14:56:29.511392+00:00",
     "updated_at": "2026-09-07T17:19:41.807416+00:00",
     "episodes": [
      {
       "episode_id": "ep01",
-      "title": "第一集 · 雨",
+      "title": "第一章 · 雨",
       "synopsis": "林渊在天台等一个不会来的人。",
       "target_duration_s": 180.0,
       "script": "（雨声起）\n林渊站在栏杆前，没有回头。",
@@ -989,7 +989,7 @@
      },
      {
       "episode_id": "ep02",
-      "title": "第二集 · 晴",
+      "title": "第二章 · 晴",
       "synopsis": "三年后，同一个天台。",
       "target_duration_s": 200.0,
       "script": "",
@@ -998,7 +998,7 @@
      },
      {
       "episode_id": "ep03",
-      "title": "第三集",
+      "title": "第三章",
       "synopsis": "",
       "target_duration_s": 60.0,
       "script": "",
@@ -1009,7 +1009,7 @@
    }
   },
   {
-   "name": "新建一集：指定 id",
+   "name": "新建一章：指定 id",
    "method": "POST",
    "url": "/api/episode",
    "query": null,
@@ -1030,13 +1030,13 @@
     "project_id": "yuye-tiantai",
     "title": "雨夜天台",
     "style_line": "realistic",
-    "premise": "一个关于错过与和解的都市短剧。每集三分钟，竖屏。",
+    "premise": "一个关于错过与和解的都市电影。全片九十分钟，横屏。",
     "created_at": "2026-09-07T14:56:29.511392+00:00",
     "updated_at": "2026-09-07T17:19:41.839981+00:00",
     "episodes": [
      {
       "episode_id": "ep01",
-      "title": "第一集 · 雨",
+      "title": "第一章 · 雨",
       "synopsis": "林渊在天台等一个不会来的人。",
       "target_duration_s": 180.0,
       "script": "（雨声起）\n林渊站在栏杆前，没有回头。",
@@ -1168,7 +1168,7 @@
      },
      {
       "episode_id": "ep02",
-      "title": "第二集 · 晴",
+      "title": "第二章 · 晴",
       "synopsis": "三年后，同一个天台。",
       "target_duration_s": 200.0,
       "script": "",
@@ -1188,7 +1188,7 @@
    }
   },
   {
-   "name": "新建一集：id 非法",
+   "name": "新建一章：id 非法",
    "method": "POST",
    "url": "/api/episode",
    "query": null,
@@ -1199,13 +1199,13 @@
    "prep": null,
    "status": 400,
    "response": {
-    "detail": "剧集 id 只能用小写字母、数字和下划线"
+    "detail": "章节 id 只能用小写字母、数字和下划线"
    },
    "compare": "detail_str",
    "project_after": null
   },
   {
-   "name": "新建一集：id 已存在",
+   "name": "新建一章：id 已存在",
    "method": "POST",
    "url": "/api/episode",
    "query": null,
@@ -1216,13 +1216,13 @@
    "prep": null,
    "status": 409,
    "response": {
-    "detail": "剧集 ep01 已存在"
+    "detail": "章节 ep01 已存在"
    },
    "compare": "detail_str",
    "project_after": null
   },
   {
-   "name": "新建一集：自定时长",
+   "name": "新建一章：自定时长",
    "method": "POST",
    "url": "/api/episode",
    "query": null,
@@ -1242,13 +1242,13 @@
     "project_id": "yuye-tiantai",
     "title": "雨夜天台",
     "style_line": "realistic",
-    "premise": "一个关于错过与和解的都市短剧。每集三分钟，竖屏。",
+    "premise": "一个关于错过与和解的都市电影。全片九十分钟，横屏。",
     "created_at": "2026-09-07T14:56:29.511392+00:00",
     "updated_at": "2026-09-07T17:19:41.918272+00:00",
     "episodes": [
      {
       "episode_id": "ep01",
-      "title": "第一集 · 雨",
+      "title": "第一章 · 雨",
       "synopsis": "林渊在天台等一个不会来的人。",
       "target_duration_s": 180.0,
       "script": "（雨声起）\n林渊站在栏杆前，没有回头。",
@@ -1380,7 +1380,7 @@
      },
      {
       "episode_id": "ep02",
-      "title": "第二集 · 晴",
+      "title": "第二章 · 晴",
       "synopsis": "三年后，同一个天台。",
       "target_duration_s": 200.0,
       "script": "",
@@ -1400,7 +1400,7 @@
    }
   },
   {
-   "name": "新建一集：项目里有预告，不该跳号",
+   "name": "新建一章：项目里有预告，不该跳号",
    "method": "POST",
    "url": "/api/episode",
    "query": null,
@@ -1419,13 +1419,13 @@
     "project_id": "yuye-tiantai",
     "title": "雨夜天台",
     "style_line": "realistic",
-    "premise": "一个关于错过与和解的都市短剧。每集三分钟，竖屏。",
+    "premise": "一个关于错过与和解的都市电影。全片九十分钟，横屏。",
     "created_at": "2026-09-07T14:56:29.511392+00:00",
     "updated_at": "2026-09-07T17:19:41.960367+00:00",
     "episodes": [
      {
       "episode_id": "ep01",
-      "title": "第一集 · 雨",
+      "title": "第一章 · 雨",
       "synopsis": "林渊在天台等一个不会来的人。",
       "target_duration_s": 180.0,
       "script": "（雨声起）\n林渊站在栏杆前，没有回头。",
@@ -1557,7 +1557,7 @@
      },
      {
       "episode_id": "ep02",
-      "title": "第二集 · 晴",
+      "title": "第二章 · 晴",
       "synopsis": "三年后，同一个天台。",
       "target_duration_s": 200.0,
       "script": "",
@@ -1586,7 +1586,7 @@
    }
   },
   {
-   "name": "删一集",
+   "name": "删一章",
    "method": "POST",
    "url": "/api/episode/action",
    "query": null,
@@ -1606,13 +1606,13 @@
     "project_id": "yuye-tiantai",
     "title": "雨夜天台",
     "style_line": "realistic",
-    "premise": "一个关于错过与和解的都市短剧。每集三分钟，竖屏。",
+    "premise": "一个关于错过与和解的都市电影。全片九十分钟，横屏。",
     "created_at": "2026-09-07T14:56:29.511392+00:00",
     "updated_at": "2026-09-07T17:19:41.994042+00:00",
     "episodes": [
      {
       "episode_id": "ep01",
-      "title": "第一集 · 雨",
+      "title": "第一章 · 雨",
       "synopsis": "林渊在天台等一个不会来的人。",
       "target_duration_s": 180.0,
       "script": "（雨声起）\n林渊站在栏杆前，没有回头。",
@@ -1768,7 +1768,7 @@
     "project_id": "yuye-tiantai",
     "title": "雨夜天台",
     "style_line": "realistic",
-    "premise": "一个关于错过与和解的都市短剧。每集三分钟，竖屏。",
+    "premise": "一个关于错过与和解的都市电影。全片九十分钟，横屏。",
     "created_at": "2026-09-07T14:56:29.511392+00:00",
     "updated_at": "2026-09-07T17:19:42.029200+00:00",
     "episodes": [
@@ -1906,7 +1906,7 @@
      },
      {
       "episode_id": "ep02",
-      "title": "第二集 · 晴",
+      "title": "第二章 · 晴",
       "synopsis": "三年后，同一个天台。",
       "target_duration_s": 200.0,
       "script": "",
@@ -1938,7 +1938,7 @@
     "project_id": "yuye-tiantai",
     "title": "雨夜天台",
     "style_line": "realistic",
-    "premise": "一个关于错过与和解的都市短剧。每集三分钟，竖屏。",
+    "premise": "一个关于错过与和解的都市电影。全片九十分钟，横屏。",
     "created_at": "2026-09-07T14:56:29.511392+00:00",
     "updated_at": "2026-09-07T17:19:42.063258+00:00",
     "episodes": [
@@ -2076,7 +2076,7 @@
      },
      {
       "episode_id": "ep02",
-      "title": "第二集 · 晴",
+      "title": "第二章 · 晴",
       "synopsis": "三年后，同一个天台。",
       "target_duration_s": 200.0,
       "script": "",
@@ -2087,7 +2087,7 @@
    }
   },
   {
-   "name": "复制：带分镜的那集",
+   "name": "复制：带分镜的那一章",
    "method": "POST",
    "url": "/api/episode/action",
    "query": null,
@@ -2108,13 +2108,13 @@
     "project_id": "yuye-tiantai",
     "title": "雨夜天台",
     "style_line": "realistic",
-    "premise": "一个关于错过与和解的都市短剧。每集三分钟，竖屏。",
+    "premise": "一个关于错过与和解的都市电影。全片九十分钟，横屏。",
     "created_at": "2026-09-07T14:56:29.511392+00:00",
     "updated_at": "2026-09-07T17:19:42.095736+00:00",
     "episodes": [
      {
       "episode_id": "ep01",
-      "title": "第一集 · 雨",
+      "title": "第一章 · 雨",
       "synopsis": "林渊在天台等一个不会来的人。",
       "target_duration_s": 180.0,
       "script": "（雨声起）\n林渊站在栏杆前，没有回头。",
@@ -2246,7 +2246,7 @@
      },
      {
       "episode_id": "ep02",
-      "title": "第二集 · 晴",
+      "title": "第二章 · 晴",
       "synopsis": "三年后，同一个天台。",
       "target_duration_s": 200.0,
       "script": "",
@@ -2255,7 +2255,7 @@
      },
      {
       "episode_id": "ep03",
-      "title": "第一集 · 雨 副本",
+      "title": "第一章 · 雨 副本",
       "synopsis": "",
       "target_duration_s": 180.0,
       "script": "（雨声起）\n林渊站在栏杆前，没有回头。",
@@ -2408,13 +2408,13 @@
     "project_id": "yuye-tiantai",
     "title": "雨夜天台",
     "style_line": "realistic",
-    "premise": "一个关于错过与和解的都市短剧。每集三分钟，竖屏。",
+    "premise": "一个关于错过与和解的都市电影。全片九十分钟，横屏。",
     "created_at": "2026-09-07T14:56:29.511392+00:00",
     "updated_at": "2026-09-07T17:19:42.130390+00:00",
     "episodes": [
      {
       "episode_id": "ep01",
-      "title": "第一集 · 雨",
+      "title": "第一章 · 雨",
       "synopsis": "林渊在天台等一个不会来的人。",
       "target_duration_s": 180.0,
       "script": "（雨声起）\n林渊站在栏杆前，没有回头。",
@@ -2546,7 +2546,7 @@
      },
      {
       "episode_id": "ep02",
-      "title": "第二集 · 晴",
+      "title": "第二章 · 晴",
       "synopsis": "三年后，同一个天台。",
       "target_duration_s": 200.0,
       "script": "",
@@ -2564,7 +2564,7 @@
      },
      {
       "episode_id": "ep04",
-      "title": "第一集 · 雨 副本",
+      "title": "第一章 · 雨 副本",
       "synopsis": "",
       "target_duration_s": 180.0,
       "script": "（雨声起）\n林渊站在栏杆前，没有回头。",
@@ -2714,7 +2714,7 @@
    "project_after": null
   },
   {
-   "name": "操作不存在的集",
+   "name": "操作不存在的章",
    "method": "POST",
    "url": "/api/episode/action",
    "query": null,
@@ -2726,13 +2726,13 @@
    "prep": null,
    "status": 404,
    "response": {
-    "detail": "没有剧集 ep99"
+    "detail": "没有章节 ep99"
    },
    "compare": "detail_str",
    "project_after": null
   },
   {
-   "name": "删最后一集要拒绝",
+   "name": "删最后一章要拒绝",
    "method": "POST",
    "url": "/api/episode/action",
    "query": null,
@@ -2744,7 +2744,7 @@
    "prep": "only_one",
    "status": 400,
    "response": {
-    "detail": "至少要留一集"
+    "detail": "至少要留一章"
    },
    "compare": "detail_str",
    "project_after": null

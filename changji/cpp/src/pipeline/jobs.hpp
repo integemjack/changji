@@ -7,7 +7,7 @@
 // "跟跑流水线分开，两件事可以同时进行"——所以这里不能只有一条工作线程。
 //
 // 方案第三节定的是线程池加按类型限流：流水线最多 1 个、写作最多 1 个。
-// 用池而不是两条固定线程，是为了以后想并发跑多集时不用改架构。
+// 用池而不是两条固定线程，是为了以后想并发跑多章时不用改架构。
 //
 // 取消令牌**按 job 挂，不按线程挂**。/api/stop 和 /api/script/series/stop
 // 各自取消对应的 job，互不影响。
@@ -35,7 +35,7 @@ namespace changji::pipeline {
 /// 任务种类。一种一个槽，同种不能并发。
 enum class JobKind {
     Run,    ///< 跑流水线，对应 RunState
-    Write,  ///< 写整季 / 批量排分镜，对应 WriteState
+    Write,  ///< 写全片 / 批量排分镜，对应 WriteState
 };
 
 const char* to_string(JobKind k);
@@ -52,7 +52,7 @@ struct Event {
 
     /// **这一镜自己**跑到第几步、一共几步。**C++ 独有，只走 WebSocket。**
     ///
-    /// `current` / `total` 是整集的位置（第 21 镜 / 共 22 镜）。镜头墙上
+    /// `current` / `total` 是整章的位置（第 21 镜 / 共 22 镜）。镜头墙上
     /// 每张牌要画的是**这一镜**的进度条，拿 21/22 去画的话，正在跑的那一
     /// 镜刚开始就显示 95%，六步走完还是 95%——一个不动的、而且一直是错的
     /// 进度条，比没有更糟。
@@ -129,7 +129,7 @@ struct JobState {
     ///
     /// **加它是为了顶栏那块"AI 作业中"能点过去。** 任务表是进程一份的，
     /// 而一个进程可以轮流跑好几个项目——只报 episode_id 的话，界面上说
-    /// "ep01 正在出片"，用户点过去可能是另一部剧的 ep01。
+    /// "ep01 正在出片"，用户点过去可能是另一部电影的 ep01。
     std::string project;
     std::chrono::steady_clock::time_point started_at{};
 
@@ -144,7 +144,7 @@ struct JobState {
     std::vector<std::string> outputs;
     std::optional<std::string> error;
 
-    // 一次跑多集时的队列进度。只跑一集时是 1/1。
+    // 一次跑多章时的队列进度。只跑一章时是 1/1。
     int queue_done = 0;
     int queue_total = 1;
 
@@ -189,10 +189,10 @@ using Sink = std::function<void(const std::string& job_id, const nlohmann::json&
 /// **一镜落定就调一次**，让上层把结果落盘。
 ///
 /// 各阶段原来都是"整批跑完再统一写回 Shot、再存一次盘"。那在一批只有几镜
-/// 的时候没问题，一集二十二镜、一镜两分钟的时候就是一个小时——这一个小时里：
+/// 的时候没问题，一章二十二镜、一镜两分钟的时候就是一个小时——这一个小时里：
 ///
 ///   * 镜头墙每六秒问一次 `/api/shots`，问到的永远是开跑那一刻的样子。
-///     镜头墙上没有缩略图、没有可以点开看的片子，而用户要的正是
+///     镜头墙上没有缩略图、没有可以点开看的视频，而用户要的正是
 ///     "已经生产的可以点击播放看效果"。
 ///   * 进程要是被杀掉（不是优雅停止），磁盘上躺着十几个 mp4，
 ///     project.json 里一条都没记——下次跑会当成没跑过，全部重来。
@@ -215,26 +215,26 @@ public:
     /// 记一条事件：进环形缓冲、更新进度、广播出去。
     void report(Event ev);
 
-    /// 只改一句话，不动进度条。跑长任务时"正在写第 3 集"这种。
+    /// 只改一句话，不动进度条。跑长任务时"正在写第 3 章"这种。
     void set_message(std::string m);
 
     /// 完成数 / 总数。对应 Python 的 writing.done / writing.total。
     void set_done(int done);
     void set_total(int total);
 
-    /// 追加一集的结果。写整季和批量出分镜都靠它，
-    /// 每写完一集就往里加一条，界面能边跑边看。
+    /// 追加一章的结果。写全片和批量出分镜都靠它，
+    /// 每写完一章就往里加一条，界面能边跑边看。
     void add_episode(nlohmann::json ep);
 
     /// 产物路径。
     void set_output(std::string path);
     void add_output(std::string path);
 
-    /// 当前跑到哪一集，以及队列进度。
+    /// 当前跑到哪一章，以及队列进度。
     void set_episode_id(std::string id);
     void set_queue(int done, int total);
 
-    /// 记一条错误。**不终止任务**——写整季时一集写砸了不该让前面几集白写。
+    /// 记一条错误。**不终止任务**——写全片时一章写砸了不该让前面几章白写。
     void set_error(std::string e);
 
     /// 登记这一阶段要跑的镜头。见 JobState::pending。
@@ -280,17 +280,18 @@ public:
     ///
     /// stop_message 是手动停止时写进 error 的那句话。留空用这一类的默认值。
     /// 要能按任务指定，是因为同一个槽上跑的两件事说法不一样：
-    /// 写整季停了是"已经写好的几集留着"，批量出分镜停了是
+    /// 写全片停了是"已经写好的几章留着"，批量出分镜停了是
     /// "已经出好的分镜留着"。用同一句必然有一半场合是错的。
     ///
     /// `project` 是这一轮跑的项目目录，留空表示不知道（顶栏那块就只显示
     /// 名字、不给跳转）。
     /// `title` 是**这一条长跑任务干什么**，给任务页面那一行用：
-    /// 「写整季正文」「给还缺的几集补分镜」「出片 · 第 3 集」。
+    /// 「写全片 · 3 章」「补分镜 · 还缺的 2 章」「出片 · 3 章」。
     ///
     /// **不给就按 kind 报个类别**（「批量写作」「出片」）。类别不够用是
-    /// 因为 `JobKind::Write` 这一个槽里跑着三种活（展开正文、写整季、批量
-    /// 补分镜），一律写「批量」的话，页面上那一行说不出正在干哪一件。
+    /// 因为 `JobKind::Write` 这一个槽里跑着**六件**活——展开正文、写全片、
+    /// 批量写剧本、理解故事、从热点写这一章、批量补分镜（六处 `start` 都在
+    /// `http/batch.cpp`）——一律写「批量」的话，页面上那一行说不出正在干哪一件。
     bool start(JobKind kind, const std::string& episode_id, Body body,
                const std::string& stop_message = "",
                const std::string& project = "",
@@ -376,15 +377,44 @@ private:
 /// 全局单例。接口层各处都要查状态和起任务，逐层传引用不划算。
 JobTable& jobs();
 
-// 手动停止时写进 error 的文案。**两种任务不是同一句**，别合并。
+// 手动停止时写进 error 的文案。**一件活一句话**，别合并。
 //
-// 逐字抄 Python。这两句是契约——不是给开发看的日志，是前端直接显示给
-// 用户的话。而且各自说的是各自的事：跑流水线保留的是镜头，
-// 写作保留的是已经写完的集。合成一句必然有一半用户看着不对。
+// 这几句是契约——不是给开发看的日志，是前端直接显示给用户的话
+// （界面靠自己按停时立的那面旗子认出"这是人按的停"，不认这些字，
+// 见 util/cancel_words.hpp；所以改字不会把取消显示成红报错）。
+// 每一句说的都是"这一趟停了，留下的是什么"，而各件活留下的东西不一样：
+// 跑流水线留的是镜头，展开正文留的是写好的章，批量写剧本留的是剧本。
+// 合成一句必然有一半用户看着不对。
+//
+// **两个槽的兜底**（任务没自报文案时 `JobTable::cancel` 用它）：
 inline constexpr const char* kRunStoppedMessage =
     "已手动停止。已完成的镜头会保留，下次从这里继续。";
 inline constexpr const char* kWriteStoppedMessage =
-    "已手动停止。已经写好的几集留着。";
+    "已手动停止。已经写好的几章留着。";
+
+// **`JobKind::Write` 一个槽里跑着三件写作活，三件活各有各的一条。**
+//
+// 2026-09-18 撞过一次：展开正文那条被收编成了 `kWriteStoppedMessage`，
+// 理由是"字一样"。字一样是巧合，不是同一件事——以后谁觉得那个兜底该贴合
+// 「写全片」而改成「已经写好的几章剧本留着。」，展开正文（展开的是章
+// **正文**、不是剧本）就会一声不响地跟着改口：用户停掉「展开正文」之后
+// 看到的是一句关于剧本的话，全程不报错，用例比的也正是那个常量的值。
+// 所以**下面三条眼下有两条同字，那也是三条**，改一条不要顺手改另一条。
+//
+// 批量出分镜、理解剧情、从热点写这一章那几条不在这儿：它们各自只有一处
+// 用，字面量就写在 `http/batch.cpp` 的 `start` 调用上。
+
+/// 「展开正文」（`POST /api/story/chapters`）。留下的是写好的**章正文**。
+inline constexpr const char* kStoryChaptersStoppedMessage =
+    "已手动停止。已经写好的几章留着。";
+
+/// 「写全片」（`POST /api/script/series`）。留下的是已经写完那几章。
+inline constexpr const char* kScriptSeriesStoppedMessage =
+    "已手动停止。已经写好的几章留着。";
+
+/// 「批量写剧本」（`POST /api/script/all`）。留下的是**剧本**。
+inline constexpr const char* kScriptAllStoppedMessage =
+    "已手动停止。已经写好的几章剧本留着。";
 
 /// 取对应种类的停止文案。
 const char* stopped_message(JobKind k);

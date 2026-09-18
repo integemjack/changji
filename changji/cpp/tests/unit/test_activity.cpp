@@ -447,7 +447,7 @@ TEST_CASE("长跑那一行的叉，按下去要真的停") {
                 std::this_thread::sleep_for(std::chrono::milliseconds(5));
             }
         },
-        "停了", "/tmp/cancel-long", "写整季正文"));
+        "停了", "/tmp/cancel-long", "写全片正文"));
 
     // **等它登记上账本再找那一行。** 起线程和开 Activity 之间有个窗口，
     // 上来就查会偶发查不到（第一版就是这么飘的）。
@@ -459,7 +459,7 @@ TEST_CASE("长跑那一行的叉，按下去要真的停") {
         // 表现是"行明明在账本里，却一条都数不出来"。
         const nlohmann::json board = pipeline::task_board("/tmp/cancel-long");
         for (const auto& r : board.at("running")) {
-            if (r.value("title", std::string{}) == "写整季正文") {
+            if (r.value("title", std::string{}) == "写全片正文") {
                 row_id = r.value("id", std::uint64_t{0});
             }
         }

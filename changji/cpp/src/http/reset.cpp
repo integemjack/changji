@@ -6,8 +6,8 @@ using namespace changji::models;
 
 namespace {
 
-/// 一集里的那两条规则。**只此一份**——头文件上写着三份拷贝迟早分叉，
-/// 现在两个入口（整个项目 / 指定几集）共用它，规则只能改在一个地方。
+/// 一章里的那两条规则。**只此一份**——头文件上写着三份拷贝迟早分叉，
+/// 现在两个入口（整个项目 / 指定几章）共用它，规则只能改在一个地方。
 int reset_episode(Episode& ep) {
     int n = 0;
     for (auto& shot : ep.shots) {

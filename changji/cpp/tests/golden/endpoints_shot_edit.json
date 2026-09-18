@@ -763,12 +763,12 @@
     },
     {
       "body": {
-        "detail": "没有剧集 ep99"
+        "detail": "没有章节 ep99"
       },
       "compare": "full",
       "dir": null,
       "episode_id": "ep99",
-      "name": "剧集不存在_404",
+      "name": "章节不存在_404",
       "patch": {
         "beat": "x"
       },

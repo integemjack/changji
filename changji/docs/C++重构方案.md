@@ -476,7 +476,7 @@ Crow 事件循环线程   ──  HTTP 请求 + WebSocket 收发
 ```
 
 **不是一条工作线程。** `server.py` 现在有两个
-独立的任务槽——`RunState` 跑流水线、`WriteState` 写整季，`WriteState` 的
+独立的任务槽——`RunState` 跑流水线、`WriteState` 写全片，`WriteState` 的
 注释明写着"跟跑流水线分开，两件事可以同时进行"。串行化会被对拍测出来。
 
 用池加队列而不是两条固定线程：按 job 类型限流（流水线最多 1 个、写作
@@ -3503,7 +3503,7 @@ Python 那个接口明写着 `if new_tts.backend not in ("comfy", "http")` 就�
 llama.cpp + mtmd 用。两条路的权重格式不通用。
 
 骨干选 `customvoice` 而不是 `base`：mtmd 那套接口的输入正好是一个
-`speaker_ref`（一段参考音频），而短剧要的是每个角色一个声音。
+`speaker_ref`（一段参考音频），而电影要的是每个角色一个声音。
 `base` 是模型自带的几个预置音色，但 **mtmd 的接口里没有"挑哪个预置音色"
 这个参数**，实际拿到的是默认那个。`voicedesign` 要一段文字描述，
 changji 目前没有地方填。

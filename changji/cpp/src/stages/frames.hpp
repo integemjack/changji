@@ -61,7 +61,7 @@ using FrameRenderer = std::function<void(
 ///
 /// 它自己不管模型加载——那是调度器的事。每次调用时向调度器借图像槽。
 /// 出首帧的实现。**要 settings**：采样旋钮（image_cfg /
-/// image_flow_shift）跟着请求走，而这一份是「这一集」的设置——建 SD
+/// image_flow_shift）跟着请求走，而这一份是「这一章」的设置——建 SD
 /// 上下文用的是全局那份，两者在出片那条路上不是同一个东西。
 /// 见 infer::SamplingKnobs。
 FrameRenderer sd_renderer(const config::Settings& settings);
@@ -72,8 +72,8 @@ FrameRenderer sd_renderer(const config::Settings& settings);
 /// `frame_seed` 要 `attempts`，而工作进程拿不到那个数。
 /// 用错种子出来的图和串行跑的不一样，**而且不会有任何报错**。
 /// **两个参数是两边各加的，都要。** `settings` 那一半是采样旋钮跟着
-/// 「这一集」走（见 sd_renderer 上面那段），`origin` 那一半是"这活谁派的"
-/// ——工作进程接外来的活时标 Peer，本机自己那一集就排在它前面。
+/// 「这一章」走（见 sd_renderer 上面那段），`origin` 那一半是"这活谁派的"
+/// ——工作进程接外来的活时标 Peer，本机自己那一章就排在它前面。
 FrameRenderer sd_renderer_with_seed(const config::Settings& settings,
                                     std::int64_t seed,
                                     infer::Origin origin = infer::Origin::Local);
@@ -85,7 +85,7 @@ FrameRenderer sd_renderer_with_seed(const config::Settings& settings,
 ///
 /// shots 会被就地改：成功的置 FRAME_DONE 并记下 frame_path，
 /// 失败的 attempts 加一。调用方负责存盘——这一层不碰 ProjectStore，
-/// 因为"什么时候存"是流水线的决定（一镜一存还是整集一存）。
+/// 因为"什么时候存"是流水线的决定（一镜一存还是整章一存）。
 /// 出一批首帧。
 ///
 /// `concurrency` 是同时在跑的镜头数。**1 就是原来的行为**（逐镜串行）。

@@ -910,7 +910,7 @@ TEST_CASE("每出完一镜就落一次盘，不是整批跑完才落") {
 
 TEST_CASE("关键镜头：第一条干净就不再多出") {
     // 2026-09-16 用户问"为什么要进行两次"：每个关键镜无条件出两条，
-    // 整集时间翻倍，而多数时候第一条就是好的。
+    // 整章时间翻倍，而多数时候第一条就是好的。
     gates::GateResult r;
     r.verdict = gates::Verdict::Pass;
     r.metrics["motion_mean"] = 6.8;
@@ -994,7 +994,7 @@ TEST_CASE("一格都没跑就被取消：镜头一个字节都不许改") {
     // skipped；而收尾那一段照着 `done` 数组整份写回，那个数组是按镜头数
     // 默认构造的——于是 17 镜被 17 个**空壳 Shot** 盖掉（shot_id 是空串、
     // 台词没了、status 回到 planned），最后那次 save 落了盘。
-    // 磁盘上的图还在，project.json 里指向它们的那一集没了。
+    // 磁盘上的图还在，project.json 里指向它们的那一章没了。
     const fs::path root = temp_root("空壳");
     const models::ProjectPaths paths(root);
     auto owned = std::vector<models::Shot>{make_shot("ep01_sh001"),

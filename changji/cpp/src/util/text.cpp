@@ -417,7 +417,7 @@ std::string slug(const std::string& text) {
     //
     // 有一个理论上的差异：Python 的 str.lower() 是 Unicode 感知的，
     // 极少数字符小写后会产生 ASCII 字母（比如土耳其语 İ 小写成 i 加组合
-    // 附加符）。那种情况这里会多出一个下划线。中文短剧的角色名不会碰到，
+    // 附加符）。那种情况这里会多出一个下划线。中文角色名不会碰到，
     // 真碰到了正确的做法是接一套 Unicode 大小写映射，而不是打补丁。
     std::string out;
     out.reserve(text.size());

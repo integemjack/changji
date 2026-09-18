@@ -465,7 +465,7 @@ TEST_CASE("镜头层：焦段和光拼进去，没填一个字不加") {
         // 没填尾帧就和首帧一样
         CHECK(composer.compose_end(plain).positive == base);
     }
-    SUBCASE("视频负向词是镜头自己的加全剧的视频那份，不带图像那份") {
+    SUBCASE("视频负向词是镜头自己的加全片的视频那份，不带图像那份") {
         rich.negative_prompt = "别有第二个人";
         const auto b = composer.compose(rich);
         CHECK(has(b.negative_video, "别有第二个人"));
@@ -519,7 +519,7 @@ TEST_CASE("关键镜头：第一镜、最后一镜、钩子反转的镜") {
     CHECK_FALSE(stages::is_hero_shot(s, false, false));
     s.beat = "反转";
     CHECK(stages::is_hero_shot(s, false, false));
-    s.beat = "集尾留扣";
+    s.beat = "章尾留扣";
     CHECK(stages::is_hero_shot(s, false, false));
     s.beat = "铺垫";
     CHECK_FALSE(stages::is_hero_shot(s, false, false));
@@ -610,7 +610,7 @@ TEST_CASE("关键镜头出几条，按闸门的数留一条，别的删掉") {
     CHECK_FALSE(fs::exists(paths.shots("draft") / "ep01_sh001_take3.mp4"));
 
     SUBCASE("第一条就干净：不再多出，只有一条") {
-        // 2026-09-16 用户问"为什么要进行两次"：无条件出两条是整集翻倍
+        // 2026-09-16 用户问"为什么要进行两次"：无条件出两条是整章翻倍
         rendered.clear();
         gate.check = [](const models::Shot& s, const fs::path&,
                         const stages::RenderPlan&) {
@@ -838,8 +838,8 @@ TEST_CASE("[look] [sound] [upscale] 从 toml 读出来，非法值拦住") {
 
 TEST_CASE("查这台的 ffmpeg 有没有某个滤镜") {
     // 2026-09-16 实撞：brew 出来的 ffmpeg 9.0.1 没编 libass，没有 subtitles
-    // 滤镜。原来这条让整集装配失败，十七镜全渲完而输出目录是空的——
-    // 为了一条可选的烧录把整集扔了。而 ffmpeg 报的还是一句误导的
+    // 滤镜。原来这条让整章装配失败，十七镜全渲完而输出目录是空的——
+    // 为了一条可选的烧录把整章扔了。而 ffmpeg 报的还是一句误导的
     // 「No option name near '/Users/…'」，人会去查路径里的空格。
     //
     // **认不得的滤镜 ffmpeg 退出码是 0**，所以判据必须看输出。
@@ -859,7 +859,7 @@ TEST_CASE("查这台的 ffmpeg 有没有某个滤镜") {
               .has_filter("subtitles"));
     // 退出码 0 但说不认得：没有
     CHECK_FALSE(ff_with("Unknown filter 'subtitles'.\n").has_filter("subtitles"));
-    // 起不来也算没有——退回外挂字幕，片子照出，别把整集扔了
+    // 起不来也算没有——退回外挂字幕，片子照出，别把整章扔了
     CHECK_FALSE(media::FFmpeg("ffmpeg", "ffprobe",
                               [](const std::string&,
                                  const std::vector<std::string>&, double) {

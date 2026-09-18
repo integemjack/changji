@@ -38,7 +38,7 @@ std::optional<std::string> pick_for(const std::vector<NodeState>& nodes,
         if (!n->busy) return n->url;
     }
     // 全忙。**回第一个去排队，不是失败**——一镜一两分钟等得起，
-    // 当场失败的话用户得到的是一集里随机几镜没了。
+    // 当场失败的话用户得到的是一章里随机几镜没了。
     return cands.front()->url;
 }
 

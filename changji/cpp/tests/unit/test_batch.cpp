@@ -4,12 +4,12 @@
 // 所以测的东西也不一样——不是"返回体对不对"，是：
 //
 //   一，起任务的那一刻回什么（started / total / 409）
-//   二，跑完之后盘上是什么（建出的剧集、存下的分镜）
+//   二，跑完之后盘上是什么（建出的章节、存下的分镜）
 //   三，中途出错和中途取消各自留下什么
 //
 // 没走对拍语料。Python 那边这两个的产出是异步写进 WriteState 的，
 // 用 TestClient 录不到中间过程，只能录到最终快照——而中间过程
-// （一集写砸了接着往下写）恰恰是这里最容易写错的地方。
+// （一章写砸了接着往下写）恰恰是这里最容易写错的地方。
 // 所以这里直接对着行为写断言，并在注释里说清每条对应 Python 的哪一段。
 
 #include <doctest/doctest.h>
@@ -81,9 +81,9 @@ json write_snapshot() {
 
 }  // namespace
 
-TEST_CASE("写整季：把每一集都建出来并落库") {
+TEST_CASE("写全片：把每一章都建出来并落库") {
     reset_jobs();
-    const fs::path root = fresh_copy("写整季");
+    const fs::path root = fresh_copy("写全片");
     const models::ProjectStore store(root);
     const std::size_t before = store.load_project().episodes.size();
 
@@ -113,10 +113,10 @@ TEST_CASE("写整季：把每一集都建出来并落库") {
     CHECK(snap.at("done") == 3);
     CHECK(snap.at("total") == 3);
     CHECK(snap.at("episodes").size() == 3);
-    CHECK(snap.at("message") == "写完了 3 集");
+    CHECK(snap.at("message") == "写完了 3 章");
     CHECK(snap.at("error").is_null());
 
-    // 每一集的记录都带上说话人和字数，界面靠它判断写长了没有
+    // 每一章的记录都带上说话人和字数，界面靠它判断写长了没有
     for (const auto& e : snap.at("episodes")) {
         CHECK_FALSE(e.at("episode_id").get<std::string>().empty());
         CHECK(e.contains("speakers"));
@@ -127,19 +127,19 @@ TEST_CASE("写整季：把每一集都建出来并落库") {
     fs::remove_all(root, ec);
 }
 
-TEST_CASE("批量写整季用的是四段的 schema，不是平的") {
+TEST_CASE("批量写全片用的是四段的 schema，不是平的") {
     // **2026-09-13 实跑这条路撞到的。** 这儿原来用 `script_schema()`——平的
     // 那份，只有 minItems 4 的地板、没有时间结构。那正是 2026-09-12 改四段
-    // 之前的行为，也正是「60 秒的集写出 13 秒的剧本」的来源：
+    // 之前的行为，也正是「60 秒的章写出 13 秒的剧本」的来源：
     //
     //     ep01   7 行 /  3 句台词 / 293 字
     //     ep02  19 行 /  8 句台词 / 477 字
     //     ep03   3 行 /  1 句台词 / 122 字
     //
-    // 同一天走单集那条出的是 17 拍 / 对白 171 字 /「合适」。**改四段那次
-    // 漏了这条路**，而单集那条有测试盯着、这条没有。
+    // 同一天走单章那条出的是 17 拍 / 对白 171 字 /「合适」。**改四段那次
+    // 漏了这条路**，而单章那条有测试盯着、这条没有。
     reset_jobs();
-    const fs::path root = fresh_copy("整季四段");
+    const fs::path root = fresh_copy("全片四段");
     auto client = std::make_shared<llm::ReplayClient>(
         std::vector<std::string>{script_reply("第一话"), script_reply("第二话")});
 
@@ -164,9 +164,9 @@ TEST_CASE("批量写整季用的是四段的 schema，不是平的") {
         CHECK_FALSE(props.contains("beats"));
     }
 
-    SUBCASE("每集的形状重摇，不是整季一个模子") {
-        // 写死比例的话 60 秒永远是 5/28/21/6，连着看几集是一个样。
-        // 段的秒数落在 schema 的 description 里，两集不该字节相同。
+    SUBCASE("每章的形状重摇，不是全片一个模子") {
+        // 写死比例的话 60 秒永远是 5/28/21/6，连着看几章是一个样。
+        // 段的秒数落在 schema 的 description 里，两章不该字节相同。
         const std::string a = client->calls()[0].schema.dump();
         const std::string b = client->calls()[1].schema.dump();
         // 摇到同一个形状也是可能的，所以这里不断言"一定不同"——
@@ -180,9 +180,9 @@ TEST_CASE("批量写整季用的是四段的 schema，不是平的") {
     fs::remove_all(root, ec);
 }
 
-TEST_CASE("剧集编号不跳号，而且跳过预告") {
+TEST_CASE("章的编号不跳号，而且跳过预告") {
     // 预告片挂在 trailer 上。把它也数进去的话，
-    // 有了预告之后新建的第二集会跳号变成 ep03。
+    // 有了预告之后新建的第二章会跳号变成 ep03。
     reset_jobs();
     const fs::path root = fresh_copy("编号");
     models::ProjectStore store(root);
@@ -217,8 +217,8 @@ TEST_CASE("剧集编号不跳号，而且跳过预告") {
     fs::remove_all(root, ec);
 }
 
-TEST_CASE("一集写砸了不拖垮后面几集") {
-    // 跑一晚上，早上发现第二集挂了导致后面几集都没动，
+TEST_CASE("一章写砸了不拖垮后面几章") {
+    // 跑一晚上，早上发现第二章挂了导致后面几章都没动，
     // 那这一晚上就白熬了。
     reset_jobs();
     const fs::path root = fresh_copy("写砸");
@@ -227,7 +227,7 @@ TEST_CASE("一集写砸了不拖垮后面几集") {
 
     auto client = std::make_shared<llm::ReplayClient>(std::vector<std::string>{
         script_reply("好的一话"),
-        "抱歉，我做不到。",          // 这一集会失败
+        "抱歉，我做不到。",          // 这一章会失败
         script_reply("又一话"),
     });
 
@@ -239,13 +239,13 @@ TEST_CASE("一集写砸了不拖垮后面几集") {
     REQUIRE(r.status == 200);
     wait_done();
 
-    // 三集都"处理过"了，但只建出两集
+    // 三章都"处理过"了，但只建出两章
     const json snap = write_snapshot();
     CHECK(snap.at("done") == 3);
     CHECK(snap.at("episodes").size() == 3);
     CHECK(store.load_project().episodes.size() == before + 2);
 
-    // 失败那条要留在列表里，而且 episode_id 是空的——这一集根本没建出来
+    // 失败那条要留在列表里，而且 episode_id 是空的——这一章根本没建出来
     int failures = 0;
     for (const auto& e : snap.at("episodes")) {
         if (e.contains("error")) {
@@ -263,7 +263,7 @@ TEST_CASE("一集写砸了不拖垮后面几集") {
 }
 
 TEST_CASE("同一个槽上不能并发") {
-    // Python 那边写整季和批量出分镜共用一个 WriteState，
+    // Python 那边写全片和批量出分镜共用一个 WriteState，
     // 所以这条限制是照抄的，不是我加的。
     reset_jobs();
     const fs::path root = fresh_copy("并发");
@@ -308,7 +308,7 @@ TEST_CASE("同一个槽上不能并发") {
 
 TEST_CASE("两个长任务的停止文案不一样") {
     // 同一个槽上跑的两件事，说法不该一样。
-    // "已经写好的几集留着" 和 "已经出好的分镜留着" 说的是不同的东西。
+    // "已经写好的几章留着" 和 "已经出好的分镜留着" 说的是不同的东西。
     reset_jobs();
     const fs::path root = fresh_copy("停止文案");
     std::vector<std::string> many;
@@ -322,7 +322,7 @@ TEST_CASE("两个长任务的停止文案不一样") {
                      {"episodes", 20}}, client);
         });
         pipeline::jobs().cancel(pipeline::JobKind::Write);
-        CHECK(write_snapshot().at("error") == "已手动停止。已经写好的几集留着。");
+        CHECK(write_snapshot().at("error") == "已手动停止。已经写好的几章留着。");
         wait_done();
     }
     {
@@ -373,7 +373,7 @@ TEST_CASE("批量出分镜只挑有剧本又没分镜的") {
         // **判据是"有能用的镜头"，不是"shots 数组非空"。** 空壳镜头
         //（shot_id 是空串）指不到任何文件、进不了任何一步，可数组非空就把
         // 这一章挡在补分镜之外——人看到「没有要补的」，而那一章明明是空的，
-        // 一键跑完整部剧也救不回来。
+        // 一键跑完整部电影也救不回来。
         //
         // 正常流程产不出这种东西（2026-09-17 那个"写回空壳"的 bug 已修，
         // 见 stages/render.cpp 的 Done::ran），但存盘被截断、手工改坏

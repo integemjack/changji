@@ -167,8 +167,8 @@ TEST_CASE("预览和进度各占各的节流桶，别互相饿死") {
 }
 
 TEST_CASE("两个任务各算各的") {
-    // 按 job_id 记，不是全局一个窗口——否则同时跑两集时，
-    // 后一集的进度会被前一集压住。
+    // 按 job_id 记，不是全局一个窗口——否则同时跑两章时，
+    // 后一章的进度会被前一章压住。
     ws::Hub h;
     CHECK_FALSE(h.should_throttle("job1", "progress", "progress"));
     CHECK_FALSE(h.should_throttle("job2", "progress", "progress"));

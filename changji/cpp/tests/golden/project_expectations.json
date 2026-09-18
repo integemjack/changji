@@ -20,7 +20,7 @@
     "ep01",
     "ep02"
   ],
-  "premise": "一个关于错过与和解的都市短剧。每集三分钟，竖屏。",
+  "premise": "一个关于错过与和解的都市电影。全片九十分钟，横屏。",
   "project_id": "yuye-tiantai",
   "rel_of_frames_file": "frames/a.png",
   "rel_of_nested": "shots/draft/b.mp4",

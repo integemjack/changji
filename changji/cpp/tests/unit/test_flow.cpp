@@ -109,7 +109,7 @@ TEST_CASE("「设定」这一格：理解过、图也画齐了才打勾") {
     }
 }
 
-TEST_CASE("「成片」这一格：出了一章的片就轮到它，切出来了才打勾") {
+TEST_CASE("「成片」这一格：出了一章的片就轮到它，合成出来了才打勾") {
     const json project =
         json{{"project_id", "p1"},
              {"episodes", json::array({json{{"episode_id", "ep01"},
@@ -125,23 +125,23 @@ TEST_CASE("「成片」这一格：出了一章的片就轮到它，切出来了
         CHECK(r.at("counters").at("allFilmed") == false);
         CHECK(r.at("done").at("film") == false);
     }
-    SUBCASE("每章都出了：还没切") {
+    SUBCASE("每章都出了：还没合成") {
         const json r = http::flow_assess(project, json::array(), both, "ep01");
         CHECK(r.at("counters").at("allFilmed") == true);
         CHECK(r.at("done").at("film") == false);
     }
-    SUBCASE("切出来了：打勾") {
-        const json film = json{{"files", json::array({json{{"name", "第01集.mp4"}}})}};
+    SUBCASE("合成出来了：打勾") {
+        const json film = json{{"files", json::array({json{{"name", "成片.mp4"}}})}};
         const json r = http::flow_assess(project, json::array(), both, "ep01", json(),
                                          json(), film);
         CHECK(r.at("done").at("film") == true);
     }
 }
 
-TEST_CASE("镜头、出片合成了一步「这一章」；成片是整部剧最后单独的一步") {
+TEST_CASE("镜头、出片合成了一步「这一章」；成片是整部电影最后单独的一步") {
     // 几页合成一页之后，侧边栏留几格指向同一个地方只会让人以为点错了。
-    // 2026-09-17 又拆出一格「成片」：它不是某一章的事——每章都出片了，把
-    // 所有章接成一条、按每集时长切。集只在那一格出现。
+    // 2026-09-17 又拆出一格「成片」：它不是某一章的事——出了片的章按章序
+    // 接成一部完整的电影、一个文件。整部电影只在那一格出现。
     const auto steps = keys_of(http::flow_steps());
     CHECK(steps.count("episode") == 1);
     CHECK(steps.count("storyboard") == 0);
@@ -156,11 +156,11 @@ TEST_CASE("镜头、出片合成了一步「这一章」；成片是整部剧最
     CHECK(http::flow_steps().size() == 5);
 }
 
-TEST_CASE("「这一集」打勾看的是**这一集自己**的成片，三位集号不许串到两位上") {
+TEST_CASE("「这一章」打勾看的是**这一章自己**的成片，三位章号不许串到两位上") {
     // 判据是 flow.cpp 里那个 film_of。它原来是 `name.find(episode_id)`，
-    // 而集号到 99 以内是 ep%02d、**第 100 集起变成 ep100**（story_plan.cpp
-    // 的 ep_id 里刻意写的），于是站在 ep10 上时 ep100～ep109 十条片子全算
-    // 成它的——短剧动辄上百集，这不是假想的数。
+    // 而章号到 99 以内是 ep%02d、**第 100 章起变成 ep100**（story_plan.cpp
+    // 的 ep_id 里刻意写的），于是站在 ep10 上时 ep100～ep109 十个成片文件
+    // 全算成它的——一部长篇动辄上百章，这不是假想的数。
     //
     // **前端有同一条规则的 JS 版**（api/labels.js 的 isFilmOf，
     // api/film-of.test.js 把边界一条条钉住了），而这一侧一条用例都没有。
@@ -175,7 +175,7 @@ TEST_CASE("「这一集」打勾看的是**这一集自己**的成片，三位�
             .get<bool>();
     };
 
-    // 引擎自己出的那份：<集号>.mp4
+    // 引擎自己出的那份：<章号>.mp4
     CHECK(done_for("ep01.mp4", "ep01"));
     CHECK(done_for("ep10.mp4", "ep10"));
     CHECK(done_for("ep107.mp4", "ep107"));
@@ -186,23 +186,23 @@ TEST_CASE("「这一集」打勾看的是**这一集自己**的成片，三位�
     // 反过来也不许
     CHECK_FALSE(done_for("ep10.mp4", "ep100"));
 
-    // 人手加的后缀还算这一集（体检里那条 2K 出路教人 --upscale 出一份）
+    // 人手加的后缀还算这一章（体检里那条 2K 出路教人 --upscale 出一份）
     CHECK(done_for("ep01_2k.mp4", "ep01"));
     CHECK(done_for("ep01-final.mp4", "ep01"));
     CHECK(done_for("导演版_ep01.mp4", "ep01"));
 
-    // 别的集一律不算
+    // 别的章一律不算
     CHECK_FALSE(done_for("ep02.mp4", "ep01"));
     CHECK_FALSE(done_for("trailer.mp4", "ep01"));
     CHECK_FALSE(done_for("ep011.mp4", "ep01"));
 
-    // 同一个集号在名字里出现两次，有一处对得上就算——不扫完的话
+    // 同一个章号在名字里出现两次，有一处对得上就算——不扫完的话
     // `ep100_ep10.mp4` 会被第一处的失败带跑
     CHECK(done_for("ep100_ep10.mp4", "ep10"));
 
-    // 没选集：这一层的策略是"有片子就算"（flow.cpp 里
+    // 没选章：这一层的策略是"有成片就算"（flow.cpp 里
     // `episode_id.empty() || film_of(...)` 那一句），和 film_of 本身
-    // 对空集号回假不是一回事。
+    // 对空章号回假不是一回事。
     CHECK(done_for("ep99.mp4", ""));
 }
 
@@ -261,7 +261,7 @@ TEST_CASE("「故事」这一格") {
     CHECK(got.at("counters").at("plannedEpisodes").get<int>() == 2);
 }
 
-TEST_CASE("「这一集」这一格：判据是装配出片子了") {
+TEST_CASE("「这一章」这一格：判据是装配出这一章的成片") {
     const auto all_done = json::array(
         {a_shot("a", "final_done"), a_shot("b", "locked")});
 
@@ -271,7 +271,7 @@ TEST_CASE("「这一集」这一格：判据是装配出片子了") {
                     .at("episode")
                     .get<bool>());
 
-    // 产物里有这一集的片子才算
+    // 产物里有这一章的成片才算
     const auto outputs = json::array({json{{"name", "ep01.mp4"}}});
     const auto got = http::flow_assess(a_project(), all_done, outputs, "ep01");
     CHECK(got.at("done").at("episode").get<bool>());
@@ -288,7 +288,7 @@ TEST_CASE("「这一集」这一格：判据是装配出片子了") {
 
 TEST_CASE("shotsDone：光有分镜表不算出完") {
     // 这个数原来是「镜头」那一格的判定，三格合一之后降级成一个计数，
-    // 但那条规矩照旧：光有分镜表就算出完的话，界面上说这一集拍完了，
+    // 但那条规矩照旧：光有分镜表就算出完的话，界面上说这一章拍完了，
     // 而实际上一帧画面都还没出。
     const auto only_planned = json::array({a_shot("a", "planned")});
     CHECK_FALSE(http::flow_assess(a_project(), only_planned, json::array(),

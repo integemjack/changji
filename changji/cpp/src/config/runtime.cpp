@@ -54,9 +54,9 @@ stages::VideoLimits video_limits_for(const Settings& s) {
     if (s.models.video_frame_base >= 0 && s.models.video_frame_step > 0) {
         limits.frame_base = s.models.video_frame_base;
     }
-    // 最后是这部剧自己要的。**放在手填覆盖之后**：video_max_frames 是
-    // "这张卡/这个模型最多能出多少"，max_shot_s 是"这部剧要多短"，
-    // 剧的要求只能往下夹，不能借它把机器的上限抬上去。
+    // 最后是这部电影自己要的。**放在手填覆盖之后**：video_max_frames 是
+    // "这张卡/这个模型最多能出多少"，max_shot_s 是"这部电影要多短"，
+    // 这部电影的要求只能往下夹，不能借它把机器的上限抬上去。
     if (s.video.max_shot_s > 0.0) {
         const int fps = stages::effective_fps(limits, s.assembly.fps);
         // frames_for 已经夹在上限之内，所以要的秒数比机器上限还长时它回的
@@ -84,7 +84,7 @@ void Runtime::replace(Settings s) {
     // 填 30 的话整片快 25%，人走路变小跑，字幕跟着漂。**不报错。**
     //
     // **这是两条入口里的第二条。** 另一条是 `load_settings`：出片那条路
-    // 每跑一集都从项目的 changji.toml 重读一遍设置（http/run.cpp 里那句
+    // 每跑一章都从项目的 changji.toml 重读一遍设置（http/run.cpp 里那句
     // `load_settings(store.root())`），**根本不经过 Runtime**。两条互不
     // 相通，只堵一条等于没堵，所以那边在 migrate_legacy 里调同一个函数。
     if (const std::string note = normalize_fps_for_model(s); !note.empty()) {

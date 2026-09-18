@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """从零走一遍写作这条链，一步一步查。
 
-    建项目 → 出大纲 → 采用 → 一章一章写 → 读故事 → 采用 → 分集 → 落成剧集
+    建项目 → 出大纲 → 采用 → 一章一章写 → 读故事 → 采用 → 章节计划 → 落成章节
 
 **为什么要有这个。** 这条链上好几处坏了是不报错的：接口回 200、界面
 不红、文件也落了盘，只是里面少了东西。2026-09-11 一天里撞见三处：
@@ -182,21 +182,22 @@ def main():
     step(base, "采用分析", "/api/story/adopt",
          {"project": proj, "story": st2, "overwrite": True})
 
-    plan = step(base, "分集", "/api/story/plan", {"project": proj})
+    plan = step(base, "章节计划", "/api/story/plan", {"project": proj})
     eps = plan.get("story", {}).get("plan") or []
-    log("   ->", len(eps), "集")
+    log("   ->", len(eps), "章")
     if len(eps) < len(st2.get("chapters") or []):
-        bad("分集比章还少——一章至少切一集")
+        bad("章节计划比章还少——一章一条，一条都不能漏")
     no_hook = [e.get("episode_id") for e in eps if not (e.get("hook") or "").strip()]
-    # 最后一集停在全剧结尾，没有钩子是正常的；中间那些没有就是按字数硬切的
+    # 钩子取的是这一章最后一场的 turn。最后一章停在全片结尾，没有钩子是正常
+    # 的；中间那几章缺，就是那一场的 turn 根本没写出来
     if len(no_hook) > 1:
-        bad(f"{len(no_hook)} 集没有钩子，只有最后一集该没有：{no_hook}")
+        bad(f"{len(no_hook)} 章没有钩子，只有最后一章该没有：{no_hook}")
 
-    made_eps = step(base, "落成剧集", "/api/story/episodes", {"project": proj})
+    made_eps = step(base, "落成章节", "/api/story/episodes", {"project": proj})
     log("   -> 新建", len(made_eps.get("created") or []),
         "更新", len(made_eps.get("updated") or []))
     if len(made_eps.get("created") or []) != len(eps):
-        bad("落成的剧集数和分集表对不上")
+        bad("落成的章数和章节计划对不上")
 
     if not args.keep:
         # confirm_name 要和目录名一字不差——那道闸就是防手滑的

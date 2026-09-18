@@ -39,26 +39,26 @@ json flow_steps() {
         json{{"key", "project"}, {"phase", "series"}, {"title", "项目"},
              {"hint", "选一个项目，或者新建一个"}},
         // **故事在剧本前面。** 原来第二步就是「剧本大纲」，而那一页是
-        // 拿一句梗概逐集续写——集数人填、上下文只带前三集。故事这一步
-        // 先把完整故事和分集定下来，剧本才有得可写。
+        // 拿一句梗概逐章续写——章数人填、上下文只带前三章。故事这一步
+        // 先把完整故事和章节定下来，剧本才有得可写。
         json{{"key", "story"}, {"phase", "series"}, {"title", "故事"},
              {"hint", "一章一章写；让 AI 写或改的都是眼前这一章"}},
         // **角色和场景 2026-09-11 合成一步「设定」。** 它们本来就是同一件
         // 事：人和地方在同一个 assets.json 里，都从故事提。而场景那一格
-        // 原来还挂在「分集」阶段——那是个错位，场景库是全剧共用的。
+        // 原来还挂在「分集」阶段——那是个错位，场景库是全片共用的。
         json{{"key", "assets"}, {"phase", "series"}, {"title", "设定"},
              {"hint", "理解故事：人物、场景、长相、剧本一次出来；再把参考图画齐"}},
-        // **镜头、成片、上传 2026-09-11 合成一步「这一集」。**
+        // **镜头、成片、上传 2026-09-11 合成一步「这一章」。**
         //
         // 2026-09-10 已经把分镜和制作合过一次（同一张分镜表，一页排一页跑，
         // 而人在同一镜上来回）。这次是同一条理由再往外一层：人做的事是
-        // **对照着看**——对着这句台词看这一镜对不对，看完整集顺手发出去。
+        // **对照着看**——对着这句台词看这一镜对不对，看完整章顺手发出去。
         // 分成几页，来回换页才知道这一镜出自哪句话。
         json{{"key", "episode"}, {"phase", "episode"}, {"title", "这一章"},
-             {"hint", "剧本、镜头、出片，都在这一章上；集是最后按时长切出来的"}},
-        // 集只在这儿出现一次：每章都出片了，选每集多长，切成几集。
+             {"hint", "剧本、镜头、出片，都在这一章上；整部电影是最后把各章接起来"}},
+        // 成片：有一章出了片就轮到它，把出了片的章接成一部电影。
         json{{"key", "film"}, {"phase", "series"}, {"title", "成片"},
-             {"hint", "出了片的章接成一条，选每集多长，切成几集"}},
+             {"hint", "出了片的章按顺序接成一部完整的电影"}},
     });
 }
 
@@ -93,12 +93,12 @@ json flow_assess(const json& project, const json& shots, const json& outputs,
 
     // ---- 「剧本大纲」那一格 2026-09-11 没有了 ----
     //
-    // 全剧那半在故事页，单集那半在「这一集」的剧本视图。`done` 里因此
+    // 全片那半在故事页，单章那半在「这一章」的剧本视图。`done` 里因此
     // 不能有这个键——test_flow 的「多出来的 key 是死代码」那条盯着。
     //
-    // 写过几集这个数留在 counters 里。**但界面上没有一处读它**：项目栏
-    // 那句「10 集里落成 3 集」是 project-stage.js 自己从项目的 episodes
-    // 里数出来的。这儿原来写着"故事页要显示「已落成几集」"，那是把
+    // 写过几章这个数留在 counters 里。**但界面上没有一处读它**：项目栏
+    // 那句「10 章里落成 3 章」是 project-stage.js 自己从项目的 episodes
+    // 里数出来的。这儿原来写着"故事页要显示「已落成几章」"，那是把
     // 「有这么个数」当成了「有人在用这个数」。
     const auto& episodes = arr_of(project, "episodes");
     int written = 0;
@@ -115,7 +115,7 @@ json flow_assess(const json& project, const json& shots, const json& outputs,
 
     // 场景那一半的判据。
     //
-    // 三个条件都要：注册过场景、这一集用到的场景都注册过、
+    // 三个条件都要：注册过场景、这一章用到的场景都注册过、
     // **而且没有"靠 scene_id 蒙对"的镜头**。
     // 最后一条是关键：`scene_id` 恰好等于某个 location_id 的时候画面能出，
     // 但那是巧合不是关联——这一步不算做完，用户得去显式关联一次。
@@ -185,7 +185,7 @@ json flow_assess(const json& project, const json& shots, const json& outputs,
     // ---- 镜头：每一镜都出到成片状态才算完 ----
     //
     // **判据取的是原来「制作」那条，不是「分镜」那条。** 合成一步之后
-    // 这一格代表的是"这一集的镜头做完了"，光有分镜表不算做完——
+    // 这一格代表的是"这一章的镜头做完了"，光有分镜表不算做完——
     // 那时候一帧画面都还没有。宽松的判据会让侧边栏早早打勾，
     // 而用户回头发现什么都没出。
     static const std::set<std::string> kFinal = {"final_done", "locked",
@@ -197,7 +197,7 @@ json flow_assess(const json& project, const json& shots, const json& outputs,
         if (kFinal.count(str_of(s, "status"))) ++produced;
         if (s.is_object() && s.value("needs_lipsync", false)) ++lipsync;
         // **优先 real_duration_s。** `duration_s` 是名义值，模型按格子出帧，
-        // 名义 2 秒实际出 2.333 秒——这个数报给界面当「这一集排了多长」，
+        // 名义 2 秒实际出 2.333 秒——这个数报给界面当「这一章排了多长」，
         // 名义值会偏小。老响应没有这个字段时才退回去。
         if (s.is_object() && s.contains("real_duration_s") &&
             s["real_duration_s"].is_number()) {
@@ -210,17 +210,17 @@ json flow_assess(const json& project, const json& shots, const json& outputs,
     const bool shots_done =
         !shots.empty() && produced == static_cast<int>(shots.size());
 
-    // ---- 成片：产物里有这一集的 ----
+    // ---- 成片：产物里有这一章的 ----
     //
-    // ⚠️ **不能用裸 `find`。** 集号到 99 以内是 `ep%02d`，**第 100 集起
+    // ⚠️ **不能用裸 `find`。** 章号到 99 以内是 `ep%02d`，**第 100 章起
     // 变成 `ep100`、`ep101`……**（story_plan.cpp 的 `ep_id`、
     // http/episodes.cpp 的 `ep_fmt` 都刻意留了这一支）。于是站在 `ep10`
-    // 上时 `"ep107.mp4".find("ep10")` 命中——ep100 到 ep109 十条片子全算
-    // 成 ep10 的，这一格当场打勾，而 ep10 可能一帧都没出。短剧动辄七八十
-    // 上百集，这不是假想的数。
+    // 上时 `"ep107.mp4".find("ep10")` 命中——ep100 到 ep109 十个成片文件全算
+    // 成 ep10 的，这一格当场打勾，而 ep10 可能一帧都没出。整本书改编下来
+    // 动辄七八十上百章，这不是假想的数。
     //
     // 判据要求**两边都挨着非字母数字**（或者到头）：`ep01.mp4` 真、
-    // `ep01_2k.mp4` 真（手动超分那份还算这一集）、`导演版_ep01.mp4` 真、
+    // `ep01_2k.mp4` 真（手动超分那份还算这一章）、`导演版_ep01.mp4` 真、
     // `ep107.mp4` 对 `ep10` 假。前端 api/labels.js 的 `isFilmOf` 是同一
     // 条规则的 JS 版，两边要一起改。
     const auto film_of = [](const std::string& name, const std::string& id) {
@@ -246,21 +246,21 @@ json flow_assess(const json& project, const json& shots, const json& outputs,
             break;
         }
     }
-    // ---- 这一集 ----
+    // ---- 这一章 ----
     //
-    // **判据取原来「成片」那条**：装配出片子才算这一集做完了。
+    // **判据取原来「成片」那条**：装配出这一章的成片才算这一章做完了。
     //
-    // 不取「镜头全出完」：那时候还没装配，拿不到片子。也不把投递算进来——
+    // 不取「镜头全出完」：那时候还没装配，拿不到成片。也不把投递算进来——
     // 投递记录存在 Node 那个 BFF 自己的配置里，引擎这边没有那份数据，
     // 而且发不发是可选的收尾动作，把它算进来会让这一格永远不打勾。
     done["episode"] = has_film;
     // 镜头有没有全出完另外报一个布尔，判定本身用的是上面那条。
-    // **界面不读它**（「这一集」那一页的「还差 N 首帧 / N 视频」是自己
+    // **界面不读它**（「这一章」那一页的「还差 N 首帧 / N 视频」是自己
     // 拿 /api/shots 数的），但 test_flow 有四条用例盯着它，是这个文件里
     // 被测得最细的一条判据——「光有分镜表不算出完」说的就是它。
     counters["shotsDone"] = shots_done;
 
-    // ---- 出了几章的片：有一章就能切（成片那一格出不出现看 filmedChapters），
+    // ---- 出了几章的片：有一章就能合成（成片那一格出不出现看 filmedChapters），
     //      allFilmed 只是给页面说"还有几章没出片"用 ----
     int filmed = 0;
     int linked_all = 0;
@@ -279,7 +279,7 @@ json flow_assess(const json& project, const json& shots, const json& outputs,
     }
     counters["filmedChapters"] = filmed;
     counters["allFilmed"] = linked_all > 0 && filmed == linked_all;
-    // 切出来的几集在不在
+    // 那一部电影在不在
     done["film"] = !arr_of(film, "files").empty();
 
     counters["shots"] = static_cast<int>(shots.size());

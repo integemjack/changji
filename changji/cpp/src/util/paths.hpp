@@ -35,7 +35,7 @@ std::filesystem::path user_config_dir(const std::string& app_name);
 /// Linux:   $XDG_DATA_HOME/changji 或 ~/.local/share/changji
 std::filesystem::path user_data_dir(const std::string& app_name);
 
-/// 展开开头的 ~。配置里的路径允许用户写 ~/短剧项目 这种形式。
+/// 展开开头的 ~。配置里的路径允许用户写 ~/电影项目 这种形式。
 std::filesystem::path expand_user(const std::string& raw);
 
 /// 读环境变量。没有或为空返回空字符串。
@@ -51,7 +51,7 @@ std::string env(const char* name);
 /// 异常一路穿到 std::terminate，进程以 0xC0000409 消失，而那个错误码字面
 /// 意思是"栈缓冲区溢出"，会把人往完全错误的方向带。
 ///
-/// 项目目录本来就允许是 E:\AI短剧\ 这种路径，用户名也可能是中文，
+/// 项目目录本来就允许是 E:\AI电影\ 这种路径，用户名也可能是中文，
 /// 所以这不是边缘情况。这个函数走 wstring → UTF-8，不经过 ANSI 代码页，
 /// 永远不会失败。
 /// 设一个环境变量（当前进程内）。

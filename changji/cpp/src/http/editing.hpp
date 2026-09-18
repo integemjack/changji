@@ -36,12 +36,12 @@ ApiResult post_character(const nlohmann::json& body);
 /// body: {project, location_id, patch: {...}, reset_shots: bool = true}
 ApiResult post_location(const nlohmann::json& body);
 
-/// POST /api/style —— 改全剧风格层。
+/// POST /api/style —— 改全片风格层。
 /// body: {project, patch: {...}, reset_shots: bool = true}
 ApiResult post_style(const nlohmann::json& body);
 
 /// POST /api/shots/batch —— 批量改状态。
-/// body: {project, episode_id, action, shot_ids: [] = 整集}
+/// body: {project, episode_id, action, shot_ids: [] = 整章}
 /// action 可选：reset / lock / unlock / clear_notes
 ApiResult post_shots_batch(const nlohmann::json& body);
 
@@ -49,7 +49,7 @@ ApiResult post_shots_batch(const nlohmann::json& body);
 /// body: {project, episode_id, shot_ids: [完整列表]}
 ///
 /// 必须给完整列表，不接受增量指令——界面和引擎对当前顺序的理解一旦对不上，
-/// 结果是把片子剪乱，而且要播一遍才发现。
+/// 结果是把成片剪乱，而且要播一遍才发现。
 ApiResult post_shots_reorder(const nlohmann::json& body);
 
 /// POST /api/shots/link_locations —— 把 location_id 空着的镜头接回场景。

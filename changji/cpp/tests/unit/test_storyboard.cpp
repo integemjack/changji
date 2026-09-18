@@ -592,7 +592,7 @@ TEST_CASE("模型多填的状态字段一律剥掉") {
     //
     // 最重的是 status：填成 final_done / locked，出片那一步整镜跳过
     // （这两个不在 render_entry_states 里），表现是"跑完了，这一镜什么都
-    // 没出"，而侧边栏还会把这一集打上勾。frame_path / video_path 会让装配
+    // 没出"，而侧边栏还会把这一章打上勾。frame_path / video_path 会让装配
     // 去拼一个不存在的文件；台词行里的 voice_id 会让这一句换个人说话。
     // 这一类全都不报错。
     const models::AssetLibrary a = test_assets();
@@ -722,7 +722,7 @@ TEST_CASE("数拍子时跳过段头和空行") {
 
 TEST_CASE("镜头编号和顺序由引擎重排") {
     std::vector<models::Shot> shots(4);
-    // 实跑里模型给出来的那几种坏写法：错集号、没补零、打错字
+    // 实跑里模型给出来的那几种坏写法：错章号、没补零、打错字
     shots[0].shot_id = "ep61_sh002"; shots[0].order = 1;
     shots[1].shot_id = "ep01_sh001"; shots[1].order = 0;
     shots[2].shot_id = "ep01_s1h11"; shots[2].order = 3;
@@ -730,7 +730,7 @@ TEST_CASE("镜头编号和顺序由引擎重排") {
 
     stages::renumber_shots(shots, "ep01");
 
-    // 按 order 排过之后编号是连号的，而且都带着对的集号
+    // 按 order 排过之后编号是连号的，而且都带着对的章号
     std::vector<std::pair<std::string, int>> got;
     for (const auto& s : shots) got.push_back({s.shot_id, s.order});
     CHECK(got[1] == std::pair<std::string, int>{"ep01_sh001", 0});  // 原 order 0
@@ -749,7 +749,7 @@ TEST_CASE("剧本里的台词漏掉了要报出来") {
         "【开场钩子 0–5 秒】\n"
         "暴雨深夜，街头。\n"
         "林浩：这单要是超时，我这月房租就泡汤了。\n"
-        "【集尾留扣 54–60 秒】\n"
+        "【章尾留扣 54–60 秒】\n"
         "苏婉：怎么了？脸色这么难看？\n"
         "林浩：你到底还瞒着我什么？";
 
@@ -764,7 +764,7 @@ TEST_CASE("剧本里的台词漏掉了要报出来") {
     l.text = "这单要是超时，我这月房租就泡汤了。";
     s.dialogue.push_back(l);
 
-    // 只排了开场那一句，集尾留扣整段没进分镜——这一集丢的正是它的钩子。
+    // 只排了开场那一句，章尾留扣整段没进分镜——这一章丢的正是它的钩子。
     // **这不是致命错**：分镜表还能用，所以 check_coverage 不报，
     // 由 missing_dialogue_lines 单独列出来，交给界面去说。
     CHECK(stages::check_coverage(script, {s}).empty());
@@ -855,7 +855,7 @@ TEST_CASE("台词栏里的占位符要删掉，别让配音念出来") {
     }
 }
 
-TEST_CASE("越界的转场时长兜住，别为一栏装饰丢掉一整集") {
+TEST_CASE("越界的转场时长兜住，别为一栏装饰丢掉一整章") {
     // 实跑撞上的：模型给了 transition_dur_s = -0.4，validate 说「要在 0 到 2
     // 秒之间」，于是整张表连同另外十二个好镜头一起作废，84 秒的显卡时间没了。
     const models::AssetLibrary a = test_assets();
@@ -875,7 +875,7 @@ TEST_CASE("越界的转场时长兜住，别为一栏装饰丢掉一整集") {
     };
 
     // 2026-09-16 起转场那两栏不再是模型能填的字段（keep_llm_fields 丢掉），
-    // 所以不管它写什么，出来都是硬切零时长——越界的自然也不会让整集作废。
+    // 所以不管它写什么，出来都是硬切零时长——越界的自然也不会让整章作废。
     CHECK(one("dissolve", -0.4) == 0.0);   // 负的
     CHECK(one("dissolve", 9.0) == 0.0);    // 超过 2 秒
     CHECK(one("dissolve", 0.0) == 0.0);    // 没填
@@ -884,7 +884,7 @@ TEST_CASE("越界的转场时长兜住，别为一栏装饰丢掉一整集") {
 }
 
 TEST_CASE("剧本里漏掉的台词由引擎照顺序补进镜头") {
-    // 分镜模型不搬台词：实跑一集九句只写了两句，dump 出来看是压根没生成。
+    // 分镜模型不搬台词：实跑一章九句只写了两句，dump 出来看是压根没生成。
     // 台词本来就在剧本里，引擎自己放比指望模型重打一遍靠谱。
     const models::AssetLibrary a = test_assets();
     const std::string script =
@@ -893,7 +893,7 @@ TEST_CASE("剧本里漏掉的台词由引擎照顺序补进镜头") {
         "林晚：你说过会来的。\n"
         "他没有回头。\n"
         "陈默：我来了。\n"
-        "【集尾留扣】\n"
+        "【章尾留扣】\n"
         "林晚：晚了七年。";
 
     auto blank = [](const char* id, int order) {
@@ -1028,7 +1028,7 @@ TEST_CASE("视频限制：默认最保守，换一份就跟着变") {
 
         // 360 不在 17k+5 的格子上，往下取到 345 = 14.375 秒
         CHECK(stages::max_shot_duration_s(24) == doctest::Approx(345.0 / 24.0));
-        // 一集不必再被切成十几个五秒片段
+        // 一章不必再被切成十几个五秒片段
         CHECK(stages::duration_slots() ==
               std::vector<double>{2.0, 3.0, 4.0, 5.0, 6.0, 8.0, 10.0, 12.0});
 
@@ -1152,7 +1152,7 @@ TEST_CASE("帧率也是模型说了算：H3 只出 24fps") {
 // ---- 名义秒 vs 成片秒 ----
 
 TEST_CASE("再平衡压的是成片长度，不是分镜表上那串名义值") {
-    // **同一集两套秒。** 分镜表里的 duration_s 是从档位表 {2,3,4,5,…} 里挑
+    // **同一章两套秒。** 分镜表里的 duration_s 是从档位表 {2,3,4,5,…} 里挑
     // 的整数，而模型只能按格子出帧（H3 是 17k+5），名义 5 秒出来是 124 帧
     // = 5.167 秒。装配那边一直按真值排时间轴（media/assemble.cpp），规划
     // 这边却一直按名义值加——rebalance 精算到"60 秒"，片子是 62 秒。
@@ -1189,7 +1189,7 @@ TEST_CASE("再平衡压的是成片长度，不是分镜表上那串名义值") 
         shots.push_back(make("gap" + std::to_string(i), 5.0, false));
     }
 
-    // 名义上正好 60 秒——按名义值记账的话这一集"已经达标了"。
+    // 名义上正好 60 秒——按名义值记账的话这一章"已经达标了"。
     double nominal = 0.0;
     for (const auto& s : shots) nominal += s.duration_s;
     REQUIRE(nominal == doctest::Approx(60.0));
@@ -1236,7 +1236,7 @@ TEST_CASE("real_total_s 数的是帧，不是分镜表") {
     // 名义 6 秒，实际 6.79 秒——每一镜都只多一点，十几镜就是好几秒。
     CHECK(stages::real_total_s(shots, 24) > 6.7);
 
-    SUBCASE("空的一集是 0，不是 NaN") {
+    SUBCASE("空的一章是 0，不是 NaN") {
         CHECK(stages::real_total_s({}, 24) == doctest::Approx(0.0));
     }
 
@@ -1391,7 +1391,7 @@ TEST_CASE("景别塌成一个值时按戏重排，认真分过的不碰") {
 }
 
 TEST_CASE("换档之后运动描述跟着改：rebalance 改了时长，motion_prompt 不能是陈的") {
-    // 2026-09-16 实测：新排的一集 18 镜里有 9 镜对不上，最离谱的一个 6 秒
+    // 2026-09-16 实测：新排的一章 18 镜里有 9 镜对不上，最离谱的一个 6 秒
     // 镜头挂着 [0-15秒]——解析时对的是换档**之前**那个数，rebalance 为了
     // 凑总时长又把档换了。多出来那截没人描述，出片模型自由发挥。
     const auto mk = [](const char* id, double dur, const char* mp) {
@@ -1434,7 +1434,7 @@ TEST_CASE("motion_covering 两头都夹，空的和没格式的都不炸") {
 }
 
 TEST_CASE("老分镜表在用的时候也会被夹：盘上存的对不上，出片照样按真时长") {
-    // 2026-09-16 实测：修复之前排的一集里，一个 6 秒的镜头挂着 [0-15秒]。
+    // 2026-09-16 实测：修复之前排的一章里，一个 6 秒的镜头挂着 [0-15秒]。
     // 那些表不重排就一直是错的，而重排会把人手改过的东西一起冲掉——
     // 所以在 PromptComposer::motion_prompt 里用之前再夹一次。
     models::AssetLibrary a;

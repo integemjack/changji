@@ -1,5 +1,5 @@
 {
- "note": "由 cpp/tests/export_storyboard_golden.py 生成，不要手改",
+ "note": "由 cpp/tests/export_storyboard_golden.py 生成，不要手改——生成器随 Python 引擎一起删了（2026-09-10）。2026-09-18：prompts 和 schemas 这两块退回 2026-09-07 的原样，连「短剧分镜师」一起。这两块谁都不读（test_storyboard.cpp 用的是 durations / quotas / links / speakers / parses / parse_failures / coverages / rebalances），而它们记的是 2026-09-17 之前的老样子：schema 里还留着那之后拿掉的 visual_desc，camera_move 写的还是「只有定格的物件特写、静止的空镜才填 static」。**这是一张 2026-09-07 的快照，不再跟着提示词和 schema 走。**今天真发给模型的是什么，读 cpp/prompts.toml 和 stages/storyboard.cpp 的 llm_shot_schema；今天钉 schema 的是 test_storyboard.cpp 里钉结构那几条，不是这里。",
  "durations": {
   "slots": [
    2.0,

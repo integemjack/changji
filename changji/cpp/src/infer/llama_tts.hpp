@@ -122,7 +122,7 @@ struct LlamaTtsRequest {
     /// （HF 的 repetition_penalty 语义就是看整个已生成序列）。
     float repetition_penalty = 1.05f;
     /// UINT32_MAX 表示随机。**默认给一个定值**：配音重跑一次就换一个
-    /// 声音的话，用户没法靠重跑修一句坏台词，只能整集重配。
+    /// 声音的话，用户没法靠重跑修一句坏台词，只能整章重配。
     unsigned int seed = 1234;
     /// 一帧一帧生成的上限。见 kTtsMaxFrames。
     ///

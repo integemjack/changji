@@ -1,6 +1,6 @@
 #pragma once
 
-// 跑一集：按阶段把镜头过一遍。
+// 跑一章：按阶段把镜头过一遍。
 //
 // **阶段之间是分批的，不是按镜头串行的。** 四十个镜头的首帧全出完，
 // 再统一出视频。这不是风格问题——预算只装得下一个模型时，
@@ -31,14 +31,14 @@ enum class Stage {
     Frames,     ///< 逐镜首帧
     Draft,      ///< 草稿档视频
     Final,      ///< 成片档视频
-    Assemble,   ///< 拼成一集
+    Assemble,   ///< 拼成这一章的成片
 };
 
 const char* to_string(Stage s);
 /// 认不出返回 false。
 bool stage_from_string(const std::string& s, Stage& out);
 
-/// 跑一集的结果。
+/// 跑一章的结果。
 struct RunReport {
     std::string episode_id;
     std::vector<stages::ShotAudioPlan> audio;
@@ -53,7 +53,7 @@ struct RunReport {
     bool ok() const { return errors.empty(); }
 };
 
-/// 跑一集要用的东西。
+/// 跑一章要用的东西。
 struct RunOptions {
     std::string episode_id;
     /// 只跑草稿档就停。快速验证叙事时用——成片档一个镜头几分钟，
@@ -73,16 +73,16 @@ struct RunOptions {
     /// RunOptions 是"跑哪些阶段"的完整描述，默认值该是"都跑"——
     /// 直接用这个结构体的（测试、将来的批处理工具）想要哪一段自己说。
     /// 而 `POST /api/run` 面对的是人，人现在不需要草稿档：挂 Turbo LoRA
-    /// 之后两档画质拉不开差距，那一遍就是白跑（一集 54 分钟）。
+    /// 之后两档画质拉不开差距，那一遍就是白跑（一章 54 分钟）。
     ///
     /// 把"人不需要"翻译成结构体默认值的话，波及的是所有直接调用方——
     /// 14 个测试用例当场变红，而它们测的正是草稿档那条路，没有一个是错的。
     bool skip_draft = false;
 
-    /// 只跑这几个镜头。**空表示整集。**
+    /// 只跑这几个镜头。**空表示整章。**
     ///
     /// 新界面上每个镜头自己有一个"重新生成"按钮——用户看着某一镜不对，
-    /// 想重跑的就是那一个。没有这一项的话只能整集重跑，而整集是一小时。
+    /// 想重跑的就是那一个。没有这一项的话只能整章重跑，而整章是一小时。
     ///
     /// 和 `force` 是两回事：这一项管"跑哪几个"，force 管"已完成的要不要
     /// 重来"。重跑单镜通常两个都要给。
@@ -95,12 +95,12 @@ struct RunOptions {
     /// 这两者不是一回事，而且都是前端能触发的：Python 那边判的是
     /// `if req.stages:`，所以 `stages: []` 走全流程（空列表是假值），
     /// `stages: ["  "]` 走"只跑指定阶段"、而指定的阶段过滤完是空的。
-    /// 合成一个空 vector 的话，后一种会变成把整集重跑一遍。
+    /// 合成一个空 vector 的话，后一种会变成把整章重跑一遍。
     std::optional<std::vector<Stage>> only;
 };
 
 /// 出图和出片的后端。注入的，理由同各阶段：
-/// 真跑一集要几十分钟，而阶段编排的逻辑（谁先谁后、哪些镜头要跑、
+/// 真跑一章要几十分钟，而阶段编排的逻辑（谁先谁后、哪些镜头要跑、
 /// 什么时候存盘）能在几毫秒内测死。
 struct Backends {
     stages::FrameRenderer frame;
@@ -139,7 +139,7 @@ struct Backends {
     std::vector<std::shared_ptr<void>> keepalive;
 };
 
-/// 跑一集。
+/// 跑一章。
 ///
 /// 每个阶段结束后**立刻存盘**。不存的话中途断电或者点了停止，
 /// 前面几十分钟的产出全部作废——文件还在磁盘上，但项目文件里没记，
@@ -157,7 +157,7 @@ RunReport run_episode(const models::ProjectStore& store,
 /// 而你会先怀疑分镜、怀疑渲染、怀疑装配。
 /// 所以它和下面那个不留在匿名 namespace 里，好让语料够得着。
 /// `only_shots` 非空时只认这几个镜头（按 shot_id）。**先筛这一层**：
-/// 不筛的话 force 会把整集都拉进来，而用户点的是某一镜的"重新生成"。
+/// 不筛的话 force 会把整章都拉进来，而用户点的是某一镜的"重新生成"。
 std::vector<models::Shot*> pick(models::Episode& ep,
                                 const std::set<models::ShotStatus>& want,
                                 bool force,
@@ -195,7 +195,7 @@ std::vector<models::Shot*> pick_for_frames(
 
 /// 这一镜能不能进成片：既出了片（video_path 有值）又过了闸门。
 ///
-/// **导出来是为了让它只有一份。** 同一条判据有两个用处——挑谁进片子、
+/// **导出来是为了让它只有一份。** 同一条判据有两个用处——挑谁进成片、
 /// 告诉人谁没进去——两处各写一遍的话迟早对不上，而对不上的表现是
 /// 「装配 16 个镜头」后面跟着一句「没进去的：（空）」。
 bool assembly_usable(const models::Shot& s);
@@ -203,8 +203,8 @@ bool assembly_usable(const models::Shot& s);
 /// 没能进成片的镜头，一镜一行：`ep01_sh001：配音完成，还没出片`。
 /// 全都能进就返回空表。
 ///
-/// 装配那道筛选本来是**静默**的：不可用的镜头直接不进片子，唯一的线索是
-/// 「装配 16 个镜头」这个数，人得自己记得这一集有 18 镜才看得出来。
+/// 装配那道筛选本来是**静默**的：不可用的镜头直接不进成片，唯一的线索是
+/// 「装配 16 个镜头」这个数，人得自己记得这一章有 18 镜才看得出来。
 /// 2026-09-13 实机撞到：walk_c ep01 两镜因为重跑过配音退回 audio_done，
 /// 成片从 18 镜 61.8 秒变成 16 镜 54.3 秒，而消息一个字都没提。
 std::vector<std::string> assembly_left_out(const models::Episode& ep);
@@ -219,7 +219,7 @@ std::set<models::ShotStatus> render_entry_states(models::Tier tier,
 
 /// 首帧该按什么规格出。
 ///
-/// 两件事在这儿汇到一起，各自都**不会报错**、只会让片子"看着不太行"：
+/// 两件事在这儿汇到一起，各自都**不会报错**、只会让成片"看着不太行"：
 ///
 /// 1. **档位**：`[models].frame_tier`，默认 `final`。画幅（`[video]`）
 ///    只盖成片档，首帧走草稿档就会拿 512×288 去配 704×1280 的视频。
@@ -232,11 +232,11 @@ std::set<models::ShotStatus> render_entry_states(models::Tier tier,
 models::TierSpec frame_spec(const models::HardwareProfile& profile,
                             const config::Settings& settings);
 
-/// 把**这部剧自己的** changji.toml 盖进档位表，顺手把首帧步数填进 settings。
+/// 把**这部电影自己的** changji.toml 盖进档位表，顺手把首帧步数填进 settings。
 ///
 /// 档位表是按这张卡的显存推出来的（5090 上是 1920×1088 / 30 步），而画幅是
-/// 这部剧的属性，写在项目目录的 `[video]` 里。不过这一道的话，出来的图是
-/// 1088×1920 而这部剧的每一镜是 544×928——**不报任何错**，只是慢一倍，
+/// 这部电影的属性，写在项目目录的 `[video]` 里。不过这一道的话，出来的图是
+/// 1088×1920 而这部电影的每一镜是 544×928——**不报任何错**，只是慢一倍，
 /// 而且参考图和成片对不上。
 ///
 /// 步数同理：`[tiers].final_steps` 那个数假设的是不挂 Turbo 的模型，挂了

@@ -129,7 +129,7 @@ void check_text(const std::string& got, const std::string& want,
 //
 TEST_CASE("三张中文标签表一项都不能少") {
     // 表里少一项的话那一层拼出来是空的，而空的景别层意味着模型
-    // 自己决定构图——同一集里景别会乱跳，而且看不出是为什么。
+    // 自己决定构图——同一章里景别会乱跳，而且看不出是为什么。
     for (const auto& kv : golden().at("shot_size_zh").items()) {
         CAPTURE(kv.key());
         models::ShotSize v{};
@@ -473,7 +473,7 @@ TEST_CASE("大特写不带身份层：物件特写里塞角色全身描述，出
 }
 
 TEST_CASE("哪几镜一张参考图都拿不到") {
-    // **这一条挡的是"跑完一个钟头才发现是一集雪花"。**
+    // **这一条挡的是"跑完一个钟头才发现是一章雪花"。**
     //
     // 首帧那一族是图像编辑模型，手上没有编辑源时退化成文生图，出来是彩色
     // 噪点；而闸门那条「不是空图」拦不住它（方差比真图还大）。所以 post_run
@@ -541,7 +541,7 @@ TEST_CASE("哪几镜一张参考图都拿不到") {
 
     SUBCASE("大特写不算 —— 那一档是故意不带参考图的") {
         // compose 里 insert_shot 那段：带上的话半个房间会被拉进一个特写里。
-        // 算进来等于让有大特写的那一集永远出不来，而它没有"补一张图"的解法。
+        // 算进来等于让有大特写的那一章永远出不来，而它没有"补一张图"的解法。
         const auto out = bare({shot("s1", "c_plain", "loc_alley",
                                     models::ShotSize::ECU,
                                     models::FacePose::FRONT)});

@@ -50,7 +50,7 @@ TEST_CASE("空闲的优先") {
 }
 
 TEST_CASE("全忙也要回一台，去排队而不是判失败") {
-    // 一镜一两分钟等得起；当场失败的话，用户得到的是一集里随机几镜没了。
+    // 一镜一两分钟等得起；当场失败的话，用户得到的是一章里随机几镜没了。
     const std::vector<NodeState> nodes = {
         node("x", true, {Capability::Video}, {}, true),
         node("y", true, {Capability::Video}, {}, true),

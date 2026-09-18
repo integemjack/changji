@@ -577,7 +577,7 @@ TEST_CASE("配音并发：几路一起跑，结果和串行一模一样") {
 }
 
 TEST_CASE("配音并发：开跑就取消，镜头一个字节都不许改") {
-    // 同 render / frames 那两层的教训（2026-09-17 丢过一集数据）：
+    // 同 render / frames 那两层的教训（2026-09-17 丢过一整章数据）：
     // 没跑过的一格装的是默认值，照着写回去就是把镜头抹平。
     const auto paths = make_paths("并发取消");
     stages::TTSBackend b;
