@@ -173,16 +173,30 @@ const stepsUnknown = computed(() => session.failed && !session.flow)
 
 /**
  * 顶栏上哪几步显示。**按状态来，不按历史**（用户 2026-09-17）：
- *   项目、故事一直在；故事有字了才有「设定」；参考图画齐了才有「这一章」；
+ *   项目、故事一直在；故事有字了才有「设定」；**理解完故事就有「这一章」**；
  *   有一章出了片就有「成片」（没片的章跳过，出了再切一次）。
  * 流程读不出来（stepsUnknown）就全显示——藏起来的话人连去哪儿都不知道。
  * 正站着的那一步永远显示，不然直接输地址进来会看到一条没有自己的导航。
+ *
+ * ---- 「这一章」原来等的是参考图（2026-09-18 改掉） ----
+ *
+ * 判据原来是 `counters.refsOk`——**要等每个人三张脸、每个地方一张空景全画完**。
+ * 用户报的就是它：设定页点完「理解故事」，这一章还是不出现。
+ *
+ * 而理解故事那一件活干的是「提结构 → 定长相 → 章对集 → **逐章写剧本**」
+ *（AssetsView 的 understand 那段），跑完剧本已经躺在那儿了；这一步自己的
+ * 说明也写着「**剧本**、镜头、出片，都在这一章上」（flow.cpp 里那句 hint）。
+ * 也就是说：页面上第一块内容早就有了，人却进不去看——而出图是接下来按小时
+ * 算的一步，让人在看不到剧本的情况下先去画一小时的图，顺序是反的。
+ *
+ * 换成 `counters.understood`（引擎那头 = 故事里有人 + 库里有人 + 至少一集
+ * 对上了章 + 每一集都写出了剧本）。它正好是「理解故事跑完了」。
  */
 const visibleSteps = computed(() =>
   STEP_ROUTES.filter((s) => {
     if (stepsUnknown.value || s.key === stepKey.value) return true
     if (s.key === 'assets') return !!session.done.story
-    if (s.key === 'episode') return !!session.counters.refsOk
+    if (s.key === 'episode') return !!session.counters.understood
     if (s.key === 'film') return Number(session.counters.filmedChapters ?? 0) > 0
     return true
   }),

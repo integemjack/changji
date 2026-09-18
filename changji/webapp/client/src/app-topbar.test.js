@@ -103,3 +103,38 @@ describe('流程读不出来的时候，导航别装作"一步都没做"', () =>
     expect(rule).not.toMatch(/display:\s*none|visibility:\s*hidden|pointer-events/)
   })
 })
+
+describe('「这一章」什么时候出现', () => {
+  /**
+   * 用户 2026-09-18：设定页点完「理解故事」，顶栏上「这一章」还是不出现。
+   *
+   * 判据原来是 `counters.refsOk`——要等每个人三张脸、每个地方一张空景**全
+   * 画完**。而理解故事那一件活里就含着「章对集 + 逐章写剧本」，跑完剧本已经
+   * 躺在那儿了，这一步自己的说明也写着「剧本、镜头、出片，都在这一章上」。
+   * 于是：页面上第一块内容早就有了，人却进不去看，还得先去画一小时的图。
+   *
+   * 这条盯着别改回去。判宽了（比如一律显示）是另一个方向的错：一部刚建的
+   * 剧顶栏上摆着五步，人不知道该从哪儿下手——「按状态来，不按历史」那句
+   * 注释说的就是它。
+   */
+  const body = code(APP)
+
+  it('等的是"理解完了"，不是"参考图画齐了"', () => {
+    const at = body.indexOf("s.key === 'episode'")
+    expect(at, "visibleSteps 里没有 episode 那一条了").toBeGreaterThan(0)
+    const line = body.slice(at, at + 120)
+    expect(line).toContain('counters.understood')
+    expect(line, '又改回等参考图了').not.toContain('refsOk')
+  })
+
+  it('其余三条判据没跟着变', () => {
+    // 「设定」等故事有字、「成片」等有一章出了片。这两条和本次无关，
+    // 一起钉住——改 episode 那一条时顺手动到它们是最容易发生的事。
+    const at = body.indexOf('const visibleSteps = computed')
+    expect(at).toBeGreaterThan(0)
+    const fn = body.slice(at, body.indexOf('const nextKey', at))
+    expect(fn).toContain('session.done.story')
+    expect(fn).toMatch(/filmedChapters/)
+  })
+})
+
