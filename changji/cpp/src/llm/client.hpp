@@ -372,8 +372,12 @@ HttpGet default_http_get();
 
 /// 造一个大模型客户端。
 ///
-/// **只有远端一条路。** 2026-09-14 把进程内那条删了，理由见
-/// client.cpp 里这个函数的实现。
+/// 造一个按 `[llm].backend` 分派的客户端。远端和命令行两条，理由见
+/// client.cpp 里的实现。
+///
+/// ⚠️ **回来的这个对象一直有效，换后端不用重造。** 它每次调用现读一遍配置
+/// 挑一条，所以调用点把它存进 `static` 是对的（`http/server.cpp` 就是这么
+/// 存的）——**而且必须这样**：批量那几条活比起它的那次请求活得久。
 ///
 /// `post` 是发送函数，由调用方注入（生产里传 `default_http_post()`）。
 /// **做成参数而不是在这里直接调**：那个函数只链进主目标，测试目标里没有，
@@ -382,5 +386,11 @@ HttpGet default_http_get();
 /// `stream_post` 是走 SSE 用的。不给的话仍然能用，只是"边写边看"退回整段
 /// 到——写一章、写大纲在界面上就是干等到最后一下子出来。
 std::shared_ptr<Client> make_client(HttpPost post, HttpPostStream stream_post = {});
+
+/// 同上，但配置从哪儿读由调用方给。**给测试用的**：生产那个重载读的是
+/// `config::runtime()`，而用例要能在两次调用之间把 `backend` 换掉，
+/// 才钉得住"换后端不用重启"这件事。
+std::shared_ptr<Client> make_client(ConfigProvider cfg, HttpPost post,
+                                    HttpPostStream stream_post = {});
 
 }  // namespace changji::llm

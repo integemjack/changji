@@ -1090,12 +1090,70 @@ std::string ReplayClient::complete(const Request& req,
 
 // ---- 造一个客户端 ----
 
-std::shared_ptr<Client> make_client(HttpPost post, HttpPostStream stream_post) {
-    // **只有远端这一条路了。** 2026-09-14 把进程内那条（LocalClient +
-    // LlamaChat）整个删了：现在的模型都要思考，而本地那条唯一的独门武器是
-    // GBNF 语法采样——它和思考是冲突的（思考被语法堵在 JSON 里之后会挤进
-    // 键名和字符串，实见于 chapter_write 那段注释），而结构约束已经整个交给
-    // 提示词了。留着它只是养一条没人跑、迟早腐烂的路。
+namespace {
+
+/// 每次调用都按**当前**配置挑一条后端。
+///
+/// **"选哪条后端"必须和 `ConfigProvider` 一样是每次现读的。** 这儿原来是在
+/// 工厂里 `if` 一次、把选中的那条造出来返回，而调用点把它存进函数局部
+/// `static`（`http/server.cpp` 的 `script_client` / `batch_client`）——于是
+/// 那个 `if` 跟着冻在进程第一次叫模型那一刻。
+///
+/// 2026-09-18 实测：`POST /api/connections` 把 `llm_backend` 从 remote 改成
+/// command，回执的 `changed` 里有它、`config.toml` 也真写进去了，紧接着那次
+/// 调用落进日志的还是 `"backend":"remote"`，重启才变。**地址、模型、密钥换了
+/// 都立刻生效**（那几样走 `ConfigProvider`），偏偏"走哪条后端"不生效，
+/// 而界面上已经显示"已应用"了——错得最难查的那一种。
+///
+/// 两条后端造起来都不花钱（各自只揣一个 `ConfigProvider` 和两个
+/// `std::function`），所以两条都先造好，每次调用只是挑一个。
+/// 原来在调用点上写的理由是「每个请求选一次的话，local 那条每次都要重新借槽」
+/// ——**那条路 2026-09-14 就删了**，理由跟着一起没了。
+class SwitchingClient : public Client {
+public:
+    SwitchingClient(ConfigProvider cfg, HttpPost post, HttpPostStream stream_post)
+        : cfg_(cfg),
+          remote_(std::make_shared<RemoteClient>(cfg, std::move(post),
+                                                 std::move(stream_post))),
+          command_(std::make_shared<CommandClient>(cfg)) {}
+
+    std::string complete(const Request& req, pipeline::CancelToken& tok) override {
+        return pick()->complete(req, tok);
+    }
+
+    std::string complete(const Request& req, pipeline::CancelToken& tok,
+                         const OnToken& on_token) override {
+        return pick()->complete(req, tok, on_token);
+    }
+
+    ChatReply chat(const std::vector<Message>& messages, const ordered& tools,
+                   const Request& opts, pipeline::CancelToken& tok) override {
+        return pick()->chat(messages, tools, opts, tok);
+    }
+
+private:
+    /// 这一次该走哪条。**认的是 `backend` 这一个值**，认不出的一律当远端——
+    /// 配置里写了个错别字时，宁可按默认那条跑通，也不要当场抛一句
+    /// 「不认识的后端」把整条流水线堵死。填错了会在 `Settings::validate`
+    /// 那头说。
+    const std::shared_ptr<Client>& pick() const {
+        return cfg_().backend == "command" ? command_ : remote_;
+    }
+
+    ConfigProvider cfg_;
+    std::shared_ptr<Client> remote_;
+    std::shared_ptr<Client> command_;
+};
+
+}  // namespace
+
+std::shared_ptr<Client> make_client(ConfigProvider cfg, HttpPost post,
+                                    HttpPostStream stream_post) {
+    // **进程内那条没有了。** 2026-09-14 把 LocalClient + LlamaChat 整个删了：
+    // 现在的模型都要思考，而本地那条唯一的独门武器是 GBNF 语法采样——它和
+    // 思考是冲突的（思考被语法堵在 JSON 里之后会挤进键名和字符串，实见于
+    // chapter_write 那段注释），而结构约束已经整个交给提示词了。
+    // 留着它只是养一条没人跑、迟早腐烂的路。
     //
     // llama.cpp 本身还在链：进程内配音（llama_tts）用的是它。
     //
@@ -1103,15 +1161,14 @@ std::shared_ptr<Client> make_client(HttpPost post, HttpPostStream stream_post) {
     // （claude / codex）当后端。**在这儿分叉，不在每个调用点**——叫模型的地方
     // 散在六七个文件里，它们只认 `Client` 这个接口。
     //
-    // 判断放在工厂里而不是造一次记一次：`ConfigProvider` 每次都读最新配置，
-    // 用户在设置页上换了后端，下一趟就该走新的那条。
-    if (config::runtime().snapshot().llm.backend == "command") {
-        return std::make_shared<CommandClient>(
-            ConfigProvider([] { return config::runtime().snapshot().llm; }));
-    }
-    return std::make_shared<RemoteClient>(
-        ConfigProvider([] { return config::runtime().snapshot().llm; }),
-        std::move(post), std::move(stream_post));
+    // 分派为什么收在 `SwitchingClient` 里而不是在这儿 `if` 一次：见它上面那段。
+    return std::make_shared<SwitchingClient>(std::move(cfg), std::move(post),
+                                             std::move(stream_post));
+}
+
+std::shared_ptr<Client> make_client(HttpPost post, HttpPostStream stream_post) {
+    return make_client(ConfigProvider([] { return config::runtime().snapshot().llm; }),
+                       std::move(post), std::move(stream_post));
 }
 
 }  // namespace changji::llm

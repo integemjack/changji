@@ -365,3 +365,84 @@ TEST_CASE("命令行后端：只有开关才能点名下一个，值里带 token
 
     std::filesystem::remove_all(root, ec);
 }
+
+TEST_CASE("运行期换后端：下一次调用就走新的那条，不用重启") {
+    // **2026-09-18 实测撞到的**：`POST /api/connections` 把 `llm_backend` 从
+    // remote 改成 command，回执的 `changed` 里有它、`config.toml` 也真写进去了，
+    // 紧接着那次调用落进提示词日志的还是 `"backend":"remote"`、
+    // `"endpoint":"https://open.bigmodel.cn/..."`，**重启引擎才变**。
+    //
+    // 根子是"选哪条后端"曾经在工厂里 `if` 一次，而调用点把结果存进函数局部
+    // `static`（http/server.cpp 的 script_client / batch_client），那个 `if`
+    // 就跟着冻在进程第一次叫模型那一刻。地址、模型、密钥都走 ConfigProvider
+    // 每次现读，所以**偏偏只有"走哪条后端"不生效**——而界面上已经显示
+    // "已应用"了，是最难查的那一种错。
+    //
+    // 这条用例**不重造 client**（正是 static 那个形状），只换配置。
+    auto cfg = std::make_shared<config::LLMConfig>();
+    cfg->call_log = false;   // 不往这台机器真实的数据目录写
+    REQUIRE(cfg->backend == "remote");
+
+    int remote_hits = 0;
+    auto post = [&remote_hits](const std::string&, const std::string&,
+                               const std::map<std::string, std::string>&, double) {
+        ++remote_hits;
+        llm::HttpResponse r;
+        r.status = 200;
+        r.body = R"({"choices":[{"message":{"content":"远端答的"}}]})";
+        return r;
+    };
+
+    const auto client =
+        llm::make_client(llm::ConfigProvider([cfg] { return *cfg; }), post);
+    REQUIRE(client != nullptr);
+
+    pipeline::CancelToken tok;
+    llm::Request req;
+    req.prompt = "写一章剧本";
+
+    // 一、起步走远端
+    CHECK(client->complete(req, tok) == "远端答的");
+    CHECK(remote_hits == 1);
+
+    // 二、换成命令行。**同一个 client 对象**，一次都没重造。
+    config::LLMConfig to_command = echo_cfg();
+    to_command.call_log = false;
+    *cfg = to_command;
+    // 那个命令原样回显标准输入，所以拿回来的就是提示词本身——
+    // 这一下同时证明了"真走了命令行"和"提示词真喂进去了"。
+    CHECK(client->complete(req, tok) == "写一章剧本");
+    CHECK_MESSAGE(remote_hits == 1, "换成命令行之后，远端那条一次都不该再被碰");
+
+    // 三、换回远端也得立刻生效——**两个方向都要验**，不然"一换就永远走命令行"
+    // 同样能让上面两条过。
+    config::LLMConfig back;
+    back.call_log = false;
+    *cfg = back;
+    CHECK(client->complete(req, tok) == "远端答的");
+    CHECK(remote_hits == 2);
+}
+
+TEST_CASE("认不出的 backend 按远端跑，不当场把流水线堵死") {
+    // 配置里把 backend 写成错别字时，宁可按默认那条跑通，也不要抛一句
+    // 「不认识的后端」——那会让所有生成一起挂，而人看到的是一句和自己刚
+    // 改的那一项对不上的话。填错了由 Settings::validate 那头去说。
+    auto cfg = std::make_shared<config::LLMConfig>();
+    cfg->call_log = false;
+    cfg->backend = "remotee";   // 手滑
+
+    auto post = [](const std::string&, const std::string&,
+                   const std::map<std::string, std::string>&, double) {
+        llm::HttpResponse r;
+        r.status = 200;
+        r.body = R"({"choices":[{"message":{"content":"远端答的"}}]})";
+        return r;
+    };
+
+    const auto client =
+        llm::make_client(llm::ConfigProvider([cfg] { return *cfg; }), post);
+    pipeline::CancelToken tok;
+    llm::Request req;
+    req.prompt = "写一章剧本";
+    CHECK(client->complete(req, tok) == "远端答的");
+}

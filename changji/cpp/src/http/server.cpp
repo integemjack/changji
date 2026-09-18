@@ -1109,13 +1109,10 @@ void run(const config::Settings& settings, const Options& opts) {
     // 三个都是同步的：调一次大模型，几十秒内返回。写全片不一样，
     // 那个要跑几分钟，走下面的 job 表。
     //
-    // 客户端在这里造一次，三个路由共用。每个请求造一个的话，
-    // 换成进程内 llama.cpp 之后就是每个请求重新加载一遍模型。
-    // 传 provider 不是拷一份配置：/api/connections 能在运行期换大模型
-    // 地址，拷一份的话改完之后这里还在往老地址发，而界面已经显示"已应用"了。
-    // **两条后端都要能走，而且要在这里选一次。**
-    // 每个请求选一次的话，local 那条每次都要重新借槽——借槽本身不贵，
-    // 但把"选哪条"散到各个路由里，将来加第三条后端就要改三处。
+    // 客户端在这里造一次，三个路由共用。**存进 static 不会把配置冻住**：
+    // 地址、模型、密钥走 ConfigProvider 每次现读，"走哪条后端"走
+    // `llm::make_client` 里那层分派、也是每次现读。理由写在那儿，别在这儿
+    // 再写一遍。
     static std::shared_ptr<llm::Client> script_client =
         llm::make_client(llm::default_http_post(),
                          llm::default_http_post_stream());
@@ -2401,9 +2398,9 @@ void run(const config::Settings& settings, const Options& opts) {
     // 立刻返回 {"started": true, ...}，活干在工作线程上。
     // 进度靠 GET /api/script/series 轮询或者 WebSocket 推。
     //
-    // 客户端换成 shared_ptr：任务比这次请求活得久，
-    // 上面那个 static 引用在这里不够安全——将来换成按项目建的客户端时，
-    // 引用会在任务还跑着的时候失效。
+    // 客户端是 shared_ptr：**任务比起它的那次请求活得久**，交引用的话，
+    // 将来换成按项目建的客户端时，引用会在任务还跑着的时候失效。
+    // 存进 static 同样不冻配置，理由见 `llm::make_client`。
     static std::shared_ptr<llm::Client> batch_client =
         llm::make_client(llm::default_http_post(),
                          llm::default_http_post_stream());

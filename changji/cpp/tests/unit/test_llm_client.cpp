@@ -692,13 +692,18 @@ TEST_CASE("回放客户端") {
     CHECK(c.calls()[0].prompt == "写一章剧本");
 }
 
-TEST_CASE("只有远端这一条后端了") {
+TEST_CASE("进程内那条后端没有了：默认配置下 make_client 给的就是远端") {
     // **2026-09-14 把进程内那条（LocalClient + LlamaChat）整个删了。**
     // 现在的模型都要思考，而本地那条唯一的独门武器是 GBNF 语法采样——
     // 它和思考是冲突的（思考被语法堵在 JSON 里之后会挤进键名和字符串），
     // 而结构约束已经整个交给提示词了。
     //
     // llama.cpp 本身还在链：进程内配音用的是它。
+    //
+    // ⚠️ 用例名原来写的是「**只有远端这一条后端了**」——2026-09-18 加了
+    // 命令行那条（`backend = "command"`）之后那句话就不成立了，而用例名
+    // 是跑测试时印在屏幕上的话。它钉的一直是"默认配置下走远端、而且跑得通"，
+    // 名字照实改。换后端立刻生效那件事另有用例，在 test_llm_command.cpp 里。
     auto dummy_post = [](const std::string&, const std::string&,
                          const std::map<std::string, std::string>&, double) {
         llm::HttpResponse r;
