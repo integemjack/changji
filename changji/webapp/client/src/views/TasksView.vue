@@ -16,6 +16,7 @@
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 
 import AppIcon from '@/components/AppIcon.vue'
+import EmptyState from '@/components/EmptyState.vue'
 import { api } from '@/api'
 import { readLocal, writeLocal } from '@/composables/local-storage'
 import { useSession } from '@/stores/session'
@@ -261,20 +262,27 @@ onUnmounted(() => clearTimeout(timer))
     <section class="card tasks__sec">
       <h2 class="tasks__h">
         <span class="dot dot--live" />正在做
-        <span class="tiny dim numeric">{{ board.running.length }}</span>
+        <!-- **计数做成牌子，不是标题后面跟一个数字。** 原来是紧贴着标题的
+             一个 `tiny dim` 数，空的时候就是「做完的 0」——那个 0 像是标题
+             的一部分，不像一个计数。围起来就读得出它是"几件"。 -->
+        <span class="tasks__n numeric" :class="{ 'tasks__n--zero': !board.running.length }">
+          {{ board.running.length }}
+        </span>
       </h2>
-      <p v-if="!board.running.length" class="tiny dim tasks__empty">
-        <!-- **过滤着的时候要说清"是没有，还是被这个勾挡住了"。**
-             一台机器上常开着好几部剧，跑着的那部不一定是当前这部——那时候
-             这一页整片空白，而顶栏那块牌子还写着「任务 6」，两处对不上。 -->
-        {{
-          !loaded
-            ? '正在问引擎…'
-            : mineOnly
-              ? '这一部这会儿没有活在跑。别的剧有没有，把「只看这一部」取消了就知道。'
-              : '这会儿没有活在跑。'
-        }}
-      </p>
+      <!-- **空态用房子里那一个，别自己手搓一行灰字。** 整份界面十个视图
+           都是 EmptyState（一个图标 + 一句"什么是空的" + 一句"下一步去哪"），
+           只有这一页原来是贴在标题底下的一行 `tiny dim` —— 挨着标题、没有
+           留白，读起来像标题掉下来的半句话，不像"这儿本来该有东西"。
+
+           **过滤着的时候要说清"是没有，还是被这个勾挡住了"。** 一台机器上常
+           开着好几部剧，跑着的那部不一定是当前这部——那时候这一页整片空白，
+           而顶栏那块牌子还写着「任务 6」，两处对不上。那句话进 hint。 -->
+      <EmptyState
+        v-if="!board.running.length"
+        icon="play"
+        :title="!loaded ? '正在问引擎…' : '这会儿没有活在跑'"
+        :hint="loaded && mineOnly ? '别的剧有没有，把「只看这一部」取消了就知道' : ''"
+      />
       <ul v-else class="rows">
         <li v-for="r in board.running" :key="r.id" class="row row--live">
           <!-- 进度铺成整行的底色，和镜头墙一个规矩：既不占地方，也比一条
@@ -344,9 +352,14 @@ onUnmounted(() => clearTimeout(timer))
     <section v-if="board.queued.length || busy" class="card tasks__sec">
       <h2 class="tasks__h">
         <span class="dot dot--wait" />排队中
-        <span class="tiny dim numeric">{{ board.queued.length }}</span>
+        <!-- **计数做成牌子，不是标题后面跟一个数字。** 原来是紧贴着标题的
+             一个 `tiny dim` 数，空的时候就是「做完的 0」——那个 0 像是标题
+             的一部分，不像一个计数。围起来就读得出它是"几件"。 -->
+        <span class="tasks__n numeric" :class="{ 'tasks__n--zero': !board.queued.length }">
+          {{ board.queued.length }}
+        </span>
       </h2>
-      <p v-if="!board.queued.length" class="tiny dim tasks__empty">没有排着的。</p>
+      <EmptyState v-if="!board.queued.length" icon="pause" title="没有排着的" />
       <ul v-else class="rows">
         <li v-for="(r, i) in board.queued" :key="r.id" class="row">
           <span class="chip tiny nowrap">
@@ -381,16 +394,32 @@ onUnmounted(() => clearTimeout(timer))
     <section class="card tasks__sec">
       <h2 class="tasks__h">
         <span class="dot" />做完的
-        <span class="tiny dim numeric">{{ board.done.length }}</span>
-        <span v-if="board.done.length" class="tiny dim">
-          · 一共 {{ dur(doneSummary.secs) }}<template v-if="doneSummary.bad">
-            · {{ doneSummary.bad }} 件失败</template
-          ><template v-if="doneSummary.stopped">
-            · {{ doneSummary.stopped }} 件停下</template
-          >
+        <!-- **计数做成牌子，不是标题后面跟一个数字。** 原来是紧贴着标题的
+             一个 `tiny dim` 数，空的时候就是「做完的 0」——那个 0 像是标题
+             的一部分，不像一个计数。围起来就读得出它是"几件"。 -->
+        <span class="tasks__n numeric" :class="{ 'tasks__n--zero': !board.done.length }">
+          {{ board.done.length }}
+        </span>
+        <!-- **失败那个数不该和别的字一样灰。** 原来四段全是 `tiny dim`
+             拿「·」串成一句：「4 · 一共 26 分 16 秒 · 1 件失败 · 1 件停下」，
+             而这一行里真正要人看见的就是"有几件砸了"。耗时照旧是灰的背景
+             信息，失败和停下各给一块牌子——和行里那两块同色，一眼对得上。 -->
+        <span v-if="board.done.length" class="tiny dim tasks__tot">
+          一共 {{ dur(doneSummary.secs) }}
+        </span>
+        <span v-if="doneSummary.bad" class="pill pill--danger tiny nowrap">
+          {{ doneSummary.bad }} 件失败
+        </span>
+        <span v-if="doneSummary.stopped" class="pill pill--neutral tiny nowrap">
+          {{ doneSummary.stopped }} 件停下
         </span>
       </h2>
-      <p v-if="!board.done.length" class="tiny dim tasks__empty">还没有干完的活。</p>
+      <EmptyState
+        v-if="!board.done.length"
+        icon="check"
+        title="还没有干完的活"
+        hint="做完的会留在这儿，连带耗时和当时的思考"
+      />
       <ul v-else class="rows">
         <li
           v-for="r in board.done"
@@ -466,8 +495,26 @@ onUnmounted(() => clearTimeout(timer))
   font-size: var(--fs-md);
   font-weight: 600;
 }
-.tasks__empty {
-  margin: 0;
+/* 小节标题上那个计数。`.chip` 那一套的缩小版：围起来才读得出是"几件"。 */
+.tasks__n {
+  min-width: 20px;
+  padding: 0 6px;
+  border-radius: var(--r-pill);
+  background: var(--surface-2);
+  color: var(--text-2);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  line-height: 18px;
+  text-align: center;
+}
+/* 零件就更退一档：它是"这儿是空的"，不是一个要看的数。 */
+.tasks__n--zero {
+  background: transparent;
+  color: var(--text-3, var(--text-2));
+}
+/* 「一共 X」是背景信息，不跟失败那块牌子抢。 */
+.tasks__tot {
+  font-weight: 400;
 }
 /* 三节各一个小圆点：在跑的会呼吸，排着的是空心，做完的是灰实心。
    标题文字都是一样的字号字重，**颜色和形状才是区分**——三行大标题
