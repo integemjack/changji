@@ -775,6 +775,26 @@ void stamp_scene(std::vector<Shot>& shots, const SceneBlock& scene) {
     if (!shots.empty()) shots.front().continuous_with_prev = false;
 }
 
+nlohmann::json scenes_array(const std::vector<Shot>& shots) {
+    nlohmann::json out = nlohmann::json::array();
+    std::string cur;
+    for (const Shot& s : shots) {
+        if (out.empty() || s.scene_id != cur) {
+            cur = s.scene_id;
+            int idx = static_cast<int>(out.size()) + 1;
+            // "s3" → 3。stamp_scene 就是这么盖的；对不上格式的按出现顺序编。
+            if (cur.size() > 1 && cur[0] == 's' &&
+                std::all_of(cur.begin() + 1, cur.end(),
+                            [](unsigned char c) { return std::isdigit(c); })) {
+                idx = std::stoi(cur.substr(1));
+            }
+            out.push_back({{"scene", idx}, {"scene_id", cur}, {"shots", nlohmann::json::array()}});
+        }
+        out.back()["shots"].push_back(nlohmann::json(s));
+    }
+    return out;
+}
+
 ShotCountBounds shot_count_bounds(const DurationQuota& quota, double target_s,
                                   int beats) {
     // 地板按 5 秒一镜算，不按最长档位：上限 15 秒时 60 秒只剩 4 镜的地板，

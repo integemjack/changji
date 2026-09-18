@@ -1426,7 +1426,7 @@ onDeactivated(() => {
           path="/api/plan"
           :resolve="peekPlanPayload"
           title="抄走「拆分镜」这一步的提示词（按场跑时是每一场一份）"
-          paste-hint="这一章按场拆的话，每一场之间要留着复制出去时那一行「===== 第 N/M 场 …… =====」——引擎按它把几段分回各场。少一段会整体错位，那种错不报错。"
+          paste-hint="按场拆的话粘一份 JSON 数组最稳：[{&quot;scene&quot;:1,&quot;shots&quot;:[…]},{&quot;scene&quot;:2,…}]——场次靠 scene 对齐，顺序乱了也认。老办法也行：每场之间留着复制出去时那行「===== 第 N/M 场 =====」，但少一行会整体错位，那种错不报错。"
           @done="onPastedShots"
         />
         <!-- 先出首帧，看一眼构图再决定要不要花那两分钟出视频。 -->

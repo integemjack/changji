@@ -363,3 +363,61 @@ TEST_CASE("plan 只在资产库为空或强制时才重出圣经") {
         fs::remove_all(root, ec);
     }
 }
+
+TEST_CASE("plan 粘回来的是按场装的 JSON 数组：场次靠 scene 对齐，回包也按场装") {
+    // 用户 2026-09-18：「把每一场的 json 合并成 json 数组」。复制出去（回包
+    // 里的 `scenes`）和粘回来（`paste`）是同一个形状。这条走整段
+    // /api/plan：两场剧本 + 故意倒着放的两段，一个模型都不调，回包按场排好。
+    const fs::path root = fresh_copy("场数组", false);
+    pipeline::CancelToken tok;
+    const std::string script =
+        "【第1场 · 夜 · 内 · 天台】\n林晚：你说过会来的\n"
+        "【第2场 · 日 · 内 · 病房】\n林晚：我来了。晚了七年。";
+    const auto shot = [](const char* prompt, const char* line) {
+        return json{
+            {"shot_id", "ep01_sh001"}, {"scene_id", "loc_rooftop"}, {"order", 0},
+            {"first_frame_prompt", prompt}, {"shot_size", "MS"},
+            {"camera_angle", "eye_level"}, {"duration_s", 3.0},
+            {"characters", json::array({json{{"char_id", "c_lin_yuan"},
+                                             {"expression", "克制"},
+                                             {"action", "站着"},
+                                             {"face_pose", "front"}}})},
+            {"dialogue", json::array({json{{"char_id", "c_lin_yuan"}, {"text", line}}})},
+            {"transition_in", "cut"}};
+    };
+    // 第 2 场放前面：顺序乱了也得按 scene 认回去
+    const json pasted = json::array({
+        json{{"scene", 2}, {"shots", json::array({shot("病房，日光", "我来了。晚了七年。")})}},
+        json{{"scene", 1}, {"shots", json::array({shot("夜间天台，雨中", "你说过会来的")})}},
+    });
+    llm::ReplayClient cl({"{}"});
+    const auto r = http::guard([&] {
+        return http::post_plan(json{{"project", paths::to_utf8(root)},
+                                    {"script", script},
+                                    {"episode_id", "ep01"},
+                                    {"paste", pasted.dump()}},
+                               cl, tok);
+    });
+    REQUIRE_MESSAGE(r.status == 200, r.body.dump());
+    CHECK(cl.calls().empty());   // 粘回来的就一个模型都不调
+    CHECK(r.body.at("shots") == 2);
+
+    const json& scenes = r.body.at("scenes");
+    REQUIRE(scenes.is_array());
+    REQUIRE_MESSAGE(scenes.size() == 2, scenes.dump());
+    CHECK(scenes[0].at("scene") == 1);
+    CHECK(scenes[0].at("scene_id") == "s1");
+    CHECK(scenes[1].at("scene") == 2);
+    CHECK(scenes[1].at("scene_id") == "s2");
+    REQUIRE(scenes[0].at("shots").size() == 1);
+    REQUIRE(scenes[1].at("shots").size() == 1);
+    // 各场的台词跟着 scene 走，不跟粘贴顺序走
+    CHECK(scenes[0].at("shots")[0].at("dialogue")[0].at("text") == "你说过会来的");
+    CHECK(scenes[1].at("shots")[0].at("dialogue")[0].at("text") == "我来了。晚了七年。");
+    // 编号按引擎的来：两场合起来从 001 连着编
+    CHECK(scenes[0].at("shots")[0].at("shot_id") == "ep01_sh001");
+    CHECK(scenes[1].at("shots")[0].at("shot_id") == "ep01_sh002");
+
+    std::error_code ec;
+    fs::remove_all(root, ec);
+}

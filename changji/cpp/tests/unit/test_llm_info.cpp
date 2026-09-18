@@ -468,6 +468,48 @@ TEST_CASE("按场次头把粘回来的那段切开") {
         CHECK(changji::http::split_by_scene("").empty());
     }
 
+    SUBCASE("一份 JSON 数组：按 scene 对齐，不靠位置") {
+        // 用户 2026-09-18：「把每一场的 json 合并成 json 数组」。
+        // 故意把第 2 场写在前面——文本头那条路会整体错位一场，这条路靠
+        // 每一项自带的场号排回去。
+        const auto p = changji::http::split_by_scene(
+            "[{\"scene\":2,\"shots\":[2]},{\"scene\":1,\"shots\":[1]},"
+            "{\"scene\":3,\"shots\":[3]}]");
+        REQUIRE(p.size() == 3);
+        CHECK(p[0].find("[1]") != std::string::npos);
+        CHECK(p[1].find("[2]") != std::string::npos);
+        CHECK(p[2].find("[3]") != std::string::npos);
+        // 每一段重新包成 {"shots":[...]}，下游逐场解析那条路一字不改
+        CHECK(p[0].rfind("{\"shots\"", 0) == 0);
+    }
+
+    SUBCASE("{\"scenes\":[...]} 包一层也认") {
+        const auto p = changji::http::split_by_scene(
+            "{\"scenes\":[{\"scene\":1,\"shots\":[1]},{\"scene\":2,\"shots\":[2]}]}");
+        REQUIRE(p.size() == 2);
+        CHECK(p[1].find("[2]") != std::string::npos);
+    }
+
+    SUBCASE("没写 scene 的按原顺序") {
+        const auto p = changji::http::split_by_scene(
+            "[{\"shots\":[7]},{\"shots\":[8]}]");
+        REQUIRE(p.size() == 2);
+        CHECK(p[0].find("[7]") != std::string::npos);
+    }
+
+    SUBCASE("单场的 {\"shots\":[...]} 不是数组形状，照旧当一段") {
+        // 整集一次拆那条路粘回来就是这个样子，不能被数组那条路误吃。
+        const auto p = changji::http::split_by_scene("{\"shots\":[5]}");
+        REQUIRE(p.size() == 1);
+        CHECK(p[0] == "{\"shots\":[5]}");
+    }
+
+    SUBCASE("数组里缺 shots 的不算这种形状，回落到文本头") {
+        const auto p = changji::http::split_by_scene("[{\"scene\":1}]");
+        // 文本头一个都没有 → 整段当一段（老行为）
+        REQUIRE(p.size() == 1);
+    }
+
     SUBCASE("头之前的话不算进任何一场") {
         // 人从聊天窗口抄回来时前面常带一句"好的，这是结果："。
         const auto p = changji::http::split_by_scene(

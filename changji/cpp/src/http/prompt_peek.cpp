@@ -1,6 +1,10 @@
 #include "http/prompt_peek.hpp"
 
+#include <algorithm>
+#include <cctype>
 #include <utility>
+
+#include <nlohmann/json.hpp>
 
 namespace changji::http {
 
@@ -22,7 +26,70 @@ std::string take_paste(nlohmann::json& body) {
     return raw;
 }
 
+namespace {
+
+/// 粘回来的是不是那份「场的数组」。是就切成一场一段（按 `scene` 排好），
+/// 不是回 false，交给文本头那条路。
+///
+/// **不在这儿校验镜头。** 每一段只是重新包成 `{"shots": [...]}`，里面是什么
+/// 由下游 parse_storyboard 说了算——那儿的规矩（枚举清洗、长度、引用）不该
+/// 在这儿再抄一份。
+bool split_json_scenes(const std::string& pasted, std::vector<std::string>& out) {
+    // 快速排除：不以 [ 或 { 开头的根本不用去解，几万字的文本头那种直接跳过。
+    std::size_t i = 0;
+    while (i < pasted.size() && std::isspace(static_cast<unsigned char>(pasted[i]))) ++i;
+    if (i >= pasted.size() || (pasted[i] != '[' && pasted[i] != '{')) return false;
+
+    nlohmann::json doc = nlohmann::json::parse(pasted, nullptr, /*allow_exceptions=*/false);
+    if (doc.is_discarded()) return false;
+    // `{"scenes": [...]}` 包一层也认；别的对象（比如单场的 `{"shots": [...]}`）
+    // 不是数组形状，回 false 让老路当一段处理。
+    if (doc.is_object()) {
+        const auto it = doc.find("scenes");
+        if (it == doc.end() || !it->is_array()) return false;
+        doc = *it;
+    }
+    if (!doc.is_array() || doc.empty()) return false;
+
+    // 每一项得是 {"shots": [...]}，缺 shots 的不算这种形状。
+    struct Part {
+        int scene;
+        std::size_t pos;
+        nlohmann::json shots;
+    };
+    std::vector<Part> parts;
+    for (std::size_t k = 0; k < doc.size(); ++k) {
+        const nlohmann::json& item = doc[k];
+        if (!item.is_object()) return false;
+        const auto sh = item.find("shots");
+        if (sh == item.end() || !sh->is_array()) return false;
+        int scene = 0;
+        const auto sc = item.find("scene");
+        if (sc != item.end() && sc->is_number_integer()) scene = sc->get<int>();
+        parts.push_back({scene, k, *sh});
+    }
+    // **按 scene 排回去；没写 scene 的按原顺序。** 全都没写的话等于按顺序，
+    // 和文本头那条路一样。
+    std::stable_sort(parts.begin(), parts.end(), [](const Part& a, const Part& b) {
+        if (a.scene != b.scene) return a.scene < b.scene;
+        return a.pos < b.pos;
+    });
+    out.clear();
+    for (const Part& p : parts) {
+        nlohmann::json one = nlohmann::json::object();
+        one["shots"] = p.shots;
+        out.push_back(one.dump());
+    }
+    return true;
+}
+
+}  // namespace
+
 std::vector<std::string> split_by_scene(const std::string& pasted) {
+    // 先认 JSON 数组（见头文件那段），不是才按文本头切。
+    if (std::vector<std::string> parts; split_json_scenes(pasted, parts)) {
+        return parts;
+    }
     // 行首是 `===== 第 ` 就算一个头。**按行认，不按正则**：场次名里什么
     // 字符都可能有（「日 · 外 · 后门货场」带点带空格），而这一行的开头
     // 是我们自己拼的，认它最稳。

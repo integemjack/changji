@@ -156,6 +156,16 @@ nlohmann::ordered_json llm_scene_shot_schema(
 
 /// 拆出来的镜头盖上这一场的印：scene_id = "sN"、location_id 统一、
 /// 第一镜不接上一场的帧。
+/// 把一份平的镜头表按场分组，回那份「场的数组」：
+///
+///     [ {"scene": 1, "scene_id": "s1", "shots": [...]}, ... ]
+///
+/// 用户 2026-09-18：「把每一场的 json 合并成 json 数组」。这是引擎产出的那
+/// 半：`/api/plan` 回它，人复制出去；粘回来时 split_by_scene 认的是同一个
+/// 形状。**分组靠 scene_id（stamp_scene 盖的 "s<场号>"），保留原顺序**——
+/// 没场次头的老剧本全部是同一个 scene_id，那就是一项。
+nlohmann::json scenes_array(const std::vector<models::Shot>& shots);
+
 void stamp_scene(std::vector<models::Shot>& shots, const SceneBlock& scene);
 
 /// 从目标时长和剧本的拍数推分镜数的上下限。

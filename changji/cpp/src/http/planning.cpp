@@ -627,6 +627,9 @@ ApiResult post_plan(const json& body, llm::Client& client,
         {"lipsync", lipsync},
         {"characters", chars},
         {"locations", locs},
+        // **整份分镜按场装成一个数组**（用户 2026-09-18）。复制出去、改完
+        // 粘回来（`paste`）是同一个形状，场次靠里面的 `scene` 对齐。
+        {"scenes", stages::scenes_array(shots)},
     }};
 }
 

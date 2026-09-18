@@ -1534,3 +1534,51 @@ TEST_CASE("分镜那份 schema 贴过去有多大——这是整条提示词里�
     CHECK(text.find("required") != std::string::npos);
     CHECK(text.find("description") != std::string::npos);
 }
+
+TEST_CASE("scenes_array：平的镜头表按场装成一个数组，场号从 scene_id 来") {
+    // 用户 2026-09-18：「把每一场的 json 合并成 json 数组」。
+    // 复制出去的是它，粘回来 split_by_scene 认的是同一个形状——
+    // 两边共用一个形状，场次才不会靠"第几段"这种位置去对。
+    using changji::models::Shot;
+    std::vector<Shot> shots;
+    auto add = [&](const char* sid, const char* scene) {
+        Shot s;
+        s.shot_id = sid;
+        s.scene_id = scene;
+        shots.push_back(s);
+    };
+    add("ep01_sh001", "s1");
+    add("ep01_sh002", "s1");
+    add("ep01_sh003", "s2");
+    add("ep01_sh004", "s3");
+    add("ep01_sh005", "s3");
+
+    const auto arr = changji::stages::scenes_array(shots);
+    REQUIRE(arr.is_array());
+    REQUIRE(arr.size() == 3);
+    CHECK(arr[0]["scene"] == 1);
+    CHECK(arr[1]["scene"] == 2);
+    CHECK(arr[2]["scene"] == 3);
+    CHECK(arr[0]["shots"].size() == 2);
+    CHECK(arr[1]["shots"].size() == 1);
+    CHECK(arr[2]["shots"].size() == 2);
+    CHECK(arr[2]["shots"][1]["shot_id"] == "ep01_sh005");
+
+    SUBCASE("没有场次头的老剧本：全是同一个 scene_id，就是一项") {
+        std::vector<Shot> flat;
+        for (int i = 0; i < 3; ++i) {
+            Shot s;
+            s.shot_id = "ep01_sh00" + std::to_string(i + 1);
+            s.scene_id = "s1";
+            flat.push_back(s);
+        }
+        const auto one = changji::stages::scenes_array(flat);
+        REQUIRE(one.size() == 1);
+        CHECK(one[0]["shots"].size() == 3);
+    }
+
+    SUBCASE("空表就是空数组，别抛") {
+        CHECK(changji::stages::scenes_array({}).empty());
+    }
+}
+
