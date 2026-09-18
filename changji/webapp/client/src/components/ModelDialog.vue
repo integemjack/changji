@@ -477,37 +477,16 @@ async function download() {
 <template>
   <div v-if="open" class="mask" @click.self="tryClose">
     <section v-if="g" ref="panel" class="dlg" tabindex="-1">
+      <!-- **× 回到右上角。**
+           这一行原来把简介、作用域那句话、显卡盘符那一长串和 × 全塞在同一个
+           flex 行里，靠 `flex-wrap` 折。折下来之后 × 跟着最后一段走，落在
+           硬件读数那一行的右边——整份界面里只有这一个窗的关闭键不在角上，
+           而人找关闭键是照着角去的，不是照着"最后一个元素"。
+           所以标题行回到别的窗那个样子（标题 · spacer · ×，见 ShowDialog /
+           DirPicker），剩下三样挪到下面自己那一条里。 -->
       <header class="dlg__head">
-        <div class="dlg__title">
-          <h2 class="dlg__t">{{ g.title }}</h2>
-          <!-- 这一组是干什么的。**放标题下面不放同一行**：同一行时它会把
-               标题挤成三行，而标题才是"我点开的是哪一个"的答案。 -->
-          <p class="tiny dim purpose">{{ g.purpose }}</p>
-        </div>
+        <h2 class="dlg__t">{{ g.title }}</h2>
         <span class="spacer" />
-        <!-- **挑哪一档 = 这部剧的；文件在哪儿 = 这台机器的。** 两件事在
-             同一个窗口里发生，不说一声的话没人分得出来。显卡和盘剩余那两
-             个读数说的是这台机器。 -->
-        <span class="tiny dim nowrap scope" :title="scopeHint">{{ scopeLabel }}</span>
-        <!-- **整行不能再 nowrap 了。** 统一内存那一句把这行拉长了一倍，
-             钉死不换行的话窄一点的窗口上它直接顶出去。改成每一小节各自
-             nowrap（"107.5 GB" 不许断在中间），整行可以折。 -->
-        <span class="tiny dim rig">
-          <template v-if="gpu">
-            <span class="nowrap">{{ gpu.name }} · {{ gpu.vramGb.toFixed(1) }} GB</span>
-            <!-- **统一内存上这两个数都要写。** vramGb 是 Metal 肯给的那一
-                 份（128 GB 的机器上是 107.5），不是整机内存。只写前一个，
-                 用户看到的是"我买的明明是 128"——而这一页正是他决定要不要
-                 下 91 GB 那一档的地方。只写后一个也不行：这一页所有门槛都
-                 是拿 vramGb 比的，按 128 算会挑中一档超过 Metal 那条线的，
-                 然后系统开始压缩换页。措辞照体检那边（doctor.cpp）。 -->
-            <span v-if="gpu.unifiedGb" class="nowrap">
-              （整机 {{ gpu.unifiedGb.toFixed(1) }} GB，其余留给系统）
-            </span>
-          </template>
-          <span v-else class="nowrap">没探测到显卡</span>
-          <span v-if="diskFree" class="nowrap"> ｜ 盘剩 {{ humanBytes(diskFree) }}</span>
-        </span>
         <button
           class="btn btn--ghost btn--sm"
           type="button"
@@ -517,6 +496,51 @@ async function download() {
           <AppIcon name="close" :size="14" />
         </button>
       </header>
+
+      <!-- 标题底下这一条：这一组是干什么的，和两句交代"这是谁的事"的话。 -->
+      <div class="dlg__meta">
+        <!-- 这一组是干什么的。**不和标题挤同一行**：挤的话标题会被压成
+             三行，而标题才是"我点开的是哪一个"的答案。 -->
+        <p v-if="g.purpose" class="tiny dim purpose">{{ g.purpose }}</p>
+
+        <!-- **挑哪一档 = 这部剧的；文件在哪儿 = 这台机器的。** 两件事在同一
+             个窗口里发生，不说一声的话没人分得出来。摆成一行两端对齐，
+             左边这台机器、右边这部剧——并排才读得出是一对，原来一个在右上角
+             一个在下一行，看着像两件不相干的事。 -->
+        <div class="meta">
+          <span class="tiny dim rig">
+            <template v-if="gpu">
+              <span class="nowrap">{{ gpu.name }} · {{ gpu.vramGb.toFixed(1) }} GB</span>
+              <!-- **统一内存上这两个数都要写。** vramGb 是 Metal 肯给的那一
+                   份（128 GB 的机器上是 107.5），不是整机内存。只写前一个，
+                   用户看到的是"我买的明明是 128"——而这一页正是他决定要不要
+                   下 91 GB 那一档的地方。只写后一个也不行：这一页所有门槛都
+                   是拿 vramGb 比的，按 128 算会挑中一档超过 Metal 那条线的，
+                   然后系统开始压缩换页。措辞照体检那边（doctor.cpp）。 -->
+              <!-- **这个 `{{ ' ' }}` 不是凑数的。** 两个 span 之间只有换行的
+                   话，Vue 的空白折叠（whitespace: condense）会把那个纯空白
+                   文本节点整个删掉，两段就**粘成一个掰不开的长串**——上面
+                   那句"整串可以折"于是从来没生效过：量出来这一块的
+                   min-content 是 415px，而手机宽才 375px，弹窗被它顶宽、
+                   整个横着溢出屏幕。写成插值就是一个真的空格节点，
+                   折行的机会回来了，同时每一小节自己照旧 nowrap。 -->
+              {{ ' ' }}
+              <span v-if="gpu.unifiedGb" class="nowrap">
+                （整机 {{ gpu.unifiedGb.toFixed(1) }} GB，其余留给系统）
+              </span>
+            </template>
+            <span v-else class="nowrap">没探测到显卡</span>
+            <!-- 同上。另外那个「｜」原来在 span **里面**，连它也断不开。 -->
+            {{ ' ' }}
+            <span v-if="diskFree" class="nowrap">｜ 盘剩 {{ humanBytes(diskFree) }}</span>
+          </span>
+          <!-- **做成牌子，不是接在后面的一句话。** 同样是 tiny dim 的字，
+               紧跟在「盘剩 44.5 GB」后面读起来就是同一句话的下半截；宽度一
+               变两者还会贴到一起。牌子在任何宽度上都自己划得出边界。
+               样式跟 ShowDialog 上那个「写实线 / 动漫线」一致。 -->
+          <span class="pill pill--neutral scope" :title="scopeHint">{{ scopeLabel }}</span>
+        </div>
+      </div>
 
       <div class="dlg__body stack stack--sm">
         <!-- 编剧：挑哪一家。清单从引擎来，十五家。 -->
@@ -789,34 +813,41 @@ async function download() {
   padding: 10px 14px;
 }
 
-.dlg__head {
-  align-items: flex-start;
+/* 标题行只剩标题和 ×，短得不可能顶出去，所以既不用折也不用按顶端对齐。
+   （2026-09-15 那条「必须能折」的注释连同 `.dlg__title` 一起去掉了：那时候
+   长的是**这一行**——「整机 X GB，其余留给系统」一加，flex 就去挤标题，把
+   「首帧模型（图像编辑）」压成一列一个字。现在那一长串在下面 `.dlg__meta`
+   里，和标题不再抢宽度，挤的前提本身没有了。） */
+
+/* 标题底下那一条：简介 + 「这台机器 / 这部剧」。
+   分隔线从标题行挪到这儿——不挪的话标题和它自己的简介之间会横一条线。 */
+.dlg__meta {
+  display: grid;
+  gap: 6px;
+  padding: 0 14px 10px;
   border-bottom: 1px solid var(--line);
-  /* **必须能折。** 2026-09-15 加了「整机 X GB，其余留给系统」之后右上角
-     那行长了一倍，而这一行钉死不折：flex 于是去挤左边的标题，把
-     「首帧模型（图像编辑）」压成**一列一个字**，窗口整个没法看。
-     `min-width: 0` 只是允许被挤，不挡这件事。 */
+}
+
+/* 这台机器的读数，后面跟着「这是谁的事」那个牌子。
+   **不用 space-between**：那样牌子在放得下时贴右边、放不下折行之后又贴左边
+   ——同一个东西两种位置，比钉死一种难看。一律跟着左边这条线，和标题、简介
+   的左缘对齐。 */
+.meta {
+  display: flex;
   flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 10px;
 }
 
-.dlg__title {
-  /* 挤到这个宽度就不再让了，剩下的让右边那行自己折下去。
-     没有下限的话 flex 会一直挤到一个字宽——上面那段说的就是它。 */
-  flex: 1 1 14rem;
-  min-width: 12rem;
-}
-
-/* 右上角那行读数。**右对齐**：它折行之后，两行的左边缘对不齐比右边缘
-   对不齐难看得多——右边就是窗口边。
-   `flex: 1 1 auto` 让它在标题占住下限之后自己去折，而不是顶出去。 */
+/* 显卡和盘剩余那一串。**每一小节各自 nowrap**（"107.5 GB" 不许断在中间），
+   整串可以折——统一内存那一句让它有两行那么长。 */
 .rig {
-  flex: 1 1 auto;
   min-width: 0;
-  text-align: right;
+  line-height: 1.5;
 }
 
 .purpose {
-  margin: 2px 0 0;
+  margin: 0;
   line-height: 1.5;
 }
 
