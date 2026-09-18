@@ -487,13 +487,28 @@ onUnmounted(() => clearTimeout(timer))
 .tasks__sec + .tasks__sec {
   margin-top: var(--s3);
 }
+/* **标题要有内距。** `.card` 自己的 padding 是 0（行各自带 `7px 8px`，
+   所以行看着是有边距的），而标题什么都没有——量过：卡片左缘 24、标题左缘
+   25、行内容左缘 33。也就是标题贴着上边框 1px，还比它底下每一行都往左顶
+   出去 8px，整个卡在角上。
+   左右给 8px，和行内容对齐成一条竖线；上面 12px，让它和卡片边框脱开。 */
 .tasks__h {
   display: flex;
   align-items: center;
   gap: var(--s2);
-  margin: 0 0 var(--s2);
+  margin: 0;
+  padding: var(--s3) var(--s2) var(--s2);
   font-size: var(--fs-md);
   font-weight: 600;
+}
+/* 最后一行离下边框也只有 7px，跟着补一点。 */
+.tasks__sec {
+  padding-bottom: var(--s2);
+}
+/* 空态是 section 的直接子元素，它自己只有上下 padding——不补的话它比
+   标题和行都往左顶 8px，三样东西三个左缘。 */
+.tasks__sec :deep(.empty) {
+  padding-inline: var(--s2);
 }
 /* 小节标题上那个计数。`.chip` 那一套的缩小版：围起来才读得出是"几件"。 */
 .tasks__n {
