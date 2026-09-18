@@ -63,6 +63,7 @@ import { openJobSocket } from '@/composables/useJobSocket'
 import { useThinking } from '@/stores/thinking'
 import { readLocal, writeLocal } from '@/composables/local-storage'
 import { pickProjectHint } from '@/composables/pick-project-hint'
+import { needsFlowReread, storyIsDone } from '@/composables/story-done'
 import { useProjects } from '@/stores/projects'
 import { useSession } from '@/stores/session'
 import { useUi } from '@/stores/ui'
@@ -168,6 +169,31 @@ const ZW = String.fromCharCode(0x200b)
 
 const chapters = computed(() => story.value?.chapters ?? [])
 const hasStory = computed(() => chapters.value.length > 0)
+
+/**
+ * 故事从"空"变成"有字"（或者反过来）→ 重读一趟流程。
+ *
+ * **不重读的后果**：顶栏那条导航里「设定」是按 `session.done.story` 显示的
+ * （App.vue 的 visibleSteps），而 `session.refresh()` 只在挂载时、换项目 /
+ * 换集时、以及带 `refresh: true` 的动作之后才跑。新建一部剧写完第一章，
+ * 故事页自己是对的——可 done.story 还停在上一次那个 false，于是**「设定」
+ * 那一格不出现，非得刷新一次页面才看得见**。用户 2026-09-18 报的就是它。
+ *
+ * **为什么挂在这儿，而不是各条路上各补一句。** 这一页改故事的路有六条：
+ * 敲字（防抖存稿）、AI 写眼前这一章、批量展开、删章、直接开写、反推。
+ * 其中删章 / 直接开写 / 反推三条早就带着 `refresh: true`，剩下三条漏了
+ * ——漏掉的恰恰是最常走的那几条。一条一条补的话，下次再加一条写故事的
+ * 路还会漏。`setStory` 是服务端那份故事进这一页的**唯一**入口，六条路
+ * 最后都落在它上面，所以只盯它算出来的这一个值。
+ *
+ * 判据和"要不要问"都在 story-done.js 里，那儿有测试盯着。
+ */
+const storyDone = computed(() => storyIsDone(chapters.value))
+
+watch(storyDone, (now) => {
+  if (needsFlowReread(now, session.done.story)) session.refresh()
+})
+
 const writtenCount = computed(
   () => chapters.value.filter((c) => (c.text ?? '').trim()).length,
 )
